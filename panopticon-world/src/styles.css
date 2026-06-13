@@ -202,7 +202,9 @@ canvas {
   left: 50%;
   bottom: 16px;
   transform: translateX(-50%);
-  width: min(720px, calc(100vw - 380px));
+  /* leave room for the inspector (left) and bubble queue (right) so panels
+     never overlap and intercept each other's clicks */
+  width: min(620px, calc(100vw - 720px));
   min-height: 96px;
 }
 .dialogue .speaker {
@@ -272,10 +274,10 @@ canvas {
 /* ── bubble queue (suggestions sidebar) ───────────────────────────────── */
 .queue {
   position: absolute;
-  top: 78px;
+  top: 124px;
   right: 14px;
   width: 270px;
-  max-height: calc(100vh - 200px);
+  max-height: calc(100vh - 250px);
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -486,7 +488,7 @@ canvas {
 /* ── options menu (config knobs) ──────────────────────────────────────── */
 .options {
   position: absolute;
-  top: 78px;
+  top: 124px;
   left: 14px;
   width: 234px;
 }
