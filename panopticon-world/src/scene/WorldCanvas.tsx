@@ -17,7 +17,7 @@ export function WorldCanvas() {
       className="world-canvas"
       orthographic
       dpr={0.75} // low-res backing buffer → chunky SNES pixels (cheap, crash-proof)
-      gl={{ antialias: false, powerPreference: "high-performance", failIfMajorPerformanceCaveat: false }}
+      gl={{ antialias: false, powerPreference: "high-performance", failIfMajorPerformanceCaveat: false, preserveDrawingBuffer: true }}
       camera={{ position: [22, 18, 22], zoom: 30, near: 0.1, far: 240 }}
       onCreated={({ gl }) => {
         // Recover gracefully instead of blanking if the GPU drops the context.

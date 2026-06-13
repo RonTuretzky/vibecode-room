@@ -1,28 +1,30 @@
 import { chromium } from "playwright";
+import { writeFileSync } from "node:fs";
 
 const browser = await chromium.launch();
 const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
 await page.goto("http://localhost:5273/", { waitUntil: "load" });
+
+const grab = async (name) => {
+  const dataUrl = await page.evaluate(() => {
+    const c = document.querySelector("canvas");
+    const off = document.createElement("canvas");
+    off.width = 1280;
+    off.height = 800;
+    const ctx = off.getContext("2d");
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(c, 0, 0, 1280, 800);
+    return off.toDataURL("image/png");
+  });
+  writeFileSync(`/tmp/${name}.png`, Buffer.from(dataUrl.split(",")[1], "base64"));
+  console.log("saved", name);
+};
+
+await page.waitForTimeout(4500);
+await grab("scene-village");
+
+await page.evaluate(() => [...document.querySelectorAll("button")].find((b) => b.textContent.includes("Grove"))?.click());
 await page.waitForTimeout(3000);
+await grab("scene-grove");
 
-const styles = await page.evaluate(() => {
-  const canvas = document.querySelector("canvas");
-  const container = canvas?.parentElement;
-  const grab = (el, name) => {
-    if (!el) return `${name}: null`;
-    const s = getComputedStyle(el);
-    return `${name} <${el.tagName}.${(el.className || "").toString().slice(0, 20)}>: pos=${s.position} z=${s.zIndex} transform=${s.transform} mixBlend=${s.mixBlendMode} isolation=${s.isolation} opacity=${s.opacity}`;
-  };
-  return [grab(canvas, "canvas"), grab(container, "container"), grab(container?.parentElement, "container.parent"), grab(document.querySelector(".ui-layer"), "ui-layer")].join("\n");
-});
-console.log("=== STYLES ===\n" + styles);
-
-// Hide the canvas container → does the UI appear?
-await page.evaluate(() => {
-  const c = document.querySelector("canvas")?.parentElement;
-  if (c) c.style.display = "none";
-});
-await page.waitForTimeout(400);
-await page.screenshot({ path: "/tmp/no-canvas.png" });
-console.log("saved /tmp/no-canvas.png");
 await browser.close();
