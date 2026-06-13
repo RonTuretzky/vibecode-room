@@ -2,41 +2,54 @@ import { chromium } from "playwright";
 
 const browser = await chromium.launch();
 const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
-page.on("pageerror", (e) => console.log(`[PAGEERROR] ${e.message}`));
+
+let pageErrors = 0;
+page.on("pageerror", (e) => {
+  pageErrors++;
+  console.log(`[PAGEERROR @${Date.now()}] ${e.message}`);
+});
+page.on("crash", () => console.log(`[PAGE CRASH @${Date.now()}]`));
+page.on("console", (m) => {
+  const t = m.text();
+  if (/context lost|webglcontextlost|lost context|out of memory|THREE/i.test(t)) console.log(`[console.${m.type()}] ${t}`);
+});
 
 await page.goto("http://localhost:5273/", { waitUntil: "load" });
-await page.waitForTimeout(4000);
 
-const probe = await page.evaluate(() => {
-  const info = (sel) => {
-    const el = document.querySelector(sel);
-    if (!el) return `${sel}: MISSING`;
-    const r = el.getBoundingClientRect();
-    const s = getComputedStyle(el);
-    return `${sel}: ${Math.round(r.width)}x${Math.round(r.height)} @(${Math.round(r.x)},${Math.round(
-      r.y,
-    )}) z=${s.zIndex} op=${s.opacity} vis=${s.visibility} disp=${s.display} bg=${s.backgroundColor} bgImg=${s.backgroundImage.slice(0, 30)}`;
-  };
-  const top = (x, y) => {
-    const el = document.elementFromPoint(x, y);
-    return el ? `${el.tagName}.${(el.className || "").toString().slice(0, 30)}` : "null";
-  };
-  return [
-    info("canvas"),
-    info(".ui-layer"),
-    info(".hud"),
-    info(".options"),
-    info(".dialogue"),
-    info(".legend"),
-    info(".legend-inner"),
-    "rootVar --panel: " + getComputedStyle(document.documentElement).getPropertyValue("--panel"),
-    "bodyBg: " + getComputedStyle(document.body).backgroundColor,
-    "elementFromPoint(40,40): " + top(40, 40),
-    "elementFromPoint(640,400): " + top(640, 400),
-    "elementFromPoint(1150,300): " + top(1150, 300),
-    "elementFromPoint(640,760): " + top(640, 760),
-    "stylesheets: " + document.styleSheets.length,
-  ];
+// attach WebGL context-loss listeners to the canvas
+await page.waitForTimeout(800);
+await page.evaluate(() => {
+  window.__gl = { lost: false, restored: false, at: 0 };
+  const c = document.querySelector("canvas");
+  if (c) {
+    c.addEventListener("webglcontextlost", () => {
+      window.__gl.lost = true;
+      window.__gl.at = performance.now();
+    });
+    c.addEventListener("webglcontextrestored", () => (window.__gl.restored = true));
+  }
 });
-console.log(probe.join("\n"));
+
+for (let t = 2; t <= 24; t += 2) {
+  await page.waitForTimeout(2000);
+  const s = await page.evaluate(() => {
+    const c = document.querySelector("canvas");
+    const gl = c && (c.getContext("webgl2") || c.getContext("webgl"));
+    return {
+      root: document.getElementById("root")?.childElementCount,
+      glLost: window.__gl?.lost,
+      glLostAt: Math.round(window.__gl?.at || 0),
+      ctxLostFlag: gl ? gl.isContextLost() : "no-gl",
+      hud: !!document.querySelector(".hud"),
+    };
+  });
+  console.log(
+    `t=${t}s  root=${s.root} hud=${s.hud} glLost=${s.glLost} ctxLost=${s.ctxLostFlag} lostAt=${s.glLostAt}ms errs=${pageErrors}`,
+  );
+  if (s.glLost) {
+    await page.screenshot({ path: "/tmp/pw-after-crash.png" });
+    console.log("→ screenshot saved after context loss");
+    break;
+  }
+}
 await browser.close();
