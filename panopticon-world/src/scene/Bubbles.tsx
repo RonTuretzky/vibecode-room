@@ -63,16 +63,15 @@ function Orb({ b, pos }: { b: WorldBubble; pos: [number, number, number] }) {
         {/* glass shell */}
         <mesh>
           <icosahedronGeometry args={[0.85, 2]} />
-          <meshPhysicalMaterial
+          <meshStandardMaterial
             color={PAL.bubble}
-            transmission={0.6}
-            thickness={0.5}
-            roughness={0.1}
+            roughness={0.15}
+            metalness={0}
             transparent
-            opacity={0.42}
+            opacity={0.45}
             emissive={accent}
-            emissiveIntensity={0.35}
-            clearcoat={1}
+            emissiveIntensity={0.4}
+            toneMapped={false}
           />
         </mesh>
         {/* glowing core */}
