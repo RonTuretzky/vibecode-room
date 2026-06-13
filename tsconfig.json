@@ -6,6 +6,8 @@
     "moduleResolution": "bundler",
     "moduleDetection": "force",
     "allowImportingTsExtensions": true,
+    "jsx": "react-jsx",
+    "jsxImportSource": "smithers-orchestrator",
     "verbatimModuleSyntax": true,
     "noEmit": true,
     "strict": true,
