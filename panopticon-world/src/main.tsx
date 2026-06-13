@@ -1,7 +1,11 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { App } from "./App.tsx";
+import { engine } from "./world/mockEngine.ts";
 import "./styles.css";
+
+// Test/debug hook: e2e specs read world state via window.__world.
+(window as unknown as { __world: typeof engine }).__world = engine;
 
 // Surface async / render-loop errors (which React error boundaries can't catch)
 // directly on screen instead of letting the canvas blank out.
