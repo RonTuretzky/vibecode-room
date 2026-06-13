@@ -10,7 +10,6 @@ export type ProcessWorkflowInput = {
 
 export type StreamEventsOptions = {
   onError?: (error: unknown) => void;
-  onReconnect?: (event: unknown) => void;
 };
 
 export class SmithersControlPlane {
@@ -66,12 +65,9 @@ export class SmithersControlPlane {
 
     void (async () => {
       try {
-        for await (const event of this.client.streamRunEventsResilient(
+        for await (const event of this.client.streamRunEvents(
           { runId: upid },
-          {
-            signal: abort.signal,
-            onReconnect: options.onReconnect,
-          },
+          { signal: abort.signal },
         )) {
           onEvent(event);
         }

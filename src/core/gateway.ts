@@ -6,14 +6,14 @@ type AppGatewayEndpoint = {
   port: number;
 };
 
-function defaultAppGatewayEndpoint(): AppGatewayEndpoint {
+export function resolveAppGatewayEndpoint(opts?: { host?: string; port?: number }): AppGatewayEndpoint {
   return {
-    host: "127.0.0.1",
-    port: Number(process.env.PANOPTICON_GATEWAY_PORT ?? 7332),
+    host: opts?.host ?? "127.0.0.1",
+    port: opts?.port ?? Number(process.env.PANOPTICON_GATEWAY_PORT ?? 7332),
   };
 }
 
-let currentEndpoint = defaultAppGatewayEndpoint();
+let currentEndpoint = resolveAppGatewayEndpoint();
 
 function formatHostForUrl(host: string) {
   return host.includes(":") && !host.startsWith("[") ? `[${host}]` : host;
@@ -24,11 +24,10 @@ export function appGatewayUrl() {
 }
 
 export async function startAppGateway(opts?: { host?: string; port?: number }) {
-  const defaults = defaultAppGatewayEndpoint();
-  const host = opts?.host ?? defaults.host;
-  const port = opts?.port ?? defaults.port;
+  const { host, port } = resolveAppGatewayEndpoint(opts);
   const gateway = new Gateway({ heartbeatMs: 15000 });
 
+  currentEndpoint = { host, port };
   gateway.register("process", processWorkflow as SmithersWorkflow<unknown>);
   const server = await gateway.listen({ host, port });
   const address = server.address();
