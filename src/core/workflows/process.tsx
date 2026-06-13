@@ -28,8 +28,8 @@ const { Workflow, Task, Loop, smithers, outputs } = createSmithers({
 });
 
 export default smithers((ctx) => {
-  const steer = ctx.latest(outputs.steer, "steer");
-  const instruction = steer?.text ?? "";
+  const steer = steerSchema.safeParse(ctx.latest(outputs.steer, "steer"));
+  const instruction = steer.success ? steer.data.text : "";
 
   return (
     <Workflow name="panopticon-process">
@@ -39,7 +39,6 @@ export default smithers((ctx) => {
           event="steer"
           correlationId="steer"
           output={outputs.steer}
-          outputSchema={steerSchema}
         />
         <Task id="step" output={outputs.step} agent={ioAgents}>
           {`You are an agent process inside Panopticon working on a long-running goal.

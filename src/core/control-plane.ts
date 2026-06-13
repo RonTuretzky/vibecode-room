@@ -8,6 +8,11 @@ export type ProcessWorkflowInput = {
   model: string;
 };
 
+export type StreamEventsOptions = {
+  onError?: (error: unknown) => void;
+  onReconnect?: (event: unknown) => void;
+};
+
 export class SmithersControlPlane {
   private readonly client: SmithersGatewayClient;
 
@@ -52,20 +57,27 @@ export class SmithersControlPlane {
     return this.client.listRuns();
   }
 
-  async streamEvents(upid: string, onEvent: (event: unknown) => void): Promise<() => void> {
+  async streamEvents(
+    upid: string,
+    onEvent: (event: unknown) => void,
+    options: StreamEventsOptions = {},
+  ): Promise<() => void> {
     const abort = new AbortController();
 
     void (async () => {
       try {
-        for await (const event of this.client.streamRunEvents(
+        for await (const event of this.client.streamRunEventsResilient(
           { runId: upid },
-          { signal: abort.signal },
+          {
+            signal: abort.signal,
+            onReconnect: options.onReconnect,
+          },
         )) {
           onEvent(event);
         }
       } catch (error) {
         if (!abort.signal.aborted) {
-          throw error;
+          options.onError?.(error);
         }
       }
     })();
