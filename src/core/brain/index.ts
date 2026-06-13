@@ -1,16 +1,15 @@
-import { AnthropicBrain } from "./anthropic.ts";
 import { MockBrain } from "./mock.ts";
+import { SmithersBrain } from "./smithers.ts";
 import type { Brain } from "./types.ts";
 
 export type { Brain, StepRequest, StepResult, SuggestRequest, SuggestionDraft } from "./types.ts";
 
-/** Pick the brain: real Anthropic if a key is present, else the deterministic mock. */
+/** Pick the brain: Smithers subscriptions by default, deterministic mock offline. */
 export function makeBrain(): Brain {
-  const key = process.env.ANTHROPIC_API_KEY;
-  if (key) {
-    console.log("[brain] using AnthropicBrain");
-    return new AnthropicBrain(key);
+  if (process.env.PANOPTICON_OFFLINE === "1") {
+    console.log("[brain] PANOPTICON_OFFLINE=1 — using MockBrain");
+    return new MockBrain();
   }
-  console.log("[brain] no ANTHROPIC_API_KEY — using MockBrain (deterministic demo)");
-  return new MockBrain();
+  console.log("[brain] using SmithersBrain");
+  return new SmithersBrain();
 }

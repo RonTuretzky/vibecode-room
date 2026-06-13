@@ -31,7 +31,8 @@ export interface ProcessMetadata {
   mode: ProcessMode;
   gitId?: string; // canonical git ref; url is derived (urls can change)
   gitUrl?: string;
-  agent: string; // agent framework: "mock" | "eliza" | "nanoclaw" | "smithers"
+  agent: string; // agent framework: "mock" | "smithers" (default)
+  // TODO(eliza): add Eliza (and other frameworks e.g. NanoClaw) as pluggable agent backends later
   model: string; // model id: claude-fable-5 (orchestrate) / claude-sonnet-4-6 (io) ...
   container?: string; // runtime container id (where the agent runs)
   state: ProcessState;

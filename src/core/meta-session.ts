@@ -8,14 +8,15 @@ import { now, uid } from "./util.ts";
 
 /**
  * The META-SESSION (§5 architecture root): a long-running, always-on outer loop
- * — the Eliza-style "session manager." It owns the Process Manager, the
- * always-on Suggestion Engine, the Input Router, and the event bus, and it
- * drives the autonomy tick that advances every process and the suggestion
- * channel on a cadence.
+ * backed by Smithers durable orchestration. Smithers owns the forkable,
+ * resumable outer loop. This layer owns the Process Manager, the always-on
+ * Suggestion Engine, the Input Router, and the event bus, and it drives the
+ * autonomy tick that advances every process and the suggestion channel on a
+ * cadence.
  *
- * This is the seam where a real elizaOS AgentRuntime + autonomy service would
- * take over the loop; here it's implemented natively so the system runs today.
+ * Here it's implemented natively so the system runs today.
  */
+// TODO(eliza): an elizaOS AgentRuntime + autonomy service could plug in here later as an alternative outer loop.
 export class MetaSession {
   readonly bus = new EventBus();
   readonly brain: Brain;

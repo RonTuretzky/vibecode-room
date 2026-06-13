@@ -4,7 +4,7 @@ import type { Brain, StepRequest, StepResult, SuggestRequest, SuggestionDraft } 
 
 // Deterministic, dependency-free brain. Good enough to demonstrate the whole
 // loop — ambient suggestion, demos, clarifying questions, process steering —
-// with zero API keys. Swap for AnthropicBrain by setting ANTHROPIC_API_KEY.
+// with zero API keys. Used for offline/dev mode and Smithers fallback.
 
 const BUILD_TRIGGERS = [
   "build",

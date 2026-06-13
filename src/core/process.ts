@@ -14,10 +14,12 @@ interface ProcessDeps {
  * One Process = a containerized agent working on a single thing, running its own
  * session loop (§5.3): Input → Pre-hooks → Action(s) → Post-hooks → Output.
  *
- * In V0 the "container" is in-process; the metadata.container field and the
- * Brain seam are where a real sandbox (Smithers/Daytona) and agent framework
- * (Eliza/NanoClaw) plug in.
+ * In V0 the "container" is in-process; Smithers is the durable process/agent
+ * backend, so a Process maps to a durable Smithers run. The metadata.container
+ * field and Brain seam are where the real sandbox (Smithers/Daytona) and agent
+ * runtime attach.
  */
+// TODO(eliza): add Eliza (and future frameworks e.g. NanoClaw) as pluggable process backends later.
 export class Process {
   readonly meta: ProcessMetadata;
   private queue: InputEvent[] = [];
