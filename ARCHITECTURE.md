@@ -8,16 +8,18 @@ plug in. The mapping below is the contract for that integration.
 
 | Spec layer | This repo (V0, native) | Drop-in backend |
 |---|---|---|
-| META-SESSION / session manager (always-on outer loop) | `core/meta-session.ts` | **elizaOS** `AgentRuntime` + autonomy service + task system |
+| META-SESSION / session manager (always-on outer loop) | `core/meta-session.ts` | **Smithers** durable orchestration (resume/fork/replay) |
 | Suggestion / wake policy (always-on listen → "should I build this?") | `core/suggestion-engine.ts` | **cue** harness (cue policy / `observe.pass`) |
 | Process = durable unit of work (the inner loop) | `core/process.ts` | **Smithers** workflow (`<Ralph>`, SQLite resume/fork/replay) |
-| Kernels: STT · TTS · LLM · VLM, and the plug-in agent | `core/brain/*` + browser Web Speech API | **plugin-local-inference** (whisper.cpp · Kokoro · llama.cpp) inside an **Eliza** agent |
+| Kernels: STT · TTS · LLM · VLM, and the plug-in agent | `core/brain/*` + browser Web Speech API | **plugin-local-inference** (whisper.cpp · Kokoro · llama.cpp) inside a Smithers-backed agent |
 
-Why this shape (from the design conversation): Eliza is *built* to be always-on
-and event-driven, so it owns the outer loop; cue's wake policy is exactly the
-unsolved "suggestion threshold"; Smithers is best at durable, forkable,
-multi-step *process* work, so it moves inward; local-inference supplies the cheap
-hot-loop kernels (no Opus in the hot loop).
+Why this shape (from the design conversation): Smithers owns the always-on,
+durable, forkable, resumable orchestration for both the outer loop and the
+multi-step *process* work; cue's wake policy is exactly the unsolved "suggestion
+threshold"; local-inference supplies the cheap hot-loop kernels (no Opus in the
+hot loop). Eliza support is planned later as a pluggable alternative
+agent/runtime backend, alongside future frameworks such as NanoClaw.
+<!-- TODO(eliza): add Eliza, and future frameworks such as NanoClaw, as pluggable agent/runtime backends later. -->
 
 ## File → spec map
 
@@ -36,14 +38,14 @@ hot-loop kernels (no Opus in the hot loop).
 
 ## Seam contracts (how to swap in the real backends)
 
-**elizaOS as the outer loop.** `MetaSession` is intentionally thin: a tick loop +
-ownership of the sub-engines. To replace it, register the Process-Manager
-functions as Eliza **actions**, the hooks as **providers** (pre) / **evaluators**
-(post), the autonomy tick as Eliza's **autonomy service**, and the event bus as
-Eliza's message bus. Rooms/worlds/entities map to the physical room + people.
-*Open risk:* Eliza is persona-centric — confirm a headless orchestrator runtime.
-*Open risk:* two schedulers — Eliza task system owns *which processes wake*;
-Smithers owns *what happens inside one process*. Keep that boundary hard.
+**Smithers as the outer loop.** `MetaSession` is intentionally thin: a tick loop
++ ownership of the sub-engines. Smithers owns durable, forkable, resumable
+orchestration for the room-level loop: which processes wake, when the autonomy
+tick runs, and how the Process Manager, Suggestion Engine, Input Router, hooks,
+and event bus resume after interruption. Eliza support is planned later as a
+pluggable `AgentRuntime` + autonomy service alternative outer loop; NanoClaw can
+follow the same backend seam.
+<!-- TODO(eliza): allow an elizaOS AgentRuntime + autonomy service to plug in later as an alternative Smithers outer loop. -->
 
 **cue as the wake policy.** `SuggestionEngine.tick()` is the cue loop: a
 deterministic gate (rate/cooldown/min-content) then a cheap model call that may
@@ -55,12 +57,16 @@ merge, accept→spawn) here.
 To make a process a real durable workflow, implement `Process` as a Smithers run:
 `fork()` → Smithers `fork`, pause/resume → workflow suspend/resume, the
 implement→validate→review→fix cycle → `<Ralph>`. The `container` metadata field
-is where the sandbox (gVisor/Daytona) id goes.
+is where the sandbox (gVisor/Daytona) id goes. Eliza support is planned later as
+a pluggable process backend alongside future frameworks such as NanoClaw.
+<!-- TODO(eliza): add Eliza, and future frameworks such as NanoClaw, as pluggable process backends later. -->
 
 **plugin-local-inference as kernels.** `AnthropicBrain` proves the brain seam;
 a `LocalInferenceBrain` would call whisper.cpp (STT), llama.cpp (LLM) and Kokoro
-(TTS) via an Eliza agent carrying the plugin. The browser Web Speech API mic is
-the V0 stand-in for whisper.cpp on the ambient channel.
+(TTS) via a Smithers-backed agent carrying the plugin. The browser Web Speech
+API mic is the V0 stand-in for whisper.cpp on the ambient channel. Eliza support
+is planned later as another host for the same plugin seam.
+<!-- TODO(eliza): let an Eliza adapter host the plugin-local-inference seam later. -->
 
 ## Event model
 

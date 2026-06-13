@@ -6,11 +6,13 @@ steer many concurrent agent **processes** at once — by click+type or by voice.
 
 This is the **V0** of the design captured in
 [`.context/attachments/.../panopticon-session-1-guide.md`](.) — implemented as a
-runnable system today, with clean seams where elizaOS, cue, Smithers and
-local-inference plug in (see [ARCHITECTURE.md](ARCHITECTURE.md)).
+runnable system today, with clean seams where Smithers, cue and local-inference
+plug in (see [ARCHITECTURE.md](ARCHITECTURE.md)). Smithers is the described
+backend now; Eliza support is planned later.
+<!-- TODO(eliza): add Eliza as a pluggable backend adapter later. -->
 
 ```
-                          META-SESSION  (always-on outer loop · Eliza-shaped)
+                          META-SESSION  (always-on outer loop · Smithers-backed)
                                 │
         ┌───────────────────────┼───────────────────────────┐
    SUGGESTION ENGINE        INPUT ROUTER                PROCESS MANAGER
@@ -81,7 +83,9 @@ bun run seed           # plays a scripted room conversation
       metadata fields (C7)
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the file-by-file map to the spec and
-the integration seams for elizaOS / cue / Smithers / plugin-local-inference.
+the integration seams for Smithers / cue / plugin-local-inference. Eliza support
+is planned later.
+<!-- TODO(eliza): include Eliza in the documented seams once the adapter exists. -->
 
 ## Layout
 
