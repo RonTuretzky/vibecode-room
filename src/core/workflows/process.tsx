@@ -12,6 +12,7 @@ const inputSchema = z.object({
 
 const steerSchema = z.object({
   text: z.string().default(""),
+  stop: z.boolean().default(false),
 });
 
 const stepOutputSchema = z.object({
@@ -20,6 +21,8 @@ const stepOutputSchema = z.object({
   done: z.boolean().default(false),
   html: z.string().default(""),
 });
+
+const loopId = "steer-loop";
 
 const { Workflow, Task, Loop, smithers, outputs } = createSmithers({
   input: inputSchema,
@@ -30,17 +33,19 @@ const { Workflow, Task, Loop, smithers, outputs } = createSmithers({
 export default smithers((ctx) => {
   const steer = steerSchema.safeParse(ctx.latest(outputs.steer, "steer"));
   const instruction = steer.success ? steer.data.text : "";
+  const shouldStop = steer.success && steer.data.stop;
+  const steerCorrelationId = `steer:${ctx.iterations?.[loopId] ?? 0}`;
 
   return (
     <Workflow name="panopticon-process">
-      <Loop until={false} maxIterations={1000}>
+      <Loop id={loopId} until={shouldStop} maxIterations={1000}>
         <WaitForEvent
           id="steer"
           event="steer"
-          correlationId="steer"
+          correlationId={steerCorrelationId}
           output={outputs.steer}
         />
-        <Task id="step" output={outputs.step} agent={ioAgents}>
+        <Task id="step" output={outputs.step} agent={ioAgents} skipIf={shouldStop}>
           {`You are an agent process inside Panopticon working on a long-running goal.
 You receive the process directive and the latest steering instruction, then produce a concrete update.
 

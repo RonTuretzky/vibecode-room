@@ -55,6 +55,7 @@ describe("Panopticon durable Smithers process smoke", () => {
       let stop = () => {};
 
       try {
+        stop = await control.streamEvents(upid, (event) => events.push(event));
         await control.launchProcess(upid, {
           directive: "Reply with a minimal status update for the smoke test.",
           processTitle: "Durable run smoke",
@@ -67,7 +68,6 @@ describe("Panopticon durable Smithers process smoke", () => {
           return isRecord(run) && run.status === "waiting-event";
         });
 
-        stop = await control.streamEvents(upid, (event) => events.push(event));
         await control.steer(upid, "Produce exactly one concise smoke-test step.");
 
         await waitFor(async () => stepFinishedCount(events) === 1);
@@ -86,6 +86,10 @@ describe("Panopticon durable Smithers process smoke", () => {
         await expectNoAdditionalStep(events, 2);
 
         await control.kill(upid);
+        await waitFor(async () => {
+          const run = await control.getRun(upid);
+          return isRecord(run) && !isActiveRunStatus(run.status);
+        });
         const run = await control.getRun(upid);
         expect(isRecord(run)).toBe(true);
         expect(isActiveRunStatus(isRecord(run) ? run.status : undefined)).toBe(false);
