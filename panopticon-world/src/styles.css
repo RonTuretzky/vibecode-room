@@ -640,3 +640,40 @@ body,
   animation: pulse 1.6s infinite;
   user-select: none;
 }
+
+/* ── crash / error overlay ────────────────────────────────────────────── */
+.crash {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  z-index: 50;
+  background: rgba(8, 6, 18, 0.85);
+  padding: 20px;
+}
+.crash-box {
+  max-width: 640px;
+}
+.crash-box h2 {
+  font-family: var(--pixel);
+  font-size: 12px;
+  color: var(--danger);
+  margin: 0 0 12px;
+}
+.crash-box pre {
+  background: #140f2a;
+  border: 2px solid #000;
+  border-radius: 4px;
+  padding: 10px;
+  font-size: 14px;
+  color: var(--gold);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 50vh;
+  overflow: auto;
+}
+.crash-box p {
+  font-size: 15px;
+  color: var(--text-dim);
+  margin: 10px 0 0;
+}
