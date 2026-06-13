@@ -23,6 +23,8 @@ export function App() {
         <DialogueBox />
       </div>
       {legend && <Legend onClose={() => setLegend(false)} />}
+      {/* CRT/scanline overlay — pure CSS, gives the retro look without a WebGL post pass */}
+      <div className="crt" aria-hidden />
     </>
   );
 }

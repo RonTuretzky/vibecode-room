@@ -3,10 +3,8 @@ import { Canvas } from "@react-three/fiber";
 import { Suspense } from "react";
 import { engine, useWorld } from "../world/mockEngine.ts";
 import { PAL } from "../world/palette.ts";
-import { ErrorBoundary } from "../ui/ErrorBoundary.tsx";
 import { Atmosphere } from "./Atmosphere.tsx";
 import { Bubbles } from "./Bubbles.tsx";
-import { Effects } from "./Effects.tsx";
 import { Ground } from "./Ground.tsx";
 import { Grove } from "./Grove.tsx";
 import { IdeaSpring } from "./IdeaSpring.tsx";
@@ -17,14 +15,24 @@ export function WorldCanvas() {
   return (
     <Canvas
       className="world-canvas"
-      shadows
       orthographic
-      dpr={[1, 1.5]}
-      gl={{ antialias: false }}
+      dpr={0.75} // low-res backing buffer → chunky SNES pixels (cheap, crash-proof)
+      gl={{ antialias: false, powerPreference: "high-performance", failIfMajorPerformanceCaveat: false }}
       camera={{ position: [22, 18, 22], zoom: 30, near: 0.1, far: 240 }}
+      onCreated={({ gl }) => {
+        // Recover gracefully instead of blanking if the GPU drops the context.
+        gl.domElement.addEventListener(
+          "webglcontextlost",
+          (e) => {
+            e.preventDefault();
+            console.warn("[panopticon-world] webgl context lost — attempting restore");
+          },
+          false,
+        );
+      }}
       onPointerMissed={() => (w.graftFrom ? engine.cancelGraft() : engine.select(null))}
     >
-      <fog attach="fog" args={[PAL.skyDay, 34, 96]} />
+      <fog attach="fog" args={[PAL.skyDay, 38, 110]} />
       <Suspense fallback={null}>
         <Atmosphere />
         <Ground />
@@ -39,10 +47,6 @@ export function WorldCanvas() {
         )}
 
         <Bubbles bubbles={w.bubbles} viewMode={w.viewMode} />
-        {/* if post-processing fails on a given GPU, the raw scene still renders */}
-        <ErrorBoundary fallback={null}>
-          <Effects />
-        </ErrorBoundary>
       </Suspense>
 
       <OrbitControls

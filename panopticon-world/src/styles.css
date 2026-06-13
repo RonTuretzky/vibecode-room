@@ -48,6 +48,29 @@ body,
   position: absolute;
   inset: 0;
 }
+/* low-res backing buffer scaled up with nearest-neighbor = chunky SNES pixels */
+canvas {
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+/* ── CRT / scanline overlay (replaces the WebGL post-processing pass) ──── */
+.crt {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  pointer-events: none;
+  background:
+    repeating-linear-gradient(
+      0deg,
+      rgba(0, 0, 0, 0.16) 0px,
+      rgba(0, 0, 0, 0.16) 1px,
+      rgba(0, 0, 0, 0) 2px,
+      rgba(0, 0, 0, 0) 3px
+    ),
+    radial-gradient(ellipse at center, rgba(0, 0, 0, 0) 55%, rgba(8, 6, 20, 0.55) 100%);
+  mix-blend-mode: multiply;
+}
 
 .ui-layer {
   position: absolute;

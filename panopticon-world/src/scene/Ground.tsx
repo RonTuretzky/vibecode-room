@@ -1,4 +1,3 @@
-import { ContactShadows } from "@react-three/drei";
 import { useMemo } from "react";
 import { PAL } from "../world/palette.ts";
 import { hash01 } from "./helpers.tsx";
@@ -78,7 +77,11 @@ export function Ground() {
         </group>
       ))}
 
-      <ContactShadows position={[0, 0.66, 0]} scale={40} far={14} blur={2.4} opacity={0.42} color="#1a1230" />
+      {/* fake blob shadow under the center instead of a per-frame ContactShadows pass */}
+      <mesh position={[0, 0.67, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+        <circleGeometry args={[5, 24]} />
+        <meshBasicMaterial color="#0f0b22" transparent opacity={0.22} />
+      </mesh>
     </group>
   );
 }

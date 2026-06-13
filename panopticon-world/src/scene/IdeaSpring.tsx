@@ -50,7 +50,7 @@ export function IdeaSpring() {
         <cylinderGeometry args={[0.18, 0.3, 1.4, 8]} />
         <meshStandardMaterial color={PAL.stone} roughness={1} flatShading />
       </mesh>
-      <pointLight position={[0, 2, 0]} color={PAL.cyan} intensity={6} distance={9} />
+      <pointLight position={[0, 2, 0]} color={PAL.cyan} intensity={2.2} distance={7} />
 
       {/* welling bubble orbs */}
       {Array.from({ length: 6 }).map((_, i) => (

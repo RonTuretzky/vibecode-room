@@ -73,9 +73,7 @@ export function Atmosphere() {
     <>
       <hemisphereLight args={["#bfe0ff", "#3a5a2a", 0.8]} />
       <ambientLight intensity={0.6} />
-      <directionalLight ref={sun} castShadow position={[20, 30, 14]} intensity={1.2}>
-        <orthographicCamera attach="shadow-camera" args={[-22, 22, 22, -22, 1, 90]} />
-      </directionalLight>
+      <directionalLight ref={sun} position={[20, 30, 14]} intensity={1.2} />
       <mesh ref={sunMesh}>
         <circleGeometry args={[3.6, 24]} />
         <meshBasicMaterial color="#ffe9a8" transparent />
