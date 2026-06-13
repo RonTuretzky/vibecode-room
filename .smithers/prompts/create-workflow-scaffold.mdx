@@ -1,0 +1,62 @@
+# Scaffold the workflow files
+
+You are the scaffolder. Turn the approved design into real, runnable Smithers
+files. You have file + shell tools — **write the files to disk**, then report
+exactly what you wrote.
+
+## Design
+
+{JSON.stringify(props.design, null, 2)}
+
+## Provisioning (templates, components, skills, agents available)
+
+{JSON.stringify(props.provisioning, null, 2)}
+
+Write the workflow to {props.workflowsDir} as a `NAME.tsx` file (NAME = the
+design's kebab-case workflowName). Write each prompt to {props.promptsDir} as its
+own `.mdx` file, one per prompt named in the design.
+
+## How to write it
+
+1. **Start from the closest example** named in the provisioning manifest — copy
+   its structure, then adapt. Don't invent API; if unsure, re-read the example or
+   `bunx smithers-orchestrator docs`.
+2. **Workflow file header** — begin with the two seed comments and the JSX pragma,
+   exactly like the other workflows in `{props.workflowsDir}`:
+   ```
+   // smithers-source: seeded
+   // smithers-display-name: <Title Case Name>
+   /** @jsxImportSource smithers-orchestrator */
+   ```
+3. **Imports** — `import { createSmithers } from "smithers-orchestrator"`,
+   `import { z } from "zod/v4"`, `import { agents } from "../agents"`, any
+   components from `../components`, and each prompt from `../prompts/<name>.mdx`.
+4. **Schemas** — define the Zod input schema and one schema per task output.
+   Call `createSmithers({ input: inputSchema, <table>: <schema>, ... })` and
+   destructure only the components you use (`Workflow`, `Task`, `Sequence`,
+   `Branch`, `Loop`, `Approval`, `smithers`, `outputs`).
+5. **Graph** — `export default smithers((ctx) => ( <Workflow name="<id>"> … ))`,
+   matching the design's `graphShape`. Gate later stages on earlier outputs with
+   `ctx.outputMaybe("table", { nodeId })`, exactly like the existing workflows.
+6. **Prompts** — author each `.mdx` from the design's `prompts` list. Pass props
+   from the task and end every prompt with:
+   ```
+   REQUIRED OUTPUT:
+   {props.schema}
+   ```
+7. **Agents** — only add a new provider/pool to `../agents.ts` if the design
+   truly needs one that doesn't exist; otherwise reuse the existing pools.
+8. **Skills** — if the design relies on a worker skill the provisioning step
+   marked `recommended` (not yet installed), create a concise skill file under
+   the local skills dir so the workflow's agents have it.
+
+Keep it idiomatic and minimal — match the style of the neighbouring files. Do not
+add dead code, placeholders, or "TODO" stubs. The next step renders the graph to
+verify it compiles, so make it actually load.
+
+## Output
+
+Return a `workflowName` and the full list of `filesWritten` (path + kind).
+
+REQUIRED OUTPUT:
+{props.schema}

@@ -1,0 +1,39 @@
+# Advise on the context contract diagnosis
+
+The deterministic checker has already diagnosed a context contract. Your job is
+to turn its findings into concrete, actionable advice. Do NOT re-run the checks
+or invent new findings — only address what the checker reported.
+
+## Diagnosis summary
+
+{props.summary}
+
+Health score: {props.score} / 100
+
+## Issues
+
+{JSON.stringify(props.issues, null, 2)}
+
+Each issue has a `check` id, a `severity` (`ok`, `warning`, `error`, or `info`),
+and a `message`.
+
+## What to produce
+
+1. For every issue whose severity is NOT `ok`, write one concrete `fix` — a short
+   imperative suggestion for how to resolve it. Prefer naming the exact contract
+   field to add or change. For example, if `hasOutputSpec` failed, suggest adding
+   an `outputSpec` field describing the produced artifact.
+2. Order `fixes` by severity: `error` first, then `warning`, then `info`.
+3. If there are no non-ok issues, return an empty `fixes` array and say the
+   contract is healthy in your `summary`.
+
+Keep each fix to a single sentence. Be specific and practical — no marketing
+copy, no restating the problem without a remedy.
+
+## Output
+
+Return `fixes` (one string per non-ok issue) and a one-line `summary` of the
+overall remediation.
+
+REQUIRED OUTPUT:
+{props.schema}

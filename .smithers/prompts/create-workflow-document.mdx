@@ -1,0 +1,49 @@
+# Document the new workflow
+
+The new workflow renders cleanly. Write a short, agent-facing skill file so that
+future agents (and the human) know it exists and how to run it. You have file
+tools — write the file, then report its path.
+
+## Workflow
+
+- Name: {props.workflowName}
+
+## Design
+
+{JSON.stringify(props.design, null, 2)}
+
+## Write the skill
+
+Create `{props.skillsDir}/{props.workflowName}.md` (create the directory if
+needed). Use YAML frontmatter then a concise body:
+
+```
+---
+name: {props.workflowName}
+description: <one line — what it does and when to reach for it>
+workflow: {props.workflowName}
+---
+```
+
+The body must tell an agent:
+
+1. What the workflow does and when to use it (1–2 sentences).
+2. Its inputs — especially `prompt` and any typed knobs from the design.
+3. How to start it:
+   `bunx smithers-orchestrator workflow run {props.workflowName} --prompt "…"`
+   (or `--input '{…}'` for structured inputs).
+4. How to run it detached and watch it: `-d` to detach, then
+   `smithers ps`, `smithers logs <runId> -f`, `smithers inspect <runId>`.
+5. How to handle blocked states: `smithers approve <runId>` for approval gates,
+   `smithers why <runId>` for signal waits, `smithers cancel <runId>` to stop.
+
+Keep it practical and short — no marketing copy. Match the style of any existing
+files in `{props.skillsDir}` and update rather than duplicate if one already
+covers this workflow.
+
+## Output
+
+Return a one-line `summary` and the `skillPath` you wrote.
+
+REQUIRED OUTPUT:
+{props.schema}
