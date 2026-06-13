@@ -21,9 +21,32 @@ async function waitFor(
   throw new Error("Timed out waiting for durable-run smoke condition.");
 }
 
+function stepFinishedCount(events: unknown[]) {
+  return events.filter((event) => {
+    if (!isRecord(event) || !isRecord(event.payload)) {
+      return false;
+    }
+    return event.payload.event === "node.finished" &&
+      isRecord(event.payload.payload) &&
+      event.payload.payload.nodeId === "step";
+  }).length;
+}
+
+async function expectNoAdditionalStep(events: unknown[], expectedCount: number) {
+  await new Promise((resolve) => setTimeout(resolve, 5_000));
+  expect(stepFinishedCount(events)).toBe(expectedCount);
+}
+
+function isActiveRunStatus(status: unknown) {
+  return status === "running" ||
+    status === "waiting-event" ||
+    status === "waiting-approval" ||
+    status === "waiting-timer";
+}
+
 describe("Panopticon durable Smithers process smoke", () => {
   test.skipIf(process.env.PANOPTICON_SMOKE_AGENT !== "1")(
-    "boots the app gateway, waits for steer, emits one step, and cancels",
+    "boots the app gateway, waits for steer, emits one step per steer, and cancels",
     async () => {
       const gateway = await startAppGateway({ port: 0 });
       const control = new SmithersControlPlane({ baseUrl: appGatewayUrl() });
@@ -47,22 +70,30 @@ describe("Panopticon durable Smithers process smoke", () => {
         stop = await control.streamEvents(upid, (event) => events.push(event));
         await control.steer(upid, "Produce exactly one concise smoke-test step.");
 
-        await waitFor(async () => events.some((event) => {
-          if (!isRecord(event) || !isRecord(event.payload)) {
-            return false;
-          }
-          return event.payload.event === "node.finished" &&
-            isRecord(event.payload.payload) &&
-            event.payload.payload.nodeId === "step";
-        }));
+        await waitFor(async () => stepFinishedCount(events) === 1);
+        await waitFor(async () => {
+          const run = await control.getRun(upid);
+          return isRecord(run) && run.status === "waiting-event";
+        });
+        await expectNoAdditionalStep(events, 1);
+
+        await control.steer(upid, "Produce exactly one second smoke-test step.");
+        await waitFor(async () => stepFinishedCount(events) === 2);
+        await waitFor(async () => {
+          const run = await control.getRun(upid);
+          return isRecord(run) && run.status === "waiting-event";
+        });
+        await expectNoAdditionalStep(events, 2);
 
         await control.kill(upid);
         const run = await control.getRun(upid);
         expect(isRecord(run)).toBe(true);
+        expect(isActiveRunStatus(isRecord(run) ? run.status : undefined)).toBe(false);
       } finally {
         stop();
         await gateway.close();
       }
     },
+    { timeout: 180_000 },
   );
 });
