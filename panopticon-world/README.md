@@ -25,6 +25,24 @@ bun run dev     # → http://localhost:5273
 
 `bun run build` / `bun run typecheck` also work.
 
+## Tests
+
+```bash
+bun run test:e2e     # Playwright — 14 e2e tests covering all functionality
+```
+
+The suite (`e2e/world.spec.ts`) drives the real UI and asserts world state via a
+`window.__world` engine hook: boot, legend, bubbles (demo + questions + accept +
+dismiss), room dialogue, select + steer, pause/resume, fork lineage, kill,
+Village⇄Grove toggle, grove re-graft (incl. cycle refusal), and the option knobs.
+
+> Note on screenshots: on some machines Playwright can't composite the WebGL
+> canvas and the DOM into one screenshot (you get a "blank" capture even though
+> the page renders fine). To verify the 3D scene, read the canvas pixels via
+> `canvas.drawImage → toDataURL` (needs `preserveDrawingBuffer`, which is on); to
+> verify the DOM, launch with `--disable-gpu`. The e2e tests avoid screenshots
+> entirely and assert state instead, so they're reliable.
+
 ## Try it
 
 1. The **Legend** opens first — it maps every game item to a Panopticon feature.
