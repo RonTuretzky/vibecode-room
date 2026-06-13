@@ -1,0 +1,642 @@
+:root {
+  --ink: #1a1428;
+  --panel: #2a2350;
+  --panel-2: #3a3170;
+  --panel-edge-light: #6b5fb8;
+  --panel-edge-dark: #110d22;
+  --gold: #ffd86b;
+  --gold-deep: #e0a52e;
+  --cyan: #6be8ff;
+  --magenta: #ff7ce5;
+  --green: #8be36b;
+  --text: #f4ecff;
+  --text-dim: #b9aee6;
+  --danger: #ff6b7a;
+  --pixel: "Press Start 2P", monospace;
+  --read: "VT323", "Press Start 2P", monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  background: #0b0a16;
+  color: var(--text);
+  font-family: var(--read);
+  -webkit-font-smoothing: none;
+  font-smooth: never;
+  image-rendering: pixelated;
+  cursor:
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 20 20'><path d='M2 2 L2 16 L6 12 L9 18 L12 17 L9 11 L15 11 Z' fill='%23ffd86b' stroke='%231a1428' stroke-width='1.5'/></svg>")
+      2 2,
+    auto;
+}
+
+#root {
+  position: relative;
+}
+
+/* ── canvas fills the screen; UI floats over it ───────────────────────── */
+.world-canvas {
+  position: absolute;
+  inset: 0;
+}
+
+.ui-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 10;
+}
+.ui-layer > * {
+  pointer-events: auto;
+}
+
+/* ── reusable SNES bevel panel ────────────────────────────────────────── */
+.snes-panel {
+  background: linear-gradient(180deg, var(--panel-2), var(--panel));
+  border: 3px solid var(--panel-edge-dark);
+  border-radius: 6px;
+  box-shadow:
+    inset 2px 2px 0 var(--panel-edge-light),
+    inset -2px -2px 0 var(--panel-edge-dark),
+    0 4px 0 rgba(0, 0, 0, 0.45),
+    0 0 0 3px #0b0a16;
+  padding: 12px 14px;
+  color: var(--text);
+}
+
+.snes-title {
+  font-family: var(--pixel);
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  color: var(--gold);
+  text-shadow: 1px 1px 0 #000;
+  margin: 0 0 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.snes-btn {
+  font-family: var(--pixel);
+  font-size: 9px;
+  color: var(--ink);
+  background: linear-gradient(180deg, var(--gold), var(--gold-deep));
+  border: 2px solid #000;
+  border-radius: 4px;
+  padding: 7px 9px;
+  cursor: inherit;
+  box-shadow:
+    inset 1px 1px 0 #fff6cf,
+    inset -1px -1px 0 #9a6a12,
+    0 2px 0 #000;
+  transition: transform 0.05s ease;
+}
+.snes-btn:hover {
+  filter: brightness(1.08);
+}
+.snes-btn:active {
+  transform: translateY(2px);
+  box-shadow: inset 1px 1px 0 #9a6a12;
+}
+.snes-btn.ghost {
+  background: linear-gradient(180deg, var(--panel-2), var(--panel));
+  color: var(--text);
+  box-shadow:
+    inset 1px 1px 0 var(--panel-edge-light),
+    inset -1px -1px 0 var(--panel-edge-dark),
+    0 2px 0 #000;
+}
+.snes-btn.danger {
+  background: linear-gradient(180deg, #ff9aa6, #d63a4d);
+  color: #2a0006;
+}
+.snes-btn.sel {
+  background: linear-gradient(180deg, var(--cyan), #2bb6d6);
+  color: #042029;
+}
+.snes-btn:disabled {
+  opacity: 0.45;
+  filter: grayscale(0.6);
+}
+
+/* ── top HUD ──────────────────────────────────────────────────────────── */
+.hud {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  right: 14px;
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+.hud .brand {
+  font-family: var(--pixel);
+  font-size: 13px;
+  color: var(--gold);
+  text-shadow: 2px 2px 0 #000;
+  line-height: 1.5;
+}
+.hud .brand small {
+  display: block;
+  font-size: 7px;
+  color: var(--cyan);
+  margin-top: 4px;
+  letter-spacing: 1px;
+}
+.hud-stats {
+  display: flex;
+  gap: 8px;
+}
+.stat {
+  font-family: var(--pixel);
+  font-size: 8px;
+  text-align: center;
+  min-width: 64px;
+}
+.stat b {
+  display: block;
+  font-size: 15px;
+  color: var(--cyan);
+  margin-bottom: 4px;
+}
+.stat.day b {
+  color: var(--gold);
+}
+
+/* ── dialogue box (room transcript) ───────────────────────────────────── */
+.dialogue {
+  position: absolute;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  width: min(720px, calc(100vw - 380px));
+  min-height: 96px;
+}
+.dialogue .speaker {
+  position: absolute;
+  top: -12px;
+  left: 16px;
+  font-family: var(--pixel);
+  font-size: 8px;
+  color: var(--ink);
+  background: var(--gold);
+  padding: 4px 8px;
+  border: 2px solid #000;
+  border-radius: 4px;
+}
+.dialogue .lines {
+  font-size: 22px;
+  line-height: 1.15;
+  min-height: 52px;
+  color: var(--text);
+}
+.dialogue .lines .ghost {
+  color: var(--text-dim);
+  opacity: 0.55;
+}
+.dialogue .caret {
+  display: inline-block;
+  width: 10px;
+  color: var(--gold);
+  animation: blink 1s steps(1) infinite;
+}
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+.dialogue form {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+.dialogue input {
+  flex: 1;
+  background: #140f2a;
+  border: 2px solid var(--panel-edge-dark);
+  box-shadow: inset 1px 1px 0 #000;
+  color: var(--text);
+  font-family: var(--read);
+  font-size: 19px;
+  padding: 6px 9px;
+  border-radius: 4px;
+  outline: none;
+}
+.mic {
+  font-size: 16px;
+  width: 42px;
+}
+.mic.rec {
+  background: linear-gradient(180deg, #ff9aa6, #d63a4d);
+  animation: pulse 0.8s infinite;
+}
+@keyframes pulse {
+  50% {
+    filter: brightness(1.4);
+  }
+}
+
+/* ── bubble queue (suggestions sidebar) ───────────────────────────────── */
+.queue {
+  position: absolute;
+  top: 78px;
+  right: 14px;
+  width: 270px;
+  max-height: calc(100vh - 200px);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow: hidden;
+}
+.queue-scroll {
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-right: 4px;
+}
+.bubble-card {
+  border-left: 4px solid var(--cyan);
+}
+.bubble-card.model {
+  border-left-color: var(--magenta);
+}
+.bubble-card h4 {
+  margin: 0 0 4px;
+  font-family: var(--pixel);
+  font-size: 9px;
+  color: var(--text);
+  line-height: 1.4;
+}
+.bubble-card .tag {
+  font-family: var(--pixel);
+  font-size: 6px;
+  padding: 2px 4px;
+  border-radius: 3px;
+  background: var(--magenta);
+  color: #2a0024;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+.bubble-card .rationale {
+  font-size: 16px;
+  color: var(--text-dim);
+  line-height: 1.1;
+  margin-bottom: 8px;
+}
+.bubble-card .preview {
+  height: 78px;
+  border: 2px solid #000;
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 8px;
+  background: #0b0f17;
+}
+.bubble-card .preview iframe {
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+.bubble-card .q {
+  margin-bottom: 7px;
+}
+.bubble-card .qp {
+  font-size: 15px;
+  color: var(--cyan);
+  margin-bottom: 4px;
+  line-height: 1.05;
+}
+.bubble-card .choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.chip {
+  font-size: 13px;
+  font-family: var(--read);
+  padding: 2px 7px;
+  border: 2px solid var(--panel-edge-dark);
+  border-radius: 10px;
+  background: #140f2a;
+  color: var(--text-dim);
+  cursor: inherit;
+}
+.chip.sel {
+  background: var(--cyan);
+  color: #042029;
+  border-color: #000;
+}
+.bubble-card .ttl {
+  height: 6px;
+  background: #140f2a;
+  border: 1px solid #000;
+  border-radius: 3px;
+  overflow: hidden;
+  margin: 8px 0;
+}
+.bubble-card .ttl span {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--green), var(--gold));
+}
+.bubble-card .row {
+  display: flex;
+  gap: 6px;
+}
+.bubble-card .row .snes-btn {
+  flex: 1;
+}
+
+/* ── inspector (selected process) ─────────────────────────────────────── */
+.inspector {
+  position: absolute;
+  left: 14px;
+  bottom: 16px;
+  width: 300px;
+}
+.inspector .meta-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 3px 10px;
+  font-size: 15px;
+  margin-bottom: 8px;
+}
+.inspector .meta-grid dt {
+  color: var(--text-dim);
+}
+.inspector .meta-grid dd {
+  margin: 0;
+  color: var(--text);
+  text-align: right;
+}
+.badge {
+  font-family: var(--pixel);
+  font-size: 7px;
+  padding: 3px 5px;
+  border-radius: 3px;
+  border: 1px solid #000;
+}
+.badge.planning {
+  background: var(--gold);
+  color: #2a1c00;
+}
+.badge.active {
+  background: var(--green);
+  color: #04250a;
+}
+.badge.paused {
+  background: #8aa0c8;
+  color: #0a1422;
+}
+.badge.dead {
+  background: #6a6a78;
+  color: #14141c;
+}
+.inspector .inbox {
+  font-size: 14px;
+  color: var(--text-dim);
+  margin: 6px 0;
+}
+.inspector .log {
+  height: 70px;
+  overflow-y: auto;
+  background: #140f2a;
+  border: 2px solid #000;
+  border-radius: 4px;
+  padding: 6px;
+  font-size: 14px;
+  line-height: 1.1;
+  margin-bottom: 8px;
+}
+.inspector .log .you {
+  color: var(--gold);
+}
+.inspector .log .agent {
+  color: var(--cyan);
+}
+.inspector form {
+  display: flex;
+  gap: 6px;
+}
+.inspector input {
+  flex: 1;
+  background: #140f2a;
+  border: 2px solid var(--panel-edge-dark);
+  color: var(--text);
+  font-family: var(--read);
+  font-size: 17px;
+  padding: 5px 8px;
+  border-radius: 4px;
+  outline: none;
+}
+.flags {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+.flag {
+  font-family: var(--pixel);
+  font-size: 6px;
+  padding: 3px 4px;
+  border-radius: 3px;
+  background: #140f2a;
+  border: 1px solid var(--panel-edge-dark);
+  color: var(--text-dim);
+}
+.flag.live {
+  background: var(--danger);
+  color: #2a0006;
+  border-color: #000;
+}
+
+/* ── options menu (config knobs) ──────────────────────────────────────── */
+.options {
+  position: absolute;
+  top: 78px;
+  left: 14px;
+  width: 234px;
+}
+.knob {
+  margin-bottom: 12px;
+}
+.knob label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 15px;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+}
+.knob label b {
+  color: var(--cyan);
+  font-family: var(--pixel);
+  font-size: 9px;
+}
+.knob input[type="range"] {
+  width: 100%;
+  accent-color: var(--gold);
+}
+.toggle-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.toggle-row .snes-btn {
+  flex: 1;
+  font-size: 7px;
+}
+
+/* ── legend ───────────────────────────────────────────────────────────── */
+.legend {
+  position: absolute;
+  inset: 0;
+  background: rgba(8, 6, 18, 0.82);
+  display: grid;
+  place-items: center;
+  z-index: 30;
+}
+.legend-inner {
+  width: min(860px, 92vw);
+  max-height: 86vh;
+  overflow-y: auto;
+}
+.legend-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(238px, 1fr));
+  gap: 10px;
+}
+.legend-item {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  background: #140f2a;
+  border: 2px solid var(--panel-edge-dark);
+  border-radius: 5px;
+  padding: 9px;
+}
+.legend-item .ico {
+  font-size: 26px;
+  line-height: 1;
+  filter: drop-shadow(2px 2px 0 #000);
+}
+.legend-item .lt {
+  font-family: var(--pixel);
+  font-size: 8px;
+  color: var(--gold);
+  margin: 2px 0 5px;
+  line-height: 1.4;
+}
+.legend-item .lf {
+  font-size: 15px;
+  color: var(--text);
+  line-height: 1.08;
+}
+.legend-item .lf b {
+  color: var(--cyan);
+}
+
+.help-btn {
+  font-size: 8px;
+}
+
+/* scrollbars */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--panel-edge-light);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-track {
+  background: #140f2a;
+}
+
+.loading {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-family: var(--pixel);
+  font-size: 11px;
+  color: var(--gold);
+  text-align: center;
+  line-height: 2;
+}
+
+/* ── in-world (drei <Html>) labels ────────────────────────────────────── */
+.orb-label,
+.name-tag,
+.build-tag,
+.graft-tag {
+  font-family: var(--pixel);
+  font-size: 8px;
+  white-space: nowrap;
+  padding: 4px 7px;
+  border: 2px solid #000;
+  border-radius: 5px;
+  color: var(--text);
+  background: rgba(20, 15, 42, 0.9);
+  box-shadow: 0 2px 0 #000;
+  user-select: none;
+  transform: translateY(-4px);
+}
+.orb-label {
+  color: var(--cyan);
+  border-color: var(--cyan);
+}
+.orb-label.model {
+  color: var(--magenta);
+  border-color: var(--magenta);
+}
+.orb-label .i,
+.name-tag b {
+  margin-right: 4px;
+}
+.orb-label em {
+  color: var(--text-dim);
+  font-style: normal;
+}
+.name-tag {
+  color: var(--gold);
+}
+.name-tag.active {
+  border-color: var(--green);
+}
+.name-tag.paused {
+  color: #aac0e8;
+  border-color: #6a7fa8;
+}
+.name-tag.dead {
+  color: #9a9aa8;
+  border-color: #555;
+}
+.name-tag .inbox-pip {
+  margin-left: 6px;
+  color: var(--cyan);
+}
+.build-tag {
+  color: var(--gold);
+  border-color: var(--gold-deep);
+}
+.graft-tag {
+  color: var(--green);
+  border-color: var(--green);
+  animation: blink 0.9s steps(1) infinite;
+}
+.zzz {
+  font-size: 22px;
+  filter: drop-shadow(1px 1px 0 #000);
+  animation: pulse 1.6s infinite;
+  user-select: none;
+}
