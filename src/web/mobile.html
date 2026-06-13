@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+    <title>Panopticon — paired device</title>
+    <style>
+      :root { --bg:#070a11; --ink:#e7ecf3; --dim:#8da0b8; --accent:#4f9dff; --line:#1f2c40; --panel:#0e1420; }
+      * { box-sizing: border-box; }
+      body { margin:0; font:16px/1.5 system-ui; background:var(--bg); color:var(--ink); height:100vh; display:flex; flex-direction:column; }
+      header { padding:14px 16px; border-bottom:1px solid var(--line); }
+      header .t { font-weight:700; font-size:18px; }
+      header .s { color:var(--dim); font-size:13px; }
+      .half { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; padding:18px; }
+      .mic { width:120px; height:120px; border-radius:50%; background:var(--panel); border:2px solid var(--accent); color:var(--accent); font-size:42px; }
+      .mic.rec { background:#f87171; border-color:#f87171; color:#fff; }
+      .label { color:var(--dim); font-size:13px; }
+      .chat { border-top:1px solid var(--line); padding:14px; }
+      .chat form { display:flex; gap:8px; }
+      input { flex:1; background:#0a0f18; color:var(--ink); border:1px solid var(--line); border-radius:10px; padding:12px; font-size:16px; }
+      button.send { background:var(--accent); color:#04101f; border:0; border-radius:10px; padding:0 18px; font-weight:700; }
+      #log { padding:0 16px; max-height:28vh; overflow:auto; }
+      #log div { font-size:13px; color:var(--dim); padding:3px 0; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="t" id="ptitle">pairing…</div>
+      <div class="s">paired device · steering this process</div>
+    </header>
+    <div class="half">
+      <button class="mic" id="mic">🎙</button>
+      <div class="label" id="micLabel">tap to talk</div>
+    </div>
+    <div id="log"></div>
+    <div class="chat">
+      <form id="f">
+        <input id="i" placeholder="Type to steer…" autocomplete="off" />
+        <button class="send" type="submit">Send</button>
+      </form>
+    </div>
+    <script type="module" src="/mobile.js"></script>
+  </body>
+</html>
