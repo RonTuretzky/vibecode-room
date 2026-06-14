@@ -62,5 +62,27 @@ describe("spine-skeleton smoke", () => {
     expect(parsed.meta["actionType"]).toBe("spawn");
     expect(parsed.meta["policy"]).toBe("TextCue/wake-word");
     expect(parsed.meta["decisionId"]).toBeTruthy();
+    // Determinism: decisionId must be stable across replays (derived from utteranceId, not random)
+    expect(parsed.meta["decisionId"]).toBe("decision:utt-smoke-002");
+  });
+
+  it("record-replay determinism: same fixture → identical trace output on repeated runs", () => {
+    function runOnce(): string[] {
+      const emitted: string[] = [];
+      const tracer = new TraceProcessor("sess-replay-det", (line) => emitted.push(line));
+      for (const obs of loadFixture(FIXTURE)) {
+        tracer.process(obs, match(obs));
+      }
+      return emitted;
+    }
+
+    const run1 = runOnce();
+    const run2 = runOnce();
+    const run3 = runOnce();
+
+    // All runs must produce identical output — no random ids
+    expect(run1).toEqual(run2);
+    expect(run2).toEqual(run3);
+    expect(run1.length).toBe(1);
   });
 });

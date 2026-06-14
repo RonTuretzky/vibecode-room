@@ -7,53 +7,55 @@
   "rbgConfirmed": true,
   "gatesGreen": true,
   "pass": true,
-  "note": "Re-derived from disk in a fresh, distinct run. Current disk state: test/smoke/spine-skeleton.smoke.ts (single test, 12 expect calls); scoped `bun test ./src ./test` 42 pass/0 fail across 8 files.",
+  "note": "Fresh, distinct, independent run; state re-derived from disk and every gate re-executed LIVE. Working tree clean aside from pre-existing modified _trace.jsonl/review.json/verify.json artifacts. Live evidence captured under evidence/_verify-live/.",
   "gates": [
     {
       "id": "smoke-spine-skeleton",
       "command": "bun test test/smoke/spine-skeleton.smoke.ts",
-      "green": "1 pass / 0 fail / 12 expect() calls (exit 0)",
-      "red": "BREAK_MATCHER=1 -> 0 pass / 1 fail at expect(emitted.length).toBe(1): Expected 1 Received 0 (exit 1)",
+      "green": "exit 0 — 1 pass / 0 fail / 12 expect() calls",
+      "red": "BREAK_MATCHER=1 -> exit 1, 0 pass / 1 fail at expect(emitted.length).toBe(1): Expected 1 Received 0",
       "rbgGenuine": true,
-      "note": "Both legs reproduced live from disk. RED is a real assertion failure of a real test; GREEN passes. Matches archived smoke-rbg-red.log / smoke-rbg-green.log."
+      "note": "Reproduced LIVE. Red is a real assertion failure of a real test (forces all decisions to 'pass' -> 0 trace lines). Matches archived smoke-rbg-red.log."
     },
     {
       "id": "tsc-noEmit",
       "command": "bun run typecheck (tsc --noEmit)",
-      "green": "exit 0, no diagnostics",
-      "red": "appended `const _verifierRbg: number = \"string\"` to src/types.ts -> TS2322 'string not assignable to number' (exit 2); restored -> clean (exit 0)",
+      "green": "exit 0, zero diagnostics (also clean after probe removed)",
+      "red": "injected `const _rbgTypeError: number = \"not-a-number\"` in src/_rbg_typecheck_probe.ts -> TS2322 exit 2; removed -> exit 0",
       "rbgGenuine": true,
-      "note": "Reproduced the same TS2322 class recorded in tsc-rbg-red.log, then restored and re-confirmed green."
+      "note": "Reproduced LIVE — TS2322 on injected error (exit 2), then restored to clean exit 0."
     },
     {
       "id": "secret-redaction",
       "command": "bun test src/orchestration/secret-scan.test.ts",
-      "green": "5 pass / 0 fail / 8 expect() calls",
+      "green": "exit 0 — 5 pass / 0 fail / 8 expect() calls",
+      "red": "planted sk-/AKIA/Bearer key -> scanner detects (grep exit 0); product source scan (excl. secret-scan.test.ts) -> zero hits",
       "rbgGenuine": true,
-      "note": "In-test RBG: planted fake sk-/AKIA/Bearer keys caught by scanForSecrets; redact() yields a clean re-scan. Independent grep over src/test/fixtures (excl. secret-scan.test.ts): zero key-shaped strings."
+      "note": "Genuine failable test: in-suite tests assert scanForSecrets(planted key).length > 0 and redact() strips it. Live grep red leg detected planted key; product source confirmed key-free."
     },
     {
       "id": "hermetic-e2e-dry-run",
       "command": "bun test src/orchestration/e2e-dry-run.test.ts",
-      "green": "3 pass / 0 fail / 15 expect() calls",
+      "green": "exit 0 — 3 pass / 0 fail / 15 expect() calls",
       "rbgGenuine": true,
-      "note": "Doubles only — no net/mic/key imports. RBG cases inside the suite: red probe verdict halts the chain (feature never schedules/lands); incomplete bundle (missing green run) bounces at the serialized land lane."
+      "note": "Doubles only (imports bun:test + ./core.ts; no net/mic/key). In-suite RBG: red probe verdict halts the chain (feature never schedules/lands); incomplete bundle (missing green run) bounces at the land lane."
     },
     {
       "id": "bun-test-full-suite",
-      "command": "bun test ./src ./test (CI command)",
-      "green": "42 pass / 0 fail / 159 expect() calls across 8 files (exit 0)",
-      "rbgGenuine": "n/a-aggregate",
-      "note": "CI (.github/workflows/ci.yml) runs `bun run typecheck` (tsc --noEmit) then `bun test ./src ./test`; both green."
+      "command": "bun test (bare — the CI command)",
+      "green": "exit 0 — 101 pass / 2 skip / 0 fail across 9 files (reproduced TWICE)",
+      "red": "BREAK_MATCHER=1 bun test -> exit 1, 100 pass / 2 skip / 1 fail (smoke)",
+      "rbgGenuine": true,
+      "note": "Reviewer's prior concern that bare `bun test` exits nonzero (poc HTTP port conflict) did NOT reproduce: dynamic-port poc tests pass; bare `bun test` exits 0 reliably across two consecutive runs. CI = `bun run typecheck` + `bun test`, both green."
     }
   ],
   "walkingSkeleton": {
     "touchesEverySeam": true,
-    "seam": "transcript(loadFixture/replay) -> decision(match) -> trace(TraceProcessor LogEvent w/ non-empty correlationId)",
+    "seam": "transcript(loadFixture/replay harness) -> decision(deterministic match) -> trace(TraceProcessor LogEvent w/ non-empty correlationId)",
     "inProcessDoublesOnly": true,
     "noCueNetworkKeyImport": true,
-    "imports": "node:crypto, node:fs, node:path, bun:test, type-only ./types.ts",
-    "ci": ".github/workflows/ci.yml runs `bun run typecheck` + `bun test ./src ./test`"
+    "imports": "node:crypto, node:fs, node:path, bun:test, type-only ./types.ts (no ws/fetch/network, no Cue, no env API keys)",
+    "ci": ".github/workflows/ci.yml runs `bun run typecheck` then `bun test`"
   },
-  "summary": "All blocking pre-merge gates re-run from disk on branch build/walking-skeleton-smoke and confirmed green. Smoke RBG reproduced live (green 1/1 with 12 expects; red is a real 1-assertion failure under BREAK_MATCHER=1, Expected 1 Received 0). tsc RBG reproduced live (real TS2322 on a planted src error, clean restore). secret-redaction 5/5 and hermetic e2e 3/3 pass with no net/mic/key imports. Full scoped suite `bun test ./src ./test` 42 pass/0 fail. Walking skeleton genuinely traverses transcript->decision->trace with in-process doubles only. PASS."
+  "summary": "Independent fresh-context verification on branch build/walking-skeleton-smoke. Every blocking pre-merge gate re-run LIVE from disk and confirmed green: smoke 1/0 (12 expects, exit 0), tsc --noEmit clean (exit 0), secret-redaction 5/0 (exit 0), hermetic e2e 3/0 (exit 0), and bare `bun test` (CI) 101 pass / 2 skip / 0 fail exit 0 reproduced TWICE. All RBG pairs reproduced LIVE and are genuine real-test failures: smoke (Expected 1 Received 0 under BREAK_MATCHER=1, exit 1), tsc (TS2322 on injected src probe, exit 2 -> restored exit 0), secret-scan (planted key detected, product source clean), full-suite (1 fail under BREAK_MATCHER=1, exit 1). Slice is hermetic — no Cue/network/mic/key imports (verified by reading types.ts, matcher.ts, replay/harness.ts, obs/trace.ts, smoke test) and traverses transcript->decision->trace. The earlier bare-`bun test` non-reproducibility concern did not reproduce. PASS."
 }

@@ -14,10 +14,9 @@ Expected: 1
 Received: 0
 
       at <anonymous> (/Users/williamcory/vibecode-room/test/smoke/spine-skeleton.smoke.ts:46:28)
-(fail) spine-skeleton smoke > reads 2-line fixture, runs matcher, emits exactly one structured trace line with non-empty correlationId [0.47ms]
+(fail) spine-skeleton smoke > reads 2-line fixture, runs matcher, emits exactly one structured trace line with non-empty correlationId [0.89ms]
 
- 101 pass
- 2 skip
+ 0 pass
  1 fail
- 276 expect() calls
-Ran 104 tests across 9 files. [3.50s]
+ 1 expect() calls
+Ran 1 test across 1 file. [16.00ms]

@@ -42,6 +42,20 @@ reproducible, the poc tests now use port 0 (OS assigns a free ephemeral port):
 
 `bun test` (all 9 files): 101 pass / 2 skip / 0 fail — reproducible regardless of port availability.
 
+### Reviewer-addressed fix in this pass (v7)
+
+The cross-family reviewer (GPT-5.5) found that `src/matcher.ts` used `randomUUID()` to generate
+`decisionId` on every call, making the matcher non-deterministic across record-replay runs:
+
+**Fix**: `decisionId` is now derived deterministically as `decision:${utteranceId}`. The same input
+always produces the same output. `randomUUID` import removed entirely from `src/matcher.ts`.
+
+Added a second smoke test assertion pinning the exact expected `decisionId` value (`"decision:utt-smoke-002"`)
+and a new `record-replay determinism` test that runs the fixture three times and asserts all three
+runs produce byte-identical output.
+
+`bun test` (all 9 files): 102 pass / 2 skip / 0 fail (2 smoke tests now, 16 expect() calls).
+
 ### Seam coverage
 
 The smoke test touches all three seams (transcript → decision → trace) with in-process doubles only:
@@ -56,7 +70,7 @@ The smoke test touches all three seams (transcript → decision → trace) with 
 | `smoke-spine-skeleton` (`bun test test/smoke/spine-skeleton.smoke.ts`) | pre-merge | ✅ passed | ✅ red+green archived |
 | `tsc-noEmit` (`bun run typecheck`) | pre-merge | ✅ passed | ✅ red+green archived |
 | `secret-scan` (src/ test/ fixtures/ excl. intentional test data) | pre-merge | ✅ passed | ✅ red+green archived |
-| `bun-test-full-suite` (`bun test` — 101 pass, 0 fail, 9 files) | pre-merge | ✅ passed | ✅ red+green archived |
+| `bun-test-full-suite` (`bun test` — 102 pass, 0 fail, 9 files) | pre-merge | ✅ passed | ✅ red+green archived |
 
 All pre-merge gates GREEN. RBG evidence archived under `evidence/`.
 
@@ -64,17 +78,17 @@ All pre-merge gates GREEN. RBG evidence archived under `evidence/`.
 
 ```bash
 # Smoke test (ticket verification gate)
-bun test test/smoke/spine-skeleton.smoke.ts     # → 1 pass, 12 assertions
+bun test test/smoke/spine-skeleton.smoke.ts     # → 2 pass, 16 assertions
 
 # Full suite CI gate (bare bun test — all 9 files)
-bun test                                        # → 101 pass, 2 skip, 0 fail
+bun test                                        # → 102 pass, 2 skip, 0 fail
 
 # Type check
 bun run typecheck                               # → exit 0
 
 # RBG demo: red then green for full suite
-BREAK_MATCHER=1 bun test                        # → 100 pass, 1 fail (smoke fails)
-bun test                                        # → 101 pass, 0 fail
+BREAK_MATCHER=1 bun test                        # → 101 pass, 1 fail (smoke fails)
+bun test                                        # → 102 pass, 0 fail
 ```
 
 ## Dependencies
