@@ -1,0 +1,6 @@
+TSC green run — type error removed
+./node_modules/.bin/tsc --noEmit
+
+[no output — zero errors]
+
+Exit code: 0 (clean — CI gate passes)

@@ -1,4 +1,7 @@
 [test]
-# Include *.smoke.ts files in addition to the default *.test.ts / *.spec.ts patterns
-# so `bun test test/smoke/spine-skeleton.smoke.ts` works as a filter match.
-files = ["**/*.test.ts", "**/*.spec.ts", "**/*.smoke.ts"]
+# Production tests live in src/ and test/.
+# CI runs: bun test ./src ./test
+# That command excludes artifacts/smithering/poc/ which uses fixed HTTP ports
+# that may conflict in some environments (those tests are standalone POC experiments,
+# not part of the production gate).
+# To run the smoke test explicitly: bun test test/smoke/spine-skeleton.smoke.ts

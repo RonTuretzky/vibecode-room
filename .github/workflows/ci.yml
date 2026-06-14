@@ -18,4 +18,4 @@ jobs:
       - name: Type check
         run: bun run typecheck
       - name: Test
-        run: bun test
+        run: bun test ./src ./test

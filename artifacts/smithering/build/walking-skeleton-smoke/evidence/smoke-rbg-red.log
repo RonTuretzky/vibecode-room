@@ -1,22 +1,22 @@
 bun test v1.3.14 (0d9b296a)
 
-test/smoke/spine-skeleton.smoke.ts:
-38 | 
-39 |       tracer.process(obs, decision);
-40 |     }
+test/smoke/spine-skeleton.smoke.ts.test.ts:
 41 | 
-42 |     // Core gate: exactly one trace line (the action decision on the wake-word line)
-43 |     expect(emitted.length).toBe(1);
+42 |       tracer.process(obs, decision);
+43 |     }
+44 | 
+45 |     // Core gate: exactly one trace line (the action decision on the wake-word line)
+46 |     expect(emitted.length).toBe(1);
                                 ^
 error: expect(received).toBe(expected)
 
 Expected: 1
 Received: 0
 
-      at <anonymous> (/Users/williamcory/vibecode-room/test/smoke/spine-skeleton.smoke.ts:43:28)
-(fail) spine-skeleton smoke > reads 2-line fixture, runs matcher, emits exactly one structured trace line with non-empty correlationId [0.77ms]
+      at <anonymous> (/Users/williamcory/vibecode-room/test/smoke/spine-skeleton.smoke.ts:46:28)
+(fail) spine-skeleton smoke > reads 2-line fixture, runs matcher, emits exactly one structured trace line with non-empty correlationId [0.82ms]
 
  0 pass
  1 fail
  1 expect() calls
-Ran 1 test across 1 file. [13.00ms]
+Ran 1 test across 1 file. [16.00ms]

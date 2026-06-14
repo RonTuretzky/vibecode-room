@@ -3,6 +3,9 @@
 // structured trace line is emitted with a non-empty correlationId.
 // No Cue / network / API keys — pure in-process doubles.
 //
+// Invoked explicitly: bun test test/smoke/spine-skeleton.smoke.ts
+// (Bun treats an explicit file path argument as a direct run, regardless of naming convention.)
+//
 // Red-before-green gate:
 //   RED : BREAK_MATCHER=1 → all decisions are "pass" → 0 trace lines → assertion fails
 //   GREEN: normal run → exactly one action decision → exactly one trace line → passes
@@ -12,7 +15,7 @@ import { join } from "node:path";
 import { loadFixture } from "../../src/replay/harness.ts";
 import { match } from "../../src/matcher.ts";
 import { TraceProcessor } from "../../src/obs/trace.ts";
-import type { CueDecision } from "../../src/types.ts";
+import type { CueDecision, LogEvent } from "../../src/types.ts";
 
 const FIXTURE = join(import.meta.dir, "../../fixtures/smoke/transcript.jsonl");
 
@@ -42,9 +45,22 @@ describe("spine-skeleton smoke", () => {
     // Core gate: exactly one trace line (the action decision on the wake-word line)
     expect(emitted.length).toBe(1);
 
-    // That trace line must carry a non-empty correlationId
-    const parsed = JSON.parse(emitted[0]!) as { correlationId?: string };
+    // Parse and verify full LogEvent shape (not just correlationId)
+    const parsed = JSON.parse(emitted[0]!) as LogEvent;
+
+    // Verify required LogEvent fields
     expect(parsed.correlationId).toBeTruthy();
     expect(parsed.correlationId).not.toBe("");
+    expect(parsed.event).toBe("spine.action");
+    expect(parsed.level).toBe("info");
+    expect(parsed.sessionId).toBe("sess-smoke-001");
+    expect(parsed.meta).toBeDefined();
+    expect(typeof parsed.meta).toBe("object");
+
+    // Verify the action decision meta fields are present
+    expect(parsed.meta["utteranceId"]).toBe("utt-smoke-002");
+    expect(parsed.meta["actionType"]).toBe("spawn");
+    expect(parsed.meta["policy"]).toBe("TextCue/wake-word");
+    expect(parsed.meta["decisionId"]).toBeTruthy();
   });
 });

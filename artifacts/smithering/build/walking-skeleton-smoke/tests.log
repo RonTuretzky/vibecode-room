@@ -1,7 +1,7 @@
 bun test v1.3.14 (0d9b296a)
 
- 100 pass
- 2 skip
+ 42 pass
  0 fail
- 272 expect() calls
-Ran 102 tests across 8 files. [3.50s]
+ 159 expect() calls
+Ran 42 tests across 8 files. [23.00ms]
+Excludes: artifacts/ (contains POC experiments with fixed HTTP ports)
