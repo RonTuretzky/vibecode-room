@@ -1,0 +1,167 @@
+{
+  "probeId": "probe-cue-substrate",
+  "status": "passed",
+  "summary": "probe assertions were failable and passed",
+  "correlationId": "p-cue-real-cue-substrate",
+  "startedAt": "2026-06-14T21:51:46.623Z",
+  "finishedAt": "2026-06-14T21:51:46.845Z",
+  "assertions": [
+    {
+      "id": "repo-access-source-build",
+      "behavior": "github.com/jameslbarnes/cue is accessible and built from source",
+      "phase": "red",
+      "status": "failed-as-expected",
+      "error": "expect(received).toBe(expected)\n\nExpected: \"built\"\nReceived: \"not-built\"\n"
+    },
+    {
+      "id": "text-cue-latency",
+      "behavior": "TextCue-triggered harness decision resolves inside the hard earcon budget",
+      "phase": "red",
+      "status": "failed-as-expected",
+      "error": "expect(received).toBeLessThanOrEqual(expected)\n\nExpected: <= 50\nReceived: 82.768666\n"
+    },
+    {
+      "id": "cue-policy-primitives",
+      "behavior": "TextCue, SpeakerWordCue, IdleCue, WordCountCue, IntervalCue, and cooldownSeconds semantics are evidenced",
+      "phase": "red",
+      "status": "failed-as-expected",
+      "error": "expect(received).toBe(expected)\n\nExpected: true\nReceived: false\n"
+    },
+    {
+      "id": "observe-pass-first-class",
+      "behavior": "observe.pass is a named, loggable, first-class tool result and trace entry",
+      "phase": "red",
+      "status": "failed-as-expected",
+      "error": "expect(received).toBe(expected)\n\nExpected: \"missing.pass\"\nReceived: \"observe.pass\"\n"
+    },
+    {
+      "id": "two-programs-mapped-action-tool",
+      "behavior": "two independent Programs route independently through MappedActionTool schemas",
+      "phase": "red",
+      "status": "failed-as-expected",
+      "error": "expect(received).toEqual(expected)\n\n  [\n-   \"panopticon.spawn\",\n+   \"panopticon.suggest\",\n+   \"panopticon.steer\",\n  ]\n\n- Expected  - 1\n+ Received  + 2\n"
+    },
+    {
+      "id": "provider-slots-and-transcription-ingress",
+      "behavior": "transcription, LLM, output, and frame/VLM provider slots accept Panopticon-shaped adapters; qwen-asr JSON ingress is confirmed",
+      "phase": "red",
+      "status": "failed-as-expected",
+      "error": "expect(received).toBe(expected)\n\nExpected: \"missing transcript\"\nReceived: \"Panop steer cometa toward tests.\"\n"
+    },
+    {
+      "id": "jsonl-trace-files",
+      "behavior": "Cue recording writes JSONL observation, decision, and action traces with stable ids",
+      "phase": "red",
+      "status": "failed-as-expected",
+      "error": "expect(received).toBe(expected)\n\nExpected: \"observe.pass\"\nReceived: \"panopticon.trace\"\n"
+    },
+    {
+      "id": "http-and-live-event-routes",
+      "behavior": "HTTP state/agent/observations routes and read-only live event route expose board-consumable state",
+      "phase": "red",
+      "status": "failed-as-expected",
+      "error": "expect(received).toBe(expected)\n\nExpected: 404\nReceived: 200\n"
+    },
+    {
+      "id": "repo-access-source-build",
+      "behavior": "github.com/jameslbarnes/cue is accessible and built from source",
+      "phase": "green",
+      "status": "passed"
+    },
+    {
+      "id": "text-cue-latency",
+      "behavior": "TextCue-triggered harness decision resolves inside the hard earcon budget",
+      "phase": "green",
+      "status": "passed"
+    },
+    {
+      "id": "cue-policy-primitives",
+      "behavior": "TextCue, SpeakerWordCue, IdleCue, WordCountCue, IntervalCue, and cooldownSeconds semantics are evidenced",
+      "phase": "green",
+      "status": "passed"
+    },
+    {
+      "id": "observe-pass-first-class",
+      "behavior": "observe.pass is a named, loggable, first-class tool result and trace entry",
+      "phase": "green",
+      "status": "passed"
+    },
+    {
+      "id": "two-programs-mapped-action-tool",
+      "behavior": "two independent Programs route independently through MappedActionTool schemas",
+      "phase": "green",
+      "status": "passed"
+    },
+    {
+      "id": "provider-slots-and-transcription-ingress",
+      "behavior": "transcription, LLM, output, and frame/VLM provider slots accept Panopticon-shaped adapters; qwen-asr JSON ingress is confirmed",
+      "phase": "green",
+      "status": "passed"
+    },
+    {
+      "id": "jsonl-trace-files",
+      "behavior": "Cue recording writes JSONL observation, decision, and action traces with stable ids",
+      "phase": "green",
+      "status": "passed"
+    },
+    {
+      "id": "http-and-live-event-routes",
+      "behavior": "HTTP state/agent/observations routes and read-only live event route expose board-consumable state",
+      "phase": "green",
+      "status": "passed"
+    }
+  ],
+  "reportDir": "artifacts/smithering/reports/probe-cue-substrate",
+  "secretScan": {
+    "passed": true,
+    "findings": []
+  },
+  "meta": {
+    "repo": "https://github.com/jameslbarnes/cue.git",
+    "sourceDir": "/var/folders/4s/d0wlfs9d00v4349cdqgd13f00000gn/T/panopticon-cue-src",
+    "commit": "2dbccc023863f2f0563e06c4d0a6aa44cff3988b",
+    "primitives": {
+      "confirmedPrimitives": [
+        "TextCue",
+        "SpeakerWordCue",
+        "IdleCue",
+        "WordCountCue",
+        "IntervalCue.intervalSeconds",
+        "TextCue.cooldownSeconds",
+        "observe.pass",
+        "CueHarness",
+        "SemanticProgram",
+        "MappedActionTool",
+        "transcriptionProvider",
+        "llmProvider",
+        "outputProviders",
+        "vlmProvider",
+        "recording.JSONL",
+        "HTTP state/agent/observations",
+        "WebSocket events",
+        "qwen-asr JSON transcription ingress",
+        "voxterm transcription provider"
+      ],
+      "ownedExtensionsRequired": [
+        "Panopticon transcript normalization adds sessionId/correlationId fields around Cue transcript observations.",
+        "Earcon emission remains adapter-owned; Cue supplies the deterministic TextCue result.",
+        "IntervalCue does not expose cooldownSeconds directly; cadence throttling must combine intervalSeconds with adapter/tool cooldown.",
+        "Cue exposes WebSocket events, not native EventSource SSE; board SSE requires a thin bridge if EventSource is mandatory.",
+        "Current Cue source exports deepgramTranscriptionProvider in addition to qwen-asr and voxterm; ENG-T-10 should target the qwen-asr JSON shape when Panopticon owns ASR."
+      ],
+      "exports": {
+        "TextCue": true,
+        "SpeakerWordCue": true,
+        "IdleCue": true,
+        "WordCountCue": true,
+        "IntervalCue": true,
+        "CueHarness": true,
+        "MappedActionTool": true,
+        "qwenAsrTranscriptionProvider": true,
+        "voxtermTranscriptionProvider": true,
+        "deepgramTranscriptionProvider": true,
+        "startServer": true
+      }
+    }
+  }
+}
