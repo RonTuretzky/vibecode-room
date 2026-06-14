@@ -1,0 +1,30 @@
+# Author the implementation workflow
+
+Author the bespoke implementation workflow at .smithers/workflows/smithering-impl.tsx.
+
+First, ground yourself in the real API — run "bunx smithers-orchestrator docs", read the
+relevant fragments, and study the closest seeded examples in .smithers/workflows/
+(implement.tsx, mission.tsx, kanban.tsx, research-plan-implement.tsx). Copy structure from
+the closest one, then adapt. Do not invent API.
+
+Hard contract for the generated workflow:
+
+- Implements docs/planning/06-orchestration.md exactly (worktrees, merge policy, test
+  tiers, model assignment, concurrency, observability, fresh-context worker prompts).
+- Imports tickets from artifacts/smithering/tickets.json at module load; task ids derive
+  from ticket ids (stable across resume — never indexes/timestamps).
+- Input schema includes a boolean "smoke" (default false): smoke=true processes ONLY the
+  first ticket end-to-end (including its verification) with NO approval gates, and must
+  reach status finished.
+- Wires every blocking gate from docs/planning/04-backpressure.md into pre-merge checks;
+  evidence persisted under artifacts/smithering/build/ per ticket id. Red-before-green
+  for fixes.
+- Reviewer model family ≠ implementer model family on every ticket.
+- Every loop has maxIterations; side-effecting custom tools declare sideEffect +
+  idempotency keys; no caching of side-effect tasks.
+- NEVER merges to {props.baseBranch}, no exceptions: all work lands on an integration
+  branch; merging that branch is a human act after delivery.
+- Workers persist HTML decision docs for judgment calls under
+  artifacts/smithering/decisions/ (alternatives considered, example inputs/outputs, diffs).
+
+List every file you write in filesWritten.
