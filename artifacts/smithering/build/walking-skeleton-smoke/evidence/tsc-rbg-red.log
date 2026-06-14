@@ -1,2 +1,3 @@
+$ tsc --noEmit
 src/types.ts(128,7): error TS2322: Type 'string' is not assignable to type 'number'.
-EXIT:2 (type error)
+EXIT:2

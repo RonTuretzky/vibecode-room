@@ -1,1 +1,3 @@
-tsc clean
+$ tsc --noEmit
+[no output — clean typecheck]
+EXIT:0
