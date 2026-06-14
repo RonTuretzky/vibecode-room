@@ -42,10 +42,21 @@ function waitingEventCorrelationKey(run: unknown) {
     return blocked.correlationKey;
   }
 
-  const finishedCount = isRecord(run.summary) && typeof run.summary.finished === "number"
-    ? run.summary.finished
-    : undefined;
-  return typeof finishedCount === "number" ? `steer:${finishedCount}` : undefined;
+  return undefined;
+}
+
+function attemptCorrelationKey(attempt: unknown) {
+  if (!isRecord(attempt) || attempt.state !== "waiting-event" || typeof attempt.metaJson !== "string") {
+    return undefined;
+  }
+
+  const parsed = JSON.parse(attempt.metaJson) as unknown;
+  if (!isRecord(parsed) || !isRecord(parsed.waitForEvent)) {
+    return undefined;
+  }
+
+  const correlationId = parsed.waitForEvent.correlationId;
+  return typeof correlationId === "string" && correlationId.length > 0 ? correlationId : undefined;
 }
 
 export class SmithersControlPlane {
@@ -64,12 +75,10 @@ export class SmithersControlPlane {
   }
 
   async steer(upid: string, text: string) {
-    const run = await this.client.getRun({ runId: upid });
-    const correlationKey = waitingEventCorrelationKey(run);
-    if (!correlationKey) {
+    const correlationKey = await this.waitingSteerCorrelationKey(upid);
+    if (correlationKey === undefined) {
       throw new Error(`Run ${upid} is not waiting for steer.`);
     }
-
     return this.client.submitSignal({
       runId: upid,
       correlationKey,
@@ -84,7 +93,8 @@ export class SmithersControlPlane {
       return { runId: upid, status: run.status };
     }
 
-    return this.client.cancelRun({ runId: upid });
+    const status = isRecord(run) && typeof run.status === "string" ? run.status : "unknown";
+    throw new Error(`Run ${upid} is ${status}; pause only succeeds once the process is suspended.`);
   }
 
   resume(upid: string) {
@@ -93,8 +103,8 @@ export class SmithersControlPlane {
 
   async kill(upid: string) {
     const run = await this.client.getRun({ runId: upid });
-    const correlationKey = waitingEventCorrelationKey(run);
-    if (correlationKey) {
+    const correlationKey = await this.waitingSteerCorrelationKey(upid, run);
+    if (correlationKey !== undefined) {
       return this.client.submitSignal({
         runId: upid,
         correlationKey,
@@ -118,6 +128,36 @@ export class SmithersControlPlane {
       }
       throw error;
     }
+  }
+
+  private async waitingSteerCorrelationKey(upid: string, currentRun?: unknown) {
+    const run = currentRun ?? await this.client.getRun({ runId: upid });
+    if (!isWaitingEventRun(run)) {
+      return undefined;
+    }
+
+    const blockedKey = waitingEventCorrelationKey(run);
+    if (blockedKey !== undefined) {
+      return blockedKey;
+    }
+
+    const attempts = await this.client.rpcRaw("attempts.list", { runId: upid });
+    if (!Array.isArray(attempts)) {
+      throw new Error(`Run ${upid} did not return task attempts.`);
+    }
+
+    const waitingSteerAttempts = attempts.filter((attempt) => {
+      if (!isRecord(attempt) || attempt.nodeId !== "steer" && !(typeof attempt.nodeId === "string" && attempt.nodeId.startsWith("steer@@"))) {
+        return false;
+      }
+      return attemptCorrelationKey(attempt) !== undefined;
+    });
+
+    if (waitingSteerAttempts.length !== 1) {
+      throw new Error(`Run ${upid} has ${waitingSteerAttempts.length} waiting steer attempts.`);
+    }
+
+    return attemptCorrelationKey(waitingSteerAttempts[0]);
   }
 
   getRun(upid: string) {

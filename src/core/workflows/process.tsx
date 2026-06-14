@@ -1,5 +1,5 @@
 /** @jsxImportSource smithers-orchestrator */
-import { WaitForEvent, createSmithers } from "smithers-orchestrator";
+import { Sequence, WaitForEvent, createSmithers } from "smithers-orchestrator";
 import { z } from "zod";
 import { ioAgents } from "./agents.ts";
 
@@ -39,13 +39,14 @@ export default smithers((ctx) => {
   return (
     <Workflow name="panopticon-process">
       <Loop id={loopId} until={shouldStop} maxIterations={1000}>
-        <WaitForEvent
-          id="steer"
-          event="steer"
-          correlationId={steerCorrelationId}
-          output={outputs.steer}
-        />
-        <Task id="step" output={outputs.step} agent={ioAgents} skipIf={shouldStop}>
+        <Sequence>
+          <WaitForEvent
+            id="steer"
+            event="steer"
+            correlationId={steerCorrelationId}
+            output={outputs.steer}
+          />
+          <Task id="step" output={outputs.step} agent={ioAgents} skipIf={shouldStop}>
           {`You are an agent process inside Panopticon working on a long-running goal.
 You receive the process directive and the latest steering instruction, then produce a concrete update.
 
@@ -66,7 +67,8 @@ Produce:
 - html: a complete self-contained HTML document for the visualizer using inline CSS/JS and no external assets; use an empty string to keep the current view
 
 Do not put HTML anywhere except the html field.`}
-        </Task>
+          </Task>
+        </Sequence>
       </Loop>
     </Workflow>
   );

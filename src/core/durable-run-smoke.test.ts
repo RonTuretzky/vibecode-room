@@ -46,7 +46,7 @@ function isActiveRunStatus(status: unknown) {
 
 describe("Panopticon durable Smithers process smoke", () => {
   test.skipIf(process.env.PANOPTICON_SMOKE_AGENT !== "1")(
-    "boots the app gateway, waits for steer, emits one step per steer, and cancels",
+    "boots the app gateway, waits for steer, emits one step per steer, and kills cleanly",
     async () => {
       const gateway = await startAppGateway({ port: 0 });
       const control = new SmithersControlPlane({ baseUrl: appGatewayUrl() });
@@ -85,6 +85,11 @@ describe("Panopticon durable Smithers process smoke", () => {
         });
         await expectNoAdditionalStep(events, 2);
 
+        await expect(control.pause(upid)).resolves.toMatchObject({
+          runId: upid,
+          status: "waiting-event",
+        });
+
         await control.kill(upid);
         await waitFor(async () => {
           const run = await control.getRun(upid);
@@ -92,7 +97,8 @@ describe("Panopticon durable Smithers process smoke", () => {
         });
         const run = await control.getRun(upid);
         expect(isRecord(run)).toBe(true);
-        expect(isActiveRunStatus(isRecord(run) ? run.status : undefined)).toBe(false);
+        expect(isRecord(run) ? run.status : undefined).toBe("finished");
+        expect(stepFinishedCount(events)).toBe(2);
       } finally {
         stop();
         await gateway.close();
