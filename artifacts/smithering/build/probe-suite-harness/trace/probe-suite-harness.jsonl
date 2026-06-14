@@ -1,0 +1,2 @@
+{"level":"info","event":"probe-harness.rbg-red","ticketId":"probe-suite-harness","criterionId":"ENG-T-05","correlationId":"probe-suite-harness-rbg","status":"failed-as-expected"}
+{"level":"info","event":"probe-harness.rbg-green","ticketId":"probe-suite-harness","criterionId":"ENG-T-05","correlationId":"probe-suite-harness-rbg","status":"passed"}

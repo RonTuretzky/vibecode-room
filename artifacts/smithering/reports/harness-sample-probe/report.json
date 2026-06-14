@@ -1,0 +1,31 @@
+{
+  "probeId": "harness-sample-probe",
+  "status": "passed",
+  "summary": "probe assertions were failable and passed",
+  "correlationId": "probe-harness-test-sample",
+  "startedAt": "2026-06-14T20:49:06.206Z",
+  "finishedAt": "2026-06-14T20:49:06.206Z",
+  "assertions": [
+    {
+      "id": "shape",
+      "behavior": "real API result exposes the relied-on shape",
+      "phase": "red",
+      "status": "failed-as-expected",
+      "error": "expect(received).toHaveProperty(path)\n\nExpected path: \"missing\"\n\nUnable to find property\n"
+    },
+    {
+      "id": "shape",
+      "behavior": "real API result exposes the relied-on shape",
+      "phase": "green",
+      "status": "passed"
+    }
+  ],
+  "reportDir": "artifacts/smithering/reports/harness-sample-probe",
+  "secretScan": {
+    "passed": true,
+    "findings": []
+  },
+  "meta": {
+    "provider": "sample-real-api-double"
+  }
+}

@@ -1,0 +1,2 @@
+{"id":"redacts-errors","behavior":"assertion errors can include provider text without leaking secrets","phase":"red","status":"failed-as-expected","error":"provider denied [redacted-secret]"}
+{"id":"redacts-errors","behavior":"assertion errors can include provider text without leaking secrets","phase":"green","status":"passed"}
