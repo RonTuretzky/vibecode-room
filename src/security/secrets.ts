@@ -34,8 +34,8 @@ const SECRET_PATTERNS: SecretPattern[] = [
   },
 ];
 
-const SECRETISH_PATH = /(?:authorization|api[_-]?key|secret|token|credential|password|bearer)/iu;
-const HIGH_ENTROPY_VALUE = /^(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9._~+/=-]{24,}$/u;
+const HIGH_ENTROPY_VALUE = /^(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9]{24,}$/u;
+const HIGH_ENTROPY_TEXT_TOKEN = /(?<![/])\b(?=[A-Za-z0-9]{24,}\b)(?=[A-Za-z0-9]*[A-Za-z])(?=[A-Za-z0-9]*\d)[A-Za-z0-9]+\b(?![/])/gu;
 
 export function redactSecretValues(value: unknown, path: readonly string[] = []): SecretRedactionResult {
   if (typeof value === "string") {
@@ -81,6 +81,12 @@ export function scanSecretLikeText(text: string): Array<{ pattern: string; count
     }
   }
 
+  HIGH_ENTROPY_TEXT_TOKEN.lastIndex = 0;
+  const unknownMatches = text.match(HIGH_ENTROPY_TEXT_TOKEN);
+  if (unknownMatches?.length) {
+    findings.push({ pattern: "unknown-high-entropy-token", count: unknownMatches.length });
+  }
+
   return findings;
 }
 
@@ -99,7 +105,7 @@ export async function scanSecretLikeFiles(rootDir: string): Promise<SecretScanRe
 }
 
 function redactString(value: string, path: readonly string[]): SecretRedactionResult {
-  if (SECRETISH_PATH.test(path.join(".")) && HIGH_ENTROPY_VALUE.test(value)) {
+  if (HIGH_ENTROPY_VALUE.test(value)) {
     return { value: REDACTED_SECRET, count: 1 };
   }
 

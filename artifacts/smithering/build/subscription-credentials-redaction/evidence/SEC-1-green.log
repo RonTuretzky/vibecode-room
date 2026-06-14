@@ -1,17 +1,17 @@
-GREEN RUN: provider credentials/redaction
+GREEN RUN: provider credentials/redaction and host command guard
 bun test v1.3.14 (0d9b296a)
 
- 4 pass
+ 5 pass
  0 fail
- 9 expect() calls
-Ran 4 tests across 1 file. [34.00ms]
+ 14 expect() calls
+Ran 5 tests across 1 file. [34.00ms]
 provider green exit=0
 
-GREEN RUN: whole-session e2e secret scan
+GREEN RUN: whole-session e2e secret scan through spine smoke path
 bun test v1.3.14 (0d9b296a)
 
  1 pass
  0 fail
  2 expect() calls
-Ran 1 test across 1 file. [33.00ms]
+Ran 1 test across 1 file. [36.00ms]
 e2e green exit=0

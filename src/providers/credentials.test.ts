@@ -34,6 +34,23 @@ describe("SEC-1 credential guard and trace redaction", () => {
     ).toThrow(/ANTHROPIC_API_KEY/u);
   });
 
+  test("host-subscription command is a narrow CLI allowlist and rejects credential smuggling", () => {
+    const rawOpenAi = fakeOpenAiKey();
+
+    expect(createModelCredentialSource({ provider: "anthropic-claude", command: "claude --print" })).toEqual({
+      kind: "host-subscription",
+      provider: "anthropic-claude",
+      command: "claude --print",
+    });
+
+    expectThrowsWithoutEcho(() => createModelCredentialSource({ provider: "openai-codex", command: `codex --api-key=${rawOpenAi}` }));
+    expectThrowsWithoutEcho(() => createModelCredentialSource({ provider: "openai-codex", command: `OPENAI_API_KEY=${rawOpenAi} codex` }));
+    expect(() => createModelCredentialSource({ provider: "openai-codex", command: "node codex" })).toThrow(/must start/u);
+    expect(() => createModelCredentialSource({ provider: "anthropic-claude", command: "claude $(printenv)" })).toThrow(
+      /plain allowlisted/u,
+    );
+  });
+
   test("audio credential provenance exposes only a redacted environment variable name", () => {
     const source = createAudioCredentialSource({
       provider: "deepgram",
@@ -68,7 +85,7 @@ describe("SEC-1 credential guard and trace redaction", () => {
           provider: rawValues[2],
           elevenlabs: rawValues[3],
           jwt: rawValues[4],
-          unknownCredential: rawValues[5],
+          blob: rawValues[5],
         },
         list: [`safe-${"x".repeat(8)}`, rawValues[1]],
       },
@@ -117,6 +134,17 @@ function assertNoRawValues(haystack: string, rawValues: readonly string[], label
   if (rawValues.some((value) => haystack.includes(value))) {
     throw new Error(`raw key-shaped string leaked into ${label}`);
   }
+}
+
+function expectThrowsWithoutEcho(fn: () => unknown): void {
+  let thrown: unknown;
+  try {
+    fn();
+  } catch (error) {
+    thrown = error;
+  }
+
+  expect(thrown).toBeInstanceOf(Error);
 }
 
 function fakeOpenAiKey(): string {

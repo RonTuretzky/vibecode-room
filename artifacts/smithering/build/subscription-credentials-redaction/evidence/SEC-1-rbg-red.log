@@ -1,54 +1,95 @@
+RED RUN: provider command allowlist intentionally disabled
+bun test v1.3.14 (0d9b296a)
+
+src/providers/credentials.test.ts:
+142 |     fn();
+143 |   } catch (error) {
+144 |     thrown = error;
+145 |   }
+146 |
+147 |   expect(thrown).toBeInstanceOf(Error);
+                       ^
+error: expect(received).toBeInstanceOf(expected)
+
+Expected constructor: [class Error]
+Received value: undefined
+
+      at expectThrowsWithoutEcho (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/subscription-credentials-redaction/src/providers/credentials.test.ts:147:18)
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/subscription-credentials-redaction/src/providers/credentials.test.ts:46:5)
+(fail) SEC-1 credential guard and trace redaction > host-subscription command is a narrow CLI allowlist and rejects credential smuggling [0.23ms]
+
+ 4 pass
+ 1 fail
+ 11 expect() calls
+Ran 5 tests across 1 file. [34.00ms]
+provider command red exit=1
+
 RED RUN: provider credentials/redaction with default filter disabled
 bun test v1.3.14 (0d9b296a)
 
 src/providers/credentials.test.ts:
-77 |     const jsonl = processor.toJsonl();
-78 |     assertNoRawValues(jsonl, rawValues, "trace JSONL");
-79 |     expect(jsonl).toContain(REDACTED_SECRET);
-80 | 
-81 |     const redactionEvents = processor.events().filter((event) => event.event === "secret.redacted");
-82 |     expect(redactionEvents).toHaveLength(1);
+142 |     fn();
+143 |   } catch (error) {
+144 |     thrown = error;
+145 |   }
+146 |
+147 |   expect(thrown).toBeInstanceOf(Error);
+                       ^
+error: expect(received).toBeInstanceOf(expected)
+
+Expected constructor: [class Error]
+Received value: undefined
+
+      at expectThrowsWithoutEcho (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/subscription-credentials-redaction/src/providers/credentials.test.ts:147:18)
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/subscription-credentials-redaction/src/providers/credentials.test.ts:46:5)
+(fail) SEC-1 credential guard and trace redaction > host-subscription command is a narrow CLI allowlist and rejects credential smuggling [0.22ms]
+94 |     const jsonl = processor.toJsonl();
+95 |     assertNoRawValues(jsonl, rawValues, "trace JSONL");
+96 |     expect(jsonl).toContain(REDACTED_SECRET);
+97 |
+98 |     const redactionEvents = processor.events().filter((event) => event.event === "secret.redacted");
+99 |     expect(redactionEvents).toHaveLength(1);
                                  ^
 error: expect(received).toHaveLength(expected)
 
 Expected length: 1
 Received length: 0
 
-      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/subscription-credentials-redaction/src/providers/credentials.test.ts:82:29)
-(fail) SEC-1 credential guard and trace redaction > LogEvent meta redacts bearer, provider keys, JWTs, authorization headers, arrays, and secret-like unknowns [2.40ms]
-102 |       await mkdir(root, { recursive: true });
-103 |       await writeFile(join(root, "report.json"), JSON.stringify({ event }, null, 2));
-104 |       await writeFile(join(root, "trace.jsonl"), processor.toJsonl());
-105 |       const scan = await scanSecretLikeFiles(root);
-106 |       if (!scan.passed) {
-107 |         throw new Error(`raw key-shaped string leaked into report tree (${scan.findings.length} findings)`);
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/subscription-credentials-redaction/src/providers/credentials.test.ts:99:29)
+(fail) SEC-1 credential guard and trace redaction > LogEvent meta redacts bearer, provider keys, JWTs, authorization headers, arrays, and secret-like unknowns [2.20ms]
+119 |       await mkdir(root, { recursive: true });
+120 |       await writeFile(join(root, "report.json"), JSON.stringify({ event }, null, 2));
+121 |       await writeFile(join(root, "trace.jsonl"), processor.toJsonl());
+122 |       const scan = await scanSecretLikeFiles(root);
+123 |       if (!scan.passed) {
+124 |         throw new Error(`raw key-shaped string leaked into report tree (${scan.findings.length} findings)`);
                         ^
-error: raw key-shaped string leaked into report tree (3 findings)
-      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/subscription-credentials-redaction/src/providers/credentials.test.ts:107:19)
-(fail) SEC-1 credential guard and trace redaction > probe-style reports can be redacted and scanned without leaking raw values [2.98ms]
+error: raw key-shaped string leaked into report tree (4 findings)
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/subscription-credentials-redaction/src/providers/credentials.test.ts:124:19)
+(fail) SEC-1 credential guard and trace redaction > probe-style reports can be redacted and scanned without leaking raw values [2.82ms]
 
  2 pass
- 2 fail
- 8 expect() calls
-Ran 4 tests across 1 file. [34.00ms]
-provider red exit=1
+ 3 fail
+ 10 expect() calls
+Ran 5 tests across 1 file. [34.00ms]
+provider redaction red exit=1
 
-RED RUN: whole-session e2e with secret planted and filter disabled
+RED RUN: whole-session e2e with redaction disabled
 bun test v1.3.14 (0d9b296a)
 
 test/e2e/secret-scan.e2e.ts.test.ts:
-41 |     await writeFile(join(SESSION_DIR, "session.log"), `redaction=${traceJsonl.includes(REDACTED_SECRET) ? "active" : "inactive"}\n`);
-42 |     await writeFile(join(TRACE_DIR, "secret-scan-session.jsonl"), traceJsonl);
-43 | 
-44 |     const scan = await scanSecretLikeFiles(SESSION_DIR);
-45 |     if (!scan.passed) {
-46 |       throw new Error(`whole-session secret scan found key-shaped strings (${scan.findings.length} findings)`);
+43 |     await writeFile(join(SESSION_DIR, "logs", "session.log"), `redaction=${traceJsonl.includes(REDACTED_SECRET) ? "active" : "inactive"}\n`);
+44 |     await writeFile(join(TRACE_DIR, "secret-scan-session.jsonl"), traceJsonl);
+45 |
+46 |     const scan = await scanSecretLikeFiles(SESSION_DIR);
+47 |     if (!scan.passed) {
+48 |       throw new Error(`whole-session secret scan found key-shaped strings (${scan.findings.length} findings)`);
                      ^
-error: whole-session secret scan found key-shaped strings (3 findings)
-      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/subscription-credentials-redaction/test/e2e/secret-scan.e2e.ts:46:17)
-(fail) SEC-1 whole-session secret scan > full trace/log/report tree has zero key-shaped strings after a session run [6.09ms]
+error: whole-session secret scan found key-shaped strings (4 findings)
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/subscription-credentials-redaction/test/e2e/secret-scan.e2e.ts:48:17)
+(fail) SEC-1 whole-session secret scan > full trace/log/report tree has zero key-shaped strings after a session run [7.85ms]
 
  0 pass
  1 fail
-Ran 1 test across 1 file. [34.00ms]
+Ran 1 test across 1 file. [35.00ms]
 e2e red exit=1
