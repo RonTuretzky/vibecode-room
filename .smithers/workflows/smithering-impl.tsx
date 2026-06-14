@@ -127,20 +127,19 @@ const codexImpl = new CodexAgent({
   sandbox: "workspace-write",
   yolo: true,
   skipGitRepoCheck: true,
-  cwd: process.cwd(),
   timeoutMs: 2 * HOUR,
 });
 
 // Verifier (Anthropic / Sonnet 4.6) — ALWAYS Sonnet (brief O4). A DISTINCT agent instance
 // from the implementer so the verifier is a different run/context (verifier-independence,
 // §4). Authority = the test result, not its opinion.
-const sonnetVerify = new ClaudeCodeAgent({ model: SONNET_MODEL, cwd: process.cwd(), timeoutMs: HOUR });
+const sonnetVerify = new ClaudeCodeAgent({ model: SONNET_MODEL, timeoutMs: HOUR });
 
 // Reviewer A (Anthropic / Opus 4.8) — the CROSS-FAMILY check against the OpenAI/Codex
 // implementer. workspace-write so it can persist its own review.json verdict into the
 // machine-checked evidence bundle (the land gate REQUIRES review.json). The prompt forbids
 // editing implementation code — it only writes its verdict.
-const opusReview = new ClaudeCodeAgent({ model: OPUS_MODEL, cwd: process.cwd(), timeoutMs: 30 * 60_000 });
+const opusReview = new ClaudeCodeAgent({ model: OPUS_MODEL, timeoutMs: 30 * 60_000 });
 
 // Reviewer B (OpenAI / Codex `gpt-5.5`) — the SAME-FAMILY second reviewer (review uses BOTH
 // Codex and Opus, brief O4). workspace-write so it can persist its own review verdict file.
@@ -150,7 +149,6 @@ const codexReview = new CodexAgent({
   sandbox: "workspace-write",
   yolo: false,
   skipGitRepoCheck: true,
-  cwd: process.cwd(),
   timeoutMs: 30 * 60_000,
 });
 // Adversarial red-team for safety tickets (Codex `challenge` posture). workspace-write so it
@@ -161,7 +159,6 @@ const codexChallenge = new CodexAgent({
   sandbox: "workspace-write",
   yolo: false,
   skipGitRepoCheck: true,
-  cwd: process.cwd(),
   timeoutMs: 30 * 60_000,
 });
 

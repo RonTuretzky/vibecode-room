@@ -1,0 +1,27 @@
+{
+  "family": "anthropic",
+  "model": "claude-opus-4-8",
+  "kind": "review",
+  "approved": true,
+  "pass": true,
+  "findings": [
+    {
+      "severity": "minor",
+      "title": "tsc --noEmit gate does not type-check the test tree",
+      "file": "tsconfig.json",
+      "description": "tsconfig include is [\"src\"], so the CI tsc --noEmit gate never type-checks test/ (including the named smoke deliverable). The tsc RBG correctly bites for src (planted TS2322 in src/__rbg_type_error.ts, since removed), but a type error introduced under test/ would slip past the typecheck gate and only be caught by bun test. Consider adding test/ to include so the gate covers the spine test it is meant to protect."
+    },
+    {
+      "severity": "minor",
+      "title": "Smoke test split across deliverable + auto-discovery shim",
+      "file": "test/smoke/spine-skeleton.smoke.ts.test.ts",
+      "description": "The named deliverable test/smoke/spine-skeleton.smoke.ts holds the real test and runs correctly both via the explicit path (bun test test/smoke/spine-skeleton.smoke.ts → 2 tests, 1 file) and via the full suite; a one-line .test.ts shim re-imports it so Bun's default *.test.ts glob discovers it. Functionally sound and well-commented, but the doubled filename is a mild smell; folding discovery into the named file (or a bunfig testMatch) would remove the shim."
+    },
+    {
+      "severity": "minor",
+      "title": "Build-harness orchestration logic ships under src/ alongside the product spine",
+      "file": "src/orchestration/core.ts",
+      "description": "src/orchestration/* (the smithering scheduler logic extracted for as-code testing, plus 7 self-test files) lives in the product source tree next to the walking-skeleton spine. It is deterministic, network-free, and usefully houses the SEC-1 secret scanner (scanForSecrets/redact), so it is not harmful, but mixing build-system code into the product src/ is an altitude/scope note for later separation. Does not affect the walking-skeleton seams."
+    }
+  ]
+}

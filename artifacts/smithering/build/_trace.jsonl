@@ -9,3 +9,12 @@
 {"event":"build.integration.ready","integrationBranch":"smithering/integration","baseBranch":"main","created":false,"worktreeReady":false}
 {"event":"build.integration.ready","integrationBranch":"smithering/integration","baseBranch":"main","created":false,"worktreeReady":false}
 {"event":"build.integration.ready","integrationBranch":"smithering/integration","baseBranch":"main","created":false,"worktreeReady":false}
+{"event":"build.integration.ready","integrationBranch":"smithering/integration","baseBranch":"main","created":false,"worktreeReady":false}
+{"event":"merge.lane.enqueue","ticketId":"walking-skeleton-smoke","branch":"build/walking-skeleton-smoke","integrationBranch":"smithering/integration"}
+{"event":"merge.lane.bounce","ticketId":"walking-skeleton-smoke","reason":"no-worktree"}
+{"event":"build.integration.ready","integrationBranch":"smithering/integration","baseBranch":"main","created":false,"worktreeReady":false}
+{"event":"merge.lane.enqueue","ticketId":"walking-skeleton-smoke","branch":"build/walking-skeleton-smoke","integrationBranch":"smithering/integration"}
+{"event":"merge.lane.bounce","ticketId":"walking-skeleton-smoke","reason":"no-worktree"}
+{"event":"build.integration.ready","integrationBranch":"smithering/integration","baseBranch":"main","created":false,"worktreeReady":false}
+{"event":"merge.lane.enqueue","ticketId":"walking-skeleton-smoke","branch":"build/walking-skeleton-smoke","integrationBranch":"smithering/integration"}
+{"event":"merge.lane.bounce","ticketId":"walking-skeleton-smoke","reason":"no-worktree"}
