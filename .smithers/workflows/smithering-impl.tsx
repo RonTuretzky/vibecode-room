@@ -184,7 +184,7 @@ function assignmentFor(ticket: any): Assignment {
       implementerLabel: `Opus 4.8 (${OPUS_MODEL})`,
       reviewerLabel: `Codex GPT-5.4 review + adversarial challenge (${CODEX_MODEL})`,
       verifierLabel: `independent Opus 4.8 (${OPUS_MODEL})`,
-      maxIterations: 4,
+      maxIterations: 7,
     };
   }
   if (complexity === "large") {
@@ -196,7 +196,7 @@ function assignmentFor(ticket: any): Assignment {
       implementerLabel: `Opus 4.8 (${OPUS_MODEL})`,
       reviewerLabel: `Codex GPT-5.4 (${CODEX_MODEL})`,
       verifierLabel: `independent Opus 4.8 (${OPUS_MODEL})`,
-      maxIterations: 4,
+      maxIterations: 7,
     };
   }
   if (complexity === "small") {
@@ -208,7 +208,7 @@ function assignmentFor(ticket: any): Assignment {
       implementerLabel: `Sonnet 4.6 (${SONNET_MODEL})`,
       reviewerLabel: `Codex GPT-5.4 (${CODEX_MODEL})`,
       verifierLabel: `Haiku 4.5 RBG-evidence audit (${HAIKU_MODEL})`,
-      maxIterations: 2,
+      maxIterations: 4,
     };
   }
   // medium (default)
@@ -220,7 +220,7 @@ function assignmentFor(ticket: any): Assignment {
     implementerLabel: `Sonnet 4.6 (${SONNET_MODEL})`,
     reviewerLabel: `Codex GPT-5.4 (${CODEX_MODEL})`,
     verifierLabel: `independent Opus 4.8 (${OPUS_MODEL})`,
-    maxIterations: 3,
+    maxIterations: 6,
   };
 }
 
