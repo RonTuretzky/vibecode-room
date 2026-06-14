@@ -8,7 +8,7 @@
     "redRunPath": "artifacts/smithering/build/walking-skeleton-smoke/evidence/smoke-rbg-red.log",
     "greenRunPath": "artifacts/smithering/build/walking-skeleton-smoke/evidence/smoke-rbg-green.log",
     "command": "bun test test/smoke/spine-skeleton.smoke.ts",
-    "notes": "Test content at test/smoke/spine-skeleton.smoke.ts (named deliverable per ticket). Auto-discovery shim at test/smoke/spine-skeleton.smoke.ts.test.ts enables discovery via `bun test ./src ./test`. Explicit path `bun test test/smoke/spine-skeleton.smoke.ts` runs via substring filter on shim filename. RBG red: BREAK_MATCHER=1 forces all decisions to 'pass' → 0 trace lines → expect(emitted.length).toBe(1) fails (Expected: 1, Received: 0). RBG green: normal run → 1 action decision → 1 trace line → all 12 assertions pass."
+    "notes": "Test at test/smoke/spine-skeleton.smoke.ts (named deliverable). Auto-discovery shim at test/smoke/spine-skeleton.smoke.ts.test.ts enables discovery via bun test. RBG red: BREAK_MATCHER=1 forces all decisions to 'pass' → 0 trace lines → expect(emitted.length).toBe(1) fails (Expected: 1, Received: 0). RBG green: normal run → 1 action decision → 1 trace line → all 12 assertions pass."
   },
   {
     "criterionId": "tsc-noEmit",
@@ -18,7 +18,7 @@
     "rbgRecorded": true,
     "redRunPath": "artifacts/smithering/build/walking-skeleton-smoke/evidence/tsc-rbg-red.log",
     "greenRunPath": "artifacts/smithering/build/walking-skeleton-smoke/evidence/tsc-rbg-green.log",
-    "notes": "RBG red: appended `const _rbgTypeError: number = 'string'` to src/types.ts → TS2322 error, exit 2. RBG green: type error removed → exit 0 (no output, expected clean-pass behavior)."
+    "notes": "RBG red: appended type error to src/types.ts → TS2322 error, exit 2. RBG green: type error removed → exit 0 (clean pass). CI runs bun run typecheck."
   },
   {
     "criterionId": "secret-scan",
@@ -36,10 +36,10 @@
     "method": "bun_test",
     "tier": "pre-merge",
     "status": "passed",
-    "rbgRecorded": false,
-    "redRunPath": null,
-    "greenRunPath": "artifacts/smithering/build/walking-skeleton-smoke/tests.log",
-    "command": "bun test ./src ./test",
-    "notes": "CI runs `bun test ./src ./test` — scoped to production source dirs, excludes artifacts/smithering/poc/ which uses fixed HTTP ports that conflict in some review environments. 42 pass / 0 fail / 0 skip across 8 files (7 orchestration + 1 smoke shim). This is the reproducible gate: any reviewer can re-run this exact command and get green regardless of port availability. RBG not required for this aggregate gate — individual pre-merge gates carry the RBG evidence."
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/walking-skeleton-smoke/evidence/bun-test-full-suite-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/walking-skeleton-smoke/evidence/bun-test-full-suite-rbg-green.log",
+    "command": "bun test",
+    "notes": "CI runs bare `bun test` — discovers all 9 test files (src/orchestration/*.test.ts, test/smoke shim, artifacts/smithering/poc tests). 101 pass / 2 skip / 0 fail. RBG red: BREAK_MATCHER=1 bun test → smoke test fails (1 fail); RBG green: bun test → 101 pass / 0 fail."
   }
 ]

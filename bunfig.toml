@@ -1,7 +1,4 @@
 [test]
-# Production tests live in src/ and test/.
-# CI runs: bun test ./src ./test
-# That command excludes artifacts/smithering/poc/ which uses fixed HTTP ports
-# that may conflict in some environments (those tests are standalone POC experiments,
-# not part of the production gate).
+# CI runs: bun test (discovers all test files including poc integration tests)
+# POC tests in artifacts/smithering/poc/ use fixed HTTP ports but pass in clean CI environments.
 # To run the smoke test explicitly: bun test test/smoke/spine-skeleton.smoke.ts
