@@ -1,0 +1,15 @@
+command: bun test
+bun test v1.3.14 (0d9b296a)
+
+ 6 pass
+ 0 fail
+ 15 expect() calls
+Ran 6 tests across 1 file. [22.00ms]
+
+bun test exit=0
+
+command: bunx tsc --noEmit
+
+tsc exit=0
+
+exit=0
