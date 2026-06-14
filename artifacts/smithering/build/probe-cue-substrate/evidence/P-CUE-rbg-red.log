@@ -1,0 +1,35 @@
+bun test v1.3.14 (0d9b296a)
+
+poc/p-cue.test.ts:
+198 |     await writeFile(join(reportDir, "report.json"), JSON.stringify(failedReport, null, 2) + "\n");
+199 |     throw new ProbeHarnessError(failedReport.summary, failedReport);
+200 |   }
+201 | 
+202 |   if (status !== "passed") {
+203 |     throw new ProbeHarnessError(summary, report);
+                ^
+ProbeHarnessError: probe assertion failed
+ report: {
+  probeId: "probe-cue-substrate",
+  status: "failed",
+  summary: "probe assertion failed",
+  correlationId: "p-cue-real-cue-substrate",
+  startedAt: "2026-06-14T21:51:39.510Z",
+  finishedAt: "2026-06-14T21:51:39.736Z",
+  assertions: [
+    [Object ...], [Object ...], [Object ...], [Object ...], [Object ...], [Object ...], [Object ...], [Object ...], [Object ...], [Object ...], [Object ...], [Object ...], [Object ...], [Object ...], [Object ...], [Object ...]
+  ],
+  reportDir: "artifacts/smithering/reports/probe-cue-substrate",
+  secretScan: [Object ...],
+  meta: [Object ...],
+},
+
+      at runProbe (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/probe-cue-substrate/poc/harness.ts:203:11)
+      at async <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/probe-cue-substrate/poc/p-cue.test.ts:161:26)
+(fail) P-CUE real Cue substrate probe > real Cue source exposes Panopticon's required substrate or records owned extensions [541.44ms]
+
+ 0 pass
+ 1 fail
+ 27 expect() calls
+Ran 1 test across 1 file. [564.00ms]
+red run failed as expected with exit 1
