@@ -3,11 +3,12 @@
   "verifier": "independent-test-authority (claude-opus-4-8)",
   "family": "anthropic",
   "branch": "build/walking-skeleton-smoke",
+  "headSha": "693c736",
   "ranTests": true,
   "rbgConfirmed": true,
   "gatesGreen": true,
   "pass": true,
-  "note": "Fresh, distinct, independent run. State re-derived from disk at HEAD aaa4fc1; every pre-merge gate re-executed LIVE by this verifier (logs under evidence/_verify-authority/). All verification mutations (tsc type-error injection, secret-scan neutering) injected then fully restored — source tree clean, only review.json (pre-existing) and the _verify-authority log dir remain.",
+  "note": "Independent, fresh-context, distinct run. State re-derived from disk at HEAD 693c736. Every pre-merge gate re-executed LIVE by this verifier; logs under evidence/_verify-final/. All verification mutations (tsc type-error injection via temp src/__verify_typeerror.ts, secret-scan KEY_PATTERNS neutering via /tmp backup) injected then fully restored — source tree clean (git diff empty for src/), only review.json (pre-existing) and the _verify-final log dir remain.",
   "gates": [
     {
       "id": "smoke-spine-skeleton",
@@ -15,43 +16,43 @@
       "green": "exit 0 — 2 pass / 0 fail / 16 expect() calls",
       "red": "BREAK_MATCHER=1 -> exit 1, 1 pass / 1 fail at spine-skeleton.smoke.ts:46 expect(emitted.length).toBe(1): Expected 1 Received 0",
       "rbgGenuine": true,
-      "evidence": "evidence/_verify-authority/smoke-green.log, smoke-red.log",
-      "note": "Reproduced LIVE. Red is a real assertion failure of the real test (forces all decisions to 'pass' -> 0 trace lines). Matches archived smoke-rbg-red.log."
+      "evidence": "evidence/_verify-final/smoke-green.log, smoke-red.log",
+      "note": "Reproduced LIVE by this verifier. Red is a real assertion failure of the real test (BREAK_MATCHER forces all decisions to 'pass' -> 0 trace lines emitted -> emitted.length 0 != 1)."
     },
     {
       "id": "tsc-noEmit",
-      "command": "bunx tsc --noEmit (== bun run typecheck)",
+      "command": "tsc --noEmit (== bun run typecheck)",
       "green": "exit 0, zero diagnostics",
-      "red": "appended `const _verifierTypeError: number = \"not a number\"` to src/types.ts -> src/types.ts(129,7) TS2322 exit 2; restored -> exit 0",
+      "red": "injected src/__verify_typeerror.ts (export const x: number = \"not a number\") -> TS2322 exit 2; temp file removed; restore -> exit 0",
       "rbgGenuine": true,
-      "evidence": "evidence/_verify-authority/tsc-green.log, tsc-red-live.log, tsc-restore-live.log",
-      "note": "Reproduced LIVE — TS2322 on injected error (exit 2), then restored to clean exit 0; git status confirms types.ts clean."
+      "evidence": "evidence/_verify-final/tsc-green.log, tsc-red.log, tsc-restore.log",
+      "note": "Reproduced LIVE — TS2322 'Type string is not assignable to type number' (exit 2), then restored to clean exit 0; temp file removed, tree clean."
     },
     {
       "id": "secret-redaction",
       "command": "bun test src/orchestration/secret-scan.test.ts",
       "green": "exit 0 — 5 pass / 0 fail / 8 expect() calls",
-      "red": "neutered scanForSecrets in core.ts to return [] -> exit 1, 3 real fails (planted sk-/AKIA/Bearer keys no longer caught at expect(...).toBeGreaterThan(0): Received 0); restored -> 5 pass exit 0",
+      "red": "neutered KEY_PATTERNS to [] in core.ts -> exit 1, 4 real fails (planted sk-/AKIA/Bearer keys no longer caught; redact() leaves «redacted» absent); restored via backup -> 5 pass exit 0",
       "rbgGenuine": true,
-      "evidence": "evidence/_verify-authority/secret-scan.log, secret-scan-red-live.log, secret-scan-restore-live.log",
-      "note": "Genuine failable test proven LIVE by breaking the real scanForSecrets; redact() also strips keys so trace output scans clean."
+      "evidence": "evidence/_verify-final/secret-green.log, secret-red.log, secret-restore.log",
+      "note": "Genuine failable test proven LIVE by breaking the real scanForSecrets/redact (emptied KEY_PATTERNS); 1 pass / 4 fail; restored from /tmp backup, git diff on core.ts clean."
     },
     {
       "id": "hermetic-e2e-dry-run",
       "command": "bun test src/orchestration/e2e-dry-run.test.ts",
       "green": "exit 0 — 3 pass / 0 fail / 15 expect() calls",
       "rbgGenuine": true,
-      "evidence": "evidence/_verify-authority/e2e.log",
-      "note": "Doubles only (imports bun:test + real ./core.ts helpers blockingProbeClosure/isProbeVerdictGreen/evaluateEvidenceBundle; no net/mic/key). In-suite RBG: a red probe verdict halts the chain (feature never schedules/lands); an incomplete bundle (missing green run) bounces at the land lane — genuine failable assertions over real gating logic."
+      "evidence": "evidence/_verify-final/e2e-green.log",
+      "note": "Doubles only — imports bun:test + local ./core.ts gating helpers; no net/mic/key. Hermetic replay-driven slice over real gating logic; its own RBG cases (red probe halts chain, missing green run bounces) are internal passing assertions."
     },
     {
       "id": "bun-test-full-suite",
       "command": "bun test (bare — the CI command)",
       "green": "exit 0 — 102 pass / 2 skip / 0 fail across 9 files (288 expects)",
-      "red": "archived bun-test-full-suite-rbg-red.log shows a real run: 101 pass / 2 skip / 1 fail (smoke break)",
+      "red": "BREAK_MATCHER=1 bun test -> exit 1, 101 pass / 2 skip / 1 fail (smoke break propagates into full run)",
       "rbgGenuine": true,
-      "evidence": "evidence/_verify-authority/full-suite.log; archived evidence/bun-test-full-suite-rbg-red.log",
-      "note": "Bare `bun test` exit 0 (the CI gate). CI (.github/workflows/ci.yml) = `bun run typecheck` + `bun test`, both green."
+      "evidence": "evidence/_verify-final/fulltest-green.log, fulltest-red.log",
+      "note": "Bare `bun test` exit 0 (the CI gate). The 2 skips are legitimate describe.skipIf(!_canBindSockets) environment guards on the POC socket test (artifacts/smithering/poc/safety-hook-approval-roundtrip/poc.test.ts), not gate failures. CI (.github/workflows/ci.yml) = `bun run typecheck` + `bun test`, both green."
     }
   ],
   "walkingSkeleton": {
@@ -59,8 +60,8 @@
     "seam": "transcript (replay harness loadFixture reads JSONL from disk) -> decision (deterministic match) -> trace (TraceProcessor emits one LogEvent with non-empty correlationId)",
     "inProcessDoublesOnly": true,
     "noCueNetworkKeyImport": true,
-    "imports": "node:fs, node:path, bun:test, type-only ./types.ts. Grep for net/mic/key (fetch/http/ws/WebSocket/apiKey/provider-env-key/getUserMedia) over the slice files returned NONE — only the CueDecision type name and 'TextCue/wake-word' policy label appear.",
+    "imports": "Spine slice (types.ts, matcher.ts, replay/harness.ts, obs/trace.ts) plus the smoke test imports only node:fs (local fixture read), node:path, bun:test, and type-only ./types.ts. Grep over the slice for fetch/http/https/WebSocket/node:net/node:dgram/ws/apiKey/process.env returned NONE — confirmed hermetic.",
     "ci": ".github/workflows/ci.yml runs `bun run typecheck` then `bun test`"
   },
-  "summary": "Independent fresh-context verification on branch build/walking-skeleton-smoke (HEAD aaa4fc1). Every blocking pre-merge gate re-run LIVE and green: smoke 2/0 (exit 0), tsc --noEmit clean (exit 0), secret-redaction 5/0 (exit 0), hermetic e2e 3/0 (exit 0), and bare `bun test` (CI) 102 pass / 2 skip / 0 fail (exit 0). RBG pairs reproduced LIVE and genuine: smoke (Expected 1 Received 0 under BREAK_MATCHER=1, exit 1), tsc (TS2322 on injected error, exit 2 -> restored exit 0), secret-scan (3 real fails when scanForSecrets neutered -> restored 5/0); full-suite red archived as a real 1-fail run; e2e carries genuine in-suite failable RBG tests over real core.ts gating logic. Slice is hermetic — no Cue/network/mic/key imports (verified by reading types.ts, matcher.ts, replay/harness.ts, obs/trace.ts, smoke test + grep) and traverses transcript->decision->trace with a non-empty correlationId. All verification mutations restored; source tree clean. PASS."
+  "summary": "Independent fresh-context verification on branch build/walking-skeleton-smoke (HEAD 693c736). Every blocking pre-merge gate re-run LIVE and green: smoke 2/0 (exit 0), tsc --noEmit clean (exit 0), secret-redaction 5/0 (exit 0), hermetic e2e 3/0 (exit 0), and bare `bun test` (CI) 102 pass / 2 skip / 0 fail (exit 0). RBG pairs reproduced LIVE and genuine: smoke (Expected 1 Received 0 under BREAK_MATCHER=1, exit 1), tsc (TS2322 on injected error, exit 2 -> restored exit 0), secret-scan (1 pass / 4 real fails when KEY_PATTERNS neutered -> restored 5/0), full-suite (1 fail under BREAK_MATCHER, exit 1 -> restored 0 fail). Slice is hermetic — no Cue/network/mic/key imports (verified by reading types.ts, matcher.ts, replay/harness.ts, obs/trace.ts, smoke test + grep) and traverses transcript->decision->trace with a non-empty correlationId. All verification mutations restored; source tree clean (git diff empty for src/). PASS."
 }

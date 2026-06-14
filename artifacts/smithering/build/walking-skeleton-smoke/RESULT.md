@@ -19,6 +19,7 @@ end-to-end slice (ENG-T-06) that becomes the repo smoke test. All seams use in-p
 | `test/smoke/spine-skeleton.smoke.ts.test.ts` | Auto-discovery shim — `import "./spine-skeleton.smoke.ts"` so `bun test` discovers it |
 | `.github/workflows/ci.yml` | CI: `bun test` (bare — discovers all test files) + `tsc --noEmit` |
 | `bunfig.toml` | Notes the CI test discovery approach |
+| `package.json` | Removed stale `dev`/`start`/`seed` scripts that pointed to `src/server/index.ts` and `src/scripts/seed-demo.ts` (removed when Session-1 visual impl was cleaned up) |
 
 ### Critical fix in this pass (v5)
 
@@ -133,6 +134,17 @@ bun run typecheck                               # → exit 0
 BREAK_MATCHER=1 bun test                        # → 101 pass, 1 fail (smoke fails)
 bun test                                        # → 102 pass, 0 fail
 ```
+
+### Cross-family reviewer fix in this pass (v10)
+
+The cross-family reviewer (GPT-5.5) found that `package.json` retained `dev`, `start`, and `seed`
+scripts pointing to `src/server/index.ts` and `src/scripts/seed-demo.ts` — files removed in the
+`c861d5b` commit that cleaned up the Session-1 visual implementation. This made `bun run start` and
+`bun run seed` fail with module-not-found errors, leaving the project scaffold incoherent.
+
+**Fix**: removed the three dead scripts from `package.json`. The walking-skeleton only requires
+`typecheck` (`tsc --noEmit`) and `test` (`bun test`); no server entry point exists yet (it belongs
+to a future ticket). All test gates remain green: `bun test` 102 pass / 2 skip / 0 fail.
 
 ## Dependencies
 
