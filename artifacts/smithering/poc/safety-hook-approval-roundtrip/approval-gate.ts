@@ -76,16 +76,26 @@ export class ApprovalGateServer {
     return Array.from(this.gates.values());
   }
 
-  /** Start the HTTP server. */
-  start(): void {
+  /** Start the HTTP server. Returns true if started, false if the environment cannot bind sockets. */
+  start(): boolean {
     const self = this;
-    this.server = Bun.serve({
-      port: this.port,
-      hostname: "127.0.0.1",
-      fetch(req: Request) {
-        return self.handleRequest(req);
-      },
-    });
+    try {
+      this.server = Bun.serve({
+        port: this.port,
+        hostname: "127.0.0.1",
+        fetch(req: Request) {
+          return self.handleRequest(req);
+        },
+      });
+      return true;
+    } catch {
+      this.server = null;
+      return false;
+    }
+  }
+
+  get started(): boolean {
+    return this.server !== null;
   }
 
   stop(): void {

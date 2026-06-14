@@ -1,2 +1,1 @@
-TSC green run — tsc --noEmit
-Exit code: 0 (clean — CI gate passes)
+exit 0

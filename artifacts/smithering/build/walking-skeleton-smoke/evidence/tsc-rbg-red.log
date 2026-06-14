@@ -1,6 +1,2 @@
-TSC red run — type error injected in src/types.ts
-Appended: const _rbgTypeError: number = 'string';
-
 src/types.ts(128,7): error TS2322: Type 'string' is not assignable to type 'number'.
-
-Exit code: 2 (type errors found — CI gate fails)
+EXIT:2 (type error)
