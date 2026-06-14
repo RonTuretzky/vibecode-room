@@ -13,7 +13,6 @@ export interface RedactionContext {
 export interface TraceProcessorOptions {
   clock?: TraceClock;
   redactionFilters?: readonly RedactionFilter[];
-  defaultSecretRedaction?: boolean;
 }
 
 export interface TraceInput {
@@ -46,18 +45,16 @@ export class TraceProcessor {
   readonly #events: LogEvent[] = [];
   readonly #clock: TraceClock;
   readonly #redactionFilters: readonly RedactionFilter[];
-  readonly #defaultSecretRedaction: boolean;
 
   constructor(options: TraceProcessorOptions = {}) {
     this.#clock = options.clock ?? defaultClock;
     this.#redactionFilters = options.redactionFilters ?? [];
-    this.#defaultSecretRedaction = options.defaultSecretRedaction ?? true;
   }
 
   record(input: TraceInput): LogEvent {
     const endedAtMs = input.endedAtMs ?? this.#clock();
     const latencyMs = measureLatency(input.startedAtMs, endedAtMs);
-    const redacted = redactValue(input.meta ?? {}, input.event, this.#redactionFilters, [], this.#defaultSecretRedaction);
+    const redacted = redactValue(input.meta ?? {}, input.event, this.#redactionFilters, []);
     const meta = redacted.value;
     assertJsonSerializable(meta, ["meta"]);
 
@@ -330,7 +327,6 @@ function redactValue(
   event: string,
   filters: readonly RedactionFilter[],
   path: readonly string[],
-  defaultSecretRedaction: boolean,
 ): { value: unknown; count: number } {
   let current = value;
   for (const filter of filters) {
@@ -340,7 +336,7 @@ function redactValue(
   if (Array.isArray(current)) {
     let count = 0;
     const value = current.map((item, index) => {
-      const redacted = redactValue(item, event, filters, [...path, String(index)], defaultSecretRedaction);
+      const redacted = redactValue(item, event, filters, [...path, String(index)]);
       count += redacted.count;
       return redacted.value;
     });
@@ -351,15 +347,11 @@ function redactValue(
     let count = 0;
     const redacted: Record<string, unknown> = {};
     for (const [key, nested] of Object.entries(current)) {
-      const nestedRedacted = redactValue(nested, event, filters, [...path, key], defaultSecretRedaction);
+      const nestedRedacted = redactValue(nested, event, filters, [...path, key]);
       count += nestedRedacted.count;
       redacted[key] = nestedRedacted.value;
     }
     return { value: redacted, count };
-  }
-
-  if (!defaultSecretRedaction) {
-    return { value: current, count: 0 };
   }
 
   return redactSecretValues(current, path);

@@ -34,8 +34,9 @@ const SECRET_PATTERNS: SecretPattern[] = [
   },
 ];
 
-const HIGH_ENTROPY_VALUE = /^(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9]{24,}$/u;
-const HIGH_ENTROPY_TEXT_TOKEN = /(?<![/])\b(?=[A-Za-z0-9]{24,}\b)(?=[A-Za-z0-9]*[A-Za-z])(?=[A-Za-z0-9]*\d)[A-Za-z0-9]+\b(?![/])/gu;
+const SECRET_KEY_PATH = /(?:api[_-]?key|authorization|bearer|credential|password|secret|token)/iu;
+const UUID_VALUE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+const UNKNOWN_SECRET_CANDIDATE = /(?<![A-Za-z0-9._-])(?=[A-Za-z0-9._-]{24,})(?=[A-Za-z0-9._-]*[A-Za-z])(?=[A-Za-z0-9._-]*\d)[A-Za-z0-9._-]+(?![A-Za-z0-9._-])/gu;
 
 export function redactSecretValues(value: unknown, path: readonly string[] = []): SecretRedactionResult {
   if (typeof value === "string") {
@@ -81,10 +82,9 @@ export function scanSecretLikeText(text: string): Array<{ pattern: string; count
     }
   }
 
-  HIGH_ENTROPY_TEXT_TOKEN.lastIndex = 0;
-  const unknownMatches = text.match(HIGH_ENTROPY_TEXT_TOKEN);
-  if (unknownMatches?.length) {
-    findings.push({ pattern: "unknown-high-entropy-token", count: unknownMatches.length });
+  const unknownMatches = findUnknownSecretTokens(text);
+  if (unknownMatches > 0) {
+    findings.push({ pattern: "unknown-high-entropy-token", count: unknownMatches });
   }
 
   return findings;
@@ -105,7 +105,11 @@ export async function scanSecretLikeFiles(rootDir: string): Promise<SecretScanRe
 }
 
 function redactString(value: string, path: readonly string[]): SecretRedactionResult {
-  if (HIGH_ENTROPY_VALUE.test(value)) {
+  if (isKnownRedactionMarker(value)) {
+    return { value, count: 0 };
+  }
+
+  if (path.some((segment) => SECRET_KEY_PATH.test(segment)) && value.length >= 8) {
     return { value: REDACTED_SECRET, count: 1 };
   }
 
@@ -120,5 +124,42 @@ function redactString(value: string, path: readonly string[]): SecretRedactionRe
     });
   }
 
+  UNKNOWN_SECRET_CANDIDATE.lastIndex = 0;
+  redacted = redacted.replace(UNKNOWN_SECRET_CANDIDATE, (match) => {
+    if (!isUnknownSecretToken(match)) {
+      return match;
+    }
+    count += 1;
+    return REDACTED_SECRET;
+  });
+
   return { value: redacted, count };
+}
+
+function findUnknownSecretTokens(text: string): number {
+  let count = 0;
+  UNKNOWN_SECRET_CANDIDATE.lastIndex = 0;
+  for (const match of text.matchAll(UNKNOWN_SECRET_CANDIDATE)) {
+    if (isUnknownSecretToken(match[0])) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+function isUnknownSecretToken(value: string): boolean {
+  if (UUID_VALUE.test(value)) {
+    return false;
+  }
+
+  if (/^[A-Za-z0-9]{24,}$/u.test(value)) {
+    return true;
+  }
+
+  const segments = value.split(/[._=-]+/u).filter(Boolean);
+  return segments.some((segment) => /^[A-Za-z0-9]{16,}$/u.test(segment));
+}
+
+function isKnownRedactionMarker(value: string): boolean {
+  return value === REDACTED_SECRET || /^\[redacted\]$/iu.test(value);
 }

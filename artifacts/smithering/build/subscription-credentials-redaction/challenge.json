@@ -4,9 +4,10 @@
   "approvalAssertedByImplementer": false,
   "challengeFocus": [
     "raw model key construction is rejected without value echo",
-    "trace meta redaction defaults on and reports count only",
-    "whole-session scan fails closed when redaction is disabled",
-    "probe report redaction uses the shared scanner"
+    "TraceProcessor has no public default redaction opt-out",
+    "embedded unknown token-shaped strings and provider-style separator tokens redact fail-closed",
+    "whole-session scan covers every emitted trace/log/report tree, including build trace copies and probe reports",
+    "probe report failure paths cannot leave raw token-shaped values on disk"
   ],
-  "notes": "External adversarial challenge must replace or amend this file with its verdict before land."
+  "notes": "The prior rejected challenge targeted pre-fix code. External adversarial challenge must replace or amend this file with its verdict before land."
 }

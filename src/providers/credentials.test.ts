@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, test } from "bun:test";
 import { TraceProcessor } from "../obs/trace";
-import { REDACTED_SECRET, scanSecretLikeFiles } from "../security/secrets";
+import { REDACTED_SECRET, redactSecretValues, scanSecretLikeFiles, scanSecretLikeText } from "../security/secrets";
 import { createAudioCredentialSource, createModelCredentialSource, rejectRawModelCredentials } from "./credentials";
 
 const sessionId = "session-sec-001";
@@ -67,10 +67,17 @@ describe("SEC-1 credential guard and trace redaction", () => {
   });
 
   test("LogEvent meta redacts bearer, provider keys, JWTs, authorization headers, arrays, and secret-like unknowns", () => {
-    const rawValues = [fakeBearer(), fakeOpenAiKey(), fakeDeepgramKey(), fakeElevenLabsKey(), fakeJwt(), fakeUnknownToken()];
-    const processor = new TraceProcessor({
-      defaultSecretRedaction: process.env.PANOPTICON_RBG_DISABLE_SECRET_REDACTION !== "1",
-    });
+    const rawValues = [
+      fakeBearer(),
+      fakeOpenAiKey(),
+      fakeDeepgramKey(),
+      fakeElevenLabsKey(),
+      fakeJwt(),
+      fakeUnknownToken(),
+      fakeUnknownSeparatedToken(),
+      fakeUnknownEmbeddedToken(),
+    ];
+    const processor = new TraceProcessor();
 
     processor.record({
       event: "observe.final",
@@ -86,6 +93,8 @@ describe("SEC-1 credential guard and trace redaction", () => {
           elevenlabs: rawValues[3],
           jwt: rawValues[4],
           blob: rawValues[5],
+          separated: rawValues[6],
+          embedded: `provider returned opaque token ${rawValues[7]} during setup`,
         },
         list: [`safe-${"x".repeat(8)}`, rawValues[1]],
       },
@@ -97,22 +106,20 @@ describe("SEC-1 credential guard and trace redaction", () => {
 
     const redactionEvents = processor.events().filter((event) => event.event === "secret.redacted");
     expect(redactionEvents).toHaveLength(1);
-    expect(redactionEvents[0].meta).toEqual({ count: 7, sourceEvent: "observe.final" });
+    expect(redactionEvents[0].meta).toEqual({ count: 9, sourceEvent: "observe.final" });
   });
 
   test("probe-style reports can be redacted and scanned without leaking raw values", async () => {
     const root = join(tmpdir(), `panopticon-secret-report-${crypto.randomUUID()}`);
-    const rawValues = [fakeOpenAiKey(), fakeBearer(), fakeDeepgramKey()];
-    const processor = new TraceProcessor({
-      defaultSecretRedaction: process.env.PANOPTICON_RBG_DISABLE_SECRET_REDACTION !== "1",
-    });
+    const rawValues = [fakeOpenAiKey(), fakeBearer(), fakeDeepgramKey(), fakeUnknownEmbeddedToken()];
+    const processor = new TraceProcessor();
     const event = processor.record({
       event: "route.pass",
       sessionId,
       correlationId,
       startedAtMs: 20,
       endedAtMs: 22,
-      meta: { report: { token: rawValues[0], auth: rawValues[1], dg: rawValues[2] } },
+      meta: { report: { token: rawValues[0], auth: rawValues[1], dg: rawValues[2], opaque: rawValues[3] } },
     });
 
     try {
@@ -127,6 +134,20 @@ describe("SEC-1 credential guard and trace redaction", () => {
     } finally {
       await rm(root, { recursive: true, force: true });
     }
+  });
+
+  test("unknown-token fallback redacts embedded and separator-bearing token shapes before scans see them", () => {
+    const rawValues = [fakeUnknownEmbeddedToken(), fakeUnknownSeparatedToken()];
+    const text = `provider note ${rawValues[0]} and ${rawValues[1]} should not leave memory`;
+
+    expect(scanSecretLikeText(text).some((finding) => finding.pattern === "unknown-high-entropy-token")).toBe(true);
+
+    const redacted = redactSecretValues({ note: text });
+    const serialized = JSON.stringify(redacted.value);
+    assertNoRawValues(serialized, rawValues, "redacted unknown-token fallback");
+    expect(serialized).toContain(REDACTED_SECRET);
+    expect(scanSecretLikeText(serialized)).toEqual([]);
+    expect(redacted.count).toBe(2);
   });
 });
 
@@ -173,4 +194,12 @@ function fakeJwt(): string {
 
 function fakeUnknownToken(): string {
   return `${"N".repeat(16)}8${"O".repeat(16)}`;
+}
+
+function fakeUnknownSeparatedToken(): string {
+  return `acme_live_${"P".repeat(14)}9${"Q".repeat(14)}`;
+}
+
+function fakeUnknownEmbeddedToken(): string {
+  return `${"R".repeat(10)}_${"S".repeat(10)}0${"T".repeat(10)}`;
 }

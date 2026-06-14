@@ -1,2 +1,1 @@
-COMMAND: bunx tsc --noEmit
-STATUS: passed
+tsc exit=0
