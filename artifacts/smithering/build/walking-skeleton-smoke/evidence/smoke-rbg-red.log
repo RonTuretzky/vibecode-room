@@ -1,6 +1,6 @@
 bun test v1.3.14 (0d9b296a)
 
-test/smoke/spine-skeleton.smoke.ts:
+test/smoke/spine-skeleton.smoke.test.ts:
 36 |     }
 37 | 
 38 |     const actionDecisions = decisions.filter((d) => d.kind === "action");
@@ -13,10 +13,11 @@ error: expect(received).toBe(expected)
 Expected: 1
 Received: 0
 
-      at <anonymous> (/Users/williamcory/vibecode-room/test/smoke/spine-skeleton.smoke.ts:41:36)
-(fail) spine-skeleton smoke > reads fixture, matches wake word, emits exactly one action trace with non-empty correlationId [0.62ms]
+      at <anonymous> (/Users/williamcory/vibecode-room/test/smoke/spine-skeleton.smoke.test.ts:41:36)
+(fail) spine-skeleton smoke > reads fixture, matches wake word, emits exactly one action trace with non-empty correlationId [0.59ms]
 
  5 pass
  1 fail
  34 expect() calls
-Ran 6 tests across 1 file. [16.00ms]
+Ran 6 tests across 1 file. [17.00ms]
+exit=1

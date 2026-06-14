@@ -6,7 +6,9 @@
     "status": "passed",
     "rbgRecorded": true,
     "redRunPath": "artifacts/smithering/build/walking-skeleton-smoke/evidence/smoke-rbg-red.log",
-    "greenRunPath": "artifacts/smithering/build/walking-skeleton-smoke/evidence/smoke-rbg-green.log"
+    "greenRunPath": "artifacts/smithering/build/walking-skeleton-smoke/evidence/smoke-rbg-green.log",
+    "command": "bun test test/smoke/spine-skeleton.smoke.test.ts",
+    "notes": "File renamed from spine-skeleton.smoke.ts → spine-skeleton.smoke.test.ts so Bun discovers it without ./ prefix. RBG: red uses BREAK_MATCHER=1 env var to bypass matcher, producing 0 action decisions."
   },
   {
     "criterionId": "tsc-noEmit",
@@ -24,15 +26,18 @@
     "status": "passed",
     "rbgRecorded": false,
     "redRunPath": null,
-    "greenRunPath": "artifacts/smithering/build/walking-skeleton-smoke/tests.log"
+    "greenRunPath": "artifacts/smithering/build/walking-skeleton-smoke/tests.log",
+    "notes": "Full suite (106 pass, 2 skip, 0 fail). RBG not required for this gate — individual test gates carry the RBG evidence. The tsc-noEmit gate has its own RBG."
   },
   {
     "criterionId": "secret-scan",
     "method": "grep_pattern",
     "tier": "pre-merge",
     "status": "passed",
-    "rbgRecorded": false,
-    "redRunPath": null,
-    "greenRunPath": "artifacts/smithering/build/walking-skeleton-smoke/secret-scan.json"
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/walking-skeleton-smoke/evidence/secret-scan-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/walking-skeleton-smoke/evidence/secret-scan-rbg-green.log",
+    "scope": "src/** test/** fixtures/** (excludes secret-scan.test.ts which has intentional fake keys)",
+    "notes": "Red run: synthetic file with fake sk-* secret — scanner detects it. Green run: full product source scan — zero hits."
   }
 ]
