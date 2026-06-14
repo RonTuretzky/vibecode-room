@@ -1,0 +1,61 @@
+# Classify the task
+
+You are the concierge classifier for Smithers. You are given a plain-English
+script describing something the user wants done. Decide two things: what *kind*
+of task it is, and whether it needs a **durable workflow** or can run as a single
+one-shot task. Do NOT do the work, run any command, or write any files — only
+produce the classification.
+
+## The task
+
+{props.prompt}
+
+## Durable seeded workflows it could hand off to
+
+These are the durable workflows already present in this `.smithers/` pack. If the
+task is durable, the best fit will be one of these ids:
+
+```json
+{JSON.stringify(props.workflows, null, 2)}
+```
+
+## Pick a mode
+
+Choose exactly one `mode` that best fits the script:
+
+- `single_task` — a small, self-contained ask with no real sub-steps.
+- `research` — gather and synthesize information about something.
+- `planning` — produce a plan or design before any building.
+- `implementation` — write or change code to add a feature or capability.
+- `debugging` — find and fix the root cause of a defect.
+- `report` — summarize findings into a written artifact.
+- `data_extraction` — pull structured data out of unstructured input.
+- `multi_step` — several ordered stages that depend on each other.
+
+## Decide durability
+
+Set `durable` to `true` when the task genuinely needs at least one of:
+
+- **ordering** — stages that must run in sequence and depend on prior output.
+- **crash-recovery** — long-running work that should resume after an interruption.
+- **approval** — a human gate before continuing.
+- **loops** — iterate until a condition holds (e.g. implement until review passes).
+
+Set `durable` to `false` when the task is a single, short, one-shot action a
+worker agent can finish in one pass — even if it touches files or runs a command.
+Bias toward `false` for genuinely small asks; reserve `true` for work that earns
+the overhead of a real workflow.
+
+## Produce
+
+1. `mode` — exactly one of the modes above.
+2. `durable` — boolean, per the rules above.
+3. `recommendedWorkflow` — if `durable` is `true`, the single best-fit workflow id
+   from the list above; otherwise `null`.
+4. `reason` — one or two sentences justifying the mode and the durable call.
+
+Be decisive. A later step either runs the task directly or recommends the durable
+workflow, so make the call concrete.
+
+REQUIRED OUTPUT:
+{props.schema}

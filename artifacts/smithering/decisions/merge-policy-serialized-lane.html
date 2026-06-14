@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Decision ORCH-A-02 — Serialized merge lane (no optimistic eviction in V0)</title>
+<style>
+  :root { --ink:#1a1a1a; --mut:#666; --line:#e2e2e2; --good:#0a7d33; --bad:#b00020; --accent:#0b5cad; --bg:#fafafa; }
+  * { box-sizing:border-box; }
+  body { font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; color:var(--ink); max-width:920px; margin:2.2rem auto; padding:0 1.2rem; background:var(--bg); }
+  h1 { font-size:1.55rem; margin:0 0 .2rem; }
+  h2 { font-size:1.12rem; margin:1.8rem 0 .5rem; border-bottom:2px solid var(--line); padding-bottom:.25rem; }
+  .meta { color:var(--mut); font-size:.86rem; margin-bottom:1.2rem; }
+  .pill { display:inline-block; padding:.08rem .5rem; border-radius:999px; font-size:.75rem; font-weight:600; background:#e7f1fb; color:var(--accent); }
+  table { border-collapse:collapse; width:100%; margin:.6rem 0; font-size:.92rem; }
+  th,td { border:1px solid var(--line); padding:.45rem .6rem; text-align:left; vertical-align:top; }
+  th { background:#f0f0f0; }
+  code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  pre { background:#0f1115; color:#e6e6e6; padding:.9rem 1.1rem; border-radius:8px; overflow:auto; font-size:.82rem; line-height:1.45; }
+  .good { color:var(--good); font-weight:600; } .bad { color:var(--bad); font-weight:600; }
+  .box { background:#fff; border:1px solid var(--line); border-radius:8px; padding:.9rem 1.1rem; margin:.7rem 0; }
+  .alt { border-left:4px solid var(--line); padding-left:.9rem; margin:.6rem 0; }
+  .alt.win { border-left-color:var(--good); } .alt.lose { border-left-color:var(--bad); }
+  .warn { background:#fff7e6; border:1px solid #ffd591; border-radius:8px; padding:.7rem 1rem; }
+</style>
+</head>
+<body>
+<h1>Merge policy: <span style="color:#0b5cad">a serialized merge lane, not optimistic eviction</span></h1>
+<div class="meta"><span class="pill">ORCH-A-02</span> &nbsp; Panopticon V0 implementation orchestration &nbsp;·&nbsp; <code>docs/planning/06-orchestration.md §2</code></div>
+
+<h2>The problem (and the trap)</h2>
+<p>Smithers' <strong>MergeQueue</strong> component is <em>only a concurrency limiter</em> — it serializes
+who writes, nothing more. The seductive design is <strong>optimistic merging with postsubmit
+eviction</strong>: land each ticket the moment its own gates are green, run the full suite on
+<code>main</code> afterward, and if something breaks, automatically evict the culprit. But that
+"automatic eviction" is <strong>entirely custom logic</strong> we would have to build and verify ourselves:
+a <code>CheckSuite</code> to attribute the postsubmit failure, a <code>Saga</code> to compensate every
+dependent run that already branched off the bad commit, a <code>jj revert</code> to surgically back the
+change out, and a re-rebase of everyone downstream (where Smithers worktree runs auto-rebase on resume
+<em>even if the rebase fails</em>, materializing conflicts that a human or agent must then resolve).</p>
+
+<h2>Decision</h2>
+<div class="box">
+For V0 we build a <strong>serialized merge lane</strong> and we <strong>do not build optimistic merging
+or postsubmit auto-eviction</strong>.
+<table>
+<tr><th>Mechanism</th><th>V0 verdict</th><th>Why</th></tr>
+<tr><td>MergeQueue (depth-1 land serializer)</td><td class="good">USE — as a pure concurrency limiter</td><td>Exactly what it is for. One writer to <code>main</code> at a time, ordered by DAG topo rank.</td></tr>
+<tr><td>Pre-merge gate on the rebased tip</td><td class="good">BUILD</td><td>A ticket re-runs its deterministic gate tier <em>after</em> rebasing onto the current lane tip; green → fast-forward land; conflict → bounce to the worker (jj materializes the conflict, worker resolves on resume).</td></tr>
+<tr><td>Optimistic land + postsubmit eviction (CheckSuite + Saga + jj revert + cascade rebase)</td><td class="bad">DO NOT BUILD</td><td>~28 tickets on a strict DAG: merge contention is low, the critical path is dependency-bound, and the eviction machinery's failure modes (mis-attribution, partial compensation, rebase-conflict cascades) add more risk than the few serialized lands cost.</td></tr>
+<tr><td>Postsubmit full suite on <code>main</code></td><td class="good">RUN — manual revert on failure</td><td>The full matrix runs after each land; a red postsubmit opens a <strong>recorded revert-or-forward-fix decision</strong> (HTML log), resolved by the orchestrator's gate, not by an autonomous evictor.</td></tr>
+</table>
+</div>
+
+<h2>Why a serialized lane is sufficient here</h2>
+<ul>
+<li><strong>The DAG already serializes the hard part.</strong> Dependents cannot start until their
+ancestors land, so the lane mostly sees <em>independent</em> tickets whose rebases are trivial. The
+widest ready-set is ~6 (Phase-0 fan-out / Phase-1 probes); the lane drains them one at a time in seconds.</li>
+<li><strong>Each land is already pre-merge-green with recorded red-before-green.</strong> A ticket reaches
+the lane only after its deterministic gate tier passed on its rebased tip (see ORCH-A-03). Postsubmit
+failures are therefore expected to be <em>rare</em> — not the common case eviction is designed for.</li>
+<li><strong>Eviction's correctness bar is brutal.</strong> To auto-evict safely you must prove
+attribution (which of N optimistically-landed commits broke postsubmit?), compensate every Saga branch
+that already forked, and survive cascade rebases — each a place to silently lose work, which REQ-15's
+durability ethic forbids. Building that to save a handful of serialized lands is a bad trade.</li>
+</ul>
+
+<h2>Alternatives</h2>
+<div class="alt lose"><strong>Optimistic merge + automatic postsubmit eviction.</strong>
+<span class="bad">Rejected for V0.</span> High custom-logic surface (CheckSuite + Saga + jj revert +
+cascade re-rebase) for low payoff at this ticket count; its own failure modes threaten silent work loss.</div>
+<div class="alt lose"><strong>Trunk-based, everyone commits to <code>main</code>, no gate.</strong>
+<span class="bad">Rejected.</span> Violates the validation bar — a ticket could land without recorded RBG.</div>
+<div class="alt win"><strong>Depth-1 serialized lane, pre-merge gate on rebased tip, postsubmit full suite, manual revert (chosen).</strong>
+<span class="good">Chosen.</span> Uses MergeQueue for exactly what it is, keeps every land gated and
+reversible, and defers the expensive eviction machinery until a future build's scale actually justifies it.</div>
+
+<h2>Verification (the orchestration logic is itself tested)</h2>
+<ul>
+<li><strong>Lane-serialization test:</strong> enqueue two ticket lands concurrently → assert exactly one
+holds the write lock at a time and the second rebases onto the first's result. <span class="bad">RBG:</span>
+set lane depth to 2 → both write → interleave detector fails.</li>
+<li><strong>Gate-before-land test:</strong> a ticket with a missing/failing pre-merge gate or no recorded
+RBG <em>cannot</em> enter the lane. <span class="bad">RBG:</span> stub a ticket with <code>rbgRecorded:false</code>
+→ assert land is refused; flip to <code>true</code> with both red+green logs present → land allowed.</li>
+<li><strong>Rebase-conflict bounce test:</strong> force a jj conflict on rebase → assert the ticket is
+returned to its worker with the conflict materialized (not force-landed). <span class="bad">RBG:</span>
+auto-resolve-by-discard → conflict-bounce assertion fails.</li>
+<li><strong>Postsubmit-revert test:</strong> inject a postsubmit failure on <code>main</code> → assert a
+revert-or-forward-fix decision row is written to <code>artifacts/smithering/decisions/build/</code> and
+no autonomous eviction fires.</li>
+</ul>
+
+<div class="warn"><strong>Carried risk:</strong> serialized lands are slower under a hypothetical wide,
+churny DAG. Mitigation: the DAG is verified narrow (max antichain ~6) and dependency-bound; if a future
+build is merge-bound rather than dependency-bound, optimistic eviction becomes worth its cost and is
+revisited at the gate — not before.</div>
+</body>
+</html>

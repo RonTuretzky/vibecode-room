@@ -1,0 +1,55 @@
+# Design the workflow graph
+
+You are the design step of the "build me a Smithers workflow" pipeline. Using the
+clarified spec and the provisioning manifest (docs pulled, examples found,
+components and skills available), produce a concrete, buildable design. Still no
+files — this is the blueprint the scaffolder will implement, and what a human may
+approve first.
+
+## Spec
+
+{JSON.stringify(props.spec, null, 2)}
+
+## Provisioning (docs, examples, components, skills, agents available)
+
+{JSON.stringify(props.provisioning, null, 2)}
+
+Workflows go in: {props.workflowsDir}
+Prompts go in: {props.promptsDir}
+
+## Design rules
+
+- **Compose, don't hand-roll.** If the provisioning step found a component
+  (`<ReviewLoop>`, `<ScanFixVerify>`, `<ValidationLoop>`, …) that fits, use it
+  instead of re-implementing the loop.
+- **One `.tsx` workflow** in `{props.workflowsDir}/<workflowName>.tsx`, importing
+  `agents` from `../agents`, with `createSmithers({ input, ...outputTables })`.
+- **Prompts as `.mdx`.** Each substantive AI task renders an `.mdx` prompt from
+  `{props.promptsDir}` that ends with `REQUIRED OUTPUT:\n{props.schema}` so the
+  task's Zod output schema is injected automatically.
+- **Typed outputs.** Every `<Task>` gets a Zod `output={outputs.x}` schema. Keep
+  schemas minimal — a `summary` plus the few fields downstream steps actually read.
+- **Pick the control flow deliberately:** `<Sequence>` for ordered stages,
+  `<Parallel maxConcurrency>` for fan-out, `<Branch if then else>` for conditional
+  paths, `<Loop>/<Ralph until maxIterations onMaxReached>` for "repeat until done".
+- **Human gates** become `<Approval>` / `<HumanTask>` nodes only where the spec
+  asked for them.
+- **Agents per task:** map each task to a pool from the manifest (`agents.smart`,
+  `agents.smartTool` for file/shell work, `agents.cheapFast` for cheap checks);
+  function tasks (no agent) for pure compute / shelling out.
+
+## Produce
+
+- `workflowName`, `summary` (2–3 sentences).
+- `inputs` — the Zod input schema fields.
+- `tasks` — each task's `id`, `purpose`, `agent`, and `outputs` (the schema fields).
+- `graphShape` — the JSX tree as an indented outline (which nodes nest where, the
+  loop/branch conditions, the human gates).
+- `components`, `prompts` (the `.mdx` files to author), `triggers`, `humanGates`.
+- `rationale` — why this shape, and any tradeoff or follow-up (e.g. a skill that
+  was only `recommended`, not installed).
+
+Make it concrete enough that the scaffolder can implement it without guessing.
+
+REQUIRED OUTPUT:
+{props.schema}

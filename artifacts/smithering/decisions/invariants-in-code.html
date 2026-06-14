@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Decision ENG-A-04 — Routing/safety authority lives in code, not the LLM</title>
+<style>
+  :root { --ink:#1a1a1a; --mut:#666; --line:#e2e2e2; --good:#0a7d33; --bad:#b00020; --accent:#0b5cad; --bg:#fafafa; }
+  * { box-sizing:border-box; }
+  body { font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; color:var(--ink); max-width:920px; margin:2.2rem auto; padding:0 1.2rem; background:var(--bg); }
+  h1 { font-size:1.55rem; margin:0 0 .2rem; }
+  h2 { font-size:1.12rem; margin:1.8rem 0 .5rem; border-bottom:2px solid var(--line); padding-bottom:.25rem; }
+  .meta { color:var(--mut); font-size:.86rem; margin-bottom:1.2rem; }
+  .pill { display:inline-block; padding:.08rem .5rem; border-radius:999px; font-size:.75rem; font-weight:600; background:#e7f1fb; color:var(--accent); }
+  table { border-collapse:collapse; width:100%; margin:.6rem 0; font-size:.92rem; }
+  th,td { border:1px solid var(--line); padding:.45rem .6rem; text-align:left; vertical-align:top; }
+  th { background:#f0f0f0; }
+  code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  pre { background:#0f1115; color:#e6e6e6; padding:.9rem 1.1rem; border-radius:8px; overflow:auto; font-size:.82rem; line-height:1.45; }
+  .good { color:var(--good); font-weight:600; } .bad { color:var(--bad); font-weight:600; }
+  .box { background:#fff; border:1px solid var(--line); border-radius:8px; padding:.9rem 1.1rem; margin:.7rem 0; }
+  .alt { border-left:4px solid var(--line); padding-left:.9rem; margin:.6rem 0; }
+  .alt.win { border-left-color:var(--good); } .alt.lose { border-left-color:var(--bad); }
+  .warn { background:#fff7e6; border:1px solid #ffd591; border-radius:8px; padding:.7rem 1rem; }
+</style>
+</head>
+<body>
+<h1>Routing &amp; safety <span style="color:#0b5cad">authority lives in code</span>, not the LLM</h1>
+<div class="meta"><span class="pill">ENG-A-04</span> &nbsp; Panopticon V0 engineering &nbsp;·&nbsp; the determinism boundary &nbsp;·&nbsp; <code>docs/planning/03-eng.md §4, §7</code></div>
+
+<h2>The problem</h2>
+<p>The product spawns code-writing agents from spoken commands rolling on ~7.4% WER ASR. A misheard
+sentence that triggers a destructive action is a real safety hazard (PRD R-Mistranscription). If the
+decisions that <em>authorize</em> actions — "does this utterance steer a process?", "is this a
+destructive verb?", "does mute out-rank panic?" — were made by the LLM, they would be
+non-deterministic, untestable for exact behavior, and unauditable. We cannot hold a 10×–100×
+validation bar over a surface whose answers change run to run.</p>
+
+<h2>Decision</h2>
+<div class="box">
+Split the two responsibilities cleanly:
+<table>
+<tr><th></th><th>The LLM does</th><th>Deterministic code does</th></tr>
+<tr><td>Role</td><td>scores <strong>quality &amp; intent</strong> (is this buildable? how confident?)</td><td>holds <strong>authority</strong> — what is allowed to happen</td></tr>
+<tr><td>Examples</td><td>suggestion eligibility, MCQ generation, 15-word summarization</td><td>priority ladder, routing exclusivity, "no steer without callsign", destructive-verb classification, dead-man timer</td></tr>
+<tr><td>Property</td><td>non-deterministic (tested for <em>shape/invariants</em>)</td><td>deterministic (tested for <em>exact behavior</em>, red-before-green)</td></tr>
+</table>
+<strong>The action payload is never self-authorizing.</strong> Destructive verbs are caught by a static
+whitelist at the point the action is produced, before execution — not by trusting the LLM's
+classification.
+</div>
+
+<h2>What this makes testable</h2>
+<pre>priority ladder      mute &gt; panic &gt; stop &gt; steer &gt; suggest &gt; pass   (deterministic comparator)
+dispatch invariant   steering verb + no callsign + no open window  → REJECTED at dispatch (REQ-6 AC6.1)
+routing exclusivity  each utterance → exactly one of {suggestion, steer:X, pass}
+safety gate          verb ∈ {delete,overwrite,force-push,rm,drop,truncate} → read-back + 25 s timer
+determinism          same transcript → same routing decision, every replay (REQ-7 AC7.3)</pre>
+
+<h2>Alternatives</h2>
+<div class="alt lose"><strong>LLM decides routing &amp; safety (agent-mediated).</strong>
+<span class="bad">Rejected:</span> non-deterministic authority over destructive actions; also explicitly
+out of V0 scope (NG-2). A misheard sentence could authorize a delete.</div>
+<div class="alt lose"><strong>Hybrid — LLM proposes, code rubber-stamps.</strong>
+<span class="bad">Rejected:</span> if code can override, code is the authority anyway; if it can't, the
+LLM is. Make the split explicit instead.</div>
+<div class="alt win"><strong>LLM scores; code authorizes (chosen).</strong>
+<span class="good">Chosen.</span> The non-deterministic surface is fenced to quality/intent; everything
+that can hurt is deterministic and tested for exact behavior.</div>
+
+<h2>Verification</h2>
+<ul>
+<li><strong>Unit:</strong> priority-ladder (<span class="bad">RBG:</span> demote mute → fails);
+dispatch-invariant (<span class="bad">RBG:</span> remove guard → un-addressed talk steers → fails);
+tier-gating ("Yes" outside the suggestion window is inert); collision-guard; determinism (replay N× →
+identical).</li>
+<li><strong>Unit:</strong> safety posture (destructive verb → read-back + wait; no confirm in 25 s →
+abort; <span class="bad">RBG:</span> fire without confirm → fails); fuzz (garbled/double/wrong-process
+confirm → never double-execute).</li>
+<li><strong>E2e:</strong> un-addressed talk never steers; near-homophone of a callsign never
+mis-selects; destructive act blocks until "confirm".</li>
+</ul>
+
+<div class="warn"><strong>Boundary rule:</strong> on AI-output surfaces assert
+<strong>shape/invariants</strong> ("≤3 MCQs", "≤15 words"), never exact text. On authority surfaces
+assert <strong>exact deterministic behavior</strong>. The two are tested differently on purpose.</div>
+</body>
+</html>

@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Decision D-DD-24 — Tiered vocabulary: always-hot vs state-gated</title>
+<style>
+  :root { --ink:#1a1a1a; --mut:#666; --line:#e2e2e2; --good:#0a7d33; --bad:#b00020; --accent:#0b5cad; --bg:#fafafa; }
+  * { box-sizing:border-box; }
+  body { font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; color:var(--ink); max-width:940px; margin:2.2rem auto; padding:0 1.2rem; background:var(--bg); }
+  h1 { font-size:1.45rem; margin:0 0 .2rem; }
+  h2 { font-size:1.12rem; margin:1.8rem 0 .5rem; border-bottom:2px solid var(--line); padding-bottom:.25rem; }
+  .meta { color:var(--mut); font-size:.86rem; margin-bottom:1.2rem; }
+  .pill { display:inline-block; padding:.08rem .5rem; border-radius:999px; font-size:.75rem; font-weight:600; background:#e7f1fb; color:var(--accent); }
+  table { border-collapse:collapse; width:100%; margin:.6rem 0; font-size:.9rem; }
+  th,td { border:1px solid var(--line); padding:.45rem .6rem; text-align:left; vertical-align:top; }
+  th { background:#f0f0f0; }
+  code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  .good { color:var(--good); font-weight:600; } .bad { color:var(--bad); font-weight:600; }
+  .box { background:#fff; border:1px solid var(--line); border-radius:8px; padding:.9rem 1.1rem; margin:.7rem 0; }
+  .alt { border-left:4px solid var(--line); padding-left:.9rem; margin:.6rem 0; }
+  .alt.win { border-left-color:var(--good); }
+</style>
+</head>
+<body>
+<h1>Tiered vocabulary: always-hot vs. state-gated</h1>
+<div class="meta"><span class="pill">D-DD-24</span> &nbsp; Panopticon V0 — final pass &nbsp;·&nbsp; <code>docs/planning/02-design.md §5.1</code></div>
+
+<h2>The puzzle</h2>
+<p>The command set lists <strong>"Yes" / "Accept"</strong> as the acceptance words — yet
+<code>design-art.md §4</code> bans common conversational words ("yes", "go", "start") as magic words.
+Both cannot be right unless we distinguish <em>when</em> a word is live.</p>
+
+<h2>Decision</h2>
+<div class="box">
+Split the vocabulary into two tiers, and let the <strong>collision-resistance bar scale with the cost
+of a false trigger</strong>:
+<ul style="margin:.5rem 0 0">
+  <li><strong>Always-hot</strong> (matched any time → must be rare/non-conversational): wake "Panop",
+  every <strong>callsign</strong>, mute "Curtain", unmute "Daybreak", panic "Abort", stop "Halt".</li>
+  <li><strong>State-gated</strong> (matched only inside a narrow window → may reuse natural words):
+  accept/decline (only in <code>SUGGESTION_DELIVERY</code>), "Done"/"Back" (only in an open steering
+  window), "Confirm" (only while a destructive read-back is pending).</li>
+</ul>
+</div>
+
+<h2>Why "Yes" is safe as a state-gated accept word</h2>
+<p>"Yes" is <strong>never live except as a direct answer to a question the system just asked</strong>
+(the pending-suggestion window). Outside that window it is inert — a casual "yes, exactly" in
+conversation cannot spawn a process. The risk <code>design-art.md</code> warns about only applies to
+<em>always-hot</em> matching; gating removes it.</p>
+
+<h2>The cost-scaled bar</h2>
+<table>
+<tr><th>Word</th><th>Tier</th><th>False-trigger cost</th><th>Required bar</th></tr>
+<tr><td>Mute "Curtain", Panic "Abort", callsigns</td><td>always-hot</td><td class="bad">high (halts work / silences room / mis-routes)</td><td>strictest: rare + collision ≤2</td></tr>
+<tr><td>"Status"</td><td>always-hot</td><td class="good">low (just a ≤15-word read-out)</td><td>looser: tolerates more conversational overlap</td></tr>
+<tr><td>"Yes" / "Confirm" / "Done"</td><td>state-gated</td><td class="good">near-zero outside window</td><td>natural words allowed</td></tr>
+</table>
+
+<h2>Callsigns are always-hot (clarifies the state machine)</h2>
+<p>The spine's state machine has <code>IDLE ──[callsign]──► STEERING_WINDOW</code> with no wake word
+required — so callsigns are <strong>always-hot</strong> and therefore must pass the strict collision
+guard (which the pre-validated NATO subset does). The wake word "Panop" gates only the general
+attention/status flow, not addressing an already-running process.</p>
+
+<h2>Alternatives</h2>
+<div class="alt"><strong>A. Make everything always-hot; ban "yes", require a coined accept word.</strong>
+<span class="bad">Rejected:</span> forces users to learn an unnatural word for the single most natural
+spoken response ("yes"); higher onboarding friction for no safety gain over gating.</div>
+<div class="alt"><strong>B. Make everything state-gated.</strong> <span class="bad">Rejected:</span>
+mute/panic/callsigns must work from any state — they cannot be gated.</div>
+<div class="alt win"><strong>C. Two tiers + cost-scaled bar (chosen).</strong> <span class="good">Chosen.</span></div>
+
+<h2>Verification</h2>
+<ul>
+<li><strong>Tier-gating test (unit):</strong> "Yes" outside <code>SUGGESTION_DELIVERY</code> is inert;
+"Confirm" outside a pending read-back is inert. <span class="bad">RBG:</span> make "Yes" always-hot →
+a casual "yes" spawns a process → fails.</li>
+<li><strong>Collision test:</strong> all always-hot words pairwise pass Metaphone + phoneme-Levenshtein ≤2.</li>
+<li><strong>E2e:</strong> un-addressed talk containing "yes/stop/go" never triggers a command unless
+the gating window is open; a near-homophone of a callsign in casual speech does not mis-select.</li>
+<li><strong>Observability:</strong> <code>command.recognize{phrase, matchedCommand|null, tier, distanceScore}</code>.</li>
+</ul>
+</body>
+</html>

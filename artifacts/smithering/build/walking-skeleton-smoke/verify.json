@@ -1,0 +1,60 @@
+{
+  "ticketId": "walking-skeleton-smoke",
+  "verifier": "independent-test-authority (claude-opus-4-8)",
+  "family": "anthropic",
+  "branch": "build/walking-skeleton-smoke",
+  "ranTests": true,
+  "rbgConfirmed": true,
+  "gatesGreen": true,
+  "pass": true,
+  "note": "Re-derived from disk in a fresh, distinct run. Corrects a stale prior verify.json that described a different variant (a 'spine-skeleton.smoke.test.ts' with 6 tests and a 106-pass suite). Actual disk state: test/smoke/spine-skeleton.smoke.ts (single test, 3 expect calls); scoped src/+test/ suite 41 pass/0 fail; unscoped `bun test` 100 pass/2 skip/0 fail.",
+  "gates": [
+    {
+      "id": "smoke-spine-skeleton",
+      "command": "bun test ./test/smoke/spine-skeleton.smoke.ts",
+      "green": "1 pass / 0 fail / 3 expect() calls (exit 0)",
+      "red": "BREAK_MATCHER=1 -> 0 pass / 1 fail at expect(emitted.length).toBe(1): Expected 1 Received 0 (exit 1)",
+      "rbgGenuine": true,
+      "note": "Both legs reproduced live from disk; archived smoke-rbg-red.log / smoke-rbg-green.log match byte-for-byte in shape. RED is a real assertion failure of a real test, GREEN passes. Filter requires './' path form on bun 1.3.14."
+    },
+    {
+      "id": "tsc-noEmit",
+      "command": "bunx tsc --noEmit",
+      "green": "exit 0, no diagnostics",
+      "red": "planted transient src/__rbg_probe__.ts (const n: number = \"...\") -> TS2322 'string not assignable to number' (exit 2); removed probe -> clean (exit 0)",
+      "rbgGenuine": true,
+      "note": "Reproduced the same TS2322 class recorded in tsc-rbg-red.log, then restored and re-confirmed green. tsconfig includes only 'src'."
+    },
+    {
+      "id": "secret-redaction",
+      "command": "bun test ./src/orchestration/secret-scan.test.ts",
+      "green": "5 pass / 0 fail / 8 expect() calls",
+      "rbgGenuine": true,
+      "note": "In-test RBG: planted fake sk-/AKIA/Bearer keys caught by scanForSecrets; redact() yields a clean re-scan. No real provider key present in source/fixtures (grep over src/test/fixtures: none)."
+    },
+    {
+      "id": "hermetic-e2e-dry-run",
+      "command": "bun test ./src/orchestration/e2e-dry-run.test.ts",
+      "green": "3 pass / 0 fail / 15 expect() calls",
+      "rbgGenuine": true,
+      "note": "Doubles only — no net/mic/key imports. RBG cases inside the suite: red probe verdict halts the chain (feature never schedules/lands); incomplete bundle (missing green run) bounces at the serialized land lane."
+    },
+    {
+      "id": "bun-test-full-suite",
+      "command": "bun test  (CI command)",
+      "green": "100 pass / 2 skip / 0 fail across 8 files (272 expect calls, exit 0)",
+      "scopedGreen": "bun test src/ test/ -> 41 pass / 0 fail across 7 files (exit 0)",
+      "rbgGenuine": "n/a-aggregate",
+      "note": "CI (.github/workflows/ci.yml) runs `bun run typecheck` (tsc --noEmit) then `bun test`; both green."
+    }
+  ],
+  "walkingSkeleton": {
+    "touchesEverySeam": true,
+    "seam": "transcript(loadFixture/replay) -> decision(match) -> trace(TraceProcessor LogEvent w/ non-empty correlationId)",
+    "inProcessDoublesOnly": true,
+    "noCueNetworkKeyImport": true,
+    "imports": "node:crypto, node:fs, node:path, bun:test, type-only ./types.ts",
+    "ci": ".github/workflows/ci.yml runs `bun run typecheck` + `bun test`"
+  },
+  "summary": "All blocking pre-merge gates re-run from disk on branch build/walking-skeleton-smoke and confirmed green. Smoke RBG reproduced live (green 1/1; red is a real 1-assertion failure under BREAK_MATCHER=1). tsc RBG reproduced live (real TS2322 on a planted src error, clean restore). secret-redaction 5/5 and hermetic e2e 3/3 pass with no net/mic/key imports. Scoped suite 41 pass/0 fail; full `bun test` 100 pass/2 skip/0 fail. Walking skeleton genuinely traverses transcript->decision->trace with in-process doubles only. PASS."
+}

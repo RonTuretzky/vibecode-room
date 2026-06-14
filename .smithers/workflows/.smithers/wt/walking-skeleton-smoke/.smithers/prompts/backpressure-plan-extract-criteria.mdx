@@ -1,0 +1,26 @@
+# Extract acceptance criteria
+
+You are the intake step of a "backpressure plan" pipeline. The next step turns each
+acceptance criterion into an enforcement gate, so your only job here is to pull the
+goal apart into a clean, flat list of **atomic, verifiable acceptance criteria**.
+
+Do NOT plan gates, write code, or run anything yet — only extract the criteria.
+
+## Goal / criteria
+
+{props.prompt}
+
+## How to extract
+
+- Produce one entry per **atomic** criterion. If a sentence bundles two checks
+  (e.g. "fast and correct"), split it into separate entries.
+- Each criterion must be **verifiable** — something a person or a check could mark
+  pass or fail. Rewrite vague wishes into testable statements where you can.
+- Make implicit-but-clearly-intended criteria explicit (for example, "the endpoint
+  returns valid JSON" implies a response-shape criterion), but do not invent scope
+  the goal does not justify.
+- Keep each entry a single short sentence. No numbering, no markdown, no `TODO`
+  markers — just the criterion text.
+
+REQUIRED OUTPUT:
+{props.schema}

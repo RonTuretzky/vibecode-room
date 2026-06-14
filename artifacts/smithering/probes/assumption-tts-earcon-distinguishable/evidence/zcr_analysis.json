@@ -1,0 +1,64 @@
+{
+  "perCue": {
+    "E1-wake": {
+      "mean": 1120,
+      "std": 221,
+      "cv": 0.1975,
+      "nFrames": 4,
+      "layer": "A"
+    },
+    "E2-hum": {
+      "mean": 209,
+      "std": 10,
+      "cv": 0.0465,
+      "nFrames": 7,
+      "layer": "A"
+    },
+    "E3-spawn": {
+      "mean": 1565,
+      "std": 10,
+      "cv": 0.0065,
+      "nFrames": 3,
+      "layer": "A"
+    },
+    "E4-resolve": {
+      "mean": 563,
+      "std": 121,
+      "cv": 0.2155,
+      "nFrames": 6,
+      "layer": "A"
+    },
+    "E5-halt": {
+      "mean": 775,
+      "std": 326,
+      "cv": 0.4199,
+      "nFrames": 4,
+      "layer": "A"
+    },
+    "B1-tick-tick": {
+      "mean": 0,
+      "std": 0,
+      "cv": 0,
+      "nFrames": 0,
+      "layer": "B"
+    },
+    "B2-whoosh": {
+      "mean": 11362,
+      "std": 73,
+      "cv": 0.0064,
+      "nFrames": 3,
+      "layer": "B"
+    }
+  },
+  "meanLayerACv": 0.1772,
+  "ttsCv": 1.4436,
+  "cvRatio": 8.15,
+  "layerAPassesTonal": false,
+  "ttsPassesSpeech": true,
+  "quantitativelyDistinct": true,
+  "thresholds": {
+    "earconCvMax": 0.15,
+    "ttsCvMin": 0.4,
+    "ratioMin": 4
+  }
+}

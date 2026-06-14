@@ -1,0 +1,67 @@
+{
+  "assumptionId": "assumption-cheap-model-hot-loop",
+  "runDate": "2026-06-14T04:38:15.910Z",
+  "corporusSize": 48,
+  "actionSamples": 20,
+  "passSamples": 28,
+  "thresholds": {
+    "minPrecision": 0.85,
+    "minRecall": 0.75,
+    "maxP95LatencyMs": 800,
+    "maxCostPerHourUsd": 0.1
+  },
+  "models": [
+    {
+      "model": "gpt-4o-mini",
+      "totalSamples": 48,
+      "truePositives": 19,
+      "falsePositives": 0,
+      "trueNegatives": 28,
+      "falseNegatives": 1,
+      "precision": 1,
+      "recall": 0.95,
+      "f1": 0.9743589743589743,
+      "accuracy": 0.9791666666666666,
+      "avgLatencyMs": 1011.6477239583337,
+      "p50LatencyMs": 798.6641249999993,
+      "p95LatencyMs": 2439.825791000003,
+      "totalInputTokens": 13384,
+      "totalOutputTokens": 1372,
+      "estimatedCostUsd": 0.0028308,
+      "estimatedCostPerHourUsd": 0.021231,
+      "gates": {
+        "passed": false,
+        "failures": [
+          "p95 latency 2440 ms > 800 ms budget"
+        ]
+      }
+    },
+    {
+      "model": "gpt-oss-120b",
+      "totalSamples": 48,
+      "truePositives": 17,
+      "falsePositives": 0,
+      "trueNegatives": 28,
+      "falseNegatives": 3,
+      "precision": 1,
+      "recall": 0.85,
+      "f1": 0.9189189189189189,
+      "accuracy": 0.9375,
+      "avgLatencyMs": 209.7414522500006,
+      "p50LatencyMs": 180.66533399999753,
+      "p95LatencyMs": 383.0016659999965,
+      "totalInputTokens": 17320,
+      "totalOutputTokens": 5061,
+      "estimatedCostUsd": 0.013428599999999999,
+      "estimatedCostPerHourUsd": 0.10071449999999998,
+      "gates": {
+        "passed": false,
+        "failures": [
+          "cost $0.1007/hr > $0.1/hr limit"
+        ]
+      }
+    }
+  ],
+  "overallPassed": false,
+  "recommendation": "No cheap/fast model met all gates. See planImpact in probe output."
+}

@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Decision D-DD-22 — On-device unmute spotter (mute-while-listening)</title>
+<style>
+  :root { --ink:#1a1a1a; --mut:#666; --line:#e2e2e2; --good:#0a7d33; --bad:#b00020; --accent:#0b5cad; --bg:#fafafa; }
+  * { box-sizing:border-box; }
+  body { font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; color:var(--ink); max-width:940px; margin:2.2rem auto; padding:0 1.2rem; background:var(--bg); }
+  h1 { font-size:1.5rem; margin:0 0 .2rem; }
+  h2 { font-size:1.12rem; margin:1.8rem 0 .5rem; border-bottom:2px solid var(--line); padding-bottom:.25rem; }
+  .meta { color:var(--mut); font-size:.86rem; margin-bottom:1.2rem; }
+  .pill { display:inline-block; padding:.08rem .5rem; border-radius:999px; font-size:.75rem; font-weight:600; background:#fbe7e7; color:var(--bad); }
+  code,pre { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  pre { background:#f4f4f4; border:1px solid var(--line); border-radius:6px; padding:.9rem; overflow:auto; font-size:.84rem; line-height:1.5; }
+  .good { color:var(--good); font-weight:600; } .bad { color:var(--bad); font-weight:600; }
+  .box { background:#fff; border:1px solid var(--line); border-radius:8px; padding:.9rem 1.1rem; margin:.7rem 0; }
+  table { border-collapse:collapse; width:100%; margin:.6rem 0; font-size:.92rem; }
+  th,td { border:1px solid var(--line); padding:.45rem .6rem; text-align:left; vertical-align:top; }
+  th { background:#f0f0f0; }
+  .alt { border-left:4px solid var(--line); padding-left:.9rem; margin:.6rem 0; }
+  .alt.win { border-left-color:var(--good); } .alt.lose { border-left-color:var(--bad); }
+  .contra { background:#fff7e6; border:1px solid #ffd591; border-radius:8px; padding:.8rem 1rem; }
+</style>
+</head>
+<body>
+<h1>Mute-while-listening: an on-device unmute spotter</h1>
+<div class="meta"><span class="pill">D-DD-22 · P0-adjacent</span> &nbsp; Panopticon V0 — final pass &nbsp;·&nbsp; <code>docs/planning/02-design.md §12</code></div>
+
+<h2>The contradiction caught in this pass</h2>
+<div class="contra">
+<strong>REQ-2 AC2.3:</strong> while muted, <em>no observations are produced and no audio streams to
+the ASR provider.</em> &nbsp;<strong>vs.</strong>&nbsp; <strong>D1:</strong> voice is the sole
+<em>operational</em> modality. &nbsp;→&nbsp; If nothing is listening while muted, <strong>how does the
+room unmute hands-free by saying "Daybreak"?</strong> The draft did not say. This is a genuine
+architectural gap, not a wording nit.
+</div>
+
+<h2>Decision</h2>
+<div class="box">
+"Curtain" hard-mutes the <strong>cloud path</strong> (ASR stream stops ≤500 ms, E2 → mute tone,
+zero transcript observations). A <strong>minimal on-device keyword spotter</strong> stays active
+while muted. It runs <strong>fully local</strong> (no network, persists nothing), matches
+<strong>exactly one</strong> keyword — "Daybreak" — and emits <strong>exactly one</strong> event,
+<code>mute.released</code>. It cannot transcribe, route, suggest, or steer. If the spotter is
+unavailable on a host, unmute degrades to the <strong>non-voice emergency control</strong> (REQ-14),
+so the room is never trapped muted.
+</div>
+
+<h2>Why this preserves AC2.3 / NG-6</h2>
+<p>The spotter is not "the ASR." It produces <strong>no observations</strong> (the thing AC2.3
+forbids) and writes <strong>no raw audio or transcript</strong> (NG-6 / AC1.3). Its only output is a
+single control event that flips the mute state back. So "no observations while muted" holds literally
+— the cloud path that <em>would</em> produce observations is closed for the entire interval.</p>
+
+<h2>State / data flow while muted</h2>
+<pre>
+ MUTED state
+ ┌─────────────────────────────────────────────────────────┐
+ │ mic ──► [on-device spotter: "Daybreak"?]                 │
+ │            │ no  → drop sample (nothing persisted)       │
+ │            │ yes → emit mute.released ──► reopen cloud ASR│
+ │                                         restore E2 hum   │
+ │ cloud ASR stream:  CLOSED   (0 observations, 0 audio)    │
+ │ persistence:       NONE                                  │
+ │ heartbeat log:     mute.heartbeat{streamingToCloud:false}│
+ └─────────────────────────────────────────────────────────┘
+</pre>
+
+<h2>Alternatives</h2>
+<div class="alt lose"><strong>A. Unmute only via the non-voice emergency control.</strong>
+<span class="bad">Rejected as the primary path:</span> turns a routine action into an emergency-only
+one and dents the hands-free promise (D1). Kept as the <em>degraded fallback</em>.</div>
+<div class="alt lose"><strong>B. Keep the cloud ASR running but "ignore" everything except the unmute word.</strong>
+<span class="bad">Rejected:</span> audio still leaves the room and observations still exist — violates
+AC2.3 and NG-6 outright.</div>
+<div class="alt win"><strong>C. Local single-keyword spotter (chosen).</strong> Hands-free, nothing
+leaves the room, AC2.3/NG-6 intact, graceful degradation. <span class="good">Chosen.</span></div>
+
+<h2>Verification (red-before-green named)</h2>
+<table>
+<tr><th>Test</th><th>Asserts</th><th>Red-before-green</th></tr>
+<tr><td>No-observation-while-muted</td><td>arbitrary speech in MUTED → 0 obs / 0 actions</td><td class="bad">leave cloud stream open on mute → obs appear → fails</td></tr>
+<tr><td>Spotter scope</td><td>spotter emits only <code>mute.released</code>; no transcribe/route path exists</td><td class="bad">give it a 2nd keyword → scope test fails</td></tr>
+<tr><td>Spotter silence</td><td>near-homophones of "Daybreak" → no release, no output</td><td class="bad">loosen the match → false unmute → fails</td></tr>
+<tr><td>Degradation</td><td>spotter disabled → non-voice control still unmutes; no audio persisted</td><td class="bad">route muted-interval mic to a recorder → disk scan finds a blob → fails</td></tr>
+<tr><td>E2e</td><td>Curtain → silent → Daybreak → resumes; post-run disk scan = 0 audio</td><td>—</td></tr>
+</table>
+
+<h2>Observability</h2>
+<p><code>mute.engaged{latencyMs}</code> · <code>mute.released{trigger:voice|nonvoice, latencyMs}</code>
+· periodic <code>mute.heartbeat{streamingToCloud:false}</code> across the whole muted interval so a
+no-context debugging agent can prove the cloud path was closed the entire time.</p>
+
+<h2>New dependency surfaced to the gate</h2>
+<p>The on-device spotter is a third-party/model dependency that needs its <strong>own probe</strong>:
+matches "Daybreak", rejects near-homophones, emits no transcript. Listed in §15 of the design doc.</p>
+</body>
+</html>

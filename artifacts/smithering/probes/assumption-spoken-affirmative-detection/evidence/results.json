@@ -1,0 +1,602 @@
+{
+  "probe": "assumption-spoken-affirmative-detection",
+  "date": "2026-06-14T05:12:25.321Z",
+  "passed": false,
+  "verdict": "CONDITIONAL FAIL — Recall is good (aff=88%, mw=83%) but natural false-accept rate is HIGH (53% of ambient utterances accidentally contain trigger words). TextCue keyword-only matching is insufficient to gate process spawning without semantic context.",
+  "planImpact": "Keyword-only matching (TextCue) has a 53% natural false-accept rate from ambient technical conversation. Assumptions requires reconsideration: (1) affirmative detection must be two-step — keyword detection gates a semantic intent check, not direct spawn; (2) magic-word callsigns must avoid common tech vocabulary (e.g. \"alpha\", \"echo\", \"delta\" appear in natural dev speech); (3) context-free matching (ctx FP rate: 80%) means \"yes, but...\" will spuriously trigger. Recommend: (a) use rare coined callsigns not in tech vocabulary, (b) require keyword + intent LLM call before spawning, (c) require explicit standalone affirmative utterance (whole-utterance match, not substring) rather than keyword-in-sentence.",
+  "metrics": {
+    "overall": {
+      "total": 38,
+      "correct": 30,
+      "accuracy": 0.7894736842105263,
+      "truePositives": 20,
+      "falsePositives": 4,
+      "trueNegatives": 10,
+      "falseNegatives": 4,
+      "precision": 0.8333333333333334,
+      "recall": 0.8333333333333334,
+      "falseAcceptRate": 0.2857142857142857
+    },
+    "byCategory": {
+      "affirmative": {
+        "total": 8,
+        "correct": 7,
+        "accuracy": 0.875,
+        "truePositives": 7,
+        "falsePositives": 0,
+        "trueNegatives": 0,
+        "falseNegatives": 1,
+        "precision": 1,
+        "recall": 0.875,
+        "falseAcceptRate": null
+      },
+      "ambient": {
+        "total": 12,
+        "correct": 11,
+        "accuracy": 0.9166666666666666,
+        "truePositives": 4,
+        "falsePositives": 0,
+        "trueNegatives": 7,
+        "falseNegatives": 1,
+        "precision": 1,
+        "recall": 0.8,
+        "falseAcceptRate": 0
+      },
+      "context-false-positive": {
+        "total": 5,
+        "correct": 1,
+        "accuracy": 0.2,
+        "truePositives": 0,
+        "falsePositives": 4,
+        "trueNegatives": 1,
+        "falseNegatives": 0,
+        "precision": 0,
+        "recall": null,
+        "falseAcceptRate": 0.8
+      },
+      "magic-word": {
+        "total": 6,
+        "correct": 5,
+        "accuracy": 0.8333333333333334,
+        "truePositives": 5,
+        "falsePositives": 0,
+        "trueNegatives": 0,
+        "falseNegatives": 1,
+        "precision": 1,
+        "recall": 0.8333333333333334,
+        "falseAcceptRate": null
+      },
+      "magic-word-ambient": {
+        "total": 7,
+        "correct": 6,
+        "accuracy": 0.8571428571428571,
+        "truePositives": 4,
+        "falsePositives": 0,
+        "trueNegatives": 2,
+        "falseNegatives": 1,
+        "precision": 1,
+        "recall": 0.8,
+        "falseAcceptRate": 0
+      }
+    },
+    "sttAccuracy": 0.8947368421052632,
+    "affirmativeRecall": 0.875,
+    "magicWordRecall": 0.8333333333333334,
+    "contextFPRate": 0.8,
+    "naturalFPRate": 0.5263157894736842,
+    "naturalFPRateHigh": true,
+    "knownFPUtterances": 10,
+    "totalAmbientUtterances": 19,
+    "falseAcceptsOnShouldNotTrigger": 4,
+    "shouldNotTriggerTotal": 14
+  },
+  "results": [
+    {
+      "id": "aff-01",
+      "category": "affirmative",
+      "utterance": "Yes.",
+      "transcript": "Yes.",
+      "expectedTrigger": true,
+      "detectedTrigger": true,
+      "matchedKeywords": [
+        "yes"
+      ],
+      "correct": true,
+      "transcriptionMs": 1198,
+      "sttAccurate": true
+    },
+    {
+      "id": "aff-02",
+      "category": "affirmative",
+      "utterance": "Yeah, do it.",
+      "transcript": "Yeah, do it.",
+      "expectedTrigger": true,
+      "detectedTrigger": true,
+      "matchedKeywords": [
+        "yeah",
+        "do it"
+      ],
+      "correct": true,
+      "transcriptionMs": 974,
+      "sttAccurate": true
+    },
+    {
+      "id": "aff-03",
+      "category": "affirmative",
+      "utterance": "Accept.",
+      "transcript": "Accept.",
+      "expectedTrigger": true,
+      "detectedTrigger": true,
+      "matchedKeywords": [
+        "accept"
+      ],
+      "correct": true,
+      "transcriptionMs": 739,
+      "sttAccurate": true
+    },
+    {
+      "id": "aff-04",
+      "category": "affirmative",
+      "utterance": "Confirm.",
+      "transcript": "Confirm.",
+      "expectedTrigger": true,
+      "detectedTrigger": true,
+      "matchedKeywords": [
+        "confirm"
+      ],
+      "correct": true,
+      "transcriptionMs": 1538,
+      "sttAccurate": true
+    },
+    {
+      "id": "aff-05",
+      "category": "affirmative",
+      "utterance": "Yep, go ahead.",
+      "transcript": "[ERROR: AbortError: The operation was aborted.]",
+      "expectedTrigger": true,
+      "detectedTrigger": false,
+      "matchedKeywords": [],
+      "correct": false,
+      "transcriptionMs": 0,
+      "sttAccurate": false
+    },
+    {
+      "id": "aff-06",
+      "category": "affirmative",
+      "utterance": "Yes, approved.",
+      "transcript": "Yes, approved.",
+      "expectedTrigger": true,
+      "detectedTrigger": true,
+      "matchedKeywords": [
+        "yes"
+      ],
+      "correct": true,
+      "transcriptionMs": 387,
+      "sttAccurate": true
+    },
+    {
+      "id": "aff-07",
+      "category": "affirmative",
+      "utterance": "Go ahead and do it.",
+      "transcript": "Go ahead and do it.",
+      "expectedTrigger": true,
+      "detectedTrigger": true,
+      "matchedKeywords": [
+        "go ahead",
+        "do it"
+      ],
+      "correct": true,
+      "transcriptionMs": 1849,
+      "sttAccurate": true
+    },
+    {
+      "id": "aff-08",
+      "category": "affirmative",
+      "utterance": "Yeah.",
+      "transcript": "Yeah.",
+      "expectedTrigger": true,
+      "detectedTrigger": true,
+      "matchedKeywords": [
+        "yeah"
+      ],
+      "correct": true,
+      "transcriptionMs": 1048,
+      "sttAccurate": true
+    },
+    {
+      "id": "amb-01",
+      "category": "ambient",
+      "utterance": "The authentication flow needs a redesign.",
+      "transcript": "The authentication flow needs a redesign.",
+      "expectedTrigger": false,
+      "detectedTrigger": false,
+      "matchedKeywords": [],
+      "correct": true,
+      "transcriptionMs": 543,
+      "sttAccurate": true
+    },
+    {
+      "id": "amb-02",
+      "category": "ambient",
+      "utterance": "Let's refactor the database layer first.",
+      "transcript": "Let's refactor the database layer first.",
+      "expectedTrigger": false,
+      "detectedTrigger": false,
+      "matchedKeywords": [],
+      "correct": true,
+      "transcriptionMs": 528,
+      "sttAccurate": true
+    },
+    {
+      "id": "amb-03",
+      "category": "ambient",
+      "utterance": "I'm not sure about the API contract here.",
+      "transcript": "I'm not sure about the API contract here.",
+      "expectedTrigger": false,
+      "detectedTrigger": false,
+      "matchedKeywords": [],
+      "correct": true,
+      "transcriptionMs": 2273,
+      "sttAccurate": true
+    },
+    {
+      "id": "amb-04",
+      "category": "ambient",
+      "utterance": "Can we add a feature flag for that?",
+      "transcript": "Can we add a feature flag for that?",
+      "expectedTrigger": false,
+      "detectedTrigger": false,
+      "matchedKeywords": [],
+      "correct": true,
+      "transcriptionMs": 1330,
+      "sttAccurate": true
+    },
+    {
+      "id": "amb-05",
+      "category": "ambient",
+      "utterance": "The latency budget is around 300 milliseconds.",
+      "transcript": "The latency budget is around 300 milliseconds.",
+      "expectedTrigger": false,
+      "detectedTrigger": false,
+      "matchedKeywords": [],
+      "correct": true,
+      "transcriptionMs": 582,
+      "sttAccurate": true
+    },
+    {
+      "id": "amb-06",
+      "category": "ambient",
+      "utterance": "We should write more unit tests for this.",
+      "transcript": "We should write more unit tests for this.",
+      "expectedTrigger": false,
+      "detectedTrigger": false,
+      "matchedKeywords": [],
+      "correct": true,
+      "transcriptionMs": 1329,
+      "sttAccurate": true
+    },
+    {
+      "id": "amb-07",
+      "category": "ambient",
+      "utterance": "The deployment pipeline is blocked on the certificate rotation.",
+      "transcript": "the deployment pipeline is blocked on the certificate rotation.",
+      "expectedTrigger": false,
+      "detectedTrigger": false,
+      "matchedKeywords": [],
+      "correct": true,
+      "transcriptionMs": 964,
+      "sttAccurate": true
+    },
+    {
+      "id": "amb-08",
+      "category": "ambient",
+      "utterance": "Does the model accept JSON or binary input?",
+      "transcript": "Does the model accept JSON or binary input?",
+      "expectedTrigger": true,
+      "detectedTrigger": true,
+      "matchedKeywords": [
+        "accept"
+      ],
+      "correct": true,
+      "transcriptionMs": 708,
+      "sttAccurate": true
+    },
+    {
+      "id": "amb-09",
+      "category": "ambient",
+      "utterance": "We need to confirm the schema before shipping.",
+      "transcript": "We need to confirm the schema before shipping.",
+      "expectedTrigger": true,
+      "detectedTrigger": true,
+      "matchedKeywords": [
+        "confirm"
+      ],
+      "correct": true,
+      "transcriptionMs": 1139,
+      "sttAccurate": true
+    },
+    {
+      "id": "amb-10",
+      "category": "ambient",
+      "utterance": "Yeah, I was thinking about that too.",
+      "transcript": "Yeah, I was thinking about that too.",
+      "expectedTrigger": true,
+      "detectedTrigger": true,
+      "matchedKeywords": [
+        "yeah"
+      ],
+      "correct": true,
+      "transcriptionMs": 1432,
+      "sttAccurate": true
+    },
+    {
+      "id": "amb-11",
+      "category": "ambient",
+      "utterance": "I'll approve the PR after the review.",
+      "transcript": "[ERROR: AbortError: The operation was aborted.]",
+      "expectedTrigger": true,
+      "detectedTrigger": false,
+      "matchedKeywords": [],
+      "correct": false,
+      "transcriptionMs": 0,
+      "sttAccurate": false
+    },
+    {
+      "id": "amb-12",
+      "category": "ambient",
+      "utterance": "The tests don't accept null values right now.",
+      "transcript": "The tests don't accept null values right now.",
+      "expectedTrigger": true,
+      "detectedTrigger": true,
+      "matchedKeywords": [
+        "accept"
+      ],
+      "correct": true,
+      "transcriptionMs": 1401,
+      "sttAccurate": true
+    },
+    {
+      "id": "ctx-01",
+      "category": "context-false-positive",
+      "utterance": "Yes, but I'm not sure we should do that.",
+      "transcript": "Yes, but I'm not sure we should do that.",
+      "expectedTrigger": false,
+      "detectedTrigger": true,
+      "matchedKeywords": [
+        "yes"
+      ],
+      "correct": false,
+      "transcriptionMs": 1420,
+      "sttAccurate": true
+    },
+    {
+      "id": "ctx-02",
+      "category": "context-false-positive",
+      "utterance": "Yeah, that's what I'm worried about.",
+      "transcript": "Yeah, that's what I'm worried about.",
+      "expectedTrigger": false,
+      "detectedTrigger": true,
+      "matchedKeywords": [
+        "yeah"
+      ],
+      "correct": false,
+      "transcriptionMs": 561,
+      "sttAccurate": true
+    },
+    {
+      "id": "ctx-03",
+      "category": "context-false-positive",
+      "utterance": "Not yet, we need to wait.",
+      "transcript": "Not yet, we need to wait.",
+      "expectedTrigger": false,
+      "detectedTrigger": false,
+      "matchedKeywords": [],
+      "correct": true,
+      "transcriptionMs": 513,
+      "sttAccurate": true
+    },
+    {
+      "id": "ctx-04",
+      "category": "context-false-positive",
+      "utterance": "Yes, the question is whether to confirm before or after.",
+      "transcript": "Yes, the question is whether to confirm before or after.",
+      "expectedTrigger": false,
+      "detectedTrigger": true,
+      "matchedKeywords": [
+        "yes",
+        "confirm"
+      ],
+      "correct": false,
+      "transcriptionMs": 1880,
+      "sttAccurate": true
+    },
+    {
+      "id": "ctx-05",
+      "category": "context-false-positive",
+      "utterance": "Yeah but that won't work with the current architecture.",
+      "transcript": "Yeah, but that won't work with the current architecture.",
+      "expectedTrigger": false,
+      "detectedTrigger": true,
+      "matchedKeywords": [
+        "yeah"
+      ],
+      "correct": false,
+      "transcriptionMs": 558,
+      "sttAccurate": true
+    },
+    {
+      "id": "mw-01",
+      "category": "magic-word",
+      "utterance": "Alpha.",
+      "transcript": "Alpha",
+      "expectedTrigger": true,
+      "detectedTrigger": true,
+      "matchedKeywords": [
+        "alpha"
+      ],
+      "correct": true,
+      "transcriptionMs": 1075,
+      "sttAccurate": true
+    },
+    {
+      "id": "mw-02",
+      "category": "magic-word",
+      "utterance": "Bravo.",
+      "transcript": "Bravo.",
+      "expectedTrigger": true,
+      "detectedTrigger": true,
+      "matchedKeywords": [
+        "bravo"
+      ],
+      "correct": true,
+      "transcriptionMs": 486,
+      "sttAccurate": true
+    },
+    {
+      "id": "mw-03",
+      "category": "magic-word",
+      "utterance": "Charlie, stop.",
+      "transcript": "Charlie, stop.",
+      "expectedTrigger": true,
+      "detectedTrigger": true,
+      "matchedKeywords": [
+        "charlie"
+      ],
+      "correct": true,
+      "transcriptionMs": 1619,
+      "sttAccurate": true
+    },
+    {
+      "id": "mw-04",
+      "category": "magic-word",
+      "utterance": "Delta, pause.",
+      "transcript": "DeltaPause.",
+      "expectedTrigger": true,
+      "detectedTrigger": false,
+      "matchedKeywords": [],
+      "correct": false,
+      "transcriptionMs": 491,
+      "sttAccurate": false
+    },
+    {
+      "id": "mw-05",
+      "category": "magic-word",
+      "utterance": "Echo, what is the status?",
+      "transcript": "Echo, what is the status?",
+      "expectedTrigger": true,
+      "detectedTrigger": true,
+      "matchedKeywords": [
+        "echo"
+      ],
+      "correct": true,
+      "transcriptionMs": 548,
+      "sttAccurate": true
+    },
+    {
+      "id": "mw-06",
+      "category": "magic-word",
+      "utterance": "Bravo, fork this process.",
+      "transcript": "Bravo, fork this process.",
+      "expectedTrigger": true,
+      "detectedTrigger": true,
+      "matchedKeywords": [
+        "bravo"
+      ],
+      "correct": true,
+      "transcriptionMs": 1478,
+      "sttAccurate": true
+    },
+    {
+      "id": "mwa-01",
+      "category": "magic-word-ambient",
+      "utterance": "The alpha version ships next week.",
+      "transcript": "The alpha version ships next week.",
+      "expectedTrigger": true,
+      "detectedTrigger": true,
+      "matchedKeywords": [
+        "alpha"
+      ],
+      "correct": true,
+      "transcriptionMs": 1761,
+      "sttAccurate": true
+    },
+    {
+      "id": "mwa-02",
+      "category": "magic-word-ambient",
+      "utterance": "Our team is delta-v testing the new pipeline.",
+      "transcript": "Our team is Delta V testing the new pipeline.",
+      "expectedTrigger": true,
+      "detectedTrigger": true,
+      "matchedKeywords": [
+        "delta"
+      ],
+      "correct": true,
+      "transcriptionMs": 915,
+      "sttAccurate": true
+    },
+    {
+      "id": "mwa-03",
+      "category": "magic-word-ambient",
+      "utterance": "The echo chamber in this organization is a real problem.",
+      "transcript": "[ERROR: AbortError: The operation was aborted.]",
+      "expectedTrigger": true,
+      "detectedTrigger": false,
+      "matchedKeywords": [],
+      "correct": false,
+      "transcriptionMs": 0,
+      "sttAccurate": false
+    },
+    {
+      "id": "mwa-04",
+      "category": "magic-word-ambient",
+      "utterance": "We should run the bravo environment next.",
+      "transcript": "we should run the Bravo environment next.",
+      "expectedTrigger": true,
+      "detectedTrigger": true,
+      "matchedKeywords": [
+        "bravo"
+      ],
+      "correct": true,
+      "transcriptionMs": 1179,
+      "sttAccurate": true
+    },
+    {
+      "id": "mwa-05",
+      "category": "magic-word-ambient",
+      "utterance": "The deployment script has a charlie foxtrot in it.",
+      "transcript": "The deployment script has a Charlie Fox straw in it.",
+      "expectedTrigger": true,
+      "detectedTrigger": true,
+      "matchedKeywords": [
+        "charlie"
+      ],
+      "correct": true,
+      "transcriptionMs": 1546,
+      "sttAccurate": true
+    },
+    {
+      "id": "mwa-06",
+      "category": "magic-word-ambient",
+      "utterance": "This is our production server configuration.",
+      "transcript": "This is our production server configuration.",
+      "expectedTrigger": false,
+      "detectedTrigger": false,
+      "matchedKeywords": [],
+      "correct": true,
+      "transcriptionMs": 770,
+      "sttAccurate": true
+    },
+    {
+      "id": "mwa-07",
+      "category": "magic-word-ambient",
+      "utterance": "Let's review the pull request queue.",
+      "transcript": "Let's review the pull request queue.",
+      "expectedTrigger": false,
+      "detectedTrigger": false,
+      "matchedKeywords": [],
+      "correct": true,
+      "transcriptionMs": 1139,
+      "sttAccurate": true
+    }
+  ]
+}

@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Decision ORCH-A-03 — Test tiers: deterministic subset pre-merge, everything postsubmit</title>
+<style>
+  :root { --ink:#1a1a1a; --mut:#666; --line:#e2e2e2; --good:#0a7d33; --bad:#b00020; --accent:#0b5cad; --bg:#fafafa; }
+  * { box-sizing:border-box; }
+  body { font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; color:var(--ink); max-width:920px; margin:2.2rem auto; padding:0 1.2rem; background:var(--bg); }
+  h1 { font-size:1.55rem; margin:0 0 .2rem; }
+  h2 { font-size:1.12rem; margin:1.8rem 0 .5rem; border-bottom:2px solid var(--line); padding-bottom:.25rem; }
+  .meta { color:var(--mut); font-size:.86rem; margin-bottom:1.2rem; }
+  .pill { display:inline-block; padding:.08rem .5rem; border-radius:999px; font-size:.75rem; font-weight:600; background:#e7f1fb; color:var(--accent); }
+  table { border-collapse:collapse; width:100%; margin:.6rem 0; font-size:.92rem; }
+  th,td { border:1px solid var(--line); padding:.45rem .6rem; text-align:left; vertical-align:top; }
+  th { background:#f0f0f0; }
+  code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  pre { background:#0f1115; color:#e6e6e6; padding:.9rem 1.1rem; border-radius:8px; overflow:auto; font-size:.82rem; line-height:1.45; }
+  .good { color:var(--good); font-weight:600; } .bad { color:var(--bad); font-weight:600; }
+  .box { background:#fff; border:1px solid var(--line); border-radius:8px; padding:.9rem 1.1rem; margin:.7rem 0; }
+  .alt { border-left:4px solid var(--line); padding-left:.9rem; margin:.6rem 0; }
+  .alt.win { border-left-color:var(--good); } .alt.lose { border-left-color:var(--bad); }
+  .warn { background:#fff7e6; border:1px solid #ffd591; border-radius:8px; padding:.7rem 1rem; }
+</style>
+</head>
+<body>
+<h1>Test tiers: <span style="color:#0b5cad">a deterministic subset gates the merge; postsubmit runs everything</span></h1>
+<div class="meta"><span class="pill">ORCH-A-03</span> &nbsp; Panopticon V0 implementation orchestration &nbsp;·&nbsp; <code>docs/planning/06-orchestration.md §3</code> &nbsp;·&nbsp; consumes <code>04-backpressure.md</code></div>
+
+<h2>The rule that makes an optimistic subset legitimate</h2>
+<p>An agent may gate the merge on <strong>only a subset</strong> of a ticket's checks <em>iff</em> the
+<strong>postsubmit tier runs every check</strong>, so nothing is permanently skipped. The pre-merge subset is
+the cheapest set that honestly proves the deterministic invariants; the slow, real-world, non-deterministic
+checks move to postsubmit where they belong — never deleted.</p>
+
+<h2>Decision — three tiers mapped onto the 74-gate matrix</h2>
+<div class="box">
+<table>
+<tr><th>Tier</th><th>When</th><th>Which matrix methods</th><th>Why here</th></tr>
+<tr><td><strong>Pre-build (probe gate)</strong></td><td>before a dependent ticket's worktree is even created</td><td>the 13 <code>P-*</code>/<code>A-*</code> probe gates (real-API)</td><td>"Validate before build." A blocking probe must be green (recorded under <code>artifacts/smithering/probes/</code>) before any code trusts that API. The pipeline is <em>paused</em> exactly here today.</td></tr>
+<tr><td><strong>Pre-merge (per ticket, blocks the land)</strong></td><td>on the rebased lane tip, every time</td><td><code>unit_test</code> · <code>integration_test</code> · <code>schema</code> · <code>tsc --noEmit</code> · the walking-skeleton smoke · architecture lint · the redaction/secret unit test · <strong>hermetic replay-driven e2e</strong> (doubles, no net/mic/keys)</td><td>Fast, deterministic, hermetic (record-replay, temp-0). Runs on every land in seconds. Each carries its recorded red-before-green.</td></tr>
+<tr><td><strong>Postsubmit (on <code>main</code>, full suite)</strong></td><td>after each land + on an integration cadence</td><td><strong>every</strong> pre-merge check <em>plus</em> live <code>e2e_test</code> (real stack) · <code>eval</code> (corpus recall/FP) · latency <strong>benchmarks</strong> (regression baselines) · durability-restart · whole-session live secret-scan · <code>manual_check</code></td><td>Needs real credentials / hardware / time / non-determinism. Cannot honestly run per-PR, so it runs here — and it runs <em>everything</em>, which is what licenses the pre-merge subset.</td></tr>
+</table>
+</div>
+
+<h2>Partition rationale (cheapest method that actually proves it — matrix rule 2)</h2>
+<ul>
+<li><strong>Deterministic invariant / logic / contract</strong> → a headless <code>bun test</code> is the honest
+gate, so it sits <strong>pre-merge</strong> (priority ladder, dispatch invariant, 15-word guard, collision
+guard, trace schema, shell classifier, hook-intercept on doubles).</li>
+<li><strong>A real-world property</strong> (measured latency, recall on a corpus, durability across a real
+restart, no-screen hands-free, real third-party behavior) → a mocked unit <em>cannot</em> prove it, so it sits
+<strong>postsubmit / pre-build</strong> (AC10.1 earcon ≤300 ms, AC10.2 p50/p95, AC3.4 recall/FP, AC15.3
+recovery, AC5.1 no-screen, every <code>P-*</code>).</li>
+<li>The matrix's <strong>AND</strong> (unit <em>and</em> e2e) is preserved across tiers: the unit half gates the
+merge, the e2e half gates the integration on <code>main</code>. Deleting either tier must still leave us
+fairly confident — exactly the bar.</li>
+</ul>
+
+<h2>Alternatives</h2>
+<div class="alt lose"><strong>Run the full matrix (incl. live e2e/eval/benchmarks) pre-merge.</strong>
+<span class="bad">Rejected.</span> Non-deterministic and credential/hardware-bound; would make every land flaky
+and slow, and can't run hermetically in the lane.</div>
+<div class="alt lose"><strong>Pre-merge subset with no postsubmit backstop.</strong>
+<span class="bad">Rejected.</span> Silently skips the real-world gates forever — the matrix's whole point is that
+those properties are the ones a mock can't prove.</div>
+<div class="alt win"><strong>Deterministic subset pre-merge, full suite postsubmit, probes pre-build (chosen).</strong>
+<span class="good">Chosen.</span> Honors the optimistic-subset rule, keeps lands fast and deterministic, and
+guarantees every gate eventually runs against the real thing.</div>
+
+<h2>Verification</h2>
+<ul>
+<li><strong>Tier-coverage test:</strong> assert every blocking row in <code>04-backpressure.md</code> is assigned
+to exactly one tier and that the union of pre-merge ∪ postsubmit = the full blocking set.
+<span class="bad">RBG:</span> drop a row from postsubmit while it's not in pre-merge → coverage test finds the
+hole → fails.</li>
+<li><strong>No-skip test:</strong> assert postsubmit ⊇ pre-merge (everything gated optimistically also runs in
+full). <span class="bad">RBG:</span> remove a pre-merge check from postsubmit → superset assertion fails.</li>
+<li><strong>Probe-precedence test:</strong> a ticket whose dependency's blocking probe is unrun/failed cannot
+start. <span class="bad">RBG:</span> mark <code>P-CUE</code> failed → assert <code>cue-adapter-and-policies</code>
+is not scheduled.</li>
+</ul>
+
+<div class="warn"><strong>Today's reality (round-1 §22):</strong> 3 of 4 blocking probes failed and the pipeline
+is paused at the pre-build tier. No Cue-dependent or hot-loop-LLM-dependent ticket may enter pre-merge until
+P-ASR-Deepgram, A-LLM-SUB, P-SEAM and P-TTS-streaming go green. This is the tier system working as designed.</div>
+</body>
+</html>

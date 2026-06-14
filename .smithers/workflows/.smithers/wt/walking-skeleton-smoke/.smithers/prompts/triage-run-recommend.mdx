@@ -1,0 +1,54 @@
+# Recommend the next move
+
+You are the final step of the "triage one Smithers run" pipeline. You have the
+deterministic evidence and a diagnosis of the most likely root cause. Decide the
+single best next action for this run and give the exact command to run. Plan
+only — do not execute anything.
+
+## Run under triage
+
+Run id: {props.runId}
+
+## Evidence (run state + event tail)
+
+{JSON.stringify(props.evidence, null, 2)}
+
+## Diagnosis
+
+{JSON.stringify(props.diagnosis, null, 2)}
+
+## Choose ONE action
+
+- **fix** — the run failed because of a real bug in the code or the workflow
+  (a task errored, a command exited non-zero, an output failed validation). The
+  underlying defect must be changed before the run can succeed. The `command`
+  should point at the follow-up (for example a `bunx smithers-orchestrator node
+  <runId> <nodeId>` to inspect the failing node, then an edit-and-`retry-task`).
+- **rewind** — earlier frames were fine but the run went off the rails after a
+  specific point; roll back to a known-good frame with
+  `bunx smithers-orchestrator rewind <runId>` (target the frame just before the
+  failure).
+- **retry** — the failure looks transient (a flaky agent, a heartbeat timeout, a
+  rate limit) and re-running the failing node should clear it:
+  `bunx smithers-orchestrator retry-task <runId> --node <nodeId>`.
+- **escalate** — the run is *stuck* waiting on a human (an `Approval` or
+  `HumanTask`), or the right call is genuinely a judgement a person must make.
+  The `command` should clear or surface the gate (for example
+  `bunx smithers-orchestrator approve <runId> --node <nodeId>` or
+  `bunx smithers-orchestrator human inbox`).
+
+## Produce
+
+1. **recommendedAction** — exactly one of `fix`, `rewind`, `retry`, `escalate`.
+2. **command** — the exact CLI command to run next. Fill in the real `<runId>`
+   and the specific failing/blocking `<nodeId>` from the evidence; do not leave
+   placeholders if the evidence names the node.
+3. **rationale** — why this action over the alternatives, tied back to the
+   diagnosis and confidence. If confidence was `low`, prefer `escalate` or a
+   read-only inspect command over a destructive `rewind`.
+
+Pick the safest action that actually moves the run forward. When in doubt,
+inspect before you mutate.
+
+REQUIRED OUTPUT:
+{props.schema}

@@ -1,0 +1,22 @@
+{
+  "ok": true,
+  "thresholdS": 0.5,
+  "text": "Ready. I'm listening and I'll let you know when I finish thinking.",
+  "latenciesS": [
+    1.3887,
+    1.2055,
+    1.2131
+  ],
+  "meanS": 1.2691,
+  "minS": 1.2055,
+  "maxS": 1.3887,
+  "passesThreshold": false,
+  "ttsPath": "evidence/audio/tts_sample.wav",
+  "fileSizeBytes": 150858,
+  "zcr": {
+    "mean": 2266,
+    "std": 3272,
+    "cv": 1.4436,
+    "nFrames": 58
+  }
+}

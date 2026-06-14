@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Decision D-DD-21 — Mute/unmute words "Curtain" / "Daybreak"</title>
+<style>
+  :root { --ink:#1a1a1a; --mut:#666; --line:#e2e2e2; --good:#0a7d33; --bad:#b00020; --accent:#0b5cad; --bg:#fafafa; }
+  * { box-sizing:border-box; }
+  body { font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; color:var(--ink); max-width:920px; margin:2.2rem auto; padding:0 1.2rem; background:var(--bg); }
+  h1 { font-size:1.55rem; margin:0 0 .2rem; }
+  h2 { font-size:1.12rem; margin:1.8rem 0 .5rem; border-bottom:2px solid var(--line); padding-bottom:.25rem; }
+  .meta { color:var(--mut); font-size:.86rem; margin-bottom:1.2rem; }
+  .pill { display:inline-block; padding:.08rem .5rem; border-radius:999px; font-size:.75rem; font-weight:600; background:#e7f1fb; color:var(--accent); }
+  table { border-collapse:collapse; width:100%; margin:.6rem 0; font-size:.92rem; }
+  th,td { border:1px solid var(--line); padding:.45rem .6rem; text-align:left; vertical-align:top; }
+  th { background:#f0f0f0; }
+  code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  .good { color:var(--good); font-weight:600; } .bad { color:var(--bad); font-weight:600; }
+  .box { background:#fff; border:1px solid var(--line); border-radius:8px; padding:.9rem 1.1rem; margin:.7rem 0; }
+  .alt { border-left:4px solid var(--line); padding-left:.9rem; margin:.6rem 0; }
+  .alt.win { border-left-color:var(--good); } .alt.lose { border-left-color:var(--bad); }
+  .warn { background:#fff7e6; border:1px solid #ffd591; border-radius:8px; padding:.7rem 1rem; }
+</style>
+</head>
+<body>
+<h1>Mute / unmute words: <span style="color:#0b5cad">"Curtain"</span> / <span style="color:#0b5cad">"Daybreak"</span></h1>
+<div class="meta"><span class="pill">D-DD-21</span> &nbsp; Panopticon V0 design — final pass &nbsp;·&nbsp; closes the <code>[mute word]</code> placeholder &nbsp;·&nbsp; <code>docs/planning/02-design.md §2.2</code></div>
+
+<h2>The gap</h2>
+<p>The PRD and the design draft carried a <code>[mute word]</code> placeholder and, in the command
+table, the literal words <strong>"Mute"</strong> and <strong>"Listen"</strong>. These are always-hot
+words (live at any moment), yet <code>design-art.md §4</code> explicitly bans common conversational
+words for exactly this slot — "listen, I think…" and "can you mute that" occur constantly in team
+speech and would misfire.</p>
+
+<h2>Decision</h2>
+<div class="box">
+Mute = <strong>"Curtain"</strong>, Unmute = <strong>"Daybreak"</strong>. Both are
+<strong>provisional pending P-CUE acoustic validation</strong> against the team's actual vocabulary
+and against "Panop"/"Abort"/all active callsigns (collision guard, Metaphone + phoneme-Levenshtein ≤2).
+</div>
+
+<h2>Selection criteria (from design-art §1/§4)</h2>
+<table>
+<tr><th>Criterion</th><th>"Curtain" (mute)</th><th>"Daybreak" (unmute)</th></tr>
+<tr><td>Rare in technical conversation</td><td class="good">yes</td><td class="good">yes</td></tr>
+<tr><td>Short (1–2 syllables)</td><td class="good">2</td><td class="good">2</td></tr>
+<tr><td>Plosive-leading onset</td><td class="good">/k/</td><td class="good">/d/</td></tr>
+<tr><td>Distinct from wake/panic/callsigns</td><td class="good">yes</td><td class="good">yes</td></tr>
+<tr><td>Memorable / paired metaphor</td><td colspan="2" class="good">curtain drawn = not listening · day breaks = listening resumes</td></tr>
+</table>
+
+<h2>Alternatives</h2>
+<div class="alt lose"><strong>"Mute" / "Listen" (status quo).</strong> <span class="bad">Rejected:</span>
+both appear in ordinary speech; "Listen, …" is a near-ubiquitous discourse marker.</div>
+<div class="alt"><strong>"Eclipse" / "Sunrise".</strong> Good paired metaphor, but "Eclipse" has a
+vowel onset (weaker keyword anchor than a plosive).</div>
+<div class="alt win"><strong>"Curtain" / "Daybreak" (chosen).</strong> Both plosive-leading, rare,
+paired. <span class="good">Chosen</span>, pending the acoustic probe.</div>
+
+<div class="warn"><strong>Open:</strong> word choice is principled but <strong>not final</strong>
+until P-CUE runs the acoustic/collision validation against the real team vocabulary. If either
+collides, substitute another plosive-leading rare word from the same metaphor family.</div>
+
+<h2>Verification</h2>
+<ul>
+<li><strong>Unit:</strong> collision-guard test asserts "Curtain"/"Daybreak" pass vs. wake/panic/callsigns;
+<span class="bad">RBG:</span> inject "Listen" → flagged against the conversational corpus → fails.</li>
+<li><strong>E2e:</strong> speak each in isolation → documented effect; speak near-homophones in casual
+talk → no misfire.</li>
+<li><strong>Onboarding:</strong> the consent line now says "Say 'Curtain' to pause" (was <code>[mute word]</code>).</li>
+</ul>
+</body>
+</html>
