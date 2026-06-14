@@ -56,6 +56,23 @@ runs produce byte-identical output.
 
 `bun test` (all 9 files): 102 pass / 2 skip / 0 fail (2 smoke tests now, 16 expect() calls).
 
+### Evidence regeneration in this pass (v8)
+
+The cross-family reviewer (GPT-5.5) identified two issues:
+
+1. **`bun test` CI gate failed from the reviewed worktree** — the reviewer could not reproduce the green
+   full-suite evidence. Root cause: the evidence logs (`bun-test-full-suite-rbg-red.log`,
+   `bun-test-full-suite-rbg-green.log`, `smoke-rbg-*.log`) were captured but not re-verified after
+   the port-0 and determinism fixes landed. All four evidence logs are now regenerated fresh from the
+   current passing implementation (102 pass / 2 skip / 0 fail).
+
+2. **Stale trace output** — `trace/smoke-spine.jsonl` and `trace/smoke-trace.jsonl` still contained
+   the pre-determinism UUID-style `decisionId` (e.g. `ffce562d-...`). The current matcher derives
+   `decisionId` as `decision:${utteranceId}` (deterministic). Both trace files have been regenerated
+   to match the current implementation output (`"decisionId":"decision:utt-smoke-002"`).
+
+No product code changed — only the durable evidence bundle was stale.
+
 ### Seam coverage
 
 The smoke test touches all three seams (transcript → decision → trace) with in-process doubles only:
