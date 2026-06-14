@@ -4,6 +4,6 @@ bun test v1.3.14 (0d9b296a)
  2 skip
  0 fail
  288 expect() calls
-Ran 104 tests across 9 files. [3.43s]
+Ran 104 tests across 9 files. [3.41s]
 
-exitCode=0
+EXIT:0

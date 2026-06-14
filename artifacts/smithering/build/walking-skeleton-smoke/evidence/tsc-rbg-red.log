@@ -1,4 +1,4 @@
 $ tsc --noEmit
 src/__rbg_type_error.ts(1,7): error TS2322: Type 'number' is not assignable to type 'string'.
 
-exitCode=2
+EXIT:2

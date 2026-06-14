@@ -1,4 +1,4 @@
 [test]
 # CI runs: bun test (discovers all test files including poc integration tests)
-# POC tests in artifacts/smithering/poc/ use fixed HTTP ports but pass in clean CI environments.
+# POC HTTP tests use ephemeral ports and skip if the host forbids local socket binding.
 # To run the smoke test explicitly: bun test test/smoke/spine-skeleton.smoke.ts

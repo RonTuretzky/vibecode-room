@@ -1,5 +1,5 @@
-// Shared data contract — every component imports from here (ENG-T-01).
-// Final shapes evolve in the shared-types-contract ticket; this stub covers the walking skeleton.
+// Shared data contract stub for the walking skeleton.
+// Final shapes land in the shared-types-contract ticket; this file stays intentionally small.
 
 export interface TranscriptObservation {
   text: string;
@@ -24,91 +24,17 @@ export type CueDecision =
     }
   | {
       kind: "action";
-      action: DispatchedAction;
+      action: {
+        type: "spawn";
+        targetUPID: null;
+        payload: unknown;
+        correlationId: string;
+      };
       policy: string;
       decisionId: string;
       correlationId: string;
       meta: DecisionMeta;
     };
-
-export interface DispatchedAction {
-  type:
-    | "spawn"
-    | "steer"
-    | "pause"
-    | "resume"
-    | "halt"
-    | "pauseAll"
-    | "status"
-    | "setMode"
-    | "approve"
-    | "deny";
-  targetUPID: string | null;
-  payload: unknown;
-  correlationId: string;
-}
-
-// V0 ships a single dangerous run-to-completion mode (brief E7). The old
-// Safe/Explicit/Dangerous mode switching is cut — safety later comes from sandboxing the
-// whole process, not from per-action permission gating.
-export type ExecutionMode = "dangerous";
-
-export interface ToolCallContext {
-  upid: string;
-  tool: string;
-  args: unknown;
-  klass:
-    | "read"
-    | "fs-write"
-    | "fs-delete"
-    | "shell"
-    | "vcs-push"
-    | "db-mutate"
-    | "net-mutate"
-    | "unknown";
-  gateId: string;
-}
-
-export type ShellVerdict = {
-  verdict: "read-safe" | "mutating" | "unknown";
-  gated: boolean;
-  parts: { argv0: string; verdict: "read-safe" | "mutating" | "unknown"; reason: string }[];
-};
-
-export interface CredentialSource {
-  forProvider(name: string): Promise<{ token: string }>;
-}
-
-export interface ApprovalRequest {
-  upid: string;
-  gateId: string;
-  readback: string;
-  armedTimerMs: number;
-  correlationId: string;
-}
-
-export type ApprovalResolution = {
-  gateId: string;
-  decision: "approve" | "deny" | "timeout";
-  correlationId: string;
-};
-
-export interface PendingSuggestion {
-  suggestionId: string;
-  pitch: string;
-  mcqs: string[];
-  answers: string[];
-  correlationId: string;
-  expiresAt: number;
-}
-
-export interface RunEvent {
-  upid: string;
-  runId: string;
-  kind: "state" | "output" | "blocker" | "completed" | "safety" | "approval";
-  text: string;
-  seq: number;
-}
 
 export interface LogEvent {
   level: "debug" | "info" | "warn" | "error";
@@ -119,12 +45,3 @@ export interface LogEvent {
   latencyMs?: number;
   meta: Record<string, unknown>;
 }
-
-export type EarconId = string;
-export type AckId = string;
-
-export type OutputDecision =
-  | { channel: "silent" }
-  | { channel: "earcon"; id: EarconId }
-  | { channel: "ack"; id: AckId }
-  | { channel: "tts"; text: string; wordCount: number; summarized: boolean };

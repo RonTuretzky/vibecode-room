@@ -10,7 +10,7 @@ end-to-end slice (ENG-T-06) that becomes the repo smoke test. All seams use in-p
 
 | File | Role |
 |---|---|
-| `src/types.ts` | Shared data contract stub — `TranscriptObservation`, `CueDecision`, `LogEvent`, supporting types |
+| `src/types.ts` | Minimal shared data contract stub — exports `TranscriptObservation`, `CueDecision`, and `LogEvent` |
 | `src/replay/harness.ts` | Record-replay reader — loads a JSONL fixture from disk, yields `TranscriptObservation` objects |
 | `src/matcher.ts` | Trivial deterministic matcher — TextCue-equivalent wake-word match; authority in deterministic code, never the LLM |
 | `src/obs/trace.ts` | `TraceProcessor` — `process(obs, decision)` emits ONE `spine.action` LogEvent per action decision (REQ-16) |
@@ -243,6 +243,17 @@ the failing assertion, expected/received values, and test name.
   same assertion failure, 101 pass / 2 skip / 1 fail across 9 files, EXIT:1
 
 All gates remain green: `bun test` 102 pass / 2 skip / 0 fail, `tsc --noEmit` exit 0.
+
+### Implementer cleanup in this pass (v15)
+
+The walking-skeleton ticket only owns the first minimal type stub. `src/types.ts` was narrowed back
+to the ticket scope: it exports only `TranscriptObservation`, `CueDecision`, and `LogEvent`; the
+full shared contract and removed V0 safety/mode types are left to later tickets rather than being
+predeclared here.
+
+The durable RBG logs were regenerated from the current implementation after this cleanup:
+`smoke-rbg-*`, `tsc-rbg-*`, `bun-test-full-suite-rbg-*`, and `secret-scan-rbg-*`. Current gates:
+`bun test` 102 pass / 2 skip / 0 fail; `tsc --noEmit` exit 0; bundle secret scan clean.
 
 ## Dependencies
 

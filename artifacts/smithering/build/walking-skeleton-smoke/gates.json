@@ -5,8 +5,8 @@
     "tier": "pre-merge",
     "status": "passed",
     "rbgRecorded": true,
-    "redRunPath": "artifacts/smithering/build/walking-skeleton-smoke/evidence/smoke-rbg-red.log",
-    "greenRunPath": "artifacts/smithering/build/walking-skeleton-smoke/evidence/smoke-rbg-green.log",
+    "redRunPath": "evidence/smoke-rbg-red.log",
+    "greenRunPath": "evidence/smoke-rbg-green.log",
     "command": "bun test test/smoke/spine-skeleton.smoke.ts",
     "notes": "v9 fix: updated fixture text from 'daybreak' to 'panopticon' to match current matcher wake words. RBG red: BREAK_MATCHER=1 forces all decisions to 'pass' → 0 trace lines → expect(emitted.length).toBe(1) fails (Expected: 1, Received: 0). RBG green: normal run → 2 tests pass / 16 assertions: (1) exactly one trace line with action event + deterministic decisionId, (2) three replay runs produce byte-identical output."
   },
@@ -16,8 +16,8 @@
     "tier": "pre-merge",
     "status": "passed",
     "rbgRecorded": true,
-    "redRunPath": "artifacts/smithering/build/walking-skeleton-smoke/evidence/tsc-rbg-red.log",
-    "greenRunPath": "artifacts/smithering/build/walking-skeleton-smoke/evidence/tsc-rbg-green.log",
+    "redRunPath": "evidence/tsc-rbg-red.log",
+    "greenRunPath": "evidence/tsc-rbg-green.log",
     "notes": "RBG red: temporarily added src/__rbg_type_error.ts assigning a number to a string → TS2322 error, exit 2. RBG green: temp type-error file removed → exit 0 (clean pass). CI runs bun run typecheck."
   },
   {
@@ -26,8 +26,8 @@
     "tier": "pre-merge",
     "status": "passed",
     "rbgRecorded": true,
-    "redRunPath": "artifacts/smithering/build/walking-skeleton-smoke/evidence/secret-scan-rbg-red.log",
-    "greenRunPath": "artifacts/smithering/build/walking-skeleton-smoke/evidence/secret-scan-rbg-green.log",
+    "redRunPath": "evidence/secret-scan-rbg-red.log",
+    "greenRunPath": "evidence/secret-scan-rbg-green.log",
     "scope": "src/** test/** fixtures/** artifacts/smithering/build/walking-skeleton-smoke/** (no exclusions)",
     "notes": "RBG red: neuter KEY_PATTERNS=[] in core.ts → bun test src/orchestration/secret-scan.test.ts: 4 detection tests fail (scanner catches nothing); all assertions use count/bool comparisons — no raw key values appear in failure output (SEC-1). RBG green: restore KEY_PATTERNS → 5 tests pass + grep over all paths (no exclusions) finds zero matches. secret-scan.test.ts assembles key-shaped test strings from runtime segments; no raw key literals in source."
   },
@@ -37,8 +37,8 @@
     "tier": "pre-merge",
     "status": "passed",
     "rbgRecorded": true,
-    "redRunPath": "artifacts/smithering/build/walking-skeleton-smoke/evidence/bun-test-full-suite-rbg-red.log",
-    "greenRunPath": "artifacts/smithering/build/walking-skeleton-smoke/evidence/bun-test-full-suite-rbg-green.log",
+    "redRunPath": "evidence/bun-test-full-suite-rbg-red.log",
+    "greenRunPath": "evidence/bun-test-full-suite-rbg-green.log",
     "command": "bun test",
     "notes": "CI runs bare `bun test` — 102 pass / 2 skip / 0 fail across 9 files. POC HTTP tests now use describe.skipIf(!_canBindSockets): in environments where port:0 binding fails (e.g., sandboxed reviewers), those blocks skip gracefully and bun test exits 0. RBG red: BREAK_MATCHER=1 bun test → smoke test fails (101 pass / 2 skip / 1 fail). RBG green: bun test → 102 pass / 2 skip / 0 fail."
   }
