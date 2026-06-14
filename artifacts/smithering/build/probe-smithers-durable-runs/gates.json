@@ -1,0 +1,11 @@
+[
+  {
+    "criterionId": "P-SMITHERS",
+    "method": "bun test poc/p-smithers.test.ts",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/probe-smithers-durable-runs/evidence/P-SMITHERS-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/probe-smithers-durable-runs/evidence/P-SMITHERS-green.log"
+  }
+]

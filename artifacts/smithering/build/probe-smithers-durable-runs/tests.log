@@ -1,0 +1,37 @@
+bun test v1.3.14 (0d9b296a)
+
+poc/p-smithers.test.ts:
+timestamp=2026-06-14T21:01:54.816Z level=INFO fiber=#5 message="Gateway run started" gateway:run=0ms runId=probe-run-alpha transport=ws triggeredBy=probe:lifecycle role=operator workflow=durable service=smithers source=user userId=probe:lifecycle resume=false connectionId=probe:lifecycle:connection
+timestamp=2026-06-14T21:01:55.142Z level=INFO fiber=#275 message="getNodeOutput completed" runId=probe-run-alpha durationMs=1.9695829999999432 nodeId=checkpoint status=produced iteration=0 rowBytes=87 service=smithers
+timestamp=2026-06-14T21:01:55.176Z level=INFO fiber=#317 message="getNodeOutput completed" runId=probe-run-alpha durationMs=0.7917080000001988 nodeId=checkpoint status=produced iteration=0 rowBytes=87 service=smithers
+timestamp=2026-06-14T21:01:55.177Z level=INFO fiber=#324 message="Gateway run started" gateway:run=1ms runId=probe-run-alpha transport=ws triggeredBy=probe:recovered role=operator workflow=durable service=smithers source=user userId=probe:recovered resume=true connectionId=probe:recovered:connection
+timestamp=2026-06-14T21:01:55.503Z level=INFO fiber=#569 message="Gateway run completed" gateway:run=0ms runId=probe-run-alpha status=finished workflow=durable service=smithers source=user
+timestamp=2026-06-14T21:01:55.529Z level=INFO fiber=#590 message="getNodeOutput completed" runId=probe-run-alpha durationMs=0.9674999999999727 nodeId=complete status=produced iteration=0 rowBytes=150 service=smithers
+timestamp=2026-06-14T21:01:55.530Z level=INFO fiber=#591 message="Gateway run started" gateway:run=0ms runId=probe-fleet-a transport=ws triggeredBy=probe:recovered role=operator workflow=durable service=smithers source=user userId=probe:recovered resume=false connectionId=probe:recovered:connection
+timestamp=2026-06-14T21:01:55.530Z level=INFO fiber=#595 message="Gateway run started" gateway:run=0ms runId=probe-fleet-b transport=ws triggeredBy=probe:recovered role=operator workflow=durable service=smithers source=user userId=probe:recovered resume=false connectionId=probe:recovered:connection
+timestamp=2026-06-14T21:01:55.530Z level=INFO fiber=#599 message="Gateway run started" gateway:run=0ms runId=probe-fleet-c transport=ws triggeredBy=probe:recovered role=operator workflow=durable service=smithers source=user userId=probe:recovered resume=false connectionId=probe:recovered:connection
+timestamp=2026-06-14T21:01:55.531Z level=INFO fiber=#603 message="Gateway run started" gateway:run=0ms runId=probe-fleet-d transport=ws triggeredBy=probe:recovered role=operator workflow=durable service=smithers source=user userId=probe:recovered resume=false connectionId=probe:recovered:connection
+timestamp=2026-06-14T21:01:55.531Z level=INFO fiber=#607 message="Gateway run started" gateway:run=0ms runId=probe-fleet-e transport=ws triggeredBy=probe:recovered role=operator workflow=durable service=smithers source=user userId=probe:recovered resume=false connectionId=probe:recovered:connection
+timestamp=2026-06-14T21:01:55.828Z level=INFO fiber=#1552 message="Gateway run started" gateway:run=0ms runId=probe-fleet-a transport=ws triggeredBy=probe:recovered role=operator workflow=durable service=smithers source=user userId=probe:recovered resume=true connectionId=probe:recovered:connection
+timestamp=2026-06-14T21:01:55.856Z level=INFO fiber=#1595 message="Gateway run started" gateway:run=0ms runId=probe-fleet-b transport=ws triggeredBy=probe:recovered role=operator workflow=durable service=smithers source=user userId=probe:recovered resume=true connectionId=probe:recovered:connection
+timestamp=2026-06-14T21:01:55.858Z level=INFO fiber=#1618 message="Gateway run started" gateway:run=0ms runId=probe-fleet-c transport=ws triggeredBy=probe:recovered role=operator workflow=durable service=smithers source=user userId=probe:recovered resume=true connectionId=probe:recovered:connection
+timestamp=2026-06-14T21:01:55.860Z level=INFO fiber=#1641 message="Gateway run started" gateway:run=0ms runId=probe-fleet-d transport=ws triggeredBy=probe:recovered role=operator workflow=durable service=smithers source=user userId=probe:recovered resume=true connectionId=probe:recovered:connection
+timestamp=2026-06-14T21:01:55.861Z level=INFO fiber=#1664 message="Gateway run started" gateway:run=0ms runId=probe-fleet-e transport=ws triggeredBy=probe:recovered role=operator workflow=durable service=smithers source=user userId=probe:recovered resume=true connectionId=probe:recovered:connection
+timestamp=2026-06-14T21:01:56.030Z level=INFO fiber=#2655 message="getNodeOutput completed" runId=probe-fleet-a durationMs=0.6570420000000468 nodeId=complete status=produced iteration=0 rowBytes=141 service=smithers
+timestamp=2026-06-14T21:01:56.057Z level=INFO fiber=#2898 message="getNodeOutput completed" runId=probe-fleet-b durationMs=0.4478750000000673 nodeId=complete status=produced iteration=0 rowBytes=141 service=smithers
+timestamp=2026-06-14T21:01:56.058Z level=INFO fiber=#2915 message="getNodeOutput completed" runId=probe-fleet-d durationMs=0.3847910000001775 nodeId=complete status=produced iteration=0 rowBytes=141 service=smithers
+timestamp=2026-06-14T21:01:56.087Z level=INFO fiber=#2952 message="getNodeOutput completed" runId=probe-fleet-c durationMs=0.91274999999996 nodeId=complete status=produced iteration=0 rowBytes=141 service=smithers
+timestamp=2026-06-14T21:01:56.088Z level=INFO fiber=#2965 message="getNodeOutput completed" runId=probe-fleet-e durationMs=0.5520420000000286 nodeId=complete status=produced iteration=0 rowBytes=141 service=smithers
+timestamp=2026-06-14T21:01:56.088Z level=INFO fiber=#2966 message="Gateway run started" gateway:run=0ms runId=probe-run-child-seeded transport=ws triggeredBy=probe:recovered role=operator workflow=durable service=smithers source=user userId=probe:recovered resume=false connectionId=probe:recovered:connection
+timestamp=2026-06-14T21:01:56.127Z level=INFO fiber=#3016 message="Gateway run completed" gateway:run=0ms runId=probe-fleet-a status=finished workflow=durable service=smithers source=user
+timestamp=2026-06-14T21:01:56.153Z level=INFO fiber=#3087 message="Gateway run completed" gateway:run=0ms runId=probe-fleet-b status=finished workflow=durable service=smithers source=user
+timestamp=2026-06-14T21:01:56.157Z level=INFO fiber=#3091 message="Gateway run completed" gateway:run=0ms runId=probe-fleet-c status=finished workflow=durable service=smithers source=user
+timestamp=2026-06-14T21:01:56.159Z level=INFO fiber=#3095 message="Gateway run completed" gateway:run=0ms runId=probe-fleet-e status=finished workflow=durable service=smithers source=user
+timestamp=2026-06-14T21:01:56.161Z level=INFO fiber=#3099 message="Gateway run completed" gateway:run=0ms runId=probe-fleet-d status=finished workflow=durable service=smithers source=user
+timestamp=2026-06-14T21:01:56.198Z level=INFO fiber=#3171 message="getNodeOutput completed" runId=probe-run-child-seeded durationMs=1.0375410000001466 nodeId=checkpoint status=produced iteration=0 rowBytes=103 service=smithers
+
+ 1 pass
+ 0 fail
+ 54 expect() calls
+Ran 1 test across 1 file. [2.26s]
+RBG_GREEN_EXIT_STATUS=0
