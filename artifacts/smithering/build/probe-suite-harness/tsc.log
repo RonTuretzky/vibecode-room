@@ -1,0 +1,4 @@
+command: bunx tsc --noEmit
+status: passed
+command: bunx tsc --noEmit --strict --target ESNext --module ESNext --moduleResolution bundler --lib ESNext,DOM --types bun poc/harness.ts poc/harness.test.ts
+status: passed

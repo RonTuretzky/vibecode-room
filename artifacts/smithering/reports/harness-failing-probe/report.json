@@ -1,0 +1,30 @@
+{
+  "probeId": "harness-failing-probe",
+  "status": "failed",
+  "summary": "probe assertion failed",
+  "correlationId": "probe-harness-test-failure",
+  "startedAt": "2026-06-14T20:49:06.209Z",
+  "finishedAt": "2026-06-14T20:49:06.209Z",
+  "assertions": [
+    {
+      "id": "green-failure",
+      "behavior": "real API eventually returns the relied-on value",
+      "phase": "red",
+      "status": "failed-as-expected",
+      "error": "red run failed as expected"
+    },
+    {
+      "id": "green-failure",
+      "behavior": "real API eventually returns the relied-on value",
+      "phase": "green",
+      "status": "failed",
+      "error": "real API returned an incompatible shape"
+    }
+  ],
+  "reportDir": "artifacts/smithering/reports/harness-failing-probe",
+  "secretScan": {
+    "passed": true,
+    "findings": []
+  },
+  "meta": {}
+}
