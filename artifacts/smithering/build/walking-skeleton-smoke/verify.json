@@ -2,71 +2,66 @@
   "ticketId": "walking-skeleton-smoke",
   "verifier": "independent-test-authority (claude-opus-4-8)",
   "family": "anthropic",
-  "branch": "build/walking-skeleton-smoke",
-  "headSha": "d0b5567",
+  "branchOrHead": "build/walking-skeleton-smoke @ da0be39 (detached HEAD; working tree)",
   "ranTests": true,
   "rbgConfirmed": true,
   "gatesGreen": true,
   "pass": true,
-  "note": "Independent, fresh-context, distinct run. State re-derived from disk at HEAD d0b5567 (newer than the prior verify which recorded 9aefa4c). Every pre-merge deterministic gate re-executed LIVE; fresh logs under evidence/_verify-independent/. All RBG mutations (tsc type-error appended to src/types.ts; KEY_PATTERNS neutered to [] in src/orchestration/core.ts) were injected, the failure observed, then fully restored via git checkout — working tree clean for src/ test/ fixtures/ .github/ package.json tsconfig.json bunfig.toml (git status empty).",
+  "note": "Independent, fresh-context, distinct run. State re-derived from disk at HEAD da0be39. Every pre-merge deterministic gate re-executed LIVE; fresh logs under evidence/_verify-opus48/. All RBG breaks (BREAK_MATCHER env; tsc type-error appended to src/types.ts; KEY_PATTERNS neutered to [] in src/orchestration/core.ts; isProbeVerdictGreen forced true in core.ts) were injected, the failure observed, then restored via git checkout — restored files match pristine git hashes; no residual source changes.",
   "gates": [
     {
       "id": "smoke-spine-skeleton",
       "command": "bun test test/smoke/spine-skeleton.smoke.ts",
       "green": "exit 0 — 2 pass / 0 fail / 16 expect() calls",
-      "red": "BREAK_MATCHER=1 forces all decisions to 'pass' -> 0 trace lines -> expect(emitted.length).toBe(1) fails at spine-skeleton.smoke.ts:46 (Expected: 1, Received: 0), exit 1, 1 pass / 1 fail",
+      "red": "BREAK_MATCHER=1 → all decisions 'pass' → 0 trace lines → expect(emitted.length).toBe(1) fails at :46 (Expected 1, Received 0), exit 1, 1 fail",
       "rbgGenuine": true,
-      "evidence": "evidence/_verify-independent/smoke-green.log, smoke-red.log",
-      "note": "Reproduced LIVE. Red is a real assertion failure of the real named-deliverable test."
+      "evidence": "evidence/_verify-opus48/smoke-green.log, smoke-red.log"
     },
     {
       "id": "tsc-noEmit",
       "command": "bunx tsc --noEmit (== bun run typecheck, the CI gate)",
       "green": "exit 0, zero diagnostics",
-      "red": "appended `export const _verifyTypeErr: number = \"not a number\"` to src/types.ts -> error TS2322 'Type string is not assignable to type number', exit 2; restored via git checkout -> exit 0, git diff empty",
+      "red": "appended a number=string export to src/types.ts → TS2322, exit 2; restored (hash match) → exit 0",
       "rbgGenuine": true,
-      "evidence": "evidence/_verify-independent/tsc-green.log, tsc-red.log, tsc-restore.log",
-      "note": "Reproduced LIVE; TS2322 exit 2 then clean exit 0 after restore."
+      "evidence": "evidence/_verify-opus48/tsc-green.log, tsc-red.log, tsc-restore.log"
     },
     {
       "id": "secret-redaction",
       "command": "bun test src/orchestration/secret-scan.test.ts",
       "green": "exit 0 — 5 pass / 0 fail / 8 expect() calls",
-      "red": "neutered KEY_PATTERNS to [] in src/orchestration/core.ts -> exit 1, 1 pass / 4 real fails (planted sk-/AKIA/Bearer keys no longer caught; redact() leaves the key intact, «redacted» absent); restored via git checkout -> 5 pass exit 0",
+      "red": "KEY_PATTERNS neutered to [] in core.ts → 1 pass / 4 real fails (planted sk-/AKIA/Bearer no longer caught; redact() leaves key intact), exit 1; restored (hash match) → 5 pass exit 0",
       "rbgGenuine": true,
-      "evidence": "evidence/_verify-independent/secret-green.log, secret-red.log, secret-restore.log",
-      "note": "Genuine failable test proven LIVE by breaking the real scanForSecrets/redact (KEY_PATTERNS emptied); 4 real assertion failures; restored, tree clean."
+      "evidence": "evidence/_verify-opus48/secret-green.log, secret-red.log, secret-restore.log"
     },
     {
       "id": "hermetic-e2e-dry-run",
       "command": "bun test src/orchestration/e2e-dry-run.test.ts",
-      "green": "exit 0 — 3 pass / 0 fail / 15 expect() calls",
+      "green": "exit 0 — 3 pass / 0 fail / 15 expect() calls (doubles only: bun:test + local ./core.ts; no net/mic/key)",
+      "red": "forced isProbeVerdictGreen→true in core.ts → 'red probe halts chain' case fails (Expected false, Received true), exit 1, 2 pass / 1 fail; restored (hash match) → 3 pass exit 0",
       "rbgGenuine": true,
-      "evidence": "evidence/_verify-independent/e2e-green.log",
-      "note": "Doubles only — imports bun:test + local ./core.ts gating helpers; no net/mic/key. Internal RBG cases (red probe halts the chain; missing green run bounces at the land lane) are passing assertions over real gating logic, so the test is genuinely failable if core.ts regresses."
+      "evidence": "evidence/_verify-opus48/e2e-green.log, e2e-red.log, e2e-restore.log"
     },
     {
       "id": "bun-test-full-suite",
       "command": "bun test (bare — the CI command)",
       "green": "exit 0 — 102 pass / 2 skip / 0 fail across 9 files (288 expects)",
-      "red": "BREAK_MATCHER=1 bun test -> smoke failure propagates: exit 1, 101 pass / 2 skip / 1 fail",
+      "red": "BREAK_MATCHER=1 bun test → smoke failure propagates: exit 1, 101 pass / 2 skip / 1 fail",
       "rbgGenuine": true,
-      "evidence": "evidence/_verify-independent/fulltest-green.log, fulltest-red.log, fulltest-restore-green.log",
-      "note": "Bare `bun test` exit 0 (CI gate). The 2 skips are legitimate describe.skipIf(!_canBindSockets) environment guards on the POC socket roundtrip test, not gate failures. CI (.github/workflows/ci.yml) runs `bun run typecheck` + `bun test`, both green. Re-confirmed green after all mutations were restored."
+      "evidence": "evidence/_verify-opus48/fulltest-green.log, fulltest-red.log",
+      "note": "2 skips are legitimate describe.skipIf(!_canBindSockets) POC socket guards, not gate failures. CI (.github/workflows/ci.yml) runs `bun run typecheck` + `bun test`, both green."
     }
   ],
   "committedEvidenceAudit": {
-    "checked": "evidence/smoke-rbg-{red,green}.log, tsc-rbg-{red,green}.log, secret-scan-rbg-{red,green}.log, bun-test-full-suite-rbg-{red,green}.log",
+    "checked": "evidence/{smoke,tsc,secret-scan,bun-test-full-suite}-rbg-{red,green}.log",
     "genuine": true,
-    "note": "All eight committed RBG logs are non-empty and contain real run output: smoke-rbg-red.log shows the real :46 assertion failure (1 fail, EXIT:1); tsc-rbg-red.log shows TS2322 EXIT:2; bun-test-full-suite-rbg-green.log shows 102 pass / 2 skip / 0 fail EXIT:0; secret-scan-rbg-red.log proves the grep gate detects a planted sk- key. None is a stub or 'agent said done' placeholder."
+    "note": "All committed RBG logs are non-empty real run output: smoke-rbg-red shows the :46 assertion failure (Expected 1 Received 0, EXIT:1); tsc-rbg-red shows TS2322 EXIT:2; secret-scan-rbg-red shows grep detecting a planted sk- key (EXIT:0 match found); bun-test-full-suite-rbg-green 102/2/0 EXIT:0 vs -red 101/2/1 EXIT:1. No stubs / 'agent said done' placeholders."
   },
   "walkingSkeleton": {
     "touchesEverySeam": true,
-    "seam": "transcript (replay harness loadFixture reads JSONL from disk) -> decision (deterministic match, no LLM) -> trace (TraceProcessor emits one spine.action LogEvent with non-empty correlationId)",
+    "seam": "transcript (loadFixture reads JSONL from disk) -> decision (deterministic match, no LLM) -> trace (TraceProcessor emits one spine.action LogEvent with non-empty correlationId)",
     "inProcessDoublesOnly": true,
     "noCueNetworkKeyImport": true,
-    "imports": "Spine slice (types.ts, matcher.ts, replay/harness.ts, obs/trace.ts) plus the smoke test import only node:fs (local fixture read), node:path, bun:test, and type-only ./types.ts. Grep over the slice for fetch/http/https/WebSocket/node:net/node:dgram/node:tls/ws/apiKey/sk-/process.env returned ONLY the BREAK_MATCHER RBG hook in the test — confirmed hermetic, no Cue/network/mic/key.",
-    "ci": ".github/workflows/ci.yml runs `bun run typecheck` then `bun test`"
+    "note": "Slice imports only node:fs, node:path, bun:test, and type-only ./types.ts. Grep over the slice for fetch/http/https/WebSocket/net/tls/ws/apiKey/process.env returned only the BREAK_MATCHER RBG hook; CueDecision/TextCue/cue.decide are the data-contract type name, a policy string, and an event name — not a Cue/network/key import."
   },
-  "summary": "Independent fresh-context verification on branch build/walking-skeleton-smoke (HEAD d0b5567). Every blocking pre-merge gate re-run LIVE and green: smoke 2/0 (exit 0), bunx tsc --noEmit clean (exit 0), secret-redaction 5/0 (exit 0), hermetic e2e 3/0 (exit 0), and bare `bun test` (CI) 102 pass / 2 skip / 0 fail (exit 0). RBG pairs reproduced LIVE and genuine: smoke (Expected 1 Received 0 at :46 under BREAK_MATCHER=1, exit 1), tsc (TS2322 on injected error, exit 2 -> restored exit 0), secret-scan (1 pass / 4 real fails when KEY_PATTERNS neutered -> restored 5/0), full-suite (smoke break propagates -> 1 fail exit 1). All eight committed RBG evidence logs audited as non-empty real run output. Slice is hermetic (no Cue/network/mic/key imports; verified by reading types.ts, matcher.ts, replay/harness.ts, obs/trace.ts, smoke test + grep) and traverses transcript->decision->trace with a non-empty correlationId. All verification mutations restored; source tree clean. PASS."
+  "summary": "Independent fresh-context verification (HEAD da0be39). Every blocking pre-merge gate re-run LIVE and green: smoke 2/0 (exit 0), bunx tsc --noEmit clean (exit 0), secret-redaction 5/0 (exit 0), hermetic e2e 3/0 (exit 0), bare `bun test` (CI) 102 pass / 2 skip / 0 fail (exit 0). All five RBG pairs reproduced LIVE and genuine — each a real failure of a real test, then restored to pristine git hash. Eight committed RBG logs audited as genuine real run output. Slice hermetic (no Cue/network/mic/key) and traverses transcript->decision->trace with non-empty correlationId. PASS."
 }

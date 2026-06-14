@@ -28,8 +28,8 @@
     "rbgRecorded": true,
     "redRunPath": "artifacts/smithering/build/walking-skeleton-smoke/evidence/secret-scan-rbg-red.log",
     "greenRunPath": "artifacts/smithering/build/walking-skeleton-smoke/evidence/secret-scan-rbg-green.log",
-    "scope": "src/** test/** fixtures/** (excludes secret-scan.test.ts which has intentional fake keys)",
-    "notes": "Red run: synthetic sk- string fed to grep — scanner detects it. Green run: full product source scan excluding known-fake-key test file — zero hits (grep exit 1 = no matches = clean)."
+    "scope": "src/** test/** fixtures/** artifacts/smithering/build/walking-skeleton-smoke/** (no exclusions)",
+    "notes": "RBG red: neuter KEY_PATTERNS=[] in core.ts → bun test src/orchestration/secret-scan.test.ts: 4 detection tests fail (scanner catches nothing); all assertions use count/bool comparisons — no raw key values appear in failure output (SEC-1). RBG green: restore KEY_PATTERNS → 5 tests pass + grep over all paths (no exclusions) finds zero matches. secret-scan.test.ts assembles key-shaped test strings from runtime segments; no raw key literals in source."
   },
   {
     "criterionId": "bun-test-full-suite",
