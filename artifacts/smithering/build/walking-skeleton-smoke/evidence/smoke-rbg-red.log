@@ -1,0 +1,22 @@
+bun test v1.3.14 (0d9b296a)
+
+test/smoke/spine-skeleton.smoke.ts:
+36 |     }
+37 | 
+38 |     const actionDecisions = decisions.filter((d) => d.kind === "action");
+39 | 
+40 |     // The core gate: exactly one wake-word match in the 2-line fixture
+41 |     expect(actionDecisions.length).toBe(1);
+                                        ^
+error: expect(received).toBe(expected)
+
+Expected: 1
+Received: 0
+
+      at <anonymous> (/Users/williamcory/vibecode-room/test/smoke/spine-skeleton.smoke.ts:41:36)
+(fail) spine-skeleton smoke > reads fixture, matches wake word, emits exactly one action trace with non-empty correlationId [0.62ms]
+
+ 5 pass
+ 1 fail
+ 34 expect() calls
+Ran 6 tests across 1 file. [16.00ms]

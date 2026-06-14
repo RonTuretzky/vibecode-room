@@ -1,0 +1,38 @@
+[
+  {
+    "criterionId": "smoke-spine-skeleton",
+    "method": "bun_test",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/walking-skeleton-smoke/evidence/smoke-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/walking-skeleton-smoke/evidence/smoke-rbg-green.log"
+  },
+  {
+    "criterionId": "tsc-noEmit",
+    "method": "tsc",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/walking-skeleton-smoke/evidence/tsc-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/walking-skeleton-smoke/evidence/tsc-rbg-green.log"
+  },
+  {
+    "criterionId": "bun-test-full-suite",
+    "method": "bun_test",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": false,
+    "redRunPath": null,
+    "greenRunPath": "artifacts/smithering/build/walking-skeleton-smoke/tests.log"
+  },
+  {
+    "criterionId": "secret-scan",
+    "method": "grep_pattern",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": false,
+    "redRunPath": null,
+    "greenRunPath": "artifacts/smithering/build/walking-skeleton-smoke/secret-scan.json"
+  }
+]
