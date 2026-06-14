@@ -215,6 +215,21 @@ The cross-family reviewer (GPT-5.5) rejected on a critical finding:
 
 Comprehensive rescan of the entire bundle post-fix confirms zero key-shaped strings anywhere.
 
+### SEC-1 RBG red exit-code fix in this pass (v13)
+
+The cross-family reviewer (GPT-5.5) found that `evidence/secret-scan-rbg-red.log` correctly showed
+4 Bun test failures, but concluded with `EXIT:0` — so the durable log did not demonstrate a failing
+command in a machine-checkable way.
+
+**Root cause**: the prior red-run capture script swallowed the non-zero exit status before recording it.
+
+**Fix**: re-ran `bun test src/orchestration/secret-scan.test.ts` with `KEY_PATTERNS = []` and
+captured `EXIT:$?` before restoring `core.ts`. The updated log now ends with `EXIT:1`.
+The `_verify-authority-live/secret-scan-red.log` was also updated to include `EXIT:1` for
+consistency (the `_verify-authority-final/secret-red.log` already recorded `exit=1`).
+
+All gates remain green: `bun test` 102 pass / 2 skip / 0 fail, `tsc --noEmit` exit 0.
+
 ## Dependencies
 
 None — this is the root ticket.

@@ -1,3 +1,0 @@
-===== GATE 2 RBG: tsc RED (inject type error) =====
-src/_verify_rbg_probe.ts(1,7): error TS2322: Type 'string' is not assignable to type 'number'.
-tsc-red exit: 2 (expect nonzero)
