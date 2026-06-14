@@ -1,0 +1,47 @@
+[
+  {
+    "criterionId": "P-SEAM-action-out",
+    "method": "P_SEAM_RBG_BREAK_ACTION_OUT=1 bun test poc/p-seam.test.ts; bun test poc/p-seam.test.ts",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/probe-cue-smithers-seam/evidence/P-SEAM-action-out-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/probe-cue-smithers-seam/evidence/P-SEAM-action-out-green.log"
+  },
+  {
+    "criterionId": "P-SEAM-run-event-back",
+    "method": "P_SEAM_RBG_BREAK_RUN_EVENT_BACK=1 bun test poc/p-seam.test.ts; bun test poc/p-seam.test.ts",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/probe-cue-smithers-seam/evidence/P-SEAM-run-event-back-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/probe-cue-smithers-seam/evidence/P-SEAM-run-event-back-green.log"
+  },
+  {
+    "criterionId": "P-SEAM-non-blocking-spawn",
+    "method": "P_SEAM_RBG_BLOCKING_DISPATCH=1 bun test poc/p-seam.test.ts; bun test poc/p-seam.test.ts",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/probe-cue-smithers-seam/evidence/P-SEAM-non-blocking-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/probe-cue-smithers-seam/evidence/P-SEAM-non-blocking-green.log"
+  },
+  {
+    "criterionId": "P-SEAM-sse-reconnect",
+    "method": "P_SEAM_RBG_BREAK_RECONNECT=1 bun test poc/p-seam.test.ts; bun test poc/p-seam.test.ts",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/probe-cue-smithers-seam/evidence/P-SEAM-sse-reconnect-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/probe-cue-smithers-seam/evidence/P-SEAM-sse-reconnect-green.log"
+  },
+  {
+    "criterionId": "P-SEAM-restart-correlation",
+    "method": "P_SEAM_RBG_BREAK_RESTART_CORRELATION=1 bun test poc/p-seam.test.ts; bun test poc/p-seam.test.ts",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/probe-cue-smithers-seam/evidence/P-SEAM-restart-correlation-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/probe-cue-smithers-seam/evidence/P-SEAM-restart-correlation-green.log"
+  }
+]
