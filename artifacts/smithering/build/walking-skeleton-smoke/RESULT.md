@@ -146,6 +146,34 @@ scripts pointing to `src/server/index.ts` and `src/scripts/seed-demo.ts` — fil
 `typecheck` (`tsc --noEmit`) and `test` (`bun test`); no server entry point exists yet (it belongs
 to a future ticket). All test gates remain green: `bun test` 102 pass / 2 skip / 0 fail.
 
+### Cross-family reviewer fix in this pass (v11)
+
+The cross-family reviewer (GPT-5.5) found two issues:
+
+1. **Stale/empty RBG evidence files**: `smoke-rbg-red.log`, `smoke-rbg-green.log`,
+   `bun-test-full-suite-rbg-red.log`, `bun-test-full-suite-rbg-green.log`, and `tsc-rbg-green.log`
+   all contained only the bun version header line (single line) or were empty (0 bytes). The
+   machine-consumed gate rows in `gates.json` pointed at these files, making the required durable
+   evidence pair non-genuine.
+
+   **Fix**: All five evidence files regenerated from live runs:
+   - `smoke-rbg-red.log`: `BREAK_MATCHER=1 bun test test/smoke/spine-skeleton.smoke.ts` → exit 1, 1 fail
+   - `smoke-rbg-green.log`: `bun test test/smoke/spine-skeleton.smoke.ts` → exit 0, 2 pass
+   - `tsc-rbg-green.log`: `bun run typecheck` → `$ tsc --noEmit` / exit 0
+   - `bun-test-full-suite-rbg-red.log`: `BREAK_MATCHER=1 bun test` → exit 1, 101 pass / 1 fail
+   - `bun-test-full-suite-rbg-green.log`: `bun test` → exit 0, 102 pass / 2 skip / 0 fail
+
+2. **Nested runtime worktree committed into branch**: The diff included 223 committed files under
+   `.smithers/workflows/.smithers/wt/walking-skeleton-smoke/` — a copied prior-app snapshot with
+   server code, browser code, JJ repo state, and Smithers gateway imports. This violates the
+   walking-skeleton scope (cheapest in-process-doubles-only scaffold, no Cue/network).
+
+   **Fix**: Removed all 223 files from git tracking (`git rm -r --cached`) and added
+   `.smithers/workflows/.smithers/` to `.gitignore` alongside the existing `.smithers/wt/` entry,
+   so future smithers worktrees in this location cannot be accidentally committed.
+
+All gates remain green: `bun test` 102 pass / 2 skip / 0 fail, `tsc --noEmit` exit 0.
+
 ## Dependencies
 
 None — this is the root ticket.
