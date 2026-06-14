@@ -1,0 +1,33 @@
+bun test v1.3.14 (0d9b296a)
+
+src/providers/boundary.test.ts:
+116 |         specifier: "../providers/asr/replay",
+117 |         line: 1,
+118 |       });
+119 |     }
+120 |
+121 |     expect(violations).toEqual([]);
+                             ^
+error: expect(received).toEqual(expected)
+
+- []
++ [
++   {
++     "line": 1,
++     "path": "src/consumer/bad.ts",
++     "specifier": "../providers/asr/replay",
++   },
++ ]
+
+- Expected  - 1
++ Received  + 7
+
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/provider-interface-doubles/src/providers/boundary.test.ts:121:24)
+(fail) ENG-T-04 provider boundary > architecture lint rejects concrete-provider imports outside src/providers [1.38ms]
+
+ 5 pass
+ 1 fail
+ 20 expect() calls
+Ran 6 tests across 1 file. [37.00ms]
+
+[exit:1]
