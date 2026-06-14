@@ -18,7 +18,7 @@
     "rbgRecorded": true,
     "redRunPath": "artifacts/smithering/build/walking-skeleton-smoke/evidence/tsc-rbg-red.log",
     "greenRunPath": "artifacts/smithering/build/walking-skeleton-smoke/evidence/tsc-rbg-green.log",
-    "notes": "RBG red: appended `const _typeErr: number = 'not a number'` to src/types.ts → TS2322 error, exit 2. RBG green: type error removed → exit 0 (clean pass). CI runs bun run typecheck."
+    "notes": "RBG red: temporarily added src/__rbg_type_error.ts assigning a number to a string → TS2322 error, exit 2. RBG green: temp type-error file removed → exit 0 (clean pass). CI runs bun run typecheck."
   },
   {
     "criterionId": "secret-scan",
@@ -40,6 +40,6 @@
     "redRunPath": "artifacts/smithering/build/walking-skeleton-smoke/evidence/bun-test-full-suite-rbg-red.log",
     "greenRunPath": "artifacts/smithering/build/walking-skeleton-smoke/evidence/bun-test-full-suite-rbg-green.log",
     "command": "bun test",
-    "notes": "CI runs bare `bun test` — 102 pass / 2 skip / 0 fail across 9 files. POC HTTP tests now use describe.skipIf(!_canBindSockets): in environments where port:0 binding fails (e.g., sandboxed reviewers), those blocks skip gracefully and bun test exits 0. RBG red: BREAK_MATCHER=1 bun test → smoke test fails (101 pass / 1 fail). RBG green: bun test → 102 pass / 0 fail."
+    "notes": "CI runs bare `bun test` — 102 pass / 2 skip / 0 fail across 9 files. POC HTTP tests now use describe.skipIf(!_canBindSockets): in environments where port:0 binding fails (e.g., sandboxed reviewers), those blocks skip gracefully and bun test exits 0. RBG red: BREAK_MATCHER=1 bun test → smoke test fails (101 pass / 2 skip / 1 fail). RBG green: bun test → 102 pass / 2 skip / 0 fail."
   }
 ]

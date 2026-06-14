@@ -1,2 +1,8 @@
 bun test v1.3.14 (0d9b296a)
-EXIT:0
+
+ 2 pass
+ 0 fail
+ 16 expect() calls
+Ran 2 tests across 1 file. [11.00ms]
+
+exitCode=0
