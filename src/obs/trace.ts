@@ -18,7 +18,7 @@ export class TraceProcessor {
   // Returns null for pass decisions so callers can assert exactly one line per action.
   process(obs: TranscriptObservation, decision: CueDecision): TraceOutput | null {
     if (decision.kind !== "action") return null;
-    return this.emit("spine.action", decision.correlationId, {
+    return this.emit("emit.spine-action", decision.correlationId, {
       utteranceId: obs.utteranceId,
       actionType: decision.action.type,
       policy: decision.policy,
@@ -27,7 +27,7 @@ export class TraceProcessor {
   }
 
   observation(obs: TranscriptObservation): TraceOutput {
-    return this.emit("transcript.observe", obs.utteranceId, {
+    return this.emit("record.transcript", obs.utteranceId, {
       speaker: obs.speaker,
       isFinal: obs.isFinal,
       textLength: obs.text.length,
@@ -36,7 +36,7 @@ export class TraceProcessor {
   }
 
   decision(dec: CueDecision): TraceOutput {
-    return this.emit("cue.decide", dec.correlationId, {
+    return this.emit("record.decision", dec.correlationId, {
       kind: dec.kind,
       policy: dec.policy,
       decisionId: dec.decisionId,

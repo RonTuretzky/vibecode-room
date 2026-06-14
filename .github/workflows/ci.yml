@@ -15,7 +15,7 @@ jobs:
           bun-version: latest
       - name: Install dependencies
         run: bun install
-      - name: Type check
-        run: bun run typecheck
       - name: Test
         run: bun test
+      - name: Type check
+        run: ./node_modules/.bin/tsc --noEmit

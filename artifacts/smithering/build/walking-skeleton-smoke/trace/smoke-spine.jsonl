@@ -1,1 +1,1 @@
-{"level":"info","event":"spine.action","sessionId":"sess-smoke-001","correlationId":"utt-smoke-002","meta":{"utteranceId":"utt-smoke-002","actionType":"spawn","policy":"TextCue/wake-word","decisionId":"decision:utt-smoke-002"}}
+{"level":"info","event":"emit.spine-action","sessionId":"sess-smoke-001","correlationId":"utt-smoke-002","meta":{"utteranceId":"utt-smoke-002","actionType":"spawn","policy":"TextCue/wake-word","decisionId":"decision:utt-smoke-002"}}

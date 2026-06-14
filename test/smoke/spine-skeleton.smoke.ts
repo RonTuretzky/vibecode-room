@@ -51,7 +51,7 @@ describe("spine-skeleton smoke", () => {
     // Verify required LogEvent fields
     expect(parsed.correlationId).toBeTruthy();
     expect(parsed.correlationId).not.toBe("");
-    expect(parsed.event).toBe("spine.action");
+    expect(parsed.event).toBe("emit.spine-action");
     expect(parsed.level).toBe("info");
     expect(parsed.sessionId).toBe("sess-smoke-001");
     expect(parsed.meta).toBeDefined();
