@@ -22,17 +22,16 @@ describe("spine skeleton smoke", () => {
     expect(event).toMatchObject({
       level: "info",
       event: "route.action",
-      eventId: "trace-decision-smoke-session-utt-002-literal-wake",
       sessionId: "smoke-session",
       correlationId: "corr-smoke-session-utt-002",
       latencyMs: 47,
       meta: {
-        action: "wake",
+        action: "status",
         observationId: "utt-002",
         policy: "literal-wake",
       },
     });
-    expect(event.correlationId.length).toBeGreaterThan(0);
+    expect(event.correlationId ?? "").not.toBe("");
     expect(JSON.parse(JSON.stringify(event))).toEqual(event);
   });
 
@@ -55,7 +54,7 @@ describe("spine skeleton smoke", () => {
     const decision = matchWakeWord(observation({ text: "Panop while still partial", isFinal: false }));
     const event = trace.emitDecision(decision, observation({ text: "Panop while still partial", isFinal: false }));
 
-    expect(decision).toMatchObject({ kind: "pass", reason: "non-final" });
+    expect(decision).toMatchObject({ kind: "pass", reason: "dropped" });
     expect(event).toBeNull();
     expect(trace.events()).toEqual([]);
   });

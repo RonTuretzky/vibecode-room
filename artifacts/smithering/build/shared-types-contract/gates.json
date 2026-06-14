@@ -1,0 +1,11 @@
+[
+  {
+    "criterionId": "ENG-T-01",
+    "method": "unit_test",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/shared-types-contract/evidence/ENG-T-01-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/shared-types-contract/evidence/ENG-T-01-green.log"
+  }
+]

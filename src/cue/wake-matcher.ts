@@ -20,7 +20,6 @@ export function matchWakeWord(
     policy,
     decisionId,
     correlationId,
-    observationId: observation.utteranceId,
   };
 
   if (!observation.isFinal) {
@@ -28,8 +27,8 @@ export function matchWakeWord(
       ...base,
       kind: "pass",
       addressed: false,
-      reason: "non-final",
-      meta: { textLength: observation.text.length },
+      reason: "dropped",
+      meta: { observationId: observation.utteranceId, textLength: observation.text.length },
     };
   }
 
@@ -39,16 +38,20 @@ export function matchWakeWord(
       kind: "pass",
       addressed: false,
       reason: "ambient",
-      meta: { textLength: observation.text.length },
+      meta: { observationId: observation.utteranceId, textLength: observation.text.length },
     };
   }
 
   return {
     ...base,
     kind: "action",
-    action: "wake",
-    payload: { wakeWord },
-    meta: { matchedText: wakeWord },
+    action: {
+      type: "status",
+      targetUPID: null,
+      payload: { wakeWord },
+      correlationId,
+    },
+    meta: { matchedText: wakeWord, observationId: observation.utteranceId },
   };
 }
 
