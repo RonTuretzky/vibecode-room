@@ -1,7 +1,15 @@
 // §8 e2e dry-run (the orchestration analog of the canonical spine): drive the scheduler
 // over a synthetic 3-ticket DAG end-to-end — schedule → worktree → fake implement →
-// cross-family review → verify → serialized land → trace reconstruction — using ONLY the
+// cross-family review → verify → optimistic land → trace reconstruction — using ONLY the
 // real core helpers, asserting the full build trace reconstructs and the invariants hold.
+//
+// MERGE POLICY (brief O2): the landing policy is OPTIMISTIC merge + postsubmit eviction
+// (land-then-learn — faster than the old serialized single-writer lane). This dry-run
+// still drives the gate evidence + DAG-order checks deterministically; it does NOT yet
+// model concurrent optimistic landing or postsubmit eviction of a bad land.
+// TODO(optimistic-merge): once the real optimistic-merge + postsubmit-eviction lane exists,
+// extend this dry-run to land eligible tickets concurrently and assert a postsubmit-red
+// ticket is evicted (reverted) rather than blocking its successors at land time.
 import { describe, expect, test } from "bun:test";
 import {
   blockingProbeClosure,
@@ -78,7 +86,7 @@ function tryLand(id: string, s: SimState): boolean {
 }
 
 // Walk the DAG in waves, simulating each ticket's worker producing a passing bundle, a
-// probe additionally recording its green verdict, then the serialized land lane.
+// probe additionally recording its green verdict, then the optimistic land step.
 function runBuild(s: SimState, opts: { probeGreen: boolean } = { probeGreen: true }) {
   for (const wave of computeWaves(tickets)) {
     // implement → review → verify (fresh-context workers), in id order within the antichain.
@@ -88,7 +96,8 @@ function runBuild(s: SimState, opts: { probeGreen: boolean } = { probeGreen: tru
       s.bundles.set(t.id, passingBundle(t.id));
       if (t.id.startsWith("probe-")) s.verdicts.set(t.id, { green: opts.probeGreen });
     }
-    // depth-1 serialized land lane: at most one writer; id order is deterministic.
+    // Optimistic landing (brief O2): every gate-green ticket lands as soon as it is ready
+    // (postsubmit eviction handles a bad land later); id order is deterministic for the trace.
     for (const t of [...wave.tickets].sort((a, b) => a.id.localeCompare(b.id))) {
       if (eligible(t.id, s) && s.bundles.has(t.id)) tryLand(t.id, s);
     }
@@ -108,7 +117,7 @@ describe("e2e dry-run over a synthetic DAG", () => {
       expect(started).toBeDefined();
       expect(landed).toBeDefined();
     }
-    // Land order is the topological order (serialized lane, one writer at a time).
+    // Land order is the topological order (optimistic landing — deps land before dependents).
     const landOrder = s.trace.filter((e) => e.event === "merge.lane.land").map((e) => e.ticketId);
     expect(landOrder).toEqual(["root", "probe-x", "feature"]);
   });

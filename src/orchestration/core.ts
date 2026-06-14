@@ -11,17 +11,18 @@
 export const ANTHROPIC = "anthropic";
 export const OPENAI = "openai";
 
-// Role → family table. Implement = Anthropic, review = OpenAI/Codex (cross-family),
-// verify = an independent Anthropic instance. assertCrossFamily() proves reviewer.family
-// ≠ implementer.family; the RBG move (point review at anthropic) makes it throw.
+// Role → family table. Implement = OpenAI/Codex, review = Anthropic (cross-family Opus
+// check) + Codex, verify = independent Anthropic (Sonnet). assertCrossFamily() proves
+// reviewer.family ≠ implementer.family; the RBG move (point review at OpenAI, the
+// implementer's family) makes it throw.
 export type RoleFamilies = {
   implementer: string;
   reviewer: string;
   verifier: string;
 };
 export const ROLE_FAMILIES: RoleFamilies = {
-  implementer: ANTHROPIC,
-  reviewer: OPENAI,
+  implementer: OPENAI,
+  reviewer: ANTHROPIC,
   verifier: ANTHROPIC,
 };
 

@@ -8,7 +8,7 @@
     "redRunPath": "artifacts/smithering/build/walking-skeleton-smoke/evidence/smoke-rbg-red.log",
     "greenRunPath": "artifacts/smithering/build/walking-skeleton-smoke/evidence/smoke-rbg-green.log",
     "command": "bun test test/smoke/spine-skeleton.smoke.ts",
-    "notes": "RBG red: BREAK_MATCHER=1 forces all decisions to 'pass' → 0 trace lines → expect(emitted.length).toBe(1) fails (Expected: 1, Received: 0). RBG green: normal run → 2 tests pass / 16 assertions: (1) exactly one trace line with action event + deterministic decisionId, (2) three replay runs produce byte-identical output."
+    "notes": "v9 fix: updated fixture text from 'daybreak' to 'panopticon' to match current matcher wake words. RBG red: BREAK_MATCHER=1 forces all decisions to 'pass' → 0 trace lines → expect(emitted.length).toBe(1) fails (Expected: 1, Received: 0). RBG green: normal run → 2 tests pass / 16 assertions: (1) exactly one trace line with action event + deterministic decisionId, (2) three replay runs produce byte-identical output."
   },
   {
     "criterionId": "tsc-noEmit",

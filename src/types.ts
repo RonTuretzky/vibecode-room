@@ -48,7 +48,10 @@ export interface DispatchedAction {
   correlationId: string;
 }
 
-export type ExecutionMode = "safe" | "explicit" | "dangerous";
+// V0 ships a single dangerous run-to-completion mode (brief E7). The old
+// Safe/Explicit/Dangerous mode switching is cut — safety later comes from sandboxing the
+// whole process, not from per-action permission gating.
+export type ExecutionMode = "dangerous";
 
 export interface ToolCallContext {
   upid: string;

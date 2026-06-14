@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Decision ORCH-A-04 — Cross-family implementer / reviewer / verifier</title>
+<title>Decision ORCH-A-04 — Model assignment: implement Codex, verify Sonnet, review Codex+Opus, plan Opus</title>
 <style>
   :root { --ink:#1a1a1a; --mut:#666; --line:#e2e2e2; --good:#0a7d33; --bad:#b00020; --accent:#0b5cad; --bg:#fafafa; }
   * { box-sizing:border-box; }
@@ -25,71 +25,82 @@
 </style>
 </head>
 <body>
-<h1>Model assignment: <span style="color:#0b5cad">implement Anthropic, review OpenAI, verify by test</span></h1>
+<h1>Model assignment: <span style="color:#0b5cad">implement Codex, verify Sonnet, review Codex + Opus, plan Opus</span></h1>
 <div class="meta"><span class="pill">ORCH-A-04</span> &nbsp; Panopticon V0 implementation orchestration &nbsp;·&nbsp; <code>docs/planning/06-orchestration.md §4</code></div>
 
-<h2>The hard rule</h2>
-<p><strong>The reviewing model family ≠ the implementing model family.</strong> A model reviewing its own
-family's output shares that family's blind spots — the same training-correlated failure modes survive
-both passes. Independent perspective is a first-class requirement of the validation bar, so we make
-family-divergence a structural invariant, not a hope.</p>
-
-<h2>The two families</h2>
-<div class="box">
-<table>
-<tr><th>Family</th><th>Models available</th><th>Build role</th></tr>
-<tr><td><strong>Anthropic</strong></td><td>Opus 4.8 <code>claude-opus-4-8</code>, Sonnet 4.6 <code>claude-sonnet-4-6</code>, Haiku 4.5 <code>claude-haiku-4-5-20251001</code> (Fable 5 <em>only if enabled</em>, R-ENG-09)</td><td><strong>Implementer</strong> (+ optional verifier)</td></tr>
-<tr><td><strong>OpenAI</strong></td><td>GPT-5.4 via the Codex CLI (<code>codex review</code> / <code>codex challenge</code>)</td><td><strong>Reviewer</strong> (cross-family, adversarial)</td></tr>
-</table>
-Default direction: <strong>implement with Claude, review with Codex.</strong> The invariant is symmetric —
-if a ticket is implemented with Codex, it is reviewed with Claude — but the default fleet implements with
-Anthropic and reviews with OpenAI.
+<div class="warn" style="margin-bottom:1rem">
+<strong>New matrix.</strong> The prior decision used a <em>complexity-based</em> assignment where
+<em>Anthropic implements</em> (Sonnet/Opus by size) and <em>OpenAI Codex reviews</em>. That is replaced
+by fixed per-role assignments below. The cross-family principle still holds — the default implementer is
+now OpenAI/Codex, and the cross-family Anthropic check is the Opus reviewer.
 </div>
 
-<h2>Decision — assignment by complexity</h2>
+<h2>The fixed roles</h2>
+<div class="box">
 <table>
-<tr><th>Complexity</th><th>Implementer (Anthropic)</th><th>Reviewer (OpenAI — cross-family)</th><th>Verifier (test-authority, fresh context)</th></tr>
-<tr><td><strong>small</strong></td><td>Sonnet 4.6</td><td>Codex GPT-5.4 (<code>codex review</code>)</td><td>Gate suite + Haiku 4.5 RBG-evidence audit</td></tr>
-<tr><td><strong>medium</strong></td><td>Sonnet 4.6 (Opus for tricky)</td><td>Codex GPT-5.4 (<code>codex review</code>)</td><td>Independent Opus 4.8 agent re-runs the gate tier + confirms recorded RBG</td></tr>
-<tr><td><strong>large</strong></td><td>Opus 4.8</td><td>Codex GPT-5.4 (<code>codex review</code> + <code>challenge</code>)</td><td>Third fresh-context agent (≠ implementer instance) executes the full Verify block + audits every RBG red run</td></tr>
+<tr><th>Role</th><th>Model(s)</th><th>Canonical id(s)</th></tr>
+<tr><td><strong>Implementation</strong></td><td><strong>always Codex 5.5</strong> (OpenAI, via the Codex CLI) — <strong>never Opus</strong></td><td><code>gpt-5.5</code></td></tr>
+<tr><td><strong>Verification</strong></td><td><strong>always Sonnet 4.6</strong></td><td><code>claude-sonnet-4-6</code></td></tr>
+<tr><td><strong>Review</strong></td><td><strong>BOTH Codex 5.5 AND Opus 4.8</strong></td><td><code>gpt-5.5</code> + <code>claude-opus-4-8</code></td></tr>
+<tr><td><strong>Planning</strong></td><td><strong>Opus 4.8</strong></td><td><code>claude-opus-4-8</code></td></tr>
 </table>
-<p>The <strong>verifier's authority is the test result, never its opinion</strong> (the build-time analog of
-"invariants in code, not the LLM", ENG-A-04). It exists to confirm each blocking gate's test was <em>capable
-of failing</em> (the red run exists and is real) and that the green run passes — not to re-judge taste.</p>
+<!-- TODO: use Fable (Fable 5, claude-fable-5) once wired in — aspirational, not yet enabled. -->
+<p style="margin:.6rem 0 0"><strong>TODO (aspirational, not yet wired in):</strong> use <strong>Fable
+(Fable 5, <code>claude-fable-5</code>)</strong> in the fleet once it is available.</p>
+</div>
 
-<h2>Safety-critical tickets</h2>
-<p><code>safety-execution-boundary-hook</code> and <code>shell-command-classifier</code> are implemented with
-<strong>Opus 4.8</strong> and additionally get an <strong>adversarial red-team pass from the reviewer family</strong>
-(Codex <code>challenge</code> against the read-safe allowlist — the §8.1.1 / FINDINGS RBG table). Note the
-product-runtime constraint from the POC (FINDING-1): the <em>shipped</em> safety processes must run on
-<code>ClaudeCodeAgent</code> (the PreToolUse hook is a Claude Code CLI <code>settings.json</code> mechanism, not a
-Smithers API). That constrains the <em>product's</em> agent, not the <em>build's</em> review — the cross-family
-review rule still applies to the code that implements the hook.</p>
+<h2>Cross-family still holds</h2>
+<p><strong>The implementer is OpenAI/Codex; the cross-family Anthropic check is the Opus reviewer.</strong>
+Review runs <em>both</em> Codex 5.5 and Opus 4.8, so every diff gets an in-family adversarial pass (Codex
+reviewing Codex's implementation) <em>and</em> an independent cross-family perspective (Opus). The
+cross-family invariant — a reviewer of a different family than the implementer — is satisfied by the Opus
+reviewer. A model reviewing only its own family's output shares that family's blind spots; pairing the
+Codex implementer with an Opus reviewer keeps independent perspective structural, not hoped-for.</p>
+
+<h2>The verifier's authority is the test result</h2>
+<p>Verification is <strong>Sonnet 4.6</strong>, and the <strong>verifier's authority is the test result,
+never its opinion</strong> (the build-time analog of "routing authority in code, not the LLM",
+ENG-A-04). The verifier confirms each blocking gate's test was <em>capable of failing</em> (the red run
+exists and is real) and that the green run passes — it does not re-judge taste.</p>
+
+<h2>Per-ticket assignment</h2>
+<pre>implement → Codex gpt-5.5        (always; never Opus)
+verify    → Sonnet claude-sonnet-4-6
+review    → Codex gpt-5.5  AND  Opus claude-opus-4-8   (in-family + cross-family)
+plan      → Opus claude-opus-4-8
+// TODO: Fable 5 (claude-fable-5) — aspirational, not yet wired in</pre>
 
 <h2>Alternatives</h2>
-<div class="alt lose"><strong>Same family implements and reviews (e.g. Opus writes, Sonnet reviews).</strong>
-<span class="bad">Rejected — violates the hard rule.</span> Shared blind spots survive both passes.</div>
-<div class="alt lose"><strong>Self-review (implementer reviews its own diff).</strong>
-<span class="bad">Rejected.</span> No independence; "the agent said it's done" is never evidence.</div>
-<div class="alt win"><strong>Implement Anthropic, review OpenAI, verify by test (chosen).</strong>
-<span class="good">Chosen.</span> Structural family-divergence + a test-authority verifier whose word is the
-gate result, not a vibe.</div>
+<div class="alt lose"><strong>Complexity-based: Anthropic implements (Sonnet/Opus by size), Codex reviews (prior plan).</strong>
+<span class="bad">Replaced.</span> Superseded by fixed per-role assignments; the default implementer is now
+Codex, not Anthropic.</div>
+<div class="alt lose"><strong>Single-family review (only Codex, or only Opus).</strong>
+<span class="bad">Rejected.</span> Review runs both so a diff gets in-family adversarial review and a
+cross-family independent check.</div>
+<div class="alt win"><strong>Implement Codex 5.5, verify Sonnet 4.6, review Codex 5.5 + Opus 4.8, plan Opus 4.8 (chosen).</strong>
+<span class="good">Chosen.</span> Fixed roles, cross-family check via the Opus reviewer, test-authority
+verifier. (Fable 5 is a TODO.)</div>
 
 <h2>Verification</h2>
 <ul>
-<li><strong>Cross-family-guard test:</strong> for every ticket assignment assert
-<code>reviewer.family !== implementer.family</code>. <span class="bad">RBG:</span> assign a Sonnet reviewer to
-an Opus implementer → guard rejects the assignment (else fails).</li>
-<li><strong>Verifier-independence test:</strong> assert the verifier agent is a distinct run/context from the
-implementer (different <code>runId</code>, fresh prompt). <span class="bad">RBG:</span> reuse the implementer
-context as verifier → independence assertion fails.</li>
-<li><strong>Review-recorded test:</strong> a land requires <code>review.json</code> with a cross-family verdict and
-<code>verify.json</code> with a passing gate re-run. <span class="bad">RBG:</span> drop <code>review.json</code> →
-land refused.</li>
+<li><strong>Role-assignment test:</strong> for every ticket, assert implement = <code>gpt-5.5</code>,
+verify = <code>claude-sonnet-4-6</code>, review includes <em>both</em> <code>gpt-5.5</code> and
+<code>claude-opus-4-8</code>, plan = <code>claude-opus-4-8</code>. <span class="bad">RBG:</span> assign
+Opus as the implementer → assignment guard rejects it (implement must be Codex).</li>
+<li><strong>Cross-family-guard test:</strong> assert the review set contains a reviewer of a different
+family than the implementer (the Opus reviewer vs. the Codex implementer). <span class="bad">RBG:</span>
+drop Opus from review, leaving only Codex → cross-family assertion fails.</li>
+<li><strong>Verifier-independence test:</strong> assert the Sonnet verifier is a distinct run/context
+from the implementer (different <code>runId</code>, fresh prompt). <span class="bad">RBG:</span> reuse
+the implementer context as verifier → independence assertion fails.</li>
+<li><strong>Review-recorded test:</strong> a land requires <code>review.json</code> with both reviewers'
+verdicts and <code>verify.json</code> with a passing gate re-run. <span class="bad">RBG:</span> drop
+<code>review.json</code> → land refused.</li>
 </ul>
 
-<div class="warn"><strong>Fallback (R-ENG-09):</strong> if Fable 5 or an Anthropic tier is unavailable, the
-implementer defaults to Opus/Sonnet and the reviewer stays Codex; if Codex is unavailable, review falls back
-to a different Anthropic family member only as a logged exception — never same-instance self-review.</div>
+<div class="warn"><strong>Fallback:</strong> if Codex is unavailable, implementation cannot proceed for
+that ticket (Codex is the implementer); if an Anthropic tier is unavailable, the Opus reviewer/planner
+falls back to another Anthropic family member as a logged exception — never same-instance self-review.
+<strong>TODO:</strong> wire in Fable 5 (<code>claude-fable-5</code>) when available.</div>
 </body>
 </html>

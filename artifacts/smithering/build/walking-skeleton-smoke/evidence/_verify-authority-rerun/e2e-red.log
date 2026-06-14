@@ -1,0 +1,22 @@
+bun test v1.3.14 (0d9b296a)
+
+src/orchestration/e2e-dry-run.test.ts:
+116 |   test("RBG — a red probe verdict halts the chain: feature never schedules or lands", () => {
+117 |     const s: SimState = { landed: new Set(), verdicts: new Map(), bundles: new Map(), trace: [] };
+118 |     runBuild(s, { probeGreen: false });
+119 |     expect(s.landed.has("root")).toBe(true);
+120 |     expect(s.landed.has("probe-x")).toBe(true); // the probe itself still ran + landed
+121 |     expect(s.landed.has("feature")).toBe(false); // but its dependent is gated off the red verdict
+                                          ^
+error: expect(received).toBe(expected)
+
+Expected: false
+Received: true
+
+      at <anonymous> (/Users/williamcory/vibecode-room/src/orchestration/e2e-dry-run.test.ts:121:37)
+(fail) e2e dry-run over a synthetic DAG > RBG — a red probe verdict halts the chain: feature never schedules or lands [0.18ms]
+
+ 2 pass
+ 1 fail
+ 14 expect() calls
+Ran 3 tests across 1 file. [7.00ms]

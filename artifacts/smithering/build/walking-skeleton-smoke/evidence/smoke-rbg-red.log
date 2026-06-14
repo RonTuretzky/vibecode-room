@@ -1,23 +1,2 @@
 bun test v1.3.14 (0d9b296a)
-
-test/smoke/spine-skeleton.smoke.ts.test.ts:
-41 |
-42 |       tracer.process(obs, decision);
-43 |     }
-44 |
-45 |     // Core gate: exactly one trace line (the action decision on the wake-word line)
-46 |     expect(emitted.length).toBe(1);
-                                ^
-error: expect(received).toBe(expected)
-
-Expected: 1
-Received: 0
-
-      at <anonymous> (/Users/williamcory/vibecode-room/test/smoke/spine-skeleton.smoke.ts:46:28)
-(fail) spine-skeleton smoke > reads 2-line fixture, runs matcher, emits exactly one structured trace line with non-empty correlationId [0.84ms]
-
- 1 pass
- 1 fail
- 4 expect() calls
-Ran 2 tests across 1 file. [16.00ms]
 EXIT:1

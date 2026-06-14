@@ -24,84 +24,81 @@
 > the **real** thing before building on it. Build for observability so a later agent with **no
 > context** can debug from traces alone.
 >
-> **This revision** closes the eight findings from the adversarial review (R1–R8, recorded in §20.1):
-> the safety gate is moved to the agent's **tool-call execution boundary** (an in-run PreToolUse
-> hook + safe-executor, probe-gated by P-HOOK — R1); REQ-1 gains a real consent scheduler, listening-
-> indicator owner, and **whole-session** raw-audio persistence guard (§12 — R2); the **acceptance→spawn**
-> flow gets a state owner, MCQ accumulator, accept/decline classifier, auto-select and planning
-> transition (§7 — R3); the hot-plane earcon is re-grounded on **Cue's deterministic `TextCue`
-> outcome** (recognition stays on Cue — R4); a **"working-on-it" timeout ack** is defined (§5.4 — R5);
-> the **`observe.pass` silence vs. audible-ack contradiction** is resolved by distinguishing *ambient
-> pass* (silence) from *addressed pass* (audible ignored-ack), with a PRD-amendment recommendation
-> surfaced to the gate (§4.2 — R6); **status, pause-all, and the Safe/Explicit/Dangerous mode commands**
-> are added to the action contract, handlers and tests (R7); and the **pre-spawn resource check** is
-> engineered with refusal behavior, observability and tests (§10.1 — R8).
+> **Decision update (V0 scope cut — supersedes prior safety machinery).** Per the V0 decision update we
+> **run dangerously to completion** and **trust the voice library (Cue)**: the in-run PreToolUse safety
+> hook / safe-executor / dead-man timer (old R1/ENG-A-08), the shell-command classifier (old R9/ENG-A-12),
+> the Safe/Explicit/Dangerous mode switching (old R7/ENG-A-11), the bespoke on-device keyword spotter and
+> its P-SPOTTER gate (old R10/ENG-A-13), the elaborate `SubscriptionCredentialProvider` machinery (old
+> R15/ENG-A-15), and the formal annotated replay corpus / restraint metric (old R16/ENG-A-14/ENG-T-07) are
+> **all cut or deferred for V0** (see §8 "(cut in V0)", §0 below, and §20). Mute/unmute words are now plain
+> **"mute"/"unmute"**; **ignored ambient speech is silent**; safety later means **sandboxing the process,
+> not gating permissions**.
 >
-> **This revision (second adversarial round)** closes eight further findings (R9–R16, §20.2): the
-> safety classifier gains a concrete, deterministic **shell-command policy** that distinguishes
-> read-only shell (`ls`, tests, typechecks, `git` inspection) from destructive/unknown shell so
-> **Safe mode stays autonomous (AC11.1) and never collapses into Explicit** (§8.1.1 — R9); the
-> illegal "emergency-stop-unmutes" path is removed — **voice-unmute via the spotter is the sole
-> operational unmute and P-SPOTTER becomes blocking**, while REQ-14 stays a kill-all that *ends the
-> session* (a fresh session restarts unmuted), never an in-session resume (§5.3, §11 — R10);
-> **per-process `[callsign], pause`/`resume` magic words** are added with handlers and tests so
-> "steer A, pause B" (REQ-13) has a deterministic command path, not free-form NL (§4.3 — R11); the
-> **consent line now states "Only transcripts are saved"** (AC1.1) with a test asserting it (§12 —
-> R12); the output policy is aligned to the PRD — **mute = earcon + one-word TTS (AC2.4), halt =
-> earcon + ≤15-word TTS (AC12.3), and every spoken read-back is ≤15 words (AC9.3)** (§5.5, §8.1 —
-> R13); **AC6.4 is implemented as written** — ambient `observe.pass` emits a distinct, minimal
-> audible ack by default (silence is a knob unlocked only by an explicit PRD amendment), so the doc
-> no longer violates a literal AC (§4.2 — R14); the **hot-loop DecisionLLM is routed through Smithers
-> subscriptions** (no raw API keys) with credential injection and **secret-redaction tests on every
-> probe and the trace log** (§2, §15.6 — R15); and the **annotated replay corpus is engineered as a
-> concrete, owned, versioned artifact** with location, minimum duration, label schema, labeling
-> protocol, held-out test split, and recorded red-before-green (§15.5 — R16).
+> **This revision** closes findings from the adversarial review (R1–R8, recorded in §20.1):
+> REQ-1 gains a real consent scheduler, listening-indicator owner, and **whole-session** raw-audio
+> persistence guard (§12 — R2); the **acceptance→spawn** flow gets a state owner, MCQ accumulator,
+> accept/decline classifier, auto-select and planning transition (§7 — R3); the hot-plane earcon is
+> re-grounded on **Cue's deterministic `TextCue` outcome** (recognition stays on Cue — R4); a
+> **"working-on-it" timeout ack** is defined (§5.4 — R5); ignored ambient speech is **silent** while
+> addressed-command acks remain (§4.2 — R6); and **status and pause-all commands** are added to the
+> action contract, handlers and tests (R7); the **pre-spawn resource check** is engineered with
+> refusal behavior, observability and tests (§10.1 — R8). *(The old R1 safety-boundary hook is cut —
+> see §8.)*
+>
+> **This revision (second adversarial round)** carried findings R9–R16 (§20.2); several are now
+> superseded by the V0 scope cut: the shell-command classifier (R9) and the bespoke unmute spotter
+> (R10) are **cut**. Still in force: **per-process `[callsign], pause`/`resume` magic words** with
+> handlers and tests so "steer A, pause B" (REQ-13) has a deterministic command path, not free-form NL
+> (§4.3 — R11); the **consent line states "Only transcripts are saved"** (AC1.1) with a test asserting
+> it (§12 — R12); the output policy is aligned to the PRD — **mute = earcon + one-word TTS (AC2.4),
+> halt = earcon + ≤15-word TTS (AC12.3)** (§5.5 — R13); **ignored ambient speech is silent** (§4.2 —
+> R14, redefined per the V0 update); credential handling keeps **no raw keys in source** but drops the
+> heavy provider machinery — model calls use the host's logged-in OpenAI Codex + Anthropic Claude
+> subscriptions (§2, §15.6 — R15, simplified); and suggestion restraint is now a set of **env-tunable
+> parameters with documented defaults**, tuned by feel later, not a formal labeled corpus (§15.5 — R16,
+> deferred).
 
 ---
 
-## 0. The five architectural bets (what the orchestrator decided here)
+## 0. The four architectural bets (what the orchestrator decided here)
 
-The architecture is shaped by five bets. Each is a judgment call recorded with an HTML decision doc
+The architecture is shaped by four bets. Each is a judgment call recorded with an HTML decision doc
 under `artifacts/smithering/decisions/` (§20). Everything else in this document is the consequence of
-these five.
+these four. *(A prior fifth bet — safety enforced at the tool-call boundary via an in-run hook — is
+**cut in V0**: we run dangerously to completion and trust Cue for any needed confirmation. Safety
+later = sandbox the process, not gate permissions. See §8.)*
 
 1. **Three concurrency planes that must never block each other** (`concurrency-planes.html`). The
-   product lives or dies on latency asymmetry: the earcon ack must fire in ≤300 ms (REQ-10) while a
+   product lives or dies on latency asymmetry: the earcon ack should fire in ≤300 ms (REQ-10) while a
    durable spawn may take up to 3 s (REQ-4) and an LLM decision ~100 ms (NG-9 hot loop). We separate
    the system into a **Hot plane** (audio in/out + earcon dispatch, never gated on the LLM/Smithers/TTS),
    a **Decision plane** (Cue policies + cheap/fast LLM, temperature-0), and a **Durable plane**
-   (Smithers runs + the in-run safety hook). The planes communicate only through queues; a stall in a
-   slower plane can never delay a faster one. **What the hot plane reacts to is Cue's own deterministic
-   `TextCue` decision** — recognition stays on Cue (§3.4, bet shared with #5).
+   (Smithers runs). The planes communicate only through queues; a stall in a slower plane can never
+   delay a faster one. **What the hot plane reacts to is Cue's own deterministic `TextCue` decision** —
+   recognition stays on Cue (§3.4). The three latency budgets (≤300 ms / ~100 ms / ≤3 s) are
+   **env-tunable knobs with documented defaults (§14), not hard guarantees** — tune by feel later.
 
 2. **The provider interface is the universal test boundary** (`provider-test-boundary.html`). All
    four OSS references (eng-oss §5.2) converge on this: every external dependency (ASR, TTS, decision
-   LLM, Smithers, the on-device spotter) sits behind a typed interface, and *everything inside that
-   boundary is tested headless via record-replay* (eng-oss §5.3, design §13.1). This is the single
-   decision that makes the 10×–100× bar physically achievable — no mic, no network, no API keys in
-   the inner test loop.
+   LLM, Smithers) sits behind a typed interface, and *everything inside that boundary is tested
+   headless via record-replay* (eng-oss §5.3, design §13.1). This is the single decision that makes the
+   10×–100× bar physically achievable **and keeps the voice-library integration trivially mockable** —
+   no mic, no network, no API keys in the inner test loop.
 
 3. **The Cue↔Smithers seam is one explicit, owned, asynchronous, bidirectional module**
-   (`cue-smithers-seam.html`). This is the novel integration with no prior art (PRD §9, eng-oss §6).
-   We isolate it into a single dispatcher so it is the *one* place the seam is implemented, traced,
-   and tested — actions flow out (Cue→Smithers), run-events flow back (Smithers→Cue), and neither
-   system knows about the other (the Temporal lesson, eng-oss §3.3). The seam carries the **safety
-   approval round-trip** (read-back out, confirm/deny back), not just spawn/steer.
+   (`cue-smithers-seam.html`). **Cue and Smithers do not know about each other — they are two
+   completely separate things: Cue is essentially I/O into the event loop, Smithers just runs
+   background jobs.** This is the novel integration with no prior art (PRD §9, eng-oss §6). We isolate
+   it into a single decoupled dispatcher so it is the *one* place the seam is implemented, traced, and
+   tested — actions flow out (Cue→Smithers), run-events flow back (Smithers→Cue) (the Temporal lesson,
+   eng-oss §3.3).
 
-4. **All routing/safety invariants live in code, never in the LLM** (`invariants-in-code.html`). The
-   priority ladder (mute>panic>stop>steer>suggest>pass), routing exclusivity, the "no steer without a
-   callsign" dispatch guard, and the destructive-action classifier are **deterministic code**. The LLM
-   scores *quality and intent*; it never *authorizes an action*. This is what makes REQ-6/7/11/12
-   testable and deterministic (design §5.5, §8).
-
-5. **Safety is enforced at the agent's tool-call execution boundary, not at the dispatcher**
-   (`safety-execution-boundary.html`). Destructive work does not happen in the steering instruction —
-   it happens **inside a Smithers run** when the agent calls a tool (`Bash("rm -rf …")`, a file
-   overwrite, `git push --force`, a DB `DROP`). The dispatcher never sees those. So the read-back/
-   confirm gate (REQ-11) lives in an **in-run PreToolUse hook + safe-executor** that intercepts the
-   *real tool call* before execution, classifies it **deny-by-default**, holds it, and routes the
-   read-back to voice across the seam. This is the only place REQ-11 can be made true; it is
-   **probe-gated by P-HOOK** before any code trusts it.
+4. **All routing invariants live in code, never in the LLM** (`invariants-in-code.html`). The
+   priority ladder (mute>panic>stop>steer>suggest>pass), routing exclusivity, and the "no steer
+   without a callsign" dispatch guard are **deterministic code** — routing *authority* is in code. The
+   LLM scores *quality and intent*; it never *authorizes a route*. This is what makes REQ-6/7/12
+   testable and deterministic (design §5.5). *(Safety-authority machinery is cut in V0 — see §8 — but
+   routing-authority-in-code stays.)*
 
 ---
 
@@ -112,10 +109,10 @@ these five.
 ```
                                   ┌─────────────────── HOT PLANE (≤300 ms, never gated on LLM/Smithers/TTS) ───────────────┐
    mic ──▶ AudioInput ──▶ MuteController ──▶ ASRProvider(Deepgram) ──▶ TranscriptObservation                              │
-            (PCM)            │  hard-mute fork              │                     │                                        │
+            (PCM)            │  mute = stop feeding pipeline│                     │                                        │
             │               ▼                              │                     │                                        │
-            │       KeywordSpotter (local, "Daybreak")     │                     │   EarconEngine ◀── Cue TextCue (det.)   │
-            │       — parallel branch, bypasses mute gate  │                     │       │ pre-rendered PCM  ▲ "working" ack│
+            │       Cue keyword listening ("unmute")       │                     │   EarconEngine ◀── Cue TextCue (det.)   │
+            │       — handled by the voice library         │                     │       │ pre-rendered PCM  ▲ "working" ack│
             │                                              │                     │       ▼                  │ (timeout)    │
             └──────────────────────────────────────────────┼─────────────────▶ AudioOutput ──▶ speaker     │              │
                                                             │                     ▲             RoundTripTimer(REQ-10)     │
@@ -126,22 +123,21 @@ these five.
                                   │        ├─ Program: AMBIENT (C2) → SuggestionEngine → Pending     │  │
                                   │        └─ Program: STEERING (C3) → Dispatch (invariants)         │  │
                                   │     policies: TextCue/WordCountCue/IdleCue/IntervalCue           │  │
-                                  │     decision LLM (cheap/fast) ── observe.pass (≈90%)             │  │
+                                  │     decision LLM (cheap/fast) ── observe.pass (≈90%, SILENT)     │  │
                                   │     MappedActionTool action {type,target,payload}                │  │
                                   └──────────────────────────┬──────────────────────────────────────┘  │
                                                              ▼                                          │
                                   ┌──────────────── SEAM (async, Hono) — bet #3 ───────────────────┐   │
                                   │  ActionDispatcher ─▶ SmithersClient.spawn/steer/pause/halt      │   │
-                                  │                      /status/setMode/approve/deny               │   │
+                                  │                      /status                                    │   │
                                   │        ▲                          │                             │   │
                                   │  RunEventNormalizer ◀── streamRunEvents (SSE) ◀─────────────────┘   │
-                                  │   (run-event | approval-request → ≤15-word summary → back to Cue)───┘
+                                  │   (run-event → ≤15-word summary → back to Cue)────────────────────┘
                                   └──────────────────────────┬──────────────────────────────────────┐
                                   ┌─────────────────── DURABLE PLANE (seconds) ──────────────────────▼─┐
                                   │  Smithers durable runs (per process)  +  ProcessRegistry/Lifecycle │
-                                  │  ┌─ in each run: PreToolUse SafetyHook + SafeExecutor (bet #5) ──┐ │
-                                  │  │   classify tool call (deny-by-default) → hold → approval-req  │ │
-                                  │  │   dead-man timer 25 s → abort if no "confirm"                 │ │
+                                  │  ┌─ V0: runs DANGEROUSLY to completion — no in-run approval gate ─┐ │
+                                  │  │   (safety later = sandbox the process, not gate permissions)   │ │
                                   │  └───────────────────────────────────────────────────────────────┘ │
                                   │  Pre-spawn ResourceCheck (§10.1)  +  EmergencyStop (REQ-14)         │
                                   └───────────────────────────────────────────────────────────────────┘
@@ -156,11 +152,10 @@ these five.
 mic → ASR(isFinal) → CueAdapter → Cue decision
    ├─ [TextCue match → recognized command] → EarconEngine.emit ≤300 ms   (hot plane, fed by Cue's
    │                                                                       deterministic match — never the LLM)
+   ├─ [ambient pass — un-addressed chatter] → SILENT (no ack)
    └─ [LLM-scored / MappedActionTool action] → ActionDispatcher → SmithersClient → durable run
-            ├─ run-event → RunEventNormalizer → CueAdapter → OutputPolicy (silent|earcon|≤15-word TTS) → speaker
-            └─ [agent attempts destructive tool] → PreToolUse SafetyHook holds it
-                       → approval-request → seam → read-back TTS → room says "confirm"
-                       → dispatcher.approve(gateId)  |  dead-man timer → abort
+            └─ run-event → RunEventNormalizer → CueAdapter → OutputPolicy (silent|earcon|≤15-word TTS) → speaker
+                          (V0: the run executes dangerously to completion — no per-tool approval gate)
 ```
 
 ### 1.2 Why this shape
@@ -184,11 +179,13 @@ mic → ASR(isFinal) → CueAdapter → Cue decision
   around by replacing Cue.
 - **The seam is the top integration risk, so it is one module (bet #3).** No prior art integrates Cue
   and Smithers (PRD §9, eng-oss §6.2). Concentrating it in `seam/` means the novel risk has exactly
-  one home to probe (P-SEAM), trace, and test — and one place the safety approval round-trip lives.
-- **Safety must reach the real execution site (bet #5).** Authority-in-code (bet #4) is only true if
-  it reaches *where the destructive act actually executes* — inside the Smithers run. Hence the
-  in-run PreToolUse hook (§8). A dispatcher-side NL-verb classifier alone cannot guarantee it sees the
-  action before execution, which is exactly the R1 finding.
+  one home to probe (P-SEAM), trace, and test. Cue and Smithers stay fully decoupled — Cue is I/O into
+  the event loop, Smithers runs background jobs; the seam is the single translation layer between them.
+- **V0 runs dangerously to completion (was bet #5 — cut).** A prior bet placed a safety gate at the
+  agent's tool-call execution boundary (in-run PreToolUse hook + safe-executor). **That is cut for
+  V0:** we trust the library and run to completion with no per-step approval gate. Where a confirmation
+  is genuinely needed, Cue handles it; minimize approvals. If we want safety later, we **sandbox the
+  whole process**, not gate via permissions (see §8).
 
 ### 1.3 The data contract (`src/types.ts`) — defined first
 
@@ -203,26 +200,21 @@ interface TranscriptObservation { text: string; isFinal: boolean; speaker: strin
 // an ambient pass (un-addressed chatter) from an addressed pass (a command attempt that resolved to no-op) — R6/§4.2.
 type CueDecision = { kind: 'pass'; addressed: boolean; reason: 'ambient'|'near-miss'|'low-confidence'|'dropped'; policy: string; decisionId: string; correlationId: string; meta: DecisionMeta }
                  | { kind: 'action'; action: DispatchedAction; policy: string; decisionId: string; correlationId: string; meta: DecisionMeta }
-// What the dispatcher sends across the seam to Smithers. Covers EVERY documented command (R7).
-interface DispatchedAction { type: 'spawn'|'steer'|'pause'|'resume'|'halt'|'pauseAll'|'status'|'setMode'|'approve'|'deny'; targetUPID: string | null; payload: unknown; correlationId: string }
-// Per-process execution posture. Default 'safe'; 'explicit' and 'dangerous' are session-only, voice opt-in, off by default (REQ-11 AC11.4).
-type ExecutionMode = 'safe' | 'explicit' | 'dangerous'
-// A tool call intercepted by the in-run PreToolUse safety hook, BEFORE execution (bet #5, §8).
-interface ToolCallContext { upid: string; tool: string; args: unknown; klass: 'read'|'fs-write'|'fs-delete'|'shell'|'vcs-push'|'db-mutate'|'net-mutate'|'unknown'; gateId: string }
-// Shell calls are sub-classified DETERMINISTICALLY before they reach `klass` (§8.1.1). A compound
-// command takes the MOST DANGEROUS verdict of its parsed simple-commands; any unparseable /
-// substitution / injection construct is `unknown` → gated. `read-safe` runs ungated (preserves AC11.1).
-type ShellVerdict = { verdict: 'read-safe'|'mutating'|'unknown'; gated: boolean; parts: { argv0: string; verdict: 'read-safe'|'mutating'|'unknown'; reason: string }[] }
-// Credentials for ASR/TTS/LLM providers are fetched from the Smithers subscription layer at
-// construction — NEVER a raw API key in source/env/artifact, NEVER written to a log (PRD §6, R15/§15.6).
-interface CredentialSource { forProvider(name: string): Promise<{ token: string } /* redacted in all logs */> }
-// The approval request that crosses the seam to voice, and the resolution that returns.
-interface ApprovalRequest { upid: string; gateId: string; readback: string; armedTimerMs: number; correlationId: string }
-type ApprovalResolution = { gateId: string; decision: 'approve'|'deny'|'timeout'; correlationId: string }
+// What the dispatcher sends across the seam to Smithers. Covers EVERY documented V0 command (R7).
+// (V0 scope cut: no setMode/approve/deny — execution modes and the safety approval gate are cut, §8.)
+interface DispatchedAction { type: 'spawn'|'steer'|'pause'|'resume'|'halt'|'pauseAll'|'status'; targetUPID: string | null; payload: unknown; correlationId: string }
+// NOTE: V0 runs DANGEROUSLY to completion. There is no per-process ExecutionMode, no ToolCallContext
+// safety classification, and no ShellVerdict — the Safe/Explicit/Dangerous modes, the in-run
+// PreToolUse safety hook, and the shell-command classifier are all CUT in V0 (§8). Safety later =
+// sandbox the process, not gate permissions. The ApprovalRequest/ApprovalResolution gate types are
+// likewise cut; if Cue needs a confirmation it handles it within the voice library.
+// Provider credentials: V0 assumes the host machine is already logged in to its OpenAI Codex and
+// Anthropic Claude subscriptions; model calls use those local CLIs/subscriptions. No raw API key in
+// source/env/artifact, NEVER written to a log (PRD §6 / §15.6). No bespoke credential-provider type.
 // The pending suggestion + accumulated MCQ answers awaiting accept/decline (REQ-4, §7).
 interface PendingSuggestion { suggestionId: string; pitch: string; mcqs: string[]; answers: string[]; correlationId: string; expiresAt: number }
 // What Smithers streams back, normalized for voice-out.
-interface RunEvent { upid: string; runId: string; kind: 'state'|'output'|'blocker'|'completed'|'safety'|'approval'; text: string; seq: number }
+interface RunEvent { upid: string; runId: string; kind: 'state'|'output'|'blocker'|'completed'; text: string; seq: number }
 // One structured log line (the §15.4 contract). The single source of truth.
 interface LogEvent { level: 'debug'|'info'|'warn'|'error'; event: string /* verb-noun */; sessionId: string; correlationId?: string; upid?: string; latencyMs?: number; meta: Record<string, unknown> }
 // Audio output decision. `working` is the timeout ack (REQ-10 AC10.3, §5.4).
@@ -247,63 +239,63 @@ a provider directly — providers are injected at construction** (eng-oss §4.4,
 interface ASRProvider { stream(audio: ReadableStream): AsyncIterable<TranscriptObservation> }       // src/providers/asr/
 interface TTSProvider { speak(text: string, opts?: {voice?: string}): Promise<ReadableStream> }      // src/providers/tts/
 interface DecisionLLM { decide(input: DecisionInput): Promise<DecisionOutput> }   // OpenAI-compatible; temp-0   // src/providers/llm/
-interface KeywordSpotter { detect(audio: AsyncIterable<AudioChunk>): Promise<Detection | null> }     // src/providers/spotter/
 ```
+
+> **V0 scope cut:** there is **no `KeywordSpotter` provider**. Cue (the voice library) already handles
+> always-on keyword listening — including hearing "unmute" while the cloud suggestion/routing pipeline
+> is paused — so we build no bespoke on-device spotter (§5.3). The provider boundary stays modular and
+> easy to mock; all tunable parameters (timeouts, cadence/gates, thresholds, latency budgets, word
+> lists) are passed in via documented **ENV variables** (§14), tuned by feel later.
 
 - **ASR — Deepgram Nova-3** (`deepgram.ts`, ENG-D-03, P-ASR). WebSocket streaming; `isFinal` per
   segment; `speaker_0/1` diarization → `SpeakerChangedCue`/`SpeakerWordCue`. Normalized to
   `TranscriptObservation`. Test double: `replay.ts` reads pre-recorded JSONL (the §15.1 spine).
 - **TTS — unverified, behind interface** (`<selected>.ts`, ENG-D-04, P-TTS). Provider chosen by the
   probe-as-benchmark; `noop.ts` double for tests. 15-word guard runs *before* `speak()` (§5.2).
-- **Decision LLM — cheap/fast only, routed through Smithers subscriptions** (`haiku.ts` default;
-  `cerebras.ts` contingent, ENG-D-05, P-LLM, **R15**). Temperature-0 for record-replay; **no
-  Opus/Sonnet in the hot loop** (NG-9). **All model calls — including the hot loop — route through
-  Smithers subscriptions, never a raw API key** (PRD §6, ENG-D-02). The `DecisionLLM` adapter fills
-  Cue's `llmProvider` slot but obtains its model access from the **same subscription path** the
-  per-process planner uses (`SubscriptionCredentialProvider`, §2.1), so Cue never holds a provider
-  key. **Default = Claude Haiku-4.5 via subscription** (reachable through Smithers today, so
-  compliant by construction); Cerebras-served Llama is a fallback **only if** it can be routed
-  through the subscription layer *or* the PRD explicitly amends §6 — recorded as an assumption to
-  probe (A-LLM-SUB, §17), never assumed.
-- **Keyword spotter — local** (`porcupine.ts`, ENG-D-06, P-SPOTTER). `Detection | null` return type
-  *enforces the scope fence* — it can return a match or nothing, never anything else (eng-oss §4.3,
-  OpenWakeWord §2.5). See §5.3.
+- **Decision LLM — cheap/fast only, behind the interface** (ENG-D-05, P-LLM). Temperature-0 for
+  record-replay; the hot loop must stay cheap/fast. Model choice follows the **model-assignment matrix
+  in the orchestration doc (O4)** — implementation = Codex `gpt-5.5`, verification = Sonnet
+  `claude-sonnet-4-6`, review = Codex `gpt-5.5` + Opus `claude-opus-4-8`, planning = Opus
+  `claude-opus-4-8` (Fable `claude-fable-5` is an aspirational TODO, not yet wired in). **V0 assumes
+  the host machine is already logged in to its OpenAI Codex and Anthropic Claude subscriptions** and
+  model calls use those local CLIs/subscriptions — **no raw API key in source** (§2.1). The
+  `DecisionLLM` adapter fills Cue's `llmProvider` slot.
 
-### 2.1 Credential handling — one subscription path, no raw keys, redacted everywhere (R15)
+### 2.1 Credential handling — host subscriptions, no raw keys (R15, simplified)
 
-PRD §6 is binding: **all model calls route through Smithers subscriptions, never a raw API key.** A
-single `SubscriptionCredentialProvider` (`src/providers/credentials.ts`) is the *only* place any
-provider credential is obtained, at construction time, from the Smithers subscription/secret layer:
+PRD §6 is binding on one point: **no raw API keys in source.** Per the V0 decision update we **drop
+the bespoke `SubscriptionCredentialProvider` abstraction** and **assume the host machine running this
+is already logged in to its OpenAI Codex and Anthropic Claude subscriptions** — the local
+CLIs/subscriptions are available, and model calls use those. There is no elaborate credential-provider
+machinery to build.
 
-- The **DecisionLLM** (hot loop) and the **per-process planner** both resolve their model access
-  through this provider — there is exactly one credential path, and **Cue holds no key** (§2).
-- **ASR (Deepgram) and TTS** are audio services, not LLM model calls, so they fall outside the
-  literal "model call" clause — but their credentials are obtained through the **same provider** and
-  are subject to the same rule: **never hard-coded, never in an env var committed to the repo, never
-  written to any artifact, log, JSONL trace, or probe report.**
-- The `TraceProcessor` (§13) runs a **redaction filter** over every `LogEvent.meta` and every probe
-  report: any value matching a credential/token shape (bearer tokens, `sk-…`, Deepgram/ElevenLabs
-  key patterns, JWTs, `Authorization:` headers) is replaced with `«redacted»` **before** the line is
+- **Model access** (the hot-loop DecisionLLM and the per-process planner) comes from the host's
+  already-authenticated Codex / Claude subscriptions. **No raw API key is hard-coded, committed to the
+  repo, written to any artifact, log, JSONL trace, or probe report.**
+- **ASR (Deepgram) and TTS** are audio services; their credentials (when needed) are read from the
+  environment at construction and are subject to the same rule: **never written to any trace, log, or
+  report.**
+- The `TraceProcessor` (§13) runs a lightweight **redaction filter** over every `LogEvent.meta` and
+  every probe report: any value matching a credential/token shape (bearer tokens, JWTs,
+  `Authorization:` headers, provider key patterns) is replaced with `«redacted»` **before** the line is
   emitted. Redaction is fail-closed: an unrecognized-but-secret-shaped string is redacted, not passed.
 
-**Verify (provider layer + credentials):**
+**Verify (provider layer + secret hygiene):**
 - *Unit/integration:* a *boundary-substitution test* constructs every consumer with the replay/noop
   doubles and asserts it runs with zero network/mic (eng-oss §5.2). *Interface-conformance tests*:
   the replay ASR yields the same `TranscriptObservation` shape the real one promises; the noop TTS
-  records calls without audio. *Subscription-path test* — the DecisionLLM adapter obtains access via
-  `SubscriptionCredentialProvider` and **fails construction if handed a raw key** (RBG: inject a raw
-  `OPENAI_API_KEY` path → the no-raw-key assertion fails). ***Secret-redaction test*** — feed a
-  `LogEvent`/probe report whose `meta` contains a fake bearer token / `sk-…` / Deepgram key and assert
-  the emitted line shows `«redacted»` and the raw value appears **nowhere** in any trace/log/report
-  (RBG: disable the redaction filter → the key leaks into the JSONL → test fails; restore → redacted).
-  *Red-before-green:* have a consumer `import` a concrete provider directly → an architecture lint test
-  (no concrete-provider imports outside `providers/`) fails.
+  records calls without audio. ***Secret-redaction test*** — feed a `LogEvent`/probe report whose
+  `meta` contains a fake bearer token / key and assert the emitted line shows `«redacted»` and the raw
+  value appears **nowhere** in any trace/log/report (RBG: disable the redaction filter → the key leaks
+  into the JSONL → test fails; restore → redacted). *Red-before-green:* have a consumer `import` a
+  concrete provider directly → an architecture lint test (no concrete-provider imports outside
+  `providers/`) fails.
 - *E2e:* covered per consumer below; the providers themselves are proven by their probes (§17), **each
   of which carries the secret-redaction assertion** (P-ASR/P-TTS/P-LLM, §17). A *whole-session
   secret-scan* greps the full trace/log/report tree after a live run and asserts **zero** key-shaped
   strings (RBG: plant a key in a meta field → scan finds it → fails).
-- *Observability:* `provider.init{name, kind, credentialSource:'subscription'}`;
-  `asr.final{utteranceId, latencyMs}`; `secret.redacted{count}` (proof the filter ran, never the value).
+- *Observability:* `provider.init{name, kind}`; `asr.final{utteranceId, latencyMs}`;
+  `secret.redacted{count}` (proof the filter ran, never the value).
 
 ---
 
@@ -337,8 +329,7 @@ evaluation from its **LLM-scored** decision:
 
 - A magic word is matched by **Cue's `TextCue`** — a literal/regex match over the transcript
   observation. This is deterministic, in-process, and does **not** call the decision LLM or Smithers.
-  Recognition is therefore *on Cue* (constraint satisfied, `safety-execution-boundary.html` sibling
-  doc `hot-plane-cue-recognition.html`).
+  Recognition is therefore *on Cue* (constraint satisfied, `hot-plane-cue-recognition.html`).
 - The Cue adapter routes the **`TextCue` decision outcome straight to `EarconEngine`** in the hot
   plane the moment it resolves — before the SuggestionEngine's LLM scoring, before any
   `MappedActionTool` dispatch, before Smithers. The earcon never waits on the slow path.
@@ -374,14 +365,16 @@ evaluation from its **LLM-scored** decision:
 
 ## 4. Routing & dispatch — invariants in code (bet #4) — REQ-6, REQ-7, REQ-8, REQ-12
 
-`src/routing/`. **Authority lives here, not in the LLM.**
+`src/routing/`. **Routing authority lives here, not in the LLM.**
 
 - `dispatch.ts` — the **priority ladder** `mute > panic > stop > steer > suggest > pass` resolved by a
   deterministic comparator; **routing exclusivity** (each utterance → exactly one of
   {suggestion, steer:X, pass}); the **dispatch invariant** — a steering verb with no in-utterance
   callsign and no open window is *rejected at dispatch* (REQ-6 AC6.1).
-- `vocabulary.ts` — the tiered magic-word table (§4.3). The collision-resistance bar **scales with
-  false-trigger cost** (D-DD-24).
+- `vocabulary.ts` — the magic-word table (§4.3). **Word lists are an ENV-configured parameter** (§14),
+  tuned by feel later. *(V0 scope cut: the prior always-hot vs. state-gated **tiered vocabulary**
+  (old D-DD-24) is **deferred** — Cue handles wake/keyword activation. Revisit only if it becomes a
+  problem.)*
 - `callsigns.ts` — the NATO subset pool (Atlas…Lima) + the **collision guard** (Metaphone +
   phoneme-Levenshtein ≤2 against every active callsign/wake/mute/unmute/panic; D-DD-05); sequential
   assignment; **60 s re-use cooldown** for a halted callsign (D-DD-18).
@@ -391,69 +384,57 @@ evaluation from its **LLM-scored** decision:
 - `handlers.ts` — **one handler per documented command** (R7). Every entry in the §4.3 table maps to
   exactly one handler that emits exactly one `DispatchedAction` (or a local effect). Includes the
   **`status`** handler (emits `{type:'status'}` → §9 returns a ≤15-word active-process summary),
-  **`pauseAll`** handler (`{type:'pauseAll'}` → pauses every running process), the **per-process
+  **`pauseAll`** handler (`{type:'pauseAll'}` → pauses every running process), and the **per-process
   `pause`/`resume`** handlers (R11 — `{type:'pause'|'resume', targetUPID}`; the UPID comes from the
-  in-utterance callsign or the open steering window, **never** from free-form NL, so REQ-7/NG-2 hold),
-  and the **mode commands** (§8.3) that emit `{type:'setMode', payload:{mode}}`.
+  in-utterance callsign or the open steering window, **never** from free-form NL, so REQ-7/NG-2 hold).
+  *(V0 scope cut: there are no execution-mode commands — Safe/Explicit/Dangerous switching is removed;
+  V0 runs dangerously to completion, §8.)*
 
-### 4.2 Audible routing acks — AC6.4 implemented as written, silence behind an amendment (R6, R14)
+### 4.2 Audible routing acks — ignored ambient speech is SILENT (R6, R14 — redefined per V0 update)
 
-AC6.4 **literally** requires each routed utterance to be audibly distinguishable across
-{fed-the-idea-engine, steering-process-X, ignored/`observe.pass`}. The prior eng draft made ambient
-`route.pass` **silence** and *recommended a PRD amendment* — but per the second review (R14) the eng
-doc **cannot be approved while knowingly violating a literal AC**. So we **implement AC6.4 as
-written**: every routed utterance, including ambient pass, gets a **distinct audible ack** by default
-(`addressed-pass-ack.html`, ENG-A-10). The restraint-motivated silence is preserved only as a
-**live-tunable knob** that is **unlocked solely by an explicit PRD amendment** — until that amendment
-lands, the default and the only AC-compliant setting is the audible ambient-pass ack.
+Per the V0 decision update, **ignored ambient speech makes no sound.** `observe.pass` / `route.pass`
+for un-addressed chatter is **silent by default** — of course ignored ambient speech should make no
+noise. Earcons remain for explicit **state transitions** (wake, spawn, mute, halt, etc.) and for
+acknowledging **addressed** commands; un-addressed / ignored speech is silent. This replaces the prior
+"every routed utterance gets a distinct audible ack" engineering (the old two-layer-ack-for-all-
+utterances model is removed).
 
-| Route | Case | Ack (Layer B, non-tonal — D-DD-23) — **default (AC6.4-compliant)** |
+| Route | Case | Ack (Layer B, non-tonal — D-DD-23) |
 |---|---|---|
 | `route.suggestion` | fed the idea engine | single soft "whoosh" |
 | `route.steer:X` | steered process X | brief double-click "tick-tick" |
 | `route.pass` **addressed** | a command attempt (wake/callsign/command-shaped) that resolved to no-op | distinct **"declined" tick** (single low non-tonal blip) |
-| `route.pass` **ambient** | un-addressed chatter that was never a command attempt | **near-subliminal soft tick** (the minimal *distinct* ack AC6.4 requires) — distinct from the three above |
+| `route.pass` **ambient** | un-addressed chatter that was never a command attempt | **SILENT — no sound** |
 
 `CueDecision.addressed` (§1.3) carries the addressed/ambient distinction (set deterministically in
-code — was a wake/callsign/command token present? — never by the LLM) **only so the two pass cases
-get acoustically distinct acks**, not so ambient pass is silenced. A live knob
-`ambientPassAck: 'tick' | 'silent'` defaults to **`'tick'`** and is **refused at config-load unless
-a `prdAmendment: 'AC6.4-silence'` flag is present** — i.e. code cannot select silence until the PRD
-says so. This makes the build compliant **today** while leaving a clean, single-line path to the
-product's preferred restraint **iff** the PRD amends.
-
-> **PRD-amendment recommendation (non-blocking — the build does NOT depend on it).** We still
-> recommend the PRD scope AC6.4's distinct-ack to **addressed** utterances and declare **silence the
-> intended ack for ambient `observe.pass`** (consistent with REQ-9 restraint, PRD §1's "over-speaking
-> makes the product unbearable"). If adopted, set `ambientPassAck:'silent'`. Recorded in the
-> structured-output summary for the orchestrator's gate — but, unlike the prior draft, **the doc is
-> approvable as-is because the default honors the current AC.**
+code — was a wake/callsign/command token present? — never by the LLM): an **addressed** pass gets the
+declined tick (the user spoke a command that resolved to no-op, so they get acknowledged), while an
+**ambient** pass is silent. There is no `ambientPassAck` knob and no PRD-amendment gate — silence for
+ignored ambient speech is the requirement, not a configurable behavior.
 
 **Verify (routing & dispatch):**
 - *Unit/integration:* *priority-ladder test* (RBG: demote mute below panic → fails); *dispatch-invariant
   test* (RBG: remove the guard → un-addressed talk steers → fails); *routing-exclusivity test*;
-  *tier-gating test* ("Yes" outside `SUGGESTION_DELIVERY` is inert — RBG: make "Yes" always-hot → a
-  casual "yes" spawns → fails); *collision-guard test* (RBG: add a callsign within distance ≤2 → must
-  reject); *determinism test* (replay same transcript N× → identical decisions); *window-lifecycle
-  test* (open on callsign; close on Done/20 s/Abort); *re-use cooldown test* (halted callsign
-  unavailable 60 s); *command-coverage test* — every row of the §4.3 table maps to **exactly one**
-  handler and one `DispatchedAction.type` (RBG: drop the `status` handler → a documented command has
-  no handler → fails); *command-coverage test (incl. per-process pause/resume)* — the §4.3
-  `pause`/`resume` rows each map to one handler emitting `{type:'pause'|'resume', targetUPID}`;
-  *addressed-vs-ambient-pass test* — an addressed near-miss yields `pass{addressed:true}`→ declined
-  tick; ambient chatter yields `pass{addressed:false}`→ near-subliminal ambient tick, and **all four
-  Layer-B acks are pairwise distinct** so AC6.4 holds (RBG: make ambient pass silent without a
-  PRD-amendment flag → AC6.4-compliance test fails); *ambient-ack-knob test* —
-  `ambientPassAck:'silent'` is **rejected at config-load** absent `prdAmendment:'AC6.4-silence'`;
+  *suggestion-gating test* ("Yes" outside an active suggestion is inert — RBG: accept "Yes" with no
+  pending suggestion → a casual "yes" spawns → fails); *collision-guard test* (RBG: add a callsign
+  within distance ≤2 → must reject); *determinism test* (replay same transcript N× → identical
+  decisions); *window-lifecycle test* (open on callsign; close on Done/20 s/Abort); *re-use cooldown
+  test* (halted callsign unavailable 60 s); *command-coverage test* — every row of the §4.3 table maps
+  to **exactly one** handler and one `DispatchedAction.type` (RBG: drop the `status` handler → a
+  documented command has no handler → fails); *command-coverage test (incl. per-process pause/resume)*
+  — the §4.3 `pause`/`resume` rows each map to one handler emitting `{type:'pause'|'resume',
+  targetUPID}`; *addressed-vs-ambient-pass test* — an addressed near-miss yields `pass{addressed:true}`→
+  declined tick; ambient chatter yields `pass{addressed:false}`→ **silence** (RBG: emit any sound for
+  an ambient pass → the "ignored ambient is silent" test fails);
   *per-process-pause routing test* — "[callsign], pause" / select-then-"Pause" dispatches `pause` to
   **that UPID only**, and a free-form NL "pause the second one" with no callsign/window is **rejected
   at dispatch** (REQ-7/NG-2; RBG: route NL "pause B" to a pause action → fails); symmetric for resume.
-- *E2e:* live multi-utterance script — un-addressed talk only ever feeds suggestions (each ambient
-  pass emits the near-subliminal tick by default); one-breath select-and-steer routes correctly;
-  near-homophone of a callsign in casual speech does **not** mis-select; each documented command
-  (incl. status, pause-all, **per-process pause/resume**, mode commands) yields its documented effect;
-  **"Atlas, pause" pauses Atlas while Bravo keeps running** (the REQ-13 "steer A, pause B" path, §10);
-  an addressed near-miss emits the declined tick; an undocumented ambient phrase yields no command.
+- *E2e:* live multi-utterance script — un-addressed talk only ever feeds suggestions and **makes no
+  sound**; one-breath select-and-steer routes correctly; near-homophone of a callsign in casual speech
+  does **not** mis-select; each documented command (incl. status, pause-all, **per-process
+  pause/resume**) yields its documented effect; **"Atlas, pause" pauses Atlas while Bravo keeps
+  running** (the REQ-13 "steer A, pause B" path, §10); an addressed near-miss emits the declined tick;
+  an undocumented ambient phrase yields no command and no sound.
 - *Third-party:* P-CUE (`TextCue`, `SpeakerWordCue`, two-Program routing), P-PHONETIC (the
   Metaphone/phoneme-distance library produces stable, reproducible codes).
 - *Observability:* `command.recognize{phrase, matchedCommand|null, tier, distanceScore}`,
@@ -461,27 +442,27 @@ product's preferred restraint **iff** the PRD amends.
 
 ### 4.3 V0 magic-word vocabulary (every command → handler → action)
 
-| Command | Spoken form | Tier | Handler → `DispatchedAction` / effect |
+Activation is handled by Cue's wake/keyword recognition; the "Activation" column below notes whether a
+word is heard anytime or only inside an open suggestion/steering window. *(V0 scope cut: there is no
+bespoke always-hot vs. state-gated **tiered** vocabulary — deferred, §4 `vocabulary.ts`.)*
+
+| Command | Spoken form | Activation | Handler → `DispatchedAction` / effect |
 |---|---|---|---|
-| Wake | "Panop" | always-hot | opens active-listen window (local) |
-| Accept | "Yes"/"Accept"/"Do it" | state-gated (suggestion) | §7 acceptance → `{type:'spawn'}` |
-| Decline | "No"/"Nah"/"Skip" | state-gated (suggestion) | §7 decline → no-op |
-| Select-and-steer | "[callsign], [instruction]" | always-hot (callsign) | select + `{type:'steer'}` |
-| Select only | "[callsign]" | always-hot | open steering window (local) |
-| Steer | (after select) "[instruction]" | state-gated (window) | `{type:'steer'}` |
-| End steering | "Done"/"Back" | state-gated (window) | close window (local) |
-| **Pause (targeted)** | "[callsign], pause" *or* (after select) "Pause" | always-hot (callsign) / state-gated (window) | `{type:'pause', targetUPID}` |
-| **Resume (targeted)** | "[callsign], resume" *or* (after select) "Resume" | always-hot (callsign) / state-gated (window) | `{type:'resume', targetUPID}` |
-| **Pause all** | "Pause all" | always-hot | `{type:'pauseAll'}` |
-| **Status** | "Status" | always-hot (low-cost) | `{type:'status'}` → ≤15-word summary |
-| Stop (targeted) | "Stop"/"Halt" | always-hot | `{type:'halt', targetUPID}` |
-| Panic (global) | "Abort" | always-hot | halt all + close windows |
-| Mute | "Curtain" | always-hot | stop cloud streaming (§5.3) |
-| Unmute | "Daybreak" | always-hot (local spotter) | resume streaming (§5.3) |
-| Confirm | "Confirm" | state-gated (read-back) | resolve safety gate → `{type:'approve'}` (§8) |
-| **Dangerous mode** | "Panop, dangerous mode" | state-gated (mode prompt) | `{type:'setMode', payload:{mode:'dangerous'}}` (§8.3) |
-| **Explicit mode** | "Panop, explicit mode" | state-gated (mode prompt) | `{type:'setMode', payload:{mode:'explicit'}}` (§8.3) |
-| **Safe mode** | "Panop, safe mode" | state-gated (mode prompt) | `{type:'setMode', payload:{mode:'safe'}}` (§8.3) |
+| Wake | "Panop" | anytime | opens active-listen window (local) |
+| Accept | "Yes"/"Accept"/"Do it" | in suggestion | §7 acceptance → `{type:'spawn'}` |
+| Decline | "No"/"Nah"/"Skip" | in suggestion | §7 decline → no-op |
+| Select-and-steer | "[callsign], [instruction]" | anytime (callsign) | select + `{type:'steer'}` |
+| Select only | "[callsign]" | anytime | open steering window (local) |
+| Steer | (after select) "[instruction]" | in window | `{type:'steer'}` |
+| End steering | "Done"/"Back" | in window | close window (local) |
+| **Pause (targeted)** | "[callsign], pause" *or* (after select) "Pause" | anytime (callsign) / in window | `{type:'pause', targetUPID}` |
+| **Resume (targeted)** | "[callsign], resume" *or* (after select) "Resume" | anytime (callsign) / in window | `{type:'resume', targetUPID}` |
+| **Pause all** | "Pause all" | anytime | `{type:'pauseAll'}` |
+| **Status** | "Status" | anytime | `{type:'status'}` → ≤15-word summary |
+| Stop (targeted) | "Stop"/"Halt" | anytime | `{type:'halt', targetUPID}` |
+| Panic (global) | "Abort" | anytime | halt all + close windows |
+| Mute | "mute" | anytime | stop feeding audio into the suggestion/routing pipeline (§5.3) |
+| Unmute | "unmute" | anytime (Cue hears it while muted) | resume feeding the pipeline (§5.3) |
 
 ---
 
@@ -496,37 +477,35 @@ product's preferred restraint **iff** the PRD amends.
   command (§3.4, REQ-10 AC10.1).
 - `output-policy.ts` — the triage map (§5.5): each trigger class → exactly one of
   {silent, earcon, ack, tts}; default = silent (90%-silence target, REQ-9 AC9.1); the **15-word hard
-  guard** counts words and, if >15, summarizes via the cheap/fast LLM (never Opus, NG-9) before
-  submission; **never-recite** rule strips file names/diffs/URLs/stack traces.
-- `mute-controller.ts` — **the hard-mute fork** (bet #1, REQ-2, design §12). "Curtain" stops the cloud
-  ASR stream ≤500 ms (Pipecat `stt_mute_filter` pattern, eng-oss §1.3); E2 → persistent mute tone;
-  the mute is **announced with a one-word TTS** ("Muted") alongside the earcon (REQ-2 **AC2.4**, R13 —
-  this is an *output*, so it is allowed even though listening has stopped); **zero observations** are
-  produced/persisted while muted. The `KeywordSpotter` runs as a **parallel branch that never passes
-  through the mute gate** — it is the only thing alive while muted, emits only `mute.released`,
-  persists nothing.
+  guard** counts words and, if >15, summarizes via the cheap/fast LLM before submission; **never-recite**
+  rule strips file names/diffs/URLs/stack traces. Thresholds (silence target, word cap, summarizer
+  budget) are ENV-tunable (§14).
+- `mute-controller.ts` — **the mute fork** (bet #1, REQ-2, design §12). Per the V0 update, **muted
+  means: stop feeding audio into the suggestion/routing pipeline** — the cloud ASR / suggestion stream
+  is stopped ≤500 ms (Pipecat `stt_mute_filter` pattern, eng-oss §1.3); E2 → persistent mute tone; the
+  mute is **announced with a one-word TTS** ("Muted") alongside the earcon (REQ-2 **AC2.4**, R13 — this
+  is an *output*, so it is allowed even though the pipeline has stopped); **zero observations** are fed
+  into the suggestion/routing pipeline or persisted while muted. **Cue (the voice library) keeps
+  listening for the "unmute" keyword** even while the pipeline is paused — we build no bespoke
+  on-device spotter for this (§5.3.1).
 
-### 5.3.1 Voice-unmute is the sole operational unmute; emergency stop is NOT an unmute (R10)
+### 5.3.1 Unmuting: say "unmute" or press the on-screen unmute button (V0 update — supersedes R10)
 
-The prior draft degraded unmute to the **non-voice emergency control (REQ-14)**, even testing that the
-emergency control "unmutes." That is **non-compliant**: REQ-14 AC14.2 scopes that control to a
-**kill-all that stops listening** and exposes *only* kill-all — it has no operational resume/unmute
-verb, and reusing it as one both violates AC14.2 and quietly breaks D1's voice-only operating model.
-Corrected story (`unmute-recovery.html`, ENG-A-13):
+Per the V0 decision update there are **two ways to unmute**, and we build **no bespoke on-device
+keyword spotter**:
 
-- **Voice-unmute via the local "Daybreak" spotter is the one and only operational unmute path**, and
-  it is therefore **on the critical path for REQ-2 / D1**. Consequently **P-SPOTTER is promoted to a
-  blocking P0 probe** (§17): if the spotter cannot reliably hear "Daybreak," voice-unmute and the
-  voice-only model fail, and that must be proven *before* build, not waved off as a graceful fallback.
-- **There is no in-session non-voice unmute.** If the spotter is genuinely unavailable on a host, the
-  room is still never *permanently* trapped: the REQ-14 emergency control performs its **documented
-  kill-all — halt every process and stop listening, ending the session**. A **fresh session then
-  starts unmuted** (re-running the §12 consent announcement). This is a *session teardown + clean
-  restart*, **not** an in-session resume, so REQ-14 stays exactly kill-all (AC14.2 preserved) and the
-  emergency control never gains an operational verb.
-- This is recorded as a **PRD clarification surfaced to the gate** (not a self-raised human request):
-  REQ-14 is the documented escape from a stuck mute **only** in the form "kill-all + restart," never
-  "unmute in place." See §11 and the structured output.
+- **(a) Say "unmute".** The voice library (Cue, by Etheria) already handles always-on keyword listening
+  even while cloud transcription / suggestions are paused, so it hears "unmute" while muted and resumes
+  feeding the pipeline. *(V0 scope cut: the prior bespoke local "Daybreak" spotter, the blocking
+  P-SPOTTER probe, and the "spotter-unavailable" degradation logic are all **removed** — we trust the
+  library.)*
+- **(b) Press the on-screen "unmute" button.** The screen always offers an unmute button, so the room
+  is never trapped even if the keyword is mis-heard.
+
+Because Cue handles keyword listening while muted, **the illegal "emergency-stop-unmutes" path is moot
+and the spotter-down teardown/clean-restart recovery is removed** — there is no spotter to go down.
+REQ-14's emergency control remains exactly a **kill-all** (AC14.2 preserved, §11) and is never an
+unmute. *(This supersedes the prior `unmute-recovery.html` / ENG-A-13 story.)*
 
 ### 5.4 The "working-on-it" timeout ack (R5) — REQ-10 AC10.3
 
@@ -544,48 +523,43 @@ output-policy triage (§5.5) and to `OutputDecision.channel:'ack'` (§1.3).
   relax → passes); *Layer-A/B-disjoint test* (RBG: give a routing/latency ack a pitched tone → overlap
   detector fails); *class→channel map test* (RBG: route routine tick → tts → fails); *15-word-guard
   test* (16 words → summarized; RBG: remove guard → recited verbatim → fails); *never-recite test*;
-  *silence-budget test* (>10% TTS-ticks in window → gate tightens); ***mute-announce test*** — "Curtain"
+  *silence-budget test* (>10% TTS-ticks in window → gate tightens); ***mute-announce test*** — "mute"
   emits the mute earcon **and a one-word TTS "Muted"** (REQ-2 AC2.4; RBG: drop the one-word TTS →
   earcon-only → fails); ***halt-announce test*** — a stop/panic halt emits **E5 + a ≤15-word TTS**
   acknowledgement naming the target (REQ-12 AC12.3; RBG: map halt to earcon-only → fails);
-  ***read-back-length test*** — every safety read-back is **≤15 words** (REQ-9 AC9.3; RBG: allow a
-  20-word read-back → fails); *mute-latency test* (Curtain stops cloud stream ≤500 ms);
-  *no-observation-while-muted test* (RBG: leave stream open on mute → observations appear → fails);
-  *spotter-scope test* (spotter emits only `mute.released`; RBG: give it a 2nd keyword → fails);
-  *spotter-silence test* (near-homophones produce nothing); ***unmute-recovery test*** (R10) — with the
-  spotter **disabled**, assert there is **no in-session unmute** and that triggering the REQ-14 control
-  performs a **kill-all + stop-listening (session end)**, *not* an unmute (RBG: wire the emergency
-  control to resume streaming → the "emergency-is-kill-all-only" assertion fails); ***timeout-ack
-  test*** — with the substantive ack mocked to exceed the budget, the "working" pulse fires once budget
-  is blown and stops when the ack arrives (RBG: remove the `RoundTripTimer` → silence on overrun →
-  fails; restore → pulse fires).
+  *mute-latency test* ("mute" stops the pipeline ≤500 ms);
+  *no-observation-while-muted test* (RBG: leave the pipeline fed on mute → observations appear → fails);
+  *ambient-silence test* — an ambient `observe.pass` produces **no sound** (RBG: emit any ack for
+  ignored ambient speech → fails); ***unmute-keyword test*** — Cue's keyword listening hears "unmute"
+  while muted and resumes the pipeline; ***unmute-button test*** — the on-screen unmute button resumes
+  the pipeline; ***timeout-ack test*** — with the substantive ack mocked to exceed the budget, the
+  "working" pulse fires once budget is blown and stops when the ack arrives (RBG: remove the
+  `RoundTripTimer` → silence on overrun → fails; restore → pulse fires).
 - *E2e:* representative session — TTS-bearing-tick ratio ≤10% (RBG: chatty build → exceeds → fails);
-  every state transition emits its mapped earcon; ambient `observe.pass` = near-subliminal ambient tick
-  (default; positive assertion), addressed pass = declined tick (§4.2); speak "Curtain" → streaming
-  stops ≤500 ms (measured), E2 → mute tone **and a spoken "Muted"** (AC2.4), subsequent speech yields
-  zero observations; speak "Daybreak" → resumes; a stop/panic produces **E5 + a ≤15-word spoken
-  acknowledgement** (AC12.3); post-run disk/log scan finds **zero** audio artifacts across the muted
-  interval (RBG: route muted-interval mic to a recorder → scan finds a blob → fails); ***unmute-recovery
-  e2e*** — with the spotter disabled, the emergency control **kills all + stops listening (session
-  ends)** and a fresh session restarts unmuted with consent re-spoken (RBG: emergency control unmutes
-  in place → fails); ***timeout-ack e2e*** — inject a build whose round-trip exceeds 1.5 s and assert
-  the "working" pulse is heard (RBG: speed the build under budget → no pulse).
-- *Third-party:* P-TTS (streaming start latency), P-LLM (summarizer ≤2 s), P-ASR (stream stop/restart),
-  P-SPOTTER (matches "Daybreak", rejects near-homophones, emits no transcript).
+  every state transition emits its mapped earcon; ambient `observe.pass` = **silent** (positive
+  assertion: no sound), addressed pass = declined tick (§4.2); speak "mute" → the pipeline
+  stops ≤500 ms (measured), E2 → mute tone **and a spoken "Muted"** (AC2.4), subsequent speech feeds
+  zero observations into the pipeline; speak "unmute" (or press the unmute button) → resumes; a
+  stop/panic produces **E5 + a ≤15-word spoken acknowledgement** (AC12.3); post-run disk/log scan finds
+  **zero** audio artifacts across the muted interval (RBG: route muted-interval mic to a recorder →
+  scan finds a blob → fails); ***timeout-ack e2e*** — inject a build whose round-trip exceeds 1.5 s and
+  assert the "working" pulse is heard (RBG: speed the build under budget → no pulse).
+- *Third-party:* P-TTS (streaming start latency), P-LLM (summarizer ≤2 s), P-ASR (stream stop/restart).
 - *Observability:* `earcon.emit{id, latencyMs, source}`, `ack.working{correlationId, elapsedMs}`,
   `output.decision{tickId, class, channel, wordCount, summarized}`, `mute.engaged{latencyMs}`,
-  `mute.released{trigger, latencyMs}`, `mute.heartbeat{streamingToCloud:false}` (periodic proof the
-  cloud path stayed closed).
+  `mute.released{trigger, latencyMs}`, `mute.heartbeat{feedingPipeline:false}` (periodic proof the
+  pipeline stayed unfed while muted).
 
 ### 5.5 Output triage (default = silent)
 
 | Trigger | Channel | Max |
 |---|---|---|
-| Completion / blocker / explicit "status" / **safety read-back** | TTS | **≤15 words** (read-back included — REQ-9 AC9.3, R13) |
+| Completion / blocker / explicit "status" | TTS | **≤15 words** (REQ-9 AC9.3, R13) |
 | **Halt (stop/panic)** | **Earcon E5 + TTS** | **≤15 words** (REQ-12 AC12.3, R13) |
-| **Mute ("Curtain")** | **Earcon/mute-tone + TTS** | **1 word** ("Muted" — REQ-2 AC2.4, R13) |
+| **Mute ("mute")** | **Earcon/mute-tone + TTS** | **1 word** ("Muted" — REQ-2 AC2.4, R13) |
 | State transition (wake/spawn/resolve) | Earcon (Layer A, ≤500 ms) | — |
-| Route ack (suggestion whoosh / steer tick-tick / addressed-pass declined tick / ambient tick) | Ack (Layer B, non-tonal) | — |
+| Route ack (suggestion whoosh / steer tick-tick / addressed-pass declined tick) | Ack (Layer B, non-tonal) | — |
+| **Ignored ambient speech (`observe.pass` / `route.pass` ambient)** | **Silent (no sound)** | — |
 | **Round-trip budget exceeded** | **"working" ack (Layer B pulse)** | — |
 | Routine progress / tick | Silent | — |
 
@@ -603,20 +577,24 @@ fire = gate_passed AND quality >= quality_threshold AND (interrupt_cost low OR r
 Otherwise **queued** and delivered on the next `IdleCue` gap; a queued suggestion **expires after 90 s**
 with no idle gap (logged `suggestion.expired`, never spoken; D-DD-15). Delivery format: ≤12-word
 spoken concept pitch + 1–3 MCQs answerable aloud (never >3); apologetic language banned (design §4.2).
-Cadence/TTL are **live-tunable knobs** without restart (AC3.5). On delivery, the engine **hands a
-`PendingSuggestion` to the acceptance owner (§7)** — the suggestion's pitch + its MCQs become the
-seed scaffold the acceptance flow accumulates answers into.
+Cadence/TTL, the word/time gate, the quality threshold, and the interrupt-cost gate are all **ENV-tunable
+parameters with documented defaults (§14)**, patchable without restart (AC3.5) and **tuned by feel
+later** — not a fixed metric. On delivery, the engine **hands a `PendingSuggestion` to the acceptance
+owner (§7)** — the suggestion's pitch + its MCQs become the seed scaffold the acceptance flow
+accumulates answers into.
 
 **Verify (suggestion engine):**
-- *Unit/integration:* *gate-boundary tests* (59→pass, 61→eligible; 89 s→pass, 91 s→eligible; RBG:
-  lower threshold → 59-word case fires → fails); *MCQ-count invariant* (RBG: force 4 → fails);
-  *interrupt-cost test* (high velocity / utterance <5 s old → queued, not spoken; RBG: zero out cost →
-  fires mid-speech → fails); *expiry test*; *live-knob test* (cadence/TTL patch at runtime);
-  *handoff test* — a delivered suggestion produces exactly one `PendingSuggestion` with the pitch +
-  MCQs populated (§7).
-- *E2e:* the **annotated replay suite** (record-replay, temp-0) — recall **≥80%** on ground-truth
-  "should suggest"; **≤1 false-positive / 10 min** on "should pass"; idle-preference holds. RBG:
-  shuffle ground-truth labels → recall collapses → suite fails (proves it discriminates).
+- *Unit/integration:* *gate-boundary tests* (against the configured default thresholds: 59→pass,
+  61→eligible; 89 s→pass, 91 s→eligible; RBG: lower threshold → 59-word case fires → fails);
+  *MCQ-count invariant* (RBG: force 4 → fails); *interrupt-cost test* (high velocity / utterance <5 s
+  old → queued, not spoken; RBG: zero out cost → fires mid-speech → fails); *expiry test*; *env-knob
+  test* (cadence/TTL/threshold patch at runtime, AC3.5); *handoff test* — a delivered suggestion
+  produces exactly one `PendingSuggestion` with the pitch + MCQs populated (§7).
+- *E2e:* a record-replay sanity scenario (temp-0) drives a representative recorded session and asserts
+  the engine stays mostly silent and that obvious "should suggest" moments fire and obvious chatter
+  passes, **against the configured defaults**. *(V0 scope cut: no formal labeled replay corpus and no
+  hard restraint metric — recall ≥80% / ≤1 FP per 10 min etc. are dropped as hard requirements;
+  restraint is the ENV-tunable params above, tuned by feel later. See §15.5 / E9.)*
 - *Third-party:* P-CUE (`WordCountCue`, `IdleCue`, `IntervalCue`, `cooldownSeconds`, `observe.pass`),
   P-LLM (cheap/fast scoring, temp-0 determinism).
 - *Observability:* every decision — **fire and every `observe.pass`** — logs `{policy, wordCount,
