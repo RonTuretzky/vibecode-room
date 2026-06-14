@@ -230,6 +230,20 @@ consistency (the `_verify-authority-final/secret-red.log` already recorded `exit
 
 All gates remain green: `bun test` 102 pass / 2 skip / 0 fail, `tsc --noEmit` exit 0.
 
+### Cross-family reviewer fix in this pass (v14)
+
+The cross-family reviewer (GPT-5.5) found that `smoke-rbg-red.log` and `bun-test-full-suite-rbg-red.log`
+each contained only the Bun version header and `EXIT:1` — not the actual test failure output with
+the failing assertion, expected/received values, and test name.
+
+**Fix**: Both red evidence files regenerated from live BREAK_MATCHER=1 runs:
+- `smoke-rbg-red.log`: `BREAK_MATCHER=1 bun test test/smoke/spine-skeleton.smoke.ts` →
+  shows `expect(emitted.length).toBe(1)` failure at line 46 (Expected: 1, Received: 0), 1 pass / 1 fail, EXIT:1
+- `bun-test-full-suite-rbg-red.log`: `BREAK_MATCHER=1 bun test` →
+  same assertion failure, 101 pass / 2 skip / 1 fail across 9 files, EXIT:1
+
+All gates remain green: `bun test` 102 pass / 2 skip / 0 fail, `tsc --noEmit` exit 0.
+
 ## Dependencies
 
 None — this is the root ticket.
