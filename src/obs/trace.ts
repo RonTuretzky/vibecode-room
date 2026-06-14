@@ -14,6 +14,18 @@ export class TraceProcessor {
     this.sink = sink;
   }
 
+  // Single-event emit for the spine: one LogEvent per action decision (REQ-5 / REQ-16).
+  // Returns null for pass decisions so callers can assert exactly one line per action.
+  process(obs: TranscriptObservation, decision: CueDecision): TraceOutput | null {
+    if (decision.kind !== "action") return null;
+    return this.emit("spine.action", decision.correlationId, {
+      utteranceId: obs.utteranceId,
+      actionType: decision.action.type,
+      policy: decision.policy,
+      decisionId: decision.decisionId,
+    });
+  }
+
   observation(obs: TranscriptObservation): TraceOutput {
     return this.emit("transcript.observe", obs.utteranceId, {
       speaker: obs.speaker,

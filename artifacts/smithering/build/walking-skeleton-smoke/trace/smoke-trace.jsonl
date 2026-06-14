@@ -1,4 +1,1 @@
-{"level":"info","event":"transcript.observe","sessionId":"sess-smoke-001","correlationId":"utt-smoke-001","meta":{"speaker":"speaker_0","isFinal":true,"textLength":30,"latencyMs":120}}
-{"level":"info","event":"cue.decide","sessionId":"sess-smoke-001","correlationId":"utt-smoke-001","meta":{"kind":"pass","policy":"TextCue/wake-word","decisionId":"3947281b-2bd2-4571-96e3-733573902187"}}
-{"level":"info","event":"transcript.observe","sessionId":"sess-smoke-001","correlationId":"utt-smoke-002","meta":{"speaker":"speaker_0","isFinal":true,"textLength":34,"latencyMs":95}}
-{"level":"info","event":"cue.decide","sessionId":"sess-smoke-001","correlationId":"utt-smoke-002","meta":{"kind":"action","policy":"TextCue/wake-word","decisionId":"a16b8974-21d1-4ded-80ad-2e93fe9bec0a"}}
+{"level":"info","event":"spine.action","sessionId":"sess-smoke-001","correlationId":"utt-smoke-002","meta":{"utteranceId":"utt-smoke-002","actionType":"spawn","policy":"TextCue/wake-word","decisionId":"58f5ff01-db81-476e-8fab-975eca2b45ba"}}
