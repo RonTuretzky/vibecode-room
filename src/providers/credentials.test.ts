@@ -49,6 +49,12 @@ describe("SEC-1 credential guard and trace redaction", () => {
     expect(() => createModelCredentialSource({ provider: "anthropic-claude", command: "claude $(printenv)" })).toThrow(
       /plain allowlisted/u,
     );
+    expect(() => createModelCredentialSource({ provider: "openai-codex", command: "codex --profile=default" })).toThrow(
+      /unsupported argument/u,
+    );
+    expect(() => createModelCredentialSource({ provider: "anthropic-claude", command: "claude --model=default" })).toThrow(
+      /unsupported argument/u,
+    );
   });
 
   test("audio credential provenance exposes only a redacted environment variable name", () => {
@@ -76,6 +82,7 @@ describe("SEC-1 credential guard and trace redaction", () => {
       fakeUnknownToken(),
       fakeUnknownSeparatedToken(),
       fakeUnknownEmbeddedToken(),
+      fakeUnknownCommonAlphabetToken(),
     ];
     const processor = new TraceProcessor();
 
@@ -95,6 +102,7 @@ describe("SEC-1 credential guard and trace redaction", () => {
           blob: rawValues[5],
           separated: rawValues[6],
           embedded: `provider returned opaque token ${rawValues[7]} during setup`,
+          commonAlphabet: rawValues[8],
         },
         list: [`safe-${"x".repeat(8)}`, rawValues[1]],
       },
@@ -106,7 +114,7 @@ describe("SEC-1 credential guard and trace redaction", () => {
 
     const redactionEvents = processor.events().filter((event) => event.event === "secret.redacted");
     expect(redactionEvents).toHaveLength(1);
-    expect(redactionEvents[0].meta).toEqual({ count: 9, sourceEvent: "observe.final" });
+    expect(redactionEvents[0].meta).toEqual({ count: 10, sourceEvent: "observe.final" });
   });
 
   test("probe-style reports can be redacted and scanned without leaking raw values", async () => {
@@ -136,9 +144,9 @@ describe("SEC-1 credential guard and trace redaction", () => {
     }
   });
 
-  test("unknown-token fallback redacts embedded and separator-bearing token shapes before scans see them", () => {
-    const rawValues = [fakeUnknownEmbeddedToken(), fakeUnknownSeparatedToken()];
-    const text = `provider note ${rawValues[0]} and ${rawValues[1]} should not leave memory`;
+  test("unknown-token fallback redacts embedded, separator-bearing, and common token alphabets before scans see them", () => {
+    const rawValues = [fakeUnknownEmbeddedToken(), fakeUnknownSeparatedToken(), fakeUnknownCommonAlphabetToken()];
+    const text = `provider note ${rawValues[0]} and ${rawValues[1]} and ${rawValues[2]} should not leave memory`;
 
     expect(scanSecretLikeText(text).some((finding) => finding.pattern === "unknown-high-entropy-token")).toBe(true);
 
@@ -147,7 +155,7 @@ describe("SEC-1 credential guard and trace redaction", () => {
     assertNoRawValues(serialized, rawValues, "redacted unknown-token fallback");
     expect(serialized).toContain(REDACTED_SECRET);
     expect(scanSecretLikeText(serialized)).toEqual([]);
-    expect(redacted.count).toBe(2);
+    expect(redacted.count).toBe(3);
   });
 });
 
@@ -202,4 +210,8 @@ function fakeUnknownSeparatedToken(): string {
 
 function fakeUnknownEmbeddedToken(): string {
   return `${"R".repeat(10)}_${"S".repeat(10)}0${"T".repeat(10)}`;
+}
+
+function fakeUnknownCommonAlphabetToken(): string {
+  return `${"AbCdEfGhIjKlMnOpQrStUvWxYz"}+/=${"ZaYbXcWdVeUfTgShRiQpOnMlKj"}~`;
 }

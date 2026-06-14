@@ -21,7 +21,14 @@ describe("SEC-1 whole-session secret scan", () => {
     await mkdir(TRACE_DIR, { recursive: true });
     await mkdir(PROBE_REPORT_ROOT, { recursive: true });
 
-    const rawValues = [fakeOpenAiKey(), fakeBearer(), fakeDeepgramKey(), fakeUnknownToken(), fakeUnknownSeparatedToken()];
+    const rawValues = [
+      fakeOpenAiKey(),
+      fakeBearer(),
+      fakeDeepgramKey(),
+      fakeUnknownToken(),
+      fakeUnknownSeparatedToken(),
+      fakeUnknownCommonAlphabetToken(),
+    ];
     const processor = new TraceProcessor();
     const result = await runSpineSmoke("fixtures/smoke/transcript.jsonl", {
       trace: processor,
@@ -34,6 +41,7 @@ describe("SEC-1 whole-session secret scan", () => {
                 deepgram: rawValues[2],
                 blob: rawValues[3],
                 separated: rawValues[4],
+                commonAlphabet: rawValues[5],
               },
             }
           : {},
@@ -112,4 +120,8 @@ function fakeUnknownToken(): string {
 
 function fakeUnknownSeparatedToken(): string {
   return `provider_live_${"Y".repeat(12)}5${"Z".repeat(12)}`;
+}
+
+function fakeUnknownCommonAlphabetToken(): string {
+  return `${"QwErTyUiOpAsDfGhJkLzXcVbNm"}+/=${"MnBvCxZlKjHgFdSaPoIuYtReWq"}~`;
 }

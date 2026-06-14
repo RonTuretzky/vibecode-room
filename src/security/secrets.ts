@@ -36,7 +36,11 @@ const SECRET_PATTERNS: SecretPattern[] = [
 
 const SECRET_KEY_PATH = /(?:api[_-]?key|authorization|bearer|credential|password|secret|token)/iu;
 const UUID_VALUE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
-const UNKNOWN_SECRET_CANDIDATE = /(?<![A-Za-z0-9._-])(?=[A-Za-z0-9._-]{24,})(?=[A-Za-z0-9._-]*[A-Za-z])(?=[A-Za-z0-9._-]*\d)[A-Za-z0-9._-]+(?![A-Za-z0-9._-])/gu;
+const UNKNOWN_SECRET_CHARS = "A-Za-z0-9._~+/=-";
+const UNKNOWN_SECRET_CANDIDATE = new RegExp(
+  `(?<![${UNKNOWN_SECRET_CHARS}])(?=[${UNKNOWN_SECRET_CHARS}]{24,})(?=[${UNKNOWN_SECRET_CHARS}]*[A-Za-z])[${UNKNOWN_SECRET_CHARS}]+(?![${UNKNOWN_SECRET_CHARS}])`,
+  "gu",
+);
 
 export function redactSecretValues(value: unknown, path: readonly string[] = []): SecretRedactionResult {
   if (typeof value === "string") {
@@ -152,12 +156,25 @@ function isUnknownSecretToken(value: string): boolean {
     return false;
   }
 
-  if (/^[A-Za-z0-9]{24,}$/u.test(value)) {
+  if (/^(?=[A-Za-z0-9]*\d)[A-Za-z0-9]{24,}$/u.test(value)) {
     return true;
   }
 
-  const segments = value.split(/[._=-]+/u).filter(Boolean);
-  return segments.some((segment) => /^[A-Za-z0-9]{16,}$/u.test(segment));
+  if (/[+~]/u.test(value)) {
+    return true;
+  }
+
+  if (/=/u.test(value) && !/^[A-Za-z][A-Za-z0-9_-]{1,96}=/u.test(value)) {
+    return true;
+  }
+
+  const segments = value.split(/[._~+/=-]+/u).filter(Boolean);
+  const hasSecretPrefix = /(?:^|[._~+/=-])(?:key|live|prod|secret|test|token)[._~+/=-]/iu.test(value);
+  const hasLongSegment = segments.some((segment) => /^[A-Za-z0-9]{16,}$/u.test(segment));
+  const hasLongMixedSegment = segments.some((segment) =>
+    /^(?=[A-Za-z0-9]*[A-Za-z])(?=[A-Za-z0-9]*\d)[A-Za-z0-9]{16,}$/u.test(segment),
+  );
+  return hasLongMixedSegment || (hasSecretPrefix && hasLongSegment);
 }
 
 function isKnownRedactionMarker(value: string): boolean {

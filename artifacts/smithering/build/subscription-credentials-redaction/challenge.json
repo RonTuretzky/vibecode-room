@@ -6,8 +6,14 @@
     "raw model key construction is rejected without value echo",
     "TraceProcessor has no public default redaction opt-out",
     "embedded unknown token-shaped strings and provider-style separator tokens redact fail-closed",
+    "common token alphabet characters are scanned without requiring a digit",
+    "host subscription commands use exact provider-specific argument allowlists",
     "whole-session scan covers every emitted trace/log/report tree, including build trace copies and probe reports",
     "probe report failure paths cannot leave raw token-shaped values on disk"
   ],
-  "notes": "The prior rejected challenge targeted pre-fix code. External adversarial challenge must replace or amend this file with its verdict before land."
+  "priorFindingsAddressed": [
+    "fail-closed redaction missed opaque base64-style tokens",
+    "host subscription command guard accepted arbitrary dashed flags"
+  ],
+  "notes": "External adversarial challenge must replace or amend this file with its verdict before land."
 }

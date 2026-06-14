@@ -18,6 +18,10 @@ export interface AudioCredentialOptions {
 }
 
 const RAW_MODEL_KEY_VARIABLES = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY"] as const;
+const ALLOWED_HOST_COMMAND_ARGS: Record<ModelSubscriptionProvider, ReadonlySet<string>> = {
+  "openai-codex": new Set(),
+  "anthropic-claude": new Set(["--print"]),
+};
 
 export function createModelCredentialSource(options: ModelCredentialOptions): CredentialSource {
   rejectRawModelCredentials(options);
@@ -75,7 +79,7 @@ function validateHostCommand(provider: ModelSubscriptionProvider, command: strin
   }
 
   for (const arg of argv.slice(1)) {
-    if (!isSafeHostCommandArg(arg)) {
+    if (!isSafeHostCommandArg(provider, arg)) {
       throw new Error("Host subscription command contains an unsupported argument.");
     }
   }
@@ -100,6 +104,6 @@ function parseHostCommand(command: string): string[] {
   return argv;
 }
 
-function isSafeHostCommandArg(arg: string): boolean {
-  return /^--?[a-z][a-z0-9-]*(?:=[a-zA-Z0-9._:@/-]{1,64})?$/u.test(arg);
+function isSafeHostCommandArg(provider: ModelSubscriptionProvider, arg: string): boolean {
+  return ALLOWED_HOST_COMMAND_ARGS[provider].has(arg);
 }

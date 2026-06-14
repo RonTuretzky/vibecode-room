@@ -7,7 +7,7 @@
       "correlationId": "corr-smoke-session-utt-001",
       "latencyMs": 42,
       "meta": {
-        "count": 5,
+        "count": 6,
         "sourceEvent": "observe.final"
       }
     },
@@ -26,7 +26,8 @@
           "authorization": "«redacted»",
           "deepgram": "«redacted»",
           "blob": "«redacted»",
-          "separated": "«redacted»"
+          "separated": "«redacted»",
+          "commonAlphabet": "«redacted»"
         }
       }
     },
