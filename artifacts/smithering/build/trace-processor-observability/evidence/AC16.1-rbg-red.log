@@ -1,0 +1,31 @@
+bun test v1.3.14 (0d9b296a)
+
+src/obs/trace.test.ts:
+ 8 |         throw new core.$ZodAsyncError();
+ 9 |     }
+10 |     if (result.issues.length) {
+11 |         const e = new (_params?.Err ?? _Err)(result.issues.map((iss) => util.finalizeIssue(iss, ctx, core.config())));
+12 |         util.captureStackTrace(e, _params?.callee);
+13 |         throw e;
+                   ^
+ZodError: [
+  {
+    "code": "custom",
+    "path": [
+      "correlationId"
+    ],
+    "message": "Loop events must carry correlationId for causal-chain joins."
+  }
+]
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/node_modules/zod/v4/core/parse.js:13:15)
+      at record (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/trace-processor-observability/src/obs/trace.ts:59:34)
+      at map (1:11)
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/trace-processor-observability/src/obs/trace.test.ts:18:44)
+(fail) ENG-T-03 TraceProcessor > trace-schema records required ids, verb-noun event names, and measured latency on every record [2.58ms]
+
+ 0 pass
+ 6 filtered out
+ 1 fail
+Ran 1 test across 1 file. [29.00ms]
+
+[exit_code=1]

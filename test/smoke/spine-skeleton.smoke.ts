@@ -11,14 +11,16 @@ import type { TranscriptObservation } from "../../src/types";
 const fixturePath = "fixtures/smoke/transcript.jsonl";
 
 describe("spine skeleton smoke", () => {
-  test("reads replayed transcript, matches one wake decision, and emits exactly one trace line", async () => {
+  test("reads replayed transcript, matches one wake decision, and traces pass plus action lines", async () => {
     const result = await runSpineSmoke(fixturePath);
 
     expect(result.observations).toHaveLength(2);
     expect(result.decisions.map((decision) => decision.kind)).toEqual(["pass", "action"]);
-    expect(result.traceEvents).toHaveLength(1);
+    expect(result.traceEvents).toHaveLength(3);
 
-    const [event] = result.traceEvents;
+    expect(result.traceEvents.map((event) => event.event)).toEqual(["observe.pass", "route.pass", "route.action"]);
+
+    const event = result.traceEvents[2];
     expect(event).toMatchObject({
       level: "info",
       event: "route.action",
@@ -49,14 +51,14 @@ describe("spine skeleton smoke", () => {
     expect(matchWakeWord(observation({ text: "panoptic dashboards are unrelated" })).kind).toBe("pass");
   });
 
-  test("non-final observations never produce actions or trace events", () => {
+  test("non-final observations never produce actions but still produce pass trace events", () => {
     const trace = new TraceProcessor();
     const decision = matchWakeWord(observation({ text: "Panop while still partial", isFinal: false }));
-    const event = trace.emitDecision(decision, observation({ text: "Panop while still partial", isFinal: false }));
+    const events = trace.emitDecision(decision, observation({ text: "Panop while still partial", isFinal: false }));
 
     expect(decision).toMatchObject({ kind: "pass", reason: "dropped" });
-    expect(event).toBeNull();
-    expect(trace.events()).toEqual([]);
+    expect(events.map((event) => event.event)).toEqual(["observe.pass", "route.pass"]);
+    expect(trace.events()).toHaveLength(2);
   });
 
   test("replay reader rejects invalid JSONL with line context", async () => {
@@ -71,7 +73,7 @@ describe("spine skeleton smoke", () => {
     }
   });
 
-  test("trace JSONL is one structured LogEvent per emitted route action", async () => {
+  test("trace JSONL is structured LogEvent lines for pass and action decisions", async () => {
     const result = await runSpineSmoke(fixturePath);
     const trace = new TraceProcessor();
     for (const [index, decision] of result.decisions.entries()) {
@@ -79,8 +81,10 @@ describe("spine skeleton smoke", () => {
     }
 
     const lines = trace.toJsonl().split("\n").filter(Boolean);
-    expect(lines).toHaveLength(1);
+    expect(lines).toHaveLength(3);
     expect(JSON.parse(lines[0])).toEqual(result.traceEvents[0]);
+    expect(JSON.parse(lines[1])).toEqual(result.traceEvents[1]);
+    expect(JSON.parse(lines[2])).toEqual(result.traceEvents[2]);
   });
 });
 

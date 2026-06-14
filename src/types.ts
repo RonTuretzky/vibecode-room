@@ -143,5 +143,5 @@ export const outputDecisionSchema = z.discriminatedUnion("channel", [
 export type OutputDecision = z.infer<typeof outputDecisionSchema>;
 
 export function isLoopEventName(event: string): boolean {
-  return /^(ack|command|earcon|mute|output|process|route)\./u.test(event);
+  return /^(ack|command|earcon|mute|observe|output|process|route|safety)\./u.test(event);
 }
