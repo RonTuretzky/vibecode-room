@@ -1,0 +1,8 @@
+===== GATE 4: e2e-dry-run (hermetic, doubles only) =====
+bun test v1.3.14 (0d9b296a)
+
+ 3 pass
+ 0 fail
+ 15 expect() calls
+Ran 3 tests across 1 file. [7.00ms]
+e2e exit: 0
