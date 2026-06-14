@@ -1,2 +1,0 @@
-$ tsc --noEmit
-TSC_RESTORE_EXIT=0
