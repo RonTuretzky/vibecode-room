@@ -1,1 +1,27 @@
-{"family":"openai","model":"gpt-5.5","kind":"review","approved":true,"pass":true,"findings":[]}
+{
+  "family": "anthropic",
+  "model": "claude-opus-4-8",
+  "kind": "review",
+  "approved": true,
+  "pass": true,
+  "findings": [
+    {
+      "severity": "minor",
+      "title": "Red-before-green runs archived under evidence/ rather than artifacts/smithering/reports/",
+      "file": "artifacts/smithering/build/walking-skeleton-smoke/evidence/smoke-rbg-red.log",
+      "description": "The ticket's convention names artifacts/smithering/reports/ as the archive for red runs, but that directory is empty; the real failing runs live under the ticket-scoped evidence/ dir (smoke-rbg-red.log, tsc-rbg-red.log, secret-scan-rbg-red.log, bun-test-full-suite-rbg-red.log). Substance is fully satisfied — each is a genuine failing run (smoke: Expected 1, Received 0, exit 1; tsc: TS2322, exit 2; secret-scan: detection tests fail; full-suite: 1 fail) and gates.json points at the correct paths. Path-convention deviation only, not a missing-evidence defect."
+    },
+    {
+      "severity": "nit",
+      "title": "Auto-discovery shim sits beside the named deliverable",
+      "file": "test/smoke/spine-skeleton.smoke.ts.test.ts",
+      "description": "The named deliverable test/smoke/spine-skeleton.smoke.ts does not match Bun's default *.test.ts discovery glob, so a one-line shim re-exports it for `bun test`. Behavior is identical and documented; `bun test test/smoke/spine-skeleton.smoke.ts` still runs it directly. Harmless convention workaround."
+    },
+    {
+      "severity": "nit",
+      "title": "src/orchestration/* is additive evidence tooling beyond the four named spine modules",
+      "file": "src/orchestration/core.ts",
+      "description": "Beyond types/replay-harness/matcher/trace, the branch adds pure orchestration + secret-scan helpers and tests that back the machine-checked gates (secret redaction, deterministic routing). They import no runtime/network/key and do not duplicate scope owned by later foundation tickets. Additive and hermetic."
+    }
+  ]
+}

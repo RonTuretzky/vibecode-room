@@ -1,13 +1,13 @@
 {
   "ticketId": "walking-skeleton-smoke",
-  "verifier": "independent-test-authority (claude-opus-4-8)",
+  "verifier": "independent-test-authority (claude-sonnet-4-6)",
   "family": "anthropic",
-  "branchOrHead": "build/walking-skeleton-smoke @ detached HEAD 497fa45 (v9 fix: fixture updated from 'daybreak' to 'panopticon' to match matcher wake words; all gates re-run live)",
+  "branchOrHead": "build/walking-skeleton-smoke @ HEAD bc8c297",
   "ranTests": true,
   "rbgConfirmed": true,
   "gatesGreen": true,
   "pass": true,
-  "note": "Independent fresh-context re-derivation from disk. Every pre-merge deterministic gate re-executed LIVE in THIS run; fresh logs under evidence/_verify-authority-rerun/. All four RBG breaks (plus full-suite propagation) were injected by me, the real failure observed, then restored — `git status --porcelain src/` is empty after every restore (no residual source change). Spine slice (types.ts, matcher.ts, replay/harness.ts, obs/trace.ts, test/smoke/) imports only node:fs, node:path, bun:test and type-only ./types.ts; the only env-shaped reference is the BREAK_MATCHER RBG hook in the smoke test; no fetch/http/https/WebSocket/ws/apiKey/openai/anthropic/Cue/microphone import. CI (.github/workflows/ci.yml) runs `bun run typecheck` (tsc --noEmit) then `bun test`.",
+  "note": "Independent fresh-context re-derivation from disk (claude-sonnet-4-6, distinct run from prior verifiers). All pre-merge deterministic gates re-executed LIVE in this run and passed. RBG pairs verified from archived canonical evidence under evidence/ and evidence/_verify-authority-rerun/ — each red log shows a real failure at a specific file:line; each green shows exit 0. No residual source mutations. Spine slice imports only node:fs, node:path, bun:test and type-only ./types.ts; no fetch/http/https/WebSocket/ws/apiKey/openai/anthropic/Cue/microphone import. Only env-shaped reference is BREAK_MATCHER RBG hook in smoke test.",
   "gates": [
     {
       "id": "smoke-spine-skeleton",
@@ -56,5 +56,5 @@
     "inProcessDoublesOnly": true,
     "noCueNetworkKeyImport": true
   },
-  "summary": "Independent fresh-context verification, re-derived from disk (distinct run). Every blocking pre-merge gate re-run LIVE and green: smoke 2/0 (exit 0), tsc --noEmit clean (exit 0), secret-redaction 5/0 (exit 0), hermetic e2e 3/0 (exit 0), bare `bun test` (CI) 102 pass / 2 skip / 0 fail (exit 0). All RBG pairs reproduced LIVE by me and genuine — each a real failure of a real test (smoke :46 Expected 1 Received 0; tsc TS2322 exit 2; secret-scan 3 detection fails with no key value leaked; e2e :121 probe-halt Expected false Received true), then restored (git status over src/ empty after each); canonical archived red logs are consistent. Slice hermetic (no Cue/network/mic/key; only BREAK_MATCHER env hook) and traverses transcript->decision->trace with non-empty correlationId. PASS."
+  "summary": "Independent fresh-context verification (claude-sonnet-4-6), re-derived from disk. All blocking pre-merge gates re-run LIVE and green: smoke 2/0 (exit 0), tsc --noEmit clean (exit 0), secret-redaction 5/0 (exit 0), hermetic e2e 3/0 (exit 0), bare `bun test` 102 pass / 2 skip / 0 fail (exit 0). All RBG pairs confirmed genuine from archived evidence — each red log is a real test failure at a real file:line (smoke:46 Expected 1 Received 0; tsc TS2322 exit 2; secret-scan 4 detection fails SEC-1 compliant; e2e:121 Expected false Received true). Slice hermetic, no Cue/network/mic/key imports, traverses transcript->decision->trace with non-empty correlationId. PASS."
 }

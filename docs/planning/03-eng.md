@@ -678,40 +678,40 @@ cut; the *routing-authority-in-code* invariant is unchanged.
 
 ## 9. The Cue↔Smithers seam — REQ-4, REQ-8, REQ-13 (bet #3)
 
-`src/seam/`. **The novel integration, isolated into one module.** Bidirectional and asynchronous so
-spawn never blocks the Cue loop (AC4.3 requires ≤3 s; eng-deps §9).
+`src/seam/`. **The novel integration, isolated into one decoupled module.** **Cue and Smithers do not
+know about each other** — Cue is I/O into the event loop, Smithers runs background jobs; the seam is the
+single translation layer. Bidirectional and asynchronous so spawn never blocks the Cue loop (AC4.3
+requires ≤3 s; eng-deps §9).
 
 - `dispatcher.ts` — Hono HTTP/WebSocket endpoint that receives every `DispatchedAction` from Cue
   routing and calls the Smithers client. **Async dispatch** — returns immediately, the spawn completes
-  off the hot path. Handles the full action set incl. `status` (queries the registry → ≤15-word
-  summary), `pauseAll`, `setMode`, and the **`approve`/`deny`** safety resolutions (§8).
+  off the hot path. Handles the V0 action set incl. `status` (queries the registry → ≤15-word summary)
+  and `pauseAll`. *(V0 scope cut: no `setMode` and no `approve`/`deny` — execution modes and the safety
+  approval gate are cut, §8.)*
 - `smithers-client.ts` — wraps Smithers durable-run APIs: `spawn(seed)`, `steer/signal(upid,payload)`,
-  `pause/resume(upid)`, `halt(upid)`, `streamRunEvents(upid)` (SSE), and the **approval-gate resolve**
-  `approve(upid,gateId)`/`deny(upid,gateId)`. Isomorphic to Temporal's `signal`/`startChild`
-  (eng-oss §3.3/§3.4): `{type:"steer",upid,payload}` → `client.signal(upid,"steer",payload)`. **All
-  model calls route through Smithers subscriptions — never a raw API key** (PRD §6, ENG-D-02). Fork may
-  require a fresh seeded run + `parentId` lineage rather than a native fork — P-SMITHERS determines
-  which (eng-oss §3.4).
-- `run-events.ts` — normalizes Smithers SSE run-events → `RunEvent` (incl. the `approval` kind from the
-  §8 hook), summarizes to ≤15 words *before* TTS, and feeds them back into Cue as observations
-  (`cue.send_observation`) for voice-out coherence. Handles SSE reconnect without stalling voice-out;
-  maintains UPID↔steering-window correlation across Cue session restarts.
+  `pause/resume(upid)`, `halt(upid)`, `streamRunEvents(upid)` (SSE). Isomorphic to Temporal's
+  `signal`/`startChild` (eng-oss §3.3/§3.4): `{type:"steer",upid,payload}` →
+  `client.signal(upid,"steer",payload)`. **No raw API key** — model access comes from the host's
+  logged-in Codex/Claude subscriptions (PRD §6, §2.1). Fork may require a fresh seeded run + `parentId`
+  lineage rather than a native fork — P-SMITHERS determines which (eng-oss §3.4).
+- `run-events.ts` — normalizes Smithers SSE run-events → `RunEvent`, summarizes to ≤15 words *before*
+  TTS, and feeds them back into Cue as observations (`cue.send_observation`) for voice-out coherence.
+  Handles SSE reconnect without stalling voice-out; maintains UPID↔steering-window correlation across
+  Cue session restarts.
 
 **Verify (seam):**
 - *Unit/integration:* *action-schema-match test* (the dispatched action matches the real
-  `MappedActionTool` shape across the **full** action set incl. status/setMode/approve/deny; RBG:
-  change a field name → fails); *async-dispatch test* (spawn returns without blocking the decision
-  plane; mocked slow Smithers still lets the next observation process); *SSE-reconnect test* (drop +
-  restore the stream → voice-out resumes, no duplicate observations); *UPID↔window-correlation test*
-  (survives a simulated Cue restart); *approval-roundtrip test* — an `approval` run-event surfaces a
-  read-back and an `approve` resolves the right `gateId` (RBG: resolve the wrong gateId → the held
-  action stays held → fails).
+  `MappedActionTool` shape across the **V0** action set incl. status/pauseAll; RBG: change a field name
+  → fails); *async-dispatch test* (spawn returns without blocking the decision plane; mocked slow
+  Smithers still lets the next observation process); *SSE-reconnect test* (drop + restore the stream →
+  voice-out resumes, no duplicate observations); *UPID↔window-correlation test* (survives a simulated
+  Cue restart).
 - *E2e:* the full spine (§10) drives a **real durable run** spawn→confirm within 3 s;
   *durability-recovery test* — kill the backend mid-run, restart, assert resume from last checkpoint
-  (work not lost, REQ-15); *fleet-isolation test* — steer A, assert B byte-identical (REQ-8/13);
-  *safety-roundtrip e2e* — a destructive tool call inside a real run round-trips read-back→confirm via
-  the seam and executes exactly once (ties §8 to the real API).
-- *Third-party:* **P-SMITHERS** + **P-SEAM** + **P-HOOK** (the seam carries the safety round-trip).
+  (work not lost, REQ-15); *fleet-isolation test* — steer A, assert B byte-identical (REQ-8/13). *(V0
+  runs the durable process dangerously to completion — there is no in-run safety round-trip to test,
+  §8.)*
+- *Third-party:* **P-SMITHERS** + **P-SEAM**.
 - *Observability:* `process.spawn{...}`, `process.steer{targetUPID, instructionId,
   accepted|reprompted|dropped}`, action-dispatch + run-event traces keyed by `correlationId`/`upid`.
 
@@ -769,7 +769,7 @@ that threads `wake → decision → action → spoken ack`. A single trace query
   callsign → rejected at dispatch); leave both unselected and confirm both progressed. *Resource-check
   e2e* — fill capacity, attempt a third spawn by voice, assert the spoken refusal and that no third
   process appears.
-- *Third-party:* all probes (P-CUE, P-ASR, P-TTS, P-LLM, P-SMITHERS, P-SEAM, P-HOOK).
+- *Third-party:* all V0 probes (P-CUE, P-ASR, P-TTS, P-LLM, P-SMITHERS, P-SEAM).
 - *Observability:* one `correlationId` across the loop; `fleet.snapshot{upids[], states[],
   lastAction[]}`; `spawn.refused{reason, correlationId}`; durable checkpoint log `{runId, seq,
   stateDigest}`.
@@ -783,19 +783,18 @@ control) that halts **all** processes and stops listening within 2 s, **ending t
 **Scoped to kill-all only** — it exposes **no** steer/select/spawn **and no unmute/resume** (preserving
 D1: voice is the sole *operational* modality; AC14.2). Loud, unambiguous signal.
 
-**It is NOT an unmute (R10).** The prior draft reused this control to recover from a stuck mute; that
-violates AC14.2 (kill-all only). The correct recovery from a stuck mute when the local spotter is
-unavailable is: this control **kills all + stops listening (session ends)**, and the room **restarts a
-fresh session**, which begins **unmuted** with the §12 consent re-spoken. That is a session
-teardown + clean restart, never an in-session unmute (see §5.3.1; `unmute-recovery.html`, ENG-A-13).
+**It is NOT an unmute.** This control is a kill-all (AC14.2), never an in-session resume. Unmuting is
+done by **saying "unmute"** (Cue hears it while muted) or **pressing the on-screen unmute button**
+(§5.3.1) — there is no spotter-down teardown/restart recovery to lean on, because Cue handles keyword
+listening while muted and the screen always offers an unmute button.
 
 **Verify (emergency stop):**
 - *Unit/integration:* *handler test* (halts every registered process + the listener); *scope test*
   (exposes **only** kill-all; RBG: add a steer route → fails); ***no-unmute-verb test*** — the control
   exposes no resume/unmute path (RBG: add an unmute route → the AC14.2 scope test fails).
 - *E2e:* with several processes running, trigger the control → all halt + listening stops ≤2 s (session
-  ends), with an unambiguous signal; a subsequent fresh session starts **unmuted** with consent
-  re-spoken (the only spotter-down recovery, §5.3.1).
+  ends), with an unambiguous signal. *(Unmuting is covered in §5: say "unmute" or press the unmute
+  button — not via this control.)*
 - *Observability:* `emergency.stop{trigger: non-voice, processesHalted, latencyMs, sessionEnded:true}`.
 
 ---
@@ -808,8 +807,8 @@ transcript-only persistence (AC1.3) were previously unowned.
 - `consent.ts` — **the consent scheduler.** Fires the spoken consent announcement **once per session,
   idempotent, within 3 s of start** (AC1.1). The line **must state that only transcripts are saved**
   (AC1.1 literal requirement, R12): **"Panopticon is listening. Only transcripts are saved. Say 'Panop,
-  status' for a rundown; say 'Curtain' to pause."** — three sentences, ≤8 s (design D-DD-16), naming
-  the **actual** mute word "Curtain" **and** the transcript-only privacy statement. Emits
+  status' for a rundown; say 'mute' to pause."** — three sentences, ≤8 s (design D-DD-16), naming
+  the **actual** mute word "mute" **and** the transcript-only privacy statement. Emits
   `session.start{provider, consentSpoken:true, transcriptOnlyStated:true}`. *(Design §10's onboarding
   quote omitted the transcript-only sentence; PRD AC1.1 is binding, so the eng text above is
   authoritative and a one-line design erratum is surfaced to the gate.)*
@@ -827,13 +826,13 @@ transcript-only persistence (AC1.3) were previously unowned.
 - *Unit/integration:* *consent-scheduler test* — fires once per session, idempotent, within 3 s of
   start (RBG: make it fire twice → idempotency fails); *consent-content test* — the first announcement
   **contains the transcript-only statement "Only transcripts are saved"** (AC1.1, R12) **and** names the
-  actual mute word "Curtain" (RBG: drop the transcript-only sentence → the AC1.1 content assertion
+  actual mute word "mute" (RBG: drop the transcript-only sentence → the AC1.1 content assertion
   fails); *listening-indicator test* — E2 active whenever the mic streams, inactive
   when muted; *persistence-guard test* — the audio buffer is never passed to any writer for the whole
   session (mock the writer, assert never-called; RBG: introduce a raw-audio write path → the guard
   test fails); *near-miss / first-run-VAD tests* (design §10.1).
 - *E2e:* live — assert the consent line is spoken **first**, **states "Only transcripts are saved"**
-  (AC1.1) and names "Curtain", the listening indicator is active for the **whole** session, and a
+  (AC1.1) and names "mute", the listening indicator is active for the **whole** session, and a
   **whole-session** post-run disk/log scan finds **zero** audio artifacts — including across muted
   intervals (RBG: introduce a `.wav`/`.pcm` write anywhere → the whole-session scan fails).
 - *Third-party:* P-ASR, P-TTS.
@@ -849,12 +848,12 @@ transcript-only persistence (AC1.3) were previously unowned.
 
 - `trace.ts` — the **`TraceProcessor`**: every event flows through it and emits one structured
   `LogEvent` (§1.3, design §13.3) **before** going downstream, so nothing is silently lost. Verb-noun
-  event names (`process.spawn`, `route.pass`, `safety.intercept`); stable ids (`sessionId`,
+  event names (`process.spawn`, `route.pass`, `process.steer`); stable ids (`sessionId`,
   `correlationId`, `upid`); **measured** `latencyMs`. **The trace log is the single source of truth**
   for causal-chain reconstruction.
-- `otel.ts` — Smithers-side: instrument per-process agent calls (incl. the §8 safety hook events) with
-  OpenTelemetry GenAI semantic conventions, export to self-hosted **Langfuse** via OTLP (ENG-D-07).
-  Cue's JSONL covers the Cue side (eng-deps §7a); the two are joined by `correlationId`/`upid`.
+- `otel.ts` — Smithers-side: instrument per-process agent calls with OpenTelemetry GenAI semantic
+  conventions, export to self-hosted **Langfuse** via OTLP (ENG-D-07). Cue's JSONL covers the Cue side
+  (eng-deps §7a); the two are joined by `correlationId`/`upid`.
 - `board/` — the **read-only** React 19 board served over Hono SSE (design §9). Zero operational
   controls; the system never waits for board connections and never alters behavior based on board
   presence (off the critical path of every voice flow).
@@ -862,8 +861,8 @@ transcript-only persistence (AC1.3) were previously unowned.
 **Verify (observability):**
 - *Unit/integration:* *trace-schema test* (every record carries required ids/fields; RBG: drop
   `correlationId` → fails); *causal-chain reconstruction test* (rebuild an utterance's full
-  observation→decision→action→outcome chain — including a safety read-back→resolution — from recorded
-  traces alone); *board read-only test* (no mutating endpoint/handler; RBG: add a POST route → fails);
+  observation→decision→action→outcome chain from recorded traces alone); *board read-only test* (no
+  mutating endpoint/handler; RBG: add a POST route → fails);
   *trace-roundtrip test* (every event serializes/deserializes byte-identical, eng-oss §4.5).
 - *E2e:* *board-non-authoritative test* — run the full REQ-5 scenario with the board server **down**
   and assert it still passes (AC16.2; RBG: make a voice flow await a board connection → board-down
@@ -877,11 +876,30 @@ transcript-only persistence (AC1.3) were previously unowned.
 ## 14. Runtime, build & engineering-only foundations
 
 - **Bun** (runtime + `bun:test`) — already the project runtime; `bun test` is wired (recent commit).
-  Native-module compat for the spotter is the one open question (P-BUN-NATIVE).
+  The V0 stack is pure TS on Bun (no native spotter module — the spotter is cut, §5.3.1).
 - **Hono** — HTTP/WebSocket for the seam dispatcher, the board server, and the emergency endpoint;
   Bun-native (eng-deps §8).
 - **React 19** — the read-only board only (off critical path); **exempt** from validate-before-build
   as a popular framework, proven by the board e2e (AC16.2).
+
+### 14.1 ENV-tunable parameters (tuned by feel later) — E1
+
+Per the V0 decision update, **all tunable parameters are passed in externally via documented ENV
+variables**, each with a default that gets tuned by real-world UX feel later. The voice-library
+integration stays **modular and easy to mock** (bet #2). Representative knobs (non-exhaustive; each is
+documented with its default at its definition site):
+
+| ENV var (example) | Default | Tunes |
+|---|---|---|
+| `PANOP_EARCON_BUDGET_MS` | 300 | hot-plane earcon latency budget (§1, REQ-10) — a knob, not a guarantee |
+| `PANOP_DECISION_BUDGET_MS` | 100 | decision-plane LLM budget (§1) — a knob, not a guarantee |
+| `PANOP_SPAWN_BUDGET_MS` | 3000 | durable-plane spawn budget (§1, REQ-4) — a knob, not a guarantee |
+| `PANOP_ROUNDTRIP_BUDGET_MS` | 1500 | "working" timeout-ack threshold (§5.4) |
+| `PANOP_SUGGEST_WORD_GATE` / `PANOP_SUGGEST_TIME_GATE_S` | 60 / 90 | suggestion fire gate (§6) |
+| `PANOP_SUGGEST_QUALITY_THRESHOLD` | (tuned) | suggestion quality gate (§6) |
+| `PANOP_SUGGEST_CADENCE_S` / `PANOP_SUGGEST_TTL_S` | 180 / 90 | suggestion cadence + expiry (§6) |
+| `PANOP_OUTPUT_WORD_CAP` | 15 | spoken-output word cap (§5.5) |
+| `PANOP_WAKE_WORD` / `PANOP_MUTE_WORD` / `PANOP_UNMUTE_WORD` | Panop / mute / unmute | word lists (§4.3) |
 
 **Engineering-only tickets** (pure implementation infrastructure serving no single feature — called
 out explicitly per the operating rules):
@@ -894,9 +912,10 @@ out explicitly per the operating rules):
 | **ENG-T-04** | Provider-interface scaffolding + record-replay/noop test doubles | All providers (§2) |
 | **ENG-T-05** | The probe suite (`poc/`) — validate-before-build harness | All P0 probes (§17) |
 | **ENG-T-06** | Bun/Hono project scaffold + CI wiring (`bun test`, red-before-green gate) | Build/CI |
-| **ENG-T-07** | The annotated replay corpus (`artifacts/smithering/corpus/replay/`) — JSONL + labels, labeling protocol, dev/test split, RBG harness (§15.5) | REQ-3 AC3.4 (the restraint metric) — R16 |
-| **ENG-T-08** | The shell-command classifier + shell-parser integration (`safety/shell-classifier.ts`, §8.1.1) | REQ-11 AC11.1/AC11.2 (Safe stays autonomous) — R9 |
-| **ENG-T-09** | The `SubscriptionCredentialProvider` + `TraceProcessor` redaction filter (§2.1, §15.6) | PRD §6 secrets constraint (no raw keys, nothing logged) — R15 |
+| **ENG-T-11** | ENV-config layer (`src/config.ts`) — typed, documented defaults for every tunable (§14.1) | E1 (env-tunable params) |
+| ~~**ENG-T-07**~~ | ~~Annotated replay corpus + restraint metric~~ — **REMOVED in V0** (§15.5, E9); restraint is ENV-tunable params (§14.1) | — |
+| ~~**ENG-T-08**~~ | ~~Shell-command classifier + shell-parser integration~~ — **REMOVED in V0** (§8, E8); run dangerously, sandbox-later | — |
+| ~~**ENG-T-09**~~ | ~~`SubscriptionCredentialProvider` + redaction filter~~ — **REMOVED in V0** (§2.1, E10); use host Codex/Claude subscriptions. The lightweight redaction filter survives as part of ENG-T-03 (§15.6) | — |
 
 ---
 
@@ -923,73 +942,55 @@ text**.
 - **Unit/integration AND e2e for every behavior.** If we deleted either layer, the surviving layer
   alone must still leave us *fairly confident* the behavior holds. Every Verify block above names both.
 - **Red-before-green is mandatory.** Each test is trusted only after it has been shown to fail. The
-  standard moves: **remove the guard** (dispatch invariant, 15-word guard, mute stream-close, the
-  safety hook); **breach the budget** (earcon ≤300 ms, round-trip <1 s, timeout ack); **cross the
-  boundary** (59/61 words, 89/91 s, distance-≤2 collision). The red run is the evidence.
+  standard moves: **remove the guard** (dispatch invariant, 15-word guard, mute stream-close);
+  **breach the budget** (earcon ≤300 ms, round-trip <1 s, timeout ack); **cross the boundary** (59/61
+  words, 89/91 s, distance-≤2 collision). The red run is the evidence.
 
 ### 15.3 The 10×–100× catalog (boundary / fuzz / benchmark)
 
 The Verify blocks are the **floor**. Each component additionally carries: **empty/longest inputs**
 (empty transcript, single word, 10k-word monologue → all `observe.pass`); **silence** (no
 observations, not empty ones); **simultaneous speakers** (2 at once — routing/diarization stay sane);
-**mis-transcription** (garbled callsign/confirm → re-prompt or drop, never destructive execution);
-**fuzz** (random confirm tokens, double-confirm, "confirm" to the wrong gateId/process, unknown tool
-classes at the safety hook); and **benchmarks** for performance-critical paths (earcon <300 ms;
-round-trip p50<1 s / p95<1.5 s; timeout-ack fires at the budget edge) recorded as **regression
-baselines that fail on regression** (REQ-10 e2e). Anything unverified is treated as broken.
+**mis-transcription** (garbled callsign → re-prompt or drop); **fuzz** (random/garbled magic-word
+tokens, near-homophones of callsigns/wake/mute words → routing stays sane); and **benchmarks** for
+performance-critical paths (earcon <300 ms; round-trip p50<1 s / p95<1.5 s; timeout-ack fires at the
+budget edge) recorded as **regression baselines that fail on regression** (REQ-10 e2e), against the
+ENV-configured budgets (§14.1). Anything unverified is treated as broken.
 
 ### 15.4 Structured observability contract
 
 Every event emits one `LogEvent` (§1.3): `level` · `event` (verb-noun) · `sessionId` · `correlationId`
 (one loop iteration) · `upid` · `latencyMs` (**measured, not estimated**) · `meta`. A debugging agent
 with **no context** must be able to query one `correlationId` and replay the full
-observation→decision→action→outcome chain (REQ-16 AC16.3), including a safety read-back→resolution.
-Cue JSONL (Cue side) + OTel/Langfuse (Smithers side), joined by `correlationId`/`upid`.
+observation→decision→action→outcome chain (REQ-16 AC16.3). Cue JSONL (Cue side) + OTel/Langfuse
+(Smithers side), joined by `correlationId`/`upid`.
 
-### 15.5 The annotated replay corpus — a concrete, owned, versioned artifact (R16) — REQ-3 AC3.4
+### 15.5 Suggestion restraint — ENV-tunable params, not a labeled corpus (cut/deferred in V0 — E9)
 
-AC3.4's recall (**≥80%**) and false-positive (**≤1/10 min**) bar — the single most important restraint
-metric — is only reproducible if the corpus it runs against is a *real, fixed, owned artifact*, not a
-hand-wave. The prior draft referenced "the annotated replay suite" without defining it (R16). It is
-now engineered as ticket **ENG-T-07** (`replay-corpus-contract.html`, ENG-A-14):
+> **The formal annotated replay corpus and the restraint metric are CUT / deferred for V0** per the
+> decision update. The prior design (R16/ENG-A-14/ENG-T-07) built a fixed, human-labeled replay corpus
+> (`artifacts/smithering/corpus/replay/`) enforcing recall **≥80%** / **≤1 false-positive per 10 min**
+> with a ≥2-labeler protocol, κ adjudication, dev/test split, and shuffle-labels RBG. **None of that is
+> a V0 requirement** — AC3.4's hard restraint metric is dropped as a gate.
 
-- **Location & form.** `artifacts/smithering/corpus/replay/` — versioned with the repo. It stores
-  **transcript-observation JSONL** (the recorded Deepgram output, §15.1) + a `labels.json` ground
-  truth, **not raw audio in the product runtime** (NG-6). Any seed `.wav` used to *generate* the JSONL
-  once lives only in a **dev-only corpus store fenced outside the product** (the product's
-  whole-session persistence guard, §12, still proves zero raw-audio at runtime). A `CORPUS.md` records
-  provenance and a CHANGELOG.
-- **Minimum size (for statistical power).** **≥60 min** of "should-pass" (negative) audio — enough to
-  observe a ≤1/10-min FP rate meaningfully (≥6 ten-minute windows) — and **≥50** distinct ground-truth
-  "should-suggest" segments. Both grow over time; these are floors.
-- **Label schema.** Each segment: `{segmentId, startMs, endMs, label: 'should-suggest'|'should-pass',
-  topic, rationale, speakerCount, conditions: ['clean'|'overlap'|'noise'|'near-homophone']}`.
-- **Labeling protocol.** **≥2 independent human labelers**; disagreements adjudicated by a third;
-  **inter-annotator agreement recorded** (Cohen's κ, target ≥0.7) so the ground truth itself is
-  trustworthy. Protocol documented in `CORPUS.md`.
-- **Representative negatives.** The "should-pass" set **must** include technical jargon, build/test
-  talk, two-speaker overlap, silence, and **near-homophones of every always-hot word** (callsigns,
-  "Panop", "Curtain", "Daybreak", "Abort") — the exact inputs that cause false triggers.
-- **Train/test separation (no overfitting the gate).** The corpus is **test-only**. Suggestion-engine
-  knobs/thresholds are tuned on a **separate dev split**; the **held-out test split** is run **only**
-  for the AC3.4 acceptance number and is never used for tuning. A *leakage test* asserts the two splits
-  are disjoint by `segmentId`.
-- **Red-before-green evidence.** The recorded RBG move: **shuffle the ground-truth labels** → recall
-  and FP collapse → the suite **fails**, proving it actually discriminates (not just passes a trivially
-  satisfiable assertion). The red run is archived under `artifacts/smithering/reports/` alongside the
-  green run.
-- **Ownership.** Owned by the engineering team; the corpus version + the measured (recall, FP) pair are
-  recorded per acceptance run so the metric is reproducible and regressions are visible.
+V0 restraint is simply a set of **ENV-tunable parameters with documented defaults** (§14.1) — the
+suggestion fire gate, quality threshold, cadence, and TTL — **tuned by feel later** based on real-world
+UX (ties to E1). Sanity is still checked by the §6 record-replay scenario (the engine stays mostly
+silent; obvious "suggest" moments fire, obvious chatter passes) against the configured defaults, but
+there is no labeled corpus, no recall/FP number, and no red-before-green-on-shuffled-labels gate.
+*(Revisit a labeled corpus later only if suggestion quality becomes a problem.)*
 
-### 15.6 Secret hygiene — no raw keys, redaction proven by test (R15)
+### 15.6 Secret hygiene — no raw keys in source (R15, simplified)
 
-Per §2.1 and PRD §6: provider credentials come **only** from the Smithers subscription layer, are
-**never** written to source/env-in-repo/artifact/log/JSONL/probe report, and the `TraceProcessor`
-**redaction filter** strips any credential-shaped value before emission (fail-closed). This is proven,
-not asserted: the *secret-redaction test* (§2.1), the *subscription-path test* (§2.1), each probe's
-redaction assertion (§17), and a *whole-session secret-scan* (greps the entire trace/log/report tree
-for key-shaped strings, asserts zero). RBG: plant a fake key in a `meta` field with the filter
-disabled → it leaks → test fails; enable → `«redacted»`.
+Per §2.1 and the V0 update: **no raw API keys in source.** Model access comes from the **host's
+already-authenticated OpenAI Codex and Anthropic Claude subscriptions** — there is no bespoke
+credential-provider abstraction to build. ASR/TTS credentials (when needed) are read from the
+environment and are **never** written to source/env-in-repo/artifact/log/JSONL/probe report. The
+`TraceProcessor` keeps a **lightweight redaction filter** that strips any credential-shaped value
+before emission (fail-closed). This is proven, not asserted: the *secret-redaction test* (§2.1), each
+probe's redaction assertion (§17), and a *whole-session secret-scan* (greps the entire
+trace/log/report tree for key-shaped strings, asserts zero). RBG: plant a fake key in a `meta` field
+with the filter disabled → it leaks → test fails; enable → `«redacted»`.
 
 ---
 
@@ -1000,18 +1001,18 @@ Every infra/3rd-party dependency. Each maps to ≥1 probe in §17. (Detail: eng-
 | # | Dependency | Purpose | Risk | Probe |
 |---|---|---|---|---|
 | 1 | **Cue** (`github.com/jameslbarnes/cue`) | Canonical audio-observation substrate: transcription→observations→cue policies→act-or-`observe.pass`; two-Program routing; `TextCue` recognition; `MappedActionTool`; JSONL traces (D2) | **HIGH / P0 BLOCKER.** Repo availability **unconfirmed** (domain.md §7 vs prior-art.md §1); entire input/routing/suggestion layer (REQ-1/3/5/6/7) depends on it; the hot-plane earcon depends on `TextCue` latency. Mitigation: thin owned adapter; gaps recorded as risks | **P-CUE** |
-| 2 | **Smithers** (`smithers-orchestrator ^0.23.0`) | Durable agent process manager: spawn, `streamRunEvents`, pause/resume, steer/signal, recovery, concurrent runs; **PreToolUse hook + approval gate** for the safety boundary (§8); all model calls via subscriptions (no raw keys) | **HIGH** (single-vendor, mitigated by first-party status). Fork/resume/steer semantics **and the pre-tool hook / approval-gate primitive** vs our model are unconfirmed | **P-SMITHERS**, **P-HOOK** |
+| 2 | **Smithers** (`smithers-orchestrator ^0.23.0`) | Durable agent process manager: spawn, `streamRunEvents`, pause/resume, steer/signal, recovery, concurrent runs. **V0 runs dangerously to completion — no in-run safety hook/approval gate (§8 cut).** Model access via host subscriptions (no raw keys) | **HIGH** (single-vendor, mitigated by first-party status). Fork/resume/steer semantics vs our model are unconfirmed | **P-SMITHERS** |
 | 3 | **Deepgram Nova-3** (streaming ASR) | Primary transcription provider behind `ASRProvider`: streaming, `isFinal`, diarization labels | **MEDIUM** (interface-abstracted, swappable). Diarization-label stability is the tightest coupling (`SpeakerChangedCue`); latency must hit <200 ms word-final | **P-ASR** |
-| 4 | **TTS provider** (ElevenLabs Flash v3 / Cartesia Sonic / PlayHT 3.0 Turbo) | Streaming text→audio for acks/summaries/read-backs behind `TTSProvider` | **LOW-but-UNVERIFIED.** Research benchmarked ASR, **not** TTS; first-byte ≤200 ms unproven; probe is also the selection benchmark | **P-TTS** |
-| 5 | **Cheap/fast decision LLM** (Claude Haiku-4.5 via Smithers subscription; Cerebras Llama contingent) | Hot-loop decisions: suggestion scoring, 15-word summarizer, tool-selection. **Routed through Smithers subscriptions — no raw API key** (PRD §6, R15). **No Opus/Sonnet** (NG-9) | **MEDIUM** (R15). Must reach the model **through the subscription path** (Cerebras only if subscription-routable or PRD amends §6); temp-0 determinism + ~100 ms p50 must hold; **no key may be logged** | **P-LLM** (+ A-LLM-SUB) |
-| 6 | **On-device keyword spotter** (Picovoice Porcupine / OpenWakeWord) | Local "Daybreak" unmute spotter while cloud is muted; emits only `mute.released` — **the sole operational unmute path (R10)** | **MEDIUM (raised, R10).** Now **on the critical path for REQ-2/D1** (voice-unmute); a failed probe is no longer a soft fallback — spotter-down means session-end+restart, not in-session unmute. Custom-keyword accuracy on team-room speech unverified | **P-SPOTTER (blocking)**, **P-BUN-NATIVE** |
-| 7 | **Langfuse + OpenTelemetry** (Smithers-side observability) | OTLP-native LLM tracing for per-process agent calls incl. safety hook events | **LOW** (OTLP standard, backend swappable; off critical path) | **P-OTEL** |
+| 4 | **TTS provider** (ElevenLabs Flash v3 / Cartesia Sonic / PlayHT 3.0 Turbo) | Streaming text→audio for acks/summaries behind `TTSProvider` | **LOW-but-UNVERIFIED.** Research benchmarked ASR, **not** TTS; first-byte ≤200 ms unproven; probe is also the selection benchmark | **P-TTS** |
+| 5 | **Cheap/fast decision LLM** (per the O4 model matrix; via the host's logged-in subscriptions) | Hot-loop decisions: suggestion scoring, 15-word summarizer, tool-selection. **No raw API key — uses host Codex/Claude subscriptions** (PRD §6, R15) | **MEDIUM.** temp-0 determinism + ~100 ms p50 must hold; **no key may be logged** | **P-LLM** |
+| 6 | ~~**On-device keyword spotter**~~ | **REMOVED in V0 (E5/§5.3.1).** Cue handles always-on keyword listening (incl. "unmute" while muted); plus an on-screen unmute button. No bespoke spotter, no P-SPOTTER, no P-BUN-NATIVE for it | — | — (removed) |
+| 7 | **Langfuse + OpenTelemetry** (Smithers-side observability) | OTLP-native LLM tracing for per-process agent calls | **LOW** (OTLP standard, backend swappable; off critical path) | **P-OTEL** |
 | 8 | **Phonetic-distance library** (double-metaphone + phoneme-Levenshtein) | Callsign collision guard (D-DD-05) | **LOW** (pure, deterministic, unit-testable; swappable) | **P-PHONETIC** |
-| 9 | **Bun** (runtime + test runner) | TS execution, `bun:test`, fast install | **MEDIUM** (native-module compat for the spotter unverified; pure-TS path already confirmed by `bun test`) | **P-BUN-NATIVE** |
+| 9 | **Bun** (runtime + test runner) | TS execution, `bun:test`, fast install | **LOW** (V0 stack is pure TS on Bun — the native spotter module is cut; pure-TS path confirmed by `bun test`) | (covered by `bun test`) |
 | 10 | **Hono** (HTTP/WebSocket) | Seam dispatcher, board server, emergency endpoint | **LOW** (standard HTTP, Bun-native; covered by P-SEAM/board e2e) | **P-SEAM** (dispatcher), board e2e |
 | 11 | **React 19** (read-only board) | Optional debug board UI (off critical path) | **LOW.** **Exempt** from validate-before-build (popular framework); proven by board-non-authoritative e2e | board e2e (exempt) |
-| 12 | **Shell-command parser** (`shell-quote` or equiv.) | Tokenize/split shell commands into simple-commands + operators for the §8.1.1 safety classifier (R9) | **MEDIUM.** A parser miss = a destructive command mis-classified `read-safe`; mitigated by deny-by-default (unparseable → `unknown`→gated) + heavy fuzz tests | **P-SHELL-PARSE** |
-| 13 | **Smithers subscription credential layer** (`SubscriptionCredentialProvider`) | The one credential path for ASR/TTS/LLM; enforces "no raw API key" (PRD §6, R15) | **MEDIUM.** Whether the hot-loop model is reachable through subscriptions is unproven (A-LLM-SUB); a leak would breach PRD §6 — mitigated by the redaction filter + secret-scan tests (§15.6) | **P-LLM** (subscription assertion), redaction tests |
+| 12 | ~~**Shell-command parser**~~ (`shell-quote`) | **REMOVED in V0 (E8/§8).** No shell classifier, no gating — run dangerously, sandbox-later. No P-SHELL-PARSE | — | — (removed) |
+| 13 | ~~**Subscription credential layer**~~ (`SubscriptionCredentialProvider`) | **REMOVED in V0 (E10/§2.1).** Use the host's logged-in Codex/Claude subscriptions; keep only "no raw keys in source" + the lightweight redaction filter (§15.6) | — | redaction tests |
 
 ---
 
@@ -1029,16 +1030,16 @@ plan.** The remaining P-* gates below stay UNRUN.
 | Probe | Dependency | The one narrow question | Blocking? |
 |---|---|---|---|
 | **P-CUE** (P0) | Cue | Can we run the *real* Cue library, and does its cue-policy + `observe.pass` + two-`Program` routing + `MappedActionTool` schema + provider slots match our design **and does a `TextCue` decision resolve within the ≤300 ms earcon budget** (recognition stays on Cue, §3.4)? | **YES** — if false, REQ-1/3/5/6/7 are redesigned. **First build task.** |
-| **P-HOOK** (P0) | Smithers pre-tool hook | Can a PreToolUse hook in a real Smithers run **intercept and hold a destructive tool call *before* execution**, and can approve/deny/timeout resolve the held call (file unmodified on deny/timeout)? | **YES** — REQ-11 (the critical R1 finding) is unenforceable without this; the safety guarantee is a lie until it passes. |
-| **P-ASR** (P0) | Deepgram Nova-3 | Does Nova-3 streaming deliver `isFinal`-flagged, diarized observations with word-final latency <200 ms and **no** observation on silence — **with its credential drawn from the subscription layer and never logged** (R15)? | **YES** — the ≤300 ms earcon and <1 s round-trip (REQ-10) depend on it. |
+| ~~**P-HOOK**~~ | Smithers pre-tool hook | **REMOVED in V0 (E5/E6/§8).** The in-run safety hook / read-back gate is cut — we run dangerously to completion and trust Cue for confirmation. | — (removed) |
+| **P-ASR** (P0) | Deepgram Nova-3 | Does Nova-3 streaming deliver `isFinal`-flagged, diarized observations with word-final latency <200 ms and **no** observation on silence — **with no key written to any log/report** (R15)? | **YES** — the ≤300 ms earcon and <1 s round-trip (REQ-10) depend on it. |
 | **P-TTS** (P0) | TTS provider | Which candidate streams **first audio byte ≤200 ms** of text submission (and does any) — **with no key written to any log/report** (R15)? | **YES** — round-trip ≤1 s (REQ-10) is unprovable until one passes; the probe also *selects* the provider. |
-| **P-LLM** (P0) | Decision LLM | Does the chosen cheap/fast model — **reached through the Smithers subscription path, with no raw API key (R15)** — return **temperature-0-deterministic** decisions within ~100 ms with a `MappedActionTool`-compatible tool-selection schema, **and does the probe's own trace contain zero key-shaped strings**? | **YES** — record-replay (§15.1), the hot-loop budget, **and PRD §6 (subscriptions, no raw keys)** depend on it. |
-| **A-LLM-SUB** (P0) | Subscription credential layer | **Can the cheap/fast hot-loop model actually be reached *through Smithers subscriptions*** (vs. requiring a raw provider key)? If Haiku-4.5-via-subscription, confirm; if only Cerebras meets latency and it is **not** subscription-routable, this is a blocking conflict with PRD §6 to surface, not work around. | **YES** — PRD §6 is binding; if no compliant hot-loop model exists, the constraint or the model choice must change at the gate. |
-| **P-SHELL-PARSE** (P0) | Shell-command parser | Does the parser split compound commands (`&&`/`;`/`\|`), expose redirections, and surface command-substitution/`eval`/process-substitution as distinct tokens so the §8.1.1 classifier can gate them (unparseable → `unknown`)? | **YES** — the safety classifier (R9, critical) is only sound if parsing is; a mis-parse mis-classifies a destructive command as `read-safe`. |
+| **P-LLM** (P0) | Decision LLM | Does the chosen cheap/fast model (via the host's logged-in Codex/Claude subscriptions, no raw API key) return **temperature-0-deterministic** decisions within ~100 ms with a `MappedActionTool`-compatible tool-selection schema, **and does the probe's own trace contain zero key-shaped strings**? | **YES** — record-replay (§15.1) and the hot-loop budget depend on it. |
+| ~~**A-LLM-SUB**~~ | Subscription credential layer | **REMOVED in V0 (E10/§2.1).** No bespoke credential layer — use the host's logged-in subscriptions; model choice follows the O4 matrix. | — (removed) |
+| ~~**P-SHELL-PARSE**~~ | Shell-command parser | **REMOVED in V0 (E8/§8).** No shell classifier, no gating — run dangerously, sandbox-later. | — (removed) |
 | **P-SMITHERS** (P0) | Smithers | Against the *real* harness, do durable spawn, `streamRunEvents`, pause/resume, steer/signal, restart-recovery, and concurrent runs behave as our lifecycle assumes — and how is fork realized (native vs fresh-seeded-run + `parentId`)? | **YES** — REQ-4/8/13/15 depend on it. |
-| **P-SEAM** (P0) | Cue↔Smithers seam (+ Hono) | Does a Cue `MappedActionTool` action round-trip through the dispatcher into a real Smithers run **and** do Smithers SSE run-events (incl. the §8 approval-request) flow back into Cue as observations, with spawn ≤3 s and **without blocking the Cue loop**? | **YES** — the novel integration; top integration risk (PRD §9). |
-| **P-SPOTTER** (P0) | Keyword spotter | Does the local spotter detect "Daybreak" with acceptable recall and <1 FP/hr on team-room speech while emitting **only** `mute.released` and no transcript? | **YES (raised to blocking, R10)** — voice-unmute via the spotter is **the sole operational unmute** (REQ-2/D1); there is **no** in-session non-voice unmute. A failed probe means the only spotter-down recovery is REQ-14 kill-all + session restart, so the spotter's reliability must be proven before voice-unmute ships, not assumed. |
-| **P-BUN-NATIVE** | Bun native compat | Does the native spotter module (Porcupine/ONNX) load and run under Bun's Node-compat layer? | **NO** — *justified:* even though voice-unmute is now critical (R10), this probe gates only the *Bun-specific* load path; the spotter is an isolated single-purpose component that can run as a **separate Node sidecar** if Bun native compat fails, with no architectural change. The rest of the stack is pure TS on Bun (confirmed by `bun test`). |
+| **P-SEAM** (P0) | Cue↔Smithers seam (+ Hono) | Does a Cue `MappedActionTool` action round-trip through the dispatcher into a real Smithers run **and** do Smithers SSE run-events flow back into Cue as observations, with spawn ≤3 s and **without blocking the Cue loop**? | **YES** — the novel integration; top integration risk (PRD §9). |
+| ~~**P-SPOTTER**~~ | Keyword spotter | **REMOVED in V0 (E5/§5.3.1).** No bespoke spotter — Cue handles "unmute" keyword listening while muted; plus an on-screen unmute button. | — (removed) |
+| ~~**P-BUN-NATIVE**~~ | Bun native compat | **REMOVED in V0** — there is no native spotter module to load under Bun (spotter cut). V0 stack is pure TS on Bun (confirmed by `bun test`). | — (removed) |
 | **P-PHONETIC** | Phonetic-distance lib | Does the double-metaphone / phoneme-Levenshtein library produce **stable, reproducible** codes so the callsign collision guard is deterministic? | **NO** — *justified:* a pure, offline, deterministic library fully covered by unit tests; if it misbehaves we swap it with zero architectural impact. |
 | **P-OTEL** | Langfuse / OTel | Does Smithers' structured output export cleanly to a self-hosted Langfuse via OTLP with GenAI semantic conventions? | **NO** — *justified:* observability is off every critical path (REQ-16 AC16.2) and Cue JSONL already covers causal-chain reconstruction; OTLP backends are swappable by config. |
 
@@ -1048,18 +1049,11 @@ plan.** The remaining P-* gates below stay UNRUN.
 > task and a hard gate.** Every Cue claim here is README-derived and unconfirmed. *(Surfaced to the
 > orchestrator's gate via the structured output — not raised as a human request from this pass.)*
 
-> **⚠ NEW P0 PROBE (R1).** **P-HOOK** must pass before REQ-11 is trusted: if Smithers cannot
-> intercept-and-hold a tool call before execution, the entire read-back/confirm safety guarantee is
-> not enforceable and the design (and possibly the PRD's optimistic-execution posture) must be
-> revisited. Surfaced to the gate.
-
-> **⚠ NEW P0 PROBES / GATE ITEMS (second round, R9/R10/R15).** **P-SHELL-PARSE** gates the §8.1.1
-> shell classifier that keeps Safe mode autonomous (R9, critical). **P-SPOTTER is now blocking**
-> because voice-unmute is the sole operational unmute (R10). **A-LLM-SUB** must confirm a
-> PRD-§6-compliant (subscription-routed, no-raw-key) hot-loop model exists; if the only model meeting
-> the ~100 ms budget cannot be reached through Smithers subscriptions, that is a **binding conflict
-> with PRD §6** to resolve at the gate, not engineer around (R15). Surfaced to the gate via the
-> structured output.
+> **V0 scope cut — probes removed.** **P-HOOK** (safety hook), **P-SHELL-PARSE** (shell classifier),
+> **P-SPOTTER** + **P-BUN-NATIVE** (bespoke spotter), and **A-LLM-SUB** (credential layer) are
+> **removed** per the decision update: we trust the voice library, run dangerously to completion, use
+> the host's logged-in subscriptions, and defer the tiered vocabulary. Safety later = sandbox the
+> process, not gate permissions.
 
 ---
 
@@ -1067,28 +1061,28 @@ plan.** The remaining P-* gates below stay UNRUN.
 
 Every PRD requirement maps to the engineering section(s) that implement it. Conversely, every
 engineering section serves a requirement; pure-infrastructure work that serves no single feature is
-the **engineering-only tickets** (ENG-T-01..09, §14), called out explicitly.
+the **engineering-only tickets** (ENG-T-01..06, ENG-T-10, ENG-T-11, §14), called out explicitly.
 
 | PRD Requirement | Engineering section(s) |
 |---|---|
 | REQ-1 — Ambient listening, consent, transcript-only | §2 (ASR), §3 (Cue/adapter), §5 (mute), **§12 (consent scheduler — incl. "Only transcripts are saved" AC1.1/R12, listening indicator, whole-session persistence guard)**, §13 (trace) |
-| REQ-2 — Hard spoken mute | §5 (mute-controller — **mute = earcon + one-word "Muted" TTS, AC2.4/R13**), **§5.3.1 (voice-unmute is the sole operational unmute, R10)**, §2 (ASR stream stop) |
-| REQ-3 — Conservative suggestion engine | §6 (suggestion engine), §3 (Cue policies), **§15.5 (the annotated replay corpus contract — AC3.4/R16)** |
+| REQ-2 — Hard spoken mute | §5 (mute-controller — **mute = earcon + one-word "Muted" TTS, AC2.4/R13**), **§5.3.1 (unmute = say "unmute" / press the unmute button; no bespoke spotter — V0 update)**, §2 (ASR stream stop) |
+| REQ-3 — Conservative suggestion engine | §6 (suggestion engine), §3 (Cue policies), **§15.5 (restraint = ENV-tunable params, tuned by feel — no labeled corpus in V0, E9)** |
 | REQ-4 — Hands-free spawn → durable process | **§7 (acceptance→spawn flow: pending state, MCQ accumulation, accept/decline classifier, auto-select, planning)**, §9 (seam), §10 (registry) |
 | REQ-5 — Canonical voice loop (the spine) | §1 (planes), §3, §4, §7, §9, §10 (spine) |
-| REQ-6 — Two-channel routing + acks | §4 (dispatch invariants, **AC6.4 acks implemented as written §4.2/R14 — four distinct Layer-B acks incl. ambient pass**), §3 (two Programs), §5 (routing/latency acks) |
-| REQ-7 — Fixed magic-word vocabulary | §4 (vocabulary, callsigns, **handlers — incl. status, pause-all, and per-process pause/resume §4.3/R11**), §8.3 (mode commands) |
+| REQ-6 — Two-channel routing + acks | §4 (dispatch invariants, **§4.2 — earcons for state transitions + addressed-command acks; ignored ambient speech is SILENT, V4/R14**), §3 (two Programs), §5 (routing/latency acks) |
+| REQ-7 — Fixed magic-word vocabulary | §4 (vocabulary, callsigns, **handlers — incl. status, pause-all, and per-process pause/resume §4.3/R11**) |
 | REQ-8 — Voice steering of a selected process | §4 (steering window), §9 (steer/signal), §10 (isolation) |
-| REQ-9 — Rationed spoken output | §5 (output policy, earcons — **all spoken read-backs ≤15 words, AC9.3/R13**) |
-| REQ-10 — Sub-second ack latency | §1 (three planes), §3.4 (hot-plane recognition on Cue), §5 (earcons, **timeout "working" ack §5.4**), §2 (ASR/TTS latency) |
-| REQ-11 — Safe-by-default execution | **§8 (in-run PreToolUse safety hook + safe-executor, dead-man timer, Safe/Explicit/Dangerous modes)**, **§8.1.1 (shell-command classifier keeping Safe autonomous, AC11.1/R9)**, §9 (approval round-trip) |
+| REQ-9 — Rationed spoken output | §5 (output policy, earcons — **spoken output ≤15 words, AC9.3/R13**) |
+| REQ-10 — Sub-second ack latency | §1 (three planes; budgets are ENV-tunable knobs, §14.1), §3.4 (hot-plane recognition on Cue), §5 (earcons, **timeout "working" ack §5.4**), §2 (ASR/TTS latency) |
+| REQ-11 — Execution posture | **§8 (V0: run dangerously to completion — the in-run safety hook, shell classifier, and Safe/Explicit/Dangerous modes are CUT; safety later = sandbox the process)** |
 | REQ-12 — Panic/stop word | §4 (priority ladder), §5 (**halt = earcon + ≤15-word TTS, AC12.3/R13**), §10 (halt) |
 | REQ-13 — Minimal concurrent fleet | §10 (registry/fleet — **per-process pause/resume drives "steer A, pause B" §10/R11**), §4.3 (per-process pause/resume commands), §9 (concurrent runs) |
-| REQ-14 — Non-voice emergency stop | §11 (emergency stop — **kill-all + session-end only, NOT an unmute, AC14.2/R10**) |
+| REQ-14 — Non-voice emergency stop | §11 (emergency stop — **kill-all + session-end only, NOT an unmute, AC14.2**) |
 | REQ-15 — Durable processes | §10 (lifecycle, **pre-spawn resource check §10.1**), §9 (Smithers durability) |
 | REQ-16 — Observability surface + tracing | §13 (trace, OTel, board), **§15.6 (secret-redaction in the trace contract, R15)** |
-| *(cross-cutting infra serving PRD §6 secrets constraint)* | **§2.1 (subscription-mediated credentials, no raw keys), §15.6 (redaction) — R15** |
-| *(engineering-only)* | ENG-T-01 types · ENG-T-02 replay harness · ENG-T-03 trace plumbing · ENG-T-04 provider scaffolding · ENG-T-05 probe suite · ENG-T-06 Bun/Hono/CI scaffold · **ENG-T-07 annotated replay corpus (§15.5)** · **ENG-T-08 shell-classifier + shell-parser integration (§8.1.1)** · **ENG-T-09 credential layer + redaction filter (§2.1/§15.6)** (§14) |
+| *(cross-cutting infra serving PRD §6 secrets constraint)* | **§2.1 (host Codex/Claude subscriptions, no raw keys in source), §15.6 (redaction) — R15** |
+| *(engineering-only)* | ENG-T-01 types · ENG-T-02 replay harness · ENG-T-03 trace plumbing (+ redaction filter) · ENG-T-04 provider scaffolding · ENG-T-05 probe suite · ENG-T-06 Bun/Hono/CI scaffold · **ENG-T-10 audio-capture→ASR→Cue bridge (§22)** · **ENG-T-11 ENV-config layer (§14.1)** (§14). *(ENG-T-07 corpus, ENG-T-08 shell classifier, ENG-T-09 credential layer — removed in V0.)* |
 
 ---
 
@@ -1098,15 +1092,16 @@ Engineering V0 is accepted **only if** all of the following hold. This is the en
 of the PRD's §8 user-visible gate; each line is proven by the tests named above, each capable of
 failing (red-before-green recorded).
 
-1. **EV-1 — Probes green first.** Every **blocking** probe (P-CUE, **P-HOOK**, P-ASR, P-TTS, P-LLM,
+1. **EV-1 — Probes green first.** Every **blocking** probe (P-CUE, P-ASR, P-TTS, P-LLM,
    P-SMITHERS, P-SEAM) has a recorded red-before-green pass against the **real** API before any code
-   depends on it. **P-CUE is the first build task** (the P0 blocker); **P-HOOK gates REQ-11**;
-   **P-SPOTTER (R10), P-SHELL-PARSE (R9) and A-LLM-SUB (R15) are now blocking too**. Non-blocking
-   probes (P-BUN-NATIVE, P-PHONETIC, P-OTEL) run before their paths ship.
-2. **EV-2 — The contract, harness & credential path exist (ENG-T-01/02/04/09).** `types.ts`, the
+   depends on it. **P-CUE is the first build task** (the P0 blocker). Non-blocking probes (P-PHONETIC,
+   P-OTEL) run before their paths ship. *(V0 scope cut: P-HOOK, P-SHELL-PARSE, P-SPOTTER,
+   P-BUN-NATIVE, and A-LLM-SUB are removed — §17.)*
+2. **EV-2 — The contract, harness & config layer exist (ENG-T-01/02/04/10).** `types.ts`, the
    record-replay harness, and the injectable provider doubles are in place; the inner test loop runs
-   **headless, no mic, no network, no API keys**; provider credentials resolve **only** through the
-   `SubscriptionCredentialProvider` (§2.1) and the redaction filter is active (§15.6).
+   **headless, no mic, no network, no API keys**; model access uses the host's logged-in Codex/Claude
+   subscriptions with **no raw key in source** (§2.1) and the redaction filter is active (§15.6);
+   tunables resolve from the documented ENV-config layer (§14.1).
 3. **EV-3 — Every component carries both layers.** Unit/integration AND e2e for each of §2–§14, with
    the named red-before-green failure injection demonstrated.
 4. **EV-4 — The spine passes ≥9/10 with zero GUI/keyboard events** (§10 canonical scenario + no-screen
@@ -1114,17 +1109,16 @@ failing (red-before-green recorded).
 5. **EV-5 — Latency baselines recorded** (§5/§15.3): earcon <300 ms; round-trip p50<1 s / p95<1.5 s
    over ≥100 live round-trips; the **timeout "working" ack** fires at the budget edge — all stored as
    regression baselines that **fail on regression**.
-6. **EV-6 — Restraint proven on a real corpus** (§5/§6/§15.5): ≥90% silent ticks; ≤1 false-positive/10
-   min and ≥80% recall on the **held-out split of the engineered annotated corpus** (ENG-T-07, R16),
-   with the shuffle-labels RBG run archived; **AC6.4 honored — all four Layer-B acks (suggestion,
-   steer, addressed-pass, ambient-pass) are distinct** (§4.2, R14).
-7. **EV-7 — Safety proven at the execution boundary, Safe stays autonomous** (§8/§8.1.1/§11): a
-   destructive **tool call** is held before execution and blocks on "confirm"; the in-hook dead-man
-   timer aborts (file unmodified); **a Safe-mode run executes `bun test`/`git status`/`grep` with zero
-   approvals while `rm -rf`/`git push --force`/unknown/compound/redirect/injection shell is gated**
-   (R9, AC11.1); explicit/dangerous modes behave and reset; panic halts ≤1 s; non-voice emergency
-   kills all ≤2 s **(kill-all + session-end, not an unmute — R10)** — all with red-before-green and
-   **P-HOOK** + **P-SHELL-PARSE** green.
+6. **EV-6 — Restraint and silence** (§5/§6/§15.5): the engine stays mostly silent on a representative
+   record-replay session against the configured default thresholds (§14.1); **ignored ambient speech
+   makes no sound** while earcons fire for state transitions and addressed-command acks (§4.2, V4/R14).
+   *(V0 scope cut: no labeled corpus, no recall/FP metric — restraint is ENV-tunable, tuned by feel
+   later, E9.)*
+7. **EV-7 — Runs dangerously to completion** (§8/§11): the durable process **runs to completion with no
+   per-step approval gate, no read-back/confirm hold, and no dead-man timer** (§8 cut). Panic halts
+   ≤1 s; non-voice emergency kills all ≤2 s **(kill-all + session-end, not an unmute)**. *(V0 scope cut:
+   no in-run safety hook, no shell classifier, no Safe/Explicit/Dangerous modes — safety later =
+   sandbox the process. E6/E7/E8.)*
 8. **EV-8 — Spawn flow proven** (§7/§10): a spoken accept spawns **exactly one** auto-selected
    PLANNING process seeded with pitch + MCQ answers; decline/ignore is a **no-op**; a spawn at
    capacity is **refused with an audible ack** and leaves the registry unchanged.
@@ -1132,16 +1126,15 @@ failing (red-before-green recorded).
    steer/pause independently; with the fleet disabled the spine still passes.
 10. **EV-10 — Consent & debuggability** (§12/§13): consent spoken within 3 s, listening indicator
     active whole-session, **whole-session** disk/log scan finds zero raw audio; any utterance's full
-    chain (incl. safety read-back→resolution) is reconstructable from persisted traces; the board is
+    observation→decision→action→outcome chain is reconstructable from persisted traces; the board is
     non-authoritative.
 11. **EV-11 — The 10×–100× catalog is populated** (§15.3): boundary/fuzz/benchmark cases beyond the
     Verify-block floor exist for every component, every test demonstrated capable of failing.
-12. **EV-12 — PRD-literal acceptance criteria pass as written** (R12/R13/R14): consent states "Only
+12. **EV-12 — PRD-literal acceptance criteria pass as written** (R12/R13/V4): consent states "Only
     transcripts are saved" (AC1.1); mute = earcon + one-word TTS (AC2.4); halt = earcon + ≤15-word TTS
-    (AC12.3); every spoken read-back ≤15 words (AC9.3); AC6.4's distinct pass-ack present. No literal AC
-    is knowingly violated; any preferred deviation (ambient-pass silence) is gated behind a recorded
-    PRD amendment, not shipped unilaterally.
-13. **EV-13 — Secret hygiene proven** (§2.1/§15.6, R15): the subscription-path test, the
+    (AC12.3); spoken output ≤15 words (AC9.3); **ignored ambient speech is silent** while addressed-
+    command acks and state-transition earcons fire (AC6.4 per the V0 update, §4.2).
+13. **EV-13 — Secret hygiene proven** (§2.1/§15.6, R15): **no raw API key in source**; the
     secret-redaction test, every probe's redaction assertion, and the whole-session secret-scan are
     green; **no raw key appears anywhere** in source/artifact/log/trace/report, with RBG recorded.
 
@@ -1153,63 +1146,58 @@ failing (red-before-green recorded).
 |---|---|---|
 | **ENG-A-01** | Three concurrency planes (Hot ≤300 ms / Decision ~100 ms / Durable seconds), communicating only via queues | Latency asymmetry (REQ-10 vs REQ-4) forbids sharing an await-chain across planes. (`concurrency-planes.html`) |
 | **ENG-A-02** | The provider interface is the universal test boundary; record-replay is the test spine | All four OSS references converge (eng-oss §5.2/§5.3); makes the 10×–100× bar achievable headless. (`provider-test-boundary.html`) |
-| **ENG-A-03** | The Cue↔Smithers seam is one explicit, owned, async, bidirectional module carrying the safety approval round-trip | Novel integration, top risk (PRD §9); one home to probe/trace/test. (`cue-smithers-seam.html`) |
-| **ENG-A-04** | All routing/safety **authority** lives in deterministic code; the LLM scores quality/intent only | Keeps REQ-6/7/11/12 testable over a non-deterministic core. (`invariants-in-code.html`) |
+| **ENG-A-03** | The Cue↔Smithers seam is one explicit, owned, async, bidirectional module; **Cue and Smithers are fully decoupled (Cue = I/O into the event loop; Smithers runs background jobs)** | Novel integration, top risk (PRD §9); one home to probe/trace/test. (`cue-smithers-seam.html`) |
+| **ENG-A-04** | **Routing authority** lives in deterministic code; the LLM scores quality/intent only | Keeps REQ-6/7/12 testable over a non-deterministic core. *(Safety-authority machinery is cut in V0 — §8 — but routing-authority-in-code stays.)* (`invariants-in-code.html`) |
 | **ENG-A-05** | `types.ts` shared contract defined first (ENG-T-01) | Single source for the data contract (eng-oss §5.1/§7). |
-| **ENG-A-06** | Every dependency maps to ≥1 probe; blocking unless justified; P-CUE first, P-HOOK gates REQ-11 | Validation bar — all 3rd-party integrations proven in isolation before build (§17). (`probe-gating.html`) |
+| **ENG-A-06** | Every dependency maps to ≥1 probe; blocking unless justified; **P-CUE first** | Validation bar — all 3rd-party integrations proven in isolation before build (§17). *(P-HOOK/P-SHELL-PARSE/P-SPOTTER/A-LLM-SUB removed in V0.)* (`probe-gating.html`) |
 | **ENG-A-07** | Adopt eng-deps decisions ENG-D-01..09 | The dependency research is sound and consistent with PRD/design. |
-| **ENG-A-08** | **Safety gate lives in an in-run PreToolUse hook + safe-executor at the agent's tool-call boundary, classified deny-by-default, probe-gated by P-HOOK** | **R1 (critical).** A dispatcher-side NL-verb classifier cannot guarantee it sees a destructive action before execution and misses agent-initiated ops; the only enforceable place is the real tool-call site inside the run. (`safety-execution-boundary.html`) |
+| ~~**ENG-A-08**~~ | ~~Safety gate in an in-run PreToolUse hook + safe-executor~~ — **CUT in V0 (E5/E6/§8).** V0 runs dangerously to completion; safety later = sandbox the process, not gate permissions. | Decision update: trust the library, minimize approvals. |
 | **ENG-A-09** | **The hot-plane earcon is triggered by Cue's deterministic `TextCue` decision (recognition stays on Cue); fallback adapter pre-matcher mirrors the `TextCue` config only to drive the earcon, never as authority** | **R4.** Resolves the latency-vs-Cue-substrate contradiction by splitting Cue's deterministic policy eval (fast) from its LLM-scored decision (slow). (`hot-plane-cue-recognition.html`) |
-| **ENG-A-10** | **AC6.4 implemented as written: four distinct Layer-B acks (suggestion / steer / addressed-pass / ambient-pass); ambient-pass silence is a knob unlocked only by an explicit PRD amendment** | **R6/R14.** The doc may not knowingly violate a literal AC; default honors AC6.4, while the product-preferred restraint (silence) has a clean, single-flag path iff the PRD amends. (`addressed-pass-ack.html`) |
-| **ENG-A-11** | **Execution modes Safe (default) / Explicit (per-step) / Dangerous (gate off); non-defaults voice opt-in, session-only, warned + off by default** | **R7.** AC11.4 requires both dangerous and fully-explicit modes; both reachable only by warned, state-gated voice commands. (`execution-modes.html`) |
-| **ENG-A-12** | **Deterministic shell-command classifier (parse → per-simple-command verdict → most-dangerous compound verdict; read-safe ungated, mutating/unknown/redirect/injection gated, deny-by-default)** | **R9 (critical).** A blanket `shell` gate turns Safe into Explicit (violates AC11.1); a defined parse-based policy keeps harmless shell autonomous while gating destructive/unknown shell. (`shell-classifier-policy.html`) |
-| **ENG-A-13** | **Voice-unmute via the local spotter is the sole operational unmute (P-SPOTTER blocking); REQ-14 emergency control is kill-all + session-end only — never an in-session unmute; spotter-down recovery = restart unmuted** | **R10.** Reusing the emergency kill-all as an unmute violates AC14.2 and D1's voice-only model; a session-teardown+restart is the compliant spotter-down recovery. (`unmute-recovery.html`) |
-| **ENG-A-14** | **The annotated replay corpus is a concrete, versioned, owned artifact: location, ≥60 min negatives + ≥50 positives, label schema, ≥2-labeler protocol with κ, dev/test split, shuffle-labels RBG** | **R16.** AC3.4 (the restraint metric) is reproducible only against a fixed, leakage-free, human-labeled corpus, not a vague "suite." (`replay-corpus-contract.html`) |
-| **ENG-A-15** | **Hot-loop DecisionLLM routed through Smithers subscriptions (no raw key); one `SubscriptionCredentialProvider`; fail-closed redaction filter; secret-redaction tests on every probe + whole-session secret-scan** | **R15.** PRD §6 binds all model calls to subscriptions with no raw keys; the prior draft left an undeclared secrets/dependency path. (`subscription-mediated-credentials.html`) |
-| **ENG-A-16** | **PRD-literal output & consent alignment: consent states "Only transcripts are saved"; mute = earcon + one-word TTS; halt = earcon + ≤15-word TTS; all read-backs ≤15 words; per-process pause/resume magic words** | **R11/R12/R13.** Engineering output policy and vocabulary are aligned to the literal ACs (AC1.1/AC2.4/AC12.3/AC9.3) and REQ-13's per-process pausability rather than deviating. (`prd-literal-alignment.html`) |
+| **ENG-A-10** | **Earcons for state transitions + addressed-command acks; ignored ambient speech (`observe.pass`/`route.pass` ambient) is SILENT** | **V4 (supersedes R6/R14).** Of course ignored ambient speech should make no noise; the prior two-layer-ack-for-all-utterances model is removed. (`addressed-pass-ack.html`) |
+| ~~**ENG-A-11**~~ | ~~Execution modes Safe / Explicit / Dangerous~~ — **CUT in V0 (E7/§8).** One mode: run dangerously to completion. | Decision update: no per-step approval; sandbox later, not permissions. |
+| ~~**ENG-A-12**~~ | ~~Deterministic shell-command classifier~~ — **CUT in V0 (E8/§8).** No shell classifier, no gating. | Decision update: run dangerously; safety later = sandbox the process. |
+| ~~**ENG-A-13**~~ | ~~Voice-unmute via the local spotter is the sole operational unmute~~ — **SUPERSEDED in V0 (E5/§5.3.1).** Unmute = say "unmute" (Cue keyword listening) or press the on-screen unmute button; no bespoke spotter. | Decision update: trust the voice library; no custom on-device spotter. |
+| ~~**ENG-A-14**~~ | ~~Annotated replay corpus as a concrete versioned artifact~~ — **CUT/deferred in V0 (E9/§15.5).** Restraint = ENV-tunable params, tuned by feel; no labeled corpus / restraint metric. | Decision update: defer the formal corpus; tune by feel. |
+| ~~**ENG-A-15**~~ | ~~Hot-loop DecisionLLM via `SubscriptionCredentialProvider`; Cerebras/Haiku specifics~~ — **SIMPLIFIED in V0 (E10/§2.1).** Use the host's logged-in OpenAI Codex + Anthropic Claude subscriptions; keep "no raw keys in source"; model choice follows the O4 matrix. | Decision update: drop the credential-provider abstraction and Cerebras/Haiku specifics. |
+| **ENG-A-16** | **PRD-literal output & consent alignment: consent states "Only transcripts are saved"; mute = earcon + one-word TTS; halt = earcon + ≤15-word TTS; spoken output ≤15 words; per-process pause/resume magic words; mute/unmute words = "mute"/"unmute"; ignored ambient = silence** | **R11/R12/R13 + V1/V4.** Output policy and vocabulary are aligned to the literal ACs (AC1.1/AC2.4/AC12.3/AC9.3) and REQ-13's per-process pausability. (`prd-literal-alignment.html`) |
 
 **HTML decision docs** (self-contained, under `artifacts/smithering/decisions/`):
 
 - `concurrency-planes.html` — the three-plane architecture (**ENG-A-01**)
 - `provider-test-boundary.html` — provider interface as the universal test boundary (**ENG-A-02**)
-- `cue-smithers-seam.html` — the owned async bidirectional seam (**ENG-A-03**)
-- `invariants-in-code.html` — routing/safety authority in code, not the LLM (**ENG-A-04**)
+- `cue-smithers-seam.html` — the owned async bidirectional seam; Cue↔Smithers decoupled (**ENG-A-03**)
+- `invariants-in-code.html` — routing authority in code, not the LLM (**ENG-A-04**)
 - `probe-gating.html` — dependency→probe mapping & blocking classification (**ENG-A-06**)
-- `safety-execution-boundary.html` — the in-run PreToolUse hook + safe-executor (**ENG-A-08**, R1)
 - `hot-plane-cue-recognition.html` — earcon fed by Cue `TextCue`, recognition on Cue (**ENG-A-09**, R4)
-- `addressed-pass-ack.html` — four distinct pass-acks; AC6.4 as-written, silence behind amendment (**ENG-A-10**, R6/R14)
-- `execution-modes.html` — Safe / Explicit / Dangerous postures (**ENG-A-11**, R7)
-- `shell-classifier-policy.html` — the deterministic shell-command classifier (**ENG-A-12**, R9)
-- `unmute-recovery.html` — voice-unmute as sole operational unmute; emergency = kill-all + restart (**ENG-A-13**, R10)
-- `replay-corpus-contract.html` — the annotated replay corpus artifact contract (**ENG-A-14**, R16)
-- `subscription-mediated-credentials.html` — subscription-routed model calls, no raw keys, redaction (**ENG-A-15**, R15)
-- `prd-literal-alignment.html` — consent/mute/halt/read-back/per-process-pause alignment to literal ACs (**ENG-A-16**, R11/R12/R13)
+- `addressed-pass-ack.html` — earcons for transitions + addressed acks; ignored ambient is silent (**ENG-A-10**, V4)
+- `prd-literal-alignment.html` — consent/mute/halt/output/per-process-pause/mute-words alignment to literal ACs (**ENG-A-16**)
+- *(cut in V0 — superseded by the decision update): `safety-execution-boundary.html` (ENG-A-08), `execution-modes.html` (ENG-A-11), `shell-classifier-policy.html` (ENG-A-12), `unmute-recovery.html` (ENG-A-13), `replay-corpus-contract.html` (ENG-A-14), `subscription-mediated-credentials.html` (ENG-A-15).*
 
 ### 20.1 Adversarial review findings → resolution map (first round, R1–R8)
 
 | # | Severity | Finding | Resolved in |
 |---|---|---|---|
-| R1 | critical | Safety gate not enforceable at the Smithers execution boundary | §8 (in-run PreToolUse hook + safe-executor, deny-by-default), §9 (approval round-trip), §17 (P-HOOK), ENG-A-08 |
+| R1 | critical | Safety gate not enforceable at the Smithers execution boundary | **Superseded by the V0 decision update — the safety gate is CUT (§8).** V0 runs dangerously to completion; safety later = sandbox the process. (was: in-run PreToolUse hook + safe-executor, ENG-A-08 — removed) |
 | R2 | major | REQ-1 consent & transcript-only persistence not engineered | §12 (consent scheduler, listening indicator, whole-session persistence guard) |
 | R3 | major | REQ-4 acceptance→spawn path missing state and tests | §7 (pending state, MCQ accumulation, accept/decline classifier, auto-select, planning, decline no-op) |
 | R4 | major | Hot-plane ack conflicts with Cue as command substrate | §3.4 (earcon fed by Cue `TextCue`), §1.2, ENG-A-09, P-CUE latency assertion |
 | R5 | major | REQ-10 timeout acknowledgement undefined | §5.4 ("working" timeout ack), §5.5 triage, `OutputDecision` |
-| R6 | major | REQ-6 audible pass ack unresolved vs. silence | §4.2 (addressed vs. ambient pass), ENG-A-10 — *superseded by R14: now implemented as-written* |
-| R7 | major | Command vocabulary not fully in the action contract | §4.3 (status/pause-all + handlers), §8.3 (explicit + dangerous modes), `DispatchedAction` extended |
+| R6 | major | REQ-6 audible pass ack unresolved vs. silence | §4.2 — **resolved by V4: ignored ambient speech is SILENT** (earcons remain for state transitions + addressed acks), ENG-A-10 |
+| R7 | major | Command vocabulary not fully in the action contract | §4.3 (status/pause-all + per-process pause/resume handlers), `DispatchedAction`. *(The execution-mode commands are cut in V0, §8.)* |
 | R8 | major | REQ-15 pre-spawn resource check absent | §10.1 (capacity + headroom gates, refusal ack, observability, tests) |
 
 ### 20.2 Adversarial review findings → resolution map (second round, R9–R16)
 
 | # | Severity | Finding | Resolved in |
 |---|---|---|---|
-| R9 | **critical** | Safety hook gates `shell` wholesale → Safe collapses into Explicit (violates AC11.1); no defined read/destructive shell policy | **§8.1.1** (deterministic parse-based shell classifier: read-safe ungated; mutating/unknown/redirect/injection/compound gated, deny-by-default), §8.1 step 2, tests for safe/destructive/unknown/compound/redirect/injection/fuzz, **P-SHELL-PARSE**, ENG-A-12 |
-| R10 | major | Emergency stop (REQ-14) wrongly reused as an unmute fallback | **§5.3.1 + §11** (voice-unmute via spotter is the sole operational unmute; **P-SPOTTER raised to blocking**; REQ-14 is kill-all + session-end only, spotter-down recovery = restart unmuted), ENG-A-13 |
+| R9 | **critical** | Safety hook gates `shell` wholesale → Safe collapses into Explicit | **Moot in V0 — the safety hook and shell classifier are CUT (§8, E8).** V0 runs dangerously; safety later = sandbox the process. (was: deterministic shell classifier, ENG-A-12 — removed) |
+| R10 | major | Emergency stop (REQ-14) wrongly reused as an unmute fallback | **Moot in V0 — there is no spotter to go down (§5.3.1, E5).** Unmute = say "unmute" (Cue keyword listening) or press the on-screen unmute button; REQ-14 stays kill-all (§11). (was: ENG-A-13 / P-SPOTTER — removed) |
 | R11 | major | Per-process pause (REQ-13) has no deterministic voice command | **§4.3** ("[callsign], pause"/"resume" magic words + handlers), **§10** (per-UPID pause/resume lifecycle, the "steer A, pause B" path), routing + e2e tests, ENG-A-16 |
 | R12 | major | Consent omits the AC1.1 transcript-only statement | **§12** (consent line now states "Only transcripts are saved"; consent-content test asserts it), ENG-A-16 |
-| R13 | major | Output policy violates AC2.4 (mute TTS), AC12.3 (halt TTS), AC9.3 (read-back ≤15) | **§5.5 + §5.3 + §8.1** (mute = earcon + one-word TTS; halt = earcon + ≤15-word TTS; read-back ≤15), mute/halt/read-back-length tests, ENG-A-16 |
-| R14 | major | Doc knowingly violated literal AC6.4 (silence for ambient pass) | **§4.2** (AC6.4 implemented as written — four distinct acks; silence is a knob unlocked only by a recorded PRD amendment), ENG-A-10 |
-| R15 | major | Hot-loop model calls bypass the Smithers-subscription / no-raw-key constraint; no redaction tests | **§2.1 + §15.6** (one `SubscriptionCredentialProvider`; DecisionLLM via subscriptions; fail-closed redaction; secret-redaction tests on every probe + whole-session scan), **A-LLM-SUB**, ENG-A-15 |
-| R16 | major | Annotated replay suite not engineered as a concrete artifact | **§15.5** (location, ≥60 min negatives + ≥50 positives, label schema, ≥2-labeler protocol with κ, dev/test split, shuffle-labels RBG, ownership — **ENG-T-07**), ENG-A-14 |
+| R13 | major | Output policy violates AC2.4 (mute TTS), AC12.3 (halt TTS), AC9.3 (≤15 words) | **§5.5 + §5.3** (mute = earcon + one-word TTS; halt = earcon + ≤15-word TTS; spoken output ≤15), mute/halt tests, ENG-A-16 |
+| R14 | major | REQ-6 ambient-pass ack policy | **§4.2 — resolved by V4: ignored ambient speech is SILENT** (earcons remain for state transitions + addressed acks); the prior "distinct ack for every utterance" model is removed, ENG-A-10 |
+| R15 | major | Hot-loop model calls / no-raw-key constraint | **§2.1 + §15.6 (simplified per E10)** — use the host's logged-in Codex/Claude subscriptions; keep "no raw keys in source" + the lightweight redaction filter. (The `SubscriptionCredentialProvider` abstraction, Cerebras/Haiku specifics, and A-LLM-SUB are removed.) |
+| R16 | major | Annotated replay suite not engineered as a concrete artifact | **Deferred in V0 (§15.5, E9)** — restraint = ENV-tunable params with documented defaults, tuned by feel; no labeled corpus / restraint metric. (was: ENG-T-07 / ENG-A-14 — removed) |
 
 ---
 
@@ -1217,42 +1205,44 @@ failing (red-before-green recorded).
 
 - **R-ENG-01 (P0):** Cue repo unavailable / API differs from README → blocks REQ-1/3/5/6/7. P-CUE is
   the first build task (§17).
-- **R-ENG-02 (P0, new):** Smithers may not expose a PreToolUse hook that can intercept-and-hold a tool
-  call before execution → REQ-11 unenforceable as designed. **P-HOOK** is the gate; if it fails, the
-  safe-executor must be realized another way (a constrained Smithers tool layer that wraps every
-  mutating tool) or the optimistic-execution posture revisited with the PRD gate.
+- ~~**R-ENG-02 (P-HOOK / safety hook)**~~ — **removed in V0 (E5/E6/§8):** no in-run safety hook; we run
+  dangerously to completion and trust Cue for confirmation. Safety later = sandbox the process.
 - **R-ENG-03:** TTS first-byte latency unverified → P-TTS validates *and* selects the provider.
 - **R-ENG-04:** Cue↔Smithers seam (P-SEAM) — no prior art; async dispatch + SSE-reconnect + UPID↔window
-  correlation + the safety approval round-trip must all hold.
-- **R-ENG-05 (raised, R10):** The on-device spotter is now **on the critical path** (sole operational
-  unmute, REQ-2/D1) — **P-SPOTTER is blocking**. If unavailable on a host, there is **no in-session
-  unmute**: recovery is the REQ-14 kill-all + fresh-session restart (unmuted). Not a soft degrade.
+  correlation must all hold. *(No safety approval round-trip in V0 — §8 cut.)*
+- ~~**R-ENG-05 (on-device spotter)**~~ — **removed in V0 (E5/§5.3.1):** Cue handles "unmute" keyword
+  listening while muted; plus an on-screen unmute button. No bespoke spotter, no P-SPOTTER.
 - **R-ENG-06:** Smithers fork semantics — may require fresh seeded run + `parentId` lineage; P-SMITHERS
   determines the pattern.
-- **R-ENG-07:** Bun native-module compat for the spotter (P-BUN-NATIVE) — gates only the voice-unmute
-  path.
+- ~~**R-ENG-07 (Bun native compat for the spotter)**~~ — **removed in V0:** no native spotter module; the
+  V0 stack is pure TS on Bun.
 - **R-ENG-08:** Deepgram diarization under real in-room crosstalk — tested in P-ASR with 2-speaker
   simultaneous speech.
-- **R-ENG-09:** Fable model reachability (per `intake.md`, may be disabled) — per-process planning
-  model needs a documented fallback; does **not** affect the hot loop (cheap/fast LLM regardless).
-- **R-ENG-10 (process, R14):** The build is now AC6.4-compliant by default (four distinct acks). A PRD
-  amendment is **recommended but no longer required** to declare silence the intended ambient-pass ack;
-  if adopted, flip `ambientPassAck:'silent'` (§4.2). Surfaced to the gate as a recommendation.
-- **R-ENG-11 (R9):** A shell-parser miss could mis-classify a destructive command as `read-safe`.
-  Mitigated by deny-by-default (unparseable → `unknown` → gated) + heavy fuzz/injection tests; gated by
-  **P-SHELL-PARSE**. The read-safe allowlist is curated and append-only-by-review.
-- **R-ENG-12 (R15):** The cheap/fast hot-loop model may not be reachable **through Smithers
-  subscriptions** at the ~100 ms budget (PRD §6 forbids raw keys). **A-LLM-SUB** must resolve this; if
-  no subscription-routable model meets the budget, it is a **binding PRD-§6 conflict** for the gate
-  (amend §6 with secure credential handling, or accept a slower compliant model), not an
-  engineer-around.
-- **R-ENG-13 (R16):** The annotated corpus is human-labeled; label quality (κ) and representativeness of
-  real team-room speech bound the trustworthiness of the AC3.4 metric. Mitigated by ≥2-labeler
-  adjudication, the shuffle-labels RBG, and held-out test/dev separation (ENG-T-07, §15.5).
+- **R-ENG-09:** Fable (`claude-fable-5`) is an **aspirational TODO, not yet wired in** (O4 matrix). Model
+  roles follow O4 (implement=Codex `gpt-5.5`, verify=Sonnet `claude-sonnet-4-6`, review=Codex `gpt-5.5`
+  + Opus `claude-opus-4-8`, plan=Opus); the hot-loop cheap/fast LLM is independent of Fable.
+- ~~**R-ENG-10 (AC6.4 ambient-ack amendment)**~~ — **resolved in V0 (V4/§4.2):** ignored ambient speech
+  is simply **silent**; there is no amendment to recommend and no `ambientPassAck` knob.
+- ~~**R-ENG-11 (shell-parser mis-classification)**~~ — **removed in V0 (E8/§8):** no shell classifier, no
+  gating; run dangerously, sandbox-later.
+- ~~**R-ENG-12 (subscription-routable hot-loop model)**~~ — **removed in V0 (E10/§2.1):** assume the host
+  is logged in to its Codex/Claude subscriptions; keep "no raw keys in source." No A-LLM-SUB gate.
+- ~~**R-ENG-13 (corpus label quality)**~~ — **removed in V0 (E9/§15.5):** no labeled corpus / restraint
+  metric; restraint = ENV-tunable params, tuned by feel later.
 
 ---
 
 ## 22. Probe results & required plan amendments — round 1 (2026-06-14)
+
+> **V0 decision-update note (historical record below).** §22/§23 capture round-1 probe results *as run
+> on 2026-06-14*, before the V0 scope cut. Several gates they raise are now **moot**: the credential
+> subscription gate (A-LLM-SUB / Cerebras vs. Haiku) is dropped — V0 uses the host's logged-in
+> Codex/Claude subscriptions, model roles per the O4 matrix (E10); the safety-hook POC (§23) is moot —
+> the in-run safety gate is **cut**, V0 runs dangerously to completion (E6); and any "Daybreak" callsign
+> example is illustrative only (mute/unmute words are now plain "mute"/"unmute", V1; A5.2's point about
+> dropping NATO-subset callsigns for coined multi-syllable words still stands). The factual probe
+> findings (ASR latency, Cue audio bridge, Smithers durability, earcon distinguishability,
+> keyword-only false-accepts) are unaffected and remain in force.
 
 Five assumption probes ran against **real APIs and the real Smithers harness**. Evidence lives under
 `artifacts/smithering/probes/<id>/evidence/` (the durable record). **3 of 4 blocking probes failed →
@@ -1300,14 +1290,12 @@ show **PASS**; it is recorded as passed per disk evidence (A3).
 3. **Raise the cost gate $0.10 → $0.15/hr.** Cerebras came in at $0.1007/hr — a rounding artifact of
    verbose output tokens and full-corpus assumptions; with Cue's pre-filter + a tighter output schema
    real cost is <$0.05/hr.
-4. **A-LLM-SUB still OPEN (PRD §6 compliance).** The intended Haiku-tier model
-   `claude-haiku-4-5-20251001` was **not** tested — the Anthropic account had zero credits, and the
-   probe called Cerebras **directly**, not through Cue's provider slot. Re-run P-LLM/A-LLM-SUB against
-   `claude-haiku-4-5` **through Smithers subscriptions** when credits are restored, and have P-CUE
-   confirm the Cue LLM provider slot accepts a Cerebras base-URL override. The R-ENG-12 / PRD-§6
-   conflict is **not yet resolved**.
+4. **A-LLM-SUB — MOOT in V0 (E10).** The credential-subscription gate is dropped: V0 assumes the host
+   is logged in to its **OpenAI Codex + Anthropic Claude subscriptions** and model roles follow the O4
+   matrix (no `SubscriptionCredentialProvider`, no Cerebras/Haiku-hot-loop specifics). The hot-loop
+   model choice is now a tunable, not a blocking PRD-§6 conflict; keep only "no raw keys in source."
 5. **Prompt fix.** Add "*or a status/information query addressed to a named callsign*" to the ACT
-   criteria (closes the missed `a15` "Daybreak, what's your current status?").
+   criteria (closes the missed `a15` "[callsign], what's your current status?").
 
 ### A3 — durable voice-steerable processes (`durable-voice-steerable-processes`) — PASSED (setup only)
 
@@ -1353,8 +1341,9 @@ and action emission — §3/§4/§6/§7):
    ("standalone command vs. conversational filler?") before any spawn/control action fires (~200–400 ms
    added to the spawn path). The current `TextCue → direct action` is **broken**.
 2. **Callsign vocabulary must drop the NATO-alphabet subset** (`alpha/bravo/charlie/delta/echo` all
-   occur in natural dev speech). Use **rare coined multi-syllable** callsigns (cf. "Daybreak" in §17 /
-   §4.3). Amend the §4.3 V0 vocabulary accordingly.
+   occur in natural dev speech). Use **rare coined multi-syllable** callsigns. Amend the §4.3 V0
+   vocabulary accordingly. *(Note: the mute/unmute words are plain "mute"/"unmute" per V1; this point
+   is about the per-process callsign pool, not the mute words.)*
 3. **Whole-utterance pre-filter** (zero-cost): if the transcript is substantially just the affirmative
    with no adversative conjunction, accept; else send to the LLM intent check — eliminates "yes, but…"
    for free.
@@ -1369,61 +1358,28 @@ and action emission — §3/§4/§6/§7):
   spawn/control action (A5.1); whole-utterance pre-filter (A5.3).
 - **§4.3 (amend):** replace NATO-subset callsigns with coined multi-syllable words (A5.2).
 - **§5 (amend):** earcon redesign for E4/E5 (A4.3); pre-cache fixed state phrases (A4.2).
-- **Cost gate (amend §17 / R-ENG-12):** $0.10/hr → $0.15/hr (A2.3).
-- **Still-OPEN blocking gates:** P-ASR-Deepgram (A1.2), A-LLM-SUB / Haiku-via-subscription (A2.4),
-  P-SEAM (needs Cue build, A3), P-TTS-streaming + human earcon test (A4). Build does **not** proceed
-  on the affected paths until these pass.
+- **Cost gate (A2.3):** the hot-loop model cost is now a tunable, not a hard gate (E10) — the prior
+  $0.10→$0.15/hr gate is informational.
+- **Still-OPEN blocking gates:** P-ASR-Deepgram (A1.2), P-SEAM (needs Cue build, A3), P-TTS-streaming +
+  human earcon test (A4). Build does **not** proceed on the affected paths until these pass. *(A-LLM-SUB
+  is removed in V0 — E10.)*
 
 ---
 
-## 23. POC findings — safety hook approval round-trip (2026-06-14)
+## 23. POC findings — safety hook approval round-trip (2026-06-14) — CUT in V0 (see decision update)
+
+> **This entire section is superseded by the V0 decision update.** The §8 in-run safety hook /
+> read-back / confirm round-trip and the shell-command classifier are **CUT** (E6/E7/E8): V0 runs
+> dangerously to completion, trusts the voice library for any needed confirmation, and pursues safety
+> later by **sandboxing the process**, not by gating tool calls. The historical POC findings below are
+> retained for the record only; none of them gate V0.
 
 A throwaway POC (`artifacts/smithering/poc/safety-hook-approval-roundtrip/`) built and tested the
-riskiest unproven architectural slice: the §8 safety hook approval round-trip. **59/59 headless
-tests pass; 2 skipped (require `PANOPTICON_E2E=1` + API key).** Full findings in
-`artifacts/smithering/poc/safety-hook-approval-roundtrip/FINDINGS.md`. Critical amendments:
-
-### POC-A1 (HIGH) — PreToolUse hook mechanism relies on Claude Code CLI's `settings.json`, not a Smithers-native API
-
-**Evidence:** Full type inspection of `smithers-orchestrator@0.23.0`. No `PreToolUse`,
-`beforeToolCall`, `toolInterceptor` or equivalent Smithers runtime API exists. The
-`snapshot-hook.d.ts` mechanism IS the hook system — it is **Claude Code CLI's own
-`settings.json` PreToolUse hook**, not a Smithers primitive.
-
-**Required amendment to §8.1:** Add the following after the opening paragraph:
-
-> **Agent constraint (POC-A1):** The PreToolUse hook fires via Claude Code CLI's
-> built-in `settings.json` hook mechanism — not a Smithers-native API. Therefore
-> every Panopticon process that requires the safety gate **MUST use `ClaudeCodeAgent`
-> (Claude Code CLI)** as its agent implementation. Processes using `AnthropicAgent`
-> (direct Anthropic SDK calls) bypass this hook entirely and cannot be used for
-> safety-gated work. The `settings.json` hook entry must configure `timeoutMs > 25000`
-> and `onFailure: "block"` to ensure hook failure denies (not allows) the tool call
-> if the dead-man timer fires.
-
-**Tickets affected:** `probe-pretool-safety-hook`, `safety-execution-boundary-hook`.
-
-### POC-A2 (MEDIUM) — Hook timeout coordination: Claude Code must be configured with `timeoutMs > 25000`
-
-**Finding:** If Claude Code's hook timeout is ≤ the dead-man timer (25 s), Claude Code may
-kill the hook process before it fires, with uncertain `onFailure` behavior. The `settings.json`
-entry must set `timeoutMs: 30000` (or higher) AND `onFailure: "block"` so that a killed hook
-defaults to deny, not allow.
-
-**Tickets affected:** `safety-execution-boundary-hook`.
-
-### POC-A3 (LOW) — `shell-quote` not installed; add to P-SHELL-PARSE scope
-
-**Finding:** The `shell-quote` parser is not in `node_modules/`. A regex-based classifier
-was built for the POC and validated in 59 tests. The P-SHELL-PARSE probe must also confirm
-`shell-quote` handles compound commands, redirections, and injection constructs correctly before
-the production classifier builds on it. **No design change; confirms P-SHELL-PARSE is blocking.**
-
-### POC-A4 (HIGH) — gateId↔UPID correlation gap in seam design
-
-**Finding:** The approval request from the hook carries a `gateId` (minted in the hook). For
-the voice dispatcher to resolve it, the seam must maintain a `gateId → upid` mapping and a
-`upid → pending gateId` cache so "confirm" for a given UPID calls `resolve(gateId, "approve")`.
-**This per-UPID mapping is not specified in the current §9 seam design.** Add to §9
-(`src/seam/dispatcher.ts`): the dispatcher maintains `pendingGates: Map<upid, gateId>`,
-updated when an `approval` run-event arrives and cleared on resolution or dead-man timeout.
+then-riskiest architectural slice (the safety-hook approval round-trip). Its findings — that the
+PreToolUse hook would have relied on **Claude Code CLI's `settings.json`** mechanism rather than a
+Smithers-native API (POC-A1); that the hook timeout would have had to exceed the (now-removed) 25 s
+dead-man timer (POC-A2); that `shell-quote` would have needed validating for the (now-removed) shell
+classifier / P-SHELL-PARSE (POC-A3); and that a `gateId↔UPID` mapping would have been needed in the
+seam for the (now-removed) approval resolution (POC-A4) — are **all moot in V0**, because the safety
+gate, the dead-man timer, the shell classifier, and the approval round-trip are cut. *(If a sandboxed
+safety mode is added later, revisit this POC as a starting reference.)*

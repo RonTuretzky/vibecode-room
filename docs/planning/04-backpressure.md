@@ -21,8 +21,10 @@
 > metric) / `schema` / `agent_review` / `approval` / `manual_check`.
 > **Gate types:** `blocking` (merge-blocking) · `warning` · `informational`.
 >
-> **Totals:** 60 acceptance-criterion gates (REQ-1..16) + 13 validate-before-build probe gates + 1
-> secret-hygiene gate = **74 gate rows** (71 blocking, 2 warning, 1 informational).
+> **Totals (after the V0 scope cut):** 57 active acceptance-criterion gates (REQ-1..16; AC11.2/11.3/11.4
+> removed as N-A, AC3.4 downgraded to informational) + 9 active validate-before-build probe gates (P-HOOK,
+> P-SPOTTER, P-SHELL-PARSE, P-BUN-NATIVE removed as N-A) + 1 secret-hygiene gate = **67 active gate rows**
+> (64 blocking, 1 warning, 2 informational), plus 7 rows explicitly marked **REMOVED / N-A**.
 
 ---
 
@@ -51,7 +53,7 @@
 | AC3.1 | Suggestion gated behind ≥60 words OR ≥90 s + buildable-intent/confidence; below floor → `observe.pass` | unit_test | blocking | `bun test src/suggest/engine.test.ts` (gate-boundary) | Block merge; sub-floor input must pass | RBG: lower threshold → 59-word case fires → fails; passing boundary tests (59→pass, 61→eligible; 89 s→pass, 91 s→eligible); empty/single-word/10k-word → all `observe.pass` |
 | AC3.2 | Default cadence ≤1 spoken suggestion / 3 min; prefers to surface a queued idea on idle, not mid-talk | integration_test | blocking | `bun test src/suggest/engine.test.ts` (cadence + idle-preference) | Block merge; cadence cap + idle-hold must hold | RBG: zero out interrupt cost → fires mid-speech → fails; passing cooldown/cadence test (≤1/3 min) and idle-preference test (queued held to idle gap); replay corroboration |
 | AC3.3 | Delivered as a spoken one-line pitch + 1–3 spoken MCQs (never >3), answerable aloud | unit_test | blocking | `bun test src/suggest/engine.test.ts` (MCQ-count invariant) | Block merge; >3 MCQs or non-spoken format fails | RBG: force 4 MCQs → invariant fails; passing tests (1–3 MCQs, pitch ≤12 words, answerable aloud) |
-| AC3.4 | On the annotated replay set: ≥80% recall on "should-suggest"; ≤1 false-positive / 10 min on "should-pass" | eval | blocking | `bun test test/eval/replay-suite.test.ts` (held-out split, temp-0) | Block merge; below recall/FP bar fails | RBG: shuffle ground-truth labels → recall/FP collapse → suite fails (proves discrimination), red run archived in `artifacts/smithering/reports/`; passing run on held-out split with recorded (recall, FP) + corpus version (ENG-T-07) |
+| AC3.4 | **DEFERRED (informational, not a V0 hard gate).** Suggestion recall/false-positive restraint is **env-tunable** (cadence/threshold/TTL params with documented defaults), tuned by feel later — not enforced against a fixed labeled corpus | eval | informational | (deferred) | Non-blocking: the annotated replay corpus + restraint metric (former ENG-T-07) are dropped for V0 (E9); restraint lives in `AC3.2`/`AC3.5` env knobs | If/when a corpus is built later, an `eval` recall/FP run can graduate this to a gate; for V0 the knobs and their defaults are the contract |
 | AC3.5 | Cadence and TTL are live-tunable knobs without restart | integration_test | blocking | `bun test src/suggest/engine.test.ts` (live-knob) | Block merge; knobs must patch at runtime | RBG: hard-code cadence → knob-patch test fails; passing test (cadence/TTL changed at runtime, no restart) |
 
 ## REQ-4 — Hands-free spawn from a spoken acceptance → durable process
@@ -188,13 +190,13 @@
 | ~~P-HOOK~~ **REMOVED / N-A** | Was: Smithers PreToolUse hook intercept-and-hold for a read-back/confirm gate | — | — | — | **Cut (E6/E7/O-Safety).** V0 runs to completion / dangerously — no read-back/confirm safety gate. Sandbox the process later if needed, not per-action gating. | n/a |
 | P-ASR | Deepgram Nova-3 streaming: `isFinal`-flagged diarized observations, word-final latency <200 ms, no observation on silence; credential from subscription, never logged | integration_test | blocking | `bun test poc/p-asr.test.ts` (real Deepgram) | Block build; ≤300 ms earcon + <1 s round-trip depend on it | RBG probe (latency + isFinal shape + silence→no-observation, each failable) + secret-redaction assertion (zero key-shaped strings in probe report) |
 | P-TTS | Which candidate streams first audio byte ≤200 ms (selection benchmark); no key written to any log/report | integration_test | blocking | `bun test poc/p-tts.test.ts` (real candidates) | Block build; round-trip ≤1 s unprovable until one passes | RBG probe across 2026 TTS candidates (first-byte ≤200 ms failable) + selection record + secret-redaction assertion |
-| P-LLM | Cheap/fast model via Smithers subscription returns temp-0-deterministic decisions ~100 ms with `MappedActionTool`-compatible schema; probe trace has zero key-shaped strings | integration_test | blocking | `bun test poc/p-llm.test.ts` | Block build; record-replay + hot-loop budget + PRD §6 depend on it | RBG probe (temp-0 determinism, ~100 ms p50, tool-selection schema) + redaction assertion (no raw key in trace) |
-| A-LLM-SUB | Can the hot-loop model actually be reached through Smithers subscriptions (vs requiring a raw key)? | integration_test | blocking | `bun test poc/a-llm-sub.test.ts` | Block build; if no subscription-routable model meets the budget, binding PRD-§6 conflict to resolve at gate | RBG probe confirming subscription-routed access (Haiku-4.5) OR a recorded conflict surfaced to the gate; no raw key present |
+| P-LLM | Cheap/fast model returns temp-0-deterministic decisions ~100 ms with `MappedActionTool`-compatible schema; probe trace has zero key-shaped strings | integration_test | blocking | `bun test poc/p-llm.test.ts` | Block build; record-replay + hot-loop budget + PRD §6 depend on it | RBG probe (temp-0 determinism, ~100 ms p50, tool-selection schema) + redaction assertion (no raw key in trace) |
+| A-LLM-SUB | Can the hot-loop model be reached through the **host's logged-in Codex/Claude subscriptions** (no raw key)? | integration_test | blocking | `bun test poc/a-llm-sub.test.ts` | Block build; if no subscription-routable model meets the budget, binding PRD-§6 conflict to resolve at gate | RBG probe confirming subscription-routed access via the host's logged-in CLIs OR a recorded conflict surfaced to the gate; no raw key present |
 | P-SMITHERS | Durable spawn, `streamRunEvents`, pause/resume, steer/signal, restart-recovery, concurrent runs behave as the lifecycle assumes; fork realization (native vs seeded `parentId`) | integration_test | blocking | `bun test poc/p-smithers.test.ts` | Block build; REQ-4/8/13/15 depend on it | RBG probe exercising each lifecycle op against the real harness (each failable), incl. recovery-equality after restart; recorded report |
-| P-SEAM | A Cue `MappedActionTool` action round-trips through the dispatcher into a real Smithers run and SSE run-events (incl. approval-request) flow back into Cue; spawn ≤3 s without blocking the Cue loop | integration_test | blocking | `bun test poc/p-seam.test.ts` | Block build; novel integration / top risk | RBG probe (action out + run-event back + approval round-trip; spawn ≤3 s; non-blocking) against real Cue+Smithers; recorded report |
-| P-SPOTTER | Local spotter detects "Daybreak" with acceptable recall + <1 FP/hr on team-room speech, emits only `mute.released`, no transcript | integration_test | blocking | `bun test poc/p-spotter.test.ts` | Block build; voice-unmute is the sole operational unmute (REQ-2/D1) — spotter-down = REQ-14 kill-all + restart | RBG probe (recall + FP/hr on team-room speech; near-homophones → nothing; emits only `mute.released`); recorded report |
-| P-SHELL-PARSE | Parser splits compound (`&&`/`;`/`\|`), exposes redirections, surfaces substitution/`eval`/process-subst as distinct tokens so the §8.1.1 classifier gates them (unparseable → `unknown`) | integration_test | blocking | `bun test poc/p-shell-parse.test.ts` | Block build; the R9 safety classifier is only sound if parsing is | RBG probe + fuzz (compound/redirect/injection tokenization; mis-parse mis-classifying a destructive command as read-safe is a failure); recorded report |
-| P-BUN-NATIVE | Native spotter module (Porcupine/ONNX) loads and runs under Bun's Node-compat layer | integration_test | warning | `bun test poc/p-bun-native.test.ts` | Non-blocking (justified): spotter can run as a separate Node sidecar with no architectural change | RBG probe (module loads + runs under Bun); if it fails, recorded sidecar fallback decision |
+| P-SEAM | A Cue `MappedActionTool` action round-trips through the dispatcher into a real Smithers run and SSE run-events flow back into Cue; spawn ≤3 s without blocking the Cue loop | integration_test | blocking | `bun test poc/p-seam.test.ts` | Block build; novel integration / top risk | RBG probe (action out + run-event back; spawn ≤3 s; non-blocking) against real Cue+Smithers; recorded report |
+| ~~P-SPOTTER~~ **REMOVED / N-A** | Was: local on-device keyword spotter for unmute-while-muted | — | — | — | **Cut (V2).** The voice library (Cue) handles always-on keyword listening while muted; unmute = say "unmute" or press the on-screen unmute button. No bespoke spotter. | n/a |
+| ~~P-SHELL-PARSE~~ **REMOVED / N-A** | Was: shell parser feeding the §8.1.1 shell classifier | — | — | — | **Cut (E8).** No shell classifier, no gating — V0 runs dangerously; sandbox the process later if needed. | n/a |
+| ~~P-BUN-NATIVE~~ **REMOVED / N-A** | Was: native spotter module under Bun | — | — | — | **Cut (V2).** The spotter is removed, so there is no native spotter module to load. | n/a |
 | P-PHONETIC | double-metaphone / phoneme-Levenshtein library produces stable, reproducible codes for the callsign collision guard | unit_test | warning | `bun test poc/p-phonetic.test.ts` | Non-blocking (justified): pure deterministic lib, swappable with zero architectural impact | RBG probe (stable codes across runs); covered by callsign collision-guard unit tests |
 | P-OTEL | Smithers structured output exports to self-hosted Langfuse via OTLP with GenAI semantic conventions | integration_test | informational | `bun test poc/p-otel.test.ts` | Non-blocking (justified): observability off every critical path; OTLP backends swappable by config | RBG probe (OTLP export succeeds); Cue JSONL already covers causal-chain reconstruction |
 
@@ -204,7 +206,7 @@
 
 | Criterion ID | Criterion | Method | Gate | Checked by | Failure action | Evidence required |
 |---|---|---|---|---|---|---|
-| SEC-1 | No raw provider key appears anywhere in source/artifact/log/JSONL trace/probe report; credentials resolve only via `SubscriptionCredentialProvider`; redaction is fail-closed | e2e_test | blocking | `bun test test/e2e/secret-scan.e2e.ts` + `src/providers/credentials.test.ts` | Block merge; any key-shaped string in the trace tree fails | RBG: plant a fake bearer/`sk-…`/Deepgram key in a `meta` field with the filter disabled → it leaks → secret-scan/redaction test fails; enable → `«redacted»`; passing subscription-path test (raw-key construction rejected) + whole-session secret-scan = 0 key-shaped strings |
+| SEC-1 | No raw provider key appears anywhere in source/artifact/log/JSONL trace/probe report; model access comes from the **host's logged-in Codex/Claude subscriptions** (no raw keys in source); redaction is fail-closed | e2e_test | blocking | `bun test test/e2e/secret-scan.e2e.ts` + `src/providers/credentials.test.ts` | Block merge; any key-shaped string in the trace tree fails | RBG: plant a fake bearer/`sk-…`/Deepgram key in a `meta` field with the filter disabled → it leaks → secret-scan/redaction test fails; enable → `«redacted»`; passing no-raw-key test (a raw-key construction path is rejected) + whole-session secret-scan = 0 key-shaped strings |
 
 ---
 
@@ -214,10 +216,10 @@
   named test(s) **passing with a recorded red-before-green** for the gates it implements. A blocking
   gate with no failable test, or whose only evidence is "the agent said it's done," **blocks merge**.
 - **Probe gates** run **before** the code that depends on them: **P-CUE is the first build task**;
-  **P-HOOK gates all of REQ-11**; P-SPOTTER, P-SHELL-PARSE and A-LLM-SUB are blocking per the second
-  adversarial round. A failed blocking probe is **surfaced to the orchestrator's gate**, not engineered
-  around.
+  A-LLM-SUB and the ASR/TTS/seam probes are blocking. (P-HOOK, P-SPOTTER, P-SHELL-PARSE and P-BUN-NATIVE
+  are **removed/N-A** — the safety read-back hook, on-device spotter, and shell classifier are cut for V0.)
+  A failed blocking probe is **surfaced to the orchestrator's gate**, not engineered around.
 - **Latency/recall gates** (AC10.2, AC3.4, AC9.1) store a **regression baseline**; a later build that
   regresses past threshold **fails the gate**.
-- **Warning/informational gates** (P-BUN-NATIVE, P-PHONETIC, P-OTEL) do not block merge but must run
-  before their paths ship; failure forces the recorded fallback (sidecar / library swap / backend swap).
+- **Warning/informational gates** (P-PHONETIC, P-OTEL) do not block merge but must run
+  before their paths ship; failure forces the recorded fallback (library swap / backend swap).

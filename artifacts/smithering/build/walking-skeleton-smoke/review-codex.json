@@ -1,0 +1,8 @@
+{
+  "family": "openai",
+  "model": "gpt-5.5",
+  "kind": "codex-review",
+  "approved": true,
+  "pass": true,
+  "findings": []
+}

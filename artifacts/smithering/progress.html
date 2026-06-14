@@ -1,0 +1,73 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Panopticon — Build Progress</title>
+<style>
+:root{--bg:#0b0b0f;--card:#16161c;--bd:#26262e;--tx:#eaeaf0;--mut:#8a8a96;--ok:#4ade80;--wk:#fbbf24;--td:#3a3a44;--ac:#7c83ff;color-scheme:dark}
+*{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.55 -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif}
+.deck{max-width:1000px;margin:0 auto;padding:32px 20px 80px}
+.slide{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:26px 30px;margin:0 0 22px;scroll-margin-top:20px}
+h1{font-size:30px;margin:0 0 6px}h2{font-size:20px;margin:0 0 16px;display:flex;align-items:center;gap:10px}
+.cnt{font-size:13px;color:var(--mut);font-weight:500}
+.sub{color:var(--mut);margin:0 0 18px}
+.bar{height:14px;background:var(--td);border-radius:8px;overflow:hidden;margin:14px 0}
+.bar>i{display:block;height:100%;width:0%;background:linear-gradient(90deg,var(--ac),var(--ok))}
+.big{font-size:46px;font-weight:700}.muted{color:var(--mut)}
+.tickets{list-style:none;margin:0;padding:0}
+.t{display:grid;grid-template-columns:96px 1fr;gap:4px 12px;padding:10px 0;border-bottom:1px solid var(--bd)}
+.t:last-child{border-bottom:0}.t .b{font-size:12px;font-weight:600;grid-row:span 2}
+.t.built .b{color:var(--ok)}.t.inflight .b{color:var(--wk)}.t.todo .b{color:var(--mut)}
+.t .ti{font-weight:600}.t .exp{grid-column:2;color:var(--mut);font-size:13px}
+.cap img{width:100%;border:1px solid var(--bd);border-radius:8px}
+.legend{display:flex;gap:16px;color:var(--mut);font-size:13px;margin-top:8px}
+a.nav{color:var(--ac);text-decoration:none;font-size:13px;margin-right:14px}
+</style></head><body><div class="deck">
+<section class="slide">
+  <h1>Panopticon — Build Progress</h1>
+  <p class="sub">Voice-only / Cue-powered OS for AI-agent work. Smithered from PROMPT.md · generated 2026-06-14 17:37:55 UTC</p>
+  <div class="big">0<span class="muted" style="font-size:20px"> / 31 tickets built (0%)</span></div>
+  <div class="bar"><i></i></div>
+  <div class="legend"><span>✅ built (landed on integration)</span><span>🔨 building now</span><span>⬜ not yet</span></div>
+  <p class="muted" style="margin-top:14px">Foundation is being established (orchestration spine + shared contracts). Feature areas below fill in as tickets land in parallel waves.</p>
+</section>
+<section class="slide"><h2>Foundation &amp; spine <span class="cnt">0/5</span></h2><ul class="tickets"><li class="t inflight"><span class="b">🔨 building</span><span class="ti">Walking-skeleton smoke slice: Bun/Hono scaffold + CI + the cheapest headless end-to-end test</span>
+      <span class="exp">Establish the project scaffold (ENG-T-06) and the single cheapest end-to-end slice that becomes the repo smoke test</span></li><li class="t todo"><span class="b">⬜ not yet</span><span class="ti">Shared data contract (src/types.ts) — ENG-T-01, defined first</span>
+      <span class="exp">Promote the stub from walking-skeleton-smoke into the full ENG-T-01 contract in `src/types</span></li><li class="t todo"><span class="b">⬜ not yet</span><span class="ti">Record-replay harness (src/replay/) — ENG-T-02, the testable seam over ASR+LLM</span>
+      <span class="exp">Build the record-replay harness per eng §15</span></li><li class="t todo"><span class="b">⬜ not yet</span><span class="ti">Provider interfaces + record-replay/noop doubles (src/providers/) — ENG-T-04</span>
+      <span class="exp">Per eng §2 / ENG-T-04, define the typed provider boundary in `src/providers/`: `ASRProvider` (`stream(audio): AsyncIterable&lt;TranscriptObservation&gt;`), `TTS</span></li><li class="t todo"><span class="b">⬜ not yet</span><span class="ti">The canonical voice loop (spine) + no-screen harness + degradation test — REQ-5/6/7/8</span>
+      <span class="exp">Per eng §10 / design §6 / REQ-5 integrate §3–§10 into the canonical spine: wake/magic-word → spoken intent → agent action → spoken confirmation, under ONE `corr</span></li></ul></section><section class="slide"><h2>Validation probes (real third-party APIs) <span class="cnt">0/7</span></h2><ul class="tickets"><li class="t todo"><span class="b">⬜ not yet</span><span class="ti">Validate-before-build probe harness (poc/) — ENG-T-05</span>
+      <span class="exp">Per eng §17 / ENG-T-05, build the `poc/` probe harness that every validate-before-build probe uses: a runner that executes a probe against the REAL third-party </span></li><li class="t todo"><span class="b">⬜ not yet</span><span class="ti">P-CUE (P0 blocker, first third-party build task): real Cue library, policies, two-Program routing, MappedActionTool, TextCue ≤300 ms</span>
+      <span class="exp">Run P-CUE per eng §17 / design §11</span></li><li class="t todo"><span class="b">⬜ not yet</span><span class="ti">P-ASR (P0): Deepgram Nova-3 streaming — isFinal, diarization, &lt;200 ms word-final, silence→no-observation, subscription credential</span>
+      <span class="exp">Run P-ASR per eng §17 / design §11</span></li><li class="t todo"><span class="b">⬜ not yet</span><span class="ti">P-LLM + A-LLM-SUB (P0): cheap/fast decision LLM via the host's logged-in subscription — temp-0 determinism, ~100 ms, MappedActionTool schema, no raw key</span>
+      <span class="exp">Run P-LLM and A-LLM-SUB per eng §17 / §22 A2</span></li><li class="t todo"><span class="b">⬜ not yet</span><span class="ti">P-TTS (P0): streaming TTS first-byte ≤200 ms (selection benchmark) + pre-cached fixed phrases, no key logged</span>
+      <span class="exp">Run P-TTS per eng §17 / design §11</span></li><li class="t todo"><span class="b">⬜ not yet</span><span class="ti">P-SMITHERS (P0): durable spawn, streamRunEvents, pause/resume, steer/signal, restart-recovery, concurrent runs, fork realization</span>
+      <span class="exp">Run P-SMITHERS per eng §17 / design §11</span></li><li class="t todo"><span class="b">⬜ not yet</span><span class="ti">P-SEAM (P0): a Cue MappedActionTool action round-trips into a real Smithers run and SSE run-events flow back into Cue; spawn ≤3 s, non-blocking</span>
+      <span class="exp">Run P-SEAM per eng §17 / design §11</span></li></ul></section><section class="slide"><h2>Voice I/O pipeline (STT → LLM → TTS) <span class="cnt">0/2</span></h2><ul class="tickets"><li class="t todo"><span class="b">⬜ not yet</span><span class="ti">Audio-capture → streaming ASR → Cue WebSocket transcript bridge (ENG-T-10, new scope from §22 A1.3)</span>
+      <span class="exp">Build ENG-T-10, the unplanned-but-real scope surfaced by §22 A1</span></li><li class="t todo"><span class="b">⬜ not yet</span><span class="ti">Earcons (hot plane) + output policy + timeout 'working' ack (src/audio/) — REQ-2/9/10/12</span>
+      <span class="exp">Per eng §5 build `src/audio/`</span></li></ul></section><section class="slide"><h2>Cue layer (policies, seam, routing) <span class="cnt">0/4</span></h2><ul class="tickets"><li class="t todo"><span class="b">⬜ not yet</span><span class="ti">Cue substrate, owned adapter &amp; policies (src/cue/) — REQ-1/3/5/6/7</span>
+      <span class="exp">Per eng §3 build `src/cue/` (the ONLY place that imports Cue; build on confirmed primitives only, gated by P-CUE)</span></li><li class="t todo"><span class="b">⬜ not yet</span><span class="ti">Routing &amp; dispatch — invariants in code (src/routing/) — REQ-6/7/8/12</span>
+      <span class="exp">Per eng §4 build `src/routing/` — authority lives here, NEVER in the LLM</span></li><li class="t todo"><span class="b">⬜ not yet</span><span class="ti">Cheap-LLM intent gate + whole-utterance pre-filter between TextCue and action (§22 A5.1/A5.3) — REQ-3/4/7</span>
+      <span class="exp">Implement the CRITICAL §22 A5 amendment: keyword-only `TextCue` matching is INSUFFICIENT to gate spawning/control — round-1 measured 80% context false-positive </span></li><li class="t todo"><span class="b">⬜ not yet</span><span class="ti">The Cue↔Smithers seam — async bidirectional dispatcher (src/seam/) — REQ-4/8/13/15</span>
+      <span class="exp">Per eng §9 (bet #3) build `src/seam/` as the ONE owned, async, bidirectional module wiring Cue↔Smithers (gated by P-SEAM + P-SMITHERS)</span></li></ul></section><section class="slide"><h2>Magic-word selection &amp; steering <span class="cnt">0/2</span></h2><ul class="tickets"><li class="t todo"><span class="b">⬜ not yet</span><span class="ti">Callsign pool (coined, non-NATO) + Metaphone/phoneme-Levenshtein collision guard (src/routing/callsigns.ts) — REQ-7/13</span>
+      <span class="exp">Per eng §4 (callsigns</span></li><li class="t todo"><span class="b">⬜ not yet</span><span class="ti">Steering-window lifecycle (src/routing/steering-window.ts) — REQ-6/8</span>
+      <span class="exp">Per eng §4 (steering-window</span></li></ul></section><section class="slide"><h2>Suggestion engine (idea bubbles) <span class="cnt">0/2</span></h2><ul class="tickets"><li class="t todo"><span class="b">⬜ not yet</span><span class="ti">Conservative ambient suggestion engine (src/suggest/engine.ts) — REQ-3</span>
+      <span class="exp">Per eng §6 / design §4 build `src/suggest/engine</span></li><li class="t todo"><span class="b">⬜ not yet</span><span class="ti">Acceptance → spawn flow (src/acceptance/) — REQ-4</span>
+      <span class="exp">Per eng §7 (R3) build `src/acceptance/`, the central hands-free spawn path, as its own state owner</span></li></ul></section><section class="slide"><h2>Process Manager &amp; fleet <span class="cnt">0/3</span></h2><ul class="tickets"><li class="t todo"><span class="b">⬜ not yet</span><span class="ti">Process registry, lifecycle, fleet &amp; pre-spawn resource check (src/process/) — REQ-4/8/12/13/15</span>
+      <span class="exp">Per eng §10 build `src/process/`</span></li><li class="t todo"><span class="b">⬜ not yet</span><span class="ti">Bounded non-voice emergency stop — kill-all + session-end only (src/emergency/stop.ts) — REQ-14</span>
+      <span class="exp">Per eng §11 build `src/emergency/stop</span></li><li class="t todo"><span class="b">⬜ not yet</span><span class="ti">Two-process fleet + durability/recovery + restraint e2e — REQ-8/13/15/9</span>
+      <span class="exp">Per eng §10 / §9 / design §13 close the product-level e2e gates that prove the differentiator and durability</span></li></ul></section><section class="slide"><h2>Safety &amp; consent <span class="cnt">0/3</span></h2><ul class="tickets"><li class="t todo"><span class="b">⬜ not yet</span><span class="ti">No-raw-key model access (host subscriptions) + fail-closed redaction filter (src/providers/credentials.ts) — ENG-T-09, SEC-1</span>
+      <span class="exp">Per eng §2</span></li><li class="t todo"><span class="b">⬜ not yet</span><span class="ti">Hard-mute fork + unmute via 'unmute' word (Cue) and on-screen button (src/audio/mute-controller.ts) — REQ-2</span>
+      <span class="exp">Per eng §5</span></li><li class="t todo"><span class="b">⬜ not yet</span><span class="ti">Onboarding, consent scheduler, listening indicator &amp; whole-session raw-audio guard (src/onboarding/) — REQ-1</span>
+      <span class="exp">Per eng §12 (R2) build `src/onboarding/`</span></li></ul></section><section class="slide"><h2>Observability &amp; display board <span class="cnt">0/3</span></h2><ul class="tickets"><li class="t todo"><span class="b">⬜ not yet</span><span class="ti">TraceProcessor pipeline stage + structured log contract (src/obs/trace.ts) — ENG-T-03</span>
+      <span class="exp">Per eng §13 / §15</span></li><li class="t todo"><span class="b">⬜ not yet</span><span class="ti">Observability — causal-chain reconstruction, OTel/Langfuse export &amp; read-only board (src/obs/) — REQ-16</span>
+      <span class="exp">Per eng §13 complete the observability surface on top of trace-processor-observability</span></li><li class="t todo"><span class="b">⬜ not yet</span><span class="ti">Latency benchmark with regression baselines — REQ-10</span>
+      <span class="exp">Per eng §5/§15</span></li></ul></section>
+<section class="slide"><h2>UI captures</h2><p class="muted">The product is voice-only; the screen is an output-only display board (React/Vite).
+     It isn't runnable yet — these slides will fill with live screenshots & GIFs of the board, idea-bubbles, "you are steering X" banner,
+     and the living-garden process view as the frontend tickets land.</p></section>
+</div>
+<script>
+const V="1781458675710";
+async function check(){try{const r=await fetch('progress.version?'+Date.now(),{cache:'no-store'});if(r.ok){const v=(await r.text()).trim();if(v&&v!==V){location.reload();}}}catch(e){}}
+setInterval(check,6000);
+</script>
+</body></html>

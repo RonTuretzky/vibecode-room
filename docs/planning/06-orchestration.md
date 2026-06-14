@@ -420,7 +420,7 @@ independent concerns (probe vs. types/contracts vs. audio vs. routing vs. seam/f
 on **separate concurrent tracks**. The wall-clock critical path is therefore the **DAG depth (the wave
 count), not the ticket count**.
 
-> Computed from `artifacts/smithering/tickets.json` (29 V0 tickets after the V0 scope cut — the spotter,
+> Computed from `artifacts/smithering/tickets.json` (31 V0 tickets after the V0 scope cut — the spotter,
 > safety read-back hook, shell classifier, seam gate-correlation, and replay corpus were removed; the DAG is
 > acyclic and every `dependsOn` reference resolves — both are asserted at module load, §8 `dag-acyclic`). The
 > widest ready-set (antichain) is **~7** at wave 2, which is why the worker cap is ~8 and probe waves burst

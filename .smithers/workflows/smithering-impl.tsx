@@ -855,11 +855,22 @@ function ticketEligible(ctx: any, t: Ticket): boolean {
 // Read a verdict file the verify/review agents persist into the on-disk evidence bundle. Their
 // structured task RETURNS are unreliable (often empty), so the bundle on disk is the source of truth.
 function readBundleJson(ticketId: string, name: string): any {
-  try {
-    return JSON.parse(readFileSync(resolve(workerBundleDir(ticketId), name), "utf8"));
-  } catch {
-    return null;
+  // The evidence bundle lands under different roots depending on the worker's cwd
+  // (worktree-nested vs repo-root, and cwd may be repo-root or .smithers/workflows).
+  // Search the candidate locations and use the first file that parses.
+  const cwd = process.cwd();
+  const cands = [
+    resolve(cwd, BUILD_DIR, ticketId, name),
+    resolve(cwd, "..", "..", BUILD_DIR, ticketId, name),
+    resolve(workerBundleDir(ticketId), name),
+    resolve(cwd, "..", "..", ".smithers", "wt", ticketId, BUILD_DIR, ticketId, name),
+  ];
+  for (const p of cands) {
+    try {
+      return JSON.parse(readFileSync(p, "utf8"));
+    } catch {}
   }
+  return null;
 }
 function ticketDone(ctx: any, t: Ticket): boolean {
   // The independent test-authority verifier re-runs every pre-merge gate LIVE and confirms RBG;
