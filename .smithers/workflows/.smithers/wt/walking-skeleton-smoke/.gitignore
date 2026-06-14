@@ -1,0 +1,17 @@
+node_modules/
+.context/
+*.log
+.DS_Store
+.env
+panopticon.db
+dist/
+
+# Smithers runtime state
+smithers.db
+smithers.db-shm
+smithers.db-wal
+src/core/workflows/.smithers/
+
+# Playwright artifacts
+test-results/
+playwright-report/

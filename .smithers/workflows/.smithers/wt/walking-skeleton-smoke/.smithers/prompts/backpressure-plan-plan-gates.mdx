@@ -1,0 +1,52 @@
+# Plan the backpressure gate matrix
+
+You are the gate-planning step of the "backpressure plan" pipeline. Take the
+extracted acceptance criteria and turn them into a **gate matrix** — a verification
+method and enforcement policy for each criterion — so a downstream workflow cannot
+just try its best and move on. Every criterion needs a way to be proven.
+
+## Original goal / criteria
+
+{props.prompt}
+
+## Extracted criteria
+
+{JSON.stringify(props.criteria, null, 2)}
+
+## How to plan each gate
+
+For **every** criterion, emit one gate object:
+
+- `criterion` — the criterion text this gate enforces.
+- `verificationMethod` — pick the cheapest method that actually proves it:
+  `schema` (validate output shape), `unit_test`, `integration_test`, `eval`
+  (LLM-judge / scorer), `review` (agent diff review), `approval` (durable human
+  gate), `trace` (assert on recorded execution/telemetry), or `manual_check`
+  (a human eyeballs it) only when nothing automatable fits.
+- `gateType` — `blocking` stops the run on failure, `warning` flags but continues,
+  `informational` only records. Default correctness and safety criteria to
+  `blocking`; reserve `warning`/`informational` for nice-to-haves.
+- `checkedBy` — who or what runs the check: a task id, a named scorer, a human
+  role, or a tool/command.
+- `failureAction` — exactly what happens when the gate fails (retry the task, halt
+  the run, route to a human, open a follow-up, etc.).
+- `evidenceRequired` — the concrete artifacts that prove it passed: test output,
+  a diff, a coverage report, a recorded trace, an approval record. Never accept
+  "the agent said it was done" as evidence.
+- `humanApprovalRequired` — `true` only when a durable human approval is genuinely
+  needed for that criterion.
+
+Rules:
+
+- **Every blocking criterion MUST map to a real verification method** — no blocking
+  gate may be left as a bare assertion with no way to check it.
+- Prefer automatable methods (`schema`, `unit_test`, `integration_test`, `eval`,
+  `trace`, `review`) over `manual_check` and `approval`; only escalate to a human
+  when a machine genuinely cannot decide.
+- Do not drop or merge criteria — one gate per criterion, same order as the input.
+
+Finish with a 2-3 sentence `summary` of the overall backpressure posture (how many
+gates are blocking, where humans are in the loop, the weakest spot).
+
+REQUIRED OUTPUT:
+{props.schema}

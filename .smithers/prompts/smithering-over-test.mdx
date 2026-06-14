@@ -1,8 +1,21 @@
-## Verification norm
+## Validation is your primary deliverable (specs, prompts, tickets, workflows)
 
-It is expensive for the orchestrator to verify but cheap to make agents write
-verification, so demand MORE verification than a human would reasonably write — e2e tests
-wherever possible, plus unit/integration tests, corner cases, error cases, boundary
-conditions (largest inputs), fuzzing where applicable, and benchmarks for anything
-performance-critical. Tests must be able to FAIL: red-before-green evidence is required
-for fixes, and "the agent said it was done" is never evidence.
+The validation & observability bar in the operating rules is the FIRST-CLASS concern of
+anything you author here — not an afterthought bolted on at the end. When you write a spec,
+PRD, design doc, eng doc, prompt, ticket, or the generated workflow, the verification plan
+IS the centerpiece, and you should weight your effort accordingly.
+
+- Every requirement and every ticket must enumerate its CONCRETE verification: the specific
+  unit/integration tests AND the specific end-to-end tests that prove it. Both — it is an
+  AND, such that either layer alone would make us fairly confident. Vague acceptance
+  criteria like "it works" are unacceptable; spell out the tests that prove it.
+- Name any third-party APIs or libraries the work depends on, and require they be validated
+  against the REAL API first (a probe / PoC that actually calls it and asserts the behavior
+  we expect) before code is built on top of them — excepting popular frameworks like React.
+- Specify the observability each piece must emit — structured logs, traces, traceable
+  state — so a later agent debugging it can immediately tell what is going on.
+- Demand far MORE verification than a human would reasonably write (target 10×–100×): corner
+  cases, error paths, boundary conditions (largest / empty inputs), fuzzing where
+  applicable, and benchmarks for anything performance-critical. Every test must be able to
+  FAIL — red-before-green evidence is required for fixes, and "the agent said it was done"
+  is never evidence.

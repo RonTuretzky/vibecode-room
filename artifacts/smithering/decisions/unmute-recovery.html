@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ENG-A-13 — Voice-unmute is the sole operational unmute</title>
+<style>
+  :root { --bg:#0a0a0a; --fg:#e0e0e0; --ok:#00ff88; --bad:#ff3b30; --warn:#f5a623; --sel:#00bcd4; --mut:#888; }
+  body { background:var(--bg); color:var(--fg); font:15px/1.6 -apple-system,Segoe UI,Roboto,sans-serif; max-width:920px; margin:0 auto; padding:32px; }
+  h1 { font-size:24px; color:var(--sel); margin-bottom:4px; }
+  h2 { font-size:18px; color:var(--ok); margin-top:32px; border-bottom:1px solid #222; padding-bottom:6px; }
+  .tag { display:inline-block; background:#1a1a1a; border:1px solid #333; border-radius:4px; padding:2px 8px; font-size:12px; color:var(--mut); margin-right:6px; }
+  code,pre { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  pre { background:#111; border:1px solid #222; border-radius:6px; padding:14px; overflow:auto; font-size:13px; }
+  table { border-collapse:collapse; width:100%; margin:12px 0; font-size:14px; }
+  th,td { border:1px solid #222; padding:8px 10px; text-align:left; vertical-align:top; }
+  th { background:#141414; color:var(--sel); }
+  .rej { color:var(--bad); } .acc { color:var(--ok); } .mono { color:var(--warn); }
+  blockquote { border-left:3px solid var(--warn); margin:12px 0; padding:6px 14px; color:#ccc; background:#120f08; }
+</style>
+</head>
+<body>
+<h1>Voice-unmute is the sole operational unmute; emergency stop is kill-all only</h1>
+<p><span class="tag">ENG-A-13</span><span class="tag">REQ-2 / REQ-14 / D1</span><span class="tag">Resolves R10</span><span class="tag">Probe: P-SPOTTER (now blocking)</span></p>
+
+<h2>The decision</h2>
+<p>The local on-device "Daybreak" spotter is the <strong>one and only operational unmute path</strong>,
+so it is <strong>on the critical path for REQ-2/D1</strong> and <strong>P-SPOTTER is promoted to a
+blocking P0 probe</strong>. The REQ-14 non-voice emergency control stays exactly what the PRD says — a
+<strong>kill-all that halts every process and stops listening, ending the session</strong> — and is
+<strong>never</strong> reused as an in-session unmute. When the spotter is unavailable, the
+spotter-down recovery is: emergency kill-all → <strong>a fresh session restarts unmuted</strong> (with
+the §12 consent re-spoken). A teardown + clean restart, not a resume.</p>
+
+<h2>Why — the R10 finding</h2>
+<blockquote>"§5.4/§11/§17 say a disabled/failing spotter degrades to the non-voice emergency control
+and even test that it 'unmutes.' REQ-14 defines that control as emergency-only kill-all that exposes
+only kill-all — not an unmute/resume path. This weakens D1 and makes P-SPOTTER incorrectly
+non-blocking for voice-unmute."</blockquote>
+
+<h2>The two states reconciled</h2>
+<pre>
+NORMAL:   "Curtain" → hard-mute cloud ASR (≤500 ms) + earcon + one-word "Muted"
+              while muted: ONLY the local spotter is alive (no network, no transcript, no observations)
+          "Daybreak" (spotter) → mute.released → cloud ASR resumes        ← the ONLY operational unmute
+
+SPOTTER DOWN (host lacks it):  there is NO in-session unmute.
+          REQ-14 emergency control → KILL-ALL + stop listening → SESSION ENDS
+              → operator starts a fresh session → begins UNMUTED, consent re-spoken
+          (REQ-14 stays kill-all only; AC14.2 preserved; D1's voice-only model intact)
+</pre>
+
+<h2>Alternatives considered</h2>
+<table>
+<tr><th>Approach</th><th>Verdict</th><th>Why</th></tr>
+<tr><td>Emergency control doubles as an unmute (prior draft)</td><td class="rej">Rejected</td><td>Violates AC14.2 (kill-all only) and adds a non-voice operational verb → breaks D1.</td></tr>
+<tr><td>Add a separate non-voice "resume" affordance + amend PRD</td><td class="rej">Rejected</td><td>Still a non-voice <em>operational</em> control → conflicts with D1/NG-1; needs a PRD change for marginal benefit.</td></tr>
+<tr><td>Keep P-SPOTTER non-blocking</td><td class="rej">Rejected</td><td>Voice-unmute is operationally required; an unproven spotter is an unproven critical path.</td></tr>
+<tr><td><strong>Spotter = sole operational unmute (blocking); emergency = kill-all + restart-unmuted</strong></td><td class="acc">Chosen</td><td>Keeps voice the only operational modality; never traps the room; REQ-14 stays exactly kill-all.</td></tr>
+</table>
+
+<h2>Verification</h2>
+<ul>
+<li><strong>no-unmute-verb test</strong> — the emergency control exposes no resume/unmute path (RBG: add an unmute route → AC14.2 scope test fails).</li>
+<li><strong>unmute-recovery test/e2e</strong> — with the spotter disabled, there is no in-session unmute; triggering REQ-14 performs kill-all + stop-listening (session ends); a fresh session starts unmuted with consent re-spoken (RBG: wire the emergency control to resume streaming → fails).</li>
+<li><strong>mute-announce test</strong> — "Curtain" emits earcon + one-word "Muted" (AC2.4).</li>
+<li><strong>P-SPOTTER (blocking)</strong> — detects "Daybreak", rejects near-homophones, emits only <code>mute.released</code>, no transcript, fully local.</li>
+</ul>
+
+<blockquote><strong>Surfaced to the gate:</strong> a one-line PRD clarification — REQ-14 is the
+documented escape from a stuck mute only as "kill-all + restart," never "unmute in place."</blockquote>
+</body>
+</html>

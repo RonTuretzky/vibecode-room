@@ -1,0 +1,4 @@
+[test]
+# Include *.smoke.ts files in addition to the default *.test.ts / *.spec.ts patterns
+# so `bun test test/smoke/spine-skeleton.smoke.ts` works as a filter match.
+files = ["**/*.test.ts", "**/*.spec.ts", "**/*.smoke.ts"]

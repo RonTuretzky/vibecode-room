@@ -43,14 +43,14 @@
 // prompt files — change both together.
 //
 // Division of labor (primary duties; supporting tasks follow the same tiers):
-//   fable        — judgment & synthesis: brainstorm, questions, PRD, architecture/eng
+//   opus         — judgment & synthesis: brainstorm, questions, PRD, architecture/eng
 //                  doc, backpressure matrix, tickets, orchestration design, triage, review, final report.
-//   fableBuilder — same brain, builder leash: authors/fixes the generated workflow, polish fixes, delivery.
+//   opusBuilder  — same brain, builder leash: authors/fixes the generated workflow, polish fixes, delivery.
 //   codexXhigh   — cross-vendor adversarial reviewer (eng doc, generated workflow, final review).
 //   codexBuilder — codex xhigh with write access: owns the complex direct tier (/goal).
 //                  Rule: the eng doc, the generated workflow, and the final build are never
 //                  approved solely by their author's model family. (The design doc reviewer
-//                  is deliberately fable — taste judgment stays with the orchestrator, per
+//                  is deliberately opus — taste judgment stays with the orchestrator, per
 //                  PROMPT.md step 4.)
 //   sonnet       — cheap tier: routing, the trivial direct tier, research fan-out,
 //                  design-doc drafting, probes, progress reports, trivial review.
@@ -151,23 +151,23 @@ const ART = "artifacts/smithering";
 const PLANNING = "docs/planning";
 const IMPL_WORKFLOW = ".smithers/workflows/smithering-impl.tsx";
 
-// ─── Model roster (the "use fable" part) ─────────────────────────────────────
-const FABLE_MODEL = "claude-fable-5";
-const FAST_MODEL = "claude-sonnet-4-7";
-const CODEX_MODEL = "gpt-5.3-codex";
+// ─── Model roster (fable is disabled; the orchestrator brain runs on opus) ───
+const OPUS_MODEL = "claude-opus-4-8";
+const FAST_MODEL = "claude-sonnet-4-6";
+const CODEX_MODEL = "gpt-5.5";
 
 // Orchestrator-grade judgment. Default yolo (skip permission prompts) is intentional:
 // this workflow runs unattended; blast radius is bounded by gates and the
 // no-merge-to-base-branch rule instead.
-const fable = new ClaudeCodeAgent({
-  model: FABLE_MODEL,
+const opus = new ClaudeCodeAgent({
+  model: OPUS_MODEL,
   cwd: process.cwd(),
   timeoutMs: 30 * 60_000,
 });
 
 // Same brain, builder duties: writes many files, runs commands, longer leash.
-const fableBuilder = new ClaudeCodeAgent({
-  model: FABLE_MODEL,
+const opusBuilder = new ClaudeCodeAgent({
+  model: OPUS_MODEL,
   cwd: process.cwd(),
   timeoutMs: 60 * 60_000,
 });
@@ -464,7 +464,7 @@ const gateSchema = z.looseObject({
   decidedAt: z.string().nullable().default(null),
 });
 
-// Shared doc-review table (design loop reviewer = fable, eng loop reviewer = codex).
+// Shared doc-review table (design loop reviewer = opus, eng loop reviewer = codex).
 const docReviewSchema = z.looseObject({
   approved: z.boolean().default(false),
   feedback: z.string().default(""),
@@ -799,7 +799,7 @@ export default smithers((ctx) => {
   const productPrompt = cfg?.prompt ?? "";
   const monitorMaxIterations = Math.max(4, Math.round((cfg?.maxMonitorHours ?? 24) * 4));
 
-  // ── Routing: forced via setup.route, otherwise classified by fable ──
+  // ── Routing: forced via setup.route, otherwise classified by opus ──
   const routeOut = (ctx as any).outputMaybe("route", { nodeId: "route", iteration: 0 });
   const forcedRoute = cfg?.route && cfg.route !== "auto" ? cfg.route : null;
   const routeTier: "trivial" | "complex" | "full-build" | null =
@@ -997,7 +997,7 @@ export default smithers((ctx) => {
 
         {/* ── 0b. Intake: classify the request before planning ── */}
         {preflight?.ok ? (
-          <Task id="intake" output={outputs.intake} agent={fable}>
+          <Task id="intake" output={outputs.intake} agent={opus}>
             <IntakePrompt prompt={productPrompt} repo={cfg?.repo ?? null} />
             <Rules />
           </Task>
@@ -1005,7 +1005,7 @@ export default smithers((ctx) => {
 
         {/* ── 1. Brainstorm (PROMPT.md step 1) ── */}
         {intake ? (
-          <Task id="brainstorm" output={outputs.brainstorm} agent={fable}>
+          <Task id="brainstorm" output={outputs.brainstorm} agent={opus}>
             <BrainstormPrompt
               prompt={productPrompt}
               intakeSummary={intake.summary}
@@ -1039,7 +1039,7 @@ export default smithers((ctx) => {
 
         {/* ── 2b. Clarifying questions: only what research could not answer ── */}
         {brainstorm && researchDomain && researchPriorArt ? (
-          <Task id="questions" output={outputs.questions} agent={fable}>
+          <Task id="questions" output={outputs.questions} agent={opus}>
             <QuestionsPrompt />
             <Rules />
           </Task>
@@ -1070,12 +1070,13 @@ export default smithers((ctx) => {
 
         {/* ── 3. PRD + end-user interface artifacts (PROMPT.md step 3) ── */}
         {answers ? (
-          <Task id="prd" output={outputs.prd} agent={fable} heartbeatTimeoutMs={900_000}>
+          <Task id="prd" output={outputs.prd} agent={opus} heartbeatTimeoutMs={900_000}>
             <PrdPrompt
               answers={JSON.stringify(answers.answers ?? [])}
               additionalContext={answers.additionalContext}
               productType={intake?.productType ?? "other"}
             />
+            <OverTest />
             <Rules />
           </Task>
         ) : null}
@@ -1102,7 +1103,7 @@ export default smithers((ctx) => {
           </Task>
         ) : null}
 
-        {/* ── 4. Design doc: delegated draft → fable review loop → fable final pass ── */}
+        {/* ── 4. Design doc: delegated draft → opus review loop → opus final pass ── */}
         {prdApproved ? (
           <Task id="research:design-art" output={outputs.research} agent={sonnet} retries={2}>
             <ResearchDesignArtPrompt productType={intake?.productType ?? "other"} />
@@ -1120,7 +1121,7 @@ export default smithers((ctx) => {
                 />
                 <Rules />
               </Task>
-              <Task id="design:review" output={outputs.docReview} agent={fable}>
+              <Task id="design:review" output={outputs.docReview} agent={opus}>
                 <DesignReviewPrompt />
                 <Rules />
               </Task>
@@ -1129,7 +1130,7 @@ export default smithers((ctx) => {
         ) : null}
 
         {prdApproved && designArt && designLoopDone ? (
-          <Task id="design:final" output={outputs.designDoc} agent={fable}>
+          <Task id="design:final" output={outputs.designDoc} agent={opus}>
             <DesignFinalPrompt
               reviewOutcome={
                 designReviewLatest?.approved === true
@@ -1137,12 +1138,13 @@ export default smithers((ctx) => {
                   : "loop cap reached — note unresolved concerns explicitly"
               }
             />
+            <OverTest />
             <DecisionDocs />
             <Rules />
           </Task>
         ) : null}
 
-        {/* ── 5. Eng doc: research fan-out → fable architecture ⇄ codex adversarial review ── */}
+        {/* ── 5. Eng doc: research fan-out → opus architecture ⇄ codex adversarial review ── */}
         {designFinal ? (
           <Parallel maxConcurrency={2}>
             <Task id="research:eng-deps" output={outputs.research} agent={sonnet} retries={2}>
@@ -1159,7 +1161,7 @@ export default smithers((ctx) => {
         {designFinal && engDepsResearch && engOssResearch ? (
           <Loop id="eng:loop" until={engReviewLatest?.approved === true} maxIterations={3} onMaxReached="return-last">
             <Sequence>
-              <Task id="eng:doc" output={outputs.engDoc} agent={fable} heartbeatTimeoutMs={900_000}>
+              <Task id="eng:doc" output={outputs.engDoc} agent={opus} heartbeatTimeoutMs={900_000}>
                 <EngDocPrompt
                   feedback={engReviewLatest?.feedback ?? null}
                   issues={engReviewLatest ? JSON.stringify(engReviewLatest.issues ?? []) : null}
@@ -1200,7 +1202,7 @@ export default smithers((ctx) => {
 
         {/* ── 5.5 Backpressure matrix: criterion → gate traceability ── */}
         {engApproved ? (
-          <Task id="backpressure" output={outputs.backpressure} agent={fable}>
+          <Task id="backpressure" output={outputs.backpressure} agent={opus}>
             <BackpressurePrompt />
             <OverTest />
             <Rules />
@@ -1227,7 +1229,7 @@ export default smithers((ctx) => {
         ) : null}
 
         {allProbesDone && probesNeeded.length > 0 ? (
-          <Task id="probe:synthesis" output={outputs.probeSynthesis} agent={fable}>
+          <Task id="probe:synthesis" output={outputs.probeSynthesis} agent={opus}>
             <ProbeSynthesisPrompt
               results={JSON.stringify(
                 probesNeeded.map((a: any) => ({
@@ -1266,8 +1268,9 @@ export default smithers((ctx) => {
 
         {/* ── 7. Ticket breakdown: the contract the implementation workflow consumes ── */}
         {engApproved && probesCleared ? (
-          <Task id="tickets" output={outputs.tickets} agent={fable} heartbeatTimeoutMs={900_000}>
+          <Task id="tickets" output={outputs.tickets} agent={opus} heartbeatTimeoutMs={900_000}>
             <TicketsPrompt probeSummary={probeSynth?.summary ?? null} />
+            <OverTest />
             <Rules />
           </Task>
         ) : null}
@@ -1282,20 +1285,22 @@ export default smithers((ctx) => {
 
         {/* ── 9. Orchestration design: decisions recorded, then the workflow authored ── */}
         {tickets && pocDone ? (
-          <Task id="orch:design" output={outputs.orchDesign} agent={fable}>
+          <Task id="orch:design" output={outputs.orchDesign} agent={opus}>
             <OrchDesignPrompt
               targetRepo={targetRepo}
               baseBranch={baseBranch}
               pocSummary={poc?.summary ?? null}
             />
+            <OverTest />
             <DecisionDocs />
             <Rules />
           </Task>
         ) : null}
 
         {orchDesign ? (
-          <Task id="wf:scaffold" output={outputs.scaffold} agent={fableBuilder} heartbeatTimeoutMs={900_000}>
+          <Task id="wf:scaffold" output={outputs.scaffold} agent={opusBuilder} heartbeatTimeoutMs={900_000}>
             <ScaffoldPrompt baseBranch={baseBranch} />
+            <OverTest />
             <Rules />
           </Task>
         ) : null}
@@ -1315,7 +1320,7 @@ export default smithers((ctx) => {
               <Branch
                 if={verifyFailed}
                 then={
-                  <Task id="wf:fix" output={outputs.scaffold} agent={fableBuilder} heartbeatTimeoutMs={900_000}>
+                  <Task id="wf:fix" output={outputs.scaffold} agent={opusBuilder} heartbeatTimeoutMs={900_000}>
                     <WfFixPrompt errors={(lastVerify?.errors ?? []).join("\n\n")} />
                     <Rules />
                   </Task>
@@ -1335,7 +1340,7 @@ export default smithers((ctx) => {
         ) : null}
 
         {wfReview && wfReview.approved === false && !wfFix ? (
-          <Task id="wf:fix-blocking" output={outputs.scaffold} agent={fableBuilder} heartbeatTimeoutMs={900_000}>
+          <Task id="wf:fix-blocking" output={outputs.scaffold} agent={opusBuilder} heartbeatTimeoutMs={900_000}>
             <WfFixBlockingPrompt blockingIssues={JSON.stringify(wfReview.blockingIssues ?? [], null, 2)} />
             <Rules />
           </Task>
@@ -1371,7 +1376,7 @@ export default smithers((ctx) => {
               <Branch
                 if={smokeLatest !== undefined && smokeLatest.passed === false}
                 then={
-                  <Task id="wf:smoke-fix" output={outputs.scaffold} agent={fableBuilder} heartbeatTimeoutMs={900_000}>
+                  <Task id="wf:smoke-fix" output={outputs.scaffold} agent={opusBuilder} heartbeatTimeoutMs={900_000}>
                     <SmokeFixPrompt
                       childRunId={smokeLatest?.childRunId ?? ""}
                       errors={(smokeLatest?.errors ?? []).join("\n").slice(0, 5000)}
@@ -1445,7 +1450,7 @@ export default smithers((ctx) => {
                   (ctx as any).latest("monitorPoll", "monitor:poll")?.terminal !== true
                 }
                 then={
-                  <Task id="monitor:triage" output={outputs.monitorTriage} agent={fable}>
+                  <Task id="monitor:triage" output={outputs.monitorTriage} agent={opus}>
                     <MonitorTriagePrompt
                       implRunId={implRunId}
                       poll={JSON.stringify((ctx as any).latest("monitorPoll", "monitor:poll") ?? {}, null, 2)}
@@ -1484,7 +1489,7 @@ export default smithers((ctx) => {
         {/* ── 11. Review panel: three lenses, cross-model, then orchestrator synthesis ── */}
         {reviewReady ? (
           <Parallel maxConcurrency={3}>
-            <Task id="review:fable" output={outputs.reviewFinding} agent={fable} continueOnFail retries={1} heartbeatTimeoutMs={900_000}>
+            <Task id="review:fable" output={outputs.reviewFinding} agent={opus} continueOnFail retries={1} heartbeatTimeoutMs={900_000}>
               <ReviewFablePrompt targetRepo={targetRepo} />
               <Rules />
             </Task>
@@ -1500,7 +1505,7 @@ export default smithers((ctx) => {
         ) : null}
 
         {reviewReady && panelFindings.length >= 2 && !reviewSynth ? (
-          <Task id="review:synthesis" output={outputs.reviewSynthesis} agent={fable}>
+          <Task id="review:synthesis" output={outputs.reviewSynthesis} agent={opus}>
             <ReviewSynthesisPrompt findings={JSON.stringify(panelFindings, null, 2)} />
             <Rules />
           </Task>
@@ -1511,7 +1516,7 @@ export default smithers((ctx) => {
           <ScanFixVerify
             id="polish"
             scanner={sonnet}
-            fixer={fableBuilder}
+            fixer={opusBuilder}
             verifier={codexVerifier}
             scanOutput={outputs.polishScan}
             fixOutput={outputs.polishFix}
@@ -1531,7 +1536,7 @@ export default smithers((ctx) => {
         ) : null}
 
         {gather ? (
-          <Task id="report:final" output={outputs.finalReport} agent={fable} heartbeatTimeoutMs={900_000}>
+          <Task id="report:final" output={outputs.finalReport} agent={opus} heartbeatTimeoutMs={900_000}>
             <ReportFinalPrompt
               reviewSynth={JSON.stringify(reviewSynth ?? {}, null, 2)}
               implRunId={implRunId}
@@ -1554,7 +1559,7 @@ export default smithers((ctx) => {
         ) : null}
 
         {finalReport && deliveryApproved && finalReport.status !== "cancelled" ? (
-          <Task id="delivery" output={outputs.delivery} agent={fableBuilder}>
+          <Task id="delivery" output={outputs.delivery} agent={opusBuilder}>
             <DeliveryPrompt
               targetRepo={targetRepo}
               baseBranch={baseBranch}

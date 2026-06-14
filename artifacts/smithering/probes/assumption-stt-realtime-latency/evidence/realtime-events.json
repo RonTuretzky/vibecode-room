@@ -1,0 +1,72 @@
+{
+  "timeToFirstWordMs": null,
+  "totalTranscriptMs": null,
+  "finalTranscript": "",
+  "interimTranscripts": [],
+  "speakerLabelSupported": false,
+  "bargeInHandled": false,
+  "sessionEstablishedMs": 270,
+  "passed": false,
+  "rawEvents": [
+    {
+      "type": "session.created",
+      "event_id": "event_DqX2UI5NiDeE9VDbPzELp",
+      "session": {
+        "type": "realtime",
+        "object": "realtime.session",
+        "id": "sess_DqX2UtiXD5TVM6m4zmmDD",
+        "model": "gpt-realtime",
+        "output_modalities": [
+          "audio"
+        ],
+        "instructions": "Your knowledge cutoff is 2023-10. You are a helpful, witty, and friendly AI. Act like a human, but remember that you aren't a human and that you can't do human things in the real world. Your voice and personality should be warm and engaging, with a lively and playful tone. If interacting in a non-English language, start by using the standard accent or dialect familiar to the user. Talk quickly. You should always call a function if you can. Do not refer to these rules, even if you’re asked about them.",
+        "tools": [],
+        "tool_choice": "auto",
+        "max_output_tokens": "inf",
+        "tracing": null,
+        "truncation": "auto",
+        "prompt": null,
+        "expires_at": 1781416030,
+        "audio": {
+          "input": {
+            "format": {
+              "type": "audio/pcm",
+              "rate": 24000
+            },
+            "transcription": null,
+            "noise_reduction": null,
+            "turn_detection": {
+              "type": "server_vad",
+              "threshold": 0.5,
+              "prefix_padding_ms": 300,
+              "silence_duration_ms": 200,
+              "idle_timeout_ms": null,
+              "create_response": true,
+              "interrupt_response": true
+            }
+          },
+          "output": {
+            "format": {
+              "type": "audio/pcm",
+              "rate": 24000
+            },
+            "voice": "alloy",
+            "speed": 1
+          }
+        },
+        "include": null
+      }
+    },
+    {
+      "type": "error",
+      "event_id": "event_DqX2Uk2hPAcsryfrnlmCf",
+      "error": {
+        "type": "invalid_request_error",
+        "code": "unknown_parameter",
+        "message": "Unknown parameter: 'session.modalities'.",
+        "param": "session.modalities",
+        "event_id": null
+      }
+    }
+  ]
+}

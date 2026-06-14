@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ENG-A-11 — Execution modes: Safe / Explicit / Dangerous</title>
+<style>
+  :root { --bg:#0a0a0a; --fg:#e0e0e0; --ok:#00ff88; --bad:#ff3b30; --warn:#f5a623; --sel:#00bcd4; --mut:#888; }
+  body { background:var(--bg); color:var(--fg); font:15px/1.6 -apple-system,Segoe UI,Roboto,sans-serif; max-width:920px; margin:0 auto; padding:32px; }
+  h1 { font-size:24px; color:var(--sel); margin-bottom:4px; }
+  h2 { font-size:18px; color:var(--ok); margin-top:32px; border-bottom:1px solid #222; padding-bottom:6px; }
+  .tag { display:inline-block; background:#1a1a1a; border:1px solid #333; border-radius:4px; padding:2px 8px; font-size:12px; color:var(--mut); margin-right:6px; }
+  code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  table { border-collapse:collapse; width:100%; margin:12px 0; font-size:14px; }
+  th,td { border:1px solid #222; padding:8px 10px; text-align:left; vertical-align:top; }
+  th { background:#141414; color:var(--sel); }
+  .acc { color:var(--ok); } .warn { color:var(--warn); } .bad { color:var(--bad); }
+  blockquote { border-left:3px solid var(--warn); margin:12px 0; padding:6px 14px; color:#ccc; background:#120f08; }
+</style>
+</head>
+<body>
+<h1>Execution modes: Safe (default) / Explicit / Dangerous</h1>
+<p><span class="tag">ENG-A-11</span><span class="tag">REQ-11 AC11.4</span><span class="tag warn">Resolves R7 (modes)</span></p>
+
+<h2>The finding (R7, modes half)</h2>
+<blockquote>"AC11.4 requires both dangerous mode and fully-explicit mode to be opt-in by voice and off
+by default. … lines mention only Dangerous mode, not a fully-explicit mode or voice command
+path."</blockquote>
+<p>AC11.4 requires <strong>two</strong> opt-in postures beyond the Safe default. The prior doc named
+only Dangerous. Both are now first-class, each reachable only by a warned, state-gated voice command.</p>
+
+<h2>The three modes</h2>
+<table>
+<tr><th>Mode</th><th>The in-run PreToolUse hook (§8)…</th><th>Opt-in</th><th>Default</th></tr>
+<tr><td class="acc"><strong>safe</strong></td><td>gates mutating / <code>unknown</code> tool classes (deny-by-default)</td><td>—</td><td class="acc">ON (default)</td></tr>
+<tr><td class="warn"><strong>explicit</strong> (fully-explicit)</td><td>gates <strong>every</strong> action — per-step approval</td><td>voice, warned</td><td class="bad">OFF</td></tr>
+<tr><td class="bad"><strong>dangerous</strong></td><td><strong>bypasses</strong> the gate entirely</td><td>voice, warned</td><td class="bad">OFF</td></tr>
+</table>
+
+<h2>Properties (all enforced in code)</h2>
+<ul>
+<li><strong>Default is <code>safe</code></strong> for every fresh process (unit test: fresh process is
+<code>safe</code>; RBG: default to dangerous → fails).</li>
+<li><strong>Voice opt-in only</strong> via the state-gated mode commands ("Panop, dangerous mode" /
+"Panop, explicit mode" / "Panop, safe mode"), each requiring a <strong>spoken warning read-back +
+affirmative confirm</strong> before taking effect.</li>
+<li><strong>Session-only</strong>: a non-default mode <strong>resets to <code>safe</code> at session
+end</strong> (D-DD-19) — a persistent dangerous mode surviving restarts is an accident waiting to
+happen (unit test: persist dangerous across sessions → fails).</li>
+</ul>
+
+<h2>Action contract</h2>
+<p>Each mode command maps to exactly one handler emitting <code>{type:'setMode',
+payload:{mode}}</code>; <code>ExecutionMode = 'safe' | 'explicit' | 'dangerous'</code> is part of the
+shared <code>types.ts</code> contract, so the command vocabulary, the action schema, and the handlers
+all cover every documented command (the R7 traceability fix).</p>
+
+<h2>Verification</h2>
+<ul>
+<li><strong>Unit:</strong> mode-default (safe); explicit-mode (every action gated); dangerous-mode
+(bypass only after warning + confirm; resets at session end); mode-command (each flips mode + requires
+warning + confirm).</li>
+<li><strong>E2e:</strong> switch to explicit → a non-destructive action is gated; switch to dangerous
+(with warning) → a destructive act proceeds without a gate; new session → back to safe.</li>
+</ul>
+</body>
+</html>

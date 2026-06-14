@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ENG-A-14 — The annotated replay corpus contract</title>
+<style>
+  :root { --bg:#0a0a0a; --fg:#e0e0e0; --ok:#00ff88; --bad:#ff3b30; --warn:#f5a623; --sel:#00bcd4; --mut:#888; }
+  body { background:var(--bg); color:var(--fg); font:15px/1.6 -apple-system,Segoe UI,Roboto,sans-serif; max-width:920px; margin:0 auto; padding:32px; }
+  h1 { font-size:24px; color:var(--sel); margin-bottom:4px; }
+  h2 { font-size:18px; color:var(--ok); margin-top:32px; border-bottom:1px solid #222; padding-bottom:6px; }
+  .tag { display:inline-block; background:#1a1a1a; border:1px solid #333; border-radius:4px; padding:2px 8px; font-size:12px; color:var(--mut); margin-right:6px; }
+  code,pre { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  pre { background:#111; border:1px solid #222; border-radius:6px; padding:14px; overflow:auto; font-size:13px; }
+  table { border-collapse:collapse; width:100%; margin:12px 0; font-size:14px; }
+  th,td { border:1px solid #222; padding:8px 10px; text-align:left; vertical-align:top; }
+  th { background:#141414; color:var(--sel); }
+  .acc { color:var(--ok); } .warn { color:var(--warn); }
+  blockquote { border-left:3px solid var(--warn); margin:12px 0; padding:6px 14px; color:#ccc; background:#120f08; }
+</style>
+</head>
+<body>
+<h1>The annotated replay corpus is a concrete, owned, versioned artifact</h1>
+<p><span class="tag">ENG-A-14</span><span class="tag">REQ-3 AC3.4</span><span class="tag">Resolves R16</span><span class="tag">Ticket: ENG-T-07</span></p>
+
+<h2>The decision</h2>
+<p>The restraint metric — recall ≥80% on "should-suggest", ≤1 false-positive / 10 min on "should-pass"
+(AC3.4) — is reproducible only against a <strong>fixed, owned, human-labeled corpus</strong>, not a
+vague "suite." It is engineered as ticket ENG-T-07 with a defined location, size floor, label schema,
+labeling protocol, dev/test split, and recorded red-before-green.</p>
+
+<h2>Why — the R16 finding</h2>
+<blockquote>"§13 references an annotated replay suite but does not define where it lives, minimum
+duration, label schema, labeling protocol, train/test separation, representative negative audio, or how
+red-before-green evidence is recorded. Without that, the most important restraint metric is not
+reproducible."</blockquote>
+
+<h2>The contract</h2>
+<table>
+<tr><th>Aspect</th><th>Specification</th></tr>
+<tr><td>Location / form</td><td><code>artifacts/smithering/corpus/replay/</code> — transcript-observation <strong>JSONL</strong> + <code>labels.json</code> (NOT raw audio in the product; any seed <code>.wav</code> lives only in a dev-only store fenced outside the product, so §12's no-raw-audio guarantee holds). <code>CORPUS.md</code> records provenance + CHANGELOG.</td></tr>
+<tr><td>Minimum size</td><td>≥60 min "should-pass" (negative) audio (≥6 ten-minute windows for a meaningful ≤1/10-min FP rate) + ≥50 distinct "should-suggest" segments. Floors, not caps.</td></tr>
+<tr><td>Label schema</td><td><code>{segmentId, startMs, endMs, label:'should-suggest'|'should-pass', topic, rationale, speakerCount, conditions:['clean'|'overlap'|'noise'|'near-homophone']}</code></td></tr>
+<tr><td>Labeling protocol</td><td>≥2 independent labelers; third-party adjudication of disagreements; inter-annotator agreement recorded (Cohen's κ, target ≥0.7).</td></tr>
+<tr><td>Representative negatives</td><td>technical jargon, build/test talk, 2-speaker overlap, silence, and near-homophones of every always-hot word (callsigns, Panop, Curtain, Daybreak, Abort).</td></tr>
+<tr><td>Train/test separation</td><td>Corpus is <strong>test-only</strong>. Knobs tuned on a separate <em>dev</em> split; the held-out <em>test</em> split runs only for the AC3.4 number. A leakage test asserts splits are disjoint by <code>segmentId</code>.</td></tr>
+<tr><td>Red-before-green</td><td>Shuffle the ground-truth labels → recall/FP collapse → suite fails (proves discrimination). Red + green runs archived under <code>artifacts/smithering/reports/</code>.</td></tr>
+<tr><td>Ownership</td><td>Engineering team; corpus version + measured (recall, FP) recorded per acceptance run.</td></tr>
+</table>
+
+<h2>How it runs</h2>
+<pre>
+[real audio, dev-only] → [Deepgram, recorded ONCE] → corpus/replay/*.jsonl + labels.json
+                                                            │
+   dev split  → tune suggestion knobs/thresholds            │  (never the test split)
+   test split → decision loop @ temp-0 → fired vs observe.pass → compare to labels
+                                                            │
+                       recall ≥80%  AND  ≤1 FP / 10 min  →  AC3.4 PASS
+   RBG: shuffle labels → recall collapses → FAIL (the suite can actually go red)
+</pre>
+
+<blockquote>This makes AC3.4 — the product's single most important "restraint" number — a reproducible,
+regression-tracked measurement rather than an assertion.</blockquote>
+</body>
+</html>

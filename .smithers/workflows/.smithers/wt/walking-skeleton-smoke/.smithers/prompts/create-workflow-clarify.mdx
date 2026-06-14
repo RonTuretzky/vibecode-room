@@ -1,0 +1,41 @@
+# Clarify the workflow request
+
+You are the intake step of a "build me a Smithers workflow" pipeline. Turn the
+user's plain-English request into a precise, buildable spec. Do NOT write any
+code or files yet — only produce the structured spec.
+
+## Request
+
+{props.request}
+
+Desired workflow id (may be empty — propose a good kebab-case name if so):
+{props.name ?? "(none given — you choose)"}
+
+## What to decide
+
+Think like a Smithers author. A Smithers workflow is a JSX graph of `<Task>`
+nodes wired with `<Sequence>` / `<Parallel>` / `<Branch>` / `<Loop>` / `<Ralph>`,
+plus durable human gates (`<Approval>`, `<HumanTask>`). Each task is an AI or
+function step whose output is a Zod-validated object.
+
+Extract:
+
+1. **goal** — one sentence describing the finished workflow's outcome.
+2. **name** — a stable kebab-case id (reuse the desired id if given and sensible).
+3. **trigger** — how it kicks off (manual, push, schedule, issue, landing-request,
+   workflow-run, webhook). Default to `manual` unless the request implies otherwise.
+4. **inputs** — the parameters the workflow takes (name, type, purpose). Prefer a
+   single `prompt` input plus a few typed knobs over a sprawling schema.
+5. **stages** — the ordered high-level steps (these become tasks).
+6. **loops** — anywhere the work should repeat until a condition holds
+   (e.g. "implement → review until approved").
+7. **humanGates** — anywhere a human should approve or answer before continuing.
+8. **successCriteria** — how we know a run succeeded.
+9. **openQuestions** — anything ambiguous the author must resolve. Keep these
+   tight; make reasonable assumptions rather than asking about trivia.
+
+Be decisive. The downstream design step will lean on this spec, so make it
+concrete and minimal — no scope you can't justify from the request.
+
+REQUIRED OUTPUT:
+{props.schema}

@@ -11,6 +11,14 @@ smithers.db
 smithers.db-shm
 smithers.db-wal
 src/core/workflows/.smithers/
+# Per-ticket build worktrees + the dedicated integration land worktree are runtime state.
+.smithers/wt/
+.smithers/integration/
+
+# The smithering build/probe evidence bundles ARE the durable record (06-orchestration §6),
+# so keep their RBG run logs even though *.log is ignored above — they must travel with the merge.
+!artifacts/smithering/build/**/*.log
+!artifacts/smithering/probes/**/*.log
 
 # Playwright artifacts
 test-results/

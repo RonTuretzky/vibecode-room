@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ENG-A-10 — AC6.4 as written: four distinct acks (silence behind amendment)</title>
+<style>
+  :root { --bg:#0a0a0a; --fg:#e0e0e0; --ok:#00ff88; --bad:#ff3b30; --warn:#f5a623; --sel:#00bcd4; --mut:#888; }
+  body { background:var(--bg); color:var(--fg); font:15px/1.6 -apple-system,Segoe UI,Roboto,sans-serif; max-width:920px; margin:0 auto; padding:32px; }
+  h1 { font-size:23px; color:var(--sel); margin-bottom:4px; }
+  h2 { font-size:18px; color:var(--ok); margin-top:32px; border-bottom:1px solid #222; padding-bottom:6px; }
+  .tag { display:inline-block; background:#1a1a1a; border:1px solid #333; border-radius:4px; padding:2px 8px; font-size:12px; color:var(--mut); margin-right:6px; }
+  code,pre { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  pre { background:#111; border:1px solid #222; border-radius:6px; padding:14px; overflow:auto; font-size:13px; }
+  table { border-collapse:collapse; width:100%; margin:12px 0; font-size:14px; }
+  th,td { border:1px solid #222; padding:8px 10px; text-align:left; vertical-align:top; }
+  th { background:#141414; color:var(--sel); }
+  .acc { color:var(--ok); } .rej { color:var(--bad); } .warn { color:var(--warn); }
+  blockquote { border-left:3px solid var(--warn); margin:12px 0; padding:6px 14px; color:#ccc; background:#120f08; }
+</style>
+</head>
+<body>
+<h1>AC6.4 implemented as written — four distinct acks; silence behind a PRD amendment</h1>
+<p><span class="tag">ENG-A-10</span><span class="tag">REQ-6 AC6.4</span><span class="tag">REQ-9 restraint</span><span class="tag warn">Resolves R6 → updated for R14</span></p>
+
+<h2>The contradiction (R6) and the second-round ruling (R14)</h2>
+<blockquote>R6: "AC6.4 says each routed utterance must produce a distinct audible ack distinguishing
+fed-the-idea-engine, steering-process-X, and ignored observe.pass; the design said route.pass is
+silence." · R14: "The product rationale for silence is strong, but the engineering doc cannot be
+approved while intentionally violating a literal AC. Amend AC6.4 first or implement the current
+requirement."</blockquote>
+<p><strong>Updated decision:</strong> we now <strong>implement AC6.4 as written</strong>. Every routed
+utterance — including ambient <code>observe.pass</code> — gets a <strong>distinct audible ack</strong>
+by default, so the doc no longer knowingly violates a literal AC. The restraint-motivated silence
+survives only as a <strong>live knob unlocked solely by an explicit PRD amendment</strong>.</p>
+
+<h2>The four distinct Layer-B acks (default = AC6.4-compliant)</h2>
+<table>
+<tr><th>Route</th><th>Case</th><th>Ack (Layer B, non-tonal)</th></tr>
+<tr><td><code>route.suggestion</code></td><td>fed the idea engine</td><td>soft "whoosh"</td></tr>
+<tr><td><code>route.steer:X</code></td><td>steered process X</td><td>double-click "tick-tick"</td></tr>
+<tr><td><code>route.pass</code> <strong>addressed</strong></td><td>command attempt that resolved to no-op: near-miss, low-confidence, dropped steer</td><td class="warn">declined tick (single low blip)</td></tr>
+<tr><td><code>route.pass</code> <strong>ambient</strong></td><td>un-addressed chatter, never a command attempt</td><td class="acc"><strong>near-subliminal soft tick</strong> — the minimal <em>distinct</em> ack AC6.4 requires</td></tr>
+</table>
+<p>All four are pairwise distinct. <code>CueDecision.addressed</code> (set deterministically — was a
+wake/callsign/command token present? — never by the LLM) exists <strong>only</strong> so the two pass
+cases get acoustically distinct acks, <em>not</em> so ambient pass is silenced.</p>
+
+<h2>The silence knob — gated by amendment, not shippable unilaterally</h2>
+<pre>
+ambientPassAck: 'tick' | 'silent'
+   default            = 'tick'      (AC6.4-compliant; the only setting allowed today)
+   'silent'  REQUIRES   prdAmendment: 'AC6.4-silence'   ← config-load REFUSES silence without it
+</pre>
+<p>So code <strong>cannot</strong> select silence until the PRD says so. The build is compliant today;
+the product's preferred restraint is one flag away <em>iff</em> the PRD amends.</p>
+
+<h2>Example</h2>
+<pre>
+"…so then I refactored the parser…"          → ambient pass   → near-subliminal tick   (default)
+"Atlasss, make it faster"  (mis-heard callsign)→ addressed pass → declined tick
+"Atlas, make the header blue"                  → route.steer    → tick-tick
+"Here's an idea: …"  (engine fired)            → route.suggestion → whoosh
+</pre>
+
+<h2>Process recommendation (non-blocking — the build does NOT depend on it)</h2>
+<blockquote>We still recommend the PRD scope AC6.4's distinct-ack to <strong>addressed</strong> utterances
+and declare <strong>silence the intended ack for ambient <code>observe.pass</code></strong> (consistent
+with REQ-9 restraint / PRD §1's "over-speaking makes the product unbearable"). If adopted, set
+<code>ambientPassAck:'silent'</code>. Unlike the prior draft, the doc is <strong>approvable as-is</strong>
+because the default honors the current AC.</blockquote>
+
+<h2>Verification</h2>
+<ul>
+<li><strong>Unit:</strong> all four acks pairwise distinct; addressed near-miss → declined tick; ambient
+chatter → near-subliminal tick (RBG: make ambient pass silent with no amendment flag → AC6.4-compliance
+test fails). <em>ambient-ack-knob test</em>: <code>'silent'</code> rejected at config-load without
+<code>prdAmendment:'AC6.4-silence'</code>.</li>
+<li><strong>E2e:</strong> each ambient pass emits the near-subliminal tick by default; an addressed
+near-miss emits the declined tick; the four routes are audibly distinct.</li>
+</ul>
+</body>
+</html>

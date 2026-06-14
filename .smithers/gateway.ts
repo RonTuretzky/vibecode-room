@@ -48,6 +48,7 @@ await mountWorkflow("audit", "Audit");
 await mountWorkflow("mission", "Mission");
 await mountWorkflow("workflow-skill", "Workflow Skill");
 await mountWorkflow("vcs", "VCS");
+await mountWorkflow("smithering", "Smithering");
 
 await gateway.listen({ host, port });
 console.log("Smithers Gateway listening on http://" + host + ":" + port);

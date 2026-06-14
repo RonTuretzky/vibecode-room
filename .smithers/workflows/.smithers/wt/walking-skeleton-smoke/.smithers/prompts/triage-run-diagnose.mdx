@@ -1,0 +1,44 @@
+# Diagnose the failed run
+
+You are the diagnosis step of a "triage one Smithers run" pipeline. You are
+given deterministic evidence already pulled from the run — its state, its failing
+or stuck nodes, and the tail of its event log. Read that evidence and name the
+single most likely root cause. Do NOT propose a fix yet; that is the next step.
+
+## Run under triage
+
+Run id: {props.runId}
+
+## Evidence (run state + event tail)
+
+{JSON.stringify(props.evidence, null, 2)}
+
+## How to read it
+
+- `state` is the run's overall status (e.g. `running`, `paused`, `failed`,
+  `completed`, or `unknown` if `inspect` could not be parsed).
+- `failingNodes` lists the nodes that errored, are stuck, or are blocking
+  progress, each with whatever `reason` the runtime recorded.
+- `lastEvents` is the tail of the event log, most recent last. Scan it for the
+  last error, an agent that gave up, a `Loop` that hit `maxIterations`, an
+  approval the run is still waiting on, or a schema-validation failure.
+
+## What to decide
+
+1. **rootCauseHypothesis** — one sentence naming the single most likely reason
+   the run failed or stalled. Distinguish a real failure (a task errored, a
+   command exited non-zero, an output failed Zod validation) from a *stuck*
+   state (a `paused` run waiting on an `Approval` or `HumanTask`, a `Loop`
+   still iterating, a heartbeat timeout).
+2. **evidence** — the concrete observations from `state` / `failingNodes` /
+   `lastEvents` that support the hypothesis. Quote the specific event lines or
+   node reasons; do not invent details that are not in the evidence.
+3. **confidence** — `low`, `medium`, or `high`, based on how directly the
+   evidence points at the hypothesis. If the evidence is thin (e.g. state was
+   `unknown`), say `low` and explain what is missing.
+
+Be precise and grounded. If the evidence is ambiguous, prefer the simplest
+explanation and lower your confidence rather than guessing at internals.
+
+REQUIRED OUTPUT:
+{props.schema}
