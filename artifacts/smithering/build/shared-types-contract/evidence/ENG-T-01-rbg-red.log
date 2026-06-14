@@ -1,0 +1,30 @@
+bun test v1.3.14 (0d9b296a)
+
+src/types.test.ts:
+ 8 |         throw new core.$ZodAsyncError();
+ 9 |     }
+10 |     if (result.issues.length) {
+11 |         const e = new (_params?.Err ?? _Err)(result.issues.map((iss) => util.finalizeIssue(iss, ctx, core.config())));
+12 |         util.captureStackTrace(e, _params?.callee);
+13 |         throw e;
+                   ^
+ZodError: [
+  {
+    "code": "custom",
+    "path": [
+      "correlationId"
+    ],
+    "message": "Loop events must carry correlationId for causal-chain joins."
+  }
+]
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/node_modules/zod/v4/core/parse.js:13:15)
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/shared-types-contract/src/types.test.ts:78:52)
+      at map (1:11)
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/shared-types-contract/src/types.test.ts:78:8)
+(fail) ENG-T-01 shared type contract > LogEvent samples serialize to JSONL and deserialize byte-identically [1.70ms]
+
+ 8 pass
+ 1 fail
+ 34 expect() calls
+Ran 9 tests across 1 file. [24.00ms]
+red_status=1

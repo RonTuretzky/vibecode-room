@@ -1,17 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { z } from "zod";
-import type { TranscriptObservation } from "../types";
-
-const transcriptObservationSchema = z
-  .object({
-    text: z.string(),
-    isFinal: z.boolean(),
-    speaker: z.string().nullable(),
-    sessionId: z.string().min(1),
-    latencyMs: z.number().nonnegative(),
-    utteranceId: z.string().min(1),
-  })
-  .strict();
+import { transcriptObservationSchema, type TranscriptObservation } from "../types";
 
 export async function readTranscriptObservationJsonl(path: string): Promise<TranscriptObservation[]> {
   const body = await readFile(path, "utf8");

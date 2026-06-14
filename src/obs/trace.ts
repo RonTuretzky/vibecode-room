@@ -11,13 +11,15 @@ export class TraceProcessor {
     const event: LogEvent = {
       level: "info",
       event: "route.action",
-      eventId: `trace-${decision.decisionId}`,
       sessionId: observation.sessionId,
       correlationId: decision.correlationId,
       latencyMs: observation.latencyMs,
       meta: {
-        action: decision.action,
-        observationId: decision.observationId,
+        action: decision.action.type,
+        targetUPID: decision.action.targetUPID,
+        observationId: decision.meta.observationId,
+        payload: decision.action.payload,
+        decisionId: decision.decisionId,
         policy: decision.policy,
       },
     };
