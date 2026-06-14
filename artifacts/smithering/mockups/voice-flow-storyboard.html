@@ -67,7 +67,7 @@
   <!-- 0. consent -->
   <div class="stage">0 · Session start — consent & listening (REQ-1)</div>
   <div class="turn tts"><div class="who">Panopticon</div><div class="bubble">
-    “Panopticon is listening. Say <strong>‘Panopticon, stand down’</strong> to stop. Only transcripts are saved.”
+    “Panopticon is listening. Say <strong>‘mute’</strong> (or press the on-screen mute button) to stop feeding audio to the pipeline. Only transcripts are saved.”
     <span class="meta"><span class="badge">consent</span> spoken once at start · listening indicator now active</span>
   </div></div>
 
@@ -115,14 +115,12 @@
     <span class="badge">route: steer:Atlas</span> instruction delivered to selected process only · Bravo unaffected
   </div></div>
 
-  <!-- 5. safety read-back -->
-  <div class="stage">5 · Safe-by-default — read-back before a destructive act (REQ-11)</div>
-  <div class="turn tts"><div class="who">Atlas</div><div class="bubble">
-    <span class="danger">“About to overwrite <code>announcer.config</code>. Say ‘confirm’ to proceed.”</span>
-    <span class="meta"><span class="badge">dead-man timer 25s</span> no confirm → abort, never execute</span>
+  <!-- 5. run-to-completion (no per-action approval gate) -->
+  <div class="stage">5 · Run to completion — V0 runs dangerously, no per-action approval gate (REQ-11)</div>
+  <div class="turn earcon"><div class="who">Atlas</div><div class="bubble">
+    <span class="earcon-mark">▶ soft click</span> (overwrote <code>announcer.config</code>, applied once)
+    <span class="meta"><span class="badge">run-to-completion</span> no spoken read-back / dead-man timer — V0 runs dangerously; minimize approvals. Where a confirm is genuinely needed, the voice library (Cue) handles it. Safety later = sandbox the whole process, not per-action gating.</span>
   </div></div>
-  <div class="turn room"><div class="who">Ava</div><div class="bubble">“Confirm.”</div></div>
-  <div class="turn earcon"><div class="who">Atlas</div><div class="bubble"><span class="earcon-mark">▶ soft click</span> (confirmed, applied once)</div></div>
 
   <!-- 6. spoken result -->
   <div class="stage">6 · Spoken result — rationed output (REQ-9 / G5′)</div>
@@ -140,8 +138,8 @@
   <div class="stage">8 · Panic / stop word always wins (REQ-12 / REQ-2)</div>
   <div class="turn room"><div class="who">Ava</div><div class="bubble">“<strong>Atlas, stop.</strong>”</div></div>
   <div class="turn earcon"><div class="who">Panopticon</div><div class="bubble"><span class="earcon-mark">▶ double buzz</span> (Atlas halted) <span class="meta latency">halt @ 0.7s</span> · siblings unaffected</div></div>
-  <div class="turn room"><div class="who">Sam</div><div class="bubble">“Panopticon, stand down.”</div></div>
-  <div class="turn earcon"><div class="who">Panopticon</div><div class="bubble"><span class="earcon-mark">▶ descending tone</span> (muted — listening stopped ≤500ms) <span class="meta">mute pre-empts every other cue</span></div></div>
+  <div class="turn room"><div class="who">Sam</div><div class="bubble">“Mute.”</div></div>
+  <div class="turn earcon"><div class="who">Panopticon</div><div class="bubble"><span class="earcon-mark">▶ descending tone</span> (muted — audio no longer fed to the pipeline ≤500ms) <span class="meta">mute pre-empts every other cue · the voice library keeps listening for “unmute”; to resume, say <strong>“unmute”</strong> or press the on-screen unmute button</span></div></div>
 </main>
 
 <footer>

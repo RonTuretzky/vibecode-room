@@ -80,7 +80,7 @@
         <span class="sel-tag">◀ selected · steering window 14s left</span>
       </div>
       <div class="pmeta">
-        <div>Posture: <b>Safe + Optimistic</b></div><div>Model: <b>fable (per-process)</b></div>
+        <div>Posture: <b>Dangerous (run-to-completion)</b></div><div>Model: <b>fable (per-process)</b></div>
         <div>Task: <b>blocker announcer</b></div><div>Last spoke: <b>“Done — 3 files.”</b></div>
       </div>
       <div class="ids">UPID upid_atlas_7f3 · run smithers_run_9c12 · cue sess_a1</div>
@@ -92,7 +92,7 @@
         <span class="state s-paused">paused</span>
       </div>
       <div class="pmeta">
-        <div>Posture: <b>Safe + Optimistic</b></div><div>Model: <b>fable (per-process)</b></div>
+        <div>Posture: <b>Dangerous (run-to-completion)</b></div><div>Model: <b>fable (per-process)</b></div>
         <div>Task: <b>migration dry-run</b></div><div>Paused by: <b>voice (“Bravo, pause”)</b></div>
       </div>
       <div class="ids">UPID upid_bravo_2a9 · run smithers_run_9c41 · cue sess_a1</div>
@@ -104,7 +104,7 @@
         <span class="state s-planning">planning</span>
       </div>
       <div class="pmeta">
-        <div>Posture: <b>Safe + Optimistic</b></div><div>Model: <b>fable (per-process)</b></div>
+        <div>Posture: <b>Dangerous (run-to-completion)</b></div><div>Model: <b>fable (per-process)</b></div>
         <div>Task: <b>(seeding…)</b></div><div>Spawned: <b>just now</b></div>
       </div>
       <div class="ids">UPID upid_cobalt_5e0 · run smithers_run_9c55 · cue sess_a1</div>
@@ -132,9 +132,9 @@
         <span class="word">Atlas</span><span class="word">Bravo</span><span class="word">Cobalt</span>
         <span class="word">accept</span><span class="word">confirm</span><span class="word">pause</span>
         <span class="word">done</span><span class="word">status</span><span class="word">pause all</span>
-        <span class="word panic">stop</span><span class="word mute">Panopticon, stand down</span>
+        <span class="word panic">stop</span><span class="word mute">mute</span><span class="word">unmute</span>
       </div>
-      <div class="foot">Phonetically distinct, accident-resistant, documented &amp; deterministic. NL commands are V0 non-goal (NG-2).</div>
+      <div class="foot">Plain-English, documented &amp; deterministic; the voice library (Cue) handles wake/keyword robustness. Unmute = say “unmute” or press the on-screen unmute button. NL commands are V0 non-goal (NG-2).</div>
     </div>
 
     <h2>Trace log — REQ-16 (reconstruct any chain)</h2>
@@ -142,8 +142,7 @@
       <div class="t"><span class="ts">12:04:31</span><span class="ev ev-obs">OBS</span><span class="msg">seg#218 spk_1 “Atlas, also include the run name…”</span></div>
       <div class="t"><span class="ts">12:04:31</span><span class="ev ev-fire">FIRE</span><span class="msg">ProcessSelectCue → route steer:Atlas (conf 0.91)</span></div>
       <div class="t"><span class="ts">12:04:32</span><span class="ev ev-act">ACT</span><span class="msg">process.steer upid_atlas_7f3 ✓ ack@240ms</span></div>
-      <div class="t"><span class="ts">12:04:48</span><span class="ev ev-safe">SAFE</span><span class="msg">readback overwrite announcer.config · timer 25s</span></div>
-      <div class="t"><span class="ts">12:04:53</span><span class="ev ev-act">ACT</span><span class="msg">confirm received → applied once</span></div>
+      <div class="t"><span class="ts">12:04:48</span><span class="ev ev-act">ACT</span><span class="msg">overwrite announcer.config → applied once (run-to-completion · no per-action gate)</span></div>
       <div class="t"><span class="ts">12:05:02</span><span class="ev ev-obs">OBS</span><span class="msg">seg#224 spk_0 “did you see the standup notes…”</span></div>
       <div class="t"><span class="ts">12:05:02</span><span class="ev ev-pass">PASS</span><span class="msg">observe.pass · not buildable · gate 18/60</span></div>
       <div class="t"><span class="ts">12:05:40</span><span class="ev ev-fire">FIRE</span><span class="msg">SuggestionCue · queued, awaiting idle (conf 0.82)</span></div>

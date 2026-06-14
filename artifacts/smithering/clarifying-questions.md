@@ -87,19 +87,27 @@ kept as a clarifying question.
   only feeds suggestions. Callsign style is an implementation detail.
 - **Q6 (process output sound, G5′):** RESOLVED by audio-only constraint + PROMPT silent-tick
   design — concise spoken summary, volunteered sparingly, ~90% of ticks silent.
-- **Q7 (execution posture):** RESOLVED by risk analysis (R-Mistranscription) — default
-  Explicit+Safe, spoken confirm on destructive acts, `DeadManTimerCue` (30 s) on for dangerous
-  actions; optimistic/dangerous are opt-in. Safe-by-default is the obviously-correct default.
+- **Q7 (execution posture):** RESOLVED — V0 ships a **single dangerous run-to-completion mode**:
+  no Safe/Explicit/Dangerous mode switching, no per-action spoken read-back/confirm gate, no
+  dead-man timer. We run to completion and minimize approvals; where a confirmation is genuinely
+  needed, the voice library (Cue) handles it. If we want safety later we **sandbox the whole
+  process**, not gate via permissions. (Reverses the earlier Safe-by-default posture.)
 - **Q8 (multi-speaker: pairing vs diarization):** RESOLVED — domain §5-Q4 + prior-art:
   Deepgram Nova-3 native diarization via `SpeakerChangedCue`/`SpeakerWordCue`; QR pairing
   demoted to wishlist.
 - **Q9 (unselected process keeps working):** RESOLVED by product vision (G2/G3) — processes
   advance autonomously; steering only redirects. Definitional.
 - **Q10 (consent/trust for always-on cloud mic):** RESOLVED within V0 scope by the
-  trusted-single-room assumption (Q1) — listening indicator, hard spoken mute with physical
-  fallback, transcript-only persistence (no raw audio), explicit third-party STT disclosure.
-  Broader external-user consent is out of V0 scope.
+  trusted-single-room assumption (Q1) — listening indicator, a hard mute (say **“mute”** or press
+  the on-screen mute button), transcript-only persistence (no raw audio), explicit third-party STT
+  disclosure. While muted, audio is no longer fed into the suggestion/routing pipeline; to unmute,
+  **say “unmute” or press the on-screen unmute button** — the voice library (Cue) keeps listening
+  for the keyword even while the cloud pipeline is paused, so there is **no bespoke on-device
+  spotter** to build. Broader external-user consent is out of V0 scope.
 - **Q11 (adopt Cue's provider stack + the Smithers/Fable seam):** RESOLVED — Deepgram Nova-3
-  (domain §5-Q4) + a cheap fast LLM (Cerebras/Haiku-tier, prior-art) for Cue's hot loop; seam =
-  Cue decides *when*, Smithers executes *what* durably, Fable plans per-process, calls via
-  Smithers subscriptions. Provider/seam are architecture, not product.
+  (domain §5-Q4) for transcription; seam = Cue decides *when* (it is essentially I/O into the
+  event loop), Smithers just runs background jobs durably, and Cue ↔ Smithers do not know about
+  each other. No raw API keys and no elaborate credential-provider abstraction: **assume the host
+  machine is already logged in to its OpenAI Codex and Anthropic Claude subscriptions** and call
+  through those (no Cerebras/Haiku hot-loop specifics; model choice follows the assignment matrix).
+  Provider/seam are architecture, not product.

