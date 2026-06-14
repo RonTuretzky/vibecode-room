@@ -1,0 +1,11 @@
+[
+  {
+    "criterionId": "SEC-1",
+    "method": "unit_test+e2e_test",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/subscription-credentials-redaction/evidence/SEC-1-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/subscription-credentials-redaction/evidence/SEC-1-green.log"
+  }
+]

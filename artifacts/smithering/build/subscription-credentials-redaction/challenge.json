@@ -1,0 +1,12 @@
+{
+  "ticketId": "subscription-credentials-redaction",
+  "status": "ready_for_external_adversarial_challenge",
+  "approvalAssertedByImplementer": false,
+  "challengeFocus": [
+    "raw model key construction is rejected without value echo",
+    "trace meta redaction defaults on and reports count only",
+    "whole-session scan fails closed when redaction is disabled",
+    "probe report redaction uses the shared scanner"
+  ],
+  "notes": "External adversarial challenge must replace or amend this file with its verdict before land."
+}

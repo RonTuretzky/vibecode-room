@@ -1,4 +1,5 @@
 import { logEventSchema, type CueDecision, type LogEvent, type TranscriptObservation } from "../types";
+import { redactSecretValues } from "../security/secrets";
 
 export type TraceClock = () => number;
 
@@ -12,6 +13,7 @@ export interface RedactionContext {
 export interface TraceProcessorOptions {
   clock?: TraceClock;
   redactionFilters?: readonly RedactionFilter[];
+  defaultSecretRedaction?: boolean;
 }
 
 export interface TraceInput {
@@ -44,17 +46,34 @@ export class TraceProcessor {
   readonly #events: LogEvent[] = [];
   readonly #clock: TraceClock;
   readonly #redactionFilters: readonly RedactionFilter[];
+  readonly #defaultSecretRedaction: boolean;
 
   constructor(options: TraceProcessorOptions = {}) {
     this.#clock = options.clock ?? defaultClock;
     this.#redactionFilters = options.redactionFilters ?? [];
+    this.#defaultSecretRedaction = options.defaultSecretRedaction ?? true;
   }
 
   record(input: TraceInput): LogEvent {
     const endedAtMs = input.endedAtMs ?? this.#clock();
     const latencyMs = measureLatency(input.startedAtMs, endedAtMs);
-    const meta = redactValue(input.meta ?? {}, input.event, this.#redactionFilters, []);
+    const redacted = redactValue(input.meta ?? {}, input.event, this.#redactionFilters, [], this.#defaultSecretRedaction);
+    const meta = redacted.value;
     assertJsonSerializable(meta, ["meta"]);
+
+    if (redacted.count > 0) {
+      this.#events.push(
+        logEventSchema.parse({
+          level: "warn",
+          event: "secret.redacted",
+          sessionId: input.sessionId,
+          correlationId: input.correlationId,
+          upid: input.upid,
+          latencyMs,
+          meta: { count: redacted.count, sourceEvent: input.event },
+        }),
+      );
+    }
 
     const event = logEventSchema.parse({
       level: input.level ?? "info",
@@ -167,7 +186,7 @@ export class TraceProcessor {
 }
 
 export function serializeTraceJsonl(events: readonly LogEvent[]): string {
-  return events.map((event) => JSON.stringify(logEventSchema.parse(event))).join("\n");
+  return events.flatMap(sanitizeLogEventForEmission).map((event) => JSON.stringify(logEventSchema.parse(event))).join("\n");
 }
 
 export function parseTraceJsonl(jsonl: string): LogEvent[] {
@@ -286,30 +305,64 @@ function classifyStage(event: string): ChainStage {
   return null;
 }
 
+function sanitizeLogEventForEmission(event: LogEvent): LogEvent[] {
+  const redacted = redactSecretValues(event.meta, ["meta"]);
+  if (redacted.count === 0) {
+    return [event];
+  }
+
+  return [
+    logEventSchema.parse({
+      level: "warn",
+      event: "secret.redacted",
+      sessionId: event.sessionId,
+      correlationId: event.correlationId,
+      upid: event.upid,
+      latencyMs: event.latencyMs,
+      meta: { count: redacted.count, sourceEvent: event.event },
+    }),
+    { ...event, meta: redacted.value as Record<string, unknown> },
+  ];
+}
+
 function redactValue(
   value: unknown,
   event: string,
   filters: readonly RedactionFilter[],
   path: readonly string[],
-): unknown {
+  defaultSecretRedaction: boolean,
+): { value: unknown; count: number } {
   let current = value;
   for (const filter of filters) {
     current = filter(current, { event, path });
   }
 
   if (Array.isArray(current)) {
-    return current.map((item, index) => redactValue(item, event, filters, [...path, String(index)]));
+    let count = 0;
+    const value = current.map((item, index) => {
+      const redacted = redactValue(item, event, filters, [...path, String(index)], defaultSecretRedaction);
+      count += redacted.count;
+      return redacted.value;
+    });
+    return { value, count };
   }
 
   if (current !== null && typeof current === "object") {
+    let count = 0;
     const redacted: Record<string, unknown> = {};
     for (const [key, nested] of Object.entries(current)) {
-      redacted[key] = redactValue(nested, event, filters, [...path, key]);
+      const nestedRedacted = redactValue(nested, event, filters, [...path, key], defaultSecretRedaction);
+      count += nestedRedacted.count;
+      redacted[key] = nestedRedacted.value;
     }
-    return redacted;
+    return { value: redacted, count };
   }
 
-  return current;
+  if (!defaultSecretRedaction) {
+    return { value: current, count: 0 };
+  }
+
+  return redactSecretValues(current, path);
 }
 
 function assertJsonSerializable(value: unknown, path: readonly string[]): void {

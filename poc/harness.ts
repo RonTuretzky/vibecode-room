@@ -1,5 +1,6 @@
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join, relative } from "node:path";
+import { redactSecretValues, scanSecretLikeFiles, type SecretScanResult } from "../src/security/secrets";
 
 export type ProbeStatus = "passed" | "failed";
 export type AssertionStatus = "failed-as-expected" | "passed" | "not-failable" | "failed";
@@ -41,15 +42,6 @@ export interface ProbeReport {
   meta: Record<string, unknown>;
 }
 
-export interface SecretScanResult {
-  passed: boolean;
-  findings: Array<{
-    path: string;
-    pattern: string;
-    count: number;
-  }>;
-}
-
 export class ProbeHarnessError extends Error {
   readonly report: ProbeReport;
 
@@ -61,48 +53,20 @@ export class ProbeHarnessError extends Error {
 }
 
 const DEFAULT_REPORT_ROOT = "artifacts/smithering/reports";
-const REDACTED = "[redacted-secret]";
-
-const SECRET_PATTERNS: Array<{ name: string; pattern: RegExp }> = [
-  { name: "openai-key", pattern: /\bsk-[A-Za-z0-9_-]{20,}\b/g },
-  { name: "bearer-token", pattern: /\bBearer\s+[A-Za-z0-9._~+/=-]{20,}\b/gi },
-  { name: "generic-api-key-assignment", pattern: /\b(?:api[_-]?key|secret|token)\s*[:=]\s*["']?[A-Za-z0-9._~+/=-]{20,}["']?/gi },
-];
 
 export function redactSecrets(value: unknown): unknown {
-  if (typeof value === "string") {
-    return SECRET_PATTERNS.reduce((current, { pattern }) => current.replace(pattern, REDACTED), value);
-  }
-
-  if (Array.isArray(value)) {
-    return value.map((entry) => redactSecrets(entry));
-  }
-
-  if (value && typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value).map(([key, entry]) => [key, redactSecrets(entry)]),
-    );
-  }
-
-  return value;
+  return redactSecretValues(value).value;
 }
 
 export async function assertNoKeyShapedStrings(rootDir: string): Promise<SecretScanResult> {
-  const findings: SecretScanResult["findings"] = [];
-  const paths = await listReportFiles(rootDir);
-
-  for (const path of paths) {
-    const content = await readFile(path, "utf8");
-    for (const { name, pattern } of SECRET_PATTERNS) {
-      pattern.lastIndex = 0;
-      const matches = content.match(pattern);
-      if (matches?.length) {
-        findings.push({ path: relative(process.cwd(), path), pattern: name, count: matches.length });
-      }
-    }
-  }
-
-  return { passed: findings.length === 0, findings };
+  const scan = await scanSecretLikeFiles(rootDir);
+  return {
+    passed: scan.passed,
+    findings: scan.findings.map((finding) => ({
+      ...finding,
+      path: relative(process.cwd(), finding.path),
+    })),
+  };
 }
 
 export async function runProbe(options: ProbeRunOptions): Promise<ProbeReport> {
@@ -211,13 +175,4 @@ function errorMessage(error: unknown): string {
     return String(redactSecrets(error.message));
   }
   return String(redactSecrets(String(error)));
-}
-
-async function listReportFiles(rootDir: string): Promise<string[]> {
-  const glob = new Bun.Glob("**/*.{json,jsonl,log,txt,md}");
-  const files: string[] = [];
-  for await (const path of glob.scan({ cwd: rootDir, absolute: true, onlyFiles: true })) {
-    files.push(path);
-  }
-  return files.sort();
 }

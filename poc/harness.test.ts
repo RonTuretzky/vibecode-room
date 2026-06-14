@@ -9,6 +9,7 @@ import {
   runProbe,
   type ProbeAssertion,
 } from "./harness";
+import { REDACTED_SECRET } from "../src/security/secrets";
 
 const REPORT_ROOT = "artifacts/smithering/reports";
 const SAMPLE_ID = "harness-sample-probe";
@@ -125,8 +126,8 @@ describe("probe harness", () => {
     const rawBearer = ["Bearer", "B".repeat(48)].join(" ");
 
     expect(redactSecrets({ fakeKey, rawBearer })).toEqual({
-      fakeKey: "[redacted-secret]",
-      rawBearer: "[redacted-secret]",
+      fakeKey: REDACTED_SECRET,
+      rawBearer: REDACTED_SECRET,
     });
 
     const assertion: ProbeAssertion = {
@@ -152,7 +153,7 @@ describe("probe harness", () => {
     const content = await readFile(join(REPORT_ROOT, REDACT_ID, "report.json"), "utf8");
     expect(content).not.toContain(fakeKey);
     expect(content).not.toContain(rawBearer);
-    expect(content).toContain("[redacted-secret]");
+    expect(content).toContain(REDACTED_SECRET);
     expect(await assertNoKeyShapedStrings(join(REPORT_ROOT, REDACT_ID))).toEqual({
       passed: true,
       findings: [],

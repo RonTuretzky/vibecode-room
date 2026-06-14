@@ -1,0 +1,2 @@
+{"level":"warn","event":"secret.redacted","sessionId":"session-e2e-sec-001","correlationId":"corr-e2e-sec-001","latencyMs":8,"meta":{"count":3,"sourceEvent":"observe.final"}}
+{"level":"info","event":"observe.final","sessionId":"session-e2e-sec-001","correlationId":"corr-e2e-sec-001","latencyMs":8,"meta":{"utteranceId":"utt-sec-001","providerMeta":{"apiKey":"«redacted»","authorization":"«redacted»","deepgram":"«redacted»"}}}
