@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ENG-A-14 — The annotated replay corpus contract</title>
+<title>ENG-A-14 — Suggestion restraint = env-tunable params (corpus deferred)</title>
 <style>
   :root { --bg:#0a0a0a; --fg:#e0e0e0; --ok:#00ff88; --bad:#ff3b30; --warn:#f5a623; --sel:#00bcd4; --mut:#888; }
   body { background:var(--bg); color:var(--fg); font:15px/1.6 -apple-system,Segoe UI,Roboto,sans-serif; max-width:920px; margin:0 auto; padding:32px; }
@@ -15,51 +15,59 @@
   table { border-collapse:collapse; width:100%; margin:12px 0; font-size:14px; }
   th,td { border:1px solid #222; padding:8px 10px; text-align:left; vertical-align:top; }
   th { background:#141414; color:var(--sel); }
-  .acc { color:var(--ok); } .warn { color:var(--warn); }
+  .acc { color:var(--ok); } .warn { color:var(--warn); } .rej { color:var(--bad); }
   blockquote { border-left:3px solid var(--warn); margin:12px 0; padding:6px 14px; color:#ccc; background:#120f08; }
 </style>
 </head>
 <body>
-<h1>The annotated replay corpus is a concrete, owned, versioned artifact</h1>
-<p><span class="tag">ENG-A-14</span><span class="tag">REQ-3 AC3.4</span><span class="tag">Resolves R16</span><span class="tag">Ticket: ENG-T-07</span></p>
+<h1>Suggestion restraint is a set of env-tunable parameters — the labeled corpus is deferred</h1>
+<p><span class="tag">ENG-A-14</span><span class="tag">REQ-3</span><span class="tag warn">Simplified / deferred</span></p>
+
+<blockquote><strong>Superseded / simplified.</strong> The prior decision engineered a fixed, owned,
+human-labeled replay corpus (ticket <strong>ENG-T-07</strong>) with a minimum size, label schema,
+multi-labeler protocol, dev/test split, and a hard restraint metric (recall ≥80% / ≤1 false-positive per
+10 min, red-before-green). That formal corpus and metric are <strong>dropped for V0</strong>. ENG-T-07
+is no longer a hard requirement.</blockquote>
 
 <h2>The decision</h2>
-<p>The restraint metric — recall ≥80% on "should-suggest", ≤1 false-positive / 10 min on "should-pass"
-(AC3.4) — is reproducible only against a <strong>fixed, owned, human-labeled corpus</strong>, not a
-vague "suite." It is engineered as ticket ENG-T-07 with a defined location, size floor, label schema,
-labeling protocol, dev/test split, and recorded red-before-green.</p>
+<p>For V0 there is <strong>no formal labeled corpus and no fixed restraint metric</strong>. Suggestion
+cadence / restraint is simply a set of <strong>env-tunable parameters with documented defaults</strong>
+(ties to ENG-A-01) — thresholds, cooldowns, and gates passed in via ENV, each with a default — that we
+<strong>tune by feel later</strong> from real-world UX. We do not stand up a labeling pipeline or assert
+a recall/FP number against a held-out test split.</p>
 
-<h2>Why — the R16 finding</h2>
-<blockquote>"§13 references an annotated replay suite but does not define where it lives, minimum
-duration, label schema, labeling protocol, train/test separation, representative negative audio, or how
-red-before-green evidence is recorded. Without that, the most important restraint metric is not
-reproducible."</blockquote>
+<h2>Why simplified</h2>
+<p>Owning a human-labeled corpus (≥2 labelers, adjudication, inter-annotator agreement, leakage tests,
+a size floor) is heavy machinery whose only job was to make one number reproducible. The V0 posture —
+<strong>ship fast, make everything env-tunable, tune by feel</strong> — replaces that number with knobs.
+If suggestions are too chatty or too quiet, we turn a dial, not re-run a labeled eval.</p>
 
-<h2>The contract</h2>
+<h2>What it looks like instead</h2>
 <table>
-<tr><th>Aspect</th><th>Specification</th></tr>
-<tr><td>Location / form</td><td><code>artifacts/smithering/corpus/replay/</code> — transcript-observation <strong>JSONL</strong> + <code>labels.json</code> (NOT raw audio in the product; any seed <code>.wav</code> lives only in a dev-only store fenced outside the product, so §12's no-raw-audio guarantee holds). <code>CORPUS.md</code> records provenance + CHANGELOG.</td></tr>
-<tr><td>Minimum size</td><td>≥60 min "should-pass" (negative) audio (≥6 ten-minute windows for a meaningful ≤1/10-min FP rate) + ≥50 distinct "should-suggest" segments. Floors, not caps.</td></tr>
-<tr><td>Label schema</td><td><code>{segmentId, startMs, endMs, label:'should-suggest'|'should-pass', topic, rationale, speakerCount, conditions:['clean'|'overlap'|'noise'|'near-homophone']}</code></td></tr>
-<tr><td>Labeling protocol</td><td>≥2 independent labelers; third-party adjudication of disagreements; inter-annotator agreement recorded (Cohen's κ, target ≥0.7).</td></tr>
-<tr><td>Representative negatives</td><td>technical jargon, build/test talk, 2-speaker overlap, silence, and near-homophones of every always-hot word (callsigns, Panop, Curtain, Daybreak, Abort).</td></tr>
-<tr><td>Train/test separation</td><td>Corpus is <strong>test-only</strong>. Knobs tuned on a separate <em>dev</em> split; the held-out <em>test</em> split runs only for the AC3.4 number. A leakage test asserts splits are disjoint by <code>segmentId</code>.</td></tr>
-<tr><td>Red-before-green</td><td>Shuffle the ground-truth labels → recall/FP collapse → suite fails (proves discrimination). Red + green runs archived under <code>artifacts/smithering/reports/</code>.</td></tr>
-<tr><td>Ownership</td><td>Engineering team; corpus version + measured (recall, FP) recorded per acceptance run.</td></tr>
+<tr><th>Knob (ENV, documented default)</th><th>Effect</th></tr>
+<tr><td><code>SUGGESTION_MIN_CONFIDENCE</code></td><td>how confident the idea engine must be before it speaks</td></tr>
+<tr><td><code>SUGGESTION_COOLDOWN_MS</code></td><td>minimum gap between suggestions (restraint)</td></tr>
+<tr><td><code>SUGGESTION_MAX_PER_WINDOW</code></td><td>cap on suggestions in a rolling window</td></tr>
+</table>
+<p>Defaults are documented; all are externally injected and tuned later by feel. No corpus, no metric,
+no red-before-green eval gate.</p>
+
+<h2>Alternatives considered</h2>
+<table>
+<tr><th>Approach</th><th>Verdict</th><th>Why</th></tr>
+<tr><td>Fixed labeled corpus + hard recall/FP metric (ENG-T-07, prior plan)</td><td class="rej">Deferred</td><td>Heavy labeling pipeline to make one number reproducible; against the ship-fast / tune-by-feel posture.</td></tr>
+<tr><td><strong>Env-tunable restraint parameters with documented defaults</strong></td><td class="acc">Chosen</td><td>Ships fast; restraint is a dial we tune from real UX, not a labeled eval.</td></tr>
 </table>
 
-<h2>How it runs</h2>
-<pre>
-[real audio, dev-only] → [Deepgram, recorded ONCE] → corpus/replay/*.jsonl + labels.json
-                                                            │
-   dev split  → tune suggestion knobs/thresholds            │  (never the test split)
-   test split → decision loop @ temp-0 → fired vs observe.pass → compare to labels
-                                                            │
-                       recall ≥80%  AND  ≤1 FP / 10 min  →  AC3.4 PASS
-   RBG: shuffle labels → recall collapses → FAIL (the suite can actually go red)
-</pre>
+<h2>Verification</h2>
+<ul>
+<li><strong>Knob-wiring test:</strong> each restraint parameter reads from ENV with its documented
+default and actually changes behavior (RBG: hard-code a threshold ignoring ENV → override test fails).</li>
+<li><strong>No-corpus assertion:</strong> there is no ENG-T-07 labeled corpus or held-out test-split eval
+gate in V0.</li>
+</ul>
 
-<blockquote>This makes AC3.4 — the product's single most important "restraint" number — a reproducible,
-regression-tracked measurement rather than an assertion.</blockquote>
+<blockquote><strong>Note:</strong> a labeled corpus and a formal restraint metric can be revisited
+later if restraint-by-feel proves insufficient — but it is not V0 scope.</blockquote>
 </body>
 </html>

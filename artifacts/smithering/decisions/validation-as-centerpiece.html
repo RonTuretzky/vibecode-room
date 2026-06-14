@@ -34,8 +34,15 @@ Restructure the design doc so the <strong>verification plan is the centerpiece, 
 Every design section (§2–§12) carries an inline <strong>Verify</strong> block naming the specific
 unit/integration tests <em>and</em> end-to-end tests that prove it, each with a named
 red-before-green failure injection. §13 consolidates these into a single component→test→observability
-matrix, the structured-log contract, the red-before-green protocol, and a boundary/fuzz/benchmark
-catalog sized to the 10×–100× bar. No behavior is described anywhere without the test that proves it.
+matrix, the structured-log contract, the red-before-green protocol, and a boundary/fuzz catalog.
+No behavior is described anywhere without the test that proves it.
+<p style="margin:.6rem 0 0"><strong>Scope of what we verify:</strong> we <strong>trust Cue (Etheria's
+voice library)</strong> and do <strong>not</strong> re-test its internal recognition quality. Our tests
+verify only <strong>our integration WITH the library</strong> — that words/events are wired correctly,
+that actions round-trip, and that our own deterministic code behaves. Tunable parameters (timeouts,
+suggestion cadence, thresholds, latency budgets, word lists) are <strong>env-tunable knobs with
+documented defaults</strong> (ENG-A-01), not hard guarantees we assert against — so a Verify block
+checks the wiring and shape, not a fixed numeric promise about the library.</p>
 </div>
 
 <h2>Why this was a judgment call</h2>
@@ -62,7 +69,7 @@ constantly.</div>
 <table>
 <tr><th>Behavior (claimed)</th><th>Unit (RBG)</th><th>E2e</th><th>Observability</th></tr>
 <tr><td>Earcon E1 ≤300 ms after wake</td><td>mocked clock; <span class="bad">set 100 ms budget → fail</span>; relax to 300 ms → pass</td><td>≥100 live round-trips, earcon&lt;300 ms baseline</td><td><code>earcon.emit{latencyMs}</code></td></tr>
-<tr><td>No observations while muted</td><td>feed speech in MUTED → assert zero obs; <span class="bad">leave cloud stream open → fail</span></td><td>speak Curtain; disk scan = 0 audio</td><td><code>mute.heartbeat{streamingToCloud:false}</code></td></tr>
+<tr><td>No observations while muted</td><td>feed speech in MUTED → assert zero obs; <span class="bad">leave the pipeline open → fail</span></td><td>say "mute"; disk scan = 0 audio</td><td><code>mute.heartbeat{streamingToCloud:false}</code></td></tr>
 </table>
 
 <h2>Consequences</h2>

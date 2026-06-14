@@ -8,6 +8,11 @@
 > specifications, command vocabulary, and interaction ergonomics. Each decision is recorded with
 > rationale in §12 and inline.
 >
+> **Posture (V0):** cut scope and ship fast — run dangerously / run-to-completion, trust the voice
+> library (Cue, by Etheria), and make tunable parameters env-driven (tuned by feel later). We verify
+> **our integration** with the libraries via typed, mockable provider interfaces — not the libraries'
+> own correctness. See the final design (`02-design.md`) for the authoritative detail.
+>
 > This doc does **not** reproduce requirements — it answers "how" and "with what specifics."
 
 ---
@@ -58,12 +63,14 @@ rhythmic pattern, and tested for discriminability under conversational noise. Al
 (D2, ~-15dBFS) plays continuously while muted. The contrast is: nothing = listening, persistent low
 tone = muted. This is the inverse of E2 and unmistakable.
 
-**Routing acknowledgement earcons:** beyond the 5 earcon set, per-utterance routing decisions
-get brief non-tonal ack signals (not earcons but functional equivalents):
+**Addressed-command ack earcons:** beyond the 5 earcon set, **addressed** routing decisions get
+brief non-tonal ack signals (not earcons but functional equivalents). **Ignored ambient speech is
+silent** — there is no ack for un-addressed speech:
 - `route.steer:X` → brief double-click or "tick-tick" sound after the wake chime (signals
   "I routed to a process")
 - `route.suggestion` → single soft "whoosh" (signals "feeding the suggestion engine")
-- `route.pass` → no sound (silence is the ack for observe.pass — this is deliberate)
+- `route.pass` / `observe.pass` (ignored ambient) → **no sound**, by definition — un-addressed
+  speech makes no noise. This is not a tunable knob.
 
 The "Roger vs. Wilco" distinction (from ATC design research): the system needs two distinct
 receipts for (a) "heard" vs. (b) "heard and acting on it." E1 (wake chime) = "I heard the wake
@@ -92,10 +99,14 @@ Where `interrupt_cost` is a function of:
 
 The suggestion fires only when gate_passed AND (interrupt_cost is low OR the room has been idle
 ≥10s). If the gate passes but interrupt_cost is high, the suggestion is queued and delivered on
-the next idle gap (via Cue's `IdleCue` — see §7). The suggestion expires from queue after 90s
-with no idle gap — at that point it is discarded, not spoken.
+the next idle gap (via Cue's `IdleCue` — see §7). The suggestion expires from queue after
+`SUGGEST_TTL_SECONDS` (default 90) with no idle gap — at that point it is discarded, not spoken.
 
-**Why expire:** a queued suggestion about something the room discussed 90 seconds ago may no
+All of these — gate thresholds (`SUGGEST_MIN_WORDS`/`SUGGEST_MIN_SECONDS`), quality threshold, cost
+ceiling, cadence, TTL — are **env-tunable params with documented defaults, tuned by feel later**.
+There is **no formal labeled corpus or restraint metric** for V0.
+
+**Why expire:** a queued suggestion about something the room discussed ~90 seconds ago may no
 longer be relevant. Expired suggestions are logged (`suggestion.expired`) but not spoken.
 
 ### Suggestion delivery format
@@ -133,9 +144,8 @@ Commands are deterministic: same transcript → same routing decision, every tim
 | Status | "Status" | Speaks a brief summary of active processes (≤15 words) |
 | Stop (targeted) | "Stop" / "Halt" | Halts the currently selected process |
 | Panic (global) | "Abort" | Halts all processes, closes steering windows |
-| Mute | "Mute" / "[mute word]" | Stops all audio streaming |
-| Unmute | "Listen" | Resumes audio streaming |
-| Confirm | "Confirm" | Confirms a pending destructive-action read-back |
+| Mute | "mute" | Stops feeding audio into the suggestion/routing pipeline (§ mute/unmute) |
+| Unmute | "unmute" | Resumes the pipeline (Cue hears "unmute" even while muted) |
 
 **Why "Abort" not "Stop" for panic:** "Stop" appears in natural speech ("stop that process",
 "stop working on it"). "Abort" is rare in casual team conversation, short (2 syllables), and
@@ -156,7 +166,7 @@ A proposed callsign is rejected if:
 
 V0 ships with a pre-validated subset of NATO phonetic alphabet as the available callsign pool.
 Suggested V0 callsign pool (validated for distinctiveness against each other and against
-"Panop"/"Abort"/"Mute"/"Listen"):
+"Panop"/"Abort"):
 
 ```
 Atlas    Bravo    Delta    Foxtrot    Golf
@@ -190,7 +200,7 @@ IDLE ──[wake word]──► ACTIVE_LISTEN
   │                    [done/idle20s]──► IDLE
   │                    [abort]──► GLOBAL_HALT
   │
-  └──[mute word]──► MUTED (always wins from any state)
+  └──[mute]──► MUTED (always wins; exits on "unmute" — heard by Cue — or the on-screen unmute button)
 ```
 
 **Stage-transition audibility (REQ-5, AC5.3):** every stage transition must produce an
@@ -224,18 +234,19 @@ Every process tick is classified before audio is emitted:
 |---------|---------|-----------|
 | Completion / success | TTS | ≤15 words |
 | Blocker / question needed | TTS | ≤15 words |
-| Destructive read-back | TTS | ≤20 words (action + "confirm?") |
 | Explicit "status" ask | TTS | ≤15 words |
 | State transition | Earcon | ≤500ms |
 | Routine progress / tick | Silent | — |
-| `observe.pass` | Silent | — |
+| Ignored ambient (`observe.pass` / `route.pass`) | Silent | — |
 
 **Never emit to TTS:** file names, diff contents, URLs, stack traces, raw output. If the
 process output contains these, summarize: "The diff is ready. Say 'continue' to apply."
 
+**Ignored ambient speech is silent by definition** — un-addressed speech makes no sound.
+
 **15-word guard:** implemented as a hard truncator in the TTS pipeline stage. Output >15 words
-is summarized by the system before TTS emission. Summarization uses the same cheap/fast LLM
-as the suggestion engine — never Opus (NG-9).
+is summarized by the system before TTS emission. Summarization uses the same cheap/fast hot-loop
+LLM as the suggestion engine — never the heavy planning model (NG-9).
 
 **90% silence target:** the output-policy gate is the mechanism. Default classification is
 `silent`. Only the listed trigger classes promote to earcon or TTS. The gate implementation
@@ -249,35 +260,25 @@ A consistent voice across all TTS events prevents the "multiple assistants" conf
 
 ---
 
-## 7. Safety & Execution Posture Design (REQ-11)
+## 7. Execution Posture Design (REQ-11)
 
-### Default: Safe + Optimistic
+### V0: one mode — dangerous / run-to-completion
 
-Processes run autonomously to completion by default. The safety gate fires only on
-destructive/irreversible verbs: delete, overwrite, force-push, rm, drop, truncate.
+V0 has **one execution mode: dangerous / run-to-completion.** Processes run autonomously to
+completion; there is **no per-action approval, no spoken read-back/confirm gate, and no dead-man
+timer.** You shouldn't need to approve often — and where a confirmation is genuinely needed, the
+voice library (Cue) already handles it. We minimize approvals rather than build a bespoke gate.
 
-**Destructive-action classification** is evaluated at the point the agent produces an action,
-before execution:
-- Static whitelist of destructive verbs (checked before any execution)
-- The action payload is never trusted on its own — the verb classification is deterministic
+We **do not** build, in V0:
+- a `PreToolUse` read-back/confirm hook or a safe-executor that holds destructive tool calls;
+- a 25s dead-man timer;
+- Safe / Explicit / Dangerous **mode switching** (there is only the one dangerous mode);
+- a parse-based shell-command classifier that gates shell calls (read-safe vs. mutating). Nothing
+  is gated — there is no `safety/shell-classifier.ts`.
 
-**Read-back format:** "I'm about to [verb] [object]. Say 'confirm' to proceed."
-- `[verb]` = one word (delete, overwrite, push)  
-- `[object]` = ≤3 words (e.g., "auth.ts", "main branch", "the database")
-- The word "confirm" is reserved exclusively for this gate — it cannot be used in any other context
-
-**Dead-man timer:** armed at read-back emission. 25s (midpoint of 20–30s range, giving
-humans enough time to react). On timeout: action aborts, process emits E5, logs
-`safety.resolution {confirmed: false, timedOut: true}`.
-
-**Why 25s not 20s:** 20s is the lower bound but can be tight in a busy room where someone
-mis-hears and the team needs to confer. 30s is too long for genuinely urgent actions. 25s
-is the empirically-supported midpoint from aviation dead-man-switch design (30s is used for
-non-time-critical systems; 20s for time-critical ones; 25s for mixed-criticality).
-
-**Dangerous mode (opt-in by voice):** "Enable dangerous mode" disables the confirmation gate
-for the current session only. Re-confirmed on each session start with a spoken warning:
-"Dangerous mode is on. Destructive actions will execute without confirmation."
+**Routing authority still lives in deterministic code** (the LLM scores quality/intent; code decides
+where an utterance goes), but execution is ungated. **Safety, when we want it later, comes from
+sandboxing the whole process — not from permission classification.**
 
 **See decision D-DD-06.**
 

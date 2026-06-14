@@ -8,16 +8,18 @@
 > `artifacts/smithering/research/domain.md`, `artifacts/smithering/research/prior-art.md`.
 > Predecessor: `docs/planning/02-design-draft.md` (reviewed → approved).
 >
-> This doc translates PRD requirements into concrete design decisions and — first and foremost —
-> the **verification plan that proves each decision works**. Per the operating bar, the
-> verification plan is the centerpiece, not an afterthought: every design component below carries
-> an inline **Verify** block (the specific unit/integration tests AND end-to-end tests that prove
-> it), and §13 consolidates them into a single component→test→observability matrix. Decisions are
-> recorded in §14 with rationale; significant final-pass judgment calls also have standalone HTML
-> decision docs (§16).
+> This doc translates PRD requirements into concrete design decisions. We verify **our integration**
+> with the third-party libraries (Cue, Smithers, ASR, TTS, the decision LLM) — not the libraries'
+> own internal correctness. Cue is battle-tested by Etheria; we do not re-verify it. Our job is to
+> prove the **seams we own** work: typed provider interfaces at every boundary, mocked/doubled in
+> tests, plus a few real-API probes that confirm the shapes we depend on. Tunable parameters are
+> passed in via documented ENV vars and tuned by feel later. Each design component below carries an
+> inline **Verify** block (integration tests over our adapter, plus targeted e2e), and §13
+> consolidates them into a single component→test→observability matrix. Decisions are recorded in §14
+> with rationale; significant final-pass judgment calls also have standalone HTML decision docs (§16).
 >
 > **Reading order for a verifier:** §1 (how verification is treated) → §13 (the consolidated
-> matrix and harness) → §11 (the real-API probe gates). The design sections (§2–§10, §12) exist to
+> matrix and harness) → §11 (the real-API probe gates). The design sections (§2–§10) exist to
 > be tested; each ends with its own Verify block so no behavior is described without the test that
 > proves it.
 
@@ -25,62 +27,72 @@
 
 ## 0. What changed in the final orchestrator pass
 
-This document supersedes `02-design-draft.md`. The draft was approved; this pass tightens it and
-closes four concrete gaps the draft left open. Nothing from the approved draft was removed; the
-changes are additive or corrective.
+This document supersedes `02-design-draft.md`. The draft was approved; this pass tightens it,
+**cuts scope to ship V0 fast**, and resolves a few concrete gaps. The overall posture: run
+dangerously / run-to-completion, trust the voice library, make everything env-tunable and tune by
+feel later.
 
-1. **Validation & observability promoted to the structural centerpiece.** Every design section now
-   carries an inline **Verify** block (unit AND e2e, with the red-before-green failure injection
-   named). §13 adds a full per-component verification matrix, a boundary/fuzz/benchmark catalog
-   sized to the 10×–100× bar, and the structured-log schema. §11 now names the **exact** third-party
-   API surface each probe must exercise against the real library, with the assertions that gate
-   build. (Decision **D-DD-25**, HTML: `validation-as-centerpiece.html`.)
-2. **Concrete mute/unmute words chosen.** The draft (and PRD) carried a `[mute word]` placeholder
-   and used the conversational words "Mute"/"Listen" — which `design-art.md` §4 explicitly warns
-   against. Final pass selects **"Curtain"** (mute) and **"Daybreak"** (unmute): rare,
-   plosive-leading, 2 syllables, a paired metaphor, provisional pending P-CUE acoustic validation.
-   (Decision **D-DD-21**, HTML: `mute-unmute-words.html`.)
-3. **The "no observations while muted" vs. voice-unmute contradiction resolved.** REQ-2 AC2.3 says
-   *no observations are produced while muted*, but D1 makes voice the sole operational modality —
-   so something must still hear "Daybreak." Final pass specifies an **on-device unmute keyword
-   spotter** that runs while muted: it streams nothing to the cloud ASR, persists nothing, and
-   emits exactly one event class (`mute.released`) — preserving AC2.3 while keeping unmute
-   hands-free. (Decision **D-DD-22**, HTML: `mute-local-spotter.html`, new §12.)
-4. **"Exactly 5 earcons" reconciled with routing-acks.** The draft said "exactly 5 earcons, no
-   more" then added routing acks ("tick-tick", "whoosh"). Final pass makes the layering explicit
-   and intentional: the 5 are the **tonal state earcons**; routing acks are a separate,
-   deliberately **non-tonal** ack layer, categorically distinguishable so the two never collide.
-   (Decision **D-DD-23**, HTML: `earcon-vs-routing-ack-layering.html`.)
-5. **Command vocabulary tiered into always-hot vs. state-gated.** This explains why "Yes"/"Accept"
-   may be acceptance words despite the no-conversational-words rule (they are only matched inside
-   the narrow pending-suggestion window), and why callsigns/wake/mute/panic must pass the strict
-   rarity+collision bar (they are always live). The collision-resistance bar **scales with the cost
-   of a false trigger**. (Decision **D-DD-24**, HTML: `always-hot-callsigns.html`.)
+1. **Verification is integration-only.** We verify **our seams** with the third-party libraries, not
+   the libraries themselves — Cue is battle-tested by Etheria. The mechanism is typed provider
+   interfaces at every boundary (mockable in tests) plus a few real-API probes (§11) for the shapes
+   we depend on. Tunable parameters (timeouts, suggestion cadence/gates, thresholds, latency
+   budgets, word lists) are passed in via **documented ENV vars** and tuned by feel later. The
+   formal labeled "restraint-metric" replay corpus is **dropped**; suggestion restraint is just
+   env-tunable params. (Decision **D-DD-25**.)
+2. **Concrete mute/unmute words chosen — plain English.** The draft (and PRD) carried a `[mute word]`
+   placeholder and used "Mute"/"Listen". Final pass selects the plain words **"mute"** and
+   **"unmute"**; the voice library (Cue) handles wake/keyword robustness, so no exotic
+   collision-resistant words are needed. (Decision **D-DD-21**.)
+3. **Unmuting while muted needs no custom subsystem.** "Muted" means: stop feeding audio into the
+   suggestion/routing pipeline. The voice library (Cue) keeps listening for "unmute" even while
+   muted, so there are **two ways to unmute: say "unmute", or press the on-screen unmute button.**
+   We do **not** build a custom on-device keyword spotter. (Decision **D-DD-22**, §12.)
+4. **Ignored ambient speech is silent.** Earcons and acks exist for explicit state transitions
+   (wake, spawn, mute, halt, …) and for **addressed** commands, but un-addressed / ignored ambient
+   speech (`observe.pass` / `route.pass`) makes **no sound** — by definition, not as a tunable knob.
+   The 5 tonal state earcons remain; addressed-command acks remain. (Decision **D-DD-23**.)
+5. **No tiered vocabulary in V0.** The always-hot vs. state-gated vocabulary split is **deferred** —
+   the voice library handles wake/keyword activation. Revisit later only if it becomes a problem.
+   (Decision **D-DD-24**.)
+6. **Safety scope cut.** No per-action read-back/confirm gate, no dead-man timer, no
+   Safe/Explicit/Dangerous mode switching, no shell-command classifier. V0 runs **dangerously /
+   run-to-completion**. Safety later = sandbox the process, not permission gating. (See §8.)
+7. **Credentials simplified.** Assume the host is logged in to its OpenAI Codex and Anthropic Claude
+   subscriptions; model calls use those. No raw API keys, no elaborate credential-provider
+   abstraction, no Cerebras/Haiku hot-loop specifics. (See §11.)
 
 ---
 
 ## 1. How verification is treated in this document (the bar)
 
-We hold an **extremely high validation bar**: assume **no behavior works until a test that was
-capable of failing proves it works**. "The agent said it's done" is never evidence. This is not a
-closing checklist — it shaped every decision below.
+We verify **our integration with the third-party libraries — not the libraries themselves.** Cue is
+battle-tested by Etheria; Smithers, the ASR/TTS providers, and the decision LLM each own their own
+correctness. Our job is to prove the **seams we own** behave: the adapter, the routing/dispatch
+logic, the output policy, the state machine. The mechanism is **typed provider interfaces at every
+external boundary, mocked or doubled in tests**, plus a small number of real-API probes (§11) that
+confirm the exact shapes we depend on.
 
-- **Unit/integration AND end-to-end — it is an AND.** Every behavior gets both. The bar: if we
-  deleted either layer, the surviving layer alone should still leave us *fairly confident* the
-  behavior holds. Each Verify block names both.
-- **Red-before-green is mandatory.** Each test must be demonstrated capable of failing before it is
-  trusted. Every Verify block names the **failure injection** that proves the test can go red
-  (remove the guard / breach the budget / cross the boundary), then is restored to green.
-- **10×–100× more verification than a human would write.** The criteria here are the *floor*. §13.5
-  catalogs the corner cases, error paths, boundary conditions (empty / largest / silence /
-  simultaneous-speaker / mis-transcription), fuzz inputs, and benchmarks that each component must
-  additionally carry. Performance-critical paths (the ≤300 ms earcon, the <1 s round-trip) get
-  recorded benchmark baselines that fail on regression.
-- **Validate third-party APIs against the real thing first.** Cue, Smithers, the ASR provider, the
-  TTS provider, and the cheap/fast decision LLM are all **non-framework third-party dependencies**.
-  Per §11, each is exercised by a probe that calls the **real** API and asserts the exact methods,
-  arguments, and return shapes we rely on — **before** any product code is built on it. React and
-  standard libraries are exempt. **P-CUE is a P0 blocker** (see §11.1, §15).
+- **Test the seams we own, with doubles.** Every external dependency sits behind a typed provider
+  interface (§11). Integration tests exercise our adapter/dispatch/policy code against **mocks or
+  doubles** of those interfaces, so the tests run fast and deterministically and don't re-prove
+  third-party behavior. This is what makes the design mockable end to end.
+- **Red-before-green where it's cheap and meaningful.** For the seams we own, a test should be shown
+  capable of failing before it is trusted (remove the guard / breach the budget / cross the
+  boundary, then restore). Verify blocks below name the failure injection where it adds confidence —
+  but this is a tool, not a per-line mandate; we don't gold-plate.
+- **Targeted e2e on the spine.** The full voice loop (wake → intent → action → ack) and a few
+  isolation/durability scenarios get end-to-end coverage against the live stack. We don't catalog
+  exhaustive 10×–100× fuzz matrices for V0 — boundary/error cases are covered where they protect a
+  real invariant.
+- **Confirm third-party API shapes against the real thing first.** Cue, Smithers, the ASR provider,
+  the TTS provider, and the decision LLM are **third-party dependencies**. Per §11, each is exercised
+  by a probe that calls the **real** API and asserts the methods, arguments, and return shapes our
+  adapter relies on — **before** product code is built on it. We confirm the *shape of the seam*, not
+  the library's internal correctness. **P-CUE is a P0 blocker** (see §11.1, §15).
+- **Tunable parameters are env-driven.** Timeouts, suggestion cadence/gates, thresholds, latency
+  budgets, and word lists are passed in via **documented ENV vars** (each with a default), and tuned
+  by feel later from real-world UX. Tests assert invariants ("≤3 MCQs", "fires within the configured
+  budget"), not magic numbers.
 - **Observability is a build requirement, not a nicety.** Every decision, action, route, and state
   transition emits a structured, leveled log line (schema in §13.3) carrying stable ids
   (`sessionId`, `correlationId`, `upid`) so a later agent with **no context** can reconstruct any
@@ -100,20 +112,18 @@ Acoustic-testing fallbacks if "Panop" collides with the team's ambient vocabular
 "Opticon". The wake word gates only the general attention/status flow (see §5 tiering); it is
 **not** required to address an already-running process by callsign.
 
-### 2.2 Mute / unmute words — "Curtain" / "Daybreak" (final-pass decision)
+### 2.2 Mute / unmute words — "mute" / "unmute" (final-pass decision)
 
-The draft left `[mute word]` unbound and used "Mute"/"Listen" — both of which appear in ordinary
-team speech ("can you mute that", "listen, I think…"), which `design-art.md` §4 explicitly warns
-against for always-hot words. Final pass selects:
+The draft left `[mute word]` unbound. Final pass selects the **plain English words**:
 
 | Function | Word | Why |
 |----------|------|-----|
-| Mute | **"Curtain"** | Rare in technical conversation; 2 syllables; /k/ plosive onset (design-art §1); metaphor "curtain drawn = not listening". |
-| Unmute | **"Daybreak"** | Rare; 2 syllables; /d/ plosive onset; paired metaphor "day breaks = listening resumes"; drives the on-device unmute spotter (§12). |
+| Mute | **"mute"** | The obvious word for the action; no onboarding friction. |
+| Unmute | **"unmute"** | The obvious paired word; recognized by Cue even while muted (§12). |
 
-Both are **provisional pending P-CUE acoustic validation** against the team's actual vocabulary and
-against "Panop"/"Abort"/all active callsigns (collision guard §5.3). Mute is **highest priority**:
-it pre-empts every other cue (REQ-2 AC2.2). See **D-DD-21**.
+The voice library (Cue, by Etheria) handles wake/keyword robustness, so we do **not** need exotic
+collision-resistant words here. Mute is **highest priority**: it pre-empts every other cue (REQ-2
+AC2.2). See **D-DD-21**.
 
 ### 2.3 Panic word — "Abort"
 
@@ -124,17 +134,15 @@ conversation, 2 syllables, phonetically distinct from all other commands, and is
 
 ### 2.4 Verify (words & priority)
 
-- **Unit/integration:**
+- **Integration (against Cue/ASR doubles):**
   - *Priority ladder test* — on a single utterance containing co-occurring triggers, assert the
     resolved order is **mute > panic > stop > steer > suggest > pass** (REQ-2 AC2.2, REQ-12 AC12.2).
     *Red-before-green:* swap mute below panic in the comparator → test fails; restore → passes.
-  - *Word-rarity/collision test* — assert "Panop", "Curtain", "Daybreak", "Abort", and every active
-    callsign pairwise pass the collision guard (Metaphone + phoneme-Levenshtein ≤2, §5.3).
-    *Red-before-green:* inject "Listen" as the unmute word → collision with conversational corpus
-    flags it → test fails; restore "Daybreak" → passes.
-- **E2e:** live session — speak each always-hot word in isolation and assert its documented effect;
-  speak a near-homophone in casual speech and assert **no** misfire; speak "Curtain"+"Abort" in one
-  breath and assert mute wins and nothing is halted-then-heard.
+  - *Collision-guard test* — assert the collision guard rejects a proposed callsign within
+    phoneme-Levenshtein ≤2 of an active callsign / wake / mute / unmute / panic word (§5.3).
+    *Red-before-green:* add a near-homophone of an active callsign → must reject.
+- **E2e:** live session — speak each command word in isolation and assert its documented effect;
+  speak "mute"+"abort" in one breath and assert mute wins and nothing is halted-then-heard.
 - **Third-party:** P-CUE (`TextCue` match semantics, §11.1), P-ASR (finalization timing, §11.3).
 - **Observability:** `wake.detected`, `mute.engaged`, `mute.released`, `process.halt{trigger:panic}`
   — each with `correlationId`, the triggering `utteranceId`, and measured `latencyMs`.
@@ -144,8 +152,9 @@ conversation, 2 syllables, phonetically distinct from all other commands, and is
 ## 3. Earcon & routing-ack design (REQ-9, REQ-5 AC5.3) — two intentionally separate layers
 
 The system speaks through **two categorically different non-verbal layers** so they can never be
-confused. This resolves the draft's "exactly 5 earcons, no more" vs. the routing acks (see
-**D-DD-23**, `earcon-vs-routing-ack-layering.html`).
+confused. The guiding rule: **ignored ambient speech is silent.** Earcons and acks fire for explicit
+state transitions and for **addressed** commands; un-addressed / ignored ambient speech
+(`observe.pass` / `route.pass`) makes **no sound** (see **D-DD-23**).
 
 ### 3.1 Layer A — the 5 tonal state earcons (fixed for V0)
 
@@ -164,32 +173,36 @@ under conversational noise, and **≤500 ms** — earcons signal, they do not pe
 continuously while muted. Contrast: *nothing* = listening; *persistent low tone* = muted — the
 inverse of E2, unmistakable.
 
-### 3.2 Layer B — routing acks (deliberately non-tonal, so they never collide with Layer A)
+### 3.2 Layer B — addressed-command acks (deliberately non-tonal, so they never collide with Layer A)
 
-Per-utterance routing receipts use **non-tonal** signatures (clicks/whoosh), categorically distinct
-from the tonal earcons:
+Receipts for **addressed** commands use **non-tonal** signatures (clicks/whoosh), categorically
+distinct from the tonal earcons. **Ignored ambient speech is silent** — there is no ack for
+un-addressed speech:
 
 - `route.steer:X` → brief double-click ("tick-tick") after the wake/ack — "routed to a process".
 - `route.suggestion` → single soft "whoosh" — "fed the suggestion engine".
-- `route.pass` → **silence** — the deliberate ack for `observe.pass`.
+- `route.pass` / `observe.pass` (ignored ambient) → **silence**, by definition. Un-addressed speech
+  makes no sound; this is not a tunable knob.
 
 **Roger vs. Wilco (ATC):** receipt ≠ compliance. E1 (wake chime) = "I heard the wake word"; E3
 (spawn) = "I'm acting on the acceptance." These must never be the same sound (see **D-DD-17**).
 
 ### 3.3 Verify (earcons & acks)
 
-- **Unit/integration:**
-  - *Earcon-dispatch latency test* (mocked clock) — E1 fires ≤300 ms after the wake transcript is
-    `isFinal`; dispatch is **never gated** on Smithers/LLM/TTS. *Red-before-green:* set budget to
-    100 ms → fails; relax to 300 ms → passes (REQ-10 AC10.1).
+- **Integration (against doubles):**
+  - *Earcon-dispatch latency test* (mocked clock) — E1 fires within the configured earcon budget
+    (`EARCON_BUDGET_MS`, default 300) after the wake transcript is `isFinal`; dispatch is **never
+    gated** on Smithers/LLM/TTS. *Red-before-green:* set the budget env to 100 ms → fails; restore
+    default → passes (REQ-10 AC10.1).
   - *Acoustic-distinctness fixture* — assert E1–E5 differ in both pitch register and rhythm
     descriptor, and that every Layer-B ack is non-tonal (no pitched content), so Layer A and Layer B
-    are disjoint by construction. *Red-before-green:* give a routing ack a pitched tone → overlap
-    detector flags it → fails.
+    are disjoint by construction. *Red-before-green:* give an ack a pitched tone → overlap detector
+    flags it → fails.
   - *Output-class → channel map test* — each trigger class resolves to exactly one of
-    {silent, earcon, tts} (§7). *Red-before-green:* route "routine tick" → tts → fails.
+    {silent, earcon, tts} (§7), and ignored ambient (`observe.pass` / `route.pass`) maps to
+    **silent**. *Red-before-green:* route "routine tick" or `observe.pass` → tts/earcon → fails.
 - **E2e:** representative recorded session — assert each state transition emits its mapped earcon
-  (REQ-5 AC5.3), the mute tone replaces E2 on "Curtain", and `observe.pass` emits **silence** (a
+  (REQ-5 AC5.3), the mute tone replaces E2 on "mute", and **ignored ambient speech emits silence** (a
   positive assertion that no ack was emitted, not merely "nothing logged").
 - **Third-party:** P-LLM/P-CUE for the decision that *selects* the class (the class→sound map itself
   is local and framework-free).
@@ -201,7 +214,8 @@ from the tonal earcons:
 
 ### 4.1 Gate: room-interrupt cost, not just suggestion quality
 
-The REQ-3 floor (≥60 words **OR** ≥90 s of substantive talk) is the right shape. The design adds
+The REQ-3 floor (≥60 words **OR** ≥90 s of substantive talk) is the right shape; the thresholds are
+**env-tunable** (`SUGGEST_MIN_WORDS` default 60, `SUGGEST_MIN_SECONDS` default 90). The design adds
 **room-interrupt cost** as a first-class dimension — a spoken suggestion is a broadcast interrupt
 with no per-person opt-out (`design-art.md` §3):
 
@@ -212,9 +226,11 @@ fire = gate_passed AND quality >= quality_threshold AND interrupt_cost <= cost_c
 `interrupt_cost` rises with: active speech velocity (words/min over last 30 s), utterance recency
 (ended <5 s ago = high), and any pending steerings (in-flight work = elevated). A suggestion fires
 only when `gate_passed AND (interrupt_cost low OR room idle ≥10 s)`. Otherwise it is **queued** and
-delivered on the next idle gap (Cue `IdleCue`, §11.1). A queued suggestion **expires after 90 s**
-with no idle gap (logged `suggestion.expired`, **not** spoken) — a 90-s-old idea about a topic the
-room has moved past is stale (see **D-DD-15**).
+delivered on the next idle gap (Cue `IdleCue`, §11.1). A queued suggestion **expires after**
+`SUGGEST_TTL_SECONDS` (default 90) with no idle gap (logged `suggestion.expired`, **not** spoken) — a
+stale idea about a topic the room has moved past should not resurface (see **D-DD-15**). All of these
+— quality threshold, cost ceiling, cadence, TTL — are **env-tunable params with documented defaults,
+tuned by feel later**; there is no formal labeled corpus or restraint metric for V0.
 
 ### 4.2 Delivery format
 
@@ -226,21 +242,22 @@ the ceiling — brevity signals confidence (`design-art.md` §3). See **D-DD-03*
 
 ### 4.3 Verify (suggestion engine)
 
-- **Unit/integration:**
-  - *Gate-boundary tests* — 59 words → `observe.pass`; 61 → eligible; 89 s → pass; 91 s → eligible.
-    *Red-before-green:* move the threshold to 50 words → the 59-word case fires → fails.
+- **Integration (against Cue/LLM doubles):**
+  - *Gate-boundary tests* — at the configured `SUGGEST_MIN_WORDS`, one-below → `observe.pass`,
+    at/above → eligible (likewise for `SUGGEST_MIN_SECONDS`). *Red-before-green:* lower the env
+    threshold → the previously-passing case fires → fails.
   - *MCQ-count invariant* — never emit >3 MCQs. *Red-before-green:* force 4 → fails.
   - *Interrupt-cost test* — with speech velocity high / utterance <5 s old, a gate-passed suggestion
     is **queued, not spoken**; with room idle ≥10 s it fires. *Red-before-green:* zero out
     `interrupt_cost` → it fires mid-speech → fails.
-  - *Expiry test* — a queued suggestion with no idle gap for 90 s is discarded and logged
-    `suggestion.expired`, never spoken.
-  - *Live-knob test* — cadence and TTL patch at runtime without restart (AC3.5).
-- **E2e:** the **annotated replay suite** (record-replay harness, temperature-0 decisions, §13.1) —
-  assert recall **≥80%** on ground-truth "should suggest" segments and **≤1 false-positive / 10 min**
-  on "should pass" audio (AC3.4); assert idle-preference (a queued idea is held until an idle gap,
-  never spoken over active talk). *Red-before-green:* shuffle the ground-truth labels → recall
-  collapses → suite fails, proving it discriminates.
+  - *Expiry test* — a queued suggestion with no idle gap for `SUGGEST_TTL_SECONDS` is discarded and
+    logged `suggestion.expired`, never spoken.
+  - *Live-knob test* — cadence and TTL re-read from env without a code change (AC3.5).
+- **E2e:** scripted-audio session over the record-replay harness (temperature-0 decisions, §13.1) —
+  assert **idle-preference** (a queued idea is held until an idle gap, never spoken over active talk)
+  and that ignored ambient yields `observe.pass` with no sound. Suggestion restraint is **tuned by
+  feel** against documented env defaults; there is no formal labeled corpus or recall/false-positive
+  metric gate for V0.
 - **Third-party:** P-CUE (`WordCountCue`, `IdleCue`, `IntervalCue`, `cooldownSeconds`, `observe.pass`),
   P-LLM (cheap/fast scoring, temperature-0 determinism).
 - **Observability:** every decision — **fire and every `observe.pass`** — logs `{policy, wordCount,
@@ -253,46 +270,41 @@ the ceiling — brevity signals confidence (`design-art.md` §3). See **D-DD-03*
 Commands are deterministic: **same transcript → same routing decision, every time** (record-replay
 confirms, AC7.3).
 
-### 5.1 Tiered vocabulary — always-hot vs. state-gated (final-pass decision)
+### 5.1 Vocabulary — flat magic-word set (no tiering in V0)
 
-The vocabulary splits into two tiers; the **collision-resistance bar scales with the cost of a
-false trigger** (see **D-DD-24**, `always-hot-callsigns.html`):
+V0 ships a **flat set of magic words**; the voice library (Cue) handles wake/keyword activation, so
+we do **not** implement a tiered always-hot vs. state-gated vocabulary. Context still matters for a
+few words — "Yes"/"Accept" only mean *accept* while a suggestion is pending; "Done"/"Back" only
+close a steering window when one is open — but this is plain per-state command handling in our
+dispatch logic, not a separate vocabulary-tiering subsystem with its own collision bar.
 
-- **Always-hot** (matched at any time, so they must be rare/non-conversational and pass the §5.3
-  collision guard): wake ("Panop"), every process **callsign**, mute ("Curtain"), unmute
-  ("Daybreak"), panic ("Abort"), targeted stop ("Halt"). High-misfire-cost words (mute, panic,
-  callsigns) get the **strictest** bar; low-cost words ("Status", whose only effect is a ≤15-word
-  read-out) tolerate more conversational overlap.
-- **State-gated** (matched **only** inside a narrow context window, so they may reuse natural
-  words): accept ("Yes"/"Accept"/"Do it") and decline ("No"/"Nah"/"Skip") — active **only** in
-  `SUGGESTION_DELIVERY`; "Done"/"Back" — active only inside an open steering window; "Confirm" —
-  active **only** while a destructive read-back is pending (§8). This is why "Yes" is a legal accept
-  word despite `design-art.md` §4's no-conversational-words rule: it is never live except as a
-  direct answer to a question the system just asked.
+> **Deferred (revisit later only if needed):** the original design split the vocabulary into
+> always-hot (rare words matched anytime) vs. state-gated (natural words matched only inside a narrow
+> window), with a collision-resistance bar scaling with false-trigger cost. That tiering is **not a
+> V0 requirement** — Cue's wake/keyword robustness makes it unnecessary for now (see **D-DD-24**).
 
 ### 5.2 V0 magic-word vocabulary
 
-| Command | Spoken form | Tier | Effect |
-|---------|-------------|------|--------|
-| Wake | "Panop" | always-hot | Opens active-listen window for next utterance |
-| Accept | "Yes" / "Accept" / "Do it" | state-gated (suggestion) | Accepts pending suggestion → spawns |
-| Decline | "No" / "Nah" / "Skip" | state-gated (suggestion) | Declines pending suggestion → no-op |
-| Select-and-steer | "[callsign], [instruction]" | always-hot (callsign) | Selects process, opens steering window, routes instruction |
-| Select only | "[callsign]" | always-hot | Selects process, opens steering window |
-| Steer | (after select) "[instruction]" | state-gated (window) | Routes instruction to selected process |
-| End steering | "Done" / "Back" | state-gated (window) | Closes the steering window |
-| Pause all | "Pause all" | always-hot | Pauses all running processes |
-| Status | "Status" | always-hot (low-cost) | Speaks brief summary of active processes (≤15 words) |
-| Stop (targeted) | "Stop" / "Halt" | always-hot | Halts the currently selected process |
-| Panic (global) | "Abort" | always-hot | Halts all processes, closes steering windows |
-| Mute | "Curtain" | always-hot | Stops cloud audio streaming (§12) |
-| Unmute | "Daybreak" | always-hot (local spotter) | Resumes audio streaming (§12) |
-| Confirm | "Confirm" | state-gated (read-back) | Confirms a pending destructive-action read-back |
+| Command | Spoken form | Effect |
+|---------|-------------|--------|
+| Wake | "Panop" | Opens active-listen window for next utterance |
+| Accept | "Yes" / "Accept" / "Do it" | Accepts pending suggestion → spawns (only while a suggestion is pending) |
+| Decline | "No" / "Nah" / "Skip" | Declines pending suggestion → no-op (only while a suggestion is pending) |
+| Select-and-steer | "[callsign], [instruction]" | Selects process, opens steering window, routes instruction |
+| Select only | "[callsign]" | Selects process, opens steering window |
+| Steer | (after select) "[instruction]" | Routes instruction to selected process (inside an open window) |
+| End steering | "Done" / "Back" | Closes the steering window |
+| Pause all | "Pause all" | Pauses all running processes |
+| Status | "Status" | Speaks brief summary of active processes (≤15 words) |
+| Stop (targeted) | "Stop" / "Halt" | Halts the currently selected process |
+| Panic (global) | "Abort" | Halts all processes, closes steering windows |
+| Mute | "mute" | Stops feeding audio into the suggestion/routing pipeline (§12) |
+| Unmute | "unmute" | Resumes the pipeline (Cue hears "unmute" even while muted) (§12) |
 
 ### 5.3 Callsign pool & collision guard
 
 A proposed callsign is **rejected** if its Metaphone code matches, **or** its phoneme-Levenshtein
-distance is ≤2 to, any active callsign / wake / mute / unmute / panic word. V0 ships a pre-validated
+distance is ≤2 to, any active callsign / wake / panic word. V0 ships a pre-validated
 NATO subset:
 
 ```
@@ -306,32 +318,30 @@ a halted process's callsign is **not** re-available for **60 s** (muscle-memory 
 
 ### 5.4 Steering-window lifecycle
 
-1. **Opens on:** callsign detection (always-hot), including one-breath "Atlas, make it faster".
+1. **Opens on:** callsign detection, including one-breath "Atlas, make it faster".
 2. **Routes** subsequent speech to the selected UPID **only**.
-3. **Closes on:** "Done"/"Back", **OR** 20 s of mic-level idle, **OR** "Abort".
-4. **While open:** the Layer-B routing ack (§3.2) marks each routed utterance.
+3. **Closes on:** "Done"/"Back", **OR** `STEER_IDLE_SECONDS` (default 20) of mic-level idle, **OR** "Abort".
+4. **While open:** the Layer-B addressed-command ack (§3.2) marks each routed utterance.
 
 ### 5.5 Verify (vocabulary & routing)
 
-- **Unit/integration:**
+- **Integration (against Cue doubles):**
   - *Dispatch-invariant test* — a steering verb with no in-utterance callsign and no open window is
-    **rejected at dispatch, not by the LLM** (REQ-6 AC6.1). *Red-before-green:* remove the guard →
-    un-addressed talk steers a process → fails; restore → passes.
+    **rejected in deterministic dispatch, not by the LLM** (REQ-6 AC6.1). *Red-before-green:* remove
+    the guard → un-addressed talk steers a process → fails; restore → passes.
   - *Routing-exclusivity test* — each utterance resolves to exactly one of {suggestion, steer:X, pass}.
-  - *Tier-gating test* — "Yes" outside `SUGGESTION_DELIVERY` is inert (does not accept anything);
-    "Confirm" outside a pending read-back is inert. *Red-before-green:* make "Yes" always-hot → a
-    casual "yes" spawns a process → fails.
-  - *Collision-guard test* — reject a callsign within distance ≤2 of an active one / wake / mute /
-    panic. *Red-before-green:* add "Delta" while "Della"-like is active → must reject.
+  - *Per-state command test* — "Yes" with no suggestion pending is inert (does not accept anything).
+    *Red-before-green:* make "Yes" accept unconditionally → a casual "yes" spawns a process → fails.
+  - *Collision-guard test* — reject a callsign within distance ≤2 of an active one / wake / panic.
+    *Red-before-green:* add "Delta" while a "Della"-like callsign is active → must reject.
   - *Determinism test* — replay the same transcript N× → identical decisions every time.
-  - *Window-lifecycle test* — open on callsign; close on "Done" / 20 s idle / "Abort".
-  - *Re-use cooldown test* — a halted callsign is unavailable for 60 s.
+  - *Window-lifecycle test* — open on callsign; close on "Done" / idle / "Abort".
+  - *Re-use cooldown test* — a halted callsign is unavailable for the cooldown window.
 - **E2e:** live multi-utterance script — un-addressed talk only ever feeds suggestions (never
-  steers); one-breath select-and-steer routes correctly; a near-homophone of a callsign in casual
-  speech does **not** mis-select; each documented command yields its documented effect; an
-  undocumented phrase yields no command.
+  steers); one-breath select-and-steer routes correctly; each documented command yields its
+  documented effect; an undocumented phrase yields no command.
 - **Third-party:** P-CUE (`TextCue`, `SpeakerWordCue`, two-`Program` routing).
-- **Observability:** `command.recognize{phrase, matchedCommand|null, tier, distanceScore}`,
+- **Observability:** `command.recognize{phrase, matchedCommand|null, distanceScore}`,
   `route{utteranceId, route, targetUPID|null, ackKind}`.
 
 ---
@@ -348,21 +358,23 @@ IDLE ──[wake word]──► ACTIVE_LISTEN
   │                        │            [accept]──► SPAWN ──► PLANNING
   │                        │            [decline]──► IDLE
   │                        │
-  │            [callsign]──► STEERING_WINDOW(UPID)         ← always-hot: no wake needed
+  │            [callsign]──► STEERING_WINDOW(UPID)         ← callsign select: no wake needed
   │                              │
   │                    [instruction]──► STEER(UPID) ──► ACK ──► STEERING_WINDOW
   │                    [done/idle20s]──► IDLE
   │                    [abort]──► GLOBAL_HALT
   │
-  └──[mute word]──► MUTED (always wins from any state; only "Daybreak" via §12 local spotter exits)
+  └──[mute]──► MUTED (always wins from any state; exits on "unmute" — heard by Cue, §12 —
+              or the on-screen unmute button)
 ```
 
 ### 6.2 Stage-transition audibility (AC5.3)
 
 Every transition emits an identifiable signal: IDLE→ACTIVE_LISTEN = E1; →SUGGESTION_DELIVERY = soft
 spoken pitch begins; ACCEPT→SPAWN = E3 + spoken callsign; STEERING_WINDOW open = Layer-B tick-tick
-per routed utterance; STEER→ACK = spoken read-back ≤7 words ("Got it: [summary]"); HALT = E5 +
-spoken callsign + "halted"; MUTED = E2 silent, persistent low tone starts.
+per routed utterance; STEER→ACK = spoken confirmation ≤7 words ("Got it: [summary]"); HALT = E5 +
+spoken callsign + "halted"; MUTED = E2 silent, persistent low tone starts. **Ignored ambient speech
+emits no signal** (silence).
 
 ### 6.3 Sub-second acknowledgement (REQ-10) & correlation threading
 
@@ -373,15 +385,15 @@ reconstructs the full loop.
 
 ### 6.4 Verify (the spine)
 
-- **Unit/integration:** *stage-sequencer test* drives all four stages through the happy path **and**
-  each single-stage failure (mis-heard wake, empty intent, action error, TTS failure), asserting
-  the correct recovery/ack at each boundary. *Red-before-green:* drop the ack on the action-error
-  branch → fails.
-- **E2e:** the **canonical scenario test** — scripted audio drives wake→intent→action→confirm
+- **Integration (against doubles):** *stage-sequencer test* drives all four stages through the happy
+  path **and** each single-stage failure (mis-heard wake, empty intent, action error, TTS failure),
+  asserting the correct recovery/ack at each boundary. *Red-before-green:* drop the ack on the
+  action-error branch → fails.
+- **E2e:** the **canonical scenario test** — scripted audio drives wake→intent→action→ack
   against the live stack; run **≥10×**, assert **≥9 pass** (AC5.2) with each failure attributable to
-  a logged cause; a **no-screen harness** asserts **zero** GUI/keyboard events were consumed
-  (AC5.1). *Red-before-green:* feed a build with a broken dispatcher → ≥2 runs fail → suite reports
-  red, proving it can detect spine breakage.
+  a logged cause; a **no-screen harness** asserts **zero** GUI/keyboard events were consumed on the
+  critical path (AC5.1). *Red-before-green:* feed a build with a broken dispatcher → ≥2 runs fail →
+  suite reports red, proving it can detect spine breakage.
 - **Third-party:** P-CUE + P-ASR + P-TTS + P-SMITHERS + P-SEAM (all of §11).
 - **Observability:** one `correlationId` threads `wake.detected → decision → action → ack.emit`; a
   single trace query rebuilds the loop (causal-chain test, §13).
@@ -396,26 +408,26 @@ reconstructs the full loop.
 |---------|---------|-----------|
 | Completion / success | TTS | ≤15 words |
 | Blocker / question needed | TTS | ≤15 words |
-| Destructive read-back | TTS | ≤20 words (action + "confirm?") |
 | Explicit "status" ask | TTS | ≤15 words |
 | State transition | Earcon | ≤500 ms |
 | Routine progress / tick | Silent | — |
-| `observe.pass` | Silent | — |
+| Ignored ambient (`observe.pass` / `route.pass`) | Silent | — |
 
 **Never emit to TTS:** file names, diff contents, URLs, stack traces, raw output — summarize instead
 ("The diff is ready. Say 'continue' to apply."). The **15-word guard** is a hard truncator in the
-TTS pipeline stage: count words → ≤15 submit as-is → >15 summarize via the **cheap/fast** LLM (never
-Opus, NG-9) and resubmit. **90%-silence target:** default class is `silent`; a per-session
-TTS-bearing-tick counter tightens the gate (explicit-ask-only) if >10% in a rolling 5-min window.
-**TTS voice:** one consistent, calm, neutral, non-persona voice across all events — selected once
-per session, not per-utterance.
+TTS pipeline stage: count words → ≤15 submit as-is → >15 summarize via the **cheap/fast hot-loop**
+LLM (never the planning model, NG-9) and resubmit. **90%-silence target:** default class is `silent`;
+a per-session TTS-bearing-tick counter tightens the gate (explicit-ask-only) if >10% in a rolling
+5-min window. **Ignored ambient speech is silent by definition.** **TTS voice:** one consistent,
+calm, neutral, non-persona voice across all events — selected once per session, not per-utterance.
 
 ### 7.2 Verify (output policy)
 
-- **Unit/integration:** *class→channel map test* (each trigger → {silent|earcon|tts}); *15-word
-  guard test* (16-word candidate → summarized; 15 → as-is) — *red-before-green:* feed 16 words and
-  remove the guard → recited verbatim → fails; *never-recite test* (file/diff/URL payload is never
-  sent to TTS); *silence-budget test* (>10% TTS-bearing ticks in the window → gate tightens).
+- **Integration (against doubles):** *class→channel map test* (each trigger → {silent|earcon|tts},
+  ignored ambient → silent); *15-word guard test* (16-word candidate → summarized; 15 → as-is) —
+  *red-before-green:* feed 16 words and remove the guard → recited verbatim → fails; *never-recite
+  test* (file/diff/URL payload is never sent to TTS); *silence-budget test* (>10% TTS-bearing ticks
+  in the window → gate tightens).
 - **E2e:** representative session — count TTS-bearing ticks / total, assert **≤10%** (AC9.1); assert
   every TTS utterance is in an allowed class and ≤15 words. *Red-before-green:* inject a chatty build
   → ratio exceeds 10% → test fails.
@@ -424,35 +436,40 @@ per session, not per-utterance.
 
 ---
 
-## 8. Safety & execution posture design (REQ-11)
+## 8. Execution posture design (REQ-11)
 
-### 8.1 Default: Safe + Optimistic
+### 8.1 V0 runs dangerously — run-to-completion, no per-action gate
 
-Processes run autonomously to completion by default. The safety gate fires **only** on
-destructive/irreversible verbs (delete, overwrite, force-push, rm, drop, truncate), classified
-**deterministically at the point the agent produces the action, before execution** — via a static
-verb whitelist; the action payload is never trusted on its own.
+V0 has **one execution mode: dangerous / run-to-completion.** Processes run autonomously to
+completion; there is **no per-action approval, no spoken read-back/confirm gate, and no dead-man
+timer.** You shouldn't need to approve often. Where a confirmation is genuinely needed, the voice
+library (Cue) already handles it — we minimize approvals rather than build a bespoke gate.
 
-**Read-back:** "I'm about to [verb] [object]. Say 'confirm' to proceed." — `[verb]` = one word,
-`[object]` ≤3 words; "confirm" is reserved exclusively for this gate (state-gated, §5.1).
-**Dead-man timer:** armed at read-back emission, **25 s** (mixed-criticality aviation midpoint —
-20 s too tight in a busy room, 30 s too slow for urgent acts; **D-DD-06**). On timeout: action
-aborts, process emits E5, logs `safety.resolution{confirmed:false, timedOut:true}`.
-**Dangerous mode** (opt-in by voice, **session-only**, re-confirmed with a spoken warning each
-session start, **D-DD-19**) disables the gate.
+We **do not** build:
 
-### 8.2 Verify (safety)
+- a `PreToolUse` read-back/confirm hook or a safe-executor that holds destructive tool calls;
+- a 25 s dead-man timer;
+- Safe / Explicit / Dangerous mode switching (there is only the one dangerous mode);
+- a parse-based shell-command classifier that sub-classifies shell calls into read-safe vs.
+  mutating/unknown and gates them. There is **no** `safety/shell-classifier.ts`; nothing is gated.
 
-- **Unit/integration:** *posture state-machine test* — destructive verb in Safe mode → read-back +
-  wait; no "confirm" within 25 s → **abort** (*red-before-green:* let the action fire without
-  confirmation → fails); Dangerous mode bypasses only when explicitly enabled; *error-path/fuzz* —
-  garbled confirm token, "confirm" addressed to the wrong process, double-confirm → all resolve
-  safely, **never double-execute**; *dead-man-timer test* — 25 s elapsed → abort, process not
-  executed (mocked clock).
-- **E2e:** live — instruct a process toward a destructive act; assert read-back + block; withholding
-  "confirm" aborts after the timer; speaking "confirm" proceeds **exactly once**.
-- **Third-party:** P-SMITHERS (pause/steer/cancel mid-run so the gate can actually hold an action).
-- **Observability:** `safety.readback{action}`, `safety.resolution{action, confirmed|aborted|timedout, timerMs}`.
+This is an explicit scope cut. **Routing authority still lives in deterministic code** (§5, E4) — the
+LLM scores quality/intent, code decides where an utterance goes — but execution is ungated.
+
+**Safety, when we want it later, comes from sandboxing the whole process, not from permission
+classification.** That is a future addition (sandbox the run), not a V0 permission/mode system.
+
+### 8.2 Verify (execution posture)
+
+- **Integration (against doubles):** *run-to-completion test* — a destructive-verb action is
+  dispatched to Smithers **without** any read-back, confirm wait, or timer (assert no gate is
+  interposed). *Red-before-green:* re-introduce a blocking confirm gate → the action no longer
+  dispatches in one pass → fails.
+- **E2e:** live — instruct a process toward a destructive act and assert it runs to completion with
+  no spoken approval prompt and no timeout abort.
+- **Third-party:** P-SMITHERS (spawn/steer/cancel a durable run).
+- **Observability:** `process.action{verb, object, gated:false}` — the `gated:false` field is a
+  positive assertion that nothing held the action.
 
 ---
 
@@ -470,8 +487,8 @@ action / UPID + a 5-event action log; a scrollable, **non-auto-scrolling** trace
 **Color semantics (STARS/APCA on dark):** bg `#0a0a0a`; nominal/active `#00ff88`; paused/pending
 `#f5a623`; halted/error `#ff3b30`; selected/in-focus `#00bcd4` (cyan, the Echo active-listening
 color, **D-DD-20**); text `#e0e0e0`. **Violet/purple is prohibited** as a status color (STARS
-human-factors audit). **Blink** is reserved for exactly two states: destructive-read-back pending,
-and emergency-stop triggered (**D-DD-09**). **Auto-scroll disabled**; a "NEW" indicator appears when
+human-factors audit). **Blink** is reserved for exactly one state: emergency-stop triggered
+(**D-DD-09**). **Auto-scroll disabled**; a "NEW" indicator appears when
 events arrive while scrolled up — clicking it scrolls to bottom, the **only** click target and it is
 navigational, never operational (**D-DD-07/08**). Reference mockup:
 `artifacts/smithering/mockups/observability-board.html`.
@@ -498,13 +515,13 @@ The **consent announcement is the entire onboarding** — three sentences, ≤8 
 
 ```
 "Panopticon is listening. Say 'Panop, status' to hear a rundown.
-Say 'Curtain' to pause. [earcon E2 begins]"
+Say 'mute' to pause. [earcon E2 begins]"
 ```
 
-(Updated from the draft's `[mute word]` to the chosen "Curtain".) **Printed A6 magic-word card** (a
-build artifact, posted near the primary mic) is the persistent reference for a zero-screen room —
-**not optional**; it lists the wake word, all magic commands, active callsigns, mute/unmute, and the
-panic word. **Progressive disclosure:** capabilities are not announced, only responded to.
+(Updated from the draft's `[mute word]` to the chosen plain word "mute".) **Printed A6 magic-word
+card** (a build artifact, posted near the primary mic) is the persistent reference for a zero-screen
+room — **not optional**; it lists the wake word, all magic commands, active callsigns, mute/unmute,
+and the panic word. **Progressive disclosure:** capabilities are not announced, only responded to.
 **Near-miss soft landing:** an utterance within Levenshtein ≤2 of a documented command (and no other
 route) → "Did you mean '[closest]'? Say it again to confirm." — disabled after the first 20 min.
 **First-run VAD:** end-of-utterance silence threshold extended **+50%** for the first 5 min
@@ -516,7 +533,7 @@ route) → "Did you mean '[closest]'? Say it again to confirm." — disabled aft
   3 s of start (AC1.1); *near-miss test* — distance-≤2 non-match → soft landing; exact match → no
   prompt; *first-run VAD test* — threshold is +50% for 5 min then reverts (mocked clock).
   *Red-before-green:* make the scheduler fire twice → idempotency test fails.
-- **E2e:** live — assert the consent line is spoken **first**, names the actual mute word "Curtain",
+- **E2e:** live — assert the consent line is spoken **first**, names the actual mute word "mute",
   the listening indicator is active for the whole session, and a post-run disk/log scan finds **zero**
   audio artifacts (REQ-1 AC1.3; *red-before-green:* introduce a `.wav` write path → scan fails).
 - **Third-party:** P-ASR, P-TTS.
@@ -526,11 +543,12 @@ route) → "Did you mean '[closest]'? Say it again to confirm." — disabled aft
 
 ## 11. API & integration design + real-API probe gates
 
-Every probe below calls the **real** library and asserts the **exact** methods/arguments/return
-shapes we depend on, **before** product code is built on it. A probe that *could* fail and *passed*
-is the evidence; docs and memory are not. Probe artifacts live under `artifacts/smithering/probes/`;
-results under `artifacts/smithering/reports/`. All are currently **unrun** — nothing below is
-confirmed yet.
+Every probe below calls the **real** library and asserts the methods/arguments/return shapes **our
+adapter** depends on, **before** product code is built on it. We confirm the *shape of the seam we
+own*, not the library's internal correctness (Cue is battle-tested by Etheria). A probe that *could*
+fail and *passed* is the evidence; docs and memory are not. Probe artifacts live under
+`artifacts/smithering/probes/`; results under `artifacts/smithering/reports/`. All are currently
+**unrun** — nothing below is confirmed yet.
 
 ### 11.1 P-CUE (P0, blocking) — Cue (`github.com/jameslbarnes/cue`)
 
@@ -575,11 +593,14 @@ count and assert it does). Record red-before-green for every assertion.
 
 ### 11.2 P-SMITHERS (P0) + P-SEAM (P0) — durable runs and the Cue↔Smithers seam
 
-All model calls route through **Smithers subscriptions — never a raw API key.** Probe asserts, against
-the real harness: durable-run spawn with seed payload; `streamRunEvents` (SSE) shape; pause/resume;
-steer/signal (mid-run injection); pre-kill context archive; restart recovery to last checkpoint;
-concurrent durable runs (fleet, REQ-13). **Fork may require a fresh seeded run + `parentId` lineage
-rather than a native fork — the probe must determine which.**
+**Credentials:** there are **no raw API keys** and no elaborate credential-provider abstraction. We
+**assume the host machine is already logged in to its OpenAI Codex and Anthropic Claude
+subscriptions** (the local CLIs/subscriptions are available); model calls use those. Model choice
+follows the model-assignment matrix in O4 (see `docs/planning/` orchestration notes). Probe asserts,
+against the real harness: durable-run spawn with seed payload; `streamRunEvents` (SSE) shape;
+pause/resume; steer/signal (mid-run injection); pre-kill context archive; restart recovery to last
+checkpoint; concurrent durable runs (fleet, REQ-13). **Fork may require a fresh seeded run +
+`parentId` lineage rather than a native fork — the probe must determine which.**
 
 **P-SEAM** (the novel integration, no prior art — `prior-art.md` §8): probe asserts a `MappedActionTool`
 action out of Cue invokes the Smithers spawn API, and Smithers SSE run-events flow back into Cue as
@@ -618,68 +639,65 @@ is selected once per session, not per-utterance. The 15-word guard runs **before
 ### 11.5 P-LLM (P0) — cheap/fast decision LLM (hot loop only)
 
 The hot loop (Cue decision layer, suggestion scoring, 15-word summarizer) uses a **cheap/fast model
-only** — target Cerebras-served Llama or Haiku-4.5. **No Opus/Sonnet in the hot loop** (NG-9). The
-per-process planning agent (via Smithers) uses a richer model per subscription config. Probe asserts:
-temperature-0 determinism (record-replay compatibility); p50 latency within the ~100 ms hot-loop
-budget; the emitted action/tool-selection schema matches `MappedActionTool`.
+only** — **no heavy planning model in the hot loop** (NG-9). The specific model follows the O4
+model-assignment matrix and runs against the host's logged-in subscriptions (no raw keys). The
+per-process planning agent (via Smithers) uses a richer model per the same matrix. Probe asserts:
+temperature-0 determinism (record-replay compatibility); p50 latency within the hot-loop budget
+(env-tunable `HOTLOOP_BUDGET_MS`); the emitted action/tool-selection schema matches
+`MappedActionTool`.
 
 ---
 
-## 12. Mute-while-listening architecture — the on-device unmute spotter (final-pass decision)
+## 12. Mute / unmute architecture (final-pass decision)
 
-**The gap caught in this pass:** REQ-2 AC2.3 requires that **while muted, no observations are
-produced and no audio streams to the ASR provider**. But D1 makes voice the sole *operational*
-modality — so *something* must still hear "Daybreak" to unmute hands-free. The draft did not say
-what. (See **D-DD-22**, `mute-local-spotter.html`.)
+**What "muted" means.** Saying "mute" **stops feeding audio into the suggestion/routing pipeline**:
+within 500 ms (AC2.1) the system produces **zero transcript observations, suggestions, or actions**
+(AC2.3), and the transcribing-ambient earcon E2 is replaced by the persistent mute tone (§3.1). The
+voice library (Cue, by Etheria) **still listens for the "unmute" keyword** the whole time — Cue
+already handles always-on keyword listening even while cloud transcription/suggestions are paused, so
+we do **not** build a custom on-device keyword spotter. (See **D-DD-22**.)
 
-**Resolution.** "Curtain" engages a **hard mute of the cloud path** — the audio stream to the ASR
-provider stops within 500 ms (AC2.1), the transcribing-ambient earcon E2 is replaced by the
-persistent mute tone (§3.1), and **zero transcript observations** are produced or persisted (AC2.3).
-While muted, a **minimal on-device keyword spotter** stays active. It:
+**Two ways to unmute:**
 
-- runs **fully local** (no network), so nothing leaves the room and **no raw audio or transcript is
-  written** (preserves NG-6 / AC1.3 / AC2.3 — it is not "the ASR" and produces no observations);
-- matches **exactly one** keyword, "Daybreak", and **emits exactly one event class** on a match —
-  `mute.released` — and nothing else (it cannot transcribe, route, suggest, or steer);
-- on match: re-opens the cloud ASR stream, restores E2, and logs `mute.released{trigger: voice, latencyMs}`.
+1. **Say "unmute."** Cue hears it even while muted and re-opens the pipeline.
+2. **Press the on-screen "unmute" button.** The screen always offers an unmute button — a minimal
+   non-voice control (the bounded off-path hatch of REQ-14) so the room is never trapped muted.
 
-If the local spotter is unavailable on a given host, unmute degrades to the **non-voice emergency
-control** (REQ-14) — which already exists as the bounded off-path safety hatch — so the room is never
-trapped muted. This keeps voice the operational modality without violating "no observations while
-muted."
+On unmute (either path): the suggestion/routing pipeline resumes, E2 is restored, and the system logs
+`mute.released{trigger: voice|button, latencyMs}`.
+
+This keeps voice the operational modality and satisfies "no observations while muted" without a
+bespoke spotter, a P-SPOTTER blocking probe, or any teardown/clean-restart recovery — all removed.
 
 ### 12.1 Verify (mute/unmute)
 
-- **Unit/integration:**
-  - *Mute-latency test* — "Curtain" stops the cloud stream ≤500 ms (mocked clock, AC2.1).
+- **Integration (against Cue/ASR doubles):**
+  - *Mute-latency test* — "mute" stops feeding the pipeline ≤500 ms (mocked clock, AC2.1).
   - *No-observation-while-muted test* — in MUTED state, feed arbitrary speech and assert **zero**
-    observations/suggestions/actions (AC2.3). *Red-before-green:* leave the cloud stream open on
-    mute → observations appear → fails.
-  - *Local-spotter scope test* — the spotter emits **only** `mute.released`; assert it has no code
-    path that can transcribe, route, or persist. *Red-before-green:* give the spotter a second
-    keyword → scope test fails.
-  - *Spotter-silence test* — non-"Daybreak" speech (including near-homophones) produces **no**
-    `mute.released` and no other output.
-  - *Degradation test* — disable the spotter; assert the non-voice emergency control still unmutes
-    and that the system never persists audio while muted.
-- **E2e:** live — speak "Curtain"; assert streaming stops ≤500 ms (measured), E2 flips to the mute
-  tone, and subsequent speech yields zero observations; then speak "Daybreak"; assert streaming
-  resumes and E2 returns. Post-run disk/log scan finds **zero** audio artifacts across the muted
-  interval. *Red-before-green:* route the muted-interval mic to a recorder → scan finds a blob → fails.
-- **Third-party:** P-ASR (stream stop/restart semantics); the local spotter is validated as its own
-  probe (on-device keyword model: assert it matches "Daybreak", rejects near-homophones, emits no
-  transcript).
-- **Observability:** `mute.engaged{latencyMs}`, `mute.released{trigger: voice|nonvoice, latencyMs}`,
-  and a periodic `mute.heartbeat{streamingToCloud:false}` while muted so a debugging agent can prove
-  the cloud path was closed for the whole interval.
+    observations/suggestions/actions reach the pipeline (AC2.3). *Red-before-green:* leave the
+    pipeline fed on mute → observations appear → fails.
+  - *Unmute-paths test* — both "unmute" (via Cue) and the on-screen button re-open the pipeline.
+    *Red-before-green:* disconnect the button handler → button no longer unmutes → fails.
+- **E2e:** live — speak "mute"; assert the pipeline stops ≤500 ms (measured), E2 flips to the mute
+  tone, and subsequent speech yields zero observations; then speak "unmute" (and separately, press
+  the button); assert the pipeline resumes and E2 returns. Post-run disk/log scan finds **zero**
+  audio artifacts across the muted interval. *Red-before-green:* route the muted-interval mic to a
+  recorder → scan finds a blob → fails.
+- **Third-party:** P-CUE (asserts Cue still surfaces the "unmute" keyword while the pipeline is
+  paused); P-ASR (stream stop/restart semantics).
+- **Observability:** `mute.engaged{latencyMs}`, `mute.released{trigger: voice|button, latencyMs}`,
+  and a periodic `mute.heartbeat{feedingPipeline:false}` while muted so a debugging agent can prove
+  the pipeline was closed for the whole interval.
 
 ---
 
-## 13. Validation & observability — consolidated centerpiece
+## 13. Validation & observability — consolidated
 
-This is the heart of the document. §13.1 is the only testable seam over the AI surface; §13.2 is the
-component→test matrix; §13.3 is the log contract; §13.4 the red-before-green protocol; §13.5 the
-10×–100× catalog.
+This section consolidates how we test **the seams we own**. §13.1 is the testable seam over the AI
+surface; §13.2 is the component→test matrix; §13.3 is the log contract; §13.4 the red-before-green
+protocol; §13.5 the boundary/error catalog. We do **not** re-verify the third-party libraries
+themselves, and there is **no formal labeled corpus or restraint metric** for V0 — tunable behavior
+is governed by documented env vars, tuned by feel.
 
 ### 13.1 Record-replay harness (the testable seam)
 
@@ -698,21 +716,22 @@ text. The harness records every decision's `input→output` hashed for replay.
 
 ### 13.2 Per-component verification matrix
 
-Every component has both layers; "RBG" names the failure injection that proves the test can go red.
+Each component is tested over the seam we own; "RBG" names the failure injection that proves the
+test can go red where we use one.
 
-| Component (§) | Unit/integration (with RBG) | End-to-end | Probe | Key observability |
+| Component (§) | Integration (with RBG) | End-to-end | Probe | Key observability |
 |---|---|---|---|---|
 | Priority ladder (§2.4) | mute>panic>stop>steer>suggest>pass; RBG: demote mute | co-occurring triggers in one utterance resolve correctly | P-CUE | `*.detected`, ordered `decisionId` |
-| Mute/unmute (§12.1) | stop ≤500 ms; zero obs while muted (RBG: leave stream open); spotter scope (RBG: 2nd keyword) | speak Curtain→silent→Daybreak→resumes; disk scan = 0 audio | P-ASR + spotter probe | `mute.engaged/released/heartbeat` |
-| Earcons & acks (§3.3) | E1 ≤300 ms (RBG: 100 ms budget); Layer A/B disjoint (RBG: pitched ack) | each transition emits mapped earcon; `observe.pass`=silence | P-LLM | `earcon.emit`, `route.*` |
-| Suggestion engine (§4.3) | gate 59/61, 89/91 (RBG: lower threshold); MCQ≤3 (RBG: force 4); interrupt-cost queue (RBG: zero cost); expiry | annotated replay: recall ≥80%, ≤1 FP/10 min, idle-preference | P-CUE, P-LLM | per-decision incl. every `observe.pass` |
-| Vocabulary & routing (§5.5) | dispatch-invariant (RBG: remove guard); tier-gating (RBG: "Yes" always-hot); collision; determinism | un-addressed never steers; one-breath steer; near-homophone safe | P-CUE | `command.recognize`, `route` |
-| The spine (§6.4) | stage-sequencer happy + 4 failure branches (RBG: drop ack) | canonical scenario ≥9/10; no-screen harness = 0 GUI events | all probes | one `correlationId` across loop |
-| Output policy (§7.2) | class→channel; 15-word guard (RBG: 16 words, remove guard); never-recite; silence budget | session TTS-tick ratio ≤10% (RBG: chatty build) | P-TTS, P-LLM | `output.decision` |
-| Safety posture (§8.2) | read-back+wait; no-confirm→abort (RBG: fire without confirm); dead-man 25 s; fuzz tokens | destructive act blocks; withhold→abort; confirm→once | P-SMITHERS | `safety.readback/resolution` |
+| Mute/unmute (§12.1) | stop feeding ≤500 ms; zero obs while muted (RBG: leave pipeline fed); both unmute paths (RBG: disconnect button) | speak "mute"→silent→"unmute"/button→resumes; disk scan = 0 audio | P-CUE + P-ASR | `mute.engaged/released/heartbeat` |
+| Earcons & acks (§3.3) | E1 within budget (RBG: 100 ms budget); Layer A/B disjoint (RBG: pitched ack) | each transition emits mapped earcon; ignored ambient = silence | P-LLM | `earcon.emit`, `route.*` |
+| Suggestion engine (§4.3) | gate boundary (RBG: lower env threshold); MCQ≤3 (RBG: force 4); interrupt-cost queue (RBG: zero cost); expiry | scripted replay: idle-preference; ignored ambient = `observe.pass`/silence (restraint tuned by feel via env, no metric gate) | P-CUE, P-LLM | per-decision incl. every `observe.pass` |
+| Vocabulary & routing (§5.5) | dispatch-invariant (RBG: remove guard); per-state command (RBG: "Yes" unconditional); collision; determinism | un-addressed never steers; one-breath steer | P-CUE | `command.recognize`, `route` |
+| The spine (§6.4) | stage-sequencer happy + 4 failure branches (RBG: drop ack) | canonical scenario ≥9/10; no-screen harness = 0 GUI events on critical path | all probes | one `correlationId` across loop |
+| Output policy (§7.2) | class→channel (ignored ambient=silent); 15-word guard (RBG: 16 words, remove guard); never-recite; silence budget | session TTS-tick ratio ≤10% (RBG: chatty build) | P-TTS, P-LLM | `output.decision` |
+| Execution posture (§8.2) | run-to-completion, no gate interposed (RBG: re-introduce blocking confirm) | destructive act runs to completion, no approval prompt | P-SMITHERS | `process.action{gated:false}` |
 | Board (§9.1) | read-only (RBG: add POST); trace-schema; causal-chain rebuild | board-down → REQ-5 still passes (RBG: await board → hangs) | P-CUE SSE | renders §13.3 stream |
-| Onboarding (§10.1) | consent once+idempotent (RBG: fire twice); near-miss; first-run VAD | consent first, names "Curtain"; disk scan = 0 audio | P-ASR, P-TTS | `session.start`, `onboarding.nearMiss` |
-| Latency (REQ-10) | ack scheduler within budget; timeout→"working" earcon | ≥100 round-trips: p50<1 s, p95<1.5 s, earcon<300 ms; recorded baseline | P-ASR, P-TTS | latency spans `asr.final/decision/ack.emit` |
+| Onboarding (§10.1) | consent once+idempotent (RBG: fire twice); near-miss; first-run VAD | consent first, names "mute"; disk scan = 0 audio | P-ASR, P-TTS | `session.start`, `onboarding.nearMiss` |
+| Latency (REQ-10) | ack scheduler within env budget; timeout→"working" earcon | ≥100 round-trips: p50<1 s, p95<1.5 s, earcon<300 ms; recorded baseline | P-ASR, P-TTS | latency spans `asr.final/decision/ack.emit` |
 | Durability/fleet (§11.2) | lifecycle edges; pre-kill archive; recovery equality | kill backend mid-run→resume; steer A, B byte-identical | P-SMITHERS | durable checkpoint log |
 | Cue↔Smithers seam (§11.2) | action schema match; SSE reconnect; UPID↔window | full spine drives a real durable run | P-SEAM | action-dispatch + run-event trace |
 
@@ -732,24 +751,24 @@ human memory, no agent assertion — only a structured line proves something hap
 agent arriving with **no context** must be able to query one `correlationId` and replay the full
 chain.
 
-### 13.4 Red-before-green protocol (mandatory)
+### 13.4 Red-before-green protocol
 
-A test is trusted only after it has been shown to fail. The standard moves: **remove the guard** and
-assert failure, then restore and assert pass (dispatch invariant, 15-word guard, mute stream-close);
-**breach the budget** and assert failure, then relax to spec (earcon ≤300 ms, round-trip <1 s);
-**cross the boundary** and assert the boundary holds (59/61 words, 89/91 s, distance-≤2 collision).
-"The agent said it's done" is never accepted; the red run is the evidence.
+A test is trusted only after it has been shown to fail — applied where it adds confidence on the
+seams we own, not as a per-line mandate. The standard moves: **remove the guard** and assert failure,
+then restore and assert pass (dispatch invariant, 15-word guard, mute pipeline-close); **breach the
+budget** and assert failure, then relax to spec (earcon ≤300 ms, round-trip <1 s); **cross the
+boundary** and assert the boundary holds (word/second gate thresholds, distance-≤2 collision). "The
+agent said it's done" is never accepted; the red run is the evidence.
 
-### 13.5 Boundary / fuzz / benchmark catalog (the 10×–100×)
+### 13.5 Boundary / error / benchmark catalog
 
-The Verify blocks are the floor. Each component additionally carries: **empty/longest inputs**
-(empty transcript, single word, 10k-word monologue → all resolve to `observe.pass`); **silence**
-(produces no observations, not empty ones); **simultaneous speakers** (2 talking at once — routing
-and diarization stay sane); **mis-transcription** (garbled callsign/confirm → re-prompt or drop,
-never destructive execution); **fuzz** (random confirm tokens, double-confirm, "confirm" to the
-wrong process); and **benchmarks** for the performance-critical paths (earcon <300 ms, round-trip
-p50<1 s / p95<1.5 s) recorded as regression baselines that **fail on regression**. Anything
-unverified is treated as broken.
+The Verify blocks are the floor; each component covers the boundary/error cases that protect a real
+invariant — we don't gold-plate. Representative cases: **empty/longest inputs** (empty transcript,
+single word, very long monologue → all resolve to `observe.pass`); **silence** (produces no
+observations, not empty ones); **simultaneous speakers** (2 talking at once — routing and diarization
+stay sane); **mis-transcription** (garbled callsign → re-prompt or drop); and **benchmarks** for the
+performance-critical paths (earcon <300 ms, round-trip p50<1 s / p95<1.5 s) recorded as regression
+baselines that **fail on regression**.
 
 ---
 
@@ -762,10 +781,10 @@ unverified is treated as broken.
 | D-DD-03 | Suggestion threshold | Gate on **room-interrupt cost**, not just quality | A spoken suggestion is a no-opt-out broadcast interrupt; annoyance ∝ frequency (CHI 2025). FP cost in a room ≫ FP on a screen. Idle-preferring delivery is non-negotiable. |
 | D-DD-04 | Panic word | "Abort" (not "Stop") | "Stop" is constant in speech; "Abort" is rare, 2 syllables, distinct, reserved exclusively for global panic. |
 | D-DD-05 | Callsign collision guard | Metaphone + phoneme-Levenshtein ≤2 | ICAO 1948–49: design the active set holistically. At 7.4% WER, similar callsigns misroute. Algorithm must be reproducible and tested. |
-| D-DD-06 | Dead-man timer | 25 s | 20 s too tight in a busy room; 30 s too slow for urgent acts; 25 s = aviation mixed-criticality midpoint. |
+| D-DD-06 | Execution posture | V0 runs dangerously / run-to-completion; no read-back/confirm gate or dead-man timer | Cut for speed. You shouldn't need to approve often; Cue handles genuine confirmations. Safety later = sandbox the process, not permission gating. (Supersedes the former 25 s dead-man timer.) |
 | D-DD-07 | Board layout | Z-pattern, listening top-left, per-process panels, trace bottom, no controls | NASA MOCR / STARS: role-based segregation, tiered authority, "read-only displays have no buttons." |
 | D-DD-08 | Trace auto-scroll | Disabled; "NEW" indicator, click to scroll | Auto-scroll past readable speed makes the log worthless; the only click target is navigational. |
-| D-DD-09 | Blink policy | Only destructive-read-back-pending and emergency-stop blink | Peripheral blink is the fastest visual signal; blink fatigue (STARS audit) means it must not be wasted. |
+| D-DD-09 | Blink policy | Only emergency-stop triggered blinks | Peripheral blink is the fastest visual signal; blink fatigue (STARS audit) means it must not be wasted. (The destructive-read-back-pending state was removed with the safety gate, D-DD-06.) |
 | D-DD-10 | First-run VAD | +50% silence threshold for first 5 min | Mid-sentence pauses cut users off during first-run; one cut-off command kills onboarding confidence. |
 | D-DD-11 | TTS word guard | Hard 15-word cap before submission | Spoken word count is the sole length measure in audio; the guard is a pipeline function, not a guideline. |
 | D-DD-12 | Log naming | Verb-noun (`process.spawn`, `route.pass`) | Reads in event order, fast to scan, self-documenting (ATC naming, `design-art.md` §7). |
@@ -775,13 +794,13 @@ unverified is treated as broken.
 | D-DD-16 | Onboarding | Consent announcement = full onboarding (≤3 sentences, ≤8 s); printed card is the reference | "Feature wall" is the top VUI onboarding failure; humans retain <5–7 audio items. The card is the persistent zero-screen reference. |
 | D-DD-17 | Roger vs. Wilco | E1 = "I heard the wake word"; E3 = "I'm acting on it" | Receipt ≠ compliance (ATC). The room must hear *received* vs. *acted*; these are never the same sound. |
 | D-DD-18 | Callsign re-use cooldown | 60 s before a halted callsign is re-available | Avoids muscle-memory confusion when a just-halted callsign is reassigned moments later. |
-| D-DD-19 | Dangerous mode | Session-only; spoken warning each session start | Forces active re-acknowledgement; a persistent dangerous mode that survives restarts is an accident waiting to happen. |
+| D-DD-19 | Execution mode | One mode for V0: dangerous / run-to-completion (no Safe/Explicit/Dangerous switching) | Cut mode-switching for speed. Run-to-completion by default; safety later = sandbox the whole process, not voice-toggled permission modes. (Supersedes the former session-only "dangerous mode" toggle.) |
 | D-DD-20 | "Selected" color | Cyan `#00bcd4` | Distinct from green/amber/red; cyan is the Echo active-listening color — reuses an existing mental model. |
-| **D-DD-21** | **Mute/unmute words** | **"Curtain" (mute) / "Daybreak" (unmute), provisional pending P-CUE** | Closes the `[mute word]` gap; replaces conversational "Mute"/"Listen" (`design-art.md` §4) with rare, plosive-leading, 2-syllable paired words. |
-| **D-DD-22** | **Mute-while-listening** | **On-device unmute keyword spotter ("Daybreak") runs while muted; cloud path hard-muted** | Resolves AC2.3 ("no observations while muted") vs. D1 (voice is the sole operational modality): the spotter is local, persists nothing, emits only `mute.released`. Degrades to the non-voice control if absent. |
-| **D-DD-23** | **Earcon vs. routing-ack layering** | **5 tonal state earcons (Layer A) + non-tonal routing acks (Layer B), categorically disjoint** | Reconciles "exactly 5 earcons" with the routing acks: making Layer B non-tonal guarantees the two layers never collide acoustically. |
-| **D-DD-24** | **Tiered vocabulary** | **Always-hot vs. state-gated; collision bar scales with false-trigger cost** | Explains why "Yes"/"Accept" are legal (only live in the pending-suggestion window) while callsigns/wake/mute/panic must pass the strict rarity bar; "Status" (low misfire cost) gets a looser bar. |
-| **D-DD-25** | **Validation as centerpiece** | **Each design section carries an inline Verify block; §13 consolidates a component→test matrix, the log contract, RBG protocol, and 10×–100× catalog** | The operating bar makes the verification plan the first-class deliverable; structuring the doc around it (not bolting tests on at the end) is what makes "assume nothing works until a test proves it" enforceable. |
+| **D-DD-21** | **Mute/unmute words** | **"mute" (mute) / "unmute" (unmute) — plain English** | Closes the `[mute word]` gap. Cue handles wake/keyword robustness, so no exotic collision-resistant words are needed; plain words remove onboarding friction. |
+| **D-DD-22** | **Unmuting while muted** | **No custom spotter. Cue hears "unmute" even while muted; an on-screen unmute button is also always available** | "Muted" = stop feeding audio into the suggestion/routing pipeline; Cue keeps listening for "unmute". Two unmute paths (voice + button) mean the room is never trapped. The bespoke on-device spotter, P-SPOTTER probe, and teardown/restart recovery are removed. |
+| **D-DD-23** | **Earcons & acks** | **Ignored ambient speech is silent; tonal state earcons + addressed-command acks remain** | `observe.pass` / `route.pass` make no sound by definition — un-addressed speech should make no noise. The 5 tonal state earcons (Layer A) and non-tonal addressed-command acks (Layer B) stay, disjoint by construction. |
+| **D-DD-24** | **Vocabulary tiering** | **Deferred — no always-hot vs. state-gated tiering in V0** | Cue handles wake/keyword activation, so the tiered vocabulary and its scaling collision bar are not a V0 requirement. Revisit later only if it becomes a problem. |
+| **D-DD-25** | **Verification stance** | **Integration-only: verify our seams with the libraries (typed providers + mocks), not the libraries themselves; no formal restraint corpus** | Cue is battle-tested by Etheria; we verify our adapter/dispatch/policy code via typed, mockable provider interfaces plus real-API probes for the shapes we depend on. Tunable behavior is env-driven and tuned by feel — the formal labeled restraint corpus is dropped. |
 
 ---
 
@@ -798,13 +817,12 @@ within this pass.
 - **TTS provider unverified (P-TTS).** No prior benchmark covered TTS; the probe both validates and
   selects. Latency target (first byte ≤200 ms) is unproven until the probe runs.
 - **Cue↔Smithers seam (P-SEAM).** Novel integration with no prior art; top integration risk.
-- **Mute/unmute words provisional.** "Curtain"/"Daybreak" are chosen on principle but **must** pass
-  P-CUE acoustic validation against the team's actual vocabulary before they are final.
-- **On-device unmute spotter availability.** Assumed present; where absent, unmute degrades to the
-  non-voice emergency control (REQ-14). The spotter needs its own probe (matches "Daybreak", rejects
-  near-homophones, emits no transcript).
-- **Mistranscription blast radius.** ~7.4% WER on technical speech; mitigated by safe-by-default +
-  read-back + dead-man timer + panic word + emergency stop.
+- **Unmute-while-muted depends on Cue.** We assume Cue keeps surfacing the "unmute" keyword while the
+  pipeline is paused (P-CUE must confirm). The on-screen unmute button is the guaranteed fallback so
+  the room is never trapped muted.
+- **Mistranscription blast radius.** ~7.4% WER on technical speech. V0 runs dangerously by design;
+  the mitigations are the panic word + emergency stop, and (later) sandboxing the process — not a
+  per-action read-back gate.
 
 ---
 
@@ -814,8 +832,8 @@ Significant final-pass judgment calls have self-contained HTML decision docs und
 `artifacts/smithering/decisions/` — what was decided, alternatives considered, example
 inputs/outputs, and diagrams/diffs where they help a human review fast:
 
-- `validation-as-centerpiece.html` — restructuring the doc around verification (**D-DD-25**)
-- `mute-unmute-words.html` — choosing "Curtain"/"Daybreak" (**D-DD-21**)
-- `mute-local-spotter.html` — the on-device unmute spotter resolving AC2.3 vs. D1 (**D-DD-22**)
-- `earcon-vs-routing-ack-layering.html` — two disjoint non-verbal layers (**D-DD-23**)
-- `always-hot-callsigns.html` — tiered always-hot vs. state-gated vocabulary (**D-DD-24**)
+- `validation-as-centerpiece.html` — integration-only verification stance (**D-DD-25**)
+- `mute-unmute-words.html` — choosing the plain words "mute"/"unmute" (**D-DD-21**)
+- `mute-local-spotter.html` — superseded: no custom spotter; unmute = "unmute" (Cue) + on-screen button (**D-DD-22**)
+- `earcon-vs-routing-ack-layering.html` — ignored ambient is silent; two disjoint non-verbal layers (**D-DD-23**)
+- `always-hot-callsigns.html` — superseded: tiered vocabulary deferred for V0 (**D-DD-24**)

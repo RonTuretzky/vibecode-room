@@ -35,16 +35,17 @@ That volume is impossible if every test needs a live mic, real API keys, and net
 would be slow, flaky, and expensive. We need a boundary where the entire inner system can be tested
 headless and deterministically.</p>
 
-<h2>Decision</h2>
+<h2>Decision <span style="color:var(--good);font-size:.8rem">— CONFIRMED, kept</span></h2>
 <div class="box">
-Put a <strong>typed provider interface at every external boundary</strong>, and test everything inside
-that boundary with <strong>record-replay doubles</strong>. No component constructs a provider directly
-— providers are <strong>injected at construction</strong>.
+<strong>Confirmed and retained.</strong> Put a <strong>typed provider interface at every external
+boundary</strong>, and test everything inside that boundary with <strong>record-replay doubles</strong>.
+No component constructs a provider directly — providers are <strong>injected at construction</strong>.
+This is the mechanism that makes the Cue integration <strong>modular and trivial to mock</strong>
+(ENG-A-01) and that makes verification possible without live mics, keys, or network.
 </div>
 <pre>interface ASRProvider     { stream(audio): AsyncIterable&lt;TranscriptObservation&gt; }   // real: Deepgram | double: JSONL replay
 interface TTSProvider     { speak(text, opts?): Promise&lt;ReadableStream&gt; }            // real: probe-selected | double: noop
-interface DecisionLLM     { decide(input): Promise&lt;DecisionOutput&gt; }                 // real: Cerebras/Haiku temp-0 | double: fixture
-interface KeywordSpotter  { detect(audio): Promise&lt;Detection | null&gt; }              // real: Porcupine | double: scripted
+interface DecisionLLM     { decide(input): Promise&lt;DecisionOutput&gt; }                 // real: host Codex/Claude subscription, temp-0 | double: fixture
 </pre>
 <p>The inner test loop reads <strong>pre-recorded ASR output as JSONL</strong>, runs the decision LLM
 at <strong>temperature-0</strong>, and asserts <strong>shape/invariants</strong> ("≤3 MCQs",

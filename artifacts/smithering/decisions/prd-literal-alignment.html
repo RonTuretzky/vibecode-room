@@ -24,23 +24,27 @@
 <p><span class="tag">ENG-A-16</span><span class="tag">REQ-1/2/9/12/13</span><span class="tag">Resolves R11, R12, R13</span></p>
 
 <h2>The decision</h2>
-<p>Where the engineering output policy or vocabulary diverged from a literal acceptance criterion, the
-doc is corrected to <strong>match the PRD as written</strong> rather than deviate. Four corrections:</p>
+<p>We keep deterministic <strong>magic words</strong> for commands (yes, magic words). Where the
+engineering output policy or vocabulary diverged from a literal acceptance criterion — or where a
+decision changed — the doc is corrected to <strong>match the current intent</strong>. The alignments:</p>
 
 <table>
 <tr><th>Criterion</th><th>Was (draft)</th><th>Now (aligned)</th></tr>
-<tr><td>AC1.1 — consent privacy line (R12)</td><td class="was">"Panopticon is listening. Say 'Panop, status'… Say 'Curtain' to pause."</td><td class="now">+ <strong>"Only transcripts are saved."</strong> in the first announcement; consent-content test asserts it.</td></tr>
+<tr><td>AC1.1 — consent privacy line (R12)</td><td class="was">"Panopticon is listening. Say 'Panop, status'… Say 'mute' to pause."</td><td class="now">+ <strong>"Only transcripts are saved."</strong> in the first announcement; consent-content test asserts it. (consent behavior unchanged by these updates)</td></tr>
+<tr><td>Mute/unmute words (V1)</td><td class="was">exotic coined words ("Curtain"/"Daybreak")</td><td class="now">plain English: <strong>"mute"</strong> / <strong>"unmute"</strong> — Cue owns keyword robustness</td></tr>
 <tr><td>AC2.4 — mute announce (R13)</td><td class="was">mute = earcon only</td><td class="now">mute = earcon/mute-tone + <strong>one-word TTS "Muted"</strong></td></tr>
+<tr><td>AC6.4 — ambient ack (V4)</td><td class="was">every routed utterance, incl. ignored ambient, gets a distinct ack</td><td class="now"><strong>ignored ambient speech is SILENT</strong> — distinct acks only for <em>addressed</em> outcomes (see ENG-A-10)</td></tr>
 <tr><td>AC12.3 — halt announce (R13)</td><td class="was">halt folded into "state transition = earcon"</td><td class="now">halt = <strong>E5 + ≤15-word TTS</strong> naming the target</td></tr>
-<tr><td>AC9.3 — read-back length (R13)</td><td class="was">safety read-back ≤20 words</td><td class="now"><strong>≤15 words</strong> (the 15-word guard enforces; verb=1, object≤3 → ≤11 words)</td></tr>
 <tr><td>REQ-13 — per-process pause (R11)</td><td class="was">only global "Pause all"; "pause B" would be free-form NL (violates NG-2)</td><td class="now"><strong>"[callsign], pause" / "[callsign], resume"</strong> magic words → <code>{type:'pause'|'resume', targetUPID}</code></td></tr>
 </table>
 
-<h2>Why — the R11/R12/R13 findings</h2>
+<h2>Why — the R11/R12/R13 findings (plus V1/V4 updates)</h2>
 <blockquote>R12: "AC1.1 requires the announcement include that only transcripts are saved." · R13: "AC2.4
-requires mute = earcon + one-word TTS; AC12.3 requires halt = earcon + ≤15-word TTS; read-back ≤20
-contradicts AC9.3's ≤15." · R11: "REQ-13 requires two processes independently pausable by voice, but V0
-vocab only has global 'Pause all'; free-form 'pause B' violates REQ-7/NG-2."</blockquote>
+requires mute = earcon + one-word TTS; AC12.3 requires halt = earcon + ≤15-word TTS." · R11: "REQ-13
+requires two processes independently pausable by voice, but V0 vocab only has global 'Pause all';
+free-form 'pause B' violates REQ-7/NG-2." · V1: mute/unmute words are now "mute"/"unmute". · V4: ignored
+ambient speech is SILENT, which changes AC6.4. <em>(The old AC9.3 read-back-length item is gone — the
+destructive read-back gate is cut, ENG-A-08.)</em></blockquote>
 
 <h2>Per-process pause — deterministic, not NL</h2>
 <pre>
@@ -54,8 +58,10 @@ make it faster" steers A, "Bravo, pause" pauses B — A unaffected (AC13.1).</p>
 
 <h2>Verification</h2>
 <ul>
-<li><strong>consent-content test</strong> — first announcement contains "Only transcripts are saved" AND names "Curtain" (RBG: drop the sentence → AC1.1 fails).</li>
-<li><strong>mute-announce / halt-announce / read-back-length tests</strong> — earcon + one-word "Muted"; E5 + ≤15-word halt TTS; every read-back ≤15 words (RBG each: earcon-only / 20-word read-back → fails).</li>
+<li><strong>consent-content test</strong> — first announcement contains "Only transcripts are saved" AND names "mute" (RBG: drop the sentence → AC1.1 fails).</li>
+<li><strong>mute/unmute-word test</strong> — "mute"/"unmute" are the wired mute/unmute keywords (via Cue) (RBG: wire a different word → control no longer toggles → fails).</li>
+<li><strong>mute-announce / halt-announce tests</strong> — earcon + one-word "Muted"; E5 + ≤15-word halt TTS (RBG each: earcon-only → fails).</li>
+<li><strong>ambient-silence test (AC6.4)</strong> — ignored ambient speech emits no ack; only addressed outcomes get a distinct ack (RBG: make ambient pass emit a tick → fails).</li>
 <li><strong>per-process-pause routing test + e2e</strong> — "[callsign], pause" pauses that UPID only; NL "pause B" rejected at dispatch; "Atlas steer / Bravo pause" e2e (RBG: route NL pause → fails).</li>
 </ul>
 </body>

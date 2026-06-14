@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Decision D-DD-24 — Tiered vocabulary: always-hot vs state-gated</title>
+<title>Decision D-DD-24 — Tiered vocabulary deferred for V0 (Cue owns activation)</title>
 <style>
   :root { --ink:#1a1a1a; --mut:#666; --line:#e2e2e2; --good:#0a7d33; --bad:#b00020; --accent:#0b5cad; --bg:#fafafa; }
   * { box-sizing:border-box; }
@@ -20,67 +20,61 @@
   .box { background:#fff; border:1px solid var(--line); border-radius:8px; padding:.9rem 1.1rem; margin:.7rem 0; }
   .alt { border-left:4px solid var(--line); padding-left:.9rem; margin:.6rem 0; }
   .alt.win { border-left-color:var(--good); }
+  .warn { background:#fff7e6; border:1px solid #ffd591; border-radius:8px; padding:.7rem 1rem; }
 </style>
 </head>
 <body>
-<h1>Tiered vocabulary: always-hot vs. state-gated</h1>
+<h1>Tiered vocabulary (always-hot vs. state-gated): <span style="color:#0b5cad">deferred for V0</span></h1>
 <div class="meta"><span class="pill">D-DD-24</span> &nbsp; Panopticon V0 — final pass &nbsp;·&nbsp; <code>docs/planning/02-design.md §5.1</code></div>
 
-<h2>The puzzle</h2>
-<p>The command set lists <strong>"Yes" / "Accept"</strong> as the acceptance words — yet
-<code>design-art.md §4</code> bans common conversational words ("yes", "go", "start") as magic words.
-Both cannot be right unless we distinguish <em>when</em> a word is live.</p>
+<div class="warn" style="margin-bottom:1rem">
+<strong>Superseded:</strong> the prior pass split the vocabulary into an <em>always-hot</em> tier (rare
+words matched anytime) vs. a <em>state-gated</em> tier (natural words matched only inside a narrow
+window), with a phoneme-distance collision bar scaled to false-trigger cost. <strong>That tiering is NOT
+implemented for V0.</strong> Cue (Etheria's voice library) handles wake/keyword activation, so we do not
+build a custom two-tier matcher. Revisit later only if it becomes a real problem.
+</div>
+
+<h2>The original puzzle</h2>
+<p>The command set lists <strong>"Yes" / "Accept"</strong> as acceptance words — conversational words
+that, if matched at any moment, could misfire. The earlier solution was to distinguish <em>when</em> a
+word is live (tiering). With Cue owning keyword activation, we no longer design or test that ourselves
+for V0.</p>
 
 <h2>Decision</h2>
 <div class="box">
-Split the vocabulary into two tiers, and let the <strong>collision-resistance bar scale with the cost
-of a false trigger</strong>:
-<ul style="margin:.5rem 0 0">
-  <li><strong>Always-hot</strong> (matched any time → must be rare/non-conversational): wake "Panop",
-  every <strong>callsign</strong>, mute "Curtain", unmute "Daybreak", panic "Abort", stop "Halt".</li>
-  <li><strong>State-gated</strong> (matched only inside a narrow window → may reuse natural words):
-  accept/decline (only in <code>SUGGESTION_DELIVERY</code>), "Done"/"Back" (only in an open steering
-  window), "Confirm" (only while a destructive read-back is pending).</li>
-</ul>
+<strong>Do not implement a tiered always-hot/state-gated vocabulary for V0.</strong> Keyword/wake
+activation — including not firing on incidental conversational uses — is delegated to Cue. Magic words
+for commands still exist (yes, magic words — see ENG-A-16), but the bespoke two-tier matcher,
+phoneme-distance collision bar, and "cost-scaled rarity" machinery are <strong>removed as a V0
+requirement / acceptance criterion</strong>.
 </div>
 
-<h2>Why "Yes" is safe as a state-gated accept word</h2>
-<p>"Yes" is <strong>never live except as a direct answer to a question the system just asked</strong>
-(the pending-suggestion window). Outside that window it is inert — a casual "yes, exactly" in
-conversation cannot spawn a process. The risk <code>design-art.md</code> warns about only applies to
-<em>always-hot</em> matching; gating removes it.</p>
-
-<h2>The cost-scaled bar</h2>
-<table>
-<tr><th>Word</th><th>Tier</th><th>False-trigger cost</th><th>Required bar</th></tr>
-<tr><td>Mute "Curtain", Panic "Abort", callsigns</td><td>always-hot</td><td class="bad">high (halts work / silences room / mis-routes)</td><td>strictest: rare + collision ≤2</td></tr>
-<tr><td>"Status"</td><td>always-hot</td><td class="good">low (just a ≤15-word read-out)</td><td>looser: tolerates more conversational overlap</td></tr>
-<tr><td>"Yes" / "Confirm" / "Done"</td><td>state-gated</td><td class="good">near-zero outside window</td><td>natural words allowed</td></tr>
-</table>
-
-<h2>Callsigns are always-hot (clarifies the state machine)</h2>
-<p>The spine's state machine has <code>IDLE ──[callsign]──► STEERING_WINDOW</code> with no wake word
-required — so callsigns are <strong>always-hot</strong> and therefore must pass the strict collision
-guard (which the pre-validated NATO subset does). The wake word "Panop" gates only the general
-attention/status flow, not addressing an already-running process.</p>
+<h2>Why defer</h2>
+<p>The tiering existed to solve a problem we assumed we had to solve in-house: keeping rare words live
+everywhere while allowing natural words inside windows, all without misfiring. That is exactly the
+robustness Cue provides. Building our own tier system duplicates the library and adds collision-guard
+tests that prove a library capability we already trust. If real-world use later shows a specific word
+misfiring, we revisit — but not as V0 scope.</p>
 
 <h2>Alternatives</h2>
-<div class="alt"><strong>A. Make everything always-hot; ban "yes", require a coined accept word.</strong>
-<span class="bad">Rejected:</span> forces users to learn an unnatural word for the single most natural
-spoken response ("yes"); higher onboarding friction for no safety gain over gating.</div>
-<div class="alt"><strong>B. Make everything state-gated.</strong> <span class="bad">Rejected:</span>
-mute/panic/callsigns must work from any state — they cannot be gated.</div>
-<div class="alt win"><strong>C. Two tiers + cost-scaled bar (chosen).</strong> <span class="good">Chosen.</span></div>
+<div class="alt"><strong>A. Build the two-tier matcher now (prior plan).</strong>
+<span class="bad">Rejected for V0:</span> duplicates Cue's activation handling; over-engineered for a
+problem the library owns.</div>
+<div class="alt"><strong>B. Make everything always-hot in our own matcher.</strong>
+<span class="bad">Rejected:</span> still a bespoke matcher we don't need.</div>
+<div class="alt win"><strong>C. Defer tiering; delegate activation to Cue (chosen).</strong>
+<span class="good">Chosen.</span> Ship V0 fast; revisit only if a misfire problem actually appears.</div>
 
 <h2>Verification</h2>
 <ul>
-<li><strong>Tier-gating test (unit):</strong> "Yes" outside <code>SUGGESTION_DELIVERY</code> is inert;
-"Confirm" outside a pending read-back is inert. <span class="bad">RBG:</span> make "Yes" always-hot →
-a casual "yes" spawns a process → fails.</li>
-<li><strong>Collision test:</strong> all always-hot words pairwise pass Metaphone + phoneme-Levenshtein ≤2.</li>
-<li><strong>E2e:</strong> un-addressed talk containing "yes/stop/go" never triggers a command unless
-the gating window is open; a near-homophone of a callsign in casual speech does not mis-select.</li>
-<li><strong>Observability:</strong> <code>command.recognize{phrase, matchedCommand|null, tier, distanceScore}</code>.</li>
+<li><strong>Integration:</strong> assert command magic words ("accept", callsigns, "mute"/"unmute",
+"halt") are wired into Cue and toggle the right actions. <span class="bad">RBG:</span> mis-wire a word
+→ wrong action fires → fails. We verify wiring into Cue, not a custom tier matcher.</li>
+<li><strong>E2e:</strong> un-addressed talk does not trigger commands; addressed magic words do —
+robustness provided by Cue, observed end-to-end rather than asserted against an in-house collision
+guard.</li>
+<li><strong>Observability:</strong> <code>command.recognize{phrase, matchedCommand|null}</code>.</li>
 </ul>
 </body>
 </html>

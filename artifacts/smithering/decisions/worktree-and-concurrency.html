@@ -25,8 +25,17 @@
 </style>
 </head>
 <body>
-<h1>Worktrees &amp; concurrency: <span style="color:#0b5cad">one worktree per ticket, DAG antichains drive parallelism</span></h1>
+<h1>Worktrees &amp; concurrency: <span style="color:#0b5cad">maximize concurrency, one worktree per ticket, order tickets to minimize conflicts</span></h1>
 <div class="meta"><span class="pill">ORCH-A-01</span><span class="pill">ORCH-A-05</span> &nbsp; Panopticon V0 implementation orchestration &nbsp;·&nbsp; <code>docs/planning/06-orchestration.md §1, §5</code></div>
+
+<h2>Decision — posture</h2>
+<div class="box" style="border-color:#0b5cad">
+<strong>Maximize concurrency. Speed is the priority — build this as fast as possible.</strong> Use
+<strong>per-ticket git/jj worktrees</strong> so parallel tickets never share a working copy, and
+<strong>order tickets to minimize merge conflicts</strong> (independent, disjoint-path tickets first;
+sequence likely-conflicting tickets so they don't collide). Pair this with the optimistic merge policy
+(ORCH-A-02) so lands aren't serialized behind one another.
+</div>
 
 <h2>Decision — worktree layout</h2>
 <div class="box">
@@ -40,59 +49,69 @@ current <code>main</code> tip once all of the ticket's <code>dependsOn</code> an
 <tr><td>Lifetime</td><td>= ticket lifetime; removed after land (or kept if it still carries an unresolved jj conflict for the worker to fix)</td></tr>
 <tr><td>Probe worktrees</td><td>disposable; write <strong>only</strong> under <code>poc/</code> and <code>artifacts/smithering/probes/</code> — disjoint paths, so they parallelize freely and land via a trivial fast lane (no src conflicts)</td></tr>
 </table>
-Isolation is the point: parallel tickets never touch the same working copy, so the only place edits meet is
-the serialized merge lane (ORCH-A-02), where jj's first-class conflict handling makes a bad rebase a
-recoverable bounce rather than a corrupt land.
+Isolation is the point: parallel tickets never touch the same working copy, so edits only meet when a
+ticket lands. With the optimistic merge policy (ORCH-A-02) lands aren't queued behind one another, and
+jj's first-class conflict handling makes a bad rebase a recoverable bounce rather than a corrupt land.
+Ordering tickets to minimize conflicts keeps those merge collisions rare in the first place.
 </div>
 
-<h2>Decision — concurrency cap</h2>
+<h2>Decision — concurrency</h2>
 <div class="box">
-<strong>Max 6 concurrent ticket workers</strong>; merge lane depth <strong>1</strong>; probe phase may burst to
-<strong>8</strong> (probes are disjoint-path and external-API-latency-bound, not CPU-bound, and do not merge src).
+<strong>Run as many ticket workers in parallel as the DAG and the host allow — maximize concurrency.</strong>
+The effective ceiling is the graph's width and the host's Smithers run-slots, not an arbitrary policy
+cap. Probes are disjoint-path and external-API-latency-bound (not CPU-bound) and don't merge src, so they
+burst freely.
 </div>
-<p>Why 6, grounded in the actual DAG rather than a round number:</p>
+<p>What actually bounds parallelism is the DAG's width and host resources, not a hand-picked number:</p>
 <ul>
 <li>The <strong>widest ready-set (antichain)</strong> in the graph is ~6: Phase-0's fan-out
 (<code>record-replay-harness</code>, <code>provider-interface-doubles</code>, <code>trace-processor-observability</code>,
 <code>probe-suite-harness</code>) is ~4, and Phase-1's independent probes
 (<code>probe-cue-substrate</code>, <code>probe-asr-deepgram</code>, <code>probe-hot-loop-llm-subscription</code>,
-<code>probe-streaming-tts</code>, <code>probe-smithers-durable-runs</code>, <code>probe-keyword-spotter</code>) is ~6.
-Beyond that the DAG narrows. A cap above 6 buys idle workers, not speed.</li>
+<code>probe-streaming-tts</code>, <code>probe-smithers-durable-runs</code>) is ~5. We schedule the whole
+ready-set every tick — leave no ready worker idle.</li>
 <li>Each worker is a <em>heavy</em> durable run (implementer + cross-family reviewer + verifier, each running
-<code>bun test</code> / <code>tsc</code>, some spawning real Smithers child runs). 6 keeps us under the host's
-Smithers run-slots — the build-layer analog of §10.1's pre-spawn resource check — leaving headroom for the
-postsubmit live-e2e / latency / durability suite so it isn't starved.</li>
-<li>Because the merge lane is depth-1, more than ~6 in-flight just multiplies rebase churn: every land
-invalidates the others' base. 6 matches throughput to the lane's drain rate.</li>
+<code>bun test</code> / <code>tsc</code>, some spawning real Smithers child runs). The only real limit is the
+host's Smithers run-slots; we run up to that, not below it.</li>
+<li>Because merges are optimistic (ORCH-A-02), more in-flight tickets do not back up behind a serialized
+lane — they land as their own gates go green, and postsubmit eviction cleans up the rare bad land.
+Ordering tickets to minimize conflicts keeps rebase churn low even at high concurrency.</li>
 </ul>
 
 <h2>Scheduling</h2>
 <pre>ready(t)  := every dep in t.dependsOn has LANDED on main
             AND every blocking probe t depends on is GREEN (pre-build tier)
-schedule  := take up to (6 - inFlight) tickets from ready(), topo-rank order
-land      := depth-1 serialized lane; rebase onto tip; pre-merge gate; ff or bounce</pre>
+schedule  := take EVERY ready ticket the host has run-slots for, conflict-minimizing topo order
+land      := optimistic — land when the ticket's own gates are green; postsubmit eviction on a bad land</pre>
 
 <h2>Alternatives</h2>
 <div class="alt lose"><strong>One worktree per phase (shared by all tickets in it).</strong>
 <span class="bad">Rejected.</span> Re-introduces in-worktree contention the per-ticket split exists to remove.</div>
-<div class="alt lose"><strong>Unbounded workers (one per ready ticket).</strong>
-<span class="bad">Rejected.</span> Exceeds host run-slots and starves postsubmit; churns the depth-1 lane.</div>
-<div class="alt win"><strong>Per-ticket worktree, cap 6, antichain scheduling (chosen).</strong>
-<span class="good">Chosen.</span> Matches the DAG's real width, isolates edits, and keeps the lane drainable.</div>
+<div class="alt lose"><strong>Low arbitrary concurrency cap.</strong>
+<span class="bad">Rejected.</span> Leaves ready workers idle; the priority is speed, so we run every ready
+ticket the host can support, not an under-set number.</div>
+<div class="alt win"><strong>Maximize concurrency: per-ticket worktree, schedule the full ready-set, order to minimize conflicts (chosen).</strong>
+<span class="good">Chosen.</span> Fastest build; isolates edits; conflict-minimizing order + optimistic
+merge keep collisions rare.</div>
 
 <h2>Verification</h2>
 <ul>
 <li><strong>DAG-acyclic test:</strong> assert <code>tickets.json</code> <code>dependsOn</code> is acyclic and every
 ref resolves. <span class="bad">RBG:</span> add a back-edge → cycle detector fails.</li>
-<li><strong>Antichain-schedule test:</strong> never schedule a ticket whose deps haven't landed; never exceed 6
-in-flight. <span class="bad">RBG:</span> raise the cap to 99 with a 7-wide ready-set → over-cap assertion fires.</li>
+<li><strong>Max-concurrency-schedule test:</strong> every ready ticket the host has run-slots for is scheduled
+(no ready worker left idle), never one whose deps haven't landed. <span class="bad">RBG:</span> leave a ready
+ticket unscheduled while slots are free → idle-worker assertion fires.</li>
+<li><strong>Conflict-minimizing-order test:</strong> the scheduler emits a topo order that places
+disjoint-path tickets first and sequences likely-conflicting ones. <span class="bad">RBG:</span> shuffle to
+interleave conflicting tickets → ordering assertion fails.</li>
 <li><strong>Worktree-isolation test:</strong> two parallel workers writing the same path land without clobber —
 the second rebases and either merges cleanly or bounces with a jj conflict. <span class="bad">RBG:</span> share
 one working copy → concurrent-edit corruption detector fails.</li>
 </ul>
 
 <div class="warn"><strong>jj specifics:</strong> co-located jj+git so Smithers durability snapshots map onto jj
-operations; <code>jj revert</code> is the postsubmit back-out primitive (ORCH-A-02); auto-rebase-on-resume means a
-resumed worker re-reads disk and re-derives state — it never trusts in-memory context (ORCH-A-07).</div>
+operations; <code>jj revert</code> is the postsubmit eviction / back-out primitive (ORCH-A-02);
+auto-rebase-on-resume means a resumed worker re-reads disk and re-derives state — it never trusts in-memory
+context (ORCH-A-07).</div>
 </body>
 </html>

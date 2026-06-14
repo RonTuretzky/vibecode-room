@@ -35,12 +35,14 @@ it is the top integration risk. Done carelessly, the seam leaks: Cue grows knowl
 internals, Smithers grows knowledge of cue policies, the spawn call blocks the Cue loop and blows the
 3 s budget, and the novel risk is smeared across the codebase with no single place to test it.</p>
 
-<h2>Decision</h2>
+<h2>Decision <span style="color:var(--good);font-size:.8rem">— CONFIRMED</span></h2>
 <div class="box">
-The seam is <strong>exactly one module</strong> (<code>src/seam/</code>), and it is
-<strong>asynchronous and bidirectional</strong>. Neither Cue nor Smithers knows the other exists; the
-seam is the only code that speaks both schemas (the Temporal lesson — the adapter owns the translation,
-eng-oss §3.3).
+<strong>Confirmed.</strong> The seam is <strong>exactly one module</strong> (<code>src/seam/</code>), and
+it is <strong>asynchronous and bidirectional</strong>. <strong>Cue and Smithers do not know about each
+other — they are two completely separate things.</strong> Framed sharply:
+<strong>Cue is essentially I/O into the event loop; Smithers just runs background jobs.</strong> The
+single decoupled seam module is the only code that speaks both schemas (the Temporal lesson — the
+adapter owns the translation, eng-oss §3.3).
 </div>
 <pre>actions OUT (Cue → Smithers):
   Cue MappedActionTool {type,target,payload}

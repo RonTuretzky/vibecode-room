@@ -30,7 +30,11 @@ duplicating command recognition outside Cue or waiting on Cue."</blockquote>
 <strong>built on Cue</strong>; (b) REQ-10 requires the earcon ≤300&nbsp;ms, which cannot wait on the
 LLM-scored decision or Smithers.</p>
 
-<h2>The resolution: split Cue's deterministic eval from its LLM-scored decision</h2>
+<h2>The resolution <span style="color:var(--ok);font-size:.8rem">— CONFIRMED: Cue does recognition</span></h2>
+<p style="margin:0 0 10px"><strong>Confirmed.</strong> Cue handles keyword/intent recognition — "Cue does
+that." We do <strong>not</strong> build a custom recognizer. The earcon fires off Cue's own
+deterministic recognition outcome.</p>
+<h3 style="color:var(--sel);font-size:15px;margin:14px 0 4px">Split Cue's deterministic eval from its LLM-scored decision</h3>
 <p>Cue does two different things at different speeds:</p>
 <table>
 <tr><th>Cue stage</th><th>Speed</th><th>Drives</th></tr>

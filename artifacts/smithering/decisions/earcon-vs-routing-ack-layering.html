@@ -52,11 +52,13 @@ state earcons. "Exactly 5" governs Layer A only.
   </div>
   <div>
     <div class="tag">Layer B — routing acks (non-tonal)</div>
-    <p>Clicks / whoosh, <strong>no pitched content</strong>. Signal <em>where an utterance was routed</em>.</p>
+    <p>Clicks / whoosh, <strong>no pitched content</strong>. Signal <em>where an addressed utterance was
+    routed</em>. Ignored ambient speech is <strong>silent</strong> — of course un-addressed chatter
+    should make no noise.</p>
     <ul>
       <li><code>route.steer:X</code> → double-click "tick-tick"</li>
       <li><code>route.suggestion</code> → soft "whoosh"</li>
-      <li><code>route.pass</code> → silence</li>
+      <li><code>observe.pass</code> / <code>route.pass</code> (ignored ambient) → <strong>silence</strong> (default, not a knob)</li>
     </ul>
   </div>
 </div>
@@ -82,8 +84,9 @@ spoken routing receipts are slow and chatty — violates the restraint/latency b
 <li><strong>Acoustic-distinctness fixture (unit):</strong> assert E1–E5 differ in pitch register and
 rhythm, <em>and</em> every Layer-B ack is non-tonal. <span class="bad">RBG:</span> give a routing ack
 a pitched tone → an overlap detector flags Layer A/B collision → fails.</li>
-<li><strong>E2e:</strong> <code>observe.pass</code> emits <em>silence</em> — a positive assertion that
-no ack was played, not merely "nothing logged."</li>
+<li><strong>E2e:</strong> ignored ambient <code>observe.pass</code> / <code>route.pass</code> emits
+<em>silence</em> by default — a positive assertion that no ack was played, not merely "nothing logged."
+This is the requirement, not a configurable knob (see ENG-A-10).</li>
 <li><strong>Observability:</strong> <code>earcon.emit{id}</code> (Layer A) vs.
 <code>route.*{ackKind}</code> (Layer B) are distinct event families in the trace.</li>
 </ul>

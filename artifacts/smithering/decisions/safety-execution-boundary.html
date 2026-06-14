@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ENG-A-08 — Safety at the tool-call execution boundary</title>
+<title>ENG-A-08 — CUT: no destructive read-back / confirm gate (run to completion)</title>
 <style>
   :root { --bg:#0a0a0a; --fg:#e0e0e0; --ok:#00ff88; --bad:#ff3b30; --warn:#f5a623; --sel:#00bcd4; --mut:#888; }
   body { background:var(--bg); color:var(--fg); font:15px/1.6 -apple-system,Segoe UI,Roboto,sans-serif; max-width:920px; margin:0 auto; padding:32px; }
@@ -23,78 +23,61 @@
 </style>
 </head>
 <body>
-<h1>Safety is enforced at the agent's tool-call boundary</h1>
-<p><span class="tag">ENG-A-08</span><span class="tag">REQ-11</span><span class="tag crit">Resolves R1 (critical)</span><span class="tag">Probe: P-HOOK</span></p>
+<h1>CUT: no destructive read-back / confirm gate — we run to completion</h1>
+<p><span class="tag">ENG-A-08</span><span class="tag">REQ-11</span><span class="tag warn">Scope cut</span></p>
+
+<blockquote><strong>Superseded / CUT.</strong> The prior decision built an in-run PreToolUse hook +
+safe-executor that intercepted every destructive tool call, held it deny-by-default, routed a spoken
+read-back/confirm across the seam, and aborted via a <em>25&nbsp;s dead-man timer</em> if no "confirm"
+arrived. That entire mechanism — the hook, the safe-executor, the spoken read-back gate, and the
+timer — is <strong>removed</strong>.</blockquote>
 
 <h2>The decision</h2>
-<p>The destructive-action read-back/confirm gate (REQ-11) lives in an <strong>in-run PreToolUse hook +
-safe-executor</strong> registered inside every Panopticon Smithers process — it intercepts the
-<em>actual tool call</em> before execution, classifies it <strong>deny-by-default</strong>, holds it,
-and routes the read-back to voice across the seam. The dead-man timer (25&nbsp;s) lives in the hook, so
-a missed/mis-heard "stop" aborts rather than executes. It is <strong>probe-gated by P-HOOK</strong>
-before any code trusts it.</p>
+<p>For V0 we <strong>run to completion</strong>. We do <strong>not</strong> build a heavy per-action
+approval / spoken read-back gate, and there is no dead-man timer holding destructive tool calls. You
+shouldn't need to approve often — minimize approvals. Where a confirmation is <em>genuinely</em> needed,
+the voice library (Cue, by Etheria) already handles it; we don't reimplement a confirmation layer inside
+the Smithers run.</p>
 
-<h2>Why — the R1 finding</h2>
-<blockquote>"If destructive work happens inside a Smithers run, Panopticon cannot guarantee it sees the
-action before execution. The static verb list also misses many dangerous operations."</blockquote>
-<p>The destructive act is <strong>not</strong> the steering instruction the human speaks — it is the
-<strong>tool call the agent emits later</strong>, inside the durable run, possibly several reasoning
-steps after (and not lexically related to) any instruction. The dispatcher only sees actions flowing
-<em>out of Cue</em>; it never sees <code>Bash("rm -rf …")</code>, a file overwrite, <code>git push
---force</code>, or a DB <code>DROP</code> that the agent decides to run on its own.</p>
+<h2>Why cut</h2>
+<p>The overall V0 posture is: <strong>cut scope, ship fast, run dangerously, trust the library.</strong>
+A per-tool-call interception layer with deny-by-default classification and a spoken-confirm round-trip
+is exactly the kind of heavy machinery that posture removes. The product is meant to run autonomously to
+completion; constant per-action gating fights that goal. If we want real safety later, we
+<strong>sandbox the whole process</strong> (ENG-A-11), not gate individual actions through permissions.</p>
+
+<h2>What replaces it</h2>
+<table>
+<tr><th>Old (cut)</th><th>Now</th></tr>
+<tr><td>In-run PreToolUse hook + safe-executor, deny-by-default</td><td class="acc">Removed — run to completion, no in-run interception</td></tr>
+<tr><td>Spoken read-back + "confirm" before every destructive tool call</td><td class="acc">Removed — Cue handles any confirmation that's genuinely needed; minimize approvals</td></tr>
+<tr><td>25&nbsp;s dead-man timer holds/aborts the call</td><td class="acc">Removed — no timer, no hold</td></tr>
+<tr><td>Future safety</td><td class="mono">Sandbox the whole process later (ENG-A-11) — not permission gating</td></tr>
+</table>
+
+<h2>What stays</h2>
+<p>Routing authority in code (ENG-A-04) is unaffected: deterministic code still decides where an
+utterance routes. What is gone is the <em>execution-time</em> destructive-action gate — there is no
+read-back, no confirm-before-execute, no timer.</p>
 
 <h2>Alternatives considered</h2>
 <table>
 <tr><th>Approach</th><th>Verdict</th><th>Why</th></tr>
-<tr><td>Dispatcher-side static NL-verb classifier (the rejected prior plan)</td><td class="rej">Rejected</td><td>Cannot guarantee pre-execution interception; misses agent-initiated destructive ops no human named; a fixed verb list misses many dangerous operations.</td></tr>
-<tr><td>Trust the agent's own judgement + post-hoc archive</td><td class="rej">Rejected</td><td>Violates REQ-11 (read-back <em>before</em> execution); irreversible by definition.</td></tr>
-<tr><td>Constrained tool layer that wraps every mutating tool</td><td class="mono">Fallback</td><td>Equivalent guarantee if Smithers has no usable PreToolUse hook; heavier. Kept as the R-ENG-02 fallback if P-HOOK fails.</td></tr>
-<tr><td><strong>In-run PreToolUse hook + safe-executor, deny-by-default</strong></td><td class="acc">Chosen</td><td>The only place that sees the real <code>{tool,args}</code> at the real call site and can hold it before execution.</td></tr>
+<tr><td>In-run PreToolUse hook + safe-executor (prior plan)</td><td class="rej">Cut</td><td>Heavy per-action gate; fights run-to-completion; against the V0 "run dangerously" posture.</td></tr>
+<tr><td>Constrained tool layer wrapping every mutating tool</td><td class="rej">Cut</td><td>Same problem, heavier. Not built.</td></tr>
+<tr><td><strong>Run to completion; no read-back gate; sandbox later if needed</strong></td><td class="acc">Chosen</td><td>Ships fast, autonomous, minimal approvals; Cue covers any genuine confirmation; real isolation comes from sandboxing, not permissions.</td></tr>
 </table>
 
-<h2>Mechanism</h2>
-<pre>
-agent emits tool call {tool, args}
-   │
-   ▼  PreToolUse hook (in the Smithers run)
-classify(klass)  ── read ───────────────▶ execute (pass)
-   │ fs-write|fs-delete|shell|vcs-push|db-mutate|net-mutate|unknown
-   ▼  (Safe mode: gate;  Explicit mode: gate ALL;  Dangerous mode: bypass)
-HOLD the call  ──▶ ApprovalRequest{gateId, readback} ──seam──▶ Cue ──▶ TTS
-   │                                          "I'm about to delete X. Say 'confirm'."
-   ├── room says "confirm" ──▶ dispatcher.approve(gateId) ──▶ release ──▶ execute ONCE
-   └── 25 s dead-man timer  ──▶ abort (file unmodified) ──▶ E5 + safety.resolution{timedOut:true}
-</pre>
-<p><strong>Deny-by-default</strong> is the key strengthening over a verb list: anything in a mutating
-<em>or</em> <code>unknown</code> class is gated. The verb/pattern fast-path (rm, drop, force-push,
-truncate, overwrite) is an optimization on top, never the authority.</p>
-
-<h2>Example inputs / outputs</h2>
-<table>
-<tr><th>Agent tool call</th><th>Class</th><th>Safe mode result</th></tr>
-<tr><td><code>Read("src/app.ts")</code></td><td>read</td><td class="acc">execute (no gate)</td></tr>
-<tr><td><code>Edit("config.ts", …)</code></td><td>fs-write</td><td class="warn">read-back → wait for "confirm"</td></tr>
-<tr><td><code>Bash("rm -rf build/")</code></td><td>fs-delete / shell</td><td class="warn">read-back → wait; no confirm in 25 s → abort</td></tr>
-<tr><td><code>Bash("git push --force")</code></td><td>vcs-push</td><td class="warn">read-back → wait</td></tr>
-<tr><td><code>SomeNewTool(...)</code> (unrecognized)</td><td>unknown</td><td class="warn">gated (deny-by-default) — never silently allowed</td></tr>
-</table>
-
-<h2>Verification (the evidence, not the claim)</h2>
+<h2>Verification</h2>
 <ul>
-<li><strong>P-HOOK (P0, blocking):</strong> against the <em>real</em> Smithers API — register a
-PreToolUse hook, have an agent attempt a destructive tool call, assert the hook fires
-<em>before</em> execution, can hold the call, and that approve / deny / timeout resolve correctly with
-the <strong>file verifiably unmodified</strong> on deny/timeout.</li>
-<li><strong>Unit:</strong> hook-intercept (held, not executed; RBG: bypass → file modified before
-approval → fails); deny-by-default (unknown class gated; RBG: default unknown→allow → fails);
-dead-man-timer (mocked clock → abort); fuzz (wrong gateId, double-confirm → never double-execute).</li>
-<li><strong>E2e:</strong> instruct toward a destructive act → blocks (file unmodified while held);
-withhold confirm → aborts; confirm → executes exactly once; explicit mode gates a non-destructive
-action; dangerous mode (after warning) bypasses.</li>
+<li><strong>No-gate test:</strong> a destructive tool call inside a run executes without an in-run hold
+or spoken read-back (RBG: re-introduce a blocking read-back gate → the run-to-completion e2e fails).</li>
+<li><strong>No-timer test:</strong> assert there is no dead-man timer holding tool calls.</li>
+<li><strong>E2e:</strong> a run reaches completion autonomously; any confirmation that is genuinely
+required is delegated to Cue, not to an in-run safe-executor.</li>
 </ul>
 
-<blockquote><strong>Surfaced to the gate:</strong> if P-HOOK fails, REQ-11 is not enforceable as
-designed — fall back to the constrained-tool-layer wrapper (R-ENG-02) or revisit the optimistic
-posture with the PRD gate. The safety guarantee is treated as a lie until P-HOOK is green.</blockquote>
+<blockquote><strong>Note:</strong> safety is deferred to process-level sandboxing (ENG-A-11), revisited
+when it actually matters — not engineered as a permission gate for V0.</blockquote>
 </body>
 </html>

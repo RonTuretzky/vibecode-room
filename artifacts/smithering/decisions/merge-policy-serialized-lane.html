@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Decision ORCH-A-02 — Serialized merge lane (no optimistic eviction in V0)</title>
+<title>Decision ORCH-A-02 — Optimistic merge + postsubmit eviction (REVERSED)</title>
 <style>
   :root { --ink:#1a1a1a; --mut:#666; --line:#e2e2e2; --good:#0a7d33; --bad:#b00020; --accent:#0b5cad; --bg:#fafafa; }
   * { box-sizing:border-box; }
@@ -25,76 +25,83 @@
 </style>
 </head>
 <body>
-<h1>Merge policy: <span style="color:#0b5cad">a serialized merge lane, not optimistic eviction</span></h1>
+<h1>Merge policy: <span style="color:#0b5cad">optimistic merge + postsubmit eviction</span></h1>
 <div class="meta"><span class="pill">ORCH-A-02</span> &nbsp; Panopticon V0 implementation orchestration &nbsp;·&nbsp; <code>docs/planning/06-orchestration.md §2</code></div>
 
-<h2>The problem (and the trap)</h2>
-<p>Smithers' <strong>MergeQueue</strong> component is <em>only a concurrency limiter</em> — it serializes
-who writes, nothing more. The seductive design is <strong>optimistic merging with postsubmit
-eviction</strong>: land each ticket the moment its own gates are green, run the full suite on
-<code>main</code> afterward, and if something breaks, automatically evict the culprit. But that
-"automatic eviction" is <strong>entirely custom logic</strong> we would have to build and verify ourselves:
-a <code>CheckSuite</code> to attribute the postsubmit failure, a <code>Saga</code> to compensate every
-dependent run that already branched off the bad commit, a <code>jj revert</code> to surgically back the
-change out, and a re-rebase of everyone downstream (where Smithers worktree runs auto-rebase on resume
-<em>even if the rebase fails</em>, materializing conflicts that a human or agent must then resolve).</p>
+<div class="warn" style="margin-bottom:1rem">
+<strong>Reversed.</strong> The prior decision built a <em>serialized merge lane</em> (depth-1, one writer
+to <code>main</code> at a time) and explicitly <em>forbade</em> optimistic merging and postsubmit
+eviction. That is overturned. We now <strong>prefer optimistic merging — land-then-learn with postsubmit
+eviction — because it is faster.</strong> We <em>do</em> build the optimistic land + postsubmit eviction
+machinery that was previously declared out of scope.
+</div>
 
-<h2>Decision</h2>
+<h2>The decision</h2>
 <div class="box">
-For V0 we build a <strong>serialized merge lane</strong> and we <strong>do not build optimistic merging
-or postsubmit auto-eviction</strong>.
+For V0 we build <strong>optimistic merging with postsubmit eviction</strong>. Speed is the priority: a
+ticket lands the moment its own gates are green — it does <strong>not</strong> wait behind a serialized
+lane — and the full suite runs on <code>main</code> afterward. If a postsubmit run goes red, the culprit
+is automatically <strong>evicted</strong> (backed out) and downstream is re-rebased.
 <table>
 <tr><th>Mechanism</th><th>V0 verdict</th><th>Why</th></tr>
-<tr><td>MergeQueue (depth-1 land serializer)</td><td class="good">USE — as a pure concurrency limiter</td><td>Exactly what it is for. One writer to <code>main</code> at a time, ordered by DAG topo rank.</td></tr>
-<tr><td>Pre-merge gate on the rebased tip</td><td class="good">BUILD</td><td>A ticket re-runs its deterministic gate tier <em>after</em> rebasing onto the current lane tip; green → fast-forward land; conflict → bounce to the worker (jj materializes the conflict, worker resolves on resume).</td></tr>
-<tr><td>Optimistic land + postsubmit eviction (CheckSuite + Saga + jj revert + cascade rebase)</td><td class="bad">DO NOT BUILD</td><td>~28 tickets on a strict DAG: merge contention is low, the critical path is dependency-bound, and the eviction machinery's failure modes (mis-attribution, partial compensation, rebase-conflict cascades) add more risk than the few serialized lands cost.</td></tr>
-<tr><td>Postsubmit full suite on <code>main</code></td><td class="good">RUN — manual revert on failure</td><td>The full matrix runs after each land; a red postsubmit opens a <strong>recorded revert-or-forward-fix decision</strong> (HTML log), resolved by the orchestrator's gate, not by an autonomous evictor.</td></tr>
+<tr><td>Optimistic land (land on own green gates, no lane wait)</td><td class="good">BUILD</td><td>Fastest path; tickets land in parallel as their gates pass instead of queueing.</td></tr>
+<tr><td>Postsubmit full suite on <code>main</code></td><td class="good">RUN — after every land</td><td>Catches what optimistic lands let through; the trigger for eviction.</td></tr>
+<tr><td>Automatic postsubmit eviction (CheckSuite attribute → <code>jj revert</code> → cascade re-rebase)</td><td class="good">BUILD</td><td>A red postsubmit auto-backs-out the offending land and re-rebases dependents — land-then-learn.</td></tr>
+<tr><td>Serialized depth-1 merge lane (one writer at a time)</td><td class="bad">DO NOT BUILD</td><td>Too slow — it queues lands behind one another. Replaced by optimistic land.</td></tr>
 </table>
 </div>
 
-<h2>Why a serialized lane is sufficient here</h2>
+<h2>Why optimistic is the right trade now</h2>
 <ul>
-<li><strong>The DAG already serializes the hard part.</strong> Dependents cannot start until their
-ancestors land, so the lane mostly sees <em>independent</em> tickets whose rebases are trivial. The
-widest ready-set is ~6 (Phase-0 fan-out / Phase-1 probes); the lane drains them one at a time in seconds.</li>
-<li><strong>Each land is already pre-merge-green with recorded red-before-green.</strong> A ticket reaches
-the lane only after its deterministic gate tier passed on its rebased tip (see ORCH-A-03). Postsubmit
-failures are therefore expected to be <em>rare</em> — not the common case eviction is designed for.</li>
-<li><strong>Eviction's correctness bar is brutal.</strong> To auto-evict safely you must prove
-attribution (which of N optimistically-landed commits broke postsubmit?), compensate every Saga branch
-that already forked, and survive cascade rebases — each a place to silently lose work, which REQ-15's
-durability ethic forbids. Building that to save a handful of serialized lands is a bad trade.</li>
+<li><strong>Speed is the priority.</strong> Build this as fast as possible. Serializing every land
+behind a single writer throttles a wide, mostly-independent ready-set; optimistic land lets the whole
+antichain land in parallel.</li>
+<li><strong>Conflicts are kept rare by ordering.</strong> Tickets are ordered to minimize merge
+conflicts (ORCH-A-01), so most optimistic lands are independent and clean; the rare bad land is the
+exception eviction exists to handle.</li>
+<li><strong>jj makes eviction tractable.</strong> Co-located jj+git gives first-class conflict handling
+and <code>jj revert</code> as a clean back-out primitive, so attribute-and-evict is a recoverable
+operation rather than a corrupt-history hazard.</li>
 </ul>
 
+<h2>The flow</h2>
+<pre>ticket gates green  →  LAND optimistically on main  (no lane wait)
+   └─ postsubmit full suite runs on the new main tip
+         ├─ green  →  done
+         └─ red    →  CheckSuite attributes the failure → jj revert the culprit (EVICT)
+                       → re-rebase downstream → re-run their gates</pre>
+
 <h2>Alternatives</h2>
-<div class="alt lose"><strong>Optimistic merge + automatic postsubmit eviction.</strong>
-<span class="bad">Rejected for V0.</span> High custom-logic surface (CheckSuite + Saga + jj revert +
-cascade re-rebase) for low payoff at this ticket count; its own failure modes threaten silent work loss.</div>
+<div class="alt lose"><strong>Serialized depth-1 merge lane, no eviction (prior plan).</strong>
+<span class="bad">Reversed.</span> Slower — queues lands behind one writer; throttles a wide independent
+ready-set. The whole point of this reversal is speed.</div>
 <div class="alt lose"><strong>Trunk-based, everyone commits to <code>main</code>, no gate.</strong>
 <span class="bad">Rejected.</span> Violates the validation bar — a ticket could land without recorded RBG.</div>
-<div class="alt win"><strong>Depth-1 serialized lane, pre-merge gate on rebased tip, postsubmit full suite, manual revert (chosen).</strong>
-<span class="good">Chosen.</span> Uses MergeQueue for exactly what it is, keeps every land gated and
-reversible, and defers the expensive eviction machinery until a future build's scale actually justifies it.</div>
+<div class="alt win"><strong>Optimistic land on own green gates + postsubmit full suite + automatic eviction (chosen).</strong>
+<span class="good">Chosen.</span> Fastest; every land still gated with recorded RBG; bad lands are
+auto-evicted and downstream re-rebased.</div>
 
 <h2>Verification (the orchestration logic is itself tested)</h2>
 <ul>
-<li><strong>Lane-serialization test:</strong> enqueue two ticket lands concurrently → assert exactly one
-holds the write lock at a time and the second rebases onto the first's result. <span class="bad">RBG:</span>
-set lane depth to 2 → both write → interleave detector fails.</li>
-<li><strong>Gate-before-land test:</strong> a ticket with a missing/failing pre-merge gate or no recorded
-RBG <em>cannot</em> enter the lane. <span class="bad">RBG:</span> stub a ticket with <code>rbgRecorded:false</code>
-→ assert land is refused; flip to <code>true</code> with both red+green logs present → land allowed.</li>
-<li><strong>Rebase-conflict bounce test:</strong> force a jj conflict on rebase → assert the ticket is
-returned to its worker with the conflict materialized (not force-landed). <span class="bad">RBG:</span>
-auto-resolve-by-discard → conflict-bounce assertion fails.</li>
-<li><strong>Postsubmit-revert test:</strong> inject a postsubmit failure on <code>main</code> → assert a
-revert-or-forward-fix decision row is written to <code>artifacts/smithering/decisions/build/</code> and
-no autonomous eviction fires.</li>
+<li><strong>Optimistic-land test:</strong> a ticket whose own gates are green lands immediately without
+waiting on another in-flight land. <span class="bad">RBG:</span> force a serialized single-writer lock →
+assert the parallel land is <em>not</em> blocked (else the optimistic-land assertion fails).</li>
+<li><strong>Gate-before-land test:</strong> a ticket with a missing/failing gate or no recorded RBG
+<em>cannot</em> land. <span class="bad">RBG:</span> stub a ticket with <code>rbgRecorded:false</code> →
+assert land is refused; flip to <code>true</code> with both red+green logs present → land allowed.</li>
+<li><strong>Postsubmit-eviction test:</strong> inject a postsubmit failure on <code>main</code> → assert
+the offending land is attributed and <code>jj revert</code>-evicted automatically, and downstream is
+re-rebased. <span class="bad">RBG:</span> disable attribution → eviction targets the wrong commit →
+fails.</li>
+<li><strong>Cascade-rebase test:</strong> after an eviction, dependents that branched off the bad commit
+are re-rebased and re-gated. <span class="bad">RBG:</span> skip the cascade → a dependent keeps the
+reverted change → fails.</li>
 </ul>
 
-<div class="warn"><strong>Carried risk:</strong> serialized lands are slower under a hypothetical wide,
-churny DAG. Mitigation: the DAG is verified narrow (max antichain ~6) and dependency-bound; if a future
-build is merge-bound rather than dependency-bound, optimistic eviction becomes worth its cost and is
-revisited at the gate — not before.</div>
+<div class="warn"><strong>Carried risk:</strong> optimistic land + eviction is custom logic
+(attribution, <code>jj revert</code>, cascade re-rebase) with its own failure modes. Mitigation:
+conflict-minimizing ticket order keeps bad lands rare; every eviction is recorded
+(<code>artifacts/smithering/decisions/build/</code>); jj's first-class conflict handling makes the
+back-out recoverable. The speed win outweighs the machinery's cost at this build's scale.</div>
 </body>
 </html>

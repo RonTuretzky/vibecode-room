@@ -40,15 +40,21 @@ calls unbearable.</p>
 <h2>Decision</h2>
 <div class="box">
 Split the system into <strong>three planes that communicate only through queues</strong>, so a stall in
-a slower plane can never delay a faster one:
+a slower plane can never delay a faster one. The plane structure is a <strong>modular, easily mockable</strong>
+integration around Cue; the per-plane <strong>budgets are env-tunable knobs with documented defaults,
+not hard guarantees</strong> — tune them by feel later from real-world UX.
 <table>
-<tr><th>Plane</th><th>Budget</th><th>Contains</th><th>Never waits on</th></tr>
-<tr><td><strong>Hot</strong></td><td>≤300 ms</td><td>audio in/out, ASR finalization, <strong>earcon dispatch</strong> (pre-rendered PCM)</td><td class="bad">LLM · Smithers · TTS · network</td></tr>
-<tr><td><strong>Decision</strong></td><td>~100 ms</td><td>Cue policies, cheap/fast LLM (temp-0), <code>observe.pass</code></td><td class="bad">Smithers · durable runs</td></tr>
-<tr><td><strong>Durable</strong></td><td>seconds–min</td><td>Smithers runs, spawn, steer, recovery, safety hold</td><td>—</td></tr>
+<tr><th>Plane</th><th>Budget (env default)</th><th>Contains</th><th>Never waits on</th></tr>
+<tr><td><strong>Hot</strong></td><td><code>HOT_BUDGET_MS</code> ≈ 300</td><td>audio in/out, ASR finalization, <strong>earcon dispatch</strong> (pre-rendered PCM)</td><td class="bad">LLM · Smithers · TTS · network</td></tr>
+<tr><td><strong>Decision</strong></td><td><code>DECISION_BUDGET_MS</code> ≈ 100</td><td>Cue policies, cheap/fast LLM (temp-0), <code>observe.pass</code></td><td class="bad">Smithers · durable runs</td></tr>
+<tr><td><strong>Durable</strong></td><td>seconds–min</td><td>Smithers runs, spawn, steer, recovery</td><td>—</td></tr>
 </table>
 The earcon is dispatched from the Hot plane the instant ASR finalizes a recognized command,
 <em>before and independent of</em> any decision/Smithers/TTS work.
+<p style="margin:.6rem 0 0"><strong>Env-tunable, externally injected:</strong> all budgets, suggestion
+cadence/gates, thresholds, and word lists are passed in via ENV variables, each documented with its
+default. The 3-plane latency model is fine <em>as documentation</em>, but framed as knobs we tune from
+real UX — don't over-engineer hard numeric promises.</p>
 </div>
 
 <h2>Data flow (the spine)</h2>
@@ -75,12 +81,15 @@ downstream and asynchronous. Matches Pipecat's pre-rendered-PCM-bypasses-TTS pat
 <span class="bad">RBG:</span> set budget to 100 ms → fails; relax to 300 ms → passes.</li>
 <li><strong>Unit:</strong> async-dispatch test — a mocked slow Smithers spawn does <em>not</em> block
 the next observation from processing on the decision plane.</li>
-<li><strong>E2e:</strong> latency benchmark over ≥100 live round-trips — earcon &lt;300 ms, round-trip
-p50&lt;1 s / p95&lt;1.5 s, recorded as a regression baseline that fails on regression.</li>
+<li><strong>E2e:</strong> latency observed over live round-trips against the env-configured budgets
+(earcon &lt; <code>HOT_BUDGET_MS</code>, decision &lt; <code>DECISION_BUDGET_MS</code>); the budgets are
+knobs, so this confirms the structure holds under whatever defaults are set rather than asserting a
+fixed promise.</li>
 </ul>
 
 <div class="warn"><strong>Constraint it imposes:</strong> earcons must be <strong>pre-rendered PCM</strong>
 (no synthesis on the hot path), and the seam (ENG-A-03) must be <strong>async</strong> — spawn returns
-immediately and completes off the hot path. Both are load-bearing for this decision.</div>
+immediately and completes off the hot path. Both are load-bearing. Everything else (the actual budget
+numbers) is an env-tunable knob, not a hard guarantee.</div>
 </body>
 </html>
