@@ -1,0 +1,7 @@
+bun test v1.3.14 (0d9b296a)
+
+ 3 pass
+ 0 fail
+ 15 expect() calls
+Ran 3 tests across 1 file. [6.00ms]
+E2E_RESTORE_EXIT=0

@@ -1,0 +1,3 @@
+$ tsc --noEmit
+src/types.ts(129,7): error TS2322: Type 'string' is not assignable to type 'number'.
+TSC_RED_EXIT=2
