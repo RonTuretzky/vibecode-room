@@ -1,0 +1,22 @@
+bun test v1.3.14 (0d9b296a)
+
+src/obs/trace.test.ts:
+165 |     return processor;
+166 |   }
+167 | }
+168 | 
+169 | export function serializeTraceJsonl(events: readonly LogEvent[]): string {
+170 |   return events.map((event) => JSON.stringify(logEventSchema.parse(event))).join("\n");
+                ^
+TypeError: JSON.stringify cannot serialize BigInt.
+      at map (1:11)
+      at serializeTraceJsonl (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/trace-processor-observability/src/obs/trace.ts:170:17)
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/trace-processor-observability/src/obs/trace.test.ts:146:19)
+(fail) ENG-T-03 TraceProcessor > trace-roundtrip serializes and deserializes every event byte-identically [2.28ms]
+
+ 0 pass
+ 6 filtered out
+ 1 fail
+Ran 1 test across 1 file. [29.00ms]
+
+[exit_code=1]

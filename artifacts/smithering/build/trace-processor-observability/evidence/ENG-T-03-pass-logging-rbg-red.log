@@ -1,0 +1,25 @@
+bun test v1.3.14 (0d9b296a)
+
+src/obs/trace.test.ts:
+86 |     const events = processor.events();
+87 |     const observePasses = events.filter((event) => event.event === "observe.pass");
+88 |     const routePasses = events.filter((event) => event.event === "route.pass");
+89 | 
+90 |     expect(observePasses).toHaveLength(1);
+91 |     expect(routePasses).toHaveLength(observePasses.length);
+                             ^
+error: expect(received).toHaveLength(expected)
+
+Expected length: 1
+Received length: 0
+
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/trace-processor-observability/src/obs/trace.test.ts:91:25)
+(fail) ENG-T-03 TraceProcessor > pass-logging emits a route.pass line for every observe.pass [2.35ms]
+
+ 0 pass
+ 6 filtered out
+ 1 fail
+ 2 expect() calls
+Ran 1 test across 1 file. [31.00ms]
+
+[exit_code=1]
