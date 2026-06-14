@@ -1,6 +1,6 @@
 export const repoCommands = {
   lint: null,
-  test: null,
+  test: "bun test",
   coverage: null,
 } as const;
 

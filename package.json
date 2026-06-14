@@ -8,6 +8,7 @@
     "dev": "bun --watch src/server/index.ts",
     "start": "bun src/server/index.ts",
     "typecheck": "tsc --noEmit",
+    "test": "bun test",
     "seed": "bun src/scripts/seed-demo.ts"
   },
   "devDependencies": {
