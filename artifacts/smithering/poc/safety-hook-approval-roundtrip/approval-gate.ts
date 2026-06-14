@@ -34,8 +34,13 @@ export class ApprovalGateServer {
   private readonly port: number;
   private server: ReturnType<typeof Bun.serve> | null = null;
 
-  constructor(port = 7777) {
+  constructor(port = 0) {
     this.port = port;
+  }
+
+  /** The actual TCP port the server is listening on (available after start()). */
+  get actualPort(): number {
+    return this.server?.port ?? this.port;
   }
 
   /** Create a new pending approval gate. Returns gateId. */

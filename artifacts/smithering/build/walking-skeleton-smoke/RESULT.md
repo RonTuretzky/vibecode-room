@@ -26,13 +26,21 @@ Previous CI ran `bun test ./src ./test` — a narrowed scope. The ticket explici
 `bun test` (no args) plus `tsc --noEmit`. With no scope, `bun test` discovers all 9 test files
 including `artifacts/smithering/poc/safety-hook-approval-roundtrip/poc.test.ts`.
 
-**Verification**: `bun test` passes locally: 101 pass / 2 skip / 0 fail across 9 files. The poc
-integration tests start HTTP servers on fixed ports (7779-7780-7781); in a clean CI environment
-those ports are free and all tests pass.
-
-**Fix**: CI now runs bare `bun test`. The poc tests are standalone experiments that pass in clean
-environments. RBG for the full-suite gate now recorded (red: `BREAK_MATCHER=1 bun test` → 1 fail;
+**Fix**: CI now runs bare `bun test`. RBG for the full-suite gate is recorded (red: `BREAK_MATCHER=1 bun test` → 1 fail;
 green: `bun test` → 0 fail).
+
+### Reviewer-addressed fix in this pass (v6)
+
+The cross-family reviewer (GPT-5.5) found that the poc tests use fixed ports 7779/7780/7781 which
+could conflict if those ports are in use in CI. To make the full-suite gate unconditionally
+reproducible, the poc tests now use port 0 (OS assigns a free ephemeral port):
+
+- `approval-gate.ts`: default port changed to 0; `actualPort` getter exposes the real assigned port
+- `poc.test.ts`: all three `describe` blocks (ApprovalGateServer, hook-integration,
+  file-integrity) use `port: 0` and read `server.actualPort` after `start()` to construct URLs and
+  the `GATE_SERVER_URL` env var passed to hook subprocesses
+
+`bun test` (all 9 files): 101 pass / 2 skip / 0 fail — reproducible regardless of port availability.
 
 ### Seam coverage
 

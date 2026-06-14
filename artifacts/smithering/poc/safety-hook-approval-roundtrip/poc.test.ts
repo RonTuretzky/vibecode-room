@@ -191,11 +191,12 @@ describe("classifyToolCall: tool name → klass", () => {
 
 describe("ApprovalGateServer", () => {
   let server: ApprovalGateServer;
-  const PORT = 7779; // avoid conflict with any running server
+  let PORT: number;
 
   beforeAll(() => {
-    server = new ApprovalGateServer(PORT);
+    server = new ApprovalGateServer(0); // OS assigns a free port — no conflict risk
     server.start();
+    PORT = server.actualPort;
   });
 
   afterAll(() => {
@@ -273,11 +274,12 @@ describe("ApprovalGateServer", () => {
 
 describe("hook-script integration (no Claude Code agent needed)", () => {
   let gateServer: ApprovalGateServer;
-  const GATE_PORT = 7780;
+  let GATE_PORT: number;
 
   beforeAll(() => {
-    gateServer = new ApprovalGateServer(GATE_PORT);
+    gateServer = new ApprovalGateServer(0); // OS assigns a free port — no conflict risk
     gateServer.start();
+    GATE_PORT = gateServer.actualPort;
   });
 
   afterAll(() => {
@@ -446,13 +448,12 @@ describe("file-integrity: target file unchanged while hook blocks", () => {
   let tmpDir: string;
   let targetFile: string;
   let gateServer: ApprovalGateServer;
-  const GATE_PORT = 7781;
 
   beforeAll(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "panopticon-poc-"));
     targetFile = join(tmpDir, "protected.txt");
     writeFileSync(targetFile, "original content");
-    gateServer = new ApprovalGateServer(GATE_PORT);
+    gateServer = new ApprovalGateServer(0); // OS assigns a free port — no conflict risk
     gateServer.start();
   });
 
