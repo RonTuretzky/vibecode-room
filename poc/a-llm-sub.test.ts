@@ -38,7 +38,7 @@ describe("A-LLM-SUB host subscription reachability probe", () => {
   test("subscription-routed hot-loop access is either green or surfaced as a binding PRD conflict", async () => {
     const verdict = await runHotLoopSubscriptionProbe();
 
-    if (process.env.PANOP_LLM_PROBE_REQUIRE_GREEN === "1") {
+    if (process.env.PANOP_LLM_PROBE_ACCEPT_CONFLICT !== "1") {
       expect(verdict.green, verdict.blockers.join("; ")).toBe(true);
     }
 

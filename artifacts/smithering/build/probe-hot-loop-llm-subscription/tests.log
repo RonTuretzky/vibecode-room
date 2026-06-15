@@ -2,7 +2,5 @@ bun test v1.3.14 (0d9b296a)
 
  4 pass
  0 fail
- 22 expect() calls
-Ran 4 tests across 2 files. [227.73s]
-
-[exit_code=0]
+ 24 expect() calls
+Ran 4 tests across 2 files. [55.57s]

@@ -7,7 +7,7 @@
     "command": "claude --print",
     "status": "passed",
     "subscriptionRouted": true,
-    "latencyMs": 12601.018459000014,
+    "latencyMs": 3436.8789999999935,
     "decisions": [
       {
         "id": "repeat-1",
@@ -32,7 +32,7 @@
     "invocations": [
       {
         "id": "same-input-1",
-        "latencyMs": 12601.018459000014,
+        "latencyMs": 3232.206416000001,
         "decisions": [
           {
             "id": "repeat-1",
@@ -58,7 +58,7 @@
       },
       {
         "id": "same-input-2",
-        "latencyMs": 10855.15383299999,
+        "latencyMs": 3436.8789999999935,
         "decisions": [
           {
             "id": "repeat-1",
@@ -76,11 +76,11 @@
             "decision": "PASS",
             "tool": "observe.pass",
             "arguments": {},
-            "confidence": 0.95,
+            "confidence": 0.92,
             "reason": "status update about existing work"
           }
         ],
-        "stdoutPreview": "{\"decisions\":[{\"id\":\"repeat-1\",\"decision\":\"ACT\",\"tool\":\"panopticon.steer\",\"arguments\":{\"callsign\":\"Daybreak\",\"instruction\":\"status\"},\"confidence\":0.95,\"reason\":\"status query addressed to named callsign Daybreak\"},{\"id\":\"pass-1\",\"decision\":\"PASS\",\"tool\":\"observe.pass\",\"arguments\":{},\"confidence\":0.95,\"reason\":\"status update about existing work\"}]}"
+        "stdoutPreview": "{\"decisions\":[{\"id\":\"repeat-1\",\"decision\":\"ACT\",\"tool\":\"panopticon.steer\",\"arguments\":{\"callsign\":\"Daybreak\",\"instruction\":\"status\"},\"confidence\":0.95,\"reason\":\"status query addressed to named callsign Daybreak\"},{\"id\":\"pass-1\",\"decision\":\"PASS\",\"tool\":\"observe.pass\",\"arguments\":{},\"confidence\":0.92,\"reason\":\"status update about existing work\"}]}"
       }
     ],
     "stdoutPreview": "{\"decisions\":[{\"id\":\"repeat-1\",\"decision\":\"ACT\",\"tool\":\"panopticon.steer\",\"arguments\":{\"callsign\":\"Daybreak\",\"instruction\":\"status\"},\"confidence\":0.95,\"reason\":\"status query addressed to named callsign Daybreak\"},{\"id\":\"pass-1\",\"decision\":\"PASS\",\"tool\":\"observe.pass\",\"arguments\":{},\"confidence\":0.93,\"reason\":\"status update about existing work\"}]}"
@@ -91,7 +91,7 @@
       "command": "codex",
       "status": "passed",
       "subscriptionRouted": true,
-      "latencyMs": 52135.459,
+      "latencyMs": 7069.573666999997,
       "decisions": [
         {
           "id": "repeat-1",
@@ -110,13 +110,13 @@
           "tool": "observe.pass",
           "arguments": {},
           "confidence": 1,
-          "reason": "status update"
+          "reason": "existing work update"
         }
       ],
       "invocations": [
         {
           "id": "same-input-1",
-          "latencyMs": 35007.64829099999,
+          "latencyMs": 5168.350166999997,
           "decisions": [
             {
               "id": "repeat-1",
@@ -135,14 +135,14 @@
               "tool": "observe.pass",
               "arguments": {},
               "confidence": 1,
-              "reason": "status update"
+              "reason": "existing work update"
             }
           ],
-          "stdoutPreview": "{\"decisions\":[{\"id\":\"repeat-1\",\"decision\":\"ACT\",\"tool\":\"panopticon.steer\",\"arguments\":{\"callsign\":\"Daybreak\",\"instruction\":\"status\"},\"confidence\":1.0,\"reason\":\"named status query\"},{\"id\":\"pass-1\",\"decision\":\"PASS\",\"tool\":\"observe.pass\",\"arguments\":{},\"confidence\":1.0,\"reason\":\"status update\"}]}"
+          "stdoutPreview": "{\"decisions\":[{\"id\":\"repeat-1\",\"decision\":\"ACT\",\"tool\":\"panopticon.steer\",\"arguments\":{\"callsign\":\"Daybreak\",\"instruction\":\"status\"},\"confidence\":1.0,\"reason\":\"named status query\"},{\"id\":\"pass-1\",\"decision\":\"PASS\",\"tool\":\"observe.pass\",\"arguments\":{},\"confidence\":1.0,\"reason\":\"existing work update\"}]}"
         },
         {
           "id": "same-input-2",
-          "latencyMs": 52135.459,
+          "latencyMs": 7069.573666999997,
           "decisions": [
             {
               "id": "repeat-1",
@@ -167,14 +167,14 @@
           "stdoutPreview": "{\"decisions\":[{\"id\":\"repeat-1\",\"decision\":\"ACT\",\"tool\":\"panopticon.steer\",\"arguments\":{\"callsign\":\"Daybreak\",\"instruction\":\"status\"},\"confidence\":1.0,\"reason\":\"status query to named callsign\"},{\"id\":\"pass-1\",\"decision\":\"PASS\",\"tool\":\"observe.pass\",\"arguments\":{},\"confidence\":1.0,\"reason\":\"status update about existing work\"}]}"
         }
       ],
-      "stdoutPreview": "{\"decisions\":[{\"id\":\"repeat-1\",\"decision\":\"ACT\",\"tool\":\"panopticon.steer\",\"arguments\":{\"callsign\":\"Daybreak\",\"instruction\":\"status\"},\"confidence\":1.0,\"reason\":\"named status query\"},{\"id\":\"pass-1\",\"decision\":\"PASS\",\"tool\":\"observe.pass\",\"arguments\":{},\"confidence\":1.0,\"reason\":\"status update\"}]}"
+      "stdoutPreview": "{\"decisions\":[{\"id\":\"repeat-1\",\"decision\":\"ACT\",\"tool\":\"panopticon.steer\",\"arguments\":{\"callsign\":\"Daybreak\",\"instruction\":\"status\"},\"confidence\":1.0,\"reason\":\"named status query\"},{\"id\":\"pass-1\",\"decision\":\"PASS\",\"tool\":\"observe.pass\",\"arguments\":{},\"confidence\":1.0,\"reason\":\"existing work update\"}]}"
     },
     {
       "provider": "anthropic-claude",
       "command": "claude --print",
       "status": "passed",
       "subscriptionRouted": true,
-      "latencyMs": 12601.018459000014,
+      "latencyMs": 3436.8789999999935,
       "decisions": [
         {
           "id": "repeat-1",
@@ -199,7 +199,7 @@
       "invocations": [
         {
           "id": "same-input-1",
-          "latencyMs": 12601.018459000014,
+          "latencyMs": 3232.206416000001,
           "decisions": [
             {
               "id": "repeat-1",
@@ -225,7 +225,7 @@
         },
         {
           "id": "same-input-2",
-          "latencyMs": 10855.15383299999,
+          "latencyMs": 3436.8789999999935,
           "decisions": [
             {
               "id": "repeat-1",
@@ -243,11 +243,11 @@
               "decision": "PASS",
               "tool": "observe.pass",
               "arguments": {},
-              "confidence": 0.95,
+              "confidence": 0.92,
               "reason": "status update about existing work"
             }
           ],
-          "stdoutPreview": "{\"decisions\":[{\"id\":\"repeat-1\",\"decision\":\"ACT\",\"tool\":\"panopticon.steer\",\"arguments\":{\"callsign\":\"Daybreak\",\"instruction\":\"status\"},\"confidence\":0.95,\"reason\":\"status query addressed to named callsign Daybreak\"},{\"id\":\"pass-1\",\"decision\":\"PASS\",\"tool\":\"observe.pass\",\"arguments\":{},\"confidence\":0.95,\"reason\":\"status update about existing work\"}]}"
+          "stdoutPreview": "{\"decisions\":[{\"id\":\"repeat-1\",\"decision\":\"ACT\",\"tool\":\"panopticon.steer\",\"arguments\":{\"callsign\":\"Daybreak\",\"instruction\":\"status\"},\"confidence\":0.95,\"reason\":\"status query addressed to named callsign Daybreak\"},{\"id\":\"pass-1\",\"decision\":\"PASS\",\"tool\":\"observe.pass\",\"arguments\":{},\"confidence\":0.92,\"reason\":\"status update about existing work\"}]}"
         }
       ],
       "stdoutPreview": "{\"decisions\":[{\"id\":\"repeat-1\",\"decision\":\"ACT\",\"tool\":\"panopticon.steer\",\"arguments\":{\"callsign\":\"Daybreak\",\"instruction\":\"status\"},\"confidence\":0.95,\"reason\":\"status query addressed to named callsign Daybreak\"},{\"id\":\"pass-1\",\"decision\":\"PASS\",\"tool\":\"observe.pass\",\"arguments\":{},\"confidence\":0.93,\"reason\":\"status update about existing work\"}]}"
@@ -259,16 +259,18 @@
     "mappedActionToolSchema": true,
     "noRawKeyRoute": true,
     "traceSecretClean": true,
-    "costWithinBudget": true,
+    "costWithinBudget": false,
     "actPromptAmendment": true
   },
   "metrics": {
     "budgetMs": 100,
-    "p50LatencyMs": 35007.64829099999,
+    "p50LatencyMs": 3436.8789999999935,
     "costBudgetPerHourUsd": 0.15,
-    "estimatedCostPerHourUsd": 0
+    "estimatedCostPerHourUsd": null,
+    "costBasis": "not-measured-host-subscription-no-metering"
   },
   "blockers": [
-    "No subscription-routed candidate met the 100 ms p50 hot-loop budget."
+    "No subscription-routed candidate met the 100 ms p50 hot-loop budget.",
+    "The $0.15/hr cost gate was not measured by the host subscription CLI probe."
   ]
 }

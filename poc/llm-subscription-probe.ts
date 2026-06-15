@@ -61,6 +61,7 @@ export interface HotLoopProbeVerdict {
     p50LatencyMs: number | null;
     costBudgetPerHourUsd: number;
     estimatedCostPerHourUsd: number | null;
+    costBasis: "not-measured-host-subscription-no-metering";
   };
   blockers: string[];
 }
@@ -116,16 +117,17 @@ export function assertDeterministic(invocations: CliInvocation[] | HotLoopToolCa
 }
 
 export function assertP50Latency(attempts: CliAttempt[], budgetMs = DECISION_BUDGET_MS): void {
-  const passedLatencies = attempts
-    .filter((attempt) => attempt.status === "passed")
-    .flatMap((attempt) => attempt.invocations.length > 0 ? attempt.invocations.map((invocation) => invocation.latencyMs) : [attempt.latencyMs])
-    .sort((a, b) => a - b);
-  if (passedLatencies.length === 0) {
+  const measured = attempts
+    .filter((attempt) => attempt.status === "passed" && attempt.subscriptionRouted)
+    .map((attempt) => ({ attempt, p50: candidateP50LatencyMs(attempt) }))
+    .filter((entry): entry is { attempt: CliAttempt; p50: number } => entry.p50 !== null);
+  if (measured.length === 0) {
     throw new Error("no successful subscription-routed model call to measure");
   }
-  const p50 = passedLatencies[Math.floor(passedLatencies.length / 2)] ?? Number.POSITIVE_INFINITY;
-  if (p50 > budgetMs) {
-    throw new Error(`hot-loop p50 latency ${p50.toFixed(0)} ms exceeds ${budgetMs} ms budget`);
+  const passing = measured.find((entry) => entry.p50 <= budgetMs);
+  if (passing === undefined) {
+    const best = measured.sort((a, b) => a.p50 - b.p50)[0];
+    throw new Error(`best subscription-routed candidate p50 latency ${best.p50.toFixed(0)} ms exceeds ${budgetMs} ms budget`);
   }
 }
 
@@ -221,9 +223,7 @@ export async function runHotLoopSubscriptionProbe(options: { forceRefresh?: bool
     await appendTrace("llm_probe.candidate", attempts[attempts.length - 1]);
   }
 
-  const selected = [...attempts]
-    .filter((attempt) => attempt.status === "passed")
-    .sort((a, b) => a.latencyMs - b.latencyMs)[0];
+  const selected = selectLowestLatencyPassedCandidate(attempts);
   const decisions = selected?.decisions ?? [];
   const selectedInvocations = selected?.invocations ?? [];
   const checks = {
@@ -235,12 +235,7 @@ export async function runHotLoopSubscriptionProbe(options: { forceRefresh?: bool
     costWithinBudget: safeCheck(() => assertCostGate(estimatedCostPerHourUsd(selected))),
     actPromptAmendment: safeCheck(() => assertActPromptAmendment(decisions)),
   };
-  const p50LatencyMs = selected === undefined ? null : percentile(
-    attempts
-      .filter((attempt) => attempt.status === "passed")
-      .flatMap((attempt) => attempt.invocations.map((invocation) => invocation.latencyMs)),
-    0.5,
-  );
+  const p50LatencyMs = selected === undefined ? null : candidateP50LatencyMs(selected);
   const blockers = buildBlockers(checks, attempts);
   const green = blockers.length === 0;
   const verdict: HotLoopProbeVerdict = {
@@ -257,6 +252,7 @@ export async function runHotLoopSubscriptionProbe(options: { forceRefresh?: bool
       p50LatencyMs,
       costBudgetPerHourUsd: COST_BUDGET_PER_HOUR_USD,
       estimatedCostPerHourUsd: estimatedCostPerHourUsd(selected),
+      costBasis: "not-measured-host-subscription-no-metering",
     },
     blockers,
   };
@@ -276,7 +272,7 @@ function candidates(): Array<{ provider: CliAttempt["provider"]; command: string
     },
     {
       provider: "anthropic-claude",
-      command: ["claude", "--print", "--output-format", "json", "--max-budget-usd", "0.01", "--tools", "", "--system-prompt", "Return only the requested JSON. Do not use tools.", HOT_LOOP_PROMPT],
+      command: ["claude", "--print", "--output-format", "json", "--max-budget-usd", "0.05", "--tools", "", "--system-prompt", "Return only the requested JSON. Do not use tools.", HOT_LOOP_PROMPT],
       display: "claude --print",
       timeoutMs: 60000,
     },
@@ -326,6 +322,7 @@ async function runCandidateInvocation(
 ): Promise<CliInvocation> {
   const started = performance.now();
   const proc = Bun.spawn(candidate.command, {
+    stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",
     env,
@@ -447,14 +444,27 @@ function percentile(values: number[], p: number): number | null {
   return sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * p))] ?? null;
 }
 
+function selectLowestLatencyPassedCandidate(attempts: CliAttempt[]): CliAttempt | undefined {
+  return [...attempts]
+    .filter((attempt) => attempt.status === "passed" && attempt.subscriptionRouted)
+    .sort((a, b) => (candidateP50LatencyMs(a) ?? Number.POSITIVE_INFINITY) - (candidateP50LatencyMs(b) ?? Number.POSITIVE_INFINITY))[0];
+}
+
+function candidateP50LatencyMs(attempt: CliAttempt): number | null {
+  const latencies = attempt.invocations.length > 0
+    ? attempt.invocations.map((invocation) => invocation.latencyMs)
+    : [attempt.latencyMs];
+  return percentile(latencies, 0.5);
+}
+
 function estimatedCostPerHourUsd(attempt: CliAttempt | undefined): number | null {
   if (attempt === undefined || attempt.status !== "passed") {
     return null;
   }
-  // Host Codex/Claude subscriptions do not expose per-call metering to this probe.
-  // E10 forbids raw API keys, so the only measurable hot-loop cost here is the
-  // marginal provider-key spend introduced by the product path, which is zero.
-  return 0;
+  // Host Codex/Claude subscription CLIs do not expose per-call metering to this
+  // probe. Treating unmetered subscription access as $0/hr would make the live
+  // $0.15/hr cost gate tautological, so the probe records this as unmeasured.
+  return null;
 }
 
 function safeCheck(check: () => void): boolean {
@@ -476,7 +486,7 @@ function buildBlockers(checks: HotLoopProbeVerdict["checks"], attempts: CliAttem
   if (!checks.mappedActionToolSchema) blockers.push("MappedActionTool-compatible tool-selection schema was not proven.");
   if (!checks.noRawKeyRoute) blockers.push("Raw-key rejection assertion failed.");
   if (!checks.traceSecretClean) blockers.push("Probe trace or report contained a key-shaped string.");
-  if (!checks.costWithinBudget) blockers.push("The $0.15/hr cost gate was not proven by a passing subscription-routed candidate.");
+  if (!checks.costWithinBudget) blockers.push("The $0.15/hr cost gate was not measured by the host subscription CLI probe.");
   if (!checks.actPromptAmendment) blockers.push("The ACT prompt amendment for named callsign status/information queries was not proven.");
   return blockers;
 }

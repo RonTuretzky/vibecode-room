@@ -1,2 +1,1 @@
-
-[exit_code=0]
+tsc passed: bunx tsc --noEmit --module ESNext --target ESNext --moduleResolution bundler --lib ESNext,DOM --types bun --strict --skipLibCheck --allowImportingTsExtensions poc/llm-subscription-probe.ts poc/p-llm.test.ts poc/a-llm-sub.test.ts

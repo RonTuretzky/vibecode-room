@@ -27,10 +27,12 @@ describe("P-LLM hot-loop subscription model probe", () => {
     ])).toThrow("diverged");
 
     expect(() => assertP50Latency([attempt(DECISION_BUDGET_MS + 1)])).toThrow("exceeds");
+    expect(() => assertP50Latency([attempt(DECISION_BUDGET_MS - 1), attempt(DECISION_BUDGET_MS + 10_000)])).not.toThrow();
     expect(() => assertMappedActionToolSchema([
       decision("repeat-1", "ACT", "observe.pass", {}),
     ])).toThrow("ACT decisions");
     expect(() => assertNoSecretText(`Authorization: Bearer ${"A".repeat(16)}`)).toThrow("secret-shaped");
+    expect(() => assertCostGate(null)).toThrow("could not be measured");
     expect(() => assertCostGate(COST_BUDGET_PER_HOUR_USD + 0.01)).toThrow("exceeds");
     expect(() => assertActPromptAmendment([
       decision("repeat-1", "PASS", "observe.pass", {}),
@@ -43,7 +45,7 @@ describe("P-LLM hot-loop subscription model probe", () => {
   test("host subscription CLI decision probe records determinism, latency, schema, prompt, cost, and trace-secret verdict", async () => {
     const verdict = await runHotLoopSubscriptionProbe();
 
-    if (process.env.PANOP_LLM_PROBE_REQUIRE_GREEN === "1") {
+    if (process.env.PANOP_LLM_PROBE_ACCEPT_CONFLICT !== "1") {
       expect(verdict.green, verdict.blockers.join("; ")).toBe(true);
     }
 
@@ -53,7 +55,9 @@ describe("P-LLM hot-loop subscription model probe", () => {
     expect(verdict.attempts.length).toBeGreaterThan(0);
     expect(verdict.checks.traceSecretClean).toBe(true);
     expect(verdict.checks.noRawKeyRoute).toBe(true);
-    expect(verdict.green || verdict.blockers.some((blocker) => blocker.includes("100 ms") || blocker.includes("No host"))).toBe(true);
+    expect(verdict.green || verdict.blockers.some((blocker) => (
+      blocker.includes("100 ms") || blocker.includes("No host") || blocker.includes("$0.15/hr cost gate was not measured")
+    ))).toBe(true);
   }, 240000);
 });
 
