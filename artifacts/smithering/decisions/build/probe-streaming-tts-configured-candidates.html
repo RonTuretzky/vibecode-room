@@ -28,17 +28,19 @@
 <div class="box">
 Benchmark every 2026 TTS candidate whose credentials are configured in the host environment, record
 unconfigured candidates by provider name and env var name only, and leave the probe verdict red when
-no measured provider meets the 200 ms first-audio-byte budget. Do not synthesize placeholder wins for
-unavailable vendors.
+no measured provider meets the 200 ms first-audio-byte budget or when the candidate benchmark is
+incomplete. Record a fastest measured provider separately from a selected provider. Do not synthesize
+placeholder wins or placeholder pre-cache clips for unavailable vendors.
 </div>
 
 <h2>Facts From The Probe</h2>
 <pre>Configured provider:
 OpenAI /v1/audio/speech, model gpt-4o-mini-tts, voice coral
 
-Measured:
-first audio byte = 1875.98 ms
+Final 200 ms run measured:
+first audio byte = 2955 ms
 budget = 200 ms
+selected provider = none
 
 Unconfigured:
 ElevenLabs Flash family: ELEVENLABS_API_KEY or XI_API_KEY
@@ -52,11 +54,14 @@ PlayHT 3.0 Turbo: PLAYHT_API_KEY and PLAYHT_USER_ID</pre>
 <span class="bad">Rejected.</span> The probe can still gather useful real evidence from configured candidates while clearly recording the missing families.</div>
 <div class="alt win"><strong>Measure configured providers and keep the verdict red if none pass.</strong>
 <span class="good">Chosen.</span> This preserves probe precedence: dependents stay unscheduled until a real provider passes.</div>
+<div class="alt win"><strong>Fail closed on selected-provider pre-cache when no provider is selected.</strong>
+<span class="good">Chosen.</span> The artifact records the blocker instead of treating synthetic bytes as evidence for real static clips.</div>
 
 <h2>Verification</h2>
 <pre>PANOP_TTS_FIRST_AUDIO_BUDGET_MS=20 bun test poc/p-tts.test.ts
 bun test poc/p-tts.test.ts</pre>
 <p>The 20 ms red run fails on the latency assertion, proving the budget check bites. The restored 200 ms
-run remains red because the fastest configured provider still exceeds the budget.</p>
+run remains red because the fastest configured provider still exceeds the budget and the three low-latency
+candidate families are not configured.</p>
 </body>
 </html>

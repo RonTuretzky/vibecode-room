@@ -2,8 +2,10 @@
 
 ## Built
 
-- Added `poc/p-tts.test.ts`, a validate-before-build P-TTS probe for ElevenLabs, Cartesia, PlayHT, and OpenAI `/v1/audio/speech` candidates.
-- The probe uses the landed `poc/harness.ts` RBG harness and exercises candidate matrix coverage, deterministic 15-word guard before submission, once-per-session voice selection, `TTSProvider` stream contract, live time-to-first-audio-byte measurement, static pre-cache playback mechanics, and secret redaction.
+- Updated `poc/p-tts.test.ts`, the validate-before-build P-TTS probe for ElevenLabs Flash, Cartesia Sonic, PlayHT 3.0 Turbo, and OpenAI `/v1/audio/speech`.
+- The probe uses the landed `poc/harness.ts` RBG harness and exercises candidate matrix coverage, deterministic 15-word guard before submission, once-per-session voice selection, `TTSProvider` stream contract, live time-to-first-audio-chunk measurement, selected-provider static pre-cache, and secret redaction.
+- The selection artifact now distinguishes `fastestMeasured` from `selected`; no selected provider is recorded unless the measured provider is within the 200 ms budget and the candidate benchmark is complete.
+- The pre-cache artifact now fails closed when no provider is selected. It no longer records synthetic one-byte clips as a green selected-provider pre-cache.
 - No raw provider key is written to source, logs, trace, report, or probe artifacts.
 
 ## Gate Roll-Up
@@ -25,15 +27,16 @@
 - Pre-cache record: `artifacts/smithering/probes/probe-streaming-tts/precache.json`
 - Harness report: `artifacts/smithering/reports/probe-streaming-tts/report.json`
 
-The only configured live provider was OpenAI `/v1/audio/speech`. It conformed to the stream contract but measured 1875.98 ms time-to-first-audio-byte, above the 200 ms P-TTS gate. ElevenLabs, Cartesia, and PlayHT credentials were not configured, so no acceptable provider was selected. The five fixed state phrases are recorded as pre-cache blocked against a selected provider; the static cache playback mechanics measured below 100 ms with synthetic clips.
+The only configured live provider was OpenAI `/v1/audio/speech`. It conformed to the stream contract but measured 2955 ms time-to-first-audio-chunk in the final 200 ms run, above the P-TTS budget. ElevenLabs, Cartesia, and PlayHT credentials were not configured, so the required 2026 candidate benchmark is incomplete. No acceptable provider was selected, and selected-provider state phrase pre-cache remains blocked.
 
 ## Commands
 
 - `PANOP_TTS_FIRST_AUDIO_BUDGET_MS=20 bun test poc/p-tts.test.ts`
 - `bun test poc/p-tts.test.ts`
-- `NODE_OPTIONS=--max-old-space-size=8192 bun run typecheck`
+- `bunx tsc --noEmit --pretty false --lib ESNext,DOM --module ESNext --target ESNext --moduleResolution bundler --moduleDetection force --verbatimModuleSyntax --strict --skipLibCheck --types bun poc/p-tts.test.ts poc/harness.ts src/providers/credentials.ts src/providers/types.ts src/security/secrets.ts`
 
 ## Blockers
 
-- P-TTS remains red. Dependent output-policy/latency tickets must stay unscheduled until a configured real TTS candidate streams first audio byte within 200 ms and selected-provider pre-cache can be generated from that provider.
-- Typecheck retried with an 8 GB Node heap and still exited 134 from repository-wide TypeScript memory exhaustion. The edited probe file is outside `tsconfig.json`'s `include`; the P-TTS blocker is the live provider budget failure.
+- P-TTS remains red. The final 200 ms evidence run measured OpenAI `/v1/audio/speech` above budget and found no selected provider.
+- The benchmark could not cover ElevenLabs Flash, Cartesia Sonic, or PlayHT 3.0 Turbo because their credential env vars are absent from this worktree environment.
+- The five state phrases cannot be pre-cached as real static clips until a selected provider exists.

@@ -47,16 +47,20 @@ interface Measurement {
 }
 
 interface SelectionRecord {
-  winner: Measurement;
+  budgetMs: number;
+  selected: Measurement | null;
+  fastestMeasured: Measurement | null;
   measured: Measurement[];
   unavailable: Array<{ providerId: ProviderId; label: string; envVars: string[] }>;
+  blockers: string[];
 }
 
 describe("P-TTS streaming provider selection probe", () => {
   test("configured 2026 TTS candidates stream first audio byte within budget and satisfy Panopticon output contract", async () => {
-    await assertDependencyVerdict();
     await mkdir(TRACE_ROOT, { recursive: true });
     await mkdir(PROBE_ROOT, { recursive: true });
+    await writeFile(TRACE_PATH, "", "utf8");
+    await assertDependencyVerdict();
 
     let selection: SelectionRecord | undefined;
     const assertions: ProbeAssertion[] = [
@@ -64,7 +68,7 @@ describe("P-TTS streaming provider selection probe", () => {
         id: "candidate-matrix",
         behavior: "the probe knows the 2026 TTS selection candidates and records unavailable credentials without values",
         falsify: () => {
-          expect(candidateMatrix().map((candidate) => candidate.id)).toContain("macos-say");
+          expect(candidateMatrix().map((candidate) => candidate.id as string)).toContain("macos-say");
         },
         run: async () => {
           const candidates = candidateMatrix();
@@ -123,12 +127,14 @@ describe("P-TTS streaming provider selection probe", () => {
         behavior: "configured real TTS candidates are benchmarked by time-to-first-audio-byte and the winner is <=200 ms",
         falsify: async () => {
           const record = await benchmarkConfiguredCandidates(20);
-          expect(record.winner.firstAudioByteMs).toBeLessThanOrEqual(20);
+          expect(record.fastestMeasured?.firstAudioByteMs ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(20);
         },
         run: async () => {
           selection = await benchmarkConfiguredCandidates(firstAudioBudgetMs());
           await writeJson(join(PROBE_ROOT, "selection.json"), selection);
-          expect(selection.winner.firstAudioByteMs).toBeLessThanOrEqual(firstAudioBudgetMs());
+          expect(selection.blockers).toEqual([]);
+          expect(selection.selected).not.toBeNull();
+          expect(selection.selected!.firstAudioByteMs).toBeLessThanOrEqual(firstAudioBudgetMs());
         },
       },
       {
@@ -143,30 +149,18 @@ describe("P-TTS streaming provider selection probe", () => {
         },
         run: async () => {
           const record = selection ?? (await benchmarkConfiguredCandidates(Number.POSITIVE_INFINITY));
-          if (firstAudioBudgetMs() < DEFAULT_FIRST_AUDIO_BUDGET_MS) {
-            const playback = await assertSyntheticPreCache(record.winner.providerId);
-            await writeJson(join(PROBE_ROOT, "precache.json"), {
-              providerId: record.winner.providerId,
-              phraseCount: STATE_PHRASES.length,
-              playback,
-              synthetic: true,
-              reason: "red-budget run avoids extra provider synthesis after first-byte failure",
-            });
-            return;
-          }
-          if (record.winner.firstAudioByteMs > firstAudioBudgetMs()) {
-            const playback = await assertSyntheticPreCache(record.winner.providerId);
+          if (record.selected === null) {
             await writeJson(join(PROBE_ROOT, "precache.json"), {
               providerId: null,
-              fastestMeasuredProviderId: record.winner.providerId,
+              fastestMeasuredProviderId: record.fastestMeasured?.providerId ?? null,
               phraseCount: STATE_PHRASES.length,
-              playback,
-              synthetic: true,
-              blocked: "no selected provider met the first-audio-byte budget",
+              playback: [],
+              blocked: "no selected provider is available for real static clip pre-cache",
+              blockers: record.blockers,
             });
-            return;
+            throw new Error("cannot pre-cache selected-provider state clips because P-TTS has no selected provider");
           }
-          const provider = configuredProviders().find((candidate) => candidate.id === record.winner.providerId);
+          const provider = configuredProviders().find((candidate) => candidate.id === record.selected!.providerId);
           expect(provider).toBeDefined();
           const cache = await preCacheStatePhrases(provider!);
           const playback = [];
@@ -177,9 +171,10 @@ describe("P-TTS streaming provider selection probe", () => {
             playback.push({ phrase, firstByteMs: result.firstByteMs, bytes: result.bytes });
           }
           await writeJson(join(PROBE_ROOT, "precache.json"), {
-            providerId: record.winner.providerId,
+            providerId: record.selected.providerId,
             phraseCount: STATE_PHRASES.length,
             playback,
+            synthetic: false,
           });
         },
       },
@@ -213,7 +208,7 @@ describe("P-TTS streaming provider selection probe", () => {
 
       await writeVerdict(true, summarizeSelection(selection, report.summary));
     } catch (error) {
-      await writeVerdict(false, error instanceof Error ? error.message : String(error));
+      await writeVerdict(false, selection === undefined ? (error instanceof Error ? error.message : String(error)) : summarizeSelection(selection, "probe assertion failed"));
       throw error;
     }
   }, 240_000);
@@ -511,7 +506,22 @@ async function benchmarkConfiguredCandidates(budgetMs: number): Promise<Selectio
     throw new Error("P-TTS measured no providers.");
   }
 
-  return { winner, measured, unavailable };
+  const blockers: string[] = [];
+  if (winner.firstAudioByteMs > budgetMs) {
+    blockers.push(`${winner.label} was fastest but measured ${Math.round(winner.firstAudioByteMs)} ms first audio byte, above the ${budgetMs} ms budget`);
+  }
+  if (unavailable.length > 0) {
+    blockers.push(`candidate benchmark incomplete; missing credentials for ${unavailable.map((candidate) => candidate.providerId).join(", ")}`);
+  }
+
+  return {
+    budgetMs,
+    selected: blockers.length === 0 ? winner : null,
+    fastestMeasured: winner,
+    measured,
+    unavailable,
+    blockers,
+  };
 }
 
 async function measureFirstAudioChunk(provider: CandidateProvider, text: string): Promise<Measurement> {
@@ -548,8 +558,9 @@ async function assertProviderContract(provider: TTSProvider, text: string): Prom
   try {
     const chunk = await reader.read();
     expect(chunk.done).toBe(false);
-    expect(chunk.value).toBeInstanceOf(Uint8Array);
-    expect(chunk.value.byteLength).toBeGreaterThan(0);
+    const value = chunk.value;
+    expect(value).toBeInstanceOf(Uint8Array);
+    expect(value?.byteLength ?? 0).toBeGreaterThan(0);
   } finally {
     reader.releaseLock();
   }
@@ -688,7 +699,11 @@ function summarizeSelection(selection: SelectionRecord | undefined, fallback: st
     return fallback;
   }
   const unavailable = selection.unavailable.length === 0 ? "all candidates configured" : `unconfigured: ${selection.unavailable.map((item) => item.providerId).join(", ")}`;
-  return `P-TTS selected ${selection.winner.label} at ${Math.round(selection.winner.firstAudioByteMs)} ms first audio byte; ${unavailable}; five fixed state phrases pre-cached for <100 ms playback; no key-shaped strings in probe artifacts.`;
+  if (selection.selected === null) {
+    const fastest = selection.fastestMeasured === null ? "no measured provider" : `${selection.fastestMeasured.label} at ${Math.round(selection.fastestMeasured.firstAudioByteMs)} ms`;
+    return `P-TTS remains blocked: no selected provider; fastest measured ${fastest}; ${unavailable}; no key-shaped strings in probe artifacts.`;
+  }
+  return `P-TTS selected ${selection.selected.label} at ${Math.round(selection.selected.firstAudioByteMs)} ms first audio byte; ${unavailable}; five fixed state phrases pre-cached for <100 ms playback; no key-shaped strings in probe artifacts.`;
 }
 
 function sleep(ms: number): Promise<void> {

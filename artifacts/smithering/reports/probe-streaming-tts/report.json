@@ -3,8 +3,8 @@
   "status": "failed",
   "summary": "probe assertion failed",
   "correlationId": "p-tts-streaming-selection",
-  "startedAt": "2026-06-15T08:13:37.223Z",
-  "finishedAt": "2026-06-15T08:13:41.367Z",
+  "startedAt": "2026-06-15T11:38:57.553Z",
+  "finishedAt": "2026-06-15T11:39:02.633Z",
   "assertions": [
     {
       "id": "candidate-matrix",
@@ -39,14 +39,14 @@
       "behavior": "configured real TTS candidates are benchmarked by time-to-first-audio-byte and the winner is <=200 ms",
       "phase": "red",
       "status": "failed-as-expected",
-      "error": "expect(received).toBeLessThanOrEqual(expected)\n\nExpected: <= 20\nReceived: 1109.937791\n"
+      "error": "expect(received).toBeLessThanOrEqual(expected)\n\nExpected: <= 20\nReceived: 1074.474792\n"
     },
     {
       "id": "precache-fixed-state-phrases",
       "behavior": "five fixed state phrases are pre-cached as static clips and play from memory in <100 ms",
       "phase": "red",
       "status": "failed-as-expected",
-      "error": "expect(received).toBeLessThanOrEqual(expected)\n\nExpected: <= 100\nReceived: 128.93520799999988\n"
+      "error": "expect(received).toBeLessThanOrEqual(expected)\n\nExpected: <= 100\nReceived: 128.00091599999996\n"
     },
     {
       "id": "secret-redaction",
@@ -84,13 +84,14 @@
       "behavior": "configured real TTS candidates are benchmarked by time-to-first-audio-byte and the winner is <=200 ms",
       "phase": "green",
       "status": "failed",
-      "error": "expect(received).toBeLessThanOrEqual(expected)\n\nExpected: <= 200\nReceived: 1875.9772909999997\n"
+      "error": "expect(received).toEqual(expected)\n\n- []\n+ [\n+   \"OpenAI /v1/audio/speech was fastest but measured 2955 ms first audio byte, above the 200 ms budget\",\n+   \"candidate benchmark incomplete; missing credentials for elevenlabs, cartesia, playht\",\n+ ]\n\n- Expected  - 1\n+ Received  + 4\n"
     },
     {
       "id": "precache-fixed-state-phrases",
       "behavior": "five fixed state phrases are pre-cached as static clips and play from memory in <100 ms",
       "phase": "green",
-      "status": "passed"
+      "status": "failed",
+      "error": "cannot pre-cache selected-provider state clips because P-TTS has no selected provider"
     },
     {
       "id": "secret-redaction",

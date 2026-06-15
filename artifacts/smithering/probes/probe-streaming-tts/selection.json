@@ -1,10 +1,12 @@
 {
-  "winner": {
+  "budgetMs": 200,
+  "selected": null,
+  "fastestMeasured": {
     "providerId": "openai",
     "label": "OpenAI /v1/audio/speech",
     "model": "gpt-4o-mini-tts",
     "voice": "coral",
-    "firstAudioByteMs": 1875.9772909999997,
+    "firstAudioByteMs": 2955.219042,
     "firstChunkBytes": 162,
     "contentType": null
   },
@@ -14,7 +16,7 @@
       "label": "OpenAI /v1/audio/speech",
       "model": "gpt-4o-mini-tts",
       "voice": "coral",
-      "firstAudioByteMs": 1875.9772909999997,
+      "firstAudioByteMs": 2955.219042,
       "firstChunkBytes": 162,
       "contentType": null
     }
@@ -43,5 +45,9 @@
         "PLAYHT_USER_ID"
       ]
     }
+  ],
+  "blockers": [
+    "OpenAI /v1/audio/speech was fastest but measured 2955 ms first audio byte, above the 200 ms budget",
+    "candidate benchmark incomplete; missing credentials for elevenlabs, cartesia, playht"
   ]
 }
