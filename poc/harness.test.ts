@@ -9,6 +9,7 @@ import {
   runProbe,
   type ProbeAssertion,
 } from "./harness";
+import { REDACTED_SECRET } from "../src/security/secrets";
 
 const REPORT_ROOT = "artifacts/smithering/reports";
 const SAMPLE_ID = "harness-sample-probe";
@@ -123,10 +124,12 @@ describe("probe harness", () => {
   test("redaction removes key-shaped strings before report secret-scan", async () => {
     const fakeKey = ["sk", "test", "A".repeat(48)].join("-");
     const rawBearer = ["Bearer", "B".repeat(48)].join(" ");
+    const opaqueToken = `vendor_live_${"C".repeat(12)}7${"D".repeat(12)}`;
 
-    expect(redactSecrets({ fakeKey, rawBearer })).toEqual({
-      fakeKey: "[redacted-secret]",
-      rawBearer: "[redacted-secret]",
+    expect(redactSecrets({ fakeKey, rawBearer, opaqueNote: `provider note ${opaqueToken}` })).toEqual({
+      fakeKey: REDACTED_SECRET,
+      rawBearer: REDACTED_SECRET,
+      opaqueNote: `provider note ${REDACTED_SECRET}`,
     });
 
     const assertion: ProbeAssertion = {
@@ -146,13 +149,14 @@ describe("probe harness", () => {
       reportRoot: REPORT_ROOT,
       cleanReportDir: true,
       correlationId: "probe-harness-test-redaction",
-      meta: { authorization: rawBearer },
+      meta: { authorization: rawBearer, providerNote: `opaque ${opaqueToken}` },
     });
 
     const content = await readFile(join(REPORT_ROOT, REDACT_ID, "report.json"), "utf8");
     expect(content).not.toContain(fakeKey);
     expect(content).not.toContain(rawBearer);
-    expect(content).toContain("[redacted-secret]");
+    expect(content).not.toContain(opaqueToken);
+    expect(content).toContain(REDACTED_SECRET);
     expect(await assertNoKeyShapedStrings(join(REPORT_ROOT, REDACT_ID))).toEqual({
       passed: true,
       findings: [],

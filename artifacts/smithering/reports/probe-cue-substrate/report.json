@@ -3,8 +3,8 @@
   "status": "passed",
   "summary": "probe assertions were failable and passed",
   "correlationId": "p-cue-real-cue-substrate",
-  "startedAt": "2026-06-14T21:51:46.623Z",
-  "finishedAt": "2026-06-14T21:51:46.845Z",
+  "startedAt": "2026-06-15T05:17:07.683Z",
+  "finishedAt": "2026-06-15T05:17:07.905Z",
   "assertions": [
     {
       "id": "repo-access-source-build",
@@ -18,7 +18,7 @@
       "behavior": "TextCue-triggered harness decision resolves inside the hard earcon budget",
       "phase": "red",
       "status": "failed-as-expected",
-      "error": "expect(received).toBeLessThanOrEqual(expected)\n\nExpected: <= 50\nReceived: 82.768666\n"
+      "error": "expect(received).toBeLessThanOrEqual(expected)\n\nExpected: <= 50\nReceived: 84.30704100000003\n"
     },
     {
       "id": "cue-policy-primitives",
@@ -118,8 +118,8 @@
   },
   "meta": {
     "repo": "https://github.com/jameslbarnes/cue.git",
-    "sourceDir": "/var/folders/4s/d0wlfs9d00v4349cdqgd13f00000gn/T/panopticon-cue-src",
-    "commit": "2dbccc023863f2f0563e06c4d0a6aa44cff3988b",
+    "sourceDir": "«redacted»",
+    "commit": "«redacted»",
     "primitives": {
       "confirmedPrimitives": [
         "TextCue",

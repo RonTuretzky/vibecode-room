@@ -162,13 +162,13 @@ describe("ENG-T-03 TraceProcessor", () => {
       correlationId,
       startedAtMs: 20,
       endedAtMs: 23,
-      meta: { credential: "fixture-sensitive-value", nested: { keep: "visible" } },
+      meta: { credential: "fixture", nested: { keep: "visible" } },
     });
 
     expect(event.correlationId).toBe(correlationId);
     expect(event.latencyMs).toBe(3);
     expect(event.meta).toEqual({ credential: "[redacted]", nested: { keep: "visible" } });
-    expect(processor.toJsonl()).not.toContain("fixture-sensitive-value");
+    expect(processor.toJsonl()).not.toContain('"fixture"');
   });
 });
 

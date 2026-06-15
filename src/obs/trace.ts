@@ -1,4 +1,5 @@
 import { logEventSchema, type CueDecision, type LogEvent, type TranscriptObservation } from "../types";
+import { redactSecretValues } from "../security/secrets";
 
 export type TraceClock = () => number;
 
@@ -53,15 +54,37 @@ export class TraceProcessor {
   record(input: TraceInput): LogEvent {
     const endedAtMs = input.endedAtMs ?? this.#clock();
     const latencyMs = measureLatency(input.startedAtMs, endedAtMs);
-    const meta = redactValue(input.meta ?? {}, input.event, this.#redactionFilters, []);
-    assertJsonSerializable(meta, ["meta"]);
-
-    const event = logEventSchema.parse({
-      level: input.level ?? "info",
+    const redacted = redactValue(input.meta ?? {}, input.event, this.#redactionFilters, []);
+    const identifiers = redactTraceFields({
       event: input.event,
       sessionId: input.sessionId,
       correlationId: input.correlationId,
       upid: input.upid,
+    });
+    const meta = redacted.value;
+    assertJsonSerializable(meta, ["meta"]);
+
+    const redactionCount = redacted.count + identifiers.count;
+    if (redactionCount > 0) {
+      this.#events.push(
+        logEventSchema.parse({
+          level: "warn",
+          event: "secret.redacted",
+          sessionId: identifiers.fields.sessionId,
+          correlationId: identifiers.fields.correlationId,
+          upid: identifiers.fields.upid,
+          latencyMs,
+          meta: { count: redactionCount, sourceEvent: identifiers.fields.event },
+        }),
+      );
+    }
+
+    const event = logEventSchema.parse({
+      level: input.level ?? "info",
+      event: identifiers.fields.event,
+      sessionId: identifiers.fields.sessionId,
+      correlationId: identifiers.fields.correlationId,
+      upid: identifiers.fields.upid,
       latencyMs,
       meta,
     });
@@ -167,7 +190,7 @@ export class TraceProcessor {
 }
 
 export function serializeTraceJsonl(events: readonly LogEvent[]): string {
-  return events.map((event) => JSON.stringify(logEventSchema.parse(event))).join("\n");
+  return events.flatMap(sanitizeLogEventForEmission).map((event) => JSON.stringify(logEventSchema.parse(event))).join("\n");
 }
 
 export function parseTraceJsonl(jsonl: string): LogEvent[] {
@@ -286,30 +309,121 @@ function classifyStage(event: string): ChainStage {
   return null;
 }
 
+function sanitizeLogEventForEmission(event: LogEvent): LogEvent[] {
+  const redacted = redactSecretValues(event.meta, ["meta"]);
+  const identifiers = redactTraceFields({
+    event: event.event,
+    sessionId: event.sessionId,
+    correlationId: event.correlationId,
+    upid: event.upid,
+  });
+  const redactionCount = redacted.count + identifiers.count;
+  const sanitized = logEventSchema.parse({
+    ...event,
+    event: identifiers.fields.event,
+    sessionId: identifiers.fields.sessionId,
+    correlationId: identifiers.fields.correlationId,
+    upid: identifiers.fields.upid,
+    meta: redacted.value as Record<string, unknown>,
+  });
+
+  if (redactionCount === 0) {
+    return [sanitized];
+  }
+
+  return [
+    logEventSchema.parse({
+      level: "warn",
+      event: "secret.redacted",
+      sessionId: identifiers.fields.sessionId,
+      correlationId: identifiers.fields.correlationId,
+      upid: identifiers.fields.upid,
+      latencyMs: event.latencyMs,
+      meta: { count: redactionCount, sourceEvent: identifiers.fields.event },
+    }),
+    sanitized,
+  ];
+}
+
+function redactTraceFields(fields: {
+  event: string;
+  sessionId: string;
+  correlationId?: string;
+  upid?: string;
+}): {
+  fields: {
+    event: string;
+    sessionId: string;
+    correlationId?: string;
+    upid?: string;
+  };
+  count: number;
+} {
+  const event = redactTraceEventName(fields.event);
+  const sessionId = redactTraceIdentifier(fields.sessionId, "sessionId");
+  const correlationId =
+    fields.correlationId === undefined ? { value: undefined, count: 0 } : redactTraceIdentifier(fields.correlationId, "correlationId");
+  const upid = fields.upid === undefined ? { value: undefined, count: 0 } : redactTraceIdentifier(fields.upid, "upid");
+
+  return {
+    fields: {
+      event: event.value,
+      sessionId: sessionId.value,
+      correlationId: correlationId.value,
+      upid: upid.value,
+    },
+    count: event.count + sessionId.count + correlationId.count + upid.count,
+  };
+}
+
+function redactTraceEventName(event: string): { value: string; count: number } {
+  const redacted = redactSecretValues(event, ["event"]);
+  if (redacted.count === 0) {
+    return { value: event, count: 0 };
+  }
+
+  return { value: "redacted.secret", count: redacted.count };
+}
+
+function redactTraceIdentifier(value: string, field: string): { value: string; count: number } {
+  const redacted = redactSecretValues(value, [field]);
+  return { value: String(redacted.value), count: redacted.count };
+}
+
 function redactValue(
   value: unknown,
   event: string,
   filters: readonly RedactionFilter[],
   path: readonly string[],
-): unknown {
+): { value: unknown; count: number } {
   let current = value;
   for (const filter of filters) {
     current = filter(current, { event, path });
   }
 
   if (Array.isArray(current)) {
-    return current.map((item, index) => redactValue(item, event, filters, [...path, String(index)]));
+    let count = 0;
+    const value = current.map((item, index) => {
+      const redacted = redactValue(item, event, filters, [...path, String(index)]);
+      count += redacted.count;
+      return redacted.value;
+    });
+    return { value, count };
   }
 
   if (current !== null && typeof current === "object") {
+    let count = 0;
     const redacted: Record<string, unknown> = {};
     for (const [key, nested] of Object.entries(current)) {
-      redacted[key] = redactValue(nested, event, filters, [...path, key]);
+      const keyRedacted = redactSecretValues(key, []);
+      const nestedRedacted = redactValue(nested, event, filters, [...path, key]);
+      count += keyRedacted.count + nestedRedacted.count;
+      redacted[uniqueRedactedKey(redacted, String(keyRedacted.value))] = nestedRedacted.value;
     }
-    return redacted;
+    return { value: redacted, count };
   }
 
-  return current;
+  return redactSecretValues(current, path);
 }
 
 function assertJsonSerializable(value: unknown, path: readonly string[]): void {
@@ -333,4 +447,16 @@ function assertJsonSerializable(value: unknown, path: readonly string[]): void {
       assertJsonSerializable(nested, [...path, key]);
     }
   }
+}
+
+function uniqueRedactedKey(target: Record<string, unknown>, key: string): string {
+  if (!Object.hasOwn(target, key)) {
+    return key;
+  }
+
+  let index = 2;
+  while (Object.hasOwn(target, `${key}#${index}`)) {
+    index += 1;
+  }
+  return `${key}#${index}`;
 }
