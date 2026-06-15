@@ -15,3 +15,8 @@ Error message: "temperature-0 replay decisions diverged across repeated CLI invo
 
       at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/probe-hot-loop-llm-subscription/poc/p-llm.test.ts:31:15)
 (fail) P-LLM hot-loop subscription model probe > decision-model assertions are independently failable [0.39ms]
+
+ 1 pass
+ 1 fail
+ 17 expect() calls
+Ran 2 tests across 1 file. [18.86s]

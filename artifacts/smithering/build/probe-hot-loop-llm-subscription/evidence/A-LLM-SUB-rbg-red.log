@@ -12,10 +12,9 @@ error: Raw provider key rejected. Model access must use the host's logged-in Cod
       at rejectRawModelCredentials (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/probe-hot-loop-llm-subscription/src/providers/credentials.ts:55:120)
       at createModelCredentialSource (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/probe-hot-loop-llm-subscription/src/providers/credentials.ts:26:3)
       at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/probe-hot-loop-llm-subscription/poc/a-llm-sub.test.ts:34:7)
-(fail) A-LLM-SUB host subscription reachability probe > model access records host subscription provenance and rejects raw-key routing [0.89ms]
+(fail) A-LLM-SUB host subscription reachability probe > model access records host subscription provenance and rejects raw-key routing [0.97ms]
 
- 0 pass
- 1 filtered out
+ 1 pass
  1 fail
- 4 expect() calls
-Ran 1 test across 1 file. [11.00ms]
+ 14 expect() calls
+Ran 2 tests across 1 file. [20.47s]
