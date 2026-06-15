@@ -13,6 +13,8 @@
 - Hardened the adversarial metadata-key gap: credential-shaped object property names are now redacted before trace/probe/report emission, including nested `LogEvent.meta` and probe report metadata keys.
 - Fixed the latest adversarial challenge: long alphabetic-only opaque values under neutral metadata keys are now treated as unknown secret candidates and redacted before trace, report, or scan emission.
 - Fixed the follow-up common-token alphabet gaps: slash-only opaque tokens, padding-only opaque tokens, and provider-prefixed alphabetic opaque tokens under neutral metadata keys now redact fail-closed.
+- Fixed the latest allowlist challenge: hyphenated provider-prefixed numeric opaque values under neutral metadata keys now redact fail-closed.
+- Hardened the whole-session scanner to inspect every regular file under trace/log/report roots, including extensionless files.
 
 ## Gate Roll-Up
 
@@ -42,6 +44,7 @@
 - Decision log: `artifacts/smithering/decisions/build/credential-shaped-metadata-keys.html`.
 - Decision log: `artifacts/smithering/decisions/build/alphabetic-opaque-token-redaction.html`.
 - Decision log: `artifacts/smithering/decisions/build/common-opaque-token-redaction.html`.
+- Decision log: `artifacts/smithering/decisions/build/numeric-token-extensionless-scan.html`.
 
 ## Blockers
 

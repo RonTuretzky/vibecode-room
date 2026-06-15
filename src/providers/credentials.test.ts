@@ -87,6 +87,7 @@ describe("SEC-1 credential guard and trace redaction", () => {
       fakeUnknownSlashOnlyToken(),
       fakeUnknownPaddingOnlyToken(),
       fakeProviderPrefixedAlphabeticToken(),
+      fakeProviderPrefixedNumericToken(),
     ];
     const processor = new TraceProcessor();
 
@@ -111,6 +112,7 @@ describe("SEC-1 credential guard and trace redaction", () => {
           slashOnlyOpaque: rawValues[10],
           paddingOnlyOpaque: rawValues[11],
           providerPrefixedOpaque: rawValues[12],
+          providerPrefixedNumeric: rawValues[13],
         },
         list: [`safe-${"x".repeat(8)}`, rawValues[1]],
       },
@@ -122,7 +124,7 @@ describe("SEC-1 credential guard and trace redaction", () => {
 
     const redactionEvents = processor.events().filter((event) => event.event === "secret.redacted");
     expect(redactionEvents).toHaveLength(1);
-    expect(redactionEvents[0].meta).toEqual({ count: 14, sourceEvent: "observe.final" });
+    expect(redactionEvents[0].meta).toEqual({ count: 15, sourceEvent: "observe.final" });
   });
 
   test("LogEvent meta redacts credential-shaped object keys before emission", () => {
@@ -209,6 +211,7 @@ describe("SEC-1 credential guard and trace redaction", () => {
       fakeUnknownSlashOnlyToken(),
       fakeUnknownPaddingOnlyToken(),
       fakeProviderPrefixedAlphabeticToken(),
+      fakeProviderPrefixedNumericToken(),
     ];
     const text = `provider note ${rawValues.join(" and ")} should not leave memory`;
 
@@ -234,13 +237,36 @@ describe("SEC-1 credential guard and trace redaction", () => {
         (finding) => finding.pattern === "unknown-high-entropy-token",
       ),
     ).toBe(true);
+    expect(
+      scanSecretLikeText(JSON.stringify({ opaque: fakeProviderPrefixedNumericToken() })).some(
+        (finding) => finding.pattern === "unknown-high-entropy-token",
+      ),
+    ).toBe(true);
 
     const redacted = redactSecretValues({ note: text });
     const serialized = JSON.stringify(redacted.value);
     assertNoRawValues(serialized, rawValues, "redacted unknown-token fallback");
     expect(serialized).toContain(REDACTED_SECRET);
     expect(scanSecretLikeText(serialized)).toEqual([]);
-    expect(redacted.count).toBe(7);
+    expect(redacted.count).toBe(8);
+  });
+
+  test("secret scan covers extensionless files in trace and report trees", async () => {
+    const root = join(tmpdir(), `panopticon-extensionless-secret-${crypto.randomUUID()}`);
+
+    try {
+      await mkdir(join(root, "logs"), { recursive: true });
+      await writeFile(join(root, "logs", "session"), JSON.stringify({ providerMeta: fakeOpenAiKey() }));
+
+      const scan = await scanSecretLikeFiles(root);
+      if (scan.passed) {
+        throw new Error("extensionless trace/log/report file with key-shaped content was not scanned");
+      }
+      expect(scan.findings.length).toBeGreaterThanOrEqual(1);
+      expect(scan.findings[0].path.endsWith("/logs/session")).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
   });
 });
 
@@ -315,4 +341,8 @@ function fakeUnknownPaddingOnlyToken(): string {
 
 function fakeProviderPrefixedAlphabeticToken(): string {
   return `ghp_${"alphabeticprovideropaque".repeat(2)}`;
+}
+
+function fakeProviderPrefixedNumericToken(): string {
+  return ["xoxb", "1".repeat(12), "2".repeat(12), "3".repeat(12)].join("-");
 }

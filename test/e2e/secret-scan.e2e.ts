@@ -32,6 +32,7 @@ describe("SEC-1 whole-session secret scan", () => {
       fakeUnknownSlashOnlyToken(),
       fakeUnknownPaddingOnlyToken(),
       fakeProviderPrefixedAlphabeticToken(),
+      fakeProviderPrefixedNumericToken(),
     ];
     const rawKeyNames = [fakeOpenAiKey(), `Authorization: ${fakeBearer()}`, fakeUnknownSeparatedToken()];
     const processor = new TraceProcessor();
@@ -51,6 +52,7 @@ describe("SEC-1 whole-session secret scan", () => {
                 slashOnlyOpaque: rawValues[7],
                 paddingOnlyOpaque: rawValues[8],
                 providerPrefixedOpaque: rawValues[9],
+                providerPrefixedNumeric: rawValues[10],
                 [rawKeyNames[0]]: "harmless-openai-shaped-property-name",
                 nested: {
                   [rawKeyNames[1]]: "harmless-authorization-shaped-property-name",
@@ -66,9 +68,11 @@ describe("SEC-1 whole-session secret scan", () => {
     await writeFile(join(SESSION_DIR, "traces", "trace.jsonl"), traceJsonl);
     await writeFile(join(SESSION_DIR, "reports", "report.json"), JSON.stringify({ events: processor.events(), decisions: result.decisions }, null, 2));
     await writeFile(join(SESSION_DIR, "logs", "session.log"), `redaction=${traceJsonl.includes(REDACTED_SECRET) ? "active" : "inactive"}\n`);
+    await writeFile(join(SESSION_DIR, "logs", "session"), `redaction=${traceJsonl.includes(REDACTED_SECRET) ? "active" : "inactive"}\n`);
     await writeFile(join(TRACE_DIR, "secret-scan-session.jsonl"), traceJsonl);
     if (process.env.PANOPTICON_RBG_PLANT_SECRET_IN_SESSION === "1") {
       await writeFile(join(SESSION_DIR, "reports", "planted-leak.json"), JSON.stringify({ providerMeta: rawValues[0] }, null, 2));
+      await writeFile(join(SESSION_DIR, "logs", "planted-leak"), JSON.stringify({ providerMeta: rawValues[10] }, null, 2));
     }
 
     const scans = await Promise.all([SESSION_DIR, TRACE_DIR, PROBE_REPORT_ROOT].map((root) => scanSecretLikeFiles(root)));
@@ -115,6 +119,7 @@ async function runRedactedProbeReport(rawValues: readonly string[], rawKeyNames:
         slashOnlyOpaque: rawValues[7],
         paddingOnlyOpaque: rawValues[8],
         providerPrefixedOpaque: rawValues[9],
+        providerPrefixedNumeric: rawValues[10],
         [rawKeyNames[0]]: "probe-key-name",
         nested: {
           [rawKeyNames[1]]: "probe-authorization-key-name",
@@ -163,4 +168,8 @@ function fakeUnknownPaddingOnlyToken(): string {
 
 function fakeProviderPrefixedAlphabeticToken(): string {
   return `ghp_${"alphabeticprovideropaque".repeat(2)}`;
+}
+
+function fakeProviderPrefixedNumericToken(): string {
+  return ["xoxb", "4".repeat(12), "5".repeat(12), "6".repeat(12)].join("-");
 }

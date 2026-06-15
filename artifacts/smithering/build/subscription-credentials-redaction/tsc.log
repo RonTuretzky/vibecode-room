@@ -1,2 +1,1 @@
-### bunx tsc --noEmit
-tsc --noEmit passed
+bunx tsc --noEmit passed

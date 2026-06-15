@@ -99,7 +99,7 @@ export function scanSecretLikeText(text: string): Array<{ pattern: string; count
 
 export async function scanSecretLikeFiles(rootDir: string): Promise<SecretScanResult> {
   const findings: SecretScanFinding[] = [];
-  const glob = new Bun.Glob("**/*.{json,jsonl,log,txt,md,ts,tsx,js,mjs,cjs,html}");
+  const glob = new Bun.Glob("**/*");
 
   for await (const path of glob.scan({ cwd: rootDir, absolute: true, onlyFiles: true })) {
     const text = await Bun.file(path).text();
@@ -199,6 +199,10 @@ function isUnknownSecretToken(value: string): boolean {
     return true;
   }
 
+  if (isProviderPrefixedNumericToken(value)) {
+    return true;
+  }
+
   if (/[+~]/u.test(value)) {
     return true;
   }
@@ -237,6 +241,10 @@ function isSlashOnlyOpaqueToken(value: string): boolean {
 function isProviderPrefixedOpaqueToken(value: string): boolean {
   const match = /^(?:[A-Za-z]{2,12})[._-]([A-Za-z0-9]{24,})$/u.exec(value);
   return match !== null && /[A-Za-z]/u.test(match[1]);
+}
+
+function isProviderPrefixedNumericToken(value: string): boolean {
+  return /^(?:[A-Za-z]{2,12})[._-](?:[0-9]{8,}[._-]){1,}[0-9]{8,}$/u.test(value);
 }
 
 function isKnownRedactionMarker(value: string): boolean {
