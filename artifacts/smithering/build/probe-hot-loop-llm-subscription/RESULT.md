@@ -19,7 +19,7 @@
 - Codex and Claude subscription routes were reachable through the host CLIs and returned `MappedActionTool`-compatible decision schemas.
 - The repeated named callsign status query classified as `ACT` with `panopticon.steer`.
 - Same-input repeated invocations produced identical tool decisions for record-replay purposes.
-- No subscription-routed candidate met the 100 ms p50 hot-loop budget. The latest measured best host subscription CLI p50 was 4508 ms.
+- No subscription-routed candidate met the 100 ms p50 hot-loop budget. The latest measured best host subscription CLI p50 was 4770 ms.
 - The conflict is specifically the host subscription CLI transport round trip versus the 100 ms hot-loop budget; no raw-key API fallback was built.
 - The $0.15/hr cost gate is recorded as unmeasured by the live host subscription CLI probe. Host subscriptions do not expose per-call metering to this probe, and treating them as $0/hr would make the gate tautological.
 - Probe/build traces and evidence secret-scan clean.
