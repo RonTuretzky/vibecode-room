@@ -1,0 +1,24 @@
+bun test v1.3.14 (0d9b296a)
+
+poc/p-llm.test.ts:
+42 |
+43 |   test("host subscription CLI decision probe records determinism, latency, schema, prompt, cost, and trace-secret verdict", async () => {
+44 |     const verdict = await runHotLoopSubscriptionProbe();
+45 |
+46 |     if (process.env.PANOP_LLM_PROBE_REQUIRE_GREEN === "1") {
+47 |       expect(verdict.green, verdict.blockers.join("; ")).toBe(true);
+                                                              ^
+error: No subscription-routed candidate met the 100 ms p50 hot-loop budget.
+
+Expected: true
+Received: false
+
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/probe-hot-loop-llm-subscription/poc/p-llm.test.ts:47:58)
+(fail) P-LLM hot-loop subscription model probe > host subscription CLI decision probe records determinism, latency, schema, prompt, cost, and trace-secret verdict [181907.35ms]
+
+ 1 pass
+ 1 fail
+ 8 expect() calls
+Ran 2 tests across 1 file. [181.92s]
+
+[exit_code=1]

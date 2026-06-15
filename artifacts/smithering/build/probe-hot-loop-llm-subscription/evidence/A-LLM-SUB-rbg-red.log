@@ -1,0 +1,22 @@
+bun test v1.3.14 (0d9b296a)
+
+poc/a-llm-sub.test.ts:
+50 | export function rejectRawModelCredentials(options: {
+51 |   env?: Record<string, string | undefined>;
+52 |   rawApiKey?: string;
+53 | }): void {
+54 |   if (options.rawApiKey !== undefined && options.rawApiKey.length > 0) {
+55 |     throw new Error("Raw provider key rejected. Model access must use the host's logged-in Codex/Claude subscriptions.");
+                                                                                                                            ^
+error: Raw provider key rejected. Model access must use the host's logged-in Codex/Claude subscriptions.
+      at rejectRawModelCredentials (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/probe-hot-loop-llm-subscription/src/providers/credentials.ts:55:120)
+      at createModelCredentialSource (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/probe-hot-loop-llm-subscription/src/providers/credentials.ts:26:3)
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/probe-hot-loop-llm-subscription/poc/a-llm-sub.test.ts:34:7)
+(fail) A-LLM-SUB host subscription reachability probe > model access records host subscription provenance and rejects raw-key routing [0.90ms]
+
+ 1 pass
+ 1 fail
+ 8 expect() calls
+Ran 2 tests across 1 file. [144.57s]
+
+[exit_code=1]
