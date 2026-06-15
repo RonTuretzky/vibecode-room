@@ -5,5 +5,6 @@
   "rebasedOntoIntegration": true,
   "mergedTipGatesGreen": false,
   "integrationBranch": "smithering/integration",
-  "pass": false
+  "pass": false,
+  "summary": "FAIL: gates.json records status='failed' for both pre-merge gates (P-LLM and A-LLM-SUB); verification requires status='passed'. RBG evidence files are genuine and non-empty (P-LLM-rbg-red.log 880 bytes real failure, P-LLM-green.log 100 bytes 2 pass; A-LLM-SUB-rbg-red.log 1358 bytes real failure, A-LLM-SUB-green.log 99 bytes 2 pass). My independent test runs confirm assertion tests pass and hermetic e2e/smoke passes. build/probe-hot-loop-llm-subscription@453308c is already rebased onto smithering/integration@24c7efb. TSC OOM'd all 3 attempts (SIGABRT/SIGKILL, zero TS error diagnostics — INFRA/transient, not tsc red). Fix: implementer must update gates.json status to 'passed' for both gates after confirming full probe tests ran green (green.log evidence already exists showing 2 pass per file)."
 }

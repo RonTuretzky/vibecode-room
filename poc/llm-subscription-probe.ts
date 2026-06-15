@@ -236,14 +236,11 @@ export async function runHotLoopSubscriptionProbe(options: { forceRefresh?: bool
     actPromptAmendment: safeCheck(() => assertActPromptAmendment(decisions)),
   };
   const p50LatencyMs = selected === undefined ? null : candidateP50LatencyMs(selected);
-  let verdict = buildVerdict(selected, attempts, checks, p50LatencyMs);
-
+  const preliminaryVerdict = buildVerdict(selected, attempts, { ...checks, traceSecretClean: true }, p50LatencyMs);
+  const traceSecretClean = await prospectiveVerdictSecretScan(preliminaryVerdict);
+  const verdict = buildVerdict(selected, attempts, { ...checks, traceSecretClean }, p50LatencyMs);
   await writeFile(CACHE_PATH, JSON.stringify(redactForArtifact(verdict), null, 2) + "\n");
   await appendTrace("llm_probe.verdict", verdict);
-
-  const traceSecretClean = (await scanSecretLikeFiles(PROBE_ROOT)).passed && (await scanSecretLikeFiles(TRACE_ROOT)).passed;
-  verdict = buildVerdict(selected, attempts, { ...checks, traceSecretClean }, p50LatencyMs);
-  await writeFile(CACHE_PATH, JSON.stringify(redactForArtifact(verdict), null, 2) + "\n");
   return verdict;
 }
 
@@ -548,14 +545,25 @@ function generatedBearerLikeToken(): string {
 }
 
 async function appendTrace(event: string, meta: unknown): Promise<void> {
-  const line = JSON.stringify(redactForArtifact({
+  await writeFile(TRACE_PATH, formatTraceLine(event, meta) + "\n", { flag: "a" });
+}
+
+function formatTraceLine(event: string, meta: unknown): string {
+  return JSON.stringify(redactForArtifact({
     event,
     ticketId: PROBE_ID,
     correlationId: "probe-hot-loop-llm-subscription",
     ts: new Date().toISOString(),
     meta,
   }));
-  await writeFile(TRACE_PATH, line + "\n", { flag: "a" });
+}
+
+async function prospectiveVerdictSecretScan(verdict: HotLoopProbeVerdict): Promise<boolean> {
+  const cacheText = JSON.stringify(redactForArtifact(verdict), null, 2) + "\n";
+  const verdictTraceLine = formatTraceLine("llm_probe.verdict", verdict) + "\n";
+  const currentArtifactsClean = (await scanSecretLikeFiles(PROBE_ROOT)).passed && (await scanSecretLikeFiles(TRACE_ROOT)).passed;
+  const pendingWritesClean = scanSecretLikeText(cacheText).length === 0 && scanSecretLikeText(verdictTraceLine).length === 0;
+  return currentArtifactsClean && pendingWritesClean;
 }
 
 function redactForArtifact<T>(value: T): T {

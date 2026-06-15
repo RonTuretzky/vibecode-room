@@ -1,22 +1,25 @@
 bun test v1.3.14 (0d9b296a)
 
 poc/p-llm.test.ts:
-44 | 
-45 |   test("host subscription CLI decision probe records determinism, latency, schema, prompt, cost, and trace-secret verdict", async () => {
-46 |     const verdict = await runHotLoopSubscriptionProbe();
-47 | 
-48 |     if (process.env.PANOP_LLM_PROBE_ACCEPT_CONFLICT !== "1") {
-49 |       expect(verdict.green, verdict.blockers.join("; ")).toBe(true);
-                                                              ^
-error: No subscription-routed candidate met the 100 ms p50 hot-loop budget.; The $0.15/hr cost gate was not measured by the host subscription CLI probe.
+26 |           decision("repeat-1", "ACT", "panopticon.steer", { callsign: "Daybreak", instruction: "status" }),
+27 |         ]),
+28 |         invocation("same-input-2", [
+29 |           decision("repeat-1", "ACT", "panopticon.steer", { callsign: "Daybreak", instruction: "status" }),
+30 |         ]),
+31 |       ])).toThrow("diverged");
+               ^
+error: expect(received).toThrow(expected)
 
-Expected: true
-Received: false
+Expected substring: "diverged"
 
-      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/probe-hot-loop-llm-subscription/poc/p-llm.test.ts:49:58)
-(fail) P-LLM hot-loop subscription model probe > host subscription CLI decision probe records determinism, latency, schema, prompt, cost, and trace-secret verdict [24261.47ms]
+Received function did not throw
+Received value: undefined
 
- 1 pass
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/probe-hot-loop-llm-subscription/poc/p-llm.test.ts:31:11)
+(fail) P-LLM hot-loop subscription model probe > decision-model assertions are independently failable [1.33ms]
+
+ 0 pass
+ 1 filtered out
  1 fail
- 10 expect() calls
-Ran 2 tests across 1 file. [24.27s]
+ 1 expect() calls
+Ran 1 test across 1 file. [13.00ms]

@@ -6,28 +6,34 @@
   "pass": false,
   "findings": [
     {
-      "severity": "minor",
-      "title": "ACT-prompt-amendment assertion is weakened by a spoon-fed prompt",
-      "file": "poc/llm-subscription-probe.ts",
-      "description": "The §22 A2 amended criterion line ('...or a status/information query addressed to a named callsign') is correctly present in HOT_LOOP_PROMPT, but the same prompt also explicitly instructs the model 'For the status query choose panopticon.steer ... For pass-1 choose observe.pass.' assertActPromptAmendment would therefore pass even if the amended criterion were removed, so it does not isolate the amendment's classification effect. Acceptable for a reachability/latency probe whose verdict is red anyway, but the amendment is not independently proven."
+      "severity": "major",
+      "title": "Persisted evidence bundle is in a partial, post-interruption state (missing verdict event + verdict.json)",
+      "file": "artifacts/smithering/build/probe-hot-loop-llm-subscription/trace/llm-subscription-probe.jsonl",
+      "description": "The on-disk trace contains only the codex candidate and a single anthropic-claude invocation (latencies 5.8 s / 10.9 s / 5.4 s) and is MISSING the terminal llm_probe.verdict event, and the durable artifacts/smithering/probes/probe-hot-loop-llm-subscription/verdict.json that RESULT.md presents as 'the verdict' is deleted/absent. These artifacts are regenerated each run (the probe rm's PROBE_ROOT and truncates the trace at start, then writes verdict.json and the verdict event at the end), so this reflects an interrupted re-run, not a code defect: the green run (P-LLM-green.log / A-LLM-SUB-green.log, 2 pass each) proves the behavior and the gate-cited RBG red+green logs are intact. But the bundle is internally inconsistent (RESULT.md cites a red verdict.json an auditor cannot find), so re-run the probe so the persisted trace ends in llm_probe.verdict and verdict.json exists."
     },
     {
       "severity": "minor",
-      "title": "Determinism is decision-identity, not byte-identical temp-0",
+      "title": "RESULT.md documents a removed env path (PANOP_LLM_PROBE_ACCEPT_CONFLICT)",
+      "file": "artifacts/smithering/build/probe-hot-loop-llm-subscription/RESULT.md",
+      "description": "RESULT.md line 45 still lists PANOP_LLM_PROBE_ACCEPT_CONFLICT=1, but that conflict-accept branch no longer exists in poc/p-llm.test.ts (grep finds no ACCEPT_CONFLICT in poc/ or src/). The current live test instead unconditionally requires deterministic, mappedActionToolSchema, actPromptAmendment, traceSecretClean, noRawKeyRoute and a passed subscription-routed candidate - the stronger correct behavior that resolves the prior codex-review major. Doc is stale; harmless but should be removed."
+    },
+    {
+      "severity": "minor",
+      "title": "ACT-prompt-amendment assertion is spoon-fed and does not isolate the amendment",
       "file": "poc/llm-subscription-probe.ts",
-      "description": "assertDeterministic compares canonicalDecisions (id/decision/tool/arguments) and excludes confidence/reason, which do vary across the two same-input runs (selected claude candidate: pass-1 confidence 0.93 vs 0.92). This is a reasonable and documented record-replay invariant (routing action is identical) and is the right choice for subscription CLIs, but it is explicitly weaker than strict byte-identical temperature-0 output. Documented in RESULT.md."
+      "description": "The required §22 A2 criterion line ('...or a status/information query addressed to a named callsign') is present in HOT_LOOP_PROMPT, but the same prompt also explicitly instructs 'For the status query choose panopticon.steer ... For pass-1 choose observe.pass.' assertActPromptAmendment (repeat-1 must be ACT/panopticon.steer) would therefore pass even if the amended criterion were deleted, so it proves the model can follow an explicit instruction, not that the amended classification criterion drives the ACT. Acceptable for a reachability/latency probe whose verdict is red regardless, but the amendment is not independently proven."
+    },
+    {
+      "severity": "minor",
+      "title": "Determinism is decision-identity, not byte-identical temperature-0",
+      "file": "poc/llm-subscription-probe.ts",
+      "description": "assertDeterministic compares canonicalDecisions (id/decision/tool/arguments) across the two same-input invocations and excludes confidence/reason, which do vary run-to-run. This is the right record-replay invariant for subscription CLIs (the routed action must be stable) and is documented in RESULT.md, but it is explicitly weaker than strict byte-identical temp-0 output. Defensible, flagged for completeness."
     },
     {
       "severity": "nit",
-      "title": "Planning-doc tension on whether A-LLM-SUB is blocking",
+      "title": "Planning-doc tension: 03-eng §22 A2.4/§20 call A-LLM-SUB MOOT + cost gate informational; 04-backpressure + ticket treat them as blocking",
       "file": "docs/planning/03-eng.md",
-      "description": "03-eng §22 A2.4 / §17 / §20 / R15 declare A-LLM-SUB 'MOOT/removed in V0' and the hot-loop model choice 'a tunable, not a blocking PRD §6 conflict', while 04-backpressure rows 193/194/219 and this ticket treat P-LLM/A-LLM-SUB as blocking with a binding PRD §6 conflict. The implementer correctly followed the ticket + backpressure gate rows (the binding-conflict path). Flagged for the gate to reconcile the docs; not an implementation defect."
-    },
-    {
-      "severity": "nit",
-      "title": "Cost gate recorded as unmeasured rather than treated as flat-rate zero",
-      "file": "poc/llm-subscription-probe.ts",
-      "description": "estimatedCostPerHourUsd returns null for host-subscription routes (no per-call metering), so costWithinBudget is false and becomes a blocker. This is the conservative, intellectually honest choice (treating unmetered subscription access as $0/hr would make the $0.15/hr gate tautological) and is consistent with 'surface the conflict, do not engineer around it'. Noted as a deliberate, defensible decision, not a defect."
+      "description": "03-eng §22 A2.4 (line 1293) and §20 (lines 1361-1362) declare A-LLM-SUB 'MOOT in V0 (E10)' and the hot-loop cost gate 'a tunable, not a hard gate ... informational' (also lines 1037/1053 mark A-LLM-SUB removed), i.e. NOT a blocking PRD-§6 conflict; meanwhile 04-backpressure rows 193/194 and this ticket treat P-LLM/A-LLM-SUB as blocking with a binding PRD-§6 conflict-to-gate. The implementer correctly followed the ticket + backpressure gate rows (surface the conflict; build no SubscriptionCredentialProvider / Cerebras fallback / Haiku path), consistent with A2.4's 'keep only no raw keys in source'. Reconcile the docs at the gate; not an implementation defect."
     }
   ]
 }

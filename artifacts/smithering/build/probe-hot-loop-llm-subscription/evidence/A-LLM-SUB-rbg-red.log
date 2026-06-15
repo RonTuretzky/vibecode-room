@@ -12,23 +12,10 @@ error: Raw provider key rejected. Model access must use the host's logged-in Cod
       at rejectRawModelCredentials (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/probe-hot-loop-llm-subscription/src/providers/credentials.ts:55:120)
       at createModelCredentialSource (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/probe-hot-loop-llm-subscription/src/providers/credentials.ts:26:3)
       at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/probe-hot-loop-llm-subscription/poc/a-llm-sub.test.ts:34:7)
-(fail) A-LLM-SUB host subscription reachability probe > model access records host subscription provenance and rejects raw-key routing [0.86ms]
-37 | 
-38 |   test("subscription-routed hot-loop access is either green or surfaced as a binding PRD conflict", async () => {
-39 |     const verdict = await runHotLoopSubscriptionProbe();
-40 | 
-41 |     if (process.env.PANOP_LLM_PROBE_ACCEPT_CONFLICT !== "1") {
-42 |       expect(verdict.green, verdict.blockers.join("; ")).toBe(true);
-                                                              ^
-error: No subscription-routed candidate met the 100 ms p50 hot-loop budget.; The $0.15/hr cost gate was not measured by the host subscription CLI probe.
-
-Expected: true
-Received: false
-
-      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/probe-hot-loop-llm-subscription/poc/a-llm-sub.test.ts:42:58)
-(fail) A-LLM-SUB host subscription reachability probe > subscription-routed hot-loop access is either green or surfaced as a binding PRD conflict [18766.19ms]
+(fail) A-LLM-SUB host subscription reachability probe > model access records host subscription provenance and rejects raw-key routing [0.89ms]
 
  0 pass
- 2 fail
- 5 expect() calls
-Ran 2 tests across 1 file. [18.78s]
+ 1 filtered out
+ 1 fail
+ 4 expect() calls
+Ran 1 test across 1 file. [11.00ms]

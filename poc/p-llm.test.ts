@@ -20,6 +20,18 @@ import {
 
 describe("P-LLM hot-loop subscription model probe", () => {
   test("decision-model assertions are independently failable", () => {
+    if (process.env.PANOP_LLM_PROBE_RBG_BREAK_DETERMINISM === "1") {
+      expect(() => assertDeterministic([
+        invocation("same-input-1", [
+          decision("repeat-1", "ACT", "panopticon.steer", { callsign: "Daybreak", instruction: "status" }),
+        ]),
+        invocation("same-input-2", [
+          decision("repeat-1", "ACT", "panopticon.steer", { callsign: "Daybreak", instruction: "status" }),
+        ]),
+      ])).toThrow("diverged");
+      return;
+    }
+
     expect(() => assertDeterministic([
       invocation("same-input-1", [
         decision("repeat-1", "ACT", "panopticon.steer", { callsign: "Daybreak", instruction: "status" }),
