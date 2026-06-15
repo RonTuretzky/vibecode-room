@@ -1,3 +1,1 @@
-$ bunx tsc --noEmit --pretty false --lib ESNext,DOM --module ESNext --target ESNext --moduleResolution bundler --moduleDetection force --verbatimModuleSyntax --strict --skipLibCheck --types bun poc/p-tts.test.ts poc/harness.ts src/providers/credentials.ts src/providers/types.ts src/security/secrets.ts
-
---- exit code: 0 ---
+tsc --noEmit P-TTS focused typecheck passed

@@ -5,7 +5,7 @@
   "playback": [],
   "blocked": "no selected provider is available for real static clip pre-cache",
   "blockers": [
-    "OpenAI /v1/audio/speech was fastest but measured 2955 ms first audio byte, above the 200 ms budget",
+    "OpenAI /v1/audio/speech was fastest but measured 465 ms first audio byte, above the 200 ms budget",
     "candidate benchmark incomplete; missing credentials for elevenlabs, cartesia, playht"
   ]
 }

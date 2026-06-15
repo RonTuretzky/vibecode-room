@@ -6,9 +6,9 @@
     "label": "OpenAI /v1/audio/speech",
     "model": "gpt-4o-mini-tts",
     "voice": "coral",
-    "firstAudioByteMs": 2955.219042,
-    "firstChunkBytes": 162,
-    "contentType": null
+    "firstAudioByteMs": 464.6125410000004,
+    "firstChunkBytes": 9600,
+    "contentType": "audio/pcm"
   },
   "measured": [
     {
@@ -16,9 +16,9 @@
       "label": "OpenAI /v1/audio/speech",
       "model": "gpt-4o-mini-tts",
       "voice": "coral",
-      "firstAudioByteMs": 2955.219042,
-      "firstChunkBytes": 162,
-      "contentType": null
+      "firstAudioByteMs": 464.6125410000004,
+      "firstChunkBytes": 9600,
+      "contentType": "audio/pcm"
     }
   ],
   "unavailable": [
@@ -47,7 +47,7 @@
     }
   ],
   "blockers": [
-    "OpenAI /v1/audio/speech was fastest but measured 2955 ms first audio byte, above the 200 ms budget",
+    "OpenAI /v1/audio/speech was fastest but measured 465 ms first audio byte, above the 200 ms budget",
     "candidate benchmark incomplete; missing credentials for elevenlabs, cartesia, playht"
   ]
 }

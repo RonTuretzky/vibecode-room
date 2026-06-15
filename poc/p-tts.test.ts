@@ -34,6 +34,7 @@ interface CandidateProvider extends TTSProvider {
   readonly model: string;
   readonly voice: string;
   readonly envVars: string[];
+  readonly lastContentType: string | null;
 }
 
 interface Measurement {
@@ -378,6 +379,7 @@ class FetchTTSProvider implements CandidateProvider {
   readonly envVars: string[];
   private readonly request: (text: string, voice: string) => { url: string; init: RequestInit };
   private readonly voiceSelector: SessionVoiceSelector;
+  private contentType: string | null = null;
 
   constructor(options: {
     id: ProviderId;
@@ -401,10 +403,15 @@ class FetchTTSProvider implements CandidateProvider {
     const selectedVoice = this.voiceSelector.select(opts?.voice);
     const { url, init } = this.request(guarded.text, selectedVoice);
     const response = await fetchWithTimeout(url, init, TIMEOUT_MS);
+    this.contentType = response.headers.get("content-type");
     if (!response.ok || response.body === null) {
       throw new Error(`${this.label} TTS request failed with HTTP ${response.status}`);
     }
     return response.body;
+  }
+
+  get lastContentType(): string | null {
+    return this.contentType;
   }
 }
 
@@ -542,7 +549,7 @@ async function measureFirstAudioChunk(provider: CandidateProvider, text: string)
           voice: provider.voice,
           firstAudioByteMs: performance.now() - started,
           firstChunkBytes: chunk.value.byteLength,
-          contentType: null,
+          contentType: provider.lastContentType,
         };
       }
     }
@@ -581,24 +588,6 @@ async function preCacheStatePhrases(provider: CandidateProvider): Promise<Static
     clips: clips.map((clip) => ({ phrase: clip.phrase, bytes: clip.bytes.byteLength })),
   });
   return cache;
-}
-
-async function assertSyntheticPreCache(providerId: ProviderId): Promise<Array<{ phrase: string; firstByteMs: number; bytes: number }>> {
-  const cache = new StaticClipCache();
-  await cache.preload(STATE_PHRASES.map((phrase, index) => ({ phrase, bytes: new Uint8Array([index + 1]) })));
-  const playback = [];
-  for (const phrase of STATE_PHRASES) {
-    const result = await cache.play(phrase);
-    expect(result.firstByteMs).toBeLessThanOrEqual(PRE_CACHE_PLAYBACK_BUDGET_MS);
-    expect(result.bytes).toBeGreaterThan(0);
-    playback.push({ phrase, firstByteMs: result.firstByteMs, bytes: result.bytes });
-  }
-  await appendTrace("tts.precache.synthetic", {
-    providerId,
-    phraseCount: STATE_PHRASES.length,
-    reason: "red-budget run avoids extra provider synthesis after first-byte failure",
-  });
-  return playback;
 }
 
 async function readAllBytes(stream: ReadableStream<Uint8Array>): Promise<Uint8Array> {
