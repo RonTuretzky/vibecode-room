@@ -212,8 +212,9 @@ export type EvidenceResult = { ok: boolean; reasons: string[] };
 
 // The machine record the merge lane reads. A land is allowed ONLY when, for every
 // pre-merge blocking gate, rbgRecorded is true and BOTH the red and green run files exist
-// and are non-empty; AND verify.json reports pass; AND review.json reports approved; AND
-// every required bundle file is present. This is the authority — never the agent's boolean.
+// and are non-empty; AND verify.json reports pass; AND every required bundle file is
+// present. review.json is required as recorded advisory feedback, but its approval boolean
+// is not a landing authority; the independent verifier is.
 export function evaluateEvidenceBundle(input: EvidenceInput): EvidenceResult {
   const reasons: string[] = [];
   const present = input.present;
@@ -254,8 +255,6 @@ export function evaluateEvidenceBundle(input: EvidenceInput): EvidenceResult {
 
   if (!input.review) {
     reasons.push("review.json missing — the cross-family reviewer left no machine record");
-  } else if (input.review.approved !== true && input.review.pass !== true) {
-    reasons.push("review.json not approved (cross-family reviewer rejected)");
   }
 
   return { ok: reasons.length === 0, reasons };

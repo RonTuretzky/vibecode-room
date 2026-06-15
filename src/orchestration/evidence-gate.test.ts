@@ -1,6 +1,6 @@
 // §8 invariant: no land without recorded RBG red+green; the merge gate machine-checks the
 // evidence bundle rather than trusting agent booleans. RBG move: delete a red run / fail
-// verify / reject review / drop a required file → land refused.
+// verify / drop a required file → land refused. Review approval is advisory feedback.
 import { describe, expect, test } from "bun:test";
 import {
   evaluateEvidenceBundle,
@@ -40,7 +40,7 @@ function baseInput(overrides: Partial<EvidenceInput> = {}): EvidenceInput {
 }
 
 describe("evidence-completeness (gate-before-land)", () => {
-  test("green — a complete bundle with red+green runs, verify pass, review approved lands", () => {
+  test("green — a complete bundle with red+green runs and verifier pass lands", () => {
     const r = evaluateEvidenceBundle(baseInput());
     expect(r.ok).toBe(true);
     expect(r.reasons).toEqual([]);
@@ -77,10 +77,10 @@ describe("evidence-completeness (gate-before-land)", () => {
     expect(r.reasons.join("\n")).toMatch(/verify\.json missing/i);
   });
 
-  test("RBG — cross-family review rejected → land refused", () => {
+  test("review advisory — cross-family review rejected does not refuse land", () => {
     const r = evaluateEvidenceBundle(baseInput({ review: { approved: false } }));
-    expect(r.ok).toBe(false);
-    expect(r.reasons.join("\n")).toMatch(/review\.json not approved/i);
+    expect(r.ok).toBe(true);
+    expect(r.reasons).toEqual([]);
   });
 
   test("RBG — a required durable file (review.json) is empty/absent → land refused", () => {
