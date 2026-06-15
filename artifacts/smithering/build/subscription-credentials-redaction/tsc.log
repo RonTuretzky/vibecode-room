@@ -1,3 +1,2 @@
-Command: bunx tsc --noEmit
-
-status.tsc=0
+### bunx tsc --noEmit
+tsc --noEmit passed

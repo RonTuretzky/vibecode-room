@@ -12,6 +12,7 @@
 - Added SEC-1 unit and e2e coverage for provider guard rejection, trace/report redaction, and whole-session secret scanning through the spine smoke session path.
 - Hardened the adversarial metadata-key gap: credential-shaped object property names are now redacted before trace/probe/report emission, including nested `LogEvent.meta` and probe report metadata keys.
 - Fixed the latest adversarial challenge: long alphabetic-only opaque values under neutral metadata keys are now treated as unknown secret candidates and redacted before trace, report, or scan emission.
+- Fixed the follow-up common-token alphabet gaps: slash-only opaque tokens, padding-only opaque tokens, and provider-prefixed alphabetic opaque tokens under neutral metadata keys now redact fail-closed.
 
 ## Gate Roll-Up
 
@@ -40,6 +41,7 @@
 - `secret-scan.json` reports zero key-shaped strings in this ticket's build bundle.
 - Decision log: `artifacts/smithering/decisions/build/credential-shaped-metadata-keys.html`.
 - Decision log: `artifacts/smithering/decisions/build/alphabetic-opaque-token-redaction.html`.
+- Decision log: `artifacts/smithering/decisions/build/common-opaque-token-redaction.html`.
 
 ## Blockers
 

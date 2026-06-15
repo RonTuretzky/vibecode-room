@@ -3,8 +3,8 @@
   "status": "passed",
   "summary": "probe assertions were failable and passed",
   "correlationId": "secret-scan-e2e-probe",
-  "startedAt": "2026-06-15T00:23:48.478Z",
-  "finishedAt": "2026-06-15T00:23:48.478Z",
+  "startedAt": "2026-06-15T00:36:02.822Z",
+  "finishedAt": "2026-06-15T00:36:02.823Z",
   "assertions": [
     {
       "id": "redacted-probe-report",
@@ -32,6 +32,9 @@
       "deepgram": "«redacted»",
       "unknown": "«redacted»",
       "alphabeticOpaque": "«redacted»",
+      "slashOnlyOpaque": "«redacted»",
+      "paddingOnlyOpaque": "«redacted»",
+      "providerPrefixedOpaque": "«redacted»",
       "«redacted»": "probe-key-name",
       "nested": {
         "«redacted»": "«redacted»",

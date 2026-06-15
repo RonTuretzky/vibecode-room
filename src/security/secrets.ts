@@ -187,6 +187,18 @@ function isUnknownSecretToken(value: string): boolean {
     return true;
   }
 
+  if (isPaddedOpaqueToken(value)) {
+    return true;
+  }
+
+  if (isSlashOnlyOpaqueToken(value)) {
+    return true;
+  }
+
+  if (isProviderPrefixedOpaqueToken(value)) {
+    return true;
+  }
+
   if (/[+~]/u.test(value)) {
     return true;
   }
@@ -202,6 +214,29 @@ function isUnknownSecretToken(value: string): boolean {
     /^(?=[A-Za-z0-9]*[A-Za-z])(?=[A-Za-z0-9]*\d)[A-Za-z0-9]{16,}$/u.test(segment),
   );
   return hasLongMixedSegment || (hasSecretPrefix && hasLongSegment);
+}
+
+function isPaddedOpaqueToken(value: string): boolean {
+  if (!/={1,2}$/u.test(value)) {
+    return false;
+  }
+
+  const unpadded = value.replace(/=+$/u, "");
+  return unpadded.length >= 24 && /^[A-Za-z0-9._~+/-]+$/u.test(unpadded) && /[A-Za-z]/u.test(unpadded);
+}
+
+function isSlashOnlyOpaqueToken(value: string): boolean {
+  if (!value.includes("/") || /[._-]/u.test(value) || value.startsWith("/") || value.includes("//")) {
+    return false;
+  }
+
+  const segments = value.split("/");
+  return value.length >= 32 && segments.length >= 2 && segments.every((segment) => /^[A-Za-z0-9]{12,}$/u.test(segment));
+}
+
+function isProviderPrefixedOpaqueToken(value: string): boolean {
+  const match = /^(?:[A-Za-z]{2,12})[._-]([A-Za-z0-9]{24,})$/u.exec(value);
+  return match !== null && /[A-Za-z]/u.test(match[1]);
 }
 
 function isKnownRedactionMarker(value: string): boolean {

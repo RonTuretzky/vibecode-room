@@ -29,6 +29,9 @@ describe("SEC-1 whole-session secret scan", () => {
       fakeUnknownSeparatedToken(),
       fakeUnknownCommonAlphabetToken(),
       fakeUnknownAlphabeticToken(),
+      fakeUnknownSlashOnlyToken(),
+      fakeUnknownPaddingOnlyToken(),
+      fakeProviderPrefixedAlphabeticToken(),
     ];
     const rawKeyNames = [fakeOpenAiKey(), `Authorization: ${fakeBearer()}`, fakeUnknownSeparatedToken()];
     const processor = new TraceProcessor();
@@ -45,6 +48,9 @@ describe("SEC-1 whole-session secret scan", () => {
                 separated: rawValues[4],
                 commonAlphabet: rawValues[5],
                 alphabeticOpaque: rawValues[6],
+                slashOnlyOpaque: rawValues[7],
+                paddingOnlyOpaque: rawValues[8],
+                providerPrefixedOpaque: rawValues[9],
                 [rawKeyNames[0]]: "harmless-openai-shaped-property-name",
                 nested: {
                   [rawKeyNames[1]]: "harmless-authorization-shaped-property-name",
@@ -106,6 +112,9 @@ async function runRedactedProbeReport(rawValues: readonly string[], rawKeyNames:
         deepgram: rawValues[2],
         unknown: rawValues[4],
         alphabeticOpaque: rawValues[6],
+        slashOnlyOpaque: rawValues[7],
+        paddingOnlyOpaque: rawValues[8],
+        providerPrefixedOpaque: rawValues[9],
         [rawKeyNames[0]]: "probe-key-name",
         nested: {
           [rawKeyNames[1]]: "probe-authorization-key-name",
@@ -142,4 +151,16 @@ function fakeUnknownCommonAlphabetToken(): string {
 
 function fakeUnknownAlphabeticToken(): string {
   return `${"alphabeticopaque".repeat(4)}seed`;
+}
+
+function fakeUnknownSlashOnlyToken(): string {
+  return `${"slashopaquecredential".repeat(2)}/${"continuationopaquevalue".repeat(2)}`;
+}
+
+function fakeUnknownPaddingOnlyToken(): string {
+  return `${"paddedopaquecredential".repeat(3)}==`;
+}
+
+function fakeProviderPrefixedAlphabeticToken(): string {
+  return `ghp_${"alphabeticprovideropaque".repeat(2)}`;
 }
