@@ -1,16 +1,17 @@
-// Trivial deterministic matcher — TextCue-equivalent for the wake word.
+// Trivial deterministic matcher: TextCue-equivalent for the wake word.
 // Routing authority lives in deterministic code, never the LLM (invariants-in-code.html).
 // decisionId is derived deterministically from utteranceId so record-replay produces identical output.
 
 import type { CueDecision, TranscriptObservation } from "./types.ts";
 
-const WAKE_WORDS = ["panopticon"] as const;
+const WAKE_WORDS = ["panop"] as const;
 
 export function match(obs: TranscriptObservation): CueDecision {
   const lower = obs.text.toLowerCase();
-  const hit = WAKE_WORDS.some((w) => lower.includes(w));
+  const matchedWord = WAKE_WORDS.find((w) => new RegExp(`\\b${w}\\b`, "i").test(lower));
+  const hit = matchedWord !== undefined;
 
-  // Deterministic: same utteranceId → same decisionId across replays.
+  // Deterministic: same utteranceId maps to same decisionId across replays.
   const decisionId = `decision:${obs.utteranceId}`;
   const correlationId = obs.utteranceId; // utterance is the correlation root in the skeleton
 
@@ -26,7 +27,7 @@ export function match(obs: TranscriptObservation): CueDecision {
       policy: "TextCue/wake-word",
       decisionId,
       correlationId,
-      meta: { matchedWord: WAKE_WORDS.find((w) => lower.includes(w)) },
+      meta: { matchedWord },
     };
   }
 
