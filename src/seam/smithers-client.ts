@@ -1,5 +1,8 @@
-import type { CorrelationStore } from "./correlation-store";
+import type { CorrelationRecord, CorrelationStore } from "./correlation-store";
 import { SmithersGatewayClient as OfficialSmithersGatewayClient } from "smithers-orchestrator/gateway-client";
+
+const SIGNAL_WAIT_TIMEOUT_MS = 2_000;
+const SIGNAL_WAIT_POLL_MS = 20;
 
 export interface SpawnSeed {
   upid: string;
@@ -92,27 +95,54 @@ export class GatewaySmithersClient implements SmithersClient {
 
   async signal(upid: string, payload: unknown): Promise<unknown> {
     const record = await this.requireRecord(upid);
-    return this.transport.request("submitSignal", {
-      runId: record.runId,
-      correlationKey: record.correlationId,
-      signalName: "steer",
-      payload,
-    });
+    return this.submitSignal(record, "steer", payload);
   }
 
   async pause(upid: string): Promise<unknown> {
     const record = await this.requireRecord(upid);
-    return this.transport.request("submitSignal", {
-      runId: record.runId,
-      correlationKey: record.correlationId,
-      signalName: "pause",
-      payload: { upid },
-    });
+    await this.waitForSignalWait(record, "pause");
+    return this.submitSignal(record, "pause", { upid });
   }
 
   async resume(upid: string): Promise<unknown> {
     const record = await this.requireRecord(upid);
-    return this.transport.request("resumeRun", { runId: record.runId, options: { force: false } });
+    if (process.env.PANOP_RBG_RESUME_RPC === "1") {
+      return this.transport.request("resumeRun", { runId: record.runId, options: { force: false } });
+    }
+    await this.waitForSignalWait(record, "resume");
+    return this.submitSignal(record, "resume", { upid });
+  }
+
+  private submitSignal(record: CorrelationRecord, signalName: string, payload: unknown): Promise<unknown> {
+    return this.transport.request("submitSignal", {
+      runId: record.runId,
+      correlationKey: record.correlationId,
+      signalName,
+      payload,
+    });
+  }
+
+  private async waitForSignalWait(record: CorrelationRecord, signalName: string): Promise<void> {
+    const deadlineAt = Date.now() + SIGNAL_WAIT_TIMEOUT_MS;
+    while (Date.now() <= deadlineAt) {
+      const run = await this.tryGetRun(record.runId);
+      if (run === undefined || isTerminalRun(run)) {
+        return;
+      }
+      if (isBlockedOnSignal(run, signalName)) {
+        return;
+      }
+      await sleep(SIGNAL_WAIT_POLL_MS);
+    }
+  }
+
+  private async tryGetRun(runId: string): Promise<Record<string, unknown> | undefined> {
+    try {
+      const run = await this.transport.request("getRun", { runId });
+      return isObject(run) ? run : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   async halt(upid: string): Promise<unknown> {
@@ -232,4 +262,24 @@ export class OfficialGatewayTransport implements GatewayRpcTransport {
 
 function isRpcFrame(value: unknown): value is { ok: boolean; payload?: unknown } {
   return typeof value === "object" && value !== null && "ok" in value;
+}
+
+function isTerminalRun(run: Record<string, unknown>): boolean {
+  return run.status === "finished" || run.status === "failed" || run.status === "cancelled";
+}
+
+function isBlockedOnSignal(run: Record<string, unknown>, signalName: string): boolean {
+  const runState = isObject(run.runState) ? run.runState : undefined;
+  const blocked = isObject(runState?.blocked) ? runState.blocked : undefined;
+  return runState?.state === "waiting-event" &&
+    blocked?.kind === "event" &&
+    blocked.nodeId === signalName;
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

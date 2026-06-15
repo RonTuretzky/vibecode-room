@@ -7,7 +7,14 @@ import type { DispatchedAction } from "../types";
 import { createCorrelationRecord, FileCorrelationStore, MemoryCorrelationStore } from "./correlation-store";
 import { createSeamApp, SeamDispatcher } from "./dispatcher";
 import { RunEventBridge } from "./run-events";
-import type { GatewayEventFrame, SmithersClient, SpawnResult, StreamRunEventsOptions } from "./smithers-client";
+import {
+  GatewaySmithersClient,
+  type GatewayEventFrame,
+  type GatewayRpcTransport,
+  type SmithersClient,
+  type SpawnResult,
+  type StreamRunEventsOptions,
+} from "./smithers-client";
 
 const tempDirs: string[] = [];
 
@@ -125,6 +132,52 @@ describe("Cue Smithers seam dispatcher", () => {
     expect(payload.statusSummary).toBe("Atlas active");
     expect(String(payload.statusSummary).split(/\s+/u).length).toBeLessThanOrEqual(15);
     expect(String(statusPayload.summary).split(/\s+/u).length).toBeLessThanOrEqual(15);
+  });
+
+  test("Gateway client pause and resume use per-process submitSignal correlation keys", async () => {
+    const store = new MemoryCorrelationStore([processRecord("upid-atlas", "run-atlas", "Atlas")]);
+    const transport = new RecordingGatewayTransport();
+    const client = new GatewaySmithersClient({
+      transport,
+      correlations: store,
+      defaultWorkflow: "panopticon-test",
+    });
+
+    await client.pause("upid-atlas");
+    await client.resume("upid-atlas");
+
+    expect(transport.requests).toEqual([
+      {
+        method: "getRun",
+        params: {
+          runId: "run-atlas",
+        },
+      },
+      {
+        method: "submitSignal",
+        params: {
+          runId: "run-atlas",
+          correlationKey: "corr-upid-atlas",
+          signalName: "pause",
+          payload: { upid: "upid-atlas" },
+        },
+      },
+      {
+        method: "getRun",
+        params: {
+          runId: "run-atlas",
+        },
+      },
+      {
+        method: "submitSignal",
+        params: {
+          runId: "run-atlas",
+          correlationKey: "corr-upid-atlas",
+          signalName: "resume",
+          payload: { upid: "upid-atlas" },
+        },
+      },
+    ]);
   });
 });
 
@@ -253,6 +306,31 @@ class MockSmithersClient implements SmithersClient {
       await sleep(1);
       yield entry;
     }
+  }
+}
+
+class RecordingGatewayTransport implements GatewayRpcTransport {
+  readonly requests: Array<{ method: string; params?: Record<string, unknown> }> = [];
+
+  async request(method: string, params?: Record<string, unknown>): Promise<unknown> {
+    this.requests.push({ method, params });
+    if (method === "getRun") {
+      const previousSignal = this.requests
+        .filter((request) => request.method === "submitSignal")
+        .at(-1)?.params?.signalName;
+      return {
+        runId: params?.runId,
+        status: "waiting-event",
+        runState: {
+          state: "waiting-event",
+          blocked: {
+            kind: "event",
+            nodeId: previousSignal === "pause" ? "resume" : "pause",
+          },
+        },
+      };
+    }
+    return { ok: true };
   }
 }
 

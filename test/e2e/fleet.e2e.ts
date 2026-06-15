@@ -5,7 +5,7 @@ import { join } from "node:path";
 import React from "react";
 import { Gateway, createSmithers } from "smithers-orchestrator";
 import { z } from "zod";
-import { MemoryCorrelationStore } from "../../src/seam/correlation-store";
+import { FileCorrelationStore, MemoryCorrelationStore } from "../../src/seam/correlation-store";
 import { SeamDispatcher } from "../../src/seam/dispatcher";
 import { GatewaySmithersClient, InProcessGatewayTransport } from "../../src/seam/smithers-client";
 
@@ -80,10 +80,12 @@ describe("seam durability recovery e2e", () => {
 
       expect(await store.findByUPID("upid-bravo")).toEqual(expect.objectContaining({ state: "paused" }));
       expect(await store.findByUPID("upid-atlas")).not.toEqual(expect.objectContaining({ state: "paused" }));
+      await waitForNodeOutput(gateway, connection, "run-bravo", "pause-ack");
 
       await dispatcher.dispatch({ type: "resume", targetUPID: "upid-bravo", payload: {}, correlationId: "corr-resume-bravo" });
       await dispatcher.drain();
       expect(await store.findByUPID("upid-bravo")).toEqual(expect.objectContaining({ state: "active" }));
+      await waitForNodeOutput(gateway, connection, "run-bravo", "resume-ack");
     } finally {
       await gateway.close().catch(() => {});
       closeRuntime(runtime);
@@ -94,19 +96,42 @@ describe("seam durability recovery e2e", () => {
     const dir = mkdtempSync(join(tmpdir(), "panop-fleet-"));
     tempDirs.push(dir);
     const dbPath = join(dir, "smithers.db");
+    const correlationPath = join(dir, "correlations.json");
     const initial = createRuntime("initial", dbPath);
     const gateway = new Gateway({ heartbeatMs: 1_000, eventWindowSize: 200 });
     const connection = createConnection("fleet-initial");
     gateway.connections.add(connection as any);
     gateway.register("panopticon-fleet", initial.workflow as any);
+    const initialStore = new FileCorrelationStore(correlationPath);
+    const initialDispatcher = new SeamDispatcher({
+      client: new GatewaySmithersClient({
+        transport: new InProcessGatewayTransport(gateway as any, connection),
+        correlations: initialStore,
+        defaultWorkflow: "panopticon-fleet",
+      }),
+      correlations: initialStore,
+      sessionId: "fleet-recovery-initial",
+    });
 
     try {
-      const created = await rpc(gateway, connection, "launchRun", {
-        workflow: "panopticon-fleet",
-        input: { seed: "fleet seed", checkpoint: "checkpoint:fleet-seed" },
-        options: { runId: "run-fleet-001" },
+      const accepted = await initialDispatcher.dispatch({
+        type: "spawn",
+        targetUPID: null,
+        payload: {
+          upid: "upid-fleet-001",
+          runId: "run-fleet-001",
+          workflow: "panopticon-fleet",
+          callsign: "Fleet",
+          steeringWindowId: "window-fleet-001",
+          input: {
+            seed: "fleet seed",
+            checkpoint: "checkpoint:fleet-seed",
+          },
+        },
+        correlationId: "fleet-correlation",
       });
-      expect(created.ok).toBe(true);
+      expect(accepted.accepted).toBe(true);
+      await initialDispatcher.drain();
       await waitForStatus(gateway, connection, "run-fleet-001", "waiting-event");
       const checkpointBefore = await rpc(gateway, connection, "getNodeOutput", {
         runId: "run-fleet-001",
@@ -127,6 +152,16 @@ describe("seam durability recovery e2e", () => {
     const recoveredConnection = createConnection("fleet-recovered");
     recoveredGateway.connections.add(recoveredConnection as any);
     recoveredGateway.register("panopticon-fleet", recovered.workflow as any);
+    const recoveredStore = new FileCorrelationStore(correlationPath);
+    const recoveredDispatcher = new SeamDispatcher({
+      client: new GatewaySmithersClient({
+        transport: new InProcessGatewayTransport(recoveredGateway as any, recoveredConnection),
+        correlations: recoveredStore,
+        defaultWorkflow: "panopticon-fleet",
+      }),
+      correlations: recoveredStore,
+      sessionId: "fleet-recovery-restarted",
+    });
 
     try {
       const run = await rpc(recoveredGateway, recoveredConnection, "getRun", { runId: "run-fleet-001" });
@@ -143,6 +178,32 @@ describe("seam durability recovery e2e", () => {
         expect.objectContaining({
           seed: "fleet seed",
           checkpoint: "checkpoint:fleet-seed",
+        }),
+      );
+      expect(await recoveredStore.findByUPID("upid-fleet-001")).toEqual(
+        expect.objectContaining({
+          runId: "run-fleet-001",
+          steeringWindowId: "window-fleet-001",
+          correlationId: "fleet-correlation",
+        }),
+      );
+
+      if (process.env.PANOP_RBG_SKIP_RECOVERY_STEER !== "1") {
+        await recoveredDispatcher.dispatch({
+          type: "steer",
+          targetUPID: "upid-fleet-001",
+          payload: { command: "continue-after-restart" },
+          correlationId: "fleet-correlation-steer",
+        });
+      }
+      await recoveredDispatcher.drain();
+
+      const completion = await waitForNodeOutput(recoveredGateway, recoveredConnection, "run-fleet-001", "complete");
+      expect(completion.row).toEqual(
+        expect.objectContaining({
+          seed: "fleet seed",
+          checkpoint: "checkpoint:fleet-seed",
+          command: "continue-after-restart",
         }),
       );
     } finally {
@@ -166,6 +227,8 @@ function createFleetControlRuntime(label: string, dbPath: string) {
       }),
       pause: z.object({ upid: z.string() }),
       pauseAck: z.object({ upid: z.string(), paused: z.boolean() }),
+      resume: z.object({ upid: z.string() }),
+      resumeAck: z.object({ upid: z.string(), resumed: z.boolean() }),
       complete: z.object({
         seed: z.string(),
         upid: z.string(),
@@ -182,6 +245,55 @@ function createFleetControlRuntime(label: string, dbPath: string) {
     const upid = String(input.upid ?? "");
     const callsign = String(input.callsign ?? "");
     const correlationId = String(input.correlationId ?? "");
+    const controlMode = String(input.controlMode ?? "steer");
+
+    const checkpoint = React.createElement(
+      api.Task,
+      { id: "checkpoint", output: api.outputs.checkpoint },
+      { seed, upid, callsign } as any,
+    );
+
+    const steer = React.createElement(api.Signal, {
+      id: "steer",
+      schema: api.outputs.steer,
+      correlationId,
+      children: (data: any) =>
+        React.createElement(
+          api.Task,
+          { id: "complete", output: api.outputs.complete },
+          {
+            seed,
+            upid,
+            callsign,
+            command: data.payload.command,
+            injection: data.payload.injection,
+          } as any,
+        ),
+    });
+
+    const pause = React.createElement(api.Signal, {
+      id: "pause",
+      schema: api.outputs.pause,
+      correlationId,
+      children: (data: any) =>
+        React.createElement(
+          api.Task,
+          { id: "pause-ack", output: api.outputs.pauseAck },
+          { upid: data.upid, paused: true } as any,
+        ),
+    });
+
+    const resume = React.createElement(api.Signal, {
+      id: "resume",
+      schema: api.outputs.resume,
+      correlationId,
+      children: (data: any) =>
+        React.createElement(
+          api.Task,
+          { id: "resume-ack", output: api.outputs.resumeAck },
+          { upid: data.upid, resumed: true } as any,
+        ),
+    });
 
     return React.createElement(
       api.Workflow,
@@ -189,43 +301,8 @@ function createFleetControlRuntime(label: string, dbPath: string) {
       React.createElement(
         api.Sequence,
         null,
-        React.createElement(
-          api.Task,
-          { id: "checkpoint", output: api.outputs.checkpoint },
-          { seed, upid, callsign } as any,
-        ),
-        React.createElement(
-          api.Parallel,
-          null,
-          React.createElement(api.Signal, {
-            id: "steer",
-            schema: api.outputs.steer,
-            correlationId,
-            children: (data: any) =>
-              React.createElement(
-                api.Task,
-                { id: "complete", output: api.outputs.complete },
-                {
-                  seed,
-                  upid,
-                  callsign,
-                  command: data.payload.command,
-                  injection: data.payload.injection,
-                } as any,
-              ),
-          }),
-          React.createElement(api.Signal, {
-            id: "pause",
-            schema: api.outputs.pause,
-            correlationId,
-            children: (data: any) =>
-              React.createElement(
-                api.Task,
-                { id: "pause-ack", output: api.outputs.pauseAck },
-                { upid: data.upid, paused: true } as any,
-              ),
-          }),
-        ),
+        checkpoint,
+        ...(controlMode === "pause-resume" ? [pause, resume] : [steer]),
       ),
     );
   });
@@ -236,7 +313,15 @@ function createRuntime(label: string, dbPath: string) {
   const api = createSmithers(
     {
       checkpoint: z.object({ seed: z.string(), checkpoint: z.string() }),
-      steer: z.object({ command: z.string().optional() }),
+      steer: z.object({
+        type: z.string(),
+        payload: z.object({ command: z.string() }),
+      }),
+      complete: z.object({
+        seed: z.string(),
+        checkpoint: z.string(),
+        command: z.string(),
+      }),
     },
     { dbPath, readableName: `Panopticon fleet ${label}` },
   );
@@ -259,7 +344,17 @@ function createRuntime(label: string, dbPath: string) {
         React.createElement(api.Signal, {
           id: "steer",
           schema: api.outputs.steer,
-          correlationId: "fleet-correlation",
+          correlationId: String(input.correlationId ?? ""),
+          children: (data: any) =>
+            React.createElement(
+              api.Task,
+              { id: "complete", output: api.outputs.complete },
+              {
+                seed: String(input.seed ?? ""),
+                checkpoint: String(input.checkpoint ?? ""),
+                command: data.payload.command,
+              } as any,
+            ),
         }),
       ),
     );
@@ -278,7 +373,7 @@ function spawnAction(callsign: string, upid: string, runId: string, seed: string
       callsign,
       steeringWindowId: `window-${callsign.toLowerCase()}`,
       seed,
-      input: { seed, upid, callsign },
+      input: { seed, upid, callsign, controlMode: callsign === "Bravo" ? "pause-resume" : "steer" },
     },
     correlationId: `corr-${upid}`,
   };
