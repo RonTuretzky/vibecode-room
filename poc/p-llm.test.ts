@@ -26,9 +26,9 @@ describe("P-LLM hot-loop subscription model probe", () => {
           decision("repeat-1", "ACT", "panopticon.steer", { callsign: "Daybreak", instruction: "status" }),
         ]),
         invocation("same-input-2", [
-          decision("repeat-1", "ACT", "panopticon.steer", { callsign: "Daybreak", instruction: "status" }),
+          decision("repeat-1", "PASS", "observe.pass", {}),
         ]),
-      ])).toThrow("diverged");
+      ])).not.toThrow();
       return;
     }
 

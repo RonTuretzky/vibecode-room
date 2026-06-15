@@ -3,8 +3,17 @@
   "status": "passed",
   "summary": "probe assertions were failable and passed",
   "correlationId": "secret-scan-e2e-probe",
+<<<<<<< conflict 1 of 1
+%%%%%%% diff from: pvqrmsly 0f308b21 "Fix hot-loop subscription probe evidence" (parents of rebased revision)
+\\\\\\\        to: pvqrmsly 25bdbc88 "Fix hot-loop subscription probe evidence" (rebase destination)
+-  "startedAt": "2026-06-15T08:25:26.297Z",
+-  "finishedAt": "2026-06-15T08:25:26.298Z",
++  "startedAt": "2026-06-15T23:30:20.062Z",
++  "finishedAt": "2026-06-15T23:30:20.063Z",
++++++++ twpwtqzn 40e324bc (rebased revision)
   "startedAt": "2026-06-15T23:31:13.451Z",
   "finishedAt": "2026-06-15T23:31:13.451Z",
+>>>>>>> conflict 1 of 1 ends
   "assertions": [
     {
       "id": "redacted-probe-report",

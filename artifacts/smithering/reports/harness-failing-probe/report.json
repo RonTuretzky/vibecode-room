@@ -3,8 +3,17 @@
   "status": "failed",
   "summary": "probe assertion failed",
   "correlationId": "probe-harness-test-failure",
+<<<<<<< conflict 1 of 1
+%%%%%%% diff from: pvqrmsly 0f308b21 "Fix hot-loop subscription probe evidence" (parents of rebased revision)
+\\\\\\\        to: pvqrmsly 25bdbc88 "Fix hot-loop subscription probe evidence" (rebase destination)
+-  "startedAt": "2026-06-15T05:17:09.627Z",
+-  "finishedAt": "2026-06-15T05:17:09.627Z",
++  "startedAt": "2026-06-15T23:30:15.662Z",
++  "finishedAt": "2026-06-15T23:30:15.663Z",
++++++++ twpwtqzn 40e324bc (rebased revision)
   "startedAt": "2026-06-15T23:31:09.673Z",
   "finishedAt": "2026-06-15T23:31:09.674Z",
+>>>>>>> conflict 1 of 1 ends
   "assertions": [
     {
       "id": "green-failure",

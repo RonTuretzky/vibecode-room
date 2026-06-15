@@ -51,7 +51,14 @@
     {
       "runId": "probe-run-alpha",
       "frameNo": 2,
+<<<<<<< conflict 1 of 7
+%%%%%%% diff from: pvqrmsly 0f308b21 "Fix hot-loop subscription probe evidence" (parents of rebased revision)
+\\\\\\\        to: pvqrmsly 25bdbc88 "Fix hot-loop subscription probe evidence" (rebase destination)
+-      "createdAtMs": 1781500629737,
++      "createdAtMs": 1781566215804,
++++++++ twpwtqzn 40e324bc (rebased revision)
       "createdAtMs": 1781566269803,
+>>>>>>> conflict 1 of 7 ends
       "xmlJson": "{\"kind\":\"element\",\"tag\":\"smithers:workflow\",\"props\":{\"name\":\"durable\"},\"children\":[{\"kind\":\"element\",\"tag\":\"smithers:sequence\",\"props\":{},\"children\":[{\"kind\":\"element\",\"tag\":\"smithers:task\",\"props\":{\"id\":\"checkpoint\",\"waitAsync\":\"false\"},\"children\":[]},{\"kind\":\"element\",\"tag\":\"smithers:wait-for-event\",\"props\":{\"correlationId\":\"seed-alpha\",\"event\":\"steer\",\"id\":\"steer\",\"label\":\"signal:steer\",\"onTimeout\":\"fail\",\"waitAsync\":\"false\"},\"children\":[]}]}]}",
       "xmlHash": "762c8dad038a2c388850f0ea1e5e60b30fc3b6f077607d775735d5ce6f43c172",
       "encoding": "delta",
@@ -62,7 +69,14 @@
     {
       "runId": "probe-run-alpha",
       "frameNo": 1,
+<<<<<<< conflict 2 of 7
+%%%%%%% diff from: pvqrmsly 0f308b21 "Fix hot-loop subscription probe evidence" (parents of rebased revision)
+\\\\\\\        to: pvqrmsly 25bdbc88 "Fix hot-loop subscription probe evidence" (rebase destination)
+-      "createdAtMs": 1781500629712,
++      "createdAtMs": 1781566215766,
++++++++ twpwtqzn 40e324bc (rebased revision)
       "createdAtMs": 1781566269771,
+>>>>>>> conflict 2 of 7 ends
       "xmlJson": "{\"kind\":\"element\",\"tag\":\"smithers:workflow\",\"props\":{\"name\":\"durable\"},\"children\":[{\"kind\":\"element\",\"tag\":\"smithers:sequence\",\"props\":{},\"children\":[{\"kind\":\"element\",\"tag\":\"smithers:task\",\"props\":{\"id\":\"checkpoint\",\"waitAsync\":\"false\"},\"children\":[]},{\"kind\":\"element\",\"tag\":\"smithers:wait-for-event\",\"props\":{\"correlationId\":\"seed-alpha\",\"event\":\"steer\",\"id\":\"steer\",\"label\":\"signal:steer\",\"onTimeout\":\"fail\",\"waitAsync\":\"false\"},\"children\":[]}]}]}",
       "xmlHash": "762c8dad038a2c388850f0ea1e5e60b30fc3b6f077607d775735d5ce6f43c172",
       "encoding": "keyframe",
@@ -78,14 +92,37 @@
       "iteration": 0,
       "attempt": 1,
       "state": "finished",
+<<<<<<< conflict 3 of 7
+%%%%%%% diff from: pvqrmsly 0f308b21 "Fix hot-loop subscription probe evidence" (parents of rebased revision)
+\\\\\\\        to: pvqrmsly 25bdbc88 "Fix hot-loop subscription probe evidence" (rebase destination)
+-      "startedAtMs": 1781500629714,
+-      "finishedAtMs": 1781500629716,
++      "startedAtMs": 1781566215770,
++      "finishedAtMs": 1781566215772,
++++++++ twpwtqzn 40e324bc (rebased revision)
       "startedAtMs": 1781566269775,
       "finishedAtMs": 1781566269777,
+>>>>>>> conflict 3 of 7 ends
       "heartbeatAtMs": null,
       "heartbeatDataJson": null,
       "errorJson": null,
+<<<<<<< conflict 4 of 7
+%%%%%%% diff from: pvqrmsly 0f308b21 "Fix hot-loop subscription probe evidence" (parents of rebased revision)
+\\\\\\\        to: pvqrmsly 25bdbc88 "Fix hot-loop subscription probe evidence" (rebase destination)
+-      "jjPointer": "mwtpwmymvnuwkmyxsmvslvvzyzpsrxzv",
++      "jjPointer": "vyqzosvnlyukwxrwuplrzxlxrvpznvyv",
++++++++ twpwtqzn 40e324bc (rebased revision)
       "jjPointer": "twpwtqznxnytmovuwkzqnzkmmnnpxnms",
+>>>>>>> conflict 4 of 7 ends
       "responseText": null,
+<<<<<<< conflict 5 of 7
+%%%%%%% diff from: pvqrmsly 0f308b21 "Fix hot-loop subscription probe evidence" (parents of rebased revision)
+\\\\\\\        to: pvqrmsly 25bdbc88 "Fix hot-loop subscription probe evidence" (rebase destination)
+-      "jjCwd": "/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/subscription-credentials-redaction",
++      "jjCwd": "/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/cue-adapter-and-policies",
++++++++ twpwtqzn 40e324bc (rebased revision)
       "jjCwd": "/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/probe-hot-loop-llm-subscription",
+>>>>>>> conflict 5 of 7 ends
       "cached": false,
       "metaJson": "{\"kind\":\"static\",\"prompt\":null,\"staticPayload\":{\"seed\":\"seed-alpha\",\"parentId\":\"\",\"checkpoint\":\"checkpoint:seed-alpha\",\"fleetIndex\":0},\"label\":null,\"outputTable\":\"checkpoint\",\"needsApproval\":false,\"retries\":null,\"timeoutMs\":null,\"heartbeatTimeoutMs\":null,\"lastHeartbeat\":null,\"agentId\":null,\"agentModel\":null,\"agentEngine\":null,\"agentResume\":null,\"agentConversation\":null,\"resumedFromSession\":null,\"resumedFromConversation\":false,\"hijackHandoff\":null}"
     },
@@ -95,7 +132,14 @@
       "iteration": 0,
       "attempt": 1,
       "state": "waiting-event",
+<<<<<<< conflict 6 of 7
+%%%%%%% diff from: pvqrmsly 0f308b21 "Fix hot-loop subscription probe evidence" (parents of rebased revision)
+\\\\\\\        to: pvqrmsly 25bdbc88 "Fix hot-loop subscription probe evidence" (rebase destination)
+-      "startedAtMs": 1781500629739,
++      "startedAtMs": 1781566215806,
++++++++ twpwtqzn 40e324bc (rebased revision)
       "startedAtMs": 1781566269808,
+>>>>>>> conflict 6 of 7 ends
       "finishedAtMs": null,
       "heartbeatAtMs": null,
       "heartbeatDataJson": null,
@@ -104,7 +148,14 @@
       "responseText": null,
       "jjCwd": null,
       "cached": false,
+<<<<<<< conflict 7 of 7
+%%%%%%% diff from: pvqrmsly 0f308b21 "Fix hot-loop subscription probe evidence" (parents of rebased revision)
+\\\\\\\        to: pvqrmsly 25bdbc88 "Fix hot-loop subscription probe evidence" (rebase destination)
+-      "metaJson": "{\"kind\":\"wait-for-event\",\"waitForEvent\":{\"signalName\":\"steer\",\"correlationId\":\"seed-alpha\",\"onTimeout\":\"fail\",\"timeoutMs\":null,\"waitAsync\":false,\"startedAtMs\":1781500629739,\"resolvedSignalSeq\":null,\"receivedAtMs\":null,\"timedOutAtMs\":null}}"
++      "metaJson": "{\"kind\":\"wait-for-event\",\"waitForEvent\":{\"signalName\":\"steer\",\"correlationId\":\"seed-alpha\",\"onTimeout\":\"fail\",\"timeoutMs\":null,\"waitAsync\":false,\"startedAtMs\":1781566215806,\"resolvedSignalSeq\":null,\"receivedAtMs\":null,\"timedOutAtMs\":null}}"
++++++++ twpwtqzn 40e324bc (rebased revision)
       "metaJson": "{\"kind\":\"wait-for-event\",\"waitForEvent\":{\"signalName\":\"steer\",\"correlationId\":\"seed-alpha\",\"onTimeout\":\"fail\",\"timeoutMs\":null,\"waitAsync\":false,\"startedAtMs\":1781566269808,\"resolvedSignalSeq\":null,\"receivedAtMs\":null,\"timedOutAtMs\":null}}"
+>>>>>>> conflict 7 of 7 ends
     }
   ]
 }
