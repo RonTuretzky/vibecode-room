@@ -18,3 +18,62 @@
 {"event":"build.integration.ready","integrationBranch":"smithering/integration","baseBranch":"main","created":false,"worktreeReady":false}
 {"event":"merge.lane.enqueue","ticketId":"walking-skeleton-smoke","branch":"build/walking-skeleton-smoke","integrationBranch":"smithering/integration"}
 {"event":"merge.lane.bounce","ticketId":"walking-skeleton-smoke","reason":"no-worktree"}
+{"event":"build.integration.ready","integrationBranch":"smithering/integration","baseBranch":"main","created":false,"worktreeReady":false}
+{"event":"merge.lane.enqueue","ticketId":"walking-skeleton-smoke","branch":"build/walking-skeleton-smoke","integrationBranch":"smithering/integration"}
+{"event":"merge.lane.bounce","ticketId":"walking-skeleton-smoke","reason":"no-worktree"}
+{"event":"build.integration.ready","integrationBranch":"smithering/integration","baseBranch":"main","created":false,"worktreeReady":true}
+{"event":"build.integration.ready","integrationBranch":"smithering/integration","baseBranch":"main","created":false,"worktreeReady":true}
+{"event":"merge.lane.enqueue","ticketId":"walking-skeleton-smoke","branch":"build/walking-skeleton-smoke","integrationBranch":"smithering/integration"}
+{"event":"merge.lane.gate.skip","ticketId":"walking-skeleton-smoke","gate":"lint:arch","reason":"no such script on merged tip"}
+{"event":"merge.lane.bounce","ticketId":"walking-skeleton-smoke","reason":"gate","failures":["pre-merge gate 'WSS-SMOKE' red run missing/empty: artifacts/smithering/build/walking-skeleton-smoke/evidence/WSS-SMOKE-rbg-red.log","pre-merge gate 'WSS-SMOKE' green run missing/empty: artifacts/smithering/build/walking-skeleton-smoke/evidence/WSS-SMOKE-green.log","pre-merge gate 'WSS-CI' red run missing/empty: artifacts/smithering/build/walking-skeleton-smoke/evidence/WSS-CI-rbg-red.log","pre-merge gate 'WSS-CI' green run missing/empty: artifacts/smithering/build/walking-skeleton-smoke/evidence/WSS-CI-green.log"]}
+{"event":"build.integration.ready","integrationBranch":"smithering/integration","baseBranch":"main","created":false,"worktreeReady":true}
+{"event":"merge.lane.enqueue","ticketId":"walking-skeleton-smoke","branch":"build/walking-skeleton-smoke","integrationBranch":"smithering/integration"}
+{"event":"merge.lane.gate.skip","ticketId":"walking-skeleton-smoke","gate":"lint:arch","reason":"no such script on merged tip"}
+{"event":"merge.lane.land","ticketId":"walking-skeleton-smoke","ff":false,"latencyMs":1213}
+{"event":"merge.lane.postsubmit.skip","ticketId":"walking-skeleton-smoke","reason":"no postsubmit script on integration tip"}
+{"event":"merge.lane.enqueue","ticketId":"probe-suite-harness","branch":"build/probe-suite-harness","integrationBranch":"smithering/integration"}
+{"event":"merge.lane.gate.skip","ticketId":"probe-suite-harness","gate":"lint:arch","reason":"no such script on merged tip"}
+{"event":"merge.lane.land","ticketId":"probe-suite-harness","ff":false,"latencyMs":1029}
+{"event":"merge.lane.postsubmit.skip","ticketId":"probe-suite-harness","reason":"no postsubmit script on integration tip"}
+{"event":"merge.lane.enqueue","ticketId":"shared-types-contract","branch":"build/shared-types-contract","integrationBranch":"smithering/integration"}
+{"event":"merge.lane.gate.skip","ticketId":"shared-types-contract","gate":"lint:arch","reason":"no such script on merged tip"}
+{"event":"merge.lane.land","ticketId":"shared-types-contract","ff":false,"latencyMs":1026}
+{"event":"merge.lane.postsubmit.skip","ticketId":"shared-types-contract","reason":"no postsubmit script on integration tip"}
+{"event":"merge.lane.enqueue","ticketId":"probe-cue-substrate","branch":"build/probe-cue-substrate","integrationBranch":"smithering/integration"}
+{"event":"merge.lane.gate.skip","ticketId":"probe-cue-substrate","gate":"lint:arch","reason":"no such script on merged tip"}
+{"event":"merge.lane.land","ticketId":"probe-cue-substrate","ff":false,"latencyMs":1406}
+{"event":"merge.lane.postsubmit.skip","ticketId":"probe-cue-substrate","reason":"no postsubmit script on integration tip"}
+{"event":"merge.lane.enqueue","ticketId":"probe-smithers-durable-runs","branch":"build/probe-smithers-durable-runs","integrationBranch":"smithering/integration"}
+{"event":"merge.lane.gate.skip","ticketId":"probe-smithers-durable-runs","gate":"lint:arch","reason":"no such script on merged tip"}
+{"event":"merge.lane.land","ticketId":"probe-smithers-durable-runs","ff":false,"latencyMs":3227}
+{"event":"merge.lane.postsubmit.skip","ticketId":"probe-smithers-durable-runs","reason":"no postsubmit script on integration tip"}
+{"event":"merge.lane.enqueue","ticketId":"provider-interface-doubles","branch":"build/provider-interface-doubles","integrationBranch":"smithering/integration"}
+{"event":"merge.lane.gate.skip","ticketId":"provider-interface-doubles","gate":"lint:arch","reason":"no such script on merged tip"}
+{"event":"merge.lane.land","ticketId":"provider-interface-doubles","ff":false,"latencyMs":3136}
+{"event":"merge.lane.postsubmit.skip","ticketId":"provider-interface-doubles","reason":"no postsubmit script on integration tip"}
+{"event":"merge.lane.enqueue","ticketId":"record-replay-harness","branch":"build/record-replay-harness","integrationBranch":"smithering/integration"}
+{"event":"merge.lane.gate.skip","ticketId":"record-replay-harness","gate":"lint:arch","reason":"no such script on merged tip"}
+{"event":"merge.lane.land","ticketId":"record-replay-harness","ff":false,"latencyMs":3143}
+{"event":"merge.lane.postsubmit.skip","ticketId":"record-replay-harness","reason":"no postsubmit script on integration tip"}
+{"event":"merge.lane.enqueue","ticketId":"trace-processor-observability","branch":"build/trace-processor-observability","integrationBranch":"smithering/integration"}
+{"event":"merge.lane.gate.skip","ticketId":"trace-processor-observability","gate":"lint:arch","reason":"no such script on merged tip"}
+{"event":"merge.lane.land","ticketId":"trace-processor-observability","ff":false,"latencyMs":3257}
+{"event":"merge.lane.postsubmit.skip","ticketId":"trace-processor-observability","reason":"no postsubmit script on integration tip"}
+{"event":"merge.lane.enqueue","ticketId":"probe-cue-smithers-seam","branch":"build/probe-cue-smithers-seam","integrationBranch":"smithering/integration"}
+{"event":"merge.lane.gate.skip","ticketId":"probe-cue-smithers-seam","gate":"lint:arch","reason":"no such script on merged tip"}
+{"event":"merge.lane.land","ticketId":"probe-cue-smithers-seam","ff":false,"latencyMs":5250}
+{"event":"merge.lane.postsubmit.skip","ticketId":"probe-cue-smithers-seam","reason":"no postsubmit script on integration tip"}
+{"event":"merge.lane.enqueue","ticketId":"subscription-credentials-redaction","branch":"build/subscription-credentials-redaction","integrationBranch":"smithering/integration"}
+{"event":"merge.lane.gate.skip","ticketId":"subscription-credentials-redaction","gate":"lint:arch","reason":"no such script on merged tip"}
+{"event":"merge.lane.bounce","ticketId":"subscription-credentials-redaction","reason":"gate","failures":["review.json not approved (cross-family reviewer rejected)"]}
+{"event":"merge.lane.enqueue","ticketId":"cue-smithers-seam-dispatcher","branch":"build/cue-smithers-seam-dispatcher","integrationBranch":"smithering/integration"}
+{"event":"merge.lane.gate.skip","ticketId":"cue-smithers-seam-dispatcher","gate":"lint:arch","reason":"no such script on merged tip"}
+{"event":"merge.lane.bounce","ticketId":"cue-smithers-seam-dispatcher","reason":"gate","failures":["pre-merge gate red: tsc --noEmit on the merged tip"]}
+{"event":"build.integration.ready","integrationBranch":"smithering/integration","baseBranch":"main","created":false,"worktreeReady":true}
+{"event":"merge.lane.enqueue","ticketId":"cue-smithers-seam-dispatcher","branch":"build/cue-smithers-seam-dispatcher","integrationBranch":"smithering/integration"}
+{"event":"merge.lane.gate.skip","ticketId":"cue-smithers-seam-dispatcher","gate":"lint:arch","reason":"no such script on merged tip"}
+{"event":"merge.lane.bounce","ticketId":"cue-smithers-seam-dispatcher","reason":"gate","failures":["pre-merge gate red: tsc --noEmit on the merged tip"]}
+{"event":"build.integration.ready","integrationBranch":"smithering/integration","baseBranch":"main","created":false,"worktreeReady":true}
+{"event":"merge.lane.enqueue","ticketId":"cue-smithers-seam-dispatcher","branch":"build/cue-smithers-seam-dispatcher","integrationBranch":"smithering/integration"}
+{"event":"merge.lane.gate.skip","ticketId":"cue-smithers-seam-dispatcher","gate":"lint:arch","reason":"no such script on merged tip"}
+{"event":"merge.lane.bounce","ticketId":"cue-smithers-seam-dispatcher","reason":"gate","failures":["pre-merge gate red: tsc --noEmit on the merged tip"]}
