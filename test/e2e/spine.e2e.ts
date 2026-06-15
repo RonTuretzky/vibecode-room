@@ -8,6 +8,8 @@ import { z } from "zod";
 import { MemoryCorrelationStore } from "../../src/seam/correlation-store";
 import { SeamDispatcher } from "../../src/seam/dispatcher";
 import { GatewaySmithersClient, InProcessGatewayTransport } from "../../src/seam/smithers-client";
+import { CueAdapter } from "../../src/cue/adapter";
+import { loadCueCore } from "../../src/cue/source";
 
 const tempDirs: string[] = [];
 
@@ -18,6 +20,51 @@ afterEach(() => {
 });
 
 describe("seam slice spine e2e", () => {
+  test("recognition-latency slice emits the earcon within 300 ms after finalization while the LLM is delayed", async () => {
+    const cue = await loadCueCore();
+    const { TextCue, ConversationState, transcriptObservation } = cue as any;
+    const finalTranscript = transcriptObservation("Panop status", {
+      speaker: "speaker_0",
+      timestamp: 1,
+    });
+    const textCue = new TextCue(["panop"]);
+    const cueDecision = textCue.maybeCue(finalTranscript, new ConversationState());
+    const emitted: Array<{ emittedAtMs: number; source: string }> = [];
+    const adapter = new CueAdapter({
+      sessionId: "spine-latency",
+      textCueWords: ["panop"],
+      clock: () => performance.now(),
+      idFactory: sequenceIds("latency"),
+      earconSink: {
+        emit(emission) {
+          emitted.push({ emittedAtMs: performance.now(), source: emission.source });
+        },
+      },
+    });
+    const observation = adapter.normalizeObservation({
+      text: "Panop status",
+      isFinal: true,
+      speaker: "speaker_0",
+      sessionId: "spine-latency",
+      latencyMs: 0,
+      utteranceId: "utt-latency-001",
+    });
+    const finalizedAtMs = performance.now();
+    const slowDecision = sleep(process.env.PANOP_RBG_SLOW_EARCON === "1" ? 350 : 450);
+
+    if (process.env.PANOP_RBG_SLOW_EARCON === "1") {
+      await sleep(325);
+    }
+    await adapter.emitTextCueEarcon(observation, cueDecision, "corr-latency-001");
+    const earconLatencyMs = emitted[0].emittedAtMs - finalizedAtMs;
+
+    expect(cueDecision?.name).toBe("text");
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0].source).toBe("cue-textcue");
+    expect(earconLatencyMs).toBeLessThanOrEqual(300);
+    await slowDecision;
+  }, 10_000);
+
   test("real durable spawn confirms within 3 seconds through the Gateway path", async () => {
     const runtime = createRuntime("spine");
     const gateway = new Gateway({ heartbeatMs: 1_000, eventWindowSize: 200 });
@@ -165,4 +212,9 @@ function closeRuntime(runtime: ReturnType<typeof createRuntime>) {
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function sequenceIds(prefix: string): () => string {
+  let next = 0;
+  return () => `${prefix}-${++next}`;
 }

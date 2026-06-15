@@ -1,0 +1,29 @@
+bun test v1.3.14 (0d9b296a)
+
+src/cue/adapter.test.ts:
+24 |       sessionId: "session-normalize",
+25 |       latencyMs: 42,
+26 |       utteranceId: "utt-normalize-001",
+27 |     });
+28 | 
+29 |     expect(normalized).toEqual({
+                            ^
+error: expect(received).toEqual(expected)
+
+@@ -4,3 +4,3 @@
+    "sessionId": "session-normalize",
+-   "speaker": "speaker_0",
++   "speaker": null,
+    "text": "Panop build the replay tests",
+
+- Expected  - 1
++ Received  + 1
+
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/cue-adapter-and-policies/src/cue/adapter.test.ts:29:24)
+(fail) Cue adapter and policies > adapter-normalization maps Cue frames to the exact TranscriptObservation shape [1.27ms]
+
+ 4 pass
+ 1 fail
+ 15 expect() calls
+Ran 5 tests across 1 file. [72.00ms]
+exit=1

@@ -1,0 +1,21 @@
+bun test v1.3.14 (0d9b296a)
+
+src/cue/adapter.test.ts:
+57 | 
+58 | export function assertPrematcherParity(textCueWords: readonly string[], prematcherWords: readonly string[]): void {
+59 |   const cueWords = JSON.stringify([...textCueWords]);
+60 |   const mirrorWords = JSON.stringify([...prematcherWords]);
+61 |   if (cueWords !== mirrorWords) {
+62 |     throw new Error(`Adapter pre-matcher word list drifted from TextCue config: ${mirrorWords} !== ${cueWords}`);
+                   ^
+error: Adapter pre-matcher word list drifted from TextCue config: ["panop","shadow"] !== ["panop"]
+      at assertPrematcherParity (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/cue-adapter-and-policies/src/cue/policies.ts:62:15)
+      at new CueAdapter (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/cue-adapter-and-policies/src/cue/adapter.ts:72:7)
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/cue-adapter-and-policies/src/cue/adapter.test.ts:198:21)
+(fail) Cue adapter and policies > recognition-source feeds earcons from Cue TextCue decisions or a byte-equal adapter pre-matcher mirror [0.36ms]
+
+ 4 pass
+ 1 fail
+ 13 expect() calls
+Ran 5 tests across 1 file. [75.00ms]
+exit=1
