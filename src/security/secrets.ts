@@ -61,9 +61,10 @@ export function redactSecretValues(value: unknown, path: readonly string[] = [])
     let count = 0;
     const redacted: Record<string, unknown> = {};
     for (const [key, entry] of Object.entries(value)) {
+      const keyResult = redactObjectKey(key);
       const result = redactSecretValues(entry, [...path, key]);
-      count += result.count;
-      redacted[key] = result.value;
+      count += keyResult.count + result.count;
+      redacted[uniqueRedactedKey(redacted, keyResult.value)] = result.value;
     }
     return { value: redacted, count };
   }
@@ -138,6 +139,26 @@ function redactString(value: string, path: readonly string[]): SecretRedactionRe
   });
 
   return { value: redacted, count };
+}
+
+function redactObjectKey(key: string): { value: string; count: number } {
+  const result = redactString(key, []);
+  if (typeof result.value !== "string") {
+    return { value: REDACTED_SECRET, count: result.count + 1 };
+  }
+  return { value: result.value, count: result.count };
+}
+
+function uniqueRedactedKey(target: Record<string, unknown>, key: string): string {
+  if (!Object.hasOwn(target, key)) {
+    return key;
+  }
+
+  let index = 2;
+  while (Object.hasOwn(target, `${key}#${index}`)) {
+    index += 1;
+  }
+  return `${key}#${index}`;
 }
 
 function findUnknownSecretTokens(text: string): number {

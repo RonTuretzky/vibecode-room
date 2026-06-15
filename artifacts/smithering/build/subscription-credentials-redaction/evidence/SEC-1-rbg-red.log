@@ -1,84 +1,41 @@
-== unit red: common-token fallback regression ==
+== unit red: metadata key redaction regression ==
 bun test v1.3.14 (0d9b296a)
 
 src/providers/credentials.test.ts:
-159 |   });
-160 | });
-161 | 
-162 | function assertNoRawValues(haystack: string, rawValues: readonly string[], label: string): void {
-163 |   if (rawValues.some((value) => haystack.includes(value))) {
-164 |     throw new Error(`raw key-shaped string leaked into ${label}`);
-                                                                      ^
-error: raw key-shaped string leaked into trace JSONL
-      at assertNoRawValues (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/subscription-credentials-redaction/src/providers/credentials.test.ts:164:65)
-      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/subscription-credentials-redaction/src/providers/credentials.test.ts:112:5)
-(fail) SEC-1 credential guard and trace redaction > LogEvent meta redacts bearer, provider keys, JWTs, authorization headers, arrays, and secret-like unknowns [2.29ms]
-159 |   });
-160 | });
-161 | 
-162 | function assertNoRawValues(haystack: string, rawValues: readonly string[], label: string): void {
-163 |   if (rawValues.some((value) => haystack.includes(value))) {
-164 |     throw new Error(`raw key-shaped string leaked into ${label}`);
-                                                                      ^
-error: raw key-shaped string leaked into redacted unknown-token fallback
-      at assertNoRawValues (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/subscription-credentials-redaction/src/providers/credentials.test.ts:164:65)
-      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/subscription-credentials-redaction/src/providers/credentials.test.ts:155:5)
-(fail) SEC-1 credential guard and trace redaction > unknown-token fallback redacts embedded, separator-bearing, and common token alphabets before scans see them [0.35ms]
+140 |
+141 |     const jsonl = processor.toJsonl();
+142 |     if (process.env.PANOPTICON_RBG_UNREDACTED_META_KEYS === "1") {
+143 |       const leakySerialized = JSON.stringify({ meta: { [rawKeyNames[0]]: "unredacted property-name fixture" } });
+144 |       const findingCount = scanSecretLikeText(leakySerialized).reduce((total, finding) => total + finding.count, 0);
+145 |       throw new Error(`synthetic unredacted property-name leak detected (${findingCount} findings)`);
+                                                                                                         ^
+error: synthetic unredacted property-name leak detected (2 findings)
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/subscription-credentials-redaction/src/providers/credentials.test.ts:145:100)
+(fail) SEC-1 credential guard and trace redaction > LogEvent meta redacts credential-shaped object keys before emission [0.83ms]
 
- 4 pass
- 2 fail
- 14 expect() calls
-Ran 6 tests across 1 file. [36.00ms]
-exit=1
-
-== unit red: host command allowlist regression ==
-bun test v1.3.14 (0d9b296a)
-
-src/providers/credentials.test.ts:
-47 |     expectThrowsWithoutEcho(() => createModelCredentialSource({ provider: "openai-codex", command: `OPENAI_API_KEY=${rawOpenAi} codex` }));
-48 |     expect(() => createModelCredentialSource({ provider: "openai-codex", command: "node codex" })).toThrow(/must start/u);
-49 |     expect(() => createModelCredentialSource({ provider: "anthropic-claude", command: "claude $(printenv)" })).toThrow(
-50 |       /plain allowlisted/u,
-51 |     );
-52 |     expect(() => createModelCredentialSource({ provider: "openai-codex", command: "codex --profile=default" })).toThrow(
-                                                                                                                     ^
-error: expect(received).toThrow(expected)
-
-Expected pattern: /unsupported argument/u
-
-Received function did not throw
-Received value: {
-  kind: "host-subscription",
-  provider: "openai-codex",
-  command: "codex --profile=default",
-}
-
-      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/subscription-credentials-redaction/src/providers/credentials.test.ts:52:113)
-(fail) SEC-1 credential guard and trace redaction > host-subscription command is a narrow CLI allowlist and rejects credential smuggling [0.38ms]
-
- 5 pass
+ 6 pass
  1 fail
- 19 expect() calls
-Ran 6 tests across 1 file. [37.00ms]
-exit=1
+ 20 expect() calls
+Ran 7 tests across 1 file. [36.00ms]
+unit-red-exit=1
 
 == e2e red: planted session leak ==
 bun test v1.3.14 (0d9b296a)
 
 test/e2e/secret-scan.e2e.ts.test.ts:
-58 |     }
-59 | 
-60 |     const scans = await Promise.all([SESSION_DIR, TRACE_DIR, PROBE_REPORT_ROOT].map((root) => scanSecretLikeFiles(root)));
-61 |     const findingCount = scans.reduce((count, scan) => count + scan.findings.length, 0);
-62 |     if (findingCount > 0) {
-63 |       throw new Error(`whole-session secret scan found key-shaped strings (${findingCount} findings)`);
+64 |     }
+65 |
+66 |     const scans = await Promise.all([SESSION_DIR, TRACE_DIR, PROBE_REPORT_ROOT].map((root) => scanSecretLikeFiles(root)));
+67 |     const findingCount = scans.reduce((count, scan) => count + scan.findings.length, 0);
+68 |     if (findingCount > 0) {
+69 |       throw new Error(`whole-session secret scan found key-shaped strings (${findingCount} findings)`);
                      ^
 error: whole-session secret scan found key-shaped strings (2 findings)
-      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/subscription-credentials-redaction/test/e2e/secret-scan.e2e.ts:63:17)
-(fail) SEC-1 whole-session secret scan > full trace/log/report tree has zero key-shaped strings after a session run [12.60ms]
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/subscription-credentials-redaction/test/e2e/secret-scan.e2e.ts:69:17)
+(fail) SEC-1 whole-session secret scan > full trace/log/report tree has zero key-shaped strings after a session run [12.66ms]
 
  0 pass
  1 fail
  1 expect() calls
-Ran 1 test across 1 file. [42.00ms]
-exit=1
+Ran 1 test across 1 file. [40.00ms]
+e2e-red-exit=1

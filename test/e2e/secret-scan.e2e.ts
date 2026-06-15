@@ -29,6 +29,7 @@ describe("SEC-1 whole-session secret scan", () => {
       fakeUnknownSeparatedToken(),
       fakeUnknownCommonAlphabetToken(),
     ];
+    const rawKeyNames = [fakeOpenAiKey(), `Authorization: ${fakeBearer()}`, fakeUnknownSeparatedToken()];
     const processor = new TraceProcessor();
     const result = await runSpineSmoke("fixtures/smoke/transcript.jsonl", {
       trace: processor,
@@ -42,11 +43,16 @@ describe("SEC-1 whole-session secret scan", () => {
                 blob: rawValues[3],
                 separated: rawValues[4],
                 commonAlphabet: rawValues[5],
+                [rawKeyNames[0]]: "harmless-openai-shaped-property-name",
+                nested: {
+                  [rawKeyNames[1]]: "harmless-authorization-shaped-property-name",
+                  [rawKeyNames[2]]: "harmless-unknown-shaped-property-name",
+                },
               },
             }
           : {},
     });
-    await runRedactedProbeReport(rawValues);
+    await runRedactedProbeReport(rawValues, rawKeyNames);
 
     const traceJsonl = processor.toJsonl();
     await writeFile(join(SESSION_DIR, "traces", "trace.jsonl"), traceJsonl);
@@ -64,7 +70,7 @@ describe("SEC-1 whole-session secret scan", () => {
     }
 
     const report = await Bun.file(join(SESSION_DIR, "reports", "report.json")).text();
-    if (rawValues.some((raw) => report.includes(raw))) {
+    if ([...rawValues, ...rawKeyNames].some((raw) => report.includes(raw))) {
       throw new Error("raw key-shaped string leaked into whole-session report");
     }
 
@@ -73,7 +79,7 @@ describe("SEC-1 whole-session secret scan", () => {
   });
 });
 
-async function runRedactedProbeReport(rawValues: readonly string[]): Promise<void> {
+async function runRedactedProbeReport(rawValues: readonly string[], rawKeyNames: readonly string[]): Promise<void> {
   const assertion: ProbeAssertion = {
     id: "redacted-probe-report",
     behavior: "probe report meta is redacted before durable emission",
@@ -97,6 +103,11 @@ async function runRedactedProbeReport(rawValues: readonly string[]): Promise<voi
         apiKey: rawValues[0],
         deepgram: rawValues[2],
         unknown: rawValues[4],
+        [rawKeyNames[0]]: "probe-key-name",
+        nested: {
+          [rawKeyNames[1]]: "probe-authorization-key-name",
+          [rawKeyNames[2]]: "probe-unknown-key-name",
+        },
       },
     },
   });

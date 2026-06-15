@@ -117,6 +117,54 @@ describe("SEC-1 credential guard and trace redaction", () => {
     expect(redactionEvents[0].meta).toEqual({ count: 10, sourceEvent: "observe.final" });
   });
 
+  test("LogEvent meta redacts credential-shaped object keys before emission", () => {
+    const rawKeyNames = [fakeOpenAiKey(), `Authorization: ${fakeBearer()}`, fakeUnknownSeparatedToken()];
+    const processor = new TraceProcessor();
+
+    processor.record({
+      event: "observe.final",
+      sessionId,
+      correlationId,
+      startedAtMs: 16,
+      endedAtMs: 19,
+      meta: {
+        [rawKeyNames[0]]: "harmless-openai-shaped-property-name",
+        nested: {
+          [rawKeyNames[1]]: "harmless-authorization-shaped-property-name",
+          ordinary: {
+            [rawKeyNames[2]]: "harmless-unknown-shaped-property-name",
+          },
+        },
+      },
+    });
+
+    const jsonl = processor.toJsonl();
+    if (process.env.PANOPTICON_RBG_UNREDACTED_META_KEYS === "1") {
+      const leakySerialized = JSON.stringify({ meta: { [rawKeyNames[0]]: "unredacted property-name fixture" } });
+      const findingCount = scanSecretLikeText(leakySerialized).reduce((total, finding) => total + finding.count, 0);
+      throw new Error(`synthetic unredacted property-name leak detected (${findingCount} findings)`);
+    }
+
+    assertNoRawValues(jsonl, rawKeyNames, "trace JSONL property names");
+    expect(scanSecretLikeText(jsonl)).toEqual([]);
+    expect(jsonl).toContain(REDACTED_SECRET);
+
+    const emitted = processor.events().find((event) => event.event === "observe.final");
+    expect(emitted?.meta).toEqual({
+      [REDACTED_SECRET]: "harmless-openai-shaped-property-name",
+      nested: {
+        [REDACTED_SECRET]: REDACTED_SECRET,
+        ordinary: {
+          [REDACTED_SECRET]: "harmless-unknown-shaped-property-name",
+        },
+      },
+    });
+    expect(processor.events().filter((event) => event.event === "secret.redacted")[0].meta).toEqual({
+      count: 4,
+      sourceEvent: "observe.final",
+    });
+  });
+
   test("probe-style reports can be redacted and scanned without leaking raw values", async () => {
     const root = join(tmpdir(), `panopticon-secret-report-${crypto.randomUUID()}`);
     const rawValues = [fakeOpenAiKey(), fakeBearer(), fakeDeepgramKey(), fakeUnknownEmbeddedToken()];

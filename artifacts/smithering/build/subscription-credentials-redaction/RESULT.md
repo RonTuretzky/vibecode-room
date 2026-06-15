@@ -10,6 +10,7 @@
 - Extended the whole-session e2e to scan every trace/log/report tree it emits, including the build trace copy and probe-report output.
 - Added count-only `secret.redacted` trace events and safe JSONL serialization for raw `LogEvent` arrays.
 - Added SEC-1 unit and e2e coverage for provider guard rejection, trace/report redaction, and whole-session secret scanning through the spine smoke session path.
+- Hardened the adversarial metadata-key gap: credential-shaped object property names are now redacted before trace/probe/report emission, including nested `LogEvent.meta` and probe report metadata keys.
 
 ## Gate Roll-Up
 
@@ -30,6 +31,13 @@
 - `bun test`
 - `bunx tsc --noEmit`
 - `bun -e 'import { scanSecretLikeFiles } ...'` over `artifacts/smithering/build/subscription-credentials-redaction`
+
+## Follow-up Fix Evidence
+
+- `evidence/SEC-1-rbg-red.log` now includes a failable red run for unredacted credential-shaped metadata keys and the whole-session planted-leak e2e.
+- `evidence/SEC-1-green.log` records the repaired unit, e2e, full-suite, and typecheck runs.
+- `secret-scan.json` reports zero key-shaped strings in this ticket's build bundle.
+- Decision log: `artifacts/smithering/decisions/build/credential-shaped-metadata-keys.html`.
 
 ## Blockers
 

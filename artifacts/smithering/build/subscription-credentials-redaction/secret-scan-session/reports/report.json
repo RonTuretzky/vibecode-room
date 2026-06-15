@@ -7,7 +7,7 @@
       "correlationId": "corr-smoke-session-utt-001",
       "latencyMs": 42,
       "meta": {
-        "count": 6,
+        "count": 10,
         "sourceEvent": "observe.final"
       }
     },
@@ -27,7 +27,12 @@
           "deepgram": "«redacted»",
           "blob": "«redacted»",
           "separated": "«redacted»",
-          "commonAlphabet": "«redacted»"
+          "commonAlphabet": "«redacted»",
+          "«redacted»": "harmless-openai-shaped-property-name",
+          "nested": {
+            "«redacted»": "«redacted»",
+            "«redacted»#2": "harmless-unknown-shaped-property-name"
+          }
         }
       }
     },

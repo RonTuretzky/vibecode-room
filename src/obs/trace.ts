@@ -347,9 +347,10 @@ function redactValue(
     let count = 0;
     const redacted: Record<string, unknown> = {};
     for (const [key, nested] of Object.entries(current)) {
+      const keyRedacted = redactSecretValues(key, []);
       const nestedRedacted = redactValue(nested, event, filters, [...path, key]);
-      count += nestedRedacted.count;
-      redacted[key] = nestedRedacted.value;
+      count += keyRedacted.count + nestedRedacted.count;
+      redacted[uniqueRedactedKey(redacted, String(keyRedacted.value))] = nestedRedacted.value;
     }
     return { value: redacted, count };
   }
@@ -378,4 +379,16 @@ function assertJsonSerializable(value: unknown, path: readonly string[]): void {
       assertJsonSerializable(nested, [...path, key]);
     }
   }
+}
+
+function uniqueRedactedKey(target: Record<string, unknown>, key: string): string {
+  if (!Object.hasOwn(target, key)) {
+    return key;
+  }
+
+  let index = 2;
+  while (Object.hasOwn(target, `${key}#${index}`)) {
+    index += 1;
+  }
+  return `${key}#${index}`;
 }
