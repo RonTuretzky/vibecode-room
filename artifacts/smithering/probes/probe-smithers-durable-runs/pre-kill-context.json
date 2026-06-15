@@ -51,13 +51,7 @@
     {
       "runId": "probe-run-alpha",
       "frameNo": 2,
-<<<<<<< HEAD
-      "createdAtMs": 1781566215804,
-||||||| parent of 23fd1ba (feat(probe): hot-loop LLM subscription validation)
-      "createdAtMs": 1781500629737,
-=======
       "createdAtMs": 1781564468175,
->>>>>>> 23fd1ba (feat(probe): hot-loop LLM subscription validation)
       "xmlJson": "{\"kind\":\"element\",\"tag\":\"smithers:workflow\",\"props\":{\"name\":\"durable\"},\"children\":[{\"kind\":\"element\",\"tag\":\"smithers:sequence\",\"props\":{},\"children\":[{\"kind\":\"element\",\"tag\":\"smithers:task\",\"props\":{\"id\":\"checkpoint\",\"waitAsync\":\"false\"},\"children\":[]},{\"kind\":\"element\",\"tag\":\"smithers:wait-for-event\",\"props\":{\"correlationId\":\"seed-alpha\",\"event\":\"steer\",\"id\":\"steer\",\"label\":\"signal:steer\",\"onTimeout\":\"fail\",\"waitAsync\":\"false\"},\"children\":[]}]}]}",
       "xmlHash": "762c8dad038a2c388850f0ea1e5e60b30fc3b6f077607d775735d5ce6f43c172",
       "encoding": "delta",
@@ -68,13 +62,7 @@
     {
       "runId": "probe-run-alpha",
       "frameNo": 1,
-<<<<<<< HEAD
-      "createdAtMs": 1781566215766,
-||||||| parent of 23fd1ba (feat(probe): hot-loop LLM subscription validation)
-      "createdAtMs": 1781500629712,
-=======
       "createdAtMs": 1781564468149,
->>>>>>> 23fd1ba (feat(probe): hot-loop LLM subscription validation)
       "xmlJson": "{\"kind\":\"element\",\"tag\":\"smithers:workflow\",\"props\":{\"name\":\"durable\"},\"children\":[{\"kind\":\"element\",\"tag\":\"smithers:sequence\",\"props\":{},\"children\":[{\"kind\":\"element\",\"tag\":\"smithers:task\",\"props\":{\"id\":\"checkpoint\",\"waitAsync\":\"false\"},\"children\":[]},{\"kind\":\"element\",\"tag\":\"smithers:wait-for-event\",\"props\":{\"correlationId\":\"seed-alpha\",\"event\":\"steer\",\"id\":\"steer\",\"label\":\"signal:steer\",\"onTimeout\":\"fail\",\"waitAsync\":\"false\"},\"children\":[]}]}]}",
       "xmlHash": "762c8dad038a2c388850f0ea1e5e60b30fc3b6f077607d775735d5ce6f43c172",
       "encoding": "keyframe",
@@ -90,34 +78,14 @@
       "iteration": 0,
       "attempt": 1,
       "state": "finished",
-<<<<<<< HEAD
-      "startedAtMs": 1781566215770,
-      "finishedAtMs": 1781566215772,
-||||||| parent of 23fd1ba (feat(probe): hot-loop LLM subscription validation)
-      "startedAtMs": 1781500629714,
-      "finishedAtMs": 1781500629716,
-=======
       "startedAtMs": 1781564468153,
       "finishedAtMs": 1781564468154,
->>>>>>> 23fd1ba (feat(probe): hot-loop LLM subscription validation)
       "heartbeatAtMs": null,
       "heartbeatDataJson": null,
       "errorJson": null,
-<<<<<<< HEAD
-      "jjPointer": "vyqzosvnlyukwxrwuplrzxlxrvpznvyv",
-||||||| parent of 23fd1ba (feat(probe): hot-loop LLM subscription validation)
-      "jjPointer": "mwtpwmymvnuwkmyxsmvslvvzyzpsrxzv",
-=======
       "jjPointer": "twpwtqznxnytmovuwkzqnzkmmnnpxnms",
->>>>>>> 23fd1ba (feat(probe): hot-loop LLM subscription validation)
       "responseText": null,
-<<<<<<< HEAD
-      "jjCwd": "/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/cue-adapter-and-policies",
-||||||| parent of 23fd1ba (feat(probe): hot-loop LLM subscription validation)
-      "jjCwd": "/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/subscription-credentials-redaction",
-=======
       "jjCwd": "/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/probe-hot-loop-llm-subscription",
->>>>>>> 23fd1ba (feat(probe): hot-loop LLM subscription validation)
       "cached": false,
       "metaJson": "{\"kind\":\"static\",\"prompt\":null,\"staticPayload\":{\"seed\":\"seed-alpha\",\"parentId\":\"\",\"checkpoint\":\"checkpoint:seed-alpha\",\"fleetIndex\":0},\"label\":null,\"outputTable\":\"checkpoint\",\"needsApproval\":false,\"retries\":null,\"timeoutMs\":null,\"heartbeatTimeoutMs\":null,\"lastHeartbeat\":null,\"agentId\":null,\"agentModel\":null,\"agentEngine\":null,\"agentResume\":null,\"agentConversation\":null,\"resumedFromSession\":null,\"resumedFromConversation\":false,\"hijackHandoff\":null}"
     },
@@ -127,13 +95,7 @@
       "iteration": 0,
       "attempt": 1,
       "state": "waiting-event",
-<<<<<<< HEAD
-      "startedAtMs": 1781566215806,
-||||||| parent of 23fd1ba (feat(probe): hot-loop LLM subscription validation)
-      "startedAtMs": 1781500629739,
-=======
       "startedAtMs": 1781564468177,
->>>>>>> 23fd1ba (feat(probe): hot-loop LLM subscription validation)
       "finishedAtMs": null,
       "heartbeatAtMs": null,
       "heartbeatDataJson": null,
@@ -142,13 +104,7 @@
       "responseText": null,
       "jjCwd": null,
       "cached": false,
-<<<<<<< HEAD
-      "metaJson": "{\"kind\":\"wait-for-event\",\"waitForEvent\":{\"signalName\":\"steer\",\"correlationId\":\"seed-alpha\",\"onTimeout\":\"fail\",\"timeoutMs\":null,\"waitAsync\":false,\"startedAtMs\":1781566215806,\"resolvedSignalSeq\":null,\"receivedAtMs\":null,\"timedOutAtMs\":null}}"
-||||||| parent of 23fd1ba (feat(probe): hot-loop LLM subscription validation)
-      "metaJson": "{\"kind\":\"wait-for-event\",\"waitForEvent\":{\"signalName\":\"steer\",\"correlationId\":\"seed-alpha\",\"onTimeout\":\"fail\",\"timeoutMs\":null,\"waitAsync\":false,\"startedAtMs\":1781500629739,\"resolvedSignalSeq\":null,\"receivedAtMs\":null,\"timedOutAtMs\":null}}"
-=======
       "metaJson": "{\"kind\":\"wait-for-event\",\"waitForEvent\":{\"signalName\":\"steer\",\"correlationId\":\"seed-alpha\",\"onTimeout\":\"fail\",\"timeoutMs\":null,\"waitAsync\":false,\"startedAtMs\":1781564468177,\"resolvedSignalSeq\":null,\"receivedAtMs\":null,\"timedOutAtMs\":null}}"
->>>>>>> 23fd1ba (feat(probe): hot-loop LLM subscription validation)
     }
   ]
 }
