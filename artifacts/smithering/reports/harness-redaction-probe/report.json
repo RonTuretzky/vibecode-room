@@ -3,15 +3,15 @@
   "status": "passed",
   "summary": "probe assertions were failable and passed",
   "correlationId": "probe-harness-test-redaction",
-  "startedAt": "2026-06-14T20:49:06.210Z",
-  "finishedAt": "2026-06-14T20:49:06.210Z",
+  "startedAt": "2026-06-15T05:17:09.628Z",
+  "finishedAt": "2026-06-15T05:17:09.628Z",
   "assertions": [
     {
       "id": "redacts-errors",
       "behavior": "assertion errors can include provider text without leaking secrets",
       "phase": "red",
       "status": "failed-as-expected",
-      "error": "provider denied [redacted-secret]"
+      "error": "provider denied «redacted»"
     },
     {
       "id": "redacts-errors",
@@ -26,6 +26,7 @@
     "findings": []
   },
   "meta": {
-    "authorization": "[redacted-secret]"
+    "authorization": "«redacted»",
+    "providerNote": "opaque «redacted»"
   }
 }

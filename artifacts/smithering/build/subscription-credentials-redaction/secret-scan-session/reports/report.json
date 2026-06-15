@@ -34,7 +34,7 @@
           "providerPrefixedOpaque": "«redacted»",
           "providerPrefixedNumeric": "«redacted»",
           "providerPrefixedAlphaNumeric": "«redacted»",
-          "providerPrefixedSlack": "«redacted»",
+          "providerPrefixedSlack": "«redacted»-slackprovideropaqueslackprovideropaque",
           "«redacted»": "harmless-openai-shaped-property-name",
           "nested": {
             "«redacted»": "«redacted»",
@@ -112,7 +112,7 @@
       "level": "warn",
       "event": "secret.redacted",
       "sessionId": "«redacted»",
-      "correlationId": "«redacted»",
+      "correlationId": "corr-«redacted»-slackprovideropaqueslackprovideropaque",
       "latencyMs": 1,
       "meta": {
         "count": 3,
@@ -123,7 +123,7 @@
       "level": "info",
       "event": "redacted.secret",
       "sessionId": "«redacted»",
-      "correlationId": "«redacted»",
+      "correlationId": "corr-«redacted»-slackprovideropaqueslackprovideropaque",
       "latencyMs": 1,
       "meta": {
         "identifierRedaction": "active"

@@ -1,3 +1,5 @@
+import { lstat } from "node:fs/promises";
+
 export const REDACTED_SECRET = "«redacted»";
 
 export interface SecretRedactionResult {
@@ -21,6 +23,11 @@ interface SecretPattern {
   pattern: RegExp;
 }
 
+const PROVIDER_PREFIXED_NUMERIC_TOKEN =
+  /\b[A-Za-z][A-Za-z0-9]{1,15}[._-](?:[0-9]{8,}[._-]){1,}[0-9]{8,}\b/gu;
+const MAX_SECRET_SCAN_FILE_BYTES = 8 * 1024 * 1024;
+const BINARY_SCAN_SAMPLE_BYTES = 8192;
+
 const SECRET_PATTERNS: SecretPattern[] = [
   { name: "authorization-header", pattern: /\bAuthorization\s*:\s*(?:Bearer|Basic|Token)?\s*[A-Za-z0-9._~+/=-]{16,}\b/giu },
   { name: "bearer-token", pattern: /\bBearer\s+[A-Za-z0-9._~+/=-]{16,}\b/giu },
@@ -28,6 +35,7 @@ const SECRET_PATTERNS: SecretPattern[] = [
   { name: "jwt", pattern: /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/gu },
   { name: "deepgram-key", pattern: /\b(?:dg|deepgram)[_-][A-Za-z0-9_-]{16,}\b/giu },
   { name: "elevenlabs-key", pattern: /\b(?:xi|elevenlabs|el)[_-][A-Za-z0-9_-]{16,}\b/giu },
+  { name: "provider-prefixed-numeric-token", pattern: PROVIDER_PREFIXED_NUMERIC_TOKEN },
   {
     name: "generic-key-assignment",
     pattern: /\b(?:api[_-]?key|secret|token|credential|password)\s*[:=]\s*["']?[A-Za-z0-9._~+/=-]{16,}["']?/giu,
@@ -102,8 +110,7 @@ export async function scanSecretLikeFiles(rootDir: string): Promise<SecretScanRe
   const glob = new Bun.Glob("**/*");
 
   for await (const path of glob.scan({ cwd: rootDir, absolute: true, onlyFiles: true })) {
-    const text = await Bun.file(path).text();
-    for (const finding of scanSecretLikeText(text)) {
+    for (const finding of await scanSecretLikeFile(path)) {
       findings.push({ path, ...finding });
     }
   }
@@ -248,7 +255,8 @@ function isProviderPrefixedOpaqueToken(value: string): boolean {
 }
 
 function isProviderPrefixedNumericToken(value: string): boolean {
-  return /^(?:[A-Za-z]{2,12})[._-](?:[0-9]{8,}[._-]){1,}[0-9]{8,}$/u.test(value);
+  PROVIDER_PREFIXED_NUMERIC_TOKEN.lastIndex = 0;
+  return PROVIDER_PREFIXED_NUMERIC_TOKEN.test(value);
 }
 
 function isProviderPrefixedMultiSegmentToken(value: string): boolean {
@@ -274,6 +282,43 @@ function isProviderPrefixedMultiSegmentToken(value: string): boolean {
 
 function isKnownRedactionMarker(value: string): boolean {
   return value === REDACTED_SECRET || /^\[redacted\]$/iu.test(value);
+}
+
+async function scanSecretLikeFile(path: string): Promise<Array<{ pattern: string; count: number }>> {
+  const stats = await lstat(path);
+  if (!stats.isFile() || stats.size === 0) {
+    return [];
+  }
+
+  const file = Bun.file(path);
+  const sample = new Uint8Array(await file.slice(0, BINARY_SCAN_SAMPLE_BYTES).arrayBuffer());
+  if (isLikelyBinary(sample)) {
+    return [];
+  }
+
+  if (stats.size > MAX_SECRET_SCAN_FILE_BYTES) {
+    return [{ pattern: "unscanned-large-text-file", count: 1 }];
+  }
+
+  return scanSecretLikeText(await file.text());
+}
+
+function isLikelyBinary(bytes: Uint8Array): boolean {
+  if (bytes.length === 0) {
+    return false;
+  }
+
+  let controlBytes = 0;
+  for (const byte of bytes) {
+    if (byte === 0) {
+      return true;
+    }
+    if ((byte < 8 || (byte > 13 && byte < 32)) && byte !== 27) {
+      controlBytes += 1;
+    }
+  }
+
+  return controlBytes / bytes.length > 0.3;
 }
 
 function isUnquotedCamelCaseIdentifier(value: string, source: string, index: number): boolean {

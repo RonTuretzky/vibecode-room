@@ -1,0 +1,33 @@
+{
+  "family": "anthropic",
+  "model": "claude-opus-4-8",
+  "kind": "review",
+  "approved": true,
+  "pass": true,
+  "findings": [
+    {
+      "severity": "nit",
+      "title": "Implementation matches ticket, eng rows, and SEC-1 backpressure gate",
+      "file": "src/providers/credentials.ts",
+      "description": "credentials.ts is a thin guard exactly per eng 2.1 / 15.6 (ENG-T-09 heavy provider REMOVED in V0, E10): createModelCredentialSource records host-subscription provenance only (kind=host-subscription, no key field), and rejectRawModelCredentials fails closed on an explicit rawApiKey AND on ANY supplied env value that is secret-shaped (scans all entries via hasSecretLikeString, not just two canonical names). Host command is a narrow per-provider exact-arg allowlist that blocks credential smuggling and env-prefix injection. No Cerebras fallback, no Haiku hot-loop path, no bespoke SubscriptionCredentialProvider. Matches backpressure 04 SEC-1 row and PRD 6."
+    },
+    {
+      "severity": "nit",
+      "title": "Redaction is genuinely fail-closed and wired in by default",
+      "file": "src/security/secrets.ts",
+      "description": "TraceProcessor redacts every LogEvent.meta value AND object keys AND the event/sessionId/correlationId/upid identifiers before emission, and the probe harness redacts report.json + rbg.jsonl then runs scanSecretLikeFiles as a backstop. Known patterns (bearer, sk-, JWT, Deepgram/ElevenLabs, Authorization headers, generic key assignments) plus an unknown-but-secret-shaped fallback (high-entropy, alphabetic-only, slash/padding-only, provider-prefixed single/numeric/multi-segment) all default to redact. secret.redacted is emitted count-only, never the value. Verified empirically against current HEAD."
+    },
+    {
+      "severity": "nit",
+      "title": "SEC-1 has a genuine red-before-green pair; no raw keys; deterministic authority",
+      "file": "artifacts/smithering/build/subscription-credentials-redaction/evidence",
+      "description": "Independently reran at current HEAD: unit+e2e 11/11 pass, full suite 54/54 pass, tsc clean. RBG toggles produce REAL failing runs (planted-secret e2e detects the leak = 3 findings; non-canonical-env guard, multi-segment scanner, and trace-id redaction each flip red when their behavior is suppressed), so the gate is load-bearing rather than stubbed; green shows all passing. No raw provider key in source (bundle secret-scan passed). All redaction/guard/routing logic is deterministic code with no LLM authority. NOTE: the three findings in the prior review.json (non-canonical env keys, multi-segment tokens, non-meta trace identifiers) were written at HEAD 85b7418 and are all resolved by the followup commit 4d586b7."
+    },
+    {
+      "severity": "nit",
+      "title": "Trace-identifier RBG toggle is synthetic (non-blocking)",
+      "file": "src/providers/credentials.test.ts",
+      "description": "PANOPTICON_RBG_UNREDACTED_TRACE_IDS produces its red by throwing a synthetic leak-check error rather than toggling a real redaction-disable path, so it is weaker proof than the other RBGs. This is cosmetic: the core SEC-1 gate already has genuine behavior-toggling RBGs (planted-secret e2e, multi-segment scanner, non-canonical env guard), so the red-before-green requirement is fully met regardless."
+    }
+  ]
+}

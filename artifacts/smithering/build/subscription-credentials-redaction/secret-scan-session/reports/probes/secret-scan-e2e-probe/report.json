@@ -3,8 +3,8 @@
   "status": "passed",
   "summary": "probe assertions were failable and passed",
   "correlationId": "secret-scan-e2e-probe",
-  "startedAt": "2026-06-15T03:53:30.402Z",
-  "finishedAt": "2026-06-15T03:53:30.403Z",
+  "startedAt": "2026-06-15T05:17:11.142Z",
+  "finishedAt": "2026-06-15T05:17:11.142Z",
   "assertions": [
     {
       "id": "redacted-probe-report",
@@ -37,7 +37,7 @@
       "providerPrefixedOpaque": "«redacted»",
       "providerPrefixedNumeric": "«redacted»",
       "providerPrefixedAlphaNumeric": "«redacted»",
-      "providerPrefixedSlack": "«redacted»",
+      "providerPrefixedSlack": "«redacted»-slackprovideropaqueslackprovideropaque",
       "«redacted»": "probe-key-name",
       "nested": {
         "«redacted»": "«redacted»",

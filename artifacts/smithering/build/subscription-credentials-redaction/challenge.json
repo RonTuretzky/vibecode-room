@@ -1,26 +1,27 @@
 {
-  "ticketId": "subscription-credentials-redaction",
-  "status": "ready_for_external_adversarial_challenge",
-  "approvalAssertedByImplementer": false,
-  "challengeFocus": [
-    "raw model key construction is rejected without value echo",
-    "TraceProcessor has no public default redaction opt-out",
-    "embedded unknown token-shaped strings and provider-style separator tokens redact fail-closed",
-    "common token alphabet characters are scanned without requiring a digit",
-    "long alphabetic-only opaque values under neutral metadata keys redact fail-closed",
-    "hyphenated provider-prefixed numeric opaque values under neutral metadata keys redact fail-closed",
-    "host subscription commands use exact provider-specific argument allowlists",
-    "credential-shaped LogEvent.meta and probe-report object keys are redacted before durable emission",
-    "whole-session scan covers every emitted trace/log/report tree, including extensionless files, build trace copies, and probe reports",
-    "probe report failure paths cannot leave raw token-shaped values on disk"
-  ],
-  "priorFindingsAddressed": [
-    "fail-closed redaction missed opaque base64-style tokens",
-    "host subscription command guard accepted arbitrary dashed flags",
-    "credential-shaped metadata keys were emitted unchanged",
-    "alphabetic-only opaque tokens under neutral metadata keys were emitted unchanged",
-    "hyphenated provider-prefixed numeric opaque values under neutral metadata keys were emitted unchanged",
-    "whole-session secret scan skipped extensionless files"
-  ],
-  "notes": "External adversarial challenge must replace or amend this file with its verdict before land."
+  "family": "openai",
+  "model": "gpt-5.5",
+  "kind": "challenge",
+  "approved": false,
+  "pass": false,
+  "findings": [
+    {
+      "severity": "critical",
+      "title": "Raw model keys can be handed through non-canonical env names",
+      "file": "src/providers/credentials.ts",
+      "description": "The model credential guard only checks two exact environment variable names. A construction call such as createModelCredentialSource({ provider: \"openai-codex\", env: { MODEL_API_KEY: <generated OpenAI-shaped provider key> } }) succeeds and returns host-subscription provenance instead of rejecting. The ticket requires any construction path handed a raw provider key to fail closed."
+    },
+    {
+      "severity": "major",
+      "title": "Unknown multi-segment provider tokens pass the redactor and scanner",
+      "file": "src/security/secrets.ts",
+      "description": "A neutral meta value shaped as provider-prefix, two long numeric dash-separated segments, and a long alphabetic dash-separated segment is neither redacted nor reported by scanSecretLikeText. The gap is in the unknown-token fallback: provider-prefixed multi-segment handling only accepts numeric-only tails or a single opaque suffix, so this secret-shaped token class fails open."
+    },
+    {
+      "severity": "major",
+      "title": "Trace JSONL redaction does not cover non-meta LogEvent fields",
+      "file": "src/obs/trace.ts",
+      "description": "TraceProcessor redacts meta but emits event, sessionId, correlationId, and upid unchanged. If a token-shaped value reaches correlationId or an event suffix, toJsonl emits it raw; the generated secret.redacted event can also echo an unsafe sourceEvent before reports that serialize events() are scanned. SEC-1 says no raw provider key may appear anywhere in JSONL trace artifacts."
+    }
+  ]
 }
