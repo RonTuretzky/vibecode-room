@@ -1,0 +1,5 @@
+{
+  "green": false,
+  "ticketId": "probe-streaming-tts",
+  "summary": "P-TTS failed: the only configured live candidate was OpenAI /v1/audio/speech, measured at 1875.98 ms time-to-first-audio-byte against the 200 ms gate. ElevenLabs, Cartesia, and PlayHT credentials were not configured, so no provider was selected."
+}

@@ -1,0 +1,5 @@
+$ NODE_OPTIONS=--max-old-space-size=8192 bun run typecheck
+TypeScript did not complete in this worktree. The process exited 134 from Node heap exhaustion during the repository-wide typecheck, even with an 8 GB old-space limit.
+
+The original native stack trace was removed from this evidence file because the secret scanner correctly treats raw native stack addresses as high-entropy token candidates. No provider key was present in the typecheck output. The edited P-TTS probe file is under poc/ and is outside tsconfig.json include ["src", "test"].
+typecheck_exit=134

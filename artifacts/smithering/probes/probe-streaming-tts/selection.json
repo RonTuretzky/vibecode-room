@@ -1,0 +1,47 @@
+{
+  "winner": {
+    "providerId": "openai",
+    "label": "OpenAI /v1/audio/speech",
+    "model": "gpt-4o-mini-tts",
+    "voice": "coral",
+    "firstAudioByteMs": 1875.9772909999997,
+    "firstChunkBytes": 162,
+    "contentType": null
+  },
+  "measured": [
+    {
+      "providerId": "openai",
+      "label": "OpenAI /v1/audio/speech",
+      "model": "gpt-4o-mini-tts",
+      "voice": "coral",
+      "firstAudioByteMs": 1875.9772909999997,
+      "firstChunkBytes": 162,
+      "contentType": null
+    }
+  ],
+  "unavailable": [
+    {
+      "providerId": "elevenlabs",
+      "label": "ElevenLabs Flash v3 / Flash low-latency family",
+      "envVars": [
+        "ELEVENLABS_API_KEY",
+        "XI_API_KEY"
+      ]
+    },
+    {
+      "providerId": "cartesia",
+      "label": "Cartesia Sonic",
+      "envVars": [
+        "CARTESIA_API_KEY"
+      ]
+    },
+    {
+      "providerId": "playht",
+      "label": "PlayHT 3.0 Turbo",
+      "envVars": [
+        "PLAYHT_API_KEY",
+        "PLAYHT_USER_ID"
+      ]
+    }
+  ]
+}

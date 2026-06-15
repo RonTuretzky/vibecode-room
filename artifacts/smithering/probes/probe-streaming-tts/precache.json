@@ -1,0 +1,34 @@
+{
+  "providerId": null,
+  "fastestMeasuredProviderId": "openai",
+  "phraseCount": 5,
+  "playback": [
+    {
+      "phrase": "Ready",
+      "firstByteMs": 0.0034589999995660037,
+      "bytes": 1
+    },
+    {
+      "phrase": "Muted",
+      "firstByteMs": 0.0008339999994859681,
+      "bytes": 1
+    },
+    {
+      "phrase": "Unmuted",
+      "firstByteMs": 0.0004999999991923687,
+      "bytes": 1
+    },
+    {
+      "phrase": "Working",
+      "firstByteMs": 0.0003749999996216502,
+      "bytes": 1
+    },
+    {
+      "phrase": "Halted",
+      "firstByteMs": 0.0003749999996216502,
+      "bytes": 1
+    }
+  ],
+  "synthetic": true,
+  "blocked": "no selected provider met the first-audio-byte budget"
+}
