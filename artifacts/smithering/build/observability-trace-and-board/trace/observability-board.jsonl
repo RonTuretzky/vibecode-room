@@ -1,0 +1,4 @@
+{"level":"info","event":"observe.final","sessionId":"build-observability","correlationId":"corr-build-board-001","latencyMs":1,"meta":{"seq":1,"utteranceId":"utt-build-board-001","runId":"run-build-board-001"}}
+{"level":"info","event":"route.action","sessionId":"build-observability","correlationId":"corr-build-board-001","latencyMs":1,"meta":{"seq":2,"utteranceId":"utt-build-board-001","runId":"run-build-board-001"}}
+{"level":"info","event":"process.spawn","sessionId":"build-observability","correlationId":"corr-build-board-001","upid":"upid-build-board-001","latencyMs":1,"meta":{"seq":3,"utteranceId":"utt-build-board-001","runId":"run-build-board-001"}}
+{"level":"info","event":"process.completed","sessionId":"build-observability","correlationId":"corr-build-board-001","upid":"upid-build-board-001","latencyMs":1,"meta":{"seq":4,"utteranceId":"utt-build-board-001","runId":"run-build-board-001"}}

@@ -6,6 +6,8 @@
       "name": "panopticon",
       "dependencies": {
         "hono": "^4.12.25",
+        "react": "^19.2.7",
+        "react-dom": "^19.2.7",
         "smithers-orchestrator": "0.23.0",
         "ws": "^8.18.2",
         "zod": "4.4.3",

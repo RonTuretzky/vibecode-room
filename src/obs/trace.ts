@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { logEventSchema, type CueDecision, type LogEvent, type TranscriptObservation } from "../types";
 import { redactSecretValues } from "../security/secrets";
 
@@ -35,6 +36,36 @@ export interface CausalChain {
   action: LogEvent[];
   outcome: LogEvent[];
   events: LogEvent[];
+}
+
+export interface CueTraceSources {
+  observationsJsonl: string;
+  decisionsJsonl: string;
+  actionsJsonl: string;
+  smithersJsonl: string;
+}
+
+export interface NormalizedTraceRecord {
+  source: "cue.observations" | "cue.decisions" | "cue.actions" | "smithers";
+  event: string;
+  correlationId?: string;
+  upid?: string;
+  runId?: string;
+  utteranceId?: string;
+  seq: number;
+  raw: Record<string, unknown>;
+}
+
+export interface CrossComponentCausalChain {
+  correlationId: string;
+  upids: string[];
+  complete: boolean;
+  missingStages: Array<"observation" | "decision" | "action" | "outcome">;
+  observation: NormalizedTraceRecord[];
+  decision: NormalizedTraceRecord[];
+  action: NormalizedTraceRecord[];
+  outcome: NormalizedTraceRecord[];
+  events: NormalizedTraceRecord[];
 }
 
 type ChainStage = "observation" | "decision" | "action" | "outcome" | null;
@@ -254,6 +285,54 @@ export function reconstructCausalChain(events: readonly LogEvent[], correlationI
   return chain;
 }
 
+export function reconstructCrossComponentCausalChain(
+  sources: CueTraceSources,
+  correlationId: string,
+): CrossComponentCausalChain {
+  const observations = parseLooseJsonl(sources.observationsJsonl, "cue.observations");
+  const decisions = parseLooseJsonl(sources.decisionsJsonl, "cue.decisions");
+  const actions = parseLooseJsonl(sources.actionsJsonl, "cue.actions");
+  const smithers = parseLooseJsonl(sources.smithersJsonl, "smithers");
+  const all = [
+    ...normalizeLooseRecords(observations, "cue.observations"),
+    ...normalizeLooseRecords(decisions, "cue.decisions"),
+    ...normalizeLooseRecords(actions, "cue.actions"),
+    ...normalizeLooseRecords(smithers, "smithers"),
+  ];
+
+  const direct = all.filter((record) => record.correlationId === correlationId);
+  const upids = new Set(direct.flatMap((record) => (record.upid === undefined ? [] : [record.upid])));
+  const joined = all
+    .filter((record) => record.correlationId === correlationId || (record.upid !== undefined && upids.has(record.upid)))
+    .sort((left, right) => left.seq - right.seq);
+
+  const chain: CrossComponentCausalChain = {
+    correlationId,
+    upids: [...upids].sort(),
+    complete: false,
+    missingStages: [],
+    observation: [],
+    decision: [],
+    action: [],
+    outcome: [],
+    events: joined,
+  };
+
+  for (const record of joined) {
+    const stage = classifyNormalizedStage(record);
+    chain[stage].push(record);
+  }
+
+  for (const stage of ["observation", "decision", "action", "outcome"] as const) {
+    if (chain[stage].length === 0) {
+      chain.missingStages.push(stage);
+    }
+  }
+
+  chain.complete = chain.missingStages.length === 0;
+  return chain;
+}
+
 function measureLatency(startedAtMs: number, endedAtMs: number): number {
   if (!Number.isFinite(startedAtMs) || !Number.isFinite(endedAtMs)) {
     throw new Error("Trace latency requires finite measured timestamps.");
@@ -447,6 +526,100 @@ function assertJsonSerializable(value: unknown, path: readonly string[]): void {
       assertJsonSerializable(nested, [...path, key]);
     }
   }
+}
+
+const looseRecordSchema = z.record(z.string(), z.unknown());
+
+function parseLooseJsonl(jsonl: string, label: NormalizedTraceRecord["source"]): Record<string, unknown>[] {
+  const records: Record<string, unknown>[] = [];
+
+  for (const [index, rawLine] of jsonl.split(/\r?\n/u).entries()) {
+    const line = rawLine.trim();
+    if (line.length === 0) {
+      continue;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch (error) {
+      throw new Error(`Invalid ${label} JSONL at line ${index + 1}: ${(error as Error).message}`);
+    }
+    records.push(looseRecordSchema.parse(parsed));
+  }
+
+  return records;
+}
+
+function normalizeLooseRecords(
+  records: readonly Record<string, unknown>[],
+  source: NormalizedTraceRecord["source"],
+): NormalizedTraceRecord[] {
+  return records.map((raw, index) => ({
+    source,
+    event: firstString(raw, ["event", "type", "kind"]) ?? source,
+    correlationId: firstString(raw, ["correlationId", "correlation_id"], ["meta", "payload", "attributes"]),
+    upid: firstString(raw, ["upid", "targetUPID", "targetUpid", "processId"], ["meta", "payload", "attributes"]),
+    runId: firstString(raw, ["runId", "run_id"], ["meta", "payload", "attributes"]),
+    utteranceId: firstString(raw, ["utteranceId", "utterance_id"], ["meta", "payload", "attributes"]),
+    seq: firstNumber(raw, ["seq", "sequence", "timestampMs", "timeUnixNano"], ["meta", "payload", "attributes"]) ?? index,
+    raw,
+  }));
+}
+
+function classifyNormalizedStage(record: NormalizedTraceRecord): "observation" | "decision" | "action" | "outcome" {
+  if (record.source === "cue.observations" || /^observe\./u.test(record.event)) {
+    return "observation";
+  }
+  if (record.source === "cue.decisions" || /^(command|route|decision)\./u.test(record.event)) {
+    return "decision";
+  }
+  if (record.source === "cue.actions" || /^process\.(spawn|steer|pause|resume|halt|pauseAll|status)$/u.test(record.event)) {
+    return "action";
+  }
+  return "outcome";
+}
+
+function firstString(
+  raw: Record<string, unknown>,
+  keys: readonly string[],
+  containers: readonly string[] = [],
+): string | undefined {
+  const value = firstValue(raw, keys, containers);
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function firstNumber(
+  raw: Record<string, unknown>,
+  keys: readonly string[],
+  containers: readonly string[] = [],
+): number | undefined {
+  const value = firstValue(raw, keys, containers);
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function firstValue(
+  raw: Record<string, unknown>,
+  keys: readonly string[],
+  containers: readonly string[],
+): unknown {
+  for (const key of keys) {
+    if (raw[key] !== undefined) {
+      return raw[key];
+    }
+  }
+
+  for (const container of containers) {
+    const nested = raw[container];
+    if (nested !== null && typeof nested === "object" && !Array.isArray(nested)) {
+      const value = firstValue(nested as Record<string, unknown>, keys, []);
+      if (value !== undefined) {
+        return value;
+      }
+    }
+  }
+
+  return undefined;
 }
 
 function uniqueRedactedKey(target: Record<string, unknown>, key: string): string {
