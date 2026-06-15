@@ -3,10 +3,12 @@ import type { LogEvent } from "../types";
 import {
   TraceProcessor,
   parseTraceJsonl,
+  reconstructCrossComponentCausalChain,
   reconstructCausalChain,
   serializeTraceJsonl,
   type TraceInput,
 } from "./trace";
+import { BoardEventBus, createBoardApp } from "./board";
 
 const sessionId = "session-trace-001";
 const correlationId = "corr-utterance-001";
@@ -119,6 +121,30 @@ describe("ENG-T-03 TraceProcessor", () => {
     expect(processorQuery.complete).toBe(true);
   });
 
+  test("causal-chain reconstruction joins Cue JSONL with Smithers traces by correlationId and UPID", () => {
+    const sources = crossComponentFixture({ dropUpidJoin: process.env.PANOP_RBG_DROP_CROSS_JOIN === "1" });
+
+    const chain = reconstructCrossComponentCausalChain(sources, correlationId);
+
+    expect(chain.complete).toBe(true);
+    expect(chain.missingStages).toEqual([]);
+    expect(chain.upids).toEqual([upid]);
+    expect(chain.observation.map((record) => record.event)).toEqual(["observe.final"]);
+    expect(chain.decision.map((record) => record.event)).toEqual(["route.suggestion"]);
+    expect(chain.action.map((record) => record.event)).toEqual(["process.spawn"]);
+    expect(chain.outcome.map((record) => record.event)).toEqual(["process.completed"]);
+    expect(chain.outcome[0].correlationId).toBeUndefined();
+    expect(chain.outcome[0].upid).toBe(upid);
+  });
+
+  test("cross-component reconstruction reports missing outcome when both join keys are absent", () => {
+    const sources = crossComponentFixture({ dropSmithersUpid: true });
+    const chain = reconstructCrossComponentCausalChain(sources, correlationId);
+
+    expect(chain.complete).toBe(false);
+    expect(chain.missingStages).toEqual(["outcome"]);
+  });
+
   test("causal-chain reconstruction reports missing stages when a join key is absent", () => {
     const chain = reconstructCausalChain(
       sampleFullChainEvents().map((event) => {
@@ -172,6 +198,42 @@ describe("ENG-T-03 TraceProcessor", () => {
   });
 });
 
+describe("REQ-16 read-only board", () => {
+  test("board app exposes only read endpoints and streams snapshots over SSE", async () => {
+    const bus = new BoardEventBus({
+      processes: [
+        {
+          upid,
+          runId: "run-001",
+          callsign: "Atlas",
+          state: "active",
+          selected: true,
+          lastOutput: "settings page ready",
+          lastAction: "spawn",
+        },
+      ],
+      trace: sampleFullChainEvents(),
+    });
+    const app = createBoardApp(bus);
+
+    const page = await app.request("/");
+    const state = await app.request("/state");
+    const health = await app.request("/health");
+    const mutating = await app.request("/actions", { method: "POST", body: "{}" });
+
+    expect(page.status).toBe(200);
+    expect(await page.text()).toContain("READ-ONLY");
+    expect(state.status).toBe(200);
+    expect(await state.json()).toEqual(expect.objectContaining({ globalState: "ready" }));
+    expect(await health.json()).toEqual({ ok: true, readonly: true, authoritative: false });
+    expect(mutating.status).toBe(404);
+
+    const events = await app.request("/events");
+    expect(events.status).toBe(200);
+    expect(events.headers.get("content-type")).toContain("text/event-stream");
+  });
+});
+
 function sampleFullChainInputs(): TraceInput[] {
   return [
     {
@@ -221,6 +283,46 @@ function sampleFullChainEvents(): LogEvent[] {
     processor.record(input);
   }
   return processor.events();
+}
+
+function crossComponentFixture(options: { dropUpidJoin?: boolean; dropSmithersUpid?: boolean } = {}) {
+  const actionUpid = options.dropUpidJoin ? undefined : upid;
+  const smithersUpid = options.dropSmithersUpid ? undefined : upid;
+  return {
+    observationsJsonl: JSON.stringify({
+      event: "observe.final",
+      sessionId,
+      correlationId,
+      utteranceId: "utt-001",
+      text: "Yes, build the settings page",
+      speaker: "speaker-0",
+      seq: 1,
+    }),
+    decisionsJsonl: JSON.stringify({
+      event: "route.suggestion",
+      correlationId,
+      decisionId: "decision-001",
+      policy: "suggestion-gate",
+      utteranceId: "utt-001",
+      seq: 2,
+    }),
+    actionsJsonl: JSON.stringify({
+      event: "process.spawn",
+      correlationId,
+      upid: actionUpid,
+      runId: "run-001",
+      actionId: "action-001",
+      utteranceId: "utt-001",
+      seq: 3,
+    }),
+    smithersJsonl: JSON.stringify({
+      event: "process.completed",
+      upid: smithersUpid,
+      runId: "run-001",
+      summary: "settings page ready",
+      seq: 4,
+    }),
+  };
 }
 
 function maybeDropCorrelation(input: TraceInput): TraceInput {

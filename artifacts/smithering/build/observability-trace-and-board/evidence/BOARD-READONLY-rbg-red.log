@@ -1,0 +1,23 @@
+bun test v1.3.14 (0d9b296a)
+
+src/obs/trace.test.ts:
+224 |     expect(page.status).toBe(200);
+225 |     expect(await page.text()).toContain("READ-ONLY");
+226 |     expect(state.status).toBe(200);
+227 |     expect(await state.json()).toEqual(expect.objectContaining({ globalState: "ready" }));
+228 |     expect(await health.json()).toEqual({ ok: true, readonly: true, authoritative: false });
+229 |     expect(mutating.status).toBe(404);
+                                  ^
+error: expect(received).toBe(expected)
+
+Expected: 404
+Received: 200
+
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/observability-trace-and-board/src/obs/trace.test.ts:229:29)
+(fail) REQ-16 read-only board > board app exposes only read endpoints and streams snapshots over SSE [6.11ms]
+
+ 9 pass
+ 1 fail
+ 64 expect() calls
+Ran 10 tests across 1 file. [58.00ms]
+EXIT_CODE:1

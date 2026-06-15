@@ -1,0 +1,47 @@
+[
+  {
+    "criterionId": "AC16.1",
+    "method": "unit_test",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/observability-trace-and-board/evidence/AC16.1-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/observability-trace-and-board/evidence/AC16.1-green.log"
+  },
+  {
+    "criterionId": "AC16.2",
+    "method": "e2e_test",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/observability-trace-and-board/evidence/AC16.2-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/observability-trace-and-board/evidence/AC16.2-green.log"
+  },
+  {
+    "criterionId": "AC16.2-read-only",
+    "method": "unit_test",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/observability-trace-and-board/evidence/BOARD-READONLY-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/observability-trace-and-board/evidence/BOARD-READONLY-green.log"
+  },
+  {
+    "criterionId": "AC16.3",
+    "method": "integration_test",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/observability-trace-and-board/evidence/AC16.3-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/observability-trace-and-board/evidence/AC16.3-green.log"
+  },
+  {
+    "criterionId": "P-OTEL",
+    "method": "integration_test",
+    "tier": "postsubmit",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/observability-trace-and-board/evidence/P-OTEL-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/observability-trace-and-board/evidence/P-OTEL-green.log"
+  }
+]
