@@ -11,6 +11,16 @@ Hard contract for the generated workflow:
 
 - Implements docs/planning/06-orchestration.md exactly (worktrees, merge policy, test
   tiers, model assignment, concurrency, observability, fresh-context worker prompts).
+- NEVER pin an agent's `cwd` for a worker that runs inside a `<Worktree>`. The engine
+  resolves a worker's working directory as `agent.cwd ?? worktreePath ?? repoRoot`, so a
+  pinned `cwd` (e.g. `new ClaudeCodeAgent({ cwd: process.cwd() })` or `new CodexAgent({ cwd:
+  process.cwd() })`) OVERRIDES the `<Worktree>` isolation: the worker writes its code into the
+  repo root instead of its ticket's worktree branch. The branch then comes up EMPTY, the merge
+  lane lands nothing, and every ticket reports "finished" while 0% actually lands on
+  integration. Leave agent `cwd` UNSET and let `<Worktree>` own the working dir (see how
+  mission.tsx wires worktree workers — it passes no `cwd`). Helper functions that read/write
+  the evidence bundle or run git in a worktree must resolve paths against the actual worktree
+  path, never `process.cwd()`.
 - PARALLEL TRACKS ARE MANDATORY — the build must NOT be a linear ticket-by-ticket chain.
   Compute the ticket dependency DAG from each ticket's dependsOn, group tickets into
   topological waves, and run every wave as a `<Parallel maxConcurrency={N}>` of independent
