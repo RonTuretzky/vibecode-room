@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { upgradeWebSocket } from "hono/bun";
 import { dispatchedActionSchema, type DispatchedAction, type LogEvent } from "../types";
 import { TraceProcessor } from "../obs/trace";
+import { CallsignAllocator } from "../routing/callsigns";
 import { createCorrelationRecord, type CorrelationStore, type CorrelationRecord } from "./correlation-store";
 import type { SmithersClient, SpawnSeed } from "./smithers-client";
 
@@ -29,6 +30,7 @@ export interface SeamDispatcherOptions {
   spawnBudgetMs?: number;
   now?: () => number;
   onTrace?: (event: LogEvent) => void;
+  callsigns?: CallsignAllocator;
 }
 
 export class SeamDispatcher {
@@ -39,6 +41,7 @@ export class SeamDispatcher {
   readonly spawnBudgetMs: number;
   readonly now: () => number;
   readonly onTrace?: (event: LogEvent) => void;
+  readonly callsigns: CallsignAllocator;
   readonly pending: Set<Promise<unknown>> = new Set();
 
   constructor(options: SeamDispatcherOptions) {
@@ -49,6 +52,7 @@ export class SeamDispatcher {
     this.spawnBudgetMs = options.spawnBudgetMs ?? 3_000;
     this.now = options.now ?? (() => performance.now());
     this.onTrace = options.onTrace;
+    this.callsigns = options.callsigns ?? new CallsignAllocator();
   }
 
   async dispatch(rawAction: unknown): Promise<DispatchResult> {
@@ -60,7 +64,7 @@ export class SeamDispatcher {
       return { accepted: false, error: parsed.error.message };
     }
 
-    const action = parsed.data;
+    let action = parsed.data;
     const startedAtMs = this.now();
     if (
       process.env.PANOP_RBG_ALLOW_MISSING_TARGET !== "1" &&
@@ -76,6 +80,14 @@ export class SeamDispatcher {
         correlationId: action.correlationId,
         error: `${action.type} requires targetUPID.`,
       };
+    }
+
+    if (action.type === "spawn") {
+      const prepared = await this.prepareSpawnCallsign(action, startedAtMs);
+      if (!prepared.ok) {
+        return { accepted: false, correlationId: action.correlationId, error: prepared.error };
+      }
+      action = prepared.action;
     }
 
     const traceEvent = this.recordTrace(action, "seam.dispatch.accepted", startedAtMs, {
@@ -179,6 +191,7 @@ export class SeamDispatcher {
         await this.withTarget(action, async (upid) => {
           await this.client.halt(upid);
           await this.correlations.update(upid, { state: "halted", updatedAtMs: Date.now() });
+          this.callsigns.release(upid);
         }, "process.halt", startedAtMs);
         return;
       case "pauseAll": {
@@ -235,6 +248,52 @@ export class SeamDispatcher {
     });
     this.onTrace?.(traceEvent);
     return traceEvent;
+  }
+
+  private async prepareSpawnCallsign(
+    action: DispatchedAction,
+    startedAtMs: number,
+  ): Promise<{ ok: true; action: DispatchedAction } | { ok: false; error: string }> {
+    const payload = isObject(action.payload) ? action.payload : {};
+    const active = await this.correlations.allActive();
+    this.callsigns.syncActive(
+      active
+        .filter((record) => record.callsign !== null)
+        .map((record) => ({ upid: record.upid, callsign: record.callsign as string })),
+    );
+
+    const upid = stringValue(payload.upid) ?? action.targetUPID ?? `upid-${action.correlationId}`;
+    try {
+      const assignment = this.callsigns.assign(upid, nullableString(payload.callsign));
+      const nextPayload = {
+        ...payload,
+        upid,
+        callsign: assignment.callsign,
+      };
+      const traceEvent = this.trace.record({
+        event: "command.callsign",
+        sessionId: this.sessionId,
+        correlationId: action.correlationId,
+        upid,
+        startedAtMs,
+        endedAtMs: this.now(),
+        meta: {
+          callsign: assignment.callsign,
+          metaphone: assignment.profile.metaphone,
+          phonemes: assignment.profile.phonemes,
+          reusedAfterCooldown: assignment.reusedAfterCooldown,
+          poolIndex: assignment.poolIndex,
+        },
+      });
+      this.onTrace?.(traceEvent);
+      return { ok: true, action: { ...action, payload: nextPayload } };
+    } catch (error) {
+      this.recordTrace(action, "seam.dispatch.rejected", startedAtMs, {
+        reason: "callsign-unavailable",
+        message: (error as Error).message,
+      }, upid);
+      return { ok: false, error: (error as Error).message };
+    }
   }
 }
 
@@ -318,6 +377,7 @@ function nullableString(value: unknown): string | null | undefined {
   }
   return stringValue(value);
 }
+
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
