@@ -27,7 +27,7 @@
 - Pre-cache record: `artifacts/smithering/probes/probe-streaming-tts/precache.json`
 - Harness report: `artifacts/smithering/reports/probe-streaming-tts/report.json`
 
-The only configured live provider was OpenAI `/v1/audio/speech`. It conformed to the stream contract and returned `audio/pcm`, but measured 465 ms time-to-first-audio-chunk in the final 200 ms run, above the P-TTS budget. ElevenLabs, Cartesia, and PlayHT credentials were not configured, so the required 2026 candidate benchmark is incomplete. No acceptable provider was selected, and selected-provider state phrase pre-cache remains blocked.
+The only configured live provider was OpenAI `/v1/audio/speech`. It conformed to the stream contract and returned `audio/pcm`, but measured 490 ms time-to-first-audio-chunk in the final 200 ms run, above the P-TTS budget. ElevenLabs, Cartesia, and PlayHT credentials were not configured, so the required 2026 candidate benchmark is incomplete. No acceptable provider was selected, and selected-provider state phrase pre-cache remains blocked.
 
 ## Commands
 

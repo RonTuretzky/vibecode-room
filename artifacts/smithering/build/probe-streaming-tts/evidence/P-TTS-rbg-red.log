@@ -14,8 +14,8 @@ ProbeHarnessError: probe assertion failed
   status: "failed",
   summary: "probe assertion failed",
   correlationId: "p-tts-streaming-selection",
-  startedAt: "2026-06-15T22:45:45.500Z",
-  finishedAt: "2026-06-15T22:45:49.133Z",
+  startedAt: "2026-06-15T23:23:22.834Z",
+  finishedAt: "2026-06-15T23:23:25.846Z",
   assertions: [
     [Object ...], [Object ...], [Object ...], [Object ...], [Object ...], [Object ...], [Object ...], [Object ...], [Object ...], [Object ...], [Object ...], [Object ...], [Object ...], [Object ...]
   ],
@@ -26,9 +26,9 @@ ProbeHarnessError: probe assertion failed
 
       at runProbe (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/probe-streaming-tts/poc/harness.ts:167:11)
       at async <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/probe-streaming-tts/poc/p-tts.test.ts:197:28)
-(fail) P-TTS streaming provider selection probe > configured 2026 TTS candidates stream first audio byte within budget and satisfy Panopticon output contract [3636.80ms]
+(fail) P-TTS streaming provider selection probe > configured 2026 TTS candidates stream first audio byte within budget and satisfy Panopticon output contract [3017.52ms]
 
  0 pass
  1 fail
  30 expect() calls
-Ran 1 test across 1 file. [3.65s]
+Ran 1 test across 1 file. [3.03s]
