@@ -35,7 +35,7 @@ describe("seam slice spine e2e", () => {
 
     try {
       const startedAt = performance.now();
-      const accepted = dispatcher.dispatch({
+      const accepted = await dispatcher.dispatch({
         type: "spawn",
         targetUPID: null,
         payload: {

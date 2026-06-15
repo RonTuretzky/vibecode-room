@@ -36,7 +36,7 @@ describe("Cue Smithers seam dispatcher", () => {
     ];
 
     for (const action of actions) {
-      const result = dispatcher.dispatch(action);
+      const result = await dispatcher.dispatch(action);
       expect(result.accepted).toBe(true);
     }
     await dispatcher.drain();
@@ -48,15 +48,37 @@ describe("Cue Smithers seam dispatcher", () => {
       "resume",
       "halt",
       "pause",
-      "pause",
     ]);
-    await expect(dispatcher.statusSummary()).resolves.toBe("Atlas paused; Bravo paused; Atlas planning");
-    expect(dispatcher.dispatch({ ...spawnAction(), type: "approve" })).toEqual(
+    await expect(dispatcher.statusSummary()).resolves.toBe("Bravo paused; Atlas planning");
+    expect(await dispatcher.dispatch({ ...spawnAction(), type: "approve" })).toEqual(
       expect.objectContaining({ accepted: false }),
     );
-    expect(dispatcher.dispatch({ ...spawnAction(), type: "deny" })).toEqual(
+    expect(await dispatcher.dispatch({ ...spawnAction(), type: "deny" })).toEqual(
       expect.objectContaining({ accepted: false }),
     );
+  });
+
+  test("per-process actions without targetUPID fail before off-path Smithers work starts", async () => {
+    const client = new MockSmithersClient();
+    const dispatcher = new SeamDispatcher({ client, correlations: new MemoryCorrelationStore() });
+
+    for (const type of ["steer", "pause", "resume", "halt"] as const) {
+      const result = await dispatcher.dispatch({
+        type,
+        targetUPID: null,
+        payload: { text: "missing target" },
+        correlationId: `corr-missing-${type}`,
+      });
+
+      expect(result).toEqual({
+        accepted: false,
+        correlationId: `corr-missing-${type}`,
+        error: `${type} requires targetUPID.`,
+      });
+    }
+
+    await dispatcher.drain();
+    expect(client.calls).toHaveLength(0);
   });
 
   test("async-dispatch returns immediately while a slow Smithers spawn is still pending", async () => {
@@ -65,14 +87,16 @@ describe("Cue Smithers seam dispatcher", () => {
     const dispatcher = new SeamDispatcher({ client, correlations: store });
     const startedAt = performance.now();
 
-    const accepted = dispatcher.dispatch(spawnAction());
+    const accepted = await dispatcher.dispatch(spawnAction());
     const elapsedMs = performance.now() - startedAt;
-    const status = dispatcher.dispatch({ type: "status", targetUPID: null, payload: {}, correlationId: "corr-status" });
+    const status = await dispatcher.dispatch({ type: "status", targetUPID: null, payload: {}, correlationId: "corr-status" });
 
     expect(accepted.accepted).toBe(true);
     expect(status.accepted).toBe(true);
+    if (status.accepted) {
+      expect(status.statusSummary).toBe("No active processes.");
+    }
     expect(elapsedMs).toBeLessThan(100);
-    expect(client.calls).toHaveLength(process.env.PANOP_RBG_BLOCK_DISPATCH === "1" ? 1 : 0);
 
     await dispatcher.drain();
     expect(client.calls.map((call) => call.name)).toContain("spawn");
@@ -98,6 +122,8 @@ describe("Cue Smithers seam dispatcher", () => {
 
     expect(response.status).toBe(202);
     expect(payload.accepted).toBe(true);
+    expect(payload.statusSummary).toBe("Atlas active");
+    expect(String(payload.statusSummary).split(/\s+/u).length).toBeLessThanOrEqual(15);
     expect(String(statusPayload.summary).split(/\s+/u).length).toBeLessThanOrEqual(15);
   });
 });

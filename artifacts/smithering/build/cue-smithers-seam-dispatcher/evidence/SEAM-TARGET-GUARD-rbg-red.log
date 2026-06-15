@@ -1,0 +1,33 @@
+bun test v1.3.14 (0d9b296a)
+
+src/seam/seam.test.ts:
+68 |         targetUPID: null,
+69 |         payload: { text: "missing target" },
+70 |         correlationId: `corr-missing-${type}`,
+71 |       });
+72 | 
+73 |       expect(result).toEqual({
+                          ^
+error: expect(received).toEqual(expected)
+
+  {
+-   "accepted": false,
++   "accepted": true,
++   "actionType": "steer",
+    "correlationId": "corr-missing-steer",
+-   "error": "steer requires targetUPID.",
++   "targetUPID": null,
+  }
+
+- Expected  - 2
++ Received  + 3
+
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/cue-smithers-seam-dispatcher/src/seam/seam.test.ts:73:22)
+(fail) Cue Smithers seam dispatcher > per-process actions without targetUPID fail before off-path Smithers work starts [2.99ms]
+
+ 0 pass
+ 5 filtered out
+ 1 fail
+ 1 expect() calls
+Ran 1 test across 1 file. [39.00ms]
+exit=1

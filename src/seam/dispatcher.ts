@@ -51,7 +51,7 @@ export class SeamDispatcher {
     this.onTrace = options.onTrace;
   }
 
-  dispatch(rawAction: unknown): DispatchResult {
+  async dispatch(rawAction: unknown): Promise<DispatchResult> {
     const actionInput = process.env.PANOP_RBG_RENAME_ACTION_FIELD === "1" && isObject(rawAction)
       ? renameTargetField(rawAction)
       : rawAction;
@@ -62,12 +62,28 @@ export class SeamDispatcher {
 
     const action = parsed.data;
     const startedAtMs = this.now();
+    if (
+      process.env.PANOP_RBG_ALLOW_MISSING_TARGET !== "1" &&
+      requiresTarget(action.type) &&
+      action.targetUPID === null
+    ) {
+      this.recordTrace(action, "seam.dispatch.rejected", startedAtMs, {
+        reason: "missing-target-upid",
+        payloadKind: payloadKind(action.payload),
+      });
+      return {
+        accepted: false,
+        correlationId: action.correlationId,
+        error: `${action.type} requires targetUPID.`,
+      };
+    }
+
     const traceEvent = this.recordTrace(action, "seam.dispatch.accepted", startedAtMs, {
       payloadKind: payloadKind(action.payload),
     });
 
     if (action.type === "status") {
-      return this.statusAck(action);
+      return this.statusAck(action, startedAtMs);
     }
 
     const work = process.env.PANOP_RBG_BLOCK_DISPATCH === "1"
@@ -102,15 +118,20 @@ export class SeamDispatcher {
     return clampWords(summary, 15);
   }
 
-  private statusAck(action: DispatchedAction): DispatchAck {
-    const promise = this.statusSummary();
-    this.track(promise);
+  private async statusAck(action: DispatchedAction, startedAtMs: number): Promise<DispatchAck> {
+    const statusSummary = process.env.PANOP_RBG_STATUS_PLACEHOLDER === "1"
+      ? "Status requested."
+      : await this.statusSummary();
+    this.recordTrace(action, "seam.status", startedAtMs, {
+      statusSummary,
+      wordCount: wordCount(statusSummary),
+    }, "registry");
     return {
       accepted: true,
       actionType: "status",
       correlationId: action.correlationId,
       targetUPID: null,
-      statusSummary: "Status requested.",
+      statusSummary,
     };
   }
 
@@ -223,7 +244,7 @@ export function createSeamApp(dispatcher: SeamDispatcher): Hono {
   app.get("/health", (context) => context.json({ ok: true, module: "panopticon-seam" }));
   app.post("/actions", async (context) => {
     const action = await context.req.json();
-    const result = dispatcher.dispatch(action);
+    const result = await dispatcher.dispatch(action);
     return context.json(result, result.accepted ? 202 : 400);
   });
   app.get("/status", async (context) => context.json({ summary: await dispatcher.statusSummary() }));
@@ -231,8 +252,9 @@ export function createSeamApp(dispatcher: SeamDispatcher): Hono {
     "/ws",
     upgradeWebSocket(() => ({
       onMessage(event, ws) {
-        const result = dispatcher.dispatch(JSON.parse(String(event.data)));
-        ws.send(JSON.stringify(result));
+        void dispatcher.dispatch(JSON.parse(String(event.data))).then((result) => {
+          ws.send(JSON.stringify(result));
+        });
       },
     })),
   );
@@ -266,6 +288,14 @@ function spawnSeedFromAction(action: DispatchedAction): SpawnSeed {
 function clampWords(text: string, limit: number): string {
   const words = text.trim().split(/\s+/u).filter(Boolean);
   return words.slice(0, limit).join(" ");
+}
+
+function wordCount(text: string): number {
+  return text.trim().split(/\s+/u).filter(Boolean).length;
+}
+
+function requiresTarget(type: DispatchedAction["type"]): boolean {
+  return type === "steer" || type === "pause" || type === "resume" || type === "halt";
 }
 
 function payloadKind(payload: unknown): string {

@@ -1,12 +1,12 @@
 bun test v1.3.14 (0d9b296a)
 
 src/seam/seam.test.ts:
-127 |     });
-128 | 
-129 |     const events = await bridge.start("upid-atlas", { maxFrames: 3 });
-130 | 
-131 |     expect(reconnects).toHaveLength(1);
-132 |     expect(events.map((event) => event.seq)).toEqual([1, 2, 3]);
+153 |     });
+154 | 
+155 |     const events = await bridge.start("upid-atlas", { maxFrames: 3 });
+156 | 
+157 |     expect(reconnects).toHaveLength(1);
+158 |     expect(events.map((event) => event.seq)).toEqual([1, 2, 3]);
                                                    ^
 error: expect(received).toEqual(expected)
 
@@ -18,13 +18,12 @@ error: expect(received).toEqual(expected)
 - Expected  - 1
 + Received  + 0
 
-      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/cue-smithers-seam-dispatcher/src/seam/seam.test.ts:132:46)
-(fail) Smithers run event bridge > SSE-reconnect resumes voice-out and does not duplicate observations [14.14ms]
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/cue-smithers-seam-dispatcher/src/seam/seam.test.ts:158:46)
+(fail) Smithers run event bridge > SSE-reconnect resumes voice-out and does not duplicate observations [13.68ms]
 
  0 pass
- 4 filtered out
+ 5 filtered out
  1 fail
  2 expect() calls
-Ran 1 test across 1 file. [52.00ms]
-
-exit_code=1
+Ran 1 test across 1 file. [51.00ms]
+exit=1

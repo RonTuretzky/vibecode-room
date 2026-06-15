@@ -9,6 +9,24 @@
     "greenRunPath": "artifacts/smithering/build/cue-smithers-seam-dispatcher/evidence/SEAM-ACTION-SCHEMA-green.log"
   },
   {
+    "criterionId": "SEAM-STATUS-SUMMARY",
+    "method": "unit_test",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/cue-smithers-seam-dispatcher/evidence/SEAM-STATUS-SUMMARY-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/cue-smithers-seam-dispatcher/evidence/SEAM-STATUS-SUMMARY-green.log"
+  },
+  {
+    "criterionId": "SEAM-TARGET-GUARD",
+    "method": "unit_test",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/cue-smithers-seam-dispatcher/evidence/SEAM-TARGET-GUARD-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/cue-smithers-seam-dispatcher/evidence/SEAM-TARGET-GUARD-green.log"
+  },
+  {
     "criterionId": "SEAM-ASYNC-DISPATCH",
     "method": "unit_test",
     "tier": "pre-merge",
@@ -45,6 +63,33 @@
     "greenRunPath": "artifacts/smithering/build/cue-smithers-seam-dispatcher/evidence/AC4.3-green.log"
   },
   {
+    "criterionId": "AC8.1",
+    "method": "e2e_test",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/cue-smithers-seam-dispatcher/evidence/AC8.1-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/cue-smithers-seam-dispatcher/evidence/AC8.1-green.log"
+  },
+  {
+    "criterionId": "AC13.1",
+    "method": "e2e_test",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/cue-smithers-seam-dispatcher/evidence/AC13.1-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/cue-smithers-seam-dispatcher/evidence/AC13.1-green.log"
+  },
+  {
+    "criterionId": "AC13.3",
+    "method": "e2e_test",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/cue-smithers-seam-dispatcher/evidence/AC13.3-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/cue-smithers-seam-dispatcher/evidence/AC13.3-green.log"
+  },
+  {
     "criterionId": "AC15.3",
     "method": "e2e_test",
     "tier": "pre-merge",
@@ -52,5 +97,14 @@
     "rbgRecorded": true,
     "redRunPath": "artifacts/smithering/build/cue-smithers-seam-dispatcher/evidence/AC15.3-rbg-red.log",
     "greenRunPath": "artifacts/smithering/build/cue-smithers-seam-dispatcher/evidence/AC15.3-green.log"
+  },
+  {
+    "criterionId": "TSC-NO-EMIT",
+    "method": "typecheck",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/cue-smithers-seam-dispatcher/evidence/TSC-NO-EMIT-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/cue-smithers-seam-dispatcher/evidence/TSC-NO-EMIT-green.log"
   }
 ]

@@ -1,11 +1,10 @@
 bun test v1.3.14 (0d9b296a)
 
 test/e2e/spine.e2e.ts.test.ts:
-timestamp=2026-06-15T00:51:19.198Z level=INFO fiber=#5 message="Gateway run started" gateway:run=0ms runId=run-spine-001 transport=ws triggeredBy=spine role=operator workflow=panopticon-spine service=smithers source=user userId=spine resume=false connectionId=spine:connection
+timestamp=2026-06-15T01:11:19.766Z level=INFO fiber=#5 message="Gateway run started" gateway:run=0ms runId=run-spine-001 transport=ws triggeredBy=spine role=operator workflow=panopticon-spine service=smithers source=user userId=spine resume=false connectionId=spine:connection
 
  1 pass
  0 fail
  3 expect() calls
-Ran 1 test across 1 file. [806.00ms]
-
-exit_code=0
+Ran 1 test across 1 file. [789.00ms]
+exit=0
