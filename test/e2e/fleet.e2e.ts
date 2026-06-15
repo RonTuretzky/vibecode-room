@@ -8,6 +8,7 @@ import { z } from "zod";
 import { FileCorrelationStore, MemoryCorrelationStore } from "../../src/seam/correlation-store";
 import { SeamDispatcher } from "../../src/seam/dispatcher";
 import { GatewaySmithersClient, InProcessGatewayTransport } from "../../src/seam/smithers-client";
+import { SteeringWindowManager } from "../../src/routing/steering-window";
 
 const tempDirs: string[] = [];
 
@@ -15,6 +16,83 @@ afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+describe("steering-window fleet slice e2e", () => {
+  test("selects one process, steers it, then 20 seconds idle closes the window so ambient talk no longer steers", () => {
+    const manager = new SteeringWindowManager({
+      processes: [
+        { callsign: "Atlas", upid: "upid-atlas" },
+        { callsign: "Bravo", upid: "upid-bravo" },
+      ],
+      sessionId: "fleet-window-e2e",
+      clock: () => 1_000,
+    });
+
+    const select = manager.ingestUtterance({
+      text: "Atlas",
+      utteranceId: "utt-select-atlas",
+      correlationId: "corr-select-atlas",
+      sessionId: "fleet-window-e2e",
+      nowMs: 1_000,
+    });
+    expect(select.kind).toBe("pass");
+    expect(manager.activeWindow()).toEqual(expect.objectContaining({ targetUPID: "upid-atlas" }));
+
+    const steer = manager.ingestUtterance({
+      text: "make it faster",
+      utteranceId: "utt-steer-atlas",
+      correlationId: "corr-steer-atlas",
+      sessionId: "fleet-window-e2e",
+      nowMs: 1_250,
+    });
+    expect(steer).toEqual(
+      expect.objectContaining({
+        kind: "routed",
+        targetUPID: "upid-atlas",
+        instruction: "make it faster",
+        ackId: "route-steer",
+      }),
+    );
+    expect(steer.traceEvents).toContainEqual(
+      expect.objectContaining({
+        event: "ack.emit",
+        upid: "upid-atlas",
+        meta: expect.objectContaining({ ackId: "route-steer" }),
+      }),
+    );
+
+    const idle = manager.observeMicIdle({
+      nowMs: 21_250,
+      correlationId: "corr-window-idle",
+      sessionId: "fleet-window-e2e",
+    });
+    expect(idle).toEqual(
+      expect.objectContaining({
+        kind: "closed",
+        reason: "idle",
+        closedWindow: expect.objectContaining({ targetUPID: "upid-atlas" }),
+      }),
+    );
+    expect(manager.activeWindow()).toBeNull();
+
+    const ambient = manager.ingestUtterance({
+      text: "make it even faster",
+      utteranceId: "utt-ambient-after-idle",
+      correlationId: "corr-ambient-after-idle",
+      sessionId: "fleet-window-e2e",
+      nowMs: 21_500,
+    });
+    expect(ambient).toEqual(
+      expect.objectContaining({
+        kind: "pass",
+        reason: "ambient",
+        addressed: false,
+        ackId: null,
+      }),
+    );
+    expect(ambient.traceEvents.some((event) => event.event === "route.steer")).toBe(false);
+  });
 });
 
 describe("seam durability recovery e2e", () => {
