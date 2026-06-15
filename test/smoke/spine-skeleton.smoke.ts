@@ -1,14 +1,14 @@
 // Walking-skeleton smoke test (ENG-T-06 / ticket: walking-skeleton-smoke).
 // Reads a 2-line fixture, runs the deterministic matcher, and asserts exactly ONE
 // structured trace line is emitted with a non-empty correlationId.
-// No Cue / network / API keys — pure in-process doubles.
+// No Cue / network / API keys: pure in-process doubles.
 //
 // Invoked explicitly: bun test test/smoke/spine-skeleton.smoke.ts
 // (Bun treats an explicit file path argument as a direct run, regardless of naming convention.)
 //
 // Red-before-green gate:
-//   RED : BREAK_MATCHER=1 → all decisions are "pass" → 0 trace lines → assertion fails
-//   GREEN: normal run → exactly one action decision → exactly one trace line → passes
+//   RED : BREAK_MATCHER=1 makes all decisions "pass", so 0 trace lines fail the assertion
+//   GREEN: normal run emits exactly one action decision and exactly one trace line
 
 import { describe, expect, it } from "bun:test";
 import { join } from "node:path";
@@ -25,7 +25,7 @@ describe("spine-skeleton smoke", () => {
     const tracer = new TraceProcessor("sess-smoke-001", (line) => emitted.push(line));
 
     for (const obs of loadFixture(FIXTURE)) {
-      // RBG hook: BREAK_MATCHER=1 forces all decisions to "pass" → no trace lines emitted
+      // RBG hook: BREAK_MATCHER=1 forces all decisions to "pass"; no trace lines are emitted.
       const decision: CueDecision =
         process.env["BREAK_MATCHER"] === "1"
           ? {
@@ -66,7 +66,7 @@ describe("spine-skeleton smoke", () => {
     expect(parsed.meta["decisionId"]).toBe("decision:utt-smoke-002");
   });
 
-  it("record-replay determinism: same fixture → identical trace output on repeated runs", () => {
+  it("record-replay determinism: same fixture produces identical trace output on repeated runs", () => {
     function runOnce(): string[] {
       const emitted: string[] = [];
       const tracer = new TraceProcessor("sess-replay-det", (line) => emitted.push(line));
@@ -80,7 +80,7 @@ describe("spine-skeleton smoke", () => {
     const run2 = runOnce();
     const run3 = runOnce();
 
-    // All runs must produce identical output — no random ids
+    // All runs must produce identical output; no random ids.
     expect(run1).toEqual(run2);
     expect(run2).toEqual(run3);
     expect(run1.length).toBe(1);

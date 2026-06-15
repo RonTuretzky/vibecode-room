@@ -1,6 +1,6 @@
 // Record-replay harness (ENG-T-02 stub).
 // Reads a JSONL file of pre-recorded TranscriptObservations from disk.
-// Yields each line as a parsed observation — no network, no mic, no API keys.
+// Yields each line as a parsed observation: no network, no mic, no API keys.
 
 import { readFileSync } from "node:fs";
 import type { TranscriptObservation } from "../types.ts";

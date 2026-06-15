@@ -1,4 +1,4 @@
-// TraceProcessor — every event emits one structured LogEvent (ENG-T-03 stub, REQ-16).
+// TraceProcessor: every event emits one structured LogEvent (ENG-T-03 stub, REQ-16).
 // Verb-noun event names; stable ids; secret-free (never logs token-shaped strings).
 
 import type { CueDecision, LogEvent, TranscriptObservation } from "../types.ts";
