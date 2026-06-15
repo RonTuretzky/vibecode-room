@@ -34,6 +34,33 @@ describe("SEC-1 credential guard and trace redaction", () => {
     ).toThrow(/ANTHROPIC_API_KEY/u);
   });
 
+  test("DecisionLLM model access rejects raw provider keys under non-canonical env names", () => {
+    const rawOpenAi = fakeOpenAiKey();
+    const rawAnthropic = fakeAnthropicKey();
+    const rawBearer = fakeBearer();
+    const cases = [
+      ["MODEL_API_KEY", rawOpenAi],
+      ["CODEX_API_KEY", rawOpenAi],
+      ["LLM_TOKEN", rawBearer],
+      ["PROVIDER_CREDENTIAL", rawAnthropic],
+      ["UNRELATED_VALUE", fakeProviderPrefixedSlackToken()],
+    ] as const;
+
+    for (const [variable, value] of cases) {
+      if (process.env.PANOPTICON_RBG_ALLOW_NONCANONICAL_MODEL_KEYS === "1") {
+        expect(() => createModelCredentialSource({ provider: "openai-codex", env: { [variable]: value } })).not.toThrow();
+      } else {
+        expectThrowsWithoutEcho(() => createModelCredentialSource({ provider: "openai-codex", env: { [variable]: value } }));
+      }
+    }
+
+    expect(createModelCredentialSource({ provider: "openai-codex", env: { MODEL_PROFILE: "host-subscription" } })).toEqual({
+      kind: "host-subscription",
+      provider: "openai-codex",
+      command: "codex",
+    });
+  });
+
   test("host-subscription command is a narrow CLI allowlist and rejects credential smuggling", () => {
     const rawOpenAi = fakeOpenAiKey();
 
@@ -88,6 +115,8 @@ describe("SEC-1 credential guard and trace redaction", () => {
       fakeUnknownPaddingOnlyToken(),
       fakeProviderPrefixedAlphabeticToken(),
       fakeProviderPrefixedNumericToken(),
+      fakeProviderPrefixedAlphaNumericToken(),
+      fakeProviderPrefixedSlackToken(),
     ];
     const processor = new TraceProcessor();
 
@@ -113,6 +142,8 @@ describe("SEC-1 credential guard and trace redaction", () => {
           paddingOnlyOpaque: rawValues[11],
           providerPrefixedOpaque: rawValues[12],
           providerPrefixedNumeric: rawValues[13],
+          providerPrefixedAlphaNumeric: rawValues[14],
+          providerPrefixedSlack: rawValues[15],
         },
         list: [`safe-${"x".repeat(8)}`, rawValues[1]],
       },
@@ -124,7 +155,34 @@ describe("SEC-1 credential guard and trace redaction", () => {
 
     const redactionEvents = processor.events().filter((event) => event.event === "secret.redacted");
     expect(redactionEvents).toHaveLength(1);
-    expect(redactionEvents[0].meta).toEqual({ count: 15, sourceEvent: "observe.final" });
+    expect(redactionEvents[0].meta).toEqual({ count: 17, sourceEvent: "observe.final" });
+  });
+
+  test("LogEvent identifiers redact credential-shaped values before JSONL emission", () => {
+    const rawValues = [fakeOpenAiKey(), fakeProviderPrefixedSlackToken(), fakeProviderPrefixedAlphaNumericToken()];
+    const processor = new TraceProcessor();
+
+    const event = processor.record({
+      event: `observe.${rawValues[0]}`,
+      sessionId: `session-${rawValues[1]}`,
+      correlationId: `corr-${rawValues[2]}`,
+      startedAtMs: 12,
+      endedAtMs: 16,
+      meta: { safe: "kept" },
+    });
+
+    const jsonl = processor.toJsonl();
+    if (process.env.PANOPTICON_RBG_UNREDACTED_TRACE_IDS === "1") {
+      if (!rawValues.every((rawValue) => jsonl.includes(rawValue))) {
+        throw new Error("synthetic unredacted trace identifier leak check failed as expected");
+      }
+    }
+
+    assertNoRawValues(jsonl, rawValues, "trace JSONL identifiers");
+    expect(event.event).toBe("redacted.secret");
+    expect(event.sessionId).toContain(REDACTED_SECRET);
+    expect(event.correlationId).toContain(REDACTED_SECRET);
+    expect(processor.events()[0].meta).toEqual({ count: 3, sourceEvent: "redacted.secret" });
   });
 
   test("LogEvent meta redacts credential-shaped object keys before emission", () => {
@@ -212,6 +270,8 @@ describe("SEC-1 credential guard and trace redaction", () => {
       fakeUnknownPaddingOnlyToken(),
       fakeProviderPrefixedAlphabeticToken(),
       fakeProviderPrefixedNumericToken(),
+      fakeProviderPrefixedAlphaNumericToken(),
+      fakeProviderPrefixedSlackToken(),
     ];
     const text = `provider note ${rawValues.join(" and ")} should not leave memory`;
 
@@ -242,13 +302,26 @@ describe("SEC-1 credential guard and trace redaction", () => {
         (finding) => finding.pattern === "unknown-high-entropy-token",
       ),
     ).toBe(true);
+    expect(
+      scanSecretLikeText(JSON.stringify({ opaque: fakeProviderPrefixedAlphaNumericToken() })).some(
+        (finding) => finding.pattern === "unknown-high-entropy-token",
+      ),
+    ).toBe(true);
+    expect(
+      scanSecretLikeText(JSON.stringify({ opaque: fakeProviderPrefixedSlackToken() })).some(
+        (finding) => finding.pattern === "unknown-high-entropy-token",
+      ),
+    ).toBe(true);
+    if (process.env.PANOPTICON_RBG_ALLOW_MULTI_SEGMENT_SECRET === "1") {
+      expect(scanSecretLikeText(JSON.stringify({ opaque: fakeProviderPrefixedSlackToken() }))).toEqual([]);
+    }
 
     const redacted = redactSecretValues({ note: text });
     const serialized = JSON.stringify(redacted.value);
     assertNoRawValues(serialized, rawValues, "redacted unknown-token fallback");
     expect(serialized).toContain(REDACTED_SECRET);
     expect(scanSecretLikeText(serialized)).toEqual([]);
-    expect(redacted.count).toBe(8);
+    expect(redacted.count).toBe(10);
   });
 
   test("secret scan covers extensionless files in trace and report trees", async () => {
@@ -345,4 +418,12 @@ function fakeProviderPrefixedAlphabeticToken(): string {
 
 function fakeProviderPrefixedNumericToken(): string {
   return ["xoxb", "1".repeat(12), "2".repeat(12), "3".repeat(12)].join("-");
+}
+
+function fakeProviderPrefixedAlphaNumericToken(): string {
+  return ["acme", "alphabeticprovideropaque".repeat(2), "7".repeat(18)].join("-");
+}
+
+function fakeProviderPrefixedSlackToken(): string {
+  return ["xoxb", "4".repeat(12), "5".repeat(12), "slackprovideropaque".repeat(2)].join("-");
 }

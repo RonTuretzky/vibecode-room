@@ -33,6 +33,8 @@ describe("SEC-1 whole-session secret scan", () => {
       fakeUnknownPaddingOnlyToken(),
       fakeProviderPrefixedAlphabeticToken(),
       fakeProviderPrefixedNumericToken(),
+      fakeProviderPrefixedAlphaNumericToken(),
+      fakeProviderPrefixedSlackToken(),
     ];
     const rawKeyNames = [fakeOpenAiKey(), `Authorization: ${fakeBearer()}`, fakeUnknownSeparatedToken()];
     const processor = new TraceProcessor();
@@ -53,6 +55,8 @@ describe("SEC-1 whole-session secret scan", () => {
                 paddingOnlyOpaque: rawValues[8],
                 providerPrefixedOpaque: rawValues[9],
                 providerPrefixedNumeric: rawValues[10],
+                providerPrefixedAlphaNumeric: rawValues[11],
+                providerPrefixedSlack: rawValues[12],
                 [rawKeyNames[0]]: "harmless-openai-shaped-property-name",
                 nested: {
                   [rawKeyNames[1]]: "harmless-authorization-shaped-property-name",
@@ -61,6 +65,14 @@ describe("SEC-1 whole-session secret scan", () => {
               },
             }
           : {},
+    });
+    processor.record({
+      event: `observe.${rawValues[0]}`,
+      sessionId: `session-${rawValues[11]}`,
+      correlationId: `corr-${rawValues[12]}`,
+      startedAtMs: 30,
+      endedAtMs: 31,
+      meta: { identifierRedaction: "active" },
     });
     await runRedactedProbeReport(rawValues, rawKeyNames);
 
@@ -120,6 +132,8 @@ async function runRedactedProbeReport(rawValues: readonly string[], rawKeyNames:
         paddingOnlyOpaque: rawValues[8],
         providerPrefixedOpaque: rawValues[9],
         providerPrefixedNumeric: rawValues[10],
+        providerPrefixedAlphaNumeric: rawValues[11],
+        providerPrefixedSlack: rawValues[12],
         [rawKeyNames[0]]: "probe-key-name",
         nested: {
           [rawKeyNames[1]]: "probe-authorization-key-name",
@@ -172,4 +186,12 @@ function fakeProviderPrefixedAlphabeticToken(): string {
 
 function fakeProviderPrefixedNumericToken(): string {
   return ["xoxb", "4".repeat(12), "5".repeat(12), "6".repeat(12)].join("-");
+}
+
+function fakeProviderPrefixedAlphaNumericToken(): string {
+  return ["acme", "alphabeticprovideropaque".repeat(2), "7".repeat(18)].join("-");
+}
+
+function fakeProviderPrefixedSlackToken(): string {
+  return ["xoxb", "8".repeat(12), "9".repeat(12), "slackprovideropaque".repeat(2)].join("-");
 }

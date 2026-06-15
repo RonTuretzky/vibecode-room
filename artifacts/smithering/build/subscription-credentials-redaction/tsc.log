@@ -1,1 +1,2 @@
-bunx tsc --noEmit passed
+command=bunx tsc --noEmit
+exit_code=0

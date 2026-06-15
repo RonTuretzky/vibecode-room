@@ -203,6 +203,10 @@ function isUnknownSecretToken(value: string): boolean {
     return true;
   }
 
+  if (isProviderPrefixedMultiSegmentToken(value)) {
+    return true;
+  }
+
   if (/[+~]/u.test(value)) {
     return true;
   }
@@ -245,6 +249,27 @@ function isProviderPrefixedOpaqueToken(value: string): boolean {
 
 function isProviderPrefixedNumericToken(value: string): boolean {
   return /^(?:[A-Za-z]{2,12})[._-](?:[0-9]{8,}[._-]){1,}[0-9]{8,}$/u.test(value);
+}
+
+function isProviderPrefixedMultiSegmentToken(value: string): boolean {
+  const parts = value.split(/[._-]/u);
+  for (const startIndex of [0, 1]) {
+    const prefix = parts[startIndex];
+    const opaqueSegments = parts.slice(startIndex + 1);
+    if (
+      prefix !== undefined &&
+      /^[A-Za-z][A-Za-z0-9]{1,15}$/u.test(prefix) &&
+      opaqueSegments.length >= 2 &&
+      opaqueSegments.every((segment) => /^[A-Za-z0-9]{8,}$/u.test(segment))
+    ) {
+      const joined = opaqueSegments.join("");
+      if (/[A-Za-z]/u.test(joined) && /\d/u.test(joined)) {
+        return true;
+      }
+    }
+  }
+
+  return false;
 }
 
 function isKnownRedactionMarker(value: string): boolean {

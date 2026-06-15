@@ -15,6 +15,7 @@
 - Fixed the follow-up common-token alphabet gaps: slash-only opaque tokens, padding-only opaque tokens, and provider-prefixed alphabetic opaque tokens under neutral metadata keys now redact fail-closed.
 - Fixed the latest allowlist challenge: hyphenated provider-prefixed numeric opaque values under neutral metadata keys now redact fail-closed.
 - Hardened the whole-session scanner to inspect every regular file under trace/log/report roots, including extensionless files.
+- Fixed the follow-up reviewer findings: non-canonical model env names are scanned fail-closed for provider-shaped values, multi-segment provider tokens with homogeneous alpha/numeric segments redact under neutral keys, and TraceProcessor sanitizes credential-shaped `event`/`sessionId`/`correlationId`/`upid` fields before JSONL emission.
 
 ## Gate Roll-Up
 
@@ -38,13 +39,14 @@
 
 ## Follow-up Fix Evidence
 
-- `evidence/SEC-1-rbg-red.log` now includes a failable red run for unredacted credential-shaped metadata keys and the whole-session planted-leak e2e.
-- `evidence/SEC-1-green.log` records the repaired unit, e2e, full-suite, and typecheck runs.
+- `evidence/SEC-1-rbg-red.log` now includes failable red runs for non-canonical model env secrets, unknown multi-segment provider tokens, trace identifier redaction, and the whole-session planted-leak e2e.
+- `evidence/SEC-1-green.log` records the repaired unit and e2e gates; `tests.log` records the full suite; `tsc.log` records the typecheck.
 - `secret-scan.json` reports zero key-shaped strings in this ticket's build bundle.
 - Decision log: `artifacts/smithering/decisions/build/credential-shaped-metadata-keys.html`.
 - Decision log: `artifacts/smithering/decisions/build/alphabetic-opaque-token-redaction.html`.
 - Decision log: `artifacts/smithering/decisions/build/common-opaque-token-redaction.html`.
 - Decision log: `artifacts/smithering/decisions/build/numeric-token-extensionless-scan.html`.
+- Decision log: `artifacts/smithering/decisions/build/noncanonical-env-and-trace-identifier-redaction.html`.
 
 ## Blockers
 

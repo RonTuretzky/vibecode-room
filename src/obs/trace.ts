@@ -55,29 +55,36 @@ export class TraceProcessor {
     const endedAtMs = input.endedAtMs ?? this.#clock();
     const latencyMs = measureLatency(input.startedAtMs, endedAtMs);
     const redacted = redactValue(input.meta ?? {}, input.event, this.#redactionFilters, []);
+    const identifiers = redactTraceFields({
+      event: input.event,
+      sessionId: input.sessionId,
+      correlationId: input.correlationId,
+      upid: input.upid,
+    });
     const meta = redacted.value;
     assertJsonSerializable(meta, ["meta"]);
 
-    if (redacted.count > 0) {
+    const redactionCount = redacted.count + identifiers.count;
+    if (redactionCount > 0) {
       this.#events.push(
         logEventSchema.parse({
           level: "warn",
           event: "secret.redacted",
-          sessionId: input.sessionId,
-          correlationId: input.correlationId,
-          upid: input.upid,
+          sessionId: identifiers.fields.sessionId,
+          correlationId: identifiers.fields.correlationId,
+          upid: identifiers.fields.upid,
           latencyMs,
-          meta: { count: redacted.count, sourceEvent: input.event },
+          meta: { count: redactionCount, sourceEvent: identifiers.fields.event },
         }),
       );
     }
 
     const event = logEventSchema.parse({
       level: input.level ?? "info",
-      event: input.event,
-      sessionId: input.sessionId,
-      correlationId: input.correlationId,
-      upid: input.upid,
+      event: identifiers.fields.event,
+      sessionId: identifiers.fields.sessionId,
+      correlationId: identifiers.fields.correlationId,
+      upid: identifiers.fields.upid,
       latencyMs,
       meta,
     });
@@ -304,22 +311,83 @@ function classifyStage(event: string): ChainStage {
 
 function sanitizeLogEventForEmission(event: LogEvent): LogEvent[] {
   const redacted = redactSecretValues(event.meta, ["meta"]);
-  if (redacted.count === 0) {
-    return [event];
+  const identifiers = redactTraceFields({
+    event: event.event,
+    sessionId: event.sessionId,
+    correlationId: event.correlationId,
+    upid: event.upid,
+  });
+  const redactionCount = redacted.count + identifiers.count;
+  const sanitized = logEventSchema.parse({
+    ...event,
+    event: identifiers.fields.event,
+    sessionId: identifiers.fields.sessionId,
+    correlationId: identifiers.fields.correlationId,
+    upid: identifiers.fields.upid,
+    meta: redacted.value as Record<string, unknown>,
+  });
+
+  if (redactionCount === 0) {
+    return [sanitized];
   }
 
   return [
     logEventSchema.parse({
       level: "warn",
       event: "secret.redacted",
-      sessionId: event.sessionId,
-      correlationId: event.correlationId,
-      upid: event.upid,
+      sessionId: identifiers.fields.sessionId,
+      correlationId: identifiers.fields.correlationId,
+      upid: identifiers.fields.upid,
       latencyMs: event.latencyMs,
-      meta: { count: redacted.count, sourceEvent: event.event },
+      meta: { count: redactionCount, sourceEvent: identifiers.fields.event },
     }),
-    { ...event, meta: redacted.value as Record<string, unknown> },
+    sanitized,
   ];
+}
+
+function redactTraceFields(fields: {
+  event: string;
+  sessionId: string;
+  correlationId?: string;
+  upid?: string;
+}): {
+  fields: {
+    event: string;
+    sessionId: string;
+    correlationId?: string;
+    upid?: string;
+  };
+  count: number;
+} {
+  const event = redactTraceEventName(fields.event);
+  const sessionId = redactTraceIdentifier(fields.sessionId, "sessionId");
+  const correlationId =
+    fields.correlationId === undefined ? { value: undefined, count: 0 } : redactTraceIdentifier(fields.correlationId, "correlationId");
+  const upid = fields.upid === undefined ? { value: undefined, count: 0 } : redactTraceIdentifier(fields.upid, "upid");
+
+  return {
+    fields: {
+      event: event.value,
+      sessionId: sessionId.value,
+      correlationId: correlationId.value,
+      upid: upid.value,
+    },
+    count: event.count + sessionId.count + correlationId.count + upid.count,
+  };
+}
+
+function redactTraceEventName(event: string): { value: string; count: number } {
+  const redacted = redactSecretValues(event, ["event"]);
+  if (redacted.count === 0) {
+    return { value: event, count: 0 };
+  }
+
+  return { value: "redacted.secret", count: redacted.count };
+}
+
+function redactTraceIdentifier(value: string, field: string): { value: string; count: number } {
+  const redacted = redactSecretValues(value, [field]);
+  return { value: String(redacted.value), count: redacted.count };
 }
 
 function redactValue(

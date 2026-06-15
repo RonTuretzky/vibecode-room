@@ -7,7 +7,7 @@
       "correlationId": "corr-smoke-session-utt-001",
       "latencyMs": 42,
       "meta": {
-        "count": 15,
+        "count": 17,
         "sourceEvent": "observe.final"
       }
     },
@@ -33,6 +33,8 @@
           "paddingOnlyOpaque": "«redacted»",
           "providerPrefixedOpaque": "«redacted»",
           "providerPrefixedNumeric": "«redacted»",
+          "providerPrefixedAlphaNumeric": "«redacted»",
+          "providerPrefixedSlack": "«redacted»",
           "«redacted»": "harmless-openai-shaped-property-name",
           "nested": {
             "«redacted»": "«redacted»",
@@ -104,6 +106,27 @@
         },
         "decisionId": "decision-smoke-session-utt-002-literal-wake",
         "policy": "literal-wake"
+      }
+    },
+    {
+      "level": "warn",
+      "event": "secret.redacted",
+      "sessionId": "«redacted»",
+      "correlationId": "«redacted»",
+      "latencyMs": 1,
+      "meta": {
+        "count": 3,
+        "sourceEvent": "redacted.secret"
+      }
+    },
+    {
+      "level": "info",
+      "event": "redacted.secret",
+      "sessionId": "«redacted»",
+      "correlationId": "«redacted»",
+      "latencyMs": 1,
+      "meta": {
+        "identifierRedaction": "active"
       }
     }
   ],

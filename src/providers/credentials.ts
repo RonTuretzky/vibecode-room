@@ -17,7 +17,6 @@ export interface AudioCredentialOptions {
   env?: Record<string, string | undefined>;
 }
 
-const RAW_MODEL_KEY_VARIABLES = ["OPENAI_API_KEY", "ANTHROPIC_API_KEY"] as const;
 const ALLOWED_HOST_COMMAND_ARGS: Record<ModelSubscriptionProvider, ReadonlySet<string>> = {
   "openai-codex": new Set(),
   "anthropic-claude": new Set(["--print"]),
@@ -56,8 +55,8 @@ export function rejectRawModelCredentials(options: {
     throw new Error("Raw provider key rejected. Model access must use the host's logged-in Codex/Claude subscriptions.");
   }
 
-  for (const variable of RAW_MODEL_KEY_VARIABLES) {
-    if (options.env?.[variable] !== undefined && options.env[variable] !== "") {
+  for (const [variable, value] of Object.entries(options.env ?? {})) {
+    if (value !== undefined && value.length > 0 && hasSecretLikeString(value, [variable])) {
       throw new Error(`Raw provider key variable ${variable} rejected. Model access must use host subscriptions.`);
     }
   }
