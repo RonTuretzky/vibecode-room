@@ -1,0 +1,25 @@
+bun test v1.3.14 (0d9b296a)
+
+test/e2e/spine.e2e.ts.test.ts:
+timestamp=2026-06-15T00:50:57.645Z level=INFO fiber=#5 message="Gateway run started" gateway:run=0ms runId=run-spine-001 transport=ws triggeredBy=spine role=operator workflow=panopticon-spine service=smithers source=user userId=spine resume=false connectionId=spine:connection
+56 |       if (process.env.PANOP_RBG_SLOW_SEAM === "1") {
+57 |         await sleep(3_250);
+58 |       }
+59 |       const confirmedMs = performance.now() - startedAt;
+60 | 
+61 |       expect(confirmedMs).toBeLessThanOrEqual(3_000);
+                               ^
+error: expect(received).toBeLessThanOrEqual(expected)
+
+Expected: <= 3000
+Received: 3274.12225
+
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/cue-smithers-seam-dispatcher/test/e2e/spine.e2e.ts:61:27)
+(fail) seam slice spine e2e > real durable spawn confirms within 3 seconds through the Gateway path [3309.52ms]
+
+ 0 pass
+ 1 fail
+ 2 expect() calls
+Ran 1 test across 1 file. [3.79s]
+
+exit_code=1

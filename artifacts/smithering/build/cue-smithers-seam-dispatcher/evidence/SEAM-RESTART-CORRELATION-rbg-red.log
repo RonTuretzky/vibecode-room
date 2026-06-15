@@ -1,0 +1,22 @@
+bun test v1.3.14 (0d9b296a)
+
+src/seam/seam.test.ts:
+92 |   }
+93 | 
+94 |   private async requireCorrelation(upid: string) {
+95 |     const record = await this.correlations.findByUPID(upid);
+96 |     if (record === undefined) {
+97 |       throw new Error(`Cannot stream Smithers events without UPID correlation for ${upid}.`);
+                     ^
+error: Cannot stream Smithers events without UPID correlation for upid-atlas.
+      at requireCorrelation (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/cue-smithers-seam-dispatcher/src/seam/run-events.ts:97:17)
+      at async start (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/cue-smithers-seam-dispatcher/src/seam/run-events.ts:46:29)
+      at async <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/cue-smithers-seam-dispatcher/src/seam/seam.test.ts:159:18)
+(fail) Smithers run event bridge > UPID to steering-window correlation survives a simulated Cue restart [4.61ms]
+
+ 0 pass
+ 4 filtered out
+ 1 fail
+Ran 1 test across 1 file. [45.00ms]
+
+exit_code=1

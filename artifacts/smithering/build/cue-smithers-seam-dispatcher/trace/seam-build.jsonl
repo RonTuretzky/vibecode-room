@@ -1,0 +1,9 @@
+{"level":"info","event":"build.dependency.verdict","sessionId":"build-cue-smithers-seam-dispatcher","correlationId":"cue-smithers-seam-dispatcher","latencyMs":0,"meta":{"ticketId":"probe-cue-smithers-seam","green":true}}
+{"level":"info","event":"build.dependency.verdict","sessionId":"build-cue-smithers-seam-dispatcher","correlationId":"cue-smithers-seam-dispatcher","latencyMs":0,"meta":{"ticketId":"probe-smithers-durable-runs","green":true}}
+{"level":"info","event":"build.dependency.verdict","sessionId":"build-cue-smithers-seam-dispatcher","correlationId":"cue-smithers-seam-dispatcher","latencyMs":0,"meta":{"ticketId":"shared-types-contract","green":true}}
+{"level":"info","event":"build.gate.passed","sessionId":"build-cue-smithers-seam-dispatcher","correlationId":"cue-smithers-seam-dispatcher","latencyMs":0,"meta":{"criterionId":"SEAM-ACTION-SCHEMA","rbgRecorded":true}}
+{"level":"info","event":"build.gate.passed","sessionId":"build-cue-smithers-seam-dispatcher","correlationId":"cue-smithers-seam-dispatcher","latencyMs":0,"meta":{"criterionId":"SEAM-ASYNC-DISPATCH","rbgRecorded":true}}
+{"level":"info","event":"build.gate.passed","sessionId":"build-cue-smithers-seam-dispatcher","correlationId":"cue-smithers-seam-dispatcher","latencyMs":0,"meta":{"criterionId":"SEAM-SSE-RECONNECT","rbgRecorded":true}}
+{"level":"info","event":"build.gate.passed","sessionId":"build-cue-smithers-seam-dispatcher","correlationId":"cue-smithers-seam-dispatcher","latencyMs":0,"meta":{"criterionId":"SEAM-RESTART-CORRELATION","rbgRecorded":true}}
+{"level":"info","event":"build.gate.passed","sessionId":"build-cue-smithers-seam-dispatcher","correlationId":"cue-smithers-seam-dispatcher","latencyMs":0,"meta":{"criterionId":"AC4.3","rbgRecorded":true}}
+{"level":"info","event":"build.gate.passed","sessionId":"build-cue-smithers-seam-dispatcher","correlationId":"cue-smithers-seam-dispatcher","latencyMs":0,"meta":{"criterionId":"AC15.3","rbgRecorded":true}}

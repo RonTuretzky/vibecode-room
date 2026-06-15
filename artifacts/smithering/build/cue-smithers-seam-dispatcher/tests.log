@@ -1,0 +1,16 @@
+bun test v1.3.14 (0d9b296a)
+
+test/e2e/fleet.e2e.ts.test.ts:
+timestamp=2026-06-15T00:55:32.475Z level=INFO fiber=#5 message="Gateway run started" gateway:run=0ms runId=run-fleet-001 transport=ws triggeredBy=fleet-initial role=operator workflow=panopticon-fleet service=smithers source=user userId=fleet-initial resume=false connectionId=fleet-initial:connection
+timestamp=2026-06-15T00:55:32.687Z level=INFO fiber=#253 message="getNodeOutput completed" runId=run-fleet-001 durationMs=1.6526669999998376 nodeId=checkpoint status=produced iteration=0 rowBytes=58 service=smithers
+timestamp=2026-06-15T00:55:32.754Z level=INFO fiber=#283 message="getNodeOutput completed" runId=run-fleet-001 durationMs=0.9047499999999218 nodeId=checkpoint status=produced iteration=0 rowBytes=58 service=smithers
+
+test/e2e/spine.e2e.ts.test.ts:
+timestamp=2026-06-15T00:55:32.772Z level=INFO fiber=#287 message="Gateway run started" gateway:run=0ms runId=run-spine-001 transport=ws triggeredBy=spine role=operator workflow=panopticon-spine service=smithers source=user userId=spine resume=false connectionId=spine:connection
+
+ 7 pass
+ 0 fail
+ 36 expect() calls
+Ran 7 tests across 3 files. [1428.00ms]
+
+exit_code=0
