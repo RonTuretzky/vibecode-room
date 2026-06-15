@@ -3,6 +3,7 @@ import { ReplayASRProvider } from "../providers/asr/replay";
 import { ReplayDecisionLLM } from "../providers/llm/replay";
 import { NoopTTSProvider } from "../providers/tts/noop";
 import type { DispatchedAction, TranscriptObservation } from "../types";
+import { DEFAULT_CALLSIGN_POOL } from "../routing/callsigns";
 import { CueAdapter } from "./adapter";
 import { createPanopticonCueHarness } from "./harness";
 import { DEFAULT_TEXT_CUE_WORDS, assertPrematcherParity, createCuePolicies } from "./policies";
@@ -119,7 +120,7 @@ describe("Cue adapter and policies", () => {
       new MappedActionTool({
         name: "panopticon.steer",
         description: "steering",
-        mapper: () => [{ type: "smithers.steer", payload: { upid: "upid-cometa", instruction: "focus tests" } }],
+        mapper: () => [{ type: "smithers.steer", payload: { upid: `upid-${DEFAULT_CALLSIGN_POOL[0]}`, instruction: "focus tests" } }],
       }),
     ];
     const ambientAllowedTools =
@@ -128,7 +129,7 @@ describe("Cue adapter and policies", () => {
         : ["panopticon.suggest"];
     const harness = new CueHarness({
       sessionId: "session-isolation",
-      cues: [new TextCue(["build"]), new TextCue(["cometa"])],
+      cues: [new TextCue(["build"]), new TextCue([DEFAULT_CALLSIGN_POOL[0]])],
       programs: [
         {
           name: "ambient-C2",
@@ -138,7 +139,7 @@ describe("Cue adapter and policies", () => {
             infer({ cue: cueEvent, tools: eligibleTools }: { cue?: { metadata?: Record<string, unknown> }; tools: Array<{ name: string }> }) {
               if (cueEvent?.metadata?.pattern !== "build") return [];
               if (eligibleTools.some((tool) => tool.name === "panopticon.steer")) {
-                return [{ tool: "panopticon.steer", arguments: { upid: "upid-cometa", instruction: "leak" } }];
+                return [{ tool: "panopticon.steer", arguments: { upid: `upid-${DEFAULT_CALLSIGN_POOL[0]}`, instruction: "leak" } }];
               }
               return [{ tool: "panopticon.suggest", arguments: { concept: "add replay tests" } }];
             },
@@ -150,8 +151,8 @@ describe("Cue adapter and policies", () => {
           allowedTools: ["panopticon.steer"],
           llmProvider: {
             infer({ cue: cueEvent }: { cue?: { metadata?: Record<string, unknown> } }) {
-              if (cueEvent?.metadata?.pattern !== "cometa") return [];
-              return [{ tool: "panopticon.steer", arguments: { upid: "upid-cometa", instruction: "focus tests" } }];
+              if (cueEvent?.metadata?.pattern !== DEFAULT_CALLSIGN_POOL[0]) return [];
+              return [{ tool: "panopticon.steer", arguments: { upid: `upid-${DEFAULT_CALLSIGN_POOL[0]}`, instruction: "focus tests" } }];
             },
           },
         },
@@ -165,7 +166,7 @@ describe("Cue adapter and policies", () => {
       utteranceId: "utt-ambient",
     });
     const steeringObservation = adapter.normalizeObservation({
-      text: "cometa focus tests",
+      text: `${DEFAULT_CALLSIGN_POOL[0]} focus tests`,
       speaker: "speaker_0",
       utteranceId: "utt-steer",
     });
