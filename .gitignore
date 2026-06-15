@@ -21,7 +21,14 @@ src/core/workflows/.smithers/
 # so keep their RBG run logs even though *.log is ignored above — they must travel with the merge.
 !artifacts/smithering/build/**/*.log
 !artifacts/smithering/probes/**/*.log
+!artifacts/smithering/reports/**/*.log
 
 # Playwright artifacts
 test-results/
 playwright-report/
+.playwright-mcp/
+
+# Local capture/debug artifacts (machine-specific; not shared)
+/inspector-live.png
+/progress-slideshow.png
+artifacts/smithering/server-logs/
