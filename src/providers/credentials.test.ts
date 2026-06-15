@@ -83,6 +83,7 @@ describe("SEC-1 credential guard and trace redaction", () => {
       fakeUnknownSeparatedToken(),
       fakeUnknownEmbeddedToken(),
       fakeUnknownCommonAlphabetToken(),
+      fakeUnknownAlphabeticToken(),
     ];
     const processor = new TraceProcessor();
 
@@ -103,6 +104,7 @@ describe("SEC-1 credential guard and trace redaction", () => {
           separated: rawValues[6],
           embedded: `provider returned opaque token ${rawValues[7]} during setup`,
           commonAlphabet: rawValues[8],
+          alphabeticOpaque: rawValues[9],
         },
         list: [`safe-${"x".repeat(8)}`, rawValues[1]],
       },
@@ -114,7 +116,7 @@ describe("SEC-1 credential guard and trace redaction", () => {
 
     const redactionEvents = processor.events().filter((event) => event.event === "secret.redacted");
     expect(redactionEvents).toHaveLength(1);
-    expect(redactionEvents[0].meta).toEqual({ count: 10, sourceEvent: "observe.final" });
+    expect(redactionEvents[0].meta).toEqual({ count: 11, sourceEvent: "observe.final" });
   });
 
   test("LogEvent meta redacts credential-shaped object keys before emission", () => {
@@ -192,18 +194,29 @@ describe("SEC-1 credential guard and trace redaction", () => {
     }
   });
 
-  test("unknown-token fallback redacts embedded, separator-bearing, and common token alphabets before scans see them", () => {
-    const rawValues = [fakeUnknownEmbeddedToken(), fakeUnknownSeparatedToken(), fakeUnknownCommonAlphabetToken()];
-    const text = `provider note ${rawValues[0]} and ${rawValues[1]} and ${rawValues[2]} should not leave memory`;
+  test("unknown-token fallback redacts embedded, separator-bearing, common alphabet, and alphabetic-only opaque tokens before scans see them", () => {
+    const rawValues = [
+      fakeUnknownEmbeddedToken(),
+      fakeUnknownSeparatedToken(),
+      fakeUnknownCommonAlphabetToken(),
+      fakeUnknownAlphabeticToken(),
+    ];
+    const text = `provider note ${rawValues[0]} and ${rawValues[1]} and ${rawValues[2]} and ${rawValues[3]} should not leave memory`;
 
     expect(scanSecretLikeText(text).some((finding) => finding.pattern === "unknown-high-entropy-token")).toBe(true);
+    expect(scanSecretLikeText(`interface ProviderBoundaryConsumerProviders { value: string }`)).toEqual([]);
+    expect(
+      scanSecretLikeText(JSON.stringify({ opaque: fakeUnknownAlphabeticToken() })).some(
+        (finding) => finding.pattern === "unknown-high-entropy-token",
+      ),
+    ).toBe(true);
 
     const redacted = redactSecretValues({ note: text });
     const serialized = JSON.stringify(redacted.value);
     assertNoRawValues(serialized, rawValues, "redacted unknown-token fallback");
     expect(serialized).toContain(REDACTED_SECRET);
     expect(scanSecretLikeText(serialized)).toEqual([]);
-    expect(redacted.count).toBe(3);
+    expect(redacted.count).toBe(4);
   });
 });
 
@@ -262,4 +275,8 @@ function fakeUnknownEmbeddedToken(): string {
 
 function fakeUnknownCommonAlphabetToken(): string {
   return `${"AbCdEfGhIjKlMnOpQrStUvWxYz"}+/=${"ZaYbXcWdVeUfTgShRiQpOnMlKj"}~`;
+}
+
+function fakeUnknownAlphabeticToken(): string {
+  return `${"alphaopaquecredential".repeat(3)}seed`;
 }

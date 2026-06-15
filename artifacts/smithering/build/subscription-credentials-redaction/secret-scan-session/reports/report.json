@@ -7,7 +7,7 @@
       "correlationId": "corr-smoke-session-utt-001",
       "latencyMs": 42,
       "meta": {
-        "count": 10,
+        "count": 11,
         "sourceEvent": "observe.final"
       }
     },
@@ -28,6 +28,7 @@
           "blob": "«redacted»",
           "separated": "«redacted»",
           "commonAlphabet": "«redacted»",
+          "alphabeticOpaque": "«redacted»",
           "«redacted»": "harmless-openai-shaped-property-name",
           "nested": {
             "«redacted»": "«redacted»",

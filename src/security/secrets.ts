@@ -37,10 +37,12 @@ const SECRET_PATTERNS: SecretPattern[] = [
 const SECRET_KEY_PATH = /(?:api[_-]?key|authorization|bearer|credential|password|secret|token)/iu;
 const UUID_VALUE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const UNKNOWN_SECRET_CHARS = "A-Za-z0-9._~+/=-";
+const MIN_ALPHA_ONLY_OPAQUE_TOKEN_LENGTH = 32;
 const UNKNOWN_SECRET_CANDIDATE = new RegExp(
   `(?<![${UNKNOWN_SECRET_CHARS}])(?=[${UNKNOWN_SECRET_CHARS}]{24,})(?=[${UNKNOWN_SECRET_CHARS}]*[A-Za-z])[${UNKNOWN_SECRET_CHARS}]+(?![${UNKNOWN_SECRET_CHARS}])`,
   "gu",
 );
+const ALPHA_ONLY_OPAQUE_TOKEN = new RegExp(`^[A-Za-z]{${MIN_ALPHA_ONLY_OPAQUE_TOKEN_LENGTH},}$`, "u");
 
 export function redactSecretValues(value: unknown, path: readonly string[] = []): SecretRedactionResult {
   if (typeof value === "string") {
@@ -165,7 +167,7 @@ function findUnknownSecretTokens(text: string): number {
   let count = 0;
   UNKNOWN_SECRET_CANDIDATE.lastIndex = 0;
   for (const match of text.matchAll(UNKNOWN_SECRET_CANDIDATE)) {
-    if (isUnknownSecretToken(match[0])) {
+    if (isUnknownSecretToken(match[0]) && !isUnquotedCamelCaseIdentifier(match[0], text, match.index ?? -1)) {
       count += 1;
     }
   }
@@ -178,6 +180,10 @@ function isUnknownSecretToken(value: string): boolean {
   }
 
   if (/^(?=[A-Za-z0-9]*\d)[A-Za-z0-9]{24,}$/u.test(value)) {
+    return true;
+  }
+
+  if (ALPHA_ONLY_OPAQUE_TOKEN.test(value)) {
     return true;
   }
 
@@ -200,4 +206,14 @@ function isUnknownSecretToken(value: string): boolean {
 
 function isKnownRedactionMarker(value: string): boolean {
   return value === REDACTED_SECRET || /^\[redacted\]$/iu.test(value);
+}
+
+function isUnquotedCamelCaseIdentifier(value: string, source: string, index: number): boolean {
+  if (!ALPHA_ONLY_OPAQUE_TOKEN.test(value) || !/[a-z][A-Z]/u.test(value) || index < 0) {
+    return false;
+  }
+
+  const previous = source[index - 1];
+  const next = source[index + value.length];
+  return !((previous === "\"" && next === "\"") || (previous === "'" && next === "'"));
 }

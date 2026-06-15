@@ -11,6 +11,7 @@
 - Added count-only `secret.redacted` trace events and safe JSONL serialization for raw `LogEvent` arrays.
 - Added SEC-1 unit and e2e coverage for provider guard rejection, trace/report redaction, and whole-session secret scanning through the spine smoke session path.
 - Hardened the adversarial metadata-key gap: credential-shaped object property names are now redacted before trace/probe/report emission, including nested `LogEvent.meta` and probe report metadata keys.
+- Fixed the latest adversarial challenge: long alphabetic-only opaque values under neutral metadata keys are now treated as unknown secret candidates and redacted before trace, report, or scan emission.
 
 ## Gate Roll-Up
 
@@ -38,6 +39,7 @@
 - `evidence/SEC-1-green.log` records the repaired unit, e2e, full-suite, and typecheck runs.
 - `secret-scan.json` reports zero key-shaped strings in this ticket's build bundle.
 - Decision log: `artifacts/smithering/decisions/build/credential-shaped-metadata-keys.html`.
+- Decision log: `artifacts/smithering/decisions/build/alphabetic-opaque-token-redaction.html`.
 
 ## Blockers
 

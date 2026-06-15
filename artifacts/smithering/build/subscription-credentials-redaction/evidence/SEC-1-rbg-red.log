@@ -1,41 +1,55 @@
-== unit red: metadata key redaction regression ==
+RED RUN: alphabetic opaque token regression before implementation fix
+Command: bun test src/providers/credentials.test.ts && bun test test/e2e/secret-scan.e2e.ts
 bun test v1.3.14 (0d9b296a)
 
 src/providers/credentials.test.ts:
-140 |
-141 |     const jsonl = processor.toJsonl();
-142 |     if (process.env.PANOPTICON_RBG_UNREDACTED_META_KEYS === "1") {
-143 |       const leakySerialized = JSON.stringify({ meta: { [rawKeyNames[0]]: "unredacted property-name fixture" } });
-144 |       const findingCount = scanSecretLikeText(leakySerialized).reduce((total, finding) => total + finding.count, 0);
-145 |       throw new Error(`synthetic unredacted property-name leak detected (${findingCount} findings)`);
-                                                                                                         ^
-error: synthetic unredacted property-name leak detected (2 findings)
-      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/subscription-credentials-redaction/src/providers/credentials.test.ts:145:100)
-(fail) SEC-1 credential guard and trace redaction > LogEvent meta redacts credential-shaped object keys before emission [0.83ms]
+214 |   });
+215 | });
+216 |
+217 | function assertNoRawValues(haystack: string, rawValues: readonly string[], label: string): void {
+218 |   if (rawValues.some((value) => haystack.includes(value))) {
+219 |     throw new Error(`raw key-shaped string leaked into ${label}`);
+                                                                      ^
+error: raw key-shaped string leaked into trace JSONL
+      at assertNoRawValues (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/subscription-credentials-redaction/src/providers/credentials.test.ts:219:65)
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/subscription-credentials-redaction/src/providers/credentials.test.ts:114:5)
+(fail) SEC-1 credential guard and trace redaction > LogEvent meta redacts bearer, provider keys, JWTs, authorization headers, arrays, and secret-like unknowns [2.50ms]
+214 |   });
+215 | });
+216 |
+217 | function assertNoRawValues(haystack: string, rawValues: readonly string[], label: string): void {
+218 |   if (rawValues.some((value) => haystack.includes(value))) {
+219 |     throw new Error(`raw key-shaped string leaked into ${label}`);
+                                                                      ^
+error: raw key-shaped string leaked into redacted unknown-token fallback
+      at assertNoRawValues (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/subscription-credentials-redaction/src/providers/credentials.test.ts:219:65)
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/subscription-credentials-redaction/src/providers/credentials.test.ts:210:5)
+(fail) SEC-1 credential guard and trace redaction > unknown-token fallback redacts embedded, separator-bearing, common alphabet, and alphabetic-only opaque tokens before scans see them [0.19ms]
 
- 6 pass
- 1 fail
- 20 expect() calls
-Ran 7 tests across 1 file. [36.00ms]
-unit-red-exit=1
+ 5 pass
+ 2 fail
+ 18 expect() calls
+Ran 7 tests across 1 file. [37.00ms]
 
-== e2e red: planted session leak ==
+unit_status=1
 bun test v1.3.14 (0d9b296a)
 
 test/e2e/secret-scan.e2e.ts.test.ts:
-64 |     }
-65 |
-66 |     const scans = await Promise.all([SESSION_DIR, TRACE_DIR, PROBE_REPORT_ROOT].map((root) => scanSecretLikeFiles(root)));
-67 |     const findingCount = scans.reduce((count, scan) => count + scan.findings.length, 0);
-68 |     if (findingCount > 0) {
-69 |       throw new Error(`whole-session secret scan found key-shaped strings (${findingCount} findings)`);
+71 |       throw new Error(`whole-session secret scan found key-shaped strings (${findingCount} findings)`);
+72 |     }
+73 |
+74 |     const report = await Bun.file(join(SESSION_DIR, "reports", "report.json")).text();
+75 |     if ([...rawValues, ...rawKeyNames].some((raw) => report.includes(raw))) {
+76 |       throw new Error("raw key-shaped string leaked into whole-session report");
                      ^
-error: whole-session secret scan found key-shaped strings (2 findings)
-      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/subscription-credentials-redaction/test/e2e/secret-scan.e2e.ts:69:17)
-(fail) SEC-1 whole-session secret scan > full trace/log/report tree has zero key-shaped strings after a session run [12.66ms]
+error: raw key-shaped string leaked into whole-session report
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/subscription-credentials-redaction/test/e2e/secret-scan.e2e.ts:76:17)
+(fail) SEC-1 whole-session secret scan > full trace/log/report tree has zero key-shaped strings after a session run [12.05ms]
 
  0 pass
  1 fail
  1 expect() calls
-Ran 1 test across 1 file. [40.00ms]
-e2e-red-exit=1
+Ran 1 test across 1 file. [39.00ms]
+
+e2e_status=1
+RED RUN FAILED AS EXPECTED

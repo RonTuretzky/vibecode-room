@@ -7,6 +7,7 @@
     "TraceProcessor has no public default redaction opt-out",
     "embedded unknown token-shaped strings and provider-style separator tokens redact fail-closed",
     "common token alphabet characters are scanned without requiring a digit",
+    "long alphabetic-only opaque values under neutral metadata keys redact fail-closed",
     "host subscription commands use exact provider-specific argument allowlists",
     "credential-shaped LogEvent.meta and probe-report object keys are redacted before durable emission",
     "whole-session scan covers every emitted trace/log/report tree, including build trace copies and probe reports",
@@ -15,7 +16,8 @@
   "priorFindingsAddressed": [
     "fail-closed redaction missed opaque base64-style tokens",
     "host subscription command guard accepted arbitrary dashed flags",
-    "credential-shaped metadata keys were emitted unchanged"
+    "credential-shaped metadata keys were emitted unchanged",
+    "alphabetic-only opaque tokens under neutral metadata keys were emitted unchanged"
   ],
   "notes": "External adversarial challenge must replace or amend this file with its verdict before land."
 }
