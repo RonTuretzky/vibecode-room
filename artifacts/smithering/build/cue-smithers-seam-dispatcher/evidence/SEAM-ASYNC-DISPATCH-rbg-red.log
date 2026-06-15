@@ -1,0 +1,24 @@
+bun test v1.3.14 (0d9b296a)
+
+src/seam/seam.test.ts:
+94 |     expect(accepted.accepted).toBe(true);
+95 |     expect(status.accepted).toBe(true);
+96 |     if (status.accepted) {
+97 |       expect(status.statusSummary).toBe("No active processes.");
+98 |     }
+99 |     expect(elapsedMs).toBeLessThan(100);
+                           ^
+error: expect(received).toBeLessThan(expected)
+
+Expected: < 100
+Received: 252.43233300000003
+
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/cue-smithers-seam-dispatcher/src/seam/seam.test.ts:99:23)
+(fail) Cue Smithers seam dispatcher > async-dispatch returns immediately while a slow Smithers spawn is still pending [254.15ms]
+
+ 0 pass
+ 5 filtered out
+ 1 fail
+ 4 expect() calls
+Ran 1 test across 1 file. [289.00ms]
+exit=1

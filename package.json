@@ -16,6 +16,7 @@
     "typescript": "^5.5.0"
   },
   "dependencies": {
+    "hono": "^4.12.25",
     "smithers-orchestrator": "0.23.0",
     "ws": "^8.18.2",
     "zod": "4.4.3"
