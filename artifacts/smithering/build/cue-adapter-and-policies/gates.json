@@ -1,0 +1,47 @@
+[
+  {
+    "criterionId": "AC1.4",
+    "method": "unit_test",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/cue-adapter-and-policies/evidence/AC1.4-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/cue-adapter-and-policies/evidence/AC1.4-green.log"
+  },
+  {
+    "criterionId": "AC16.1",
+    "method": "unit_test",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/cue-adapter-and-policies/evidence/AC16.1-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/cue-adapter-and-policies/evidence/AC16.1-green.log"
+  },
+  {
+    "criterionId": "AC6.1",
+    "method": "unit_test",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/cue-adapter-and-policies/evidence/AC6.1-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/cue-adapter-and-policies/evidence/AC6.1-green.log"
+  },
+  {
+    "criterionId": "AC10.1-unit",
+    "method": "unit_test",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/cue-adapter-and-policies/evidence/AC10.1-unit-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/cue-adapter-and-policies/evidence/AC10.1-unit-green.log"
+  },
+  {
+    "criterionId": "AC10.1-e2e",
+    "method": "e2e_test",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/cue-adapter-and-policies/evidence/AC10.1-e2e-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/cue-adapter-and-policies/evidence/AC10.1-e2e-green.log"
+  }
+]
