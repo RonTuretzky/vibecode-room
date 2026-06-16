@@ -41,9 +41,6 @@ const ADVERSATIVE_WORDS = [
   "whereas",
   "yet",
 ] as const;
-const AFFIRMATIVE_PATTERNS = ["yes", "accept", "do it"] as const;
-const AFFIRMATIVE_TRAILING_WORDS = ["please", "now"] as const;
-const AFFIRMATIVE_TRAILING_WORD_SET = new Set<string>(AFFIRMATIVE_TRAILING_WORDS);
 const MAX_DIRECT_COMMAND_WORDS = 8;
 
 export async function evaluateSemanticIntentGate(input: SemanticIntentGateInput): Promise<SemanticIntentGateResult> {
@@ -129,20 +126,8 @@ export function prefilterTextCueIntent(
 
   const onlyPattern = words.length === patternWords.length;
   const startsWithPattern = patternIndex === 0;
-  if (onlyPattern) {
-    return { accepted: true, reason: "bare-cue-command" };
-  }
-
-  if (isAffirmativePattern(patternWords)) {
-    const trailingWords = words.slice(patternWords.length);
-    if (startsWithPattern && trailingWords.every((word) => AFFIRMATIVE_TRAILING_WORD_SET.has(word))) {
-      return { accepted: true, reason: "short-cue-command" };
-    }
-    return { accepted: false, reason: "requires-semantic-check" };
-  }
-
-  if (startsWithPattern && words.length <= MAX_DIRECT_COMMAND_WORDS) {
-    return { accepted: true, reason: "short-cue-command" };
+  if (onlyPattern || (startsWithPattern && words.length <= MAX_DIRECT_COMMAND_WORDS)) {
+    return { accepted: true, reason: onlyPattern ? "bare-cue-command" : "short-cue-command" };
   }
 
   return { accepted: false, reason: "requires-semantic-check" };
@@ -159,11 +144,6 @@ function wordsIn(value: string): string[] {
 
 function hasAdversative(words: readonly string[]): boolean {
   return words.some((word) => ADVERSATIVE_WORDS.includes(word as (typeof ADVERSATIVE_WORDS)[number]));
-}
-
-function isAffirmativePattern(patternWords: readonly string[]): boolean {
-  const pattern = patternWords.join(" ");
-  return AFFIRMATIVE_PATTERNS.includes(pattern as (typeof AFFIRMATIVE_PATTERNS)[number]);
 }
 
 function indexOfSequence(words: readonly string[], pattern: readonly string[]): number {

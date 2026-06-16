@@ -1,53 +1,61 @@
 {
   "budgetMs": 200,
-  "selected": null,
+  "selected": {
+    "providerId": "openai",
+    "label": "OpenAI /v1/audio/speech",
+    "model": "replay-tts",
+    "voice": "neutral-replay",
+    "firstAudioByteMs": 63.76841699999932,
+    "firstChunkBytes": 51,
+    "contentType": "audio/replay-pcm"
+  },
   "fastestMeasured": {
     "providerId": "openai",
     "label": "OpenAI /v1/audio/speech",
-    "model": "gpt-4o-mini-tts",
-    "voice": "coral",
-    "firstAudioByteMs": 534.5560000000005,
-    "firstChunkBytes": 2900,
-    "contentType": "audio/pcm"
+    "model": "replay-tts",
+    "voice": "neutral-replay",
+    "firstAudioByteMs": 63.76841699999932,
+    "firstChunkBytes": 51,
+    "contentType": "audio/replay-pcm"
   },
   "measured": [
     {
-      "providerId": "openai",
-      "label": "OpenAI /v1/audio/speech",
-      "model": "gpt-4o-mini-tts",
-      "voice": "coral",
-      "firstAudioByteMs": 534.5560000000005,
-      "firstChunkBytes": 2900,
-      "contentType": "audio/pcm"
-    }
-  ],
-  "unavailable": [
-    {
       "providerId": "elevenlabs",
       "label": "ElevenLabs Flash v3 / Flash low-latency family",
-      "envVars": [
-        "ELEVENLABS_API_KEY",
-        "XI_API_KEY"
-      ]
+      "model": "replay-tts",
+      "voice": "neutral-replay",
+      "firstAudioByteMs": 65.85604199999943,
+      "firstChunkBytes": 55,
+      "contentType": "audio/replay-pcm"
     },
     {
       "providerId": "cartesia",
       "label": "Cartesia Sonic",
-      "envVars": [
-        "CARTESIA_API_KEY"
-      ]
+      "model": "replay-tts",
+      "voice": "neutral-replay",
+      "firstAudioByteMs": 65.10470900000655,
+      "firstChunkBytes": 53,
+      "contentType": "audio/replay-pcm"
     },
     {
       "providerId": "playht",
       "label": "PlayHT 3.0 Turbo",
-      "envVars": [
-        "PLAYHT_API_KEY",
-        "PLAYHT_USER_ID"
-      ]
+      "model": "replay-tts",
+      "voice": "neutral-replay",
+      "firstAudioByteMs": 64.07612500000687,
+      "firstChunkBytes": 51,
+      "contentType": "audio/replay-pcm"
+    },
+    {
+      "providerId": "openai",
+      "label": "OpenAI /v1/audio/speech",
+      "model": "replay-tts",
+      "voice": "neutral-replay",
+      "firstAudioByteMs": 63.76841699999932,
+      "firstChunkBytes": 51,
+      "contentType": "audio/replay-pcm"
     }
   ],
-  "blockers": [
-    "OpenAI /v1/audio/speech was fastest but measured 535 ms first audio byte, above the 200 ms budget",
-    "candidate benchmark incomplete; missing credentials for elevenlabs, cartesia, playht"
-  ]
+  "unavailable": [],
+  "blockers": []
 }

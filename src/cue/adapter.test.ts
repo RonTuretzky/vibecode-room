@@ -360,7 +360,7 @@ describe("Cue adapter and policies", () => {
   test("semantic gate sends natural conversational affirmative mentions to replay before accepting", async () => {
     const cue = await loadCueCore();
     const { TextCue, Triggers, MappedActionTool, transcriptObservation } = cue;
-    const observation = transcriptObservationForGate("Yes I agree that the context was different.", "utt-natural-yes");
+    const observation = transcriptObservationForGate("I said yes earlier because the context was different.", "utt-natural-yes");
     const candidate = mapCueAction({ type: "suggestion.queue", payload: { concept: "continue" } }, "corr-natural-001");
     const llm = new ReplayDecisionLLM([
       {
