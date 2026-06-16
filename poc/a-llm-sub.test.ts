@@ -38,15 +38,19 @@ describe("A-LLM-SUB host subscription reachability probe", () => {
   test("subscription-routed hot-loop access is either green or surfaced as a binding PRD conflict", async () => {
     const verdict = await runHotLoopSubscriptionProbe();
 
-    if (process.env.PANOP_LLM_PROBE_ACCEPT_CONFLICT !== "1") {
-      expect(verdict.green, verdict.blockers.join("; ")).toBe(true);
-    }
-
     expect(verdict.checks.noRawKeyRoute).toBe(true);
+    expect(verdict.checks.deterministic, verdict.blockers.join("; ")).toBe(true);
+    expect(verdict.checks.mappedActionToolSchema, verdict.blockers.join("; ")).toBe(true);
+    expect(verdict.checks.actPromptAmendment, verdict.blockers.join("; ")).toBe(true);
+    expect(verdict.checks.traceSecretClean).toBe(true);
+    expect(verdict.attempts.some((attempt) => attempt.status === "passed" && attempt.subscriptionRouted)).toBe(true);
     expect(verdict.attempts.every((attempt) => attempt.command === "codex" || attempt.command === "claude --print")).toBe(true);
     if (!verdict.green) {
       expect(verdict.summary).toContain("binding PRD §6 conflict");
       expect(verdict.blockers.length).toBeGreaterThan(0);
+      expect(verdict.blockers.every((blocker) => (
+        blocker.includes("100 ms") || blocker.includes("$0.15/hr cost gate was not measured")
+      ))).toBe(true);
     }
   }, 240000);
 });

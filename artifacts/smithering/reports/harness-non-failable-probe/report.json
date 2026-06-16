@@ -3,8 +3,20 @@
   "status": "failed",
   "summary": "no failable assertion",
   "correlationId": "probe-harness-test-non-failable",
+<<<<<<< HEAD
   "startedAt": "2026-06-15T23:30:15.661Z",
+||||||| parent of 23fd1ba (feat(probe): hot-loop LLM subscription validation)
+  "startedAt": "2026-06-15T05:17:09.625Z",
+=======
+  "startedAt": "2026-06-15T23:01:08.050Z",
+>>>>>>> 23fd1ba (feat(probe): hot-loop LLM subscription validation)
+<<<<<<< HEAD
   "finishedAt": "2026-06-15T23:30:15.661Z",
+||||||| parent of 23fd1ba (feat(probe): hot-loop LLM subscription validation)
+  "finishedAt": "2026-06-15T05:17:09.626Z",
+=======
+  "finishedAt": "2026-06-15T23:01:08.050Z",
+>>>>>>> 23fd1ba (feat(probe): hot-loop LLM subscription validation)
   "assertions": [
     {
       "id": "cannot-fail",

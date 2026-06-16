@@ -231,14 +231,31 @@ export async function runHotLoopSubscriptionProbe(options: { forceRefresh?: bool
     p50LatencyWithinBudget: safeCheck(() => assertP50Latency(attempts)),
     mappedActionToolSchema: safeCheck(() => assertMappedActionToolSchema(decisions)),
     noRawKeyRoute: safeCheck(() => assertNoRawKeyPath()),
-    traceSecretClean: (await scanSecretLikeFiles(PROBE_ROOT)).passed && (await scanSecretLikeFiles(TRACE_ROOT)).passed,
+    traceSecretClean: true,
     costWithinBudget: safeCheck(() => assertCostGate(estimatedCostPerHourUsd(selected))),
     actPromptAmendment: safeCheck(() => assertActPromptAmendment(decisions)),
   };
   const p50LatencyMs = selected === undefined ? null : candidateP50LatencyMs(selected);
+  let verdict = buildVerdict(selected, attempts, checks, p50LatencyMs);
+
+  await writeFile(CACHE_PATH, JSON.stringify(redactForArtifact(verdict), null, 2) + "\n");
+  await appendTrace("llm_probe.verdict", verdict);
+
+  const traceSecretClean = (await scanSecretLikeFiles(PROBE_ROOT)).passed && (await scanSecretLikeFiles(TRACE_ROOT)).passed;
+  verdict = buildVerdict(selected, attempts, { ...checks, traceSecretClean }, p50LatencyMs);
+  await writeFile(CACHE_PATH, JSON.stringify(redactForArtifact(verdict), null, 2) + "\n");
+  return verdict;
+}
+
+function buildVerdict(
+  selected: CliAttempt | undefined,
+  attempts: CliAttempt[],
+  checks: HotLoopProbeVerdict["checks"],
+  p50LatencyMs: number | null,
+): HotLoopProbeVerdict {
   const blockers = buildBlockers(checks, attempts);
   const green = blockers.length === 0;
-  const verdict: HotLoopProbeVerdict = {
+  return {
     green,
     ticketId: PROBE_ID,
     summary: green
@@ -256,10 +273,6 @@ export async function runHotLoopSubscriptionProbe(options: { forceRefresh?: bool
     },
     blockers,
   };
-
-  await writeFile(CACHE_PATH, JSON.stringify(redactForArtifact(verdict), null, 2) + "\n");
-  await appendTrace("llm_probe.verdict", verdict);
-  return verdict;
 }
 
 function candidates(): Array<{ provider: CliAttempt["provider"]; command: string[]; display: string; timeoutMs: number }> {

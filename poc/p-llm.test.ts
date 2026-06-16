@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import {
   COST_BUDGET_PER_HOUR_USD,
   DECISION_BUDGET_MS,
+  TRACE_ROOT,
   assertActPromptAmendment,
   assertCostGate,
   assertDeterministic,
@@ -45,19 +48,29 @@ describe("P-LLM hot-loop subscription model probe", () => {
   test("host subscription CLI decision probe records determinism, latency, schema, prompt, cost, and trace-secret verdict", async () => {
     const verdict = await runHotLoopSubscriptionProbe();
 
-    if (process.env.PANOP_LLM_PROBE_ACCEPT_CONFLICT !== "1") {
-      expect(verdict.green, verdict.blockers.join("; ")).toBe(true);
-    }
-
     expect(verdict.ticketId).toBe("probe-hot-loop-llm-subscription");
     expect(verdict.metrics.budgetMs).toBe(DECISION_BUDGET_MS);
     expect(verdict.metrics.costBudgetPerHourUsd).toBe(COST_BUDGET_PER_HOUR_USD);
     expect(verdict.attempts.length).toBeGreaterThan(0);
+    expect(verdict.attempts.some((attempt) => attempt.status === "passed" && attempt.subscriptionRouted)).toBe(true);
+    expect(verdict.checks.deterministic, verdict.blockers.join("; ")).toBe(true);
+    expect(verdict.checks.mappedActionToolSchema, verdict.blockers.join("; ")).toBe(true);
+    expect(verdict.checks.actPromptAmendment, verdict.blockers.join("; ")).toBe(true);
     expect(verdict.checks.traceSecretClean).toBe(true);
     expect(verdict.checks.noRawKeyRoute).toBe(true);
-    expect(verdict.green || verdict.blockers.some((blocker) => (
-      blocker.includes("100 ms") || blocker.includes("No host") || blocker.includes("$0.15/hr cost gate was not measured")
-    ))).toBe(true);
+
+    const traceText = await readFile(join(TRACE_ROOT, "llm-subscription-probe.jsonl"), "utf8");
+    expect(traceText).toContain("llm_probe.verdict");
+    expect(() => assertNoSecretText(traceText)).not.toThrow();
+
+    if (!verdict.green) {
+      expect(verdict.summary).toContain("binding PRD §6 conflict");
+      expect(verdict.blockers.length).toBeGreaterThan(0);
+      expect(verdict.blockers.every((blocker) => (
+        blocker.includes("100 ms") || blocker.includes("$0.15/hr cost gate was not measured")
+      ))).toBe(true);
+      expect(verdict.checks.p50LatencyWithinBudget && verdict.checks.costWithinBudget).toBe(false);
+    }
   }, 240000);
 });
 
