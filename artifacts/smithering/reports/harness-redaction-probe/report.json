@@ -3,8 +3,8 @@
   "status": "passed",
   "summary": "probe assertions were failable and passed",
   "correlationId": "probe-harness-test-redaction",
-  "startedAt": "2026-06-16T01:54:03.857Z",
-  "finishedAt": "2026-06-16T01:54:03.858Z",
+  "startedAt": "2026-06-16T03:03:37.829Z",
+  "finishedAt": "2026-06-16T03:03:37.830Z",
   "assertions": [
     {
       "id": "redacts-errors",

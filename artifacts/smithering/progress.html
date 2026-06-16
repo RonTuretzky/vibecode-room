@@ -46,30 +46,30 @@ code{background:#0c0c0f;border:1px solid var(--line);border-radius:5px;padding:1
 </style>
 </head>
 <body>
-<div class="app" data-testid="progress-slideshow" data-version="1781576567128">
+<div class="app" data-testid="progress-slideshow" data-version="1781584433158">
   <header class="top">
     <div class="brand">Panopticon Progress</div>
-    <div class="stamp">Generated 2026-06-16 02:22:47 UTC</div>
+    <div class="stamp">Generated 2026-06-16 04:33:53 UTC</div>
     <div class="spacer"></div>
-    <div class="chip"><strong>28</strong> landed</div>
-    <div class="chip"><strong>1</strong> building</div>
-    <div class="chip"><strong>2</strong> not started</div>
+    <div class="chip"><strong>31</strong> landed</div>
+    <div class="chip"><strong>0</strong> building</div>
+    <div class="chip"><strong>0</strong> not started</div>
   </header>
   <main class="stage">
-    <section class="slide is-active" data-slide="summary" data-landed="28" data-building="1" data-todo="2">
+    <section class="slide is-active" data-slide="summary" data-landed="31" data-building="0" data-todo="0">
   <div class="kicker">Live build run impl-build-17</div>
   <h1>Panopticon Build Progress</h1>
   <p class="lede">Current state from <code>git log 8e67319..smithering/integration</code> and live Smithers worktrees.</p>
   <div class="metrics">
-    <div><span>28</span><small>Landed</small></div>
-    <div><span>1</span><small>Building</small></div>
-    <div><span>2</span><small>Not started</small></div>
-    <div><span>90%</span><small>Integrated</small></div>
+    <div><span>31</span><small>Landed</small></div>
+    <div><span>0</span><small>Building</small></div>
+    <div><span>0</span><small>Not started</small></div>
+    <div><span>100%</span><small>Integrated</small></div>
   </div>
-  <div class="meter"><i style="width:90%"></i></div>
+  <div class="meter"><i style="width:100%"></i></div>
   <div class="building-now">
     <h2>Building now</h2>
-    <ul><li><strong>probe-asr-deepgram</strong><span>P-ASR (P0): Deepgram Nova-3 streaming — isFinal, diarization, &lt;200 ms word-final, silence→no-observation, subscription credential</span></li></ul>
+    <ul><li><strong>None detected</strong><span>No active matching worktree is present.</span></li></ul>
   </div>
 </section>
 <section class="slide" data-slide="Foundation &amp; spine">
@@ -111,11 +111,16 @@ code{background:#0c0c0f;border:1px solid var(--line);border-radius:5px;padding:1
     <div class="kicker">Feature area</div>
     <h1>Validation probes</h1>
     <div class="area-stats">
-      <span class="landed">6 landed</span>
-      <span class="building">1 building</span>
+      <span class="landed">7 landed</span>
+      <span class="building">0 building</span>
       <span>0 not started</span>
     </div>
     <ul class="tickets"><li class="ticket landed">
+        <span class="status">LANDED</span>
+        <span class="title">P-ASR (P0): Deepgram Nova-3 streaming — isFinal, diarization, &lt;200 ms word-final, silence→no-observation, subscription credential</span>
+        <span class="id">probe-asr-deepgram</span>
+        <span class="note">Run P-ASR per eng §17 / design §11</span>
+      </li><li class="ticket landed">
         <span class="status">LANDED</span>
         <span class="title">P-SEAM (P0): a Cue MappedActionTool action round-trips into a real Smithers run and SSE run-events flow back into Cue; spawn ≤3 s, non-blocking</span>
         <span class="id">probe-cue-smithers-seam</span>
@@ -145,31 +150,26 @@ code{background:#0c0c0f;border:1px solid var(--line);border-radius:5px;padding:1
         <span class="title">Validate-before-build probe harness (poc/) — ENG-T-05</span>
         <span class="id">probe-suite-harness</span>
         <span class="note">Per eng §17 / ENG-T-05, build the `poc/` probe harness that every validate-before-build probe uses: a runner that executes a probe against the REAL third-party API, recor</span>
-      </li><li class="ticket building">
-        <span class="status">BUILDING</span>
-        <span class="title">P-ASR (P0): Deepgram Nova-3 streaming — isFinal, diarization, &lt;200 ms word-final, silence→no-observation, subscription credential</span>
-        <span class="id">probe-asr-deepgram</span>
-        <span class="note">Run P-ASR per eng §17 / design §11</span>
       </li></ul>
   </section>
 <section class="slide" data-slide="Voice I/O pipeline">
     <div class="kicker">Feature area</div>
     <h1>Voice I/O pipeline</h1>
     <div class="area-stats">
-      <span class="landed">1 landed</span>
+      <span class="landed">2 landed</span>
       <span class="building">0 building</span>
-      <span>1 not started</span>
+      <span>0 not started</span>
     </div>
     <ul class="tickets"><li class="ticket landed">
+        <span class="status">LANDED</span>
+        <span class="title">Audio-capture → streaming ASR → Cue WebSocket transcript bridge (ENG-T-10, new scope from §22 A1.3)</span>
+        <span class="id">audio-capture-asr-bridge</span>
+        <span class="note">Build ENG-T-10, the unplanned-but-real scope surfaced by §22 A1</span>
+      </li><li class="ticket landed">
         <span class="status">LANDED</span>
         <span class="title">Earcons (hot plane) + output policy + timeout 'working' ack (src/audio/) — REQ-2/9/10/12</span>
         <span class="id">earcons-and-output-policy</span>
         <span class="note">Per eng §5 build `src/audio/`</span>
-      </li><li class="ticket not-started">
-        <span class="status">NOT STARTED</span>
-        <span class="title">Audio-capture → streaming ASR → Cue WebSocket transcript bridge (ENG-T-10, new scope from §22 A1.3)</span>
-        <span class="id">audio-capture-asr-bridge</span>
-        <span class="note">Build ENG-T-10, the unplanned-but-real scope surfaced by §22 A1</span>
       </li></ul>
   </section>
 <section class="slide" data-slide="Cue layer">
@@ -296,11 +296,16 @@ code{background:#0c0c0f;border:1px solid var(--line);border-radius:5px;padding:1
     <div class="kicker">Feature area</div>
     <h1>Observability &amp; display board</h1>
     <div class="area-stats">
-      <span class="landed">2 landed</span>
+      <span class="landed">3 landed</span>
       <span class="building">0 building</span>
-      <span>1 not started</span>
+      <span>0 not started</span>
     </div>
     <ul class="tickets"><li class="ticket landed">
+        <span class="status">LANDED</span>
+        <span class="title">Latency benchmark with regression baselines — REQ-10</span>
+        <span class="id">latency-benchmark-suite</span>
+        <span class="note">Per eng §5/§15</span>
+      </li><li class="ticket landed">
         <span class="status">LANDED</span>
         <span class="title">Observability — causal-chain reconstruction, OTel/Langfuse export &amp; read-only board (src/obs/) — REQ-16</span>
         <span class="id">observability-trace-and-board</span>
@@ -310,11 +315,6 @@ code{background:#0c0c0f;border:1px solid var(--line);border-radius:5px;padding:1
         <span class="title">TraceProcessor pipeline stage + structured log contract (src/obs/trace.ts) — ENG-T-03</span>
         <span class="id">trace-processor-observability</span>
         <span class="note">Per eng §13 / §15</span>
-      </li><li class="ticket not-started">
-        <span class="status">NOT STARTED</span>
-        <span class="title">Latency benchmark with regression baselines — REQ-10</span>
-        <span class="id">latency-benchmark-suite</span>
-        <span class="note">Per eng §5/§15</span>
       </li></ul>
   </section>
 <section class="slide capture-placeholder" data-slide="ui-captures">
@@ -337,7 +337,7 @@ code{background:#0c0c0f;border:1px solid var(--line);border-radius:5px;padding:1
   </footer>
 </div>
 <script>
-const PAGE_VERSION = "1781576567128";
+const PAGE_VERSION = "1781584433158";
 const slides = [...document.querySelectorAll(".slide")];
 const dots = [...document.querySelectorAll(".dot")];
 let index = 0;

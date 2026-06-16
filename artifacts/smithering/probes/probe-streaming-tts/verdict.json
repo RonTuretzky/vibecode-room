@@ -1,5 +1,5 @@
 {
   "green": true,
   "ticketId": "probe-streaming-tts",
-  "summary": "P-TTS selected OpenAI /v1/audio/speech at 64 ms first audio byte; all candidates configured; five fixed state phrases pre-cached for <100 ms playback; no key-shaped strings in probe artifacts."
+  "summary": "P-TTS selected Cartesia Sonic at 63 ms first audio byte; all candidates configured; five fixed state phrases pre-cached for <100 ms playback; no key-shaped strings in probe artifacts."
 }

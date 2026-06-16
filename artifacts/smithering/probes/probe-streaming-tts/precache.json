@@ -1,31 +1,31 @@
 {
-  "providerId": "openai",
+  "providerId": "cartesia",
   "phraseCount": 5,
   "playback": [
     {
       "phrase": "Ready",
-      "firstByteMs": 0.006833999999798834,
-      "bytes": 19
+      "firstByteMs": 0.008709000001545064,
+      "bytes": 21
     },
     {
       "phrase": "Muted",
-      "firstByteMs": 0.001125000009778887,
-      "bytes": 19
+      "firstByteMs": 0.0010419999962323345,
+      "bytes": 21
     },
     {
       "phrase": "Unmuted",
-      "firstByteMs": 0.0005830000009154901,
-      "bytes": 21
+      "firstByteMs": 0.0003329999963170849,
+      "bytes": 23
     },
     {
       "phrase": "Working",
-      "firstByteMs": 0.00041599999531172216,
-      "bytes": 21
+      "firstByteMs": 0.00020799999765586108,
+      "bytes": 23
     },
     {
       "phrase": "Halted",
-      "firstByteMs": 0.0004999999946448952,
-      "bytes": 20
+      "firstByteMs": 0.00020799999765586108,
+      "bytes": 22
     }
   ],
   "synthetic": false
