@@ -70,7 +70,7 @@ export function BuildDetail({ process, trace, onClose }: BuildDetailProps) {
         <section className="detail-log" data-testid="detail-action-log">
           <span className="detail-label">Action log</span>
           <ol>
-            {process.events.map((entry, index) => (
+            {process.events.slice(-5).map((entry, index) => (
               <li key={`${entry}-${index}`}>
                 <span className="log-dot" aria-hidden="true" />
                 {entry}

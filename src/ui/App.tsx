@@ -112,8 +112,17 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
   }, []);
 
   const triggerEmergency = useCallback(() => {
-    // Optimistically reflect the kill-all; the spoken loop remains authoritative.
-    setSnapshot((current) => ({ ...current, emergencyStopTriggered: true }));
+    // Optimistically reflect the FULL kill-all (mirrors the server's emergency
+    // transition: stop listening + halt) so demo/offline mode stays coherent; the
+    // SSE push reconciles when the backend is live. The spoken loop stays authoritative.
+    setSnapshot((current) => ({
+      ...current,
+      emergencyStopTriggered: true,
+      listening: false,
+      muted: true,
+      globalState: "emergency stopped",
+      activeCue: "none",
+    }));
     if (typeof fetch !== "undefined") {
       void fetch("/api/emergency-stop", { method: "POST" }).catch(() => {
         // Best-effort: the projector is non-authoritative; never block on the API.
@@ -326,6 +335,7 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
         </section>
 
         <aside className="rail">
+          <FleetPanel processes={snapshot.processes} selected={selected} onSelect={selectBubble} />
           <AudioReadout snapshot={snapshot} />
           <TranscriptStream lines={snapshot.transcript} />
           <TraceRail trace={snapshot.trace} />
@@ -350,6 +360,61 @@ function SuggestionRegion({ pitch }: { pitch: string }) {
       <span className="suggestion-eyebrow">queued idea</span>
       <span className="suggestion-pitch">{pitch}</span>
     </div>
+  );
+}
+
+// Always-visible per-process panels (spec §9): callsign / state / last spoken
+// output / last action / UPID + the recent action log — so a passive room viewer
+// reads "how each build is going" without interacting. V0 caps the operable fleet
+// at 2; when fewer than 2 run, an explicit "No second process running" slot shows.
+function FleetPanel({
+  processes,
+  selected,
+  onSelect,
+}: {
+  processes: ProjectorProcess[];
+  selected: string | null;
+  onSelect: (id: string) => void;
+}) {
+  return (
+    <section className="rail-card fleet-card">
+      <div className="rail-title-row">
+        <h3 className="rail-title">Fleet</h3>
+        <span className="trace-count">{processes.length}/2</span>
+      </div>
+      <div className="fleet-panels">
+        {processes.map((process) => (
+          <article
+            key={process.upid}
+            className={`fleet-panel state-${process.state}${process.callsign === selected ? " selected" : ""}`}
+            data-testid="fleet-panel"
+            data-callsign={process.callsign}
+            data-state={process.state}
+            onClick={() => onSelect(process.callsign)}
+          >
+            <div className="fleet-panel-head">
+              <strong className="fleet-callsign">{process.callsign}</strong>
+              <span className={`fleet-state badge state-${process.state}`}>{process.state}</span>
+            </div>
+            <p className="fleet-output">{process.lastOutput || "—"}</p>
+            <p className="fleet-action">↳ {process.lastAction}</p>
+            {process.events.length > 0 ? (
+              <ol className="fleet-log">
+                {process.events.slice(-5).map((entry, index) => (
+                  <li key={`${entry}-${index}`}>{entry}</li>
+                ))}
+              </ol>
+            ) : null}
+            <code className="fleet-upid">{process.upid}</code>
+          </article>
+        ))}
+        {processes.length < 2 ? (
+          <article className="fleet-panel empty" data-testid="fleet-empty">
+            No second process running
+          </article>
+        ) : null}
+      </div>
+    </section>
   );
 }
 
