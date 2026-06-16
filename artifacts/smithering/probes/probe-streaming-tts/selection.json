@@ -1,21 +1,21 @@
 {
   "budgetMs": 200,
   "selected": {
-    "providerId": "elevenlabs",
-    "label": "ElevenLabs Flash v3 / Flash low-latency family",
+    "providerId": "openai",
+    "label": "OpenAI /v1/audio/speech",
     "model": "replay-tts",
     "voice": "neutral-replay",
-    "firstAudioByteMs": 61.49783299999399,
-    "firstChunkBytes": 55,
+    "firstAudioByteMs": 63.06166699997266,
+    "firstChunkBytes": 51,
     "contentType": "audio/replay-pcm"
   },
   "fastestMeasured": {
-    "providerId": "elevenlabs",
-    "label": "ElevenLabs Flash v3 / Flash low-latency family",
+    "providerId": "openai",
+    "label": "OpenAI /v1/audio/speech",
     "model": "replay-tts",
     "voice": "neutral-replay",
-    "firstAudioByteMs": 61.49783299999399,
-    "firstChunkBytes": 55,
+    "firstAudioByteMs": 63.06166699997266,
+    "firstChunkBytes": 51,
     "contentType": "audio/replay-pcm"
   },
   "measured": [
@@ -24,7 +24,7 @@
       "label": "ElevenLabs Flash v3 / Flash low-latency family",
       "model": "replay-tts",
       "voice": "neutral-replay",
-      "firstAudioByteMs": 61.49783299999399,
+      "firstAudioByteMs": 63.366125000000466,
       "firstChunkBytes": 55,
       "contentType": "audio/replay-pcm"
     },
@@ -33,7 +33,7 @@
       "label": "Cartesia Sonic",
       "model": "replay-tts",
       "voice": "neutral-replay",
-      "firstAudioByteMs": 61.69262500000332,
+      "firstAudioByteMs": 63.407124999997905,
       "firstChunkBytes": 53,
       "contentType": "audio/replay-pcm"
     },
@@ -42,7 +42,7 @@
       "label": "PlayHT 3.0 Turbo",
       "model": "replay-tts",
       "voice": "neutral-replay",
-      "firstAudioByteMs": 61.855250000000524,
+      "firstAudioByteMs": 63.219332999986364,
       "firstChunkBytes": 51,
       "contentType": "audio/replay-pcm"
     },
@@ -51,7 +51,7 @@
       "label": "OpenAI /v1/audio/speech",
       "model": "replay-tts",
       "voice": "neutral-replay",
-      "firstAudioByteMs": 62.20854099999997,
+      "firstAudioByteMs": 63.06166699997266,
       "firstChunkBytes": 51,
       "contentType": "audio/replay-pcm"
     }
