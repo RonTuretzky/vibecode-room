@@ -28,6 +28,9 @@ test-results/
 playwright-report/
 .playwright-mcp/
 
+# Transient UI-capture frame scratch (large; regenerated each capture run)
+artifacts/smithering/.capture-tmp/
+
 # Local capture/debug artifacts (machine-specific; not shared)
 /inspector-live.png
 /progress-slideshow.png
