@@ -1,31 +1,31 @@
 {
-  "providerId": "cartesia",
+  "providerId": "elevenlabs",
   "phraseCount": 5,
   "playback": [
     {
       "phrase": "Ready",
-      "firstByteMs": 0.008709000001545064,
-      "bytes": 21
+      "firstByteMs": 0.002166999998735264,
+      "bytes": 23
     },
     {
       "phrase": "Muted",
-      "firstByteMs": 0.0010419999962323345,
-      "bytes": 21
+      "firstByteMs": 0.00033400000393157825,
+      "bytes": 23
     },
     {
       "phrase": "Unmuted",
-      "firstByteMs": 0.0003329999963170849,
-      "bytes": 23
+      "firstByteMs": 0.0001249999986612238,
+      "bytes": 25
     },
     {
       "phrase": "Working",
-      "firstByteMs": 0.00020799999765586108,
-      "bytes": 23
+      "firstByteMs": 0.0002080000049318187,
+      "bytes": 25
     },
     {
       "phrase": "Halted",
-      "firstByteMs": 0.00020799999765586108,
-      "bytes": 22
+      "firstByteMs": 0.0001249999986612238,
+      "bytes": 24
     }
   ],
   "synthetic": false

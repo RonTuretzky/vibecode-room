@@ -1,21 +1,21 @@
 {
   "budgetMs": 200,
   "selected": {
-    "providerId": "cartesia",
-    "label": "Cartesia Sonic",
+    "providerId": "elevenlabs",
+    "label": "ElevenLabs Flash v3 / Flash low-latency family",
     "model": "replay-tts",
     "voice": "neutral-replay",
-    "firstAudioByteMs": 62.521709000000556,
-    "firstChunkBytes": 53,
+    "firstAudioByteMs": 61.49783299999399,
+    "firstChunkBytes": 55,
     "contentType": "audio/replay-pcm"
   },
   "fastestMeasured": {
-    "providerId": "cartesia",
-    "label": "Cartesia Sonic",
+    "providerId": "elevenlabs",
+    "label": "ElevenLabs Flash v3 / Flash low-latency family",
     "model": "replay-tts",
     "voice": "neutral-replay",
-    "firstAudioByteMs": 62.521709000000556,
-    "firstChunkBytes": 53,
+    "firstAudioByteMs": 61.49783299999399,
+    "firstChunkBytes": 55,
     "contentType": "audio/replay-pcm"
   },
   "measured": [
@@ -24,7 +24,7 @@
       "label": "ElevenLabs Flash v3 / Flash low-latency family",
       "model": "replay-tts",
       "voice": "neutral-replay",
-      "firstAudioByteMs": 64.18224999999802,
+      "firstAudioByteMs": 61.49783299999399,
       "firstChunkBytes": 55,
       "contentType": "audio/replay-pcm"
     },
@@ -33,7 +33,7 @@
       "label": "Cartesia Sonic",
       "model": "replay-tts",
       "voice": "neutral-replay",
-      "firstAudioByteMs": 62.521709000000556,
+      "firstAudioByteMs": 61.69262500000332,
       "firstChunkBytes": 53,
       "contentType": "audio/replay-pcm"
     },
@@ -42,7 +42,7 @@
       "label": "PlayHT 3.0 Turbo",
       "model": "replay-tts",
       "voice": "neutral-replay",
-      "firstAudioByteMs": 63.794834000000264,
+      "firstAudioByteMs": 61.855250000000524,
       "firstChunkBytes": 51,
       "contentType": "audio/replay-pcm"
     },
@@ -51,7 +51,7 @@
       "label": "OpenAI /v1/audio/speech",
       "model": "replay-tts",
       "voice": "neutral-replay",
-      "firstAudioByteMs": 64.13420800000313,
+      "firstAudioByteMs": 62.20854099999997,
       "firstChunkBytes": 51,
       "contentType": "audio/replay-pcm"
     }
