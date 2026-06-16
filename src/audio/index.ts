@@ -39,3 +39,15 @@ export {
   type OutputTriggerClass,
   type WorkingAckSchedulerOptions,
 } from "./output-policy";
+export {
+  DEFAULT_MUTE_HEARTBEAT_INTERVAL_MS,
+  MUTE_ENGAGE_BUDGET_MS,
+  MUTE_KEYWORD,
+  MuteController,
+  UNMUTE_KEYWORD,
+  type MuteControllerOptions,
+  type MuteCueKeyword,
+  type MuteEngageInput,
+  type MuteReleaseInput,
+  type MuteTransition,
+} from "./mute-controller";

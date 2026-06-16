@@ -6,6 +6,7 @@ import {
   dispatchedActionSchema,
   earconIdSchema,
   logEventSchema,
+  muteReleaseTriggerSchema,
   outputDecisionSchema,
   pendingSuggestionSchema,
   runEventSchema,
@@ -15,6 +16,7 @@ import {
   type DispatchedAction,
   type EarconId,
   type LogEvent,
+  type MuteReleaseTrigger,
   type OutputDecision,
   type PendingSuggestion,
   type RunEvent,
@@ -215,6 +217,16 @@ describe("ENG-T-01 shared type contract", () => {
     expect(ackIdSchema.parse(ack)).toBe("working");
     expect(earconIdSchema.safeParse(ack).success).toBe(false);
     expect(ackIdSchema.safeParse(earcon).success).toBe(false);
+  });
+
+  test("MuteReleaseTrigger covers the Cue keyword and UI button paths only", () => {
+    const triggers: MuteReleaseTrigger[] = ["unmute-word", "unmute-button"];
+
+    for (const trigger of triggers) {
+      expect(muteReleaseTriggerSchema.parse(trigger)).toBe(trigger);
+    }
+
+    expect(muteReleaseTriggerSchema.safeParse("device-spotter").success).toBe(false);
   });
 
   test("cut subsystem contracts are absent from src/types.ts", async () => {
