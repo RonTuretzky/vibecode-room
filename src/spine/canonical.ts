@@ -1,8 +1,6 @@
 import { RecordingAudioOutput } from "../audio/test-doubles";
 import { playAck, playEarcon } from "../audio/earcons";
-import { NoopTTSProvider } from "../providers/tts/noop";
-import type { DecisionInput, DecisionLLM, DecisionOutput } from "../providers";
-import { ReplayASRProvider } from "../providers/asr/replay";
+import { NoopTTSProvider, ReplayASRProvider, type DecisionInput, type DecisionLLM, type DecisionOutput } from "../providers";
 import { AcceptanceClassifier } from "../acceptance/classifier";
 import { PendingSuggestionOwner } from "../acceptance/pending";
 import { AcceptanceController, AcceptanceSpawner, createProcessRegistryAcceptanceSeam } from "../acceptance/spawn";

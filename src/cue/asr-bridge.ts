@@ -1,7 +1,6 @@
 import { readFile } from "node:fs/promises";
 import WebSocket, { type RawData } from "ws";
-import type { ASRProvider, AudioReadableStream } from "../providers";
-import { DeepgramNova3ASRProvider } from "../providers/asr/deepgram";
+import { DeepgramNova3ASRProvider, type ASRProvider, type AudioReadableStream } from "../providers";
 import { readTranscriptObservationJsonl } from "../replay/jsonl";
 import { transcriptObservationSchema, type LogEvent, type TranscriptObservation } from "../types";
 
