@@ -2,12 +2,13 @@ import { describe, expect, test } from "bun:test";
 import { ReplayASRProvider } from "../providers/asr/replay";
 import { ReplayDecisionLLM } from "../providers/llm/replay";
 import { NoopTTSProvider } from "../providers/tts/noop";
-import type { DispatchedAction, TranscriptObservation } from "../types";
+import type { CueDecision, DispatchedAction, TranscriptObservation } from "../types";
 import { DEFAULT_CALLSIGN_POOL } from "../routing/callsigns";
-import { CueAdapter } from "./adapter";
+import { CueAdapter, mapCueAction } from "./adapter";
 import { createPanopticonCueHarness } from "./harness";
+import { createSemanticIntentDecisionInput } from "./intent-gate";
 import { DEFAULT_TEXT_CUE_WORDS, assertPrematcherParity, createCuePolicies } from "./policies";
-import { assertTwoProgramIsolation, createCuePrograms } from "./programs";
+import { assertTwoProgramIsolation } from "./programs";
 import { loadCueCore } from "./source";
 
 describe("Cue adapter and policies", () => {
@@ -259,6 +260,153 @@ describe("Cue adapter and policies", () => {
     ]);
   });
 
+  test("semantic gate accepts a short standalone TextCue command without calling the DecisionLLM", async () => {
+    const cue = await loadCueCore();
+    const { TextCue, Triggers, MappedActionTool, transcriptObservation } = cue;
+    const llm = new ReplayDecisionLLM([]);
+    const adapter = new CueAdapter({
+      sessionId: "session-intent-direct",
+      clock: monotonicClock(40),
+      idFactory: sequenceIds("intent-direct"),
+      semanticIntentGate: { llm },
+    });
+    const harness = textCueActionHarness(cue, {
+      sessionId: "session-intent-direct",
+      textCue: new TextCue(["yes"]),
+      trigger: Triggers.onCue("text"),
+      tool: new MappedActionTool({
+        name: "panopticon.suggest",
+        description: "suggest",
+        mapper: () => [{ type: "suggestion.queue", payload: { concept: "continue" } }],
+      }),
+    });
+    const observation = adapter.normalizeObservation({
+      text: "Yes",
+      speaker: "speaker_0",
+      utteranceId: "utt-intent-direct",
+    });
+
+    const decision = await adapter.handleResult(
+      observation,
+      await harness.ingest(transcriptObservation(observation.text, { speaker: observation.speaker })),
+    );
+
+    expect(decision.actions.map((action) => action.type)).toEqual(["spawn"]);
+    expect(llm.calls).toHaveLength(0);
+    expect(decision.events).toContainEqual(
+      expect.objectContaining({
+        event: "decision.intent",
+        meta: expect.objectContaining({ accepted: true, source: "prefilter", reason: "bare-cue-command" }),
+      }),
+    );
+  });
+
+  test("semantic gate blocks contextual yes-but false positives through replayed DecisionLLM", async () => {
+    const cue = await loadCueCore();
+    const { TextCue, Triggers, MappedActionTool, transcriptObservation } = cue;
+    const observation = transcriptObservationForGate("Yes, but I'm not sure we should do that.", "utt-yes-but");
+    const candidate = mapCueAction({ type: "suggestion.queue", payload: { concept: "continue" } }, "corr-intent-001");
+    const llm = new ReplayDecisionLLM([
+      {
+        input: createSemanticIntentDecisionInput({
+          observation,
+          cueDecision: { name: "text", metadata: { pattern: "yes" } },
+          action: candidate,
+          correlationId: "corr-intent-001",
+          decisionId: "decision-intent-002",
+          options: { model: "intent-gate-temp-0" },
+        }),
+        output: intentGatePassOutput("yes-but", "corr-intent-001", "decision-intent-002"),
+      },
+    ]);
+    const adapter = new CueAdapter({
+      sessionId: observation.sessionId,
+      clock: monotonicClock(50),
+      idFactory: sequenceIds("intent"),
+      semanticIntentGate: { llm },
+    });
+    const harness = textCueActionHarness(cue, {
+      sessionId: observation.sessionId,
+      textCue: new TextCue(["yes"]),
+      trigger: Triggers.onCue("text"),
+      tool: new MappedActionTool({
+        name: "panopticon.suggest",
+        description: "suggest",
+        mapper: () => [{ type: "suggestion.queue", payload: { concept: "continue" } }],
+      }),
+    });
+
+    const decision = await adapter.handleResult(
+      observation,
+      await harness.ingest(transcriptObservation(observation.text, { speaker: observation.speaker })),
+    );
+
+    expect(decision.actions).toEqual([]);
+    expect(llm.calls).toHaveLength(1);
+    expect(decision.events).toContainEqual(
+      expect.objectContaining({
+        event: "decision.intent",
+        meta: expect.objectContaining({ accepted: false, source: "llm", reason: "llm-conversational-filler" }),
+      }),
+    );
+    expect(decision.events).toContainEqual(
+      expect.objectContaining({
+        event: "route.pass",
+        meta: expect.objectContaining({ policy: "cue.semantic-intent-gate", gateReason: "llm-conversational-filler" }),
+      }),
+    );
+  });
+
+  test("semantic gate sends natural conversational affirmative mentions to replay before accepting", async () => {
+    const cue = await loadCueCore();
+    const { TextCue, Triggers, MappedActionTool, transcriptObservation } = cue;
+    const observation = transcriptObservationForGate("Yes I agree that the context was different.", "utt-natural-yes");
+    const candidate = mapCueAction({ type: "suggestion.queue", payload: { concept: "continue" } }, "corr-natural-001");
+    const llm = new ReplayDecisionLLM([
+      {
+        input: createSemanticIntentDecisionInput({
+          observation,
+          cueDecision: { name: "text", metadata: { pattern: "yes" } },
+          action: candidate,
+          correlationId: "corr-natural-001",
+          decisionId: "decision-natural-002",
+          options: { model: "intent-gate-temp-0" },
+        }),
+        output: intentGatePassOutput("natural-yes", "corr-natural-001", "decision-natural-002"),
+      },
+    ]);
+    const adapter = new CueAdapter({
+      sessionId: observation.sessionId,
+      clock: monotonicClock(60),
+      idFactory: sequenceIds("natural"),
+      semanticIntentGate: { llm },
+    });
+    const harness = textCueActionHarness(cue, {
+      sessionId: observation.sessionId,
+      textCue: new TextCue(["yes"]),
+      trigger: Triggers.onCue("text"),
+      tool: new MappedActionTool({
+        name: "panopticon.suggest",
+        description: "suggest",
+        mapper: () => [{ type: "suggestion.queue", payload: { concept: "continue" } }],
+      }),
+    });
+
+    const decision = await adapter.handleResult(
+      observation,
+      await harness.ingest(transcriptObservation(observation.text, { speaker: observation.speaker })),
+    );
+
+    expect(decision.actions).toEqual([]);
+    expect(llm.calls).toHaveLength(1);
+    expect(decision.events).toContainEqual(
+      expect.objectContaining({
+        event: "decision.intent",
+        meta: expect.objectContaining({ accepted: false, source: "llm" }),
+      }),
+    );
+  });
+
   test("harness wires transcription, decision LLM, and output provider slots without constructing concrete providers", async () => {
     const providers = {
       transcription: new ReplayASRProvider([]),
@@ -278,6 +426,68 @@ describe("Cue adapter and policies", () => {
     expect(harness.risks).toEqual(expect.arrayContaining([expect.stringContaining("earcon")]));
   });
 });
+
+function textCueActionHarness(
+  cue: Awaited<ReturnType<typeof loadCueCore>>,
+  options: {
+    sessionId: string;
+    textCue: unknown;
+    trigger: unknown;
+    tool: unknown;
+  },
+) {
+  const { CueHarness } = cue;
+  return new CueHarness({
+    sessionId: options.sessionId,
+    cues: [options.textCue],
+    programs: [
+      {
+        name: "intent-gate-test",
+        triggers: [options.trigger],
+        allowedTools: ["panopticon.suggest"],
+        llmProvider: {
+          infer() {
+            return [{ tool: "panopticon.suggest", arguments: { concept: "continue" } }];
+          },
+        },
+      },
+    ],
+    tools: [options.tool],
+  });
+}
+
+function transcriptObservationForGate(text: string, utteranceId: string): TranscriptObservation {
+  return {
+    text,
+    isFinal: true,
+    speaker: "speaker_0",
+    sessionId: `session-${utteranceId}`,
+    latencyMs: 12,
+    utteranceId,
+  };
+}
+
+function intentGatePassOutput(label: string, correlationId: string, decisionId: string): {
+  id: string;
+  model: string;
+  temperature: 0;
+  decision: CueDecision;
+} {
+  return {
+    id: `intent-gate-${label}`,
+    model: "intent-gate-temp-0",
+    temperature: 0,
+    decision: {
+      kind: "pass",
+      addressed: true,
+      reason: "dropped",
+      policy: "cue.semantic-intent-gate",
+      decisionId,
+      correlationId,
+      meta: { label },
+    },
+  };
+}
 
 function sequenceIds(prefix: string): () => string {
   let next = 0;

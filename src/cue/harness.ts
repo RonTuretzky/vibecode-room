@@ -31,6 +31,7 @@ export async function createPanopticonCueHarness(options: PanopticonCueHarnessOp
   const adapter = new CueAdapter({
     sessionId: options.sessionId,
     textCueWords: policies.textCueWords,
+    semanticIntentGate: { llm: options.providers.llm },
     ...options.adapter,
   });
 
@@ -53,6 +54,7 @@ export async function createPanopticonCueHarness(options: PanopticonCueHarnessOp
       "D2: speaker-label-stability shim remains adapter-owned around ASR/Cue observation frames.",
       "D2: observe.pass interception and route.pass logging are adapter-owned even though Cue exposes observe.pass.",
       "D2: earcon emission is adapter-owned and triggered by Cue TextCue decisions.",
+      "A5: mapped actions are semantically gated after Cue TextCue detection and before dispatch.",
       ...policies.risks,
       ...programs.risks,
     ],

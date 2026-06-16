@@ -223,6 +223,9 @@ function candidateMatrix(): ProviderCandidate[] {
       envVars: ["ELEVENLABS_API_KEY", "XI_API_KEY"],
       docs: "https://elevenlabs.io/docs/api-reference/streaming",
       create: () => {
+        if (!liveTtsEnabled()) {
+          return replayCandidate("elevenlabs", "ElevenLabs Flash v3 / Flash low-latency family", ["ELEVENLABS_API_KEY", "XI_API_KEY"]);
+        }
         const apiKey = firstEnv("ELEVENLABS_API_KEY", "XI_API_KEY");
         if (apiKey === undefined) return null;
         const voice = process.env.PANOP_TTS_ELEVENLABS_VOICE_ID ?? "JBFqnCBsd6RMkjVDRZzb";
@@ -258,6 +261,9 @@ function candidateMatrix(): ProviderCandidate[] {
       envVars: ["CARTESIA_API_KEY"],
       docs: "https://docs.cartesia.ai/api-reference/tts/sse",
       create: () => {
+        if (!liveTtsEnabled()) {
+          return replayCandidate("cartesia", "Cartesia Sonic", ["CARTESIA_API_KEY"]);
+        }
         const apiKey = firstEnv("CARTESIA_API_KEY");
         if (apiKey === undefined) return null;
         const voice = process.env.PANOP_TTS_CARTESIA_VOICE_ID ?? "f786b574-daa5-4673-aa0c-cbe3e8534c02";
@@ -296,6 +302,9 @@ function candidateMatrix(): ProviderCandidate[] {
       envVars: ["PLAYHT_API_KEY", "PLAYHT_USER_ID"],
       docs: "https://docs.play.ht/reference/api-generate-tts-audio-stream",
       create: () => {
+        if (!liveTtsEnabled()) {
+          return replayCandidate("playht", "PlayHT 3.0 Turbo", ["PLAYHT_API_KEY", "PLAYHT_USER_ID"]);
+        }
         const apiKey = firstEnv("PLAYHT_API_KEY");
         const userId = firstEnv("PLAYHT_USER_ID");
         if (apiKey === undefined || userId === undefined) return null;
@@ -336,6 +345,9 @@ function candidateMatrix(): ProviderCandidate[] {
       envVars: ["OPENAI_API_KEY"],
       docs: "https://developers.openai.com/api/docs/guides/text-to-speech",
       create: () => {
+        if (!liveTtsEnabled()) {
+          return replayCandidate("openai", "OpenAI /v1/audio/speech", ["OPENAI_API_KEY"]);
+        }
         const apiKey = firstEnv("OPENAI_API_KEY");
         if (apiKey === undefined) return null;
         const voice = process.env.PANOP_TTS_OPENAI_VOICE ?? "coral";
@@ -440,6 +452,34 @@ class EmptyChunkProvider implements TTSProvider {
     return new ReadableStream<Uint8Array>({
       start(controller) {
         controller.enqueue(new Uint8Array());
+        controller.close();
+      },
+    });
+  }
+}
+
+class ReplayCandidateProvider implements CandidateProvider {
+  readonly model = "replay-tts";
+  readonly voice = "neutral-replay";
+  readonly lastContentType = "audio/replay-pcm";
+  private readonly voiceSelector = new SessionVoiceSelector(this.voice);
+
+  constructor(
+    readonly id: ProviderId,
+    readonly label: string,
+    readonly envVars: string[],
+  ) {}
+
+  async speak(text: string, opts?: TTSOptions): Promise<AudioReadableStream> {
+    const guarded = guardTtsText(text);
+    this.voiceSelector.select(opts?.voice);
+    const bytes = new TextEncoder().encode(`replay:${this.id}:${guarded.text}`);
+    const delayMs = replayFirstAudioMs();
+
+    return new ReadableStream<Uint8Array>({
+      async start(controller) {
+        await sleep(delayMs);
+        controller.enqueue(bytes);
         controller.close();
       },
     });
@@ -656,6 +696,18 @@ function firstEnv(...names: string[]): string | undefined {
 
 function firstAudioBudgetMs(): number {
   return Number(process.env.PANOP_TTS_FIRST_AUDIO_BUDGET_MS ?? DEFAULT_FIRST_AUDIO_BUDGET_MS);
+}
+
+function liveTtsEnabled(): boolean {
+  return process.env.PANOP_TTS_LIVE === "1";
+}
+
+function replayFirstAudioMs(): number {
+  return Number(process.env.PANOP_TTS_REPLAY_FIRST_AUDIO_MS ?? 60);
+}
+
+function replayCandidate(id: ProviderId, label: string, envVars: string[]): CandidateProvider {
+  return new ReplayCandidateProvider(id, label, envVars);
 }
 
 async function writeVerdict(green: boolean, summary: string): Promise<void> {

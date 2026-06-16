@@ -1,6 +1,11 @@
 import { TraceProcessor } from "../obs/trace";
 import type { DispatchedAction, LogEvent, TranscriptObservation } from "../types";
 import { transcriptObservationSchema } from "../types";
+import {
+  evaluateSemanticIntentGate,
+  type SemanticIntentGateOptions,
+  type SemanticIntentGateResult,
+} from "./intent-gate";
 import { assertPrematcherParity } from "./policies";
 import type { CueIngestResult } from "./source";
 
@@ -46,6 +51,7 @@ export interface CueAdapterOptions {
   textCueWords?: readonly string[];
   usePrematcher?: boolean;
   prematcherWords?: readonly string[];
+  semanticIntentGate?: SemanticIntentGateOptions;
 }
 
 export class CueAdapter {
@@ -57,6 +63,7 @@ export class CueAdapter {
   readonly #textCueWords: readonly string[];
   readonly #usePrematcher: boolean;
   readonly #prematcherWords: readonly string[];
+  readonly #semanticIntentGate?: SemanticIntentGateOptions;
 
   constructor(options: CueAdapterOptions) {
     this.#sessionId = options.sessionId;
@@ -67,6 +74,7 @@ export class CueAdapter {
     this.#textCueWords = options.textCueWords ?? [];
     this.#usePrematcher = options.usePrematcher ?? false;
     this.#prematcherWords = options.prematcherWords ?? this.#textCueWords;
+    this.#semanticIntentGate = options.semanticIntentGate;
 
     if (this.#usePrematcher) {
       assertPrematcherParity(this.#textCueWords, this.#prematcherWords);
@@ -146,6 +154,36 @@ export class CueAdapter {
 
       for (const action of toolResult.actions ?? []) {
         const dispatched = mapCueAction(action, correlationId);
+        const intentGate = await evaluateSemanticIntentGate({
+          observation,
+          cueDecision: textCue,
+          action: dispatched,
+          correlationId,
+          decisionId,
+          options: this.#semanticIntentGate,
+        });
+        events.push(this.#recordIntentGate(observation, correlationId, decisionId, startedAtMs, dispatched, intentGate));
+        if (!intentGate.accepted) {
+          const [observed, routed] = this.#trace.recordObservationPass({
+            sessionId: observation.sessionId,
+            correlationId,
+            startedAtMs,
+            endedAtMs: this.#clock(),
+            meta: {
+              addressed: Boolean(textCue),
+              reason: "dropped",
+              utteranceId: observation.utteranceId,
+              policy: "cue.semantic-intent-gate",
+              decisionId,
+              action: dispatched.type,
+              gateSource: intentGate.source,
+              gateReason: intentGate.reason,
+            },
+          });
+          events.push(observed, routed);
+          continue;
+        }
+
         actions.push(dispatched);
         events.push(
           this.#trace.record({
@@ -233,6 +271,36 @@ export class CueAdapter {
       latencyMs,
       matchedWord: typeof matchedWord === "string" ? matchedWord : "",
     };
+  }
+
+  #recordIntentGate(
+    observation: TranscriptObservation,
+    correlationId: string,
+    decisionId: string,
+    startedAtMs: number,
+    action: DispatchedAction,
+    result: SemanticIntentGateResult,
+  ): LogEvent {
+    const llmMeta =
+      result.llmOutput === undefined ? {} : { llmDecisionKind: result.llmOutput.decision.kind };
+
+    return this.#trace.record({
+      event: "decision.intent",
+      sessionId: observation.sessionId,
+      correlationId,
+      startedAtMs,
+      endedAtMs: this.#clock(),
+      meta: {
+        accepted: result.accepted,
+        source: result.source,
+        reason: result.reason,
+        action: action.type,
+        targetUPID: action.targetUPID,
+        decisionId,
+        utteranceId: observation.utteranceId,
+        ...llmMeta,
+      },
+    });
   }
 }
 
