@@ -7,7 +7,7 @@
     "moduleDetection": "force",
     "allowImportingTsExtensions": true,
     "jsx": "react-jsx",
-    "jsxImportSource": "smithers-orchestrator",
+    "jsxImportSource": "react",
     "verbatimModuleSyntax": true,
     "noEmit": true,
     "strict": true,
