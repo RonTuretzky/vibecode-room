@@ -1,0 +1,2 @@
+{"id":"green-failure","behavior":"real API eventually returns the relied-on value","phase":"red","status":"failed-as-expected","error":"red run failed as expected"}
+{"id":"green-failure","behavior":"real API eventually returns the relied-on value","phase":"green","status":"failed","error":"real API returned an incompatible shape"}

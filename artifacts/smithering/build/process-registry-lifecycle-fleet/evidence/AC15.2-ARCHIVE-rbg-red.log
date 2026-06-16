@@ -1,0 +1,42 @@
+$ PANOP_RBG_SKIP_PREKILL_ARCHIVE=1 bun test src/process/lifecycle.test.ts
+bun test v1.3.14 (0d9b296a)
+
+src/process/lifecycle.test.ts:
+43 |     await lifecycle.activate();
+44 |     const preKill = lifecycle.snapshot();
+45 |     await lifecycle.kill({ killed: true });
+46 | 
+47 |     const archived = await archive.load("upid-archive");
+48 |     expect(archived).toEqual(
+                          ^
+error: expect(received).toEqual(expected)
+
+- ObjectContaining 
+- {
+-   "runId": "run-archive",
+-   "snapshot": {
+-     "checkpointSeq": 0,
+-     "context": {
+-       "currentFile": "src/process/registry.ts",
+-       "intent": "preserve before kill",
+-     },
+-     "runId": "run-archive",
+-     "state": "active",
+-     "updatedAtMs": 1781569662427,
+-     "upid": "upid-archive",
+-   },
+-   "upid": "upid-archive",
+- }
++ null
+
+- Expected  - 16
++ Received  + 1
+
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/process-registry-lifecycle-fleet/src/process/lifecycle.test.ts:48:22)
+(fail) process lifecycle > AC15.2 archives context before kill [0.27ms]
+
+ 2 pass
+ 1 fail
+ 10 expect() calls
+Ran 3 tests across 1 file. [12.00ms]
+exit=1

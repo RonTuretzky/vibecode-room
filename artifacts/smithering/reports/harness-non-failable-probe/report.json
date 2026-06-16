@@ -1,0 +1,23 @@
+{
+  "probeId": "harness-non-failable-probe",
+  "status": "failed",
+  "summary": "no failable assertion",
+  "correlationId": "probe-harness-test-non-failable",
+  "startedAt": "2026-06-16T01:54:03.853Z",
+  "finishedAt": "2026-06-16T01:54:03.854Z",
+  "assertions": [
+    {
+      "id": "cannot-fail",
+      "behavior": "bad probe forgets to falsify its behavior",
+      "phase": "red",
+      "status": "not-failable",
+      "error": "falsify() returned without throwing"
+    }
+  ],
+  "reportDir": "artifacts/smithering/reports/harness-non-failable-probe",
+  "secretScan": {
+    "passed": true,
+    "findings": []
+  },
+  "meta": {}
+}

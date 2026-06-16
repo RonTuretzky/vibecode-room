@@ -1,0 +1,24 @@
+$ PANOP_RBG_ALLOW_INVALID_LIFECYCLE_EDGE=1 bun test src/process/lifecycle.test.ts
+bun test v1.3.14 (0d9b296a)
+
+src/process/lifecycle.test.ts:
+13 |       context: { seed: "start" },
+14 |       now: () => 1_000,
+15 |     });
+16 | 
+17 |     expect(lifecycle.snapshot()).toEqual(expect.objectContaining({ state: "planning" }));
+18 |     await expect(lifecycle.pause()).rejects.toThrow(/Invalid process lifecycle edge planning -> paused/u);
+                                                 ^
+error: 
+
+Expected promise that rejects
+Received promise that resolved: Promise { <resolved> }
+
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/process-registry-lifecycle-fleet/src/process/lifecycle.test.ts:18:45)
+(fail) process lifecycle > AC15.2 enforces planning -> active <-> paused -> dead edges [0.57ms]
+
+ 2 pass
+ 1 fail
+ 6 expect() calls
+Ran 3 tests across 1 file. [11.00ms]
+exit=1

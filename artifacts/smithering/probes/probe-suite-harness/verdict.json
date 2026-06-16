@@ -1,0 +1,5 @@
+{
+  "green": true,
+  "ticketId": "probe-suite-harness",
+  "summary": "Probe harness implemented and proven by RBG: non-failable assertions are rejected, passing probes write structured reports, probe failures surface as test failures, and reports secret-scan clean."
+}

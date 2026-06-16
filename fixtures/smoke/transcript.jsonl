@@ -1,2 +1,2 @@
-{"text":"can someone unmute before we get started","isFinal":true,"speaker":"speaker_0","sessionId":"sess-smoke-001","latencyMs":120,"utteranceId":"utt-smoke-001"}
-{"text":"panop start a new refactor task","isFinal":true,"speaker":"speaker_0","sessionId":"sess-smoke-001","latencyMs":95,"utteranceId":"utt-smoke-002"}
+{"text":"We should keep talking through the interface boundary first.","isFinal":true,"speaker":"speaker-1","sessionId":"smoke-session","latencyMs":42,"utteranceId":"utt-001"}
+{"text":"Panop build the thinnest walking skeleton.","isFinal":true,"speaker":"speaker-1","sessionId":"smoke-session","latencyMs":47,"utteranceId":"utt-002"}

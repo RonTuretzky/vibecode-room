@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Decision - Alphabetic opaque token redaction</title>
+  <style>
+    :root { --bg:#0a0a0a; --fg:#e0e0e0; --ok:#00ff88; --bad:#ff3b30; --warn:#f5a623; --sel:#00bcd4; --mut:#888; }
+    body { background:var(--bg); color:var(--fg); font:15px/1.6 -apple-system,Segoe UI,Roboto,sans-serif; max-width:920px; margin:0 auto; padding:32px; }
+    h1 { font-size:24px; color:var(--sel); margin-bottom:4px; }
+    h2 { font-size:18px; color:var(--ok); margin-top:32px; border-bottom:1px solid #222; padding-bottom:6px; }
+    .tag { display:inline-block; background:#1a1a1a; border:1px solid #333; border-radius:4px; padding:2px 8px; font-size:12px; color:var(--mut); margin-right:6px; }
+    code,pre { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+    pre { background:#111; border:1px solid #222; border-radius:6px; padding:14px; overflow:auto; font-size:13px; }
+    table { border-collapse:collapse; width:100%; margin:12px 0; font-size:14px; }
+    th,td { border:1px solid #222; padding:8px 10px; text-align:left; vertical-align:top; }
+    th { background:#141414; color:var(--sel); }
+    .acc { color:var(--ok); } .rej { color:var(--bad); }
+  </style>
+</head>
+<body>
+  <h1>Long alphabetic opaque values redact fail closed</h1>
+  <p><span class="tag">subscription-credentials-redaction</span><span class="tag">SEC-1</span></p>
+
+  <h2>Problem</h2>
+  <p>The unknown-token fallback redacted provider prefixes, JWTs, bearer values, separator-heavy values, and long alphanumeric values with digits. A long alphabetic-only opaque value under a neutral metadata key could still be emitted unchanged.</p>
+
+  <h2>Decision</h2>
+  <p>Treat alphabetic-only values of at least 32 characters as unknown secret candidates. This keeps the detector fail closed for opaque subscription tokens while avoiding common identifier-length noise in source and reports.</p>
+
+  <pre>input meta:  { opaque: "long alphabetic token material" }
+output meta: { opaque: "redacted marker" }</pre>
+
+  <h2>Alternatives</h2>
+  <table>
+    <tr><th>Alternative</th><th>Verdict</th><th>Reason</th></tr>
+    <tr><td>Require a digit in every unknown token</td><td class="rej">Rejected</td><td>The adversarial challenge showed a fail-open alphabetic-only class.</td></tr>
+    <tr><td>Redact every long word at 24 characters</td><td class="rej">Rejected</td><td>Too noisy for source and report scans.</td></tr>
+    <tr><td>Redact alphabetic-only values at 32 characters</td><td class="acc">Chosen</td><td>Closes the opaque-token gap with limited false positives.</td></tr>
+  </table>
+
+  <h2>Verification</h2>
+  <p><code>src/providers/credentials.test.ts</code> and <code>test/e2e/secret-scan.e2e.ts</code> plant alphabetic-only opaque values in trace and probe metadata. The captured red run fails before the detector fix; the green run passes with zero bundle scan findings.</p>
+</body>
+</html>

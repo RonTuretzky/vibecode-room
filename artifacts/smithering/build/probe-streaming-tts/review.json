@@ -1,0 +1,39 @@
+{
+  "family": "anthropic",
+  "model": "claude-opus-4-8",
+  "kind": "review",
+  "approved": false,
+  "pass": false,
+  "findings": [
+    {
+      "severity": "major",
+      "title": "Blocking P-TTS gate has no passing green run; red-before-green is red-before-red",
+      "file": "artifacts/smithering/build/probe-streaming-tts/gates.json",
+      "description": "gates.json records status \"failed\". Both evidence/P-TTS-rbg-red.log (PANOP_TTS_FIRST_AUDIO_BUDGET_MS=20) and the restored evidence/P-TTS-green.log (default 200 ms) end in `0 pass / 1 fail`, and greenRunPath points to that still-failing run. The 20 ms RBG genuinely bites and every per-assertion falsifier fires (report.json red phase: 7/7 fail-as-expected, incl. budget=20 -> measured 738 ms, EmptyChunkProvider -> 0 bytes, secret-redaction falsifier), so the suite is NOT tautological -- but the gate never reaches green. This faithfully honors the §17 / backpressure line-192 decree (\"Block build; round-trip <=1 s unprovable until one passes\"): the probe is correctly blocking, not stubbed. Review mandate (c) is therefore unmet -- the blocking gate lacks a genuine red->green transition -- so this cannot land as green."
+    },
+    {
+      "severity": "major",
+      "title": "No TTS winner selected; required 2026 candidate benchmark is incomplete",
+      "file": "artifacts/smithering/probes/probe-streaming-tts/selection.json",
+      "description": "selection.json has selected=null. Only OpenAI /v1/audio/speech was credentialed; it conformed to the streaming contract (audio/pcm, 48000-byte first chunk) but measured 2191 ms time-to-first-audio-byte, far above the 200 ms budget that backs REQ-10 (round-trip <=1 s). ElevenLabs Flash v3, Cartesia Sonic, and PlayHT 3.0 Turbo env vars are absent in this worktree, so three of the four mandated 2026 candidates were never measured. The agent-review verification (\"record which provider was selected and why\") cannot be satisfied because no provider qualifies. This is a genuine environment/credential + over-budget blocker, not a code defect."
+    },
+    {
+      "severity": "major",
+      "title": "Five fixed state-phrase pre-cache not demonstrated against a real selected provider",
+      "file": "artifacts/smithering/probes/probe-streaming-tts/precache.json",
+      "description": "precache.json has playback=[] and blocked=\"no selected provider is available for real static clip pre-cache\". The §22 A4.2 / design §11.4 requirement to pre-cache the five fixed state phrases (Ready/Muted/Unmuted/Working/Halted) for <100 ms playback is therefore unproven against a real provider. Fail-closed behavior here is correct and commendable -- the run no longer passes off synthetic one-byte clips as a green selected-provider pre-cache -- but the ticket deliverable remains unmet until a candidate clears selection."
+    },
+    {
+      "severity": "minor",
+      "title": "First-audio-byte latency is inconsistent across the bundle (regenerated non-atomically)",
+      "file": "artifacts/smithering/build/probe-streaming-tts/RESULT.md",
+      "description": "The OpenAI first-audio-byte figure differs across artifacts produced by different runs: selection.json/verdict.json record 2191 ms, RESULT.md narrates 465 ms, and report.json's red phase shows 738 ms. All three exceed 200 ms, so the verdict (blocked, no winner) is unaffected, but the bundle was not regenerated atomically, so the latency numbers in the durable artifacts disagree. Re-run end-to-end so selection.json, verdict.json, RESULT.md, and report.json reflect one measurement set."
+    },
+    {
+      "severity": "nit",
+      "title": "Strengths: honest fail-closed probe, real streaming measurement, deterministic safety, no key leakage",
+      "file": "poc/p-tts.test.ts",
+      "description": "Implementation quality is high and faithful to spec. Time-to-first-audio-chunk is measured against a real streaming API via fetch + ReadableStream reader loop reading the first non-empty Uint8Array (macOS `say` file-synth artifact correctly removed per §22 A4.2 -- candidate-matrix's falsifier even asserts macos-say is absent). The deterministic 15-word guard and never-recite scrub (links/paths/diff lines) run inside provider.speak before submission; the voice is selected once per session (SessionVoiceSelector); the provider contract enforces a non-empty Uint8Array first chunk. Selection is a deterministic sort and the safety guards are deterministic code -- no LLM holds routing/safety authority. Secret redaction is genuine: src/security/secrets.ts is a real pattern+entropy scanner with its own tests, build and report secret-scan.json both pass with zero findings, and selection/precache/trace artifacts contain only provider ids, labels, models, voices, and env-var NAMES -- no credential values. Clearing the gate requires only credentialing a candidate that streams first audio byte <=200 ms and re-running."
+    }
+  ]
+}

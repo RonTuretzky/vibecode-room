@@ -1,0 +1,110 @@
+{
+  "correlationId": "probe-smithers-durable-runs:pre-kill",
+  "run": {
+    "runId": "probe-run-alpha",
+    "workflowKey": "durable",
+    "workflowName": "durable",
+    "status": "waiting-event",
+    "summary": {
+      "finished": 1,
+      "waiting-event": 1
+    }
+  },
+  "checkpoint": {
+    "status": "produced",
+    "row": {
+      "seed": "seed-alpha",
+      "parentId": "",
+      "checkpoint": "checkpoint:seed-alpha",
+      "fleetIndex": 0
+    },
+    "schema": {
+      "fields": [
+        {
+          "name": "seed",
+          "type": "string",
+          "optional": false,
+          "nullable": false
+        },
+        {
+          "name": "parentId",
+          "type": "string",
+          "optional": false,
+          "nullable": false
+        },
+        {
+          "name": "checkpoint",
+          "type": "string",
+          "optional": false,
+          "nullable": false
+        },
+        {
+          "name": "fleetIndex",
+          "type": "number",
+          "optional": false,
+          "nullable": false
+        }
+      ]
+    }
+  },
+  "frames": [
+    {
+      "runId": "probe-run-alpha",
+      "frameNo": 2,
+      "createdAtMs": 1781574843895,
+      "xmlJson": "{\"kind\":\"element\",\"tag\":\"smithers:workflow\",\"props\":{\"name\":\"durable\"},\"children\":[{\"kind\":\"element\",\"tag\":\"smithers:sequence\",\"props\":{},\"children\":[{\"kind\":\"element\",\"tag\":\"smithers:task\",\"props\":{\"id\":\"checkpoint\",\"waitAsync\":\"false\"},\"children\":[]},{\"kind\":\"element\",\"tag\":\"smithers:wait-for-event\",\"props\":{\"correlationId\":\"seed-alpha\",\"event\":\"steer\",\"id\":\"steer\",\"label\":\"signal:steer\",\"onTimeout\":\"fail\",\"waitAsync\":\"false\"},\"children\":[]}]}]}",
+      "xmlHash": "762c8dad038a2c388850f0ea1e5e60b30fc3b6f077607d775735d5ce6f43c172",
+      "encoding": "delta",
+      "mountedTaskIdsJson": "[\"checkpoint::0\",\"steer::0\"]",
+      "taskIndexJson": "[{\"nodeId\":\"checkpoint\",\"ordinal\":0,\"iteration\":0},{\"nodeId\":\"steer\",\"ordinal\":1,\"iteration\":0}]",
+      "note": "react-driver"
+    },
+    {
+      "runId": "probe-run-alpha",
+      "frameNo": 1,
+      "createdAtMs": 1781574843886,
+      "xmlJson": "{\"kind\":\"element\",\"tag\":\"smithers:workflow\",\"props\":{\"name\":\"durable\"},\"children\":[{\"kind\":\"element\",\"tag\":\"smithers:sequence\",\"props\":{},\"children\":[{\"kind\":\"element\",\"tag\":\"smithers:task\",\"props\":{\"id\":\"checkpoint\",\"waitAsync\":\"false\"},\"children\":[]},{\"kind\":\"element\",\"tag\":\"smithers:wait-for-event\",\"props\":{\"correlationId\":\"seed-alpha\",\"event\":\"steer\",\"id\":\"steer\",\"label\":\"signal:steer\",\"onTimeout\":\"fail\",\"waitAsync\":\"false\"},\"children\":[]}]}]}",
+      "xmlHash": "762c8dad038a2c388850f0ea1e5e60b30fc3b6f077607d775735d5ce6f43c172",
+      "encoding": "keyframe",
+      "mountedTaskIdsJson": "[\"checkpoint::0\",\"steer::0\"]",
+      "taskIndexJson": "[{\"nodeId\":\"checkpoint\",\"ordinal\":0,\"iteration\":0},{\"nodeId\":\"steer\",\"ordinal\":1,\"iteration\":0}]",
+      "note": "react-driver"
+    }
+  ],
+  "attempts": [
+    {
+      "runId": "probe-run-alpha",
+      "nodeId": "checkpoint",
+      "iteration": 0,
+      "attempt": 1,
+      "state": "finished",
+      "startedAtMs": 1781574843889,
+      "finishedAtMs": 1781574843891,
+      "heartbeatAtMs": null,
+      "heartbeatDataJson": null,
+      "errorJson": null,
+      "jjPointer": null,
+      "responseText": null,
+      "jjCwd": "/private/tmp/ear-wt",
+      "cached": false,
+      "metaJson": "{\"kind\":\"static\",\"prompt\":null,\"staticPayload\":{\"seed\":\"seed-alpha\",\"parentId\":\"\",\"checkpoint\":\"checkpoint:seed-alpha\",\"fleetIndex\":0},\"label\":null,\"outputTable\":\"checkpoint\",\"needsApproval\":false,\"retries\":null,\"timeoutMs\":null,\"heartbeatTimeoutMs\":null,\"lastHeartbeat\":null,\"agentId\":null,\"agentModel\":null,\"agentEngine\":null,\"agentResume\":null,\"agentConversation\":null,\"resumedFromSession\":null,\"resumedFromConversation\":false,\"hijackHandoff\":null}"
+    },
+    {
+      "runId": "probe-run-alpha",
+      "nodeId": "steer",
+      "iteration": 0,
+      "attempt": 1,
+      "state": "waiting-event",
+      "startedAtMs": 1781574843900,
+      "finishedAtMs": null,
+      "heartbeatAtMs": null,
+      "heartbeatDataJson": null,
+      "errorJson": null,
+      "jjPointer": null,
+      "responseText": null,
+      "jjCwd": null,
+      "cached": false,
+      "metaJson": "{\"kind\":\"wait-for-event\",\"waitForEvent\":{\"signalName\":\"steer\",\"correlationId\":\"seed-alpha\",\"onTimeout\":\"fail\",\"timeoutMs\":null,\"waitAsync\":false,\"startedAtMs\":1781574843900,\"resolvedSignalSeq\":null,\"receivedAtMs\":null,\"timedOutAtMs\":null}}"
+    }
+  ]
+}

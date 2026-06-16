@@ -1,0 +1,58 @@
+bun test v1.3.14 (0d9b296a)
+
+test/smoke/spine-skeleton.smoke.ts.test.ts:
+13 | describe("spine skeleton smoke", () => {
+14 |   test("reads replayed transcript, matches one wake decision, and emits exactly one trace line", async () => {
+15 |     const result = await runSpineSmoke(fixturePath);
+16 | 
+17 |     expect(result.observations).toHaveLength(2);
+18 |     expect(result.decisions.map((decision) => decision.kind)).toEqual(["pass", "action"]);
+                                                                   ^
+error: expect(received).toEqual(expected)
+
+@@ -2,3 +2,3 @@
+    "pass",
+-   "action",
++   "pass",
+  ]
+
+- Expected  - 1
++ Received  + 1
+
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/walking-skeleton-smoke/test/smoke/spine-skeleton.smoke.ts:18:63)
+(fail) spine skeleton smoke > reads replayed transcript, matches one wake decision, and emits exactly one trace line [2.41ms]
+44 |     expect(second).toEqual(first);
+45 |   });
+46 | 
+47 |   test("wake matcher is case-insensitive but whole-token only", () => {
+48 |     const base = observation({ text: "PANOP can you hear this" });
+49 |     expect(matchWakeWord(base).kind).toBe("action");
+                                          ^
+error: expect(received).toBe(expected)
+
+Expected: "action"
+Received: "pass"
+
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/walking-skeleton-smoke/test/smoke/spine-skeleton.smoke.ts:49:38)
+(fail) spine skeleton smoke > wake matcher is case-insensitive but whole-token only [0.09ms]
+78 |     for (const [index, decision] of result.decisions.entries()) {
+79 |       trace.emitDecision(decision, result.observations[index]);
+80 |     }
+81 | 
+82 |     const lines = trace.toJsonl().split("\n").filter(Boolean);
+83 |     expect(lines).toHaveLength(1);
+                       ^
+error: expect(received).toHaveLength(expected)
+
+Expected length: 1
+Received length: 0
+
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/walking-skeleton-smoke/test/smoke/spine-skeleton.smoke.ts:83:19)
+(fail) spine skeleton smoke > trace JSONL is one structured LogEvent per emitted route action [0.33ms]
+
+ 3 pass
+ 3 fail
+ 9 expect() calls
+Ran 6 tests across 1 file. [22.00ms]
+
+exit=1

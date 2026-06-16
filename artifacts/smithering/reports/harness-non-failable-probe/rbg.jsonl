@@ -1,0 +1,1 @@
+{"id":"cannot-fail","behavior":"bad probe forgets to falsify its behavior","phase":"red","status":"not-failable","error":"falsify() returned without throwing"}

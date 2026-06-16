@@ -1,0 +1,23 @@
+bun test v1.3.14 (0d9b296a)
+
+src/cue/adapter.test.ts:
+ 95 |         : await adapter.handleResult(observation, result);
+ 96 | 
+ 97 |     const observePasses = decision.events.filter((event) => event.event === "observe.pass");
+ 98 |     const routePasses = decision.events.filter((event) => event.event === "route.pass");
+ 99 |     expect(observePasses).toHaveLength(1);
+100 |     expect(routePasses).toHaveLength(observePasses.length);
+                              ^
+error: expect(received).toHaveLength(expected)
+
+Expected length: 1
+Received length: 0
+
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/cue-adapter-and-policies/src/cue/adapter.test.ts:100:25)
+(fail) Cue adapter and policies > pass-logging turns every observe.pass into a route.pass line with the same correlation id [39.37ms]
+
+ 4 pass
+ 1 fail
+ 14 expect() calls
+Ran 5 tests across 1 file. [75.00ms]
+exit=1

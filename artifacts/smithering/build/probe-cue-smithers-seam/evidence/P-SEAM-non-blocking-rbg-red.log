@@ -1,0 +1,25 @@
+bun test v1.3.14 (0d9b296a)
+
+poc/p-seam.test.ts:
+timestamp=2026-06-14T22:26:56.388Z level=INFO fiber=#5 message="Gateway run started" gateway:run=0ms runId=p-seam-upid-seam-001 transport=ws triggeredBy=probe:seam role=operator workflow=seam service=smithers source=user userId=probe:seam resume=false connectionId=probe:seam:connection
+timestamp=2026-06-14T22:26:56.499Z level=INFO fiber=#105 message="Gateway run completed" gateway:run=0ms runId=p-seam-upid-seam-001 status=cancelled workflow=seam service=smithers source=user
+130 |             steeringWindowId: "window-seam-voice-001",
+131 |           }),
+132 |         }),
+133 |       );
+134 |       expect(dispatcher.spawnCalls).toHaveLength(1);
+135 |       expect(tickMs).toBeLessThanOrEqual(LOOP_TICK_BUDGET_MS);
+                           ^
+error: expect(received).toBeLessThanOrEqual(expected)
+
+Expected: <= 120
+Received: 398.12695799999995
+
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/probe-cue-smithers-seam/poc/p-seam.test.ts:135:22)
+(fail) P-SEAM Cue to Smithers gateway integration > MappedActionTool dispatch is bidirectional, async, reconnectable, and restart-correlated [715.30ms]
+
+ 0 pass
+ 1 fail
+ 9 expect() calls
+Ran 1 test across 1 file. [1273.00ms]
+RBG_RED_EXIT_STATUS=1

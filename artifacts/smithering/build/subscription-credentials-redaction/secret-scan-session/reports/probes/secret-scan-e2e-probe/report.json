@@ -1,0 +1,48 @@
+{
+  "probeId": "secret-scan-e2e-probe",
+  "status": "passed",
+  "summary": "probe assertions were failable and passed",
+  "correlationId": "secret-scan-e2e-probe",
+  "startedAt": "2026-06-16T01:54:09.192Z",
+  "finishedAt": "2026-06-16T01:54:09.192Z",
+  "assertions": [
+    {
+      "id": "redacted-probe-report",
+      "behavior": "probe report meta is redacted before durable emission",
+      "phase": "red",
+      "status": "failed-as-expected",
+      "error": "red probe branch proves the assertion can fail"
+    },
+    {
+      "id": "redacted-probe-report",
+      "behavior": "probe report meta is redacted before durable emission",
+      "phase": "green",
+      "status": "passed"
+    }
+  ],
+  "reportDir": "artifacts/smithering/build/subscription-credentials-redaction/secret-scan-session/reports/probes/secret-scan-e2e-probe",
+  "secretScan": {
+    "passed": true,
+    "findings": []
+  },
+  "meta": {
+    "authorization": "«redacted»",
+    "provider": {
+      "apiKey": "«redacted»",
+      "deepgram": "«redacted»",
+      "unknown": "«redacted»",
+      "alphabeticOpaque": "«redacted»",
+      "slashOnlyOpaque": "«redacted»",
+      "paddingOnlyOpaque": "«redacted»",
+      "providerPrefixedOpaque": "«redacted»",
+      "providerPrefixedNumeric": "«redacted»",
+      "providerPrefixedAlphaNumeric": "«redacted»",
+      "providerPrefixedSlack": "«redacted»-slackprovideropaqueslackprovideropaque",
+      "«redacted»": "probe-key-name",
+      "nested": {
+        "«redacted»": "«redacted»",
+        "«redacted»#2": "probe-unknown-key-name"
+      }
+    }
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "family": "openai",
+  "model": "gpt-5.5",
+  "kind": "challenge",
+  "approved": false,
+  "pass": false,
+  "findings": [
+    {
+      "severity": "critical",
+      "title": "Raw model keys can be handed through non-canonical env names",
+      "file": "src/providers/credentials.ts",
+      "description": "The model credential guard only checks two exact environment variable names. A construction call such as createModelCredentialSource({ provider: \"openai-codex\", env: { MODEL_API_KEY: <generated OpenAI-shaped provider key> } }) succeeds and returns host-subscription provenance instead of rejecting. The ticket requires any construction path handed a raw provider key to fail closed."
+    },
+    {
+      "severity": "major",
+      "title": "Unknown multi-segment provider tokens pass the redactor and scanner",
+      "file": "src/security/secrets.ts",
+      "description": "A neutral meta value shaped as provider-prefix, two long numeric dash-separated segments, and a long alphabetic dash-separated segment is neither redacted nor reported by scanSecretLikeText. The gap is in the unknown-token fallback: provider-prefixed multi-segment handling only accepts numeric-only tails or a single opaque suffix, so this secret-shaped token class fails open."
+    },
+    {
+      "severity": "major",
+      "title": "Trace JSONL redaction does not cover non-meta LogEvent fields",
+      "file": "src/obs/trace.ts",
+      "description": "TraceProcessor redacts meta but emits event, sessionId, correlationId, and upid unchanged. If a token-shaped value reaches correlationId or an event suffix, toJsonl emits it raw; the generated secret.redacted event can also echo an unsafe sourceEvent before reports that serialize events() are scanned. SEC-1 says no raw provider key may appear anywhere in JSONL trace artifacts."
+    }
+  ]
+}

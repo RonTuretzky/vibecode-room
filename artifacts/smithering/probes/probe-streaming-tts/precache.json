@@ -1,0 +1,32 @@
+{
+  "providerId": "openai",
+  "phraseCount": 5,
+  "playback": [
+    {
+      "phrase": "Ready",
+      "firstByteMs": 0.006833999999798834,
+      "bytes": 19
+    },
+    {
+      "phrase": "Muted",
+      "firstByteMs": 0.001125000009778887,
+      "bytes": 19
+    },
+    {
+      "phrase": "Unmuted",
+      "firstByteMs": 0.0005830000009154901,
+      "bytes": 21
+    },
+    {
+      "phrase": "Working",
+      "firstByteMs": 0.00041599999531172216,
+      "bytes": 21
+    },
+    {
+      "phrase": "Halted",
+      "firstByteMs": 0.0004999999946448952,
+      "bytes": 20
+    }
+  ],
+  "synthetic": false
+}

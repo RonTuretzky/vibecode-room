@@ -1,88 +1,101 @@
-// Walking-skeleton smoke test (ENG-T-06 / ticket: walking-skeleton-smoke).
-// Reads a 2-line fixture, runs the deterministic matcher, and asserts exactly ONE
-// structured trace line is emitted with a non-empty correlationId.
-// No Cue / network / API keys: pure in-process doubles.
-//
-// Invoked explicitly: bun test test/smoke/spine-skeleton.smoke.ts
-// (Bun treats an explicit file path argument as a direct run, regardless of naming convention.)
-//
-// Red-before-green gate:
-//   RED : BREAK_MATCHER=1 makes all decisions "pass", so 0 trace lines fail the assertion
-//   GREEN: normal run emits exactly one action decision and exactly one trace line
-
-import { describe, expect, it } from "bun:test";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { loadFixture } from "../../src/replay/harness.ts";
-import { match } from "../../src/matcher.ts";
-import { TraceProcessor } from "../../src/obs/trace.ts";
-import type { CueDecision, LogEvent } from "../../src/types.ts";
+import { tmpdir } from "node:os";
+import { describe, expect, test } from "bun:test";
+import { matchWakeWord } from "../../src/cue/wake-matcher";
+import { TraceProcessor } from "../../src/obs/trace";
+import { readTranscriptObservationJsonl } from "../../src/replay/jsonl";
+import { runSpineSmoke } from "../../src/spine/smoke";
+import type { TranscriptObservation } from "../../src/types";
 
-const FIXTURE = join(import.meta.dir, "../../fixtures/smoke/transcript.jsonl");
+const fixturePath = "fixtures/smoke/transcript.jsonl";
 
-describe("spine-skeleton smoke", () => {
-  it("reads 2-line fixture, runs matcher, emits exactly one structured trace line with non-empty correlationId", () => {
-    const emitted: string[] = [];
-    const tracer = new TraceProcessor("sess-smoke-001", (line) => emitted.push(line));
+describe("spine skeleton smoke", () => {
+  test("reads replayed transcript, matches one wake decision, and traces pass plus action lines", async () => {
+    const result = await runSpineSmoke(fixturePath);
 
-    for (const obs of loadFixture(FIXTURE)) {
-      // RBG hook: BREAK_MATCHER=1 forces all decisions to "pass"; no trace lines are emitted.
-      const decision: CueDecision =
-        process.env["BREAK_MATCHER"] === "1"
-          ? {
-              kind: "pass",
-              addressed: false,
-              reason: "ambient",
-              policy: "broken",
-              decisionId: "x",
-              correlationId: obs.utteranceId,
-              meta: {},
-            }
-          : match(obs);
+    expect(result.observations).toHaveLength(2);
+    expect(result.decisions.map((decision) => decision.kind)).toEqual(["pass", "action"]);
+    expect(result.traceEvents).toHaveLength(3);
 
-      tracer.process(obs, decision);
-    }
+    expect(result.traceEvents.map((event) => event.event)).toEqual(["observe.pass", "route.pass", "route.action"]);
 
-    // Core gate: exactly one trace line (the action decision on the wake-word line)
-    expect(emitted.length).toBe(1);
-
-    // Parse and verify full LogEvent shape (not just correlationId)
-    const parsed = JSON.parse(emitted[0]!) as LogEvent;
-
-    // Verify required LogEvent fields
-    expect(parsed.correlationId).toBeTruthy();
-    expect(parsed.correlationId).not.toBe("");
-    expect(parsed.event).toBe("emit.spine-action");
-    expect(parsed.level).toBe("info");
-    expect(parsed.sessionId).toBe("sess-smoke-001");
-    expect(parsed.meta).toBeDefined();
-    expect(typeof parsed.meta).toBe("object");
-
-    // Verify the action decision meta fields are present
-    expect(parsed.meta["utteranceId"]).toBe("utt-smoke-002");
-    expect(parsed.meta["actionType"]).toBe("spawn");
-    expect(parsed.meta["policy"]).toBe("TextCue/wake-word");
-    expect(parsed.meta["decisionId"]).toBeTruthy();
-    // Determinism: decisionId must be stable across replays (derived from utteranceId, not random)
-    expect(parsed.meta["decisionId"]).toBe("decision:utt-smoke-002");
+    const event = result.traceEvents[2];
+    expect(event).toMatchObject({
+      level: "info",
+      event: "route.action",
+      sessionId: "smoke-session",
+      correlationId: "corr-smoke-session-utt-002",
+      latencyMs: 47,
+      meta: {
+        action: "status",
+        observationId: "utt-002",
+        policy: "literal-wake",
+      },
+    });
+    expect(event.correlationId ?? "").not.toBe("");
+    expect(JSON.parse(JSON.stringify(event))).toEqual(event);
   });
 
-  it("record-replay determinism: same fixture produces identical trace output on repeated runs", () => {
-    function runOnce(): string[] {
-      const emitted: string[] = [];
-      const tracer = new TraceProcessor("sess-replay-det", (line) => emitted.push(line));
-      for (const obs of loadFixture(FIXTURE)) {
-        tracer.process(obs, match(obs));
-      }
-      return emitted;
+  test("matcher is deterministic across replayed runs", async () => {
+    const observations = await readTranscriptObservationJsonl(fixturePath);
+    const first = observations.map((observation) => matchWakeWord(observation));
+    const second = observations.map((observation) => matchWakeWord(observation));
+
+    expect(second).toEqual(first);
+  });
+
+  test("wake matcher is case-insensitive but whole-token only", () => {
+    const base = observation({ text: "PANOP can you hear this" });
+    expect(matchWakeWord(base).kind).toBe("action");
+    expect(matchWakeWord(observation({ text: "panoptic dashboards are unrelated" })).kind).toBe("pass");
+  });
+
+  test("non-final observations never produce actions but still produce pass trace events", () => {
+    const trace = new TraceProcessor();
+    const decision = matchWakeWord(observation({ text: "Panop while still partial", isFinal: false }));
+    const events = trace.emitDecision(decision, observation({ text: "Panop while still partial", isFinal: false }));
+
+    expect(decision).toMatchObject({ kind: "pass", reason: "dropped" });
+    expect(events.map((event) => event.event)).toEqual(["observe.pass", "route.pass"]);
+    expect(trace.events()).toHaveLength(2);
+  });
+
+  test("replay reader rejects invalid JSONL with line context", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "panopticon-smoke-"));
+    const path = join(dir, "bad.jsonl");
+    await writeFile(path, "{\"text\":\"missing fields\"}\n", "utf8");
+
+    try {
+      await expect(readTranscriptObservationJsonl(path)).rejects.toThrow("line 1");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("trace JSONL is structured LogEvent lines for pass and action decisions", async () => {
+    const result = await runSpineSmoke(fixturePath);
+    const trace = new TraceProcessor();
+    for (const [index, decision] of result.decisions.entries()) {
+      trace.emitDecision(decision, result.observations[index]);
     }
 
-    const run1 = runOnce();
-    const run2 = runOnce();
-    const run3 = runOnce();
-
-    // All runs must produce identical output; no random ids.
-    expect(run1).toEqual(run2);
-    expect(run2).toEqual(run3);
-    expect(run1.length).toBe(1);
+    const lines = trace.toJsonl().split("\n").filter(Boolean);
+    expect(lines).toHaveLength(3);
+    expect(JSON.parse(lines[0])).toEqual(result.traceEvents[0]);
+    expect(JSON.parse(lines[1])).toEqual(result.traceEvents[1]);
+    expect(JSON.parse(lines[2])).toEqual(result.traceEvents[2]);
   });
 });
+
+function observation(overrides: Partial<TranscriptObservation>): TranscriptObservation {
+  return {
+    text: "ambient room speech",
+    isFinal: true,
+    speaker: "speaker-1",
+    sessionId: "unit-session",
+    latencyMs: 1,
+    utteranceId: "unit-utt",
+    ...overrides,
+  };
+}

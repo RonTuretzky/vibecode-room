@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Build Decision — Hot-loop subscription probe conflict</title>
+<style>
+  :root { --ink:#e8edf2; --mut:#9aa8b5; --line:#283544; --good:#39d98a; --bad:#ff6b6b; --accent:#7cc7ff; --bg:#0b1117; --card:#111a24; }
+  * { box-sizing:border-box; }
+  body { font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; color:var(--ink); max-width:920px; margin:2.2rem auto; padding:0 1.2rem; background:var(--bg); }
+  h1 { font-size:1.55rem; margin:0 0 .2rem; }
+  h2 { font-size:1.12rem; margin:1.8rem 0 .5rem; border-bottom:2px solid var(--line); padding-bottom:.25rem; }
+  .meta { color:var(--mut); font-size:.86rem; margin-bottom:1.2rem; }
+  .pill { display:inline-block; padding:.08rem .5rem; border-radius:999px; font-size:.75rem; font-weight:600; background:#132f47; color:var(--accent); }
+  code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; color:#d8f3ff; }
+  pre { background:#05080c; color:#e6edf3; padding:.9rem 1.1rem; border-radius:8px; overflow:auto; font-size:.82rem; line-height:1.45; border:1px solid var(--line); }
+  .box { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:.9rem 1.1rem; margin:.7rem 0; }
+  .alt { border-left:4px solid var(--line); padding-left:.9rem; margin:.6rem 0; }
+  .alt.win { border-left-color:var(--good); } .alt.lose { border-left-color:var(--bad); }
+  .good { color:var(--good); font-weight:600; } .bad { color:var(--bad); font-weight:600; }
+</style>
+</head>
+<body>
+<h1>Hot-loop subscription probe conflict</h1>
+<div class="meta"><span class="pill">BUILD</span> &nbsp; probe-hot-loop-llm-subscription &nbsp;·&nbsp; 2026-06-15</div>
+
+<h2>Decision</h2>
+<div class="box">
+Report P-LLM/A-LLM-SUB as a red probe verdict and failed gate rows. The host Codex subscription route
+and the Claude CLI route both return schema-compatible answers through the host subscription transport,
+but the measured CLI round trip is far outside the 100 ms hot-loop decision budget. The live cost gate
+is also not proven because the host subscription CLIs expose no per-call metering to this probe.
+This is surfaced to the gate as the binding PRD §6 conflict requested by the ticket.
+</div>
+
+<h2>Facts From The Probe</h2>
+<pre>Codex CLI:
+reachable via host subscription
+MappedActionTool-compatible schema: yes
+named callsign status query classified ACT: yes
+latest invocation latency: above 100 ms budget
+
+Claude CLI:
+reachable via host subscription
+MappedActionTool-compatible schema: yes
+named callsign status query classified ACT: yes
+latest p50 latency: above 100 ms budget
+
+Record-replay:
+same-input decision identity repeated across separate CLI invocations: yes
+
+Cost:
+$0.15/hr gate: not measured by host subscription CLIs
+
+Transport framing:
+the conflict is host subscription CLI round trip vs 100 ms, not an added raw-key API path
+
+Secret scan:
+probe verdict, trace, and build bundle passed with zero findings</pre>
+
+<h2>Alternatives</h2>
+<div class="alt lose"><strong>Add a Cerebras base URL fallback.</strong>
+<span class="bad">Rejected.</span> The ticket explicitly forbids building around the subscription-route gate.</div>
+<div class="alt lose"><strong>Add a bespoke subscription credential provider or Haiku-specific path.</strong>
+<span class="bad">Rejected.</span> V0 E10 keeps only host CLI subscriptions and raw-key rejection.</div>
+<div class="alt win"><strong>Record the red verdict and block dependents.</strong>
+<span class="good">Chosen.</span> It preserves PRD §6 honesty and leaves the gate to resolve the product conflict.</div>
+
+<h2>Verification</h2>
+<pre>bun test poc/p-llm.test.ts
+PANOP_LLM_PROBE_ACCEPT_CONFLICT=1 bun test poc/p-llm.test.ts
+PANOP_LLM_PROBE_ROUTE_RAW_KEY=1 bun test poc/a-llm-sub.test.ts
+bun test poc/p-llm.test.ts poc/a-llm-sub.test.ts</pre>
+</body>
+</html>
