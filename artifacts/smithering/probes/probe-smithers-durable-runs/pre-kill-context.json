@@ -51,7 +51,7 @@
     {
       "runId": "probe-run-alpha",
       "frameNo": 2,
-      "createdAtMs": 1781634674732,
+      "createdAtMs": 1781636075597,
       "xmlJson": "{\"kind\":\"element\",\"tag\":\"smithers:workflow\",\"props\":{\"name\":\"durable\"},\"children\":[{\"kind\":\"element\",\"tag\":\"smithers:sequence\",\"props\":{},\"children\":[{\"kind\":\"element\",\"tag\":\"smithers:task\",\"props\":{\"id\":\"checkpoint\",\"waitAsync\":\"false\"},\"children\":[]},{\"kind\":\"element\",\"tag\":\"smithers:wait-for-event\",\"props\":{\"correlationId\":\"seed-alpha\",\"event\":\"steer\",\"id\":\"steer\",\"label\":\"signal:steer\",\"onTimeout\":\"fail\",\"waitAsync\":\"false\"},\"children\":[]}]}]}",
       "xmlHash": "762c8dad038a2c388850f0ea1e5e60b30fc3b6f077607d775735d5ce6f43c172",
       "encoding": "delta",
@@ -62,7 +62,7 @@
     {
       "runId": "probe-run-alpha",
       "frameNo": 1,
-      "createdAtMs": 1781634674571,
+      "createdAtMs": 1781636075585,
       "xmlJson": "{\"kind\":\"element\",\"tag\":\"smithers:workflow\",\"props\":{\"name\":\"durable\"},\"children\":[{\"kind\":\"element\",\"tag\":\"smithers:sequence\",\"props\":{},\"children\":[{\"kind\":\"element\",\"tag\":\"smithers:task\",\"props\":{\"id\":\"checkpoint\",\"waitAsync\":\"false\"},\"children\":[]},{\"kind\":\"element\",\"tag\":\"smithers:wait-for-event\",\"props\":{\"correlationId\":\"seed-alpha\",\"event\":\"steer\",\"id\":\"steer\",\"label\":\"signal:steer\",\"onTimeout\":\"fail\",\"waitAsync\":\"false\"},\"children\":[]}]}]}",
       "xmlHash": "762c8dad038a2c388850f0ea1e5e60b30fc3b6f077607d775735d5ce6f43c172",
       "encoding": "keyframe",
@@ -78,8 +78,8 @@
       "iteration": 0,
       "attempt": 1,
       "state": "finished",
-      "startedAtMs": 1781634674641,
-      "finishedAtMs": 1781634674675,
+      "startedAtMs": 1781636075589,
+      "finishedAtMs": 1781636075591,
       "heartbeatAtMs": null,
       "heartbeatDataJson": null,
       "errorJson": null,
@@ -95,7 +95,7 @@
       "iteration": 0,
       "attempt": 1,
       "state": "waiting-event",
-      "startedAtMs": 1781634674804,
+      "startedAtMs": 1781636075603,
       "finishedAtMs": null,
       "heartbeatAtMs": null,
       "heartbeatDataJson": null,
@@ -104,7 +104,7 @@
       "responseText": null,
       "jjCwd": null,
       "cached": false,
-      "metaJson": "{\"kind\":\"wait-for-event\",\"waitForEvent\":{\"signalName\":\"steer\",\"correlationId\":\"seed-alpha\",\"onTimeout\":\"fail\",\"timeoutMs\":null,\"waitAsync\":false,\"startedAtMs\":1781634674804,\"resolvedSignalSeq\":null,\"receivedAtMs\":null,\"timedOutAtMs\":null}}"
+      "metaJson": "{\"kind\":\"wait-for-event\",\"waitForEvent\":{\"signalName\":\"steer\",\"correlationId\":\"seed-alpha\",\"onTimeout\":\"fail\",\"timeoutMs\":null,\"waitAsync\":false,\"startedAtMs\":1781636075603,\"resolvedSignalSeq\":null,\"receivedAtMs\":null,\"timedOutAtMs\":null}}"
     }
   ]
 }

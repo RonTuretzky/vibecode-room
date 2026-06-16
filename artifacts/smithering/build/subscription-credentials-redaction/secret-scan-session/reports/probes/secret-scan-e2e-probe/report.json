@@ -3,8 +3,8 @@
   "status": "passed",
   "summary": "probe assertions were failable and passed",
   "correlationId": "secret-scan-e2e-probe",
-  "startedAt": "2026-06-16T18:31:24.356Z",
-  "finishedAt": "2026-06-16T18:31:24.373Z",
+  "startedAt": "2026-06-16T18:54:40.530Z",
+  "finishedAt": "2026-06-16T18:54:40.530Z",
   "assertions": [
     {
       "id": "redacted-probe-report",
