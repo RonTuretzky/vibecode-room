@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Panopticon — Canonical Voice Flow (storyboard)</title>
+<style>
+  :root{
+    --bg:#0b0e14; --panel:#121722; --ink:#e6edf3; --muted:#8b98a9;
+    --room:#2dd4bf; --cue:#a78bfa; --pass:#475569; --tts:#f59e0b; --earcon:#38bdf8;
+    --danger:#f87171; --ok:#34d399; --line:#1e2633;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:15px/1.55 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  header{padding:28px 24px 8px;max-width:880px;margin:0 auto}
+  h1{margin:0 0 4px;font-size:22px;letter-spacing:.2px}
+  .sub{color:var(--muted);font-size:13px}
+  .audio-note{margin:14px auto;max-width:880px;padding:10px 14px;background:#15202e;
+    border:1px solid var(--line);border-radius:10px;color:var(--muted);font-size:12.5px}
+  main{max-width:880px;margin:0 auto;padding:8px 24px 60px}
+  .legend{display:flex;gap:14px;flex-wrap:wrap;margin:10px 0 22px}
+  .chip{display:inline-flex;align-items:center;gap:7px;font-size:12px;color:var(--muted);
+    background:var(--panel);border:1px solid var(--line);padding:5px 10px;border-radius:999px}
+  .dot{width:9px;height:9px;border-radius:50%}
+  .stage{margin:26px 0 6px;font-size:11px;letter-spacing:.16em;text-transform:uppercase;
+    color:var(--muted);border-top:1px dashed var(--line);padding-top:14px}
+  .turn{display:grid;grid-template-columns:120px 1fr;gap:14px;margin:12px 0}
+  .who{font-size:12px;color:var(--muted);text-align:right;padding-top:9px}
+  .bubble{background:var(--panel);border:1px solid var(--line);border-left:4px solid var(--line);
+    border-radius:10px;padding:10px 14px}
+  .room .bubble{border-left-color:var(--room)}
+  .cue .bubble{border-left-color:var(--cue)}
+  .pass .bubble{border-left-color:var(--pass);opacity:.85}
+  .tts .bubble{border-left-color:var(--tts)}
+  .earcon .bubble{border-left-color:var(--earcon)}
+  .meta{display:block;margin-top:6px;font-size:11.5px;color:var(--muted)}
+  .badge{display:inline-block;font-size:10.5px;padding:2px 7px;border-radius:6px;
+    background:#0e1622;border:1px solid var(--line);color:var(--muted);margin-right:6px}
+  .earcon-mark{font-variant:all-small-caps;letter-spacing:.06em;color:var(--earcon)}
+  .latency{color:var(--ok)}
+  .danger{color:var(--danger)}
+  code{background:#0e1622;padding:1px 5px;border-radius:5px;font-size:12.5px;color:#cbd5e1}
+  footer{max-width:880px;margin:0 auto;padding:0 24px 50px;color:var(--muted);font-size:12px}
+</style>
+</head>
+<body>
+<header>
+  <h1>Panopticon — Canonical Voice Flow</h1>
+  <div class="sub">Audio-only storyboard · mock data · the spine: <code>wake/magic word → spoken intent → agent action → spoken confirmation</code></div>
+</header>
+
+<div class="audio-note">
+  🔊 <strong>There is no screen on the critical path.</strong> This page only <em>depicts</em> sound so you can see how the flow works.
+  In the real product everything below is heard, not read: <span class="earcon-mark">earcons</span> for state &amp; acks, terse TTS for substantive output.
+</div>
+
+<main>
+  <div class="legend">
+    <span class="chip"><span class="dot" style="background:var(--room)"></span> Room speech (ambient)</span>
+    <span class="chip"><span class="dot" style="background:var(--cue)"></span> Cue decision</span>
+    <span class="chip"><span class="dot" style="background:var(--pass)"></span> observe.pass (silent)</span>
+    <span class="chip"><span class="dot" style="background:var(--earcon)"></span> Earcon</span>
+    <span class="chip"><span class="dot" style="background:var(--tts)"></span> Spoken (TTS)</span>
+  </div>
+
+  <!-- 0. consent -->
+  <div class="stage">0 · Session start — consent & listening (REQ-1)</div>
+  <div class="turn tts"><div class="who">Panopticon</div><div class="bubble">
+    “Panopticon is listening. Say <strong>‘mute’</strong> (or press the on-screen mute button) to stop feeding audio to the pipeline. Only transcripts are saved.”
+    <span class="meta"><span class="badge">consent</span> spoken once at start · listening indicator now active</span>
+  </div></div>
+
+  <!-- 1. ambient + pass -->
+  <div class="stage">1 · Ambient listening — most talk is passed (REQ-3)</div>
+  <div class="turn room"><div class="who">Sam</div><div class="bubble">“…did you see the standup notes, the deploy went out fine this morning.”</div></div>
+  <div class="turn pass"><div class="who">Cue</div><div class="bubble">
+    <span class="badge">observe.pass</span> not buildable · gate floor not met
+    <span class="meta">words since last fire: 18 / 60 · elapsed: 22s / 90s · decision recorded silently</span>
+  </div></div>
+  <div class="turn room"><div class="who">Ava</div><div class="bubble">“Honestly we keep losing track of which agents are still running — it’d be cool if something just <em>told</em> us when one finishes.”</div></div>
+  <div class="turn cue"><div class="who">Cue</div><div class="bubble">
+    <span class="badge">buildable intent ✓</span> confidence 0.82 · gate met (64 words / 96s) · queued, waiting for an idle gap
+    <span class="meta">prefers room-idle over interrupting mid-conversation</span>
+  </div></div>
+
+  <!-- 2. suggestion -->
+  <div class="stage">2 · Spoken suggestion on idle — pitch + ≤3 MCQs (REQ-3)</div>
+  <div class="turn earcon"><div class="who">Panopticon</div><div class="bubble"><span class="earcon-mark">▶ ding</span> (suggestion incoming)</div></div>
+  <div class="turn tts"><div class="who">Panopticon</div><div class="bubble">
+    “I could build an agent-status announcer that speaks when a run finishes. Want it to:
+    <strong>(A)</strong> announce every finish, <strong>(B)</strong> only blockers, or <strong>(C)</strong> a quiet end-of-hour summary?”
+    <span class="meta"><span class="badge">1 / 3 min budget</span> one-line pitch + 3 spoken MCQs · answerable aloud</span>
+  </div></div>
+
+  <!-- 3. accept + spawn -->
+  <div class="stage">3 · Voice accept → durable process spawns (REQ-4)</div>
+  <div class="turn room"><div class="who">Ava</div><div class="bubble">“Yeah, do it — option B, just blockers. Accept.”</div></div>
+  <div class="turn earcon"><div class="who">Panopticon</div><div class="bubble"><span class="earcon-mark">▶ rising chime</span> (spawn ack) <span class="meta latency">earcon @ 240ms</span></div></div>
+  <div class="turn tts"><div class="who">Panopticon</div><div class="bubble">
+    “Spawned <strong>Atlas</strong>. Planning the blocker announcer now.”
+    <span class="meta"><span class="badge">≤15 words</span> callsign named · auto-selected · seeded with pitch + MCQ:B · confirmed in 2.1s</span>
+  </div></div>
+
+  <!-- 4. select + steer -->
+  <div class="stage">4 · Magic-word select → steer (REQ-6 / REQ-7 / REQ-8)</div>
+  <div class="turn room"><div class="who">Sam</div><div class="bubble">“Wait — the database migration thing is unrelated, ignore that.”</div></div>
+  <div class="turn pass"><div class="who">Cue</div><div class="bubble">
+    <span class="badge">no magic word</span> cannot steer — routed to suggestion channel only (C3 enforced at dispatch)
+    <span class="meta">un-addressed speech can never steer an existing process</span>
+  </div></div>
+  <div class="turn room"><div class="who">Ava</div><div class="bubble">“<strong>Atlas</strong>, also include the run’s name when you announce a blocker.”</div></div>
+  <div class="turn earcon"><div class="who">Panopticon</div><div class="bubble"><span class="earcon-mark">▶ tick-tick</span> (now steering Atlas) <span class="meta">steering window open · closes on ~20s idle / “done” / stop word</span></div></div>
+  <div class="turn cue"><div class="who">Cue → Atlas</div><div class="bubble">
+    <span class="badge">route: steer:Atlas</span> instruction delivered to selected process only · Bravo unaffected
+  </div></div>
+
+  <!-- 5. run-to-completion (no per-action approval gate) -->
+  <div class="stage">5 · Run to completion — V0 runs dangerously, no per-action approval gate (REQ-11)</div>
+  <div class="turn earcon"><div class="who">Atlas</div><div class="bubble">
+    <span class="earcon-mark">▶ soft click</span> (overwrote <code>announcer.config</code>, applied once)
+    <span class="meta"><span class="badge">run-to-completion</span> no spoken read-back / dead-man timer — V0 runs dangerously; minimize approvals. Where a confirm is genuinely needed, the voice library (Cue) handles it. Safety later = sandbox the whole process, not per-action gating.</span>
+  </div></div>
+
+  <!-- 6. spoken result -->
+  <div class="stage">6 · Spoken result — rationed output (REQ-9 / G5′)</div>
+  <div class="turn tts"><div class="who">Atlas</div><div class="bubble">
+    “Done — blocker announcer is live, names the run. Built 3 files.”
+    <span class="meta"><span class="badge">~90% ticks silent</span> file names/diffs shown on the optional board, never read aloud</span>
+  </div></div>
+
+  <!-- 7. concurrent fleet -->
+  <div class="stage">7 · Second process, operated independently (REQ-13)</div>
+  <div class="turn room"><div class="who">Sam</div><div class="bubble">“<strong>Bravo</strong>, pause.”</div></div>
+  <div class="turn earcon"><div class="who">Panopticon</div><div class="bubble"><span class="earcon-mark">▶ low tone</span> (Bravo paused) <span class="meta">Atlas keeps running — unselected ≠ paused</span></div></div>
+
+  <!-- 8. stop word -->
+  <div class="stage">8 · Panic / stop word always wins (REQ-12 / REQ-2)</div>
+  <div class="turn room"><div class="who">Ava</div><div class="bubble">“<strong>Atlas, stop.</strong>”</div></div>
+  <div class="turn earcon"><div class="who">Panopticon</div><div class="bubble"><span class="earcon-mark">▶ double buzz</span> (Atlas halted) <span class="meta latency">halt @ 0.7s</span> · siblings unaffected</div></div>
+  <div class="turn room"><div class="who">Sam</div><div class="bubble">“Mute.”</div></div>
+  <div class="turn earcon"><div class="who">Panopticon</div><div class="bubble"><span class="earcon-mark">▶ descending tone</span> (muted — audio no longer fed to the pipeline ≤500ms) <span class="meta">mute pre-empts every other cue · the voice library keeps listening for “unmute”; to resume, say <strong>“unmute”</strong> or press the on-screen unmute button</span></div></div>
+</main>
+
+<footer>
+  Mock data for illustration only. Maps to <code>docs/planning/01-prd.md</code> REQ-1…REQ-14.
+  Non-voice emergency stop (REQ-14) and the read-only board (REQ-16) are off the critical path — see <code>observability-board.html</code>.
+</footer>
+</body>
+</html>

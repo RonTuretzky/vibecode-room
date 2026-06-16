@@ -1,0 +1,92 @@
+[
+  {
+    "criterionId": "AC12.2",
+    "method": "unit_test",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/routing-dispatch-invariants/evidence/AC12.2-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/routing-dispatch-invariants/evidence/AC12.2-green.log"
+  },
+  {
+    "criterionId": "AC6.1",
+    "method": "unit_test",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/routing-dispatch-invariants/evidence/AC6.1-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/routing-dispatch-invariants/evidence/AC6.1-green.log"
+  },
+  {
+    "criterionId": "AC6.5",
+    "method": "unit_test",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/routing-dispatch-invariants/evidence/AC6.5-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/routing-dispatch-invariants/evidence/AC6.5-green.log"
+  },
+  {
+    "criterionId": "AC7.4-yes-gating",
+    "method": "unit_test",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/routing-dispatch-invariants/evidence/AC7.4-yes-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/routing-dispatch-invariants/evidence/AC7.4-yes-green.log"
+  },
+  {
+    "criterionId": "AC7.3",
+    "method": "unit_test",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/routing-dispatch-invariants/evidence/AC7.3-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/routing-dispatch-invariants/evidence/AC7.3-green.log"
+  },
+  {
+    "criterionId": "AC7.1",
+    "method": "unit_test",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/routing-dispatch-invariants/evidence/AC7.1-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/routing-dispatch-invariants/evidence/AC7.1-green.log"
+  },
+  {
+    "criterionId": "AC7.4-nl-out-of-scope",
+    "method": "unit_test",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/routing-dispatch-invariants/evidence/AC7.4-nl-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/routing-dispatch-invariants/evidence/AC7.4-nl-green.log"
+  },
+  {
+    "criterionId": "AC6.4",
+    "method": "unit_test",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/routing-dispatch-invariants/evidence/AC6.4-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/routing-dispatch-invariants/evidence/AC6.4-green.log"
+  },
+  {
+    "criterionId": "AC8.3",
+    "method": "unit_test",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/routing-dispatch-invariants/evidence/AC8.3-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/routing-dispatch-invariants/evidence/AC8.3-green.log"
+  },
+  {
+    "criterionId": "routing-e2e",
+    "method": "e2e_test",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/routing-dispatch-invariants/evidence/routing-e2e-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/routing-dispatch-invariants/evidence/routing-e2e-green.log"
+  }
+]

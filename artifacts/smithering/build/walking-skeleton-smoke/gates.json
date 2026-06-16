@@ -1,0 +1,20 @@
+[
+  {
+    "criterionId": "smoke-spine",
+    "method": "smoke_test",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/walking-skeleton-smoke/evidence/smoke-spine-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/walking-skeleton-smoke/evidence/smoke-spine-green.log"
+  },
+  {
+    "criterionId": "ci-test-typecheck",
+    "method": "command",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/walking-skeleton-smoke/evidence/ci-typecheck-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/walking-skeleton-smoke/evidence/ci-test-typecheck-green.log"
+  }
+]

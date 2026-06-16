@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Decision ENG-A-03 — The Cue↔Smithers seam is one owned async module</title>
+<style>
+  :root { --ink:#1a1a1a; --mut:#666; --line:#e2e2e2; --good:#0a7d33; --bad:#b00020; --accent:#0b5cad; --bg:#fafafa; }
+  * { box-sizing:border-box; }
+  body { font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; color:var(--ink); max-width:920px; margin:2.2rem auto; padding:0 1.2rem; background:var(--bg); }
+  h1 { font-size:1.55rem; margin:0 0 .2rem; }
+  h2 { font-size:1.12rem; margin:1.8rem 0 .5rem; border-bottom:2px solid var(--line); padding-bottom:.25rem; }
+  .meta { color:var(--mut); font-size:.86rem; margin-bottom:1.2rem; }
+  .pill { display:inline-block; padding:.08rem .5rem; border-radius:999px; font-size:.75rem; font-weight:600; background:#e7f1fb; color:var(--accent); }
+  table { border-collapse:collapse; width:100%; margin:.6rem 0; font-size:.92rem; }
+  th,td { border:1px solid var(--line); padding:.45rem .6rem; text-align:left; vertical-align:top; }
+  th { background:#f0f0f0; }
+  code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  pre { background:#0f1115; color:#e6e6e6; padding:.9rem 1.1rem; border-radius:8px; overflow:auto; font-size:.82rem; line-height:1.45; }
+  .good { color:var(--good); font-weight:600; } .bad { color:var(--bad); font-weight:600; }
+  .box { background:#fff; border:1px solid var(--line); border-radius:8px; padding:.9rem 1.1rem; margin:.7rem 0; }
+  .alt { border-left:4px solid var(--line); padding-left:.9rem; margin:.6rem 0; }
+  .alt.win { border-left-color:var(--good); } .alt.lose { border-left-color:var(--bad); }
+  .warn { background:#fff7e6; border:1px solid #ffd591; border-radius:8px; padding:.7rem 1rem; }
+</style>
+</head>
+<body>
+<h1>The Cue↔Smithers seam: <span style="color:#0b5cad">one owned, async, bidirectional module</span></h1>
+<div class="meta"><span class="pill">ENG-A-03</span> &nbsp; Panopticon V0 engineering &nbsp;·&nbsp; the novel integration / top risk &nbsp;·&nbsp; <code>docs/planning/03-eng.md §8</code></div>
+
+<h2>The problem</h2>
+<p>Cue (ambient observation + routing) and Smithers (durable process management) are two independent
+stateful systems. <strong>No prior art integrates exactly these two</strong> (PRD §9, eng-oss §6.2) —
+it is the top integration risk. Done carelessly, the seam leaks: Cue grows knowledge of Smithers run
+internals, Smithers grows knowledge of cue policies, the spawn call blocks the Cue loop and blows the
+3 s budget, and the novel risk is smeared across the codebase with no single place to test it.</p>
+
+<h2>Decision <span style="color:var(--good);font-size:.8rem">— CONFIRMED</span></h2>
+<div class="box">
+<strong>Confirmed.</strong> The seam is <strong>exactly one module</strong> (<code>src/seam/</code>), and
+it is <strong>asynchronous and bidirectional</strong>. <strong>Cue and Smithers do not know about each
+other — they are two completely separate things.</strong> Framed sharply:
+<strong>Cue is essentially I/O into the event loop; Smithers just runs background jobs.</strong> The
+single decoupled seam module is the only code that speaks both schemas (the Temporal lesson — the
+adapter owns the translation, eng-oss §3.3).
+</div>
+<pre>actions OUT (Cue → Smithers):
+  Cue MappedActionTool {type,target,payload}
+    → ActionDispatcher (Hono, async — returns immediately)
+    → SmithersClient.spawn/steer/pause/signal      // isomorphic to Temporal signal/startChild
+
+run-events BACK (Smithers → Cue):
+  Smithers streamRunEvents (SSE)
+    → RunEventNormalizer  → ≤15-word summary (before TTS)
+    → cue.send_observation  → drives voice-out coherence</pre>
+
+<h2>Why these properties</h2>
+<table>
+<tr><th>Property</th><th>Why it is load-bearing</th></tr>
+<tr><td><strong>One module</strong></td><td>The novel risk gets one home to probe (P-SEAM), trace, and test — not N scattered call sites.</td></tr>
+<tr><td><strong>Async dispatch</strong></td><td>Spawn must complete <strong>without blocking the Cue loop</strong> (AC4.3 ≤3 s); required by the three-plane model (ENG-A-01).</td></tr>
+<tr><td><strong>Bidirectional</strong></td><td>Voice-out coherence needs durable-state run-events flowing <em>back</em> into Cue as observations — not just fire-and-forget actions.</td></tr>
+<tr><td><strong>Neither side knows the other</strong></td><td>Keeps Cue swappable (D2 adapter posture) and Smithers swappable (Temporal is the documented fallback).</td></tr>
+</table>
+
+<h2>Isomorphism that de-risks it (eng-oss §3.3/§3.4)</h2>
+<p>Temporal's <code>signal</code>/<code>startChild</code> map directly onto Smithers'
+<code>steer/signal</code>/fork. <code>{type:"steer",upid:"atlas",payload}</code> →
+<code>client.signal(upid,"steer",payload)</code> — exactly a Temporal client call. Fork may require a
+<strong>fresh seeded run + <code>parentId</code> lineage</strong> rather than a native fork; P-SMITHERS
+determines which.</p>
+
+<h2>Alternatives</h2>
+<div class="alt lose"><strong>Inline the seam at each call site.</strong> <span class="bad">Rejected:</span>
+the top risk would have no single test home; schema drift would surface everywhere.</div>
+<div class="alt lose"><strong>Synchronous spawn.</strong> <span class="bad">Rejected:</span> blocks the
+Cue loop and violates the 3 s budget + the Hot plane guarantee.</div>
+<div class="alt lose"><strong>Fire-and-forget (actions only, no run-events back).</strong>
+<span class="bad">Rejected:</span> voice-out would have nothing coherent to say about a running process.</div>
+<div class="alt win"><strong>One owned async bidirectional module (chosen).</strong>
+<span class="good">Chosen.</span></div>
+
+<h2>Verification</h2>
+<ul>
+<li><strong>Unit:</strong> action-schema-match (dispatched action == real <code>MappedActionTool</code>
+shape; <span class="bad">RBG:</span> rename a field → fails); async-dispatch (mocked slow Smithers
+doesn't block the decision plane); SSE-reconnect (drop+restore → no duplicate observations);
+UPID↔window correlation survives a simulated Cue restart.</li>
+<li><strong>E2e:</strong> full spine drives a real durable run, spawn→confirm ≤3 s;
+durability-recovery (kill backend mid-run → resume from checkpoint, REQ-15); fleet-isolation (steer A
+→ B byte-identical, REQ-8/13).</li>
+<li><strong>Third-party:</strong> P-SMITHERS + P-SEAM (both P0).</li>
+</ul>
+
+<div class="warn"><strong>Top risk:</strong> P-SEAM has no prior art to validate against — the probe
+must exercise the full round-trip against <em>real</em> instances of both systems before any seam code
+is trusted.</div>
+</body>
+</html>

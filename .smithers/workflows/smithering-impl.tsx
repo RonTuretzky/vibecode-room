@@ -1,0 +1,1841 @@
+// smithers-source: generated (smithering step 9 — the bespoke implementation workflow).
+// smithers-metadata-version: 1
+// smithers-display-name: Smithering — Implementation
+// smithers-description: Walks the tickets.json DAG with continuous per-ticket landing; each ticket is a fresh-context worker in its own git worktree (implement → cross-family review → independent test-authority verify), lands through a depth-1 serialized merge lane onto an integration branch (NEVER main), and persists a red-before-green evidence bundle per ticket. Implements docs/planning/06-orchestration.md.
+// smithers-tags: coding, implementation, worktrees, dag, validation, orchestration
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// HOW THIS FILE IMPLEMENTS docs/planning/06-orchestration.md (each DECISION → code):
+//
+//   §1 worktreeLayout    one <Worktree> per ticket at .smithers/wt/<id> on branch
+//                        build/<id>, based off the INTEGRATION branch (see merge note).
+//                        Worktree ids/branches derive from the stable kebab ticket id —
+//                        never an index/timestamp — so a killed run resumes onto the same
+//                        worktree (REQ-15 durability ethic, applied to the build).
+//   §2 mergePolicy       depth-1 SERIALIZED merge lane: every ready ticket lands through one
+//                        global <MergeQueue maxConcurrency={1}> as soon as that ticket's own
+//                        verifier/challenge is green and all of its dependsOn tickets are
+//                        already on integration. There is NO per-wave land barrier: a blocked
+//                        sibling only blocks its own transitive dependents. landTicketBranch
+//                        re-runs the pre-merge gate on the rebased tip, fast-forwards on green,
+//                        and BOUNCES (records, does not force-land) on conflict/red. There is
+//                        NO optimistic merge / auto-eviction (ORCH-A-02).
+//   §3 testTiers         pre-build probe gate (probe tickets land first, write only poc/+probes/),
+//                        deterministic hermetic PRE-MERGE subset enforced by the verifier
+//                        after rebasing onto integration + by the land gate, and the full
+//                        real-world suite is POSTSUBMIT on the integration branch. RBG
+//                        (red-before-green) recordings are mandatory.
+//   §4 modelAssignment   FIXED roles (brief O4): implement = OpenAI/Codex `gpt-5.5` ALWAYS
+//                        (never Opus); review = BOTH the cross-family Anthropic Opus 4.8 check
+//                        AND a same-family Codex review (reviewer.family ≠ implementer.family is
+//                        a STRUCTURAL invariant asserted at module load — the Opus reviewer is
+//                        the cross-family check now that the implementer is OpenAI); verify = an
+//                        INDEPENDENT fresh-context Sonnet 4.6 instance whose authority is the
+//                        test result, not its opinion. Planning is Opus 4.8 (in the parent
+//                        smithering.tsx). Safety tickets additionally get an adversarial Codex
+//                        `challenge`. TODO: we should use Fable (Fable 5, claude-fable-5).
+//   §5 concurrency       max ticket workers follow the DAG's ready antichain; probe-only
+//                        ready sets burst to 8; merge lane depth 1.
+//   §6 observability      every ticket persists artifacts/smithering/build/<id>/ (RESULT.md,
+//                        gates.json, evidence/ RBG runs, tests.log, tsc.log, advisory
+//                        review.json, authoritative verify.json, trace/*.jsonl,
+//                        secret-scan.json). The orchestrator emits
+//                        verb-noun build.* / merge.lane.* events to artifacts/smithering/build/
+//                        _trace.jsonl with fail-closed secret redaction. Judgment calls get a
+//                        self-contained HTML decision log under artifacts/smithering/decisions/.
+//   §7 contextManagement  EVERY worker gets fresh context (no fork) and reads inputs from disk:
+//                        the prompt carries the ticket object verbatim + doc paths to READ +
+//                        the landed-dep RESULT.md list + the exact gate/RBG obligations + its
+//                        model-role contract. A worker whose dep's blocking probe is unrun/red
+//                        STOPS and surfaces a blocker — it never builds on an unproven API and
+//                        never raises a human request (the orchestrator's gates do that).
+//
+// THE HARD CONTRACT (overrides the literal "main" wording in 06-orchestration §1/§2):
+//   This workflow NEVER merges to the base branch. All work lands on the integration branch
+//   (default `smithering/integration`); merging integration → main is a HUMAN act after
+//   delivery. The integration branch IS the build's trunk, so worktrees base off it.
+//
+// SMOKE MODE (input.smoke=true): processes ONLY the first ticket (the dependsOn:[] root,
+//   `walking-skeleton-smoke`) end-to-end INCLUDING its verification, with NO approval gates,
+//   and reaches terminal status `finished`. This is what the parent smithering workflow runs
+//   before the expensive full launch.
+//
+// Run (the operating agent does this; the human just asks for the outcome):
+//   bunx smithers-orchestrator up .smithers/workflows/smithering-impl.tsx --input '{"smoke":true}'
+//   bunx smithers-orchestrator up .smithers/workflows/smithering-impl.tsx --input '{"smoke":false}' --detach
+// ─────────────────────────────────────────────────────────────────────────────
+/** @jsxImportSource smithers-orchestrator */
+import { $ } from "bun";
+import { execFileSync } from "node:child_process";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import {
+  ClaudeCodeAgent,
+  CodexAgent,
+  MergeQueue,
+  createSmithers,
+  defineTool,
+} from "smithers-orchestrator";
+import { z } from "zod/v4";
+// Pure orchestration logic lives in src/orchestration/core.ts so it is tested like code
+// (06-orchestration §8). The workflow imports the SAME functions the unit tests exercise —
+// a green src/orchestration/*.test.ts is real evidence for the shipped scheduler/gate.
+import {
+  ANTHROPIC,
+  OPENAI,
+  REQUIRED_BUNDLE_FILES,
+  type BuildConfig,
+  type Ticket,
+  blockingProbeClosure,
+  computeWaves,
+  evaluateEvidenceBundle,
+  isProbeTicket,
+  isProbeVerdictGreen,
+  parseTickets,
+  redact,
+  resolveBuildConfig,
+  scanForSecrets,
+} from "../../src/orchestration/core.ts";
+
+// ─── Paths (mirrored with the parent smithering workflow — change both together) ──
+const TICKETS_PATH = "artifacts/smithering/tickets.json";
+const BUILD_DIR = "artifacts/smithering/build";
+const DECISIONS_DIR = "artifacts/smithering/decisions";
+const PROBES_DIR = "artifacts/smithering/probes";
+const TRACE_FILE = `${BUILD_DIR}/_trace.jsonl`;
+const PLANNING = "docs/planning";
+
+// Tickets the eng/backpressure docs or id patterns flag as safety/security-critical get an
+// adversarial Codex `challenge` against the read-safe allowlist (06-orchestration §4).
+const SAFETY_TICKET_IDS = new Set([
+  "safety-execution-boundary-hook",
+  "shell-command-classifier",
+]);
+
+const TICKET_REQUIRED_CREDENTIALS: Record<string, string[]> = {
+  "probe-asr-deepgram": ["DEEPGRAM_API_KEY"],
+};
+
+function ticketRequiresChallenge(ticketOrId: Pick<Ticket, "id"> | string): boolean {
+  const id = typeof ticketOrId === "string" ? ticketOrId : ticketOrId.id;
+  const lower = id.toLowerCase();
+  return SAFETY_TICKET_IDS.has(id) || lower.includes("credentials") || lower.includes("safety");
+}
+
+function requiredCredentialsFor(ticketOrId: Pick<Ticket, "id"> | string): string[] {
+  const id = typeof ticketOrId === "string" ? ticketOrId : ticketOrId.id;
+  return TICKET_REQUIRED_CREDENTIALS[id] ?? [];
+}
+
+function missingCredentialsFor(ticketOrId: Pick<Ticket, "id"> | string): string[] {
+  return requiredCredentialsFor(ticketOrId).filter((key) => !process.env[key]?.trim());
+}
+
+function needsCredentialReason(keys: string[]): string {
+  return `needs-credential:${keys.join(",")}`;
+}
+
+// ─── Model roster (families are the whole point of §4 — keep them honestly distinct) ──
+// ANTHROPIC / OPENAI family tags are imported from src/orchestration/core.ts.
+// TODO: we should use Fable (Fable 5, claude-fable-5).
+const OPUS_MODEL = "claude-opus-4-8";
+const SONNET_MODEL = "claude-sonnet-4-6";
+// codex-1 is a ChatGPT account that rejects "gpt-5.3-codex"; use the supported "gpt-5.5"
+// (per .smithers/agents.ts). The Codex CLI family is distinct from Claude/Anthropic.
+const CODEX_MODEL = "gpt-5.5";
+
+const HOUR = 60 * 60_000;
+
+// Implementer (OpenAI / Codex `gpt-5.5`) — ALWAYS Codex, never Opus (brief O4). cwd is repo
+// root; inside a <Worktree> the descendant cwd is overridden to the worktree path, so each
+// worker edits ONLY its own working copy. yolo/workspace-write so it can build + commit.
+const codexImpl = new CodexAgent({
+  model: CODEX_MODEL,
+  config: { model_reasoning_effort: "high" },
+  sandbox: "workspace-write",
+  yolo: true,
+  skipGitRepoCheck: true,
+  timeoutMs: 2 * HOUR,
+});
+
+// Verifier (Anthropic / Sonnet 4.6) — ALWAYS Sonnet (brief O4). A DISTINCT agent instance
+// from the implementer so the verifier is a different run/context (verifier-independence,
+// §4). Authority = the test result, not its opinion.
+const sonnetVerify = new ClaudeCodeAgent({ model: SONNET_MODEL, timeoutMs: HOUR });
+
+// Reviewer A (Anthropic / Opus 4.8) — the CROSS-FAMILY check against the OpenAI/Codex
+// implementer. workspace-write so it can persist advisory review.json feedback into the
+// machine-checked evidence bundle. The prompt forbids editing implementation code — it
+// only writes its verdict.
+const opusReview = new ClaudeCodeAgent({ model: OPUS_MODEL, timeoutMs: 30 * 60_000 });
+
+// Reviewer B (OpenAI / Codex `gpt-5.5`) — the SAME-FAMILY second reviewer (review uses BOTH
+// Codex and Opus, brief O4). workspace-write so it can persist its own review verdict file.
+const codexReview = new CodexAgent({
+  model: CODEX_MODEL,
+  config: { model_reasoning_effort: "high" },
+  sandbox: "workspace-write",
+  yolo: false,
+  skipGitRepoCheck: true,
+  timeoutMs: 30 * 60_000,
+});
+// Adversarial red-team for safety tickets (Codex `challenge` posture). workspace-write so it
+// can persist its own challenge verdict file into the evidence bundle (forbidden to edit code).
+const codexChallenge = new CodexAgent({
+  model: CODEX_MODEL,
+  config: { model_reasoning_effort: "xhigh" },
+  sandbox: "workspace-write",
+  yolo: false,
+  skipGitRepoCheck: true,
+  timeoutMs: 30 * 60_000,
+});
+
+// Family tags travel WITH the agent so the cross-family invariant is checkable, not implied.
+const FAMILY = new WeakMap<object, string>([
+  [codexImpl, OPENAI],
+  [sonnetVerify, ANTHROPIC],
+  [opusReview, ANTHROPIC],
+  [codexReview, OPENAI],
+  [codexChallenge, OPENAI],
+]);
+
+// ─── §4 model assignment — FIXED roles (brief O4), no longer complexity-routed ────────────
+//   Implement = Codex gpt-5.5 (OpenAI), ALWAYS — never Opus.
+//   Verify    = Sonnet 4.6 (claude-sonnet-4-6), ALWAYS — independent Anthropic.
+//   Review    = BOTH Opus 4.8 (the cross-family Anthropic check) AND Codex gpt-5.5.
+//   Plan      = Opus 4.8 (lives in the parent smithering.tsx, not this impl workflow).
+//   TODO: we should use Fable (Fable 5, claude-fable-5).
+// `reviewer` is the CROSS-FAMILY reviewer (Opus/Anthropic) — the one assertCrossFamily()
+// checks against the OpenAI/Codex implementer. `codexReviewer` is the same-family second
+// reviewer; both run and both persist a verdict into the evidence bundle.
+type Assignment = {
+  implementer: CodexAgent;
+  reviewer: ClaudeCodeAgent; // cross-family Opus check
+  codexReviewer: CodexAgent; // same-family Codex second opinion
+  verifier: ClaudeCodeAgent;
+  challenge: CodexAgent | null;
+  implementerLabel: string;
+  reviewerLabel: string;
+  verifierLabel: string;
+  maxIterations: number;
+};
+
+function assignmentFor(ticket: any): Assignment {
+  const safety = ticketRequiresChallenge(ticket.id);
+  // Roles are fixed regardless of complexity now (brief O4). Safety-critical tickets ALSO get
+  // the adversarial Codex `challenge` and a higher iteration budget.
+  return {
+    implementer: codexImpl,
+    reviewer: opusReview,
+    codexReviewer: codexReview,
+    verifier: sonnetVerify,
+    challenge: safety ? codexChallenge : null,
+    implementerLabel: `Codex gpt-5.5 (${CODEX_MODEL})`,
+    reviewerLabel: safety
+      ? `Opus 4.8 cross-family review (${OPUS_MODEL}) + Codex review + adversarial challenge (${CODEX_MODEL})`
+      : `Opus 4.8 cross-family review (${OPUS_MODEL}) + Codex review (${CODEX_MODEL})`,
+    verifierLabel: `independent Sonnet 4.6 (${SONNET_MODEL})`,
+    maxIterations: safety ? 7 : 6,
+  };
+}
+
+// Module-load assertion: the reviewing family must never equal the implementing family.
+// `reviewer` is the cross-family check (Opus/Anthropic vs. the OpenAI/Codex implementer); a
+// regression here (e.g. someone points the cross-family review back at OpenAI) fails fast.
+function assertCrossFamily(): void {
+  for (const ticket of ALL_TICKETS) {
+    const a = assignmentFor(ticket);
+    const implFamily = FAMILY.get(a.implementer);
+    const revFamily = FAMILY.get(a.reviewer);
+    if (!implFamily || !revFamily) {
+      throw new Error(`smithering-impl: untagged agent family for ticket ${ticket.id}`);
+    }
+    if (implFamily === revFamily) {
+      throw new Error(
+        `smithering-impl: cross-family invariant violated for ${ticket.id} — implementer family ${implFamily} === reviewer family ${revFamily}`,
+      );
+    }
+  }
+}
+
+// ─── Ticket loading + DAG → topological waves (computed once at module load) ──
+// Ticket type, normalizeTicket, parseTickets, isProbeTicket, computeWaves all live in
+// src/orchestration/core.ts (pure + unit-tested). loadTickets is the only disk-touching wrapper.
+function loadTickets(): Ticket[] {
+  try {
+    const raw = JSON.parse(readFileSync(resolve(process.cwd(), TICKETS_PATH), "utf8"));
+    return parseTickets(raw);
+  } catch {
+    return [];
+  }
+}
+
+const ALL_TICKETS = loadTickets();
+const TICKET_BY_ID = new Map(ALL_TICKETS.map((t) => [t.id, t]));
+
+// The first ticket = the unique dependsOn:[] root the smoke slice exercises end-to-end.
+function firstTicket(): Ticket | null {
+  return ALL_TICKETS.find((t) => t.dependsOn.length === 0) ?? ALL_TICKETS[0] ?? null;
+}
+
+// Wave type + computeWaves live in src/orchestration/core.ts (pure + unit-tested).
+type Wave = { index: number; tickets: Ticket[] };
+
+const ALL_WAVES: Wave[] = ALL_TICKETS.length > 0 ? computeWaves(ALL_TICKETS) : [];
+assertCrossFamily();
+
+// ─── Observability: fail-closed secret redaction + verb-noun structured trace ──
+// redact()/scanForSecrets() (the SEC-1 key patterns) are imported from core and unit-tested.
+function logEvent(event: string, fields: Record<string, unknown> = {}): void {
+  const line = redact(JSON.stringify({ event, ...fields }));
+  try {
+    mkdirSync(resolve(process.cwd(), BUILD_DIR), { recursive: true });
+    appendFileSync(resolve(process.cwd(), TRACE_FILE), `${line}\n`);
+  } catch (err) {
+    // The build-level trace stream must never crash the build, but a failure to persist it
+    // is itself surfaced (never silently swallowed) — the authoritative per-ticket evidence
+    // bundle is the fail-closed record the land gate enforces.
+    console.error(`logEvent: failed to persist trace line (${(err as Error)?.message ?? err}): ${line}`);
+  }
+  console.log(line);
+}
+
+// ─── §1/§2 the deterministic, idempotent land operation (merge authority is CODE) ──
+// NEVER merges to the base/main branch. Idempotent: a branch already in the integration
+// ancestry is a no-op. On red gate or conflict it BOUNCES (records, does not force-land).
+type LandArgs = {
+  ticketId: string;
+  branch: string;
+  integrationBranch: string;
+  baseBranch: string;
+  worktreePath: string;
+  idempotencyKey: string;
+};
+type LandResult = {
+  ticketId: string;
+  landed: boolean;
+  ff: boolean;
+  alreadyLanded: boolean;
+  branch: string;
+  integrationBranch: string;
+  reason: string;
+  transient?: boolean;
+};
+
+// The depth-1 land lane operates in a DEDICATED, clean integration worktree — NEVER the
+// repo root (which may be dirty / on a detached HEAD). This removes the resume + unrelated-
+// change risk the reviewer flagged: a real-budget land never touches the operator's tree.
+const INTEGRATION_WT = ".smithers/integration";
+
+function ticketWorktreeRoot(ctx: any, ticketId: string): string {
+  return (
+    ctx.worktreePath?.(`wt-${ticketId}`) ??
+    ctx.worktreePath?.(verifyId(ticketId)) ??
+    ctx.resolveWorktreePath(worktreePath(ticketId))
+  );
+}
+
+// The fixed evidence bundle a worker writes lives under its OWN worktree (robust to the
+// `*.log` .gitignore rule, which would otherwise drop RBG run logs from the merge). Read it
+// there so the gate sees the full record regardless of what got committed.
+function workerBundleDirFromRoot(worktreeRoot: string, ticketId: string): string {
+  return resolve(worktreeRoot, BUILD_DIR, ticketId);
+}
+
+function workerBundleDir(ctx: any, ticketId: string): string {
+  return workerBundleDirFromRoot(ticketWorktreeRoot(ctx, ticketId), ticketId);
+}
+
+function rootCredentialBundleDir(ticketId: string): string {
+  return resolve(process.cwd(), BUILD_DIR, ticketId);
+}
+
+function writeNeedsCredentialEvidence(ticket: Ticket, missingCredentials: string[]) {
+  const reason = needsCredentialReason(missingCredentials);
+  const bundleDir = rootCredentialBundleDir(ticket.id);
+  const payload = {
+    ticketId: ticket.id,
+    status: "blocked",
+    reason,
+    missingCredentials,
+    requiredCredentials: requiredCredentialsFor(ticket),
+    blockedAt: new Date().toISOString(),
+    summary: `Blocked before worker launch: missing ${missingCredentials.join(", ")}.`,
+  };
+  try {
+    mkdirSync(bundleDir, { recursive: true });
+    writeFileSync(resolve(bundleDir, "credential-block.json"), `${JSON.stringify(payload, null, 2)}\n`);
+    writeFileSync(
+      resolve(bundleDir, "RESULT.md"),
+      [
+        `# ${ticket.id}`,
+        "",
+        `Status: blocked`,
+        `Reason: ${reason}`,
+        `Missing credentials: ${missingCredentials.join(", ")}`,
+        "",
+        "The implement/review/verify worker was not run. Set the listed environment variable(s) and resume.",
+        "",
+      ].join("\n"),
+    );
+  } catch (err) {
+    logEvent("credential.block.evidence_failed", {
+      ticketId: ticket.id,
+      reason,
+      error: redact((err as Error)?.message ?? String(err)),
+    });
+  }
+  logEvent("credential.block", { ticketId: ticket.id, reason, missingCredentials });
+  return {
+    ticketId: ticket.id,
+    status: "blocked" as const,
+    branch: buildBranch(ticket.id),
+    reason,
+    missingCredentials,
+    summary: `Blocked before worker launch: ${reason}. Human must set ${missingCredentials.join(", ")}.`,
+  };
+}
+
+function requiredBundleFiles(ticketId: string): string[] {
+  const files = REQUIRED_BUNDLE_FILES.map((f) => `${BUILD_DIR}/${ticketId}/${f}`);
+  if (ticketRequiresChallenge(ticketId)) files.push(`${BUILD_DIR}/${ticketId}/challenge.json`);
+  return files;
+}
+
+function gitOutput(args: string[], cwd = process.cwd()): string | null {
+  try {
+    return execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+  } catch {
+    return null;
+  }
+}
+
+function branchHead(ref: string): string | null {
+  return gitOutput(["rev-parse", "--verify", ref]);
+}
+
+function integrationHead(integrationBranch: string): string | null {
+  return gitOutput(["rev-parse", "--verify", integrationBranch]);
+}
+
+function writeLandBounce(
+  ticketId: string,
+  worktreeRoot: string,
+  payload: { reason: string; failures?: string[]; branch: string; integrationBranch: string },
+): void {
+  const file = resolve(workerBundleDirFromRoot(worktreeRoot, ticketId), "land-bounce.json");
+  try {
+    mkdirSync(dirname(file), { recursive: true });
+    const record = {
+      ticketId,
+      ...payload,
+      branchHead: branchHead(payload.branch),
+      integrationHead: integrationHead(payload.integrationBranch),
+      bouncedAt: new Date().toISOString(),
+    };
+    appendFileSync(file, `${JSON.stringify(record)}\n`);
+  } catch (err) {
+    logEvent("merge.lane.bounce.record_failed", { ticketId, error: redact((err as Error)?.message ?? String(err)) });
+  }
+}
+
+function clearLandBounce(ticketId: string, worktreeRoot: string): void {
+  const file = resolve(workerBundleDirFromRoot(worktreeRoot, ticketId), "land-bounce.json");
+  try {
+    if (existsSync(file)) appendFileSync(file, `${JSON.stringify({ ticketId, resolvedAt: new Date().toISOString() })}\n`);
+  } catch {
+    /* best-effort marker only; a successful land remains authoritative */
+  }
+}
+
+// Recursively count key-shaped strings across an evidence bundle (fail-closed, SEC-1).
+// Uses plain readdirSync(string[]) + statSync so it typechecks under both the project config
+// and a bare `tsc` invocation (the Dirent<Buffer> overload differs between them).
+function bundleSecretCount(dir: string): number {
+  let count = 0;
+  const walk = (d: string) => {
+    let names: string[];
+    try {
+      names = readdirSync(d);
+    } catch {
+      return;
+    }
+    for (const name of names) {
+      const p = resolve(d, name);
+      let st: ReturnType<typeof statSync>;
+      try {
+        st = statSync(p);
+      } catch {
+        continue;
+      }
+      if (st.isDirectory()) {
+        walk(p);
+      } else if (st.isFile() && st.size <= 2_000_000) {
+        try {
+          count += scanForSecrets(readFileSync(p, "utf8")).length;
+        } catch {
+          /* unreadable file — ignored by the scanner */
+        }
+      }
+    }
+  };
+  walk(dir);
+  return count;
+}
+
+// Does the merged tree carry any failable test file? (Avoids a spurious bounce on a tree
+// that legitimately has no tests yet, while still running the suite once tests exist.)
+function hasAnyTestFile(root: string): boolean {
+  const exts = [".test.ts", ".test.tsx", ".spec.ts"];
+  const skip = new Set(["node_modules", ".git", ".smithers", "dist"]);
+  const walk = (d: string, depth: number): boolean => {
+    if (depth > 8) return false;
+    let names: string[];
+    try {
+      names = readdirSync(d);
+    } catch {
+      return false;
+    }
+    for (const name of names) {
+      const p = resolve(d, name);
+      let st: ReturnType<typeof statSync>;
+      try {
+        st = statSync(p);
+      } catch {
+        continue;
+      }
+      if (st.isDirectory()) {
+        if (skip.has(name)) continue;
+        if (walk(p, depth + 1)) return true;
+      } else if (st.isFile() && exts.some((x) => name.endsWith(x))) {
+        return true;
+      }
+    }
+    return false;
+  };
+  return walk(root, 0);
+}
+
+const GATE_MAX_ATTEMPTS = 3;
+const GATE_MEMORY_MB = 6144;
+const GATE_TIMEOUT_MS = 30 * 60_000;
+
+type ClassifiedGateKind = "tsc" | "bun-test";
+type ClassifiedGateStatus = "pass" | "red" | "infra";
+type ClassifiedGateResult = {
+  kind: ClassifiedGateKind;
+  status: ClassifiedGateStatus;
+  attempts: number;
+  exitCode: number | null;
+  timedOut: boolean;
+  summary: string;
+};
+
+function gateNodeOptions(): string {
+  const existing = process.env.NODE_OPTIONS?.trim();
+  const memory = `--max-old-space-size=${GATE_MEMORY_MB}`;
+  return existing ? `${existing} ${memory}` : memory;
+}
+
+function gateOutput(res: { stdout?: unknown; stderr?: unknown }): string {
+  return `${res.stdout?.toString?.() ?? ""}\n${res.stderr?.toString?.() ?? ""}`;
+}
+
+function classifyGateOutput(kind: ClassifiedGateKind, exitCode: number | null, timedOut: boolean, output: string): ClassifiedGateStatus {
+  if (exitCode === 0 && !timedOut) return "pass";
+  if (kind === "tsc") {
+    return /\berror TS\d+\b/.test(output) ? "red" : "infra";
+  }
+  return /(^|\n)\s*\(fail\)\s|\b[1-9]\d*\s+fail(?:ed|ures?)?\b/i.test(output) ? "red" : "infra";
+}
+
+function gateSummary(kind: ClassifiedGateKind, exitCode: number | null, timedOut: boolean, output: string): string {
+  const command = kind === "tsc" ? "bunx tsc --noEmit" : "bun test";
+  const tail = redact(output).trim().slice(-1200);
+  return `${command} exit=${exitCode ?? "signal/timeout"}${timedOut ? " timeout" : ""}${tail ? `; output tail:\n${tail}` : "; no diagnostic output"}`;
+}
+
+async function runGateCommand(kind: ClassifiedGateKind, cwd: string): Promise<Omit<ClassifiedGateResult, "attempts">> {
+  const cmd = kind === "tsc" ? ["bunx", "tsc", "--noEmit"] : ["bun", "test"];
+  let timedOut = false;
+  const proc = Bun.spawn(cmd, {
+    cwd,
+    env: { ...process.env, NODE_OPTIONS: gateNodeOptions() },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const timer = setTimeout(() => {
+    timedOut = true;
+    proc.kill("SIGKILL");
+  }, GATE_TIMEOUT_MS);
+  const [exitCode, stdout, stderr] = await Promise.all([
+    proc.exited.catch(() => null),
+    new Response(proc.stdout).text().catch((e) => String(e)),
+    new Response(proc.stderr).text().catch((e) => String(e)),
+  ]);
+  clearTimeout(timer);
+  const output = gateOutput({ stdout, stderr });
+  return {
+    kind,
+    status: classifyGateOutput(kind, exitCode, timedOut, output),
+    exitCode,
+    timedOut,
+    summary: gateSummary(kind, exitCode, timedOut, output),
+  };
+}
+
+async function runClassifiedGate(ticketId: string, wtAbs: string, kind: ClassifiedGateKind): Promise<ClassifiedGateResult> {
+  let last: Omit<ClassifiedGateResult, "attempts"> | null = null;
+  for (let attempt = 1; attempt <= GATE_MAX_ATTEMPTS; attempt++) {
+    last = await runGateCommand(kind, wtAbs);
+    logEvent(
+      last.status === "pass"
+        ? "merge.lane.gate.pass"
+        : last.status === "red"
+          ? "merge.lane.gate.red"
+          : "merge.lane.gate.infra",
+      {
+        ticketId,
+        gate: kind === "tsc" ? "tsc" : "bun test",
+        attempt,
+        exitCode: last.exitCode,
+        timedOut: last.timedOut,
+        memoryMb: GATE_MEMORY_MB,
+      },
+    );
+    if (last.status !== "infra" || attempt === GATE_MAX_ATTEMPTS) {
+      return { ...last, attempts: attempt };
+    }
+    await Bun.sleep(1000 * attempt);
+  }
+  return { ...(last as Omit<ClassifiedGateResult, "attempts">), attempts: GATE_MAX_ATTEMPTS };
+}
+
+// Run a package.json script in the integration worktree IF it is defined; otherwise log a
+// skip (a not-yet-built tier must not block the bootstrap, but its absence is recorded).
+async function runOptionalScript(
+  ticketId: string,
+  wtAbs: string,
+  script: string,
+  reasons: string[],
+  { blocking }: { blocking: boolean },
+): Promise<void> {
+  let scripts: Record<string, unknown> = {};
+  try {
+    scripts = JSON.parse(readFileSync(resolve(wtAbs, "package.json"), "utf8"))?.scripts ?? {};
+  } catch {
+    /* no package.json on the merged tip yet */
+  }
+  if (!scripts[script]) {
+    logEvent("merge.lane.gate.skip", { ticketId, gate: script, reason: "no such script on merged tip" });
+    return;
+  }
+  const res = await $`bun run ${script}`.cwd(wtAbs).nothrow().quiet();
+  const ok = res.exitCode === 0;
+  logEvent(ok ? "merge.lane.gate.pass" : "merge.lane.gate.red", { ticketId, gate: script });
+  if (!ok && blocking) reasons.push(`pre-merge gate '${script}' red on merged tip`);
+}
+
+// ─── The deterministic pre-merge gate (06-orchestration §6 — merge authority is CODE) ──
+// Run AFTER the --no-commit merge stages the rebased tip, BEFORE commit. Machine-checks the
+// durable evidence bundle (no recorded RBG = no land), scans for secrets, then re-runs the
+// pre-merge tier (tsc + bun test incl. the walking-skeleton smoke + architecture lint) on
+// the merged tip. Returns the concrete reasons so a bounce is debuggable with no context.
+async function runMergeGate(ticketId: string, worktreeRoot: string): Promise<{ ok: boolean; reasons: string[]; transientReasons: string[] }> {
+  const reasons: string[] = [];
+  const transientReasons: string[] = [];
+  const wtAbs = resolve(process.cwd(), INTEGRATION_WT);
+  const bundleDir = workerBundleDirFromRoot(worktreeRoot, ticketId);
+
+  const present = (rel?: string | null): boolean => {
+    if (!rel) return false;
+    try {
+      const st = statSync(resolve(worktreeRoot, rel));
+      return st.isFile() && st.size > 0;
+    } catch {
+      return false;
+    }
+  };
+  const readJson = (name: string): any => {
+    try {
+      return JSON.parse(readFileSync(resolve(bundleDir, name), "utf8"));
+    } catch {
+      return null;
+    }
+  };
+
+  // 1) Durable evidence bundle is authoritative — gates.json red/green, verify.json,
+  //    review.json, and the required files must all be present + non-empty (§6).
+  const verify = readJson("verify.json");
+  const review = readJson("review.json");
+  const challenge = readJson("challenge.json");
+  const ev = evaluateEvidenceBundle({
+    gates: readJson("gates.json"),
+    verify,
+    review,
+    present,
+    requiredFiles: requiredBundleFiles(ticketId),
+  });
+  if (!ev.ok) reasons.push(...ev.reasons);
+  if (verify?.rebasedOntoIntegration !== true || verify?.mergedTipGatesGreen !== true) {
+    reasons.push("verify.json missing rebased-on-integration merged-tip gate proof");
+  }
+  if (ticketRequiresChallenge(ticketId) && challenge?.approved !== true) {
+    reasons.push("challenge.json approved !== true (safety/security challenge did not pass)");
+  }
+  if (review && review.approved === false) {
+    logEvent("merge.lane.review.advisory", { ticketId, approved: false });
+  }
+
+  // 2) Secret-redaction gate — zero key-shaped strings anywhere in the bundle (SEC-1).
+  const secretHits = bundleSecretCount(bundleDir);
+  if (secretHits > 0) reasons.push(`secret-scan found ${secretHits} key-shaped string(s) in the evidence bundle`);
+
+  // 3) Typecheck the merged tip (the rebased combination, not just the branch in isolation).
+  if (existsSync(resolve(wtAbs, "tsconfig.json"))) {
+    const tsc = await runClassifiedGate(ticketId, wtAbs, "tsc");
+    if (tsc.status === "red") {
+      reasons.push("pre-merge gate red: tsc --noEmit on the merged tip");
+    } else if (tsc.status === "infra") {
+      transientReasons.push(
+        `tsc could not complete (infra/OOM) after ${tsc.attempts} attempt(s) — treating as transient, not a type error. ${tsc.summary}`,
+      );
+    }
+  } else {
+    logEvent("merge.lane.gate.skip", { ticketId, gate: "tsc", reason: "no tsconfig on merged tip" });
+  }
+
+  // 4) Re-run the deterministic pre-merge test subset on the merged tip — this is the
+  //    walking-skeleton smoke + unit/integration tests. A red suite BOUNCES.
+  if (hasAnyTestFile(wtAbs)) {
+    const t = await runClassifiedGate(ticketId, wtAbs, "bun-test");
+    if (t.status === "red") {
+      reasons.push("pre-merge gate red: bun test on the merged tip (incl. walking-skeleton smoke)");
+    } else if (t.status === "infra") {
+      transientReasons.push(
+        `bun test could not complete (infra/OOM) after ${t.attempts} attempt(s) — treating as transient, not a test failure. ${t.summary}`,
+      );
+    }
+  } else {
+    logEvent("merge.lane.gate.skip", { ticketId, gate: "bun test", reason: "no test files on merged tip yet" });
+  }
+
+  // 5) Architecture lint is a blocking pre-merge tier IF the build has defined it; absent
+  //    (early in the build) it is logged, not faked.
+  await runOptionalScript(ticketId, wtAbs, "lint:arch", reasons, { blocking: true });
+
+  return { ok: reasons.length === 0 && transientReasons.length === 0, reasons, transientReasons };
+}
+
+// Postsubmit (the full real-world suite) runs AFTER the land on the integration tip. Per
+// ORCH-A-02 a postsubmit failure is a manual revert (the human's act), so this RECORDS the
+// verdict in the trace rather than blocking — but it can never be silently skipped.
+async function runPostsubmit(ticketId: string): Promise<void> {
+  const wtAbs = resolve(process.cwd(), INTEGRATION_WT);
+  let scripts: Record<string, unknown> = {};
+  try {
+    scripts = JSON.parse(readFileSync(resolve(wtAbs, "package.json"), "utf8"))?.scripts ?? {};
+  } catch {
+    /* none yet */
+  }
+  if (!scripts["postsubmit"]) {
+    logEvent("merge.lane.postsubmit.skip", { ticketId, reason: "no postsubmit script on integration tip" });
+    return;
+  }
+  const res = await $`bun run postsubmit`.cwd(wtAbs).nothrow().quiet();
+  logEvent(res.exitCode === 0 ? "merge.lane.postsubmit.green" : "merge.lane.postsubmit.red", { ticketId });
+}
+
+async function landTicketBranch(args: LandArgs): Promise<LandResult> {
+  const { ticketId, branch, integrationBranch, baseBranch, worktreePath, idempotencyKey } = args;
+  const base: LandResult = {
+    ticketId,
+    landed: false,
+    ff: false,
+    alreadyLanded: false,
+    branch,
+    integrationBranch,
+    reason: "",
+  };
+  const startedMs = Date.now();
+  logEvent("merge.lane.enqueue", { ticketId, branch, integrationBranch });
+
+  // HARD GUARD: refuse to land onto main / the base branch — merging is a human act.
+  if (!integrationBranch || integrationBranch === "main" || integrationBranch === baseBranch) {
+    const reason = `refused: integration branch must not be base/main (got '${integrationBranch}')`;
+    logEvent("merge.lane.refused", { ticketId, reason });
+    return { ...base, reason };
+  }
+
+  // All git ops run in the DEDICATED integration worktree, never the (possibly dirty) root.
+  const wt = INTEGRATION_WT;
+  if (!existsSync(resolve(process.cwd(), wt))) {
+    const reason = `integration worktree ${wt} is not set up (build:setup did not run)`;
+    logEvent("merge.lane.bounce", { ticketId, reason: "no-worktree" });
+    return { ...base, reason };
+  }
+
+  // Pin the integration worktree to the integration branch tip (safe here — dedicated tree).
+  const co = await $`git checkout ${integrationBranch}`.cwd(wt).nothrow().quiet();
+  if (co.exitCode !== 0) {
+    const reason = `cannot checkout integration branch in worktree: ${redact((co.stderr?.toString() ?? "").slice(-400))}`;
+    logEvent("merge.lane.bounce", { ticketId, reason: "checkout" });
+    return { ...base, reason };
+  }
+
+  // Idempotency: if the branch tip is already an ancestor of integration, the land happened.
+  const merged = await $`git merge-base --is-ancestor ${branch} HEAD`.cwd(wt).nothrow().quiet();
+  if (merged.exitCode === 0) {
+    clearLandBounce(ticketId, worktreePath);
+    logEvent("merge.lane.land", { ticketId, ff: true, alreadyLanded: true, latencyMs: Date.now() - startedMs });
+    return { ...base, landed: true, ff: true, alreadyLanded: true, reason: "already landed (idempotent no-op)" };
+  }
+
+  // Stage the rebased tip with --no-commit so the pre-merge gate runs on the COMBINED tree.
+  const stage = await $`git merge --no-commit --no-ff ${branch}`.cwd(wt).nothrow().quiet();
+  if (stage.exitCode !== 0) {
+    // Materialized conflict → bounce to the worker, do not force-land.
+    await $`git merge --abort`.cwd(wt).nothrow().quiet();
+    writeLandBounce(ticketId, worktreePath, {
+      reason: "conflict",
+      failures: [`rebase/merge conflict against ${integrationBranch}`],
+      branch,
+      integrationBranch,
+    });
+    logEvent("merge.lane.bounce", { ticketId, reason: "conflict" });
+    return { ...base, reason: `rebase/merge conflict — bounced to worker for fix-up resume` };
+  }
+
+  // Deterministic pre-merge gate (evidence bundle + secret scan + tsc + bun test + arch lint).
+  const gate = await runMergeGate(ticketId, worktreePath);
+  if (gate.transientReasons.length > 0 && gate.reasons.length === 0) {
+    await $`git merge --abort`.cwd(wt).nothrow().quiet();
+    logEvent("merge.lane.gate.transient", {
+      ticketId,
+      reason: "infra",
+      failures: gate.transientReasons.map((r) => r.slice(0, 1000)),
+    });
+    return {
+      ...base,
+      transient: true,
+      reason: `transient pre-merge gate infrastructure failure — retry land later: ${gate.transientReasons[0]}`,
+    };
+  }
+  if (!gate.ok) {
+    await $`git merge --abort`.cwd(wt).nothrow().quiet();
+    writeLandBounce(ticketId, worktreePath, {
+      reason: "gate",
+      failures: gate.reasons,
+      branch,
+      integrationBranch,
+    });
+    logEvent("merge.lane.bounce", { ticketId, reason: "gate", failures: gate.reasons.slice(0, 8) });
+    return { ...base, reason: `pre-merge gate red — land refused: ${gate.reasons[0] ?? "evidence incomplete"}` };
+  }
+
+  const commit = await $`git commit -m ${`land ${ticketId} [idem:${idempotencyKey}]`}`.cwd(wt).nothrow().quiet();
+  if (commit.exitCode !== 0) {
+    await $`git merge --abort`.cwd(wt).nothrow().quiet();
+    writeLandBounce(ticketId, worktreePath, {
+      reason: "commit",
+      failures: [`commit failed: ${redact((commit.stderr?.toString() ?? "").slice(-400))}`],
+      branch,
+      integrationBranch,
+    });
+    logEvent("merge.lane.bounce", { ticketId, reason: "commit" });
+    return { ...base, reason: `commit failed: ${redact((commit.stderr?.toString() ?? "").slice(-400))}` };
+  }
+
+  clearLandBounce(ticketId, worktreePath);
+  logEvent("merge.lane.land", { ticketId, ff: false, latencyMs: Date.now() - startedMs });
+  // Postsubmit (full real-world suite) runs after the land; records its verdict, never blocks.
+  await runPostsubmit(ticketId);
+  return { ...base, landed: true, ff: false, reason: "landed (gated --no-ff merge in integration worktree)" };
+}
+
+// §"side-effecting custom tools declare sideEffect + idempotency keys". landTool is the
+// agent-facing wrapper the conflict-bounce fix-up path uses; the deterministic land lane
+// calls landTicketBranch directly (merge authority stays in CODE, never the LLM). Both share
+// one idempotent implementation, so a retry/resume is a no-op rather than a second merge.
+// NOTE: a task that calls this is a side effect — it is NEVER given a `cache` policy.
+export const landTool = defineTool({
+  name: "smithering.land_ticket_branch",
+  description:
+    "Land a ticket's build/<id> branch onto the integration branch via the depth-1 merge lane. Idempotent; refuses to touch base/main.",
+  schema: z.object({
+    ticketId: z.string(),
+    branch: z.string(),
+    integrationBranch: z.string(),
+    baseBranch: z.string(),
+    worktreePath: z.string().optional(),
+  }),
+  sideEffect: true,
+  // The implementation IS idempotent — a branch already in the integration ancestry is a
+  // no-op (merge-base --is-ancestor short-circuit), so a retry/resume never double-merges.
+  idempotent: true,
+  async execute(args, ctx) {
+    // ctx.idempotencyKey is stable across retries/resumes for the same task iteration; fall
+    // back to the stable ticket-derived key so the key is never null (and survives resume).
+    return landTicketBranch({
+      ...args,
+      worktreePath: args.worktreePath ?? ticketWorktreeRoot(ctx, args.ticketId),
+      idempotencyKey: ctx.idempotencyKey ?? `land-${args.ticketId}`,
+    });
+  },
+});
+
+// ─── §1 integration-branch + build-dir setup (idempotent; the build's trunk) ──
+// Defense-in-depth: coerce away null/empty branch names AT the producer so the buildSetup
+// output is always valid strings even on a direct call (the caller already resolves defaults
+// via resolveBuildConfig). A null here is exactly what broke smoke-smithering-panopticon-4-0,
+// so a coercion that ever fires is logged rather than silently emitting an invalid output.
+async function ensureIntegrationBranch(integrationBranchArg: string, baseBranchArg: string) {
+  const notes: string[] = [];
+  const cfg = resolveBuildConfig({ integrationBranch: integrationBranchArg, baseBranch: baseBranchArg });
+  const integrationBranch = cfg.integrationBranch;
+  const baseBranch = cfg.baseBranch;
+  if (integrationBranch !== integrationBranchArg || baseBranch !== baseBranchArg) {
+    notes.push(
+      `coerced invalid branch input (integration='${integrationBranchArg}', base='${baseBranchArg}') to defaults (integration='${integrationBranch}', base='${baseBranch}')`,
+    );
+    logEvent("build.integration.coerced", { gotIntegration: integrationBranchArg, gotBase: baseBranchArg, integrationBranch, baseBranch });
+  }
+  mkdirSync(resolve(process.cwd(), BUILD_DIR), { recursive: true });
+  mkdirSync(resolve(process.cwd(), DECISIONS_DIR, "build"), { recursive: true });
+  let created = false;
+  const exists = await $`git rev-parse --verify ${integrationBranch}`.nothrow().quiet();
+  if (exists.exitCode !== 0) {
+    const fromBase = await $`git rev-parse --verify ${baseBranch}`.nothrow().quiet();
+    const start = fromBase.exitCode === 0 ? baseBranch : "HEAD";
+    const mk = await $`git branch ${integrationBranch} ${start}`.nothrow().quiet();
+    created = mk.exitCode === 0;
+    if (!created) notes.push(`could not create ${integrationBranch}: ${redact((mk.stderr?.toString() ?? "").slice(-300))}`);
+    else notes.push(`created integration branch ${integrationBranch} off ${start}`);
+  } else {
+    notes.push(`integration branch ${integrationBranch} already exists`);
+  }
+
+  // Dedicated, clean integration worktree so the land lane NEVER checks out / merges in the
+  // (possibly dirty, detached-HEAD) repo root — idempotent: skip if already registered.
+  const wtAbs = resolve(process.cwd(), INTEGRATION_WT);
+  let worktreeReady = existsSync(wtAbs);
+  if (!worktreeReady) {
+    mkdirSync(resolve(process.cwd(), ".smithers"), { recursive: true });
+    const add = await $`git worktree add ${INTEGRATION_WT} ${integrationBranch}`.nothrow().quiet();
+    worktreeReady = add.exitCode === 0;
+    if (!worktreeReady) {
+      notes.push(`could not add integration worktree ${INTEGRATION_WT}: ${redact((add.stderr?.toString() ?? "").slice(-300))}`);
+    } else {
+      notes.push(`added integration worktree ${INTEGRATION_WT} on ${integrationBranch}`);
+    }
+  } else {
+    notes.push(`integration worktree ${INTEGRATION_WT} already present`);
+  }
+  logEvent("build.integration.ready", { integrationBranch, baseBranch, created, worktreeReady });
+  return { integrationBranch, baseBranch, created, buildDir: BUILD_DIR, notes };
+}
+
+// ─── Schemas (house style: looseObject + defaults — a slightly-off agent reply degrades
+//     instead of hard-failing; artifacts on disk are the full record, outputs are the index) ──
+const buildSetupSchema = z.looseObject({
+  integrationBranch: z.string().default("smithering/integration"),
+  baseBranch: z.string().default("main"),
+  created: z.boolean().default(false),
+  buildDir: z.string().default(BUILD_DIR),
+  notes: z.array(z.string()).default([]),
+});
+
+// One row per blocking pre-merge gate the worker ran, mirroring 06-orchestration §6 gates.json.
+const gateRowSchema = z.looseObject({
+  criterionId: z.string().default(""),
+  method: z.string().default("unit_test"),
+  tier: z.enum(["pre-build", "pre-merge", "postsubmit"]).default("pre-merge"),
+  status: z.enum(["passed", "failed", "skipped"]).default("passed"),
+  rbgRecorded: z.boolean().default(false),
+  redRunPath: z.string().nullable().default(null),
+  greenRunPath: z.string().nullable().default(null),
+});
+
+const buildImplementSchema = z.looseObject({
+  ticketId: z.string().default(""),
+  summary: z.string().default(""),
+  filesChanged: z.array(z.string()).default([]),
+  committed: z.boolean().default(false),
+  gates: z.array(gateRowSchema).default([]),
+  rbgRecorded: z.boolean().default(false),
+  allGatesGreen: z.boolean().default(false),
+  evidencePath: z.string().default(""),
+  decisionDocs: z.array(z.string()).default([]),
+  blockers: z.array(z.string()).default([]),
+});
+
+const buildReviewSchema = z.looseObject({
+  ticketId: z.string().default(""),
+  reviewer: z.string().default(""),
+  family: z.string().default(OPENAI),
+  kind: z.enum(["review", "codex-review", "challenge"]).default("review"),
+  approved: z.boolean().default(false),
+  feedback: z.string().default(""),
+  issues: z
+    .array(
+      z.looseObject({
+        severity: z.enum(["critical", "major", "minor", "nit"]).default("minor"),
+        title: z.string().default(""),
+        file: z.string().nullable().default(null),
+        description: z.string().default(""),
+      }),
+    )
+    .default([]),
+});
+
+const buildVerifySchema = z.looseObject({
+  ticketId: z.string().default(""),
+  verifier: z.string().default(""),
+  family: z.string().default(ANTHROPIC),
+  ranTests: z.boolean().default(false),
+  rbgConfirmed: z.boolean().default(false),
+  gatesGreen: z.boolean().default(false),
+  rebasedOntoIntegration: z.boolean().default(false),
+  mergedTipGatesGreen: z.boolean().default(false),
+  integrationBranch: z.string().default(""),
+  pass: z.boolean().default(false),
+  summary: z.string().default(""),
+});
+
+const buildLandSchema = z.looseObject({
+  ticketId: z.string().default(""),
+  landed: z.boolean().default(false),
+  ff: z.boolean().default(false),
+  alreadyLanded: z.boolean().default(false),
+  branch: z.string().default(""),
+  integrationBranch: z.string().default(""),
+  reason: z.string().default(""),
+  transient: z.boolean().default(false),
+});
+
+const ticketResultSchema = z.looseObject({
+  ticketId: z.string().default(""),
+  status: z.enum(["finished", "landed", "blocked", "failed", "skipped"]).default("blocked"),
+  branch: z.string().default(""),
+  reason: z.string().default(""),
+  missingCredentials: z.array(z.string()).default([]),
+  summary: z.string().default(""),
+});
+
+const gateSchema = z.looseObject({
+  approved: z.boolean().default(false),
+  note: z.string().nullable().default(null),
+  decidedBy: z.string().nullable().default(null),
+  decidedAt: z.string().nullable().default(null),
+});
+
+const finalReportSchema = z.looseObject({
+  status: z.enum(["finished", "partial", "blocked", "cancelled"]).default("partial"),
+  smoke: z.boolean().default(false),
+  totalTickets: z.number().int().default(0),
+  landedTickets: z.number().int().default(0),
+  blockedTickets: z.number().int().default(0),
+  integrationBranch: z.string().default(""),
+  mergedToMain: z.boolean().default(false), // invariant: stays false — merging is the human's act
+  blockers: z.array(z.string()).default([]),
+  needsCredentials: z.array(z.looseObject({
+    ticketId: z.string().default(""),
+    env: z.array(z.string()).default([]),
+    reason: z.string().default(""),
+  })).default([]),
+  summary: z.string().default(""),
+  artifactPath: z.string().nullable().default(BUILD_DIR),
+});
+
+const inputSchema = z.object({
+  // smoke=true → ONLY the first ticket, end-to-end incl. verification, NO gates, reaches finished.
+  smoke: z.boolean().default(false),
+  integrationBranch: z.string().default("smithering/integration"),
+  baseBranch: z.string().default("main"),
+  maxConcurrency: z.number().int().min(1).max(12).default(8), // >=8 ticket workers per wave
+  probeConcurrency: z.number().int().min(1).max(12).default(8), // probe waves burst to 8
+  requireDeliveryGate: z.boolean().default(true), // full mode pauses for the human before declaring done
+});
+
+const { Workflow, Task, Sequence, Parallel, Loop, Approval, Worktree, smithers, outputs } = createSmithers({
+  input: inputSchema,
+  buildSetup: buildSetupSchema,
+  buildImplement: buildImplementSchema,
+  buildReview: buildReviewSchema,
+  buildVerify: buildVerifySchema,
+  buildLand: buildLandSchema,
+  ticketResult: ticketResultSchema,
+  gate: gateSchema,
+  finalReport: finalReportSchema,
+});
+
+// ─── Per-ticket id helpers (derive from the stable ticket id — never an index/timestamp) ──
+const implId = (id: string) => `build:${id}:implement`;
+const reviewId = (id: string) => `build:${id}:review`; // cross-family Opus reviewer (writes review.json)
+const codexReviewId = (id: string) => `build:${id}:review-codex`; // same-family Codex reviewer
+const challengeId = (id: string) => `build:${id}:challenge`;
+const verifyId = (id: string) => `build:${id}:verify`;
+const resultId = (id: string) => `build:${id}:result`;
+const blockedId = (id: string) => `build:${id}:blocked`;
+const landId = (id: string) => `build:${id}:land`;
+const worktreePath = (id: string) => `.smithers/wt/${id}`;
+const buildBranch = (id: string) => `build/${id}`;
+const evidenceDir = (id: string) => `${BUILD_DIR}/${id}`;
+
+// ─── ctx readers (mirror the iteration-pinned pattern the parent uses) ────────
+function latestImplement(ctx: any, id: string) {
+  return ctx.latest("buildImplement", implId(id));
+}
+function latestVerify(ctx: any, id: string) {
+  return ctx.latest("buildVerify", verifyId(id));
+}
+function latestReview(ctx: any, id: string) {
+  return ctx.latest("buildReview", reviewId(id));
+}
+function latestChallenge(ctx: any, id: string) {
+  return ctx.latest("buildReview", challengeId(id));
+}
+function landRow(ctx: any, id: string) {
+  return ctx.outputMaybe("buildLand", { nodeId: landId(id), iteration: 0 });
+}
+function ticketLanded(ctx: any, id: string): boolean {
+  if (landRow(ctx, id)?.landed === true) return true;
+  const cfg = resolveBuildConfig(ctx.input);
+  const log = gitOutput(["log", "--format=%s", `${cfg.baseBranch}..${cfg.integrationBranch}`]);
+  if (!log) return false;
+  return log
+    .split("\n")
+    .some((subject) => subject.includes(`[idem:land-${id}]`) || subject.includes(`land ${id}`) || subject.includes(id));
+}
+
+// A probe's verdict is the REAL green artifact (not agent compliance): the probe worker
+// records it under <probeId>/probes/<probeId>/verdict.json. Read the worker worktree first
+// (where it is written), then the integration tip (where a landed probe's verdict lives).
+function probeVerdictGreen(ctx: any, probeId: string): boolean {
+  const verdictPaths = [
+    resolve(ticketWorktreeRoot(ctx, probeId), PROBES_DIR, probeId, "verdict.json"),
+    resolve(process.cwd(), INTEGRATION_WT, PROBES_DIR, probeId, "verdict.json"),
+  ];
+  for (const p of verdictPaths) {
+    try {
+      if (isProbeVerdictGreen(JSON.parse(readFileSync(p, "utf8")))) return true;
+    } catch {
+      /* missing / unparseable → treated as NOT green (fail-closed) */
+    }
+  }
+  return false;
+}
+
+// Every TRANSITIVE blocking probe in the ticket's closure must show a recorded green verdict.
+function ticketProbesGreen(ctx: any, t: Ticket): boolean {
+  return blockingProbeClosure(t.id, TICKET_BY_ID).every((probeId) => probeVerdictGreen(ctx, probeId));
+}
+
+// Machine-check the durable evidence bundle on disk (gates.json RBG red/green present +
+// verify.json + review.json + required files). This is what makes "done" mean something
+// beyond the agent's say-so (§6): the same gate the land lane enforces, read at schedule time.
+function ticketEvidenceComplete(ctx: any, t: Ticket): boolean {
+  const worktreeRoot = ticketWorktreeRoot(ctx, t.id);
+  const bundleDir = workerBundleDir(ctx, t.id);
+  const present = (rel?: string | null): boolean => {
+    if (!rel) return false;
+    try {
+      const st = statSync(resolve(worktreeRoot, rel));
+      return st.isFile() && st.size > 0;
+    } catch {
+      return false;
+    }
+  };
+  const readJson = (name: string): any => {
+    try {
+      return JSON.parse(readFileSync(resolve(bundleDir, name), "utf8"));
+    } catch {
+      return null;
+    }
+  };
+  return evaluateEvidenceBundle({
+    gates: readJson("gates.json"),
+    verify: readJson("verify.json"),
+    review: readJson("review.json"),
+    present,
+    requiredFiles: requiredBundleFiles(t.id),
+  }).ok;
+}
+
+function ticketBlockingGateEvidence(ctx: any, t: Ticket): { ok: boolean; reasons: string[] } {
+  const worktreeRoot = ticketWorktreeRoot(ctx, t.id);
+  const bundleDir = workerBundleDir(ctx, t.id);
+  const present = (rel?: string | null): boolean => {
+    if (!rel) return false;
+    try {
+      const st = statSync(resolve(worktreeRoot, rel));
+      return st.isFile() && st.size > 0;
+    } catch {
+      return false;
+    }
+  };
+  let gates: any = null;
+  try {
+    gates = JSON.parse(readFileSync(resolve(bundleDir, "gates.json"), "utf8"));
+  } catch {
+    /* missing / unparseable -> evaluateEvidenceBundle fails closed */
+  }
+  return evaluateEvidenceBundle({
+    gates,
+    verify: { pass: true },
+    review: { approved: true },
+    present,
+    requiredFiles: [],
+  });
+}
+
+function ticketEligible(ctx: any, t: Ticket): boolean {
+  // A ticket may build only once every dep has LANDED on the integration branch (§1 ready())
+  // AND every transitive blocking probe shows a recorded GREEN verdict — Cue / third-party
+  // work is NEVER scheduled on agent compliance, only on a real green probe artifact (§3/§7).
+  return t.dependsOn.every((d) => ticketLanded(ctx, d)) && ticketProbesGreen(ctx, t);
+}
+
+function ticketBlockedByDependencies(ctx: any, t: Ticket): boolean {
+  // "Waiting" is not "blocked": an upstream ticket that is still running should not settle this
+  // ticket. Once an upstream ticket has settled without landing, only its transitive dependents
+  // become isolated blockers; unrelated siblings continue building and landing.
+  return t.dependsOn.some((depId) => {
+    if (ticketLanded(ctx, depId)) return false;
+    const dep = TICKET_BY_ID.get(depId);
+    return dep ? ticketSettled(ctx, dep) : true;
+  });
+}
+
+function ticketReadyToBuild(ctx: any, t: Ticket): boolean {
+  return (
+    !ticketLanded(ctx, t.id) &&
+    !ticketDone(ctx, t) &&
+    (!ticketSettled(ctx, t) || activeLandBounce(ctx, t.id)) &&
+    ticketEligible(ctx, t)
+  );
+}
+
+function ticketReadyToLand(ctx: any, t: Ticket): boolean {
+  return !ticketLanded(ctx, t.id) && ticketDone(ctx, t) && ticketEligible(ctx, t);
+}
+
+function ticketsInWaveOrder(waves: Wave[]): Ticket[] {
+  return waves.flatMap((wave) => wave.tickets);
+}
+// Read a verdict file the verify/review agents persist into the on-disk evidence bundle. Their
+// structured task RETURNS are unreliable (often empty), so the bundle on disk is the source of truth.
+function readBundleJson(ctx: any, ticketId: string, name: string): any {
+  const p = resolve(workerBundleDir(ctx, ticketId), name);
+  try {
+    return JSON.parse(readFileSync(p, "utf8"));
+  } catch {}
+  return null;
+}
+
+function activeLandBounce(ctx: any, ticketId: string): any | null {
+  const p = resolve(workerBundleDir(ctx, ticketId), "land-bounce.json");
+  let lines: string[] = [];
+  try {
+    lines = readFileSync(p, "utf8").split(/\n+/).filter(Boolean);
+  } catch {
+    return null;
+  }
+  for (let i = lines.length - 1; i >= 0; i--) {
+    let row: any = null;
+    try {
+      row = JSON.parse(lines[i]);
+    } catch {
+      continue;
+    }
+    if (row?.resolvedAt) return null;
+    if (row?.ticketId !== ticketId) continue;
+    const current = branchHead(buildBranch(ticketId));
+    if (!row.branchHead || !current || row.branchHead === current) return row;
+    return null;
+  }
+  return null;
+}
+
+function ticketDone(ctx: any, t: Ticket): boolean {
+  // The independent test-authority verifier re-runs every pre-merge gate LIVE and confirms RBG;
+  // its on-disk verify.json.pass is the authoritative landing signal. The cross-family review still
+  // runs and its findings are surfaced to the implementer (ticketFeedback), but it is ADVISORY — it
+  // must NOT hard-block a ticket the independent verifier proved green over evidence-log hygiene.
+  // Safety tickets additionally require the adversarial challenge verdict to pass. The loop
+  // also machine-checks the blocking gate rows so a stale/over-optimistic verify pass cannot
+  // declare "done" when gates.json points at missing RBG logs.
+  if (ticketLanded(ctx, t.id)) return true;
+  if (activeLandBounce(ctx, t.id)) return false;
+  const v = readBundleJson(ctx, t.id, "verify.json");
+  const verifyPass = v?.pass === true && v?.rebasedOntoIntegration === true && v?.mergedTipGatesGreen === true;
+  const blockingGateEvidenceOk = ticketBlockingGateEvidence(ctx, t).ok;
+  const challengeOk =
+    !ticketRequiresChallenge(t) || readBundleJson(ctx, t.id, "challenge.json")?.approved === true;
+  return verifyPass && blockingGateEvidenceOk && challengeOk;
+}
+function ticketSettled(ctx: any, t: Ticket): boolean {
+  if (ticketLanded(ctx, t.id)) return true;
+  const res =
+    ctx.outputMaybe("ticketResult", { nodeId: resultId(t.id), iteration: 0 }) ??
+    ctx.outputMaybe("ticketResult", { nodeId: blockedId(t.id), iteration: 0 });
+  return res !== undefined && ["blocked", "failed", "skipped"].includes(res.status);
+}
+function ticketFeedback(ctx: any, t: Ticket): string | null {
+  const parts: string[] = [];
+  const blockedResult = ctx.outputMaybe("ticketResult", { nodeId: blockedId(t.id), iteration: 0 });
+  if (typeof blockedResult?.reason === "string" && blockedResult.reason.startsWith("needs-credential:")) {
+    parts.push(
+      `NEEDS CREDENTIAL — ${blockedResult.reason}. Set ${(
+        Array.isArray(blockedResult.missingCredentials) ? blockedResult.missingCredentials : requiredCredentialsFor(t)
+      ).join(", ")} and resume; this ticket was not faked or worker-run.`,
+    );
+  }
+  const v = readBundleJson(ctx, t.id, "verify.json");
+  if (v && v.pass === false)
+    parts.push(`INDEPENDENT VERIFIER (test authority) FAILED — fix this first:\n${v.summary ?? v.note ?? ""}`);
+  if (v) {
+    if (v.pass === true && (v.rebasedOntoIntegration !== true || v.mergedTipGatesGreen !== true)) {
+      parts.push(
+        `INDEPENDENT VERIFIER CONTRACT INCOMPLETE — rebase ${buildBranch(t.id)} onto current integration and verify the merged tip before setting pass=true.`,
+      );
+    }
+    const gateEvidence = ticketBlockingGateEvidence(ctx, t);
+    if (!gateEvidence.ok) {
+      parts.push(
+        `EVIDENCE BUNDLE CONTRACT FAILED — the independent verifier must set pass=false until this is fixed:\n${gateEvidence.reasons.join(
+          "\n",
+        )}`,
+      );
+    }
+  }
+  const bounce = activeLandBounce(ctx, t.id);
+  if (bounce) {
+    const failures = Array.isArray(bounce.failures) ? bounce.failures.join("\n") : bounce.reason;
+    parts.push(`MERGE LANE BOUNCED THIS BRANCH — fix on ${buildBranch(t.id)}, rebase on integration, and re-verify:\n${failures}`);
+  }
+  const r = readBundleJson(ctx, t.id, "review.json");
+  if (r && r.approved === false) {
+    parts.push(`CROSS-FAMILY REVIEWER (${r.family ?? "anthropic"}) flagged (advisory — address if real):\n${r.feedback ?? ""}`);
+    for (const i of (r.findings ?? r.issues ?? [])) {
+      parts.push(`  [${i.severity}] ${i.title}: ${i.description}${i.file ? ` (${i.file})` : ""}`);
+    }
+  }
+  const rc = readBundleJson(ctx, t.id, "review-codex.json");
+  if (rc && rc.approved === false) {
+    parts.push(`SAME-FAMILY CODEX REVIEWER (${rc.family ?? "openai"}) flagged (advisory — address if real):\n${rc.feedback ?? ""}`);
+    for (const i of (rc.findings ?? rc.issues ?? [])) {
+      parts.push(`  [${i.severity}] ${i.title}: ${i.description}${i.file ? ` (${i.file})` : ""}`);
+    }
+  }
+  if (ticketRequiresChallenge(t)) {
+    const c = readBundleJson(ctx, t.id, "challenge.json");
+    if (c && c.approved === false) parts.push(`ADVERSARIAL CHALLENGE BROKE THE ALLOWLIST:\n${c.feedback ?? ""}`);
+  }
+  return parts.length > 0 ? parts.join("\n\n") : null;
+}
+
+// ─── Worker prompts (fresh context — §7 contract carried verbatim in every prompt) ──
+function ticketBlock(t: Ticket): string {
+  return JSON.stringify(
+    {
+      id: t.id,
+      complexity: t.complexity,
+      requirementIds: t.requirementIds,
+      dependsOn: t.dependsOn,
+      instructions: t.instructions,
+      verification: t.verification,
+    },
+    null,
+    2,
+  );
+}
+
+function landedDepsBlock(t: Ticket): string {
+  if (t.dependsOn.length === 0) return "(none — this ticket has no dependencies)";
+  return t.dependsOn
+    .map((d) => {
+      const dep = TICKET_BY_ID.get(d);
+      return `- ${d} — landed on the integration branch. READ its built interfaces + ${evidenceDir(d)}/RESULT.md${
+        dep ? ` (${dep.title})` : ""
+      }`;
+    })
+    .join("\n");
+}
+
+function probeVerdictPaths(t: Ticket): string {
+  // The orchestrator's scheduler ENFORCES this (ticketEligible → ticketProbesGreen): every
+  // transitive blocking probe must have a recorded green verdict.json on disk before this
+  // ticket is scheduled at all. The prompt mirrors the machine gate so the worker can self-check.
+  const probes = blockingProbeClosure(t.id, TICKET_BY_ID);
+  const lines: string[] = probes.map(
+    (d) =>
+      `- ${d}: the scheduler already confirmed ${PROBES_DIR}/${d}/verdict.json is GREEN ({"green":true}); re-read it before building.`,
+  );
+  if (probes.length === 0 && !isProbeTicket(t)) lines.push("(no blocking probe in this ticket's transitive closure)");
+  if (isProbeTicket(t)) {
+    lines.push(
+      `- THIS is a probe ticket: write ONLY under poc/ and ${PROBES_DIR}/. You MUST record a machine-readable`,
+      `  verdict at ${PROBES_DIR}/${t.id}/verdict.json = {"green": <true|false>, "ticketId": "${t.id}", "summary": "..."}`,
+      `  backed by a failable RBG run. Dependent tickets STAY UNSCHEDULED until that file reads green — never fake it.`,
+    );
+  }
+  return lines.join("\n");
+}
+
+function implementerPrompt(ctx: any, t: Ticket, a: Assignment): string {
+  const feedback = ticketFeedback(ctx, t);
+  const safety = ticketRequiresChallenge(t);
+  const probe = isProbeTicket(t);
+  return [
+    `You are the IMPLEMENTER for ONE ticket of the Panopticon V0 build. You have FRESH CONTEXT and NO`,
+    `conversation history — read everything you need from disk. You are running inside an isolated git`,
+    `worktree at ${worktreePath(t.id)} on branch ${buildBranch(t.id)}; edit ONLY this working copy.`,
+    ``,
+    `── YOUR TICKET (verbatim from ${TICKETS_PATH}) ──`,
+    ticketBlock(t),
+    ``,
+    `── READ THESE FROM DISK (paths, not summaries — do not trust memory) ──`,
+    `- ${PLANNING}/01-prd.md, ${PLANNING}/02-design.md, ${PLANNING}/03-eng.md (the §-anchors your`,
+    `  requirementIds ${t.requirementIds.join(", ") || "(none)"} touch), ${PLANNING}/04-backpressure.md`,
+    `  (find the EXACT gate rows for your requirementIds), ${PLANNING}/05-tickets.md, ${PLANNING}/06-orchestration.md.`,
+    `- Relevant ${DECISIONS_DIR}/*.html decision docs, and the recorded probe verdicts under ${PROBES_DIR}/.`,
+    `- For safety-hook work also read artifacts/smithering/poc/safety-hook-approval-roundtrip/FINDINGS.md.`,
+    ``,
+    `── WORKTREE CONTRACT ──`,
+    `Branch ${buildBranch(t.id)} is based off the INTEGRATION branch. Your already-landed dependencies`,
+    `(read their REAL built interfaces from disk — never re-derive them):`,
+    landedDepsBlock(t),
+    ``,
+    `── PROBE PRECEDENCE (STOP rule) ──`,
+    probeVerdictPaths(t),
+    `If a blocking probe in your dependency closure is UNRUN or FAILED, DO NOT write product code on the`,
+    `unproven API: stop, and report the blocker in your structured output (blockers[]). Never invent a pass.`,
+    ``,
+    `── WHAT "DONE" MEANS (the validation bar is the centerpiece, not an afterthought) ──`,
+    `1. Implement the ticket. Routing/safety authority lives in DETERMINISTIC code, never the LLM.`,
+    `2. Write the ticket's ENTIRE verification[] block as real tests — BOTH unit/integration AND e2e`,
+    `   where named. Aim for 10×–100× more tests than a human would: corner cases, error paths, empty/`,
+    `   largest inputs, fuzzing where applicable, benchmarks for anything perf-critical.`,
+    `3. RED-BEFORE-GREEN is mandatory: for EVERY blocking pre-merge gate, first demonstrate the test is`,
+    `   capable of FAILING (archive the failing run), then make it pass (archive the passing run). "It`,
+    `   works" / "the agent said it's done" is NOT evidence — only a test shown capable of failing is.`,
+    `4. Emit structured, leveled logs with traceable correlation ids so a later agent with NO context can`,
+    `   debug this (REQ-16). Never write a raw provider key to any source/log/artifact (SEC-1).`,
+    feedback
+      ? `\n── PREVIOUS ATTEMPT FEEDBACK (fix every item; re-run red-before-green for each fix) ──\n${feedback}`
+      : ``,
+    ``,
+    `── PERSIST THIS EVIDENCE BUNDLE under ${evidenceDir(t.id)}/ (06-orchestration §6) ──`,
+    `The land lane MACHINE-CHECKS this bundle (it does not trust prose): a missing red/green run, a`,
+    `missing/empty required file, or a key-shaped string anywhere here REFUSES the land. Write:`,
+    `- RESULT.md (what you built, gate roll-up, links to dep RESULT.md, surfaced blockers)`,
+    `- gates.json (one row per gate: {criterionId, method, tier, status, rbgRecorded, redRunPath, greenRunPath}).`,
+    `  For EVERY pre-merge blocking gate, status MUST be "passed", rbgRecorded true, and redRunPath/greenRunPath`,
+    `  must be worktree-relative paths to real, non-empty files you wrote. The path string in gates.json is`,
+    `  the single source of truth: write each RBG log EXACTLY where its redRunPath/greenRunPath says it is,`,
+    `  and never reference a path you did not write.`,
+    `- evidence/ (the RBG red + green runs). Use stable criterionId-derived filenames under`,
+    `  ${evidenceDir(t.id)}/evidence/, e.g. ${evidenceDir(t.id)}/evidence/AC11.1-rbg-red.log and`,
+    `  ${evidenceDir(t.id)}/evidence/AC11.1-green.log; record those exact strings in gates.json.`,
+    `- tests.log, tsc.log, trace/*.jsonl (secret-scanned), secret-scan.json (zero key-shaped strings)`,
+    `- review.json + verify.json complete the bundle: the cross-family reviewer records advisory`,
+    `  findings in review.json; the independent verifier's verify.json pass is the authoritative`,
+    `  landing signal. Leave both filenames free for them; do not fabricate either yourself.`,
+    safety
+      ? `- challenge.json is mandatory for this safety/security ticket; the adversarial challenge must approve before land.`
+      : ``,
+    probe ? `- (probe ticket) write ONLY under poc/ and ${PROBES_DIR}/; the verdict.json goes under ${PROBES_DIR}/${t.id}/.` : ``,
+    ``,
+    `── DECISION DOCS for judgment calls (alternatives, example in/out, diffs) ──`,
+    `For any genuine judgment call, write a self-contained HTML decision log under ${DECISIONS_DIR}/build/`,
+    `(reuse the dark self-contained template the existing ${DECISIONS_DIR}/*.html files use).`,
+    ``,
+    `── COMMIT ──`,
+    `Commit your work + evidence on branch ${buildBranch(t.id)} inside this worktree (jj or git) so the`,
+    `depth-1 merge lane can land it. The land step is deterministic CODE; you do not merge anything.`,
+    safety
+      ? `\n── SAFETY-CRITICAL ──\nThis ticket is safety-critical. A cross-family adversarial CHALLENGE will try to break your read-safe\nallowlist. Prove the gate fails CLOSED: an unparseable/unknown command must be held, never executed.`
+      : ``,
+    ``,
+    `You are the implementer (OpenAI/Codex). A CROSS-FAMILY reviewer (${a.reviewerLabel}) and an INDEPENDENT`,
+    `test-authority verifier (${a.verifierLabel}) will follow. Never raise a human request — surface`,
+    `blockers in structured output; the orchestrator's gates talk to the human.`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+// Three reviewer postures (brief O4 — review uses BOTH Opus and Codex):
+//   "review"        → the CROSS-FAMILY Opus/Anthropic reviewer; writes advisory review.json.
+//   "codex-review"  → the same-family Codex second opinion; writes review-codex.json (advisory).
+//   "challenge"     → the adversarial Codex red-team on safety tickets; writes challenge.json.
+type ReviewerKind = "review" | "codex-review" | "challenge";
+
+function reviewerPrompt(t: Ticket, kind: ReviewerKind): string {
+  const verdictFile = kind === "challenge" ? "challenge.json" : kind === "codex-review" ? "review-codex.json" : "review.json";
+  const reviewerName = kind === "challenge" ? "codex-challenge" : kind === "codex-review" ? "codex-review" : "opus-review";
+  const family = kind === "review" ? "anthropic" : "openai";
+  const model = kind === "review" ? OPUS_MODEL : CODEX_MODEL;
+  const header =
+    kind === "challenge"
+      ? `You are an ADVERSARIAL RED-TEAM reviewer (OpenAI/Codex). Read the worktree diff on branch ${buildBranch(t.id)} and the`
+      : kind === "codex-review"
+        ? `You are a same-family Codex code reviewer (OpenAI/Codex — same family as the implementer; a second opinion). Read the worktree diff on branch ${buildBranch(t.id)} and the`
+        : `You are the CROSS-FAMILY code reviewer (Anthropic/Opus — a DIFFERENT model family from the OpenAI/Codex implementer). Read the worktree diff on branch ${buildBranch(t.id)} and the`;
+  return [
+    `${header} evidence bundle under ${evidenceDir(t.id)}/. You do not edit code; you judge.`,
+    ``,
+    `── TICKET ──`,
+    ticketBlock(t),
+    ``,
+    `── READ FROM DISK ──`,
+    `${PLANNING}/04-backpressure.md (the exact gate rows for ${t.requirementIds.join(", ") || "this ticket"}),`,
+    `${PLANNING}/03-eng.md, and the ticket's gates.json + evidence/ RBG runs.`,
+    ``,
+    kind === "challenge"
+      ? [
+          `── ADVERSARIAL MANDATE ──`,
+          `Actively TRY TO BREAK the read-safe allowlist / safety gate. Construct compound commands`,
+          `(&&/;/|), redirections, substitution, eval, process-subst, and unparseable input. If ANY`,
+          `destructive command can slip through as "read-safe", or the gate ever fails OPEN, set`,
+          `approved=false and show the exact bypass. Default to approved=false if you are unsure.`,
+        ].join("\n")
+      : [
+          `── REVIEW MANDATE ──`,
+          `Confirm: (a) the implementation matches the ticket + its eng/backpressure rows; (b) the tests`,
+          `actually prove the behavior (unit AND e2e where named) and are not tautological; (c) EVERY`,
+          `blocking gate has a genuine red-before-green pair in evidence/ (a real failing run, not a stub);`,
+          `(d) no raw provider key anywhere; (e) routing/safety authority is deterministic code, not the LLM.`,
+          `Set approved=false with concrete issues[] if any of these is missing.`,
+        ].join("\n"),
+    ``,
+    `── WRITE THE DURABLE VERDICT ──`,
+    `Persist ${evidenceDir(t.id)}/${verdictFile} = {"family":"${family}","model":"${model}","kind":"${kind}",`,
+    `"approved":<bool>,"pass":<bool>,"findings":[{"severity","title","file","description"}]}.`,
+    kind === "review"
+      ? `review.json is required as advisory evidence; missing/empty review.json REFUSES the land, but approved=false is feedback, not a hard land block.`
+      : kind === "challenge"
+        ? `challenge.json is hard-required for safety/security tickets; approved=false blocks land and feeds the implementer loop.`
+        : `(${verdictFile} is advisory — surfaced to the implementer, never a hard land-blocker.)`,
+    `Never write a key-shaped string into it (the bundle is secret-scanned).`,
+    ``,
+    `Output reviewer="${reviewerName}", family="${family}", and kind="${kind}". Never raise a human request —`,
+    `your verdict is the structured output.`,
+  ].join("\n");
+}
+
+function verifierPrompt(t: Ticket, a: Assignment): string {
+  return [
+    `You are the INDEPENDENT TEST-AUTHORITY VERIFIER (${a.verifierLabel}). You have FRESH CONTEXT and a`,
+    `DISTINCT run from the implementer — you re-derive state from disk. Your authority is the TEST RESULT,`,
+    `never your opinion; you do not re-litigate taste.`,
+    ``,
+    `── TICKET ──`,
+    ticketBlock(t),
+    ``,
+    `── DO ──`,
+    `1. First make this branch match what the land lane will see: checkout ${buildBranch(t.id)}, rebase it`,
+    `   onto the current integration branch, then run the PRE-MERGE deterministic gate tier on that rebased`,
+    `   tip: the named bun test files + tsc --noEmit + the walking-skeleton smoke + the secret-redaction`,
+    `   unit test + the hermetic replay-driven e2e (doubles only — no net/mic/keys). Capture output to disk.`,
+    `   Classify these command results by evidence, not exit code alone: tsc is red ONLY when it completed`,
+    `   far enough to emit error TS diagnostics; a nonzero exit, SIGABRT/OOM, signal kill, or timeout with`,
+    `   zero error TS lines is INFRA/transient. bun test is red ONLY when tests ran and reported failed`,
+    `   tests; a crash/OOM/signal/timeout with no failed-test report is INFRA/transient. Retry infra cases`,
+    `   up to 3 attempts with NODE_OPTIONS=--max-old-space-size=6144 and short backoff, serializing heavy`,
+    `   gates. If they still cannot complete, set pass=false with summary saying infra/transient retryable,`,
+    `   but do NOT call it tsc red or test red.`,
+    `2. For EVERY blocking gate, confirm the red-before-green evidence under ${evidenceDir(t.id)}/evidence/`,
+    `   is GENUINE and path-consistent with gates.json: for every tier:"pre-merge" row, status must be`,
+    `   "passed", rbgRecorded must be true, and BOTH redRunPath and greenRunPath must resolve relative`,
+    `   to this worktree to real, non-empty files. Open the exact declared files; do not reconstruct names`,
+    `   from criterionId. The red run must be a real failure of a real test, and the green run must pass.`,
+    `   A blocking gate with missing/empty declared files, no failable test, or whose only evidence is`,
+    `   "the agent said it's done", FAILS verification.`,
+    `3. Write ${evidenceDir(t.id)}/verify.json = {ranTests, rbgConfirmed, gatesGreen, rebasedOntoIntegration,`,
+    `   mergedTipGatesGreen, integrationBranch, pass}.`,
+    ``,
+    `Set pass=true ONLY if the rebase succeeded, the merged/rebased integration tip gates are green, every`,
+    `blocking gate is green, AND every declared RBG pair resolves to genuine non-empty red/green files.`,
+    `Set pass=false on any rebase conflict, real tsc/test red, missing evidence, or inconsistent gates.json path.`,
+    `Name the exact failure so the next implementer loop can fix it. Never raise a human request.`,
+  ].join("\n");
+}
+
+// ─── Per-ticket worker subtree (implement → review[+challenge] → verify), in its worktree ──
+function renderWorker(ctx: any, t: Ticket) {
+  const cfg = resolveBuildConfig(ctx.input);
+  const a = assignmentFor(t);
+  const done = ticketDone(ctx, t);
+  return (
+    <Worktree
+      key={t.id}
+      id={`wt-${t.id}`}
+      path={worktreePath(t.id)}
+      branch={buildBranch(t.id)}
+      // Worktrees base off the INTEGRATION branch (the build's trunk), never main.
+      baseBranch={cfg.integrationBranch}
+    >
+      <Sequence>
+        <Loop id={`build:${t.id}:loop`} until={done} maxIterations={a.maxIterations} onMaxReached="return-last">
+          <Sequence>
+            <Task
+              id={implId(t.id)}
+              output={outputs.buildImplement}
+              agent={a.implementer}
+              timeoutMs={2 * HOUR}
+              heartbeatTimeoutMs={20 * 60_000}
+              continueOnFail
+            >
+              {implementerPrompt(ctx, t, a)}
+            </Task>
+            {/* Review uses BOTH the cross-family Opus reviewer (writes advisory
+                review.json) AND the same-family Codex reviewer (advisory review-codex.json),
+                in parallel; safety tickets ALSO get the adversarial Codex challenge. */}
+            <Parallel maxConcurrency={3}>
+              <Task
+                id={reviewId(t.id)}
+                output={outputs.buildReview}
+                agent={a.reviewer}
+                timeoutMs={30 * 60_000}
+                continueOnFail
+              >
+                {reviewerPrompt(t, "review")}
+              </Task>
+              <Task
+                id={codexReviewId(t.id)}
+                output={outputs.buildReview}
+                agent={a.codexReviewer}
+                timeoutMs={30 * 60_000}
+                continueOnFail
+              >
+                {reviewerPrompt(t, "codex-review")}
+              </Task>
+              {a.challenge ? (
+                <Task
+                  id={challengeId(t.id)}
+                  output={outputs.buildReview}
+                  agent={a.challenge}
+                  timeoutMs={30 * 60_000}
+                  continueOnFail
+                >
+                  {reviewerPrompt(t, "challenge")}
+                </Task>
+              ) : null}
+            </Parallel>
+            <Task
+              id={verifyId(t.id)}
+              output={outputs.buildVerify}
+              agent={a.verifier}
+              timeoutMs={HOUR}
+              heartbeatTimeoutMs={20 * 60_000}
+              continueOnFail
+            >
+              {verifierPrompt(t, a)}
+            </Task>
+          </Sequence>
+        </Loop>
+        <Task id={resultId(t.id)} output={outputs.ticketResult} continueOnFail>
+          {{
+            ticketId: t.id,
+            // "finished" = the worker completed implement→review→verify; ACTUAL landing truth
+            // is the buildLand row (the final report counts landings from there, not from here).
+            status: (done ? "finished" : "blocked") as "finished" | "blocked",
+            branch: buildBranch(t.id),
+            summary: done
+              ? `Implemented + cross-family reviewed + independently verified; queued for the depth-1 land lane.`
+              : `Did not reach done after ${a.maxIterations} iterations — held out of the land lane (blocker).`,
+          }}
+        </Task>
+      </Sequence>
+    </Worktree>
+  );
+}
+
+function renderBlocked(t: Ticket) {
+  // A ticket whose deps did not land is skipped this run and surfaced as a blocker (no LLM spend).
+  return (
+    <Task key={t.id} id={blockedId(t.id)} output={outputs.ticketResult} continueOnFail>
+      {{
+        ticketId: t.id,
+        status: "blocked" as const,
+        branch: buildBranch(t.id),
+        summary: `Blocked: a dependency did not land (deps: ${t.dependsOn.join(", ") || "none"}). Surfaced to the orchestrator's gate.`,
+      }}
+    </Task>
+  );
+}
+
+function renderCredentialBlocked(t: Ticket, missingCredentials: string[]) {
+  return (
+    <Task key={t.id} id={blockedId(t.id)} output={outputs.ticketResult} continueOnFail>
+      {() => writeNeedsCredentialEvidence(t, missingCredentials)}
+    </Task>
+  );
+}
+
+function renderLandTask(ctx: any, t: Ticket, cfg: BuildConfig) {
+  return (
+    <Task key={t.id} id={landId(t.id)} output={outputs.buildLand} continueOnFail>
+      {() =>
+        landTicketBranch({
+          ticketId: t.id,
+          branch: buildBranch(t.id),
+          integrationBranch: cfg.integrationBranch,
+          baseBranch: cfg.baseBranch,
+          worktreePath: ticketWorktreeRoot(ctx, t.id),
+          // Stable, ticket-derived idempotency key — survives resume (never an index/timestamp).
+          idempotencyKey: `land-${t.id}`,
+        })
+      }
+    </Task>
+  );
+}
+
+// Continuous ticket scheduler: workers render as soon as their own dependencies have landed,
+// and the single depth-1 land lane renders each done ticket as soon as its own verifier/
+// challenge is green. There is intentionally no per-wave land barrier here.
+function renderContinuousTickets(ctx: any, waves: Wave[]) {
+  const cfg = resolveBuildConfig(ctx.input);
+  const ordered = ticketsInWaveOrder(waves);
+  const readyWorkers = ordered.filter((t) => ticketReadyToBuild(ctx, t));
+  const credentialBlocked = readyWorkers
+    .map((t) => ({ ticket: t, missingCredentials: missingCredentialsFor(t) }))
+    .filter((row) => row.missingCredentials.length > 0);
+  const runnableWorkers = readyWorkers.filter(
+    (t) => !credentialBlocked.some((row) => row.ticket.id === t.id),
+  );
+  const blockedByDeps = ordered.filter(
+    (t) => !ticketLanded(ctx, t.id) && !ticketSettled(ctx, t) && ticketBlockedByDependencies(ctx, t),
+  );
+  const readyLand = ordered.filter((t) => ticketReadyToLand(ctx, t));
+  const workerCap =
+    readyWorkers.length > 0 && readyWorkers.every(isProbeTicket)
+      ? cfg.probeConcurrency
+      : Math.max(8, cfg.maxConcurrency); // >=8 concurrent ticket workers when the DAG allows it
+  return (
+    <Parallel id="build:continuous" maxConcurrency={workerCap + 1}>
+      <Parallel id="build:workers" maxConcurrency={workerCap}>
+        {credentialBlocked.map((row) => renderCredentialBlocked(row.ticket, row.missingCredentials))}
+        {runnableWorkers.map((t) => renderWorker(ctx, t))}
+        {blockedByDeps.map((t) => renderBlocked(t))}
+      </Parallel>
+      <MergeQueue id="build:land" maxConcurrency={1}>
+        {readyLand.map((t) => renderLandTask(ctx, t, cfg))}
+      </MergeQueue>
+    </Parallel>
+  );
+}
+
+// ─── Final report (computed at render time from ctx — static value task) ─────
+function buildFinalReport(ctx: any, ticketsToBuild: Ticket[], smoke: boolean) {
+  const cfg = resolveBuildConfig(ctx.input);
+  const landed = ticketsToBuild.filter((t) => ticketLanded(ctx, t.id));
+  const blocked = ticketsToBuild.filter((t) => !ticketLanded(ctx, t.id));
+  const blockers: string[] = [];
+  const needsCredentials: Array<{ ticketId: string; env: string[]; reason: string }> = [];
+  for (const t of blocked) {
+    const fb = ticketFeedback(ctx, t);
+    blockers.push(`${t.id}: ${fb ? fb.split("\n")[0] : "did not land"}`);
+    const res =
+      ctx.outputMaybe("ticketResult", { nodeId: blockedId(t.id), iteration: 0 }) ??
+      ctx.outputMaybe("ticketResult", { nodeId: resultId(t.id), iteration: 0 });
+    if (typeof res?.reason === "string" && res.reason.startsWith("needs-credential:")) {
+      needsCredentials.push({
+        ticketId: t.id,
+        env: Array.isArray(res.missingCredentials) ? res.missingCredentials : requiredCredentialsFor(t),
+        reason: res.reason,
+      });
+    }
+  }
+  const allLanded = blocked.length === 0;
+  const status = smoke
+    ? landed.length === ticketsToBuild.length
+      ? "finished"
+      : "blocked"
+    : allLanded
+      ? "finished"
+      : "partial";
+  return {
+    status: status as "finished" | "partial" | "blocked" | "cancelled",
+    smoke,
+    totalTickets: ticketsToBuild.length,
+    landedTickets: landed.length,
+    blockedTickets: blocked.length,
+    integrationBranch: cfg.integrationBranch,
+    mergedToMain: false, // invariant — merging the integration branch is the human's act
+    blockers,
+    needsCredentials,
+    summary: smoke
+      ? `Smoke build: first ticket (${ticketsToBuild[0]?.id ?? "n/a"}) ${
+          landed.length === ticketsToBuild.length ? "implemented, verified, and landed on" : "did NOT land on"
+        } ${cfg.integrationBranch}. No approval gates ran.`
+      : `Full build: ${landed.length}/${ticketsToBuild.length} tickets landed on ${cfg.integrationBranch} (depth-1 lane, never main). ${blocked.length} blocked.${needsCredentials.length > 0 ? ` Human credentials needed: ${needsCredentials.map((row) => `${row.ticketId}=${row.env.join(",")}`).join("; ")}.` : ""} Merge to main is the human's act after delivery.`,
+    artifactPath: BUILD_DIR,
+  };
+}
+
+// ─── Workflow ────────────────────────────────────────────────────────────────
+export default smithers((ctx) => {
+  // ctx.input fields the parent omits arrive as `null` (smithers strips Zod .default() from
+  // the durable input columns), so resolve the documented defaults ONCE here and downstream.
+  const cfg: BuildConfig = resolveBuildConfig(ctx.input);
+  const smoke = cfg.smoke;
+  const setup = ctx.outputMaybe("buildSetup", { nodeId: "build:setup", iteration: 0 });
+
+  // smoke=true → ONLY the first ticket (the dependsOn:[] root) end-to-end, NO gates.
+  const root = firstTicket();
+  const ticketsToBuild = smoke ? (root ? [root] : []) : ALL_TICKETS;
+  const waves: Wave[] = smoke
+    ? root
+      ? [{ index: 0, tickets: [root] }]
+      : []
+    : ALL_WAVES;
+
+  const allSettled = setup !== undefined && ticketsToBuild.length > 0 && ticketsToBuild.every((t) => ticketSettled(ctx, t));
+
+  // Full-mode human gate (skipped entirely in smoke mode): accept the built integration
+  // branch. This NEVER merges to main — it just records the human's acceptance.
+  const deliveryGate = ctx.outputMaybe("gate", { nodeId: "gate:delivery", iteration: 0 });
+  const needDeliveryGate = !smoke && cfg.requireDeliveryGate;
+  const deliveryDecided = !needDeliveryGate || deliveryGate !== undefined;
+
+  const reportReady = allSettled && deliveryDecided;
+  const report = reportReady ? buildFinalReport(ctx, ticketsToBuild, smoke) : null;
+
+  return (
+    <Workflow name="smithering-impl">
+      <Sequence>
+        {/* §1 — the build trunk: an integration branch off base (NEVER main is touched). */}
+        <Task id="build:setup" output={outputs.buildSetup}>
+          {() => ensureIntegrationBranch(cfg.integrationBranch, cfg.baseBranch)}
+        </Task>
+
+        {/* DAG → topological waves for stable ordering only. Workers and lands are scheduled
+            continuously by per-ticket readiness, with one serialized land lane for integration. */}
+        {setup ? renderContinuousTickets(ctx, waves) : null}
+
+        {/* Full mode only: pause for the human before declaring the build accepted. */}
+        {!smoke && setup && allSettled && needDeliveryGate && !deliveryGate ? (
+          <Approval
+            id="gate:delivery"
+            output={outputs.gate}
+            request={{
+              title: "Accept the built integration branch?",
+              summary: `All ${ticketsToBuild.length} tickets settled on ${cfg.integrationBranch}. This run will NOT merge to ${cfg.baseBranch} — merging is your act after delivery. Accept the build?`,
+              metadata: { integrationBranch: cfg.integrationBranch, artifactPath: BUILD_DIR },
+            }}
+            onDeny="continue"
+          />
+        ) : null}
+
+        {report ? (
+          <Task id="build:report" output={outputs.finalReport}>
+            {report}
+          </Task>
+        ) : null}
+      </Sequence>
+    </Workflow>
+  );
+});

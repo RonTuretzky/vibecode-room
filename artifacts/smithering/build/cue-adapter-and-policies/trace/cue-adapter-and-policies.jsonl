@@ -1,0 +1,1 @@
+{"level":"info","event":"build.ticket","sessionId":"cue-adapter-and-policies","correlationId":"corr-build-cue-adapter","latencyMs":0,"meta":{"ticketId":"cue-adapter-and-policies","tests":"bun test src/cue/adapter.test.ts && bun test test/e2e/spine.e2e.ts"}}

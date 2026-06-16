@@ -1,0 +1,32 @@
+{
+  "probeId": "harness-redaction-probe",
+  "status": "passed",
+  "summary": "probe assertions were failable and passed",
+  "correlationId": "probe-harness-test-redaction",
+  "startedAt": "2026-06-16T19:19:28.199Z",
+  "finishedAt": "2026-06-16T19:19:28.199Z",
+  "assertions": [
+    {
+      "id": "redacts-errors",
+      "behavior": "assertion errors can include provider text without leaking secrets",
+      "phase": "red",
+      "status": "failed-as-expected",
+      "error": "provider denied «redacted»"
+    },
+    {
+      "id": "redacts-errors",
+      "behavior": "assertion errors can include provider text without leaking secrets",
+      "phase": "green",
+      "status": "passed"
+    }
+  ],
+  "reportDir": "artifacts/smithering/reports/harness-redaction-probe",
+  "secretScan": {
+    "passed": true,
+    "findings": []
+  },
+  "meta": {
+    "authorization": "«redacted»",
+    "providerNote": "opaque «redacted»"
+  }
+}

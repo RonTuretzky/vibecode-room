@@ -11,7 +11,28 @@ smithers.db
 smithers.db-shm
 smithers.db-wal
 src/core/workflows/.smithers/
+# Per-ticket build worktrees + the dedicated integration land worktree are runtime state.
+.smithers/wt/
+.smithers/integration/
+# Nested smithers runtime state inside workflow directories
+.smithers/workflows/.smithers/
+
+# The smithering build/probe evidence bundles ARE the durable record (06-orchestration §6),
+# so keep their RBG run logs even though *.log is ignored above — they must travel with the merge.
+!artifacts/smithering/build/**/*.log
+!artifacts/smithering/probes/**/*.log
+!artifacts/smithering/reports/**/*.log
 
 # Playwright artifacts
 test-results/
 playwright-report/
+.playwright-mcp/
+
+# Transient UI-capture frame scratch (large; regenerated each capture run)
+artifacts/smithering/.capture-tmp/
+
+# Local capture/debug artifacts (machine-specific; not shared)
+/inspector-live.png
+/progress-slideshow.png
+/panopticon-projector-desktop.png
+artifacts/smithering/server-logs/

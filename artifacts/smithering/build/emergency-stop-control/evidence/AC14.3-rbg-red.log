@@ -1,0 +1,54 @@
+bun test v1.3.14 (0d9b296a)
+
+src/emergency/stop.test.ts:
+45 |     );
+46 |     expect(registry.activeRecords()).toHaveLength(0);
+47 |     expect(session.isListening()).toBe(false);
+48 |     expect(session.isSessionEnded()).toBe(true);
+49 |     expect(client.calls.filter((call) => call.name === "halt").map((call) => call.upid).sort()).toEqual(["upid-a", "upid-b"]);
+50 |     expect(outputs).toEqual([
+                         ^
+error: expect(received).toEqual(expected)
+
+- [
+-   {
+-     "channel": "earcon",
+-     "id": "E5",
+-   },
+-   {
+-     "channel": "tts",
+-     "summarized": false,
+-     "text": "Emergency stop. Session ended.",
+-     "wordCount": 4,
+-   },
+- ]
++ []
+
+- Expected  - 12
++ Received  + 1
+
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/emergency-stop-control/src/emergency/stop.test.ts:50:21)
+(fail) emergency stop controller > handler halts every registered process, stops listening, ends the session, and logs REQ-14 fields [4.32ms]
+86 |     const outputs: OutputDecision[] = [];
+87 |     const controller = emptyController(outputs);
+88 | 
+89 |     await controller.trigger("corr-signal");
+90 | 
+91 |     expect(outputs).toContainEqual({ channel: "earcon", id: "E5" });
+                         ^
+error: expect(received).toContainEqual(expected)
+
+Expected to contain: {
+  channel: "earcon",
+  id: "E5",
+}
+Received: []
+
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/emergency-stop-control/src/emergency/stop.test.ts:91:21)
+(fail) emergency stop controller > trigger emits a loud unambiguous audible signal [0.97ms]
+
+ 2 pass
+ 2 fail
+ 16 expect() calls
+Ran 4 tests across 1 file. [18.00ms]
+exit_code=1

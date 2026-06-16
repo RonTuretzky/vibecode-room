@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Panopticon — Mission Control (read-only observability)</title>
+<style>
+  :root{
+    --bg:#0a0d13; --panel:#111621; --panel2:#0e131c; --ink:#e6edf3; --muted:#8b98a9;
+    --teal:#2dd4bf; --violet:#a78bfa; --amber:#f59e0b; --blue:#38bdf8;
+    --red:#f87171; --green:#34d399; --gray:#475569; --line:#1d2531;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:14px/1.5 ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  .topbar{display:flex;align-items:center;gap:16px;padding:12px 20px;border-bottom:1px solid var(--line);
+    background:var(--panel)}
+  .brand{font-weight:600;letter-spacing:.3px}
+  .ro-tag{font-size:11px;color:var(--amber);border:1px solid #3a2e12;background:#1c1608;
+    padding:3px 9px;border-radius:999px;letter-spacing:.05em}
+  .listening{margin-left:auto;display:flex;align-items:center;gap:9px;font-size:13px;color:var(--green)}
+  .pulse{width:11px;height:11px;border-radius:50%;background:var(--green);
+    box-shadow:0 0 0 0 rgba(52,211,153,.6);animation:p 1.8s infinite}
+  @keyframes p{0%{box-shadow:0 0 0 0 rgba(52,211,153,.55)}70%{box-shadow:0 0 0 9px rgba(52,211,153,0)}100%{box-shadow:0 0 0 0 rgba(52,211,153,0)}}
+  .grid{display:grid;grid-template-columns:1.4fr 1fr;gap:0;height:calc(100vh - 49px)}
+  .col{overflow:auto;padding:18px 20px}
+  .col + .col{border-left:1px solid var(--line);background:var(--panel2)}
+  h2{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);margin:0 0 12px}
+  .proc{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:12px}
+  .proc.sel{border-color:var(--teal);box-shadow:inset 0 0 0 1px rgba(45,212,191,.25)}
+  .prow{display:flex;align-items:center;gap:10px}
+  .callsign{font-size:16px;font-weight:600}
+  .state{font-size:11px;padding:2px 9px;border-radius:999px;border:1px solid var(--line)}
+  .s-active{color:var(--green);border-color:#16432f;background:#0c2018}
+  .s-paused{color:var(--amber);border-color:#3a2e12;background:#1c1608}
+  .s-planning{color:var(--violet);border-color:#2c2546;background:#140f24}
+  .s-halted{color:var(--red);border-color:#3a1a1a;background:#1d0e0e}
+  .sel-tag{margin-left:auto;font-size:10.5px;color:var(--teal);border:1px solid #16432f;
+    padding:2px 8px;border-radius:999px}
+  .pmeta{margin-top:9px;font-size:12px;color:var(--muted);display:grid;grid-template-columns:1fr 1fr;gap:4px 12px}
+  .pmeta b{color:var(--ink);font-weight:500}
+  .ids{margin-top:8px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;color:#5d6b7d}
+  .panelbox{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:14px}
+  .kv{display:flex;justify-content:space-between;font-size:13px;padding:5px 0;border-bottom:1px dashed var(--line)}
+  .kv:last-child{border-bottom:0}
+  .kv span:last-child{color:var(--muted)}
+  .words{display:flex;flex-wrap:wrap;gap:7px;margin-top:6px}
+  .word{font-family:ui-monospace,monospace;font-size:11.5px;background:#0e1622;border:1px solid var(--line);
+    padding:3px 8px;border-radius:6px;color:#cbd5e1}
+  .word.panic{color:var(--red);border-color:#3a1a1a}
+  .word.mute{color:var(--amber);border-color:#3a2e12}
+  .trace{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;line-height:1.7}
+  .t{display:grid;grid-template-columns:62px 92px 1fr;gap:8px;padding:3px 0;border-bottom:1px solid #141b26}
+  .t .ts{color:#5d6b7d}
+  .t .ev{font-weight:600}
+  .ev-obs{color:var(--blue)} .ev-pass{color:var(--gray)} .ev-fire{color:var(--violet)}
+  .ev-act{color:var(--green)} .ev-safe{color:var(--amber)} .ev-halt{color:var(--red)}
+  .t .msg{color:#aebacb}
+  .foot{font-size:11px;color:#5d6b7d;margin-top:8px}
+  .emerg{margin-top:10px;border:1px dashed #3a1a1a;background:#160c0c;border-radius:10px;padding:10px 12px;
+    font-size:12px;color:var(--red)}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <span class="brand">PANOPTICON</span>
+  <span class="ro-tag">READ-ONLY · NON-AUTHORITATIVE · NOT ON CRITICAL PATH</span>
+  <span class="listening"><span class="pulse"></span> Listening · transcript-only · ASR: Nova-3 (mock)</span>
+</div>
+
+<div class="grid">
+  <!-- LEFT: process fleet -->
+  <div class="col">
+    <h2>Processes (fleet) — REQ-13 / REQ-15</h2>
+
+    <div class="proc sel">
+      <div class="prow">
+        <span class="callsign">Atlas</span>
+        <span class="state s-active">active</span>
+        <span class="sel-tag">◀ selected · steering window 14s left</span>
+      </div>
+      <div class="pmeta">
+        <div>Posture: <b>Dangerous (run-to-completion)</b></div><div>Model: <b>fable (per-process)</b></div>
+        <div>Task: <b>blocker announcer</b></div><div>Last spoke: <b>“Done — 3 files.”</b></div>
+      </div>
+      <div class="ids">UPID upid_atlas_7f3 · run smithers_run_9c12 · cue sess_a1</div>
+    </div>
+
+    <div class="proc">
+      <div class="prow">
+        <span class="callsign">Bravo</span>
+        <span class="state s-paused">paused</span>
+      </div>
+      <div class="pmeta">
+        <div>Posture: <b>Dangerous (run-to-completion)</b></div><div>Model: <b>fable (per-process)</b></div>
+        <div>Task: <b>migration dry-run</b></div><div>Paused by: <b>voice (“Bravo, pause”)</b></div>
+      </div>
+      <div class="ids">UPID upid_bravo_2a9 · run smithers_run_9c41 · cue sess_a1</div>
+    </div>
+
+    <div class="proc">
+      <div class="prow">
+        <span class="callsign">Cobalt</span>
+        <span class="state s-planning">planning</span>
+      </div>
+      <div class="pmeta">
+        <div>Posture: <b>Dangerous (run-to-completion)</b></div><div>Model: <b>fable (per-process)</b></div>
+        <div>Task: <b>(seeding…)</b></div><div>Spawned: <b>just now</b></div>
+      </div>
+      <div class="ids">UPID upid_cobalt_5e0 · run smithers_run_9c55 · cue sess_a1</div>
+    </div>
+
+    <div class="foot">Note: V0 caps the operable fleet at 2 concurrent (REQ-13 / NG-3). A third shown here is illustrative only.</div>
+
+    <div class="emerg">⛑ Emergency stop (REQ-14): hardware key <b>Esc ×3</b> = kill-all + stop listening (≤2s). Emergency-only — no steering/selection.</div>
+  </div>
+
+  <!-- RIGHT: cue state + vocab + trace -->
+  <div class="col">
+    <h2>Live cue &amp; routing — REQ-6</h2>
+    <div class="panelbox">
+      <div class="kv"><span>Active cue</span><span>ProcessSelectCue → Atlas</span></div>
+      <div class="kv"><span>Last route</span><span>steer:Atlas</span></div>
+      <div class="kv"><span>Suggestion budget</span><span>0 / 1 per 3 min</span></div>
+      <div class="kv"><span>Gate progress</span><span>31 words / 48s since last fire</span></div>
+      <div class="kv"><span>observe.pass (last min)</span><span>14</span></div>
+    </div>
+
+    <h2>Magic words (fixed set) — REQ-7</h2>
+    <div class="panelbox">
+      <div class="words">
+        <span class="word">Atlas</span><span class="word">Bravo</span><span class="word">Cobalt</span>
+        <span class="word">accept</span><span class="word">confirm</span><span class="word">pause</span>
+        <span class="word">done</span><span class="word">status</span><span class="word">pause all</span>
+        <span class="word panic">stop</span><span class="word mute">mute</span><span class="word">unmute</span>
+      </div>
+      <div class="foot">Plain-English, documented &amp; deterministic; the voice library (Cue) handles wake/keyword robustness. Unmute = say “unmute” or press the on-screen unmute button. NL commands are V0 non-goal (NG-2).</div>
+    </div>
+
+    <h2>Trace log — REQ-16 (reconstruct any chain)</h2>
+    <div class="panelbox trace">
+      <div class="t"><span class="ts">12:04:31</span><span class="ev ev-obs">OBS</span><span class="msg">seg#218 spk_1 “Atlas, also include the run name…”</span></div>
+      <div class="t"><span class="ts">12:04:31</span><span class="ev ev-fire">FIRE</span><span class="msg">ProcessSelectCue → route steer:Atlas (conf 0.91)</span></div>
+      <div class="t"><span class="ts">12:04:32</span><span class="ev ev-act">ACT</span><span class="msg">process.steer upid_atlas_7f3 ✓ ack@240ms</span></div>
+      <div class="t"><span class="ts">12:04:48</span><span class="ev ev-act">ACT</span><span class="msg">overwrite announcer.config → applied once (run-to-completion · no per-action gate)</span></div>
+      <div class="t"><span class="ts">12:05:02</span><span class="ev ev-obs">OBS</span><span class="msg">seg#224 spk_0 “did you see the standup notes…”</span></div>
+      <div class="t"><span class="ts">12:05:02</span><span class="ev ev-pass">PASS</span><span class="msg">observe.pass · not buildable · gate 18/60</span></div>
+      <div class="t"><span class="ts">12:05:40</span><span class="ev ev-fire">FIRE</span><span class="msg">SuggestionCue · queued, awaiting idle (conf 0.82)</span></div>
+      <div class="t"><span class="ts">12:06:09</span><span class="ev ev-act">ACT</span><span class="msg">spawn upid_cobalt_5e0 (run 9c55) ✓</span></div>
+      <div class="t"><span class="ts">12:06:21</span><span class="ev ev-halt">HALT</span><span class="msg">process.halt upid_atlas_7f3 trigger=panic @0.7s</span></div>
+    </div>
+    <div class="foot">JSONL: observations / decisions / actions per session · OTel GenAI spans → Langfuse (Smithers side).</div>
+  </div>
+</div>
+</body>
+</html>

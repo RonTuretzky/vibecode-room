@@ -1,0 +1,23 @@
+bun test v1.3.14 (0d9b296a)
+
+src/cue/adapter.test.ts:
+185 |       steeringTools: ["panopticon.steer"],
+186 |       ambientActions: ambient.actions,
+187 |       steeringActions: steering.actions,
+188 |     };
+189 | 
+190 |     expect(() => assertTwoProgramIsolation(probe)).not.toThrow();
+                                                             ^
+error: expect(received).not.toThrow()
+
+Error name: "Error"
+Error message: "Ambient Program may not receive the steering tool."
+
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/cue-adapter-and-policies/src/cue/adapter.test.ts:190:56)
+(fail) Cue adapter and policies > two independent Programs keep ambient C2 out of steering C3 and steering C3 out of ambient C2 [2.74ms]
+
+ 4 pass
+ 1 fail
+ 14 expect() calls
+Ran 5 tests across 1 file. [77.00ms]
+exit=1

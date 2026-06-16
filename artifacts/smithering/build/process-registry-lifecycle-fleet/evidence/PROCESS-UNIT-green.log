@@ -1,0 +1,7 @@
+$ bun test src/process/registry.test.ts src/process/lifecycle.test.ts src/process/resource-check.test.ts
+bun test v1.3.14 (0d9b296a)
+
+ 12 pass
+ 0 fail
+ 33 expect() calls
+Ran 12 tests across 3 files. [23.00ms]

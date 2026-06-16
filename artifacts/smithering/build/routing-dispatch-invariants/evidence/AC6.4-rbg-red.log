@@ -1,0 +1,23 @@
+bun test v1.3.14 (0d9b296a)
+
+src/routing/dispatch.test.ts:
+160 |     expect(addressed.kind).toBe("local");
+161 |     expect(addressed.addressed).toBe(true);
+162 |     expect(addressed.ackKind).toBe("route-declined");
+163 |     expect(ambient.kind).toBe("pass");
+164 |     expect(ambient.addressed).toBe(false);
+165 |     expect(ambient.ackKind).toBe("silent");
+                                  ^
+error: expect(received).toBe(expected)
+
+Expected: "silent"
+Received: "route-declined"
+
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/routing-dispatch-invariants/src/routing/dispatch.test.ts:165:29)
+(fail) routing dispatch invariants > addressed-vs-ambient pass is deterministic: addressed pass gets declined ack, ignored ambient is silent [3.87ms]
+
+ 0 pass
+ 10 filtered out
+ 1 fail
+ 6 expect() calls
+Ran 1 test across 1 file. [28.00ms]

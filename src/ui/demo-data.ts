@@ -1,0 +1,123 @@
+import type { LogEvent } from "../types";
+import type { ProjectorSnapshot } from "./types";
+
+const trace = (event: string, correlationId: string, meta: Record<string, unknown>, upid?: string): LogEvent => ({
+  level: "info",
+  event,
+  sessionId: "projector-demo",
+  correlationId,
+  upid,
+  latencyMs: 42,
+  meta,
+});
+
+export const demoProjectorSnapshot: ProjectorSnapshot = {
+  sessionId: "projector-demo",
+  listening: true,
+  muted: false,
+  globalState: "ready",
+  activeCue: "Atlas steering window",
+  emergencyStopTriggered: false,
+  suggestion: {
+    state: "queued",
+    pitch: "Turn the meeting notes into a blocker announcer.",
+    confidence: 0.82,
+    gate: {
+      words: 74,
+      minWords: 60,
+      seconds: 128,
+      minSeconds: 90,
+    },
+    questions: ["Which repo?", "Should it post to Slack?", "Who reviews first?"],
+  },
+  audio: {
+    lastSpoken: "Atlas active. I will include the run name in the summary.",
+    earcon: "route-steer double click",
+    silenceRatio: 0.91,
+  },
+  processes: [
+    {
+      upid: "upid_atlas_7f3",
+      runId: "smithers_run_9c12",
+      callsign: "Atlas",
+      state: "active",
+      selected: true,
+      task: "Blocker announcer",
+      model: "Codex gpt-5.5",
+      progressLabel: "writing summary",
+      progress: 68,
+      lastOutput: "Done with scan. Updating the announcement copy now.",
+      lastAction: "steer: include run name",
+      events: ["spawn confirmed", "plan accepted", "steered by room", "summary emitted"],
+    },
+    {
+      upid: "upid_cobalt_5e0",
+      runId: "smithers_run_9c55",
+      callsign: "Cobalt",
+      state: "planning",
+      selected: false,
+      task: "Migration dry-run",
+      model: "Claude Sonnet 4.6",
+      progressLabel: "checking resources",
+      progress: 24,
+      lastOutput: "Planning the dry-run path before touching files.",
+      lastAction: "spawned from accepted suggestion",
+      events: ["spawn confirmed", "resource check", "planning"],
+    },
+  ],
+  transcript: [
+    {
+      time: "12:04:31",
+      speaker: "Room",
+      kind: "room",
+      text: "Atlas, also include the run name in the spoken summary.",
+    },
+    {
+      time: "12:04:32",
+      speaker: "Panopticon",
+      kind: "panopticon",
+      text: "Routed to Atlas.",
+    },
+    {
+      time: "12:05:02",
+      speaker: "Room",
+      kind: "room",
+      text: "The standup notes keep losing blockers.",
+    },
+    {
+      time: "12:05:40",
+      speaker: "Panopticon",
+      kind: "panopticon",
+      text: "Idea queued for the next idle gap.",
+    },
+  ],
+  trace: [
+    trace("observe.final", "corr-atlas-001", { utteranceId: "utt-218", speaker: "speaker-1" }),
+    trace("route.action", "corr-atlas-001", { action: "steer", targetUPID: "upid_atlas_7f3" }, "upid_atlas_7f3"),
+    trace("process.steer", "corr-atlas-001", { runId: "smithers_run_9c12" }, "upid_atlas_7f3"),
+    trace("output.tts", "corr-atlas-001", { text: "Routed to Atlas." }, "upid_atlas_7f3"),
+    trace("observe.pass", "corr-room-224", { reason: "ambient", wordCount: 18 }),
+    trace("suggestion.queued", "corr-suggest-009", { confidence: 0.82, idlePreferred: true }),
+  ],
+  updatedAt: new Date("2026-06-16T18:00:00.000Z").toISOString(),
+};
+
+export function withUnmuted(snapshot: ProjectorSnapshot): ProjectorSnapshot {
+  return {
+    ...snapshot,
+    listening: true,
+    muted: false,
+    globalState: "ready",
+    activeCue: "ambient listening",
+    audio: {
+      ...snapshot.audio,
+      lastSpoken: "Unmuted.",
+      earcon: "ambient E2 restored",
+    },
+    trace: [
+      ...snapshot.trace,
+      trace("mute.released", `corr-unmute-${Date.now()}`, { trigger: "unmute-button", streamingToCloud: true }),
+    ].slice(-80),
+    updatedAt: new Date().toISOString(),
+  };
+}

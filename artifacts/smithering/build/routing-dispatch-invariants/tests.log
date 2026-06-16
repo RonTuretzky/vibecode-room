@@ -1,0 +1,9 @@
+bun test v1.3.14 (0d9b296a)
+
+test/e2e/spine.e2e.ts.test.ts:
+timestamp=2026-06-15T23:45:54.980Z level=INFO fiber=#5 message="Gateway run started" gateway:run=1ms runId=run-spine-001 transport=ws triggeredBy=spine role=operator workflow=panopticon-spine service=smithers source=user userId=spine resume=false connectionId=spine:connection
+
+ 17 pass
+ 0 fail
+ 126 expect() calls
+Ran 17 tests across 2 files. [1258.00ms]

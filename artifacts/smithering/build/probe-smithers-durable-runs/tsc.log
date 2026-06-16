@@ -1,0 +1,2 @@
+$ tsc --noEmit
+TSC_EXIT_STATUS=0

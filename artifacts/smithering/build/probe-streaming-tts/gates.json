@@ -1,0 +1,11 @@
+[
+  {
+    "criterionId": "P-TTS",
+    "method": "PANOP_TTS_FIRST_AUDIO_BUDGET_MS=20 bun test poc/p-tts.test.ts; bun test poc/p-tts.test.ts",
+    "tier": "pre-merge",
+    "status": "failed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/probe-streaming-tts/evidence/P-TTS-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/probe-streaming-tts/evidence/P-TTS-green.log"
+  }
+]

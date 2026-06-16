@@ -1,0 +1,3 @@
+{"level":"info","event":"build.ticket.start","sessionId":"provider-interface-doubles","correlationId":"corr-provider-interface-doubles","meta":{"ticketId":"provider-interface-doubles","branch":"build/provider-interface-doubles"}}
+{"level":"info","event":"provider.boundary.defined","sessionId":"provider-interface-doubles","correlationId":"corr-provider-interface-doubles","meta":{"interfaces":["ASRProvider","TTSProvider","DecisionLLM"],"doubles":["ReplayASRProvider","NoopTTSProvider","ReplayDecisionLLM"],"keywordSpotterProvider":false}}
+{"level":"info","event":"gate.presubmit","sessionId":"provider-interface-doubles","correlationId":"corr-provider-interface-doubles","meta":{"criterionId":"ENG-T-04","status":"passed","rbgRecorded":true}}

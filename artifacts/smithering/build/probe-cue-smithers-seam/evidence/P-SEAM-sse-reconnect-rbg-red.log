@@ -1,0 +1,24 @@
+bun test v1.3.14 (0d9b296a)
+
+poc/p-seam.test.ts:
+timestamp=2026-06-14T22:26:58.493Z level=INFO fiber=#5 message="Gateway run started" gateway:run=1ms runId=p-seam-upid-seam-001 transport=ws triggeredBy=probe:seam role=operator workflow=seam service=smithers source=user userId=probe:seam resume=false connectionId=probe:seam:connection
+170 |       const reconnectAfterSeq =
+171 |         process.env.P_SEAM_RBG_BREAK_RECONNECT === "1" ? lastSeq + 500 : Math.max(0, lastSeq - 1);
+172 |       const reconnectConnection = createConnection("probe:seam-reconnect");
+173 |       gateway.connections.add(reconnectConnection as any);
+174 |       const reconnect = await subscribeRunEvents(gateway, reconnectConnection, spawn.runId, reconnectAfterSeq);
+175 |       expect(reconnect.ok).toBe(true);
+                                 ^
+error: expect(received).toBe(expected)
+
+Expected: true
+Received: false
+
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/probe-cue-smithers-seam/poc/p-seam.test.ts:175:28)
+(fail) P-SEAM Cue to Smithers gateway integration > MappedActionTool dispatch is bidirectional, async, reconnectable, and restart-correlated [602.71ms]
+
+ 0 pass
+ 1 fail
+ 23 expect() calls
+Ran 1 test across 1 file. [1159.00ms]
+RBG_RED_EXIT_STATUS=1

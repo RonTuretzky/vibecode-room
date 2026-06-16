@@ -1,0 +1,23 @@
+bun test v1.3.14 (0d9b296a)
+
+src/routing/dispatch.test.ts:
+90 | 
+91 |   test("tier-gating keeps Yes inert outside SUGGESTION_DELIVERY", () => {
+92 |     const casualYes = dispatch("yes");
+93 |     const pendingYes = dispatch("yes", { pendingSuggestion: pendingSuggestion() });
+94 | 
+95 |     expect(casualYes.kind).toBe("pass");
+                                ^
+error: expect(received).toBe(expected)
+
+Expected: "pass"
+Received: "action"
+
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/routing-dispatch-invariants/src/routing/dispatch.test.ts:95:28)
+(fail) routing dispatch invariants > tier-gating keeps Yes inert outside SUGGESTION_DELIVERY [3.46ms]
+
+ 0 pass
+ 10 filtered out
+ 1 fail
+ 1 expect() calls
+Ran 1 test across 1 file. [27.00ms]

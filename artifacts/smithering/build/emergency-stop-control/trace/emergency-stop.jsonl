@@ -1,0 +1,1 @@
+{"level":"info","event":"emergency.stop","sessionId":"emergency-e2e","correlationId":"corr-emergency-e2e","latencyMs":1,"meta":{"ticketId":"emergency-stop-control","trigger":"non-voice","processesHalted":2,"sessionEnded":true,"listening":false,"signal":"Emergency stop. Session ended."}}

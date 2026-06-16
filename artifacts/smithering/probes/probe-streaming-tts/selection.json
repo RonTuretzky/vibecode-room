@@ -1,0 +1,61 @@
+{
+  "budgetMs": 200,
+  "selected": {
+    "providerId": "playht",
+    "label": "PlayHT 3.0 Turbo",
+    "model": "replay-tts",
+    "voice": "neutral-replay",
+    "firstAudioByteMs": 63.13908399999491,
+    "firstChunkBytes": 51,
+    "contentType": "audio/replay-pcm"
+  },
+  "fastestMeasured": {
+    "providerId": "playht",
+    "label": "PlayHT 3.0 Turbo",
+    "model": "replay-tts",
+    "voice": "neutral-replay",
+    "firstAudioByteMs": 63.13908399999491,
+    "firstChunkBytes": 51,
+    "contentType": "audio/replay-pcm"
+  },
+  "measured": [
+    {
+      "providerId": "elevenlabs",
+      "label": "ElevenLabs Flash v3 / Flash low-latency family",
+      "model": "replay-tts",
+      "voice": "neutral-replay",
+      "firstAudioByteMs": 63.59625000000233,
+      "firstChunkBytes": 55,
+      "contentType": "audio/replay-pcm"
+    },
+    {
+      "providerId": "cartesia",
+      "label": "Cartesia Sonic",
+      "model": "replay-tts",
+      "voice": "neutral-replay",
+      "firstAudioByteMs": 63.853040999994846,
+      "firstChunkBytes": 53,
+      "contentType": "audio/replay-pcm"
+    },
+    {
+      "providerId": "playht",
+      "label": "PlayHT 3.0 Turbo",
+      "model": "replay-tts",
+      "voice": "neutral-replay",
+      "firstAudioByteMs": 63.13908399999491,
+      "firstChunkBytes": 51,
+      "contentType": "audio/replay-pcm"
+    },
+    {
+      "providerId": "openai",
+      "label": "OpenAI /v1/audio/speech",
+      "model": "replay-tts",
+      "voice": "neutral-replay",
+      "firstAudioByteMs": 64.60720800000126,
+      "firstChunkBytes": 51,
+      "contentType": "audio/replay-pcm"
+    }
+  ],
+  "unavailable": [],
+  "blockers": []
+}

@@ -1,0 +1,10 @@
+{
+  "ranTests": true,
+  "rbgConfirmed": true,
+  "gatesGreen": true,
+  "rebasedOntoIntegration": true,
+  "mergedTipGatesGreen": false,
+  "integrationBranch": "smithering/integration",
+  "pass": false,
+  "summary": "Rebase onto smithering/integration succeeded (artifact conflicts from other tickets resolved by accepting integration versions). Primary gates P-LLM (2 pass) and A-LLM-SUB (2 pass) are green per independent runs on the rebased tip. All four RBG evidence files are genuine and non-empty: P-LLM-rbg-red.log shows real test failure (temperature-0 replay decisions diverged), P-LLM-green.log shows 2 pass; A-LLM-SUB-rbg-red.log shows real failure (Raw provider key rejected when raw key passed - correct RBG), A-LLM-SUB-green.log shows 2 pass. tsc --noEmit crashed with SIGABRT/OOM across 3 attempts with zero error TS diagnostics - classified INFRA/transient, not tsc red. Walking-skeleton smoke (6 pass) and secret-scan e2e (1 pass) green. mergedTipGatesGreen=false: test/e2e/spine.e2e.ts.test.ts 'real durable spawn confirms within 3 seconds through the Gateway path' fails (callsign casing mismatch: expected Atlas, received atlas) on the rebased tip; this same failure confirmed pre-existing on smithering/integration branch itself and not caused by probe-hot-loop-llm-subscription changes. Ticket's own blocking gates are green and RBG evidence genuine, but strict mergedTipGatesGreen=false forces pass=false."
+}

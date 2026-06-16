@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Build Decision - Observability OTLP exporter</title>
+<style>
+  :root { --ink:#e8edf2; --mut:#9aa8b5; --line:#283544; --good:#39d98a; --bad:#ff6b6b; --accent:#7cc7ff; --bg:#0b1117; --card:#111a24; }
+  * { box-sizing:border-box; }
+  body { font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; color:var(--ink); max-width:920px; margin:2.2rem auto; padding:0 1.2rem; background:var(--bg); }
+  h1 { font-size:1.55rem; margin:0 0 .2rem; }
+  h2 { font-size:1.12rem; margin:1.8rem 0 .5rem; border-bottom:2px solid var(--line); padding-bottom:.25rem; }
+  .meta { color:var(--mut); font-size:.86rem; margin-bottom:1.2rem; }
+  .pill { display:inline-block; padding:.08rem .5rem; border-radius:999px; font-size:.75rem; font-weight:600; background:#132f47; color:var(--accent); }
+  code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; color:#d8f3ff; }
+  pre { background:#05080c; color:#e6edf3; padding:.9rem 1.1rem; border-radius:8px; overflow:auto; font-size:.82rem; line-height:1.45; border:1px solid var(--line); }
+  .box { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:.9rem 1.1rem; margin:.7rem 0; }
+  .alt { border-left:4px solid var(--line); padding-left:.9rem; margin:.6rem 0; }
+  .alt.win { border-left-color:var(--good); } .alt.lose { border-left-color:var(--bad); }
+  .good { color:var(--good); font-weight:600; } .bad { color:var(--bad); font-weight:600; }
+</style>
+</head>
+<body>
+<h1>OTLP export for Smithers agent calls</h1>
+<div class="meta"><span class="pill">BUILD</span> &nbsp; observability-trace-and-board &nbsp;·&nbsp; 2026-06-15</div>
+
+<h2>Decision</h2>
+<div class="box">
+Implement <code>src/obs/otel.ts</code> as a small OTLP/JSON exporter with GenAI semantic-convention
+attributes, injected <code>fetch</code>, and no global OpenTelemetry SDK registration. It posts to the
+configured Langfuse OTLP endpoint when present and otherwise no-ops.
+</div>
+
+<h2>Why</h2>
+<p>P-OTEL is informational and observability is off every voice critical path. The local package already
+pulls OpenTelemetry transitively through Smithers, but adding global SDK setup here would introduce process
+state and shutdown behavior that the board and causal reconstruction do not need. A narrow OTLP exporter
+still proves the payload contract against a Langfuse-compatible endpoint while keeping the voice loop
+independent of backend availability.</p>
+
+<h2>Alternatives</h2>
+<div class="alt lose"><strong>Install and configure a global OpenTelemetry SDK provider.</strong>
+<span class="bad">Rejected for V0.</span> It increases lifecycle surface for an informational path.</div>
+<div class="alt lose"><strong>Skip OTLP and rely only on JSONL.</strong>
+<span class="bad">Rejected.</span> The ticket explicitly asks for Langfuse export via OTLP.</div>
+<div class="alt win"><strong>Use a narrow OTLP/JSON exporter with GenAI attributes.</strong>
+<span class="good">Chosen.</span> It is easy to test with a local HTTP receiver and remains off-path.</div>
+
+<h2>Verification</h2>
+<pre>PANOP_RBG_OTEL_EXPORT_FAIL=1 bun test poc/p-otel.test.ts
+bun test poc/p-otel.test.ts</pre>
+</body>
+</html>

@@ -1,0 +1,2 @@
+{"id":"redacted-probe-report","behavior":"probe report meta is redacted before durable emission","phase":"red","status":"failed-as-expected","error":"red probe branch proves the assertion can fail"}
+{"id":"redacted-probe-report","behavior":"probe report meta is redacted before durable emission","phase":"green","status":"passed"}

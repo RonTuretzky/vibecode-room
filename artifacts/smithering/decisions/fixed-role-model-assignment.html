@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Decision ORCH-A-04 — Model assignment: implement Codex, verify Sonnet, review Codex+Opus, plan Opus</title>
+<style>
+  :root { --ink:#1a1a1a; --mut:#666; --line:#e2e2e2; --good:#0a7d33; --bad:#b00020; --accent:#0b5cad; --bg:#fafafa; }
+  * { box-sizing:border-box; }
+  body { font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; color:var(--ink); max-width:920px; margin:2.2rem auto; padding:0 1.2rem; background:var(--bg); }
+  h1 { font-size:1.55rem; margin:0 0 .2rem; }
+  h2 { font-size:1.12rem; margin:1.8rem 0 .5rem; border-bottom:2px solid var(--line); padding-bottom:.25rem; }
+  .meta { color:var(--mut); font-size:.86rem; margin-bottom:1.2rem; }
+  .pill { display:inline-block; padding:.08rem .5rem; border-radius:999px; font-size:.75rem; font-weight:600; background:#e7f1fb; color:var(--accent); }
+  table { border-collapse:collapse; width:100%; margin:.6rem 0; font-size:.92rem; }
+  th,td { border:1px solid var(--line); padding:.45rem .6rem; text-align:left; vertical-align:top; }
+  th { background:#f0f0f0; }
+  code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  pre { background:#0f1115; color:#e6e6e6; padding:.9rem 1.1rem; border-radius:8px; overflow:auto; font-size:.82rem; line-height:1.45; }
+  .good { color:var(--good); font-weight:600; } .bad { color:var(--bad); font-weight:600; }
+  .box { background:#fff; border:1px solid var(--line); border-radius:8px; padding:.9rem 1.1rem; margin:.7rem 0; }
+  .alt { border-left:4px solid var(--line); padding-left:.9rem; margin:.6rem 0; }
+  .alt.win { border-left-color:var(--good); } .alt.lose { border-left-color:var(--bad); }
+  .warn { background:#fff7e6; border:1px solid #ffd591; border-radius:8px; padding:.7rem 1rem; }
+</style>
+</head>
+<body>
+<h1>Model assignment: <span style="color:#0b5cad">implement Codex, verify Sonnet, review Codex + Opus, plan Opus</span></h1>
+<div class="meta"><span class="pill">ORCH-A-04</span> &nbsp; Panopticon V0 implementation orchestration &nbsp;·&nbsp; <code>docs/planning/06-orchestration.md §4</code></div>
+
+<div class="warn" style="margin-bottom:1rem">
+<strong>New matrix.</strong> The prior decision used a <em>complexity-based</em> assignment where
+<em>Anthropic implements</em> (Sonnet/Opus by size) and <em>OpenAI Codex reviews</em>. That is replaced
+by fixed per-role assignments below. The cross-family principle still holds — the default implementer is
+now OpenAI/Codex, and the cross-family Anthropic check is the Opus reviewer.
+</div>
+
+<h2>The fixed roles</h2>
+<div class="box">
+<table>
+<tr><th>Role</th><th>Model(s)</th><th>Canonical id(s)</th></tr>
+<tr><td><strong>Implementation</strong></td><td><strong>always Codex 5.5</strong> (OpenAI, via the Codex CLI) — <strong>never Opus</strong></td><td><code>gpt-5.5</code></td></tr>
+<tr><td><strong>Verification</strong></td><td><strong>always Sonnet 4.6</strong></td><td><code>claude-sonnet-4-6</code></td></tr>
+<tr><td><strong>Review</strong></td><td><strong>BOTH Codex 5.5 AND Opus 4.8</strong></td><td><code>gpt-5.5</code> + <code>claude-opus-4-8</code></td></tr>
+<tr><td><strong>Planning</strong></td><td><strong>Opus 4.8</strong></td><td><code>claude-opus-4-8</code></td></tr>
+</table>
+<!-- TODO: use Fable (Fable 5, claude-fable-5) once wired in — aspirational, not yet enabled. -->
+<p style="margin:.6rem 0 0"><strong>TODO (aspirational, not yet wired in):</strong> use <strong>Fable
+(Fable 5, <code>claude-fable-5</code>)</strong> in the fleet once it is available.</p>
+</div>
+
+<h2>Cross-family still holds</h2>
+<p><strong>The implementer is OpenAI/Codex; the cross-family Anthropic check is the Opus reviewer.</strong>
+Review runs <em>both</em> Codex 5.5 and Opus 4.8, so every diff gets an in-family adversarial pass (Codex
+reviewing Codex's implementation) <em>and</em> an independent cross-family perspective (Opus). The
+cross-family invariant — a reviewer of a different family than the implementer — is satisfied by the Opus
+reviewer. A model reviewing only its own family's output shares that family's blind spots; pairing the
+Codex implementer with an Opus reviewer keeps independent perspective structural, not hoped-for.</p>
+
+<h2>The verifier's authority is the test result</h2>
+<p>Verification is <strong>Sonnet 4.6</strong>, and the <strong>verifier's authority is the test result,
+never its opinion</strong> (the build-time analog of "routing authority in code, not the LLM",
+ENG-A-04). The verifier confirms each blocking gate's test was <em>capable of failing</em> (the red run
+exists and is real) and that the green run passes — it does not re-judge taste.</p>
+
+<h2>Per-ticket assignment</h2>
+<pre>implement → Codex gpt-5.5        (always; never Opus)
+verify    → Sonnet claude-sonnet-4-6
+review    → Codex gpt-5.5  AND  Opus claude-opus-4-8   (in-family + cross-family)
+plan      → Opus claude-opus-4-8
+// TODO: Fable 5 (claude-fable-5) — aspirational, not yet wired in</pre>
+
+<h2>Alternatives</h2>
+<div class="alt lose"><strong>Complexity-based: Anthropic implements (Sonnet/Opus by size), Codex reviews (prior plan).</strong>
+<span class="bad">Replaced.</span> Superseded by fixed per-role assignments; the default implementer is now
+Codex, not Anthropic.</div>
+<div class="alt lose"><strong>Single-family review (only Codex, or only Opus).</strong>
+<span class="bad">Rejected.</span> Review runs both so a diff gets in-family adversarial review and a
+cross-family independent check.</div>
+<div class="alt win"><strong>Implement Codex 5.5, verify Sonnet 4.6, review Codex 5.5 + Opus 4.8, plan Opus 4.8 (chosen).</strong>
+<span class="good">Chosen.</span> Fixed roles, cross-family check via the Opus reviewer, test-authority
+verifier. (Fable 5 is a TODO.)</div>
+
+<h2>Verification</h2>
+<ul>
+<li><strong>Role-assignment test:</strong> for every ticket, assert implement = <code>gpt-5.5</code>,
+verify = <code>claude-sonnet-4-6</code>, review includes <em>both</em> <code>gpt-5.5</code> and
+<code>claude-opus-4-8</code>, plan = <code>claude-opus-4-8</code>. <span class="bad">RBG:</span> assign
+Opus as the implementer → assignment guard rejects it (implement must be Codex).</li>
+<li><strong>Cross-family-guard test:</strong> assert the review set contains a reviewer of a different
+family than the implementer (the Opus reviewer vs. the Codex implementer). <span class="bad">RBG:</span>
+drop Opus from review, leaving only Codex → cross-family assertion fails.</li>
+<li><strong>Verifier-independence test:</strong> assert the Sonnet verifier is a distinct run/context
+from the implementer (different <code>runId</code>, fresh prompt). <span class="bad">RBG:</span> reuse
+the implementer context as verifier → independence assertion fails.</li>
+<li><strong>Review-recorded test:</strong> a land requires <code>review.json</code> with both reviewers'
+verdicts and <code>verify.json</code> with a passing gate re-run. <span class="bad">RBG:</span> drop
+<code>review.json</code> → land refused.</li>
+</ul>
+
+<div class="warn"><strong>Fallback:</strong> if Codex is unavailable, implementation cannot proceed for
+that ticket (Codex is the implementer); if an Anthropic tier is unavailable, the Opus reviewer/planner
+falls back to another Anthropic family member as a logged exception — never same-instance self-review.
+<strong>TODO:</strong> wire in Fable 5 (<code>claude-fable-5</code>) when available.</div>
+</body>
+</html>

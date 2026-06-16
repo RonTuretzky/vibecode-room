@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ENG-A-14 — Suggestion restraint = env-tunable params (corpus deferred)</title>
+<style>
+  :root { --bg:#0a0a0a; --fg:#e0e0e0; --ok:#00ff88; --bad:#ff3b30; --warn:#f5a623; --sel:#00bcd4; --mut:#888; }
+  body { background:var(--bg); color:var(--fg); font:15px/1.6 -apple-system,Segoe UI,Roboto,sans-serif; max-width:920px; margin:0 auto; padding:32px; }
+  h1 { font-size:24px; color:var(--sel); margin-bottom:4px; }
+  h2 { font-size:18px; color:var(--ok); margin-top:32px; border-bottom:1px solid #222; padding-bottom:6px; }
+  .tag { display:inline-block; background:#1a1a1a; border:1px solid #333; border-radius:4px; padding:2px 8px; font-size:12px; color:var(--mut); margin-right:6px; }
+  code,pre { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  pre { background:#111; border:1px solid #222; border-radius:6px; padding:14px; overflow:auto; font-size:13px; }
+  table { border-collapse:collapse; width:100%; margin:12px 0; font-size:14px; }
+  th,td { border:1px solid #222; padding:8px 10px; text-align:left; vertical-align:top; }
+  th { background:#141414; color:var(--sel); }
+  .acc { color:var(--ok); } .warn { color:var(--warn); } .rej { color:var(--bad); }
+  blockquote { border-left:3px solid var(--warn); margin:12px 0; padding:6px 14px; color:#ccc; background:#120f08; }
+</style>
+</head>
+<body>
+<h1>Suggestion restraint is a set of env-tunable parameters — the labeled corpus is deferred</h1>
+<p><span class="tag">ENG-A-14</span><span class="tag">REQ-3</span><span class="tag warn">Simplified / deferred</span></p>
+
+<blockquote><strong>Superseded / simplified.</strong> The prior decision engineered a fixed, owned,
+human-labeled replay corpus (ticket <strong>ENG-T-07</strong>) with a minimum size, label schema,
+multi-labeler protocol, dev/test split, and a hard restraint metric (recall ≥80% / ≤1 false-positive per
+10 min, red-before-green). That formal corpus and metric are <strong>dropped for V0</strong>. ENG-T-07
+is no longer a hard requirement.</blockquote>
+
+<h2>The decision</h2>
+<p>For V0 there is <strong>no formal labeled corpus and no fixed restraint metric</strong>. Suggestion
+cadence / restraint is simply a set of <strong>env-tunable parameters with documented defaults</strong>
+(ties to ENG-A-01) — thresholds, cooldowns, and gates passed in via ENV, each with a default — that we
+<strong>tune by feel later</strong> from real-world UX. We do not stand up a labeling pipeline or assert
+a recall/FP number against a held-out test split.</p>
+
+<h2>Why simplified</h2>
+<p>Owning a human-labeled corpus (≥2 labelers, adjudication, inter-annotator agreement, leakage tests,
+a size floor) is heavy machinery whose only job was to make one number reproducible. The V0 posture —
+<strong>ship fast, make everything env-tunable, tune by feel</strong> — replaces that number with knobs.
+If suggestions are too chatty or too quiet, we turn a dial, not re-run a labeled eval.</p>
+
+<h2>What it looks like instead</h2>
+<table>
+<tr><th>Knob (ENV, documented default)</th><th>Effect</th></tr>
+<tr><td><code>SUGGESTION_MIN_CONFIDENCE</code></td><td>how confident the idea engine must be before it speaks</td></tr>
+<tr><td><code>SUGGESTION_COOLDOWN_MS</code></td><td>minimum gap between suggestions (restraint)</td></tr>
+<tr><td><code>SUGGESTION_MAX_PER_WINDOW</code></td><td>cap on suggestions in a rolling window</td></tr>
+</table>
+<p>Defaults are documented; all are externally injected and tuned later by feel. No corpus, no metric,
+no red-before-green eval gate.</p>
+
+<h2>Alternatives considered</h2>
+<table>
+<tr><th>Approach</th><th>Verdict</th><th>Why</th></tr>
+<tr><td>Fixed labeled corpus + hard recall/FP metric (ENG-T-07, prior plan)</td><td class="rej">Deferred</td><td>Heavy labeling pipeline to make one number reproducible; against the ship-fast / tune-by-feel posture.</td></tr>
+<tr><td><strong>Env-tunable restraint parameters with documented defaults</strong></td><td class="acc">Chosen</td><td>Ships fast; restraint is a dial we tune from real UX, not a labeled eval.</td></tr>
+</table>
+
+<h2>Verification</h2>
+<ul>
+<li><strong>Knob-wiring test:</strong> each restraint parameter reads from ENV with its documented
+default and actually changes behavior (RBG: hard-code a threshold ignoring ENV → override test fails).</li>
+<li><strong>No-corpus assertion:</strong> there is no ENG-T-07 labeled corpus or held-out test-split eval
+gate in V0.</li>
+</ul>
+
+<blockquote><strong>Note:</strong> a labeled corpus and a formal restraint metric can be revisited
+later if restraint-by-feel proves insufficient — but it is not V0 scope.</blockquote>
+</body>
+</html>

@@ -1,0 +1,33 @@
+bun test v1.3.14 (0d9b296a)
+
+poc/p-otel.test.ts:
+36 |       completionTokens: 5,
+37 |       startedAtMs: 1,
+38 |       endedAtMs: 8,
+39 |     });
+40 | 
+41 |     expect(result).toEqual(expect.objectContaining({ attempted: true, ok: true, status: 200 }));
+                        ^
+error: expect(received).toEqual(expected)
+
+- ObjectContaining 
+  {
+    "attempted": true,
+-   "ok": true,
+-   "status": 200,
++   "body": "",
++   "ok": false,
++   "status": 503,
+  }
+
+- Expected  - 3
++ Received  + 3
+
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/observability-trace-and-board/poc/p-otel.test.ts:41:20)
+(fail) P-OTEL informational probe > exports Smithers GenAI spans to a Langfuse-compatible OTLP endpoint [4.31ms]
+
+ 1 pass
+ 1 fail
+ 8 expect() calls
+Ran 2 tests across 1 file. [18.00ms]
+EXIT_CODE:1

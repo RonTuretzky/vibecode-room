@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ENG-A-09 — Hot-plane earcon fed by Cue's TextCue</title>
+<style>
+  :root { --bg:#0a0a0a; --fg:#e0e0e0; --ok:#00ff88; --bad:#ff3b30; --warn:#f5a623; --sel:#00bcd4; --mut:#888; }
+  body { background:var(--bg); color:var(--fg); font:15px/1.6 -apple-system,Segoe UI,Roboto,sans-serif; max-width:920px; margin:0 auto; padding:32px; }
+  h1 { font-size:24px; color:var(--sel); margin-bottom:4px; }
+  h2 { font-size:18px; color:var(--ok); margin-top:32px; border-bottom:1px solid #222; padding-bottom:6px; }
+  .tag { display:inline-block; background:#1a1a1a; border:1px solid #333; border-radius:4px; padding:2px 8px; font-size:12px; color:var(--mut); margin-right:6px; }
+  code,pre { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  pre { background:#111; border:1px solid #222; border-radius:6px; padding:14px; overflow:auto; font-size:13px; }
+  table { border-collapse:collapse; width:100%; margin:12px 0; font-size:14px; }
+  th,td { border:1px solid #222; padding:8px 10px; text-align:left; vertical-align:top; }
+  th { background:#141414; color:var(--sel); }
+  .acc { color:var(--ok); } .rej { color:var(--bad); } .warn { color:var(--warn); }
+  blockquote { border-left:3px solid var(--warn); margin:12px 0; padding:6px 14px; color:#ccc; background:#120f08; }
+</style>
+</head>
+<body>
+<h1>The hot-plane earcon is triggered by Cue's deterministic <code>TextCue</code></h1>
+<p><span class="tag">ENG-A-09</span><span class="tag">REQ-10</span><span class="tag">Cue constraint (D2)</span><span class="tag warn">Resolves R4</span></p>
+
+<h2>The apparent contradiction (R4)</h2>
+<blockquote>"The plan does not explain how the hot plane knows a command was recognized without either
+duplicating command recognition outside Cue or waiting on Cue."</blockquote>
+<p>Two requirements look opposed: (a) the standing constraint requires magic-word recognition to be
+<strong>built on Cue</strong>; (b) REQ-10 requires the earcon ≤300&nbsp;ms, which cannot wait on the
+LLM-scored decision or Smithers.</p>
+
+<h2>The resolution <span style="color:var(--ok);font-size:.8rem">— CONFIRMED: Cue does recognition</span></h2>
+<p style="margin:0 0 10px"><strong>Confirmed.</strong> Cue handles keyword/intent recognition — "Cue does
+that." We do <strong>not</strong> build a custom recognizer. The earcon fires off Cue's own
+deterministic recognition outcome.</p>
+<h3 style="color:var(--sel);font-size:15px;margin:14px 0 4px">Split Cue's deterministic eval from its LLM-scored decision</h3>
+<p>Cue does two different things at different speeds:</p>
+<table>
+<tr><th>Cue stage</th><th>Speed</th><th>Drives</th></tr>
+<tr><td><code>TextCue</code> literal/regex match of a magic word</td><td class="acc">deterministic, in-process, no LLM</td><td>the hot-plane earcon</td></tr>
+<tr><td>LLM-scored intent/quality decision (suggestion firing, etc.)</td><td class="warn">~100 ms + network</td><td>the slow routing/dispatch path</td></tr>
+</table>
+<p>The earcon fires off the <strong>deterministic <code>TextCue</code> outcome that Cue already
+produces</strong> — so recognition is genuinely on Cue (constraint satisfied) — while the slow,
+LLM-scored decision proceeds independently and never blocks the earcon. The latency split is between
+Cue's fast and slow stages, <em>not</em> between a custom recognizer and Cue.</p>
+
+<pre>
+ASR isFinal ─▶ Cue Adapter ─▶ Cue TextCue (deterministic) ─┬─▶ EarconEngine.emit  ≤300 ms  (HOT)
+                                                           └─▶ LLM-scored decision ─▶ dispatch (SLOW)
+</pre>
+
+<h2>The one risk, and how the probe closes it</h2>
+<p>This only holds if a <code>TextCue</code> decision actually resolves within budget. <strong>P-CUE
+gets a new assertion:</strong> does a <code>TextCue</code> decision resolve within the earcon budget
+(target ≤150 ms, headroom under 300 ms)? Two outcomes:</p>
+<table>
+<tr><th>P-CUE result</th><th>Action</th></tr>
+<tr><td class="acc">TextCue resolves in budget</td><td>No fallback. Earcon fed directly by the Cue decision object.</td></tr>
+<tr><td class="rej">Cue batches decisions / <code>cooldownSeconds</code> integer-only → match not observable in budget</td><td><strong>Recorded fallback (owned extension + risk, D2):</strong> an adapter pre-matcher that mirrors the <em>exact</em> <code>TextCue</code> word list/semantics <strong>solely to drive the earcon</strong>. It has <em>no</em> routing authority — the authoritative route still comes from Cue's decision. A config-parity test asserts the pre-matcher's word list is byte-equal to the <code>TextCue</code> config.</td></tr>
+</table>
+
+<h2>Why not the rejected options</h2>
+<ul>
+<li><span class="rej">Duplicate a full command recognizer outside Cue</span> — two authorities, drift,
+violates the Cue constraint.</li>
+<li><span class="rej">Wait on Cue's full LLM-scored decision</span> — blows the 300&nbsp;ms budget.</li>
+</ul>
+
+<h2>Verification</h2>
+<ul>
+<li><strong>Unit:</strong> <em>recognition-source test</em> — the earcon trigger is the Cue
+<code>TextCue</code> decision (or, in fallback, a pre-matcher with a byte-equal word list); no routing
+decision is taken outside Cue.</li>
+<li><strong>E2e:</strong> <em>recognition-latency e2e</em> — earcon fires ≤300 ms after
+<code>isFinal</code> while the LLM decision is artificially delayed (proves the earcon does not wait on
+the slow path).</li>
+<li><strong>Probe:</strong> P-CUE TextCue-latency assertion (red-before-green).</li>
+</ul>
+</body>
+</html>

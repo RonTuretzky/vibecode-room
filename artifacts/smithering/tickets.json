@@ -1,0 +1,850 @@
+{
+  "summary": "31 stable-id tickets implementing Panopticon V0 (audio-first AI-agent OS with a required Vite projector UI) from docs/planning/01-prd.md..04-backpressure.md, after the V0 scope cut: run dangerously / to completion (no read-back/confirm safety hook, no Safe/Explicit/Dangerous modes, no shell classifier — E6/E7/E8); mute word 'mute' / unmute word 'unmute', unmute via Cue's always-on keyword or an on-screen button (no bespoke on-device spotter — V1/V2); ignored ambient speech is SILENT (V4); tiered vocabulary deferred (V3); the annotated replay corpus + restraint metric dropped — restraint is env-tunable params (E9); no SubscriptionCredentialProvider/Cerebras/Haiku machinery — assume the host is logged into its Codex + Claude subscriptions, no raw keys (E10). Removed tickets: probe-keyword-spotter, probe-pretool-safety-hook, safety-execution-boundary-hook, shell-command-classifier, seam-gate-correlation, replay-corpus-contract. The §22 round-1 probe learnings remain folded in (cheap-LLM intent gate after TextCue, coined non-NATO callsigns, the audio-capture→ASR→Cue bridge ENG-T-10, gateway-mode Smithers signalling, $0.15/hr cost gate, E4/E5 earcon redesign + pre-cached phrases). Ordered as a DAG: ticket 1 (walking-skeleton-smoke) is the cheapest headless end-to-end slice and becomes the smoke test; validate-before-build probes gate every third-party-dependent ticket; the required projector UI, canonical spine, latency benchmark, and fleet/durability e2e close the set. Every ticket enumerates concrete unit/integration command tests AND e2e tests (it is an AND) plus agent-review for what only a smart agent can judge, each with the red-before-green failure injection it must demonstrate.",
+  "artifactPath": "docs/planning/05-tickets.md",
+  "tickets": [
+    {
+      "id": "walking-skeleton-smoke",
+      "title": "Walking-skeleton smoke slice: Bun/Hono scaffold + CI + the cheapest headless end-to-end test",
+      "instructions": "Establish the project scaffold (ENG-T-06) and the single cheapest end-to-end slice that becomes the repo smoke test. This is the FIRST ticket and depends on nothing; it uses only in-process doubles (no Cue, no network, no mic, no API keys), so it legitimately precedes the P-CUE 'first build task' gate. Reuse the existing `package.json` (name `panopticon`, Bun, `type:module`, `smithers-orchestrator@0.23.0`, zod, ws). Wire `bun test` (already a script) and add a CI step that runs `bun test` plus `tsc --noEmit`. Create `src/` with: a minimal `src/types.ts` stub exporting `TranscriptObservation`, `CueDecision`, `LogEvent` (final shapes land in shared-types-contract); a minimal record-replay reader that loads a fixture transcript-observation JSONL; a trivial deterministic matcher (literal `TextCue`-equivalent for the wake word) that maps a transcript line to a `CueDecision`; and a minimal `TraceProcessor` that emits one structured `LogEvent`. Ship ONE headless smoke test `test/smoke/spine-skeleton.smoke.ts` that reads a 2-line fixture (`fixtures/smoke/transcript.jsonl`), runs the matcher, and asserts exactly one structured trace line is emitted with a non-empty `correlationId` — the miniature of the REQ-5 four-stage spine that later tickets deepen. Conventions for ALL tickets: Bun + `bun:test`; every component imports types from `src/types.ts`; routing/safety authority lives in deterministic code, never the LLM; the inner test loop runs headless via record-replay; red-before-green is mandatory (each test demonstrated capable of failing, the red run archived under `artifacts/smithering/reports/`); every event emits a verb-noun `LogEvent` with stable ids; never write a raw provider key to source/log/artifact.",
+      "requirementIds": [
+        "engineering-only",
+        "REQ-5",
+        "REQ-16"
+      ],
+      "verification": [
+        {
+          "kind": "command",
+          "details": "`bun test test/smoke/spine-skeleton.smoke.ts` passes headless (no mic/network/keys); RBG: break the matcher so no decision is produced → the 'exactly one trace line' assertion fails; restore → passes."
+        },
+        {
+          "kind": "command",
+          "details": "`bun test` and `tsc --noEmit` both run green in CI; RBG: introduce a type error → `tsc --noEmit` fails the CI gate."
+        },
+        {
+          "kind": "agent-review",
+          "details": "Reviewer confirms the slice touches every seam (transcript→decision→trace) with in-process doubles only, no Cue/network/key import, so it is a true 'walking skeleton' the later foundation tickets extend rather than duplicate."
+        }
+      ],
+      "dependsOn": [],
+      "complexity": "medium"
+    },
+    {
+      "id": "shared-types-contract",
+      "title": "Shared data contract (src/types.ts) — ENG-T-01, defined first",
+      "instructions": "Promote the stub from walking-skeleton-smoke into the full ENG-T-01 contract in `src/types.ts` per eng §1.3. Define and export, verbatim to the eng doc shapes: `TranscriptObservation`, `CueDecision` (pass|action, with `addressed:boolean` + `reason`), `DispatchedAction` (type ∈ spawn|steer|pause|resume|halt|pauseAll|status), `CredentialSource`, `PendingSuggestion`, `RunEvent`, `LogEvent`, `OutputDecision` (incl. `channel:'ack'` for the timeout 'working' ack), plus `EarconId`/`AckId` unions. (Drop the cut subsystems' types — no `setMode`/`approve`/`deny` actions, no `ExecutionMode`, no `ToolCallContext`/`ShellVerdict`, no `ApprovalRequest`/`ApprovalResolution`: V0 runs dangerously / to completion with no read-back gate, modes, or shell classifier, E6/E7/E8.) Every other component imports from here; a schema change must be visible in one place. Add zod schemas mirroring the TS types so JSONL round-trips can be validated. Engineering-only (ENG-T-01).",
+      "requirementIds": [
+        "engineering-only"
+      ],
+      "verification": [
+        {
+          "kind": "command",
+          "details": "`bun test src/types.test.ts` type-roundtrip: every `LogEvent` and `RunEvent` serializes to JSONL and deserializes byte-identical (Rhasspy Wyoming pattern); schema-presence test asserts `sessionId` non-empty and `correlationId` present on any loop event. RBG: drop `correlationId` from an action event → the downstream causal-chain join can no longer be built → presence test fails."
+        },
+        {
+          "kind": "agent-review",
+          "details": "Reviewer checks the contract is complete against eng §1.3 (every V0 interface/type present with exact field names; the cut subsystems' types — modes, approval/read-back, shell verdict — are correctly absent) and that no concrete provider/Cue/Smithers import leaks into the types module."
+        }
+      ],
+      "dependsOn": [
+        "walking-skeleton-smoke"
+      ],
+      "complexity": "small"
+    },
+    {
+      "id": "record-replay-harness",
+      "title": "Record-replay harness (src/replay/) — ENG-T-02, the testable seam over ASR+LLM",
+      "instructions": "Build the record-replay harness per eng §15.1: real audio → ASR (recorded once) → transcript-observation JSONL; replay reads JSONL → decision loop at temperature-0 → deterministic actions/routing. Implement `src/replay/harness.ts` to (a) load a transcript-observation JSONL stream, (b) drive any DecisionLLM double at temp-0, (c) hash each decision's input→output for replay, and (d) return cached output deterministically on re-run. On AI-output surfaces the harness must make it easy to assert shape/invariants ('≤3 MCQs', '≤15 words', 'fires within budget'), never exact text. This is the spine of the entire test strategy — same input → same output every run. Engineering-only (ENG-T-02).",
+      "requirementIds": [
+        "engineering-only"
+      ],
+      "verification": [
+        {
+          "kind": "command",
+          "details": "`bun test src/replay/harness.test.ts`: feeding the same JSONL twice yields byte-identical decision streams; the input→output hash is stable. RBG: introduce nondeterminism (clock/Math.random/temperature>0) into the decision path → the two runs diverge → determinism test fails."
+        },
+        {
+          "kind": "command",
+          "details": "Invariant-assertion helpers proven: a candidate with 4 MCQs / 16 words is rejected by the helper. RBG: relax the helper bound → the over-limit case passes → test fails."
+        },
+        {
+          "kind": "agent-review",
+          "details": "Reviewer confirms the harness is the single seam over the non-deterministic core (no component bypasses it in tests) and that it never asserts exact LLM text, only shape/invariants."
+        }
+      ],
+      "dependsOn": [
+        "shared-types-contract"
+      ],
+      "complexity": "medium"
+    },
+    {
+      "id": "provider-interface-doubles",
+      "title": "Provider interfaces + record-replay/noop doubles (src/providers/) — ENG-T-04",
+      "instructions": "Per eng §2 / ENG-T-04, define the typed provider boundary in `src/providers/`: `ASRProvider` (`stream(audio): AsyncIterable<TranscriptObservation>`), `TTSProvider` (`speak(text,opts): Promise<ReadableStream>`), `DecisionLLM` (`decide(input): Promise<DecisionOutput>`, OpenAI-compatible, temp-0). (No `KeywordSpotter` provider — the bespoke on-device spotter is cut; the voice library (Cue) handles always-on keyword listening for 'unmute', V2.) No component constructs a provider directly — providers are injected at construction. Ship the test doubles: `asr/replay.ts` (reads pre-recorded JSONL), `tts/noop.ts` (records calls, no audio), `llm/replay.ts` (temp-0 cached). Add an architecture-lint test that fails on any concrete-provider import outside `providers/`. Keep the provider interfaces modular and trivially mockable (E2). Engineering-only (ENG-T-04); serves REQ-1/REQ-10 boundaries.",
+      "requirementIds": [
+        "engineering-only",
+        "REQ-1",
+        "REQ-10"
+      ],
+      "verification": [
+        {
+          "kind": "command",
+          "details": "`bun test src/providers/boundary.test.ts`: a boundary-substitution test constructs every consumer with the replay/noop doubles and asserts it runs with zero network/mic; interface-conformance tests assert the replay ASR yields the exact `TranscriptObservation` shape the real one promises. RBG: have a consumer import a concrete provider directly → the architecture-lint test fails."
+        },
+        {
+          "kind": "agent-review",
+          "details": "Reviewer confirms the provider boundary is modular and trivially mockable, that no bespoke `KeywordSpotter` provider was added (unmute is the Cue 'unmute' keyword + on-screen button), and that injection (not construction) is used everywhere."
+        }
+      ],
+      "dependsOn": [
+        "shared-types-contract"
+      ],
+      "complexity": "small"
+    },
+    {
+      "id": "trace-processor-observability",
+      "title": "TraceProcessor pipeline stage + structured log contract (src/obs/trace.ts) — ENG-T-03",
+      "instructions": "Per eng §13 / §15.4 / ENG-T-03, build `src/obs/trace.ts` as a first-class pipeline stage every event flows through BEFORE going downstream (so nothing is silently lost). Emit one `LogEvent` per event with verb-noun names (`process.spawn`, `route.pass`, `safety.intercept`), stable ids (`sessionId`, `correlationId`, `upid`), and MEASURED `latencyMs`. The trace log is the single source of truth for causal-chain reconstruction (REQ-16 AC16.3). Provide a query API that, given one `correlationId`, returns the full observation→decision→action→outcome chain. Leave a redaction-filter seam that subscription-credentials-redaction populates. Engineering-only plumbing serving REQ-16.",
+      "requirementIds": [
+        "REQ-16",
+        "engineering-only"
+      ],
+      "verification": [
+        {
+          "kind": "command",
+          "details": "`bun test src/obs/trace.test.ts`: trace-schema test asserts required ids/fields on every record; causal-chain reconstruction test rebuilds a synthetic utterance's full chain from recorded traces alone; pass-logging test asserts every `observe.pass` yields a `route.pass` line (positive assertion). RBG: drop `correlationId` from an action event → the chain cannot be rebuilt → reconstruction test fails."
+        },
+        {
+          "kind": "command",
+          "details": "trace-roundtrip test: every event serializes/deserializes byte-identical. RBG: add an unserializable field → roundtrip fails."
+        },
+        {
+          "kind": "agent-review",
+          "details": "Reviewer (acting as a no-context debugging agent) is handed only the persisted traces from a fixture run and confirms they can reconstruct the loop without the live system."
+        }
+      ],
+      "dependsOn": [
+        "shared-types-contract"
+      ],
+      "complexity": "medium"
+    },
+    {
+      "id": "subscription-credentials-redaction",
+      "title": "No-raw-key model access (host subscriptions) + fail-closed redaction filter (src/providers/credentials.ts) — ENG-T-09, SEC-1",
+      "instructions": "Per eng §2.1 / §15.6 / ENG-T-09 and PRD §6 (binding) and E10: NEVER put a raw API key in source. Do NOT build a heavy SubscriptionCredentialProvider abstraction, a Cerebras fallback, or a Haiku hot-loop credential path. Instead ASSUME the host machine is already logged in to its OpenAI Codex and Anthropic Claude subscriptions (the local CLIs/subscriptions are available) and model calls use those. Keep `src/providers/credentials.ts` as a thin guard: a construction path that is handed a raw key (e.g. `OPENAI_API_KEY`) is REJECTED — model access comes from the host's logged-in CLI subscriptions, not from in-source keys. Add the `TraceProcessor` redaction filter (wired into trace-processor-observability's seam): every `LogEvent.meta` and every probe report is scanned and any credential/token-shaped value (bearer, `sk-…`, Deepgram/ElevenLabs key patterns, JWTs, `Authorization:` headers) is replaced with «redacted» before emission; redaction is fail-closed (unrecognized-but-secret-shaped → redacted). Emit `secret.redacted{count}` (never the value). Engineering-only serving the SEC-1 secret-hygiene gate.",
+      "requirementIds": [
+        "SEC-1",
+        "REQ-16",
+        "engineering-only"
+      ],
+      "verification": [
+        {
+          "kind": "command",
+          "details": "`bun test src/providers/credentials.test.ts`: no-raw-key test — the DecisionLLM adapter obtains access from the host's logged-in Codex/Claude subscriptions and FAILS construction if handed a raw `OPENAI_API_KEY`; secret-redaction test — a `LogEvent`/report meta containing a fake bearer/`sk-…`/Deepgram key emits «redacted» and the raw value appears nowhere. RBG: disable the redaction filter → the key leaks into the JSONL → test fails; enable → redacted."
+        },
+        {
+          "kind": "e2e",
+          "details": "`bun test test/e2e/secret-scan.e2e.ts`: a whole-session secret-scan greps the full trace/log/report tree after a live run and asserts zero key-shaped strings. RBG: plant a key in a meta field → scan finds it → fails."
+        },
+        {
+          "kind": "agent-review",
+          "details": "Reviewer confirms there are no raw keys in source (model access comes from the host's logged-in Codex/Claude subscriptions) and that the redaction filter is genuinely fail-closed (defaults to redact on an unknown-but-secret-shaped string)."
+        }
+      ],
+      "dependsOn": [
+        "shared-types-contract",
+        "trace-processor-observability"
+      ],
+      "complexity": "medium"
+    },
+    {
+      "id": "probe-suite-harness",
+      "title": "Validate-before-build probe harness (poc/) — ENG-T-05",
+      "instructions": "Per eng §17 / ENG-T-05, build the `poc/` probe harness that every validate-before-build probe uses: a runner that executes a probe against the REAL third-party API, records a red-before-green run (each asserted behavior demonstrated capable of failing), writes a structured report to `artifacts/smithering/reports/<probe-id>/`, and asserts zero key-shaped strings in its own report (reuse the redaction helper). Provide a `bun test poc/<probe>.test.ts` convention so a failing probe is a normal test failure surfaced to the orchestrator's gate (never engineered around). Reference the existing round-1 probe scripts under `artifacts/smithering/probes/<assumption-id>/probe.ts` for the evidence-writing and assertion style. Engineering-only (ENG-T-05).",
+      "requirementIds": [
+        "engineering-only"
+      ],
+      "verification": [
+        {
+          "kind": "command",
+          "details": "`bun test poc/harness.test.ts`: a sample probe writes a report to `artifacts/smithering/reports/`, records an RBG (deliberately-failing then passing) run, and the report passes the secret-scan. RBG: feed the harness a probe whose assertion cannot fail → the harness flags 'no failable assertion' and refuses to mark it as evidence."
+        },
+        {
+          "kind": "agent-review",
+          "details": "Reviewer confirms the harness encodes 'a probe that could fail and passed is the only evidence' and that probe failures are surfaced, not swallowed."
+        }
+      ],
+      "dependsOn": [
+        "walking-skeleton-smoke"
+      ],
+      "complexity": "small"
+    },
+    {
+      "id": "probe-cue-substrate",
+      "title": "P-CUE (P0 blocker, first third-party build task): real Cue library, policies, two-Program routing, MappedActionTool, TextCue ≤300 ms",
+      "instructions": "Run P-CUE per eng §17 / design §11.1 against the REAL Cue library. FIRST resolve the open blocker: confirm `github.com/jameslbarnes/cue` is accessible and install it from source (private pnpm monorepo: `git clone … && pnpm install && pnpm build`, per §22 A3 setup note). Then exercise, each as a failable assertion: `TextCue`/`SpeakerWordCue`/`IdleCue`/`WordCountCue`/`IntervalCue`+`cooldownSeconds`, `observe.pass` (named, loggable, first-class), `CueHarness`, two independent `Program`s routing independently, the `MappedActionTool` action schema, the transcription/LLM/output/frame provider slots, the JSONL trace files, and the HTTP/SSE routes. CRITICAL new assertion (eng §3.4): does a `TextCue` decision resolve within the earcon budget (target ≤150 ms, hard ≤300 ms)? Note from §22 A1.3: Cue's real providers are `qwen-asr` (WebSocket JSON receiver) and `voxterm` (file poller) — there is NO built-in Deepgram provider, so confirm the WebSocket `/sessions/:id/transcription` ingress shape that ENG-T-10 will feed. Record every confirmed primitive vs. every required owned extension (D2). If the repo is unavailable or the API differs, REQ-1/3/5/6/7 must be redesigned — surface to the gate. Reference: `artifacts/smithering/probes/assumption-durable-voice-steerable-processes/cue-voice-adapter.ts`.",
+      "requirementIds": [
+        "REQ-1",
+        "REQ-3",
+        "REQ-5",
+        "REQ-6",
+        "REQ-7"
+      ],
+      "verification": [
+        {
+          "kind": "command",
+          "details": "`bun test poc/p-cue.test.ts` against the real library: each design §11.1 row is an assertion that can fail (e.g. feed a below-threshold word count → `WordCountCue` must NOT fire; feed a passing count → it fires). Records RBG per assertion and a repo-access confirmation in the report."
+        },
+        {
+          "kind": "command",
+          "details": "TextCue-latency assertion: a `TextCue` match resolves within the ≤300 ms earcon budget (target ≤150 ms). RBG: set the budget to 50 ms → the measured match exceeds it → fails, proving the assertion bites; restore to spec."
+        },
+        {
+          "kind": "agent-review",
+          "details": "Reviewer reads the recorded report and confirms (a) repo access is genuinely confirmed, (b) the `observe.pass`/MappedActionTool/two-Program/provider-slot claims are evidenced not README-derived, and (c) whether the TextCue-latency result requires the §3.4 adapter pre-matcher fallback."
+        }
+      ],
+      "dependsOn": [
+        "probe-suite-harness"
+      ],
+      "complexity": "large"
+    },
+    {
+      "id": "probe-asr-deepgram",
+      "title": "P-ASR (P0): Deepgram Nova-3 streaming — isFinal, diarization, <200 ms word-final, silence→no-observation, subscription credential",
+      "instructions": "Run P-ASR per eng §17 / design §11.3 against REAL Deepgram Nova-3 (WebSocket streaming). §22 A1 makes this a re-run: acquire `DEEPGRAM_API_KEY` (via the subscription layer, never logged) — round-1 could not test diarization because gpt-4o-transcribe-diarize returns flat text. Assert, each failable: `isFinal` flag shape & timing; `speaker_0/1` diarization label format; MEASURED word-final latency <200 ms (headroom under the ≤300 ms earcon); NO observation on silence (not empty observations); behavior on 2 simultaneous speakers. Credential drawn from the host's logged-in subscription (no raw key in source) and the probe report must contain zero key-shaped strings. Document the FALLBACK (eng §22 A1.2): if Deepgram is unavailable, the observation layer must be redesignable WITHOUT speaker labels (energy/VAD turn detection). Reference round-1 latency evidence: `artifacts/smithering/probes/assumption-stt-realtime-latency/`.",
+      "requirementIds": [
+        "REQ-1",
+        "REQ-10"
+      ],
+      "verification": [
+        {
+          "kind": "command",
+          "details": "`bun test poc/p-asr.test.ts` against real Deepgram: isFinal-shape, diarization-label, <200 ms word-final, and silence→no-observation each asserted failably. RBG: assert <50 ms latency → real stream exceeds it → fails, proving the latency assertion is real; restore to 200 ms."
+        },
+        {
+          "kind": "command",
+          "details": "Secret-redaction assertion: the Deepgram credential resolves via subscription and the probe report greps to zero key-shaped strings. RBG: write the key into the report with redaction off → scan finds it → fails."
+        },
+        {
+          "kind": "agent-review",
+          "details": "Reviewer judges whether diarization-label stability across utterances is good enough for `SpeakerChangedCue` routing, or whether the VAD-only fallback must be planned for ENG-T-10/cue-adapter."
+        }
+      ],
+      "dependsOn": [
+        "probe-suite-harness",
+        "subscription-credentials-redaction"
+      ],
+      "complexity": "medium"
+    },
+    {
+      "id": "probe-hot-loop-llm-subscription",
+      "title": "P-LLM + A-LLM-SUB (P0): cheap/fast decision LLM via the host's logged-in subscription — temp-0 determinism, ~100 ms, MappedActionTool schema, no raw key",
+      "instructions": "Run P-LLM and A-LLM-SUB per eng §17 / §22 A2. Confirm a cheap/fast hot-loop decision model is reachable through the HOST'S LOGGED-IN Codex/Claude CLI SUBSCRIPTIONS (no raw key in source, E10) and meets the budget — do NOT build a SubscriptionCredentialProvider, a Cerebras base-URL fallback, or a Haiku-specific credential path. Assert, each failable: temperature-0 determinism (record-replay compatible), p50 latency within the ~100 ms hot-loop budget, and a `MappedActionTool`-compatible tool-selection schema; the probe's own trace contains zero key-shaped strings. Apply the §22 A2 amendments: cost gate $0.15/hr; add to the ACT prompt criteria '…or a status/information query addressed to a named callsign'. If no subscription-routable model meets the budget, that is a BINDING PRD §6 conflict to surface to the gate, not engineer around. (Hot-loop model choice follows the O4 model matrix; the implementer model for build tickets is Codex 5.5, separate from this product hot-loop model.) Reference: `artifacts/smithering/probes/assumption-cheap-model-hot-loop/` (corpus.ts, classify.ts, metrics.ts, evidence-*.json).",
+      "requirementIds": [
+        "REQ-3",
+        "REQ-10",
+        "engineering-only"
+      ],
+      "verification": [
+        {
+          "kind": "command",
+          "details": "`bun test poc/p-llm.test.ts` + `poc/a-llm-sub.test.ts`: temp-0 determinism (same input ×N → identical decision), p50 ≤~100 ms, MappedActionTool-compatible schema, subscription-routed access via the host's logged-in CLIs (raw-key path rejected), zero key-shaped strings in the trace. RBG: route the call with a raw key → the no-raw-key assertion fails."
+        },
+        {
+          "kind": "agent-review",
+          "details": "Reviewer records the A-LLM-SUB verdict: is a cheap/fast hot-loop model reachable through the host's logged-in Codex/Claude subscriptions at budget? If not, the reviewer surfaces the PRD §6 binding conflict to the gate rather than proceeding, and confirms the $0.15/hr cost gate and the ACT-prompt amendment are recorded."
+        }
+      ],
+      "dependsOn": [
+        "probe-suite-harness",
+        "subscription-credentials-redaction"
+      ],
+      "complexity": "medium"
+    },
+    {
+      "id": "probe-streaming-tts",
+      "title": "P-TTS (P0): streaming TTS first-byte ≤200 ms (selection benchmark) + pre-cached fixed phrases, no key logged",
+      "instructions": "Run P-TTS per eng §17 / design §11.4 / §22 A4. The provider is UNVERIFIED — the probe is also the SELECTION benchmark across ElevenLabs Flash v3 / Cartesia Sonic / PlayHT 3.0 Turbo (and OpenAI `/v1/audio/speech`). §22 A4.2 correction: round-1's 1.27 s latency was a measurement artifact of macOS `say` (file synth, not streaming) — measure TIME-TO-FIRST-AUDIO-CHUNK against a real streaming API. Assert first audio byte ≤200 ms (to keep round-trip ≤1 s, REQ-10) and the output-provider contract; select the winner; no key written to any log/report. Per §22 A4.2, PRE-CACHE the five fixed state phrases as static clips for <100 ms playback. Voice selected once per session. The 15-word guard runs before submission.",
+      "requirementIds": [
+        "REQ-9",
+        "REQ-10"
+      ],
+      "verification": [
+        {
+          "kind": "command",
+          "details": "`bun test poc/p-tts.test.ts` across the 2026 candidates: first-byte ≤200 ms measured (failable), provider-contract conformance, secret-redaction assertion. RBG: assert ≤20 ms → every real provider exceeds it → fails, proving the budget assertion bites; restore to 200 ms."
+        },
+        {
+          "kind": "agent-review",
+          "details": "Reviewer records which provider was selected and why, confirms the five pre-cached state phrases play <100 ms, and confirms no key appears in the selection report."
+        }
+      ],
+      "dependsOn": [
+        "probe-suite-harness",
+        "subscription-credentials-redaction"
+      ],
+      "complexity": "medium"
+    },
+    {
+      "id": "probe-smithers-durable-runs",
+      "title": "P-SMITHERS (P0): durable spawn, streamRunEvents, pause/resume, steer/signal, restart-recovery, concurrent runs, fork realization",
+      "instructions": "Run P-SMITHERS per eng §17 / design §11.2 against the REAL Smithers harness. §22 A3 already PASSED the core gates (spawn/persist-8h/concurrent/signal) — this ticket hardens and extends: assert durable-run spawn with seed payload; `streamRunEvents` (SSE) shape; pause/resume; steer/signal mid-run injection; pre-kill context archive; restart RECOVERY to last checkpoint (reloaded state == pre-restart snapshot); concurrent durable runs (fleet, REQ-13); and DETERMINE how fork is realized — native vs. fresh seeded run + `parentId` lineage. CRITICAL architectural note from §22 A3: real-time voice steering requires GATEWAY mode (`smithers up --serve`, the existing `.smithers/gateway.ts`), NOT detach mode (`up -d`, which needs `--resume`); the adapter must call the gateway SIGNAL API, not the CLI. Document that Panopticon processes launch via the gateway. Reference: `artifacts/smithering/probes/assumption-durable-voice-steerable-processes/` (probe.ts, probe-workflow.tsx, logs).",
+      "requirementIds": [
+        "REQ-4",
+        "REQ-8",
+        "REQ-13",
+        "REQ-15"
+      ],
+      "verification": [
+        {
+          "kind": "command",
+          "details": "`bun test poc/p-smithers.test.ts`: each lifecycle op (spawn/stream/pause/resume/steer/recovery/concurrent) asserted failably against the real harness, incl. recovery-equality after a real restart. RBG: disable checkpointing → restart loses state → recovery-equality fails."
+        },
+        {
+          "kind": "agent-review",
+          "details": "Reviewer records the fork-realization verdict (native vs seeded+parentId) and confirms the gateway-mode signal path (not the CLI) is the documented steering mechanism."
+        }
+      ],
+      "dependsOn": [
+        "probe-suite-harness"
+      ],
+      "complexity": "medium"
+    },
+    {
+      "id": "probe-cue-smithers-seam",
+      "title": "P-SEAM (P0): a Cue MappedActionTool action round-trips into a real Smithers run and SSE run-events flow back into Cue; spawn ≤3 s, non-blocking",
+      "instructions": "Run P-SEAM per eng §17 / design §11.2 — the novel integration with no prior art (top integration risk). Requires the Cue build from probe-cue-substrate (still UNRUN per §22 A3). Assert, each failable, against real Cue + real Smithers (gateway mode): a `MappedActionTool` action out of Cue invokes the Smithers spawn API through the dispatcher; Smithers SSE run-events flow BACK into Cue as observations for voice-out coherence; spawn completes ≤3 s WITHOUT blocking the Cue loop; SSE reconnect works; UPID↔steering-window correlation survives a simulated Cue restart. (No approval/read-back round-trip — V0 runs dangerously / to completion, E6/E7.) Reference the documented adapter pattern in `artifacts/smithering/probes/assumption-durable-voice-steerable-processes/cue-voice-adapter.ts` (WordCue → MappedActionTool → smithers gateway signal).",
+      "requirementIds": [
+        "REQ-4",
+        "REQ-8",
+        "REQ-13",
+        "REQ-15"
+      ],
+      "verification": [
+        {
+          "kind": "command",
+          "details": "`bun test poc/p-seam.test.ts` against real Cue+Smithers: action-out, run-event-back, spawn ≤3 s, non-blocking, SSE reconnect — each failable. RBG: make the dispatch synchronous/blocking → the Cue loop stalls during spawn → the non-blocking assertion fails."
+        },
+        {
+          "kind": "agent-review",
+          "details": "Reviewer confirms the seam is genuinely bidirectional and async, and that the spawn round-trip (action out, run-events back) is exercised end-to-end against the real APIs."
+        }
+      ],
+      "dependsOn": [
+        "probe-cue-substrate",
+        "probe-smithers-durable-runs"
+      ],
+      "complexity": "medium"
+    },
+    {
+      "id": "audio-capture-asr-bridge",
+      "title": "Audio-capture → streaming ASR → Cue WebSocket transcript bridge (ENG-T-10, new scope from §22 A1.3)",
+      "instructions": "Build ENG-T-10, the unplanned-but-real scope surfaced by §22 A1.3: Cue has NO built-in Deepgram provider (its real providers are `qwen-asr` WebSocket receiver and `voxterm` file poller), so the design's implicit 'Cue pulls audio from Deepgram' path does not exist. Implement a named component (add to eng §1/§3) `src/cue/asr-bridge.ts`: capture mic PCM → stream to the `ASRProvider` (Deepgram Nova-3 adapter, behind the §2 interface) → normalize to JSON transcript events → push to Cue's WebSocket ingress `/sessions/:id/transcription` (shape confirmed by probe-cue-substrate). The bridge must respect the mute fork (no audio while muted) and the whole-session raw-audio persistence guard (transcript-only; never persist PCM). Gated by P-CUE and P-ASR. If Deepgram is unavailable, support the VAD/energy turn-detection fallback (no speaker labels) per §22 A1.2.",
+      "requirementIds": [
+        "REQ-1"
+      ],
+      "verification": [
+        {
+          "kind": "command",
+          "details": "`bun test src/cue/asr-bridge.test.ts`: with the replay ASR double, transcript events are well-formed JSON and posted to the mocked Cue `/sessions/:id/transcription` ingress in order; no PCM is written. RBG: route PCM to a writer → the persistence-guard assertion fails."
+        },
+        {
+          "kind": "e2e",
+          "details": "`bun test test/e2e/asr-bridge.e2e.ts`: against the real Cue WebSocket ingress and a recorded audio fixture, transcript observations arrive at Cue and produce `TranscriptObservation`s the adapter normalizes. RBG: malform the ingress payload → Cue rejects it → e2e fails."
+        },
+        {
+          "kind": "agent-review",
+          "details": "Reviewer confirms the bridge is the single audio→Cue path, that it degrades to VAD-only turn detection if diarization is unavailable, and that it honors the mute fork."
+        }
+      ],
+      "dependsOn": [
+        "probe-cue-substrate",
+        "probe-asr-deepgram"
+      ],
+      "complexity": "medium"
+    },
+    {
+      "id": "cue-adapter-and-policies",
+      "title": "Cue substrate, owned adapter & policies (src/cue/) — REQ-1/3/5/6/7",
+      "instructions": "Per eng §3 build `src/cue/` (the ONLY place that imports Cue; build on confirmed primitives only, gated by P-CUE). `harness.ts` constructs `CueHarness` and wires provider slots (transcription = the asr-bridge ingress, llm = decision-LLM adapter via subscription, output = TTS+earcon adapter). `adapter.ts` is the thin owned layer: normalize Cue observations → `TranscriptObservation{text,isFinal,speaker,sessionId}`; log every routing decision with a minted `correlationId`; trigger earcon emission (Cue decides, adapter plays); turn `MappedActionTool` actions into `DispatchedAction`. Record owned extensions as risks (D2): speaker-label-stability shim, `observe.pass` interception+logging if Cue's pass is not truly first-class, and the §3.4 earcon fast-path / adapter pre-matcher (mirrors the exact `TextCue` config solely to drive the earcon, NEVER an independent routing authority) iff TextCue latency fails the ≤300 ms budget. `policies.ts` wires `TextCue`/`WordCountCue`/`IdleCue`/`IntervalCue`+`cooldownSeconds`. `programs.ts` creates TWO independent `Program`s (ambient C2 = suggestions only; steering C3 = requires callsign first).",
+      "requirementIds": [
+        "REQ-1",
+        "REQ-3",
+        "REQ-5",
+        "REQ-6",
+        "REQ-7"
+      ],
+      "verification": [
+        {
+          "kind": "command",
+          "details": "`bun test src/cue/adapter.test.ts`: adapter-normalization (Cue frames → exact `TranscriptObservation` shape); pass-logging (every `observe.pass` → a `route.pass` line); two-Program isolation (an ambient observation never reaches the steering Program and vice versa); recognition-source (earcon trigger fed by the Cue `TextCue` decision, or a pre-matcher whose word list is asserted byte-equal to the `TextCue` config). RBG: route ambient talk into the steering Program → routing-exclusivity fails; give the pre-matcher a word not in the TextCue config → config-parity fails."
+        },
+        {
+          "kind": "e2e",
+          "details": "`bun test test/e2e/spine.e2e.ts` (recognition-latency slice): the earcon fires ≤300 ms after `isFinal` while the LLM decision is artificially delayed, proving the earcon does not wait on the slow path."
+        },
+        {
+          "kind": "agent-review",
+          "details": "Reviewer confirms nothing Cue provides is re-implemented, every Cue gap is recorded as an owned-extension risk (D2), and no routing authority exists outside Cue."
+        }
+      ],
+      "dependsOn": [
+        "probe-cue-substrate",
+        "shared-types-contract",
+        "provider-interface-doubles",
+        "record-replay-harness"
+      ],
+      "complexity": "large"
+    },
+    {
+      "id": "routing-dispatch-invariants",
+      "title": "Routing & dispatch — invariants in code (src/routing/) — REQ-6/7/8/12",
+      "instructions": "Per eng §4 build `src/routing/` — authority lives here, NEVER in the LLM. `dispatch.ts`: the priority ladder `mute > panic > stop > steer > suggest > pass` via a deterministic comparator; routing exclusivity (each utterance → exactly one of {suggestion, steer:X, pass}); the dispatch invariant — a steering verb with no in-utterance callsign and no open window is REJECTED at dispatch (REQ-6 AC6.1). `vocabulary.ts`: the deterministic magic-word table (eng §4.3) — wake/callsign/mute ('mute')/unmute ('unmute')/panic/stop, plus accept/decline/done. (DEFER the tiered always-hot vs. state-gated vocabulary split for V0 — the voice library handles wake/keyword activation; revisit tiering later only if it becomes a problem, V3.) `handlers.ts`: ONE handler per documented command, each emitting exactly one `DispatchedAction` (or local effect) — incl. `status`, `pauseAll`, per-process `pause`/`resume` (UPID from the in-utterance callsign or open window, NEVER free-form NL, so REQ-7/NG-2 hold). (No `setMode` handler — V0 runs in a single dangerous run-to-completion mode, no mode switching, E7.) Free-form NL command parsing is OUT of V0 scope (NG-2). Word lists and thresholds are ENV-tunable with documented defaults (E1). Coordinate the addressed-vs-ambient pass distinction (`CueDecision.addressed`, set deterministically) with earcons-and-output-policy so addressed routes get an ack and ignored ambient is silent (AC6.4, V4).",
+      "requirementIds": [
+        "REQ-6",
+        "REQ-7",
+        "REQ-8",
+        "REQ-12"
+      ],
+      "verification": [
+        {
+          "kind": "command",
+          "details": "`bun test src/routing/dispatch.test.ts`: priority-ladder (RBG: demote mute below panic → fails); dispatch-invariant (RBG: remove the guard → un-addressed talk steers → fails); routing-exclusivity; tier-gating ('Yes' outside SUGGESTION_DELIVERY inert — RBG: make 'Yes' always-hot → casual 'yes' spawns → fails); determinism (same transcript ×N → identical decisions); command-coverage (every §4.3 row → exactly one handler — RBG: drop the `status` handler → fails); per-process-pause routing (NL 'pause the second one' with no callsign → rejected at dispatch)."
+        },
+        {
+          "kind": "e2e",
+          "details": "`bun test test/e2e/spine.e2e.ts` (routing slice): un-addressed talk only ever feeds suggestions; one-breath 'Atlas, make it faster' selects+steers; an undocumented ambient phrase yields no command; 'Atlas, pause' pauses Atlas while Bravo keeps running."
+        },
+        {
+          "kind": "agent-review",
+          "details": "Reviewer confirms no routing/safety authority is delegated to the LLM and that the §4.3 vocabulary table maps 1:1 to handlers and `DispatchedAction` types."
+        }
+      ],
+      "dependsOn": [
+        "cue-adapter-and-policies"
+      ],
+      "complexity": "large"
+    },
+    {
+      "id": "callsigns-and-collision-guard",
+      "title": "Callsign pool (coined, non-NATO) + Metaphone/phoneme-Levenshtein collision guard (src/routing/callsigns.ts) — REQ-7/13",
+      "instructions": "Per eng §4 (callsigns.ts) and the CRITICAL §22 A5.2 amendment: DROP the NATO-alphabet subset — `alpha/bravo/charlie/delta/echo` all occur in natural dev speech (round-1 measured 53% natural false-accept). Ship a pool of RARE COINED MULTI-SYLLABLE callsigns that pass the collision guard. Implement the guard (D-DD-05): reject a proposed callsign whose double-Metaphone code matches, OR whose phoneme-Levenshtein distance is ≤2 to, any active callsign / wake ('Panop') / mute ('mute') / unmute ('unmute') / panic ('Abort') / stop ('Halt'). No two concurrent processes share a callsign; assign sequentially at spawn; a halted callsign is NOT re-available for 60 s (D-DD-18). Fold P-PHONETIC (non-blocking): the double-metaphone/phoneme-Levenshtein library must produce stable, reproducible codes. Also handle concatenated STT output per §22 A5.4 ('Delta, pause.' → 'DeltaPause.') — the matcher must not rely on a strict whole-word regex.",
+      "requirementIds": [
+        "REQ-7",
+        "REQ-13"
+      ],
+      "verification": [
+        {
+          "kind": "command",
+          "details": "`bun test src/routing/callsigns.test.ts`: collision-guard rejects a callsign within distance ≤2 of any active callsign/wake/mute/unmute/panic (RBG: add a near-collision callsign → it must reject, else fails); 60 s re-use cooldown; concatenated-output handling; P-PHONETIC stable-codes-across-runs. RBG: feed a NATO callsign through the natural-speech corpus → false-accept rate spikes → the 'no conversational callsigns' assertion fails."
+        },
+        {
+          "kind": "agent-review",
+          "details": "Reviewer confirms the coined pool is genuinely rare against real dev speech (cross-checks near-homophone samples) and that no NATO subset remains."
+        }
+      ],
+      "dependsOn": [
+        "routing-dispatch-invariants"
+      ],
+      "complexity": "medium"
+    },
+    {
+      "id": "steering-window-lifecycle",
+      "title": "Steering-window lifecycle (src/routing/steering-window.ts) — REQ-6/8",
+      "instructions": "Per eng §4 (steering-window.ts) build the per-process steering window: opens on callsign detection (always-hot, incl. one-breath 'Atlas, make it faster'); routes subsequent speech to the selected UPID ONLY; closes on 'Done'/'Back', OR 20 s of mic-level idle, OR 'Abort'. While open, each routed utterance gets the Layer-B routing ack (coordinated with earcons-and-output-policy). The window is the state context that gates the state-gated steer/done vocabulary (eng §4.3).",
+      "requirementIds": [
+        "REQ-6",
+        "REQ-8"
+      ],
+      "verification": [
+        {
+          "kind": "command",
+          "details": "`bun test src/routing/steering-window.test.ts`: window-lifecycle (open on callsign; subsequent speech → that UPID only; close on Done/Back, 20 s idle, Abort). RBG: disable the idle timer → the window never closes → close test fails; RBG: route post-select speech to the wrong UPID → scope test fails."
+        },
+        {
+          "kind": "e2e",
+          "details": "`bun test test/e2e/fleet.e2e.ts` (window slice): select a process, steer it, then let 20 s idle elapse and confirm the window closed and subsequent ambient talk no longer steers it."
+        }
+      ],
+      "dependsOn": [
+        "routing-dispatch-invariants"
+      ],
+      "complexity": "small"
+    },
+    {
+      "id": "intent-gate-semantic-check",
+      "title": "Cheap-LLM intent gate + whole-utterance pre-filter between TextCue and action (§22 A5.1/A5.3) — REQ-3/4/7",
+      "instructions": "Implement the CRITICAL §22 A5 amendment: keyword-only `TextCue` matching is INSUFFICIENT to gate spawning/control — round-1 measured 80% context false-positive ('Yes, but I'm not sure we should do that.') and 53% natural false-accept. Preserve the Cue `TextCue → Program → LLM → MappedActionTool` shape but INSERT a semantic gate between keyword detection and action emission (eng §3/§4/§6/§7). (1) Two-step affirmative/command gating: a `TextCue` keyword match must gate a cheap-LLM intent check ('standalone command vs. conversational filler?') via the subscription-routed DecisionLLM (temp-0) BEFORE any spawn/control action fires (~200–400 ms added to the spawn path, acceptable off the ≤300 ms earcon hot path). The current `TextCue → direct action` is broken. (2) Whole-utterance pre-filter (zero-cost): if the transcript is substantially just the affirmative/command with NO adversative conjunction, accept directly; otherwise send to the LLM intent check — this eliminates 'yes, but…' for free. Gate the intent check via record-replay (temp-0) so it stays deterministic in tests. Reference: `artifacts/smithering/probes/assumption-spoken-affirmative-detection/` (probe.ts, evidence).",
+      "requirementIds": [
+        "REQ-3",
+        "REQ-4",
+        "REQ-7"
+      ],
+      "verification": [
+        {
+          "kind": "command",
+          "details": "`bun test src/routing/intent-gate.test.ts` (record-replay, temp-0): 'Yes, but I'm not sure…' → NO action; a standalone 'Accept' in SUGGESTION_DELIVERY → action; the whole-utterance pre-filter short-circuits a clean affirmative without calling the LLM. RBG: remove the intent gate (TextCue → direct action) → the 'yes, but' context-FP case fires → fails."
+        },
+        {
+          "kind": "e2e",
+          "details": "`bun test test/eval/affirmative-suite.test.ts`: against the round-1 affirmative corpus, the gated path drives context-FP and natural-false-accept rates down from the 80%/53% baseline below an agreed threshold. RBG: shuffle the corpus labels → the metric collapses → the suite fails, proving discrimination."
+        },
+        {
+          "kind": "agent-review",
+          "details": "Reviewer confirms the intent gate sits OFF the ≤300 ms earcon hot path (only on the spawn/control path), stays temp-0 deterministic under replay, and that the ACT-criteria prompt amendment (status query to a named callsign) is included."
+        }
+      ],
+      "dependsOn": [
+        "routing-dispatch-invariants",
+        "cue-adapter-and-policies",
+        "probe-hot-loop-llm-subscription"
+      ],
+      "complexity": "medium"
+    },
+    {
+      "id": "earcons-and-output-policy",
+      "title": "Earcons (hot plane) + output policy + timeout 'working' ack (src/audio/) — REQ-2/9/10/12",
+      "instructions": "Per eng §5 build `src/audio/`. `earcons.ts` (HOT PLANE, bet #1): the 5 tonal state earcons (E1–E5) + the mute tone as PRE-RENDERED PCM dispatched directly to AudioOutput, NEVER touching LLM/Smithers/TTS/network; earcon fires ≤300 ms after Cue's `TextCue` match. Apply §22 A4.3 redesign so compound-earcon ZCR-CV is under 0.15: narrow E5-halt's E5→C4 drop to an octave (E5→C5) or add an intermediate tone; reduce E4-resolve's C4→E4 inter-tone gap. Layer B routing/latency acks are non-tonal (clicks/whoosh/pulse), categorically disjoint from Layer A (D-DD-23) — implement the distinct acks for ADDRESSED/EXPLICIT routes only (suggestion whoosh, steer tick-tick, addressed-pass declined tick), pairwise distinct (AC6.4). IGNORED AMBIENT speech (`observe.pass`/`route.pass`) is SILENT by default — no ack (V4); of course ignored ambient speech should make no noise. `output-policy.ts`: the §5.5 triage (each trigger class → exactly one of {silent, earcon, ack, tts}; default silent, 90%-silence target); the 15-word HARD guard (count words; >15 → summarize via the cheap/fast hot-loop LLM; never-recite strips file/diff/URL/stack); mute = earcon + one-word 'Muted' TTS (AC2.4); halt = E5 + ≤15-word TTS (AC12.3); every substantive utterance ≤15 words (AC9.3); the timeout 'working' ack (§5.4) — a Layer-B non-tonal pulse when the round-trip budget (default 1.5 s p95) is blown, repeating until the substantive ack arrives. All output thresholds/budgets are ENV-tunable with documented defaults (E1). Pre-cache the five fixed state phrases (§22 A4.2). Use provider doubles in unit tests.",
+      "requirementIds": [
+        "REQ-2",
+        "REQ-9",
+        "REQ-10",
+        "REQ-12"
+      ],
+      "verification": [
+        {
+          "kind": "command",
+          "details": "`bun test src/audio/output-policy.test.ts` + `src/audio/earcons.test.ts`: earcon-latency (mocked clock, E1 ≤300 ms — RBG: 100 ms budget → fails, relax → passes); Layer-A/B-disjoint (RBG: give a routing ack a pitched tone → overlap detector fails); class→channel map (RBG: routine tick → tts → fails); 15-word guard (16 words summarized — RBG: remove guard → recited verbatim → fails); never-recite; mute-announce (earcon + one-word 'Muted' — RBG: drop the TTS → fails); halt-announce (E5 + ≤15-word TTS — RBG: earcon-only → fails); acks-distinct (the addressed acks pairwise distinct AND ignored ambient `observe.pass`/`route.pass` emits NO sound — RBG: emit any sound on an ignored ambient pass → the AC6.4 ambient-silence test fails); timeout-ack (working pulse fires once budget blown — RBG: remove the RoundTripTimer → silence on overrun → fails)."
+        },
+        {
+          "kind": "e2e",
+          "details": "`bun test test/e2e/spine.e2e.ts` (output slice): every state transition emits its mapped earcon; representative-session TTS-bearing-tick ratio ≤10% (RBG: chatty build → exceeds → fails); injected slow build → the 'working' pulse is heard."
+        },
+        {
+          "kind": "agent-review",
+          "details": "Human/agent in-room perceptual test (per §22 A4.4, protocol in the tts-earcon probe README; record to `evidence/human-test.json`): the redesigned E4/E5 and the addressed ack layers are reliably distinguishable under conversational noise, and ignored ambient speech is confirmed silent, before the §5 vocabulary is finalized."
+        }
+      ],
+      "dependsOn": [
+        "shared-types-contract",
+        "provider-interface-doubles",
+        "probe-streaming-tts"
+      ],
+      "complexity": "large"
+    },
+    {
+      "id": "mute-controller",
+      "title": "Hard-mute fork + unmute via 'unmute' word (Cue) and on-screen button (src/audio/mute-controller.ts) — REQ-2",
+      "instructions": "Per eng §5.3 / design §12 build the hard-mute fork (bet #1). The mute word 'mute' stops the cloud ASR/suggestion pipeline ≤500 ms (Pipecat stt_mute_filter pattern); E2 transcribing-ambient earcon → persistent mute tone; mute announced with a one-word 'Muted' TTS alongside the earcon (AC2.4) — allowed because it is an OUTPUT even though the suggestion pipeline stopped; ZERO observations produced/persisted into the suggestion/routing pipeline while muted. 'Muted' means: stop feeding audio into the suggestion/routing pipeline. UNMUTE has TWO paths, neither of which is a bespoke on-device spotter: (a) the voice library (Cue, by Etheria) keeps always-on keyword listening for the word 'unmute' even while cloud transcription/suggestions are paused — say 'unmute' to re-open the pipeline; (b) an on-screen 'unmute' button always re-opens it. Do NOT build a custom on-device spotter, a P-SPOTTER probe, or a teardown+clean-restart recovery — Cue handles the always-on keyword. On unmute it re-opens the pipeline and restores E2. Emit `mute.engaged{latencyMs}`, `mute.released{trigger:'unmute-word'|'unmute-button', latencyMs}`, and a periodic `mute.heartbeat{streamingToCloud:false}` proving the cloud path stayed closed for the whole muted interval.",
+      "requirementIds": [
+        "REQ-2"
+      ],
+      "verification": [
+        {
+          "kind": "command",
+          "details": "`bun test src/audio/mute-controller.test.ts`: mute-latency ('mute' stops the cloud pipeline ≤500 ms, mocked clock); no-observation-while-muted (RBG: leave the pipeline open on mute → observations appear → fails); unmute-paths (the 'unmute' keyword from Cue re-opens the pipeline AND the on-screen unmute button re-opens it — RBG: drop the button handler → only one unmute path exists → fails); mute-announce (earcon + one-word 'Muted')."
+        },
+        {
+          "kind": "e2e",
+          "details": "`bun test test/e2e/onboarding.e2e.ts` (mute slice): speak 'mute' → pipeline stops ≤500 ms (measured), E2 → mute tone + spoken 'Muted', subsequent speech yields zero observations into the pipeline; speak 'unmute' (or press the unmute button) → resumes; whole-session disk/log scan finds zero audio across the muted interval (RBG: route muted-interval mic to a recorder → scan finds a blob → fails)."
+        },
+        {
+          "kind": "agent-review",
+          "details": "Reviewer confirms the `mute.heartbeat` proves the cloud path was closed for the entire muted interval, that unmute works via both the Cue 'unmute' keyword and the on-screen button, and that no bespoke on-device spotter was built."
+        }
+      ],
+      "dependsOn": [
+        "earcons-and-output-policy",
+        "cue-adapter-and-policies",
+        "provider-interface-doubles",
+        "record-replay-harness"
+      ],
+      "complexity": "medium"
+    },
+    {
+      "id": "suggestion-engine",
+      "title": "Conservative ambient suggestion engine (src/suggest/engine.ts) — REQ-3",
+      "instructions": "Per eng §6 / design §4 build `src/suggest/engine.ts`, gated behind the REQ-3 floor (≥60 words OR ≥90 s substantive talk) AND quality AND room-interrupt cost: `fire = gate_passed AND quality>=threshold AND (interrupt_cost low OR room idle ≥10 s)`. `interrupt_cost` rises with speech velocity (words/min over last 30 s), utterance recency (<5 s ago = high), and pending steerings. Otherwise QUEUE and deliver on the next `IdleCue` gap; a queued suggestion EXPIRES after 90 s with no idle gap (logged `suggestion.expired`, never spoken; D-DD-15). Delivery format: ≤12-word spoken pitch + 1–3 MCQs answerable aloud (never >3); apologetic language banned. ALL restraint/cadence parameters (word floor, time floor, quality threshold, interrupt-cost weights, cadence cap, TTL, idle-gap) are EXTERNAL ENV-TUNABLE knobs, each documented with its default, live-patchable without restart (AC3.5); they are tuned by feel later (E1/E9 — there is NO fixed labeled replay corpus or hard recall/FP metric for V0). On delivery, hand a `PendingSuggestion{pitch,mcqs,...}` to the acceptance owner (§7). The buildable-intent/quality scoring uses the cheap/fast DecisionLLM (via the host's logged-in subscription) at temp-0 and is gated by the intent-gate (no spawn from conversational filler). Every decision (fire AND every `observe.pass`) logs `{policy,wordCount,elapsedS,quality,interruptCost,decision,decisionId,correlationId}`.",
+      "requirementIds": [
+        "REQ-3"
+      ],
+      "verification": [
+        {
+          "kind": "command",
+          "details": "`bun test src/suggest/engine.test.ts`: gate-boundary (59→pass, 61→eligible; 89 s→pass, 91 s→eligible — RBG: lower the threshold → the 59-word case fires → fails); MCQ-count invariant (RBG: force 4 → fails); interrupt-cost queue (high velocity / utterance <5 s old → queued not spoken — RBG: zero out cost → fires mid-speech → fails); expiry; live-knob (every restraint param patches at runtime from ENV — RBG: hard-code a threshold → knob-patch test fails); handoff (one `PendingSuggestion` with pitch+MCQs populated); empty/single-word/10k-word/all-silence → all `observe.pass`."
+        },
+        {
+          "kind": "e2e",
+          "details": "`bun test test/e2e/spine.e2e.ts` (suggestion slice, temp-0 replay): idle-preference holds (a queued idea is held until an idle gap, never spoken over active talk) and a sub-floor input always `observe.pass`es. RBG: zero out interrupt cost → a queued idea fires over active talk → fails. (No held-out labeled-corpus recall/FP gate — restraint is the env-tunable knobs above, tuned by feel; E9.)"
+        },
+        {
+          "kind": "agent-review",
+          "details": "Reviewer confirms the engine is genuinely `observe.pass`-first (the overwhelming default is silence), that every restraint parameter is an externally-documented ENV knob, and that delivery never uses apologetic language."
+        }
+      ],
+      "dependsOn": [
+        "cue-adapter-and-policies",
+        "intent-gate-semantic-check"
+      ],
+      "complexity": "large"
+    },
+    {
+      "id": "cue-smithers-seam-dispatcher",
+      "title": "The Cue↔Smithers seam — async bidirectional dispatcher (src/seam/) — REQ-4/8/13/15",
+      "instructions": "Per eng §9 (bet #3) build `src/seam/` as the ONE owned, async, bidirectional module wiring Cue↔Smithers (gated by P-SEAM + P-SMITHERS). `dispatcher.ts` (Hono HTTP/WebSocket): receives every `DispatchedAction` from routing and calls the Smithers client; ASYNC dispatch returns immediately so spawn completes off the hot path (AC4.3 ≤3 s); handles the full action set incl. `status` (registry → ≤15-word summary), `pauseAll`, and per-process `pause`/`resume`. (No `approve`/`deny`/read-back resolutions — V0 runs to completion / dangerously, no per-action approval gate, E6/E7.) `smithers-client.ts`: wraps the durable-run APIs via the GATEWAY signal API (per §22 A3 — `smithers up --serve` / `.smithers/gateway.ts`, NOT the CLI, NOT detach mode): `spawn(seed)`, `steer/signal(upid,payload)`, `pause/resume(upid)`, `halt(upid)`, `streamRunEvents(upid)` (SSE); model access via the host's logged-in Codex/Claude subscriptions (no raw key); fork per the P-SMITHERS verdict (native vs seeded+parentId). `run-events.ts`: normalize SSE run-events → `RunEvent`, summarize to ≤15 words BEFORE TTS, feed back into Cue as observations; handle SSE reconnect without stalling voice-out; maintain UPID↔steering-window correlation across Cue restarts. Reference `artifacts/smithering/probes/assumption-durable-voice-steerable-processes/cue-voice-adapter.ts`.",
+      "requirementIds": [
+        "REQ-4",
+        "REQ-8",
+        "REQ-13",
+        "REQ-15"
+      ],
+      "verification": [
+        {
+          "kind": "command",
+          "details": "`bun test src/seam/seam.test.ts`: action-schema-match across the full action set incl. status/pauseAll/pause/resume (RBG: change a field name → fails); async-dispatch (a mocked slow Smithers still lets the next observation process); SSE-reconnect (drop+restore → voice-out resumes, no duplicate observations); UPID↔window-correlation survives a simulated Cue restart (RBG: drop the correlation map → a post-restart steer routes to the wrong UPID → fails)."
+        },
+        {
+          "kind": "e2e",
+          "details": "`bun test test/e2e/spine.e2e.ts` (seam slice): the full spine drives a REAL durable run spawn→confirm within 3 s; `bun test test/e2e/fleet.e2e.ts` (durability-recovery): kill the backend mid-run, restart, assert resume from last checkpoint (work not lost). RBG: inject a slow seam → spawn→confirm >3 s → fails."
+        },
+        {
+          "kind": "agent-review",
+          "details": "Reviewer confirms the seam is the single home of the integration (no Cue/Smithers coupling leaks elsewhere) and that the gateway signal path (not the CLI) is used."
+        }
+      ],
+      "dependsOn": [
+        "probe-cue-smithers-seam",
+        "probe-smithers-durable-runs",
+        "shared-types-contract"
+      ],
+      "complexity": "large"
+    },
+    {
+      "id": "acceptance-spawn-flow",
+      "title": "Acceptance → spawn flow (src/acceptance/) — REQ-4",
+      "instructions": "Per eng §7 (R3) build `src/acceptance/`, the central hands-free spawn path, as its own state owner. `pending.ts`: the pending-suggestion state owner — holds at most one `PendingSuggestion`, entered when the suggestion engine delivers (state SUGGESTION_DELIVERY); accumulates MCQ answers spoken aloud (each appended to `answers[]`, correlated by MCQ index); tracks expiry (5 s no-answer → re-queue once, second non-answer → discard). `classifier.ts`: the accept/decline classifier, STATE-GATED (live only in SUGGESTION_DELIVERY) and routed THROUGH the intent-gate (no spawn from 'yes, but…'): 'Yes/Accept/Do it' → accept; 'No/Nah/Skip' → decline; anything else while a question is open → MCQ answer, else ignored. `spawn.ts`: on accept, build the seed `{pitch,mcqs,answers}`, call the pre-spawn resource check (process-registry-lifecycle-fleet §10.1), then `{type:'spawn',payload:seed}` across the seam; on success auto-select the new process (open its steering window) and transition it to PLANNING (AC4.1), with a spoken confirmation naming its callsign within 3 s (AC4.2/AC4.3, E3 + ≤15-word TTS). On decline/ignore-timeout: NO-OP — no spawn, registry unchanged (AC4.4), `PendingSuggestion` cleared.",
+      "requirementIds": [
+        "REQ-4"
+      ],
+      "verification": [
+        {
+          "kind": "command",
+          "details": "`bun test src/acceptance/spawn.test.ts` + `src/acceptance/classifier.test.ts`: exactly-one-spawn (accept adds one, decline/ignore add zero — RBG: make decline fall through to spawn → registry grows → fails); seed-contents (pitch + every accumulated MCQ answer — RBG: drop `answers` → fails); auto-select; planning-transition; classifier tier-gating ('Yes' outside SUGGESTION_DELIVERY inert); MCQ-accumulation across multiple utterances; ignore-timeout no-op."
+        },
+        {
+          "kind": "e2e",
+          "details": "`bun test test/e2e/spine.e2e.ts` (spawn slice): a suggestion fires → speak MCQ answers → speak 'accept' → exactly one real durable process exists, is selected, in PLANNING, seeded with pitch+answers, confirmed by voice (callsign) within 3 s; a separate run where the room speaks 'skip' (or stays silent) → no process, no registry change. RBG: a build that spawns on decline → the no-op assertion goes red."
+        },
+        {
+          "kind": "agent-review",
+          "details": "Reviewer confirms the full causal chain (`suggestion.pending`→`mcq.answer`→`acceptance.decision`→`process.spawn`) is logged with one `correlationId` and that the accept path goes through the intent-gate, not raw keyword match."
+        }
+      ],
+      "dependsOn": [
+        "routing-dispatch-invariants",
+        "cue-smithers-seam-dispatcher",
+        "intent-gate-semantic-check",
+        "suggestion-engine"
+      ],
+      "complexity": "large"
+    },
+    {
+      "id": "process-registry-lifecycle-fleet",
+      "title": "Process registry, lifecycle, fleet & pre-spawn resource check (src/process/) — REQ-4/8/12/13/15",
+      "instructions": "Per eng §10 build `src/process/`. `registry.ts`: the UPID registry — callsign↔UPID mapping, fleet state (V0 max 2 concurrent, NG-3), sequential callsign assignment + 60 s cooldown; an UNSELECTED process keeps running ('unselected' ≠ 'paused', AC13.3); owns the `status` summary (active callsigns + states, ≤15 words). `lifecycle.ts`: the per-process state machine `planning → active ⇄ paused → dead` with assertions at each edge; PRE-KILL context archive (AC15.2); restart RECOVERY to last durable checkpoint (AC15.3), backed by Smithers durability via the seam. Per-process pause/resume (R11) drive the `active ⇄ paused` edge for a SINGLE UPID: `{type:'pause',targetUPID}` from the §4.3 callsign command pauses ONLY that process (`client.pause(upid)`), leaving siblings running (AC13.1); `{type:'resume',targetUPID}` reverses it; `pauseAll` iterates the registry calling the same per-UPID pause — there is NO free-form NL pause (REQ-7/NG-2). `resource-check.ts` (§10.1, R8): before any spawn (called by §7), refuse if the fleet is at the V0 cap OR host headroom (Smithers run slots/memory) is below a configurable floor; on refusal the registry is UNCHANGED, an audible ≤15-word refusal ack is spoken ('At capacity — stop a process first.'), and `spawn.refused{reason,correlationId}` logged.",
+      "requirementIds": [
+        "REQ-4",
+        "REQ-8",
+        "REQ-12",
+        "REQ-13",
+        "REQ-15"
+      ],
+      "verification": [
+        {
+          "kind": "command",
+          "details": "`bun test src/process/registry.test.ts` + `src/process/lifecycle.test.ts` + `src/process/resource-check.test.ts`: concurrent-registry (two live processes, independent state); isolation (mutate A; B byte-for-byte unchanged — RBG: leak steer to all UPIDs → sibling mutates → fails); lifecycle-edge assertions; pre-kill-archive; recovery-equality (reloaded == pre-restart snapshot); pre-spawn-resource-check (at cap → refused, registry unchanged, refusal ack — RBG: remove the check → a 3rd process spawns → fails); host-headroom (below floor → `spawn.refused{reason:'headroom'}`); per-process pause/resume routes to that UPID only."
+        },
+        {
+          "kind": "e2e",
+          "details": "`bun test test/e2e/fleet.e2e.ts`: spawn Atlas+Bravo; 'Atlas, make it faster' steers A then 'Bravo, pause' pauses B while A advances (no free-form NL needed); leave both unselected and confirm both progressed (AC13.3); fill capacity, attempt a third spawn by voice → spoken refusal, no third process appears."
+        },
+        {
+          "kind": "agent-review",
+          "details": "Reviewer confirms 'unselected ≠ paused' holds (an unselected process genuinely keeps advancing) and that pause/resume is exclusively command-driven (no NL path)."
+        }
+      ],
+      "dependsOn": [
+        "cue-smithers-seam-dispatcher",
+        "callsigns-and-collision-guard"
+      ],
+      "complexity": "large"
+    },
+    {
+      "id": "emergency-stop-control",
+      "title": "Bounded non-voice emergency stop — kill-all + session-end only (src/emergency/stop.ts) — REQ-14",
+      "instructions": "Per eng §11 build `src/emergency/stop.ts`: a single non-voice control (Hono endpoint bound to a physical key / one control) that halts ALL processes and stops listening within 2 s, ENDING the session. SCOPED to kill-all only — it exposes NO steer/select/spawn AND NO unmute/resume verb (preserving D1: voice is the sole operational modality; AC14.2). Loud, unambiguous signal. It is NOT an unmute: in-session unmute is handled by saying 'unmute' (Cue's always-on keyword) or pressing the on-screen unmute button (see mute-controller). The emergency control is purely the bounded kill-all + stop-listening that ends the session; a subsequent FRESH session begins unmuted with the §12 consent re-spoken. Emit `emergency.stop{trigger:non-voice, processesHalted, latencyMs, sessionEnded:true}`.",
+      "requirementIds": [
+        "REQ-14"
+      ],
+      "verification": [
+        {
+          "kind": "command",
+          "details": "`bun test src/emergency/stop.test.ts`: handler (halts every registered process + the listener); scope (exposes only kill-all — RBG: add a steer route → fails); no-unmute-verb (no resume/unmute path — RBG: add an unmute route → the AC14.2 scope test fails); signal (emits the loud unambiguous audible signal)."
+        },
+        {
+          "kind": "e2e",
+          "details": "`bun test test/e2e/safety.e2e.ts` (emergency slice): with several processes running, trigger the control → all halt + listening stops ≤2 s (session ends), unambiguous signal; a subsequent fresh session starts unmuted with consent re-spoken. RBG: wire the emergency control to resume streaming in place → the 'kill-all only' assertion fails."
+        }
+      ],
+      "dependsOn": [
+        "process-registry-lifecycle-fleet"
+      ],
+      "complexity": "small"
+    },
+    {
+      "id": "onboarding-consent-persistence-guard",
+      "title": "Onboarding, consent scheduler, listening indicator & whole-session raw-audio guard (src/onboarding/) — REQ-1",
+      "instructions": "Per eng §12 (R2) build `src/onboarding/`. `consent.ts`: the consent scheduler fires the spoken consent announcement ONCE per session, idempotent, within 3 s of start (AC1.1). The line MUST state that only transcripts are saved (AC1.1 literal, R12) and name the actual mute word: 'Panopticon is listening. Only transcripts are saved. Say \\'Panop, status\\' for a rundown; say \\'mute\\' to pause.' — three sentences, ≤8 s. Emit `session.start{provider,consentSpoken:true,transcriptOnlyStated:true}`. `listening-indicator.ts`: the authoritative indicator is the audible E2 transcribing-ambient earcon while the mic streams (the optional visual badge on the board is non-authoritative); driven by mic-stream state, not the board. `persistence-guard.ts`: the WHOLE-SESSION raw-audio guard (AC1.3/NG-6) as an invariant in code — the audio buffer is never handed to any writer; a single chokepoint asserts no raw-audio path reaches disk/logs for the ENTIRE session (not just the muted interval). Also implement near-miss soft landing (Levenshtein ≤2 of a documented command → 'Did you mean…', disabled after 20 min) and first-run VAD (+50% silence threshold for 5 min) per design §10.1.",
+      "requirementIds": [
+        "REQ-1"
+      ],
+      "verification": [
+        {
+          "kind": "command",
+          "details": "`bun test src/onboarding/consent.test.ts` + `listening-indicator.test.ts` + `persistence-guard.test.ts`: consent-scheduler (fires once/session, idempotent, ≤3 s mocked clock — RBG: fire twice → idempotency fails); consent-content (contains 'Only transcripts are saved' AND names the mute word 'mute' — RBG: drop the transcript-only sentence → the AC1.1 content assertion fails); listening-indicator (E2 active iff mic streaming, inactive when muted); persistence-guard (audio buffer never passed to any writer for the whole session — RBG: introduce a raw-audio write path → the guard test fails); near-miss + first-run-VAD."
+        },
+        {
+          "kind": "e2e",
+          "details": "`bun test test/e2e/onboarding.e2e.ts`: consent spoken FIRST, states 'Only transcripts are saved' and names the mute word 'mute', listening indicator active the WHOLE session, and a whole-session disk/log scan finds zero audio artifacts incl. across muted intervals. RBG: introduce a `.wav`/`.pcm` write anywhere → the whole-session scan fails."
+        },
+        {
+          "kind": "agent-review",
+          "details": "Reviewer confirms the persistence guard is a code invariant (a single chokepoint), not merely a post-run scan, and that the consent line matches AC1.1 verbatim intent."
+        }
+      ],
+      "dependsOn": [
+        "earcons-and-output-policy",
+        "provider-interface-doubles",
+        "record-replay-harness"
+      ],
+      "complexity": "medium"
+    },
+    {
+      "id": "projector-ui-and-observability",
+      "title": "Projector UI + observability — Vite/React shared surface, causal-chain reconstruction, OTel/Langfuse export (src/ui/, src/obs/) — REQ-16",
+      "instructions": "Per eng §13 complete the observability surface on top of trace-processor-observability. Implement the causal-chain reconstruction over real cross-component traces: given one `correlationId`, rebuild the full observation→decision→action→outcome chain, joining Cue JSONL (`observations.jsonl`/`decisions.jsonl`/`actions.jsonl`) with Smithers-side traces by `correlationId`/`upid`. `otel.ts`: instrument per-process agent calls with OpenTelemetry GenAI semantic conventions, export to self-hosted Langfuse via OTLP (fold P-OTEL, informational — observability is off every routine control path). `src/ui/`: the REQUIRED Vite + React projector app (design §9) with meaningful shared visual content: listening/mute state, active cue, suggestion status, V0 two-process fleet, recent spoken output, transcript snippets, and trace breadcrumbs. It is non-authoritative for routine operation and exposes no general steer/spawn/select controls; only bounded unmute/emergency controls may mutate state. `src/obs/board.ts`/Hono SSE provides live state/events. The system never waits for projector connections and never alters routine voice behavior based on projector presence. Reference mockup: `artifacts/smithering/mockups/observability-board.html`.",
+      "requirementIds": [
+        "REQ-16"
+      ],
+      "verification": [
+        {
+          "kind": "command",
+          "details": "`bun test src/obs/trace.test.ts` (projector + reconstruction): causal-chain reconstruction rebuilds an utterance's full observation→decision→action→outcome chain from recorded traces alone; projector contract (no general operational mutating endpoint/handler beyond unmute/emergency — RBG: add a POST steer route → fails); `bun run build` proves the Vite app compiles; `poc/p-otel.test.ts` (informational): OTLP export to Langfuse succeeds."
+        },
+        {
+          "kind": "e2e",
+          "details": "`bun test test/e2e/board.e2e.ts`: projector-non-authoritative — run the full REQ-5 scenario with the projector server DOWN and assert it still passes (AC16.3); then run the Vite projector app/render contract and reconstruct the loop from persisted traces only, asserting it matches the live run. RBG: make a voice flow await a projector connection → the projector-down scenario hangs → proves the off-path guarantee is tested."
+        },
+        {
+          "kind": "agent-review",
+          "details": "A reviewer acting as a no-context debugging engineer reconstructs a stuck process's full chain from traces alone and confirms it is sufficient to diagnose without the live system."
+        }
+      ],
+      "dependsOn": [
+        "trace-processor-observability",
+        "cue-smithers-seam-dispatcher"
+      ],
+      "complexity": "medium"
+    },
+    {
+      "id": "canonical-spine-and-no-screen-harness",
+      "title": "The canonical voice loop (spine) + no-screen harness + degradation test — REQ-5/6/7/8",
+      "instructions": "Per eng §10 / design §6 / REQ-5 integrate §3–§10 into the canonical spine: wake/magic-word → spoken intent → agent action → spoken confirmation, under ONE `correlationId` minted at wake-detection that threads `wake → decision → action → spoken ack`; a single trace query reconstructs the full loop. Build the stage-sequencer state machine (IDLE → ACTIVE_LISTEN → SUGGESTION_DELIVERY/STEERING_WINDOW → SPAWN/STEER → ACK) with audibly-legible transitions (AC5.3). Ship the canonical scenario test (the integration spine, AC5.4) and the NO-SCREEN harness that asserts zero GUI/keyboard events are consumed across the loop (AC5.1). Ship the degradation test: with the fleet path DISABLED, REQ-5's scenario still passes (fleet is additive, never a spine dependency, AC13.4). This ticket consumes the real adapter/routing/audio/seam/registry stack but is the canonical e2e the whole product is graded on.",
+      "requirementIds": [
+        "REQ-5",
+        "REQ-6",
+        "REQ-7",
+        "REQ-8"
+      ],
+      "verification": [
+        {
+          "kind": "command",
+          "details": "`bun test src/routing/handlers.test.ts` (stage-sequencer): drives the four stages through the happy path AND each single-stage failure (mis-heard wake, empty intent, action error, TTS failure), asserting correct recovery/ack at each boundary. RBG: drop the ack on the action-error branch → the sequencer test fails."
+        },
+        {
+          "kind": "e2e",
+          "details": "`bun test test/e2e/spine.e2e.ts`: the canonical scenario drives wake→intent→action→confirm against the live stack, run ≥10×, assert ≥9 pass (AC5.2) with each failure attributable to a logged `correlationId` cause; the no-screen harness asserts zero GUI/keyboard events (AC5.1); the degradation variant disables the fleet path and the spine still passes (AC13.4). RBG: feed a build with a broken dispatcher → ≥2 runs fail → the suite reports red."
+        },
+        {
+          "kind": "agent-review",
+          "details": "Reviewer confirms the entire loop is reconstructable from a single `correlationId` and that every stage transition is audibly legible (earcon or one-word ack)."
+        }
+      ],
+      "dependsOn": [
+        "acceptance-spawn-flow",
+        "routing-dispatch-invariants",
+        "earcons-and-output-policy",
+        "process-registry-lifecycle-fleet",
+        "mute-controller"
+      ],
+      "complexity": "large"
+    },
+    {
+      "id": "latency-benchmark-suite",
+      "title": "Latency benchmark with regression baselines — REQ-10",
+      "instructions": "Per eng §5/§15.3 / REQ-10 build the latency benchmark `test/e2e/latency-benchmark.e2e.ts` over ≥100 live command round-trips against the real stack. Assert: earcon acknowledgement ≤300 ms of finalization (AC10.1) while the LLM decision is artificially delayed (proving the earcon does not wait on the slow path); end-to-end round-trip p50 <1 s and p95 <1.5 s under nominal load (AC10.2); the 'working' timeout ack fires at the budget edge rather than silence (AC10.3). STORE the benchmark output as a REGRESSION BASELINE that fails on regression past threshold. Pre-cached fixed-phrase playback (<100 ms, §22 A4.2) is exercised here.",
+      "requirementIds": [
+        "REQ-10"
+      ],
+      "verification": [
+        {
+          "kind": "e2e",
+          "details": "`bun test test/e2e/latency-benchmark.e2e.ts`: ≥100 round-trips with p50 <1 s, p95 <1.5 s, earcon <300 ms recorded as a baseline. RBG: set a 100 ms earcon budget → fails; relax to 300 ms → passes (proves the assertion bites); RBG: throttle the provider → p95 blows budget → fails."
+        },
+        {
+          "kind": "command",
+          "details": "`bun test src/audio/output-policy.test.ts` (timeout-ack support, mocked clock): the working pulse fires once the budget is blown and stops when the substantive ack arrives. RBG: remove the RoundTripTimer → silence on overrun → fails."
+        },
+        {
+          "kind": "agent-review",
+          "details": "Reviewer confirms the recorded baseline is wired so a future build that regresses past threshold actually fails the gate (not just logged)."
+        }
+      ],
+      "dependsOn": [
+        "canonical-spine-and-no-screen-harness",
+        "audio-capture-asr-bridge"
+      ],
+      "complexity": "medium"
+    },
+    {
+      "id": "fleet-concurrency-and-durability-e2e",
+      "title": "Two-process fleet + durability/recovery + restraint e2e — REQ-8/13/15/9",
+      "instructions": "Per eng §10 / §9 / design §13 close the product-level e2e gates that prove the differentiator and durability. Fleet (REQ-13): spawn two processes, steer A while pausing B via the §4.3 per-process command, confirm A advanced and B paused independently (isolation, REQ-8); leave both unselected for a fixed interval and confirm both made progress (AC13.3, 'unselected ≠ paused'); confirm distinct non-colliding callsigns route with no cross-talk. Durability (REQ-15): kill the backend mid-run, restart, assert resume from the last durable checkpoint (work not lost). Restraint (REQ-9 AC9.1): over a representative session, measured TTS-bearing ticks ≤10% (≥90% silent). These are the EV-6/EV-8/EV-9 acceptance e2es; they exercise the real Smithers durable plane via the seam.",
+      "requirementIds": [
+        "REQ-8",
+        "REQ-13",
+        "REQ-15",
+        "REQ-9"
+      ],
+      "verification": [
+        {
+          "kind": "e2e",
+          "details": "`bun test test/e2e/fleet.e2e.ts`: fleet-isolation (steer A → B byte-identical); progress-while-silent (both unselected → both advance); durability-recovery (kill backend mid-run → resume from checkpoint, reloaded state == pre-restart snapshot). RBG: route '[callsign], pause' to all UPIDs → sibling pauses too → fails; RBG: disable checkpointing → restart loses state → recovery-equality fails."
+        },
+        {
+          "kind": "e2e",
+          "details": "`bun test test/e2e/spine.e2e.ts` (silence-ratio): representative-session TTS-bearing-tick ratio ≤10% (AC9.1). RBG: a chatty build emits TTS on routine ticks → ratio exceeds 10% → fails."
+        },
+        {
+          "kind": "agent-review",
+          "details": "Reviewer confirms the fleet path is genuinely additive (the canonical-spine degradation test still passes with it disabled) and that durability recovery loses no work."
+        }
+      ],
+      "dependsOn": [
+        "canonical-spine-and-no-screen-harness",
+        "process-registry-lifecycle-fleet"
+      ],
+      "complexity": "large"
+    }
+  ]
+}

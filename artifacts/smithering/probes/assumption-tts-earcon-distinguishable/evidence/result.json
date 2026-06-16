@@ -1,0 +1,16 @@
+{
+  "passed": false,
+  "checks": {
+    "ttsLatencyOk": false,
+    "earconsGenerated": true,
+    "layerAIsTonal": false,
+    "quantitativelyDistinct": true
+  },
+  "notes": [
+    "TTS mean 1.2691s > 0.5s threshold",
+    "Layer A ZCR-CV=0.1772 not tonal (target < 0.15)",
+    "Quantitative: ratio=8.15× > 4× — confirmed distinct",
+    "LIMITATION: Human in-room perceptual test not automated; see README.md for protocol"
+  ],
+  "planImpact": "Add streaming/chunked TTS or pre-cache common phrases to meet 500ms latency target. Earcon ZCR-CV too high; verify sine wave synthesis produces clean tones. If in-room listening test fails: redesign earcon vocabulary (larger spectral distance) or add spoken labels."
+}

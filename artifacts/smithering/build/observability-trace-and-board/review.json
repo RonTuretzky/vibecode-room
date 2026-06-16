@@ -1,0 +1,21 @@
+{
+  "family": "anthropic",
+  "model": "claude-opus-4-8",
+  "kind": "review",
+  "approved": true,
+  "pass": true,
+  "findings": [
+    {
+      "severity": "minor",
+      "title": "Board-down e2e drives a stand-in voice flow, not the real REQ-5 spine",
+      "file": "test/e2e/board.e2e.ts",
+      "description": "AC16.2 requires running the full REQ-5 scenario with the board down. The e2e instead calls runBoardIndependentVoiceFlow(), a purpose-built helper in src/obs/board.ts that returns a fixed {ok,correlationId,stages}. The off-path RBG (requireBoard -> awaits board -> throws) is genuinely wired and fails red, and the real spine.e2e passes independently without importing the board, so the off-path guarantee holds in practice. But the 'matches the live run' assertion compares two hand-authored fixtures rather than an actual live run, so that specific claim is weakly proven. Consider driving the real spine flow with the board server down."
+    },
+    {
+      "severity": "nit",
+      "title": "OTLP trace/span IDs derived from a 32-bit FNV hash, not real OTel IDs",
+      "file": "src/obs/otel.ts",
+      "description": "fixedHex() folds correlationId/upid into a 32-bit FNV-1a value then pads/truncates to 32/16 hex chars, so trace/span IDs are deterministic but collision-prone and not genuine 128/64-bit OTel identifiers. Acceptable for the informational, non-blocking P-OTEL probe; would need real ID generation before relying on Langfuse trace correlation in production."
+    }
+  ]
+}

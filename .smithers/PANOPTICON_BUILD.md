@@ -46,6 +46,15 @@ Smithers dev workflows here to build Panopticon's app code. It is NOT app code.
   functions → gateway-client RPCs (launchRun/resumeRun/cancelRun/submitSignal/…);
   `bus.ts` ← `streamRunEvents`.
 
+## ENG-T-10 audio capture ASR bridge
+- **§1 Component:** `src/cue/asr-bridge.ts` owns Panopticon's mic/PCM → `ASRProvider`
+  → Cue transcription ingress path. Cue is treated as a transcription receiver via
+  `/sessions/:id/transcription`; Panopticon owns Deepgram/VAD/replay ASR upstream.
+- **§3 Wiring:** live mode requires `DEEPGRAM_API_KEY` plus a supplied microphone PCM
+  capture. Without the key, the bridge emits `live capture skipped — needs
+  DEEPGRAM_API_KEY` and runs replay PCM/transcript fixtures through the same
+  normalization, correlation, and Cue ingress pipeline.
+
 ## Validation gate
 - Set `.smithers/smithers.config.ts` `repoCommands.test = "bun run typecheck"` so the
   ValidationLoop's validate step actually gates on the app's `tsc --noEmit`.

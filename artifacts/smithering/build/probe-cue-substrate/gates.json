@@ -1,0 +1,11 @@
+[
+  {
+    "criterionId": "P-CUE",
+    "method": "integration_test",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/probe-cue-substrate/evidence/P-CUE-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/probe-cue-substrate/evidence/P-CUE-green.log"
+  }
+]

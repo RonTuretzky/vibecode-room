@@ -1,0 +1,22 @@
+bun test v1.3.14 (0d9b296a)
+
+poc/harness.test.ts:
+75 |       cleanReportDir: true,
+76 |       correlationId: "probe-harness-test-non-failable",
+77 |     });
+78 | 
+79 |     if (process.env.PANOP_HARNESS_RBG_MODE === "non_failable_expect_green") {
+80 |       await expect(action).resolves.toBeDefined();
+                                         ^
+error: 
+
+Expected promise that resolves
+Received promise that rejected: Promise { <rejected> }
+
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/probe-suite-harness/poc/harness.test.ts:80:37)
+(fail) probe harness > a probe whose assertion cannot fail is refused as evidence [1.43ms]
+
+ 4 pass
+ 1 fail
+ 19 expect() calls
+Ran 5 tests across 1 file. [20.00ms]

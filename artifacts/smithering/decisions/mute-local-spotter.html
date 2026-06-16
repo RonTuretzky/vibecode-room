@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Decision D-DD-22 — Unmute while muted: "unmute" word (Cue) + on-screen button</title>
+<style>
+  :root { --ink:#1a1a1a; --mut:#666; --line:#e2e2e2; --good:#0a7d33; --bad:#b00020; --accent:#0b5cad; --bg:#fafafa; }
+  * { box-sizing:border-box; }
+  body { font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; color:var(--ink); max-width:940px; margin:2.2rem auto; padding:0 1.2rem; background:var(--bg); }
+  h1 { font-size:1.5rem; margin:0 0 .2rem; }
+  h2 { font-size:1.12rem; margin:1.8rem 0 .5rem; border-bottom:2px solid var(--line); padding-bottom:.25rem; }
+  .meta { color:var(--mut); font-size:.86rem; margin-bottom:1.2rem; }
+  .pill { display:inline-block; padding:.08rem .5rem; border-radius:999px; font-size:.75rem; font-weight:600; background:#e7f1fb; color:var(--accent); }
+  code,pre { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  pre { background:#f4f4f4; border:1px solid var(--line); border-radius:6px; padding:.9rem; overflow:auto; font-size:.84rem; line-height:1.5; }
+  .good { color:var(--good); font-weight:600; } .bad { color:var(--bad); font-weight:600; }
+  .box { background:#fff; border:1px solid var(--line); border-radius:8px; padding:.9rem 1.1rem; margin:.7rem 0; }
+  table { border-collapse:collapse; width:100%; margin:.6rem 0; font-size:.92rem; }
+  th,td { border:1px solid var(--line); padding:.45rem .6rem; text-align:left; vertical-align:top; }
+  th { background:#f0f0f0; }
+  .alt { border-left:4px solid var(--line); padding-left:.9rem; margin:.6rem 0; }
+  .alt.win { border-left-color:var(--good); } .alt.lose { border-left-color:var(--bad); }
+  .contra { background:#fff7e6; border:1px solid #ffd591; border-radius:8px; padding:.8rem 1rem; }
+</style>
+</head>
+<body>
+<h1>Unmuting while muted: the "unmute" word (via Cue) + an on-screen button</h1>
+<div class="meta"><span class="pill">D-DD-22</span> &nbsp; Panopticon V0 — final pass &nbsp;·&nbsp; <code>docs/planning/02-design.md §12</code></div>
+
+<div class="contra" style="margin-bottom:1rem">
+<strong>Superseded:</strong> the prior pass proposed building a <em>bespoke on-device keyword
+spotter</em> that stayed running while muted to catch the unmute word. That custom component is
+<strong>cut</strong>. The voice library (Cue, by Etheria) already handles always-on keyword listening
+even while cloud transcription/suggestions are paused, so we don't build our own spotter.
+</div>
+
+<h2>The question</h2>
+<div class="contra">
+<strong>REQ-2 AC2.3:</strong> while muted, <em>no observations are produced and audio is not fed into
+the suggestion/routing pipeline.</em> &nbsp;<strong>vs.</strong>&nbsp; <strong>D1:</strong> voice is the
+sole <em>operational</em> modality. &nbsp;→&nbsp; If nothing is feeding the pipeline while muted,
+<strong>how does the room unmute by saying "unmute"?</strong> Answer: Cue keeps listening for its
+keywords even while the pipeline is paused — that is what the library is for — and the screen always
+shows an unmute button as a second path.
+</div>
+
+<h2>Decision</h2>
+<div class="box">
+There are <strong>two ways to unmute</strong>:
+<ol style="margin:.5rem 0 0">
+  <li><strong>Say "unmute"</strong> — Cue's always-on keyword listening catches it even while the
+  suggestion/routing pipeline is paused, and emits <code>mute.released</code>.</li>
+  <li><strong>Press the on-screen "unmute" button</strong> — always available, emits the same
+  <code>mute.released</code> event.</li>
+</ol>
+"Muted" means: <strong>stop feeding audio into the suggestion/routing pipeline</strong> (no
+observations, nothing streams to cloud transcription/suggestions). Cue still listens for "unmute"; the
+button is always there too. <strong>We do not build a custom on-device spotter</strong> — Cue owns the
+keyword listening.
+</div>
+
+<h2>Why this preserves AC2.3 / NG-6</h2>
+<p>While muted, the suggestion/routing pipeline is closed: <strong>no observations</strong> (the thing
+AC2.3 forbids) and <strong>no raw audio or transcript</strong> is written (NG-6 / AC1.3). Cue's keyword
+listening is a library capability, not "the ASR" — its only effect in this state is to flip the mute
+state back when it hears "unmute." So "no observations while muted" holds literally — the cloud
+suggestion path that <em>would</em> produce observations is closed for the entire interval.</p>
+
+<h2>State / data flow while muted</h2>
+<pre>
+ MUTED state
+ ┌─────────────────────────────────────────────────────────┐
+ │ mic ──► Cue keyword listening: "unmute"?                 │
+ │            │ no  → nothing fed to pipeline, nothing kept │
+ │            │ yes → emit mute.released ──► resume pipeline │
+ │ on-screen "unmute" button ──► emit mute.released  (any time)│
+ │ suggestion / routing pipeline:  CLOSED  (0 observations) │
+ │ persistence:       NONE                                  │
+ │ heartbeat log:     mute.heartbeat{streamingToCloud:false}│
+ └─────────────────────────────────────────────────────────┘
+</pre>
+
+<h2>Alternatives</h2>
+<div class="alt lose"><strong>A. Build a bespoke on-device spotter.</strong>
+<span class="bad">Rejected / cut:</span> Cue already provides always-on keyword listening — building our
+own duplicates the library and adds a probe, a native-module dependency, and degradation logic we don't
+need.</div>
+<div class="alt lose"><strong>B. Keep the full pipeline running but "ignore" everything except the unmute word.</strong>
+<span class="bad">Rejected:</span> audio still flows into the suggestion path and observations still
+exist — violates AC2.3 and NG-6 outright.</div>
+<div class="alt win"><strong>C. "unmute" word (Cue) + on-screen button (chosen).</strong> Hands-free
+<em>and</em> screen-clickable, nothing leaves the room while muted, AC2.3/NG-6 intact, no custom
+component to maintain. <span class="good">Chosen.</span></div>
+
+<h2>Verification</h2>
+<table>
+<tr><th>Test</th><th>Asserts</th><th>Red-before-green</th></tr>
+<tr><td>No-observation-while-muted</td><td>arbitrary speech in MUTED → 0 obs / 0 actions fed to the pipeline</td><td class="bad">leave the pipeline open on mute → obs appear → fails</td></tr>
+<tr><td>Two unmute paths</td><td>both "unmute" (via Cue) and the on-screen button emit <code>mute.released</code></td><td class="bad">disable one path → assert the other still unmutes; remove both → room is trapped muted → fails</td></tr>
+<tr><td>E2e</td><td>mute → pipeline silent → say "unmute" OR click the button → resumes; post-run disk scan = 0 audio</td><td>—</td></tr>
+</table>
+
+<h2>Observability</h2>
+<p><code>mute.engaged{latencyMs}</code> · <code>mute.released{trigger:voice|button, latencyMs}</code>
+· periodic <code>mute.heartbeat{streamingToCloud:false}</code> across the whole muted interval so a
+no-context debugging agent can prove the pipeline was closed the entire time.</p>
+</body>
+</html>

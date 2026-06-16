@@ -1,0 +1,25 @@
+bun test v1.3.14 (0d9b296a)
+
+poc/p-smithers.test.ts:
+timestamp=2026-06-14T21:01:53.768Z level=INFO fiber=#5 message="Gateway run started" gateway:run=0ms runId=probe-run-alpha transport=ws triggeredBy=probe:lifecycle role=operator workflow=durable service=smithers source=user userId=probe:lifecycle resume=false connectionId=probe:lifecycle:connection
+timestamp=2026-06-14T21:01:54.059Z level=INFO fiber=#269 message="getNodeOutput completed" runId=probe-run-alpha durationMs=1.6381660000000693 nodeId=checkpoint status=produced iteration=0 rowBytes=87 service=smithers
+152 |       recoveredGateway.connections.add(recoveredConnection as any);
+153 |       recoveredGateway.register("durable", recoveredRuntime.workflow);
+154 |
+155 |       try {
+156 |         const recovered = await rpc(recoveredGateway, recoveredConnection, "runs.get", { runId });
+157 |         expect(recovered.ok).toBe(true);
+                                   ^
+error: expect(received).toBe(expected)
+
+Expected: true
+Received: false
+
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/probe-smithers-durable-runs/poc/p-smithers.test.ts:157:30)
+(fail) P-SMITHERS durable run lifecycle against the real Gateway harness > spawn, stream, pause/resume, gateway steering, restart recovery, fleet, and fork lineage are failably asserted [381.20ms]
+
+ 0 pass
+ 1 fail
+ 12 expect() calls
+Ran 1 test across 1 file. [1011.00ms]
+RBG_RED_EXIT_STATUS=1

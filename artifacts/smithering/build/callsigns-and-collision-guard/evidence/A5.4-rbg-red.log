@@ -1,0 +1,33 @@
+bun test v1.3.14 (0d9b296a)
+
+src/routing/callsigns.test.ts:
+113 |       : matchCallsignInUtterance("VirelliumPause.", active);
+114 | 
+115 |     expect(separated).toEqual(
+116 |       expect.objectContaining({ upid: "upid-virellium", callsign: "virellium", instruction: "pause" }),
+117 |     );
+118 |     expect(concatenated).toEqual(
+                               ^
+error: expect(received).toEqual(expected)
+
+- ObjectContaining 
+- {
+-   "callsign": "virellium",
+-   "concatenated": true,
+-   "instruction": "Pause",
+-   "upid": "upid-virellium",
+- }
++ null
+
+- Expected  - 7
++ Received  + 1
+
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/callsigns-and-collision-guard/src/routing/callsigns.test.ts:118:26)
+(fail) callsign collision guard > concatenated STT output still selects a callsign without a strict word-boundary regex [0.28ms]
+
+ 6 pass
+ 1 fail
+ 53 expect() calls
+Ran 7 tests across 1 file. [37.00ms]
+
+exit_code=1

@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ENG-A-11 — CUT: single "dangerous" run-to-completion mode for V0</title>
+<style>
+  :root { --bg:#0a0a0a; --fg:#e0e0e0; --ok:#00ff88; --bad:#ff3b30; --warn:#f5a623; --sel:#00bcd4; --mut:#888; }
+  body { background:var(--bg); color:var(--fg); font:15px/1.6 -apple-system,Segoe UI,Roboto,sans-serif; max-width:920px; margin:0 auto; padding:32px; }
+  h1 { font-size:24px; color:var(--sel); margin-bottom:4px; }
+  h2 { font-size:18px; color:var(--ok); margin-top:32px; border-bottom:1px solid #222; padding-bottom:6px; }
+  .tag { display:inline-block; background:#1a1a1a; border:1px solid #333; border-radius:4px; padding:2px 8px; font-size:12px; color:var(--mut); margin-right:6px; }
+  code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  table { border-collapse:collapse; width:100%; margin:12px 0; font-size:14px; }
+  th,td { border:1px solid #222; padding:8px 10px; text-align:left; vertical-align:top; }
+  th { background:#141414; color:var(--sel); }
+  .acc { color:var(--ok); } .warn { color:var(--warn); } .bad { color:var(--bad); }
+  blockquote { border-left:3px solid var(--warn); margin:12px 0; padding:6px 14px; color:#ccc; background:#120f08; }
+</style>
+</head>
+<body>
+<h1>CUT: one mode for V0 — run "dangerously" (run to completion)</h1>
+<p><span class="tag">ENG-A-11</span><span class="tag">REQ-11</span><span class="tag warn">Scope cut</span></p>
+
+<blockquote><strong>Superseded / CUT.</strong> The prior decision defined three execution modes —
+<em>Safe</em> (default, gates mutating tool classes), <em>Explicit</em> (gates every action), and
+<em>Dangerous</em> (bypasses the gate) — with Explicit/Dangerous opt-in by warned voice command and a
+reset-to-Safe at session end. That whole mode-switching system is <strong>removed</strong>.</blockquote>
+
+<h2>The decision</h2>
+<p>For V0 there is <strong>one mode: run "dangerously"</strong> — run-to-completion, <strong>no per-step
+approval</strong>. We do <strong>not</strong> build Safe/Explicit/Dangerous mode switching, the
+<code>setMode</code> action, the <code>ExecutionMode</code> enum, the warned voice opt-in, or the
+session-reset behavior. The system simply runs the work to completion.</p>
+
+<h2>Why cut</h2>
+<p>Three permission postures plus voice opt-in plus warning read-backs plus session-reset is exactly the
+gating machinery the V0 posture (<strong>cut scope, ship fast, run dangerously</strong>) removes. There
+is no Safe-vs-Explicit distinction to maintain because there is no per-action gate at all (ENG-A-08 is
+cut). If we want safety later, we <strong>sandbox the whole process</strong> — isolate it — rather than
+gate individual actions through permission classes.</p>
+
+<h2>The single mode</h2>
+<table>
+<tr><th>Mode</th><th>Behavior</th><th>Default</th></tr>
+<tr><td class="bad"><strong>dangerous</strong> (the only mode)</td><td>runs to completion; no per-step approval; no in-run gate</td><td class="acc">always</td></tr>
+</table>
+<p>The previously-defined <code>safe</code> and <code>explicit</code> modes no longer exist.</p>
+
+<h2>Alternatives considered</h2>
+<table>
+<tr><th>Approach</th><th>Verdict</th><th>Why</th></tr>
+<tr><td>Three modes (Safe / Explicit / Dangerous) with voice opt-in</td><td class="bad">Cut</td><td>Permission-gating machinery against the "run dangerously" V0 posture; nothing to gate once ENG-A-08 is cut.</td></tr>
+<tr><td><strong>Single dangerous run-to-completion mode; sandbox later if needed</strong></td><td class="acc">Chosen</td><td>Ships fast and autonomous; real safety, if ever wanted, comes from process sandboxing — not permissions.</td></tr>
+</table>
+
+<h2>Verification</h2>
+<ul>
+<li><strong>Single-mode test:</strong> a fresh process runs to completion with no per-step approval and
+no mode selector (RBG: re-introduce a Safe-mode gate → the run-to-completion e2e fails).</li>
+<li><strong>No mode-switch test:</strong> assert no <code>setMode</code> action / <code>ExecutionMode</code>
+switching exists.</li>
+<li><strong>E2e:</strong> a destructive act proceeds without a gate; there is no session-reset to a
+"safe" mode because there is only one mode.</li>
+</ul>
+
+<blockquote><strong>Note:</strong> sandboxing the whole process is the deferred safety lever
+(revisited later), not permission modes.</blockquote>
+</body>
+</html>

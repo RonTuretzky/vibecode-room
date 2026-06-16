@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Decision D-DD-24 — Tiered vocabulary deferred for V0 (Cue owns activation)</title>
+<style>
+  :root { --ink:#1a1a1a; --mut:#666; --line:#e2e2e2; --good:#0a7d33; --bad:#b00020; --accent:#0b5cad; --bg:#fafafa; }
+  * { box-sizing:border-box; }
+  body { font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; color:var(--ink); max-width:940px; margin:2.2rem auto; padding:0 1.2rem; background:var(--bg); }
+  h1 { font-size:1.45rem; margin:0 0 .2rem; }
+  h2 { font-size:1.12rem; margin:1.8rem 0 .5rem; border-bottom:2px solid var(--line); padding-bottom:.25rem; }
+  .meta { color:var(--mut); font-size:.86rem; margin-bottom:1.2rem; }
+  .pill { display:inline-block; padding:.08rem .5rem; border-radius:999px; font-size:.75rem; font-weight:600; background:#e7f1fb; color:var(--accent); }
+  table { border-collapse:collapse; width:100%; margin:.6rem 0; font-size:.9rem; }
+  th,td { border:1px solid var(--line); padding:.45rem .6rem; text-align:left; vertical-align:top; }
+  th { background:#f0f0f0; }
+  code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  .good { color:var(--good); font-weight:600; } .bad { color:var(--bad); font-weight:600; }
+  .box { background:#fff; border:1px solid var(--line); border-radius:8px; padding:.9rem 1.1rem; margin:.7rem 0; }
+  .alt { border-left:4px solid var(--line); padding-left:.9rem; margin:.6rem 0; }
+  .alt.win { border-left-color:var(--good); }
+  .warn { background:#fff7e6; border:1px solid #ffd591; border-radius:8px; padding:.7rem 1rem; }
+</style>
+</head>
+<body>
+<h1>Tiered vocabulary (always-hot vs. state-gated): <span style="color:#0b5cad">deferred for V0</span></h1>
+<div class="meta"><span class="pill">D-DD-24</span> &nbsp; Panopticon V0 — final pass &nbsp;·&nbsp; <code>docs/planning/02-design.md §5.1</code></div>
+
+<div class="warn" style="margin-bottom:1rem">
+<strong>Superseded:</strong> the prior pass split the vocabulary into an <em>always-hot</em> tier (rare
+words matched anytime) vs. a <em>state-gated</em> tier (natural words matched only inside a narrow
+window), with a phoneme-distance collision bar scaled to false-trigger cost. <strong>That tiering is NOT
+implemented for V0.</strong> Cue (Etheria's voice library) handles wake/keyword activation, so we do not
+build a custom two-tier matcher. Revisit later only if it becomes a real problem.
+</div>
+
+<h2>The original puzzle</h2>
+<p>The command set lists <strong>"Yes" / "Accept"</strong> as acceptance words — conversational words
+that, if matched at any moment, could misfire. The earlier solution was to distinguish <em>when</em> a
+word is live (tiering). With Cue owning keyword activation, we no longer design or test that ourselves
+for V0.</p>
+
+<h2>Decision</h2>
+<div class="box">
+<strong>Do not implement a tiered always-hot/state-gated vocabulary for V0.</strong> Keyword/wake
+activation — including not firing on incidental conversational uses — is delegated to Cue. Magic words
+for commands still exist (yes, magic words — see ENG-A-16), but the bespoke two-tier matcher,
+phoneme-distance collision bar, and "cost-scaled rarity" machinery are <strong>removed as a V0
+requirement / acceptance criterion</strong>.
+</div>
+
+<h2>Why defer</h2>
+<p>The tiering existed to solve a problem we assumed we had to solve in-house: keeping rare words live
+everywhere while allowing natural words inside windows, all without misfiring. That is exactly the
+robustness Cue provides. Building our own tier system duplicates the library and adds collision-guard
+tests that prove a library capability we already trust. If real-world use later shows a specific word
+misfiring, we revisit — but not as V0 scope.</p>
+
+<h2>Alternatives</h2>
+<div class="alt"><strong>A. Build the two-tier matcher now (prior plan).</strong>
+<span class="bad">Rejected for V0:</span> duplicates Cue's activation handling; over-engineered for a
+problem the library owns.</div>
+<div class="alt"><strong>B. Make everything always-hot in our own matcher.</strong>
+<span class="bad">Rejected:</span> still a bespoke matcher we don't need.</div>
+<div class="alt win"><strong>C. Defer tiering; delegate activation to Cue (chosen).</strong>
+<span class="good">Chosen.</span> Ship V0 fast; revisit only if a misfire problem actually appears.</div>
+
+<h2>Verification</h2>
+<ul>
+<li><strong>Integration:</strong> assert command magic words ("accept", callsigns, "mute"/"unmute",
+"halt") are wired into Cue and toggle the right actions. <span class="bad">RBG:</span> mis-wire a word
+→ wrong action fires → fails. We verify wiring into Cue, not a custom tier matcher.</li>
+<li><strong>E2e:</strong> un-addressed talk does not trigger commands; addressed magic words do —
+robustness provided by Cue, observed end-to-end rather than asserted against an in-house collision
+guard.</li>
+<li><strong>Observability:</strong> <code>command.recognize{phrase, matchedCommand|null}</code>.</li>
+</ul>
+</body>
+</html>

@@ -1,204 +1,135 @@
-import { join } from "node:path";
-import type { ServerWebSocket } from "bun";
-import { MetaSession } from "../core/meta-session.ts";
-import type { ProcessMode, VisualizerKind } from "../core/types.ts";
+import { Hono } from "hono";
+import { resolve } from "node:path";
+import { withUnmuted } from "../ui/demo-data";
+import type { ProjectorSnapshot } from "../ui/types";
+import { createProjectorRuntime } from "./composition";
 
-const PORT = Number(process.env.PORT ?? 7777);
-const WEB = join(import.meta.dir, "..", "web");
+const runtime = await createProjectorRuntime(process.env);
+const app = new Hono();
 
-const session = new MetaSession();
-session.start();
-
-// ── WebSocket fan-out of the event bus → all connected clients ────────────────
-const sockets = new Set<ServerWebSocket<unknown>>();
-session.bus.subscribe((e) => {
-  const msg = JSON.stringify(e);
-  for (const ws of sockets) {
-    try {
-      ws.send(msg);
-    } catch {
-      /* ignore */
-    }
+app.get("/api/health", (context) => context.json({ ok: true, app: "panopticon-projector" }));
+app.get("/api/state", (context) => context.json(runtime.snapshot()));
+app.get("/api/events", () => eventsResponse(runtime));
+// REQ-2 / REQ-14: in the real (live) projector path these controls ALWAYS drive
+// the real MuteController / EmergencyStopController — see runtime.unmute() /
+// runtime.emergencyStop(). A client explicitly loaded in OFFLINE-DEMO mode
+// (?live=0) is not bound to the live pipeline (it ignores /api/state + SSE and
+// renders static fixtures), so its control presses must not mutate the shared
+// runtime; we return a purely cosmetic snapshot for those instead.
+app.post("/api/unmute", async (context) => {
+  if (isOfflineDemoRequest(context.req.header("referer"))) {
+    return context.json(withUnmuted(runtime.snapshot()));
   }
+
+  const snapshot = await runtime.unmute();
+  return context.json(snapshot);
+});
+app.post("/api/emergency-stop", async (context) => {
+  if (isOfflineDemoRequest(context.req.header("referer"))) {
+    return context.json(emergencyDemoSnapshot(runtime.snapshot()));
+  }
+
+  const snapshot = await runtime.emergencyStop();
+  return context.json(snapshot);
+});
+app.get("*", async (context) => serveStatic(context.req.url));
+
+const host = process.env.HOST ?? "127.0.0.1";
+const port = parsePort(process.env.PANOP_PORT ?? process.env.PORT ?? "8787");
+
+Bun.serve({
+  hostname: host,
+  port,
+  fetch: app.fetch,
 });
 
-// ── helpers ───────────────────────────────────────────────────────────────────
-const json = (data: unknown, status = 200) =>
-  new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json" } });
-const notFound = () => new Response("not found", { status: 404 });
-const bad = (msg: string) => json({ error: msg }, 400);
+console.log(`Panopticon projector server listening on http://${host}:${port}`);
 
-async function body<T>(req: Request): Promise<T> {
+function eventsResponse(source: { subscribe(subscriber: (snapshot: ProjectorSnapshot) => void): () => void }): Response {
+  let unsubscribe: (() => void) | undefined;
+  const stream = new ReadableStream({
+    start(controller) {
+      const encoder = new TextEncoder();
+      unsubscribe = source.subscribe((next: ProjectorSnapshot) => {
+        controller.enqueue(encoder.encode(`event: snapshot\ndata: ${JSON.stringify(next)}\n\n`));
+      });
+    },
+    cancel() {
+      unsubscribe?.();
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "content-type": "text/event-stream; charset=utf-8",
+      "cache-control": "no-cache",
+      connection: "keep-alive",
+    },
+  });
+}
+
+async function serveStatic(requestUrl: string): Promise<Response> {
+  const distRoot = resolve(process.cwd(), "dist");
+  const pathname = new URL(requestUrl).pathname;
+  const candidate = resolve(distRoot, pathname === "/" ? "index.html" : `.${pathname}`);
+
+  if (!candidate.startsWith(distRoot)) {
+    return new Response("Forbidden", { status: 403 });
+  }
+
+  const file = Bun.file(candidate);
+  if (await file.exists()) {
+    return new Response(file, { headers: { "content-type": contentType(candidate) } });
+  }
+
+  const index = Bun.file(resolve(distRoot, "index.html"));
+  if (await index.exists()) {
+    return new Response(index, { headers: { "content-type": "text/html; charset=utf-8" } });
+  }
+
+  return new Response("Projector build not found. Run `bun run build` first, or use `bun run dev` for Vite.", {
+    status: 404,
+    headers: { "content-type": "text/plain; charset=utf-8" },
+  });
+}
+
+function contentType(pathname: string): string {
+  if (pathname.endsWith(".html")) return "text/html; charset=utf-8";
+  if (pathname.endsWith(".js")) return "text/javascript; charset=utf-8";
+  if (pathname.endsWith(".css")) return "text/css; charset=utf-8";
+  if (pathname.endsWith(".svg")) return "image/svg+xml";
+  if (pathname.endsWith(".json")) return "application/json; charset=utf-8";
+  return "application/octet-stream";
+}
+
+function parsePort(value: string): number {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : 8787;
+}
+
+// True only for clients explicitly loaded in offline-demo mode (?live=0), which
+// render static fixtures and never bind to the live runtime. Their control
+// presses are cosmetic so they cannot perturb the shared live pipeline.
+function isOfflineDemoRequest(referer: string | undefined): boolean {
+  if (referer === undefined) {
+    return false;
+  }
+
   try {
-    return (await req.json()) as T;
+    return new URL(referer).searchParams.get("live") === "0";
   } catch {
-    return {} as T;
+    return false;
   }
 }
 
-async function file(path: string): Promise<Response> {
-  const f = Bun.file(path);
-  if (await f.exists()) return new Response(f);
-  return notFound();
+function emergencyDemoSnapshot(snapshot: ProjectorSnapshot): ProjectorSnapshot {
+  return {
+    ...snapshot,
+    listening: false,
+    muted: true,
+    globalState: "emergency stopped",
+    activeCue: "none",
+    emergencyStopTriggered: true,
+    updatedAt: new Date().toISOString(),
+  };
 }
-
-// ── HTTP routing ────────────────────────────────────────────────────────────
-async function handle(req: Request): Promise<Response> {
-  const url = new URL(req.url);
-  const p = url.pathname;
-  const seg = p.split("/").filter(Boolean); // e.g. ["api","processes","id","prompt"]
-
-  // static + pages
-  if (p === "/" || p === "/index.html") return file(join(WEB, "index.html"));
-  if (p === "/style.css") return file(join(WEB, "style.css"));
-  if (p === "/app.js") return file(join(WEB, "app.js"));
-  if (p === "/mobile.js") return file(join(WEB, "mobile.js"));
-
-  // mobile pairing: /m/:qrToken  (§5.7)
-  if (seg[0] === "m" && seg[1]) {
-    const proc = session.pm.list().find((m) => m.qrToken === seg[1]);
-    if (!proc) return new Response("unknown or expired process pairing", { status: 404 });
-    return file(join(WEB, "mobile.html"));
-  }
-
-  // ── API ──────────────────────────────────────────────────────────────────
-  if (seg[0] === "api") {
-    // GET /api/snapshot
-    if (req.method === "GET" && seg[1] === "snapshot") return json(session.snapshot());
-
-    // GET/POST /api/config
-    if (seg[1] === "config") {
-      if (req.method === "GET") return json(session.config);
-      if (req.method === "POST") return json(session.setConfig(await body(req)));
-    }
-
-    // POST /api/select  { id | null }
-    if (req.method === "POST" && seg[1] === "select") {
-      const { id } = await body<{ id: string | null }>(req);
-      session.select(id ?? null);
-      return json({ selected: session.selected() });
-    }
-
-    // POST /api/transcript  { text, source }  → ambient suggestion channel
-    if (req.method === "POST" && seg[1] === "transcript") {
-      const { text, source } = await body<{ text: string; source?: string }>(req);
-      if (!text) return bad("text required");
-      session.observe(text, source ?? "room");
-      return json({ ok: true });
-    }
-
-    // /api/suggestions ...
-    if (seg[1] === "suggestions") {
-      if (req.method === "GET" && !seg[2]) return json(session.suggestions.getAll());
-      if (req.method === "POST" && seg[2] && seg[3] === "accept") {
-        const { answers } = await body<{ answers?: Record<string, string> }>(req);
-        const meta = await session.acceptSuggestion(seg[2], answers ?? {});
-        return meta ? json(meta) : bad("no such suggestion");
-      }
-      if (req.method === "POST" && seg[2] && seg[3] === "dismiss") {
-        return json({ ok: session.suggestions.dismiss(seg[2]) });
-      }
-    }
-
-    // /api/processes ...
-    if (seg[1] === "processes") {
-      if (req.method === "GET" && !seg[2]) return json(session.pm.list());
-      if (req.method === "POST" && !seg[2]) {
-        const b = await body<{
-          title: string;
-          visualizer?: VisualizerKind;
-          mode?: Partial<ProcessMode>;
-          model?: string;
-          agent?: string;
-        }>(req);
-        if (!b.title) return bad("title required");
-        return json(await session.pm.create(b));
-      }
-      const id = seg[2];
-      const action = seg[3];
-      if (id && req.method === "POST") {
-        switch (action) {
-          case "prompt": {
-            const { text } = await body<{ text: string }>(req);
-            if (!text) return bad("text required");
-            return json(session.prompt(id, text));
-          }
-          case "pause":
-            return json({ ok: session.pm.pause(id) });
-          case "resume":
-            return json({ ok: session.pm.resume(id) });
-          case "kill":
-            return json({ ok: await session.pm.kill(id) });
-          case "fork": {
-            const child = await session.pm.fork(id);
-            return child ? json(child) : bad("no such process");
-          }
-          case "mode": {
-            const mode = await body<Partial<ProcessMode>>(req);
-            const m = session.pm.switchMode(id, mode);
-            return m ? json(m) : bad("no such process");
-          }
-          case "modify": {
-            const patch = await body<{ title?: string; visualizer?: VisualizerKind }>(req);
-            const m = session.pm.modify(id, patch);
-            return m ? json(m) : bad("no such process");
-          }
-          case "merge": {
-            const { from } = await body<{ from: string }>(req);
-            const m = session.pm.merge(id, from);
-            return m ? json(m) : bad("merge failed");
-          }
-        }
-      }
-      if (id && action === "export" && req.method === "GET") {
-        const e = session.pm.export(id);
-        return e ? json(e) : notFound();
-      }
-      // mobile pairing token → process info (for the mobile page)
-      if (id === "by-token" && action && req.method === "GET") {
-        const m = session.pm.list().find((x) => x.qrToken === action);
-        return m ? json(m) : notFound();
-      }
-    }
-
-    return notFound();
-  }
-
-  return notFound();
-}
-
-// ── serve ──────────────────────────────────────────────────────────────────
-const server = Bun.serve({
-  port: PORT,
-  async fetch(req, srv) {
-    const url = new URL(req.url);
-    if (url.pathname === "/ws") {
-      if (srv.upgrade(req)) return undefined as unknown as Response;
-      return new Response("expected websocket", { status: 426 });
-    }
-    try {
-      return await handle(req);
-    } catch (err) {
-      console.error("[server] error", err);
-      return json({ error: (err as Error).message }, 500);
-    }
-  },
-  websocket: {
-    open(ws) {
-      sockets.add(ws);
-      // cold-start priming: snapshot + recent events
-      ws.send(JSON.stringify({ type: "snapshot", ...session.snapshot() }));
-      for (const e of session.bus.recent()) ws.send(JSON.stringify(e));
-    },
-    close(ws) {
-      sockets.delete(ws);
-    },
-    message() {
-      /* clients drive via REST; ws is read-only event stream */
-    },
-  },
-});
-
-console.log(`\n  Panopticon — OS for AI-agent work`);
-console.log(`  Pro UI:  http://localhost:${server.port}`);
-console.log(`  brain:   ${session.brain.name}\n`);

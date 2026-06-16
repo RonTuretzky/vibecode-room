@@ -1,0 +1,23 @@
+bun test v1.3.14 (0d9b296a)
+
+test/e2e/spine.e2e.ts.test.ts:
+147 |   });
+148 | 
+149 |   test("one-breath Atlas instruction selects and steers Atlas", () => {
+150 |     const decision = route("Atlas, make it faster", { activeProcesses });
+151 | 
+152 |     expect(decision.kind).toBe("action");
+                                ^
+error: expect(received).toBe(expected)
+
+Expected: "action"
+Received: "local"
+
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/routing-dispatch-invariants/test/e2e/spine.e2e.ts:152:27)
+(fail) routing slice spine e2e > one-breath Atlas instruction selects and steers Atlas [6.10ms]
+
+ 0 pass
+ 5 filtered out
+ 1 fail
+ 1 expect() calls
+Ran 1 test across 1 file. [407.00ms]

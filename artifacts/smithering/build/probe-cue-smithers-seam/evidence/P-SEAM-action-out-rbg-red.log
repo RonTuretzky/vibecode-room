@@ -1,0 +1,23 @@
+bun test v1.3.14 (0d9b296a)
+
+poc/p-seam.test.ts:
+129 |             runId: "p-seam-upid-seam-001",
+130 |             steeringWindowId: "window-seam-voice-001",
+131 |           }),
+132 |         }),
+133 |       );
+134 |       expect(dispatcher.spawnCalls).toHaveLength(1);
+                                          ^
+error: expect(received).toHaveLength(expected)
+
+Expected length: 1
+Received length: 0
+
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/probe-cue-smithers-seam/poc/p-seam.test.ts:134:37)
+(fail) P-SEAM Cue to Smithers gateway integration > MappedActionTool dispatch is bidirectional, async, reconnectable, and restart-correlated [307.44ms]
+
+ 0 pass
+ 1 fail
+ 8 expect() calls
+Ran 1 test across 1 file. [862.00ms]
+RBG_RED_EXIT_STATUS=1

@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Build Decision - Cue Smithers seam adapter</title>
+<style>
+  :root { --ink:#e8edf2; --mut:#9aa8b5; --line:#283544; --good:#39d98a; --bad:#ff6b6b; --accent:#7cc7ff; --bg:#0b1117; --card:#111a24; }
+  * { box-sizing:border-box; }
+  body { font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; color:var(--ink); max-width:920px; margin:2.2rem auto; padding:0 1.2rem; background:var(--bg); }
+  h1 { font-size:1.55rem; margin:0 0 .2rem; }
+  h2 { font-size:1.12rem; margin:1.8rem 0 .5rem; border-bottom:2px solid var(--line); padding-bottom:.25rem; }
+  .meta { color:var(--mut); font-size:.86rem; margin-bottom:1.2rem; }
+  .pill { display:inline-block; padding:.08rem .5rem; border-radius:999px; font-size:.75rem; font-weight:600; background:#132f47; color:var(--accent); }
+  code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; color:#d8f3ff; }
+  pre { background:#05080c; color:#e6edf3; padding:.9rem 1.1rem; border-radius:8px; overflow:auto; font-size:.82rem; line-height:1.45; border:1px solid var(--line); }
+  .box { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:.9rem 1.1rem; margin:.7rem 0; }
+  .alt { border-left:4px solid var(--line); padding-left:.9rem; margin:.6rem 0; }
+  .alt.win { border-left-color:var(--good); } .alt.lose { border-left-color:var(--bad); }
+  .good { color:var(--good); font-weight:600; } .bad { color:var(--bad); font-weight:600; }
+</style>
+</head>
+<body>
+<h1>Cue Smithers seam adapter</h1>
+<div class="meta"><span class="pill">BUILD</span> &nbsp; probe-cue-smithers-seam &nbsp;·&nbsp; 2026-06-14</div>
+
+<h2>Decision</h2>
+<div class="box">
+Panopticon V0 should connect Cue and Smithers with an async dispatcher behind Cue's
+<code>MappedActionTool</code>. The mapper should enqueue Smithers Gateway <code>runs.create</code>
+work and return a Cue action immediately. Gateway <code>streamRunEvents</code> frames are the
+V0 run-event stream source and are bridged back into Cue as observations carrying persisted
+<code>upid</code>, <code>runId</code>, and <code>steeringWindowId</code> correlation.
+</div>
+
+<h2>Why</h2>
+<p>The landed Cue interface executes <code>MappedActionTool</code> mappers inside the Cue
+ingest path, so awaiting the complete spawn path there would stall the Cue loop. The landed
+Smithers Gateway interface already proves <code>runs.create</code>, <code>streamRunEvents</code>,
+and durable restart behavior. Combining those surfaces with a deterministic dispatcher keeps
+LLM output limited to selecting the tool call while routing, persistence, reconnect, and
+correlation stay in code.</p>
+
+<h2>Alternatives</h2>
+<div class="alt lose"><strong>Await Smithers spawn inside the Cue mapper.</strong>
+<span class="bad">Rejected.</span> The RBG blocking run shows this stalls the Cue loop before spawn returns.</div>
+<div class="alt lose"><strong>Shell out to the Smithers CLI from Cue.</strong>
+<span class="bad">Rejected.</span> The already-landed durable-runs probe selected Gateway mode for V0 process control.</div>
+<div class="alt win"><strong>Use an async Gateway dispatcher plus event bridge.</strong>
+<span class="good">Chosen.</span> It exercises real Cue and real Smithers bidirectionally while preserving Cue loop responsiveness.</div>
+
+<h2>Verification</h2>
+<pre>P_SEAM_RBG_BREAK_ACTION_OUT=1 bun test poc/p-seam.test.ts
+P_SEAM_RBG_BREAK_RUN_EVENT_BACK=1 bun test poc/p-seam.test.ts
+P_SEAM_RBG_BLOCKING_DISPATCH=1 bun test poc/p-seam.test.ts
+P_SEAM_RBG_BREAK_RECONNECT=1 bun test poc/p-seam.test.ts
+P_SEAM_RBG_BREAK_RESTART_CORRELATION=1 bun test poc/p-seam.test.ts
+bun test poc/p-seam.test.ts
+bun run typecheck</pre>
+</body>
+</html>

@@ -1,0 +1,25 @@
+bun test v1.3.14 (0d9b296a)
+
+src/replay/harness.test.ts:
+109 |       assertAiOutputInvariants({
+110 |         mcqs: ["one", "two", "three", "four"],
+111 |         text: "one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen",
+112 |         firedAtMs: 20,
+113 |       }, relaxedLimits),
+114 |     ).toThrow(/MCQs|words/u);
+            ^
+error: expect(received).toThrow(expected)
+
+Expected pattern: /MCQs|words/u
+
+Received function did not throw
+Received value: undefined
+
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/record-replay-harness/src/replay/harness.test.ts:114:7)
+(fail) ENG-T-02 record-replay harness > AI-output invariant helpers reject over-limit MCQs and word counts without exact text assertions [0.26ms]
+
+ 6 pass
+ 1 fail
+ 40 expect() calls
+Ran 7 tests across 1 file. [39.00ms]
+exit_code=1

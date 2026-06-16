@@ -1,0 +1,36 @@
+bun test v1.3.14 (0d9b296a)
+
+src/routing/callsigns.test.ts:
+73 |     const second = allocator.assign("upid-b");
+74 | 
+75 |     expect(first.callsign).toBe(DEFAULT_CALLSIGN_POOL[0]);
+76 |     expect(second.callsign).toBe(DEFAULT_CALLSIGN_POOL[1]);
+77 |     expect(first.callsign).not.toBe(second.callsign);
+78 |     expect(() => allocator.assign("upid-c", first.callsign)).toThrow(/collides|available/u);
+                                                                  ^
+error: expect(received).toThrow(expected)
+
+Expected pattern: /collides|available/u
+
+Received function did not throw
+Received value: {
+  upid: "upid-c",
+  callsign: "virellium",
+  profile: {
+    normalized: "virellium",
+    metaphone: [ "FRLM", "" ],
+    phonemes: "fArAlAm",
+  },
+  reusedAfterCooldown: false,
+  poolIndex: 0,
+}
+
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/callsigns-and-collision-guard/src/routing/callsigns.test.ts:78:62)
+(fail) callsign collision guard > AC13.2 assigns unique sequential callsigns and rejects proposed collisions [1.34ms]
+
+ 6 pass
+ 1 fail
+ 52 expect() calls
+Ran 7 tests across 1 file. [41.00ms]
+
+exit_code=1

@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Decision ENG-A-06 — Dependency→probe gating &amp; blocking classification</title>
+<style>
+  :root { --ink:#1a1a1a; --mut:#666; --line:#e2e2e2; --good:#0a7d33; --bad:#b00020; --accent:#0b5cad; --bg:#fafafa; }
+  * { box-sizing:border-box; }
+  body { font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; color:var(--ink); max-width:960px; margin:2.2rem auto; padding:0 1.2rem; background:var(--bg); }
+  h1 { font-size:1.55rem; margin:0 0 .2rem; }
+  h2 { font-size:1.12rem; margin:1.8rem 0 .5rem; border-bottom:2px solid var(--line); padding-bottom:.25rem; }
+  .meta { color:var(--mut); font-size:.86rem; margin-bottom:1.2rem; }
+  .pill { display:inline-block; padding:.08rem .5rem; border-radius:999px; font-size:.75rem; font-weight:600; background:#e7f1fb; color:var(--accent); }
+  table { border-collapse:collapse; width:100%; margin:.6rem 0; font-size:.9rem; }
+  th,td { border:1px solid var(--line); padding:.45rem .6rem; text-align:left; vertical-align:top; }
+  th { background:#f0f0f0; }
+  code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  .good { color:var(--good); font-weight:600; } .bad { color:var(--bad); font-weight:600; }
+  .blk { font-weight:700; color:#b00020; } .nblk { font-weight:700; color:#0a7d33; }
+  .box { background:#fff; border:1px solid var(--line); border-radius:8px; padding:.9rem 1.1rem; margin:.7rem 0; }
+  .warn { background:#fff7e6; border:1px solid #ffd591; border-radius:8px; padding:.7rem 1rem; }
+</style>
+</head>
+<body>
+<h1>Dependency→probe gating &amp; <span style="color:#0b5cad">blocking classification</span></h1>
+<div class="meta"><span class="pill">ENG-A-06</span> &nbsp; Panopticon V0 engineering &nbsp;·&nbsp; validate-before-build &nbsp;·&nbsp; <code>docs/planning/03-eng.md §14, §15</code></div>
+
+<h2>The rule <span style="color:var(--good);font-size:.8rem">— CONFIRMED, kept</span></h2>
+<div class="box">
+<strong>Confirmed and retained.</strong> Every non-framework third-party dependency is
+<strong>exercised against the real API by a probe that asserts the exact behavior we rely on, before any
+product code is built on it</strong>. A probe that <em>could</em> fail and <em>passed</em> is the
+evidence — docs and memory are not. <strong>Every dependency maps to ≥1 probe; every probe is blocking
+unless explicitly justified.</strong> React / standard libraries are exempt.
+</div>
+<div class="warn" style="margin:.7rem 0"><strong>Probes removed since the prior pass:</strong> probes that
+existed only to validate the bespoke unmute spotter (<strong>P-SPOTTER</strong>, P-BUN-NATIVE), the
+shell-command classifier (<strong>P-SHELL-PARSE</strong>), and the heavy in-run safety hook
+(<strong>P-HOOK</strong>) are <strong>removed</strong>. We now trust Cue for keyword listening (no custom
+spotter — V2/ENG-A-13) and <strong>run dangerously</strong> (no shell classifier or read-back gate —
+ENG-A-08/11/12 cut). The gating <em>rule</em> is unchanged; only those now-irrelevant probes are gone.</div>
+
+<h2>How "blocking" is decided</h2>
+<p>A probe is <span class="blk">blocking</span> when a failed result forces an <strong>architectural
+redesign or makes a hard requirement unprovable</strong>. It is <span class="nblk">non-blocking</span>
+only when a failed result has a <strong>pre-designed graceful fallback</strong> with no architectural
+impact — and that fallback is named.</p>
+
+<h2>The mapping</h2>
+<table>
+<tr><th>Probe</th><th>Dependency</th><th>The one question</th><th>Block?</th><th>Why / fallback</th></tr>
+<tr><td>P-CUE</td><td>Cue</td><td>Real library matches the README surface our design is built on (repo accessible)?</td><td class="blk">YES</td><td>If false, REQ-1/3/5/6/7 redesigned from scratch. <strong>First build task.</strong></td></tr>
+<tr><td>P-ASR</td><td>Deepgram Nova-3</td><td><code>isFinal</code> + diarization + word-final &lt;200 ms + no obs on silence?</td><td class="blk">YES</td><td>The ≤300 ms earcon &amp; &lt;1 s round-trip (REQ-10) depend on it.</td></tr>
+<tr><td>P-TTS</td><td>TTS provider</td><td>Which candidate streams first byte ≤200 ms (and does any)?</td><td class="blk">YES</td><td>Round-trip ≤1 s unprovable until one passes; probe also selects.</td></tr>
+<tr><td>P-LLM</td><td>Decision LLM</td><td>Temp-0-deterministic decisions ≤~100 ms with <code>MappedActionTool</code> schema?</td><td class="blk">YES</td><td>Record-replay + hot-loop budget depend on it.</td></tr>
+<tr><td>P-SMITHERS</td><td>Smithers</td><td>Spawn/stream/pause/steer/recover/concurrent behave as our lifecycle assumes; how is fork realized?</td><td class="blk">YES</td><td>REQ-4/8/13/15 depend on it.</td></tr>
+<tr><td>P-SEAM</td><td>Cue↔Smithers (+Hono)</td><td>Action round-trips into a real run &amp; SSE events flow back, spawn ≤3 s, no Cue-loop block?</td><td class="blk">YES</td><td>The novel integration; top risk (PRD §9).</td></tr>
+<tr><td>P-OTEL</td><td>Langfuse / OTel</td><td>Smithers output exports cleanly via OTLP with GenAI conventions?</td><td class="nblk">NO</td><td>Off every critical path (AC16.2); Cue JSONL covers causal chain; OTLP backends swappable.</td></tr>
+<tr><td><em>(exempt)</em></td><td>React 19 / Hono / Bun runtime</td><td>—</td><td class="good">EXEMPT</td><td>Popular frameworks; board proven by board-non-authoritative e2e; Hono covered by P-SEAM.</td></tr>
+</table>
+
+<h2>Verification of the gate itself</h2>
+<ul>
+<li>The probe <strong>is</strong> the test — each assertion must be able to fail (feed a below-threshold
+input, assert the cue does <em>not</em> fire; feed a passing one, assert it does). Record red-before-green
+for every assertion.</li>
+<li>Probe scripts live under <code>poc/</code>; results under <code>artifacts/smithering/reports/</code>.
+All are currently <strong>UNRUN</strong> — nothing is confirmed.</li>
+</ul>
+
+<div class="warn"><strong>⚠ P0 BLOCKER carried forward:</strong> upstream artifacts disagree on whether
+<code>github.com/jameslbarnes/cue</code> is publicly accessible (<code>domain.md §7</code> unconfirmed
+2026-06-13 vs <code>prior-art.md §1</code>). Confirming Cue repo access and running P-CUE is the first
+build task and a hard gate. Surfaced to the orchestrator's gate via structured output — not raised as a
+human request from this pass.</div>
+</body>
+</html>

@@ -1,0 +1,1 @@
+{"level":"info","event":"route.action","eventId":"trace-decision-smoke-session-utt-002-literal-wake","sessionId":"smoke-session","correlationId":"corr-smoke-session-utt-002","latencyMs":47,"meta":{"action":"wake","observationId":"utt-002","policy":"literal-wake"}}

@@ -1,0 +1,77 @@
+{
+  "latencyMs": 2165,
+  "audioLengthSeconds": 4.525,
+  "realtimeFactor": 0.4784530386740331,
+  "transcript": {
+    "task": "transcribe",
+    "language": "english",
+    "duration": 4.519999980926514,
+    "text": "building software in a room with two developers discussing an API design.",
+    "words": [
+      {
+        "word": "building",
+        "start": 0,
+        "end": 0.30000001192092896
+      },
+      {
+        "word": "software",
+        "start": 0.30000001192092896,
+        "end": 0.7200000286102295
+      },
+      {
+        "word": "in",
+        "start": 0.7200000286102295,
+        "end": 0.9200000166893005
+      },
+      {
+        "word": "a",
+        "start": 0.9200000166893005,
+        "end": 1.2400000095367432
+      },
+      {
+        "word": "room",
+        "start": 1.2400000095367432,
+        "end": 1.3600000143051147
+      },
+      {
+        "word": "with",
+        "start": 1.3600000143051147,
+        "end": 1.7400000095367432
+      },
+      {
+        "word": "two",
+        "start": 1.7400000095367432,
+        "end": 2.0399999618530273
+      },
+      {
+        "word": "developers",
+        "start": 2.0399999618530273,
+        "end": 2.5999999046325684
+      },
+      {
+        "word": "discussing",
+        "start": 2.5999999046325684,
+        "end": 3.200000047683716
+      },
+      {
+        "word": "an",
+        "start": 3.200000047683716,
+        "end": 3.4800000190734863
+      },
+      {
+        "word": "API",
+        "start": 3.4800000190734863,
+        "end": 3.819999933242798
+      },
+      {
+        "word": "design",
+        "start": 3.819999933242798,
+        "end": 4.260000228881836
+      }
+    ],
+    "usage": {
+      "type": "duration",
+      "seconds": 5
+    }
+  }
+}
