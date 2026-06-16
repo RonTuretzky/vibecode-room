@@ -67,7 +67,7 @@
 /** @jsxImportSource smithers-orchestrator */
 import { $ } from "bun";
 import { execFileSync } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import {
   ClaudeCodeAgent,
@@ -112,10 +112,27 @@ const SAFETY_TICKET_IDS = new Set([
   "shell-command-classifier",
 ]);
 
+const TICKET_REQUIRED_CREDENTIALS: Record<string, string[]> = {
+  "probe-asr-deepgram": ["DEEPGRAM_API_KEY"],
+};
+
 function ticketRequiresChallenge(ticketOrId: Pick<Ticket, "id"> | string): boolean {
   const id = typeof ticketOrId === "string" ? ticketOrId : ticketOrId.id;
   const lower = id.toLowerCase();
   return SAFETY_TICKET_IDS.has(id) || lower.includes("credentials") || lower.includes("safety");
+}
+
+function requiredCredentialsFor(ticketOrId: Pick<Ticket, "id"> | string): string[] {
+  const id = typeof ticketOrId === "string" ? ticketOrId : ticketOrId.id;
+  return TICKET_REQUIRED_CREDENTIALS[id] ?? [];
+}
+
+function missingCredentialsFor(ticketOrId: Pick<Ticket, "id"> | string): string[] {
+  return requiredCredentialsFor(ticketOrId).filter((key) => !process.env[key]?.trim());
+}
+
+function needsCredentialReason(keys: string[]): string {
+  return `needs-credential:${keys.join(",")}`;
 }
 
 // ─── Model roster (families are the whole point of §4 — keep them honestly distinct) ──
@@ -302,6 +319,7 @@ type LandResult = {
   branch: string;
   integrationBranch: string;
   reason: string;
+  transient?: boolean;
 };
 
 // The depth-1 land lane operates in a DEDICATED, clean integration worktree — NEVER the
@@ -326,6 +344,56 @@ function workerBundleDirFromRoot(worktreeRoot: string, ticketId: string): string
 
 function workerBundleDir(ctx: any, ticketId: string): string {
   return workerBundleDirFromRoot(ticketWorktreeRoot(ctx, ticketId), ticketId);
+}
+
+function rootCredentialBundleDir(ticketId: string): string {
+  return resolve(process.cwd(), BUILD_DIR, ticketId);
+}
+
+function writeNeedsCredentialEvidence(ticket: Ticket, missingCredentials: string[]) {
+  const reason = needsCredentialReason(missingCredentials);
+  const bundleDir = rootCredentialBundleDir(ticket.id);
+  const payload = {
+    ticketId: ticket.id,
+    status: "blocked",
+    reason,
+    missingCredentials,
+    requiredCredentials: requiredCredentialsFor(ticket),
+    blockedAt: new Date().toISOString(),
+    summary: `Blocked before worker launch: missing ${missingCredentials.join(", ")}.`,
+  };
+  try {
+    mkdirSync(bundleDir, { recursive: true });
+    writeFileSync(resolve(bundleDir, "credential-block.json"), `${JSON.stringify(payload, null, 2)}\n`);
+    writeFileSync(
+      resolve(bundleDir, "RESULT.md"),
+      [
+        `# ${ticket.id}`,
+        "",
+        `Status: blocked`,
+        `Reason: ${reason}`,
+        `Missing credentials: ${missingCredentials.join(", ")}`,
+        "",
+        "The implement/review/verify worker was not run. Set the listed environment variable(s) and resume.",
+        "",
+      ].join("\n"),
+    );
+  } catch (err) {
+    logEvent("credential.block.evidence_failed", {
+      ticketId: ticket.id,
+      reason,
+      error: redact((err as Error)?.message ?? String(err)),
+    });
+  }
+  logEvent("credential.block", { ticketId: ticket.id, reason, missingCredentials });
+  return {
+    ticketId: ticket.id,
+    status: "blocked" as const,
+    branch: buildBranch(ticket.id),
+    reason,
+    missingCredentials,
+    summary: `Blocked before worker launch: ${reason}. Human must set ${missingCredentials.join(", ")}.`,
+  };
 }
 
 function requiredBundleFiles(ticketId: string): string[] {
@@ -448,6 +516,101 @@ function hasAnyTestFile(root: string): boolean {
   return walk(root, 0);
 }
 
+const GATE_MAX_ATTEMPTS = 3;
+const GATE_MEMORY_MB = 6144;
+const GATE_TIMEOUT_MS = 30 * 60_000;
+
+type ClassifiedGateKind = "tsc" | "bun-test";
+type ClassifiedGateStatus = "pass" | "red" | "infra";
+type ClassifiedGateResult = {
+  kind: ClassifiedGateKind;
+  status: ClassifiedGateStatus;
+  attempts: number;
+  exitCode: number | null;
+  timedOut: boolean;
+  summary: string;
+};
+
+function gateNodeOptions(): string {
+  const existing = process.env.NODE_OPTIONS?.trim();
+  const memory = `--max-old-space-size=${GATE_MEMORY_MB}`;
+  return existing ? `${existing} ${memory}` : memory;
+}
+
+function gateOutput(res: { stdout?: unknown; stderr?: unknown }): string {
+  return `${res.stdout?.toString?.() ?? ""}\n${res.stderr?.toString?.() ?? ""}`;
+}
+
+function classifyGateOutput(kind: ClassifiedGateKind, exitCode: number | null, timedOut: boolean, output: string): ClassifiedGateStatus {
+  if (exitCode === 0 && !timedOut) return "pass";
+  if (kind === "tsc") {
+    return /\berror TS\d+\b/.test(output) ? "red" : "infra";
+  }
+  return /(^|\n)\s*\(fail\)\s|\b[1-9]\d*\s+fail(?:ed|ures?)?\b/i.test(output) ? "red" : "infra";
+}
+
+function gateSummary(kind: ClassifiedGateKind, exitCode: number | null, timedOut: boolean, output: string): string {
+  const command = kind === "tsc" ? "bunx tsc --noEmit" : "bun test";
+  const tail = redact(output).trim().slice(-1200);
+  return `${command} exit=${exitCode ?? "signal/timeout"}${timedOut ? " timeout" : ""}${tail ? `; output tail:\n${tail}` : "; no diagnostic output"}`;
+}
+
+async function runGateCommand(kind: ClassifiedGateKind, cwd: string): Promise<Omit<ClassifiedGateResult, "attempts">> {
+  const cmd = kind === "tsc" ? ["bunx", "tsc", "--noEmit"] : ["bun", "test"];
+  let timedOut = false;
+  const proc = Bun.spawn(cmd, {
+    cwd,
+    env: { ...process.env, NODE_OPTIONS: gateNodeOptions() },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const timer = setTimeout(() => {
+    timedOut = true;
+    proc.kill("SIGKILL");
+  }, GATE_TIMEOUT_MS);
+  const [exitCode, stdout, stderr] = await Promise.all([
+    proc.exited.catch(() => null),
+    new Response(proc.stdout).text().catch((e) => String(e)),
+    new Response(proc.stderr).text().catch((e) => String(e)),
+  ]);
+  clearTimeout(timer);
+  const output = gateOutput({ stdout, stderr });
+  return {
+    kind,
+    status: classifyGateOutput(kind, exitCode, timedOut, output),
+    exitCode,
+    timedOut,
+    summary: gateSummary(kind, exitCode, timedOut, output),
+  };
+}
+
+async function runClassifiedGate(ticketId: string, wtAbs: string, kind: ClassifiedGateKind): Promise<ClassifiedGateResult> {
+  let last: Omit<ClassifiedGateResult, "attempts"> | null = null;
+  for (let attempt = 1; attempt <= GATE_MAX_ATTEMPTS; attempt++) {
+    last = await runGateCommand(kind, wtAbs);
+    logEvent(
+      last.status === "pass"
+        ? "merge.lane.gate.pass"
+        : last.status === "red"
+          ? "merge.lane.gate.red"
+          : "merge.lane.gate.infra",
+      {
+        ticketId,
+        gate: kind === "tsc" ? "tsc" : "bun test",
+        attempt,
+        exitCode: last.exitCode,
+        timedOut: last.timedOut,
+        memoryMb: GATE_MEMORY_MB,
+      },
+    );
+    if (last.status !== "infra" || attempt === GATE_MAX_ATTEMPTS) {
+      return { ...last, attempts: attempt };
+    }
+    await Bun.sleep(1000 * attempt);
+  }
+  return { ...(last as Omit<ClassifiedGateResult, "attempts">), attempts: GATE_MAX_ATTEMPTS };
+}
+
 // Run a package.json script in the integration worktree IF it is defined; otherwise log a
 // skip (a not-yet-built tier must not block the bootstrap, but its absence is recorded).
 async function runOptionalScript(
@@ -478,8 +641,9 @@ async function runOptionalScript(
 // durable evidence bundle (no recorded RBG = no land), scans for secrets, then re-runs the
 // pre-merge tier (tsc + bun test incl. the walking-skeleton smoke + architecture lint) on
 // the merged tip. Returns the concrete reasons so a bounce is debuggable with no context.
-async function runMergeGate(ticketId: string, worktreeRoot: string): Promise<{ ok: boolean; reasons: string[] }> {
+async function runMergeGate(ticketId: string, worktreeRoot: string): Promise<{ ok: boolean; reasons: string[]; transientReasons: string[] }> {
   const reasons: string[] = [];
+  const transientReasons: string[] = [];
   const wtAbs = resolve(process.cwd(), INTEGRATION_WT);
   const bundleDir = workerBundleDirFromRoot(worktreeRoot, ticketId);
 
@@ -529,8 +693,14 @@ async function runMergeGate(ticketId: string, worktreeRoot: string): Promise<{ o
 
   // 3) Typecheck the merged tip (the rebased combination, not just the branch in isolation).
   if (existsSync(resolve(wtAbs, "tsconfig.json"))) {
-    const tsc = await $`bunx tsc --noEmit`.cwd(wtAbs).nothrow().quiet();
-    if (tsc.exitCode !== 0) reasons.push("pre-merge gate red: tsc --noEmit on the merged tip");
+    const tsc = await runClassifiedGate(ticketId, wtAbs, "tsc");
+    if (tsc.status === "red") {
+      reasons.push("pre-merge gate red: tsc --noEmit on the merged tip");
+    } else if (tsc.status === "infra") {
+      transientReasons.push(
+        `tsc could not complete (infra/OOM) after ${tsc.attempts} attempt(s) — treating as transient, not a type error. ${tsc.summary}`,
+      );
+    }
   } else {
     logEvent("merge.lane.gate.skip", { ticketId, gate: "tsc", reason: "no tsconfig on merged tip" });
   }
@@ -538,8 +708,14 @@ async function runMergeGate(ticketId: string, worktreeRoot: string): Promise<{ o
   // 4) Re-run the deterministic pre-merge test subset on the merged tip — this is the
   //    walking-skeleton smoke + unit/integration tests. A red suite BOUNCES.
   if (hasAnyTestFile(wtAbs)) {
-    const t = await $`bun test`.cwd(wtAbs).nothrow().quiet();
-    if (t.exitCode !== 0) reasons.push("pre-merge gate red: bun test on the merged tip (incl. walking-skeleton smoke)");
+    const t = await runClassifiedGate(ticketId, wtAbs, "bun-test");
+    if (t.status === "red") {
+      reasons.push("pre-merge gate red: bun test on the merged tip (incl. walking-skeleton smoke)");
+    } else if (t.status === "infra") {
+      transientReasons.push(
+        `bun test could not complete (infra/OOM) after ${t.attempts} attempt(s) — treating as transient, not a test failure. ${t.summary}`,
+      );
+    }
   } else {
     logEvent("merge.lane.gate.skip", { ticketId, gate: "bun test", reason: "no test files on merged tip yet" });
   }
@@ -548,7 +724,7 @@ async function runMergeGate(ticketId: string, worktreeRoot: string): Promise<{ o
   //    (early in the build) it is logged, not faked.
   await runOptionalScript(ticketId, wtAbs, "lint:arch", reasons, { blocking: true });
 
-  return { ok: reasons.length === 0, reasons };
+  return { ok: reasons.length === 0 && transientReasons.length === 0, reasons, transientReasons };
 }
 
 // Postsubmit (the full real-world suite) runs AFTER the land on the integration tip. Per
@@ -632,6 +808,19 @@ async function landTicketBranch(args: LandArgs): Promise<LandResult> {
 
   // Deterministic pre-merge gate (evidence bundle + secret scan + tsc + bun test + arch lint).
   const gate = await runMergeGate(ticketId, worktreePath);
+  if (gate.transientReasons.length > 0 && gate.reasons.length === 0) {
+    await $`git merge --abort`.cwd(wt).nothrow().quiet();
+    logEvent("merge.lane.gate.transient", {
+      ticketId,
+      reason: "infra",
+      failures: gate.transientReasons.map((r) => r.slice(0, 1000)),
+    });
+    return {
+      ...base,
+      transient: true,
+      reason: `transient pre-merge gate infrastructure failure — retry land later: ${gate.transientReasons[0]}`,
+    };
+  }
   if (!gate.ok) {
     await $`git merge --abort`.cwd(wt).nothrow().quiet();
     writeLandBounce(ticketId, worktreePath, {
@@ -821,12 +1010,15 @@ const buildLandSchema = z.looseObject({
   branch: z.string().default(""),
   integrationBranch: z.string().default(""),
   reason: z.string().default(""),
+  transient: z.boolean().default(false),
 });
 
 const ticketResultSchema = z.looseObject({
   ticketId: z.string().default(""),
   status: z.enum(["finished", "landed", "blocked", "failed", "skipped"]).default("blocked"),
   branch: z.string().default(""),
+  reason: z.string().default(""),
+  missingCredentials: z.array(z.string()).default([]),
   summary: z.string().default(""),
 });
 
@@ -846,6 +1038,11 @@ const finalReportSchema = z.looseObject({
   integrationBranch: z.string().default(""),
   mergedToMain: z.boolean().default(false), // invariant: stays false — merging is the human's act
   blockers: z.array(z.string()).default([]),
+  needsCredentials: z.array(z.looseObject({
+    ticketId: z.string().default(""),
+    env: z.array(z.string()).default([]),
+    reason: z.string().default(""),
+  })).default([]),
   summary: z.string().default(""),
   artifactPath: z.string().nullable().default(BUILD_DIR),
 });
@@ -1086,6 +1283,14 @@ function ticketSettled(ctx: any, t: Ticket): boolean {
 }
 function ticketFeedback(ctx: any, t: Ticket): string | null {
   const parts: string[] = [];
+  const blockedResult = ctx.outputMaybe("ticketResult", { nodeId: blockedId(t.id), iteration: 0 });
+  if (typeof blockedResult?.reason === "string" && blockedResult.reason.startsWith("needs-credential:")) {
+    parts.push(
+      `NEEDS CREDENTIAL — ${blockedResult.reason}. Set ${(
+        Array.isArray(blockedResult.missingCredentials) ? blockedResult.missingCredentials : requiredCredentialsFor(t)
+      ).join(", ")} and resume; this ticket was not faked or worker-run.`,
+    );
+  }
   const v = readBundleJson(ctx, t.id, "verify.json");
   if (v && v.pass === false)
     parts.push(`INDEPENDENT VERIFIER (test authority) FAILED — fix this first:\n${v.summary ?? v.note ?? ""}`);
@@ -1334,6 +1539,13 @@ function verifierPrompt(t: Ticket, a: Assignment): string {
     `   onto the current integration branch, then run the PRE-MERGE deterministic gate tier on that rebased`,
     `   tip: the named bun test files + tsc --noEmit + the walking-skeleton smoke + the secret-redaction`,
     `   unit test + the hermetic replay-driven e2e (doubles only — no net/mic/keys). Capture output to disk.`,
+    `   Classify these command results by evidence, not exit code alone: tsc is red ONLY when it completed`,
+    `   far enough to emit error TS diagnostics; a nonzero exit, SIGABRT/OOM, signal kill, or timeout with`,
+    `   zero error TS lines is INFRA/transient. bun test is red ONLY when tests ran and reported failed`,
+    `   tests; a crash/OOM/signal/timeout with no failed-test report is INFRA/transient. Retry infra cases`,
+    `   up to 3 attempts with NODE_OPTIONS=--max-old-space-size=6144 and short backoff, serializing heavy`,
+    `   gates. If they still cannot complete, set pass=false with summary saying infra/transient retryable,`,
+    `   but do NOT call it tsc red or test red.`,
     `2. For EVERY blocking gate, confirm the red-before-green evidence under ${evidenceDir(t.id)}/evidence/`,
     `   is GENUINE and path-consistent with gates.json: for every tier:"pre-merge" row, status must be`,
     `   "passed", rbgRecorded must be true, and BOTH redRunPath and greenRunPath must resolve relative`,
@@ -1346,7 +1558,7 @@ function verifierPrompt(t: Ticket, a: Assignment): string {
     ``,
     `Set pass=true ONLY if the rebase succeeded, the merged/rebased integration tip gates are green, every`,
     `blocking gate is green, AND every declared RBG pair resolves to genuine non-empty red/green files.`,
-    `Set pass=false on any rebase conflict, tsc/test red, missing evidence, or inconsistent gates.json path.`,
+    `Set pass=false on any rebase conflict, real tsc/test red, missing evidence, or inconsistent gates.json path.`,
     `Name the exact failure so the next implementer loop can fix it. Never raise a human request.`,
   ].join("\n");
 }
@@ -1455,6 +1667,14 @@ function renderBlocked(t: Ticket) {
   );
 }
 
+function renderCredentialBlocked(t: Ticket, missingCredentials: string[]) {
+  return (
+    <Task key={t.id} id={blockedId(t.id)} output={outputs.ticketResult} continueOnFail>
+      {() => writeNeedsCredentialEvidence(t, missingCredentials)}
+    </Task>
+  );
+}
+
 function renderLandTask(ctx: any, t: Ticket, cfg: BuildConfig) {
   return (
     <Task key={t.id} id={landId(t.id)} output={outputs.buildLand} continueOnFail>
@@ -1480,6 +1700,12 @@ function renderContinuousTickets(ctx: any, waves: Wave[]) {
   const cfg = resolveBuildConfig(ctx.input);
   const ordered = ticketsInWaveOrder(waves);
   const readyWorkers = ordered.filter((t) => ticketReadyToBuild(ctx, t));
+  const credentialBlocked = readyWorkers
+    .map((t) => ({ ticket: t, missingCredentials: missingCredentialsFor(t) }))
+    .filter((row) => row.missingCredentials.length > 0);
+  const runnableWorkers = readyWorkers.filter(
+    (t) => !credentialBlocked.some((row) => row.ticket.id === t.id),
+  );
   const blockedByDeps = ordered.filter(
     (t) => !ticketLanded(ctx, t.id) && !ticketSettled(ctx, t) && ticketBlockedByDependencies(ctx, t),
   );
@@ -1491,7 +1717,8 @@ function renderContinuousTickets(ctx: any, waves: Wave[]) {
   return (
     <Parallel id="build:continuous" maxConcurrency={workerCap + 1}>
       <Parallel id="build:workers" maxConcurrency={workerCap}>
-        {readyWorkers.map((t) => renderWorker(ctx, t))}
+        {credentialBlocked.map((row) => renderCredentialBlocked(row.ticket, row.missingCredentials))}
+        {runnableWorkers.map((t) => renderWorker(ctx, t))}
         {blockedByDeps.map((t) => renderBlocked(t))}
       </Parallel>
       <MergeQueue id="build:land" maxConcurrency={1}>
@@ -1507,9 +1734,20 @@ function buildFinalReport(ctx: any, ticketsToBuild: Ticket[], smoke: boolean) {
   const landed = ticketsToBuild.filter((t) => ticketLanded(ctx, t.id));
   const blocked = ticketsToBuild.filter((t) => !ticketLanded(ctx, t.id));
   const blockers: string[] = [];
+  const needsCredentials: Array<{ ticketId: string; env: string[]; reason: string }> = [];
   for (const t of blocked) {
     const fb = ticketFeedback(ctx, t);
     blockers.push(`${t.id}: ${fb ? fb.split("\n")[0] : "did not land"}`);
+    const res =
+      ctx.outputMaybe("ticketResult", { nodeId: blockedId(t.id), iteration: 0 }) ??
+      ctx.outputMaybe("ticketResult", { nodeId: resultId(t.id), iteration: 0 });
+    if (typeof res?.reason === "string" && res.reason.startsWith("needs-credential:")) {
+      needsCredentials.push({
+        ticketId: t.id,
+        env: Array.isArray(res.missingCredentials) ? res.missingCredentials : requiredCredentialsFor(t),
+        reason: res.reason,
+      });
+    }
   }
   const allLanded = blocked.length === 0;
   const status = smoke
@@ -1528,11 +1766,12 @@ function buildFinalReport(ctx: any, ticketsToBuild: Ticket[], smoke: boolean) {
     integrationBranch: cfg.integrationBranch,
     mergedToMain: false, // invariant — merging the integration branch is the human's act
     blockers,
+    needsCredentials,
     summary: smoke
       ? `Smoke build: first ticket (${ticketsToBuild[0]?.id ?? "n/a"}) ${
           landed.length === ticketsToBuild.length ? "implemented, verified, and landed on" : "did NOT land on"
         } ${cfg.integrationBranch}. No approval gates ran.`
-      : `Full build: ${landed.length}/${ticketsToBuild.length} tickets landed on ${cfg.integrationBranch} (depth-1 lane, never main). ${blocked.length} blocked. Merge to main is the human's act after delivery.`,
+      : `Full build: ${landed.length}/${ticketsToBuild.length} tickets landed on ${cfg.integrationBranch} (depth-1 lane, never main). ${blocked.length} blocked.${needsCredentials.length > 0 ? ` Human credentials needed: ${needsCredentials.map((row) => `${row.ticketId}=${row.env.join(",")}`).join("; ")}.` : ""} Merge to main is the human's act after delivery.`,
     artifactPath: BUILD_DIR,
   };
 }

@@ -46,41 +46,46 @@ code{background:#0c0c0f;border:1px solid var(--line);border-radius:5px;padding:1
 </style>
 </head>
 <body>
-<div class="app" data-testid="progress-slideshow" data-version="1781491062869">
+<div class="app" data-testid="progress-slideshow" data-version="1781576567128">
   <header class="top">
     <div class="brand">Panopticon Progress</div>
-    <div class="stamp">Generated 2026-06-15 02:37:42 UTC</div>
+    <div class="stamp">Generated 2026-06-16 02:22:47 UTC</div>
     <div class="spacer"></div>
-    <div class="chip"><strong>9</strong> landed</div>
-    <div class="chip"><strong>2</strong> building</div>
-    <div class="chip"><strong>20</strong> not started</div>
+    <div class="chip"><strong>28</strong> landed</div>
+    <div class="chip"><strong>1</strong> building</div>
+    <div class="chip"><strong>2</strong> not started</div>
   </header>
   <main class="stage">
-    <section class="slide is-active" data-slide="summary" data-landed="9" data-building="2" data-todo="20">
+    <section class="slide is-active" data-slide="summary" data-landed="28" data-building="1" data-todo="2">
   <div class="kicker">Live build run impl-build-17</div>
   <h1>Panopticon Build Progress</h1>
   <p class="lede">Current state from <code>git log 8e67319..smithering/integration</code> and live Smithers worktrees.</p>
   <div class="metrics">
-    <div><span>9</span><small>Landed</small></div>
-    <div><span>2</span><small>Building</small></div>
-    <div><span>20</span><small>Not started</small></div>
-    <div><span>29%</span><small>Integrated</small></div>
+    <div><span>28</span><small>Landed</small></div>
+    <div><span>1</span><small>Building</small></div>
+    <div><span>2</span><small>Not started</small></div>
+    <div><span>90%</span><small>Integrated</small></div>
   </div>
-  <div class="meter"><i style="width:29%"></i></div>
+  <div class="meter"><i style="width:90%"></i></div>
   <div class="building-now">
     <h2>Building now</h2>
-    <ul><li><strong>cue-smithers-seam-dispatcher</strong><span>The Cue↔Smithers seam — async bidirectional dispatcher (src/seam/) — REQ-4/8/13/15</span></li><li><strong>subscription-credentials-redaction</strong><span>No-raw-key model access (host subscriptions) + fail-closed redaction filter (src/providers/credentials.ts) — ENG-T-09, SEC-1</span></li></ul>
+    <ul><li><strong>probe-asr-deepgram</strong><span>P-ASR (P0): Deepgram Nova-3 streaming — isFinal, diarization, &lt;200 ms word-final, silence→no-observation, subscription credential</span></li></ul>
   </div>
 </section>
 <section class="slide" data-slide="Foundation &amp; spine">
     <div class="kicker">Feature area</div>
     <h1>Foundation &amp; spine</h1>
     <div class="area-stats">
-      <span class="landed">4 landed</span>
+      <span class="landed">5 landed</span>
       <span class="building">0 building</span>
-      <span>1 not started</span>
+      <span>0 not started</span>
     </div>
     <ul class="tickets"><li class="ticket landed">
+        <span class="status">LANDED</span>
+        <span class="title">The canonical voice loop (spine) + no-screen harness + degradation test — REQ-5/6/7/8</span>
+        <span class="id">canonical-spine-and-no-screen-harness</span>
+        <span class="note">Per eng §10 / design §6 / REQ-5 integrate §3–§10 into the canonical spine: wake/magic-word → spoken intent → agent action → spoken confirmation, under ONE `correlationId`</span>
+      </li><li class="ticket landed">
         <span class="status">LANDED</span>
         <span class="title">Provider interfaces + record-replay/noop doubles (src/providers/) — ENG-T-04</span>
         <span class="id">provider-interface-doubles</span>
@@ -100,20 +105,15 @@ code{background:#0c0c0f;border:1px solid var(--line);border-radius:5px;padding:1
         <span class="title">Walking-skeleton smoke slice: Bun/Hono scaffold + CI + the cheapest headless end-to-end test</span>
         <span class="id">walking-skeleton-smoke</span>
         <span class="note">Establish the project scaffold (ENG-T-06) and the single cheapest end-to-end slice that becomes the repo smoke test</span>
-      </li><li class="ticket not-started">
-        <span class="status">NOT STARTED</span>
-        <span class="title">The canonical voice loop (spine) + no-screen harness + degradation test — REQ-5/6/7/8</span>
-        <span class="id">canonical-spine-and-no-screen-harness</span>
-        <span class="note">Per eng §10 / design §6 / REQ-5 integrate §3–§10 into the canonical spine: wake/magic-word → spoken intent → agent action → spoken confirmation, under ONE `correlationId`</span>
       </li></ul>
   </section>
 <section class="slide" data-slide="Validation probes">
     <div class="kicker">Feature area</div>
     <h1>Validation probes</h1>
     <div class="area-stats">
-      <span class="landed">4 landed</span>
-      <span class="building">0 building</span>
-      <span>3 not started</span>
+      <span class="landed">6 landed</span>
+      <span class="building">1 building</span>
+      <span>0 not started</span>
     </div>
     <ul class="tickets"><li class="ticket landed">
         <span class="status">LANDED</span>
@@ -127,76 +127,76 @@ code{background:#0c0c0f;border:1px solid var(--line);border-radius:5px;padding:1
         <span class="note">Run P-CUE per eng §17 / design §11</span>
       </li><li class="ticket landed">
         <span class="status">LANDED</span>
+        <span class="title">P-LLM + A-LLM-SUB (P0): cheap/fast decision LLM via the host's logged-in subscription — temp-0 determinism, ~100 ms, MappedActionTool schema, no raw key</span>
+        <span class="id">probe-hot-loop-llm-subscription</span>
+        <span class="note">Run P-LLM and A-LLM-SUB per eng §17 / §22 A2</span>
+      </li><li class="ticket landed">
+        <span class="status">LANDED</span>
         <span class="title">P-SMITHERS (P0): durable spawn, streamRunEvents, pause/resume, steer/signal, restart-recovery, concurrent runs, fork realization</span>
         <span class="id">probe-smithers-durable-runs</span>
         <span class="note">Run P-SMITHERS per eng §17 / design §11</span>
       </li><li class="ticket landed">
         <span class="status">LANDED</span>
-        <span class="title">Validate-before-build probe harness (poc/) — ENG-T-05</span>
-        <span class="id">probe-suite-harness</span>
-        <span class="note">Per eng §17 / ENG-T-05, build the `poc/` probe harness that every validate-before-build probe uses: a runner that executes a probe against the REAL third-party API, recor</span>
-      </li><li class="ticket not-started">
-        <span class="status">NOT STARTED</span>
-        <span class="title">P-ASR (P0): Deepgram Nova-3 streaming — isFinal, diarization, &lt;200 ms word-final, silence→no-observation, subscription credential</span>
-        <span class="id">probe-asr-deepgram</span>
-        <span class="note">Run P-ASR per eng §17 / design §11</span>
-      </li><li class="ticket not-started">
-        <span class="status">NOT STARTED</span>
-        <span class="title">P-LLM + A-LLM-SUB (P0): cheap/fast decision LLM via the host's logged-in subscription — temp-0 determinism, ~100 ms, MappedActionTool schema, no raw key</span>
-        <span class="id">probe-hot-loop-llm-subscription</span>
-        <span class="note">Run P-LLM and A-LLM-SUB per eng §17 / §22 A2</span>
-      </li><li class="ticket not-started">
-        <span class="status">NOT STARTED</span>
         <span class="title">P-TTS (P0): streaming TTS first-byte ≤200 ms (selection benchmark) + pre-cached fixed phrases, no key logged</span>
         <span class="id">probe-streaming-tts</span>
         <span class="note">Run P-TTS per eng §17 / design §11</span>
+      </li><li class="ticket landed">
+        <span class="status">LANDED</span>
+        <span class="title">Validate-before-build probe harness (poc/) — ENG-T-05</span>
+        <span class="id">probe-suite-harness</span>
+        <span class="note">Per eng §17 / ENG-T-05, build the `poc/` probe harness that every validate-before-build probe uses: a runner that executes a probe against the REAL third-party API, recor</span>
+      </li><li class="ticket building">
+        <span class="status">BUILDING</span>
+        <span class="title">P-ASR (P0): Deepgram Nova-3 streaming — isFinal, diarization, &lt;200 ms word-final, silence→no-observation, subscription credential</span>
+        <span class="id">probe-asr-deepgram</span>
+        <span class="note">Run P-ASR per eng §17 / design §11</span>
       </li></ul>
   </section>
 <section class="slide" data-slide="Voice I/O pipeline">
     <div class="kicker">Feature area</div>
     <h1>Voice I/O pipeline</h1>
     <div class="area-stats">
-      <span class="landed">0 landed</span>
+      <span class="landed">1 landed</span>
       <span class="building">0 building</span>
-      <span>2 not started</span>
+      <span>1 not started</span>
     </div>
-    <ul class="tickets"><li class="ticket not-started">
+    <ul class="tickets"><li class="ticket landed">
+        <span class="status">LANDED</span>
+        <span class="title">Earcons (hot plane) + output policy + timeout 'working' ack (src/audio/) — REQ-2/9/10/12</span>
+        <span class="id">earcons-and-output-policy</span>
+        <span class="note">Per eng §5 build `src/audio/`</span>
+      </li><li class="ticket not-started">
         <span class="status">NOT STARTED</span>
         <span class="title">Audio-capture → streaming ASR → Cue WebSocket transcript bridge (ENG-T-10, new scope from §22 A1.3)</span>
         <span class="id">audio-capture-asr-bridge</span>
         <span class="note">Build ENG-T-10, the unplanned-but-real scope surfaced by §22 A1</span>
-      </li><li class="ticket not-started">
-        <span class="status">NOT STARTED</span>
-        <span class="title">Earcons (hot plane) + output policy + timeout 'working' ack (src/audio/) — REQ-2/9/10/12</span>
-        <span class="id">earcons-and-output-policy</span>
-        <span class="note">Per eng §5 build `src/audio/`</span>
       </li></ul>
   </section>
 <section class="slide" data-slide="Cue layer">
     <div class="kicker">Feature area</div>
     <h1>Cue layer</h1>
     <div class="area-stats">
-      <span class="landed">0 landed</span>
-      <span class="building">1 building</span>
-      <span>3 not started</span>
+      <span class="landed">4 landed</span>
+      <span class="building">0 building</span>
+      <span>0 not started</span>
     </div>
-    <ul class="tickets"><li class="ticket building">
-        <span class="status">BUILDING</span>
-        <span class="title">The Cue↔Smithers seam — async bidirectional dispatcher (src/seam/) — REQ-4/8/13/15</span>
-        <span class="id">cue-smithers-seam-dispatcher</span>
-        <span class="note">Per eng §9 (bet #3) build `src/seam/` as the ONE owned, async, bidirectional module wiring Cue↔Smithers (gated by P-SEAM + P-SMITHERS)</span>
-      </li><li class="ticket not-started">
-        <span class="status">NOT STARTED</span>
+    <ul class="tickets"><li class="ticket landed">
+        <span class="status">LANDED</span>
         <span class="title">Cue substrate, owned adapter &amp; policies (src/cue/) — REQ-1/3/5/6/7</span>
         <span class="id">cue-adapter-and-policies</span>
         <span class="note">Per eng §3 build `src/cue/` (the ONLY place that imports Cue; build on confirmed primitives only, gated by P-CUE)</span>
-      </li><li class="ticket not-started">
-        <span class="status">NOT STARTED</span>
+      </li><li class="ticket landed">
+        <span class="status">LANDED</span>
+        <span class="title">The Cue↔Smithers seam — async bidirectional dispatcher (src/seam/) — REQ-4/8/13/15</span>
+        <span class="id">cue-smithers-seam-dispatcher</span>
+        <span class="note">Per eng §9 (bet #3) build `src/seam/` as the ONE owned, async, bidirectional module wiring Cue↔Smithers (gated by P-SEAM + P-SMITHERS)</span>
+      </li><li class="ticket landed">
+        <span class="status">LANDED</span>
         <span class="title">Cheap-LLM intent gate + whole-utterance pre-filter between TextCue and action (§22 A5.1/A5.3) — REQ-3/4/7</span>
         <span class="id">intent-gate-semantic-check</span>
         <span class="note">Implement the CRITICAL §22 A5 amendment: keyword-only `TextCue` matching is INSUFFICIENT to gate spawning/control — round-1 measured 80% context false-positive ('Yes, but</span>
-      </li><li class="ticket not-started">
-        <span class="status">NOT STARTED</span>
+      </li><li class="ticket landed">
+        <span class="status">LANDED</span>
         <span class="title">Routing &amp; dispatch — invariants in code (src/routing/) — REQ-6/7/8/12</span>
         <span class="id">routing-dispatch-invariants</span>
         <span class="note">Per eng §4 build `src/routing/` — authority lives here, NEVER in the LLM</span>
@@ -206,17 +206,17 @@ code{background:#0c0c0f;border:1px solid var(--line);border-radius:5px;padding:1
     <div class="kicker">Feature area</div>
     <h1>Magic-word steering</h1>
     <div class="area-stats">
-      <span class="landed">0 landed</span>
+      <span class="landed">2 landed</span>
       <span class="building">0 building</span>
-      <span>2 not started</span>
+      <span>0 not started</span>
     </div>
-    <ul class="tickets"><li class="ticket not-started">
-        <span class="status">NOT STARTED</span>
+    <ul class="tickets"><li class="ticket landed">
+        <span class="status">LANDED</span>
         <span class="title">Callsign pool (coined, non-NATO) + Metaphone/phoneme-Levenshtein collision guard (src/routing/callsigns.ts) — REQ-7/13</span>
         <span class="id">callsigns-and-collision-guard</span>
         <span class="note">Per eng §4 (callsigns</span>
-      </li><li class="ticket not-started">
-        <span class="status">NOT STARTED</span>
+      </li><li class="ticket landed">
+        <span class="status">LANDED</span>
         <span class="title">Steering-window lifecycle (src/routing/steering-window.ts) — REQ-6/8</span>
         <span class="id">steering-window-lifecycle</span>
         <span class="note">Per eng §4 (steering-window</span>
@@ -226,17 +226,17 @@ code{background:#0c0c0f;border:1px solid var(--line);border-radius:5px;padding:1
     <div class="kicker">Feature area</div>
     <h1>Suggestion engine</h1>
     <div class="area-stats">
-      <span class="landed">0 landed</span>
+      <span class="landed">2 landed</span>
       <span class="building">0 building</span>
-      <span>2 not started</span>
+      <span>0 not started</span>
     </div>
-    <ul class="tickets"><li class="ticket not-started">
-        <span class="status">NOT STARTED</span>
+    <ul class="tickets"><li class="ticket landed">
+        <span class="status">LANDED</span>
         <span class="title">Acceptance → spawn flow (src/acceptance/) — REQ-4</span>
         <span class="id">acceptance-spawn-flow</span>
         <span class="note">Per eng §7 (R3) build `src/acceptance/`, the central hands-free spawn path, as its own state owner</span>
-      </li><li class="ticket not-started">
-        <span class="status">NOT STARTED</span>
+      </li><li class="ticket landed">
+        <span class="status">LANDED</span>
         <span class="title">Conservative ambient suggestion engine (src/suggest/engine.ts) — REQ-3</span>
         <span class="id">suggestion-engine</span>
         <span class="note">Per eng §6 / design §4 build `src/suggest/engine</span>
@@ -246,22 +246,22 @@ code{background:#0c0c0f;border:1px solid var(--line);border-radius:5px;padding:1
     <div class="kicker">Feature area</div>
     <h1>Process Manager &amp; fleet</h1>
     <div class="area-stats">
-      <span class="landed">0 landed</span>
+      <span class="landed">3 landed</span>
       <span class="building">0 building</span>
-      <span>3 not started</span>
+      <span>0 not started</span>
     </div>
-    <ul class="tickets"><li class="ticket not-started">
-        <span class="status">NOT STARTED</span>
+    <ul class="tickets"><li class="ticket landed">
+        <span class="status">LANDED</span>
         <span class="title">Bounded non-voice emergency stop — kill-all + session-end only (src/emergency/stop.ts) — REQ-14</span>
         <span class="id">emergency-stop-control</span>
         <span class="note">Per eng §11 build `src/emergency/stop</span>
-      </li><li class="ticket not-started">
-        <span class="status">NOT STARTED</span>
+      </li><li class="ticket landed">
+        <span class="status">LANDED</span>
         <span class="title">Two-process fleet + durability/recovery + restraint e2e — REQ-8/13/15/9</span>
         <span class="id">fleet-concurrency-and-durability-e2e</span>
         <span class="note">Per eng §10 / §9 / design §13 close the product-level e2e gates that prove the differentiator and durability</span>
-      </li><li class="ticket not-started">
-        <span class="status">NOT STARTED</span>
+      </li><li class="ticket landed">
+        <span class="status">LANDED</span>
         <span class="title">Process registry, lifecycle, fleet &amp; pre-spawn resource check (src/process/) — REQ-4/8/12/13/15</span>
         <span class="id">process-registry-lifecycle-fleet</span>
         <span class="note">Per eng §10 build `src/process/`</span>
@@ -271,36 +271,41 @@ code{background:#0c0c0f;border:1px solid var(--line);border-radius:5px;padding:1
     <div class="kicker">Feature area</div>
     <h1>Safety &amp; consent</h1>
     <div class="area-stats">
-      <span class="landed">0 landed</span>
-      <span class="building">1 building</span>
-      <span>2 not started</span>
+      <span class="landed">3 landed</span>
+      <span class="building">0 building</span>
+      <span>0 not started</span>
     </div>
-    <ul class="tickets"><li class="ticket building">
-        <span class="status">BUILDING</span>
-        <span class="title">No-raw-key model access (host subscriptions) + fail-closed redaction filter (src/providers/credentials.ts) — ENG-T-09, SEC-1</span>
-        <span class="id">subscription-credentials-redaction</span>
-        <span class="note">Per eng §2</span>
-      </li><li class="ticket not-started">
-        <span class="status">NOT STARTED</span>
+    <ul class="tickets"><li class="ticket landed">
+        <span class="status">LANDED</span>
         <span class="title">Hard-mute fork + unmute via 'unmute' word (Cue) and on-screen button (src/audio/mute-controller.ts) — REQ-2</span>
         <span class="id">mute-controller</span>
         <span class="note">Per eng §5</span>
-      </li><li class="ticket not-started">
-        <span class="status">NOT STARTED</span>
+      </li><li class="ticket landed">
+        <span class="status">LANDED</span>
         <span class="title">Onboarding, consent scheduler, listening indicator &amp; whole-session raw-audio guard (src/onboarding/) — REQ-1</span>
         <span class="id">onboarding-consent-persistence-guard</span>
         <span class="note">Per eng §12 (R2) build `src/onboarding/`</span>
+      </li><li class="ticket landed">
+        <span class="status">LANDED</span>
+        <span class="title">No-raw-key model access (host subscriptions) + fail-closed redaction filter (src/providers/credentials.ts) — ENG-T-09, SEC-1</span>
+        <span class="id">subscription-credentials-redaction</span>
+        <span class="note">Per eng §2</span>
       </li></ul>
   </section>
 <section class="slide" data-slide="Observability &amp; display board">
     <div class="kicker">Feature area</div>
     <h1>Observability &amp; display board</h1>
     <div class="area-stats">
-      <span class="landed">1 landed</span>
+      <span class="landed">2 landed</span>
       <span class="building">0 building</span>
-      <span>2 not started</span>
+      <span>1 not started</span>
     </div>
     <ul class="tickets"><li class="ticket landed">
+        <span class="status">LANDED</span>
+        <span class="title">Observability — causal-chain reconstruction, OTel/Langfuse export &amp; read-only board (src/obs/) — REQ-16</span>
+        <span class="id">observability-trace-and-board</span>
+        <span class="note">Per eng §13 complete the observability surface on top of trace-processor-observability</span>
+      </li><li class="ticket landed">
         <span class="status">LANDED</span>
         <span class="title">TraceProcessor pipeline stage + structured log contract (src/obs/trace.ts) — ENG-T-03</span>
         <span class="id">trace-processor-observability</span>
@@ -310,11 +315,6 @@ code{background:#0c0c0f;border:1px solid var(--line);border-radius:5px;padding:1
         <span class="title">Latency benchmark with regression baselines — REQ-10</span>
         <span class="id">latency-benchmark-suite</span>
         <span class="note">Per eng §5/§15</span>
-      </li><li class="ticket not-started">
-        <span class="status">NOT STARTED</span>
-        <span class="title">Observability — causal-chain reconstruction, OTel/Langfuse export &amp; read-only board (src/obs/) — REQ-16</span>
-        <span class="id">observability-trace-and-board</span>
-        <span class="note">Per eng §13 complete the observability surface on top of trace-processor-observability</span>
       </li></ul>
   </section>
 <section class="slide capture-placeholder" data-slide="ui-captures">
@@ -337,7 +337,7 @@ code{background:#0c0c0f;border:1px solid var(--line);border-radius:5px;padding:1
   </footer>
 </div>
 <script>
-const PAGE_VERSION = "1781491062869";
+const PAGE_VERSION = "1781576567128";
 const slides = [...document.querySelectorAll(".slide")];
 const dots = [...document.querySelectorAll(".dot")];
 let index = 0;

@@ -391,7 +391,8 @@
       "dependsOn": [
         "probe-cue-substrate",
         "shared-types-contract",
-        "audio-capture-asr-bridge"
+        "provider-interface-doubles",
+        "record-replay-harness"
       ],
       "complexity": "large"
     },
@@ -554,7 +555,9 @@
       ],
       "dependsOn": [
         "earcons-and-output-policy",
-        "audio-capture-asr-bridge"
+        "cue-adapter-and-policies",
+        "provider-interface-doubles",
+        "record-replay-harness"
       ],
       "complexity": "medium"
     },
@@ -721,7 +724,8 @@
       ],
       "dependsOn": [
         "earcons-and-output-policy",
-        "audio-capture-asr-bridge"
+        "provider-interface-doubles",
+        "record-replay-harness"
       ],
       "complexity": "medium"
     },
@@ -807,7 +811,8 @@
         }
       ],
       "dependsOn": [
-        "canonical-spine-and-no-screen-harness"
+        "canonical-spine-and-no-screen-harness",
+        "audio-capture-asr-bridge"
       ],
       "complexity": "medium"
     },
