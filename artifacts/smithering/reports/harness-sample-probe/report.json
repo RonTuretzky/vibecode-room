@@ -3,20 +3,17 @@
   "status": "passed",
   "summary": "probe assertions were failable and passed",
   "correlationId": "probe-harness-test-sample",
-<<<<<<< HEAD
-  "startedAt": "2026-06-15T23:30:15.658Z",
-||||||| parent of 23fd1ba (feat(probe): hot-loop LLM subscription validation)
-  "startedAt": "2026-06-15T05:17:09.623Z",
-=======
-  "startedAt": "2026-06-15T23:01:08.048Z",
->>>>>>> 23fd1ba (feat(probe): hot-loop LLM subscription validation)
-<<<<<<< HEAD
-  "finishedAt": "2026-06-15T23:30:15.659Z",
-||||||| parent of 23fd1ba (feat(probe): hot-loop LLM subscription validation)
-  "finishedAt": "2026-06-15T05:17:09.623Z",
-=======
-  "finishedAt": "2026-06-15T23:01:08.049Z",
->>>>>>> 23fd1ba (feat(probe): hot-loop LLM subscription validation)
+<<<<<<< conflict 1 of 1
+%%%%%%% diff from: pvqrmsly 0f308b21 "Fix hot-loop subscription probe evidence" (parents of rebased revision)
+\\\\\\\        to: pvqrmsly 25bdbc88 "Fix hot-loop subscription probe evidence" (rebase destination)
+-  "startedAt": "2026-06-15T05:17:09.623Z",
+-  "finishedAt": "2026-06-15T05:17:09.623Z",
++  "startedAt": "2026-06-15T23:30:15.658Z",
++  "finishedAt": "2026-06-15T23:30:15.659Z",
++++++++ twpwtqzn 40e324bc (rebased revision)
+  "startedAt": "2026-06-15T23:31:09.670Z",
+  "finishedAt": "2026-06-15T23:31:09.671Z",
+>>>>>>> conflict 1 of 1 ends
   "assertions": [
     {
       "id": "shape",

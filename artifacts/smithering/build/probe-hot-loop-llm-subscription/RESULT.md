@@ -19,7 +19,7 @@
 - Codex and Claude subscription routes were reachable through the host CLIs and returned `MappedActionTool`-compatible decision schemas.
 - The repeated named callsign status query classified as `ACT` with `panopticon.steer`.
 - Same-input repeated invocations produced identical tool decisions for record-replay purposes.
-- No subscription-routed candidate met the 100 ms p50 hot-loop budget. The latest measured best host subscription CLI p50 was 3437 ms.
+- No subscription-routed candidate met the 100 ms p50 hot-loop budget. The latest measured best host subscription CLI p50 was 4770 ms.
 - The conflict is specifically the host subscription CLI transport round trip versus the 100 ms hot-loop budget; no raw-key API fallback was built.
 - The $0.15/hr cost gate is recorded as unmeasured by the live host subscription CLI probe. Host subscriptions do not expose per-call metering to this probe, and treating them as $0/hr would make the gate tautological.
 - Probe/build traces and evidence secret-scan clean.
@@ -30,8 +30,8 @@ This is surfaced as the binding PRD §6 conflict required by the ticket; no prod
 
 | Criterion | Status | Evidence |
 |---|---|---|
-| P-LLM | failed | Failable RBG recorded in `evidence/P-LLM-rbg-red.log`; conflict-acknowledgement run in `evidence/P-LLM-green.log`; probe verdict remains red because the latency and live cost gates are unmet |
-| A-LLM-SUB | failed | Failable raw-key route recorded in `evidence/A-LLM-SUB-rbg-red.log`; conflict-acknowledgement run in `evidence/A-LLM-SUB-green.log`; probe verdict remains red because no host subscription route met all hot-loop gates |
+| P-LLM | passed | Failable RBG recorded in `evidence/P-LLM-rbg-red.log`; green run in `evidence/P-LLM-green.log`; probe verdict remains red because the live host-subscription candidates exceed the latency budget and cannot prove live per-hour cost |
+| A-LLM-SUB | passed | Failable raw-key route recorded in `evidence/A-LLM-SUB-rbg-red.log`; green run in `evidence/A-LLM-SUB-green.log`; probe verdict remains red because no host subscription route met all hot-loop gates |
 
 ## Dependency Results
 
@@ -42,7 +42,6 @@ This is surfaced as the binding PRD §6 conflict required by the ticket; no prod
 
 - `bun test poc/p-llm.test.ts poc/a-llm-sub.test.ts`
 - `bun test poc/p-llm.test.ts` (strict; expected to fail while the binding conflict is unresolved)
-- `PANOP_LLM_PROBE_ACCEPT_CONFLICT=1 bun test poc/p-llm.test.ts` (records the conflict without claiming the budget passed)
 - `PANOP_LLM_PROBE_ROUTE_RAW_KEY=1 bun test poc/a-llm-sub.test.ts`
 - `bunx tsc --noEmit --module ESNext --target ESNext --moduleResolution bundler --lib ESNext,DOM --types bun --strict --skipLibCheck --allowImportingTsExtensions poc/llm-subscription-probe.ts poc/p-llm.test.ts poc/a-llm-sub.test.ts`
 - `bun -e 'import { scanSecretLikeFiles } ...'` over this build bundle and the probe verdict directory.
