@@ -1,0 +1,51 @@
+bun test v1.3.14 (0d9b296a)
+
+test/e2e/safety.e2e.ts.test.ts:
+24 | 
+25 |     const startedAt = performance.now();
+26 |     const result = await controller.trigger("corr-emergency-e2e");
+27 |     const measuredMs = performance.now() - startedAt;
+28 | 
+29 |     expect(result.ok).toBe(true);
+                           ^
+error: expect(received).toBe(expected)
+
+Expected: true
+Received: false
+
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/emergency-stop-control/test/e2e/safety.e2e.ts:29:23)
+(fail) REQ-14 emergency stop e2e slice > one non-voice control halts every process and stops listening within 2 seconds, ending the session [3.83ms]
+63 | 
+64 |     expect(session.isSessionEnded()).toBe(false);
+65 |     expect(session.isListening()).toBe(true);
+66 |     expect(session.isMuted()).toBe(false);
+67 |     expect(session.consentAnnouncements()).toBe(1);
+68 |     expect(registry.activeRecords()).toEqual([]);
+                                          ^
+error: expect(received).toEqual(expected)
+
+- []
++ [
++   {
++     "callsign": "atlas",
++     "lastAction": "spawn",
++     "progressSeq": 0,
++     "runId": "run-upid-atlas",
++     "selected": true,
++     "state": "planning",
++     "updatedAtMs": 1781570098310,
++     "upid": "upid-atlas",
++   },
++ ]
+
+- Expected  - 1
++ Received  + 12
+
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/emergency-stop-control/test/e2e/safety.e2e.ts:68:38)
+(fail) REQ-14 emergency stop e2e slice > emergency stop is kill-all only; a fresh later session starts unmuted and re-speaks consent [1.11ms]
+
+ 0 pass
+ 2 fail
+ 9 expect() calls
+Ran 2 tests across 1 file. [17.00ms]
+exit_code=1
