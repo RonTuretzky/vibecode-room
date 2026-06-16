@@ -1,0 +1,15 @@
+{
+  "ticketId": "latency-benchmark-suite",
+  "baselineKind": "threshold-regression-baseline",
+  "mode": "record-replay-with-live-asr-gate",
+  "minimumRoundTrips": 100,
+  "budgets": {
+    "textCueEarconMaxMs": 300,
+    "roundTripP50MaxMs": 1000,
+    "roundTripP95MaxMs": 1500,
+    "workingAckBudgetMs": 150,
+    "workingAckEdgeToleranceMs": 1,
+    "precachedFixedPhrasePlaybackMaxMs": 100,
+    "delayedDecisionProofMinMs": 350
+  }
+}
