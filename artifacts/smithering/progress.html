@@ -46,27 +46,27 @@ code{background:#0c0c0f;border:1px solid var(--line);border-radius:5px;padding:1
 </style>
 </head>
 <body>
-<div class="app" data-testid="progress-slideshow" data-version="1781584433158">
+<div class="app" data-testid="progress-slideshow" data-version="1781634617013">
   <header class="top">
     <div class="brand">Panopticon Progress</div>
-    <div class="stamp">Generated 2026-06-16 04:33:53 UTC</div>
+    <div class="stamp">Generated 2026-06-16 18:30:17 UTC</div>
     <div class="spacer"></div>
-    <div class="chip"><strong>31</strong> landed</div>
+    <div class="chip"><strong>30</strong> landed</div>
     <div class="chip"><strong>0</strong> building</div>
-    <div class="chip"><strong>0</strong> not started</div>
+    <div class="chip"><strong>1</strong> not started</div>
   </header>
   <main class="stage">
-    <section class="slide is-active" data-slide="summary" data-landed="31" data-building="0" data-todo="0">
+    <section class="slide is-active" data-slide="summary" data-landed="30" data-building="0" data-todo="1">
   <div class="kicker">Live build run impl-build-17</div>
   <h1>Panopticon Build Progress</h1>
   <p class="lede">Current state from <code>git log 8e67319..smithering/integration</code> and live Smithers worktrees.</p>
   <div class="metrics">
-    <div><span>31</span><small>Landed</small></div>
+    <div><span>30</span><small>Landed</small></div>
     <div><span>0</span><small>Building</small></div>
-    <div><span>0</span><small>Not started</small></div>
-    <div><span>100%</span><small>Integrated</small></div>
+    <div><span>1</span><small>Not started</small></div>
+    <div><span>97%</span><small>Integrated</small></div>
   </div>
-  <div class="meter"><i style="width:100%"></i></div>
+  <div class="meter"><i style="width:97%"></i></div>
   <div class="building-now">
     <h2>Building now</h2>
     <ul><li><strong>None detected</strong><span>No active matching worktree is present.</span></li></ul>
@@ -296,9 +296,9 @@ code{background:#0c0c0f;border:1px solid var(--line);border-radius:5px;padding:1
     <div class="kicker">Feature area</div>
     <h1>Observability &amp; display board</h1>
     <div class="area-stats">
-      <span class="landed">3 landed</span>
+      <span class="landed">2 landed</span>
       <span class="building">0 building</span>
-      <span>0 not started</span>
+      <span>1 not started</span>
     </div>
     <ul class="tickets"><li class="ticket landed">
         <span class="status">LANDED</span>
@@ -307,37 +307,52 @@ code{background:#0c0c0f;border:1px solid var(--line);border-radius:5px;padding:1
         <span class="note">Per eng §5/§15</span>
       </li><li class="ticket landed">
         <span class="status">LANDED</span>
-        <span class="title">Observability — causal-chain reconstruction, OTel/Langfuse export &amp; read-only board (src/obs/) — REQ-16</span>
-        <span class="id">observability-trace-and-board</span>
-        <span class="note">Per eng §13 complete the observability surface on top of trace-processor-observability</span>
-      </li><li class="ticket landed">
-        <span class="status">LANDED</span>
         <span class="title">TraceProcessor pipeline stage + structured log contract (src/obs/trace.ts) — ENG-T-03</span>
         <span class="id">trace-processor-observability</span>
         <span class="note">Per eng §13 / §15</span>
+      </li><li class="ticket not-started">
+        <span class="status">NOT STARTED</span>
+        <span class="title">Projector UI + observability — Vite/React shared surface, causal-chain reconstruction, OTel/Langfuse export (src/ui/, src/obs/) — REQ-16</span>
+        <span class="id">projector-ui-and-observability</span>
+        <span class="note">Per eng §13 complete the observability surface on top of trace-processor-observability</span>
       </li></ul>
   </section>
-<section class="slide capture-placeholder" data-slide="ui-captures">
-    <div class="kicker">UI captures</div>
-    <h1>Images and GIFs appear here automatically</h1>
-    <div class="placeholder-grid">
-      <div><span>Display board</span></div>
-      <div><span>Idea bubbles</span></div>
-      <div><span>Steering banner</span></div>
-    </div>
-    <p class="lede">Drop .png, .jpg, .webp, or .gif files into <code>artifacts/smithering/ui-captures/</code>, regenerate, and they become slides.</p>
-  </section>
+<section class="slide capture" data-slide="panopticon-01-idle-board.png">
+      <div class="kicker">UI capture</div>
+      <h1>panopticon-01-idle-board</h1>
+      <figure><img src="ui-captures/panopticon-01-idle-board.png" alt="panopticon-01-idle-board.png"></figure>
+    </section>
+<section class="slide capture" data-slide="panopticon-02-idea-bubbles-suggestions.png">
+      <div class="kicker">UI capture</div>
+      <h1>panopticon-02-idea-bubbles-suggestions</h1>
+      <figure><img src="ui-captures/panopticon-02-idea-bubbles-suggestions.png" alt="panopticon-02-idea-bubbles-suggestions.png"></figure>
+    </section>
+<section class="slide capture" data-slide="panopticon-03-steering-banner.png">
+      <div class="kicker">UI capture</div>
+      <h1>panopticon-03-steering-banner</h1>
+      <figure><img src="ui-captures/panopticon-03-steering-banner.png" alt="panopticon-03-steering-banner.png"></figure>
+    </section>
+<section class="slide capture" data-slide="panopticon-04-living-process-garden.png">
+      <div class="kicker">UI capture</div>
+      <h1>panopticon-04-living-process-garden</h1>
+      <figure><img src="ui-captures/panopticon-04-living-process-garden.png" alt="panopticon-04-living-process-garden.png"></figure>
+    </section>
+<section class="slide capture" data-slide="panopticon-90-board-animation.gif">
+      <div class="kicker">UI capture</div>
+      <h1>panopticon-90-board-animation</h1>
+      <figure><img src="ui-captures/panopticon-90-board-animation.gif" alt="panopticon-90-board-animation.gif"></figure>
+    </section>
   </main>
   <footer class="controls">
     <button class="nav" type="button" data-prev>Prev</button>
     <button class="nav" type="button" data-next>Next</button>
     <button class="nav" type="button" data-auto>Auto on</button>
-    <div class="dots"><button class="dot is-active" type="button" data-go="0" aria-label="Go to slide 1"></button><button class="dot" type="button" data-go="1" aria-label="Go to slide 2"></button><button class="dot" type="button" data-go="2" aria-label="Go to slide 3"></button><button class="dot" type="button" data-go="3" aria-label="Go to slide 4"></button><button class="dot" type="button" data-go="4" aria-label="Go to slide 5"></button><button class="dot" type="button" data-go="5" aria-label="Go to slide 6"></button><button class="dot" type="button" data-go="6" aria-label="Go to slide 7"></button><button class="dot" type="button" data-go="7" aria-label="Go to slide 8"></button><button class="dot" type="button" data-go="8" aria-label="Go to slide 9"></button><button class="dot" type="button" data-go="9" aria-label="Go to slide 10"></button><button class="dot" type="button" data-go="10" aria-label="Go to slide 11"></button></div>
-    <div class="counter"><span data-current>1</span> / 11</div>
+    <div class="dots"><button class="dot is-active" type="button" data-go="0" aria-label="Go to slide 1"></button><button class="dot" type="button" data-go="1" aria-label="Go to slide 2"></button><button class="dot" type="button" data-go="2" aria-label="Go to slide 3"></button><button class="dot" type="button" data-go="3" aria-label="Go to slide 4"></button><button class="dot" type="button" data-go="4" aria-label="Go to slide 5"></button><button class="dot" type="button" data-go="5" aria-label="Go to slide 6"></button><button class="dot" type="button" data-go="6" aria-label="Go to slide 7"></button><button class="dot" type="button" data-go="7" aria-label="Go to slide 8"></button><button class="dot" type="button" data-go="8" aria-label="Go to slide 9"></button><button class="dot" type="button" data-go="9" aria-label="Go to slide 10"></button><button class="dot" type="button" data-go="10" aria-label="Go to slide 11"></button><button class="dot" type="button" data-go="11" aria-label="Go to slide 12"></button><button class="dot" type="button" data-go="12" aria-label="Go to slide 13"></button><button class="dot" type="button" data-go="13" aria-label="Go to slide 14"></button><button class="dot" type="button" data-go="14" aria-label="Go to slide 15"></button></div>
+    <div class="counter"><span data-current>1</span> / 15</div>
   </footer>
 </div>
 <script>
-const PAGE_VERSION = "1781584433158";
+const PAGE_VERSION = "1781634617013";
 const slides = [...document.querySelectorAll(".slide")];
 const dots = [...document.querySelectorAll(".dot")];
 let index = 0;
