@@ -1,0 +1,45 @@
+$ bun test src/process/lifecycle.test.ts test/e2e/fleet.e2e.ts
+bun test v1.3.14 (0d9b296a)
+
+test/e2e/fleet.e2e.ts.test.ts:
+timestamp=2026-06-16T00:28:23.917Z level=INFO fiber=#5 message="Gateway run started" gateway:run=0ms runId=run-atlas transport=ws triggeredBy=fleet-control role=operator workflow=panopticon-fleet-control service=smithers source=user userId=fleet-control resume=false connectionId=fleet-control:connection
+timestamp=2026-06-16T00:28:23.919Z level=INFO fiber=#36 message="Gateway run started" gateway:run=0ms runId=run-bravo transport=ws triggeredBy=fleet-control role=operator workflow=panopticon-fleet-control service=smithers source=user userId=fleet-control resume=false connectionId=fleet-control:connection
+timestamp=2026-06-16T00:28:24.208Z level=INFO fiber=#437 message="getNodeOutput completed" runId=run-atlas durationMs=1.1299159999999802 nodeId=checkpoint status=produced iteration=0 rowBytes=60 service=smithers
+timestamp=2026-06-16T00:28:24.209Z level=INFO fiber=#446 message="getNodeOutput completed" runId=run-bravo durationMs=0.3951670000000149 nodeId=checkpoint status=produced iteration=0 rowBytes=60 service=smithers
+timestamp=2026-06-16T00:28:24.265Z level=INFO fiber=#464 message="Gateway run started" gateway:run=0ms runId=run-atlas transport=ws triggeredBy=fleet-control role=operator workflow=panopticon-fleet-control service=smithers source=user userId=fleet-control resume=true connectionId=fleet-control:connection
+timestamp=2026-06-16T00:28:24.267Z level=INFO fiber=#488 message="getNodeOutput completed" runId=run-atlas durationMs=1.0185000000000173 nodeId=complete errorCode=NodeNotFound status=error iteration=0 rowBytes=0 service=smithers
+timestamp=2026-06-16T00:28:24.288Z level=INFO fiber=#500 message="getNodeOutput completed" runId=run-atlas durationMs=0.2428749999999127 nodeId=complete errorCode=NodeNotFound status=error iteration=0 rowBytes=0 service=smithers
+timestamp=2026-06-16T00:28:24.310Z level=INFO fiber=#620 message="getNodeOutput completed" runId=run-atlas durationMs=0.5365829999999505 nodeId=complete status=pending iteration=0 rowBytes=0 service=smithers
+timestamp=2026-06-16T00:28:24.336Z level=INFO fiber=#665 message="getNodeOutput completed" runId=run-atlas durationMs=1.2225839999999835 nodeId=complete status=pending iteration=0 rowBytes=0 service=smithers
+timestamp=2026-06-16T00:28:24.361Z level=INFO fiber=#676 message="getNodeOutput completed" runId=run-atlas durationMs=0.9881250000000819 nodeId=complete status=pending iteration=0 rowBytes=0 service=smithers
+timestamp=2026-06-16T00:28:24.385Z level=INFO fiber=#750 message="getNodeOutput completed" runId=run-atlas durationMs=1.1255840000000035 nodeId=complete status=produced iteration=0 rowBytes=114 service=smithers
+timestamp=2026-06-16T00:28:24.386Z level=INFO fiber=#756 message="getNodeOutput completed" runId=run-bravo durationMs=0.3551660000000538 nodeId=complete errorCode=NodeNotFound status=error iteration=0 rowBytes=0 service=smithers
+timestamp=2026-06-16T00:28:24.388Z level=INFO fiber=#782 message="Gateway run started" gateway:run=0ms runId=run-bravo transport=ws triggeredBy=fleet-control role=operator workflow=panopticon-fleet-control service=smithers source=user userId=fleet-control resume=true connectionId=fleet-control:connection
+timestamp=2026-06-16T00:28:24.390Z level=INFO fiber=#806 message="getNodeOutput completed" runId=run-bravo durationMs=0.5180420000000368 nodeId=pause-ack errorCode=NodeNotFound status=error iteration=0 rowBytes=0 service=smithers
+timestamp=2026-06-16T00:28:24.411Z level=INFO fiber=#814 message="getNodeOutput completed" runId=run-bravo durationMs=0.2697499999999309 nodeId=pause-ack errorCode=NodeNotFound status=error iteration=0 rowBytes=0 service=smithers
+timestamp=2026-06-16T00:28:24.433Z level=INFO fiber=#956 message="getNodeOutput completed" runId=run-bravo durationMs=0.4722500000000309 nodeId=pause-ack status=pending iteration=0 rowBytes=0 service=smithers
+timestamp=2026-06-16T00:28:24.456Z level=INFO fiber=#979 message="getNodeOutput completed" runId=run-bravo durationMs=0.9259999999999309 nodeId=pause-ack status=pending iteration=0 rowBytes=0 service=smithers
+timestamp=2026-06-16T00:28:24.479Z level=INFO fiber=#1037 message="getNodeOutput completed" runId=run-bravo durationMs=0.725582999999915 nodeId=pause-ack status=produced iteration=0 rowBytes=35 service=smithers
+timestamp=2026-06-16T00:28:24.543Z level=INFO fiber=#1058 message="Gateway run completed" gateway:run=0ms runId=run-atlas status=finished workflow=panopticon-fleet-control service=smithers source=user
+timestamp=2026-06-16T00:28:24.676Z level=INFO fiber=#1067 message="Gateway run started" gateway:run=0ms runId=run-bravo transport=ws triggeredBy=fleet-control role=operator workflow=panopticon-fleet-control service=smithers source=user userId=fleet-control resume=true connectionId=fleet-control:connection
+timestamp=2026-06-16T00:28:24.679Z level=INFO fiber=#1091 message="getNodeOutput completed" runId=run-bravo durationMs=0.619499999999789 nodeId=resume-ack errorCode=NodeNotFound status=error iteration=0 rowBytes=0 service=smithers
+timestamp=2026-06-16T00:28:24.702Z level=INFO fiber=#1123 message="getNodeOutput completed" runId=run-bravo durationMs=0.10695799999984956 nodeId=resume-ack errorCode=NodeNotFound status=error iteration=0 rowBytes=0 service=smithers
+timestamp=2026-06-16T00:28:24.724Z level=INFO fiber=#1257 message="getNodeOutput completed" runId=run-bravo durationMs=0.4546250000000782 nodeId=resume-ack status=pending iteration=0 rowBytes=0 service=smithers
+timestamp=2026-06-16T00:28:24.745Z level=INFO fiber=#1312 message="getNodeOutput completed" runId=run-bravo durationMs=0.8826249999999618 nodeId=resume-ack status=pending iteration=0 rowBytes=0 service=smithers
+timestamp=2026-06-16T00:28:24.768Z level=INFO fiber=#1375 message="getNodeOutput completed" runId=run-bravo durationMs=0.4060830000000806 nodeId=resume-ack status=produced iteration=0 rowBytes=36 service=smithers
+timestamp=2026-06-16T00:28:24.954Z level=INFO fiber=#1392 message="Gateway run completed" gateway:run=0ms runId=run-bravo status=cancelled workflow=panopticon-fleet-control service=smithers source=user
+timestamp=2026-06-16T00:28:24.969Z level=INFO fiber=#1398 message="Gateway run started" gateway:run=0ms runId=run-fleet-001 transport=ws triggeredBy=fleet-initial role=operator workflow=panopticon-fleet service=smithers source=user userId=fleet-initial resume=false connectionId=fleet-initial:connection
+timestamp=2026-06-16T00:28:25.065Z level=INFO fiber=#1584 message="getNodeOutput completed" runId=run-fleet-001 durationMs=0.993125000000191 nodeId=checkpoint status=produced iteration=0 rowBytes=58 service=smithers
+timestamp=2026-06-16T00:28:25.253Z level=INFO fiber=#1614 message="getNodeOutput completed" runId=run-fleet-001 durationMs=0.5742909999999029 nodeId=checkpoint status=produced iteration=0 rowBytes=58 service=smithers
+timestamp=2026-06-16T00:28:25.255Z level=INFO fiber=#1630 message="Gateway run started" gateway:run=0ms runId=run-fleet-001 transport=ws triggeredBy=fleet-recovered role=operator workflow=panopticon-fleet service=smithers source=user userId=fleet-recovered resume=true connectionId=fleet-recovered:connection
+timestamp=2026-06-16T00:28:25.257Z level=INFO fiber=#1654 message="getNodeOutput completed" runId=run-fleet-001 durationMs=0.7025000000001 nodeId=complete errorCode=NodeNotFound status=error iteration=0 rowBytes=0 service=smithers
+timestamp=2026-06-16T00:28:25.278Z level=INFO fiber=#1662 message="getNodeOutput completed" runId=run-fleet-001 durationMs=0.3261250000000473 nodeId=complete errorCode=NodeNotFound status=error iteration=0 rowBytes=0 service=smithers
+timestamp=2026-06-16T00:28:25.300Z level=INFO fiber=#1804 message="getNodeOutput completed" runId=run-fleet-001 durationMs=0.47145799999998417 nodeId=complete status=pending iteration=0 rowBytes=0 service=smithers
+timestamp=2026-06-16T00:28:25.323Z level=INFO fiber=#1827 message="getNodeOutput completed" runId=run-fleet-001 durationMs=0.8450000000000273 nodeId=complete status=pending iteration=0 rowBytes=0 service=smithers
+timestamp=2026-06-16T00:28:25.346Z level=INFO fiber=#1901 message="getNodeOutput completed" runId=run-fleet-001 durationMs=0.7437910000001011 nodeId=complete status=produced iteration=0 rowBytes=93 service=smithers
+timestamp=2026-06-16T00:28:25.533Z level=INFO fiber=#1903 message="Gateway run completed" gateway:run=0ms runId=run-fleet-001 status=finished workflow=panopticon-fleet service=smithers source=user
+
+ 7 pass
+ 0 fail
+ 42 expect() calls
+Ran 7 tests across 2 files. [2.14s]

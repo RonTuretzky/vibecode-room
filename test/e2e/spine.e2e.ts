@@ -89,7 +89,7 @@ describe("seam slice spine e2e", () => {
           upid: "upid-spine-001",
           runId: "run-spine-001",
           workflow: "panopticon-spine",
-          callsign: "Atlas",
+          callsign: "atlas",
           steeringWindowId: "window-spine-001",
           seed: "spine spawn",
           input: {
@@ -110,7 +110,7 @@ describe("seam slice spine e2e", () => {
       expect(await store.findByUPID("upid-spine-001")).toEqual(
         expect.objectContaining({
           runId: "run-spine-001",
-          callsign: "Atlas",
+          callsign: "atlas",
           steeringWindowId: "window-spine-001",
         }),
       );
@@ -124,18 +124,16 @@ describe("seam slice spine e2e", () => {
 function createRuntime(label: string) {
   const dir = mkdtempSync(join(tmpdir(), `panop-spine-${label}-`));
   tempDirs.push(dir);
-  const api = createSmithers(
-    {
-      checkpoint: z.object({
-        seed: z.string(),
-        upid: z.string(),
-        callsign: z.string().nullable(),
-      }),
-      steer: z.object({ command: z.string().optional() }),
-    },
-    { dbPath: join(dir, "smithers.db"), readableName: `Panopticon spine ${label}` },
-  );
-  const workflow = api.smithers((ctx) => {
+  const outputs: any = {
+    checkpoint: z.object({
+      seed: z.string(),
+      upid: z.string(),
+      callsign: z.string().nullable(),
+    }),
+    steer: z.object({ command: z.string().optional() }),
+  };
+  const api: any = createSmithers(outputs, { dbPath: join(dir, "smithers.db"), readableName: `Panopticon spine ${label}` });
+  const workflow = api.smithers((ctx: any) => {
     const input = ctx.input as any;
     return React.createElement(
       api.Workflow,

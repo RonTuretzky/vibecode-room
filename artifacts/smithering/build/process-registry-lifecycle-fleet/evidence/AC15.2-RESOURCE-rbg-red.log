@@ -1,0 +1,122 @@
+$ PANOP_RBG_DISABLE_CAPACITY_CHECK=1 bun test src/process/resource-check.test.ts test/e2e/fleet.e2e.ts
+bun test v1.3.14 (0d9b296a)
+
+src/process/resource-check.test.ts:
+18 |     await registry.spawn({ correlationId: "corr-b", upid: "upid-b", callsign: "quoravex", workflow: "wf" });
+19 |     const before = registry.records();
+20 | 
+21 |     const result = await registry.spawn({ correlationId: "corr-c", upid: "upid-c", callsign: "zelanori", workflow: "wf" });
+22 | 
+23 |     expect(result).toEqual(
+                        ^
+error: expect(received).toEqual(expected)
+
+- ObjectContaining 
+  {
+-   "accepted": false,
+-   "reason": "capacity",
+-   "spokenAck": "At capacity — stop a process first.",
++   "accepted": true,
++   "process": {
++     "callsign": "zelanori",
++     "lastAction": "spawn",
++     "progressSeq": 0,
++     "runId": "run-upid-c",
++     "selected": true,
++     "state": "planning",
++     "updatedAtMs": 1781569662428,
++     "upid": "upid-c",
++   },
++   "spawn": {
++     "parentId": null,
++     "runId": "run-upid-c",
++     "upid": "upid-c",
++     "workflow": "wf",
++   },
++   "spokenAck": "zelanori spawned.",
+  }
+
+- Expected  - 4
++ Received  + 18
+
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/process-registry-lifecycle-fleet/src/process/resource-check.test.ts:23:20)
+(fail) pre-spawn resource check > AC15.2 refuses at the V0 cap, leaves the registry unchanged, acks, and logs spawn.refused [3.72ms]
+
+test/e2e/fleet.e2e.ts.test.ts:
+timestamp=2026-06-16T00:27:42.960Z level=INFO fiber=#5 message="Gateway run started" gateway:run=0ms runId=run-atlas transport=ws triggeredBy=fleet-control role=operator workflow=panopticon-fleet-control service=smithers source=user userId=fleet-control resume=false connectionId=fleet-control:connection
+timestamp=2026-06-16T00:27:42.962Z level=INFO fiber=#36 message="Gateway run started" gateway:run=1ms runId=run-bravo transport=ws triggeredBy=fleet-control role=operator workflow=panopticon-fleet-control service=smithers source=user userId=fleet-control resume=false connectionId=fleet-control:connection
+timestamp=2026-06-16T00:27:43.205Z level=INFO fiber=#433 message="getNodeOutput completed" runId=run-atlas durationMs=1.146082999999976 nodeId=checkpoint status=produced iteration=0 rowBytes=60 service=smithers
+timestamp=2026-06-16T00:27:43.206Z level=INFO fiber=#442 message="getNodeOutput completed" runId=run-bravo durationMs=0.3987920000000713 nodeId=checkpoint status=produced iteration=0 rowBytes=60 service=smithers
+timestamp=2026-06-16T00:27:43.262Z level=INFO fiber=#460 message="Gateway run started" gateway:run=0ms runId=run-atlas transport=ws triggeredBy=fleet-control role=operator workflow=panopticon-fleet-control service=smithers source=user userId=fleet-control resume=true connectionId=fleet-control:connection
+timestamp=2026-06-16T00:27:43.264Z level=INFO fiber=#484 message="getNodeOutput completed" runId=run-atlas durationMs=1.103791000000001 nodeId=complete errorCode=NodeNotFound status=error iteration=0 rowBytes=0 service=smithers
+timestamp=2026-06-16T00:27:43.289Z level=INFO fiber=#520 message="getNodeOutput completed" runId=run-atlas durationMs=0.1033750000000282 nodeId=complete errorCode=NodeNotFound status=error iteration=0 rowBytes=0 service=smithers
+timestamp=2026-06-16T00:27:43.310Z level=INFO fiber=#638 message="getNodeOutput completed" runId=run-atlas durationMs=0.5860830000000306 nodeId=complete status=pending iteration=0 rowBytes=0 service=smithers
+timestamp=2026-06-16T00:27:43.332Z level=INFO fiber=#661 message="getNodeOutput completed" runId=run-atlas durationMs=0.9769999999999754 nodeId=complete status=pending iteration=0 rowBytes=0 service=smithers
+timestamp=2026-06-16T00:27:43.357Z level=INFO fiber=#735 message="getNodeOutput completed" runId=run-atlas durationMs=0.9571250000000191 nodeId=complete status=produced iteration=0 rowBytes=114 service=smithers
+timestamp=2026-06-16T00:27:43.358Z level=INFO fiber=#741 message="getNodeOutput completed" runId=run-bravo durationMs=0.3172500000000582 nodeId=complete errorCode=NodeNotFound status=error iteration=0 rowBytes=0 service=smithers
+timestamp=2026-06-16T00:27:43.360Z level=INFO fiber=#767 message="Gateway run started" gateway:run=0ms runId=run-bravo transport=ws triggeredBy=fleet-control role=operator workflow=panopticon-fleet-control service=smithers source=user userId=fleet-control resume=true connectionId=fleet-control:connection
+timestamp=2026-06-16T00:27:43.362Z level=INFO fiber=#791 message="getNodeOutput completed" runId=run-bravo durationMs=0.48433299999999235 nodeId=pause-ack errorCode=NodeNotFound status=error iteration=0 rowBytes=0 service=smithers
+timestamp=2026-06-16T00:27:43.383Z level=INFO fiber=#823 message="getNodeOutput completed" runId=run-bravo durationMs=0.131958999999938 nodeId=pause-ack errorCode=NodeNotFound status=error iteration=0 rowBytes=0 service=smithers
+timestamp=2026-06-16T00:27:43.404Z level=INFO fiber=#953 message="getNodeOutput completed" runId=run-bravo durationMs=0.5928340000000389 nodeId=pause-ack status=pending iteration=0 rowBytes=0 service=smithers
+timestamp=2026-06-16T00:27:43.425Z level=INFO fiber=#998 message="getNodeOutput completed" runId=run-bravo durationMs=0.38245900000003985 nodeId=pause-ack status=produced iteration=0 rowBytes=35 service=smithers
+timestamp=2026-06-16T00:27:43.540Z level=INFO fiber=#1036 message="Gateway run completed" gateway:run=0ms runId=run-atlas status=finished workflow=panopticon-fleet-control service=smithers source=user
+timestamp=2026-06-16T00:27:43.636Z level=INFO fiber=#1045 message="Gateway run started" gateway:run=0ms runId=run-bravo transport=ws triggeredBy=fleet-control role=operator workflow=panopticon-fleet-control service=smithers source=user userId=fleet-control resume=true connectionId=fleet-control:connection
+timestamp=2026-06-16T00:27:43.638Z level=INFO fiber=#1069 message="getNodeOutput completed" runId=run-bravo durationMs=0.5345830000001115 nodeId=resume-ack errorCode=NodeNotFound status=error iteration=0 rowBytes=0 service=smithers
+timestamp=2026-06-16T00:27:43.659Z level=INFO fiber=#1101 message="getNodeOutput completed" runId=run-bravo durationMs=0.09587499999997817 nodeId=resume-ack errorCode=NodeNotFound status=error iteration=0 rowBytes=0 service=smithers
+timestamp=2026-06-16T00:27:43.680Z level=INFO fiber=#1235 message="getNodeOutput completed" runId=run-bravo durationMs=0.4705830000000333 nodeId=resume-ack status=pending iteration=0 rowBytes=0 service=smithers
+timestamp=2026-06-16T00:27:43.705Z level=INFO fiber=#1290 message="getNodeOutput completed" runId=run-bravo durationMs=0.928707999999915 nodeId=resume-ack status=pending iteration=0 rowBytes=0 service=smithers
+timestamp=2026-06-16T00:27:43.730Z level=INFO fiber=#1364 message="getNodeOutput completed" runId=run-bravo durationMs=0.8572920000001432 nodeId=resume-ack status=produced iteration=0 rowBytes=36 service=smithers
+timestamp=2026-06-16T00:27:43.911Z level=INFO fiber=#1366 message="Gateway run completed" gateway:run=0ms runId=run-bravo status=finished workflow=panopticon-fleet-control service=smithers source=user
+timestamp=2026-06-16T00:27:43.939Z level=INFO fiber=#1372 message="Gateway run started" gateway:run=1ms runId=run-fleet-001 transport=ws triggeredBy=fleet-initial role=operator workflow=panopticon-fleet service=smithers source=user userId=fleet-initial resume=false connectionId=fleet-initial:connection
+timestamp=2026-06-16T00:27:44.010Z level=INFO fiber=#1556 message="getNodeOutput completed" runId=run-fleet-001 durationMs=0.46537499999999454 nodeId=checkpoint status=produced iteration=0 rowBytes=58 service=smithers
+timestamp=2026-06-16T00:27:44.221Z level=INFO fiber=#1586 message="getNodeOutput completed" runId=run-fleet-001 durationMs=0.5572919999999613 nodeId=checkpoint status=produced iteration=0 rowBytes=58 service=smithers
+timestamp=2026-06-16T00:27:44.223Z level=INFO fiber=#1602 message="Gateway run started" gateway:run=0ms runId=run-fleet-001 transport=ws triggeredBy=fleet-recovered role=operator workflow=panopticon-fleet service=smithers source=user userId=fleet-recovered resume=true connectionId=fleet-recovered:connection
+timestamp=2026-06-16T00:27:44.224Z level=INFO fiber=#1626 message="getNodeOutput completed" runId=run-fleet-001 durationMs=0.6707910000000084 nodeId=complete errorCode=NodeNotFound status=error iteration=0 rowBytes=0 service=smithers
+timestamp=2026-06-16T00:27:44.247Z level=INFO fiber=#1658 message="getNodeOutput completed" runId=run-fleet-001 durationMs=0.07970799999998235 nodeId=complete errorCode=NodeNotFound status=error iteration=0 rowBytes=0 service=smithers
+timestamp=2026-06-16T00:27:44.272Z level=INFO fiber=#1788 message="getNodeOutput completed" runId=run-fleet-001 durationMs=1.02862499999992 nodeId=complete status=pending iteration=0 rowBytes=0 service=smithers
+timestamp=2026-06-16T00:27:44.293Z level=INFO fiber=#1862 message="getNodeOutput completed" runId=run-fleet-001 durationMs=0.5056250000000091 nodeId=complete status=produced iteration=0 rowBytes=93 service=smithers
+timestamp=2026-06-16T00:27:44.499Z level=INFO fiber=#1864 message="Gateway run completed" gateway:run=0ms runId=run-fleet-001 status=finished workflow=panopticon-fleet service=smithers source=user
+333 |       expect.objectContaining({ upid: "upid-bravo", selected: false, state: "active", progressSeq: 2 }),
+334 |     ]);
+335 | 
+336 |     const beforeThird = registry.records();
+337 |     const third = await registry.spawn({ correlationId: "corr-third", upid: "upid-charlie", callsign: "Charlie", workflow: "wf" });
+338 |     expect(third).toEqual(expect.objectContaining({ accepted: false, spokenAck: CAPACITY_REFUSAL_ACK }));
+                        ^
+error: expect(received).toEqual(expected)
+
+- ObjectContaining 
+  {
+-   "accepted": false,
+-   "spokenAck": "At capacity — stop a process first.",
++   "accepted": true,
++   "process": {
++     "callsign": "charlie",
++     "lastAction": "spawn",
++     "progressSeq": 0,
++     "runId": "run-upid-charlie",
++     "selected": true,
++     "state": "planning",
++     "updatedAtMs": 1781569664501,
++     "upid": "upid-charlie",
++   },
++   "spawn": {
++     "parentId": null,
++     "runId": "run-upid-charlie",
++     "upid": "upid-charlie",
++     "workflow": "wf",
++   },
++   "spokenAck": "charlie spawned.",
+  }
+
+- Expected  - 3
++ Received  + 18
+
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/process-registry-lifecycle-fleet/test/e2e/fleet.e2e.ts:338:19)
+(fail) process registry fleet e2e > voice fleet script steers Atlas, pauses Bravo, leaves unselected processes advancing, and refuses a third spawn [1.82ms]
+
+ 5 pass
+ 2 fail
+ 31 expect() calls
+Ran 7 tests across 2 files. [2.09s]
+exit=1

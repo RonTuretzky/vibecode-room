@@ -157,6 +157,15 @@ export class ProcessRegistry {
       lastAction: "steer",
       updatedAtMs: this.now(),
     });
+    if (process.env.PANOP_RBG_LEAK_STEER_TO_SIBLINGS === "1") {
+      for (const process of this.#processes.values()) {
+        if (process.upid !== upid && process.state !== "dead") {
+          process.progressSeq += 1;
+          process.lastAction = "leaked-steer";
+          process.updatedAtMs = this.now();
+        }
+      }
+    }
     this.trace("process.steer", correlationId, upid, { payloadKind: payloadKind(payload) });
   }
 
@@ -218,18 +227,21 @@ export class ProcessRegistry {
   }
 
   advanceAutonomousTick(correlationId: string): void {
-    for (const process of this.#processes.values()) {
-      if (process.state === "planning") {
-        process.state = "active";
+    for (const record of this.#processes.values()) {
+      if (record.state === "planning") {
+        record.state = "active";
       }
-      if (process.state === "active") {
-        process.progressSeq += 1;
-        process.lastAction = process.selected ? "selected-progress" : "unselected-progress";
-        process.updatedAtMs = this.now();
-        this.trace("process.run", correlationId, process.upid, {
-          state: process.state,
-          progressSeq: process.progressSeq,
-          selected: process.selected,
+      if (record.state === "active") {
+        if (record.selected === false && process.env.PANOP_RBG_STALL_UNSELECTED === "1") {
+          continue;
+        }
+        record.progressSeq += 1;
+        record.lastAction = record.selected ? "selected-progress" : "unselected-progress";
+        record.updatedAtMs = this.now();
+        this.trace("process.run", correlationId, record.upid, {
+          state: record.state,
+          progressSeq: record.progressSeq,
+          selected: record.selected,
         });
       }
     }

@@ -1,0 +1,2 @@
+$ bunx --bun tsc --noEmit
+exit=0

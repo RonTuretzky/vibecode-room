@@ -319,7 +319,15 @@ describe("process registry fleet e2e", () => {
       expect.objectContaining({ state: "planning", progressSeq: 1 }),
     );
     expect(registry.records().find((record) => record.upid === "upid-bravo")).toEqual(
-      expect.objectContaining({ ...bravoBeforePause, state: "paused", lastAction: "pause" }),
+      expect.objectContaining({
+        upid: bravoBeforePause?.upid,
+        runId: bravoBeforePause?.runId,
+        callsign: bravoBeforePause?.callsign,
+        progressSeq: bravoBeforePause?.progressSeq,
+        selected: bravoBeforePause?.selected,
+        state: "paused",
+        lastAction: "pause",
+      }),
     );
     expect(client.calls.filter((call) => call.name === "pause")).toEqual([{ name: "pause", upid: "upid-bravo" }]);
 
@@ -349,31 +357,29 @@ describe("process registry fleet e2e", () => {
 });
 
 function createFleetControlRuntime(label: string, dbPath: string) {
-  const api = createSmithers(
-    {
-      checkpoint: z.object({ seed: z.string(), upid: z.string(), callsign: z.string() }),
-      steer: z.object({
-        type: z.string(),
-        payload: z.object({
-          command: z.string(),
-          injection: z.string(),
-        }),
-      }),
-      pause: z.object({ upid: z.string() }),
-      pauseAck: z.object({ upid: z.string(), paused: z.boolean() }),
-      resume: z.object({ upid: z.string() }),
-      resumeAck: z.object({ upid: z.string(), resumed: z.boolean() }),
-      complete: z.object({
-        seed: z.string(),
-        upid: z.string(),
-        callsign: z.string(),
+  const outputs: any = {
+    checkpoint: z.object({ seed: z.string(), upid: z.string(), callsign: z.string() }),
+    steer: z.object({
+      type: z.string(),
+      payload: z.object({
         command: z.string(),
         injection: z.string(),
       }),
-    },
-    { dbPath, readableName: `Panopticon fleet control ${label}` },
-  );
-  const workflow = api.smithers((ctx) => {
+    }),
+    pause: z.object({ upid: z.string() }),
+    pauseAck: z.object({ upid: z.string(), paused: z.boolean() }),
+    resume: z.object({ upid: z.string() }),
+    resumeAck: z.object({ upid: z.string(), resumed: z.boolean() }),
+    complete: z.object({
+      seed: z.string(),
+      upid: z.string(),
+      callsign: z.string(),
+      command: z.string(),
+      injection: z.string(),
+    }),
+  };
+  const api: any = createSmithers(outputs, { dbPath, readableName: `Panopticon fleet control ${label}` });
+  const workflow = api.smithers((ctx: any) => {
     const input = ctx.input as any;
     const seed = String(input.seed ?? input.prompt ?? "");
     const upid = String(input.upid ?? "");
@@ -444,22 +450,20 @@ function createFleetControlRuntime(label: string, dbPath: string) {
 }
 
 function createRuntime(label: string, dbPath: string) {
-  const api = createSmithers(
-    {
-      checkpoint: z.object({ seed: z.string(), checkpoint: z.string() }),
-      steer: z.object({
-        type: z.string(),
-        payload: z.object({ command: z.string() }),
-      }),
-      complete: z.object({
-        seed: z.string(),
-        checkpoint: z.string(),
-        command: z.string(),
-      }),
-    },
-    { dbPath, readableName: `Panopticon fleet ${label}` },
-  );
-  const workflow = api.smithers((ctx) => {
+  const outputs: any = {
+    checkpoint: z.object({ seed: z.string(), checkpoint: z.string() }),
+    steer: z.object({
+      type: z.string(),
+      payload: z.object({ command: z.string() }),
+    }),
+    complete: z.object({
+      seed: z.string(),
+      checkpoint: z.string(),
+      command: z.string(),
+    }),
+  };
+  const api: any = createSmithers(outputs, { dbPath, readableName: `Panopticon fleet ${label}` });
+  const workflow = api.smithers((ctx: any) => {
     const input = ctx.input as any;
     return React.createElement(
       api.Workflow,

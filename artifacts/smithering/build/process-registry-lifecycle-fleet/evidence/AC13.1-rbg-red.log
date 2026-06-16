@@ -1,0 +1,71 @@
+$ PANOP_RBG_PAUSE_ALL_UPIDS=1 bun test test/e2e/fleet.e2e.ts
+bun test v1.3.14 (0d9b296a)
+
+test/e2e/fleet.e2e.ts.test.ts:
+timestamp=2026-06-16T00:27:25.707Z level=INFO fiber=#5 message="Gateway run started" gateway:run=0ms runId=run-atlas transport=ws triggeredBy=fleet-control role=operator workflow=panopticon-fleet-control service=smithers source=user userId=fleet-control resume=false connectionId=fleet-control:connection
+timestamp=2026-06-16T00:27:25.709Z level=INFO fiber=#36 message="Gateway run started" gateway:run=1ms runId=run-bravo transport=ws triggeredBy=fleet-control role=operator workflow=panopticon-fleet-control service=smithers source=user userId=fleet-control resume=false connectionId=fleet-control:connection
+timestamp=2026-06-16T00:27:25.960Z level=INFO fiber=#433 message="getNodeOutput completed" runId=run-atlas durationMs=1.2644169999999804 nodeId=checkpoint status=produced iteration=0 rowBytes=60 service=smithers
+timestamp=2026-06-16T00:27:25.961Z level=INFO fiber=#442 message="getNodeOutput completed" runId=run-bravo durationMs=0.455916000000002 nodeId=checkpoint status=produced iteration=0 rowBytes=60 service=smithers
+timestamp=2026-06-16T00:27:26.016Z level=INFO fiber=#464 message="Gateway run started" gateway:run=0ms runId=run-atlas transport=ws triggeredBy=fleet-control role=operator workflow=panopticon-fleet-control service=smithers source=user userId=fleet-control resume=true connectionId=fleet-control:connection
+timestamp=2026-06-16T00:27:26.018Z level=INFO fiber=#488 message="getNodeOutput completed" runId=run-atlas durationMs=1.0477499999999509 nodeId=complete errorCode=NodeNotFound status=error iteration=0 rowBytes=0 service=smithers
+timestamp=2026-06-16T00:27:26.040Z level=INFO fiber=#496 message="getNodeOutput completed" runId=run-atlas durationMs=0.24620900000002166 nodeId=complete errorCode=NodeNotFound status=error iteration=0 rowBytes=0 service=smithers
+timestamp=2026-06-16T00:27:26.061Z level=INFO fiber=#638 message="getNodeOutput completed" runId=run-atlas durationMs=0.5338329999999587 nodeId=complete status=pending iteration=0 rowBytes=0 service=smithers
+timestamp=2026-06-16T00:27:26.083Z level=INFO fiber=#661 message="getNodeOutput completed" runId=run-atlas durationMs=0.8039999999999736 nodeId=complete status=pending iteration=0 rowBytes=0 service=smithers
+timestamp=2026-06-16T00:27:26.105Z level=INFO fiber=#735 message="getNodeOutput completed" runId=run-atlas durationMs=0.505207999999925 nodeId=complete status=produced iteration=0 rowBytes=114 service=smithers
+timestamp=2026-06-16T00:27:26.106Z level=INFO fiber=#741 message="getNodeOutput completed" runId=run-bravo durationMs=0.23816699999997581 nodeId=complete errorCode=NodeNotFound status=error iteration=0 rowBytes=0 service=smithers
+timestamp=2026-06-16T00:27:26.108Z level=INFO fiber=#776 message="Gateway run started" gateway:run=0ms runId=run-bravo transport=ws triggeredBy=fleet-control role=operator workflow=panopticon-fleet-control service=smithers source=user userId=fleet-control resume=true connectionId=fleet-control:connection
+timestamp=2026-06-16T00:27:26.295Z level=INFO fiber=#994 message="Gateway run completed" gateway:run=0ms runId=run-atlas status=finished workflow=panopticon-fleet-control service=smithers source=user
+157 |         correlationId: "corr-pause-bravo",
+158 |       });
+159 |       await dispatcher.drain();
+160 | 
+161 |       expect(await store.findByUPID("upid-bravo")).toEqual(expect.objectContaining({ state: "paused" }));
+162 |       expect(await store.findByUPID("upid-atlas")).not.toEqual(expect.objectContaining({ state: "paused" }));
+                                                             ^
+error: expect(received).not.toEqual(expected)
+
+Expected: not ObjectContaining 
+{
+  "state": "paused",
+}
+
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/process-registry-lifecycle-fleet/test/e2e/fleet.e2e.ts:162:56)
+(fail) seam durability recovery e2e > seam steering and per-process pause stay isolated across two durable runs [722.12ms]
+timestamp=2026-06-16T00:27:26.395Z level=INFO fiber=#1006 message="Gateway run started" gateway:run=0ms runId=run-fleet-001 transport=ws triggeredBy=fleet-initial role=operator workflow=panopticon-fleet service=smithers source=user userId=fleet-initial resume=false connectionId=fleet-initial:connection
+timestamp=2026-06-16T00:27:26.468Z level=INFO fiber=#1190 message="getNodeOutput completed" runId=run-fleet-001 durationMs=0.6210829999999987 nodeId=checkpoint status=produced iteration=0 rowBytes=58 service=smithers
+timestamp=2026-06-16T00:27:26.676Z level=INFO fiber=#1220 message="getNodeOutput completed" runId=run-fleet-001 durationMs=0.5132499999999709 nodeId=checkpoint status=produced iteration=0 rowBytes=58 service=smithers
+timestamp=2026-06-16T00:27:26.678Z level=INFO fiber=#1236 message="Gateway run started" gateway:run=0ms runId=run-fleet-001 transport=ws triggeredBy=fleet-recovered role=operator workflow=panopticon-fleet service=smithers source=user userId=fleet-recovered resume=true connectionId=fleet-recovered:connection
+timestamp=2026-06-16T00:27:26.679Z level=INFO fiber=#1260 message="getNodeOutput completed" runId=run-fleet-001 durationMs=0.7331669999998667 nodeId=complete errorCode=NodeNotFound status=error iteration=0 rowBytes=0 service=smithers
+timestamp=2026-06-16T00:27:26.702Z level=INFO fiber=#1292 message="getNodeOutput completed" runId=run-fleet-001 durationMs=0.09533400000009351 nodeId=complete errorCode=NodeNotFound status=error iteration=0 rowBytes=0 service=smithers
+timestamp=2026-06-16T00:27:26.724Z level=INFO fiber=#1422 message="getNodeOutput completed" runId=run-fleet-001 durationMs=0.7083330000000387 nodeId=complete status=pending iteration=0 rowBytes=0 service=smithers
+timestamp=2026-06-16T00:27:26.745Z level=INFO fiber=#1496 message="getNodeOutput completed" runId=run-fleet-001 durationMs=0.3832079999999678 nodeId=complete status=produced iteration=0 rowBytes=93 service=smithers
+timestamp=2026-06-16T00:27:26.955Z level=INFO fiber=#1498 message="Gateway run completed" gateway:run=0ms runId=run-fleet-001 status=finished workflow=panopticon-fleet service=smithers source=user
+316 |     await registry.pause("upid-bravo", "corr-bravo-pause");
+317 | 
+318 |     expect(registry.records().find((record) => record.upid === "upid-atlas")).toEqual(
+319 |       expect.objectContaining({ state: "planning", progressSeq: 1 }),
+320 |     );
+321 |     expect(registry.records().find((record) => record.upid === "upid-bravo")).toEqual(
+                                                                                    ^
+error: expect(received).toEqual(expected)
+
+@@ -1,2 +1,2 @@
+- ObjectContaining 
+  {
+@@ -8,3 +8,3 @@
+    "state": "paused",
+-   "updatedAtMs": 1781569646961,
++   "updatedAtMs": 1781569646962,
+    "upid": "upid-bravo",
+
+- Expected  - 2
++ Received  + 1
+
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/process-registry-lifecycle-fleet/test/e2e/fleet.e2e.ts:321:79)
+(fail) process registry fleet e2e > voice fleet script steers Atlas, pauses Bravo, leaves unselected processes advancing, and refuses a third spawn [1.89ms]
+
+ 2 pass
+ 2 fail
+ 24 expect() calls
+Ran 4 tests across 1 file. [1.76s]
+exit=1
