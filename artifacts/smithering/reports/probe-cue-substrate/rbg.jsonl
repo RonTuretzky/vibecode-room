@@ -1,5 +1,11 @@
 {"id":"repo-access-source-build","behavior":"github.com/jameslbarnes/cue is accessible and built from source","phase":"red","status":"failed-as-expected","error":"expect(received).toBe(expected)\n\nExpected: \"built\"\nReceived: \"not-built\"\n"}
+<<<<<<< HEAD
 {"id":"text-cue-latency","behavior":"TextCue-triggered harness decision resolves inside the hard earcon budget","phase":"red","status":"failed-as-expected","error":"expect(received).toBeLessThanOrEqual(expected)\n\nExpected: <= 50\nReceived: 81.940875\n"}
+||||||| parent of 23fd1ba (feat(probe): hot-loop LLM subscription validation)
+{"id":"text-cue-latency","behavior":"TextCue-triggered harness decision resolves inside the hard earcon budget","phase":"red","status":"failed-as-expected","error":"expect(received).toBeLessThanOrEqual(expected)\n\nExpected: <= 50\nReceived: 84.30704100000003\n"}
+=======
+{"id":"text-cue-latency","behavior":"TextCue-triggered harness decision resolves inside the hard earcon budget","phase":"red","status":"failed-as-expected","error":"expect(received).toBeLessThanOrEqual(expected)\n\nExpected: <= 50\nReceived: 82.12679200000275\n"}
+>>>>>>> 23fd1ba (feat(probe): hot-loop LLM subscription validation)
 {"id":"cue-policy-primitives","behavior":"TextCue, SpeakerWordCue, IdleCue, WordCountCue, IntervalCue, and cooldownSeconds semantics are evidenced","phase":"red","status":"failed-as-expected","error":"expect(received).toBe(expected)\n\nExpected: true\nReceived: false\n"}
 {"id":"observe-pass-first-class","behavior":"observe.pass is a named, loggable, first-class tool result and trace entry","phase":"red","status":"failed-as-expected","error":"expect(received).toBe(expected)\n\nExpected: \"missing.pass\"\nReceived: \"observe.pass\"\n"}
 {"id":"two-programs-mapped-action-tool","behavior":"two independent Programs route independently through MappedActionTool schemas","phase":"red","status":"failed-as-expected","error":"expect(received).toEqual(expected)\n\n  [\n-   \"panopticon.spawn\",\n+   \"panopticon.suggest\",\n+   \"panopticon.steer\",\n  ]\n\n- Expected  - 1\n+ Received  + 2\n"}

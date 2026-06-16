@@ -1,0 +1,20 @@
+[
+  {
+    "criterionId": "P-LLM",
+    "method": "integration_test",
+    "tier": "pre-merge",
+    "status": "failed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/probe-hot-loop-llm-subscription/evidence/P-LLM-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/probe-hot-loop-llm-subscription/evidence/P-LLM-green.log"
+  },
+  {
+    "criterionId": "A-LLM-SUB",
+    "method": "integration_test",
+    "tier": "pre-merge",
+    "status": "failed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/probe-hot-loop-llm-subscription/evidence/A-LLM-SUB-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/probe-hot-loop-llm-subscription/evidence/A-LLM-SUB-green.log"
+  }
+]

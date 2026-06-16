@@ -3,8 +3,20 @@
   "status": "passed",
   "summary": "probe assertions were failable and passed",
   "correlationId": "p-cue-real-cue-substrate",
+<<<<<<< HEAD
   "startedAt": "2026-06-15T23:30:13.886Z",
+||||||| parent of 23fd1ba (feat(probe): hot-loop LLM subscription validation)
+  "startedAt": "2026-06-15T05:17:07.683Z",
+=======
+  "startedAt": "2026-06-15T23:00:49.608Z",
+>>>>>>> 23fd1ba (feat(probe): hot-loop LLM subscription validation)
+<<<<<<< HEAD
   "finishedAt": "2026-06-15T23:30:14.127Z",
+||||||| parent of 23fd1ba (feat(probe): hot-loop LLM subscription validation)
+  "finishedAt": "2026-06-15T05:17:07.905Z",
+=======
+  "finishedAt": "2026-06-15T23:00:49.831Z",
+>>>>>>> 23fd1ba (feat(probe): hot-loop LLM subscription validation)
   "assertions": [
     {
       "id": "repo-access-source-build",
@@ -18,7 +30,13 @@
       "behavior": "TextCue-triggered harness decision resolves inside the hard earcon budget",
       "phase": "red",
       "status": "failed-as-expected",
+<<<<<<< HEAD
       "error": "expect(received).toBeLessThanOrEqual(expected)\n\nExpected: <= 50\nReceived: 81.940875\n"
+||||||| parent of 23fd1ba (feat(probe): hot-loop LLM subscription validation)
+      "error": "expect(received).toBeLessThanOrEqual(expected)\n\nExpected: <= 50\nReceived: 84.30704100000003\n"
+=======
+      "error": "expect(received).toBeLessThanOrEqual(expected)\n\nExpected: <= 50\nReceived: 82.12679200000275\n"
+>>>>>>> 23fd1ba (feat(probe): hot-loop LLM subscription validation)
     },
     {
       "id": "cue-policy-primitives",

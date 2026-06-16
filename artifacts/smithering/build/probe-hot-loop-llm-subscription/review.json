@@ -1,0 +1,33 @@
+{
+  "family": "anthropic",
+  "model": "claude-opus-4-8",
+  "kind": "review",
+  "approved": true,
+  "pass": false,
+  "findings": [
+    {
+      "severity": "minor",
+      "title": "ACT-prompt-amendment assertion is weakened by a spoon-fed prompt",
+      "file": "poc/llm-subscription-probe.ts",
+      "description": "The §22 A2 amended criterion line ('...or a status/information query addressed to a named callsign') is correctly present in HOT_LOOP_PROMPT, but the same prompt also explicitly instructs the model 'For the status query choose panopticon.steer ... For pass-1 choose observe.pass.' assertActPromptAmendment would therefore pass even if the amended criterion were removed, so it does not isolate the amendment's classification effect. Acceptable for a reachability/latency probe whose verdict is red anyway, but the amendment is not independently proven."
+    },
+    {
+      "severity": "minor",
+      "title": "Determinism is decision-identity, not byte-identical temp-0",
+      "file": "poc/llm-subscription-probe.ts",
+      "description": "assertDeterministic compares canonicalDecisions (id/decision/tool/arguments) and excludes confidence/reason, which do vary across the two same-input runs (selected claude candidate: pass-1 confidence 0.93 vs 0.92). This is a reasonable and documented record-replay invariant (routing action is identical) and is the right choice for subscription CLIs, but it is explicitly weaker than strict byte-identical temperature-0 output. Documented in RESULT.md."
+    },
+    {
+      "severity": "nit",
+      "title": "Planning-doc tension on whether A-LLM-SUB is blocking",
+      "file": "docs/planning/03-eng.md",
+      "description": "03-eng §22 A2.4 / §17 / §20 / R15 declare A-LLM-SUB 'MOOT/removed in V0' and the hot-loop model choice 'a tunable, not a blocking PRD §6 conflict', while 04-backpressure rows 193/194/219 and this ticket treat P-LLM/A-LLM-SUB as blocking with a binding PRD §6 conflict. The implementer correctly followed the ticket + backpressure gate rows (the binding-conflict path). Flagged for the gate to reconcile the docs; not an implementation defect."
+    },
+    {
+      "severity": "nit",
+      "title": "Cost gate recorded as unmeasured rather than treated as flat-rate zero",
+      "file": "poc/llm-subscription-probe.ts",
+      "description": "estimatedCostPerHourUsd returns null for host-subscription routes (no per-call metering), so costWithinBudget is false and becomes a blocker. This is the conservative, intellectually honest choice (treating unmetered subscription access as $0/hr would make the $0.15/hr gate tautological) and is consistent with 'surface the conflict, do not engineer around it'. Noted as a deliberate, defensible decision, not a defect."
+    }
+  ]
+}
