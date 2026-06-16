@@ -213,7 +213,7 @@ export function reservedControlWords(env: Record<string, string | undefined> = p
   ].map(normalizeCallsign);
 }
 
-export function assertCallsignPool(pool: readonly string[] = DEFAULT_CALLSIGN_POOL, reservedWords = reservedControlWords()): void {
+export function assertCallsignPool(pool: readonly string[] = DEFAULT_CALLSIGN_POOL, reservedWords: readonly string[] = reservedControlWords()): void {
   const normalized = pool.map(normalizeCallsign);
   const duplicates = normalized.filter((entry, index) => normalized.indexOf(entry) !== index);
   if (duplicates.length > 0) {
