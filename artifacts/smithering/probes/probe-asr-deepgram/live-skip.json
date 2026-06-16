@@ -1,0 +1,4 @@
+{
+  "status": "skipped",
+  "reason": "live Deepgram validation SKIPPED - requires DEEPGRAM_API_KEY"
+}
