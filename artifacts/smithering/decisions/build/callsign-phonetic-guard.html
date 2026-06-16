@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Build Decision - Callsign phonetic guard</title>
+<style>
+  :root { --ink:#e8edf2; --mut:#9aa8b5; --line:#283544; --good:#39d98a; --bad:#ff6b6b; --accent:#7cc7ff; --bg:#0b1117; --card:#111a24; }
+  * { box-sizing:border-box; }
+  body { font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; color:var(--ink); max-width:920px; margin:2.2rem auto; padding:0 1.2rem; background:var(--bg); }
+  h1 { font-size:1.55rem; margin:0 0 .2rem; }
+  h2 { font-size:1.12rem; margin:1.8rem 0 .5rem; border-bottom:2px solid var(--line); padding-bottom:.25rem; }
+  .meta { color:var(--mut); font-size:.86rem; margin-bottom:1.2rem; }
+  .pill { display:inline-block; padding:.08rem .5rem; border-radius:999px; font-size:.75rem; font-weight:600; background:#132f47; color:var(--accent); }
+  code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; color:#d8f3ff; }
+  pre { background:#05080c; color:#e6edf3; padding:.9rem 1.1rem; border-radius:8px; overflow:auto; font-size:.82rem; line-height:1.45; border:1px solid var(--line); }
+  .box { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:.9rem 1.1rem; margin:.7rem 0; }
+  .alt { border-left:4px solid var(--line); padding-left:.9rem; margin:.6rem 0; }
+  .alt.win { border-left-color:var(--good); } .alt.lose { border-left-color:var(--bad); }
+  .good { color:var(--good); font-weight:600; } .bad { color:var(--bad); font-weight:600; }
+</style>
+</head>
+<body>
+<h1>Callsign phonetic guard</h1>
+<div class="meta"><span class="pill">BUILD</span> &nbsp; callsigns-and-collision-guard &nbsp;·&nbsp; 2026-06-15</div>
+
+<h2>Decision</h2>
+<div class="box">
+Use a local deterministic phonetic implementation in <code>src/routing/callsigns.ts</code>: a compact
+double-Metaphone-compatible code plus a normalized phoneme string for Levenshtein distance. The V0
+pool is restricted to coined multi-syllable callsigns and the allocator validates every proposed or
+sequential callsign against active callsigns and the fixed wake/mute/unmute/panic/stop words.
+</div>
+
+<h2>Alternatives</h2>
+<div class="alt lose"><strong>Add a package dependency for phonetics.</strong>
+<span class="bad">Rejected.</span> P-PHONETIC is explicitly non-blocking and the repo has no existing phonetic
+dependency; adding one would widen supply-chain and install surface for a small deterministic guard.</div>
+<div class="alt lose"><strong>Use edit distance over spelling only.</strong>
+<span class="bad">Rejected.</span> That misses same-sound variants and does not satisfy D-DD-05's Metaphone code
+collision requirement.</div>
+<div class="alt win"><strong>Keep the guard local and snapshot stable outputs.</strong>
+<span class="good">Chosen.</span> The codes are reproducible in unit tests, swappable later, and every route stays in
+deterministic code rather than LLM judgment.</div>
+
+<h2>Verification</h2>
+<pre>bun test src/routing/callsigns.test.ts
+bun test
+bunx tsc --noEmit --pretty false --skipLibCheck --allowImportingTsExtensions --lib ESNext,DOM --moduleResolution bundler --module ESNext --target ESNext --strict src/routing/callsigns.ts src/seam/dispatcher.ts src/cue/policies.ts src/routing/callsigns.test.ts</pre>
+</body>
+</html>

@@ -1,0 +1,2 @@
+NODE_OPTIONS=--max-old-space-size=16384 bunx tsc --noEmit --pretty false --strict --target ESNext --module ESNext --moduleResolution bundler --skipLibCheck src/routing/*.ts
+status=passed

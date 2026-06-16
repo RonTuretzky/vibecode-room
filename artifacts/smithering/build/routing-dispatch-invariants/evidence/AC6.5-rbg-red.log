@@ -1,0 +1,23 @@
+bun test v1.3.14 (0d9b296a)
+
+src/routing/dispatch.test.ts:
+74 |   });
+75 | 
+76 |   test("one-breath select-and-steer selects the callsign and emits one steer action", () => {
+77 |     const decision = dispatch("Atlas, make it faster");
+78 | 
+79 |     expect(decision.kind).toBe("action");
+                               ^
+error: expect(received).toBe(expected)
+
+Expected: "action"
+Received: "local"
+
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/routing-dispatch-invariants/src/routing/dispatch.test.ts:79:27)
+(fail) routing dispatch invariants > one-breath select-and-steer selects the callsign and emits one steer action [3.70ms]
+
+ 0 pass
+ 10 filtered out
+ 1 fail
+ 1 expect() calls
+Ran 1 test across 1 file. [31.00ms]

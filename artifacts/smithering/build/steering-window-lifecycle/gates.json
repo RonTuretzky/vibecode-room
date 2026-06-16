@@ -1,0 +1,56 @@
+[
+  {
+    "criterionId": "AC6.2",
+    "method": "unit_test",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/steering-window-lifecycle/evidence/AC6.2-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/steering-window-lifecycle/evidence/AC6.2-green.log"
+  },
+  {
+    "criterionId": "AC6.3",
+    "method": "unit_test",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/steering-window-lifecycle/evidence/AC6.3-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/steering-window-lifecycle/evidence/AC6.3-green.log"
+  },
+  {
+    "criterionId": "AC6.5",
+    "method": "integration_test",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/steering-window-lifecycle/evidence/AC6.5-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/steering-window-lifecycle/evidence/AC6.5-green.log"
+  },
+  {
+    "criterionId": "AC8.1",
+    "method": "e2e_test",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/steering-window-lifecycle/evidence/AC8.1-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/steering-window-lifecycle/evidence/AC8.1-green.log"
+  },
+  {
+    "criterionId": "AC8.2",
+    "method": "unit_test",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/steering-window-lifecycle/evidence/AC8.2-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/steering-window-lifecycle/evidence/AC8.2-green.log"
+  },
+  {
+    "criterionId": "AC8.3",
+    "method": "unit_test",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/steering-window-lifecycle/evidence/AC8.3-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/steering-window-lifecycle/evidence/AC8.3-green.log"
+  }
+]

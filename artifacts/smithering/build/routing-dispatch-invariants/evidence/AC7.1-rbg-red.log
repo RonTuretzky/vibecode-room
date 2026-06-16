@@ -1,0 +1,23 @@
+bun test v1.3.14 (0d9b296a)
+
+src/routing/dispatch.test.ts:
+118 |       expect(decision).toEqual(decisions[0]);
+119 |     }
+120 |   });
+121 | 
+122 |   test("command-coverage maps every §4.3 row to exactly one handler and no cut setMode handler exists", () => {
+123 |     expect(() => assertHandlerCoverage()).not.toThrow();
+                                                    ^
+error: expect(received).not.toThrow()
+
+Error name: "Error"
+Error message: "Command handler coverage mismatch. missing=status extra=none"
+
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/routing-dispatch-invariants/src/routing/dispatch.test.ts:123:47)
+(fail) routing dispatch invariants > command-coverage maps every §4.3 row to exactly one handler and no cut setMode handler exists [0.81ms]
+
+ 0 pass
+ 10 filtered out
+ 1 fail
+ 1 expect() calls
+Ran 1 test across 1 file. [24.00ms]

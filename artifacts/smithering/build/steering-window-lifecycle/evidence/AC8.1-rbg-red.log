@@ -1,0 +1,56 @@
+bun test v1.3.14 (0d9b296a)
+
+test/e2e/fleet.e2e.ts.test.ts:
+65 |     const idle = manager.observeMicIdle({
+66 |       nowMs: 21_250,
+67 |       correlationId: "corr-window-idle",
+68 |       sessionId: "fleet-window-e2e",
+69 |     });
+70 |     expect(idle).toEqual(
+                      ^
+error: expect(received).toEqual(expected)
+
+- ObjectContaining 
+  {
+-   "closedWindow": ObjectContaining {
++   "ackId": null,
++   "addressed": false,
++   "kind": "pass",
++   "reason": "ambient",
++   "traceEvents": [
++     {
++       "correlationId": "corr-window-idle",
++       "event": "steering.window.idle_wait",
++       "level": "debug",
++       "meta": {
++         "elapsedMs": 20000,
++         "idleMs": 20000,
++         "windowId": "steer-upid-atlas-1",
++       },
++       "sessionId": "fleet-window-e2e",
++       "upid": "upid-atlas",
++     },
++   ],
++   "window": {
++     "callsign": "Atlas",
++     "lastMicActivityAtMs": 1250,
++     "lastUtteranceId": "utt-steer-atlas",
++     "openedAtMs": 1000,
+      "targetUPID": "upid-atlas",
++     "windowId": "steer-upid-atlas-1",
+    },
+-   "kind": "closed",
+-   "reason": "idle",
+  }
+
+- Expected  - 4
++ Received  + 24
+
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/steering-window-lifecycle/test/e2e/fleet.e2e.ts:70:18)
+(fail) steering-window fleet slice e2e > selects one process, steers it, then 20 seconds idle closes the window so ambient talk no longer steers [1.22ms]
+
+ 0 pass
+ 2 filtered out
+ 1 fail
+ 5 expect() calls
+Ran 1 test across 1 file. [457.00ms]

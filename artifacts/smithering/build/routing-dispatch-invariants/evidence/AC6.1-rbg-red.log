@@ -1,0 +1,23 @@
+bun test v1.3.14 (0d9b296a)
+
+src/routing/dispatch.test.ts:
+38 |   });
+39 | 
+40 |   test("dispatch-invariant rejects steering verbs with no in-utterance callsign and no open window", () => {
+41 |     const decision = dispatch("make it faster", { suggestionEligible: false });
+42 | 
+43 |     expect(decision.kind).toBe("pass");
+                               ^
+error: expect(received).toBe(expected)
+
+Expected: "pass"
+Received: "action"
+
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/routing-dispatch-invariants/src/routing/dispatch.test.ts:43:27)
+(fail) routing dispatch invariants > dispatch-invariant rejects steering verbs with no in-utterance callsign and no open window [3.19ms]
+
+ 0 pass
+ 10 filtered out
+ 1 fail
+ 1 expect() calls
+Ran 1 test across 1 file. [31.00ms]
