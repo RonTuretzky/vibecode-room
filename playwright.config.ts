@@ -33,7 +33,9 @@ export default defineConfig({
   webServer: {
     command: `bun run build && PANOP_PORT=${PORT} bun run start`,
     url: `${BASE_URL}/api/health`,
-    reuseExistingServer: !process.env.CI,
+    // Default to a fresh build+start every run so e2e never tests a stale dist.
+    // Opt into reuse for fast local iteration with PANOP_REUSE=1 (after a manual build).
+    reuseExistingServer: !process.env.CI && process.env.PANOP_REUSE === "1",
     timeout: 180_000,
     stdout: "pipe",
     stderr: "pipe",
