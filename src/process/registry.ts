@@ -188,7 +188,7 @@ export class ProcessRegistry {
     }
   }
 
-  async halt(upid: string, correlationId: string): Promise<void> {
+  async halt(upid: string, correlationId: string, trigger = "panic"): Promise<void> {
     this.requireLive(upid);
     await this.client.halt(upid);
     this.patch(upid, { state: "dead", selected: false, lastAction: "halt", updatedAtMs: this.now() });
@@ -196,7 +196,7 @@ export class ProcessRegistry {
     if (this.#selectedUPID === upid) {
       this.#selectedUPID = null;
     }
-    this.trace("process.halt", correlationId, upid, { trigger: "panic" });
+    this.trace("process.halt", correlationId, upid, { trigger });
   }
 
   select(upid: string, correlationId: string): void {
