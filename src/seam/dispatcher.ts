@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { upgradeWebSocket } from "hono/bun";
 import { dispatchedActionSchema, type DispatchedAction, type LogEvent } from "../types";
 import { TraceProcessor } from "../obs/trace";
+import { summarizeFleetStatus } from "../process/registry";
 import { CallsignAllocator } from "../routing/callsigns";
 import { createCorrelationRecord, type CorrelationStore, type CorrelationRecord } from "./correlation-store";
 import type { SmithersClient, SpawnSeed } from "./smithers-client";
@@ -121,13 +122,7 @@ export class SeamDispatcher {
 
   async statusSummary(): Promise<string> {
     const active = await this.correlations.allActive();
-    if (active.length === 0) {
-      return "No active processes.";
-    }
-    const summary = active
-      .map((record) => `${record.callsign ?? record.upid} ${record.state}`)
-      .join("; ");
-    return clampWords(summary, 15);
+    return summarizeFleetStatus(active);
   }
 
   private async statusAck(action: DispatchedAction, startedAtMs: number): Promise<DispatchAck> {

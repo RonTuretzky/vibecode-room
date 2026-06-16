@@ -9,6 +9,8 @@ import { FileCorrelationStore, MemoryCorrelationStore } from "../../src/seam/cor
 import { SeamDispatcher } from "../../src/seam/dispatcher";
 import { GatewaySmithersClient, InProcessGatewayTransport } from "../../src/seam/smithers-client";
 import { SteeringWindowManager } from "../../src/routing/steering-window";
+import { ProcessRegistry, CAPACITY_REFUSAL_ACK } from "../../src/process/registry";
+import { MemorySmithersClient } from "../../src/process/test-helpers";
 
 const tempDirs: string[] = [];
 
@@ -290,6 +292,60 @@ describe("seam durability recovery e2e", () => {
       closeRuntime(recovered);
     }
   }, 10_000);
+});
+
+describe("process registry fleet e2e", () => {
+  test("voice fleet script steers Atlas, pauses Bravo, leaves unselected processes advancing, and refuses a third spawn", async () => {
+    const client = new MemorySmithersClient();
+    const traces: unknown[] = [];
+    const output: unknown[] = [];
+    const registry = new ProcessRegistry({
+      client,
+      sessionId: "fleet-registry-e2e",
+      onTrace: (event) => traces.push(event),
+      onOutput: (decision) => output.push(decision),
+    });
+
+    const atlas = await registry.spawn({ correlationId: "corr-atlas", upid: "upid-atlas", callsign: "Atlas", workflow: "wf" });
+    const bravo = await registry.spawn({ correlationId: "corr-bravo", upid: "upid-bravo", callsign: "Bravo", workflow: "wf" });
+    expect(atlas.accepted).toBe(true);
+    expect(bravo.accepted).toBe(true);
+
+    await registry.steer("upid-atlas", { utterance: "Atlas, make it faster" }, "corr-atlas-steer");
+    const bravoBeforePause = registry.records().find((record) => record.upid === "upid-bravo");
+    await registry.pause("upid-bravo", "corr-bravo-pause");
+
+    expect(registry.records().find((record) => record.upid === "upid-atlas")).toEqual(
+      expect.objectContaining({ state: "planning", progressSeq: 1 }),
+    );
+    expect(registry.records().find((record) => record.upid === "upid-bravo")).toEqual(
+      expect.objectContaining({ ...bravoBeforePause, state: "paused", lastAction: "pause" }),
+    );
+    expect(client.calls.filter((call) => call.name === "pause")).toEqual([{ name: "pause", upid: "upid-bravo" }]);
+
+    await registry.resume("upid-bravo", "corr-bravo-resume");
+    registry.clearSelection("corr-unselected");
+    registry.advanceAutonomousTick("corr-unselected-tick-1");
+    registry.advanceAutonomousTick("corr-unselected-tick-2");
+
+    expect(registry.records()).toEqual([
+      expect.objectContaining({ upid: "upid-atlas", selected: false, state: "active", progressSeq: 3 }),
+      expect.objectContaining({ upid: "upid-bravo", selected: false, state: "active", progressSeq: 2 }),
+    ]);
+
+    const beforeThird = registry.records();
+    const third = await registry.spawn({ correlationId: "corr-third", upid: "upid-charlie", callsign: "Charlie", workflow: "wf" });
+    expect(third).toEqual(expect.objectContaining({ accepted: false, spokenAck: CAPACITY_REFUSAL_ACK }));
+    expect(registry.records()).toEqual(beforeThird);
+    expect(output).toContainEqual(expect.objectContaining({ channel: "tts", text: CAPACITY_REFUSAL_ACK }));
+    expect(traces).toContainEqual(
+      expect.objectContaining({
+        event: "spawn.refused",
+        correlationId: "corr-third",
+        meta: expect.objectContaining({ reason: "capacity" }),
+      }),
+    );
+  });
 });
 
 function createFleetControlRuntime(label: string, dbPath: string) {
