@@ -1,4 +1,5 @@
 {"id":"repo-access-source-build","behavior":"github.com/jameslbarnes/cue is accessible and built from source","phase":"red","status":"failed-as-expected","error":"expect(received).toBe(expected)\n\nExpected: \"built\"\nReceived: \"not-built\"\n"}
+<<<<<<<<< HEAD
 <<<<<<< conflict 1 of 1
 %%%%%%% diff from: pvqrmsly 0f308b21 "Fix hot-loop subscription probe evidence" (parents of rebased revision)
 \\\\\\\        to: pvqrmsly 25bdbc88 "Fix hot-loop subscription probe evidence" (rebase destination)
@@ -7,6 +8,11 @@
 +++++++ twpwtqzn 40e324bc (rebased revision)
 {"id":"text-cue-latency","behavior":"TextCue-triggered harness decision resolves inside the hard earcon budget","phase":"red","status":"failed-as-expected","error":"expect(received).toBeLessThanOrEqual(expected)\n\nExpected: <= 50\nReceived: 80.03658400000131\n"}
 >>>>>>> conflict 1 of 1 ends
+||||||||| parent of e2baae2 (feat(probe-streaming-tts))
+{"id":"text-cue-latency","behavior":"TextCue-triggered harness decision resolves inside the hard earcon budget","phase":"red","status":"failed-as-expected","error":"expect(received).toBeLessThanOrEqual(expected)\n\nExpected: <= 50\nReceived: 84.30704100000003\n"}
+=========
+{"id":"text-cue-latency","behavior":"TextCue-triggered harness decision resolves inside the hard earcon budget","phase":"red","status":"failed-as-expected","error":"expect(received).toBeLessThanOrEqual(expected)\n\nExpected: <= 50\nReceived: 81.40750000000003\n"}
+>>>>>>>>> e2baae2 (feat(probe-streaming-tts))
 {"id":"cue-policy-primitives","behavior":"TextCue, SpeakerWordCue, IdleCue, WordCountCue, IntervalCue, and cooldownSeconds semantics are evidenced","phase":"red","status":"failed-as-expected","error":"expect(received).toBe(expected)\n\nExpected: true\nReceived: false\n"}
 {"id":"observe-pass-first-class","behavior":"observe.pass is a named, loggable, first-class tool result and trace entry","phase":"red","status":"failed-as-expected","error":"expect(received).toBe(expected)\n\nExpected: \"missing.pass\"\nReceived: \"observe.pass\"\n"}
 {"id":"two-programs-mapped-action-tool","behavior":"two independent Programs route independently through MappedActionTool schemas","phase":"red","status":"failed-as-expected","error":"expect(received).toEqual(expected)\n\n  [\n-   \"panopticon.spawn\",\n+   \"panopticon.suggest\",\n+   \"panopticon.steer\",\n  ]\n\n- Expected  - 1\n+ Received  + 2\n"}

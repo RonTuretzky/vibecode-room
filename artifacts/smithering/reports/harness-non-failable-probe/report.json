@@ -3,6 +3,7 @@
   "status": "failed",
   "summary": "no failable assertion",
   "correlationId": "probe-harness-test-non-failable",
+<<<<<<<<< HEAD
 <<<<<<< conflict 1 of 1
 %%%%%%% diff from: pvqrmsly 0f308b21 "Fix hot-loop subscription probe evidence" (parents of rebased revision)
 \\\\\\\        to: pvqrmsly 25bdbc88 "Fix hot-loop subscription probe evidence" (rebase destination)
@@ -14,6 +15,13 @@
   "startedAt": "2026-06-15T23:31:09.672Z",
   "finishedAt": "2026-06-15T23:31:09.672Z",
 >>>>>>> conflict 1 of 1 ends
+||||||||| parent of e2baae2 (feat(probe-streaming-tts))
+  "startedAt": "2026-06-15T05:17:09.625Z",
+  "finishedAt": "2026-06-15T05:17:09.626Z",
+=========
+  "startedAt": "2026-06-15T23:30:22.152Z",
+  "finishedAt": "2026-06-15T23:30:22.152Z",
+>>>>>>>>> e2baae2 (feat(probe-streaming-tts))
   "assertions": [
     {
       "id": "cannot-fail",
