@@ -31,4 +31,5 @@ playwright-report/
 # Local capture/debug artifacts (machine-specific; not shared)
 /inspector-live.png
 /progress-slideshow.png
+/panopticon-projector-desktop.png
 artifacts/smithering/server-logs/
