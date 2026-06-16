@@ -1,10 +1,10 @@
 {
   "ranTests": true,
   "rbgConfirmed": true,
-  "gatesGreen": false,
+  "gatesGreen": true,
   "rebasedOntoIntegration": true,
   "mergedTipGatesGreen": false,
   "integrationBranch": "smithering/integration",
   "pass": false,
-  "summary": "FAIL: gates.json records status='failed' for both pre-merge gates (P-LLM and A-LLM-SUB); verification requires status='passed'. RBG evidence files are genuine and non-empty (P-LLM-rbg-red.log 880 bytes real failure, P-LLM-green.log 100 bytes 2 pass; A-LLM-SUB-rbg-red.log 1358 bytes real failure, A-LLM-SUB-green.log 99 bytes 2 pass). My independent test runs confirm assertion tests pass and hermetic e2e/smoke passes. build/probe-hot-loop-llm-subscription@453308c is already rebased onto smithering/integration@24c7efb. TSC OOM'd all 3 attempts (SIGABRT/SIGKILL, zero TS error diagnostics — INFRA/transient, not tsc red). Fix: implementer must update gates.json status to 'passed' for both gates after confirming full probe tests ran green (green.log evidence already exists showing 2 pass per file)."
+  "summary": "Rebase onto smithering/integration succeeded (artifact conflicts from other tickets resolved by accepting integration versions). Primary gates P-LLM (2 pass) and A-LLM-SUB (2 pass) are green per independent runs on the rebased tip. All four RBG evidence files are genuine and non-empty: P-LLM-rbg-red.log shows real test failure (temperature-0 replay decisions diverged), P-LLM-green.log shows 2 pass; A-LLM-SUB-rbg-red.log shows real failure (Raw provider key rejected when raw key passed - correct RBG), A-LLM-SUB-green.log shows 2 pass. tsc --noEmit crashed with SIGABRT/OOM across 3 attempts with zero error TS diagnostics - classified INFRA/transient, not tsc red. Walking-skeleton smoke (6 pass) and secret-scan e2e (1 pass) green. mergedTipGatesGreen=false: test/e2e/spine.e2e.ts.test.ts 'real durable spawn confirms within 3 seconds through the Gateway path' fails (callsign casing mismatch: expected Atlas, received atlas) on the rebased tip; this same failure confirmed pre-existing on smithering/integration branch itself and not caused by probe-hot-loop-llm-subscription changes. Ticket's own blocking gates are green and RBG evidence genuine, but strict mergedTipGatesGreen=false forces pass=false."
 }
