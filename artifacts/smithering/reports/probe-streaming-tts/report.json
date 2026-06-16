@@ -1,10 +1,10 @@
 {
   "probeId": "probe-streaming-tts",
-  "status": "failed",
-  "summary": "probe assertion failed",
+  "status": "passed",
+  "summary": "probe assertions were failable and passed",
   "correlationId": "p-tts-streaming-selection",
-  "startedAt": "2026-06-15T23:30:23.700Z",
-  "finishedAt": "2026-06-15T23:30:25.516Z",
+  "startedAt": "2026-06-16T01:54:05.264Z",
+  "finishedAt": "2026-06-16T01:54:06.340Z",
   "assertions": [
     {
       "id": "candidate-matrix",
@@ -39,14 +39,14 @@
       "behavior": "configured real TTS candidates are benchmarked by time-to-first-audio-byte and the winner is <=200 ms",
       "phase": "red",
       "status": "failed-as-expected",
-      "error": "expect(received).toBeLessThanOrEqual(expected)\n\nExpected: <= 20\nReceived: 618.1408340000003\n"
+      "error": "expect(received).toBeLessThanOrEqual(expected)\n\nExpected: <= 20\nReceived: 65.52825000000303\n"
     },
     {
       "id": "precache-fixed-state-phrases",
       "behavior": "five fixed state phrases are pre-cached as static clips and play from memory in <100 ms",
       "phase": "red",
       "status": "failed-as-expected",
-      "error": "expect(received).toBeLessThanOrEqual(expected)\n\nExpected: <= 100\nReceived: 127.10662500000035\n"
+      "error": "expect(received).toBeLessThanOrEqual(expected)\n\nExpected: <= 100\nReceived: 131.10583300000872\n"
     },
     {
       "id": "secret-redaction",
@@ -83,15 +83,13 @@
       "id": "first-audio-byte-budget-and-selection",
       "behavior": "configured real TTS candidates are benchmarked by time-to-first-audio-byte and the winner is <=200 ms",
       "phase": "green",
-      "status": "failed",
-      "error": "expect(received).toEqual(expected)\n\n- []\n+ [\n+   \"OpenAI /v1/audio/speech was fastest but measured 535 ms first audio byte, above the 200 ms budget\",\n+   \"candidate benchmark incomplete; missing credentials for elevenlabs, cartesia, playht\",\n+ ]\n\n- Expected  - 1\n+ Received  + 4\n"
+      "status": "passed"
     },
     {
       "id": "precache-fixed-state-phrases",
       "behavior": "five fixed state phrases are pre-cached as static clips and play from memory in <100 ms",
       "phase": "green",
-      "status": "failed",
-      "error": "cannot pre-cache selected-provider state clips because P-TTS has no selected provider"
+      "status": "passed"
     },
     {
       "id": "secret-redaction",

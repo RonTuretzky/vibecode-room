@@ -3,25 +3,8 @@
   "status": "passed",
   "summary": "probe assertions were failable and passed",
   "correlationId": "probe-harness-test-redaction",
-<<<<<<<<< HEAD
-<<<<<<< conflict 1 of 1
-%%%%%%% diff from: pvqrmsly 0f308b21 "Fix hot-loop subscription probe evidence" (parents of rebased revision)
-\\\\\\\        to: pvqrmsly 25bdbc88 "Fix hot-loop subscription probe evidence" (rebase destination)
--  "startedAt": "2026-06-15T05:17:09.628Z",
--  "finishedAt": "2026-06-15T05:17:09.628Z",
-+  "startedAt": "2026-06-15T23:30:15.664Z",
-+  "finishedAt": "2026-06-15T23:30:15.665Z",
-+++++++ twpwtqzn 40e324bc (rebased revision)
-  "startedAt": "2026-06-15T23:31:09.675Z",
-  "finishedAt": "2026-06-15T23:31:09.675Z",
->>>>>>> conflict 1 of 1 ends
-||||||||| parent of e2baae2 (feat(probe-streaming-tts))
-  "startedAt": "2026-06-15T05:17:09.628Z",
-  "finishedAt": "2026-06-15T05:17:09.628Z",
-=========
-  "startedAt": "2026-06-15T23:30:22.156Z",
-  "finishedAt": "2026-06-15T23:30:22.157Z",
->>>>>>>>> e2baae2 (feat(probe-streaming-tts))
+  "startedAt": "2026-06-16T01:54:03.857Z",
+  "finishedAt": "2026-06-16T01:54:03.858Z",
   "assertions": [
     {
       "id": "redacts-errors",
