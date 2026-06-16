@@ -70,7 +70,12 @@ function eventsResponse(): Response {
 
 function publish(): void {
   for (const subscriber of subscribers) {
-    subscriber(snapshot);
+    try {
+      subscriber(snapshot);
+    } catch {
+      // A closed/errored stream must not abort the whole broadcast — prune it.
+      subscribers.delete(subscriber);
+    }
   }
 }
 
