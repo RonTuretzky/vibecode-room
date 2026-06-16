@@ -1,0 +1,113 @@
+$ PANOP_RBG_STALL_UNSELECTED=1 bun test src/process/registry.test.ts test/e2e/fleet.e2e.ts
+bun test v1.3.14 (0d9b296a)
+
+src/process/registry.test.ts:
+77 |     registry.clearSelection("corr-clear");
+78 | 
+79 |     registry.advanceAutonomousTick("corr-tick-1");
+80 |     registry.advanceAutonomousTick("corr-tick-2");
+81 | 
+82 |     expect(registry.records()).toEqual([
+                                    ^
+error: expect(received).toEqual(expected)
+
+@@ -1,14 +1,20 @@
+  [
+-   ObjectContaining {
+-     "progressSeq": 2,
++   {
++     "callsign": "virellium",
++     "lastAction": "spawn",
++     "progressSeq": 0,
++     "runId": "run-upid-a",
+      "selected": false,
+      "state": "active",
++     "updatedAtMs": 1781569645227,
+      "upid": "upid-a",
+    },
+-   ObjectContaining {
+-     "progressSeq": 2,
++   {
++     "callsign": "quoravex",
++     "lastAction": "spawn",
++     "progressSeq": 0,
++     "runId": "run-upid-b",
+      "selected": false,
+      "state": "active",
++     "updatedAtMs": 1781569645227,
+      "upid": "upid-b",
+
+- Expected  - 4
++ Received  + 12
+
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/process-registry-lifecycle-fleet/src/process/registry.test.ts:82:32)
+(fail) process registry > AC13.3 unselected processes keep advancing and selection never pauses siblings [1.06ms]
+
+test/e2e/fleet.e2e.ts.test.ts:
+timestamp=2026-06-16T00:27:25.709Z level=INFO fiber=#5 message="Gateway run started" gateway:run=0ms runId=run-atlas transport=ws triggeredBy=fleet-control role=operator workflow=panopticon-fleet-control service=smithers source=user userId=fleet-control resume=false connectionId=fleet-control:connection
+529 |     if (response.ok && response.payload.status === status) {
+530 |       return;
+531 |     }
+532 |     await sleep(20);
+533 |   }
+534 |   throw new Error(`Timed out waiting for ${runId} to reach ${status}`);
+                  ^
+error: Timed out waiting for run-bravo to reach waiting-event
+      at waitForStatus (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/process-registry-lifecycle-fleet/test/e2e/fleet.e2e.ts:534:13)
+      at async <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/process-registry-lifecycle-fleet/test/e2e/fleet.e2e.ts:129:13)
+(fail) seam durability recovery e2e > seam steering and per-process pause stay isolated across two durable runs [5279.47ms]
+timestamp=2026-06-16T00:27:30.957Z level=INFO fiber=#724 message="Gateway run started" gateway:run=0ms runId=run-fleet-001 transport=ws triggeredBy=fleet-initial role=operator workflow=panopticon-fleet service=smithers source=user userId=fleet-initial resume=false connectionId=fleet-initial:connection
+timestamp=2026-06-16T00:27:31.031Z level=INFO fiber=#908 message="getNodeOutput completed" runId=run-fleet-001 durationMs=1.2200419999999212 nodeId=checkpoint status=produced iteration=0 rowBytes=58 service=smithers
+timestamp=2026-06-16T00:27:31.238Z level=INFO fiber=#938 message="getNodeOutput completed" runId=run-fleet-001 durationMs=0.48250000000007276 nodeId=checkpoint status=produced iteration=0 rowBytes=58 service=smithers
+timestamp=2026-06-16T00:27:31.240Z level=INFO fiber=#954 message="Gateway run started" gateway:run=0ms runId=run-fleet-001 transport=ws triggeredBy=fleet-recovered role=operator workflow=panopticon-fleet service=smithers source=user userId=fleet-recovered resume=true connectionId=fleet-recovered:connection
+timestamp=2026-06-16T00:27:31.242Z level=INFO fiber=#978 message="getNodeOutput completed" runId=run-fleet-001 durationMs=0.786167000000205 nodeId=complete errorCode=NodeNotFound status=error iteration=0 rowBytes=0 service=smithers
+timestamp=2026-06-16T00:27:31.265Z level=INFO fiber=#1010 message="getNodeOutput completed" runId=run-fleet-001 durationMs=0.08170799999970768 nodeId=complete errorCode=NodeNotFound status=error iteration=0 rowBytes=0 service=smithers
+timestamp=2026-06-16T00:27:31.290Z level=INFO fiber=#1140 message="getNodeOutput completed" runId=run-fleet-001 durationMs=0.9877919999998994 nodeId=complete status=pending iteration=0 rowBytes=0 service=smithers
+timestamp=2026-06-16T00:27:31.312Z level=INFO fiber=#1214 message="getNodeOutput completed" runId=run-fleet-001 durationMs=0.42479200000070705 nodeId=complete status=produced iteration=0 rowBytes=93 service=smithers
+timestamp=2026-06-16T00:27:31.518Z level=INFO fiber=#1216 message="Gateway run completed" gateway:run=0ms runId=run-fleet-001 status=finished workflow=panopticon-fleet service=smithers source=user
+326 |     await registry.resume("upid-bravo", "corr-bravo-resume");
+327 |     registry.clearSelection("corr-unselected");
+328 |     registry.advanceAutonomousTick("corr-unselected-tick-1");
+329 |     registry.advanceAutonomousTick("corr-unselected-tick-2");
+330 | 
+331 |     expect(registry.records()).toEqual([
+                                     ^
+error: expect(received).toEqual(expected)
+
+@@ -1,14 +1,20 @@
+  [
+-   ObjectContaining {
+-     "progressSeq": 3,
++   {
++     "callsign": "atlas",
++     "lastAction": "steer",
++     "progressSeq": 1,
++     "runId": "run-upid-atlas",
+      "selected": false,
+      "state": "active",
++     "updatedAtMs": 1781569651525,
+      "upid": "upid-atlas",
+    },
+-   ObjectContaining {
+-     "progressSeq": 2,
++   {
++     "callsign": "bravo",
++     "lastAction": "resume",
++     "progressSeq": 0,
++     "runId": "run-upid-bravo",
+      "selected": false,
+      "state": "active",
++     "updatedAtMs": 1781569651525,
+      "upid": "upid-bravo",
+
+- Expected  - 4
++ Received  + 12
+
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/process-registry-lifecycle-fleet/test/e2e/fleet.e2e.ts:331:32)
+(fail) process registry fleet e2e > voice fleet script steers Atlas, pauses Bravo, leaves unselected processes advancing, and refuses a third spawn [1.36ms]
+
+ 7 pass
+ 3 fail
+ 38 expect() calls
+Ran 10 tests across 2 files. [6.31s]
+exit=1

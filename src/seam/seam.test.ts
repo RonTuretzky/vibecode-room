@@ -56,7 +56,7 @@ describe("Cue Smithers seam dispatcher", () => {
       "halt",
       "pause",
     ]);
-    await expect(dispatcher.statusSummary()).resolves.toBe("Bravo paused; Atlas planning");
+    await expect(dispatcher.statusSummary()).resolves.toBe("Bravo paused; mavolune planning");
     expect(await dispatcher.dispatch({ ...spawnAction(), type: "approve" })).toEqual(
       expect.objectContaining({ accepted: false }),
     );
@@ -343,7 +343,7 @@ function spawnAction(): DispatchedAction {
       runId: "run-seam-001",
       workflow: "panopticon-test",
       steeringWindowId: "window-seam-001",
-      callsign: "Atlas",
+      callsign: "mavolune",
       seed: "Build the seam",
     },
     correlationId: "corr-spawn",

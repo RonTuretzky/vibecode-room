@@ -161,6 +161,9 @@ export class SteeringWindowManager {
     let instruction = text;
 
     if (selected !== undefined) {
+      if (callsignMatch === null) {
+        throw new Error("Selected callsign without a callsign match.");
+      }
       this.#window = {
         windowId: `steer-${selected.upid}-${++this.#sequence}`,
         targetUPID: selected.upid,
@@ -235,7 +238,7 @@ export class SteeringWindowManager {
       ]);
     }
 
-    const windowSnapshot = cloneWindow({ ...window, targetUPID });
+    const windowSnapshot: SteeringWindowState = { ...window, targetUPID };
     return {
       kind: "routed",
       targetUPID,

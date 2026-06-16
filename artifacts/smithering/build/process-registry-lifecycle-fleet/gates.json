@@ -1,0 +1,74 @@
+[
+  {
+    "criterionId": "AC8.2",
+    "method": "unit_test",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/process-registry-lifecycle-fleet/evidence/AC8.2-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/process-registry-lifecycle-fleet/evidence/AC8.2-green.log"
+  },
+  {
+    "criterionId": "AC13.1",
+    "method": "e2e_test",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/process-registry-lifecycle-fleet/evidence/AC13.1-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/process-registry-lifecycle-fleet/evidence/AC13.1-green.log"
+  },
+  {
+    "criterionId": "AC13.3",
+    "method": "e2e_test",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/process-registry-lifecycle-fleet/evidence/AC13.3-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/process-registry-lifecycle-fleet/evidence/AC13.3-green.log"
+  },
+  {
+    "criterionId": "AC15.2-LIFECYCLE",
+    "method": "integration_test",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/process-registry-lifecycle-fleet/evidence/AC15.2-LIFECYCLE-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/process-registry-lifecycle-fleet/evidence/AC15.2-LIFECYCLE-green.log"
+  },
+  {
+    "criterionId": "AC15.2-ARCHIVE",
+    "method": "integration_test",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/process-registry-lifecycle-fleet/evidence/AC15.2-ARCHIVE-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/process-registry-lifecycle-fleet/evidence/AC15.2-ARCHIVE-green.log"
+  },
+  {
+    "criterionId": "AC15.2-RESOURCE",
+    "method": "integration_test",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/process-registry-lifecycle-fleet/evidence/AC15.2-RESOURCE-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/process-registry-lifecycle-fleet/evidence/AC15.2-RESOURCE-green.log"
+  },
+  {
+    "criterionId": "HOST-HEADROOM",
+    "method": "integration_test",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/process-registry-lifecycle-fleet/evidence/HOST-HEADROOM-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/process-registry-lifecycle-fleet/evidence/HOST-HEADROOM-green.log"
+  },
+  {
+    "criterionId": "AC15.3",
+    "method": "e2e_test",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/process-registry-lifecycle-fleet/evidence/AC15.3-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/process-registry-lifecycle-fleet/evidence/AC15.3-green.log"
+  }
+]

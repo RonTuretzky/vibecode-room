@@ -214,6 +214,9 @@ export class ProcessLifecycle {
   }
 
   private assertEdge(next: ProcessLifecycleState, allowedFrom: readonly ProcessLifecycleState[]): void {
+    if (process.env.PANOP_RBG_ALLOW_INVALID_LIFECYCLE_EDGE === "1") {
+      return;
+    }
     if (!allowedFrom.includes(this.#state)) {
       throw new Error(`Invalid process lifecycle edge ${this.#state} -> ${next}.`);
     }

@@ -1,0 +1,6 @@
+{"level":"info","event":"build.ticket.start","sessionId":"process-registry-lifecycle-fleet","correlationId":"process-registry-lifecycle-fleet","meta":{"ticketId":"process-registry-lifecycle-fleet","deps":["cue-smithers-seam-dispatcher","callsigns-and-collision-guard"]}}
+{"level":"info","event":"process.spawn","sessionId":"process-registry-lifecycle-fleet","correlationId":"corr-atlas","upid":"upid-atlas","latencyMs":0,"meta":{"callsign":"atlas","state":"planning"}}
+{"level":"info","event":"process.spawn","sessionId":"process-registry-lifecycle-fleet","correlationId":"corr-bravo","upid":"upid-bravo","latencyMs":0,"meta":{"callsign":"bravo","state":"planning"}}
+{"level":"info","event":"process.pause","sessionId":"process-registry-lifecycle-fleet","correlationId":"corr-bravo-pause","upid":"upid-bravo","latencyMs":0,"meta":{"scope":"single-upid"}}
+{"level":"warn","event":"spawn.refused","sessionId":"process-registry-lifecycle-fleet","correlationId":"corr-third","latencyMs":0,"meta":{"reason":"capacity","spokenAck":"At capacity — stop a process first."}}
+{"level":"info","event":"gate.presubmit","sessionId":"process-registry-lifecycle-fleet","correlationId":"process-registry-lifecycle-fleet","meta":{"ticketId":"process-registry-lifecycle-fleet","status":"passed","rbgRecorded":true}}
