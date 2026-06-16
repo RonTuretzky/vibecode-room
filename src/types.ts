@@ -6,6 +6,7 @@ export const runEventKinds = ["state", "output", "blocker", "completed"] as cons
 export const logLevels = ["debug", "info", "warn", "error"] as const;
 export const earconIds = ["E1", "E2", "E3", "E4", "E5", "mute-tone"] as const;
 export const ackIds = ["route-suggestion", "route-steer", "route-declined", "working"] as const;
+export const muteReleaseTriggers = ["unmute-word", "unmute-button"] as const;
 
 export const decisionMetaSchema = z.record(z.string(), z.unknown());
 export type DecisionMeta = z.infer<typeof decisionMetaSchema>;
@@ -126,6 +127,9 @@ export type EarconId = z.infer<typeof earconIdSchema>;
 
 export const ackIdSchema = z.enum(ackIds);
 export type AckId = z.infer<typeof ackIdSchema>;
+
+export const muteReleaseTriggerSchema = z.enum(muteReleaseTriggers);
+export type MuteReleaseTrigger = z.infer<typeof muteReleaseTriggerSchema>;
 
 export const outputDecisionSchema = z.discriminatedUnion("channel", [
   z.object({ channel: z.literal("silent") }).strict(),
