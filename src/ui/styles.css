@@ -67,7 +67,9 @@ button {
   position: relative;
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
+  /* A projector dashboard is bounded to the screen — panels scroll internally,
+     the page never scrolls. This is also what lets the trace rail's NEW pill engage. */
+  height: 100vh;
   overflow: hidden;
   isolation: isolate;
 }

@@ -246,6 +246,8 @@ test.describe("projector UI — trace NEW pill (auto-scroll disabled)", () => {
       }));
       (window as any).__PANOPTICON__.applySnapshot({ trace });
     });
+    // Wait for React to commit all 80 rows so the rail genuinely overflows before we scroll.
+    await expect(page.locator('[data-testid="trace-event"]')).toHaveCount(80);
     // Scroll the trace rail up (away from the bottom).
     await page.locator(".trace-scroll").evaluate((el) => {
       el.scrollTop = 0;
