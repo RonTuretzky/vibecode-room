@@ -1,7 +1,8 @@
 # Panopticon — Design Document (V0, final)
 
-> **Audio-only. Voice is the sole operational modality.** Design, build, and verify as if no
-> screen and no keyboard exist on any critical path.
+> **Audio-first, projector-aware. Voice is the primary routine control modality.** Design, build,
+> and verify the spoken loop as if no projector and no keyboard exist on the routine critical path,
+> while also shipping the required shared projector UI for room context.
 >
 > Upstream (read from disk, not assumed): `docs/planning/01-prd.md` (requirements & binding
 > decisions D1–D6), `artifacts/smithering/research/design-art.md` (design research),
@@ -473,39 +474,45 @@ classification.** That is a future addition (sandbox the run), not a V0 permissi
 
 ---
 
-## 9. Observability board design (REQ-16) — read-only mission-control console
+## 9. Projector UI design (REQ-16) — shared mission-control surface
 
-The board is a **debugging tool with zero operational controls** — every pixel is a display. It is
-served as an **optional** HTTP page; the system never waits for board connections and never alters
-behavior based on board presence (board serving is **off the critical path of every voice flow**).
+The projector UI is a **required shared context surface**, not a command console. It is served as a
+Vite app and should be visible on the room projector during normal use. The spoken loop remains
+authoritative: the system never waits for projector connections and routine spawn/steer/status flows
+must still pass with the projector closed. The UI may expose only bounded recovery/safety controls
+already specified elsewhere: on-screen unmute and emergency kill-all.
 
-**Layout (NASA MOCR / ATC STARS):** listening indicator top-left (highest criticality), global state
-top-center, emergency-stop status top-right (Z-pattern scan); per-process panels (V0 max 2;
-empty-state "No second process running" when <2) showing callsign / state / last output / last
-action / UPID + a 5-event action log; a scrollable, **non-auto-scrolling** trace log at the bottom.
+**Layout (NASA MOCR / ATC STARS):** listening/mute indicator top-left (highest criticality), active
+cue and suggestion status top-center, emergency-stop status top-right (Z-pattern scan); per-process
+panels (V0 max 2; empty-state "No second process running" when <2) showing callsign / state / last
+spoken output / last action / UPID + a 5-event action log; a transcript-and-trace rail for recent
+observation → decision → action → outcome breadcrumbs. The UI must show meaningful visual content
+even before a live backend is attached by using a deterministic demo snapshot.
 
 **Color semantics (STARS/APCA on dark):** bg `#0a0a0a`; nominal/active `#00ff88`; paused/pending
 `#f5a623`; halted/error `#ff3b30`; selected/in-focus `#00bcd4` (cyan, the Echo active-listening
 color, **D-DD-20**); text `#e0e0e0`. **Violet/purple is prohibited** as a status color (STARS
 human-factors audit). **Blink** is reserved for exactly one state: emergency-stop triggered
 (**D-DD-09**). **Auto-scroll disabled**; a "NEW" indicator appears when
-events arrive while scrolled up — clicking it scrolls to bottom, the **only** click target and it is
-navigational, never operational (**D-DD-07/08**). Reference mockup:
-`artifacts/smithering/mockups/observability-board.html`.
+events arrive while scrolled up — clicking it scrolls to bottom and is navigational, not operational
+(**D-DD-07/08**). The only operational click targets are the bounded unmute/emergency controls named
+above. Reference mockup: `artifacts/smithering/mockups/observability-board.html`.
 
-### 9.1 Verify (board)
+### 9.1 Verify (projector UI)
 
-- **Unit/integration:** *read-only test* — assert the board exposes **no** mutating endpoint/handler
-  (*red-before-green:* add a POST route → test fails); *trace-schema test* — every record carries the
-  required ids/fields (§13.3); *causal-chain reconstruction test* — rebuild an utterance's full chain
+- **Unit/integration:** *projector contract test* — assert no general operational mutating endpoint/
+  handler exists beyond unmute/emergency (*red-before-green:* add a steer/spawn POST route → test
+  fails); *trace-schema test* — every record carries the required ids/fields (§13.3);
+  *causal-chain reconstruction test* — rebuild an utterance's full chain
   from recorded traces alone.
-- **E2e:** *board-non-authoritative test* — run the full REQ-5 canonical scenario with the board
-  server **down** and assert it still passes (AC16.2); then run with the board up and reconstruct the
-  loop from persisted traces only, asserting it matches the live run. *Red-before-green:* make a voice
-  flow await a board connection → the board-down scenario hangs/fails → proves the off-path guarantee
-  is actually tested.
-- **Third-party:** P-CUE HTTP/SSE routes (consumed read-only).
-- **Observability:** the board renders the §13.3 stream; it adds none of its own authority.
+- **E2e:** *projector-non-authoritative test* — run the full REQ-5 canonical scenario with the
+  projector server **down** and assert it still passes (AC16.3); then run the Vite projector app and
+  assert the required regions render; then reconstruct the loop from persisted traces only, asserting
+  it matches the live run. *Red-before-green:* make a voice flow await a projector connection → the
+  projector-down scenario hangs/fails → proves the off-path guarantee is actually tested.
+- **Third-party:** P-CUE HTTP/SSE routes (consumed by the projector).
+- **Observability:** the projector renders the §13.3 stream; it adds none of its own routine
+  authority.
 
 ---
 
@@ -729,7 +736,7 @@ test can go red where we use one.
 | The spine (§6.4) | stage-sequencer happy + 4 failure branches (RBG: drop ack) | canonical scenario ≥9/10; no-screen harness = 0 GUI events on critical path | all probes | one `correlationId` across loop |
 | Output policy (§7.2) | class→channel (ignored ambient=silent); 15-word guard (RBG: 16 words, remove guard); never-recite; silence budget | session TTS-tick ratio ≤10% (RBG: chatty build) | P-TTS, P-LLM | `output.decision` |
 | Execution posture (§8.2) | run-to-completion, no gate interposed (RBG: re-introduce blocking confirm) | destructive act runs to completion, no approval prompt | P-SMITHERS | `process.action{gated:false}` |
-| Board (§9.1) | read-only (RBG: add POST); trace-schema; causal-chain rebuild | board-down → REQ-5 still passes (RBG: await board → hangs) | P-CUE SSE | renders §13.3 stream |
+| Projector UI (§9.1) | projector contract (RBG: add general steer/spawn POST); trace-schema; causal-chain rebuild | projector-down → REQ-5 still passes; Vite app renders required regions (RBG: await projector → hangs) | P-CUE SSE | renders §13.3 stream |
 | Onboarding (§10.1) | consent once+idempotent (RBG: fire twice); near-miss; first-run VAD | consent first, names "mute"; disk scan = 0 audio | P-ASR, P-TTS | `session.start`, `onboarding.nearMiss` |
 | Latency (REQ-10) | ack scheduler within env budget; timeout→"working" earcon | ≥100 round-trips: p50<1 s, p95<1.5 s, earcon<300 ms; recorded baseline | P-ASR, P-TTS | latency spans `asr.final/decision/ack.emit` |
 | Durability/fleet (§11.2) | lifecycle edges; pre-kill archive; recovery equality | kill backend mid-run→resume; steer A, B byte-identical | P-SMITHERS | durable checkpoint log |

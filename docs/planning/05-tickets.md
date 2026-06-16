@@ -1,6 +1,6 @@
 # Panopticon — Ticket Breakdown (V0)
 
-> **Audio-only. Voice is the sole operational modality.** This document breaks the V0 implementation
+> **Audio-first with a required projector UI. Voice is the primary routine control modality.** This document breaks the V0 implementation
 > into **measurable, verifiable tickets**. Each ticket has a STABLE kebab-case id (it becomes a durable
 > Smithers task id — never an index/timestamp), self-contained instructions for a fresh-context agent,
 > `requirementIds` tracing to the PRD, a `verification[]` mix (command/e2e/agent-review) drawn from the
@@ -110,7 +110,7 @@ probes. Those amendments are first-class ticket content:
 *(Safety read-back hook and shell classifier are cut — V0 runs dangerously; safety later is process sandboxing.)*
 
 **Phase 7 — Onboarding, observability, the spine, acceptance e2es.**
-`onboarding-consent-persistence-guard`, `observability-trace-and-board`,
+`onboarding-consent-persistence-guard`, `projector-ui-and-observability`,
 `canonical-spine-and-no-screen-harness` → `latency-benchmark-suite`,
 `fleet-concurrency-and-durability-e2e`.
 
@@ -302,14 +302,17 @@ first-run VAD. *Verify:* command (scheduler/content/indicator/guard, RBG = drop 
 e2e (consent first, whole-session zero-audio scan, RBG = `.wav` write), agent-review (guard is a code
 invariant).
 
-#### `observability-trace-and-board` — *medium* — REQ-16 — depends on: `trace-processor-observability`, `cue-smithers-seam-dispatcher`
-§13 — causal-chain reconstruction across Cue JSONL + Smithers traces; OTel→Langfuse (P-OTEL); read-only
-React board (no mutating endpoint). *Verify:* command (reconstruction + board read-only, RBG = add POST),
-e2e (board-down → spine still passes, RBG = await board connection), agent-review (no-context debug).
+#### `projector-ui-and-observability` — *medium* — REQ-16 — depends on: `trace-processor-observability`, `cue-smithers-seam-dispatcher`
+§13 — causal-chain reconstruction across Cue JSONL + Smithers traces; OTel→Langfuse (P-OTEL);
+required Vite + React projector UI with meaningful shared visual content (listening/mute, active cue,
+suggestion status, fleet, spoken output, trace/transcript). No general operational controls; only
+bounded unmute/emergency may mutate state. *Verify:* command (reconstruction + projector contract +
+`bun run build`, RBG = add steer POST or remove required region), e2e (projector-down → spine still
+passes, RBG = await projector connection), agent-review (no-context debug + projector usefulness).
 
 #### `canonical-spine-and-no-screen-harness` — *large* — REQ-5/6/7/8 — depends on: `acceptance-spawn-flow`, `routing-dispatch-invariants`, `earcons-and-output-policy`, `process-registry-lifecycle-fleet`, `mute-controller`
 §10/§6 — integrate the wake→intent→action→confirm spine under one `correlationId`; stage-sequencer;
-no-screen harness; degradation test (fleet disabled → spine still passes). *Verify:* command
+projector-disabled/no-input harness; degradation test (fleet disabled → spine still passes). *Verify:* command
 (stage-sequencer happy + 4 failure branches, RBG = drop ack), e2e (≥9/10 + zero GUI events + degradation,
 RBG = broken dispatcher), agent-review (single-correlationId reconstruction, audible legibility).
 
@@ -344,7 +347,7 @@ checkpointing), e2e (silence ratio ≤10%, RBG = chatty build), agent-review (fl
 | REQ-13 — Minimal concurrent fleet | `process-registry-lifecycle-fleet`, `callsigns-and-collision-guard`, `fleet-concurrency-and-durability-e2e` |
 | REQ-14 — Non-voice emergency stop | `emergency-stop-control` |
 | REQ-15 — Durable processes | `process-registry-lifecycle-fleet`, `cue-smithers-seam-dispatcher`, `fleet-concurrency-and-durability-e2e`, `probe-smithers-durable-runs` |
-| REQ-16 — Observability surface + tracing | `trace-processor-observability`, `observability-trace-and-board` |
+| REQ-16 — Projector UI + tracing | `trace-processor-observability`, `projector-ui-and-observability` |
 | SEC-1 — Secret hygiene (PRD §6) | `subscription-credentials-redaction` |
 | engineering-only (ENG-T-01..10) | `walking-skeleton-smoke`, `shared-types-contract`, `record-replay-harness`, `provider-interface-doubles`, `trace-processor-observability`, `subscription-credentials-redaction`, `probe-suite-harness`, `audio-capture-asr-bridge` |
 

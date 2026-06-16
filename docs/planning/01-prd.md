@@ -1,9 +1,10 @@
 # Panopticon — Product Requirements Document (V0)
 
-> **Audio-only operating system for AI-agent work.** A small trusted team talks in a shared
+> **Audio-first operating system for AI-agent work, with a shared projector surface.** A small trusted team talks in a shared
 > room; Panopticon passively listens, sparingly proposes things to build, and — on a spoken
 > "yes" — spawns durable agent "processes" the room can steer by voice and operate alongside
-> one another. **Voice is the sole interaction modality.**
+> one another. **Voice is the primary control modality; a required projector UI shows live visual
+> context, process state, suggestions, traces, and bounded recovery controls such as unmute.**
 >
 > Altitude: this document states **end-user requirements only** — what the product must do for
 > the people in the room, the measurable bar for "done," and the tests that prove it. It does
@@ -38,12 +39,15 @@ So the bottleneck has moved. It is no longer "can a model do the work." It is: *
 humans express intent and operate many agents at once, hands-free, without drowning in command
 overhead or being talked over by their own tools.**
 
-**Panopticon's bet:** the missing interface is *ambient and audio-only*. The room talks; the
+**Panopticon's bet:** the missing interface is *ambient and audio-first*. The room talks; the
 system listens through **Cue** (continuous audio → transcript observations → cue policies →
 decide-or-`observe.pass`); when the room accepts a spoken proposal, Panopticon spawns a durable,
-steerable agent process. Because there is no screen on the critical path, "render the right
-thing" becomes **"tell the right thing"** — a process's output is a *spoken* summary it volunteers
-rarely (~90% of ticks are silent), never a rendered demo.
+steerable agent process. The projector is not a command console, but it is a product surface:
+it keeps the room oriented with live visual context, process state, suggestion cards, transcript
+snippets, trace/debug breadcrumbs, and bounded recovery controls. Because there is no screen on the
+critical path for routine operation, "render the right thing" becomes **"tell the right thing and
+show enough shared context"** — substantive process output is still a terse spoken summary, while
+the projector carries visual status and detail that would be wasteful to read aloud.
 
 **The single hardest thing — and the thing this product lives or dies on — is restraint.** In
 audio, a wrong suggestion does not sit ignorable in a sidebar; it **talks over the room**. The
@@ -64,9 +68,13 @@ touching a keyboard, mouse, or screen at any step.**
 These were decided by a human and are **binding**. Where they conflict with upstream
 recommendations, they win.
 
-- **D1 — Audio is the sole required modality** (q1). Every interaction loop is audio. A visual
-  surface is permitted **only** if it costs near-zero, is **non-authoritative**, and is **never on
-  the critical path**. Build and test the whole flow **as if no screen exists**.
+- **D1 — Audio-first control, required projector context** (q1, updated). Routine control loops are
+  spoken; the product must still be operable by voice when the projector is unavailable. A visual
+  projector surface is nevertheless required in V0 for shared room context: listening/mute state,
+  active cue, suggestions, process fleet, current spoken output, and trace/debug breadcrumbs. The
+  projector is non-authoritative for routine operation and must never be required for spawn/steer/
+  status flows. Bounded non-voice controls remain allowed where already specified: on-screen unmute
+  and emergency kill-all.
 - **D2 — Build on confirmed Cue primitives first** (q2). Cue is the substrate for agent
   interaction and command-triggering. Any extension we need lives in a **thin adapter layer we
   own**, so Cue gaps never block us. **Every place we must extend Cue is recorded as a risk.**
@@ -107,8 +115,9 @@ decisions above):
   per-user identity beyond speaker diarization labels (`domain.md` §5-Q1/Q8).
 - **The debugging engineer (secondary):** consults an **optional, read-only** observability
   surface to debug a stuck process. Never required to operate the product.
-- **Operable with zero screen and zero keyboard.** A blind user, or a room with no display, can
-  run the entire flow by voice alone.
+- **Operable with zero projector and zero keyboard for the core flow.** A blind user, or a room with
+  no display, can still run the routine flow by voice alone; a sighted room with a projector gets
+  the intended shared visual context.
 
 ---
 
@@ -241,7 +250,8 @@ or clicking.
 **Statement:** The end-to-end loop **wake/magic word → spoken intent → agent action → spoken
 confirmation** works reliably, hands-free, as the product's backbone (D5).
 **Acceptance criteria:**
-- AC5.1 The full loop completes hands-free with **no keyboard/mouse/screen** input at any step.
+- AC5.1 The full loop completes hands-free with **no keyboard/mouse/projector input** at any step;
+  the projector may display state but must not be required to complete the routine voice loop.
 - AC5.2 The loop succeeds end-to-end on **≥9 of 10** scripted live runs (the 12-minute demo
   scenario), with each failure attributable to a logged, identifiable cause.
 - AC5.3 Every stage transition is **audibly legible** (earcon or one-word ack) so the room always
@@ -473,25 +483,32 @@ state survives a process/host restart.
 - *Third-party:* Smithers durability/resume/`streamRunEvents` — see §6 probe P-SMITHERS.
 - *Observability:* durable checkpoint log with run-id, sequence, and state digest per checkpoint.
 
-### REQ-16 — Read-only observability surface + structured tracing (debug-only, off the critical path)
+### REQ-16 — Projector UI + structured tracing (shared context, off the routine control path)
 **Statement:** A later engineer with **no context** can debug a stuck process from traces alone; an
-**optional, read-only** visual board reflects live state but is never required to operate the
-product.
+**always-available projector UI** reflects live state for the room while remaining non-authoritative
+for routine operation.
 **Acceptance criteria:**
 - AC16.1 Every decision (including every `observe.pass`), action, routing choice, and process
   state transition is recorded with a **traceable id** (Cue session id, UPID, Smithers run-id) and
   is queryable after the fact.
-- AC16.2 The optional board is **strictly read-only** (no operational control) and **non-
-  authoritative**: with the board closed, every requirement above still passes (D1).
-- AC16.3 From traces alone (no live system), an engineer can reconstruct, for any given utterance,
+- AC16.2 The Vite projector UI loads in a browser and displays, at minimum: listening/mute state,
+  active cue, suggestion status, the two-process fleet with callsigns/states/last output, recent
+  spoken output, and a live trace/transcript strip.
+- AC16.3 The projector is **non-authoritative** for routine operation: with the projector closed,
+  every voice-loop requirement above still passes. It may expose only bounded recovery/safety
+  controls already required elsewhere (on-screen unmute and emergency kill-all), not general
+  steer/spawn/select controls.
+- AC16.4 From traces alone (no live system), an engineer can reconstruct, for any given utterance,
   the full chain: observation → decision → action → outcome.
 **Verification:**
-- *Unit/integration:* trace-schema test asserts required ids/fields on every record; "board is
-  read-only" test asserts the board exposes no mutating endpoint/handler; **causal-chain
-  reconstruction test** rebuilds an utterance's full chain purely from recorded traces.
+- *Unit/integration:* trace-schema test asserts required ids/fields on every record; projector
+  contract test asserts no general operational mutating route/handler exists beyond the bounded
+  unmute/emergency controls; **causal-chain reconstruction test** rebuilds an utterance's full chain
+  purely from recorded traces.
 - *E2e:* run a session, then — using **only** the persisted traces — programmatically reconstruct
   the canonical loop's chain and assert it matches the live run; run the full REQ-5 scenario with
-  the board disabled and assert it still passes.
+  the projector disabled and assert it still passes; run the Vite projector app and assert the
+  required visual regions render.
 - *Observability:* this requirement *is* the observability contract — leveled, structured logs with
   meaningful messages and stable ids across Cue, the dispatcher, and Smithers.
 
@@ -501,8 +518,9 @@ product.
 
 Adding any of these to V0 scope requires an explicit amendment to this PRD.
 
-- **NG-1 — No GUI/CLI as an operational surface.** No click/type/touch/drag/scroll control path.
-  The only visual surface is the optional read-only board (REQ-16).
+- **NG-1 — No GUI/CLI as the routine operational surface.** No click/type/touch/drag/scroll path may
+  replace voice for spawn, steer, status, pause/resume, or suggestion acceptance. The required
+  projector UI is for shared context and traceability, with only bounded unmute/emergency controls.
 - **NG-2 — No agent-mediated natural-language command parsing in V0.** Commands are the fixed magic-
   word set (REQ-7/D3); free-form NL command understanding is a fast-follow.
 - **NG-3 — No fleet beyond two concurrent processes**, and no fork/replay/advanced fleet controls
@@ -512,8 +530,9 @@ Adding any of these to V0 scope requires an explicit amendment to this PRD.
 - **NG-5 — No per-user phone pairing / QR mic onboarding.** Multi-speaker handling is diarization
   only; a phone, if used, is "just another audio input."
 - **NG-6 — No raw-audio persistence.** Transcript-only (REQ-1); raw audio is never stored.
-- **NG-7 — No visual "live HTML demo" as part of the product.** A suggestion's "demo" is the spoken
-  pitch + spoken MCQs; any HTML demo strip is an optional observability bonus only.
+- **NG-7 — No generated product demo as part of a suggestion.** A suggestion's "demo" is the spoken
+  pitch + spoken MCQs. The projector UI visualizes Panopticon's session state; it does not render
+  arbitrary demos for spawned tasks in V0.
 - **NG-8 — No on-device/local STT requirement in V0.** Hosted streaming providers are the V0
   default; local inference (whisper.cpp etc.) is a documented V1 fallback only.
 - **NG-9 — No Opus (or other premium model) in the always-on hot decision loop.** Cost-fit tiering:
@@ -597,7 +616,7 @@ referenced, is documentation of env-tunable knobs, not a hard guarantee.)
 ## 8. Verification at PRD altitude (user-visible acceptance — the V0 gate)
 
 V0 is accepted **only if** all of the following are demonstrated **live, hands-free, with no
-keyboard/mouse/screen on the critical path** (this is the user-visible restatement of REQ-1..16;
+keyboard/mouse/projector input on the routine critical path** (this is the user-visible restatement of REQ-1..16;
 each maps to its requirement's detailed tests):
 
 1. **V-1 (consent & mute):** Session starts with a spoken consent announcement; the listening
@@ -622,8 +641,9 @@ each maps to its requirement's detailed tests):
 9. **V-9 (durability):** A process keeps progressing while unselected and is recoverable to its
    last durable state after a backend restart. *(REQ-15)*
 10. **V-10 (debuggability):** From persisted traces alone, an engineer reconstructs any utterance's
-    full observation→decision→action→outcome chain; the read-only board is non-authoritative
-    (everything passes with it closed). *(REQ-16)*
+    full observation→decision→action→outcome chain; the projector UI is non-authoritative for
+    routine control (everything passes with it closed) while still providing shared visual context.
+    *(REQ-16)*
 
 ---
 
@@ -652,14 +672,15 @@ each maps to its requirement's detailed tests):
 
 ## 10. End-user interface artifacts
 
-Because the product is audio-only, the "interface" is sound. The artifacts that show *how it
-functions* are mockups of (a) the **canonical voice flow** as a storyboard, and (b) the **optional
-read-only observability board** — both with mock data:
+Because the product is audio-first, the "interface" is a combination of sound and shared projector
+state. The artifacts that show *how it functions* are mockups of (a) the **canonical voice flow** as
+a storyboard, and (b) the **required Vite projector UI** — both with mock data:
 
 - `artifacts/smithering/mockups/voice-flow-storyboard.html` — the canonical loop (REQ-5) rendered
   as an audio storyboard: room utterances, earcons, Cue decisions (incl. `observe.pass`), and TTS
   responses, with an audio legend (earcons vs. TTS per D6). This is the primary "how it functions"
   artifact.
-- `artifacts/smithering/mockups/observability-board.html` — the optional, read-only "mission
-  control" surface (REQ-16): process list with callsigns/states, listening indicator, active cue,
-  last action, magic-word legend, and a live trace log. Explicitly non-operational.
+- `artifacts/smithering/mockups/observability-board.html` — the projector "mission control" surface
+  (REQ-16): process list with callsigns/states, listening indicator, active cue, suggestion status,
+  last action/output, magic-word legend, bounded unmute/emergency affordances, and a live trace log.
+  Explicitly non-authoritative for routine operation.

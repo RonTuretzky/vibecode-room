@@ -1,6 +1,7 @@
 # Panopticon — Design Document (Draft V0)
 
-> **Audio-only. Voice is the sole operational modality.**
+> **Superseded assumption corrected:** Panopticon is audio-first with voice as the primary routine
+> control modality, and V0 includes a required shared projector UI for visual context.
 >
 > Upstream: `docs/planning/01-prd.md` (requirements), `artifacts/smithering/research/design-art.md`
 > (design research). This doc translates PRD requirements into concrete design decisions: layout
@@ -575,7 +576,8 @@ is trusted:
 - Mute isolation (speak "mute", assert no downstream observations or actions; "unmute"/button resumes)
 - Fleet isolation (steer A, assert B byte-identical state)
 - Durability recovery (kill backend mid-run, restart, assert resume from last checkpoint)
-- Board is non-authoritative (run canonical loop with board server down, assert it still passes)
+- Projector UI is non-authoritative for routine control (run canonical loop with projector server
+  down, assert it still passes)
 
 ### Observability requirements
 
@@ -607,7 +609,7 @@ memory, no agent assertion — only the structured log proves something happened
 | D-DD-08 | Auto-scroll on trace log | Disabled; "NEW" indicator appears, click to scroll | Auto-scrolling past readable speed during active operation makes the log worthless. The only click target on the board is the "NEW" scroll-to-bottom indicator — navigational, not operational. |
 | D-DD-09 | Blink policy | Blink reserved for one state only: emergency stop triggered | Blink fatigue is documented in STARS human-factors audit. Peripheral blink detection is the fastest human visual signal — it must not be wasted on non-critical states. (The destructive-read-back-pending state was removed with the safety gate, D-DD-06.) |
 | D-DD-10 | First-run silence threshold | Extended 50% during first 5 minutes | Smart speaker studies show natural mid-sentence pauses caused devices to cut off users during first-run. This is critical for onboarding confidence — one cut-off first command causes users to stop attempting. |
-| D-DD-11 | TTS word guard | Hard cap at 15 words, enforced in the pipeline before TTS submission | Spoken word count is the sole measure of output length in an audio-only system. The guard is a function in the output pipeline, not a guideline — it truncates/summarizes without exception. |
+| D-DD-11 | TTS word guard | Hard cap at 15 words, enforced in the pipeline before TTS submission | Spoken word count remains the measure of audio output length in the audio-first system. The guard is a function in the output pipeline, not a guideline — it truncates/summarizes without exception. |
 | D-DD-12 | Log event naming | Verb-noun convention: `process.spawn`, `route.pass`, `mute.engaged` | ATC naming rationale (design-art.md §7): verb-object naming reads in the order events occur, is faster to scan in log output, and is self-documenting without context. Consistent with PRD observability requirements. |
 | D-DD-13 | Cue integration posture | Thin adapter we own; build only on confirmed Cue primitives; record all required extensions as risks | PRD D2 binding decision. Any extension we need lives in our adapter layer so Cue gaps never block us. P-CUE probe is a P0 blocker — nothing above the adapter is built before the probe confirms the primitives. |
 | D-DD-14 | TTS provider selection | Unverified; selected by P-TTS probe (ElevenLabs Flash v3, Cartesia Sonic, PlayHT 3.0 Turbo are candidates) | Research covered ASR not TTS (PRD §6, P-TTS). The probe is also a benchmark. Target: first audio byte within 200ms of text submission. |

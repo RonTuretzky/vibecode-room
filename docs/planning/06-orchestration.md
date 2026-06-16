@@ -1,6 +1,6 @@
 # Panopticon — Implementation Orchestration (V0)
 
-> **Audio-only. Voice is the sole operational modality.** This document specifies **how the V0 tickets
+> **Audio-first with a required projector UI. Voice is the primary routine control modality.** This document specifies **how the V0 tickets
 > are actually built**: how they parallelize into worktrees, how work lands, which gates run where, which
 > model builds/reviews/verifies each ticket, how many workers run at once, what evidence every ticket
 > persists, and what each fresh-context worker is handed. Per the operating bar, **the verification plan
@@ -437,7 +437,7 @@ count), not the ticket count**.
 | 3 | 1 | `subscription-credentials-redaction` |
 | 4 | 4 | `probe-asr-deepgram` · `probe-hot-loop-llm-subscription` · `probe-streaming-tts` · `probe-cue-smithers-seam` |
 | 5 | 3 | `audio-capture-asr-bridge` · `earcons-and-output-policy` · `cue-smithers-seam-dispatcher` |
-| 6 | 3 | `cue-adapter-and-policies` · `onboarding-consent-persistence-guard` · `observability-trace-and-board` |
+| 6 | 3 | `cue-adapter-and-policies` · `onboarding-consent-persistence-guard` · `projector-ui-and-observability` |
 | 7 | 2 | `routing-dispatch-invariants` · `mute-controller` |
 | 8 | 3 | `callsigns-and-collision-guard` · `steering-window-lifecycle` · `intent-gate-semantic-check` |
 | 9 | 2 | `suggestion-engine` · `process-registry-lifecycle-fleet` |
@@ -469,7 +469,7 @@ Within and across waves the DAG decomposes into these **independent tracks** —
 - **Seam / fleet track**: `cue-smithers-seam-dispatcher`, `process-registry-lifecycle-fleet`,
   `emergency-stop-control`, `suggestion-engine`, `acceptance-spawn-flow`. *(The safety read-back hook and
   shell classifier are cut — V0 runs dangerously; safety, if wanted later, is process sandboxing.)*
-- **Observability track**: `observability-trace-and-board`.
+- **Observability/projector track**: `projector-ui-and-observability`.
 - **Integration / e2e harness track** (the convergence point): `canonical-spine-and-no-screen-harness` →
   `latency-benchmark-suite`, `fleet-concurrency-and-durability-e2e`.
 

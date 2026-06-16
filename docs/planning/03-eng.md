@@ -1,6 +1,6 @@
 # Panopticon — Engineering Document & Architecture (V0)
 
-> **Audio-only. Voice is the sole operational modality.** This document specifies the V0
+> **Audio-first with a required projector UI. Voice is the primary routine control modality.** This document specifies the V0
 > implementation architecture and — first and foremost — **the verification plan that proves it
 > works**. Per the operating bar, the verification plan is the centerpiece, not an afterthought:
 > every component below carries an inline **Verify** block (the specific unit/integration tests AND
@@ -143,7 +143,7 @@ later = sandbox the process, not gate permissions. See §8.)*
                                   └───────────────────────────────────────────────────────────────────┘
 
    CROSS-CUTTING:  TraceProcessor (every event → structured JSONL, §15.4)  ·  correlationId threads the whole loop
-                   Cue JSONL (Cue side)  +  OTel/Langfuse (Smithers side)  ·  read-only Board (REQ-16, off critical path)
+                   Cue JSONL (Cue side)  +  OTel/Langfuse (Smithers side)  ·  Vite Projector UI (REQ-16, off routine path)
 ```
 
 **The spine (REQ-5), one correlation id end to end:**
@@ -781,7 +781,7 @@ that threads `wake → decision → action → spoken ack`. A single trace query
 `src/emergency/stop.ts`. A single non-voice control (Hono endpoint bound to a physical key / one
 control) that halts **all** processes and stops listening within 2 s, **ending the session**.
 **Scoped to kill-all only** — it exposes **no** steer/select/spawn **and no unmute/resume** (preserving
-D1: voice is the sole *operational* modality; AC14.2). Loud, unambiguous signal.
+D1: voice is the primary routine control modality; AC14.2). Loud, unambiguous signal.
 
 **It is NOT an unmute.** This control is a kill-all (AC14.2), never an in-session resume. Unmuting is
 done by **saying "unmute"** (Cue hears it while muted) or **pressing the on-screen unmute button**
@@ -814,7 +814,7 @@ transcript-only persistence (AC1.3) were previously unowned.
   authoritative and a one-line design erratum is surfaced to the gate.)*
 - `listening-indicator.ts` — **the listening-indicator owner** (AC1.2). The **authoritative** indicator
   is the audible E2 transcribing-ambient earcon while the mic streams; the optional visual badge on
-  the read-only board is non-authoritative (D1). The indicator is driven by the mic-stream state, not
+  the projector UI is non-authoritative for routine control (D1). The indicator is driven by the mic-stream state, not
   by the board.
 - `persistence-guard.ts` — **the whole-session raw-audio guard** (AC1.3 / NG-6). This is engineered as
   an **invariant in code**, not just a post-run scan: the audio buffer is **never handed to any
@@ -842,7 +842,7 @@ transcript-only persistence (AC1.3) were previously unowned.
 
 ---
 
-## 13. Observability — REQ-16 (the observability contract)
+## 13. Observability + projector UI — REQ-16 (the observability contract)
 
 `src/obs/`. **Observability is a first-class pipeline stage, not bolted on** (eng-oss §5.4).
 
@@ -854,21 +854,27 @@ transcript-only persistence (AC1.3) were previously unowned.
 - `otel.ts` — Smithers-side: instrument per-process agent calls with OpenTelemetry GenAI semantic
   conventions, export to self-hosted **Langfuse** via OTLP (ENG-D-07). Cue's JSONL covers the Cue side
   (eng-deps §7a); the two are joined by `correlationId`/`upid`.
-- `board/` — the **read-only** React 19 board served over Hono SSE (design §9). Zero operational
-  controls; the system never waits for board connections and never alters behavior based on board
+- `src/ui/` + `index.html` — the **required Vite projector app** (design §9). It renders shared room
+  context: listening/mute state, active cue, suggestion status, two-process fleet, recent spoken
+  output, transcript snippets, and trace breadcrumbs. It may expose only bounded unmute/emergency
+  controls; it never exposes general steer/spawn/select controls.
+- `src/obs/board.ts` / Hono SSE — the live state/event API consumed by the projector. The system
+  never waits for projector connections and never alters routine behavior based on projector
   presence (off the critical path of every voice flow).
 
 **Verify (observability):**
 - *Unit/integration:* *trace-schema test* (every record carries required ids/fields; RBG: drop
   `correlationId` → fails); *causal-chain reconstruction test* (rebuild an utterance's full
-  observation→decision→action→outcome chain from recorded traces alone); *board read-only test* (no
-  mutating endpoint/handler; RBG: add a POST route → fails);
+  observation→decision→action→outcome chain from recorded traces alone); *projector contract test*
+  (no general operational mutating endpoint/handler beyond unmute/emergency; RBG: add a steer/spawn
+  POST route → fails);
   *trace-roundtrip test* (every event serializes/deserializes byte-identical, eng-oss §4.5).
-- *E2e:* *board-non-authoritative test* — run the full REQ-5 scenario with the board server **down**
-  and assert it still passes (AC16.2; RBG: make a voice flow await a board connection → board-down
-  scenario hangs → proves the off-path guarantee is tested); then run with the board up and
-  reconstruct the loop from persisted traces only, asserting it matches the live run.
-- *Third-party:* P-CUE SSE routes (consumed read-only), P-OTEL (Smithers→Langfuse OTLP export).
+- *E2e:* *projector-non-authoritative test* — run the full REQ-5 scenario with the projector server
+  **down** and assert it still passes (AC16.3; RBG: make a voice flow await a projector connection →
+  projector-down scenario hangs → proves the off-path guarantee is tested); then run the Vite
+  projector and assert required regions render; then reconstruct the loop from persisted traces only,
+  asserting it matches the live run.
+- *Third-party:* P-CUE SSE routes (consumed by the projector), P-OTEL (Smithers→Langfuse OTLP export).
 - *Observability:* this section *is* the contract.
 
 ---
@@ -877,10 +883,10 @@ transcript-only persistence (AC1.3) were previously unowned.
 
 - **Bun** (runtime + `bun:test`) — already the project runtime; `bun test` is wired (recent commit).
   The V0 stack is pure TS on Bun (no native spotter module — the spotter is cut, §5.3.1).
-- **Hono** — HTTP/WebSocket for the seam dispatcher, the board server, and the emergency endpoint;
+- **Hono** — HTTP/WebSocket for the seam dispatcher, the projector state/SSE API, and the emergency endpoint;
   Bun-native (eng-deps §8).
-- **React 19** — the read-only board only (off critical path); **exempt** from validate-before-build
-  as a popular framework, proven by the board e2e (AC16.2).
+- **Vite + React 19** — the projector app. Popular framework path, still verified by a Vite build and
+  projector e2e/visual smoke checks (AC16.2/AC16.3).
 
 ### 14.1 ENV-tunable parameters (tuned by feel later) — E1
 
@@ -1009,8 +1015,8 @@ Every infra/3rd-party dependency. Each maps to ≥1 probe in §17. (Detail: eng-
 | 7 | **Langfuse + OpenTelemetry** (Smithers-side observability) | OTLP-native LLM tracing for per-process agent calls | **LOW** (OTLP standard, backend swappable; off critical path) | **P-OTEL** |
 | 8 | **Phonetic-distance library** (double-metaphone + phoneme-Levenshtein) | Callsign collision guard (D-DD-05) | **LOW** (pure, deterministic, unit-testable; swappable) | **P-PHONETIC** |
 | 9 | **Bun** (runtime + test runner) | TS execution, `bun:test`, fast install | **LOW** (V0 stack is pure TS on Bun — the native spotter module is cut; pure-TS path confirmed by `bun test`) | (covered by `bun test`) |
-| 10 | **Hono** (HTTP/WebSocket) | Seam dispatcher, board server, emergency endpoint | **LOW** (standard HTTP, Bun-native; covered by P-SEAM/board e2e) | **P-SEAM** (dispatcher), board e2e |
-| 11 | **React 19** (read-only board) | Optional debug board UI (off critical path) | **LOW.** **Exempt** from validate-before-build (popular framework); proven by board-non-authoritative e2e | board e2e (exempt) |
+| 10 | **Hono** (HTTP/WebSocket) | Seam dispatcher, projector state/SSE API, emergency endpoint | **LOW** (standard HTTP, Bun-native; covered by P-SEAM/projector e2e) | **P-SEAM** (dispatcher), projector e2e |
+| 11 | **Vite + React 19** (projector UI) | Required shared room context UI (off routine control path) | **LOW.** Popular framework; proven by Vite build + projector-non-authoritative e2e/visual smoke | Vite build + projector e2e |
 | 12 | ~~**Shell-command parser**~~ (`shell-quote`) | **REMOVED in V0 (E8/§8).** No shell classifier, no gating — run dangerously, sandbox-later. No P-SHELL-PARSE | — | — (removed) |
 | 13 | ~~**Subscription credential layer**~~ (`SubscriptionCredentialProvider`) | **REMOVED in V0 (E10/§2.1).** Use the host's logged-in Codex/Claude subscriptions; keep only "no raw keys in source" + the lightweight redaction filter (§15.6) | — | redaction tests |
 
@@ -1080,7 +1086,7 @@ the **engineering-only tickets** (ENG-T-01..06, ENG-T-10, ENG-T-11, §14), calle
 | REQ-13 — Minimal concurrent fleet | §10 (registry/fleet — **per-process pause/resume drives "steer A, pause B" §10/R11**), §4.3 (per-process pause/resume commands), §9 (concurrent runs) |
 | REQ-14 — Non-voice emergency stop | §11 (emergency stop — **kill-all + session-end only, NOT an unmute, AC14.2**) |
 | REQ-15 — Durable processes | §10 (lifecycle, **pre-spawn resource check §10.1**), §9 (Smithers durability) |
-| REQ-16 — Observability surface + tracing | §13 (trace, OTel, board), **§15.6 (secret-redaction in the trace contract, R15)** |
+| REQ-16 — Projector UI + tracing | §13 (trace, OTel, Vite projector UI), **§15.6 (secret-redaction in the trace contract, R15)** |
 | *(cross-cutting infra serving PRD §6 secrets constraint)* | **§2.1 (host Codex/Claude subscriptions, no raw keys in source), §15.6 (redaction) — R15** |
 | *(engineering-only)* | ENG-T-01 types · ENG-T-02 replay harness · ENG-T-03 trace plumbing (+ redaction filter) · ENG-T-04 provider scaffolding · ENG-T-05 probe suite · ENG-T-06 Bun/Hono/CI scaffold · **ENG-T-10 audio-capture→ASR→Cue bridge (§22)** · **ENG-T-11 ENV-config layer (§14.1)** (§14). *(ENG-T-07 corpus, ENG-T-08 shell classifier, ENG-T-09 credential layer — removed in V0.)* |
 
