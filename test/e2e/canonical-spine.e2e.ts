@@ -3,7 +3,7 @@ import { runReplayObservations, type DecisionInput, type DecisionLLM } from "../
 import { runCanonicalSpineScenario } from "../../src/spine/canonical";
 import type { TranscriptObservation } from "../../src/types";
 
-describe("canonical spine and no-screen harness e2e", () => {
+describe("deterministic replay canonical spine and no-screen harness e2e", () => {
   test("AC5.4 reconstructs wake to decision to action to spoken ack under one correlationId", async () => {
     const result = await runCanonicalSpineScenario({ sessionId: "canonical-spine-ac54" });
 
@@ -54,7 +54,7 @@ describe("canonical spine and no-screen harness e2e", () => {
     expect(result.noScreen.consumedEvents()).toEqual([]);
   });
 
-  test("record-replay canonical scenario is deterministic across repeated runs", async () => {
+  test("record-replay canonical scenario is deterministic across repeated runs and is not the live release gate", async () => {
     const observations = canonicalReplayObservations("canonical-replay-determinism");
     const first = await runReplayObservations(observations, canonicalReplayDecision());
     const second = await runReplayObservations(observations, canonicalReplayDecision());

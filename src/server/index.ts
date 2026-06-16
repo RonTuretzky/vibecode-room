@@ -1,37 +1,41 @@
 import { Hono } from "hono";
 import { resolve } from "node:path";
-import { demoProjectorSnapshot, withUnmuted } from "../ui/demo-data";
+import { withUnmuted } from "../ui/demo-data";
 import type { ProjectorSnapshot } from "../ui/types";
+import { createProjectorRuntime } from "./composition";
 
+const runtime = await createProjectorRuntime(process.env);
 const app = new Hono();
-const subscribers = new Set<(snapshot: ProjectorSnapshot) => void>();
-let snapshot = demoProjectorSnapshot;
 
 app.get("/api/health", (context) => context.json({ ok: true, app: "panopticon-projector" }));
-app.get("/api/state", (context) => context.json(snapshot));
-app.get("/api/events", () => eventsResponse());
-app.post("/api/unmute", (context) => {
-  snapshot = withUnmuted(snapshot);
-  publish();
+app.get("/api/state", (context) => context.json(runtime.snapshot()));
+app.get("/api/events", () => eventsResponse(runtime));
+// REQ-2 / REQ-14: in the real (live) projector path these controls ALWAYS drive
+// the real MuteController / EmergencyStopController — see runtime.unmute() /
+// runtime.emergencyStop(). A client explicitly loaded in OFFLINE-DEMO mode
+// (?live=0) is not bound to the live pipeline (it ignores /api/state + SSE and
+// renders static fixtures), so its control presses must not mutate the shared
+// runtime; we return a purely cosmetic snapshot for those instead.
+app.post("/api/unmute", async (context) => {
+  if (isOfflineDemoRequest(context.req.header("referer"))) {
+    return context.json(withUnmuted(runtime.snapshot()));
+  }
+
+  const snapshot = await runtime.unmute();
   return context.json(snapshot);
 });
-app.post("/api/emergency-stop", (context) => {
-  snapshot = {
-    ...snapshot,
-    listening: false,
-    muted: true,
-    globalState: "emergency stopped",
-    activeCue: "none",
-    emergencyStopTriggered: true,
-    updatedAt: new Date().toISOString(),
-  };
-  publish();
+app.post("/api/emergency-stop", async (context) => {
+  if (isOfflineDemoRequest(context.req.header("referer"))) {
+    return context.json(emergencyDemoSnapshot(runtime.snapshot()));
+  }
+
+  const snapshot = await runtime.emergencyStop();
   return context.json(snapshot);
 });
 app.get("*", async (context) => serveStatic(context.req.url));
 
 const host = process.env.HOST ?? "127.0.0.1";
-const port = parsePort(process.env.PORT ?? "8787");
+const port = parsePort(process.env.PANOP_PORT ?? process.env.PORT ?? "8787");
 
 Bun.serve({
   hostname: host,
@@ -41,21 +45,17 @@ Bun.serve({
 
 console.log(`Panopticon projector server listening on http://${host}:${port}`);
 
-function eventsResponse(): Response {
-  let send: ((next: ProjectorSnapshot) => void) | undefined;
+function eventsResponse(source: { subscribe(subscriber: (snapshot: ProjectorSnapshot) => void): () => void }): Response {
+  let unsubscribe: (() => void) | undefined;
   const stream = new ReadableStream({
     start(controller) {
       const encoder = new TextEncoder();
-      send = (next: ProjectorSnapshot) => {
+      unsubscribe = source.subscribe((next: ProjectorSnapshot) => {
         controller.enqueue(encoder.encode(`event: snapshot\ndata: ${JSON.stringify(next)}\n\n`));
-      };
-      subscribers.add(send);
-      send(snapshot);
+      });
     },
     cancel() {
-      if (send !== undefined) {
-        subscribers.delete(send);
-      }
+      unsubscribe?.();
     },
   });
 
@@ -66,17 +66,6 @@ function eventsResponse(): Response {
       connection: "keep-alive",
     },
   });
-}
-
-function publish(): void {
-  for (const subscriber of subscribers) {
-    try {
-      subscriber(snapshot);
-    } catch {
-      // A closed/errored stream must not abort the whole broadcast — prune it.
-      subscribers.delete(subscriber);
-    }
-  }
 }
 
 async function serveStatic(requestUrl: string): Promise<Response> {
@@ -116,4 +105,31 @@ function contentType(pathname: string): string {
 function parsePort(value: string): number {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : 8787;
+}
+
+// True only for clients explicitly loaded in offline-demo mode (?live=0), which
+// render static fixtures and never bind to the live runtime. Their control
+// presses are cosmetic so they cannot perturb the shared live pipeline.
+function isOfflineDemoRequest(referer: string | undefined): boolean {
+  if (referer === undefined) {
+    return false;
+  }
+
+  try {
+    return new URL(referer).searchParams.get("live") === "0";
+  } catch {
+    return false;
+  }
+}
+
+function emergencyDemoSnapshot(snapshot: ProjectorSnapshot): ProjectorSnapshot {
+  return {
+    ...snapshot,
+    listening: false,
+    muted: true,
+    globalState: "emergency stopped",
+    activeCue: "none",
+    emergencyStopTriggered: true,
+    updatedAt: new Date().toISOString(),
+  };
 }

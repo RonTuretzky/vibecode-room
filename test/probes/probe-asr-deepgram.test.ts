@@ -34,7 +34,7 @@ interface RawFixtureRecord {
 
 interface ProbeVerdict {
   ticketId: typeof PROBE_ID;
-  status: "passed" | "failed";
+  status: "passed" | "failed" | "blocked" | "skipped";
   liveDeepgram: {
     status: "skipped" | "validated";
     reason: string | null;
@@ -60,8 +60,8 @@ interface ProbeVerdict {
   };
 }
 
-describe("P-ASR Deepgram Nova-3 probe", () => {
-  test("replay contract passes without a Deepgram key and live socket is gated by DEEPGRAM_API_KEY", async () => {
+describe("P-ASR Deepgram Nova-3 deterministic replay probe (not the live release gate)", () => {
+  test("replay contract passes without a Deepgram key and writes blocked verdict when the live socket cannot run", async () => {
     await rm(PROBE_ROOT, { recursive: true, force: true });
     await rm(BUILD_ROOT, { recursive: true, force: true });
     await mkdir(PROBE_ROOT, { recursive: true });
@@ -70,7 +70,7 @@ describe("P-ASR Deepgram Nova-3 probe", () => {
     let replaySummary: ProbeVerdict["replay"] | null = null;
     let liveStatus: ProbeVerdict["liveDeepgram"] = {
       status: "skipped",
-      reason: "live Deepgram validation SKIPPED - requires DEEPGRAM_API_KEY",
+      reason: "live Deepgram gate did not run because DEEPGRAM_API_KEY is absent",
       provider: "deepgram",
       model: "nova-3",
     };
@@ -163,7 +163,7 @@ describe("P-ASR Deepgram Nova-3 probe", () => {
       },
       {
         id: "live-deepgram-gate",
-        behavior: "live Deepgram Nova-3 validation is skipped without DEEPGRAM_API_KEY and runs through the real adapter when present",
+        behavior: "live Deepgram Nova-3 validation is reported as blocked/skipped without DEEPGRAM_API_KEY and runs through the real adapter when present",
         falsify: () => {
           const gate = createDeepgramNova3ASRFromEnv({});
           expect(gate.skippedReason).toBeNull();
@@ -210,7 +210,7 @@ describe("P-ASR Deepgram Nova-3 probe", () => {
 
       await writeVerdict({
         ticketId: PROBE_ID,
-        status: "passed",
+        status: verdictStatus(liveStatus),
         liveDeepgram: liveStatus,
         fallback: fallbackStatement(),
         replay: replaySummary,
@@ -230,6 +230,22 @@ describe("P-ASR Deepgram Nova-3 probe", () => {
     }
   }, 120_000);
 });
+
+describe.skipIf(process.env.DEEPGRAM_API_KEY === undefined || process.env.DEEPGRAM_API_KEY.length === 0)(
+  "LIVE RELEASE GATE: Deepgram Nova-3 probe",
+  () => {
+    test("validates through the real Deepgram adapter when DEEPGRAM_API_KEY is present", async () => {
+      const liveStatus = await runLiveGate();
+
+      expect(liveStatus).toEqual({
+        status: "validated",
+        reason: null,
+        provider: "deepgram",
+        model: "nova-3",
+      });
+    }, 120_000);
+  },
+);
 
 async function normalizeRawFixture(): Promise<TranscriptObservation[]> {
   const records = await readRawFixture();
@@ -354,12 +370,14 @@ async function writeNormalizedObservations(observations: TranscriptObservation[]
 }
 
 async function runLiveGate(): Promise<ProbeVerdict["liveDeepgram"]> {
+  await mkdir(PROBE_ROOT, { recursive: true });
   const gate = createDeepgramNova3ASRFromEnv();
   if (gate.provider === null) {
-    await writeFile(join(PROBE_ROOT, "live-skip.json"), JSON.stringify({ status: "skipped", reason: gate.skippedReason }, null, 2) + "\n", "utf8");
+    const reason = "live Deepgram gate did not run because DEEPGRAM_API_KEY is absent";
+    await writeFile(join(PROBE_ROOT, "live-skip.json"), JSON.stringify({ status: "skipped", reason }, null, 2) + "\n", "utf8");
     return {
       status: "skipped",
-      reason: gate.skippedReason,
+      reason,
       provider: "deepgram",
       model: "nova-3",
     };
@@ -387,6 +405,10 @@ async function runLiveGate(): Promise<ProbeVerdict["liveDeepgram"]> {
     "utf8",
   );
   return { status: "validated", reason: null, provider: "deepgram", model: "nova-3" };
+}
+
+function verdictStatus(liveStatus: ProbeVerdict["liveDeepgram"]): ProbeVerdict["status"] {
+  return liveStatus.status === "skipped" ? "blocked" : "passed";
 }
 
 function fileAudioStream(path: string): AudioReadableStream {

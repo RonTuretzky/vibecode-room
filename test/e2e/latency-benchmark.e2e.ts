@@ -89,8 +89,8 @@ interface BenchmarkReport {
   metrics: RoundTripMetric[];
 }
 
-describe("latency benchmark suite", () => {
-  test("record-replay benchmark enforces hot-path latency budgets and gates live ASR on DEEPGRAM_API_KEY", async () => {
+describe("deterministic replay latency benchmark suite (not the live ASR release gate)", () => {
+  test("record-replay benchmark enforces hot-path latency budgets and records blocked live ASR status separately", async () => {
     const baseline = await readBaseline();
     await resetGeneratedArtifacts();
 
@@ -144,7 +144,7 @@ describe("latency benchmark suite", () => {
     if (process.env.DEEPGRAM_API_KEY === undefined || process.env.DEEPGRAM_API_KEY.length === 0) {
       expect(report.liveAsr).toEqual({
         status: "skipped",
-        reason: "live ASR round-trip latency SKIPPED - needs DEEPGRAM_API_KEY",
+        reason: "live ASR round-trip latency gate did not run because DEEPGRAM_API_KEY is absent",
         provider: "deepgram",
         model: "nova-3",
       });
@@ -379,7 +379,7 @@ function liveAsrStatus(): BenchmarkReport["liveAsr"] {
   if (gate.provider === null) {
     return {
       status: "skipped",
-      reason: "live ASR round-trip latency SKIPPED - needs DEEPGRAM_API_KEY",
+      reason: "live ASR round-trip latency gate did not run because DEEPGRAM_API_KEY is absent",
       provider: "deepgram",
       model: "nova-3",
     };
@@ -446,7 +446,7 @@ async function emitEvidence(report: BenchmarkReport, traceEvents: readonly LogEv
     JSON.stringify(
       {
         ticketId: TICKET_ID,
-        status: "passed",
+        status: report.liveAsr.status === "skipped" ? "blocked" : "passed",
         gates: {
           textCueEarconMs: report.textCue.maxEarconLatencyMs,
           roundTripP50Ms: report.roundTrips.p50Ms,
@@ -463,6 +463,22 @@ async function emitEvidence(report: BenchmarkReport, traceEvents: readonly LogEv
   );
   await writeFile(TRACE_PATH, traceEvents.map((event) => JSON.stringify(event)).join("\n") + "\n", "utf8");
 }
+
+describe.skipIf(process.env.DEEPGRAM_API_KEY === undefined || process.env.DEEPGRAM_API_KEY.length === 0)(
+  "LIVE RELEASE GATE: Deepgram latency benchmark",
+  () => {
+    test("is blocked/skipped when DEEPGRAM_API_KEY is absent and configured only when the credential exists", () => {
+      const liveAsr = liveAsrStatus();
+
+      expect(liveAsr).toEqual({
+        status: "configured",
+        reason: null,
+        provider: "deepgram",
+        model: "nova-3",
+      });
+    });
+  },
+);
 
 function percentile(values: readonly number[], percentileRank: number): number {
   if (values.length === 0) {

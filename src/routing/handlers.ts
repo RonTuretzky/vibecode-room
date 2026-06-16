@@ -7,8 +7,7 @@ export type LocalEffect =
   | "unmute"
   | "declineSuggestion"
   | "openSteeringWindow"
-  | "closeSteeringWindow"
-  | "panic";
+  | "closeSteeringWindow";
 
 export interface HandlerInput {
   commandId: DocumentedCommandId;
@@ -88,7 +87,9 @@ const baseHandlers = {
   stop(input) {
     return targetedAction("halt", input, { trigger: "stop" });
   },
-  panic: local("panic"),
+  panic(input) {
+    return targetedAction("halt", input, { trigger: "panic" });
+  },
 } satisfies Record<DocumentedCommandId, CommandHandler>;
 
 export const COMMAND_HANDLERS: Record<DocumentedCommandId, CommandHandler> =

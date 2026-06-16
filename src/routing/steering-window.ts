@@ -1,4 +1,5 @@
-import type { AckId } from "../types";
+import type { AckId, DispatchedAction, OutputDecision } from "../types";
+import { panicHaltAction, panicHaltOutputs } from "./panic-feedback";
 import { loadRoutingVocabulary, matchPhrase, normalizeSpeech, type RoutingVocabulary } from "./vocabulary";
 
 export interface SteeringProcess {
@@ -40,6 +41,8 @@ export type SteeringDecision =
       kind: "closed";
       reason: "done" | "back" | "abort" | "idle";
       closedWindow: SteeringWindowState | null;
+      action: DispatchedAction | null;
+      outputs: OutputDecision[];
       ackId: Extract<AckId, "route-declined"> | null;
       traceEvents: SteeringTraceEvent[];
     }
@@ -66,6 +69,8 @@ export interface SteeringWindowManagerOptions {
   vocabulary?: RoutingVocabulary;
   sessionId?: string;
   clock?: () => number;
+  onAction?: (action: DispatchedAction) => void;
+  onOutput?: (decision: OutputDecision) => void;
 }
 
 export class SteeringWindowManager {
@@ -73,6 +78,8 @@ export class SteeringWindowManager {
   readonly #vocabulary: RoutingVocabulary;
   readonly #sessionId: string;
   readonly #clock: () => number;
+  readonly #onAction?: (action: DispatchedAction) => void;
+  readonly #onOutput?: (decision: OutputDecision) => void;
   #window: SteeringWindowState | null = null;
   #sequence = 0;
 
@@ -81,6 +88,8 @@ export class SteeringWindowManager {
     this.#vocabulary = options.vocabulary ?? loadRoutingVocabulary();
     this.#sessionId = options.sessionId ?? "steering-session";
     this.#clock = options.clock ?? (() => Date.now());
+    this.#onAction = options.onAction;
+    this.#onOutput = options.onOutput;
   }
 
   activeWindow(): SteeringWindowState | null {
@@ -109,10 +118,17 @@ export class SteeringWindowManager {
     const abort = matchPhrase(text, this.#vocabulary.panic);
     if (abort !== undefined) {
       const closed = this.#close("abort");
+      const action = closed === null
+        ? null
+        : panicHaltAction({ targetUPID: closed.targetUPID, correlationId: utterance.correlationId, text: utterance.text });
+      const outputs = action === null ? [] : panicHaltOutputs();
+      this.#emit(action, outputs);
       return {
         kind: "closed",
         reason: "abort",
         closedWindow: closed,
+        action,
+        outputs,
         ackId: closed === null ? null : "route-declined",
         traceEvents: [
           trace(baseTrace, "warn", "steering.window.close", closed?.targetUPID, {
@@ -134,6 +150,8 @@ export class SteeringWindowManager {
           kind: "closed",
           reason,
           closedWindow: closed,
+          action: null,
+          outputs: [],
           ackId: "route-declined",
           traceEvents: [
             trace(baseTrace, "info", "steering.window.close", closed?.targetUPID, {
@@ -305,6 +323,8 @@ export class SteeringWindowManager {
       kind: "closed",
       reason: "idle",
       closedWindow: closed,
+      action: null,
+      outputs: [],
       ackId: null,
       traceEvents: [
         trace({ sessionId, correlationId: input.correlationId }, "info", "steering.window.close", closed?.targetUPID, {
@@ -322,6 +342,15 @@ export class SteeringWindowManager {
     const closed = cloneWindow(this.#window);
     this.#window = null;
     return closed;
+  }
+
+  #emit(action: DispatchedAction | null, outputs: readonly OutputDecision[]): void {
+    if (action !== null) {
+      this.#onAction?.(action);
+    }
+    for (const output of outputs) {
+      this.#onOutput?.(output);
+    }
   }
 }
 

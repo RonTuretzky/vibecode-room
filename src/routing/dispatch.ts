@@ -18,6 +18,7 @@ export interface ActiveProcess {
   upid: string;
   callsign: string;
   state?: "planning" | "active" | "paused" | "halted" | "running";
+  selected?: boolean;
 }
 
 export interface SteeringWindow {
@@ -287,6 +288,7 @@ function collectCandidates(
   const callsignMatch = findCallsign(utterance, context.activeProcesses);
   const window = context.openWindow;
   const target = callsignMatch ?? window;
+  const focusedTarget = target ?? focusedProcess(context.activeProcesses);
   const instruction = callsignMatch === null ? normalizeSpeech(utterance) : instructionAfterCallsign(utterance, callsignMatch.callsign);
 
   if (includesPhrase(utterance, vocabulary.mute)) {
@@ -296,7 +298,15 @@ function collectCandidates(
     candidates.push(commandCandidate("unmute", "mute", true, null, null, ""));
   }
   if (includesPhrase(utterance, vocabulary.panic)) {
-    candidates.push(commandCandidate("panic", "panic", true, null, null, ""));
+    if (focusedTarget !== null) {
+      candidates.push(commandCandidate("panic", "panic", true, focusedTarget.upid, focusedTarget.callsign, instruction));
+    } else {
+      // Spoken panic halts the in-focus process. With no callsign, open window,
+      // or single/selected target there is nothing unambiguous to halt, so emit
+      // an addressed near-miss (no halt, no "Halting" feedback) rather than a
+      // halt action with a null target. Kill-all stays the emergency control.
+      candidates.push(passCandidate("near-miss", true, "panic"));
+    }
   }
   if (includesPhrase(utterance, vocabulary.stop)) {
     if (target !== null) {
@@ -431,6 +441,17 @@ function findCallsign(utterance: string, processes: readonly ActiveProcess[]): {
   return null;
 }
 
+function focusedProcess(processes: readonly ActiveProcess[]): { upid: string; callsign: string } | null {
+  const selected = processes.filter((process) => process.selected === true);
+  if (selected.length === 1) {
+    return { upid: selected[0].upid, callsign: selected[0].callsign };
+  }
+  if (processes.length === 1) {
+    return { upid: processes[0].upid, callsign: processes[0].callsign };
+  }
+  return null;
+}
+
 function instructionAfterCallsign(utterance: string, callsign: string): string {
   const normalized = normalizeSpeech(utterance);
   const normalizedCallsign = normalizeSpeech(callsign);
@@ -446,6 +467,9 @@ function activeWindow(window: SteeringWindow | null, nowMs: number, vocabulary: 
 }
 
 function ackFor(candidate: Candidate): AckKind {
+  if (candidate.commandId === "panic") {
+    return "state-earcon";
+  }
   if (candidate.route === "suggestion") {
     return "route-suggestion";
   }
@@ -455,7 +479,7 @@ function ackFor(candidate: Candidate): AckKind {
   if (!candidate.addressed) {
     return process.env.PANOP_RBG_AMBIENT_ACK === "1" ? "route-declined" : "silent";
   }
-  if (candidate.commandId === "mute" || candidate.commandId === "unmute" || candidate.commandId === "panic") {
+  if (candidate.commandId === "mute" || candidate.commandId === "unmute") {
     return "state-earcon";
   }
   return "route-declined";

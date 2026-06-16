@@ -1,5 +1,6 @@
-import type { CueDecision, DispatchedAction, TranscriptObservation } from "../types";
+import type { CueDecision, DispatchedAction, OutputDecision, TranscriptObservation } from "../types";
 import { dispatchUtterance, routeKey, toCueDecision, type DispatchContext, type DispatchDecision } from "./dispatch";
+import { panicHaltOutputs } from "./panic-feedback";
 
 /**
  * Minimal structural view of the Cue↔Smithers seam executor.
@@ -23,6 +24,12 @@ export interface RoutedUtterance<TResult = unknown> {
   route: ReturnType<typeof routeKey>;
   /** The seam result when the decision produced an executable action, else `null`. */
   dispatch: TResult | null;
+  /** Audible feedback decisions produced by routing for immediate state/safety feedback. */
+  outputs: OutputDecision[];
+}
+
+export interface RouteUtteranceToSeamOptions {
+  onOutput?: (decision: OutputDecision) => void | Promise<void>;
 }
 
 /**
@@ -37,9 +44,21 @@ export async function routeUtteranceToSeam<TResult>(
   observation: TranscriptObservation,
   context: DispatchContext,
   seam: SeamLike<TResult>,
+  options: RouteUtteranceToSeamOptions = {},
 ): Promise<RoutedUtterance<TResult>> {
   const decision = dispatchUtterance(observation, context);
   const cueDecision = toCueDecision(decision);
   const dispatch = decision.kind === "action" ? await seam.dispatch(decision.action) : null;
-  return { decision, cueDecision, route: routeKey(decision), dispatch };
+  const outputs = outputsForDecision(decision);
+  for (const output of outputs) {
+    await options.onOutput?.(output);
+  }
+  return { decision, cueDecision, route: routeKey(decision), dispatch, outputs };
+}
+
+function outputsForDecision(decision: DispatchDecision): OutputDecision[] {
+  if (decision.kind === "action" && decision.commandId === "panic" && decision.action.type === "halt") {
+    return panicHaltOutputs();
+  }
+  return [];
 }

@@ -1301,6 +1301,66 @@ button {
   }
 }
 
+@media (max-width: 720px) {
+  .deep {
+    overflow-y: auto;
+  }
+
+  .stage {
+    gap: 18px;
+    padding: 14px 16px 22px;
+  }
+
+  .bubble-field {
+    overflow: visible;
+    min-height: auto;
+  }
+
+  .suggestion-banner {
+    position: relative;
+    top: auto;
+    left: auto;
+    transform: none;
+    max-width: 100%;
+    margin: 0 auto 14px;
+  }
+
+  .field-inner {
+    position: relative;
+    inset: auto;
+    gap: 18px 16px;
+    padding: 0;
+  }
+
+  .bubble {
+    width: min(var(--size, 220px), 144px);
+    height: min(var(--size, 220px), 144px);
+  }
+
+  .bubble-callsign {
+    font-size: 25px;
+  }
+
+  .bubble-state {
+    font-size: 10px;
+  }
+
+  .bubble-progress {
+    font-size: 9.5px;
+  }
+
+  .bubble-id,
+  .bubble-hotkey,
+  .idea-eyebrow {
+    display: none;
+  }
+
+  .idea-pitch {
+    font-size: 11px;
+    -webkit-line-clamp: 3;
+  }
+}
+
 /* ============================================================================
    Reduced motion — freeze all float/drift, keep the static beauty
    ============================================================================ */
