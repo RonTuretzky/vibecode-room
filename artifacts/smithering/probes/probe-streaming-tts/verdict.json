@@ -1,0 +1,5 @@
+{
+  "green": false,
+  "ticketId": "probe-streaming-tts",
+  "summary": "P-TTS remains blocked: no selected provider; fastest measured OpenAI /v1/audio/speech at 535 ms; unconfigured: elevenlabs, cartesia, playht; no key-shaped strings in probe artifacts."
+}

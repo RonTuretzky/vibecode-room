@@ -1,0 +1,27 @@
+{
+  "family": "openai",
+  "model": "gpt-5.5",
+  "kind": "codex-review",
+  "approved": false,
+  "pass": false,
+  "findings": [
+    {
+      "severity": "critical",
+      "title": "P-TTS gate has no passing green evidence",
+      "file": "artifacts/smithering/build/probe-streaming-tts/gates.json",
+      "description": "The recorded gate status is failed. The restored 200 ms evidence run still ends with 1 failing test, so the required red-before-green proof is not complete."
+    },
+    {
+      "severity": "critical",
+      "title": "No streaming TTS provider was selected",
+      "file": "artifacts/smithering/probes/probe-streaming-tts/selection.json",
+      "description": "The selection record has selected set to null. Only one candidate was measured, it exceeded the 200 ms first-audio-byte budget, and the other required 2026 candidates were unavailable."
+    },
+    {
+      "severity": "major",
+      "title": "Static state phrase pre-cache was not demonstrated",
+      "file": "artifacts/smithering/probes/probe-streaming-tts/precache.json",
+      "description": "The pre-cache record has no selected provider and an empty playback list. The five fixed state phrases therefore were not proven to play from static clips in under 100 ms."
+    }
+  ]
+}

@@ -3,6 +3,7 @@
   "status": "passed",
   "summary": "probe assertions were failable and passed",
   "correlationId": "p-cue-real-cue-substrate",
+<<<<<<<<< HEAD
 <<<<<<< conflict 1 of 2
 %%%%%%% diff from: pvqrmsly 0f308b21 "Fix hot-loop subscription probe evidence" (parents of rebased revision)
 \\\\\\\        to: pvqrmsly 25bdbc88 "Fix hot-loop subscription probe evidence" (rebase destination)
@@ -14,6 +15,13 @@
   "startedAt": "2026-06-15T23:30:49.582Z",
   "finishedAt": "2026-06-15T23:30:49.803Z",
 >>>>>>> conflict 1 of 2 ends
+||||||||| parent of e2baae2 (feat(probe-streaming-tts))
+  "startedAt": "2026-06-15T05:17:07.683Z",
+  "finishedAt": "2026-06-15T05:17:07.905Z",
+=========
+  "startedAt": "2026-06-15T23:30:20.444Z",
+  "finishedAt": "2026-06-15T23:30:20.677Z",
+>>>>>>>>> e2baae2 (feat(probe-streaming-tts))
   "assertions": [
     {
       "id": "repo-access-source-build",
@@ -27,6 +35,7 @@
       "behavior": "TextCue-triggered harness decision resolves inside the hard earcon budget",
       "phase": "red",
       "status": "failed-as-expected",
+<<<<<<<<< HEAD
 <<<<<<< conflict 2 of 2
 %%%%%%% diff from: pvqrmsly 0f308b21 "Fix hot-loop subscription probe evidence" (parents of rebased revision)
 \\\\\\\        to: pvqrmsly 25bdbc88 "Fix hot-loop subscription probe evidence" (rebase destination)
@@ -35,6 +44,11 @@
 +++++++ twpwtqzn 40e324bc (rebased revision)
       "error": "expect(received).toBeLessThanOrEqual(expected)\n\nExpected: <= 50\nReceived: 80.03658400000131\n"
 >>>>>>> conflict 2 of 2 ends
+||||||||| parent of e2baae2 (feat(probe-streaming-tts))
+      "error": "expect(received).toBeLessThanOrEqual(expected)\n\nExpected: <= 50\nReceived: 84.30704100000003\n"
+=========
+      "error": "expect(received).toBeLessThanOrEqual(expected)\n\nExpected: <= 50\nReceived: 81.40750000000003\n"
+>>>>>>>>> e2baae2 (feat(probe-streaming-tts))
     },
     {
       "id": "cue-policy-primitives",
