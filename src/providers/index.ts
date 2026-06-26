@@ -70,3 +70,26 @@ export {
   type DecisionLLMSelectionEnv,
   type DecisionLLMSelectionOptions,
 } from "./llm/registry";
+
+// --- TTS registry / factory (ISSUE-0007) ---------------------------------
+// Append-only block: kept at the end of the barrel so it does not conflict
+// with the ASR/LLM registry issues editing the export list above. The real
+// streaming provider and the TTS registry are reachable only through this
+// barrel, like every other concrete provider (see ENG-T-04 in
+// providers/boundary.test.ts).
+export {
+  ElevenLabsFlashTTSProvider,
+  createElevenLabsFlashTTSFromEnv,
+  type ElevenLabsEnvTTS,
+  type ElevenLabsFlashTTSOptions,
+  type TTSTransport,
+  type TTSTransportRequest,
+} from "./tts/elevenlabs";
+export {
+  selectTtsProvider,
+  DEFAULT_TTS_CREDENTIAL_VARIABLE,
+  type TtsProviderMode,
+  type TtsSelection,
+  type TtsSelectionEnv,
+  type TtsSelectionOptions,
+} from "./tts/registry";
