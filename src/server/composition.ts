@@ -912,7 +912,9 @@ function projectorState(state: RegistryProcess["state"]): ProjectorProcessState 
 // Returns null for the `idle` no-op verdict so the caller keeps the demo bubble.
 // The gate counters come from the engine: words/seconds are the decision meta's
 // substantive totals, minWords/minSeconds are the configured REQ-3 floors.
-function liveProjectorSuggestion(
+// Exported (ISSUE-0018) so the fired-decision -> bubble projection is unit-testable
+// independently of the full runtime drive.
+export function liveProjectorSuggestion(
   decision: SuggestionEngineDecision,
   config: SuggestionEngineConfig,
 ): ProjectorSuggestion | null {

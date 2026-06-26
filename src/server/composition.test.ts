@@ -2,12 +2,12 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createProjectorRuntime, type ProjectorRuntime } from "./composition";
+import { createProjectorRuntime, liveProjectorSuggestion, type ProjectorRuntime } from "./composition";
 import { NoopTTSProvider, arraySegmentSource, type VoxTermSegment } from "../providers";
 import { AcceptanceController } from "../acceptance/spawn";
 import { ProcessRegistry } from "../process/registry";
-import { SuggestionEngine } from "../suggest/engine";
-import type { OutputDecision, TranscriptObservation } from "../types";
+import { readSuggestionEngineConfig, SuggestionEngine, type SuggestionEngineDecision } from "../suggest/engine";
+import type { LogEvent, OutputDecision, PendingSuggestion, TranscriptObservation } from "../types";
 import { demoProjectorSnapshot } from "../ui/demo-data";
 
 // ISSUE-0008: live FINAL observations must reach SuggestionEngine.observe with a
@@ -474,6 +474,81 @@ describe("LiveProjectorRuntime — ASR backend selection through the providers r
     const transcript = runtime.snapshot().transcript;
     expect(transcript.some((line) => line.text === "hey panop spin up a runner")).toBe(true);
     expect(transcript.some((line) => line.text === "hey panop")).toBe(false);
+  });
+});
+
+// ISSUE-0018: the wired path from a real-speech-shaped FINAL transcript through
+// SuggestionEngine.observe to a populated snapshot.suggestion idea bubble. The
+// projection (decision -> bubble) is unit-testable in isolation, and the engine's
+// pending suggestion is the live state the runtime consumes to drive the bubble.
+describe("LiveProjectorRuntime — live final -> SuggestionEngine.observe -> snapshot.suggestion (ISSUE-0018)", () => {
+  test("liveProjectorSuggestion maps a fired decision to the bubble (unit)", () => {
+    const suggestion: PendingSuggestion = {
+      suggestionId: "sg-build-1",
+      pitch: "Spin up a replay dashboard runner",
+      mcqs: ["Want me to kick that off now?"],
+      answers: [],
+      correlationId: "corr-unit-fired",
+      expiresAt: 0,
+    };
+    // A `fired` verdict carries its gate counters only on its trace events, so the
+    // projection pulls words/seconds/quality from the first event whose meta has them.
+    const events: LogEvent[] = [
+      {
+        event: "suggestion.fired",
+        level: "info",
+        sessionId: "test-session",
+        correlationId: "corr-unit-fired",
+        meta: { wordCount: 12, elapsedS: 95, quality: 0.82 },
+      },
+    ];
+    const decision: SuggestionEngineDecision = { kind: "fired", suggestion, events };
+
+    const config = readSuggestionEngineConfig({ PANOP_SUGGEST_WORD_FLOOR: "3" });
+    const bubble = liveProjectorSuggestion(decision, config);
+    if (bubble === null) {
+      throw new Error("a fired decision must project to a populated bubble, not null");
+    }
+
+    // A fired suggestion surfaces as the live "speaking" idea bubble: the pitch and
+    // its lead question come straight off the suggestion, confidence + gate counters
+    // off the decision meta, and the floors off the engine config (not the demo).
+    expect(bubble.state).toBe("speaking");
+    expect(bubble.pitch).toBe("Spin up a replay dashboard runner");
+    expect(bubble.questions).toEqual(["Want me to kick that off now?"]);
+    expect(bubble.confidence).toBe(0.82);
+    expect(bubble.gate).toEqual({ words: 12, minWords: 3, seconds: 95, minSeconds: 90 });
+    expect(bubble).not.toEqual(demoProjectorSnapshot.suggestion);
+  });
+
+  test("observe of a buildable final populates the engine pending suggestion consumed by the runtime (integration)", async () => {
+    const path = writeReplayFixture([
+      final("let's build a dashboard tool to ship the replay prototype today", "utt-build"),
+    ]);
+    const runtime = await createProjectorRuntime(baseEnv(path));
+
+    // Before any final is observed there is no pending suggestion and the runtime
+    // shows the demo bubble.
+    expect(runtime.acceptanceController.awaitingAcceptance()).toBe(false);
+
+    await driveMic(runtime);
+
+    // SuggestionEngine.observe on the buildable final produced a suggestion that
+    // fired and is now pending acceptance — the live state the runtime consumes.
+    const decision = runtime.lastSuggestionDecision;
+    if (decision === null || decision.kind !== "fired") {
+      throw new Error("expected the buildable final to fire a suggestion");
+    }
+    expect(decision.suggestion.pitch.length).toBeGreaterThan(0);
+    expect(runtime.acceptanceController.awaitingAcceptance()).toBe(true);
+
+    // The runtime consumed that fired verdict into the published idea bubble:
+    // a live "speaking" pitch + lead question, not the idle/demo baseline.
+    const bubble = runtime.snapshot().suggestion;
+    expect(bubble.state).toBe("speaking");
+    expect(bubble.pitch).toBe(decision.suggestion.pitch);
+    expect(bubble.questions.length).toBeGreaterThan(0);
+    expect(bubble).not.toEqual(demoProjectorSnapshot.suggestion);
   });
 });
 
