@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createProjectorRuntime, type ProjectorRuntime } from "./composition";
 import type { TranscriptObservation } from "../types";
+import { demoProjectorSnapshot } from "../ui/demo-data";
 
 // ISSUE-0008: live FINAL observations must reach SuggestionEngine.observe with a
 // real (heuristic-by-default) decider; interim partials must not drive the engine.
@@ -69,6 +70,90 @@ describe("LiveProjectorRuntime — live final observations drive the SuggestionE
     expect(runtime.pendingSuggestion()).toBeNull();
     const events = runtime.trace.events().map((event) => event.event);
     expect(events.some((event) => event === "suggestion.queued" || event === "route.suggestion")).toBe(false);
+  });
+});
+
+// ISSUE-0009: buildSnapshot.suggestion must reflect the live SuggestionEngine
+// verdict (state/pitch/confidence/gate/questions) once a final has been scored,
+// and keep the demo fixture before any live suggestion exists.
+describe("LiveProjectorRuntime — snapshot.suggestion reflects live engine state", () => {
+  test("before any live suggestion, the demo bubble is shown (fallback)", async () => {
+    const path = writeReplayFixture([]);
+    const runtime = await createProjectorRuntime(baseEnv(path));
+
+    // No mic driven yet → no decision → demo fixture verbatim.
+    expect(runtime.snapshot().suggestion).toEqual(demoProjectorSnapshot.suggestion);
+    expect(runtime.lastSuggestionDecision).toBeNull();
+  });
+
+  test("a buildable utterance maps the fired/queued engine state into the bubble (unit)", async () => {
+    const path = writeReplayFixture([
+      final("let's build a dashboard tool to ship the replay prototype today", "utt-build"),
+    ]);
+    const runtime = await createProjectorRuntime(baseEnv(path));
+
+    await driveMic(runtime);
+
+    const decision = runtime.lastSuggestionDecision;
+    if (decision === null) {
+      throw new Error("expected a suggestion decision from a buildable utterance");
+    }
+    const suggestion = runtime.snapshot().suggestion;
+    // fired -> "speaking", queued -> "queued"; never the demo "queued" pitch.
+    const expectedState = decision.kind === "fired" ? "speaking" : "queued";
+    expect(suggestion.state).toBe(expectedState);
+    expect(suggestion.pitch.length).toBeGreaterThan(0);
+    expect(suggestion).not.toEqual(demoProjectorSnapshot.suggestion);
+    // Gate floors come from the engine config (WORD_FLOOR=3 in baseEnv), not the
+    // static fixture (which uses minWords 60 / minSeconds 90).
+    expect(suggestion.gate.minWords).toBe(3);
+    expect(suggestion.gate.minSeconds).toBe(90);
+    expect(suggestion.gate.words).toBeGreaterThanOrEqual(suggestion.gate.minWords);
+    expect(suggestion.confidence).toBeGreaterThan(0);
+  });
+
+  test("a non-buildable (pass) utterance maps to an idle bubble with live gate counters (unit)", async () => {
+    const path = writeReplayFixture([
+      final("the weather has been really nice and the coffee was good this morning", "utt-ambient"),
+    ]);
+    const runtime = await createProjectorRuntime(baseEnv(path));
+
+    await driveMic(runtime);
+
+    expect(runtime.lastSuggestionDecision?.kind).toBe("pass");
+    const suggestion = runtime.snapshot().suggestion;
+    expect(suggestion.state).toBe("idle");
+    expect(suggestion.questions).toEqual([]);
+    // Gate counters come from the engine, not the demo fixture.
+    expect(suggestion.gate.minWords).toBe(3);
+    expect(suggestion.gate.words).toBeGreaterThan(0);
+    expect(suggestion).not.toEqual(demoProjectorSnapshot.suggestion);
+  });
+
+  test("a subscriber's bubble transitions from demo -> live as observations arrive (integration)", async () => {
+    const path = writeReplayFixture([
+      final("let's build a dashboard tool to ship the replay prototype today", "utt-build"),
+    ]);
+    const runtime = await createProjectorRuntime(baseEnv(path));
+
+    const states: string[] = [];
+    const pitches: string[] = [];
+    const unsubscribe = runtime.subscribe((snapshot) => {
+      states.push(snapshot.suggestion.state);
+      pitches.push(snapshot.suggestion.pitch);
+    });
+
+    // The very first push (on subscribe) is the demo bubble.
+    expect(states[0]).toBe(demoProjectorSnapshot.suggestion.state);
+    expect(pitches[0]).toBe(demoProjectorSnapshot.suggestion.pitch);
+
+    await driveMic(runtime);
+    unsubscribe();
+
+    // After a buildable utterance, the latest published bubble is a live state.
+    const finalSuggestion = runtime.snapshot().suggestion;
+    expect(["queued", "speaking"]).toContain(finalSuggestion.state);
+    expect(finalSuggestion.pitch).not.toBe(demoProjectorSnapshot.suggestion.pitch);
   });
 });
 

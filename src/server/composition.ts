@@ -9,11 +9,17 @@ import { ProcessRegistry, type RegistryProcess } from "../process/registry";
 import { MemorySmithersClient } from "../process/test-helpers";
 import { DeepgramNova3ASRProvider, ReplayASRProvider, NoopTTSProvider, selectDecisionLLM, type ASRProvider } from "../providers";
 import type { TTSProvider } from "../providers";
-import { SuggestionEngine, type PendingQueuedSuggestion, type SuggestionEngineDecision } from "../suggest/engine";
+import {
+  readSuggestionEngineConfig,
+  SuggestionEngine,
+  type PendingQueuedSuggestion,
+  type SuggestionEngineConfig,
+  type SuggestionEngineDecision,
+} from "../suggest/engine";
 import { StageSequencer } from "../spine/stage-sequencer";
 import type { LogEvent, OutputDecision, PendingSuggestion } from "../types";
 import { demoProjectorSnapshot, withUnmuted } from "../ui/demo-data";
-import type { ProjectorProcess, ProjectorProcessState, ProjectorSnapshot, TranscriptLine } from "../ui/types";
+import type { ProjectorProcess, ProjectorProcessState, ProjectorSnapshot, ProjectorSuggestion, TranscriptLine } from "../ui/types";
 import type { TranscriptObservation } from "../types";
 
 export type ProjectorRuntimeSubscriber = (snapshot: ProjectorSnapshot) => void;
@@ -108,6 +114,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   readonly trace: TraceProcessor;
   readonly emergencyController: EmergencyStopController;
   readonly #session: EmergencySessionState;
+  readonly #env: ProjectorRuntimeEnv;
   readonly #subscribers = new Set<ProjectorRuntimeSubscriber>();
   readonly #outputs: OutputDecision[] = [];
   readonly #demoProcesses: SeededProcessView[];
@@ -129,6 +136,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     readonly sessionId: string,
     env: ProjectorRuntimeEnv,
   ) {
+    this.#env = env;
     const clock = () => Date.now();
     this.trace = new TraceProcessor({ clock });
     this.#demoProcesses = demoProjectorSnapshot.processes.map((process) => ({ ...process }));
@@ -492,6 +500,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       globalState: this.#emergencyTriggered ? "emergency stopped" : muted ? "muted" : "ready",
       activeCue: this.#emergencyTriggered ? "none" : muted ? "muted" : liveActiveCue,
       emergencyStopTriggered: this.#emergencyTriggered,
+      suggestion: this.suggestionSnapshot(),
       audio: this.audioSnapshot(previous),
       processes: this.processSnapshots(),
       transcript: this.transcriptSnapshot(),
@@ -512,6 +521,20 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       lines.push(this.#interim);
     }
     return lines.slice(-MAX_LIVE_TRANSCRIPT_LINES);
+  }
+
+  // Reflect the live SuggestionEngine verdict in the idea bubble. Before any
+  // FINAL observation has been scored (`#lastSuggestionDecision === null`), keep
+  // the demo bubble so the panel is never empty — mirroring the transcript
+  // fallback above. Once a real decision exists, map it to a ProjectorSuggestion
+  // with gate counters (words/seconds vs the engine's floors) from the engine.
+  private suggestionSnapshot(): ProjectorSuggestion {
+    const decision = this.#lastSuggestionDecision;
+    if (decision === null) {
+      return demoProjectorSnapshot.suggestion;
+    }
+    const live = liveProjectorSuggestion(decision, readSuggestionEngineConfig(this.#env));
+    return live ?? demoProjectorSnapshot.suggestion;
   }
 
   private processSnapshots(): ProjectorProcess[] {
@@ -641,4 +664,90 @@ function projectorState(state: RegistryProcess["state"]): ProjectorProcessState 
     default:
       return "blocked";
   }
+}
+
+// Map one live SuggestionEngine verdict to the projector's idea-bubble shape.
+// Returns null for the `idle` no-op verdict so the caller keeps the demo bubble.
+// The gate counters come from the engine: words/seconds are the decision meta's
+// substantive totals, minWords/minSeconds are the configured REQ-3 floors.
+function liveProjectorSuggestion(
+  decision: SuggestionEngineDecision,
+  config: SuggestionEngineConfig,
+): ProjectorSuggestion | null {
+  const minWords = config.wordFloor;
+  const minSeconds = config.timeFloorSeconds;
+  switch (decision.kind) {
+    case "queued":
+      return {
+        state: "queued",
+        pitch: decision.queued.suggestion.pitch,
+        confidence: decision.queued.decision.quality,
+        gate: gateFrom(decision.queued.decision, minWords, minSeconds),
+        questions: [...decision.queued.suggestion.mcqs],
+      };
+    case "fired": {
+      const meta = suggestionMetaFromEvents(decision.events);
+      return {
+        state: "speaking",
+        pitch: decision.suggestion.pitch,
+        confidence: meta.quality,
+        gate: gateFrom(meta, minWords, minSeconds),
+        questions: [...decision.suggestion.mcqs],
+      };
+    }
+    case "expired":
+      return {
+        state: "declined",
+        pitch: decision.suggestion.suggestion.pitch,
+        confidence: decision.suggestion.decision.quality,
+        gate: gateFrom(decision.suggestion.decision, minWords, minSeconds),
+        questions: [...decision.suggestion.suggestion.mcqs],
+      };
+    case "pass": {
+      // A FINAL utterance was scored but produced no suggestion (below the REQ-3
+      // floor, or failed the quality gate). Show an idle bubble whose gate still
+      // reflects real accumulated speech, so the panel reacts to live audio.
+      const meta = suggestionMetaFromEvents(decision.events);
+      return {
+        state: "idle",
+        pitch: "",
+        confidence: meta.quality,
+        gate: gateFrom(meta, minWords, minSeconds),
+        questions: [],
+      };
+    }
+    case "idle":
+      return null;
+  }
+}
+
+interface SuggestionGateMeta {
+  wordCount: number;
+  elapsedS: number;
+  quality: number;
+}
+
+function gateFrom(meta: SuggestionGateMeta, minWords: number, minSeconds: number): ProjectorSuggestion["gate"] {
+  return { words: meta.wordCount, minWords, seconds: meta.elapsedS, minSeconds };
+}
+
+// `fired`/`pass` verdicts don't carry the decision meta on the returned object,
+// only on their trace events. Pull the substantive word/time/quality counters
+// from the first event whose meta carries them.
+function suggestionMetaFromEvents(events: readonly LogEvent[]): SuggestionGateMeta {
+  for (const event of events) {
+    const meta = event.meta;
+    if (typeof meta.wordCount === "number") {
+      return {
+        wordCount: meta.wordCount,
+        elapsedS: numberOr(meta.elapsedS, 0),
+        quality: numberOr(meta.quality, 0),
+      };
+    }
+  }
+  return { wordCount: 0, elapsedS: 0, quality: 0 };
+}
+
+function numberOr(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
