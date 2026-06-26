@@ -9,8 +9,9 @@ import { createCueBridge, type CueBridge, type CueBridgeMode } from "./cue-bridg
 import { EMERGENCY_STOP_LATENCY_BUDGET_MS, EmergencySessionState, EmergencyStopController } from "../emergency/stop";
 import { TraceProcessor } from "../obs/trace";
 import { ProcessRegistry, type RegistryProcess } from "../process/registry";
-import { selectSmithersClient } from "./smithers-select";
-import type { GatewayRpcTransport } from "../seam/smithers-client";
+import { GatewayRegistryClient, selectSmithersClient, type RegistrySmithersClient } from "./smithers-select";
+import { RunEventDriver, type RunEventStreamClient } from "./run-event-driver";
+import type { GatewayRpcTransport, SmithersClient } from "../seam/smithers-client";
 import type { AcceptanceSpawnResult } from "../acceptance/spawn";
 import { selectAsrProvider, selectDecisionLLM, selectTtsProvider, type ASRProvider, type AsrProviderMode, type DecisionLLM } from "../providers";
 import type { ClaudeMessagesTransport, ReplayASRSource, TTSProvider, TTSTransport, VoxTermSegmentSource } from "../providers";
@@ -72,6 +73,10 @@ export interface ProjectorRuntime {
   // once the room falls quiet (ISSUE-0024). The server boundary calls start();
   // tests drive tick() deterministically off the injected clock.
   readonly idleCueDriver: IdleCueDriver;
+  // Subscribes each spawned run to the gateway's live event stream and folds the
+  // frames into a per-UPID overlay that the process panel reads (ISSUE-0021), so
+  // a live run shows real progress/lastOutput/state instead of demo fixtures.
+  readonly runEventDriver: RunEventDriver;
   // The most recent decision the SuggestionEngine returned for a live final
   // observation (null before the first one). ISSUE-0009/0010 read this — plus
   // `pendingSuggestion()` — to drive delivery/acceptance off the live runtime.
@@ -164,6 +169,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   readonly trace: TraceProcessor;
   readonly emergencyController: EmergencyStopController;
   readonly idleCueDriver: IdleCueDriver;
+  readonly runEventDriver: RunEventDriver;
   readonly #clock: () => number;
   readonly #session: EmergencySessionState;
   readonly #env: ProjectorRuntimeEnv;
@@ -247,12 +253,21 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     // is correct. When PANOP_SMITHERS_GATEWAY_URL (or an injected transport) is
     // present, selectSmithersClient returns a gateway-backed client that routes
     // spawn/halt to a real Smithers gateway over its RPC transport.
+    const smithersClient = selectSmithersClient(env, { transport: options.smithersTransport });
     this.registry = new ProcessRegistry({
-      client: selectSmithersClient(env, { transport: options.smithersTransport }),
+      client: smithersClient,
       sessionId,
       now: clock,
       onTrace: (event) => this.recordExternalTrace(event),
       onOutput: (decision) => this.recordOutput(decision),
+    });
+    // Live run telemetry into the process panel (ISSUE-0021). The driver streams
+    // off the same selected Smithers client the registry spawns through; on each
+    // overlay change it republishes so the snapshot reflects live progress. In the
+    // in-memory default the stream is empty, so the seeded fleet keeps its fixtures.
+    this.runEventDriver = new RunEventDriver({
+      client: runEventStreamClient(smithersClient),
+      onUpdate: () => this.publish(),
     });
 
     const pending = new PendingSuggestionOwner({ clock });
@@ -551,6 +566,11 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       // the live loop both earcons and speaks on accept (GAP-005/GAP-008).
       if (result.kind === "spawned" && result.spawn.accepted) {
         await this.spawnAck(result.spawn, acceptanceCorrelationId);
+        // Subscribe the freshly spawned run to its live event stream so the
+        // process panel reflects real progress (ISSUE-0021). Fire-and-forget: the
+        // overlay updates republish on their own, and a stream failure must not
+        // abort acceptance routing.
+        this.subscribeRunEvents(result.spawn.process.upid, result.spawn.process.runId);
       }
     } catch (error) {
       this.recordExternalTrace({
@@ -744,19 +764,25 @@ class LiveProjectorRuntime implements ProjectorRuntime {
 
     return this.registry.records().map((record) => {
       const demo = demoByUpid.get(record.upid);
+      // Live run telemetry (ISSUE-0021): a spawned run streaming gateway events has
+      // an overlay whose progress/lastOutput/state replace the demo-fixture values
+      // for that UPID. The seeded fleet has no live run, so no overlay exists and it
+      // keeps its fixtures. A dead (halted) process always shows the halt state —
+      // live telemetry never overrides an emergency stop.
+      const live = record.state === "dead" ? undefined : this.runEventDriver.overlay(record.upid);
       return {
         upid: record.upid,
         runId: record.runId,
         // The registry normalizes callsigns to lowercase for voice matching; the
         // projector shows the pre-authored display casing ("Atlas"/"Cobalt").
         callsign: demo?.callsign ?? record.callsign,
-        state: projectorState(record.state),
+        state: record.state === "dead" ? "halted" : live?.state ?? projectorState(record.state),
         selected: record.selected,
         task: demo?.task ?? "Panopticon task",
         model: demo?.model ?? "runtime",
         progressLabel: record.state === "dead" ? "halted" : demo?.progressLabel ?? record.lastAction,
-        progress: record.state === "dead" ? 100 : demo?.progress ?? Math.min(95, record.progressSeq * 12),
-        lastOutput: record.state === "dead" ? "Halted by emergency stop." : demo?.lastOutput ?? record.lastAction,
+        progress: record.state === "dead" ? 100 : live?.progress ?? demo?.progress ?? Math.min(95, record.progressSeq * 12),
+        lastOutput: record.state === "dead" ? "Halted by emergency stop." : live?.lastOutput ?? demo?.lastOutput ?? record.lastAction,
         lastAction: record.lastAction === "spawn" && demo !== undefined ? demo.events[0] ?? record.lastAction : record.lastAction,
         events: record.state === "dead" ? [...(demo?.events ?? []), "halted"] : demo?.events ?? [record.lastAction],
       };
@@ -816,6 +842,22 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     if (this.stageSequencer.state() === "IDLE") {
       await this.driveTransition("ACTIVE_LISTEN", { correlationId, reason: "ambient-listen", audible: null });
     }
+  }
+
+  // Subscribe one spawned run to its live gateway event stream (ISSUE-0021). The
+  // RunEventDriver folds frames into a per-UPID overlay and republishes via its
+  // onUpdate hook, so the process panel tracks real progress. Fire-and-forget: a
+  // stream/transport failure is swallowed so it can never wedge live ingestion.
+  private subscribeRunEvents(upid: string, runId: string): void {
+    void this.runEventDriver.subscribe(upid, runId).catch((error) => {
+      this.recordExternalTrace({
+        event: "run.events.error",
+        level: "error",
+        sessionId: this.sessionId,
+        upid,
+        meta: { message: error instanceof Error ? error.message : String(error) },
+      });
+    });
   }
 
   // Handle one idle-cue decision from the IdleCueDriver. A suggestion that was
@@ -967,6 +1009,24 @@ class BufferedAudioOutput implements AudioOutput {
 // the canonical spine's suggestionSpeech so the live ack reads the same way.
 function suggestionSpeech(suggestion: PendingSuggestion): string {
   return `${suggestion.pitch}. ${suggestion.mcqs[0] ?? "Proceed?"}`;
+}
+
+// Resolve a streamRunEvents-capable client from whatever the registry was given
+// (ISSUE-0021). The gateway path wraps a GatewaySmithersClient that streams; the
+// in-memory default exposes an empty stream. A client without the method (should
+// not happen) degrades to a no-op stream so the runtime never throws on subscribe.
+function runEventStreamClient(client: RegistrySmithersClient): RunEventStreamClient {
+  if (client instanceof GatewayRegistryClient) {
+    return client.client;
+  }
+  if ("streamRunEvents" in client && typeof (client as Partial<SmithersClient>).streamRunEvents === "function") {
+    return client as RunEventStreamClient;
+  }
+  return {
+    async *streamRunEvents() {
+      // No live event source (no gateway configured) — seeded fixtures stand.
+    },
+  };
 }
 
 function projectorState(state: RegistryProcess["state"]): ProjectorProcessState {
