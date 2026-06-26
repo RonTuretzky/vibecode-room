@@ -7,6 +7,7 @@ import { Atmosphere } from "./Atmosphere";
 import { ProcessBubble, IdeaBubble } from "./Bubble";
 import { BuildDetail } from "./BuildDetail";
 import { traceClass, traceTag, summarizeMeta } from "./trace-utils";
+import { startMicCapture, type MicCaptureHandle } from "./mic";
 
 export const REQUIRED_PROJECTOR_REGIONS = [
   "status",
@@ -40,6 +41,10 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
   const [snapshot, setSnapshot] = useState(initialSnapshot);
   const [selected, setSelected] = useState<string | null>(null);
   const [isUnmuting, setIsUnmuting] = useState(false);
+  const [micState, setMicState] = useState<"off" | "connecting" | "live">("off");
+  const [micLevel, setMicLevel] = useState(0);
+  const [micError, setMicError] = useState<string | null>(null);
+  const micHandleRef = useRef<MicCaptureHandle | null>(null);
 
   // Latest snapshot exposed to the e2e window hook without re-binding it.
   const snapshotRef = useRef(snapshot);
@@ -128,6 +133,58 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
         // Best-effort: the projector is non-authoritative; never block on the API.
       });
     }
+    // Stop any live mic capture as part of the kill-all.
+    micHandleRef.current?.stop();
+    micHandleRef.current = null;
+    setMicState("off");
+    setMicLevel(0);
+  }, []);
+
+  const stopMic = useCallback(() => {
+    micHandleRef.current?.stop();
+    micHandleRef.current = null;
+    setMicState("off");
+    setMicLevel(0);
+  }, []);
+
+  const toggleMic = useCallback(async () => {
+    if (micHandleRef.current !== null) {
+      stopMic();
+      return;
+    }
+    setMicError(null);
+    setMicState("connecting");
+    try {
+      // Safety mirror of the server: a muted room must unmute before the mic can
+      // stream cloud ASR. Release the mute first so the socket is accepted.
+      if (snapshotRef.current.muted) {
+        await releaseMute();
+      }
+      const handle = await startMicCapture({
+        onLevel: (rms) => setMicLevel(rms),
+        onStatus: (status) => {
+          if (status === "live") {
+            setMicState("live");
+          } else if (status === "stopped") {
+            setMicState("off");
+            setMicLevel(0);
+          }
+        },
+        onError: (message) => setMicError(message),
+      });
+      micHandleRef.current = handle;
+    } catch (error) {
+      setMicError(error instanceof Error ? error.message : "Could not start microphone");
+      setMicState("off");
+    }
+  }, [releaseMute, stopMic]);
+
+  // Stop capture if the component unmounts.
+  useEffect(() => {
+    return () => {
+      micHandleRef.current?.stop();
+      micHandleRef.current = null;
+    };
   }, []);
 
   // --- Live data: fetch /api/state + subscribe to /api/events (SSR-guarded) ---
@@ -297,6 +354,14 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
               {isUnmuting ? "Unmuting" : "Unmute"}
             </button>
           ) : null}
+          <MicControl
+            state={micState}
+            level={micLevel}
+            error={micError}
+            mode={snapshot.mic?.mode}
+            bytesReceived={snapshot.mic?.bytesReceived ?? 0}
+            onToggle={() => void toggleMic()}
+          />
           <button
             type="button"
             className="ctl-button emergency"
@@ -349,6 +414,72 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
       ) : null}
     </main>
   );
+}
+
+// Live-mic control: toggles browser capture and shows a real-time input level
+// meter so the room can confirm the mic is actually feeding the server. When the
+// server reports ASR mode "replay" (no DEEPGRAM_API_KEY), audio still streams and
+// the meter moves, but words are not transcribed — surfaced via the title hint.
+function MicControl({
+  state,
+  level,
+  error,
+  mode,
+  bytesReceived,
+  onToggle,
+}: {
+  state: "off" | "connecting" | "live";
+  level: number;
+  error: string | null;
+  mode?: "deepgram" | "replay";
+  bytesReceived: number;
+  onToggle: () => void;
+}) {
+  // Map RMS (~0–0.3 for speech) onto a 0–100% bar with mild gain.
+  const levelPercent = Math.min(100, Math.round(level * 320));
+  const label = state === "live" ? "Mic On" : state === "connecting" ? "Starting" : "Mic";
+  const hint =
+    mode === "replay"
+      ? "Audio streams to the server, but transcription needs DEEPGRAM_API_KEY."
+      : "Live mic → server ASR → transcript.";
+
+  return (
+    <div className="mic-control" data-testid="mic-control" data-state={state}>
+      <button
+        type="button"
+        className={`ctl-button mic mic-${state}`}
+        data-testid="mic-button"
+        onClick={onToggle}
+        disabled={state === "connecting"}
+        title={error ?? hint}
+      >
+        <span className="mic-dot" aria-hidden="true" />
+        {label}
+      </button>
+      {state === "live" ? (
+        <>
+          <span className="mic-meter" aria-label="Microphone input level">
+            <span className="mic-meter-fill" data-testid="mic-meter-fill" style={{ width: `${levelPercent}%` }} />
+          </span>
+          <span className="mic-stats" data-testid="mic-stats">
+            {mode === "replay" ? "replay · " : "deepgram · "}
+            {formatBytes(bytesReceived)} in
+          </span>
+        </>
+      ) : null}
+      {error ? <span className="mic-error" data-testid="mic-error">{error}</span> : null}
+    </div>
+  );
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+  if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(1)} KB`;
+  }
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 // A region carrying the suggestion pitch text + data-region="suggestion".

@@ -37,13 +37,54 @@ app.get("*", async (context) => serveStatic(context.req.url));
 const host = process.env.HOST ?? "127.0.0.1";
 const port = parsePort(process.env.PANOP_PORT ?? process.env.PORT ?? "8787");
 
-Bun.serve({
+// Per-connection state for the live-mic WebSocket.
+interface MicSocketData {
+  session?: import("./composition").MicSession;
+}
+
+Bun.serve<MicSocketData>({
   hostname: host,
   port,
-  fetch: app.fetch,
+  fetch(request, server) {
+    // The live microphone path is a WebSocket so the browser can stream raw PCM
+    // continuously. Everything else stays on the Hono app.
+    if (new URL(request.url).pathname === "/api/mic") {
+      const upgraded = server.upgrade(request, { data: {} });
+      if (upgraded) {
+        return undefined;
+      }
+      return new Response("Expected a WebSocket upgrade for /api/mic", { status: 426 });
+    }
+    return app.fetch(request);
+  },
+  websocket: {
+    open(ws) {
+      // Safety: never open a cloud-ASR mic session while the room is muted. The
+      // browser unmutes first, so a muted socket is a client-side ordering bug.
+      if (runtime.snapshot().muted) {
+        ws.send(JSON.stringify({ type: "error", reason: "muted" }));
+        ws.close(1008, "muted");
+        return;
+      }
+      ws.data.session = runtime.startMicSession();
+      ws.send(JSON.stringify({ type: "ready", mode: runtime.micMode, sessionId: ws.data.session.id }));
+    },
+    message(ws, message) {
+      const session = ws.data.session;
+      if (session === undefined || typeof message === "string") {
+        return; // Control text frames are ignored; only binary PCM is consumed.
+      }
+      const bytes = message instanceof Uint8Array ? message : new Uint8Array(message);
+      session.pushAudio(bytes);
+    },
+    close(ws) {
+      void ws.data.session?.stop();
+    },
+  },
 });
 
 console.log(`Panopticon projector server listening on http://${host}:${port}`);
+console.log(`Live mic ASR mode: ${runtime.micMode}${runtime.micMode === "replay" ? " (set DEEPGRAM_API_KEY for real transcription)" : ""}`);
 
 function eventsResponse(source: { subscribe(subscriber: (snapshot: ProjectorSnapshot) => void): () => void }): Response {
   let unsubscribe: (() => void) | undefined;

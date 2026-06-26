@@ -441,6 +441,86 @@ button {
 }
 
 /* ============================================================================
+   Live mic control
+   ============================================================================ */
+.mic-control {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 5px;
+  min-width: 96px;
+}
+
+.ctl-button.mic {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: #cfe9ff;
+  border-color: rgba(90, 190, 255, 0.4);
+  background: rgba(40, 120, 180, 0.14);
+}
+
+.ctl-button.mic:hover {
+  background: rgba(40, 120, 180, 0.24);
+}
+
+.ctl-button.mic .mic-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: rgba(150, 200, 230, 0.6);
+}
+
+.ctl-button.mic.mic-live {
+  color: #d8ffe6;
+  border-color: rgba(52, 224, 138, 0.6);
+  background: rgba(52, 224, 138, 0.16);
+}
+
+.ctl-button.mic.mic-live .mic-dot {
+  background: #34e08a;
+  box-shadow: 0 0 10px rgba(52, 224, 138, 0.9);
+  animation: mic-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes mic-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+.mic-meter {
+  display: block;
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(20, 34, 44, 0.7);
+  overflow: hidden;
+}
+
+.mic-meter-fill {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: 3px;
+  background: linear-gradient(90deg, #34e08a, #8ef0c0);
+  transition: width 80ms linear;
+}
+
+.mic-stats {
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  color: rgba(180, 220, 240, 0.75);
+  text-align: center;
+}
+
+.mic-error {
+  font-size: 11px;
+  line-height: 1.2;
+  color: #ffb4ad;
+  max-width: 180px;
+}
+
+/* ============================================================================
    Bubble field
    ============================================================================ */
 .bubble-field {

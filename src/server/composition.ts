@@ -14,9 +14,27 @@ import { StageSequencer } from "../spine/stage-sequencer";
 import type { DecisionInput, DecisionLLM, DecisionOutput } from "../providers";
 import type { LogEvent, OutputDecision, PendingSuggestion } from "../types";
 import { demoProjectorSnapshot, withUnmuted } from "../ui/demo-data";
-import type { ProjectorProcess, ProjectorProcessState, ProjectorSnapshot } from "../ui/types";
+import type { ProjectorProcess, ProjectorProcessState, ProjectorSnapshot, TranscriptLine } from "../ui/types";
+import type { TranscriptObservation } from "../types";
 
 export type ProjectorRuntimeSubscriber = (snapshot: ProjectorSnapshot) => void;
+
+// A live browser-microphone session. The /api/mic WebSocket pushes raw PCM
+// frames in via `pushAudio`; the runtime streams them through the ASR provider
+// and surfaces resulting transcript lines on the projector snapshot.
+export interface MicSession {
+  readonly id: string;
+  pushAudio(chunk: Uint8Array): void;
+  stop(): Promise<void>;
+}
+
+// Keep at most this many committed (final) transcript lines on the snapshot so a
+// long-running room session does not grow the published payload without bound.
+const MAX_LIVE_TRANSCRIPT_LINES = 40;
+// Deepgram's stream() applies a close timer as a safety cap on total duration.
+// A live mic must stay open for the whole session, so we lift the cap well past
+// any single demo (6h); `stop()` closes the audio stream explicitly.
+const MIC_CLOSE_TIMEOUT_MS = 6 * 60 * 60 * 1000;
 
 export interface ProjectorRuntimeEnv {
   DEEPGRAM_API_KEY?: string;
@@ -28,6 +46,7 @@ export interface ProjectorRuntimeEnv {
 export interface ProjectorRuntime {
   readonly sessionId: string;
   readonly asrMode: "deepgram" | "replay";
+  readonly micMode: "deepgram" | "replay";
   readonly asr: ASRProvider;
   readonly tts: TTSProvider;
   readonly cueAdapter: CueAdapter;
@@ -42,6 +61,7 @@ export interface ProjectorRuntime {
   subscribe(subscriber: ProjectorRuntimeSubscriber): () => void;
   unmute(correlationId?: string): Promise<ProjectorSnapshot>;
   emergencyStop(correlationId?: string): Promise<ProjectorSnapshot>;
+  startMicSession(correlationId?: string): MicSession;
 }
 
 interface SeededProcessView {
@@ -71,7 +91,9 @@ export async function createProjectorRuntime(env: ProjectorRuntimeEnv = process.
 
 class LiveProjectorRuntime implements ProjectorRuntime {
   readonly asrMode: "deepgram" | "replay";
+  readonly micMode: "deepgram" | "replay";
   readonly asr: ASRProvider;
+  readonly #micAsr: ASRProvider;
   readonly tts = new NoopTTSProvider();
   readonly cueAdapter: CueAdapter;
   readonly muteController: MuteController;
@@ -87,6 +109,13 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   readonly #demoProcesses: SeededProcessView[];
   #snapshot: ProjectorSnapshot = demoProjectorSnapshot;
   #emergencyTriggered = false;
+  // Live microphone state. `#liveFinals` are committed (final) ASR lines;
+  // `#interim` is the in-flight partial that Deepgram revises as you speak.
+  #liveFinals: TranscriptLine[] = [];
+  #interim: TranscriptLine | null = null;
+  #micActive = false;
+  #micBytes = 0;
+  #micLastPublishMs = 0;
 
   constructor(
     readonly sessionId: string,
@@ -106,6 +135,12 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     const selectedAsr = selectAsrProvider(env, sessionId);
     this.asrMode = selectedAsr.mode;
     this.asr = this.muteController.protectCloudAsr(selectedAsr.provider);
+
+    // A second, long-lived ASR provider dedicated to the live browser mic. It is
+    // mute-protected too, so a muted room never streams audio to the cloud.
+    const selectedMicAsr = selectMicAsrProvider(env, sessionId);
+    this.micMode = selectedMicAsr.mode;
+    this.#micAsr = this.muteController.protectCloudAsr(selectedMicAsr.provider);
     this.cueAdapter = new CueAdapter({
       sessionId,
       trace: this.trace,
@@ -221,6 +256,121 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     return this.#snapshot;
   }
 
+  startMicSession(correlationId = `corr-mic-${crypto.randomUUID()}`): MicSession {
+    let controller: ReadableStreamDefaultController<Uint8Array> | null = null;
+    let closed = false;
+    const audio = new ReadableStream<Uint8Array>({
+      start: (c) => {
+        controller = c;
+      },
+      cancel: () => {
+        closed = true;
+      },
+    });
+
+    this.#micActive = true;
+    this.#micBytes = 0;
+    this.#micLastPublishMs = 0;
+    this.#interim = null;
+    this.recordExternalTrace({
+      event: "mic.session.open",
+      level: "info",
+      sessionId: this.sessionId,
+      correlationId,
+      meta: { mode: this.micMode },
+    });
+    this.publish();
+
+    // Drain the ASR provider in the background; each observation updates the
+    // live transcript and republishes the snapshot to all SSE subscribers.
+    const drained = (async () => {
+      try {
+        for await (const observation of this.#micAsr.stream(audio)) {
+          this.ingestTranscript(observation);
+        }
+      } catch (error) {
+        this.recordExternalTrace({
+          event: "mic.session.error",
+          level: "error",
+          sessionId: this.sessionId,
+          correlationId,
+          meta: { message: error instanceof Error ? error.message : String(error) },
+        });
+      } finally {
+        // Note: `#micActive` is tied to the socket lifetime (cleared in stop()),
+        // not to this drain completing. In replay mode the ASR stream ends
+        // immediately, but the room mic is still open and feeding the server.
+        this.#interim = null;
+        this.publish();
+      }
+    })();
+
+    return {
+      id: correlationId,
+      pushAudio: (chunk: Uint8Array) => {
+        if (closed || controller === null || chunk.byteLength === 0) {
+          return;
+        }
+        this.#micBytes += chunk.byteLength;
+        try {
+          controller.enqueue(chunk);
+        } catch {
+          // The stream was already closed/cancelled; drop the late frame.
+        }
+        // Throttle byte-counter publishes so a steady mic stream (many frames/s)
+        // doesn't flood SSE subscribers.
+        const now = Date.now();
+        if (now - this.#micLastPublishMs >= 200) {
+          this.#micLastPublishMs = now;
+          this.publish();
+        }
+      },
+      stop: async () => {
+        if (closed) {
+          return;
+        }
+        closed = true;
+        this.#micActive = false;
+        try {
+          controller?.close();
+        } catch {
+          // Already closed.
+        }
+        this.recordExternalTrace({
+          event: "mic.session.close",
+          level: "info",
+          sessionId: this.sessionId,
+          correlationId,
+          meta: { bytesReceived: this.#micBytes },
+        });
+        this.publish();
+        await drained.catch(() => undefined);
+      },
+    };
+  }
+
+  // Fold one ASR observation into the live transcript. Interim (partial) results
+  // replace the single in-flight line; final results commit it to the log.
+  private ingestTranscript(observation: TranscriptObservation): void {
+    const text = observation.text.trim();
+    if (text.length === 0) {
+      return;
+    }
+    const line: TranscriptLine = {
+      time: new Date().toISOString().slice(11, 19),
+      speaker: observation.speaker ?? "Room",
+      text,
+      kind: "room",
+    };
+    if (observation.isFinal) {
+      this.#liveFinals = [...this.#liveFinals, line].slice(-MAX_LIVE_TRANSCRIPT_LINES);
+      this.#interim = null;
+    } else {
+      this.#interim = line;
+    }
+    this.publish();
+  }
+
   async seedDemoFleet(): Promise<void> {
     const [atlas, cobalt] = this.#demoProcesses;
     if (atlas === undefined || cobalt === undefined) {
@@ -285,6 +435,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   private buildSnapshot(previous: ProjectorSnapshot = this.#snapshot): ProjectorSnapshot {
     const muted = this.#emergencyTriggered || this.muteController.isMuted();
     const listening = !this.#emergencyTriggered && this.#session.isListening() && !muted;
+    const liveActiveCue = this.#micActive ? "ambient listening" : previous.activeCue;
 
     return {
       ...demoProjectorSnapshot,
@@ -292,13 +443,28 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       listening,
       muted,
       globalState: this.#emergencyTriggered ? "emergency stopped" : muted ? "muted" : "ready",
-      activeCue: this.#emergencyTriggered ? "none" : muted ? "muted" : previous.activeCue,
+      activeCue: this.#emergencyTriggered ? "none" : muted ? "muted" : liveActiveCue,
       emergencyStopTriggered: this.#emergencyTriggered,
       audio: this.audioSnapshot(previous),
       processes: this.processSnapshots(),
+      transcript: this.transcriptSnapshot(),
       trace: [...demoProjectorSnapshot.trace, ...this.trace.events()].slice(-80),
       updatedAt: new Date().toISOString(),
+      mic: { mode: this.micMode, active: this.#micActive, bytesReceived: this.#micBytes },
     };
+  }
+
+  // Once any live mic line exists, the transcript region reflects the real room
+  // audio; before that it shows the seeded demo lines so the panel is never empty.
+  private transcriptSnapshot(): TranscriptLine[] {
+    if (this.#liveFinals.length === 0 && this.#interim === null) {
+      return demoProjectorSnapshot.transcript;
+    }
+    const lines = [...this.#liveFinals];
+    if (this.#interim !== null) {
+      lines.push(this.#interim);
+    }
+    return lines.slice(-MAX_LIVE_TRANSCRIPT_LINES);
   }
 
   private processSnapshots(): ProjectorProcess[] {
@@ -377,6 +543,30 @@ function selectAsrProvider(
     return {
       mode: "deepgram",
       provider: new DeepgramNova3ASRProvider({ apiKey, sessionId }),
+    };
+  }
+
+  return {
+    mode: "replay",
+    provider: new ReplayASRProvider([]),
+  };
+}
+
+// Like selectAsrProvider, but tuned for a continuous live mic: the Deepgram
+// close-timer is lifted so a long room session is not cut off mid-stream.
+function selectMicAsrProvider(
+  env: ProjectorRuntimeEnv,
+  sessionId: string,
+): { mode: "deepgram" | "replay"; provider: ASRProvider } {
+  const apiKey = env.DEEPGRAM_API_KEY;
+  if (apiKey !== undefined && apiKey.length > 0) {
+    return {
+      mode: "deepgram",
+      provider: new DeepgramNova3ASRProvider({
+        apiKey,
+        sessionId,
+        closeTimeoutMs: MIC_CLOSE_TIMEOUT_MS,
+      }),
     };
   }
 
