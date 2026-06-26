@@ -208,6 +208,9 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       trace: this.trace,
       clock,
       textCueWords: ["panop"],
+      // Tag the fallback adapter so its earcon trace is distinguishable from the
+      // upstream harness adapter's when operators inspect the live trace (GAP-006).
+      earconPath: "fallback",
     });
     // Real decider selected by env (heuristic by default — no key, deterministic).
     // Shared by the SuggestionEngine and the Cue harness fast-path bridge.

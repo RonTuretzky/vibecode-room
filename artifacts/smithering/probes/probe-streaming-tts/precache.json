@@ -1,31 +1,31 @@
 {
-  "providerId": "playht",
+  "providerId": "elevenlabs",
   "phraseCount": 5,
   "playback": [
     {
       "phrase": "Ready",
-      "firstByteMs": 0.008750000000873115,
-      "bytes": 19
+      "firstByteMs": 0.004832999999052845,
+      "bytes": 23
     },
     {
       "phrase": "Muted",
-      "firstByteMs": 0.001291000000492204,
-      "bytes": 19
+      "firstByteMs": 0.0006670000002486631,
+      "bytes": 23
     },
     {
       "phrase": "Unmuted",
-      "firstByteMs": 0.00045900000259280205,
-      "bytes": 21
+      "firstByteMs": 0.0004169999956502579,
+      "bytes": 25
     },
     {
       "phrase": "Working",
-      "firstByteMs": 0.0005420000015874393,
-      "bytes": 21
+      "firstByteMs": 0.00033400000393157825,
+      "bytes": 25
     },
     {
       "phrase": "Halted",
-      "firstByteMs": 0.0007499999992433004,
-      "bytes": 20
+      "firstByteMs": 0.00033399999665562063,
+      "bytes": 24
     }
   ],
   "synthetic": false

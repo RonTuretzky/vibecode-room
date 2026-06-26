@@ -1,4 +1,5 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
+import { join } from "node:path";
 import { CueAdapter } from "../cue/adapter";
 import type { PanopticonCueHarness } from "../cue/harness";
 import { TraceProcessor } from "../obs/trace";
@@ -27,8 +28,13 @@ function fallbackAdapter(trace: TraceProcessor): CueAdapter {
     clock: monotonicClock(100),
     idFactory: sequenceIds("bridge"),
     textCueWords: ["panop"],
+    earconPath: "fallback",
   });
 }
+
+// The committed pre-built Cue fixture; pointing PANOP_CUE_SOURCE_DIR here makes
+// cueSourceBuildAvailable() report a build so the bridge selects the harness path.
+const CUE_BUILD_FIXTURE = join(import.meta.dir, "../../fixtures/cue-build");
 
 const providers = {
   transcription: new ReplayASRProvider([]),
@@ -96,6 +102,79 @@ describe("createCueBridge — path selection on build presence", () => {
 
     expect(bridge.mode).toBe("fallback");
     expect(bridge.selection.reason).toContain("dist missing");
+  });
+});
+
+describe("createCueBridge — harness path against a real Cue build (integration)", () => {
+  const priorSourceDir = process.env.PANOP_CUE_SOURCE_DIR;
+
+  afterEach(() => {
+    if (priorSourceDir === undefined) {
+      delete process.env.PANOP_CUE_SOURCE_DIR;
+    } else {
+      process.env.PANOP_CUE_SOURCE_DIR = priorSourceDir;
+    }
+  });
+
+  test("a fixture build dir yields mode 'harness' and a harness-tagged earcon trace", async () => {
+    // Point at the committed pre-built Cue substrate: no override of
+    // buildAvailable/createHarness, so this exercises the real cueSourceBuildAvailable
+    // detector, loadCueCore import, and createPanopticonCueHarness factory.
+    process.env.PANOP_CUE_SOURCE_DIR = CUE_BUILD_FIXTURE;
+
+    const trace = new TraceProcessor({ clock: monotonicClock(100) });
+    const logs: string[] = [];
+    const bridge = await createCueBridge({
+      sessionId: "session-cue-bridge",
+      providers,
+      fallbackAdapter: fallbackAdapter(trace),
+      textCueWords: ["panop"],
+      trace,
+      clock: monotonicClock(100),
+      onLog: (message) => logs.push(message),
+    });
+
+    expect(bridge.mode).toBe("harness");
+    expect(bridge.selection.reason).toContain(CUE_BUILD_FIXTURE);
+    expect(logs.some((line) => line.includes("harness"))).toBe(true);
+
+    const decision = await bridge.observeFinal(observation("Panop status"));
+    if (decision === null) {
+      throw new Error("expected a decision for a final observation");
+    }
+
+    // The wake word drove the upstream harness ingest to a TextCue decision, and
+    // the harness-owned adapter emitted the earcon.
+    expect(decision.earcons).toHaveLength(1);
+    expect(decision.earcons[0]).toEqual(
+      expect.objectContaining({ id: "E1", source: "cue-textcue", matchedWord: "panop" }),
+    );
+    const earconTrace = decision.events.filter((event) => event.event === "earcon.emit");
+    expect(earconTrace).toHaveLength(1);
+    // Distinguishable from the fallback adapter trace via the `path` tag.
+    expect(earconTrace[0]?.meta).toEqual(
+      expect.objectContaining({ id: "E1", source: "cue-textcue", matchedWord: "panop", path: "harness" }),
+    );
+  });
+
+  test("the fallback adapter tags its earcon trace 'fallback', distinct from the harness path", async () => {
+    const trace = new TraceProcessor({ clock: monotonicClock(100) });
+    const bridge = await createCueBridge({
+      sessionId: "session-cue-bridge",
+      providers,
+      fallbackAdapter: fallbackAdapter(trace),
+      textCueWords: ["panop"],
+      trace,
+      clock: monotonicClock(100),
+      buildAvailable: () => false,
+      onLog: () => undefined,
+    });
+
+    expect(bridge.mode).toBe("fallback");
+    const decision = await bridge.observeFinal(observation("Panop status"));
+    const earconTrace = (decision?.events ?? []).filter((event) => event.event === "earcon.emit");
+    expect(earconTrace).toHaveLength(1);
+    expect(earconTrace[0]?.meta).toEqual(expect.objectContaining({ source: "cue-textcue", path: "fallback" }));
   });
 });
 
