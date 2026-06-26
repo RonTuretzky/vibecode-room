@@ -1,21 +1,21 @@
 {
   "budgetMs": 200,
   "selected": {
-    "providerId": "cartesia",
-    "label": "Cartesia Sonic",
+    "providerId": "openai",
+    "label": "OpenAI /v1/audio/speech",
     "model": "replay-tts",
     "voice": "neutral-replay",
-    "firstAudioByteMs": 63.37670799999978,
-    "firstChunkBytes": 53,
+    "firstAudioByteMs": 62.05325000000448,
+    "firstChunkBytes": 51,
     "contentType": "audio/replay-pcm"
   },
   "fastestMeasured": {
-    "providerId": "cartesia",
-    "label": "Cartesia Sonic",
+    "providerId": "openai",
+    "label": "OpenAI /v1/audio/speech",
     "model": "replay-tts",
     "voice": "neutral-replay",
-    "firstAudioByteMs": 63.37670799999978,
-    "firstChunkBytes": 53,
+    "firstAudioByteMs": 62.05325000000448,
+    "firstChunkBytes": 51,
     "contentType": "audio/replay-pcm"
   },
   "measured": [
@@ -24,7 +24,7 @@
       "label": "ElevenLabs Flash v3 / Flash low-latency family",
       "model": "replay-tts",
       "voice": "neutral-replay",
-      "firstAudioByteMs": 64.7007909999993,
+      "firstAudioByteMs": 65.57450000000244,
       "firstChunkBytes": 55,
       "contentType": "audio/replay-pcm"
     },
@@ -33,7 +33,7 @@
       "label": "Cartesia Sonic",
       "model": "replay-tts",
       "voice": "neutral-replay",
-      "firstAudioByteMs": 63.37670799999978,
+      "firstAudioByteMs": 65.58554100000038,
       "firstChunkBytes": 53,
       "contentType": "audio/replay-pcm"
     },
@@ -42,7 +42,7 @@
       "label": "PlayHT 3.0 Turbo",
       "model": "replay-tts",
       "voice": "neutral-replay",
-      "firstAudioByteMs": 63.97124999999869,
+      "firstAudioByteMs": 62.851582999996026,
       "firstChunkBytes": 51,
       "contentType": "audio/replay-pcm"
     },
@@ -51,7 +51,7 @@
       "label": "OpenAI /v1/audio/speech",
       "model": "replay-tts",
       "voice": "neutral-replay",
-      "firstAudioByteMs": 64.84504200000083,
+      "firstAudioByteMs": 62.05325000000448,
       "firstChunkBytes": 51,
       "contentType": "audio/replay-pcm"
     }
