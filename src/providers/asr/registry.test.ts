@@ -7,12 +7,21 @@ import {
   type AsrSelectionEnv,
   type AsrSelectionOptions,
 } from "./registry";
-import { VoxTermASRProvider } from "./voxterm";
+import { arraySegmentSource, VoxTermASRProvider, type VoxTermSegment } from "./voxterm";
+import { transcriptObservationSchema, type TranscriptObservation } from "../../types";
 
 // Deepgram-shaped token so createAudioCredentialSource accepts it as a real
 // provider key (see src/security/secrets.ts deepgram-key pattern).
 const DEEPGRAM_KEY = "dg_test_0123456789abcdef0123456789";
 const baseOptions: AsrSelectionOptions = { sessionId: "registry-session" };
+
+function emptyAudioStream(): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.close();
+    },
+  });
+}
 
 describe("selectAsrProvider — explicit PANOP_ASR_PROVIDER mapping (unit)", () => {
   test("maps 'deepgram' to DeepgramNova3ASRProvider", () => {
@@ -27,6 +36,50 @@ describe("selectAsrProvider — explicit PANOP_ASR_PROVIDER mapping (unit)", () 
 
     expect(selection.mode).toBe("voxterm");
     expect(selection.provider).toBeInstanceOf(VoxTermASRProvider);
+  });
+
+  test("the selected voxterm provider is driven by the injected segment source", async () => {
+    // An interim revision then the committed final of one utterance, plus a second
+    // utterance — the injected source is the only thing that can produce these.
+    const segments: VoxTermSegment[] = [
+      { utteranceId: 9, text: "open the", final: false, speaker: 0, emittedAtMs: 100 },
+      { utteranceId: 9, text: "open the build dashboard", final: true, speaker: 0, emittedAtMs: 260 },
+      { utteranceId: 10, text: "and ship it", final: true, speaker: 1, emittedAtMs: 600 },
+    ];
+    const selection = selectAsrProvider(
+      { PANOP_ASR_PROVIDER: "voxterm" },
+      { sessionId: "registry-voxterm", voxtermSource: arraySegmentSource(segments) },
+    );
+
+    expect(selection.mode).toBe("voxterm");
+    expect(selection.provider).toBeInstanceOf(VoxTermASRProvider);
+
+    const observations: TranscriptObservation[] = [];
+    for await (const observation of selection.provider.stream(emptyAudioStream())) {
+      expect(transcriptObservationSchema.parse(observation)).toEqual(observation);
+      observations.push(observation);
+    }
+
+    // The injected frames — and only those — surfaced, in order, stamped with the
+    // selection's sessionId and the stable per-utterance ids.
+    expect(observations.map((o) => o.text)).toEqual([
+      "open the",
+      "open the build dashboard",
+      "and ship it",
+    ]);
+    expect(observations.map((o) => o.isFinal)).toEqual([false, true, true]);
+    expect(observations.map((o) => o.utteranceId)).toEqual(["vox-9", "vox-9", "vox-10"]);
+    expect(observations.every((o) => o.sessionId === "registry-voxterm")).toBe(true);
+  });
+
+  test("voxterm without an injected source streams nothing (no mic/process opened)", async () => {
+    const selection = selectAsrProvider({ PANOP_ASR_PROVIDER: "voxterm" }, baseOptions);
+
+    const observations: TranscriptObservation[] = [];
+    for await (const observation of selection.provider.stream(emptyAudioStream())) {
+      observations.push(observation);
+    }
+    expect(observations).toEqual([]);
   });
 
   test("maps 'replay' to ReplayASRProvider", () => {

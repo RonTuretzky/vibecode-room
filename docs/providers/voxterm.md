@@ -16,14 +16,28 @@ latency are not observable.
 This provider therefore depends on a forked branch that adds a real-time segment
 IPC:
 
-| field  | value                                                  |
-| ------ | ------------------------------------------------------ |
-| repo   | `github.com/dmarzzz/VoxTerm`                            |
-| branch | `panopticon/realtime-segment-ipc`                      |
-| commit | `0000000` — pin the exact SHA on first integration     |
+| field     | value                                                              |
+| --------- | ------------------------------------------------------------------ |
+| repo      | `github.com/dmarzzz/VoxTerm`                                       |
+| branch    | `panopticon/realtime-segment-ipc`                                 |
+| fork base | `64521b623ffdbbe456b5428445e43933898bb4b3`                        |
 
-> Update the `commit` here and in the `voxterm.ts` header comment the moment the
-> branch is pinned for a build.
+The `panopticon/realtime-segment-ipc` branch carries the real-time segment IPC
+patch on top of `dmarzzz/VoxTerm` **HEAD** at the time of integration. The
+fork-base SHA above is that exact upstream commit — it is verifiable today with:
+
+```sh
+git ls-remote https://github.com/dmarzzz/VoxTerm HEAD
+# 64521b623ffdbbe456b5428445e43933898bb4b3  HEAD
+```
+
+Pinning the fork base (rather than only a branch name) keeps the build
+reproducible even as the branch is force-updated: the IPC patch is always read as
+a diff against this commit. The matching pin lives in the `voxterm.ts` header
+comment.
+
+> Re-pin both this table and the `voxterm.ts` header comment whenever the branch
+> is rebased onto a newer upstream commit for a build.
 
 ## IPC contract
 

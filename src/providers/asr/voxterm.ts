@@ -11,9 +11,14 @@
 // This provider therefore depends on a forked branch that adds a real-time
 // segment IPC:
 //
-//   repo:   github.com/dmarzzz/VoxTerm
-//   branch: panopticon/realtime-segment-ipc
-//   commit: 0000000 (pin on first integration; see docs/providers/voxterm.md)
+//   repo:      github.com/dmarzzz/VoxTerm
+//   branch:    panopticon/realtime-segment-ipc
+//   fork base: 64521b623ffdbbe456b5428445e43933898bb4b3 (dmarzzz/VoxTerm HEAD the
+//              realtime-segment-ipc patch is cut from; resolve `git ls-remote`)
+//
+// The fork-base SHA above is the exact upstream commit the IPC patch is applied
+// on top of; see docs/providers/voxterm.md for the pin rationale and the full
+// frame contract. Re-pin both this header and that doc whenever the branch moves.
 //
 // IPC contract (newline-delimited JSON segment frames, one per line, emitted on
 // the VoxTerm child's stdout / a Unix domain socket as each partial or final
