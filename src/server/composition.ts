@@ -19,6 +19,7 @@ import type { ClaudeMessagesTransport, ReplayASRSource, TTSProvider, TTSTranspor
 import { drainTtsStream, type TtsAudioSink } from "./tts-sink";
 import { selectAudioSink, type AudioSink, type AudioSinkMode } from "./audio-device-sink";
 import { IdleCueDriver } from "./idle-cue-driver";
+import { IdeaBuildRegistry } from "./idea-builder";
 import {
   readSuggestionEngineConfig,
   SuggestionEngine,
@@ -28,7 +29,7 @@ import {
 } from "../suggest/engine";
 import { StageSequencer, type CanonicalStage } from "../spine/stage-sequencer";
 import type { LogEvent, OutputDecision, PendingSuggestion } from "../types";
-import { demoProjectorSnapshot, withUnmuted } from "../ui/demo-data";
+import { demoProjectorSnapshot, emptyProjectorSnapshot, withUnmuted } from "../ui/demo-data";
 import type { ProjectorProcess, ProjectorProcessState, ProjectorSnapshot, ProjectorSuggestion, TranscriptLine } from "../ui/types";
 import type { TranscriptObservation } from "../types";
 
@@ -51,6 +52,10 @@ export interface ProjectorRuntimeEnv {
   DEEPGRAM_API_KEY?: string;
   PANOP_SESSION_ID?: string;
   PANOP_INITIAL_MUTED?: string;
+  // Opt-in: seed the FIXTURE demo fleet (Atlas/Cobalt) into the live registry at
+  // boot. OFF by default so an idle live runtime has zero processes; set to "1"
+  // for the projector demo (`bun run start`) / tests that exercise the fleet.
+  PANOP_SEED_DEMO_FLEET?: string;
   [key: string]: string | undefined;
 }
 
@@ -83,6 +88,10 @@ export interface ProjectorRuntime {
   // frames into a per-UPID overlay that the process panel reads (ISSUE-0021), so
   // a live run shows real progress/lastOutput/state instead of demo fixtures.
   readonly runEventDriver: RunEventDriver;
+  // Real accept->build->preview registry: each voice-accepted idea scaffolds a
+  // runnable artifact + a live preview server, tracked here per UPID so the
+  // snapshot can surface previewUrl/buildStatus and lifecycle can tear it down.
+  readonly ideaBuilds: IdeaBuildRegistry;
   // The most recent decision the SuggestionEngine returned for a live final
   // observation (null before the first one). ISSUE-0009/0010 read this — plus
   // `pendingSuggestion()` — to drive delivery/acceptance off the live runtime.
@@ -93,6 +102,20 @@ export interface ProjectorRuntime {
   unmute(correlationId?: string): Promise<ProjectorSnapshot>;
   emergencyStop(correlationId?: string): Promise<ProjectorSnapshot>;
   startMicSession(correlationId?: string): MicSession;
+  // Click-to-build (CLICK THE IDEA BUBBLE -> BUILD): accept the CURRENT pending
+  // suggestion directly, bypassing the spoken AcceptanceClassifier/semantic gate,
+  // by spawning through the same accept path (build:true) so ideaBuilds.build runs
+  // and a process with previewUrl/buildStatus appears on the snapshot. A no-op
+  // returning the current snapshot when there is no pending suggestion.
+  acceptPendingSuggestion(correlationId?: string): Promise<ProjectorSnapshot>;
+  // Click-to-steer (CLICK A PROJECT -> STEER IT): set the steering target UPID so
+  // subsequent live FINAL transcript lines route to THAT process's agent loop
+  // (registry.steer) instead of seeding a fresh ambient suggestion.
+  setSteeringTarget(upid: string, correlationId?: string): ProjectorSnapshot;
+  // Clear the steering target; live transcript returns to ambient suggestion +
+  // click-to-build behavior.
+  clearSteeringTarget(correlationId?: string): ProjectorSnapshot;
+  steeringTarget(): string | null;
 }
 
 interface SeededProcessView {
@@ -135,16 +158,26 @@ export interface ProjectorRuntimeOptions {
   // this, so tests advance silence deterministically instead of waiting on the
   // wall clock. Defaults to Date.now.
   clock?: () => number;
+  // Root directory the real accept->build->preview artifacts are scaffolded under
+  // (idea-builder). Defaults to <cwd>/builds. Tests point it at a temp dir so the
+  // repo tree stays clean and each run is isolated.
+  buildsRoot?: string;
 }
 
 export async function createProjectorRuntime(
   env: ProjectorRuntimeEnv = process.env,
   options: ProjectorRuntimeOptions = {},
 ): Promise<ProjectorRuntime> {
-  const sessionId = env.PANOP_SESSION_ID ?? demoProjectorSnapshot.sessionId;
+  const sessionId = env.PANOP_SESSION_ID ?? emptyProjectorSnapshot.sessionId;
   const runtime = new LiveProjectorRuntime(sessionId, env, options);
   await runtime.initCueBridge();
-  await runtime.seedDemoFleet();
+  // The seeded demo fleet (FIXTURE Atlas/Cobalt processes) is OFF by default in
+  // the live server: an idle runtime must have ZERO processes until a real idea
+  // is accepted and spawns one. It stays available for tests/demo via the opt-in
+  // PANOP_SEED_DEMO_FLEET=1 flag.
+  if (env.PANOP_SEED_DEMO_FLEET === "1") {
+    await runtime.seedDemoFleet();
+  }
   runtime.startAcceptanceWatchdog();
 
   if (env.PANOP_INITIAL_MUTED !== "0") {
@@ -185,13 +218,14 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   readonly emergencyController: EmergencyStopController;
   readonly idleCueDriver: IdleCueDriver;
   readonly runEventDriver: RunEventDriver;
+  readonly ideaBuilds: IdeaBuildRegistry;
   readonly #clock: () => number;
   readonly #session: EmergencySessionState;
   readonly #env: ProjectorRuntimeEnv;
   readonly #subscribers = new Set<ProjectorRuntimeSubscriber>();
   readonly #outputs: OutputDecision[] = [];
   readonly #demoProcesses: SeededProcessView[];
-  #snapshot: ProjectorSnapshot = demoProjectorSnapshot;
+  #snapshot: ProjectorSnapshot = emptyProjectorSnapshot;
   #emergencyTriggered = false;
   // Live microphone state. `#liveFinals` are committed (final) ASR lines;
   // `#interim` is the in-flight partial that Deepgram revises as you speak.
@@ -205,6 +239,11 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   // is the latest engine verdict; `#lastFinalAtMs` lets us report room-idle gap.
   #lastSuggestionDecision: SuggestionEngineDecision | null = null;
   #lastFinalAtMs: number | null = null;
+  // Click-to-steer target (CLICK A PROJECT -> STEER IT). When non-null, live FINAL
+  // transcript lines are routed to this process's agent loop via registry.steer
+  // instead of seeding a fresh ambient suggestion. Set/cleared by the projector
+  // click endpoints; cleared automatically if the target stops being live.
+  #steeringUpid: string | null = null;
 
   constructor(
     readonly sessionId: string,
@@ -292,10 +331,28 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       decider: decisionSelection.mode,
       smithers: smithersMode,
     });
+    // Real accept->build->preview registry. A voice-accepted idea spawns a
+    // process AND scaffolds a runnable artifact served live from builds/<upid>/.
+    // The runtime owns the instance (pointing builds at a test-safe root) and
+    // shares it with the registry, which triggers the build on an accept-path
+    // spawn (build:true — the demo seed spawns bare and never builds) and tears
+    // the preview server down on halt.
+    this.ideaBuilds = new IdeaBuildRegistry({ buildsRoot: options.buildsRoot });
     this.registry = new ProcessRegistry({
       client: smithersClient,
       sessionId,
       now: clock,
+      ideaBuilds: this.ideaBuilds,
+      // A halted/emergency-stopped process drops its preview; republish so the
+      // "Preview ->" link disappears from the snapshot immediately. If the halted
+      // process was the steering target, drop the target so transcript stops
+      // routing into a dead process and returns to ambient handling.
+      onHalt: (upid) => {
+        if (this.#steeringUpid === upid) {
+          this.#steeringUpid = null;
+        }
+        this.publish();
+      },
       onTrace: (event) => this.recordExternalTrace(event),
       onOutput: (decision) => this.recordOutput(decision),
     });
@@ -445,10 +502,115 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     } catch (error) {
       console.error("Emergency stop encountered an error while halting processes:", error);
     } finally {
+      // Tear down every live accept->build->preview server as part of the kill-all
+      // (per-process halt already stops its own; this also reaps any in-flight or
+      // not-yet-halted build so no loopback preview outlives the session).
+      await this.ideaBuilds.stopAll().catch(() => undefined);
       this.#snapshot = this.buildSnapshot();
       this.publish();
     }
     return this.#snapshot;
+  }
+
+  // CLICK THE IDEA BUBBLE -> BUILD. Accept the CURRENT pending suggestion directly,
+  // bypassing the spoken AcceptanceClassifier/semantic gate, by spawning through
+  // the same accept path the spoken "yes" takes (the ProcessRegistry seam's
+  // build:true spawn), so the existing idea-builder (ideaBuilds.build) runs and a
+  // process with previewUrl/buildStatus appears on the snapshot. A no-op returning
+  // the current snapshot when there is no pending suggestion.
+  async acceptPendingSuggestion(
+    correlationId = `corr-accept-click-${crypto.randomUUID()}`,
+  ): Promise<ProjectorSnapshot> {
+    if (this.#emergencyTriggered) {
+      return this.#snapshot;
+    }
+    // Accept whatever the bubble is currently showing: the engine's QUEUED entry
+    // if a suggestion is still queued, otherwise the AcceptanceController's
+    // DELIVERED (awaiting-acceptance) suggestion — the common case, since a fired
+    // suggestion leaves the engine queue and sits in delivery awaiting accept.
+    const queued = this.pendingSuggestion();
+    const suggestion = queued?.suggestion ?? this.acceptanceController.currentPending();
+    if (suggestion === null) {
+      // Nothing delivered/pending — the click is a no-op; return the live snapshot.
+      return this.#snapshot;
+    }
+    this.recordExternalTrace({
+      event: "suggestion.accept.click",
+      level: "info",
+      sessionId: this.sessionId,
+      correlationId,
+      meta: { suggestionId: suggestion.suggestionId, pitch: suggestion.pitch },
+    });
+    try {
+      const spawn = await this.acceptanceController.spawnAccepted(suggestion, correlationId);
+      // Consume the engine's queued entry too so the accepted idea is not later
+      // re-delivered or re-expired by the idle-cue driver.
+      this.suggestionEngine.clearPending();
+      if (spawn.accepted) {
+        await this.spawnAck(spawn, correlationId);
+        this.subscribeRunEvents(spawn.process.upid, spawn.process.runId);
+      }
+    } catch (error) {
+      this.recordExternalTrace({
+        event: "suggestion.accept.error",
+        level: "error",
+        sessionId: this.sessionId,
+        correlationId,
+        meta: { message: error instanceof Error ? error.message : String(error) },
+      });
+    }
+    this.publish();
+    return this.#snapshot;
+  }
+
+  // CLICK A PROJECT -> STEER IT. Set the steering target UPID so subsequent live
+  // FINAL transcript lines route to that process's agent loop (registry.steer)
+  // instead of seeding a fresh ambient suggestion. The steered bubble is surfaced
+  // via the snapshot's `steeringUpid` + per-process `steering` flag.
+  setSteeringTarget(upid: string, correlationId = `corr-steer-select-${crypto.randomUUID()}`): ProjectorSnapshot {
+    if (this.#emergencyTriggered) {
+      return this.#snapshot;
+    }
+    const live = this.registry.activeRecords().some((record) => record.upid === upid);
+    if (!live) {
+      // The target is gone (halted / never existed): clear any stale steering and
+      // return the current snapshot rather than steering into a dead process.
+      return this.clearSteeringTarget(correlationId);
+    }
+    this.#steeringUpid = upid;
+    this.recordExternalTrace({
+      event: "steering.target.set",
+      level: "info",
+      sessionId: this.sessionId,
+      correlationId,
+      upid,
+      meta: { upid },
+    });
+    this.publish();
+    return this.#snapshot;
+  }
+
+  // Clear the steering target; live transcript returns to ambient suggestion +
+  // click-to-build behavior.
+  clearSteeringTarget(correlationId = `corr-steer-clear-${crypto.randomUUID()}`): ProjectorSnapshot {
+    const had = this.#steeringUpid;
+    this.#steeringUpid = null;
+    if (had !== null) {
+      this.recordExternalTrace({
+        event: "steering.target.cleared",
+        level: "info",
+        sessionId: this.sessionId,
+        correlationId,
+        upid: had,
+        meta: { upid: had },
+      });
+    }
+    this.publish();
+    return this.#snapshot;
+  }
+
+  steeringTarget(): string | null {
+    return this.#steeringUpid;
   }
 
   startMicSession(correlationId = `corr-mic-${crypto.randomUUID()}`): MicSession {
@@ -572,6 +734,14 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       // earcon trace. This is orthogonal to the suggestion/acceptance routing below.
       await this.driveCueBridge(observation, correlationId);
 
+      // CLICK A PROJECT -> STEER IT. While a steering target is set, route this
+      // FINAL line to that process's agent loop (registry.steer) instead of seeding
+      // a fresh ambient suggestion. Behavior is unchanged when no target is set.
+      if (this.#steeringUpid !== null) {
+        await this.routeSteering(observation, correlationId);
+        return;
+      }
+
       // Expire a stale pending suggestion FIRST. Acceptance otherwise only times
       // out on a room-idle tick; during continuous talk the room never goes idle,
       // so without this an un-answered suggestion would wedge the loop into
@@ -626,6 +796,45 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       });
     }
     // Reflect any registry spawn (or cleared pending) on the published snapshot.
+    this.publish();
+  }
+
+  // Route one FINAL transcript line to the current steering target's agent loop
+  // (CLICK A PROJECT -> STEER IT). The text is sent through the process registry's
+  // steer/signal for that UPID, correlationId-tagged, so the build's agent receives
+  // the spoken instruction instead of the runtime seeding a new ambient suggestion.
+  // If the target has gone dead, the steering is cleared and the line falls back to
+  // ambient suggestion handling.
+  private async routeSteering(observation: TranscriptObservation, correlationId: string): Promise<void> {
+    const upid = this.#steeringUpid;
+    if (upid === null) {
+      return;
+    }
+    if (!this.registry.activeRecords().some((record) => record.upid === upid)) {
+      // The steered process is no longer live: drop the target and re-run this
+      // FINAL line through the normal ambient path so it is not lost.
+      this.clearSteeringTarget(`${correlationId}-steer-stale`);
+      this.acceptanceController.checkExpiry(this.#clock());
+      if (this.acceptanceController.awaitingAcceptance()) {
+        await this.routeAcceptance(observation, correlationId);
+      } else {
+        await this.driveSuggestionEngine(observation, correlationId);
+      }
+      return;
+    }
+    const steerCorrelationId = `${correlationId}-${observation.utteranceId}`;
+    try {
+      await this.registry.steer(upid, { text: observation.text, source: "live-transcript" }, steerCorrelationId);
+    } catch (error) {
+      this.recordExternalTrace({
+        event: "steering.route.error",
+        level: "error",
+        sessionId: this.sessionId,
+        correlationId: steerCorrelationId,
+        upid,
+        meta: { message: error instanceof Error ? error.message : String(error) },
+      });
+    }
     this.publish();
   }
 
@@ -785,7 +994,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     const liveActiveCue = this.#micActive ? "ambient listening" : previous.activeCue;
 
     return {
-      ...demoProjectorSnapshot,
+      ...emptyProjectorSnapshot,
       sessionId: this.sessionId,
       listening,
       muted,
@@ -796,17 +1005,20 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       audio: this.audioSnapshot(previous),
       processes: this.processSnapshots(),
       transcript: this.transcriptSnapshot(),
-      trace: [...demoProjectorSnapshot.trace, ...this.trace.events()].slice(-80),
+      // Real trace only — no demo fixtures. An idle runtime that has emitted no
+      // events shows an empty trace, not the canned demo causal chain.
+      trace: [...this.trace.events()].slice(-80),
       updatedAt: new Date().toISOString(),
       mic: { mode: this.micMode, active: this.#micActive, bytesReceived: this.#micBytes },
+      steeringUpid: this.#steeringUpid,
     };
   }
 
-  // Once any live mic line exists, the transcript region reflects the real room
-  // audio; before that it shows the seeded demo lines so the panel is never empty.
+  // The live transcript region reflects the real room audio. With no live mic
+  // line yet it is EMPTY (neutral idle state) — never the canned demo lines.
   private transcriptSnapshot(): TranscriptLine[] {
     if (this.#liveFinals.length === 0 && this.#interim === null) {
-      return demoProjectorSnapshot.transcript;
+      return [];
     }
     const lines = [...this.#liveFinals];
     if (this.#interim !== null) {
@@ -816,17 +1028,17 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   }
 
   // Reflect the live SuggestionEngine verdict in the idea bubble. Before any
-  // FINAL observation has been scored (`#lastSuggestionDecision === null`), keep
-  // the demo bubble so the panel is never empty — mirroring the transcript
-  // fallback above. Once a real decision exists, map it to a ProjectorSuggestion
-  // with gate counters (words/seconds vs the engine's floors) from the engine.
+  // FINAL observation has been scored (`#lastSuggestionDecision === null`), show
+  // the neutral idle bubble (empty pitch) — never the demo "blocker announcer"
+  // pitch. Once a real decision exists, map it to a ProjectorSuggestion with gate
+  // counters (words/seconds vs the engine's floors) from the engine.
   private suggestionSnapshot(): ProjectorSuggestion {
     const decision = this.#lastSuggestionDecision;
     if (decision === null) {
-      return demoProjectorSnapshot.suggestion;
+      return emptyProjectorSnapshot.suggestion;
     }
     const live = liveProjectorSuggestion(decision, readSuggestionEngineConfig(this.#env));
-    return live ?? demoProjectorSnapshot.suggestion;
+    return live ?? emptyProjectorSnapshot.suggestion;
   }
 
   private processSnapshots(): ProjectorProcess[] {
@@ -840,14 +1052,23 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       // keeps its fixtures. A dead (halted) process always shows the halt state —
       // live telemetry never overrides an emergency stop.
       const live = record.state === "dead" ? undefined : this.runEventDriver.overlay(record.upid);
+      // Real preview surface (accept->build->preview). A halted process drops its
+      // preview (the server is torn down on halt), so a dead record never carries
+      // a stale URL. The seeded demo fleet has no build, so build state is null.
+      const build = record.state === "dead" ? undefined : this.ideaBuilds.state(record.upid);
       return {
         upid: record.upid,
         runId: record.runId,
+        previewUrl: build?.previewUrl ?? null,
+        buildStatus: build?.status ?? null,
         // The registry normalizes callsigns to lowercase for voice matching; the
         // projector shows the pre-authored display casing ("Atlas"/"Cobalt").
         callsign: demo?.callsign ?? record.callsign,
         state: record.state === "dead" ? "halted" : live?.state ?? projectorState(record.state),
         selected: record.selected,
+        // Click-to-steer marker: this process is the live steering target, so
+        // subsequent FINAL transcript lines route to it. A dead record never steers.
+        steering: record.state !== "dead" && this.#steeringUpid === record.upid,
         task: demo?.task ?? "Panopticon task",
         model: demo?.model ?? "runtime",
         progressLabel: record.state === "dead" ? "halted" : demo?.progressLabel ?? record.lastAction,
@@ -899,6 +1120,12 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       endedAtMs: startedAtMs + (event.latencyMs ?? 0),
       meta: event.meta,
     });
+    // A completed accept->build->preview build flips buildStatus/previewUrl on the
+    // owning process; republish so subscribers see the live "Preview ->" link the
+    // moment the scaffolded page is served (or the failure).
+    if (event.event === "process.build") {
+      this.publish();
+    }
   }
 
   private recordOutput(decision: OutputDecision): void {
