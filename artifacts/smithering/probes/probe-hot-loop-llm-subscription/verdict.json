@@ -7,7 +7,7 @@
     "command": "claude --print",
     "status": "passed",
     "subscriptionRouted": true,
-    "latencyMs": 9561.391416999999,
+    "latencyMs": 4144.749790999998,
     "decisions": [
       {
         "id": "repeat-1",
@@ -32,7 +32,7 @@
     "invocations": [
       {
         "id": "same-input-1",
-        "latencyMs": 4499.009416000001,
+        "latencyMs": 4144.749790999998,
         "decisions": [
           {
             "id": "repeat-1",
@@ -54,11 +54,11 @@
             "reason": "status update on existing work"
           }
         ],
-        "stdoutPreview": "```json\n{\"decisions\":[{\"id\":\"repeat-1\",\"decision\":\"ACT\",\"tool\":\"panopticon.steer\",\"arguments\":{\"callsign\":\"Daybreak\",\"instruction\":\"status\"},\"confidence\":0.95,\"reason\":\"status query to named callsign\"},{\"id\":\"pass-1\",\"decision\":\"PASS\",\"tool\":\"observe.pass\",\"arguments\":{},\"confidence\":0.9,\"reason\":\"status update on existing work\"}]}\n```"
+        "stdoutPreview": "{\"decisions\":[{\"id\":\"repeat-1\",\"decision\":\"ACT\",\"tool\":\"panopticon.steer\",\"arguments\":{\"callsign\":\"Daybreak\",\"instruction\":\"status\"},\"confidence\":0.95,\"reason\":\"status query to named callsign\"},{\"id\":\"pass-1\",\"decision\":\"PASS\",\"tool\":\"observe.pass\",\"arguments\":{},\"confidence\":0.9,\"reason\":\"status update on existing work\"}]}"
       },
       {
         "id": "same-input-2",
-        "latencyMs": 9561.391416999999,
+        "latencyMs": 4101.641125000002,
         "decisions": [
           {
             "id": "repeat-1",
@@ -76,14 +76,14 @@
             "decision": "PASS",
             "tool": "observe.pass",
             "arguments": {},
-            "confidence": 0.92,
+            "confidence": 0.9,
             "reason": "Status update on existing work"
           }
         ],
-        "stdoutPreview": "{\"decisions\":[{\"id\":\"repeat-1\",\"decision\":\"ACT\",\"tool\":\"panopticon.steer\",\"arguments\":{\"callsign\":\"Daybreak\",\"instruction\":\"status\"},\"confidence\":0.95,\"reason\":\"Status query to named callsign\"},{\"id\":\"pass-1\",\"decision\":\"PASS\",\"tool\":\"observe.pass\",\"arguments\":{},\"confidence\":0.92,\"reason\":\"Status update on existing work\"}]}"
+        "stdoutPreview": "```json\n{\"decisions\":[{\"id\":\"repeat-1\",\"decision\":\"ACT\",\"tool\":\"panopticon.steer\",\"arguments\":{\"callsign\":\"Daybreak\",\"instruction\":\"status\"},\"confidence\":0.95,\"reason\":\"Status query to named callsign\"},{\"id\":\"pass-1\",\"decision\":\"PASS\",\"tool\":\"observe.pass\",\"arguments\":{},\"confidence\":0.9,\"reason\":\"Status update on existing work\"}]}\n```"
       }
     ],
-    "stdoutPreview": "```json\n{\"decisions\":[{\"id\":\"repeat-1\",\"decision\":\"ACT\",\"tool\":\"panopticon.steer\",\"arguments\":{\"callsign\":\"Daybreak\",\"instruction\":\"status\"},\"confidence\":0.95,\"reason\":\"status query to named callsign\"},{\"id\":\"pass-1\",\"decision\":\"PASS\",\"tool\":\"observe.pass\",\"arguments\":{},\"confidence\":0.9,\"reason\":\"status update on existing work\"}]}\n```"
+    "stdoutPreview": "{\"decisions\":[{\"id\":\"repeat-1\",\"decision\":\"ACT\",\"tool\":\"panopticon.steer\",\"arguments\":{\"callsign\":\"Daybreak\",\"instruction\":\"status\"},\"confidence\":0.95,\"reason\":\"status query to named callsign\"},{\"id\":\"pass-1\",\"decision\":\"PASS\",\"tool\":\"observe.pass\",\"arguments\":{},\"confidence\":0.9,\"reason\":\"status update on existing work\"}]}"
   },
   "attempts": [
     {
@@ -91,18 +91,18 @@
       "command": "codex",
       "status": "failed",
       "subscriptionRouted": true,
-      "latencyMs": 3815.4142079999983,
+      "latencyMs": 3886.192792,
       "decisions": [],
       "invocations": [],
       "stdoutPreview": "",
-      "error": "Reading additional input from stdin...\nOpenAI Codex v0.138.0\n--------\nworkdir: /Users/wk/.smither-worktrees/ISSUE-0020\nmodel: gpt-5.5\nprovider: openai\napproval: never\nsandbox: read-only\nreasoning effort: none\nreasoning summaries: none\nsession id: 019f035c-1a8c-7993-bb55-44ee02d2bfa9\n--------\nuser\nYou are the Panopticon hot-loop decision classifier.\n\nReturn only valid JSON with this exact shape:\n{\"decisions\":[{\"id\":\"repeat-1\",\"decision\":\"PASS|ACT\",\"tool\":\"observe.pass|panopticon.suggest|panoptico"
+      "error": "Reading additional input from stdin...\nOpenAI Codex v0.138.0\n--------\nworkdir: /Users/wk/.smither-worktrees/ISSUE-0024\nmodel: gpt-5.5\nprovider: openai\napproval: never\nsandbox: read-only\nreasoning effort: none\nreasoning summaries: none\nsession id: 019f035d-8c6e-7e12-bba5-47c9f22f1f98\n--------\nuser\nYou are the Panopticon hot-loop decision classifier.\n\nReturn only valid JSON with this exact shape:\n{\"decisions\":[{\"id\":\"repeat-1\",\"decision\":\"PASS|ACT\",\"tool\":\"observe.pass|panopticon.suggest|panoptico"
     },
     {
       "provider": "anthropic-claude",
       "command": "claude --print",
       "status": "passed",
       "subscriptionRouted": true,
-      "latencyMs": 9561.391416999999,
+      "latencyMs": 4144.749790999998,
       "decisions": [
         {
           "id": "repeat-1",
@@ -127,7 +127,7 @@
       "invocations": [
         {
           "id": "same-input-1",
-          "latencyMs": 4499.009416000001,
+          "latencyMs": 4144.749790999998,
           "decisions": [
             {
               "id": "repeat-1",
@@ -149,11 +149,11 @@
               "reason": "status update on existing work"
             }
           ],
-          "stdoutPreview": "```json\n{\"decisions\":[{\"id\":\"repeat-1\",\"decision\":\"ACT\",\"tool\":\"panopticon.steer\",\"arguments\":{\"callsign\":\"Daybreak\",\"instruction\":\"status\"},\"confidence\":0.95,\"reason\":\"status query to named callsign\"},{\"id\":\"pass-1\",\"decision\":\"PASS\",\"tool\":\"observe.pass\",\"arguments\":{},\"confidence\":0.9,\"reason\":\"status update on existing work\"}]}\n```"
+          "stdoutPreview": "{\"decisions\":[{\"id\":\"repeat-1\",\"decision\":\"ACT\",\"tool\":\"panopticon.steer\",\"arguments\":{\"callsign\":\"Daybreak\",\"instruction\":\"status\"},\"confidence\":0.95,\"reason\":\"status query to named callsign\"},{\"id\":\"pass-1\",\"decision\":\"PASS\",\"tool\":\"observe.pass\",\"arguments\":{},\"confidence\":0.9,\"reason\":\"status update on existing work\"}]}"
         },
         {
           "id": "same-input-2",
-          "latencyMs": 9561.391416999999,
+          "latencyMs": 4101.641125000002,
           "decisions": [
             {
               "id": "repeat-1",
@@ -171,14 +171,14 @@
               "decision": "PASS",
               "tool": "observe.pass",
               "arguments": {},
-              "confidence": 0.92,
+              "confidence": 0.9,
               "reason": "Status update on existing work"
             }
           ],
-          "stdoutPreview": "{\"decisions\":[{\"id\":\"repeat-1\",\"decision\":\"ACT\",\"tool\":\"panopticon.steer\",\"arguments\":{\"callsign\":\"Daybreak\",\"instruction\":\"status\"},\"confidence\":0.95,\"reason\":\"Status query to named callsign\"},{\"id\":\"pass-1\",\"decision\":\"PASS\",\"tool\":\"observe.pass\",\"arguments\":{},\"confidence\":0.92,\"reason\":\"Status update on existing work\"}]}"
+          "stdoutPreview": "```json\n{\"decisions\":[{\"id\":\"repeat-1\",\"decision\":\"ACT\",\"tool\":\"panopticon.steer\",\"arguments\":{\"callsign\":\"Daybreak\",\"instruction\":\"status\"},\"confidence\":0.95,\"reason\":\"Status query to named callsign\"},{\"id\":\"pass-1\",\"decision\":\"PASS\",\"tool\":\"observe.pass\",\"arguments\":{},\"confidence\":0.9,\"reason\":\"Status update on existing work\"}]}\n```"
         }
       ],
-      "stdoutPreview": "```json\n{\"decisions\":[{\"id\":\"repeat-1\",\"decision\":\"ACT\",\"tool\":\"panopticon.steer\",\"arguments\":{\"callsign\":\"Daybreak\",\"instruction\":\"status\"},\"confidence\":0.95,\"reason\":\"status query to named callsign\"},{\"id\":\"pass-1\",\"decision\":\"PASS\",\"tool\":\"observe.pass\",\"arguments\":{},\"confidence\":0.9,\"reason\":\"status update on existing work\"}]}\n```"
+      "stdoutPreview": "{\"decisions\":[{\"id\":\"repeat-1\",\"decision\":\"ACT\",\"tool\":\"panopticon.steer\",\"arguments\":{\"callsign\":\"Daybreak\",\"instruction\":\"status\"},\"confidence\":0.95,\"reason\":\"status query to named callsign\"},{\"id\":\"pass-1\",\"decision\":\"PASS\",\"tool\":\"observe.pass\",\"arguments\":{},\"confidence\":0.9,\"reason\":\"status update on existing work\"}]}"
     }
   ],
   "checks": {
@@ -192,7 +192,7 @@
   },
   "metrics": {
     "budgetMs": 100,
-    "p50LatencyMs": 9561.391416999999,
+    "p50LatencyMs": 4144.749790999998,
     "costBudgetPerHourUsd": 0.15,
     "estimatedCostPerHourUsd": null,
     "costBasis": "not-measured-host-subscription-no-metering"
