@@ -13,7 +13,8 @@ import { selectSmithersClient } from "./smithers-select";
 import type { GatewayRpcTransport } from "../seam/smithers-client";
 import type { AcceptanceSpawnResult } from "../acceptance/spawn";
 import { selectAsrProvider, selectDecisionLLM, selectTtsProvider, type ASRProvider, type AsrProviderMode, type DecisionLLM } from "../providers";
-import type { ClaudeMessagesTransport, ReplayASRSource, TTSProvider, VoxTermSegmentSource } from "../providers";
+import type { ClaudeMessagesTransport, ReplayASRSource, TTSProvider, TTSTransport, VoxTermSegmentSource } from "../providers";
+import { drainTtsStream, noopTtsAudioSink, type TtsAudioSink } from "./tts-sink";
 import {
   readSuggestionEngineConfig,
   SuggestionEngine,
@@ -103,6 +104,10 @@ export interface ProjectorRuntimeOptions {
   // Injectable Anthropic transport for the auto-selected Claude decider, so a
   // credential-present runtime can be exercised in tests/e2e with no network.
   decisionTransport?: ClaudeMessagesTransport;
+  // Injectable ElevenLabs streaming transport (ISSUE-0022), so a runtime with
+  // PANOP_TTS_PROVIDER=elevenlabs can drain a stubbed synthesized stream in
+  // tests/e2e with no network or audio device.
+  ttsTransport?: TTSTransport;
 }
 
 export async function createProjectorRuntime(
@@ -135,6 +140,9 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   // audio device, so a no-op sink absorbs the prerendered clips; the audible
   // OutputDecisions themselves are what surface on the snapshot via #outputs.
   readonly #audio: AudioOutput = new BufferedAudioOutput();
+  // No-op device sink for synthesized TTS bytes. Production has no audio device,
+  // so the drained stream is read (forcing synthesis to completion) and dropped.
+  readonly #ttsSink: TtsAudioSink = noopTtsAudioSink;
   readonly cueAdapter: CueAdapter;
   readonly #decisionLlm: DecisionLLM;
   #cueBridge: CueBridge | null = null;
@@ -171,7 +179,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   ) {
     this.#env = env;
     const clock = () => Date.now();
-    this.tts = selectTtsProvider(env).provider;
+    this.tts = selectTtsProvider(env, { transport: options.ttsTransport }).provider;
     this.trace = new TraceProcessor({ clock });
     this.#demoProcesses = demoProjectorSnapshot.processes.map((process) => ({ ...process }));
     this.#session = new EmergencySessionState({ sessionId, listening: true, muted: false });
@@ -854,14 +862,34 @@ class LiveProjectorRuntime implements ProjectorRuntime {
           await playAck(this.#audio, decision.id, { correlationId, source: "stage-sequencer" });
           this.recordTimedTrace("ack.emit", correlationId, startedAtMs, { ackId: decision.id, source: "stage-sequencer" });
           return;
-        case "tts":
-          await this.tts.speak(decision.text);
+        case "tts": {
+          // Synthesize, then fully drain the returned audio stream to the sink so
+          // the bytes are actually read (the prior code awaited + discarded the
+          // stream). The drain is best-effort: a read/sink failure is recorded but
+          // never propagated, so it cannot abort the in-flight stage transition.
+          const stream = await this.tts.speak(decision.text);
+          let drained = { bytes: 0, chunks: 0 };
+          try {
+            drained = await drainTtsStream(stream, { sink: this.#ttsSink });
+          } catch (error) {
+            await stream.cancel().catch(() => undefined);
+            this.recordExternalTrace({
+              event: "output.tts.drain.error",
+              level: "error",
+              sessionId: this.sessionId,
+              correlationId,
+              meta: { message: error instanceof Error ? error.message : String(error) },
+            });
+          }
           this.recordTimedTrace("output.tts", correlationId, startedAtMs, {
             text: decision.text,
             wordCount: decision.wordCount,
             summarized: decision.summarized,
+            bytes: drained.bytes,
+            chunks: drained.chunks,
           });
           return;
+        }
         case "silent":
           this.recordTimedTrace("output.silent", correlationId, startedAtMs, {});
           return;

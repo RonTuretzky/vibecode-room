@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createProjectorRuntime, liveProjectorSuggestion, type ProjectorRuntime } from "./composition";
-import { NoopTTSProvider, arraySegmentSource, type VoxTermSegment } from "../providers";
+import { ElevenLabsFlashTTSProvider, NoopTTSProvider, arraySegmentSource, type TTSTransport, type VoxTermSegment } from "../providers";
 import { AcceptanceController } from "../acceptance/spawn";
 import { ProcessRegistry } from "../process/registry";
 import { readSuggestionEngineConfig, SuggestionEngine, type SuggestionEngineDecision } from "../suggest/engine";
@@ -551,6 +551,95 @@ describe("LiveProjectorRuntime — live final -> SuggestionEngine.observe -> sna
     expect(bubble).not.toEqual(demoProjectorSnapshot.suggestion);
   });
 });
+
+// ISSUE-0022: emitOutput must consume the AudioReadableStream returned by
+// tts.speak to completion via the sink. With PANOP_TTS_PROVIDER=elevenlabs and a
+// stubbed transport, a fired suggestion's tts OutputDecision drains the whole
+// synthesized stream and records byte/chunk totals on the trace; an unset
+// provider keeps the silent-but-recorded NoopTTSProvider.
+describe("LiveProjectorRuntime — emitOutput drains the synthesized TTS stream (ISSUE-0022)", () => {
+  test("a fired suggestion drains a stubbed ElevenLabs stream and records bytes/chunks on the trace (integration)", async () => {
+    const path = writeReplayFixture([
+      final("let's build a dashboard tool to ship the replay prototype today", "utt-build"),
+    ]);
+    const synthetic = [
+      Uint8Array.from([0x49, 0x44, 0x33]),
+      Uint8Array.from([0x10, 0x20, 0x30, 0x40]),
+      Uint8Array.from([0xaa, 0xbb]),
+    ];
+    const expectedBytes = synthetic.reduce((sum, chunk) => sum + chunk.byteLength, 0);
+
+    let speakCalls = 0;
+    let pulledChunks = 0;
+    const transport: TTSTransport = async () => {
+      speakCalls += 1;
+      let index = 0;
+      // A pull-based (lazy) stream: a chunk is produced only when the drain pulls
+      // it, so `pulledChunks === synthetic.length` proves the whole stream was read.
+      return new ReadableStream<Uint8Array>(
+        {
+          pull(controller) {
+            if (index >= synthetic.length) {
+              controller.close();
+              return;
+            }
+            controller.enqueue(synthetic[index]);
+            index += 1;
+            pulledChunks += 1;
+          },
+        },
+        { highWaterMark: 0 },
+      );
+    };
+
+    const runtime = await createProjectorRuntime(
+      baseEnv(path, { PANOP_TTS_PROVIDER: "elevenlabs", ELEVENLABS_API_KEY: fakeElevenLabsKey() }),
+      { ttsTransport: transport },
+    );
+    expect(runtime.tts).toBeInstanceOf(ElevenLabsFlashTTSProvider);
+
+    await driveMic(runtime);
+
+    // The fired suggestion produced exactly one spoken (tts) OutputDecision, and
+    // emitOutput drained its stream to completion through the stub transport.
+    expect(runtime.lastSuggestionDecision?.kind).toBe("fired");
+    expect(speakCalls).toBe(1);
+    expect(pulledChunks).toBe(synthetic.length);
+
+    // The trace records the drained byte/chunk totals on the output.tts event.
+    const ttsEvents = runtime.trace.events().filter((event) => event.event === "output.tts");
+    expect(ttsEvents).toHaveLength(1);
+    expect(ttsEvents[0]?.meta.bytes).toBe(expectedBytes);
+    expect(ttsEvents[0]?.meta.chunks).toBe(synthetic.length);
+    // No drain error was recorded — the stream was consumed cleanly.
+    expect(runtime.trace.events().some((event) => event.event === "output.tts.drain.error")).toBe(false);
+  });
+
+  test("PANOP_TTS_PROVIDER unset keeps the NoopTTSProvider (silent, records text only) (integration)", async () => {
+    const path = writeReplayFixture([
+      final("let's build a dashboard tool to ship the replay prototype today", "utt-build"),
+    ]);
+    const runtime = await createProjectorRuntime(baseEnv(path));
+
+    await driveMic(runtime);
+
+    // Default selection is the silent-but-recorded Noop provider: it records the
+    // spoken phrase and returns an immediately-closed (zero-byte) stream that the
+    // sink still drains to completion.
+    expect(runtime.tts).toBeInstanceOf(NoopTTSProvider);
+    expect((runtime.tts as NoopTTSProvider).calls.length).toBeGreaterThanOrEqual(1);
+    const ttsEvents = runtime.trace.events().filter((event) => event.event === "output.tts");
+    expect(ttsEvents.length).toBeGreaterThanOrEqual(1);
+    expect(ttsEvents[0]?.meta.bytes).toBe(0);
+    expect(ttsEvents[0]?.meta.chunks).toBe(0);
+  });
+});
+
+// Built at runtime (never a literal) so the source tree stays free of key-shaped
+// strings, matching the audio credential seam's accepted token shape.
+function fakeElevenLabsKey(): string {
+  return ["xi", `${"a".repeat(18)}1${"b".repeat(18)}`].join("-");
+}
 
 function restoreEnv(key: string, prior: string | undefined): void {
   if (prior === undefined) {
