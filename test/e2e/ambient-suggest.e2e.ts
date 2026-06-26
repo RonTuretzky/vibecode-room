@@ -43,7 +43,11 @@ describe("ambient suggest e2e — live runtime queues a suggestion from spoken b
 
     const events = runtime.trace.events().map((event) => event.event);
     expect(events.some((event) => event === "suggestion.queued" || event === "route.suggestion")).toBe(true);
-    expect(["queued", "fired"]).toContain(runtime.lastSuggestionDecision?.kind);
+    const decision = runtime.lastSuggestionDecision;
+    if (decision === null) {
+      throw new Error("expected a suggestion decision from two buildable utterances");
+    }
+    expect(["queued", "fired"]).toContain(decision.kind);
     // Heuristic decider only: nothing should have touched the network.
     expect(fetchCalls).toBe(0);
   });

@@ -50,8 +50,11 @@ describe("LiveProjectorRuntime — live final observations drive the SuggestionE
 
     const events = runtime.trace.events().map((event) => event.event);
     expect(events.some((event) => event === "suggestion.queued" || event === "route.suggestion")).toBe(true);
-    expect(runtime.lastSuggestionDecision).not.toBeNull();
-    expect(["queued", "fired"]).toContain(runtime.lastSuggestionDecision?.kind);
+    const decision = runtime.lastSuggestionDecision;
+    if (decision === null) {
+      throw new Error("expected a suggestion decision from a buildable utterance");
+    }
+    expect(["queued", "fired"]).toContain(decision.kind);
   });
 
   test("a non-buildable utterance passes with no queued suggestion (integration)", async () => {
