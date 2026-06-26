@@ -109,7 +109,9 @@ async function defaultCreateHarness(options: {
     sessionId: options.sessionId,
     providers: options.providers,
     textCueWords: [...options.textCueWords],
-    adapter: { trace: options.trace, clock: options.clock },
+    // Tag the harness-owned adapter so its earcon trace is distinguishable from
+    // the in-runtime fallback adapter's (GAP-006).
+    adapter: { trace: options.trace, clock: options.clock, earconPath: "harness" },
   });
 }
 
