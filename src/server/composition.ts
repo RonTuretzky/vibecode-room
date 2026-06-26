@@ -15,6 +15,7 @@ import type { AcceptanceSpawnResult } from "../acceptance/spawn";
 import { selectAsrProvider, selectDecisionLLM, selectTtsProvider, type ASRProvider, type AsrProviderMode, type DecisionLLM } from "../providers";
 import type { ClaudeMessagesTransport, ReplayASRSource, TTSProvider, TTSTransport, VoxTermSegmentSource } from "../providers";
 import { drainTtsStream, noopTtsAudioSink, type TtsAudioSink } from "./tts-sink";
+import { IdleCueDriver } from "./idle-cue-driver";
 import {
   readSuggestionEngineConfig,
   SuggestionEngine,
@@ -67,6 +68,10 @@ export interface ProjectorRuntime {
   readonly stageSequencer: StageSequencer;
   readonly trace: TraceProcessor;
   readonly emergencyController: EmergencyStopController;
+  // Polls the room-idle gap to deliver a deferred (high interrupt cost) suggestion
+  // once the room falls quiet (ISSUE-0024). The server boundary calls start();
+  // tests drive tick() deterministically off the injected clock.
+  readonly idleCueDriver: IdleCueDriver;
   // The most recent decision the SuggestionEngine returned for a live final
   // observation (null before the first one). ISSUE-0009/0010 read this — plus
   // `pendingSuggestion()` — to drive delivery/acceptance off the live runtime.
@@ -108,6 +113,11 @@ export interface ProjectorRuntimeOptions {
   // PANOP_TTS_PROVIDER=elevenlabs can drain a stubbed synthesized stream in
   // tests/e2e with no network or audio device.
   ttsTransport?: TTSTransport;
+  // Injectable monotonic clock (ISSUE-0024). The whole runtime — including the
+  // room-idle gap that drives deferred-suggestion delivery — reads time through
+  // this, so tests advance silence deterministically instead of waiting on the
+  // wall clock. Defaults to Date.now.
+  clock?: () => number;
 }
 
 export async function createProjectorRuntime(
@@ -153,6 +163,8 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   readonly stageSequencer: StageSequencer;
   readonly trace: TraceProcessor;
   readonly emergencyController: EmergencyStopController;
+  readonly idleCueDriver: IdleCueDriver;
+  readonly #clock: () => number;
   readonly #session: EmergencySessionState;
   readonly #env: ProjectorRuntimeEnv;
   readonly #subscribers = new Set<ProjectorRuntimeSubscriber>();
@@ -178,7 +190,8 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     options: ProjectorRuntimeOptions = {},
   ) {
     this.#env = env;
-    const clock = () => Date.now();
+    const clock = options.clock ?? (() => Date.now());
+    this.#clock = clock;
     this.tts = selectTtsProvider(env, { transport: options.ttsTransport }).provider;
     this.trace = new TraceProcessor({ clock });
     this.#demoProcesses = demoProjectorSnapshot.processes.map((process) => ({ ...process }));
@@ -290,6 +303,18 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       now: clock,
       onTrace: (event) => this.recordExternalTrace(event),
       onOutput: (decision) => this.recordOutput(decision),
+    });
+    // Room-idle delivery of deferred suggestions (ISSUE-0024). The driver reads
+    // the same clock and #lastFinalAtMs the suggestion path stamps, so the
+    // measured silence is exact. On a 'fired' idle decision it speaks the
+    // suggestion through the same SUGGESTION_DELIVERY path a live fire takes.
+    this.idleCueDriver = new IdleCueDriver({
+      engine: this.suggestionEngine,
+      sessionId,
+      clock,
+      env,
+      lastFinalAtMs: () => this.#lastFinalAtMs,
+      onDecision: (decision) => this.deliverIdleDecision(decision),
     });
   }
 
@@ -577,7 +602,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   // `roomIdleMs` is the quiet gap since the previous final utterance — the engine
   // uses it to decide whether interrupting now is acceptable.
   private async driveSuggestionEngine(observation: TranscriptObservation, correlationId: string): Promise<void> {
-    const nowMs = Date.now();
+    const nowMs = this.#clock();
     const roomIdleMs = this.#lastFinalAtMs === null ? 0 : Math.max(0, nowMs - this.#lastFinalAtMs);
     this.#lastFinalAtMs = nowMs;
     try {
@@ -791,6 +816,19 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     if (this.stageSequencer.state() === "IDLE") {
       await this.driveTransition("ACTIVE_LISTEN", { correlationId, reason: "ambient-listen", audible: null });
     }
+  }
+
+  // Handle one idle-cue decision from the IdleCueDriver. A suggestion that was
+  // deferred at fire time (high interrupt cost) reaches here as a 'fired'
+  // decision once the room has been quiet for the idle gap: reflect it on the
+  // snapshot and speak it through the same SUGGESTION_DELIVERY path a live fire
+  // takes. Non-fired decisions (e.g. 'expired') only update the bubble.
+  private async deliverIdleDecision(decision: SuggestionEngineDecision): Promise<void> {
+    this.#lastSuggestionDecision = decision;
+    if (decision.kind === "fired") {
+      await this.deliverSuggestionAudio(decision.suggestion, `corr-idle-${decision.suggestion.suggestionId}`);
+    }
+    this.publish();
   }
 
   // Speak a fired suggestion and record the SUGGESTION_DELIVERY transition.
