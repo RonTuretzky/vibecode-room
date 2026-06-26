@@ -15,7 +15,8 @@
 
 import { DeepgramNova3ASRProvider } from "./deepgram";
 import { ReplayASRProvider, type ReplayASRSource } from "./replay";
-import { arraySegmentSource, VoxTermASRProvider, type VoxTermSegmentSource } from "./voxterm";
+import { VoxTermASRProvider, type VoxTermSegmentSource } from "./voxterm";
+import { createVoxTermSegmentSource } from "./voxterm-source";
 import type { ASRProvider } from "../types";
 
 export type AsrProviderMode = "deepgram" | "voxterm" | "replay";
@@ -94,13 +95,21 @@ function createDeepgramProvider(env: AsrSelectionEnv, options: AsrSelectionOptio
 }
 
 function createVoxTermProvider(options: AsrSelectionOptions): VoxTermASRProvider {
-  // The real VoxTerm transport is wired with the live loop; until then the
-  // factory binds an empty segment source (touching no mic/process/network)
-  // unless the caller injects one (tests/e2e feed a fixture-backed source).
   return new VoxTermASRProvider({
     sessionId: options.sessionId,
-    source: options.voxtermSource ?? arraySegmentSource([]),
+    source: resolveVoxTermSource(options),
   });
+}
+
+/**
+ * Pick the VoxTerm segment transport: the explicitly injected source when one is
+ * provided (tests/e2e feed a synthetic source), otherwise the production
+ * spawn-backed source that connects the forked VoxTerm child (GAP-002). The
+ * production source spawns lazily, so binding it by default opens no mic/process
+ * until a session actually streams.
+ */
+export function resolveVoxTermSource(options: AsrSelectionOptions): VoxTermSegmentSource {
+  return options.voxtermSource ?? createVoxTermSegmentSource();
 }
 
 function createReplayProvider(env: AsrSelectionEnv, options: AsrSelectionOptions): ReplayASRProvider {

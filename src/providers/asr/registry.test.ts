@@ -3,11 +3,13 @@ import { DeepgramNova3ASRProvider } from "./deepgram";
 import { ReplayASRProvider } from "./replay";
 import {
   MIC_CLOSE_TIMEOUT_MS,
+  resolveVoxTermSource,
   selectAsrProvider,
   type AsrSelectionEnv,
   type AsrSelectionOptions,
 } from "./registry";
 import { arraySegmentSource, VoxTermASRProvider, type VoxTermSegment } from "./voxterm";
+import { VoxTermSpawnSource } from "./voxterm-source";
 import { transcriptObservationSchema, type TranscriptObservation } from "../../types";
 
 // Deepgram-shaped token so createAudioCredentialSource accepts it as a real
@@ -72,14 +74,25 @@ describe("selectAsrProvider — explicit PANOP_ASR_PROVIDER mapping (unit)", () 
     expect(observations.every((o) => o.sessionId === "registry-voxterm")).toBe(true);
   });
 
-  test("voxterm without an injected source streams nothing (no mic/process opened)", async () => {
-    const selection = selectAsrProvider({ PANOP_ASR_PROVIDER: "voxterm" }, baseOptions);
+  test("binds the production spawn-backed source by default (no injected source)", () => {
+    // GAP-002: without an injected source the registry binds the production
+    // VoxTermSpawnSource. It spawns lazily, so selection alone opens no
+    // mic/process — only iterating its stream would.
+    const source = resolveVoxTermSource(baseOptions);
+    expect(source).toBeInstanceOf(VoxTermSpawnSource);
 
-    const observations: TranscriptObservation[] = [];
-    for await (const observation of selection.provider.stream(emptyAudioStream())) {
-      observations.push(observation);
-    }
-    expect(observations).toEqual([]);
+    // And the selected provider is the VoxTerm provider regardless.
+    const selection = selectAsrProvider({ PANOP_ASR_PROVIDER: "voxterm" }, baseOptions);
+    expect(selection.mode).toBe("voxterm");
+    expect(selection.provider).toBeInstanceOf(VoxTermASRProvider);
+  });
+
+  test("binds the injected source only when one is explicitly provided", () => {
+    const injected = arraySegmentSource([]);
+    expect(resolveVoxTermSource({ ...baseOptions, voxtermSource: injected })).toBe(injected);
+    // Absent the injection it falls back to the production source, not the injected one.
+    expect(resolveVoxTermSource(baseOptions)).not.toBe(injected);
+    expect(resolveVoxTermSource(baseOptions)).toBeInstanceOf(VoxTermSpawnSource);
   });
 
   test("maps 'replay' to ReplayASRProvider", () => {
