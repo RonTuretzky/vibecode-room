@@ -3,7 +3,8 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createProjectorRuntime, type ProjectorRuntime } from "./composition";
-import type { TranscriptObservation } from "../types";
+import { NoopTTSProvider } from "../providers";
+import type { OutputDecision, TranscriptObservation } from "../types";
 import { demoProjectorSnapshot } from "../ui/demo-data";
 
 // ISSUE-0008: live FINAL observations must reach SuggestionEngine.observe with a
@@ -237,6 +238,77 @@ describe("LiveProjectorRuntime — spoken acceptance after a delivered suggestio
     expect(events).toContain("route.acceptance");
     // No spawn beyond the demo seed: a decline clears pending without spawning.
     expect(spawnTraceCount(runtime)).toBe(spawnsBefore);
+  });
+});
+
+// ISSUE-0013: the live loop must drive canonical stage transitions and audible
+// feedback — a fired suggestion speaks a TTS summary (SUGGESTION_DELIVERY), and a
+// spoken accept earcons + speaks a confirmation (SPAWN E3 + ACK). The earcon/tts
+// OutputDecisions land in #outputs so audioSnapshot reflects lastSpoken/earcon
+// (GAP-005 speak path + GAP-008 earcons/stage transitions on the live loop).
+describe("LiveProjectorRuntime — stage transitions + audible feedback on the live loop", () => {
+  let priorCapacityGuard: string | undefined;
+  beforeEach(() => {
+    priorCapacityGuard = process.env.PANOP_RBG_DISABLE_CAPACITY_CHECK;
+    process.env.PANOP_RBG_DISABLE_CAPACITY_CHECK = "1";
+  });
+  afterEach(() => {
+    if (priorCapacityGuard === undefined) {
+      delete process.env.PANOP_RBG_DISABLE_CAPACITY_CHECK;
+    } else {
+      process.env.PANOP_RBG_DISABLE_CAPACITY_CHECK = priorCapacityGuard;
+    }
+  });
+
+  test("suggestion delivery and spawn drive StageSequencer.transition + spoken outputs (unit, spy)", async () => {
+    const path = writeReplayFixture([
+      final("let's build a dashboard tool to ship the replay prototype today", "utt-build"),
+      final("yes", "utt-yes"),
+    ]);
+    const runtime = await createProjectorRuntime(baseEnv(path));
+    const transitionSpy = spyOn(runtime.stageSequencer, "transition");
+    const speakSpy = spyOn(runtime.tts, "speak");
+
+    await driveMic(runtime);
+
+    const transitionFor = (stage: string): OutputDecision | null | undefined =>
+      transitionSpy.mock.calls.find((call) => call[0] === stage)?.[1]?.audible;
+
+    // The fired suggestion opens SUGGESTION_DELIVERY with a spoken (tts) summary.
+    expect(transitionSpy.mock.calls.some((call) => call[0] === "SUGGESTION_DELIVERY")).toBe(true);
+    expect(transitionFor("SUGGESTION_DELIVERY")?.channel).toBe("tts");
+    // The spoken accept earcons (SPAWN E3) and speaks a confirmation (ACK tts).
+    expect(transitionFor("SPAWN")).toEqual({ channel: "earcon", id: "E3" });
+    expect(transitionFor("ACK")?.channel).toBe("tts");
+    // The TTS path was actually invoked: at least the summary + the spawn ack.
+    expect(speakSpy.mock.calls.length).toBeGreaterThanOrEqual(2);
+  });
+
+  test("audioSnapshot reflects the spoken ack and the E3 earcon after suggestion + spawn (integration)", async () => {
+    const path = writeReplayFixture([
+      final("let's build a dashboard tool to ship the replay prototype today", "utt-build"),
+      final("yes", "utt-yes"),
+    ]);
+    const runtime = await createProjectorRuntime(baseEnv(path));
+
+    await driveMic(runtime);
+
+    const audio = runtime.snapshot().audio;
+    // The spawn earcon (E3) and the spoken spawn ack both surface on the snapshot.
+    expect(audio.earcon).toBe("E3");
+    expect(audio.lastSpoken).toContain("spawned");
+
+    // No-key (replay) mode: this.tts is the NoopTTSProvider and it recorded the
+    // expected phrases — the suggestion summary and the spawn confirmation.
+    expect(runtime.tts).toBeInstanceOf(NoopTTSProvider);
+    const calls = (runtime.tts as NoopTTSProvider).calls.map((call) => call.text);
+    expect(calls.some((text) => text.includes("spawned"))).toBe(true);
+    expect(calls.length).toBeGreaterThanOrEqual(2);
+
+    // The audible OutputDecisions reach the trace via the canonical emit path.
+    const events = runtime.trace.events();
+    expect(events.some((event) => event.event === "output.tts")).toBe(true);
+    expect(events.some((event) => event.event === "earcon.emit" && event.meta.id === "E3")).toBe(true);
   });
 });
 

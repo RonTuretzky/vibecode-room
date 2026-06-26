@@ -2,6 +2,8 @@ import { AcceptanceClassifier } from "../acceptance/classifier";
 import { PendingSuggestionOwner } from "../acceptance/pending";
 import { AcceptanceController, AcceptanceSpawner, createProcessRegistryAcceptanceSeam } from "../acceptance/spawn";
 import { MuteController } from "../audio/mute-controller";
+import { playAck, playEarcon, type AudioOutput } from "../audio/earcons";
+import { ttsDecision } from "../audio/output-policy";
 import { CueAdapter } from "../cue/adapter";
 import { createCueBridge, type CueBridge, type CueBridgeMode } from "./cue-bridge";
 import { EMERGENCY_STOP_LATENCY_BUDGET_MS, EmergencySessionState, EmergencyStopController } from "../emergency/stop";
@@ -9,7 +11,8 @@ import { TraceProcessor } from "../obs/trace";
 import { ProcessRegistry, type RegistryProcess } from "../process/registry";
 import { selectSmithersClient } from "./smithers-select";
 import type { GatewayRpcTransport } from "../seam/smithers-client";
-import { DeepgramNova3ASRProvider, ReplayASRProvider, NoopTTSProvider, selectDecisionLLM, type ASRProvider, type DecisionLLM } from "../providers";
+import type { AcceptanceSpawnResult } from "../acceptance/spawn";
+import { DeepgramNova3ASRProvider, ReplayASRProvider, selectDecisionLLM, selectTtsProvider, type ASRProvider, type DecisionLLM } from "../providers";
 import type { TTSProvider } from "../providers";
 import {
   readSuggestionEngineConfig,
@@ -18,7 +21,7 @@ import {
   type SuggestionEngineConfig,
   type SuggestionEngineDecision,
 } from "../suggest/engine";
-import { StageSequencer } from "../spine/stage-sequencer";
+import { StageSequencer, type CanonicalStage } from "../spine/stage-sequencer";
 import type { LogEvent, OutputDecision, PendingSuggestion } from "../types";
 import { demoProjectorSnapshot, withUnmuted } from "../ui/demo-data";
 import type { ProjectorProcess, ProjectorProcessState, ProjectorSnapshot, ProjectorSuggestion, TranscriptLine } from "../ui/types";
@@ -119,7 +122,14 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   readonly micMode: "deepgram" | "replay";
   readonly asr: ASRProvider;
   readonly #micAsr: ASRProvider;
-  readonly tts = new NoopTTSProvider();
+  // Selected by env (Noop default — silent-but-recorded, no key/network/device).
+  // ISSUE-0013 replaces the former hardcoded NoopTTSProvider so the live loop
+  // actually drives a spoken path on suggestion delivery and spawn ack (GAP-005).
+  readonly tts: TTSProvider;
+  // Earcon/ack PCM sink for the stage-sequencer audio path. Production has no
+  // audio device, so a no-op sink absorbs the prerendered clips; the audible
+  // OutputDecisions themselves are what surface on the snapshot via #outputs.
+  readonly #audio: AudioOutput = new BufferedAudioOutput();
   readonly cueAdapter: CueAdapter;
   readonly #decisionLlm: DecisionLLM;
   #cueBridge: CueBridge | null = null;
@@ -156,6 +166,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   ) {
     this.#env = env;
     const clock = () => Date.now();
+    this.tts = selectTtsProvider(env).provider;
     this.trace = new TraceProcessor({ clock });
     this.#demoProcesses = demoProjectorSnapshot.processes.map((process) => ({ ...process }));
     this.#session = new EmergencySessionState({ sessionId, listening: true, muted: false });
@@ -230,7 +241,11 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       sessionId,
       trace: this.trace,
       clock,
-      onOutput: (decision) => this.recordOutput(decision),
+      // Mirrors the canonical.ts emitOutput pattern: every audible stage
+      // transition is recorded in #outputs AND routed through the audio/tts path
+      // so earcons play, the spoken ack reaches this.tts.speak, and audioSnapshot
+      // reflects lastSpoken/earcon (GAP-005/GAP-008).
+      onOutput: (decision, transition) => this.emitOutput(decision, transition.correlationId),
     });
     this.emergencyController = new EmergencyStopController({
       registry: this.registry,
@@ -469,7 +484,13 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       meta: { utteranceId: observation.utteranceId, candidate: observation.text },
     });
     try {
-      await this.acceptanceController.observe({ observation, correlationId: acceptanceCorrelationId });
+      const result = await this.acceptanceController.observe({ observation, correlationId: acceptanceCorrelationId });
+      // On a spoken accept the registry spawns: open the SPAWN stage (earcon E3)
+      // and the ACK stage with a spoken confirmation, routed through this.tts so
+      // the live loop both earcons and speaks on accept (GAP-005/GAP-008).
+      if (result.kind === "spawned" && result.spawn.accepted) {
+        await this.spawnAck(result.spawn, acceptanceCorrelationId);
+      }
     } catch (error) {
       this.recordExternalTrace({
         event: "acceptance.error",
@@ -492,7 +513,16 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       return;
     }
     try {
-      await this.#cueBridge.observeFinal(observation);
+      const decision = await this.#cueBridge.observeFinal(observation);
+      // A wake word match emits a text-cue earcon on the active Cue path; mirror
+      // that into the canonical spine by opening the ACTIVE_LISTEN stage with E1.
+      if (decision !== null && decision.earcons.length > 0) {
+        await this.driveTransition("ACTIVE_LISTEN", {
+          correlationId,
+          reason: "wake-detected",
+          audible: { channel: "earcon", id: "E1" },
+        });
+      }
     } catch (error) {
       this.recordExternalTrace({
         event: "cue.bridge.error",
@@ -515,11 +545,17 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     const roomIdleMs = this.#lastFinalAtMs === null ? 0 : Math.max(0, nowMs - this.#lastFinalAtMs);
     this.#lastFinalAtMs = nowMs;
     try {
-      this.#lastSuggestionDecision = await this.suggestionEngine.observe({
+      const decision = await this.suggestionEngine.observe({
         observation,
         correlationId: `${correlationId}-${observation.utteranceId}`,
         roomIdleMs,
       });
+      this.#lastSuggestionDecision = decision;
+      // A fired suggestion is spoken: open the SUGGESTION_DELIVERY stage with a
+      // TTS summary of the pitch + lead question, routed through this.tts (GAP-005).
+      if (decision.kind === "fired") {
+        await this.deliverSuggestionAudio(decision.suggestion, `${correlationId}-${observation.utteranceId}`);
+      }
     } catch (error) {
       this.recordExternalTrace({
         event: "suggestion.engine.error",
@@ -666,20 +702,24 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     });
   }
 
+  // Reflect the most recent spoken phrase and earcon independently: a spoken ack
+  // (tts) and an earcon often land together on one turn (e.g. SPAWN E3 + ACK
+  // speech), so the snapshot must surface both, not just whichever was emitted
+  // last. Falls back to the previous audio fields before any live output exists.
   private audioSnapshot(previous: ProjectorSnapshot): ProjectorSnapshot["audio"] {
-    const lastOutput = [...this.#outputs].reverse().find((decision) => decision.channel === "tts" || decision.channel === "earcon");
-    if (lastOutput === undefined) {
-      return previous.audio;
-    }
-    if (lastOutput.channel === "tts") {
-      return {
-        ...previous.audio,
-        lastSpoken: lastOutput.text,
-      };
+    let lastSpoken: string | undefined;
+    let earcon: string | undefined;
+    for (const decision of this.#outputs) {
+      if (decision.channel === "tts") {
+        lastSpoken = decision.text;
+      } else if (decision.channel === "earcon") {
+        earcon = decision.id;
+      }
     }
     return {
       ...previous.audio,
-      earcon: lastOutput.id,
+      lastSpoken: lastSpoken ?? previous.audio.lastSpoken,
+      earcon: earcon ?? previous.audio.earcon,
     };
   }
 
@@ -707,6 +747,132 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   private recordOutput(decision: OutputDecision): void {
     this.#outputs.push(decision);
   }
+
+  // Open the ACTIVE_LISTEN stage when the spine is still IDLE so a suggestion
+  // delivery / spawn that arrives without a preceding wake word (the common
+  // ambient case) still has a valid canonical path to transition along.
+  private async ensureActiveListen(correlationId: string): Promise<void> {
+    if (this.stageSequencer.state() === "IDLE") {
+      await this.driveTransition("ACTIVE_LISTEN", { correlationId, reason: "ambient-listen", audible: null });
+    }
+  }
+
+  // Speak a fired suggestion and record the SUGGESTION_DELIVERY transition.
+  private async deliverSuggestionAudio(suggestion: PendingSuggestion, correlationId: string): Promise<void> {
+    await this.ensureActiveListen(correlationId);
+    const spoken = await ttsDecision(suggestionSpeech(suggestion), { fallback: "I have a suggestion." });
+    await this.driveTransition("SUGGESTION_DELIVERY", {
+      correlationId,
+      reason: "route-suggestion",
+      audible: spoken,
+      meta: { suggestionId: suggestion.suggestionId },
+    });
+  }
+
+  // Earcon + spoken confirmation for an accepted spawn, recorded as the
+  // SPAWN -> ACK transitions, then reset to IDLE for the next ambient cycle.
+  private async spawnAck(spawn: Extract<AcceptanceSpawnResult, { accepted: true }>, correlationId: string): Promise<void> {
+    await this.ensureActiveListen(correlationId);
+    await this.driveTransition("SPAWN", {
+      correlationId,
+      reason: "acceptance-spawn",
+      audible: { channel: "earcon", id: "E3" },
+      meta: { upid: spawn.process.upid, callsign: spawn.process.callsign },
+    });
+    const spokenAck = spawn.outputs.find((output) => output.channel === "tts");
+    const ackText = spokenAck?.channel === "tts" ? spokenAck.text : `${spawn.process.callsign} spawned.`;
+    await this.driveTransition("ACK", {
+      correlationId,
+      reason: "spoken-confirmation",
+      audible: await ttsDecision(ackText, { fallback: "Spawned." }),
+      meta: { upid: spawn.process.upid, callsign: spawn.process.callsign },
+    });
+    await this.driveTransition("IDLE", { correlationId, reason: "ack-complete", audible: null });
+  }
+
+  // Drive one canonical stage transition without ever aborting live ingestion: an
+  // invalid/failed transition is recorded as a trace event and swallowed.
+  private async driveTransition(
+    to: CanonicalStage,
+    input: { correlationId: string; reason: string; audible?: OutputDecision | null; meta?: Record<string, unknown> },
+  ): Promise<void> {
+    try {
+      await this.stageSequencer.transition(to, input);
+    } catch (error) {
+      this.recordExternalTrace({
+        event: "stage.transition.error",
+        level: "error",
+        sessionId: this.sessionId,
+        correlationId: input.correlationId,
+        meta: { to, reason: input.reason, message: error instanceof Error ? error.message : String(error) },
+      });
+    }
+  }
+
+  // Record an audible OutputDecision in #outputs and play/speak it. Mirrors the
+  // canonical.ts emitOutput pattern: earcon/ack clips play to the audio sink and
+  // TTS reaches this.tts.speak, with a trace event per channel. Failures here must
+  // not abort a stage transition, so the emit is best-effort.
+  private async emitOutput(decision: OutputDecision, correlationId: string): Promise<void> {
+    this.#outputs.push(decision);
+    const startedAtMs = Date.now();
+    try {
+      switch (decision.channel) {
+        case "earcon":
+          await playEarcon(this.#audio, decision.id, { correlationId, source: "stage-sequencer" });
+          this.recordTimedTrace("earcon.emit", correlationId, startedAtMs, { id: decision.id, source: "stage-sequencer" });
+          return;
+        case "ack":
+          await playAck(this.#audio, decision.id, { correlationId, source: "stage-sequencer" });
+          this.recordTimedTrace("ack.emit", correlationId, startedAtMs, { ackId: decision.id, source: "stage-sequencer" });
+          return;
+        case "tts":
+          await this.tts.speak(decision.text);
+          this.recordTimedTrace("output.tts", correlationId, startedAtMs, {
+            text: decision.text,
+            wordCount: decision.wordCount,
+            summarized: decision.summarized,
+          });
+          return;
+        case "silent":
+          this.recordTimedTrace("output.silent", correlationId, startedAtMs, {});
+          return;
+      }
+    } catch (error) {
+      this.recordExternalTrace({
+        event: "output.emit.error",
+        level: "error",
+        sessionId: this.sessionId,
+        correlationId,
+        meta: { channel: decision.channel, message: error instanceof Error ? error.message : String(error) },
+      });
+    }
+  }
+
+  private recordTimedTrace(event: string, correlationId: string, startedAtMs: number, meta: Record<string, unknown>): void {
+    this.trace.record({
+      event,
+      sessionId: this.sessionId,
+      correlationId,
+      startedAtMs,
+      endedAtMs: Date.now(),
+      meta,
+    });
+  }
+}
+
+// No-op audio sink: production has no device, so prerendered earcon/ack clips are
+// absorbed here. The audible OutputDecisions are what surface on the snapshot.
+class BufferedAudioOutput implements AudioOutput {
+  async playPcm(): Promise<void> {
+    // Intentionally empty — see class doc.
+  }
+}
+
+// Spoken form of a fired suggestion: the pitch plus its lead question, mirroring
+// the canonical spine's suggestionSpeech so the live ack reads the same way.
+function suggestionSpeech(suggestion: PendingSuggestion): string {
+  return `${suggestion.pitch}. ${suggestion.mcqs[0] ?? "Proceed?"}`;
 }
 
 function selectAsrProvider(
