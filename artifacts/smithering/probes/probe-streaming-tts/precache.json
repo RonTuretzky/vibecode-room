@@ -4,27 +4,27 @@
   "playback": [
     {
       "phrase": "Ready",
-      "firstByteMs": 0.00204200000007404,
+      "firstByteMs": 0.008041000000957865,
       "bytes": 19
     },
     {
       "phrase": "Muted",
-      "firstByteMs": 0.00020799999765586108,
+      "firstByteMs": 0.0007909999985713512,
       "bytes": 19
     },
     {
       "phrase": "Unmuted",
-      "firstByteMs": 0.0001249999986612238,
+      "firstByteMs": 0.0004169999956502579,
       "bytes": 21
     },
     {
       "phrase": "Working",
-      "firstByteMs": 0.00008299999899463728,
+      "firstByteMs": 0.0005000000019208528,
       "bytes": 21
     },
     {
       "phrase": "Halted",
-      "firstByteMs": 0.00008299999899463728,
+      "firstByteMs": 0.0006670000002486631,
       "bytes": 20
     }
   ],
