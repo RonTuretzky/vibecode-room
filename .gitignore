@@ -6,6 +6,12 @@ node_modules/
 panopticon.db
 dist/
 
+# The committed Cue build fixture (ISSUE-0025 / GAP-006) is an already-"built"
+# stand-in: its dist/ entrypoints ARE the artifact under test, so they must
+# travel with the repo even though dist/ is ignored above.
+!fixtures/cue-build/**/dist/
+!fixtures/cue-build/**/dist/**
+
 # Smithers runtime state
 smithers.db
 smithers.db-shm

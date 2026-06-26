@@ -3,8 +3,8 @@
   "status": "passed",
   "summary": "probe assertions were failable and passed",
   "correlationId": "p-cue-real-cue-substrate",
-  "startedAt": "2026-06-26T08:52:36.648Z",
-  "finishedAt": "2026-06-26T08:52:36.861Z",
+  "startedAt": "2026-06-26T09:16:58.420Z",
+  "finishedAt": "2026-06-26T09:16:58.633Z",
   "assertions": [
     {
       "id": "repo-access-source-build",
@@ -18,7 +18,7 @@
       "behavior": "TextCue-triggered harness decision resolves inside the hard earcon budget",
       "phase": "red",
       "status": "failed-as-expected",
-      "error": "expect(received).toBeLessThanOrEqual(expected)\n\nExpected: <= 50\nReceived: 82.39533300000039\n"
+      "error": "expect(received).toBeLessThanOrEqual(expected)\n\nExpected: <= 50\nReceived: 82.32137499999953\n"
     },
     {
       "id": "cue-policy-primitives",
