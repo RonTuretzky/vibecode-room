@@ -40,7 +40,16 @@ export {
   type VoxTermSegmentSource,
 } from "./asr/voxterm";
 export {
+  VoxTermSpawnSource,
+  createVoxTermSegmentSource,
+  parseSegmentLine,
+  type VoxTermChild,
+  type VoxTermSourceOptions,
+  type VoxTermSpawn,
+} from "./asr/voxterm-source";
+export {
   selectAsrProvider,
+  resolveVoxTermSource,
   MIC_CLOSE_TIMEOUT_MS,
   type AsrProviderMode,
   type AsrSelection,

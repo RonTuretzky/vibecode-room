@@ -51,7 +51,7 @@
     {
       "runId": "probe-run-alpha",
       "frameNo": 2,
-      "createdAtMs": 1782467902416,
+      "createdAtMs": 1782470291334,
       "xmlJson": "{\"kind\":\"element\",\"tag\":\"smithers:workflow\",\"props\":{\"name\":\"durable\"},\"children\":[{\"kind\":\"element\",\"tag\":\"smithers:sequence\",\"props\":{},\"children\":[{\"kind\":\"element\",\"tag\":\"smithers:task\",\"props\":{\"id\":\"checkpoint\",\"waitAsync\":\"false\"},\"children\":[]},{\"kind\":\"element\",\"tag\":\"smithers:wait-for-event\",\"props\":{\"correlationId\":\"seed-alpha\",\"event\":\"steer\",\"id\":\"steer\",\"label\":\"signal:steer\",\"onTimeout\":\"fail\",\"waitAsync\":\"false\"},\"children\":[]}]}]}",
       "xmlHash": "762c8dad038a2c388850f0ea1e5e60b30fc3b6f077607d775735d5ce6f43c172",
       "encoding": "delta",
@@ -62,7 +62,7 @@
     {
       "runId": "probe-run-alpha",
       "frameNo": 1,
-      "createdAtMs": 1782467902407,
+      "createdAtMs": 1782470291325,
       "xmlJson": "{\"kind\":\"element\",\"tag\":\"smithers:workflow\",\"props\":{\"name\":\"durable\"},\"children\":[{\"kind\":\"element\",\"tag\":\"smithers:sequence\",\"props\":{},\"children\":[{\"kind\":\"element\",\"tag\":\"smithers:task\",\"props\":{\"id\":\"checkpoint\",\"waitAsync\":\"false\"},\"children\":[]},{\"kind\":\"element\",\"tag\":\"smithers:wait-for-event\",\"props\":{\"correlationId\":\"seed-alpha\",\"event\":\"steer\",\"id\":\"steer\",\"label\":\"signal:steer\",\"onTimeout\":\"fail\",\"waitAsync\":\"false\"},\"children\":[]}]}]}",
       "xmlHash": "762c8dad038a2c388850f0ea1e5e60b30fc3b6f077607d775735d5ce6f43c172",
       "encoding": "keyframe",
@@ -78,14 +78,14 @@
       "iteration": 0,
       "attempt": 1,
       "state": "finished",
-      "startedAtMs": 1782467902411,
-      "finishedAtMs": 1782467902412,
+      "startedAtMs": 1782470291328,
+      "finishedAtMs": 1782470291329,
       "heartbeatAtMs": null,
       "heartbeatDataJson": null,
       "errorJson": null,
       "jjPointer": null,
       "responseText": null,
-      "jjCwd": "/Users/wk/.smither-worktrees/ISSUE-0024",
+      "jjCwd": "/Users/wk/.smither-worktrees/ISSUE-0028",
       "cached": false,
       "metaJson": "{\"kind\":\"static\",\"prompt\":null,\"staticPayload\":{\"seed\":\"seed-alpha\",\"parentId\":\"\",\"checkpoint\":\"checkpoint:seed-alpha\",\"fleetIndex\":0},\"label\":null,\"outputTable\":\"checkpoint\",\"needsApproval\":false,\"retries\":null,\"timeoutMs\":null,\"heartbeatTimeoutMs\":null,\"lastHeartbeat\":null,\"agentId\":null,\"agentModel\":null,\"agentEngine\":null,\"agentResume\":null,\"agentConversation\":null,\"resumedFromSession\":null,\"resumedFromConversation\":false,\"hijackHandoff\":null}"
     },
@@ -95,7 +95,7 @@
       "iteration": 0,
       "attempt": 1,
       "state": "waiting-event",
-      "startedAtMs": 1782467902417,
+      "startedAtMs": 1782470291338,
       "finishedAtMs": null,
       "heartbeatAtMs": null,
       "heartbeatDataJson": null,
@@ -104,7 +104,7 @@
       "responseText": null,
       "jjCwd": null,
       "cached": false,
-      "metaJson": "{\"kind\":\"wait-for-event\",\"waitForEvent\":{\"signalName\":\"steer\",\"correlationId\":\"seed-alpha\",\"onTimeout\":\"fail\",\"timeoutMs\":null,\"waitAsync\":false,\"startedAtMs\":1782467902417,\"resolvedSignalSeq\":null,\"receivedAtMs\":null,\"timedOutAtMs\":null}}"
+      "metaJson": "{\"kind\":\"wait-for-event\",\"waitForEvent\":{\"signalName\":\"steer\",\"correlationId\":\"seed-alpha\",\"onTimeout\":\"fail\",\"timeoutMs\":null,\"waitAsync\":false,\"startedAtMs\":1782470291338,\"resolvedSignalSeq\":null,\"receivedAtMs\":null,\"timedOutAtMs\":null}}"
     }
   ]
 }
