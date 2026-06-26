@@ -20,10 +20,13 @@
 
 import { ClaudeDecisionLLM, createFetchTransport, type ClaudeMessagesTransport } from "./claude";
 import { HeuristicDecisionLLM } from "./heuristic";
+import { HostClaudeDecisionLLM, type ClaudeCliRunner } from "./host-claude";
 import { ReplayDecisionLLM, type ReplayDecisionRecord } from "./replay";
 import type { DecisionLLM } from "../types";
 
-export type DecisionLLMMode = "heuristic" | "claude" | "replay";
+// "claude-cli" performs genuine inference via the host's logged-in `claude` CLI
+// (no API key) — distinct from "claude" (the ANTHROPIC_API_KEY fetch path).
+export type DecisionLLMMode = "heuristic" | "claude" | "claude-cli" | "replay";
 
 // Default sanctioned host-subscription invocation for the Claude decider. The
 // model credential is never a raw key — access routes through the host's
@@ -52,6 +55,10 @@ export interface DecisionLLMSelectionOptions {
   claudeTransport?: ClaudeMessagesTransport;
   /** Replay records for the replay backend (deterministic fixtures). */
   replayRecords?: readonly ReplayDecisionRecord[];
+  /** Model id for the host-claude (CLI) decider (defaults to a fast model). */
+  hostClaudeModel?: string;
+  /** Injectable CLI runner for the host-claude decider (tests avoid shelling out). */
+  hostClaudeRunner?: ClaudeCliRunner;
 }
 
 export interface DecisionLLMSelection {
@@ -69,6 +76,8 @@ export function selectDecisionLLM(
       return { mode, llm: new HeuristicDecisionLLM({ policy: options.heuristicPolicy }) };
     case "claude":
       return { mode, llm: createClaudeDecisionLLM(env, options) };
+    case "claude-cli":
+      return { mode, llm: new HostClaudeDecisionLLM({ model: options.hostClaudeModel, runner: options.hostClaudeRunner }) };
     case "replay":
       return { mode, llm: new ReplayDecisionLLM(options.replayRecords ?? []) };
   }
@@ -77,11 +86,11 @@ export function selectDecisionLLM(
 function resolveDecisionMode(env: DecisionLLMSelectionEnv): DecisionLLMMode {
   const explicit = env.PANOP_DECISION_LLM?.trim().toLowerCase();
   if (explicit !== undefined && explicit.length > 0) {
-    if (explicit === "heuristic" || explicit === "claude" || explicit === "replay") {
+    if (explicit === "heuristic" || explicit === "claude" || explicit === "claude-cli" || explicit === "replay") {
       return explicit;
     }
     throw new Error(
-      `Unknown PANOP_DECISION_LLM "${env.PANOP_DECISION_LLM}". Expected one of: heuristic, claude, replay.`,
+      `Unknown PANOP_DECISION_LLM "${env.PANOP_DECISION_LLM}". Expected one of: heuristic, claude, claude-cli, replay.`,
     );
   }
 
