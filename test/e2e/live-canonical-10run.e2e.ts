@@ -29,7 +29,10 @@ describe.skipIf(hasDeepgramCredential() || !liveGateRequired())("LIVE RELEASE GA
   });
 });
 
-describe.skipIf(!hasDeepgramCredential())("LIVE RELEASE GATE: canonical scripted-audio Deepgram stack", () => {
+// The live stack can only run with both a Deepgram credential and a scripted
+// audio fixture. Without PANOP_REQUIRE_LIVE_GATE the gate honestly skips when
+// either is missing; with it set, the gate runs and fails loudly below.
+describe.skipIf(!liveGateRequired() && (!hasDeepgramCredential() || !hasAudioFixture()))("LIVE RELEASE GATE: canonical scripted-audio Deepgram stack", () => {
   test(
     "runs the canonical scenario against live scripted audio 10 times and requires at least 9 passes",
     async () => {
@@ -151,6 +154,11 @@ function hasDeepgramCredential(): boolean {
 
 function liveGateRequired(): boolean {
   return process.env.PANOP_REQUIRE_LIVE_GATE === "1";
+}
+
+function hasAudioFixture(): boolean {
+  const path = process.env.PANOP_ASR_DEEPGRAM_AUDIO_FIXTURE;
+  return path !== undefined && path.length > 0;
 }
 
 function fileAudioStream(path: string): AudioReadableStream {
