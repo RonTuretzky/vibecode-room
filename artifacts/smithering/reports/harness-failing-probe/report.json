@@ -3,8 +3,8 @@
   "status": "failed",
   "summary": "probe assertion failed",
   "correlationId": "probe-harness-test-failure",
-  "startedAt": "2026-06-26T09:58:22.378Z",
-  "finishedAt": "2026-06-26T09:58:22.379Z",
+  "startedAt": "2026-06-26T10:38:50.730Z",
+  "finishedAt": "2026-06-26T10:38:50.730Z",
   "assertions": [
     {
       "id": "green-failure",

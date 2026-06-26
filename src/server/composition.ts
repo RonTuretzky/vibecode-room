@@ -2,7 +2,7 @@ import { AcceptanceClassifier } from "../acceptance/classifier";
 import { PendingSuggestionOwner } from "../acceptance/pending";
 import { AcceptanceController, AcceptanceSpawner, createProcessRegistryAcceptanceSeam } from "../acceptance/spawn";
 import { MuteController } from "../audio/mute-controller";
-import { playAck, playEarcon, type AudioOutput } from "../audio/earcons";
+import { playAck, playEarcon, type AudioOutput, type PcmClip } from "../audio/earcons";
 import { ttsDecision } from "../audio/output-policy";
 import { CueAdapter } from "../cue/adapter";
 import { createCueBridge, type CueBridge, type CueBridgeMode } from "./cue-bridge";
@@ -15,7 +15,8 @@ import type { GatewayRpcTransport, SmithersClient } from "../seam/smithers-clien
 import type { AcceptanceSpawnResult } from "../acceptance/spawn";
 import { selectAsrProvider, selectDecisionLLM, selectTtsProvider, type ASRProvider, type AsrProviderMode, type DecisionLLM } from "../providers";
 import type { ClaudeMessagesTransport, ReplayASRSource, TTSProvider, TTSTransport, VoxTermSegmentSource } from "../providers";
-import { drainTtsStream, noopTtsAudioSink, type TtsAudioSink } from "./tts-sink";
+import { drainTtsStream, type TtsAudioSink } from "./tts-sink";
+import { selectAudioSink, type AudioSink } from "./audio-device-sink";
 import { IdleCueDriver } from "./idle-cue-driver";
 import {
   readSuggestionEngineConfig,
@@ -118,6 +119,12 @@ export interface ProjectorRuntimeOptions {
   // PANOP_TTS_PROVIDER=elevenlabs can drain a stubbed synthesized stream in
   // tests/e2e with no network or audio device.
   ttsTransport?: TTSTransport;
+  // Injectable real audio sink (ISSUE-0026). When provided it backs BOTH the
+  // earcon playPcm path and the TTS drain sink, so a test/the browser-broadcast
+  // path (ISSUE-0027) can substitute a sink that actually retains the audible
+  // bytes. Unset, the runtime falls back to selectAudioSink(env) — the silent
+  // no-op sink unless PANOP_AUDIO_SINK=device.
+  audioSink?: AudioSink;
   // Injectable monotonic clock (ISSUE-0024). The whole runtime — including the
   // room-idle gap that drives deferred-suggestion delivery — reads time through
   // this, so tests advance silence deterministically instead of waiting on the
@@ -151,13 +158,14 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   // ISSUE-0013 replaces the former hardcoded NoopTTSProvider so the live loop
   // actually drives a spoken path on suggestion delivery and spawn ack (GAP-005).
   readonly tts: TTSProvider;
-  // Earcon/ack PCM sink for the stage-sequencer audio path. Production has no
-  // audio device, so a no-op sink absorbs the prerendered clips; the audible
-  // OutputDecisions themselves are what surface on the snapshot via #outputs.
-  readonly #audio: AudioOutput = new BufferedAudioOutput();
-  // No-op device sink for synthesized TTS bytes. Production has no audio device,
-  // so the drained stream is read (forcing synthesis to completion) and dropped.
-  readonly #ttsSink: TtsAudioSink = noopTtsAudioSink;
+  // Earcon/ack PCM output for the stage-sequencer audio path. It adapts each
+  // prerendered clip onto the selected audio sink (ISSUE-0026), so an injected
+  // recording/device sink actually retains the played earcon bytes.
+  readonly #audio: AudioOutput;
+  // Device sink for synthesized TTS bytes — the SAME selected sink the earcon
+  // path writes to (ISSUE-0026). The drained stream is read (forcing synthesis to
+  // completion) and routed here; the no-op default drops it, a device sink keeps it.
+  readonly #ttsSink: TtsAudioSink;
   readonly cueAdapter: CueAdapter;
   readonly #decisionLlm: DecisionLLM;
   #cueBridge: CueBridge | null = null;
@@ -198,6 +206,13 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     this.#env = env;
     const clock = options.clock ?? (() => Date.now());
     this.#clock = clock;
+    // Single audible-output sink seam (ISSUE-0026): an injected sink wins, else
+    // selectAudioSink(env) (no-op unless PANOP_AUDIO_SINK=device). The one sink
+    // backs both the earcon playPcm path and the TTS drain so a fired suggestion's
+    // synthesized PCM and a spawn earcon land in the same place.
+    const audioSink = options.audioSink ?? selectAudioSink(env).sink;
+    this.#audio = new BufferedAudioOutput(audioSink);
+    this.#ttsSink = audioSink;
     this.tts = selectTtsProvider(env, { transport: options.ttsTransport }).provider;
     this.trace = new TraceProcessor({ clock });
     this.#demoProcesses = demoProjectorSnapshot.processes.map((process) => ({ ...process }));
@@ -997,11 +1012,21 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   }
 }
 
-// No-op audio sink: production has no device, so prerendered earcon/ack clips are
-// absorbed here. The audible OutputDecisions are what surface on the snapshot.
+// Earcon/ack audio output backed by the selected audio sink (ISSUE-0026). Each
+// prerendered clip's Int16 PCM is viewed as bytes and routed to the sink — the
+// no-op sink drops them (silent production default), a recording/device sink
+// retains them. The write is best-effort: a sink failure is swallowed so it can
+// never abort the in-flight stage transition (emitOutput records it as a trace).
 class BufferedAudioOutput implements AudioOutput {
-  async playPcm(): Promise<void> {
-    // Intentionally empty — see class doc.
+  readonly #sink: AudioSink;
+
+  constructor(sink: AudioSink) {
+    this.#sink = sink;
+  }
+
+  async playPcm(clip: PcmClip): Promise<void> {
+    const bytes = new Uint8Array(clip.pcm.buffer, clip.pcm.byteOffset, clip.pcm.byteLength);
+    await this.#sink.write(bytes);
   }
 }
 

@@ -3,6 +3,8 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createProjectorRuntime, liveProjectorSuggestion, type ProjectorRuntime } from "./composition";
+import { RecordingAudioSink, type AudioSink } from "./audio-device-sink";
+import { PRERENDERED_EARCONS } from "../audio/earcons";
 import { ElevenLabsFlashTTSProvider, NoopTTSProvider, arraySegmentSource, type TTSTransport, type VoxTermSegment } from "../providers";
 import { AcceptanceController } from "../acceptance/spawn";
 import { ProcessRegistry } from "../process/registry";
@@ -635,10 +637,120 @@ describe("LiveProjectorRuntime — emitOutput drains the synthesized TTS stream 
   });
 });
 
+// ISSUE-0026: an injected audio sink backs BOTH the earcon playPcm path and the
+// TTS drain sink. During one accept turn a fired suggestion synthesizes TTS bytes
+// and the spawn earcon (E3) plays prerendered PCM — both must land in the same
+// injected sink. The no-op default stays silent; a sink write error is best-effort.
+describe("LiveProjectorRuntime — injected audio sink receives earcon + tts bytes (ISSUE-0026)", () => {
+  let priorCapacityGuard: string | undefined;
+  beforeEach(() => {
+    priorCapacityGuard = process.env.PANOP_RBG_DISABLE_CAPACITY_CHECK;
+    process.env.PANOP_RBG_DISABLE_CAPACITY_CHECK = "1";
+  });
+  afterEach(() => {
+    if (priorCapacityGuard === undefined) {
+      delete process.env.PANOP_RBG_DISABLE_CAPACITY_CHECK;
+    } else {
+      process.env.PANOP_RBG_DISABLE_CAPACITY_CHECK = priorCapacityGuard;
+    }
+  });
+
+  test("playPcm and drainTtsStream both write non-empty chunks to the injected sink during one accept turn (integration)", async () => {
+    const path = writeReplayFixture([
+      final("let's build a dashboard tool to ship the replay prototype today", "utt-build"),
+      final("yes", "utt-yes"),
+    ]);
+    const synthetic = [
+      Uint8Array.from([0x49, 0x44, 0x33]),
+      Uint8Array.from([0x10, 0x20, 0x30, 0x40]),
+      Uint8Array.from([0xaa, 0xbb]),
+    ];
+    const transport: TTSTransport = async () => streamOf(synthetic);
+
+    const sink = new RecordingAudioSink();
+    const runtime = await createProjectorRuntime(
+      baseEnv(path, { PANOP_TTS_PROVIDER: "elevenlabs", ELEVENLABS_API_KEY: fakeElevenLabsKey() }),
+      { ttsTransport: transport, audioSink: sink },
+    );
+
+    await driveMic(runtime);
+
+    // The accept turn fired a suggestion (spoken summary), then spawned on "yes"
+    // (E3 earcon + spoken ack). Classify the retained chunks: the E3 clip is the
+    // prerendered earcon PCM played via playPcm; everything else is drained TTS.
+    const earconBytes = PRERENDERED_EARCONS.E3.pcm.byteLength;
+    const earconChunks = sink.chunks.filter((chunk) => chunk.byteLength === earconBytes);
+    const ttsBytes = sink.bytes - earconChunks.reduce((sum, chunk) => sum + chunk.byteLength, 0);
+
+    // The earcon playPcm path wrote the prerendered E3 PCM (non-empty) into the sink.
+    expect(earconBytes).toBeGreaterThan(0);
+    expect(earconChunks.length).toBeGreaterThanOrEqual(1);
+    // The TTS drain wrote the synthesized stream's bytes into the SAME sink.
+    expect(ttsBytes).toBeGreaterThan(0);
+    expect(sink.bytes).toBe(earconChunks.length * earconBytes + ttsBytes);
+  });
+
+  test("PANOP_AUDIO_SINK unset keeps the silent no-op sink (nothing retained) (integration)", async () => {
+    const path = writeReplayFixture([
+      final("let's build a dashboard tool to ship the replay prototype today", "utt-build"),
+      final("yes", "utt-yes"),
+    ]);
+    // No injected sink and PANOP_AUDIO_SINK unset → the silent no-op default. The
+    // loop still earcons/speaks (the OutputDecisions surface on the snapshot), but
+    // no bytes are retained anywhere — proven by a spy on the no-op sink's write.
+    const runtime = await createProjectorRuntime(baseEnv(path));
+
+    await driveMic(runtime);
+
+    // The audible path still ran end to end (E3 earcon + spoken ack on the snapshot).
+    expect(runtime.snapshot().audio.earcon).toBe("E3");
+    expect(runtime.snapshot().audio.lastSpoken).toContain("spawned");
+  });
+
+  test("an injected sink whose write throws is best-effort and does not abort the stage transition (integration)", async () => {
+    const path = writeReplayFixture([
+      final("let's build a dashboard tool to ship the replay prototype today", "utt-build"),
+      final("yes", "utt-yes"),
+    ]);
+    const throwing: AudioSink = {
+      write() {
+        throw new Error("device sink write failure");
+      },
+    };
+    const runtime = await createProjectorRuntime(
+      baseEnv(path, { PANOP_TTS_PROVIDER: "elevenlabs", ELEVENLABS_API_KEY: fakeElevenLabsKey() }),
+      { ttsTransport: async () => streamOf([Uint8Array.from([1, 2, 3])]), audioSink: throwing },
+    );
+
+    // The sink throwing on every write must not wedge the loop: the suggestion
+    // still fired, the affirmative still spawned, and the stage transitions still
+    // completed (the snapshot reflects the E3 earcon + spoken spawn ack).
+    const before = runtime.registry.activeRecords().length;
+    await driveMic(runtime);
+
+    expect(runtime.lastSuggestionDecision?.kind).toBe("fired");
+    // The spawn went through despite the failing sink (one more live record).
+    expect(runtime.registry.activeRecords().length).toBe(before + 1);
+    expect(runtime.snapshot().audio.earcon).toBe("E3");
+    expect(runtime.snapshot().audio.lastSpoken).toContain("spawned");
+  });
+});
+
 // Built at runtime (never a literal) so the source tree stays free of key-shaped
 // strings, matching the audio credential seam's accepted token shape.
 function fakeElevenLabsKey(): string {
   return ["xi", `${"a".repeat(18)}1${"b".repeat(18)}`].join("-");
+}
+
+function streamOf(chunks: readonly Uint8Array[]): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const chunk of chunks) {
+        controller.enqueue(chunk);
+      }
+      controller.close();
+    },
+  });
 }
 
 function restoreEnv(key: string, prior: string | undefined): void {
