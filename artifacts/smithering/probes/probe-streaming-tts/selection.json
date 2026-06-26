@@ -1,21 +1,21 @@
 {
   "budgetMs": 200,
   "selected": {
-    "providerId": "elevenlabs",
-    "label": "ElevenLabs Flash v3 / Flash low-latency family",
+    "providerId": "cartesia",
+    "label": "Cartesia Sonic",
     "model": "replay-tts",
     "voice": "neutral-replay",
-    "firstAudioByteMs": 61.89033299999937,
-    "firstChunkBytes": 55,
+    "firstAudioByteMs": 63.37670799999978,
+    "firstChunkBytes": 53,
     "contentType": "audio/replay-pcm"
   },
   "fastestMeasured": {
-    "providerId": "elevenlabs",
-    "label": "ElevenLabs Flash v3 / Flash low-latency family",
+    "providerId": "cartesia",
+    "label": "Cartesia Sonic",
     "model": "replay-tts",
     "voice": "neutral-replay",
-    "firstAudioByteMs": 61.89033299999937,
-    "firstChunkBytes": 55,
+    "firstAudioByteMs": 63.37670799999978,
+    "firstChunkBytes": 53,
     "contentType": "audio/replay-pcm"
   },
   "measured": [
@@ -24,7 +24,7 @@
       "label": "ElevenLabs Flash v3 / Flash low-latency family",
       "model": "replay-tts",
       "voice": "neutral-replay",
-      "firstAudioByteMs": 61.89033299999937,
+      "firstAudioByteMs": 64.7007909999993,
       "firstChunkBytes": 55,
       "contentType": "audio/replay-pcm"
     },
@@ -33,7 +33,7 @@
       "label": "Cartesia Sonic",
       "model": "replay-tts",
       "voice": "neutral-replay",
-      "firstAudioByteMs": 62.54070800000045,
+      "firstAudioByteMs": 63.37670799999978,
       "firstChunkBytes": 53,
       "contentType": "audio/replay-pcm"
     },
@@ -42,7 +42,7 @@
       "label": "PlayHT 3.0 Turbo",
       "model": "replay-tts",
       "voice": "neutral-replay",
-      "firstAudioByteMs": 62.046666999998706,
+      "firstAudioByteMs": 63.97124999999869,
       "firstChunkBytes": 51,
       "contentType": "audio/replay-pcm"
     },
@@ -51,7 +51,7 @@
       "label": "OpenAI /v1/audio/speech",
       "model": "replay-tts",
       "voice": "neutral-replay",
-      "firstAudioByteMs": 62.94945799999914,
+      "firstAudioByteMs": 64.84504200000083,
       "firstChunkBytes": 51,
       "contentType": "audio/replay-pcm"
     }
