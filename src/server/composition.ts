@@ -145,6 +145,7 @@ export async function createProjectorRuntime(
   const runtime = new LiveProjectorRuntime(sessionId, env, options);
   await runtime.initCueBridge();
   await runtime.seedDemoFleet();
+  runtime.startAcceptanceWatchdog();
 
   if (env.PANOP_INITIAL_MUTED !== "0") {
     await runtime.muteForInitialState();
@@ -199,6 +200,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   #micActive = false;
   #micBytes = 0;
   #micLastPublishMs = 0;
+  #acceptanceWatchdog: ReturnType<typeof setInterval> | null = null;
   // Ambient-suggestion state, fed by FINAL observations only. `#lastSuggestionDecision`
   // is the latest engine verdict; `#lastFinalAtMs` lets us report room-idle gap.
   #lastSuggestionDecision: SuggestionEngineDecision | null = null;
@@ -570,6 +572,12 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       // earcon trace. This is orthogonal to the suggestion/acceptance routing below.
       await this.driveCueBridge(observation, correlationId);
 
+      // Expire a stale pending suggestion FIRST. Acceptance otherwise only times
+      // out on a room-idle tick; during continuous talk the room never goes idle,
+      // so without this an un-answered suggestion would wedge the loop into
+      // accept/decline mode forever and no new ideas could form.
+      this.acceptanceController.checkExpiry(this.#clock());
+
       // Once a suggestion is delivered and pending, subsequent FINAL utterances are
       // accept/decline/answer candidates — route them to the AcceptanceController
       // (GAP-003) instead of seeding a fresh suggestion. The suggestion-engine
@@ -682,6 +690,32 @@ class LiveProjectorRuntime implements ProjectorRuntime {
         meta: { message: error instanceof Error ? error.message : String(error) },
       });
     }
+  }
+
+  // Wall-clock watchdog: a delivered suggestion that is never voice-accepted must
+  // not wedge the loop in accept/decline mode forever. The per-final checkExpiry
+  // stops firing once the room goes quiet (no more finals), so a timer drives the
+  // no-answer expiry and returns the runtime to ambient idea generation.
+  startAcceptanceWatchdog(intervalMs = 1500): void {
+    if (this.#acceptanceWatchdog !== null) {
+      return;
+    }
+    const timer = setInterval(() => {
+      const wasAwaiting = this.acceptanceController.awaitingAcceptance();
+      this.acceptanceController.checkExpiry(this.#clock());
+      if (wasAwaiting && !this.acceptanceController.awaitingAcceptance()) {
+        this.recordExternalTrace({
+          event: "acceptance.expired",
+          level: "info",
+          sessionId: this.sessionId,
+          correlationId: "corr-acceptance-watchdog",
+          meta: {},
+        });
+        this.publish();
+      }
+    }, intervalMs);
+    (timer as { unref?: () => void }).unref?.();
+    this.#acceptanceWatchdog = timer;
   }
 
   async seedDemoFleet(): Promise<void> {
