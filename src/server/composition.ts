@@ -398,8 +398,44 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     this.publish();
 
     if (observation.isFinal) {
-      await this.driveSuggestionEngine(observation, correlationId);
+      // Once a suggestion is delivered and pending, subsequent FINAL utterances are
+      // accept/decline/answer candidates — route them to the AcceptanceController
+      // (GAP-003) instead of seeding a fresh suggestion. The suggestion-engine
+      // #fire -> acceptanceOwner.acceptSuggestion path sets that pending state.
+      if (this.acceptanceController.awaitingAcceptance()) {
+        await this.routeAcceptance(observation, correlationId);
+      } else {
+        await this.driveSuggestionEngine(observation, correlationId);
+      }
     }
+  }
+
+  // Route one FINAL observation into the AcceptanceController while a suggestion
+  // is pending. An affirmative spawns through the ProcessRegistry seam (the spawn
+  // surfaces on the next snapshot via processSnapshots); a decline clears the
+  // pending suggestion without spawning.
+  private async routeAcceptance(observation: TranscriptObservation, correlationId: string): Promise<void> {
+    const acceptanceCorrelationId = `${correlationId}-${observation.utteranceId}`;
+    this.recordExternalTrace({
+      event: "route.acceptance",
+      level: "info",
+      sessionId: this.sessionId,
+      correlationId: acceptanceCorrelationId,
+      meta: { utteranceId: observation.utteranceId, candidate: observation.text },
+    });
+    try {
+      await this.acceptanceController.observe({ observation, correlationId: acceptanceCorrelationId });
+    } catch (error) {
+      this.recordExternalTrace({
+        event: "acceptance.error",
+        level: "error",
+        sessionId: this.sessionId,
+        correlationId: acceptanceCorrelationId,
+        meta: { message: error instanceof Error ? error.message : String(error) },
+      });
+    }
+    // Reflect any registry spawn (or cleared pending) on the published snapshot.
+    this.publish();
   }
 
   // Feed one FINAL observation into the SuggestionEngine and retain its verdict.

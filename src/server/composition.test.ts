@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -22,12 +22,15 @@ afterEach(() => {
 
 describe("LiveProjectorRuntime — live final observations drive the SuggestionEngine", () => {
   test("ingestTranscript forwards only final observations to the engine (spy)", async () => {
+    // Ambient (non-buildable) utterances so neither final fires a suggestion: a
+    // fired suggestion enters pending and (ISSUE-0010) redirects the next final to
+    // acceptance instead of the engine. This test isolates the interim/final gate.
     const path = writeReplayFixture([
-      interim("let's build", "utt-1"),
-      interim("let's build a dashboard", "utt-1"),
-      final("let's build a dashboard tool to ship the prototype", "utt-1"),
-      interim("and we should", "utt-2"),
-      final("and we should deploy the api service today", "utt-2"),
+      interim("the weather is", "utt-1"),
+      interim("the weather is really", "utt-1"),
+      final("the weather is really nice and the coffee was good", "utt-1"),
+      interim("we chatted about", "utt-2"),
+      final("we chatted about weekend plans for a while today", "utt-2"),
     ]);
     const runtime = await createProjectorRuntime(baseEnv(path));
     const observeSpy = spyOn(runtime.suggestionEngine, "observe");
@@ -156,6 +159,90 @@ describe("LiveProjectorRuntime — snapshot.suggestion reflects live engine stat
     expect(finalSuggestion.pitch).not.toBe(demoProjectorSnapshot.suggestion.pitch);
   });
 });
+
+// ISSUE-0010: once a suggestion is delivered and pending, a subsequent FINAL
+// utterance is an accept/decline candidate — the ingest path routes it to the
+// AcceptanceController (GAP-003), and an affirmative spawns through the registry.
+describe("LiveProjectorRuntime — spoken acceptance after a delivered suggestion", () => {
+  // The pre-spawn resource check reads PANOP_RBG_DISABLE_CAPACITY_CHECK from the
+  // global process.env (not the runtime env). The demo fleet seeds two processes
+  // against the default cap of two, so give the acceptance spawn headroom here.
+  let priorCapacityGuard: string | undefined;
+  beforeEach(() => {
+    priorCapacityGuard = process.env.PANOP_RBG_DISABLE_CAPACITY_CHECK;
+    process.env.PANOP_RBG_DISABLE_CAPACITY_CHECK = "1";
+  });
+  afterEach(() => {
+    if (priorCapacityGuard === undefined) {
+      delete process.env.PANOP_RBG_DISABLE_CAPACITY_CHECK;
+    } else {
+      process.env.PANOP_RBG_DISABLE_CAPACITY_CHECK = priorCapacityGuard;
+    }
+  });
+
+  test("ingest routes finals to acceptance only while a suggestion is pending (unit, spy)", async () => {
+    const path = writeReplayFixture([
+      final("let's build a dashboard tool to ship the replay prototype today", "utt-build"),
+      final("yes", "utt-yes"),
+    ]);
+    const runtime = await createProjectorRuntime(baseEnv(path));
+    const observeSpy = spyOn(runtime.acceptanceController, "observe");
+
+    await driveMic(runtime);
+
+    // The buildable utterance fired a suggestion (driving the engine, NOT
+    // acceptance); only the following "yes" — observed while pending — routes to
+    // acceptance. So observe() is called exactly once, with the affirmative.
+    expect(runtime.lastSuggestionDecision?.kind).toBe("fired");
+    expect(observeSpy.mock.calls.length).toBe(1);
+    expect(observeSpy.mock.calls[0]?.[0]?.observation.text).toBe("yes");
+    expect(observeSpy.mock.calls[0]?.[0]?.observation.isFinal).toBe(true);
+  });
+
+  test("an affirmative after a delivered suggestion spawns a registry process (integration)", async () => {
+    const path = writeReplayFixture([
+      final("let's build a dashboard tool to ship the replay prototype today", "utt-build"),
+      final("yes", "utt-yes"),
+    ]);
+    const runtime = await createProjectorRuntime(baseEnv(path));
+    const before = runtime.registry.activeRecords().length;
+    const spawnsBefore = spawnTraceCount(runtime);
+
+    await driveMic(runtime);
+
+    // route.acceptance -> process.spawn: one more live registry record, and the
+    // acceptance was routed (trace) before classification spawned it. (The demo
+    // fleet also spawns on seed, so compare spawn-trace deltas, not raw presence.)
+    expect(runtime.registry.activeRecords().length).toBe(before + 1);
+    const events = runtime.trace.events().map((event) => event.event);
+    expect(events).toContain("route.acceptance");
+    expect(spawnTraceCount(runtime)).toBe(spawnsBefore + 1);
+    expect(runtime.snapshot().processes.length).toBe(before + 1);
+  });
+
+  test("a decline after a delivered suggestion clears pending without spawning (integration)", async () => {
+    const path = writeReplayFixture([
+      final("let's build a dashboard tool to ship the replay prototype today", "utt-build"),
+      final("no", "utt-no"),
+    ]);
+    const runtime = await createProjectorRuntime(baseEnv(path));
+    const before = runtime.registry.activeRecords().length;
+    const spawnsBefore = spawnTraceCount(runtime);
+
+    await driveMic(runtime);
+
+    expect(runtime.registry.activeRecords().length).toBe(before);
+    expect(runtime.acceptanceController.awaitingAcceptance()).toBe(false);
+    const events = runtime.trace.events().map((event) => event.event);
+    expect(events).toContain("route.acceptance");
+    // No spawn beyond the demo seed: a decline clears pending without spawning.
+    expect(spawnTraceCount(runtime)).toBe(spawnsBefore);
+  });
+});
+
+function spawnTraceCount(runtime: ProjectorRuntime): number {
+  return runtime.trace.events().filter((event) => event.event === "process.spawn").length;
+}
 
 function baseEnv(replayPath: string, overrides: Record<string, string> = {}): Record<string, string> {
   return {

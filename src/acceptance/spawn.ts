@@ -2,7 +2,7 @@ import { checkPreSpawnResources, type HostHeadroom, type SpawnRefusalReason } fr
 import { ProcessRegistry, type RegistryProcess } from "../process/registry";
 import type { DispatchedAction, LogEvent, OutputDecision, PendingSuggestion } from "../types";
 import { AcceptanceClassifier, type AcceptanceClassification } from "./classifier";
-import { PendingSuggestionOwner, type PendingExpiryResult } from "./pending";
+import { ACCEPTANCE_STATE_SUGGESTION_DELIVERY, PendingSuggestionOwner, type PendingExpiryResult } from "./pending";
 
 export const DEFAULT_ACCEPTANCE_CONFIRMATION_BUDGET_MS = 3_000;
 
@@ -183,6 +183,13 @@ export class AcceptanceController {
 
   acceptSuggestion(suggestion: PendingSuggestion): PendingSuggestion {
     return this.#pending.acceptSuggestion(suggestion);
+  }
+
+  // True once a suggestion has been delivered and is awaiting a spoken accept /
+  // decline / MCQ answer. The runtime gates live FINAL observations on this so a
+  // spoken "yes" routes to acceptance instead of seeding a fresh suggestion.
+  awaitingAcceptance(): boolean {
+    return this.#pending.state() === ACCEPTANCE_STATE_SUGGESTION_DELIVERY && this.#pending.pending() !== null;
   }
 
   checkExpiry(nowMs?: number): PendingExpiryResult {
