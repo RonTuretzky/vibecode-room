@@ -431,7 +431,7 @@ function MicControl({
   state: "off" | "connecting" | "live";
   level: number;
   error: string | null;
-  mode?: "deepgram" | "replay";
+  mode?: "deepgram" | "voxterm" | "replay";
   bytesReceived: number;
   onToggle: () => void;
 }) {

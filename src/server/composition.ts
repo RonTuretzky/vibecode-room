@@ -12,8 +12,8 @@ import { ProcessRegistry, type RegistryProcess } from "../process/registry";
 import { selectSmithersClient } from "./smithers-select";
 import type { GatewayRpcTransport } from "../seam/smithers-client";
 import type { AcceptanceSpawnResult } from "../acceptance/spawn";
-import { DeepgramNova3ASRProvider, ReplayASRProvider, selectDecisionLLM, selectTtsProvider, type ASRProvider, type DecisionLLM } from "../providers";
-import type { TTSProvider } from "../providers";
+import { selectAsrProvider, selectDecisionLLM, selectTtsProvider, type ASRProvider, type AsrProviderMode, type DecisionLLM } from "../providers";
+import type { ReplayASRSource, TTSProvider, VoxTermSegmentSource } from "../providers";
 import {
   readSuggestionEngineConfig,
   SuggestionEngine,
@@ -41,10 +41,6 @@ export interface MicSession {
 // Keep at most this many committed (final) transcript lines on the snapshot so a
 // long-running room session does not grow the published payload without bound.
 const MAX_LIVE_TRANSCRIPT_LINES = 40;
-// Deepgram's stream() applies a close timer as a safety cap on total duration.
-// A live mic must stay open for the whole session, so we lift the cap well past
-// any single demo (6h); `stop()` closes the audio stream explicitly.
-const MIC_CLOSE_TIMEOUT_MS = 6 * 60 * 60 * 1000;
 
 export interface ProjectorRuntimeEnv {
   DEEPGRAM_API_KEY?: string;
@@ -55,8 +51,8 @@ export interface ProjectorRuntimeEnv {
 
 export interface ProjectorRuntime {
   readonly sessionId: string;
-  readonly asrMode: "deepgram" | "replay";
-  readonly micMode: "deepgram" | "replay";
+  readonly asrMode: AsrProviderMode;
+  readonly micMode: AsrProviderMode;
   readonly asr: ASRProvider;
   readonly tts: TTSProvider;
   readonly cueAdapter: CueAdapter;
@@ -98,6 +94,12 @@ export interface ProjectorRuntimeOptions {
   // Injects a gateway RPC transport for the Smithers client (tests/e2e drive the
   // gateway path with a stub transport; production builds the real one from env).
   smithersTransport?: GatewayRpcTransport;
+  // Injectable ASR sources for the registry-selected backends (tests/e2e feed a
+  // synthetic feed with no mic/process/network). `voxtermSource` drives the
+  // voxterm backend; `replaySource` (observations array or jsonl path) drives the
+  // replay backend. Both flow to the ambient + live-mic providers.
+  voxtermSource?: VoxTermSegmentSource;
+  replaySource?: ReplayASRSource;
 }
 
 export async function createProjectorRuntime(
@@ -118,8 +120,8 @@ export async function createProjectorRuntime(
 }
 
 class LiveProjectorRuntime implements ProjectorRuntime {
-  readonly asrMode: "deepgram" | "replay";
-  readonly micMode: "deepgram" | "replay";
+  readonly asrMode: AsrProviderMode;
+  readonly micMode: AsrProviderMode;
   readonly asr: ASRProvider;
   readonly #micAsr: ASRProvider;
   // Selected by env (Noop default — silent-but-recorded, no key/network/device).
@@ -177,13 +179,28 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       onOutput: (decision) => this.recordOutput(decision),
     });
 
-    const selectedAsr = selectAsrProvider(env, sessionId);
+    // Single ASR selection seam (ISSUE-0016): PANOP_ASR_PROVIDER picks the backend
+    // (deepgram|voxterm|replay), defaulting to Deepgram when DEEPGRAM_API_KEY is
+    // present and replay otherwise. Tests inject a voxterm/replay source.
+    const selectedAsr = selectAsrProvider(env, {
+      sessionId,
+      voxtermSource: options.voxtermSource,
+      replaySource: options.replaySource,
+    });
     this.asrMode = selectedAsr.mode;
     this.asr = this.muteController.protectCloudAsr(selectedAsr.provider);
 
-    // A second, long-lived ASR provider dedicated to the live browser mic. It is
-    // mute-protected too, so a muted room never streams audio to the cloud.
-    const selectedMicAsr = selectMicAsrProvider(env, sessionId);
+    // A second, long-lived ASR provider dedicated to the live browser mic. The mic
+    // profile lifts the Deepgram close-timer so a long room session is not cut off
+    // mid-stream. It is mute-protected too, so a muted room never streams audio to
+    // the cloud. The replay source falls back to PANOP_MIC_REPLAY_PATH so the live
+    // mic path stays deterministically drivable offline.
+    const selectedMicAsr = selectAsrProvider(env, {
+      sessionId,
+      micProfile: true,
+      voxtermSource: options.voxtermSource,
+      replaySource: options.replaySource ?? env.PANOP_MIC_REPLAY_PATH,
+    });
     this.micMode = selectedMicAsr.mode;
     this.#micAsr = this.muteController.protectCloudAsr(selectedMicAsr.provider);
     this.cueAdapter = new CueAdapter({
@@ -873,55 +890,6 @@ class BufferedAudioOutput implements AudioOutput {
 // the canonical spine's suggestionSpeech so the live ack reads the same way.
 function suggestionSpeech(suggestion: PendingSuggestion): string {
   return `${suggestion.pitch}. ${suggestion.mcqs[0] ?? "Proceed?"}`;
-}
-
-function selectAsrProvider(
-  env: ProjectorRuntimeEnv,
-  sessionId: string,
-): { mode: "deepgram" | "replay"; provider: ASRProvider } {
-  const apiKey = env.DEEPGRAM_API_KEY;
-  if (apiKey !== undefined && apiKey.length > 0) {
-    return {
-      mode: "deepgram",
-      provider: new DeepgramNova3ASRProvider({ apiKey, sessionId }),
-    };
-  }
-
-  return {
-    mode: "replay",
-    provider: new ReplayASRProvider([]),
-  };
-}
-
-// Like selectAsrProvider, but tuned for a continuous live mic: the Deepgram
-// close-timer is lifted so a long room session is not cut off mid-stream.
-function selectMicAsrProvider(
-  env: ProjectorRuntimeEnv,
-  sessionId: string,
-): { mode: "deepgram" | "replay"; provider: ASRProvider } {
-  const apiKey = env.DEEPGRAM_API_KEY;
-  if (apiKey !== undefined && apiKey.length > 0) {
-    return {
-      mode: "deepgram",
-      provider: new DeepgramNova3ASRProvider({
-        apiKey,
-        sessionId,
-        closeTimeoutMs: MIC_CLOSE_TIMEOUT_MS,
-      }),
-    };
-  }
-
-  // No cloud key: replay mode. A JSONL fixture path lets the live mic path be
-  // driven deterministically (tests/e2e + offline demos) instead of staying silent.
-  const replayPath = env.PANOP_MIC_REPLAY_PATH;
-  if (replayPath !== undefined && replayPath.length > 0) {
-    return { mode: "replay", provider: ReplayASRProvider.fromFile(replayPath) };
-  }
-
-  return {
-    mode: "replay",
-    provider: new ReplayASRProvider([]),
-  };
 }
 
 function projectorState(state: RegistryProcess["state"]): ProjectorProcessState {

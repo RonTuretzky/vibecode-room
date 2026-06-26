@@ -1,31 +1,31 @@
 {
-  "providerId": "cartesia",
+  "providerId": "playht",
   "phraseCount": 5,
   "playback": [
     {
       "phrase": "Ready",
-      "firstByteMs": 0.010500000000320142,
-      "bytes": 21
+      "firstByteMs": 0.008750000000873115,
+      "bytes": 19
     },
     {
       "phrase": "Muted",
-      "firstByteMs": 0.001374999999825377,
-      "bytes": 21
+      "firstByteMs": 0.001291000000492204,
+      "bytes": 19
     },
     {
       "phrase": "Unmuted",
-      "firstByteMs": 0.0007499999992433004,
-      "bytes": 23
+      "firstByteMs": 0.00045900000259280205,
+      "bytes": 21
     },
     {
       "phrase": "Working",
-      "firstByteMs": 0.0006659999999101274,
-      "bytes": 23
+      "firstByteMs": 0.0005420000015874393,
+      "bytes": 21
     },
     {
       "phrase": "Halted",
-      "firstByteMs": 0.0004579999986162875,
-      "bytes": 22
+      "firstByteMs": 0.0007499999992433004,
+      "bytes": 20
     }
   ],
   "synthetic": false

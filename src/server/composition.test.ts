@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createProjectorRuntime, type ProjectorRuntime } from "./composition";
-import { NoopTTSProvider } from "../providers";
+import { NoopTTSProvider, arraySegmentSource, type VoxTermSegment } from "../providers";
 import { AcceptanceController } from "../acceptance/spawn";
 import { ProcessRegistry } from "../process/registry";
 import { SuggestionEngine } from "../suggest/engine";
@@ -398,6 +398,92 @@ describe("LiveProjectorRuntime — assembled ambient loop end to end (ISSUE-0014
     expect(runtime.snapshot().processes.length).toBe(upidsBefore.size + 1);
   });
 });
+
+// ISSUE-0016: the live runtime selects its ambient + mic ASR backend through the
+// providers ASR registry (selectAsrProvider), so PANOP_ASR_PROVIDER picks the
+// backend, Deepgram stays the key-present default, and tests inject a synthetic
+// ASR source. The local shadowing selectors are gone.
+describe("LiveProjectorRuntime — ASR backend selection through the providers registry (ISSUE-0016)", () => {
+  let priorAsrProvider: string | undefined;
+  let priorDeepgramKey: string | undefined;
+  beforeEach(() => {
+    priorAsrProvider = process.env.PANOP_ASR_PROVIDER;
+    priorDeepgramKey = process.env.DEEPGRAM_API_KEY;
+    delete process.env.PANOP_ASR_PROVIDER;
+    delete process.env.DEEPGRAM_API_KEY;
+  });
+  afterEach(() => {
+    restoreEnv("PANOP_ASR_PROVIDER", priorAsrProvider);
+    restoreEnv("DEEPGRAM_API_KEY", priorDeepgramKey);
+  });
+
+  test("PANOP_ASR_PROVIDER=voxterm selects voxterm for both ambient + mic (unit)", async () => {
+    const runtime = await createProjectorRuntime(
+      { PANOP_INITIAL_MUTED: "0", PANOP_ASR_PROVIDER: "voxterm" },
+      { voxtermSource: arraySegmentSource([]) },
+    );
+
+    expect(runtime.asrMode).toBe("voxterm");
+    expect(runtime.micMode).toBe("voxterm");
+    expect(runtime.snapshot().mic?.mode).toBe("voxterm");
+  });
+
+  test("unset PANOP_ASR_PROVIDER + DEEPGRAM_API_KEY present selects deepgram (unit)", async () => {
+    const runtime = await createProjectorRuntime({
+      PANOP_INITIAL_MUTED: "0",
+      DEEPGRAM_API_KEY: "dg-test-key",
+    });
+
+    expect(runtime.asrMode).toBe("deepgram");
+    expect(runtime.micMode).toBe("deepgram");
+  });
+
+  test("unset PANOP_ASR_PROVIDER + no key falls back to replay (unit)", async () => {
+    const runtime = await createProjectorRuntime({ PANOP_INITIAL_MUTED: "0" });
+
+    expect(runtime.asrMode).toBe("replay");
+    expect(runtime.micMode).toBe("replay");
+  });
+
+  test("explicit PANOP_ASR_PROVIDER=replay overrides a present DEEPGRAM_API_KEY (unit)", async () => {
+    const runtime = await createProjectorRuntime({
+      PANOP_INITIAL_MUTED: "0",
+      PANOP_ASR_PROVIDER: "replay",
+      DEEPGRAM_API_KEY: "dg-test-key",
+    });
+
+    expect(runtime.asrMode).toBe("replay");
+    expect(runtime.micMode).toBe("replay");
+  });
+
+  test("an injected voxterm source flows a synthetic segment into the runtime transcript (integration)", async () => {
+    const segments: VoxTermSegment[] = [
+      { utteranceId: 1, text: "hey panop", final: false, speaker: 0 },
+      { utteranceId: 1, text: "hey panop spin up a runner", final: true, speaker: 0 },
+    ];
+    const runtime = await createProjectorRuntime(
+      { PANOP_INITIAL_MUTED: "0", PANOP_ASR_PROVIDER: "voxterm" },
+      { voxtermSource: arraySegmentSource(segments) },
+    );
+
+    await driveMic(runtime);
+
+    // The registry-selected voxterm provider normalized the synthetic segment and
+    // it reached the runtime's transcript handling: the committed final surfaced on
+    // the published snapshot's transcript region.
+    const transcript = runtime.snapshot().transcript;
+    expect(transcript.some((line) => line.text === "hey panop spin up a runner")).toBe(true);
+    expect(transcript.some((line) => line.text === "hey panop")).toBe(false);
+  });
+});
+
+function restoreEnv(key: string, prior: string | undefined): void {
+  if (prior === undefined) {
+    delete process.env[key];
+  } else {
+    process.env[key] = prior;
+  }
+}
 
 function spawnTraceCount(runtime: ProjectorRuntime): number {
   return runtime.trace.events().filter((event) => event.event === "process.spawn").length;
