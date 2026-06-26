@@ -3,8 +3,8 @@
   "status": "passed",
   "summary": "probe assertions were failable and passed",
   "correlationId": "p-tts-streaming-selection",
-  "startedAt": "2026-06-26T08:04:43.962Z",
-  "finishedAt": "2026-06-26T08:04:45.033Z",
+  "startedAt": "2026-06-26T08:52:52.136Z",
+  "finishedAt": "2026-06-26T08:52:53.209Z",
   "assertions": [
     {
       "id": "candidate-matrix",
@@ -39,14 +39,14 @@
       "behavior": "configured real TTS candidates are benchmarked by time-to-first-audio-byte and the winner is <=200 ms",
       "phase": "red",
       "status": "failed-as-expected",
-      "error": "expect(received).toBeLessThanOrEqual(expected)\n\nExpected: <= 20\nReceived: 62.47174999999697\n"
+      "error": "expect(received).toBeLessThanOrEqual(expected)\n\nExpected: <= 20\nReceived: 64.71824999999808\n"
     },
     {
       "id": "precache-fixed-state-phrases",
       "behavior": "five fixed state phrases are pre-cached as static clips and play from memory in <100 ms",
       "phase": "red",
       "status": "failed-as-expected",
-      "error": "expect(received).toBeLessThanOrEqual(expected)\n\nExpected: <= 100\nReceived: 129.2933750000011\n"
+      "error": "expect(received).toBeLessThanOrEqual(expected)\n\nExpected: <= 100\nReceived: 129.2923750000009\n"
     },
     {
       "id": "secret-redaction",

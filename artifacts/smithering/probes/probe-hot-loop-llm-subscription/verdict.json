@@ -7,7 +7,7 @@
     "command": "claude --print",
     "status": "passed",
     "subscriptionRouted": true,
-    "latencyMs": 4558.293791999997,
+    "latencyMs": 4737.291084,
     "decisions": [
       {
         "id": "repeat-1",
@@ -25,14 +25,14 @@
         "decision": "PASS",
         "tool": "observe.pass",
         "arguments": {},
-        "confidence": 0.9,
+        "confidence": 0.92,
         "reason": "status update on existing work"
       }
     ],
     "invocations": [
       {
         "id": "same-input-1",
-        "latencyMs": 4213.49525,
+        "latencyMs": 4730.09275,
         "decisions": [
           {
             "id": "repeat-1",
@@ -50,15 +50,15 @@
             "decision": "PASS",
             "tool": "observe.pass",
             "arguments": {},
-            "confidence": 0.9,
+            "confidence": 0.92,
             "reason": "status update on existing work"
           }
         ],
-        "stdoutPreview": "```json\n{\"decisions\":[{\"id\":\"repeat-1\",\"decision\":\"ACT\",\"tool\":\"panopticon.steer\",\"arguments\":{\"callsign\":\"Daybreak\",\"instruction\":\"status\"},\"confidence\":0.95,\"reason\":\"status query to named callsign\"},{\"id\":\"pass-1\",\"decision\":\"PASS\",\"tool\":\"observe.pass\",\"arguments\":{},\"confidence\":0.9,\"reason\":\"status update on existing work\"}]}\n```"
+        "stdoutPreview": "```json\n{\"decisions\":[{\"id\":\"repeat-1\",\"decision\":\"ACT\",\"tool\":\"panopticon.steer\",\"arguments\":{\"callsign\":\"Daybreak\",\"instruction\":\"status\"},\"confidence\":0.95,\"reason\":\"status query to named callsign\"},{\"id\":\"pass-1\",\"decision\":\"PASS\",\"tool\":\"observe.pass\",\"arguments\":{},\"confidence\":0.92,\"reason\":\"status update on existing work\"}]}\n```"
       },
       {
         "id": "same-input-2",
-        "latencyMs": 4558.293791999997,
+        "latencyMs": 4737.291084,
         "decisions": [
           {
             "id": "repeat-1",
@@ -83,7 +83,7 @@
         "stdoutPreview": "```json\n{\"decisions\":[{\"id\":\"repeat-1\",\"decision\":\"ACT\",\"tool\":\"panopticon.steer\",\"arguments\":{\"callsign\":\"Daybreak\",\"instruction\":\"status\"},\"confidence\":0.95,\"reason\":\"status query to named callsign\"},{\"id\":\"pass-1\",\"decision\":\"PASS\",\"tool\":\"observe.pass\",\"arguments\":{},\"confidence\":0.9,\"reason\":\"status update on existing work\"}]}\n```"
       }
     ],
-    "stdoutPreview": "```json\n{\"decisions\":[{\"id\":\"repeat-1\",\"decision\":\"ACT\",\"tool\":\"panopticon.steer\",\"arguments\":{\"callsign\":\"Daybreak\",\"instruction\":\"status\"},\"confidence\":0.95,\"reason\":\"status query to named callsign\"},{\"id\":\"pass-1\",\"decision\":\"PASS\",\"tool\":\"observe.pass\",\"arguments\":{},\"confidence\":0.9,\"reason\":\"status update on existing work\"}]}\n```"
+    "stdoutPreview": "```json\n{\"decisions\":[{\"id\":\"repeat-1\",\"decision\":\"ACT\",\"tool\":\"panopticon.steer\",\"arguments\":{\"callsign\":\"Daybreak\",\"instruction\":\"status\"},\"confidence\":0.95,\"reason\":\"status query to named callsign\"},{\"id\":\"pass-1\",\"decision\":\"PASS\",\"tool\":\"observe.pass\",\"arguments\":{},\"confidence\":0.92,\"reason\":\"status update on existing work\"}]}\n```"
   },
   "attempts": [
     {
@@ -91,18 +91,18 @@
       "command": "codex",
       "status": "failed",
       "subscriptionRouted": true,
-      "latencyMs": 3944.048917,
+      "latencyMs": 3987.9393340000006,
       "decisions": [],
       "invocations": [],
       "stdoutPreview": "",
-      "error": "Reading additional input from stdin...\nOpenAI Codex v0.138.0\n--------\nworkdir: /Users/wk/.smither-worktrees/ISSUE-0011\nmodel: gpt-5.5\nprovider: openai\napproval: never\nsandbox: read-only\nreasoning effort: none\nreasoning summaries: none\nsession id: 019f02f5-7ae3-7320-abce-4a7147d17547\n--------\nuser\nYou are the Panopticon hot-loop decision classifier.\n\nReturn only valid JSON with this exact shape:\n{\"decisions\":[{\"id\":\"repeat-1\",\"decision\":\"PASS|ACT\",\"tool\":\"observe.pass|panopticon.suggest|panoptico"
+      "error": "Reading additional input from stdin...\nOpenAI Codex v0.138.0\n--------\nworkdir: /Users/wk/.smither-worktrees/ISSUE-0015\nmodel: gpt-5.5\nprovider: openai\napproval: never\nsandbox: read-only\nreasoning effort: none\nreasoning summaries: none\nsession id: 019f0321-89f9-7562-8922-35e6a11f3b87\n--------\nuser\nYou are the Panopticon hot-loop decision classifier.\n\nReturn only valid JSON with this exact shape:\n{\"decisions\":[{\"id\":\"repeat-1\",\"decision\":\"PASS|ACT\",\"tool\":\"observe.pass|panopticon.suggest|panoptico"
     },
     {
       "provider": "anthropic-claude",
       "command": "claude --print",
       "status": "passed",
       "subscriptionRouted": true,
-      "latencyMs": 4558.293791999997,
+      "latencyMs": 4737.291084,
       "decisions": [
         {
           "id": "repeat-1",
@@ -120,14 +120,14 @@
           "decision": "PASS",
           "tool": "observe.pass",
           "arguments": {},
-          "confidence": 0.9,
+          "confidence": 0.92,
           "reason": "status update on existing work"
         }
       ],
       "invocations": [
         {
           "id": "same-input-1",
-          "latencyMs": 4213.49525,
+          "latencyMs": 4730.09275,
           "decisions": [
             {
               "id": "repeat-1",
@@ -145,15 +145,15 @@
               "decision": "PASS",
               "tool": "observe.pass",
               "arguments": {},
-              "confidence": 0.9,
+              "confidence": 0.92,
               "reason": "status update on existing work"
             }
           ],
-          "stdoutPreview": "```json\n{\"decisions\":[{\"id\":\"repeat-1\",\"decision\":\"ACT\",\"tool\":\"panopticon.steer\",\"arguments\":{\"callsign\":\"Daybreak\",\"instruction\":\"status\"},\"confidence\":0.95,\"reason\":\"status query to named callsign\"},{\"id\":\"pass-1\",\"decision\":\"PASS\",\"tool\":\"observe.pass\",\"arguments\":{},\"confidence\":0.9,\"reason\":\"status update on existing work\"}]}\n```"
+          "stdoutPreview": "```json\n{\"decisions\":[{\"id\":\"repeat-1\",\"decision\":\"ACT\",\"tool\":\"panopticon.steer\",\"arguments\":{\"callsign\":\"Daybreak\",\"instruction\":\"status\"},\"confidence\":0.95,\"reason\":\"status query to named callsign\"},{\"id\":\"pass-1\",\"decision\":\"PASS\",\"tool\":\"observe.pass\",\"arguments\":{},\"confidence\":0.92,\"reason\":\"status update on existing work\"}]}\n```"
         },
         {
           "id": "same-input-2",
-          "latencyMs": 4558.293791999997,
+          "latencyMs": 4737.291084,
           "decisions": [
             {
               "id": "repeat-1",
@@ -178,7 +178,7 @@
           "stdoutPreview": "```json\n{\"decisions\":[{\"id\":\"repeat-1\",\"decision\":\"ACT\",\"tool\":\"panopticon.steer\",\"arguments\":{\"callsign\":\"Daybreak\",\"instruction\":\"status\"},\"confidence\":0.95,\"reason\":\"status query to named callsign\"},{\"id\":\"pass-1\",\"decision\":\"PASS\",\"tool\":\"observe.pass\",\"arguments\":{},\"confidence\":0.9,\"reason\":\"status update on existing work\"}]}\n```"
         }
       ],
-      "stdoutPreview": "```json\n{\"decisions\":[{\"id\":\"repeat-1\",\"decision\":\"ACT\",\"tool\":\"panopticon.steer\",\"arguments\":{\"callsign\":\"Daybreak\",\"instruction\":\"status\"},\"confidence\":0.95,\"reason\":\"status query to named callsign\"},{\"id\":\"pass-1\",\"decision\":\"PASS\",\"tool\":\"observe.pass\",\"arguments\":{},\"confidence\":0.9,\"reason\":\"status update on existing work\"}]}\n```"
+      "stdoutPreview": "```json\n{\"decisions\":[{\"id\":\"repeat-1\",\"decision\":\"ACT\",\"tool\":\"panopticon.steer\",\"arguments\":{\"callsign\":\"Daybreak\",\"instruction\":\"status\"},\"confidence\":0.95,\"reason\":\"status query to named callsign\"},{\"id\":\"pass-1\",\"decision\":\"PASS\",\"tool\":\"observe.pass\",\"arguments\":{},\"confidence\":0.92,\"reason\":\"status update on existing work\"}]}\n```"
     }
   ],
   "checks": {
@@ -192,7 +192,7 @@
   },
   "metrics": {
     "budgetMs": 100,
-    "p50LatencyMs": 4558.293791999997,
+    "p50LatencyMs": 4737.291084,
     "costBudgetPerHourUsd": 0.15,
     "estimatedCostPerHourUsd": null,
     "costBasis": "not-measured-host-subscription-no-metering"
