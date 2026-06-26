@@ -4,6 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createProjectorRuntime, type ProjectorRuntime } from "./composition";
 import { NoopTTSProvider } from "../providers";
+import { AcceptanceController } from "../acceptance/spawn";
+import { ProcessRegistry } from "../process/registry";
+import { SuggestionEngine } from "../suggest/engine";
 import type { OutputDecision, TranscriptObservation } from "../types";
 import { demoProjectorSnapshot } from "../ui/demo-data";
 
@@ -309,6 +312,90 @@ describe("LiveProjectorRuntime — stage transitions + audible feedback on the l
     const events = runtime.trace.events();
     expect(events.some((event) => event.event === "output.tts")).toBe(true);
     expect(events.some((event) => event.event === "earcon.emit" && event.meta.id === "E3")).toBe(true);
+  });
+});
+
+// ISSUE-0014 (GAP-009): the assembled end-to-end loop on the REAL composition —
+// not the canonical hand-wired harness. createProjectorRuntime wires the live
+// SuggestionEngine/AcceptanceController/registry/TTS from the registries, and one
+// audio drive walks the full chain (transcript -> suggestion fired -> spoken ->
+// acceptance -> registry spawn -> tts/earcon output), verifiable on one
+// correlation chain via trace.query. This is the binding measurable for M2/M4 and
+// guards against the false assurance the canonical test gives.
+describe("LiveProjectorRuntime — assembled ambient loop end to end (ISSUE-0014)", () => {
+  let priorCapacityGuard: string | undefined;
+  beforeEach(() => {
+    priorCapacityGuard = process.env.PANOP_RBG_DISABLE_CAPACITY_CHECK;
+    process.env.PANOP_RBG_DISABLE_CAPACITY_CHECK = "1";
+  });
+  afterEach(() => {
+    if (priorCapacityGuard === undefined) {
+      delete process.env.PANOP_RBG_DISABLE_CAPACITY_CHECK;
+    } else {
+      process.env.PANOP_RBG_DISABLE_CAPACITY_CHECK = priorCapacityGuard;
+    }
+  });
+
+  test("runtime exposes the assembled components for the e2e harness (unit)", async () => {
+    const path = writeReplayFixture([]);
+    const runtime = await createProjectorRuntime(baseEnv(path));
+
+    // The live runtime exposes the real components selected from the provider/
+    // process registries — not canonical hand-wired doubles. A harness drives the
+    // loop entirely through these objects.
+    expect(runtime.suggestionEngine).toBeInstanceOf(SuggestionEngine);
+    expect(runtime.acceptanceController).toBeInstanceOf(AcceptanceController);
+    expect(runtime.registry).toBeInstanceOf(ProcessRegistry);
+    // No key in baseEnv -> the TTS registry selects the silent-but-recorded Noop
+    // provider and the ASR registry selects replay; the loop runs fully offline.
+    expect(runtime.tts).toBeInstanceOf(NoopTTSProvider);
+    expect(runtime.asrMode).toBe("replay");
+    expect(runtime.micMode).toBe("replay");
+  });
+
+  test("ambient loop chain on the live runtime — one correlation chain via trace.query (integration)", async () => {
+    const path = writeReplayFixture([
+      final("let's build a dashboard tool to ship the replay prototype today", "utt-build"),
+      final("yes", "utt-yes"),
+    ]);
+    const runtime = await createProjectorRuntime(baseEnv(path));
+    const upidsBefore = new Set(runtime.snapshot().processes.map((process) => process.upid));
+
+    const session = runtime.startMicSession("corr-loop");
+    await session.stop();
+
+    // The buildable utterance fired a suggestion that went live on the snapshot.
+    expect(runtime.lastSuggestionDecision?.kind).toBe("fired");
+    expect(runtime.snapshot().suggestion.state).toBe("speaking");
+    expect(runtime.snapshot().suggestion).not.toEqual(demoProjectorSnapshot.suggestion);
+
+    // The ordered chain across the trace: the suggestion fired (utt-build), then the
+    // affirmative routed to acceptance and spawned (utt-yes), then the spoken ack.
+    const events = runtime.trace.events();
+    const acceptanceCorrelationId = "corr-loop-utt-yes";
+    const firstIndex = (event: string, correlationId?: string): number =>
+      events.findIndex((entry) => entry.event === event && (correlationId === undefined || entry.correlationId === correlationId));
+    const suggestionIndex = firstIndex("route.suggestion");
+    const acceptanceIndex = firstIndex("route.acceptance", acceptanceCorrelationId);
+    const spawnIndex = firstIndex("process.spawn", acceptanceCorrelationId);
+    const ackIndex = firstIndex("output.tts", acceptanceCorrelationId);
+    expect(suggestionIndex).toBeGreaterThanOrEqual(0);
+    expect(suggestionIndex).toBeLessThan(acceptanceIndex);
+    expect(acceptanceIndex).toBeLessThan(spawnIndex);
+    expect(spawnIndex).toBeLessThan(ackIndex);
+
+    // One correlation chain (the acceptance spawn) reconstructs decision -> action
+    // -> outcome: route.acceptance -> process.spawn -> tts/earcon output.
+    const chain = runtime.trace.query(acceptanceCorrelationId);
+    expect(chain.decision.map((entry) => entry.event)).toContain("route.acceptance");
+    expect(chain.action.map((entry) => entry.event)).toContain("process.spawn");
+    expect(chain.outcome.some((entry) => entry.event === "output.tts")).toBe(true);
+    expect(chain.outcome.some((entry) => entry.event === "earcon.emit" && entry.meta.id === "E3")).toBe(true);
+
+    // snapshot.processes gained exactly the spawned process.
+    const spawned = runtime.snapshot().processes.filter((process) => !upidsBefore.has(process.upid));
+    expect(spawned.length).toBe(1);
+    expect(runtime.snapshot().processes.length).toBe(upidsBefore.size + 1);
   });
 });
 
