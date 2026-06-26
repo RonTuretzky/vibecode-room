@@ -6,7 +6,8 @@ import { CueAdapter } from "../cue/adapter";
 import { EMERGENCY_STOP_LATENCY_BUDGET_MS, EmergencySessionState, EmergencyStopController } from "../emergency/stop";
 import { TraceProcessor } from "../obs/trace";
 import { ProcessRegistry, type RegistryProcess } from "../process/registry";
-import { MemorySmithersClient } from "../process/test-helpers";
+import { selectSmithersClient } from "./smithers-select";
+import type { GatewayRpcTransport } from "../seam/smithers-client";
 import { DeepgramNova3ASRProvider, ReplayASRProvider, NoopTTSProvider, selectDecisionLLM, type ASRProvider } from "../providers";
 import type { TTSProvider } from "../providers";
 import {
@@ -86,9 +87,18 @@ interface SeededProcessView {
   events: string[];
 }
 
-export async function createProjectorRuntime(env: ProjectorRuntimeEnv = process.env): Promise<ProjectorRuntime> {
+export interface ProjectorRuntimeOptions {
+  // Injects a gateway RPC transport for the Smithers client (tests/e2e drive the
+  // gateway path with a stub transport; production builds the real one from env).
+  smithersTransport?: GatewayRpcTransport;
+}
+
+export async function createProjectorRuntime(
+  env: ProjectorRuntimeEnv = process.env,
+  options: ProjectorRuntimeOptions = {},
+): Promise<ProjectorRuntime> {
   const sessionId = env.PANOP_SESSION_ID ?? demoProjectorSnapshot.sessionId;
-  const runtime = new LiveProjectorRuntime(sessionId, env);
+  const runtime = new LiveProjectorRuntime(sessionId, env, options);
   await runtime.seedDemoFleet();
 
   if (env.PANOP_INITIAL_MUTED !== "0") {
@@ -135,6 +145,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   constructor(
     readonly sessionId: string,
     env: ProjectorRuntimeEnv,
+    options: ProjectorRuntimeOptions = {},
   ) {
     this.#env = env;
     const clock = () => Date.now();
@@ -163,13 +174,14 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       clock,
       textCueWords: ["panop"],
     });
-    // The projector demo (`bun run start`) drives an in-process Smithers client:
-    // the seeded fleet are deterministic fixtures, not real Smithers runs, so
-    // halting them in memory is the correct behavior here. A production deployment
-    // that drives real runs injects a gateway-backed client via this same option
-    // (ProcessRegistryOptions.client) — that is the single swap point.
+    // Single Smithers-client swap point (GAP-004). With no gateway config the
+    // projector demo (`bun run start`) drives an in-memory client — the seeded
+    // fleet are deterministic fixtures, not real runs, so halting them in memory
+    // is correct. When PANOP_SMITHERS_GATEWAY_URL (or an injected transport) is
+    // present, selectSmithersClient returns a gateway-backed client that routes
+    // spawn/halt to a real Smithers gateway over its RPC transport.
     this.registry = new ProcessRegistry({
-      client: new MemorySmithersClient(),
+      client: selectSmithersClient(env, { transport: options.smithersTransport }),
       sessionId,
       now: clock,
       onTrace: (event) => this.recordExternalTrace(event),
