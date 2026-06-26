@@ -92,6 +92,56 @@ describe("selectDecisionLLM — default + credential gating (integration)", () =
   });
 });
 
+describe("selectDecisionLLM — credential auto-select precedence (unit)", () => {
+  // explicit env > credential auto-select > heuristic default.
+  test("no explicit env + resolvable credential -> Claude is auto-selected", () => {
+    const selection = selectDecisionLLM({ ANTHROPIC_API_KEY: ANTHROPIC_KEY });
+
+    expect(selection.mode).toBe("claude");
+    expect(selection.llm).toBeInstanceOf(ClaudeDecisionLLM);
+    expect((selection.llm as ClaudeDecisionLLM).credentialSource).toEqual({
+      kind: "host-subscription",
+      provider: "anthropic-claude",
+      command: DEFAULT_CLAUDE_DECISION_COMMAND,
+    });
+  });
+
+  test("no explicit env + no credential -> heuristic default", () => {
+    const selection = selectDecisionLLM({});
+
+    expect(selection.mode).toBe("heuristic");
+    expect(selection.llm).toBeInstanceOf(HeuristicDecisionLLM);
+  });
+
+  test("no explicit env + empty credential counts as no credential -> heuristic", () => {
+    const selection = selectDecisionLLM({ ANTHROPIC_API_KEY: "" });
+
+    expect(selection.mode).toBe("heuristic");
+    expect(selection.llm).toBeInstanceOf(HeuristicDecisionLLM);
+  });
+
+  test("explicit PANOP_DECISION_LLM=heuristic overrides credential auto-select", () => {
+    const selection = selectDecisionLLM({ PANOP_DECISION_LLM: "heuristic", ANTHROPIC_API_KEY: ANTHROPIC_KEY });
+
+    expect(selection.mode).toBe("heuristic");
+    expect(selection.llm).toBeInstanceOf(HeuristicDecisionLLM);
+  });
+
+  test("explicit PANOP_DECISION_LLM=replay overrides credential auto-select", () => {
+    const selection = selectDecisionLLM({ PANOP_DECISION_LLM: "replay", ANTHROPIC_API_KEY: ANTHROPIC_KEY });
+
+    expect(selection.mode).toBe("replay");
+    expect(selection.llm).toBeInstanceOf(ReplayDecisionLLM);
+  });
+
+  test("auto-selected Claude decider never smuggles the raw key through the constructor", () => {
+    const selection = selectDecisionLLM({ ANTHROPIC_API_KEY: ANTHROPIC_KEY });
+
+    expect(selection.llm).toBeInstanceOf(ClaudeDecisionLLM);
+    expect((selection.llm as ClaudeDecisionLLM).credentialSource.kind).toBe("host-subscription");
+  });
+});
+
 describe("decision registry is reachable through the providers barrel (AC4)", () => {
   test("the deciders and selectDecisionLLM are exported from the barrel", () => {
     expect(typeof providers.selectDecisionLLM).toBe("function");

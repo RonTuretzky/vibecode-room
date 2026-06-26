@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { cueDecisionSchema, type CredentialSource, type CueDecision } from "../../types";
+import { cueDecisionSchema, type CredentialSource, type CueDecision, type TranscriptObservation } from "../../types";
 import { createModelCredentialSource } from "../credentials";
+import { createSuggestionDecisionInput, scoreFromDecisionOutput } from "../../suggest/engine";
+import { selectDecisionLLM } from "./registry";
 import type { DecisionInput } from "../types";
 import {
   ClaudeDecisionLLM,
@@ -130,6 +132,83 @@ describe("ClaudeDecisionLLM unit", () => {
     const llm = new ClaudeDecisionLLM({ credentialSource: sanctionedCredentialSource, transport });
 
     await expect(llm.decide(decisionInput())).rejects.toThrow("emit_cue_decision");
+  });
+});
+
+describe("Claude decider scores a buildable transcript via an injected transport (integration)", () => {
+  const ANTHROPIC_KEY = "sk-ant-test-0123456789abcdef0123456789";
+
+  function buildableObservation(): TranscriptObservation {
+    return {
+      text: "Let's build a dashboard tool to ship the replay prototype today.",
+      isFinal: true,
+      speaker: "speaker_0",
+      sessionId: "claude-score-integration",
+      latencyMs: 20,
+      utteranceId: "utt-claude-score-001",
+    };
+  }
+
+  function spawnLeaningDecision(correlationId: string, decisionId: string): CueDecision {
+    return cueDecisionSchema.parse({
+      kind: "action",
+      action: {
+        type: "spawn",
+        targetUPID: null,
+        correlationId,
+        payload: {
+          quality: 0.92,
+          pitch: "Build a dashboard tool to ship the replay prototype",
+          mcqs: ["Scope it as one task?", "Spawn an agent now?"],
+          answers: ["Yes, scope it", "Yes, spawn it"],
+        },
+      },
+      policy: "claude-decider",
+      decisionId,
+      correlationId,
+      meta: { quality: 0.92, source: "claude" },
+    });
+  }
+
+  test("a buildable transcript yields a spawn-leaning score from the Claude path with a stub transport", async () => {
+    const observation = buildableObservation();
+    const correlationId = `corr-${observation.utteranceId}`;
+    const decisionId = "decision-claude-score-001";
+
+    const requests: AnthropicMessagesRequest[] = [];
+    const transport: ClaudeMessagesTransport = async (request) => {
+      requests.push(request);
+      return {
+        id: "msg_claude_score_001",
+        model: DEFAULT_CLAUDE_DECISION_MODEL,
+        content: [
+          {
+            type: "tool_use",
+            name: "emit_cue_decision",
+            input: { decision: spawnLeaningDecision(correlationId, decisionId) },
+          },
+        ],
+      };
+    };
+
+    // Auto-select the Claude decider via a resolvable credential, then route the
+    // SuggestionEngine's own DecisionInput through it with the injected transport.
+    const selection = selectDecisionLLM({ ANTHROPIC_API_KEY: ANTHROPIC_KEY }, { claudeTransport: transport });
+    expect(selection.mode).toBe("claude");
+    expect(selection.llm).toBeInstanceOf(ClaudeDecisionLLM);
+
+    const output = await selection.llm.decide(
+      createSuggestionDecisionInput({ observation, correlationId, decisionId }),
+    );
+    const score = scoreFromDecisionOutput(output);
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0].temperature).toBe(0);
+    expect(requests[0].system).toContain("buildable ambient suggestion");
+    expect(score.accepted).toBe(true);
+    expect(score.reason).toBe("intent-gate-action");
+    expect(score.quality).toBeGreaterThanOrEqual(0.7);
+    expect(score.pitch.length).toBeGreaterThan(0);
   });
 });
 
