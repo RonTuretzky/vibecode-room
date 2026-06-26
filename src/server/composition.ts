@@ -10,13 +10,14 @@ import { EMERGENCY_STOP_LATENCY_BUDGET_MS, EmergencySessionState, EmergencyStopC
 import { TraceProcessor } from "../obs/trace";
 import { ProcessRegistry, type RegistryProcess } from "../process/registry";
 import { GatewayRegistryClient, selectSmithersClient, type RegistrySmithersClient } from "./smithers-select";
+import { buildDegradationNotice, type DegradationNotice, type SmithersClientMode } from "./degradation-notice";
 import { RunEventDriver, type RunEventStreamClient } from "./run-event-driver";
 import type { GatewayRpcTransport, SmithersClient } from "../seam/smithers-client";
 import type { AcceptanceSpawnResult } from "../acceptance/spawn";
 import { selectAsrProvider, selectDecisionLLM, selectTtsProvider, type ASRProvider, type AsrProviderMode, type DecisionLLM } from "../providers";
 import type { ClaudeMessagesTransport, ReplayASRSource, TTSProvider, TTSTransport, VoxTermSegmentSource } from "../providers";
 import { drainTtsStream, type TtsAudioSink } from "./tts-sink";
-import { selectAudioSink, type AudioSink } from "./audio-device-sink";
+import { selectAudioSink, type AudioSink, type AudioSinkMode } from "./audio-device-sink";
 import { IdleCueDriver } from "./idle-cue-driver";
 import {
   readSuggestionEngineConfig,
@@ -63,6 +64,10 @@ export interface ProjectorRuntime {
   // Which Cue wake/earcon path is active (GAP-006). `null` only before the async
   // bridge selection runs; `createProjectorRuntime` always resolves it.
   readonly cueBridgeMode: CueBridgeMode | null;
+  // Structured startup degradation notice (GAP-002): which legs resolved to a
+  // stubbed/offline backend and how to upgrade each. Logged at boot and surfaced
+  // on /api/health so a degraded deployment is explicit, not silent.
+  readonly degradation: DegradationNotice;
   readonly muteController: MuteController;
   readonly suggestionEngine: SuggestionEngine;
   readonly acceptanceController: AcceptanceController;
@@ -152,6 +157,7 @@ export async function createProjectorRuntime(
 class LiveProjectorRuntime implements ProjectorRuntime {
   readonly asrMode: AsrProviderMode;
   readonly micMode: AsrProviderMode;
+  readonly degradation: DegradationNotice;
   readonly asr: ASRProvider;
   readonly #micAsr: ASRProvider;
   // Selected by env (Noop default — silent-but-recorded, no key/network/device).
@@ -210,10 +216,14 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     // selectAudioSink(env) (no-op unless PANOP_AUDIO_SINK=device). The one sink
     // backs both the earcon playPcm path and the TTS drain so a fired suggestion's
     // synthesized PCM and a spawn earcon land in the same place.
-    const audioSink = options.audioSink ?? selectAudioSink(env).sink;
+    const audioSinkSelection = selectAudioSink(env);
+    // An injected sink (test/browser-broadcast) is a real audible path, not the no-op.
+    const sinkMode: AudioSinkMode = options.audioSink ? "device" : audioSinkSelection.mode;
+    const audioSink = options.audioSink ?? audioSinkSelection.sink;
     this.#audio = new BufferedAudioOutput(audioSink);
     this.#ttsSink = audioSink;
-    this.tts = selectTtsProvider(env, { transport: options.ttsTransport }).provider;
+    const ttsSelection = selectTtsProvider(env, { transport: options.ttsTransport });
+    this.tts = ttsSelection.provider;
     this.trace = new TraceProcessor({ clock });
     this.#demoProcesses = demoProjectorSnapshot.processes.map((process) => ({ ...process }));
     this.#session = new EmergencySessionState({ sessionId, listening: true, muted: false });
@@ -261,7 +271,8 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     // when a model credential resolves, else the no-key heuristic. The single
     // selected instance is shared by the SuggestionEngine scoring, the acceptance
     // intent-gate, and the Cue harness fast-path bridge.
-    this.#decisionLlm = selectDecisionLLM(env, { claudeTransport: options.decisionTransport }).llm;
+    const decisionSelection = selectDecisionLLM(env, { claudeTransport: options.decisionTransport });
+    this.#decisionLlm = decisionSelection.llm;
     // Single Smithers-client swap point (GAP-004). With no gateway config the
     // projector demo (`bun run start`) drives an in-memory client — the seeded
     // fleet are deterministic fixtures, not real runs, so halting them in memory
@@ -269,6 +280,16 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     // present, selectSmithersClient returns a gateway-backed client that routes
     // spawn/halt to a real Smithers gateway over its RPC transport.
     const smithersClient = selectSmithersClient(env, { transport: options.smithersTransport });
+    const smithersMode: SmithersClientMode = smithersClient instanceof GatewayRegistryClient ? "gateway" : "memory";
+    // Structured degradation notice computed from the resolved per-leg selections
+    // (GAP-002). The live mic ASR is the leg that gates real transcription.
+    this.degradation = buildDegradationNotice({
+      asr: this.micMode,
+      tts: ttsSelection.mode,
+      sink: sinkMode,
+      decider: decisionSelection.mode,
+      smithers: smithersMode,
+    });
     this.registry = new ProcessRegistry({
       client: smithersClient,
       sessionId,

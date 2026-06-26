@@ -42,3 +42,7 @@ artifacts/smithering/.capture-tmp/
 /progress-slideshow.png
 /panopticon-projector-desktop.png
 artifacts/smithering/server-logs/
+
+# smither harness runtime state
+.smither/
+.smither-worktrees/

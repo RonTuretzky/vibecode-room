@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { withUnmuted } from "../ui/demo-data";
 import type { ProjectorSnapshot } from "../ui/types";
 import { createProjectorRuntime } from "./composition";
+import { formatDegradationNotice, healthPayload } from "./degradation-notice";
 
 const runtime = await createProjectorRuntime(process.env);
 // Start polling the room-idle gap so a suggestion deferred for interrupt cost is
@@ -11,7 +12,7 @@ const runtime = await createProjectorRuntime(process.env);
 runtime.idleCueDriver.start();
 const app = new Hono();
 
-app.get("/api/health", (context) => context.json({ ok: true, app: "panopticon-projector" }));
+app.get("/api/health", (context) => context.json(healthPayload(runtime)));
 app.get("/api/state", (context) => context.json(runtime.snapshot()));
 app.get("/api/events", () => eventsResponse(runtime));
 // REQ-2 / REQ-14: in the real (live) projector path these controls ALWAYS drive
@@ -88,7 +89,9 @@ Bun.serve<MicSocketData>({
 });
 
 console.log(`Panopticon projector server listening on http://${host}:${port}`);
-console.log(`Live mic ASR mode: ${runtime.micMode}${runtime.micMode === "replay" ? " (set DEEPGRAM_API_KEY for real transcription)" : ""}`);
+// Structured startup degradation notice (ISSUE-0003): one line per stubbed leg
+// with the env var that upgrades it, computed from the resolved runtime.
+console.warn(formatDegradationNotice(runtime.degradation));
 
 function eventsResponse(source: { subscribe(subscriber: (snapshot: ProjectorSnapshot) => void): () => void }): Response {
   let unsubscribe: (() => void) | undefined;
