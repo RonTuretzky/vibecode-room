@@ -5,18 +5,18 @@
 // concrete deciders directly (the provider boundary lint only forbids that
 // outside src/providers — see providers/boundary.test.ts).
 //
-// Default selection is the heuristic decider: a no-key, deterministic policy.
-// This is deliberate — with no PANOP_DECISION_LLM set the runtime must never ship
-// an always-pass demo stub, so the no-credential default still makes real,
-// reproducible decisions.
+// Selection precedence (ISSUE-0023): an explicit PANOP_DECISION_LLM always wins;
+// with it unset the registry auto-selects the Claude decider when a model
+// credential resolves, so the runtime makes model-quality decisions by default,
+// and otherwise falls back to the heuristic decider. The heuristic remains the
+// no-key default — with no credential the runtime must never ship an always-pass
+// demo stub, so it still makes real, reproducible decisions.
 //
-//   heuristic -> HeuristicDecisionLLM   (default; no key, deterministic)
-//   claude    -> ClaudeDecisionLLM      (explicit; only when a credential resolves)
+//   heuristic -> HeuristicDecisionLLM   (no-credential default; deterministic)
+//   claude    -> ClaudeDecisionLLM      (auto-selected when a credential resolves)
 //   replay    -> ReplayDecisionLLM      (deterministic fixtures)
 //
-// NOTE: this issue only delivers + tests the factory and its barrel exposure.
-// composition.ts / the live loop are intentionally NOT rewired here; that
-// injection happens in ISSUE-0008.
+//   explicit env  >  credential auto-select  >  heuristic default
 
 import { ClaudeDecisionLLM, createFetchTransport, type ClaudeMessagesTransport } from "./claude";
 import { HeuristicDecisionLLM } from "./heuristic";
@@ -85,8 +85,10 @@ function resolveDecisionMode(env: DecisionLLMSelectionEnv): DecisionLLMMode {
     );
   }
 
-  // Unset: heuristic — deterministic, no key, no always-pass stub.
-  return "heuristic";
+  // Unset: auto-select the Claude decider when a model credential resolves so the
+  // runtime decisions are model-quality by default; otherwise the heuristic —
+  // deterministic, no key, no always-pass stub.
+  return hasResolvableModelCredential(env) ? "claude" : "heuristic";
 }
 
 function createClaudeDecisionLLM(

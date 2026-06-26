@@ -13,7 +13,7 @@ import { selectSmithersClient } from "./smithers-select";
 import type { GatewayRpcTransport } from "../seam/smithers-client";
 import type { AcceptanceSpawnResult } from "../acceptance/spawn";
 import { selectAsrProvider, selectDecisionLLM, selectTtsProvider, type ASRProvider, type AsrProviderMode, type DecisionLLM } from "../providers";
-import type { ReplayASRSource, TTSProvider, VoxTermSegmentSource } from "../providers";
+import type { ClaudeMessagesTransport, ReplayASRSource, TTSProvider, VoxTermSegmentSource } from "../providers";
 import {
   readSuggestionEngineConfig,
   SuggestionEngine,
@@ -100,6 +100,9 @@ export interface ProjectorRuntimeOptions {
   // replay backend. Both flow to the ambient + live-mic providers.
   voxtermSource?: VoxTermSegmentSource;
   replaySource?: ReplayASRSource;
+  // Injectable Anthropic transport for the auto-selected Claude decider, so a
+  // credential-present runtime can be exercised in tests/e2e with no network.
+  decisionTransport?: ClaudeMessagesTransport;
 }
 
 export async function createProjectorRuntime(
@@ -212,9 +215,11 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       // upstream harness adapter's when operators inspect the live trace (GAP-006).
       earconPath: "fallback",
     });
-    // Real decider selected by env (heuristic by default — no key, deterministic).
-    // Shared by the SuggestionEngine and the Cue harness fast-path bridge.
-    this.#decisionLlm = selectDecisionLLM(env).llm;
+    // Real decider selected by env (ISSUE-0023): the Claude decider auto-selects
+    // when a model credential resolves, else the no-key heuristic. The single
+    // selected instance is shared by the SuggestionEngine scoring, the acceptance
+    // intent-gate, and the Cue harness fast-path bridge.
+    this.#decisionLlm = selectDecisionLLM(env, { claudeTransport: options.decisionTransport }).llm;
     // Single Smithers-client swap point (GAP-004). With no gateway config the
     // projector demo (`bun run start`) drives an in-memory client — the seeded
     // fleet are deterministic fixtures, not real runs, so halting them in memory
@@ -241,7 +246,10 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     });
     this.acceptanceController = new AcceptanceController({
       pending,
-      classifier: new AcceptanceClassifier({ pending }),
+      // The same selected decider backs the acceptance intent-gate (ISSUE-0023),
+      // so spoken accept/decline classification gets the same model-quality
+      // semantic judgement the SuggestionEngine uses to score ideas.
+      classifier: new AcceptanceClassifier({ pending, semanticIntentGate: { llm: this.#decisionLlm } }),
       spawner,
     });
     this.suggestionEngine = new SuggestionEngine({
