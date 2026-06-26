@@ -142,6 +142,9 @@ function gatewayEnv(): ProjectorRuntimeEnv {
     PANOP_SESSION_ID: "run-events-snapshot-e2e",
     PANOP_INITIAL_MUTED: "0",
     PANOP_ASR_PROVIDER: "replay",
+    // Opt into the seeded demo fleet: this test asserts the spawned run's live
+    // overlay does NOT touch the (no-live-run) seeded fixtures, so it needs them.
+    PANOP_SEED_DEMO_FLEET: "1",
     PANOP_SMITHERS_GATEWAY_URL: "ws://gateway.local:8080",
     PANOP_SUGGEST_WORD_FLOOR: "3",
     PANOP_SUGGEST_INTERRUPT_VELOCITY_WEIGHT: "0",

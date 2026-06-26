@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createProjectorRuntime, type ProjectorRuntime } from "../../src/server/composition";
 import type { TranscriptObservation } from "../../src/types";
-import { demoProjectorSnapshot } from "../../src/ui/demo-data";
+import { demoProjectorSnapshot, emptyProjectorSnapshot } from "../../src/ui/demo-data";
 
 // ISSUE-0008 e2e: a spoken, buildable idea queues/fires a suggestion within two
 // turns on the LIVE runtime — createProjectorRuntime + replay ASR, heuristic
@@ -72,15 +72,16 @@ describe("ambient suggest e2e — live runtime queues a suggestion from spoken b
   // ISSUE-0009: the idea bubble must react to real speech. Driving audio through
   // startMicSession should flip snapshot.suggestion off the demo fixture to a
   // live state carrying the spoken pitch.
-  test("idea bubble flips from demo to a live suggestion with the spoken pitch", async () => {
+  test("idea bubble flips from idle to a live suggestion with the spoken pitch", async () => {
     const path = writeFixture(tempDirs, [
       final("let's design and build a replay dashboard for the fleet", "utt-1"),
       final("then we can ship the prototype and automate the pipeline", "utt-2"),
     ]);
     const runtime = await createProjectorRuntime(liveEnv(path));
 
-    // Before any audio: the demo bubble (so the panel is never empty).
-    expect(runtime.snapshot().suggestion).toEqual(demoProjectorSnapshot.suggestion);
+    // Before any audio: the neutral idle bubble (empty pitch), not the demo fixture.
+    expect(runtime.snapshot().suggestion).toEqual(emptyProjectorSnapshot.suggestion);
+    expect(runtime.snapshot().suggestion).not.toEqual(demoProjectorSnapshot.suggestion);
 
     await driveMic(runtime);
 

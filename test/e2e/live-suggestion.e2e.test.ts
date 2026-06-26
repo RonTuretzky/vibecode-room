@@ -11,7 +11,7 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createProjectorRuntime } from "../../src/server/composition";
-import { demoProjectorSnapshot } from "../../src/ui/demo-data";
+import { demoProjectorSnapshot, emptyProjectorSnapshot } from "../../src/ui/demo-data";
 import type { TranscriptObservation } from "../../src/types";
 
 describe("spoken buildable idea surfaces the idea bubble (e2e)", () => {
@@ -50,7 +50,10 @@ describe("spoken buildable idea surfaces the idea bubble (e2e)", () => {
     // Backend-independent: the injected source drives the runtime with no key and
     // no network — the heuristic decider scores the final offline.
     expect(runtime.tts.constructor.name).toBe("NoopTTSProvider");
-    expect(runtime.snapshot().suggestion).toEqual(demoProjectorSnapshot.suggestion);
+    // Before any final is scored the live bubble is the neutral idle state (empty
+    // pitch) — never the demo "blocker announcer" fixture.
+    expect(runtime.snapshot().suggestion).toEqual(emptyProjectorSnapshot.suggestion);
+    expect(runtime.snapshot().suggestion).not.toEqual(demoProjectorSnapshot.suggestion);
 
     await driveMic(runtime);
 

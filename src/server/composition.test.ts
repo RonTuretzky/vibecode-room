@@ -10,7 +10,7 @@ import { AcceptanceController } from "../acceptance/spawn";
 import { ProcessRegistry } from "../process/registry";
 import { readSuggestionEngineConfig, SuggestionEngine, type SuggestionEngineDecision } from "../suggest/engine";
 import type { LogEvent, OutputDecision, PendingSuggestion, TranscriptObservation } from "../types";
-import { demoProjectorSnapshot } from "../ui/demo-data";
+import { demoProjectorSnapshot, emptyProjectorSnapshot } from "../ui/demo-data";
 
 // ISSUE-0008: live FINAL observations must reach SuggestionEngine.observe with a
 // real (heuristic-by-default) decider; interim partials must not drive the engine.
@@ -82,16 +82,61 @@ describe("LiveProjectorRuntime — live final observations drive the SuggestionE
   });
 });
 
+// A freshly-booted LIVE runtime shows NO fixtures: the seeded demo fleet is off
+// by default (zero processes — no Atlas/Cobalt), the transcript is empty, and the
+// idea bubble is the neutral idle state (empty pitch — no demo "blocker announcer").
+describe("LiveProjectorRuntime — fixture-free idle boot", () => {
+  test("a freshly-booted live runtime has zero processes, an empty transcript, and an idle suggestion", async () => {
+    const path = writeReplayFixture([]);
+    const runtime = await createProjectorRuntime(baseEnv(path));
+
+    const snapshot = runtime.snapshot();
+    // Zero processes — the seeded demo fleet (Atlas/Cobalt) is OFF by default.
+    expect(snapshot.processes).toHaveLength(0);
+    expect(runtime.registry.activeRecords()).toHaveLength(0);
+    expect(snapshot.processes.some((process) => process.callsign === "Atlas")).toBe(false);
+    expect(snapshot.processes.some((process) => process.callsign === "Cobalt")).toBe(false);
+
+    // Empty transcript — no canned demo lines.
+    expect(snapshot.transcript).toHaveLength(0);
+
+    // Neutral idle suggestion — empty pitch, not the demo "blocker announcer".
+    expect(snapshot.suggestion.state).toBe("idle");
+    expect(snapshot.suggestion.pitch).toBe("");
+    expect(snapshot.suggestion).not.toEqual(demoProjectorSnapshot.suggestion);
+
+    // No demo trace fixtures, no spoken/earcon fixtures.
+    expect(snapshot.audio.lastSpoken).toBe("");
+    expect(snapshot.audio.earcon).toBe("");
+    expect(snapshot.trace).not.toEqual(demoProjectorSnapshot.trace);
+  });
+
+  test("opting into PANOP_SEED_DEMO_FLEET=1 restores the seeded Atlas/Cobalt fleet", async () => {
+    const path = writeReplayFixture([]);
+    const runtime = await createProjectorRuntime(baseEnv(path, { PANOP_SEED_DEMO_FLEET: "1" }));
+
+    const callsigns = runtime.snapshot().processes.map((process) => process.callsign);
+    expect(callsigns).toContain("Atlas");
+    expect(callsigns).toContain("Cobalt");
+    expect(runtime.registry.activeRecords().length).toBe(2);
+  });
+});
+
 // ISSUE-0009: buildSnapshot.suggestion must reflect the live SuggestionEngine
 // verdict (state/pitch/confidence/gate/questions) once a final has been scored,
 // and keep the demo fixture before any live suggestion exists.
 describe("LiveProjectorRuntime — snapshot.suggestion reflects live engine state", () => {
-  test("before any live suggestion, the demo bubble is shown (fallback)", async () => {
+  test("before any live suggestion, the neutral idle bubble is shown (no demo fixture)", async () => {
     const path = writeReplayFixture([]);
     const runtime = await createProjectorRuntime(baseEnv(path));
 
-    // No mic driven yet → no decision → demo fixture verbatim.
-    expect(runtime.snapshot().suggestion).toEqual(demoProjectorSnapshot.suggestion);
+    // No mic driven yet → no decision → neutral idle bubble (empty pitch), NOT the
+    // demo "blocker announcer" fixture.
+    const suggestion = runtime.snapshot().suggestion;
+    expect(suggestion).toEqual(emptyProjectorSnapshot.suggestion);
+    expect(suggestion.state).toBe("idle");
+    expect(suggestion.pitch).toBe("");
+    expect(suggestion).not.toEqual(demoProjectorSnapshot.suggestion);
     expect(runtime.lastSuggestionDecision).toBeNull();
   });
 
@@ -139,7 +184,7 @@ describe("LiveProjectorRuntime — snapshot.suggestion reflects live engine stat
     expect(suggestion).not.toEqual(demoProjectorSnapshot.suggestion);
   });
 
-  test("a subscriber's bubble transitions from demo -> live as observations arrive (integration)", async () => {
+  test("a subscriber's bubble transitions from idle -> live as observations arrive (integration)", async () => {
     const path = writeReplayFixture([
       final("let's build a dashboard tool to ship the replay prototype today", "utt-build"),
     ]);
@@ -152,9 +197,11 @@ describe("LiveProjectorRuntime — snapshot.suggestion reflects live engine stat
       pitches.push(snapshot.suggestion.pitch);
     });
 
-    // The very first push (on subscribe) is the demo bubble.
-    expect(states[0]).toBe(demoProjectorSnapshot.suggestion.state);
-    expect(pitches[0]).toBe(demoProjectorSnapshot.suggestion.pitch);
+    // The very first push (on subscribe) is the neutral idle bubble (empty pitch),
+    // NOT the demo "blocker announcer" fixture.
+    expect(states[0]).toBe(emptyProjectorSnapshot.suggestion.state);
+    expect(pitches[0]).toBe(emptyProjectorSnapshot.suggestion.pitch);
+    expect(pitches[0]).not.toBe(demoProjectorSnapshot.suggestion.pitch);
 
     await driveMic(runtime);
     unsubscribe();
@@ -634,6 +681,71 @@ describe("LiveProjectorRuntime — emitOutput drains the synthesized TTS stream 
     expect(ttsEvents.length).toBeGreaterThanOrEqual(1);
     expect(ttsEvents[0]?.meta.bytes).toBe(0);
     expect(ttsEvents[0]?.meta.chunks).toBe(0);
+  });
+});
+
+// The real device sink path (selectAudioSink) is exercised through the runtime
+// when PANOP_AUDIO_SINK=device, and the startup degradation notice reflects the
+// resolved sink leg accurately: real ("device") is not degraded, the no-op
+// default is.
+describe("LiveProjectorRuntime — real device audio sink via PANOP_AUDIO_SINK (env-selected)", () => {
+  let priorCapacityGuard: string | undefined;
+  beforeEach(() => {
+    priorCapacityGuard = process.env.PANOP_RBG_DISABLE_CAPACITY_CHECK;
+    process.env.PANOP_RBG_DISABLE_CAPACITY_CHECK = "1";
+  });
+  afterEach(() => {
+    if (priorCapacityGuard === undefined) {
+      delete process.env.PANOP_RBG_DISABLE_CAPACITY_CHECK;
+    } else {
+      process.env.PANOP_RBG_DISABLE_CAPACITY_CHECK = priorCapacityGuard;
+    }
+  });
+
+  test("PANOP_AUDIO_SINK=device selects the real device sink and the loop drives audible output through it (integration)", async () => {
+    const path = writeReplayFixture([
+      final("let's build a dashboard tool to ship the replay prototype today", "utt-build"),
+      final("yes", "utt-yes"),
+    ]);
+    // No injected sink: the runtime resolves the REAL device sink from the env via
+    // selectAudioSink(env).
+    const runtime = await createProjectorRuntime(baseEnv(path, { PANOP_AUDIO_SINK: "device" }));
+
+    // The sink leg resolved to the real device backend — degradation must not flag it.
+    expect(runtime.degradation.degraded.map((leg) => leg.leg)).not.toContain("sink");
+
+    await driveMic(runtime);
+
+    // The audible path ran end to end through the env-selected device sink: the
+    // spawn earcon + spoken ack surface on the snapshot.
+    expect(runtime.snapshot().audio.earcon).toBe("E3");
+    expect(runtime.snapshot().audio.lastSpoken).toContain("spawned");
+  });
+
+  test("PANOP_AUDIO_SINK unset -> the no-op sink leg is reported degraded", async () => {
+    const path = writeReplayFixture([]);
+    const runtime = await createProjectorRuntime(baseEnv(path));
+
+    expect(runtime.degradation.degraded.map((leg) => leg.leg)).toContain("sink");
+  });
+
+  test("an ELEVENLABS_API_KEY auto-selects real TTS so the tts leg is not degraded", async () => {
+    const path = writeReplayFixture([]);
+    const runtime = await createProjectorRuntime(
+      baseEnv(path, { ELEVENLABS_API_KEY: fakeElevenLabsKey() }),
+      { ttsTransport: async () => streamOf([Uint8Array.from([1, 2, 3])]) },
+    );
+
+    expect(runtime.tts).toBeInstanceOf(ElevenLabsFlashTTSProvider);
+    expect(runtime.degradation.degraded.map((leg) => leg.leg)).not.toContain("tts");
+  });
+
+  test("no TTS credential -> Noop, and the tts leg is reported degraded", async () => {
+    const path = writeReplayFixture([]);
+    const runtime = await createProjectorRuntime(baseEnv(path));
+
+    expect(runtime.tts).toBeInstanceOf(NoopTTSProvider);
+    expect(runtime.degradation.degraded.map((leg) => leg.leg)).toContain("tts");
   });
 });
 

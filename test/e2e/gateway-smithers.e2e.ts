@@ -36,7 +36,13 @@ function baseEnv(): ProjectorRuntimeEnv {
 describe("gateway-smithers e2e — live runtime drives the gateway when flagged", () => {
   test("gateway env + stub transport records launchRun on an accepted spawn", async () => {
     const transport = new StubGatewayTransport();
-    const env: ProjectorRuntimeEnv = { ...baseEnv(), PANOP_SMITHERS_GATEWAY_URL: "ws://gateway.local:8080" };
+    // Opt into the seeded fleet: this asserts the seed's two spawns reach the
+    // gateway transport, the accepted spawn under test.
+    const env: ProjectorRuntimeEnv = {
+      ...baseEnv(),
+      PANOP_SEED_DEMO_FLEET: "1",
+      PANOP_SMITHERS_GATEWAY_URL: "ws://gateway.local:8080",
+    };
 
     const runtime = await createProjectorRuntime(env, { smithersTransport: transport });
 

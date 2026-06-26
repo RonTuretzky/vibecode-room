@@ -301,6 +301,13 @@ export class SuggestionEngine {
     return this.#queued === null ? null : structuredClone(this.#queued);
   }
 
+  // Drop the currently queued suggestion without firing it. Used by the click-to-
+  // build path: once the operator clicks the popped idea to accept it, the engine's
+  // queued entry is consumed so it is not later re-delivered or re-expired.
+  clearPending(): void {
+    this.#queued = null;
+  }
+
   events(): LogEvent[] {
     return this.#trace.events();
   }

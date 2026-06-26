@@ -46,6 +46,25 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
   const [micError, setMicError] = useState<string | null>(null);
   const micHandleRef = useRef<MicCaptureHandle | null>(null);
 
+  // Whether this projector is bound to the LIVE runtime (vs. the static offline
+  // demo). Mirrors the /api/state + SSE gate below: ?live=0 is always offline; in
+  // DEV only ?live=1 opts in; in a built deployment live is the default. Click-to-
+  // build / click-to-steer POST to the runtime only in live mode; in offline demo
+  // they fall back to local selection so the static fixtures stay interactive.
+  const liveMode = useMemo(() => {
+    if (typeof window === "undefined") {
+      return false;
+    }
+    const liveParam = new URLSearchParams(window.location.search).get("live");
+    if (liveParam === "0") {
+      return false;
+    }
+    if (import.meta.env.DEV && liveParam !== "1") {
+      return false;
+    }
+    return true;
+  }, []);
+
   // Latest snapshot exposed to the e2e window hook without re-binding it.
   const snapshotRef = useRef(snapshot);
   snapshotRef.current = snapshot;
@@ -99,6 +118,56 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
   );
 
   const closeDetail = useCallback(() => setSelected(null), []);
+
+  // The current steering target UPID (CLICK A PROJECT -> STEER IT). Surfaced on the
+  // live snapshot; null in the static demo.
+  const steeringUpid = snapshot.steeringUpid ?? null;
+
+  // CLICK THE IDEA BUBBLE -> BUILD. In live mode the popped idea bubble's primary
+  // click POSTs /api/suggestion/accept, which accepts the current pending
+  // suggestion and starts the real build; the returned snapshot is applied. In
+  // offline demo there is no runtime, so it falls back to opening the idea detail.
+  const acceptIdea = useCallback(async () => {
+    if (!liveMode) {
+      selectBubble(IDEA_ID);
+      return;
+    }
+    try {
+      const response = await fetch("/api/suggestion/accept", { method: "POST" });
+      if (response.ok && response.headers.get("content-type")?.includes("application/json")) {
+        setSnapshot((await response.json()) as ProjectorSnapshot);
+      }
+    } catch {
+      // Non-authoritative projector: a failed accept must never block the UI.
+    }
+  }, [liveMode, selectBubble]);
+
+  // CLICK A PROJECT -> STEER IT. In live mode, clicking a process bubble/panel sets
+  // it as the steering target (so subsequent transcript routes to it); clicking the
+  // current target again clears steering. In offline demo it falls back to opening
+  // the process detail.
+  const steerProcess = useCallback(
+    async (id: string) => {
+      const match = snapshotRef.current.processes.find(
+        (process) => process.callsign === id || process.upid === id,
+      );
+      if (!liveMode || match === undefined) {
+        selectBubble(id);
+        return;
+      }
+      const clearing = snapshotRef.current.steeringUpid === match.upid;
+      const url = clearing ? "/api/process/select/clear" : `/api/process/${encodeURIComponent(match.upid)}/select`;
+      try {
+        const response = await fetch(url, { method: "POST" });
+        if (response.ok && response.headers.get("content-type")?.includes("application/json")) {
+          setSnapshot((await response.json()) as ProjectorSnapshot);
+        }
+      } catch {
+        // Non-authoritative projector: a failed select must never block the UI.
+      }
+    },
+    [liveMode, selectBubble],
+  );
 
   const releaseMute = useCallback(async () => {
     setIsUnmuting(true);
@@ -384,23 +453,32 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
               gatePercent={gatePercent}
               selected={ideaSelected}
               size={ideaSelected ? 250 : 196}
-              onSelect={selectBubble}
+              onSelect={() => void acceptIdea()}
             />
             {snapshot.processes.map((process, index) => (
               <ProcessBubble
                 key={process.upid}
-                process={{ ...process, selected: process.callsign === selected }}
+                process={{
+                  ...process,
+                  selected: process.callsign === selected,
+                  steering: process.upid === steeringUpid,
+                }}
                 index={index}
                 size={bubbleSize(process)}
                 hotkey={index < 9 ? index + 1 : null}
-                onSelect={selectBubble}
+                onSelect={() => void steerProcess(process.callsign)}
               />
             ))}
           </div>
         </section>
 
         <aside className="rail">
-          <FleetPanel processes={snapshot.processes} selected={selected} onSelect={selectBubble} />
+          <FleetPanel
+            processes={snapshot.processes}
+            selected={selected}
+            steeringUpid={steeringUpid}
+            onSelect={(id) => void steerProcess(id)}
+          />
           <AudioReadout snapshot={snapshot} />
           <TranscriptStream lines={snapshot.transcript} />
           <TraceRail trace={snapshot.trace} />
@@ -501,10 +579,12 @@ function SuggestionRegion({ pitch }: { pitch: string }) {
 function FleetPanel({
   processes,
   selected,
+  steeringUpid,
   onSelect,
 }: {
   processes: ProjectorProcess[];
   selected: string | null;
+  steeringUpid: string | null;
   onSelect: (id: string) => void;
 }) {
   return (
@@ -514,18 +594,22 @@ function FleetPanel({
         <span className="trace-count">{processes.length}/2</span>
       </div>
       <div className="fleet-panels">
-        {processes.map((process) => (
+        {processes.map((process) => {
+          const steering = process.upid === steeringUpid;
+          return (
           <article
             key={process.upid}
-            className={`fleet-panel state-${process.state}${process.callsign === selected ? " selected" : ""}`}
+            className={`fleet-panel state-${process.state}${process.callsign === selected ? " selected" : ""}${steering ? " steering" : ""}`}
             data-testid="fleet-panel"
             data-callsign={process.callsign}
             data-state={process.state}
+            data-steering={steering ? "true" : "false"}
             onClick={() => onSelect(process.callsign)}
           >
             <div className="fleet-panel-head">
               <strong className="fleet-callsign">{process.callsign}</strong>
               <span className={`fleet-state badge state-${process.state}`}>{process.state}</span>
+              {steering ? <span className="fleet-steering" data-testid="fleet-steering">steering →</span> : null}
             </div>
             <p className="fleet-output">{process.lastOutput || "—"}</p>
             <p className="fleet-action">↳ {process.lastAction}</p>
@@ -538,7 +622,8 @@ function FleetPanel({
             ) : null}
             <code className="fleet-upid">{process.upid}</code>
           </article>
-        ))}
+          );
+        })}
         {processes.length < 2 ? (
           <article className="fleet-panel empty" data-testid="fleet-empty">
             No second process running

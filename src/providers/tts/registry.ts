@@ -5,17 +5,19 @@
 // the concrete classes directly (the provider boundary lint only forbids that
 // outside src/providers — see providers/boundary.test.ts).
 //
-// Default selection is the Noop provider: a no-key, silent-but-recorded backend
-// so offline/replay runs stay quiet while still recording every phrase that
-// would have been spoken. This is deliberate — with no PANOP_TTS_PROVIDER set
-// the runtime must never reach for the network or an audio device.
+// Selection precedence mirrors the ASR registry (Deepgram on key) and the
+// DecisionLLM registry (Claude on credential): an explicit PANOP_TTS_PROVIDER
+// always wins; with it unset the registry AUTO-SELECTS the real ElevenLabs
+// provider when an ElevenLabs credential resolves, so a credentialled runtime
+// actually speaks by default. With no credential it falls back to the Noop
+// provider — a no-key, silent-but-recorded backend so offline/replay runs stay
+// quiet (never reaching for the network or an audio device) while still
+// recording every phrase that would have been spoken.
 //
-//   noop       -> NoopTTSProvider            (default; silent, records calls)
-//   elevenlabs -> ElevenLabsFlashTTSProvider (explicit; only when ELEVENLABS_API_KEY resolves)
+//   noop       -> NoopTTSProvider            (no-credential default; silent, records calls)
+//   elevenlabs -> ElevenLabsFlashTTSProvider (explicit, or auto when ELEVENLABS_API_KEY resolves)
 //
-// NOTE: this issue only delivers + tests the factory and its barrel exposure.
-// composition.ts / the live loop are intentionally NOT rewired here; that
-// wiring happens in ISSUE-0013.
+//   explicit env  >  credential auto-select  >  noop default
 
 import {
   ElevenLabsFlashTTSProvider,
@@ -60,7 +62,8 @@ export function selectTtsProvider(
   env: TtsSelectionEnv,
   options: TtsSelectionOptions = {},
 ): TtsSelection {
-  const mode = resolveTtsMode(env);
+  const variable = options.credentialVariable ?? DEFAULT_TTS_CREDENTIAL_VARIABLE;
+  const mode = resolveTtsMode(env, variable);
   switch (mode) {
     case "noop":
       return { mode, provider: new NoopTTSProvider() };
@@ -69,7 +72,7 @@ export function selectTtsProvider(
   }
 }
 
-function resolveTtsMode(env: TtsSelectionEnv): TtsProviderMode {
+function resolveTtsMode(env: TtsSelectionEnv, variable: string): TtsProviderMode {
   const explicit = env.PANOP_TTS_PROVIDER?.trim().toLowerCase();
   if (explicit !== undefined && explicit.length > 0) {
     if (explicit === "noop" || explicit === "elevenlabs") {
@@ -80,8 +83,16 @@ function resolveTtsMode(env: TtsSelectionEnv): TtsProviderMode {
     );
   }
 
-  // Unset: Noop — silent-but-recorded, no key, no network, no audio device.
-  return "noop";
+  // Unset: auto-select the real ElevenLabs provider when its credential resolves
+  // so a credentialled runtime speaks by default (mirroring the ASR/Deepgram and
+  // DecisionLLM/Claude auto-selects); otherwise Noop — silent-but-recorded, no
+  // key, no network, no audio device.
+  return hasResolvableTtsCredential(env, variable) ? "elevenlabs" : "noop";
+}
+
+function hasResolvableTtsCredential(env: TtsSelectionEnv, variable: string): boolean {
+  const value = env[variable];
+  return typeof value === "string" && value.length > 0;
 }
 
 function createElevenLabsProvider(

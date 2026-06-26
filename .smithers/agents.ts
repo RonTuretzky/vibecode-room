@@ -46,7 +46,10 @@ export const agents = {
   // both pinned to APP_ROOT so dev workflows edit the app source, not .smithers/.
   // gemini-1 is OMITTED (quota exhausted — it hangs in a capacity-retry loop) and
   // kimi-1 is OMITTED (OAuth expired; run `kimi login` to revive). Re-add when healthy.
-  cheapFast: [providers.codexApp, providers.claudeApp],
-  smart: [providers.codexApp, providers.claudeApp],
-  smartTool: [providers.codexApp, providers.claudeApp],
+  // codexApp temporarily DROPPED: the ChatGPT account hit its Codex usage limit
+  // (resets ~Jul 25) and was wedging every task in a retry loop. Claude (host
+  // subscription, opus-4-8) is the only healthy worker, so run Claude-only.
+  cheapFast: [providers.claudeApp],
+  smart: [providers.claudeApp],
+  smartTool: [providers.claudeApp],
 } as const satisfies Record<string, AgentLike[]>;

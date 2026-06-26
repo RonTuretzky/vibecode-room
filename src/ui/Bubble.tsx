@@ -54,11 +54,16 @@ export interface ProcessBubbleProps {
   index: number;
   size: number;
   hotkey: number | null;
-  onSelect: (callsign: string) => void;
+  // Primary click: in the live projector this steers the process (routes
+  // subsequent transcript to it); in offline demo it opens the build detail.
+  onSelect: () => void;
 }
 
 export function ProcessBubble({ process, index, size, hotkey, onSelect }: ProcessBubbleProps) {
-  const bloom = bloomColor(process.state, process.selected);
+  // The current steering target reads as cyan focus and carries a "steering ->"
+  // indicator, the same way a selected bubble does.
+  const steering = process.steering === true;
+  const bloom = bloomColor(process.state, process.selected || steering);
   const showRing = process.state === "active" || process.state === "planning";
   // Progress ring geometry (SVG circle, normalized 0–100).
   const radius = 46;
@@ -76,15 +81,16 @@ export function ProcessBubble({ process, index, size, hotkey, onSelect }: Proces
   return (
     <button
       type="button"
-      className={`bubble bubble-process state-${process.state}${process.selected ? " is-selected" : ""}`}
+      className={`bubble bubble-process state-${process.state}${process.selected ? " is-selected" : ""}${steering ? " is-steering" : ""}`}
       style={style}
       data-testid="bubble"
       data-callsign={process.callsign}
       data-kind="process"
       data-state={process.state}
       data-selected={process.selected ? "true" : "false"}
-      onClick={() => onSelect(process.callsign)}
-      aria-label={`${process.callsign}, ${STATE_WORD[process.state]}. ${process.task}.`}
+      data-steering={steering ? "true" : "false"}
+      onClick={() => onSelect()}
+      aria-label={`${process.callsign}, ${STATE_WORD[process.state]}.${steering ? " Steering target." : ""} ${process.task}.`}
     >
       <span className="bubble-bloom" aria-hidden="true" />
       <span className="bubble-glass" aria-hidden="true">
@@ -109,8 +115,29 @@ export function ProcessBubble({ process, index, size, hotkey, onSelect }: Proces
       <span className="bubble-content">
         <span className="bubble-callsign">{process.callsign}</span>
         <span className="bubble-state">{STATE_WORD[process.state]}</span>
+        {steering ? (
+          <span className="bubble-steering" data-testid="bubble-steering">
+            steering →
+          </span>
+        ) : null}
         <span className="bubble-progress">{process.progress}% · {process.progressLabel}</span>
         <span className="bubble-id">{process.upid}</span>
+        {process.buildStatus === "ready" && process.previewUrl ? (
+          // A bubble is a <button>, so the live link can't be a nested <a> (invalid
+          // interactive nesting). Surface a "preview ready" marker carrying the URL
+          // here; the clickable "Preview ->" anchor lives in the BuildDetail card.
+          <span
+            className="bubble-preview-ready"
+            data-testid="bubble-preview-ready"
+            data-preview-url={process.previewUrl}
+          >
+            Preview ready →
+          </span>
+        ) : process.buildStatus === "building" ? (
+          <span className="bubble-preview-pending" data-testid="bubble-preview-pending">
+            building…
+          </span>
+        ) : null}
       </span>
 
       {hotkey !== null ? <span className="bubble-hotkey" aria-hidden="true">{hotkey}</span> : null}
@@ -125,7 +152,9 @@ export interface IdeaBubbleProps {
   gatePercent: number;
   selected: boolean;
   size: number;
-  onSelect: (id: string) => void;
+  // Primary click: in the live projector this accepts the pending suggestion and
+  // starts the real build; in offline demo it opens the idea detail.
+  onSelect: () => void;
 }
 
 export function IdeaBubble({ state, pitch, confidence, gatePercent, selected, size, onSelect }: IdeaBubbleProps) {
@@ -147,7 +176,7 @@ export function IdeaBubble({ state, pitch, confidence, gatePercent, selected, si
       data-kind="idea"
       data-state={state}
       data-selected={selected ? "true" : "false"}
-      onClick={() => onSelect("idea")}
+      onClick={() => onSelect()}
       aria-label={`Forming idea: ${pitch}`}
     >
       <span className="bubble-bloom" aria-hidden="true" />

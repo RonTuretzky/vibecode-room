@@ -59,6 +59,7 @@ export function BuildDetail({ process, trace, onClose }: BuildDetailProps) {
         <DetailField label="Last action" value={process.lastAction} />
         <DetailField label="UPID" value={process.upid} mono />
         <DetailField label="Run ID" value={process.runId} mono />
+        <PreviewField previewUrl={process.previewUrl} buildStatus={process.buildStatus} />
       </div>
 
       <section className="detail-output">
@@ -95,6 +96,40 @@ export function BuildDetail({ process, trace, onClose }: BuildDetailProps) {
           )}
         </section>
       </div>
+    </div>
+  );
+}
+
+// The real accept->build->preview surface in the detail card. While the build is
+// in flight it shows a "building" hint; once the scaffolded page is served it
+// shows a clickable "Preview ->" to the live http://127.0.0.1:<port>/ URL. Absent
+// entirely for processes that never triggered a build (the seeded demo fleet).
+function PreviewField({
+  previewUrl,
+  buildStatus,
+}: {
+  previewUrl?: string | null;
+  buildStatus?: ProjectorProcess["buildStatus"];
+}) {
+  if (buildStatus === undefined || buildStatus === null) {
+    return null;
+  }
+  return (
+    <div className="detail-field detail-preview" data-testid="detail-preview" data-build-status={buildStatus}>
+      <span className="detail-label">Preview</span>
+      {buildStatus === "ready" && previewUrl ? (
+        <a
+          className="detail-value detail-preview-link"
+          data-testid="detail-preview-link"
+          href={previewUrl}
+          target="_blank"
+          rel="noreferrer"
+        >
+          Preview →
+        </a>
+      ) : (
+        <span className="detail-value">{buildStatus === "failed" ? "build failed" : "building…"}</span>
+      )}
     </div>
   );
 }

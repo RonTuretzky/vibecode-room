@@ -37,6 +37,41 @@ app.post("/api/emergency-stop", async (context) => {
   const snapshot = await runtime.emergencyStop();
   return context.json(snapshot);
 });
+// CLICK THE IDEA BUBBLE -> BUILD. Accept the current pending suggestion directly
+// (no spoken "yes"): spawns through the same accept path so the idea-builder runs
+// and a process with previewUrl/buildStatus appears on the returned snapshot. A
+// no-op returning the current snapshot when there is no pending suggestion.
+app.post("/api/suggestion/accept", async (context) => {
+  if (isOfflineDemoRequest(context.req.header("referer"))) {
+    return context.json(runtime.snapshot());
+  }
+  const snapshot = await runtime.acceptPendingSuggestion();
+  return context.json(snapshot);
+});
+// CLICK A PROJECT -> STEER IT. Set the steering target so subsequent FINAL
+// transcript lines route to that process's agent loop. Returns the snapshot.
+app.post("/api/process/:upid/select", (context) => {
+  if (isOfflineDemoRequest(context.req.header("referer"))) {
+    return context.json(runtime.snapshot());
+  }
+  const upid = context.req.param("upid");
+  const snapshot = runtime.setSteeringTarget(upid);
+  return context.json(snapshot);
+});
+// Clear the steering target (both POST and DELETE) so transcript returns to
+// ambient suggestion + click-to-build behavior. Returns the snapshot.
+app.post("/api/process/select/clear", (context) => {
+  if (isOfflineDemoRequest(context.req.header("referer"))) {
+    return context.json(runtime.snapshot());
+  }
+  return context.json(runtime.clearSteeringTarget());
+});
+app.delete("/api/process/select", (context) => {
+  if (isOfflineDemoRequest(context.req.header("referer"))) {
+    return context.json(runtime.snapshot());
+  }
+  return context.json(runtime.clearSteeringTarget());
+});
 app.get("*", async (context) => serveStatic(context.req.url));
 
 const host = process.env.HOST ?? "127.0.0.1";

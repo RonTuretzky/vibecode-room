@@ -53,11 +53,48 @@ describe("selectTtsProvider — explicit PANOP_TTS_PROVIDER mapping (unit)", () 
 });
 
 describe("selectTtsProvider — default + credential gating (integration)", () => {
-  test("no PANOP_TTS_PROVIDER -> Noop (silent, no key, no network)", () => {
+  test("no PANOP_TTS_PROVIDER + no credential -> Noop (silent, no key, no network)", () => {
     const selection = selectTtsProvider({});
 
     expect(selection.mode).toBe("noop");
     expect(selection.provider).toBeInstanceOf(NoopTTSProvider);
+  });
+
+  test("no PANOP_TTS_PROVIDER + ELEVENLABS_API_KEY present -> auto-selects the real provider", () => {
+    const selection = selectTtsProvider(
+      { ELEVENLABS_API_KEY: fakeElevenLabsKey() },
+      { transport: stubTransport },
+    );
+
+    expect(selection.mode).toBe("elevenlabs");
+    expect(selection.provider).toBeInstanceOf(ElevenLabsFlashTTSProvider);
+  });
+
+  test("an empty ELEVENLABS_API_KEY counts as unresolvable -> Noop default", () => {
+    const selection = selectTtsProvider({ ELEVENLABS_API_KEY: "" });
+
+    expect(selection.mode).toBe("noop");
+    expect(selection.provider).toBeInstanceOf(NoopTTSProvider);
+  });
+
+  test("explicit PANOP_TTS_PROVIDER=noop overrides a present credential", () => {
+    const selection = selectTtsProvider({
+      PANOP_TTS_PROVIDER: "noop",
+      ELEVENLABS_API_KEY: fakeElevenLabsKey(),
+    });
+
+    expect(selection.mode).toBe("noop");
+    expect(selection.provider).toBeInstanceOf(NoopTTSProvider);
+  });
+
+  test("the auto-select credential variable is overridable via options", () => {
+    const selection = selectTtsProvider(
+      { ELEVEN_ALT_KEY: fakeElevenLabsKey() },
+      { credentialVariable: "ELEVEN_ALT_KEY", transport: stubTransport },
+    );
+
+    expect(selection.mode).toBe("elevenlabs");
+    expect(selection.provider).toBeInstanceOf(ElevenLabsFlashTTSProvider);
   });
 
   test("an empty PANOP_TTS_PROVIDER falls back to the Noop default", () => {

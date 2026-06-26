@@ -902,6 +902,34 @@ button {
   box-shadow: inset 0 0 0 1px rgba(0, 188, 212, 0.3);
 }
 
+/* CLICK A PROJECT -> STEER IT: the live steering target reads as cyan focus with
+   a pulsing ring, and surfaces a "steering ->" tag in the panel head. */
+.fleet-panel.steering {
+  border-color: var(--c-selected);
+  box-shadow: inset 0 0 0 1px var(--c-selected), 0 0 18px rgba(0, 188, 212, 0.35);
+}
+
+.fleet-steering {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--c-selected);
+  text-transform: uppercase;
+}
+
+.bubble-steering {
+  margin-top: 2px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--c-selected);
+  text-transform: uppercase;
+}
+
+.bubble.is-steering .bubble-bloom {
+  filter: drop-shadow(0 0 22px var(--c-selected));
+}
+
 .fleet-panel:hover { background: rgba(14, 26, 36, 0.66); }
 
 .fleet-panel-head {
