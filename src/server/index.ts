@@ -5,6 +5,10 @@ import type { ProjectorSnapshot } from "../ui/types";
 import { createProjectorRuntime } from "./composition";
 
 const runtime = await createProjectorRuntime(process.env);
+// Start polling the room-idle gap so a suggestion deferred for interrupt cost is
+// delivered once the room falls quiet (ISSUE-0024). Tests drive the tick off an
+// injected clock instead; this is the single live tick hook.
+runtime.idleCueDriver.start();
 const app = new Hono();
 
 app.get("/api/health", (context) => context.json({ ok: true, app: "panopticon-projector" }));

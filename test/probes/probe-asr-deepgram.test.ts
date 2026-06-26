@@ -231,7 +231,7 @@ describe("P-ASR Deepgram Nova-3 deterministic replay probe (not the live release
   }, 120_000);
 });
 
-describe.skipIf(process.env.DEEPGRAM_API_KEY === undefined || process.env.DEEPGRAM_API_KEY.length === 0)(
+describe.skipIf(!liveGateRequired() && (!hasDeepgramCredential() || !hasAudioFixture()))(
   "LIVE RELEASE GATE: Deepgram Nova-3 probe",
   () => {
     test("validates through the real Deepgram adapter when DEEPGRAM_API_KEY is present", async () => {
@@ -385,7 +385,14 @@ async function runLiveGate(): Promise<ProbeVerdict["liveDeepgram"]> {
 
   const audioPath = process.env.PANOP_ASR_DEEPGRAM_AUDIO_FIXTURE;
   if (audioPath === undefined || audioPath.length === 0) {
-    throw new Error("DEEPGRAM_API_KEY is set, so live validation requires PANOP_ASR_DEEPGRAM_AUDIO_FIXTURE with linear16 16kHz mono audio.");
+    if (liveGateRequired()) {
+      throw new Error(
+        "PANOP_REQUIRE_LIVE_GATE=1 and DEEPGRAM_API_KEY is set, so live validation requires PANOP_ASR_DEEPGRAM_AUDIO_FIXTURE with linear16 16kHz mono audio.",
+      );
+    }
+    const reason = "live Deepgram gate skipped because PANOP_ASR_DEEPGRAM_AUDIO_FIXTURE is not set";
+    await writeFile(join(PROBE_ROOT, "live-skip.json"), JSON.stringify({ status: "skipped", reason }, null, 2) + "\n", "utf8");
+    return { status: "skipped", reason, provider: "deepgram", model: "nova-3" };
   }
 
   const observations: TranscriptObservation[] = [];
@@ -409,6 +416,19 @@ async function runLiveGate(): Promise<ProbeVerdict["liveDeepgram"]> {
 
 function verdictStatus(liveStatus: ProbeVerdict["liveDeepgram"]): ProbeVerdict["status"] {
   return liveStatus.status === "skipped" ? "blocked" : "passed";
+}
+
+function hasDeepgramCredential(): boolean {
+  return process.env.DEEPGRAM_API_KEY !== undefined && process.env.DEEPGRAM_API_KEY.length > 0;
+}
+
+function hasAudioFixture(): boolean {
+  const path = process.env.PANOP_ASR_DEEPGRAM_AUDIO_FIXTURE;
+  return path !== undefined && path.length > 0;
+}
+
+function liveGateRequired(): boolean {
+  return process.env.PANOP_REQUIRE_LIVE_GATE === "1";
 }
 
 function fileAudioStream(path: string): AudioReadableStream {

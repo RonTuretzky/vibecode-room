@@ -3,8 +3,8 @@
   "status": "failed",
   "summary": "no failable assertion",
   "correlationId": "probe-harness-test-non-failable",
-  "startedAt": "2026-06-16T19:19:28.196Z",
-  "finishedAt": "2026-06-16T19:19:28.196Z",
+  "startedAt": "2026-06-26T10:38:11.294Z",
+  "finishedAt": "2026-06-26T10:38:11.294Z",
   "assertions": [
     {
       "id": "cannot-fail",

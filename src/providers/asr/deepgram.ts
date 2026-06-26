@@ -81,7 +81,9 @@ export class DeepgramNova3ASRProvider implements ASRProvider {
   readonly #endpointingMs: number;
   readonly #diarizeModel: "latest" | "v1";
   readonly #openTimeoutMs: number;
-  readonly #closeTimeoutMs: number;
+  // Public so the ASR registry/factory can assert the lifted live-mic cap
+  // (micProfile) without reaching into private state.
+  readonly closeTimeoutMs: number;
   readonly #clock: () => number;
   readonly #utteranceIdFactory: (input: DeepgramUtteranceIdInput) => string;
 
@@ -99,7 +101,7 @@ export class DeepgramNova3ASRProvider implements ASRProvider {
     this.#endpointingMs = options.endpointingMs ?? 300;
     this.#diarizeModel = options.diarizeModel ?? "v1";
     this.#openTimeoutMs = options.openTimeoutMs ?? DEFAULT_OPEN_TIMEOUT_MS;
-    this.#closeTimeoutMs = options.closeTimeoutMs ?? DEFAULT_CLOSE_TIMEOUT_MS;
+    this.closeTimeoutMs = options.closeTimeoutMs ?? DEFAULT_CLOSE_TIMEOUT_MS;
     this.#clock = options.clock ?? (() => performance.now());
     this.#utteranceIdFactory = options.utteranceIdFactory ?? defaultUtteranceId;
     this.credentialSource = createAudioCredentialSource({
@@ -162,7 +164,7 @@ export class DeepgramNova3ASRProvider implements ASRProvider {
         ws.close();
       }
       queue.close();
-    }, this.#closeTimeoutMs);
+    }, this.closeTimeoutMs);
 
     try {
       for await (const observation of queue) {

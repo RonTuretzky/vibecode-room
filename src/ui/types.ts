@@ -58,9 +58,10 @@ export interface ProjectorSnapshot {
   // Optional live-microphone status. Absent in the static demo fixtures; the
   // server runtime sets it when a browser mic session is wired through
   // /api/mic. `mode` is the ASR backend ("deepgram" = real transcription,
-  // "replay" = audio received but not transcribed because no key is set).
+  // "voxterm" = the local VoxTerm transcriber, "replay" = audio received but not
+  // transcribed because no key/transcriber is set).
   mic?: {
-    mode: "deepgram" | "replay";
+    mode: "deepgram" | "voxterm" | "replay";
     active: boolean;
     // Total raw PCM bytes the server has received from the live mic socket. Lets
     // the projector prove audio is flowing even in "replay" mode (no ASR key).

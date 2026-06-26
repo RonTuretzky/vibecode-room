@@ -8,6 +8,7 @@ import { pathToFileURL } from "node:url";
 import React from "react";
 import { Gateway, createSmithers } from "smithers-orchestrator";
 import { z } from "zod";
+import { ensureCueSourceBuild } from "../src/cue/source";
 
 const PROBE_ID = "probe-cue-smithers-seam";
 const BUILD_DIR = `artifacts/smithering/build/${PROBE_ID}`;
@@ -541,14 +542,10 @@ async function loadCue(): Promise<CueCore> {
 }
 
 function ensureCueSource(): void {
-  if (!existsSync(join(CUE_ROOT, ".git"))) {
-    execFileSync("git", ["clone", "--depth", "1", CUE_REPO, CUE_ROOT], { stdio: "pipe" });
-  }
-  execFileSync("git", ["ls-remote", CUE_REPO, "HEAD"], { stdio: "pipe" });
-  if (!existsSync(join(CUE_ROOT, "packages/core/dist/index.js"))) {
-    execFileSync("pnpm", ["install"], { cwd: CUE_ROOT, stdio: "pipe" });
-    execFileSync("pnpm", ["build"], { cwd: CUE_ROOT, stdio: "pipe" });
-  }
+  // Build (and cache) the upstream Cue substrate from source. A cached build is
+  // reused with no network access, so the probe stays deterministic offline and
+  // does not contend on per-run `git ls-remote` calls under test concurrency.
+  ensureCueSourceBuild();
 }
 
 function git(cwd: string, args: string[]): string {
