@@ -3,12 +3,13 @@ import { PendingSuggestionOwner } from "../acceptance/pending";
 import { AcceptanceController, AcceptanceSpawner, createProcessRegistryAcceptanceSeam } from "../acceptance/spawn";
 import { MuteController } from "../audio/mute-controller";
 import { CueAdapter } from "../cue/adapter";
+import { createCueBridge, type CueBridge, type CueBridgeMode } from "./cue-bridge";
 import { EMERGENCY_STOP_LATENCY_BUDGET_MS, EmergencySessionState, EmergencyStopController } from "../emergency/stop";
 import { TraceProcessor } from "../obs/trace";
 import { ProcessRegistry, type RegistryProcess } from "../process/registry";
 import { selectSmithersClient } from "./smithers-select";
 import type { GatewayRpcTransport } from "../seam/smithers-client";
-import { DeepgramNova3ASRProvider, ReplayASRProvider, NoopTTSProvider, selectDecisionLLM, type ASRProvider } from "../providers";
+import { DeepgramNova3ASRProvider, ReplayASRProvider, NoopTTSProvider, selectDecisionLLM, type ASRProvider, type DecisionLLM } from "../providers";
 import type { TTSProvider } from "../providers";
 import {
   readSuggestionEngineConfig,
@@ -56,6 +57,9 @@ export interface ProjectorRuntime {
   readonly asr: ASRProvider;
   readonly tts: TTSProvider;
   readonly cueAdapter: CueAdapter;
+  // Which Cue wake/earcon path is active (GAP-006). `null` only before the async
+  // bridge selection runs; `createProjectorRuntime` always resolves it.
+  readonly cueBridgeMode: CueBridgeMode | null;
   readonly muteController: MuteController;
   readonly suggestionEngine: SuggestionEngine;
   readonly acceptanceController: AcceptanceController;
@@ -99,6 +103,7 @@ export async function createProjectorRuntime(
 ): Promise<ProjectorRuntime> {
   const sessionId = env.PANOP_SESSION_ID ?? demoProjectorSnapshot.sessionId;
   const runtime = new LiveProjectorRuntime(sessionId, env, options);
+  await runtime.initCueBridge();
   await runtime.seedDemoFleet();
 
   if (env.PANOP_INITIAL_MUTED !== "0") {
@@ -116,6 +121,8 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   readonly #micAsr: ASRProvider;
   readonly tts = new NoopTTSProvider();
   readonly cueAdapter: CueAdapter;
+  readonly #decisionLlm: DecisionLLM;
+  #cueBridge: CueBridge | null = null;
   readonly muteController: MuteController;
   readonly suggestionEngine: SuggestionEngine;
   readonly acceptanceController: AcceptanceController;
@@ -174,6 +181,9 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       clock,
       textCueWords: ["panop"],
     });
+    // Real decider selected by env (heuristic by default — no key, deterministic).
+    // Shared by the SuggestionEngine and the Cue harness fast-path bridge.
+    this.#decisionLlm = selectDecisionLLM(env).llm;
     // Single Smithers-client swap point (GAP-004). With no gateway config the
     // projector demo (`bun run start`) drives an in-memory client — the seeded
     // fleet are deterministic fixtures, not real runs, so halting them in memory
@@ -207,9 +217,8 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       sessionId,
       trace: this.trace,
       clock,
-      // Real decider selected by env (heuristic by default — no key, deterministic).
       // Replaces the former always-pass demo stub so live finals get real decisions.
-      llm: selectDecisionLLM(env).llm,
+      llm: this.#decisionLlm,
       acceptanceOwner: {
         acceptSuggestion: (suggestion: PendingSuggestion) => {
           pending.acceptSuggestion(suggestion);
@@ -239,6 +248,25 @@ class LiveProjectorRuntime implements ProjectorRuntime {
 
   get lastSuggestionDecision(): SuggestionEngineDecision | null {
     return this.#lastSuggestionDecision;
+  }
+
+  get cueBridgeMode(): CueBridgeMode | null {
+    return this.#cueBridge?.mode ?? null;
+  }
+
+  // Select the Cue wake/earcon path once at startup (GAP-006): the upstream Cue
+  // harness fast-path when a build is present, otherwise the deterministic
+  // in-runtime CueAdapter fallback. Selection never throws — a missing build (or
+  // a harness that fails to construct) degrades gracefully to the fallback.
+  async initCueBridge(): Promise<void> {
+    this.#cueBridge = await createCueBridge({
+      sessionId: this.sessionId,
+      providers: { transcription: this.asr, llm: this.#decisionLlm, output: this.tts },
+      fallbackAdapter: this.cueAdapter,
+      textCueWords: ["panop"],
+      trace: this.trace,
+      clock: () => Date.now(),
+    });
   }
 
   pendingSuggestion(): PendingQueuedSuggestion | null {
@@ -410,6 +438,11 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     this.publish();
 
     if (observation.isFinal) {
+      // Wake/earcon fast-path (GAP-006): every FINAL observation reaches the active
+      // Cue path (harness or fallback) exactly once, so a 'panop' wake word emits an
+      // earcon trace. This is orthogonal to the suggestion/acceptance routing below.
+      await this.driveCueBridge(observation, correlationId);
+
       // Once a suggestion is delivered and pending, subsequent FINAL utterances are
       // accept/decline/answer candidates — route them to the AcceptanceController
       // (GAP-003) instead of seeding a fresh suggestion. The suggestion-engine
@@ -448,6 +481,30 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     }
     // Reflect any registry spawn (or cleared pending) on the published snapshot.
     this.publish();
+  }
+
+  // Route one FINAL observation through the active Cue wake/earcon path. The
+  // bridge emits an earcon trace on a wake-word match (via the harness-owned or
+  // in-runtime adapter, both wired to this.trace). Failures are non-fatal: a
+  // broken wake path must never abort live transcript ingestion.
+  private async driveCueBridge(observation: TranscriptObservation, correlationId: string): Promise<void> {
+    if (this.#cueBridge === null) {
+      return;
+    }
+    try {
+      await this.#cueBridge.observeFinal(observation);
+    } catch (error) {
+      this.recordExternalTrace({
+        event: "cue.bridge.error",
+        level: "error",
+        sessionId: this.sessionId,
+        correlationId,
+        meta: {
+          mode: this.#cueBridge.mode,
+          message: error instanceof Error ? error.message : String(error),
+        },
+      });
+    }
   }
 
   // Feed one FINAL observation into the SuggestionEngine and retain its verdict.
