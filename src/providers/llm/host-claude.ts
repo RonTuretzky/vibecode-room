@@ -15,11 +15,21 @@ const DEFAULT_MIN_INTERVAL_MS = 6_000;
 // (the inner answer, with the CLI envelope already unwrapped).
 export type ClaudeCliRunner = (prompt: string, opts: { model: string; timeoutMs: number }) => Promise<string>;
 
+// The decider keeps a rolling window of recent speech so it judges the IDEA as it
+// forms across fragmented ASR finals — not each isolated fragment (which is never
+// a complete idea on its own). Bounded by age and word count.
+const DEFAULT_WINDOW_MS = 60_000;
+const DEFAULT_WINDOW_WORDS = 120;
+
 export interface HostClaudeDecisionLLMOptions {
   policy?: string;
   model?: string;
   timeoutMs?: number;
   minIntervalMs?: number;
+  /** Max age of a fragment kept in the rolling context window. */
+  windowMs?: number;
+  /** Max words retained in the rolling context window. */
+  windowWords?: number;
   runner?: ClaudeCliRunner;
   now?: () => number;
 }
@@ -38,13 +48,18 @@ export class HostClaudeDecisionLLM implements DecisionLLM {
   readonly #minIntervalMs: number;
   readonly #runner: ClaudeCliRunner;
   readonly #now: () => number;
+  readonly #windowMs: number;
+  readonly #windowWords: number;
   #lastCallAtMs = Number.NEGATIVE_INFINITY;
+  #window: Array<{ atMs: number; text: string }> = [];
 
   constructor(options: HostClaudeDecisionLLMOptions = {}) {
     this.#policy = options.policy ?? HOST_CLAUDE_DECISION_POLICY;
     this.#model = options.model ?? DEFAULT_MODEL;
     this.#timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.#minIntervalMs = options.minIntervalMs ?? DEFAULT_MIN_INTERVAL_MS;
+    this.#windowMs = options.windowMs ?? DEFAULT_WINDOW_MS;
+    this.#windowWords = options.windowWords ?? DEFAULT_WINDOW_WORDS;
     this.#runner = options.runner ?? defaultClaudeCliRunner;
     this.#now = options.now ?? (() => Date.now());
   }
@@ -54,21 +69,35 @@ export class HostClaudeDecisionLLM implements DecisionLLM {
       throw new Error("HostClaudeDecisionLLM only supports temperature 0.");
     }
     const decisionId = decisionIdFrom(input);
-    const transcript = extractTranscript(input);
+    const fragment = extractTranscript(input);
+    const now = this.#now();
+
+    // Always accumulate the fragment into the rolling window (even when the call
+    // itself is throttled), so the next real call sees the whole forming idea.
+    if (fragment.length > 0) {
+      this.#window.push({ atMs: now, text: fragment });
+    }
+    this.#pruneWindow(now);
+    const windowText = this.#windowText();
 
     // Throttle: don't spawn a model call for every final in a chatty room.
-    const now = this.#now();
-    if (transcript.length === 0 || now - this.#lastCallAtMs < this.#minIntervalMs) {
+    if (windowText.length === 0 || now - this.#lastCallAtMs < this.#minIntervalMs) {
       return this.#pass(input, decisionId, "throttled-or-empty");
     }
     this.#lastCallAtMs = now;
 
     let verdict: ClaudeVerdict | null = null;
     try {
-      const reply = await this.#runner(buildPrompt(transcript), { model: this.#model, timeoutMs: this.#timeoutMs });
+      const reply = await this.#runner(buildPrompt(windowText), { model: this.#model, timeoutMs: this.#timeoutMs });
       verdict = parseVerdict(reply);
     } catch {
       verdict = null; // any runner failure → pass
+    }
+
+    // After proposing an idea, reset the window so the same idea doesn't re-fire
+    // on the next call; the room moves on to fresh context.
+    if (verdict?.act === true) {
+      this.#window = [];
     }
 
     if (verdict === null || !verdict.act) {
@@ -93,7 +122,7 @@ export class HostClaudeDecisionLLM implements DecisionLLM {
       model: input.model,
       temperature: 0,
       decision: cueDecisionSchema.parse(decision),
-      raw: { hostClaude: true, transcript, verdict },
+      raw: { hostClaude: true, transcript: windowText, verdict },
     };
   }
 
@@ -114,6 +143,25 @@ export class HostClaudeDecisionLLM implements DecisionLLM {
       decision: cueDecisionSchema.parse(decision),
       raw: { hostClaude: true, reason },
     };
+  }
+
+  #pruneWindow(now: number): void {
+    // Drop fragments older than the window, then trim from the front until the
+    // retained text is within the word budget.
+    this.#window = this.#window.filter((entry) => now - entry.atMs <= this.#windowMs);
+    let words = this.#wordCount();
+    while (this.#window.length > 1 && words > this.#windowWords) {
+      const dropped = this.#window.shift();
+      words -= dropped ? dropped.text.trim().split(/\s+/u).filter(Boolean).length : 0;
+    }
+  }
+
+  #windowText(): string {
+    return this.#window.map((entry) => entry.text).join(" ").replace(/\s+/gu, " ").trim();
+  }
+
+  #wordCount(): number {
+    return this.#windowText().split(/\s+/u).filter(Boolean).length;
   }
 }
 

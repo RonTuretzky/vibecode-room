@@ -73,6 +73,28 @@ describe("HostClaudeDecisionLLM", () => {
     expect(runner.calls).toBe(2);
   });
 
+  test("accumulates fragmented finals into a rolling window so the whole idea is judged", async () => {
+    // Capture the prompt the runner receives on each (non-throttled) call.
+    const prompts: string[] = [];
+    const runner = (async (prompt: string) => {
+      prompts.push(prompt);
+      // Only ACT once the window has accumulated the full idea.
+      return /snow.*water|water.*snow/i.test(prompt)
+        ? '{"act":true,"quality":0.85,"pitch":"Build a snow-to-water calculator","questions":[]}'
+        : '{"act":false,"quality":0.1,"pitch":"","questions":[]}';
+    }) as ClaudeCliRunner;
+    const llm = new HostClaudeDecisionLLM({ runner, minIntervalMs: 0 });
+
+    const r1 = await llm.decide(input("i would really like us to make an app", "c1"));
+    expect(r1.decision.kind).toBe("pass"); // fragment alone isn't a complete idea
+
+    const r2 = await llm.decide(input("that tells me how much snow i need for drinking water", "c2"));
+    expect(r2.decision.kind).toBe("action"); // the WINDOW now contains the whole idea
+    // the second prompt carried the earlier fragment too
+    expect(prompts[1]).toContain("make an app");
+    expect(prompts[1]).toContain("snow");
+  });
+
   test("empty transcript passes without invoking the runner", async () => {
     const runner = stubRunner('{"act":true,"quality":0.9,"pitch":"x","questions":[]}');
     const llm = new HostClaudeDecisionLLM({ runner, minIntervalMs: 0 });
