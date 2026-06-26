@@ -19,14 +19,16 @@
 //   explicit env  >  credential auto-select  >  heuristic default
 
 import { ClaudeDecisionLLM, createFetchTransport, type ClaudeMessagesTransport } from "./claude";
+import { CueCerebrasDecisionLLM, type IdeaProposer } from "./cue-cerebras";
 import { HeuristicDecisionLLM } from "./heuristic";
 import { HostClaudeDecisionLLM, type ClaudeCliRunner } from "./host-claude";
 import { ReplayDecisionLLM, type ReplayDecisionRecord } from "./replay";
+import { WindowedDecisionLLM } from "./windowed";
 import type { DecisionLLM } from "../types";
 
-// "claude-cli" performs genuine inference via the host's logged-in `claude` CLI
-// (no API key) — distinct from "claude" (the ANTHROPIC_API_KEY fetch path).
-export type DecisionLLMMode = "heuristic" | "claude" | "claude-cli" | "replay";
+// "claude-cli" = genuine inference via the host's logged-in `claude` CLI (no key).
+// "cue-cerebras" = idea inference through Cue's CerebrasLLMProvider (needs CEREBRAS_API_KEY).
+export type DecisionLLMMode = "heuristic" | "claude" | "claude-cli" | "cue-cerebras" | "replay";
 
 // Default sanctioned host-subscription invocation for the Claude decider. The
 // model credential is never a raw key — access routes through the host's
@@ -59,6 +61,10 @@ export interface DecisionLLMSelectionOptions {
   hostClaudeModel?: string;
   /** Injectable CLI runner for the host-claude decider (tests avoid shelling out). */
   hostClaudeRunner?: ClaudeCliRunner;
+  /** Cerebras model id for the cue-cerebras decider. */
+  cerebrasModel?: string;
+  /** Injectable idea proposer for the cue-cerebras decider (tests avoid Cue/Cerebras). */
+  cueProposer?: IdeaProposer;
 }
 
 export interface DecisionLLMSelection {
@@ -77,7 +83,17 @@ export function selectDecisionLLM(
     case "claude":
       return { mode, llm: createClaudeDecisionLLM(env, options) };
     case "claude-cli":
+      // HostClaudeDecisionLLM carries its own window + throttle (CLI is slow).
       return { mode, llm: new HostClaudeDecisionLLM({ model: options.hostClaudeModel, runner: options.hostClaudeRunner }) };
+    case "cue-cerebras":
+      // Idea inference through Cue's CerebrasLLMProvider, windowed for context.
+      return {
+        mode,
+        llm: new WindowedDecisionLLM(
+          new CueCerebrasDecisionLLM({ proposer: options.cueProposer, model: options.cerebrasModel }),
+          { minIntervalMs: 1500 },
+        ),
+      };
     case "replay":
       return { mode, llm: new ReplayDecisionLLM(options.replayRecords ?? []) };
   }
@@ -86,11 +102,17 @@ export function selectDecisionLLM(
 function resolveDecisionMode(env: DecisionLLMSelectionEnv): DecisionLLMMode {
   const explicit = env.PANOP_DECISION_LLM?.trim().toLowerCase();
   if (explicit !== undefined && explicit.length > 0) {
-    if (explicit === "heuristic" || explicit === "claude" || explicit === "claude-cli" || explicit === "replay") {
+    if (
+      explicit === "heuristic" ||
+      explicit === "claude" ||
+      explicit === "claude-cli" ||
+      explicit === "cue-cerebras" ||
+      explicit === "replay"
+    ) {
       return explicit;
     }
     throw new Error(
-      `Unknown PANOP_DECISION_LLM "${env.PANOP_DECISION_LLM}". Expected one of: heuristic, claude, claude-cli, replay.`,
+      `Unknown PANOP_DECISION_LLM "${env.PANOP_DECISION_LLM}". Expected one of: heuristic, claude, claude-cli, cue-cerebras, replay.`,
     );
   }
 
