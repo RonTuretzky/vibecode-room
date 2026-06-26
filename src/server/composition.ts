@@ -7,11 +7,10 @@ import { EMERGENCY_STOP_LATENCY_BUDGET_MS, EmergencySessionState, EmergencyStopC
 import { TraceProcessor } from "../obs/trace";
 import { ProcessRegistry, type RegistryProcess } from "../process/registry";
 import { MemorySmithersClient } from "../process/test-helpers";
-import { DeepgramNova3ASRProvider, ReplayASRProvider, NoopTTSProvider, type ASRProvider } from "../providers";
+import { DeepgramNova3ASRProvider, ReplayASRProvider, NoopTTSProvider, selectDecisionLLM, type ASRProvider } from "../providers";
 import type { TTSProvider } from "../providers";
-import { SuggestionEngine } from "../suggest/engine";
+import { SuggestionEngine, type PendingQueuedSuggestion, type SuggestionEngineDecision } from "../suggest/engine";
 import { StageSequencer } from "../spine/stage-sequencer";
-import type { DecisionInput, DecisionLLM, DecisionOutput } from "../providers";
 import type { LogEvent, OutputDecision, PendingSuggestion } from "../types";
 import { demoProjectorSnapshot, withUnmuted } from "../ui/demo-data";
 import type { ProjectorProcess, ProjectorProcessState, ProjectorSnapshot, TranscriptLine } from "../ui/types";
@@ -57,6 +56,11 @@ export interface ProjectorRuntime {
   readonly stageSequencer: StageSequencer;
   readonly trace: TraceProcessor;
   readonly emergencyController: EmergencyStopController;
+  // The most recent decision the SuggestionEngine returned for a live final
+  // observation (null before the first one). ISSUE-0009/0010 read this — plus
+  // `pendingSuggestion()` — to drive delivery/acceptance off the live runtime.
+  readonly lastSuggestionDecision: SuggestionEngineDecision | null;
+  pendingSuggestion(): PendingQueuedSuggestion | null;
   snapshot(): ProjectorSnapshot;
   subscribe(subscriber: ProjectorRuntimeSubscriber): () => void;
   unmute(correlationId?: string): Promise<ProjectorSnapshot>;
@@ -116,6 +120,10 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   #micActive = false;
   #micBytes = 0;
   #micLastPublishMs = 0;
+  // Ambient-suggestion state, fed by FINAL observations only. `#lastSuggestionDecision`
+  // is the latest engine verdict; `#lastFinalAtMs` lets us report room-idle gap.
+  #lastSuggestionDecision: SuggestionEngineDecision | null = null;
+  #lastFinalAtMs: number | null = null;
 
   constructor(
     readonly sessionId: string,
@@ -179,7 +187,9 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       sessionId,
       trace: this.trace,
       clock,
-      llm: demoSuggestionDecisionLLM(),
+      // Real decider selected by env (heuristic by default — no key, deterministic).
+      // Replaces the former always-pass demo stub so live finals get real decisions.
+      llm: selectDecisionLLM(env).llm,
       acceptanceOwner: {
         acceptSuggestion: (suggestion: PendingSuggestion) => {
           pending.acceptSuggestion(suggestion);
@@ -205,6 +215,14 @@ class LiveProjectorRuntime implements ProjectorRuntime {
 
   snapshot(): ProjectorSnapshot {
     return this.#snapshot;
+  }
+
+  get lastSuggestionDecision(): SuggestionEngineDecision | null {
+    return this.#lastSuggestionDecision;
+  }
+
+  pendingSuggestion(): PendingQueuedSuggestion | null {
+    return this.suggestionEngine.pending();
   }
 
   subscribe(subscriber: ProjectorRuntimeSubscriber): () => void {
@@ -286,7 +304,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     const drained = (async () => {
       try {
         for await (const observation of this.#micAsr.stream(audio)) {
-          this.ingestTranscript(observation);
+          await this.ingestTranscript(observation, correlationId);
         }
       } catch (error) {
         this.recordExternalTrace({
@@ -349,9 +367,10 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     };
   }
 
-  // Fold one ASR observation into the live transcript. Interim (partial) results
-  // replace the single in-flight line; final results commit it to the log.
-  private ingestTranscript(observation: TranscriptObservation): void {
+  // Fold one ASR observation into the live transcript, then — for FINAL results
+  // only — drive the ambient SuggestionEngine. Interim (partial) results replace
+  // the single in-flight line and must NOT move the engine's gates.
+  private async ingestTranscript(observation: TranscriptObservation, correlationId: string): Promise<void> {
     const text = observation.text.trim();
     if (text.length === 0) {
       return;
@@ -369,6 +388,34 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       this.#interim = line;
     }
     this.publish();
+
+    if (observation.isFinal) {
+      await this.driveSuggestionEngine(observation, correlationId);
+    }
+  }
+
+  // Feed one FINAL observation into the SuggestionEngine and retain its verdict.
+  // `roomIdleMs` is the quiet gap since the previous final utterance — the engine
+  // uses it to decide whether interrupting now is acceptable.
+  private async driveSuggestionEngine(observation: TranscriptObservation, correlationId: string): Promise<void> {
+    const nowMs = Date.now();
+    const roomIdleMs = this.#lastFinalAtMs === null ? 0 : Math.max(0, nowMs - this.#lastFinalAtMs);
+    this.#lastFinalAtMs = nowMs;
+    try {
+      this.#lastSuggestionDecision = await this.suggestionEngine.observe({
+        observation,
+        correlationId: `${correlationId}-${observation.utteranceId}`,
+        roomIdleMs,
+      });
+    } catch (error) {
+      this.recordExternalTrace({
+        event: "suggestion.engine.error",
+        level: "error",
+        sessionId: this.sessionId,
+        correlationId,
+        meta: { message: error instanceof Error ? error.message : String(error) },
+      });
+    }
   }
 
   async seedDemoFleet(): Promise<void> {
@@ -570,6 +617,13 @@ function selectMicAsrProvider(
     };
   }
 
+  // No cloud key: replay mode. A JSONL fixture path lets the live mic path be
+  // driven deterministically (tests/e2e + offline demos) instead of staying silent.
+  const replayPath = env.PANOP_MIC_REPLAY_PATH;
+  if (replayPath !== undefined && replayPath.length > 0) {
+    return { mode: "replay", provider: ReplayASRProvider.fromFile(replayPath) };
+  }
+
   return {
     mode: "replay",
     provider: new ReplayASRProvider([]),
@@ -587,25 +641,4 @@ function projectorState(state: RegistryProcess["state"]): ProjectorProcessState 
     default:
       return "blocked";
   }
-}
-
-function demoSuggestionDecisionLLM(): DecisionLLM {
-  return {
-    async decide(input: DecisionInput): Promise<DecisionOutput> {
-      return {
-        id: `decision-${input.correlationId}`,
-        model: input.model,
-        temperature: 0,
-        decision: {
-          kind: "pass",
-          correlationId: input.correlationId,
-          policy: "server-runtime-demo",
-          decisionId: `decision-${input.correlationId}`,
-          addressed: false,
-          reason: "ambient",
-          meta: {},
-        },
-      };
-    },
-  };
 }
