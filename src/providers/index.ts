@@ -47,3 +47,26 @@ export {
   type AsrSelectionEnv,
   type AsrSelectionOptions,
 } from "./asr/registry";
+
+// --- DecisionLLM registry / factory (ISSUE-0005) -------------------------
+// Append-only block: kept at the end of the barrel so it does not conflict
+// with the ASR/TTS registry issues editing the export list above. The concrete
+// deciders and the decision registry are reachable only through this barrel,
+// like every other concrete provider (see ENG-T-04 in providers/boundary.test.ts).
+export { HeuristicDecisionLLM, HEURISTIC_DECISION_POLICY, type HeuristicDecisionLLMOptions } from "./llm/heuristic";
+export {
+  ClaudeDecisionLLM,
+  DEFAULT_CLAUDE_DECISION_MODEL,
+  createFetchTransport,
+  type ClaudeDecisionLLMOptions,
+  type ClaudeMessagesTransport,
+} from "./llm/claude";
+export { ReplayDecisionLLM, type ReplayDecisionRecord } from "./llm/replay";
+export {
+  selectDecisionLLM,
+  DEFAULT_CLAUDE_DECISION_COMMAND,
+  type DecisionLLMMode,
+  type DecisionLLMSelection,
+  type DecisionLLMSelectionEnv,
+  type DecisionLLMSelectionOptions,
+} from "./llm/registry";
