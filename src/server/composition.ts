@@ -19,7 +19,7 @@ import type { ClaudeMessagesTransport, ReplayASRSource, TTSProvider, TTSTranspor
 import { drainTtsStream, type TtsAudioSink } from "./tts-sink";
 import { selectAudioSink, type AudioSink, type AudioSinkMode } from "./audio-device-sink";
 import { IdleCueDriver } from "./idle-cue-driver";
-import { IdeaBuildRegistry } from "./idea-builder";
+import { IdeaBuildRegistry, type BuilderAgent } from "./idea-builder";
 import {
   readSuggestionEngineConfig,
   SuggestionEngine,
@@ -162,6 +162,10 @@ export interface ProjectorRuntimeOptions {
   // (idea-builder). Defaults to <cwd>/builds. Tests point it at a temp dir so the
   // repo tree stays clean and each run is isolated.
   buildsRoot?: string;
+  // The real coding agent that turns an accepted idea's scaffold into a working
+  // app (idea-builder). Defaults to the host `claude` CLI builder. Tests inject a
+  // synthetic builder so no real `claude` spawn occurs.
+  builderAgent?: BuilderAgent;
 }
 
 export async function createProjectorRuntime(
@@ -337,7 +341,10 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     // shares it with the registry, which triggers the build on an accept-path
     // spawn (build:true — the demo seed spawns bare and never builds) and tears
     // the preview server down on halt.
-    this.ideaBuilds = new IdeaBuildRegistry({ buildsRoot: options.buildsRoot });
+    this.ideaBuilds = new IdeaBuildRegistry({
+      buildsRoot: options.buildsRoot,
+      builderAgent: options.builderAgent,
+    });
     this.registry = new ProcessRegistry({
       client: smithersClient,
       sessionId,
@@ -365,7 +372,17 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       onUpdate: () => this.publish(),
     });
 
-    const pending = new PendingSuggestionOwner({ clock });
+    // Click-to-build: a delivered suggestion bubble must persist long enough to
+    // CLICK it, not self-destruct in ~10s (the old voice-"yes" no-answer window).
+    // The watchdog still eventually expires an ignored bubble so the loop never
+    // wedges, but the window is now long and configurable (default 120s; total
+    // clear time is ~2x this due to the requeue-once expiry). PANOP_ACCEPT_WINDOW_SECONDS=0
+    // restores the legacy short default.
+    const acceptWindowSeconds = Number(env.PANOP_ACCEPT_WINDOW_SECONDS ?? "120");
+    const noAnswerTimeoutMs = Number.isFinite(acceptWindowSeconds) && acceptWindowSeconds > 0
+      ? Math.round(acceptWindowSeconds * 1000)
+      : undefined;
+    const pending = new PendingSuggestionOwner({ clock, noAnswerTimeoutMs });
     const acceptanceSeam = createProcessRegistryAcceptanceSeam(this.registry);
     const spawner = new AcceptanceSpawner({
       seam: acceptanceSeam,
