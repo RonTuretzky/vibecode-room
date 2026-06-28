@@ -271,8 +271,13 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
 
     let closed = false;
     let events: EventSource | undefined;
+    let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+    let backoffMs = 1_000;
 
-    async function connect() {
+    // Pull the authoritative snapshot from /api/state. Runs on first load and on
+    // EVERY (re)connect / tab re-focus, so a server restart or dropped SSE stream
+    // can never leave the projector frozen on stale state.
+    async function syncState() {
       try {
         const response = await fetch("/api/state", { headers: { accept: "application/json" } });
         if (!response.ok || !response.headers.get("content-type")?.includes("application/json")) {
@@ -282,24 +287,62 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
         if (!closed) {
           setSnapshot(liveSnapshot);
         }
-        if (typeof EventSource === "undefined") {
-          return;
-        }
-        events = new EventSource("/api/events");
-        events.addEventListener("snapshot", (messageEvent) => {
-          if (!closed) {
-            setSnapshot(JSON.parse((messageEvent as MessageEvent).data) as ProjectorSnapshot);
-          }
-        });
       } catch {
-        // Demo mode runs on the deterministic snapshot.
+        // Transient (e.g. server restarting); the reconnect loop will retry.
       }
     }
 
-    void connect();
+    function openStream() {
+      if (closed || typeof EventSource === "undefined") {
+        return;
+      }
+      const source = new EventSource("/api/events");
+      events = source;
+      source.addEventListener("open", () => {
+        backoffMs = 1_000; // healthy connection — reset backoff
+        void syncState(); // resync current state immediately on (re)connect
+      });
+      source.addEventListener("snapshot", (messageEvent) => {
+        if (closed) {
+          return;
+        }
+        try {
+          setSnapshot(JSON.parse((messageEvent as MessageEvent).data) as ProjectorSnapshot);
+        } catch {
+          // Ignore a malformed frame; the next push or a resync recovers.
+        }
+      });
+      source.addEventListener("error", () => {
+        // The stream dropped (server restart / network blip). Tear it down and
+        // reconnect with capped exponential backoff so the tab self-heals instead
+        // of silently going stale — the root cause of "the bubble stopped showing".
+        source.close();
+        if (closed) {
+          return;
+        }
+        reconnectTimer = setTimeout(openStream, backoffMs);
+        backoffMs = Math.min(backoffMs * 2, 15_000);
+      });
+    }
+
+    // Re-focusing the tab may have missed pushes while backgrounded/disconnected.
+    const onVisible = () => {
+      if (document.visibilityState === "visible") {
+        void syncState();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisible);
+
+    void syncState();
+    openStream();
+
     return () => {
       closed = true;
       events?.close();
+      if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+      }
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, []);
 
