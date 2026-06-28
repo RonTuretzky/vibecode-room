@@ -546,9 +546,24 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     // DELIVERED (awaiting-acceptance) suggestion — the common case, since a fired
     // suggestion leaves the engine queue and sits in delivery awaiting accept.
     const queued = this.pendingSuggestion();
-    const suggestion = queued?.suggestion ?? this.acceptanceController.currentPending();
+    let suggestion = queued?.suggestion ?? this.acceptanceController.currentPending();
+    // The visible bubble is rendered from #lastSuggestionDecision, which OUTLIVES
+    // the acceptance pending (the pending expires after the accept window, but the
+    // bubble stays on screen). If a bubble is showing but the pending already
+    // expired/cleared, accept the DISPLAYED suggestion so a visible bubble is
+    // ALWAYS clickable — otherwise the click silently no-ops ("can't click it").
     if (suggestion === null) {
-      // Nothing delivered/pending — the click is a no-op; return the live snapshot.
+      const last = this.#lastSuggestionDecision;
+      if (last?.kind === "fired") {
+        suggestion = last.suggestion;
+      } else if (last?.kind === "queued") {
+        suggestion = last.queued.suggestion;
+      } else if (last?.kind === "expired") {
+        suggestion = last.suggestion.suggestion;
+      }
+    }
+    if (suggestion === null) {
+      // Nothing on screen to accept — the click is a no-op; return the live snapshot.
       return this.#snapshot;
     }
     this.recordExternalTrace({
@@ -564,6 +579,9 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       // re-delivered or re-expired by the idle-cue driver.
       this.suggestionEngine.clearPending();
       if (spawn.accepted) {
+        // Clear the on-screen bubble — the idea became a process. Otherwise the
+        // built idea's bubble lingers (and would block fresh ideas from showing).
+        this.#lastSuggestionDecision = null;
         await this.spawnAck(spawn, correlationId);
         this.subscribeRunEvents(spawn.process.upid, spawn.process.runId);
       }
