@@ -10,6 +10,11 @@ const DEFAULT_TIMEOUT_MS = 12_000;
 // At most one real model call per interval; intervening observations return a
 // throttled pass. Keeps a chatty room from spawning a claude process per final.
 const DEFAULT_MIN_INTERVAL_MS = 6_000;
+const envNumber = (name: string, fallback: number): number => {
+  const raw = typeof process !== "undefined" ? process.env?.[name] : undefined;
+  const n = raw === undefined ? NaN : Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+};
 
 // Injectable runner so tests never shell out. Returns the model's raw text reply
 // (the inner answer, with the CLI envelope already unwrapped).
@@ -18,8 +23,13 @@ export type ClaudeCliRunner = (prompt: string, opts: { model: string; timeoutMs:
 // The decider keeps a rolling window of recent speech so it judges the IDEA as it
 // forms across fragmented ASR finals — not each isolated fragment (which is never
 // a complete idea on its own). Bounded by age and word count.
-const DEFAULT_WINDOW_MS = 60_000;
-const DEFAULT_WINDOW_WORDS = 120;
+// The rolling context window must be long enough to span a meandering, real
+// conversation: an idea ("a crypto laundromat app") and the details that follow
+// it (revenue share, dividends, voting) can be a few minutes apart. A 60s window
+// drops the framing before the discussion finishes, so a sustained idea never
+// fires. Default 4 minutes / 400 words; env-tunable.
+const DEFAULT_WINDOW_MS = envNumber("PANOP_DECIDER_WINDOW_SECONDS", 240) * 1_000;
+const DEFAULT_WINDOW_WORDS = envNumber("PANOP_DECIDER_WINDOW_WORDS", 400);
 
 export interface HostClaudeDecisionLLMOptions {
   policy?: string;
