@@ -48,6 +48,23 @@ app.post("/api/suggestion/accept", async (context) => {
   const snapshot = await runtime.acceptPendingSuggestion();
   return context.json(snapshot);
 });
+// AUTO-BUILD toggle (no click required). Body `{ on: boolean }` sets it
+// explicitly; absent body flips the current state. Returns the fresh snapshot.
+app.post("/api/auto-accept", async (context) => {
+  if (isOfflineDemoRequest(context.req.header("referer"))) {
+    return context.json(runtime.snapshot());
+  }
+  let on = !runtime.autoAccept();
+  try {
+    const body = (await context.req.json()) as { on?: unknown };
+    if (typeof body?.on === "boolean") {
+      on = body.on;
+    }
+  } catch {
+    // no/!invalid body -> toggle current state
+  }
+  return context.json(runtime.setAutoAccept(on));
+});
 // CLICK A PROJECT -> STEER IT. Set the steering target so subsequent FINAL
 // transcript lines route to that process's agent loop. Returns the snapshot.
 app.post("/api/process/:upid/select", (context) => {

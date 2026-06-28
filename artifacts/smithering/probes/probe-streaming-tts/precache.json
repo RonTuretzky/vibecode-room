@@ -1,31 +1,31 @@
 {
-  "providerId": "openai",
+  "providerId": "elevenlabs",
   "phraseCount": 5,
   "playback": [
     {
       "phrase": "Ready",
-      "firstByteMs": 0.001750000003085006,
-      "bytes": 19
+      "firstByteMs": 0.00883300000714371,
+      "bytes": 23
     },
     {
       "phrase": "Muted",
-      "firstByteMs": 0.0002500000045984052,
-      "bytes": 19
+      "firstByteMs": 0.000375000003259629,
+      "bytes": 23
     },
     {
       "phrase": "Unmuted",
-      "firstByteMs": 0.00008299999899463728,
-      "bytes": 21
+      "firstByteMs": 0.0002919999969890341,
+      "bytes": 25
     },
     {
       "phrase": "Working",
-      "firstByteMs": 0.0000830000062705949,
-      "bytes": 21
+      "firstByteMs": 0.0004169999956502579,
+      "bytes": 25
     },
     {
       "phrase": "Halted",
-      "firstByteMs": 0.00008299999899463728,
-      "bytes": 20
+      "firstByteMs": 0.0002500000045984052,
+      "bytes": 24
     }
   ],
   "synthetic": false

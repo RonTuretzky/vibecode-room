@@ -95,6 +95,42 @@ describe("click-control e2e — click idea to build, click project to steer", ()
     expect(runtime.pendingSuggestion()).toBeNull();
   });
 
+  test("AUTO-BUILD on: a fired idea builds itself with no click", async () => {
+    // A low interrupt threshold makes the buildable utterance FIRE (not queue), and
+    // PANOP_AUTO_ACCEPT=1 boots with the toggle on — so driving the mic spawns a
+    // build with no acceptPendingSuggestion() call.
+    await writeReplay([final("let's build a status board to track the migration dry run", "utt-auto")]);
+    runtime = await createProjectorRuntime(
+      { ...fireEnv(replayPath), PANOP_AUTO_ACCEPT: "1" },
+      { buildsRoot, builderAgent: noopBuilder },
+    );
+    expect(runtime.autoAccept()).toBe(true);
+
+    const upidsBefore = new Set(runtime.snapshot().processes.map((process) => process.upid));
+    await drive(runtime);
+    // Auto-accept runs fire-and-forget in the fire path; poll until the build lands.
+    const spawned = await waitForNewProcess(runtime, upidsBefore);
+    expect(spawned).toBeDefined();
+    if (spawned === undefined) return;
+    await runtime.ideaBuilds.settle(spawned.upid);
+    expect(runtime.snapshot().processes.find((p) => p.upid === spawned.upid)?.buildStatus).toBe("ready");
+  });
+
+  test("AUTO-BUILD toggle: off then setAutoAccept(true) makes the next fired idea build itself", async () => {
+    await writeReplay([final("let's build a status board to track the migration dry run", "utt-toggle")]);
+    runtime = await createProjectorRuntime(fireEnv(replayPath), { buildsRoot, builderAgent: noopBuilder });
+    expect(runtime.autoAccept()).toBe(false);
+
+    const snap = runtime.setAutoAccept(true);
+    expect(snap.autoAccept).toBe(true);
+    expect(runtime.autoAccept()).toBe(true);
+
+    const upidsBefore = new Set(runtime.snapshot().processes.map((process) => process.upid));
+    await drive(runtime);
+    const spawned = await waitForNewProcess(runtime, upidsBefore);
+    expect(spawned).toBeDefined();
+  });
+
   test("selecting a process routes the next FINAL transcript to its steer, not a new suggestion", async () => {
     // Phase 1: queue + accept a suggestion so a live process exists to steer.
     await writeReplay([final("let's build a status board to track the migration dry run", "utt-build")]);
@@ -180,6 +216,33 @@ function queueEnv(replayPath: string): Record<string, string> {
     PANOP_SUGGEST_INTERRUPT_RECENCY_WEIGHT: "1",
     PANOP_SUGGEST_INTERRUPT_PENDING_STEERING_WEIGHT: "0",
   };
+}
+
+// Env that lets a single short buildable utterance FIRE immediately (so the
+// auto-accept fire-path hook runs): low word floor + a saturated low-interrupt
+// threshold so the engine never holds it back as a queued pending suggestion.
+function fireEnv(replayPath: string): Record<string, string> {
+  return {
+    PANOP_INITIAL_MUTED: "0",
+    PANOP_ASR_PROVIDER: "replay",
+    PANOP_MIC_REPLAY_PATH: replayPath,
+    PANOP_SUGGEST_WORD_FLOOR: "3",
+    PANOP_SUGGEST_INTERRUPT_LOW_THRESHOLD: "9999",
+  };
+}
+
+// Poll the snapshot until a process not in `before` appears (auto-accept spawns
+// fire-and-forget), or give up after ~2s.
+async function waitForNewProcess(
+  runtime: ProjectorRuntime,
+  before: Set<string>,
+): Promise<{ upid: string } | undefined> {
+  for (let i = 0; i < 100; i++) {
+    const found = runtime.snapshot().processes.find((process) => !before.has(process.upid));
+    if (found !== undefined) return found;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  return undefined;
 }
 
 async function writeReplay(observations: TranscriptObservation[]): Promise<void> {

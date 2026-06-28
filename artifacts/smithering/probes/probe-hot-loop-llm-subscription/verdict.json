@@ -7,7 +7,7 @@
     "command": "claude --print",
     "status": "passed",
     "subscriptionRouted": true,
-    "latencyMs": 9731.805375,
+    "latencyMs": 7701.012167000004,
     "decisions": [
       {
         "id": "repeat-1",
@@ -18,21 +18,21 @@
           "instruction": "status"
         },
         "confidence": 0.95,
-        "reason": "Status query to named callsign Daybreak"
+        "reason": "Status query addressed to named callsign Daybreak"
       },
       {
         "id": "pass-1",
         "decision": "PASS",
         "tool": "observe.pass",
         "arguments": {},
-        "confidence": 0.9,
-        "reason": "Status update about existing work"
+        "confidence": 0.95,
+        "reason": "Status update about existing work in progress"
       }
     ],
     "invocations": [
       {
         "id": "same-input-1",
-        "latencyMs": 4386.2124170000025,
+        "latencyMs": 6689.248124999998,
         "decisions": [
           {
             "id": "repeat-1",
@@ -43,22 +43,22 @@
               "instruction": "status"
             },
             "confidence": 0.95,
-            "reason": "Status query to named callsign Daybreak"
+            "reason": "Status query addressed to named callsign Daybreak"
           },
           {
             "id": "pass-1",
             "decision": "PASS",
             "tool": "observe.pass",
             "arguments": {},
-            "confidence": 0.9,
-            "reason": "Status update about existing work"
+            "confidence": 0.95,
+            "reason": "Status update about existing work in progress"
           }
         ],
-        "stdoutPreview": "```json\n{\"decisions\":[{\"id\":\"repeat-1\",\"decision\":\"ACT\",\"tool\":\"panopticon.steer\",\"arguments\":{\"callsign\":\"Daybreak\",\"instruction\":\"status\"},\"confidence\":0.95,\"reason\":\"Status query to named callsign Daybreak\"},{\"id\":\"pass-1\",\"decision\":\"PASS\",\"tool\":\"observe.pass\",\"arguments\":{},\"confidence\":0.9,\"reason\":\"Status update about existing work\"}]}\n```"
+        "stdoutPreview": "```json\n{\"decisions\":[{\"id\":\"repeat-1\",\"decision\":\"ACT\",\"tool\":\"panopticon.steer\",\"arguments\":{\"callsign\":\"Daybreak\",\"instruction\":\"status\"},\"confidence\":0.95,\"reason\":\"Status query addressed to named callsign Daybreak\"},{\"id\":\"pass-1\",\"decision\":\"PASS\",\"tool\":\"observe.pass\",\"arguments\":{},\"confidence\":0.95,\"reason\":\"Status update about existing work in progress\"}]}\n```"
       },
       {
         "id": "same-input-2",
-        "latencyMs": 9731.805375,
+        "latencyMs": 7701.012167000004,
         "decisions": [
           {
             "id": "repeat-1",
@@ -69,21 +69,21 @@
               "instruction": "status"
             },
             "confidence": 0.95,
-            "reason": "status query to named callsign"
+            "reason": "Status query addressed to named callsign Daybreak"
           },
           {
             "id": "pass-1",
             "decision": "PASS",
             "tool": "observe.pass",
             "arguments": {},
-            "confidence": 0.92,
-            "reason": "status update about existing work"
+            "confidence": 0.95,
+            "reason": "Status update about existing work, not a new command"
           }
         ],
-        "stdoutPreview": "```json\n{\"decisions\":[{\"id\":\"repeat-1\",\"decision\":\"ACT\",\"tool\":\"panopticon.steer\",\"arguments\":{\"callsign\":\"Daybreak\",\"instruction\":\"status\"},\"confidence\":0.95,\"reason\":\"status query to named callsign\"},{\"id\":\"pass-1\",\"decision\":\"PASS\",\"tool\":\"observe.pass\",\"arguments\":{},\"confidence\":0.92,\"reason\":\"status update about existing work\"}]}\n```"
+        "stdoutPreview": "```json\n{\"decisions\":[{\"id\":\"repeat-1\",\"decision\":\"ACT\",\"tool\":\"panopticon.steer\",\"arguments\":{\"callsign\":\"Daybreak\",\"instruction\":\"status\"},\"confidence\":0.95,\"reason\":\"Status query addressed to named callsign Daybreak\"},{\"id\":\"pass-1\",\"decision\":\"PASS\",\"tool\":\"observe.pass\",\"arguments\":{},\"confidence\":0.95,\"reason\":\"Status update about existing work, not a new command\"}]}\n```"
       }
     ],
-    "stdoutPreview": "```json\n{\"decisions\":[{\"id\":\"repeat-1\",\"decision\":\"ACT\",\"tool\":\"panopticon.steer\",\"arguments\":{\"callsign\":\"Daybreak\",\"instruction\":\"status\"},\"confidence\":0.95,\"reason\":\"Status query to named callsign Daybreak\"},{\"id\":\"pass-1\",\"decision\":\"PASS\",\"tool\":\"observe.pass\",\"arguments\":{},\"confidence\":0.9,\"reason\":\"Status update about existing work\"}]}\n```"
+    "stdoutPreview": "```json\n{\"decisions\":[{\"id\":\"repeat-1\",\"decision\":\"ACT\",\"tool\":\"panopticon.steer\",\"arguments\":{\"callsign\":\"Daybreak\",\"instruction\":\"status\"},\"confidence\":0.95,\"reason\":\"Status query addressed to named callsign Daybreak\"},{\"id\":\"pass-1\",\"decision\":\"PASS\",\"tool\":\"observe.pass\",\"arguments\":{},\"confidence\":0.95,\"reason\":\"Status update about existing work in progress\"}]}\n```"
   },
   "attempts": [
     {
@@ -91,18 +91,18 @@
       "command": "codex",
       "status": "failed",
       "subscriptionRouted": true,
-      "latencyMs": 3576.950208000002,
+      "latencyMs": 3303.602332999999,
       "decisions": [],
       "invocations": [],
       "stdoutPreview": "",
-      "error": "Reading additional input from stdin...\nOpenAI Codex v0.138.0\n--------\nworkdir: /Users/wk/.smither-worktrees/ISSUE-0028\nmodel: gpt-5.5\nprovider: openai\napproval: never\nsandbox: read-only\nreasoning effort: none\nreasoning summaries: none\nsession id: 019f0381-ea65-7850-992d-b6d6eb78bebe\n--------\nuser\nYou are the Panopticon hot-loop decision classifier.\n\nReturn only valid JSON with this exact shape:\n{\"decisions\":[{\"id\":\"repeat-1\",\"decision\":\"PASS|ACT\",\"tool\":\"observe.pass|panopticon.suggest|panoptico"
+      "error": "Reading additional input from stdin...\nOpenAI Codex v0.138.0\n--------\nworkdir: /Users/wk/panopticon-live-mic\nmodel: gpt-5.5\nprovider: openai\napproval: never\nsandbox: read-only\nreasoning effort: none\nreasoning summaries: none\nsession id: 019f0fcb-b4cc-7711-88cd-3a5240c7262e\n--------\nuser\nYou are the Panopticon hot-loop decision classifier.\n\nReturn only valid JSON with this exact shape:\n{\"decisions\":[{\"id\":\"repeat-1\",\"decision\":\"PASS|ACT\",\"tool\":\"observe.pass|panopticon.suggest|panopticon.steer\",\""
     },
     {
       "provider": "anthropic-claude",
       "command": "claude --print",
       "status": "passed",
       "subscriptionRouted": true,
-      "latencyMs": 9731.805375,
+      "latencyMs": 7701.012167000004,
       "decisions": [
         {
           "id": "repeat-1",
@@ -113,21 +113,21 @@
             "instruction": "status"
           },
           "confidence": 0.95,
-          "reason": "Status query to named callsign Daybreak"
+          "reason": "Status query addressed to named callsign Daybreak"
         },
         {
           "id": "pass-1",
           "decision": "PASS",
           "tool": "observe.pass",
           "arguments": {},
-          "confidence": 0.9,
-          "reason": "Status update about existing work"
+          "confidence": 0.95,
+          "reason": "Status update about existing work in progress"
         }
       ],
       "invocations": [
         {
           "id": "same-input-1",
-          "latencyMs": 4386.2124170000025,
+          "latencyMs": 6689.248124999998,
           "decisions": [
             {
               "id": "repeat-1",
@@ -138,22 +138,22 @@
                 "instruction": "status"
               },
               "confidence": 0.95,
-              "reason": "Status query to named callsign Daybreak"
+              "reason": "Status query addressed to named callsign Daybreak"
             },
             {
               "id": "pass-1",
               "decision": "PASS",
               "tool": "observe.pass",
               "arguments": {},
-              "confidence": 0.9,
-              "reason": "Status update about existing work"
+              "confidence": 0.95,
+              "reason": "Status update about existing work in progress"
             }
           ],
-          "stdoutPreview": "```json\n{\"decisions\":[{\"id\":\"repeat-1\",\"decision\":\"ACT\",\"tool\":\"panopticon.steer\",\"arguments\":{\"callsign\":\"Daybreak\",\"instruction\":\"status\"},\"confidence\":0.95,\"reason\":\"Status query to named callsign Daybreak\"},{\"id\":\"pass-1\",\"decision\":\"PASS\",\"tool\":\"observe.pass\",\"arguments\":{},\"confidence\":0.9,\"reason\":\"Status update about existing work\"}]}\n```"
+          "stdoutPreview": "```json\n{\"decisions\":[{\"id\":\"repeat-1\",\"decision\":\"ACT\",\"tool\":\"panopticon.steer\",\"arguments\":{\"callsign\":\"Daybreak\",\"instruction\":\"status\"},\"confidence\":0.95,\"reason\":\"Status query addressed to named callsign Daybreak\"},{\"id\":\"pass-1\",\"decision\":\"PASS\",\"tool\":\"observe.pass\",\"arguments\":{},\"confidence\":0.95,\"reason\":\"Status update about existing work in progress\"}]}\n```"
         },
         {
           "id": "same-input-2",
-          "latencyMs": 9731.805375,
+          "latencyMs": 7701.012167000004,
           "decisions": [
             {
               "id": "repeat-1",
@@ -164,21 +164,21 @@
                 "instruction": "status"
               },
               "confidence": 0.95,
-              "reason": "status query to named callsign"
+              "reason": "Status query addressed to named callsign Daybreak"
             },
             {
               "id": "pass-1",
               "decision": "PASS",
               "tool": "observe.pass",
               "arguments": {},
-              "confidence": 0.92,
-              "reason": "status update about existing work"
+              "confidence": 0.95,
+              "reason": "Status update about existing work, not a new command"
             }
           ],
-          "stdoutPreview": "```json\n{\"decisions\":[{\"id\":\"repeat-1\",\"decision\":\"ACT\",\"tool\":\"panopticon.steer\",\"arguments\":{\"callsign\":\"Daybreak\",\"instruction\":\"status\"},\"confidence\":0.95,\"reason\":\"status query to named callsign\"},{\"id\":\"pass-1\",\"decision\":\"PASS\",\"tool\":\"observe.pass\",\"arguments\":{},\"confidence\":0.92,\"reason\":\"status update about existing work\"}]}\n```"
+          "stdoutPreview": "```json\n{\"decisions\":[{\"id\":\"repeat-1\",\"decision\":\"ACT\",\"tool\":\"panopticon.steer\",\"arguments\":{\"callsign\":\"Daybreak\",\"instruction\":\"status\"},\"confidence\":0.95,\"reason\":\"Status query addressed to named callsign Daybreak\"},{\"id\":\"pass-1\",\"decision\":\"PASS\",\"tool\":\"observe.pass\",\"arguments\":{},\"confidence\":0.95,\"reason\":\"Status update about existing work, not a new command\"}]}\n```"
         }
       ],
-      "stdoutPreview": "```json\n{\"decisions\":[{\"id\":\"repeat-1\",\"decision\":\"ACT\",\"tool\":\"panopticon.steer\",\"arguments\":{\"callsign\":\"Daybreak\",\"instruction\":\"status\"},\"confidence\":0.95,\"reason\":\"Status query to named callsign Daybreak\"},{\"id\":\"pass-1\",\"decision\":\"PASS\",\"tool\":\"observe.pass\",\"arguments\":{},\"confidence\":0.9,\"reason\":\"Status update about existing work\"}]}\n```"
+      "stdoutPreview": "```json\n{\"decisions\":[{\"id\":\"repeat-1\",\"decision\":\"ACT\",\"tool\":\"panopticon.steer\",\"arguments\":{\"callsign\":\"Daybreak\",\"instruction\":\"status\"},\"confidence\":0.95,\"reason\":\"Status query addressed to named callsign Daybreak\"},{\"id\":\"pass-1\",\"decision\":\"PASS\",\"tool\":\"observe.pass\",\"arguments\":{},\"confidence\":0.95,\"reason\":\"Status update about existing work in progress\"}]}\n```"
     }
   ],
   "checks": {
@@ -192,7 +192,7 @@
   },
   "metrics": {
     "budgetMs": 100,
-    "p50LatencyMs": 9731.805375,
+    "p50LatencyMs": 7701.012167000004,
     "costBudgetPerHourUsd": 0.15,
     "estimatedCostPerHourUsd": null,
     "costBasis": "not-measured-host-subscription-no-metering"

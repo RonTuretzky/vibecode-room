@@ -429,6 +429,23 @@ button {
   cursor: wait;
 }
 
+.ctl-button.auto-build {
+  color: #cfeede;
+  border-color: rgba(48, 209, 138, 0.45);
+  background: rgba(48, 209, 138, 0.1);
+}
+
+.ctl-button.auto-build.on {
+  color: #04130c;
+  background: var(--c-active, #30d18a);
+  border-color: rgba(48, 209, 138, 0.9);
+  box-shadow: 0 0 20px rgba(48, 209, 138, 0.5);
+}
+
+.ctl-button.auto-build:hover {
+  background: rgba(48, 209, 138, 0.22);
+}
+
 .ctl-button.emergency {
   color: #ffd9d6;
   border-color: rgba(255, 59, 48, 0.55);

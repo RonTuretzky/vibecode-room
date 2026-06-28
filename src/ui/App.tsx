@@ -142,6 +142,27 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
     }
   }, [liveMode, selectBubble]);
 
+  // AUTO-BUILD toggle. Flips the server-side auto-accept flag so every fired idea
+  // builds itself with no click. The returned snapshot carries the new state.
+  const autoAccept = snapshot.autoAccept ?? false;
+  const toggleAutoAccept = useCallback(async () => {
+    if (!liveMode) {
+      return;
+    }
+    try {
+      const response = await fetch("/api/auto-accept", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ on: !snapshotRef.current.autoAccept }),
+      });
+      if (response.ok && response.headers.get("content-type")?.includes("application/json")) {
+        setSnapshot((await response.json()) as ProjectorSnapshot);
+      }
+    } catch {
+      // Non-authoritative projector: a failed toggle must never block the UI.
+    }
+  }, [liveMode]);
+
   // CLICK A PROJECT -> STEER IT. In live mode, clicking a process bubble/panel sets
   // it as the steering target (so subsequent transcript routes to it); clicking the
   // current target again clears steering. In offline demo it falls back to opening
@@ -474,6 +495,17 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
             bytesReceived={snapshot.mic?.bytesReceived ?? 0}
             onToggle={() => void toggleMic()}
           />
+          <button
+            type="button"
+            className={`ctl-button auto-build${autoAccept ? " on" : ""}`}
+            data-testid="auto-build-button"
+            data-state={autoAccept ? "on" : "off"}
+            aria-pressed={autoAccept}
+            onClick={() => void toggleAutoAccept()}
+            title="When on, every detected idea builds itself — no click required."
+          >
+            {autoAccept ? "Auto-Build: ON" : "Auto-Build: OFF"}
+          </button>
           <button
             type="button"
             className="ctl-button emergency"

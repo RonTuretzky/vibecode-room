@@ -6,6 +6,11 @@ node_modules/
 panopticon.db
 dist/
 
+# Scaffolded accept->build->preview artifacts (idea-builder). Each accepted idea
+# writes a self-contained prototype under builds/<upid>/ and serves it live; the
+# directory is runtime output, not source.
+builds/
+
 # The committed Cue build fixture (ISSUE-0025 / GAP-006) is an already-"built"
 # stand-in: its dist/ entrypoints ARE the artifact under test, so they must
 # travel with the repo even though dist/ is ignored above.

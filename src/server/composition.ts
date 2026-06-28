@@ -116,6 +116,10 @@ export interface ProjectorRuntime {
   // click-to-build behavior.
   clearSteeringTarget(correlationId?: string): ProjectorSnapshot;
   steeringTarget(): string | null;
+  // AUTO-BUILD toggle (no click required): when on, every fired suggestion is
+  // accepted+built the instant it pops.
+  setAutoAccept(on: boolean, correlationId?: string): ProjectorSnapshot;
+  autoAccept(): boolean;
 }
 
 interface SeededProcessView {
@@ -248,6 +252,12 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   // instead of seeding a fresh ambient suggestion. Set/cleared by the projector
   // click endpoints; cleared automatically if the target stops being live.
   #steeringUpid: string | null = null;
+  // AUTO-BUILD toggle. When true, every fired suggestion is accepted+built the
+  // instant it pops — no click required. Operator flips it from the projector
+  // (POST /api/auto-accept) or boots with PANOP_AUTO_ACCEPT=1. A re-entrancy guard
+  // (#autoAcceptInFlight) keeps a slow build from stacking a second auto-accept.
+  #autoAccept = false;
+  #autoAcceptInFlight = false;
 
   constructor(
     readonly sessionId: string,
@@ -382,6 +392,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     const noAnswerTimeoutMs = Number.isFinite(acceptWindowSeconds) && acceptWindowSeconds > 0
       ? Math.round(acceptWindowSeconds * 1000)
       : undefined;
+    this.#autoAccept = env.PANOP_AUTO_ACCEPT === "1" || env.PANOP_AUTO_ACCEPT === "true";
     const pending = new PendingSuggestionOwner({ clock, noAnswerTimeoutMs });
     const acceptanceSeam = createProcessRegistryAcceptanceSeam(this.registry);
     const spawner = new AcceptanceSpawner({
@@ -596,6 +607,26 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     }
     this.publish();
     return this.#snapshot;
+  }
+
+  // AUTO-BUILD toggle. Flip on => every fired idea is built without a click; flip
+  // off => back to click-to-build. Returns the fresh snapshot so the UI reflects
+  // the new state immediately.
+  setAutoAccept(on: boolean, correlationId = `corr-auto-accept-toggle-${crypto.randomUUID()}`): ProjectorSnapshot {
+    this.#autoAccept = on;
+    this.recordExternalTrace({
+      event: "suggestion.autoaccept.set",
+      level: "info",
+      sessionId: this.sessionId,
+      correlationId,
+      meta: { on },
+    });
+    this.publish();
+    return this.#snapshot;
+  }
+
+  autoAccept(): boolean {
+    return this.#autoAccept;
   }
 
   // CLICK A PROJECT -> STEER IT. Set the steering target UPID so subsequent live
@@ -924,6 +955,15 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       // TTS summary of the pitch + lead question, routed through this.tts (GAP-005).
       if (decision.kind === "fired") {
         await this.deliverSuggestionAudio(decision.suggestion, `${correlationId}-${observation.utteranceId}`);
+        // AUTO-BUILD: when the toggle is on, accept+build the moment it fires — no
+        // click. The guard drops overlapping fires while a build is spinning up so
+        // a chatty room doesn't stack spawns; the next fired idea will catch it.
+        if (this.#autoAccept && !this.#autoAcceptInFlight) {
+          this.#autoAcceptInFlight = true;
+          void this.acceptPendingSuggestion(`corr-auto-accept-${observation.utteranceId}`).finally(() => {
+            this.#autoAcceptInFlight = false;
+          });
+        }
       }
     } catch (error) {
       this.recordExternalTrace({
@@ -1046,6 +1086,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       updatedAt: new Date().toISOString(),
       mic: { mode: this.micMode, active: this.#micActive, bytesReceived: this.#micBytes },
       steeringUpid: this.#steeringUpid,
+      autoAccept: this.#autoAccept,
     };
   }
 

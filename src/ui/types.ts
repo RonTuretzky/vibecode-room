@@ -73,6 +73,9 @@ export interface ProjectorSnapshot {
   // instead of seeding a new ambient suggestion. Surfaced so the projector can
   // highlight the steered bubble and show a "steering ->" indicator.
   steeringUpid?: string | null;
+  // AUTO-BUILD: when true, every fired idea is accepted+built without a click. The
+  // projector shows the toggle as ON.
+  autoAccept?: boolean;
   // Optional live-microphone status. Absent in the static demo fixtures; the
   // server runtime sets it when a browser mic session is wired through
   // /api/mic. `mode` is the ASR backend ("deepgram" = real transcription,

@@ -131,6 +131,7 @@ export const emptyProjectorSnapshot: ProjectorSnapshot = {
   trace: [],
   updatedAt: new Date(0).toISOString(),
   steeringUpid: null,
+  autoAccept: false,
 };
 
 export function withUnmuted(snapshot: ProjectorSnapshot): ProjectorSnapshot {
