@@ -25,12 +25,23 @@ export interface IdeaPreview {
   stop(): Promise<void>;
 }
 
+// A real coding-agent invocation: given the accepted idea's pitch, the build
+// directory (already holding the deterministic scaffold + live server), and the
+// UPID, build the actual app by writing files directly into `dir` (index.html as
+// the entry). Resolves on success; rejects/throws on failure so the caller can
+// degrade. Injectable so tests pass a synthetic builder with no real `claude`
+// spawn; the production default spawns the host `claude` CLI.
+export type BuilderAgent = (pitch: string, dir: string, upid: string) => Promise<void>;
+
 export interface BuildIdeaPreviewOptions {
   // Root the per-UPID build directories live under. Defaults to <cwd>/builds.
   // Tests point this at a temp dir so the repo tree stays clean.
   buildsRoot?: string;
   // Hostname to bind the static server to. Always loopback in practice.
   host?: string;
+  // The real coding agent that turns the scaffold into a working app. Defaults
+  // to the host `claude` CLI builder. Tests inject a synthetic builder.
+  builderAgent?: BuilderAgent;
 }
 
 const DEFAULT_HOST = "127.0.0.1";
@@ -133,9 +144,83 @@ function contentTypeFor(file: string): string {
   return "application/octet-stream";
 }
 
+const DEFAULT_BUILDER_TIMEOUT_MS = 180_000;
+
+// Build a prompt instructing the host `claude` CLI to turn the pitch into a real,
+// self-contained static web app written directly into the cwd.
+function builderPrompt(pitch: string): string {
+  const idea = pitch.trim().length > 0 ? pitch.trim() : "A small useful web tool.";
+  return [
+    "You are a coding agent building a real, working web app from a one-line idea.",
+    "",
+    `IDEA: ${idea}`,
+    "",
+    "Build a SELF-CONTAINED static web app that implements this idea:",
+    "- Plain HTML/CSS/JavaScript only. NO build step, NO frameworks requiring compilation, NO package install.",
+    "- The app must run by simply serving this directory over HTTP — opening index.html must work.",
+    "- Write index.html as the entry file. Prefer inlining CSS and JS inside index.html to avoid MIME issues.",
+    "- Make it actually functional and interactive, not a description of the idea — implement the real behavior.",
+    "- Write the files directly into the current working directory. Overwrite any existing scaffold files.",
+    "",
+    "Do not ask questions. Build the app now.",
+  ].join("\n");
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+// Default production builder: spawn the host `claude` CLI in the build directory
+// so it edits files in place, turning the deterministic scaffold into a real app.
+// The JSON envelope is parsed only for logging; the agent's effect is on disk.
+export const defaultClaudeBuilderAgent: BuilderAgent = async (pitch, dir, _upid) => {
+  const bun = (globalThis as { Bun?: typeof import("bun") }).Bun;
+  if (bun === undefined || typeof bun.spawn !== "function") {
+    throw new Error("claude builder requires the Bun runtime");
+  }
+  const proc = bun.spawn(
+    [
+      "claude",
+      "-p",
+      builderPrompt(pitch),
+      "--model",
+      "sonnet",
+      "--output-format",
+      "json",
+      "--dangerously-skip-permissions",
+    ],
+    { cwd: dir, stdout: "pipe", stderr: "ignore", stdin: "ignore" },
+  );
+  const timer = setTimeout(() => proc.kill(), DEFAULT_BUILDER_TIMEOUT_MS);
+  try {
+    const out = await new Response(proc.stdout).text();
+    const exit = await proc.exited;
+    if (exit !== 0) {
+      throw new Error(`claude builder exited ${exit}`);
+    }
+    try {
+      const envelope: unknown = JSON.parse(out);
+      if (isRecord(envelope) && typeof envelope.result === "string") {
+        // Parsed for logging only — the agent already edited files in cwd.
+        void envelope.result;
+      }
+    } catch {
+      // Non-JSON stdout is fine; the agent's effect is the files it wrote.
+    }
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
 // Scaffold a fresh build directory + start a real preview server for one accepted
-// idea. The page content is a deterministic function of the pitch — same pitch,
-// same artifact — so no external LLM call is needed on the hot accept path.
+// idea, then run a real coding agent that rebuilds the directory into a working
+// app. The deterministic scaffold (index.html/css/js) is written FIRST so the
+// preview is reachable immediately while the agent runs; the static server reads
+// files from disk per-request, so once the agent overwrites index.html the live
+// URL serves the real app with no restart. The builder runs inside a try/catch
+// that DEGRADES (keeps the scaffold) on failure/timeout — this function never
+// throws from the builder path, so the build always resolves to a reachable
+// preview rather than a stuck 'building' or 'failed' state.
 export async function buildIdeaPreview(
   pitch: string,
   upid: string,
@@ -143,12 +228,15 @@ export async function buildIdeaPreview(
 ): Promise<IdeaPreview> {
   const root = options.buildsRoot ?? defaultBuildsRoot();
   const host = options.host ?? DEFAULT_HOST;
+  const builder = options.builderAgent ?? defaultClaudeBuilderAgent;
   const dir = join(root, safeSegment(upid));
 
   // Fresh directory: an accept always starts the artifact from scratch.
   await rm(dir, { recursive: true, force: true });
   await mkdir(dir, { recursive: true });
 
+  // Instant placeholder: write the deterministic scaffold and start the server
+  // BEFORE the real agent runs so the preview is never empty.
   const title = pitchTitle(pitch);
   await writeFile(join(dir, "index.html"), renderIndexHtml(title, pitch, upid), "utf8");
   await writeFile(join(dir, "styles.css"), renderStyles(), "utf8");
@@ -156,6 +244,14 @@ export async function buildIdeaPreview(
 
   const server = await serveDirectory(dir, host);
   const previewUrl = `http://${host}:${server.port}/`;
+
+  // Real build: run the coding agent to overwrite the scaffold with a working
+  // app. Degrade to the scaffold on any failure/timeout — never throw here.
+  try {
+    await builder(pitch, dir, upid);
+  } catch {
+    // Degraded path: keep the deterministic scaffold already on disk + served.
+  }
 
   return {
     upid,

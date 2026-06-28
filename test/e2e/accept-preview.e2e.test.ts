@@ -3,7 +3,12 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createProjectorRuntime, type ProjectorRuntime } from "../../src/server/composition";
+import type { BuilderAgent } from "../../src/server/idea-builder";
 import type { TranscriptObservation } from "../../src/types";
+
+// Inject a synthetic builder so NO real `claude` CLI is spawned: the no-op leaves
+// the deterministic scaffold in place, which the assertions expect.
+const noopBuilder: BuilderAgent = async () => undefined;
 
 // e2e: accepting a suggestion yields a real live preview. On the LIVE runtime
 // (createProjectorRuntime + replay ASR + heuristic decider, no network), a fired
@@ -39,6 +44,7 @@ describe("accept-preview e2e — say yes yields a live, reachable preview", () =
   test("accepting a suggestion surfaces a previewUrl and GET serves the page", async () => {
     runtime = await createProjectorRuntime(liveEnv(), {
       buildsRoot,
+      builderAgent: noopBuilder,
       replaySource: [
         final("let's build a status board to track the migration dry run", "utt-build"),
         final("yes", "utt-yes"),

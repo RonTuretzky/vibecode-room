@@ -3,7 +3,12 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createProjectorRuntime, type ProjectorRuntime } from "../../src/server/composition";
+import type { BuilderAgent } from "../../src/server/idea-builder";
 import type { TranscriptObservation } from "../../src/types";
+
+// Inject a synthetic builder so NO real `claude` CLI is spawned in e2e: the
+// no-op leaves the deterministic scaffold in place, which the assertions expect.
+const noopBuilder: BuilderAgent = async () => undefined;
 
 // e2e: CLICK-driven control on the LIVE runtime (no spoken "yes", no callsign).
 //
@@ -49,7 +54,7 @@ describe("click-control e2e — click idea to build, click project to steer", ()
 
   test("clicking the pending idea (acceptPendingSuggestion) yields a ready preview", async () => {
     await writeReplay([final("let's build a status board to track the migration dry run", "utt-build")]);
-    runtime = await createProjectorRuntime(queueEnv(replayPath), { buildsRoot });
+    runtime = await createProjectorRuntime(queueEnv(replayPath), { buildsRoot, builderAgent: noopBuilder });
 
     // A buildable utterance queues a pending suggestion (high interrupt cost keeps
     // it from auto-firing) — the popped idea bubble the operator can click.
@@ -81,7 +86,7 @@ describe("click-control e2e — click idea to build, click project to steer", ()
 
   test("accept with no pending suggestion is a no-op returning the current snapshot", async () => {
     await writeReplay([]);
-    runtime = await createProjectorRuntime(queueEnv(replayPath), { buildsRoot });
+    runtime = await createProjectorRuntime(queueEnv(replayPath), { buildsRoot, builderAgent: noopBuilder });
 
     const before = runtime.snapshot();
     const after = await runtime.acceptPendingSuggestion("corr-noop");
@@ -93,7 +98,7 @@ describe("click-control e2e — click idea to build, click project to steer", ()
   test("selecting a process routes the next FINAL transcript to its steer, not a new suggestion", async () => {
     // Phase 1: queue + accept a suggestion so a live process exists to steer.
     await writeReplay([final("let's build a status board to track the migration dry run", "utt-build")]);
-    runtime = await createProjectorRuntime(queueEnv(replayPath), { buildsRoot });
+    runtime = await createProjectorRuntime(queueEnv(replayPath), { buildsRoot, builderAgent: noopBuilder });
     await drive(runtime);
     expect(runtime.pendingSuggestion()).not.toBeNull();
 
@@ -136,7 +141,7 @@ describe("click-control e2e — click idea to build, click project to steer", ()
 
   test("clearing the steering target restores ambient suggestion behavior", async () => {
     await writeReplay([final("let's build a status board to track the migration dry run", "utt-build")]);
-    runtime = await createProjectorRuntime(queueEnv(replayPath), { buildsRoot });
+    runtime = await createProjectorRuntime(queueEnv(replayPath), { buildsRoot, builderAgent: noopBuilder });
     await drive(runtime);
     const upidsBefore = new Set(runtime.snapshot().processes.map((process) => process.upid));
     await runtime.acceptPendingSuggestion("corr-accept-clear");
