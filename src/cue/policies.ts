@@ -2,7 +2,7 @@ import type { CueCoreModule } from "./source";
 import { DEFAULT_CALLSIGN_POOL } from "../routing/callsigns";
 
 export const DEFAULT_TEXT_CUE_WORDS = [
-  "panop",
+  "viber",
   "build",
   DEFAULT_CALLSIGN_POOL[0],
   "yes",

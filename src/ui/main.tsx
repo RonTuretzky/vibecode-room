@@ -6,7 +6,7 @@ import "./styles.css";
 const root = document.getElementById("root");
 
 if (root === null) {
-  throw new Error("Missing #root element for Panopticon projector app.");
+  throw new Error("Missing #root element for Vibersyn projector app.");
 }
 
 createRoot(root).render(

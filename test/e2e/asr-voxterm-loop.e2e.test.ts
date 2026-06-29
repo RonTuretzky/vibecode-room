@@ -1,4 +1,4 @@
-// ISSUE-0016 e2e: with PANOP_ASR_PROVIDER=voxterm, the live runtime selects the
+// ISSUE-0016 e2e: with VIBERSYN_ASR_PROVIDER=voxterm, the live runtime selects the
 // VoxTerm backend through the providers ASR registry, and a fed segment drives a
 // transcript observation that is reflected on the published projector snapshot.
 //
@@ -22,21 +22,21 @@ describe("voxterm-selected live runtime drives a transcript to the snapshot (e2e
       fetchCalls += 1;
       throw new Error(`unexpected network fetch in the offline voxterm loop: ${String(args[0])}`);
     }) as unknown as typeof fetch;
-    // The registry resolves the backend off PANOP_ASR_PROVIDER / DEEPGRAM_API_KEY
+    // The registry resolves the backend off VIBERSYN_ASR_PROVIDER / DEEPGRAM_API_KEY
     // read from the runtime env, but isolate the test from any ambient settings.
-    priorAsrProvider = process.env.PANOP_ASR_PROVIDER;
+    priorAsrProvider = process.env.VIBERSYN_ASR_PROVIDER;
     priorDeepgramKey = process.env.DEEPGRAM_API_KEY;
-    delete process.env.PANOP_ASR_PROVIDER;
+    delete process.env.VIBERSYN_ASR_PROVIDER;
     delete process.env.DEEPGRAM_API_KEY;
   });
 
   afterEach(() => {
     globalThis.fetch = realFetch;
-    restoreEnv("PANOP_ASR_PROVIDER", priorAsrProvider);
+    restoreEnv("VIBERSYN_ASR_PROVIDER", priorAsrProvider);
     restoreEnv("DEEPGRAM_API_KEY", priorDeepgramKey);
   });
 
-  test("PANOP_ASR_PROVIDER=voxterm: a fed segment becomes a transcript observation on the snapshot", async () => {
+  test("VIBERSYN_ASR_PROVIDER=voxterm: a fed segment becomes a transcript observation on the snapshot", async () => {
     // A two-frame utterance: an interim revision then the committed final. Only the
     // committed text is a transcript observation that should surface on the snapshot.
     const segments: VoxTermSegment[] = [
@@ -57,6 +57,7 @@ describe("voxterm-selected live runtime drives a transcript to the snapshot (e2e
     // stop() awaits the background drain loop, so every fed segment has been folded
     // into the transcript by the time it resolves.
     await session.stop();
+    await runtime.detection.flush();
 
     // The committed final reached the runtime's transcript handling and is on the
     // published snapshot; the interim revision was cleared (not committed).
@@ -64,9 +65,9 @@ describe("voxterm-selected live runtime drives a transcript to the snapshot (e2e
     expect(transcript.some((line) => line.text === "let's build a dashboard tool today")).toBe(true);
     expect(transcript.some((line) => line.text === "let's build")).toBe(false);
 
-    // The committed utterance was scored by the live engine (a final observation
-    // reached driveSuggestionEngine), and the mic counted as active during stream.
-    expect(runtime.lastSuggestionDecision).not.toBeNull();
+    // The committed (buildable) utterance reached idea DETECTION and surfaced a
+    // grounded candidate, and the mic counted as active during stream.
+    expect(runtime.detection.primary()).not.toBeNull();
     expect(runtime.snapshot().mic?.active).toBe(false);
 
     // The whole loop ran offline: no network fetch.
@@ -77,13 +78,13 @@ describe("voxterm-selected live runtime drives a transcript to the snapshot (e2e
 function voxtermEnv(): Record<string, string> {
   return {
     // Start unmuted so the (mute-protected) voxterm mic actually streams.
-    PANOP_INITIAL_MUTED: "0",
-    PANOP_ASR_PROVIDER: "voxterm",
-    // Lower the REQ-3 floors so a single short utterance is eligible to be scored.
-    PANOP_SUGGEST_WORD_FLOOR: "3",
-    PANOP_SUGGEST_INTERRUPT_VELOCITY_WEIGHT: "0",
-    PANOP_SUGGEST_INTERRUPT_RECENCY_WEIGHT: "0",
-    PANOP_SUGGEST_INTERRUPT_PENDING_STEERING_WEIGHT: "0",
+    VIBERSYN_INITIAL_MUTED: "0",
+    VIBERSYN_ASR_PROVIDER: "voxterm",
+    // Deterministic idea detection: heuristic detector, eager scheduling, no tick.
+    VIBERSYN_IDEA_DETECTOR: "heuristic",
+    VIBERSYN_DETECT_MIN_NEW_TURNS: "1",
+    VIBERSYN_DETECT_MIN_INTERVAL_MS: "0",
+    VIBERSYN_DETECT_TICK_MS: "0",
   };
 }
 

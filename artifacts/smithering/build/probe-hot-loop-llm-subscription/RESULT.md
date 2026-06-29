@@ -6,7 +6,7 @@
 - The probe calls the host's logged-in CLI subscription routes only: `codex` and `claude --print`.
 - CLI invocations run with a sanitized allowlisted environment so raw provider credential variables are not inherited by the subscription transport.
 - Temperature-0 determinism is checked as decision identity across repeated same-input CLI invocations, not byte-identical full CLI output.
-- Live verdicts are refreshed by default; artifact-cache reuse is opt-in only through `PANOP_LLM_PROBE_USE_ARTIFACT_CACHE=1`.
+- Live verdicts are refreshed by default; artifact-cache reuse is opt-in only through `VIBERSYN_LLM_PROBE_USE_ARTIFACT_CACHE=1`.
 - Model output parsing is strict: invalid decisions or non-`MappedActionTool` tools fail before schema assertion.
 - Raw model key construction is rejected through the landed credential guard; no `SubscriptionCredentialProvider`, Cerebras base-URL fallback, or Haiku-specific credential path was added.
 - The ACT criteria include the §22 A2 amendment: a status/information query addressed to a named callsign must classify as ACT.
@@ -17,7 +17,7 @@
 `verdict.json` is red:
 
 - Codex and Claude subscription routes were reachable through the host CLIs and returned `MappedActionTool`-compatible decision schemas.
-- The repeated named callsign status query classified as `ACT` with `panopticon.steer`.
+- The repeated named callsign status query classified as `ACT` with `vibersyn.steer`.
 - Same-input repeated invocations produced identical tool decisions for record-replay purposes.
 - No subscription-routed candidate met the 100 ms p50 hot-loop budget. The latest measured best host subscription CLI p50 was 4770 ms.
 - The conflict is specifically the host subscription CLI transport round trip versus the 100 ms hot-loop budget; no raw-key API fallback was built.
@@ -42,7 +42,7 @@ This is surfaced as the binding PRD §6 conflict required by the ticket; no prod
 
 - `bun test poc/p-llm.test.ts poc/a-llm-sub.test.ts`
 - `bun test poc/p-llm.test.ts` (strict; expected to fail while the binding conflict is unresolved)
-- `PANOP_LLM_PROBE_ROUTE_RAW_KEY=1 bun test poc/a-llm-sub.test.ts`
+- `VIBERSYN_LLM_PROBE_ROUTE_RAW_KEY=1 bun test poc/a-llm-sub.test.ts`
 - `bunx tsc --noEmit --module ESNext --target ESNext --moduleResolution bundler --lib ESNext,DOM --types bun --strict --skipLibCheck --allowImportingTsExtensions poc/llm-subscription-probe.ts poc/p-llm.test.ts poc/a-llm-sub.test.ts`
 - `bun -e 'import { scanSecretLikeFiles } ...'` over this build bundle and the probe verdict directory.
 

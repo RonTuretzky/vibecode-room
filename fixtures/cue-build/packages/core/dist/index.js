@@ -3,10 +3,10 @@
 // The upstream Cue harness fast-path in src/server/cue-bridge.ts is normally
 // gated behind cloning and compiling https://github.com/jameslbarnes/cue.git,
 // which needs network access and a matching toolchain. This fixture is a
-// committed, already-"built" stand-in: pointing PANOP_CUE_SOURCE_DIR here makes
+// committed, already-"built" stand-in: pointing VIBERSYN_CUE_SOURCE_DIR here makes
 // cueSourceBuildAvailable() report a build, so createCueBridge selects mode
 // 'harness' and loadCueCore() imports this module instead of building from
-// source. It implements exactly the @cue/core surface that the Panopticon
+// source. It implements exactly the @cue/core surface that the Vibersyn
 // harness wires (see CueCoreModule in src/cue/source.ts) — no more.
 
 export class TextCue {
@@ -56,7 +56,7 @@ export function transcriptObservation(text, options = {}) {
 }
 
 // The harness substrate. It scans the configured cues for the TextCue's wake
-// patterns and, on a token match, surfaces a Cue "text" decision the Panopticon
+// patterns and, on a token match, surfaces a Cue "text" decision the Vibersyn
 // adapter turns into an earcon. No match is an ambient pass (no cues, no tools).
 export class CueHarness {
   constructor(config) {

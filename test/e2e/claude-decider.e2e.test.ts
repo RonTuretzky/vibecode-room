@@ -11,12 +11,13 @@ import {
 import { cueDecisionSchema, type CueDecision, type TranscriptObservation } from "../../src/types";
 
 // ISSUE-0023 e2e: with a model credential present (ANTHROPIC_API_KEY) and no
-// explicit PANOP_DECISION_LLM, the live runtime (createProjectorRuntime) auto-
-// selects the Claude decider. The SAME instance backs both the SuggestionEngine
-// scoring and the acceptance intent-gate, so a buildable utterance is scored
-// through the Claude path (fires a suggestion) and a subsequent affirmative that
-// requires a semantic check is judged through the Claude path too (accepts +
-// spawns). A stub transport stands in for Anthropic so nothing touches the network.
+// explicit VIBERSYN_DECISION_LLM, the live runtime (createProjectorRuntime) auto-
+// selects the Claude decider for the acceptance intent-gate. Idea generation now
+// runs through the windowed idea DETECTION engine (forced to the deterministic
+// heuristic here, no model), so a buildable utterance surfaces a grounded idea and
+// a subsequent affirmative that requires a semantic check is judged through the
+// Claude path (accepts + spawns). A stub transport stands in for Anthropic so
+// nothing touches the network.
 
 describe("claude decider e2e — credential-present runtime routes suggest + accept through Claude", () => {
   const realFetch = globalThis.fetch;
@@ -31,16 +32,16 @@ describe("claude decider e2e — credential-present runtime routes suggest + acc
       throw new Error(`unexpected network fetch in injected-transport Claude e2e: ${String(args[0])}`);
     }) as unknown as typeof fetch;
     // The acceptance spawn needs headroom over the two seeded demo processes.
-    priorCapacityGuard = process.env.PANOP_RBG_DISABLE_CAPACITY_CHECK;
-    process.env.PANOP_RBG_DISABLE_CAPACITY_CHECK = "1";
+    priorCapacityGuard = process.env.VIBERSYN_RBG_DISABLE_CAPACITY_CHECK;
+    process.env.VIBERSYN_RBG_DISABLE_CAPACITY_CHECK = "1";
   });
 
   afterEach(() => {
     globalThis.fetch = realFetch;
     if (priorCapacityGuard === undefined) {
-      delete process.env.PANOP_RBG_DISABLE_CAPACITY_CHECK;
+      delete process.env.VIBERSYN_RBG_DISABLE_CAPACITY_CHECK;
     } else {
-      process.env.PANOP_RBG_DISABLE_CAPACITY_CHECK = priorCapacityGuard;
+      process.env.VIBERSYN_RBG_DISABLE_CAPACITY_CHECK = priorCapacityGuard;
     }
     while (tempDirs.length > 0) {
       const dir = tempDirs.pop();
@@ -68,11 +69,12 @@ describe("claude decider e2e — credential-present runtime routes suggest + acc
     const spawnsBefore = spawnTraceCount(runtime);
 
     await driveMic(runtime);
+    await runtime.detection.flush();
 
-    // The suggestion was scored + fired, then the affirmative routed to acceptance
-    // and spawned a brand-new process through the registry seam.
+    // The idea was detected, then the affirmative routed to acceptance and spawned a
+    // brand-new process through the registry seam.
     const events = runtime.trace.events().map((event) => event.event);
-    expect(events).toContain("route.suggestion");
+    expect(events).toContain("detect.candidate.new");
     expect(events).toContain("route.acceptance");
     expect(spawnTraceCount(runtime)).toBe(spawnsBefore + 1);
 
@@ -80,10 +82,9 @@ describe("claude decider e2e — credential-present runtime routes suggest + acc
     const spawned = processes.filter((process) => !upidsBefore.has(process.upid));
     expect(spawned.length).toBe(1);
 
-    // Both the SuggestionEngine scoring and the acceptance intent-gate routed
-    // through the one auto-selected Claude decider (its injected transport).
+    // The acceptance intent-gate routed through the auto-selected Claude decider
+    // (its injected transport) — the "standalone user command" judgement path.
     const systemPrompts = requests.map((request) => request.system ?? "");
-    expect(systemPrompts.some((prompt) => prompt.includes("buildable ambient suggestion"))).toBe(true);
     expect(systemPrompts.some((prompt) => prompt.includes("standalone user command"))).toBe(true);
     expect(requests.every((request) => request.temperature === 0)).toBe(true);
 
@@ -133,12 +134,14 @@ function liveEnv(replayPath: string): Record<string, string> {
     // A resolvable model credential — the registry reads it only to gate the
     // auto-select; the host-subscription command (not this key) is the seam.
     ANTHROPIC_API_KEY: "sk-ant-test-0123456789abcdef0123456789",
-    PANOP_INITIAL_MUTED: "0",
-    PANOP_MIC_REPLAY_PATH: replayPath,
-    PANOP_SUGGEST_WORD_FLOOR: "3",
-    PANOP_SUGGEST_INTERRUPT_VELOCITY_WEIGHT: "0",
-    PANOP_SUGGEST_INTERRUPT_RECENCY_WEIGHT: "0",
-    PANOP_SUGGEST_INTERRUPT_PENDING_STEERING_WEIGHT: "0",
+    VIBERSYN_INITIAL_MUTED: "0",
+    VIBERSYN_MIC_REPLAY_PATH: replayPath,
+    // Force the deterministic heuristic detector so idea generation never spawns a
+    // model — only the acceptance intent-gate routes through the Claude transport.
+    VIBERSYN_IDEA_DETECTOR: "heuristic",
+    VIBERSYN_DETECT_MIN_NEW_TURNS: "1",
+    VIBERSYN_DETECT_MIN_INTERVAL_MS: "0",
+    VIBERSYN_DETECT_TICK_MS: "0",
   };
 }
 
@@ -149,10 +152,11 @@ function spawnTraceCount(runtime: ProjectorRuntime): number {
 async function driveMic(runtime: ProjectorRuntime): Promise<void> {
   const session = runtime.startMicSession("corr-claude-decider-e2e");
   await session.stop();
+  await runtime.detection.flush();
 }
 
 function writeFixture(tempDirs: string[], observations: TranscriptObservation[]): string {
-  const dir = mkdtempSync(join(tmpdir(), "panop-claude-decider-"));
+  const dir = mkdtempSync(join(tmpdir(), "vibersyn-claude-decider-"));
   tempDirs.push(dir);
   const path = join(dir, "mic.jsonl");
   writeFileSync(path, observations.map((observation) => JSON.stringify(observation)).join("\n"), "utf8");

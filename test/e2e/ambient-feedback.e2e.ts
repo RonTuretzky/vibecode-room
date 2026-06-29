@@ -24,16 +24,16 @@ describe("ambient feedback e2e — the live loop speaks and earcons on accept", 
       fetchCalls += 1;
       throw new Error(`unexpected network fetch in no-key feedback path: ${String(args[0])}`);
     }) as unknown as typeof fetch;
-    priorCapacityGuard = process.env.PANOP_RBG_DISABLE_CAPACITY_CHECK;
-    process.env.PANOP_RBG_DISABLE_CAPACITY_CHECK = "1";
+    priorCapacityGuard = process.env.VIBERSYN_RBG_DISABLE_CAPACITY_CHECK;
+    process.env.VIBERSYN_RBG_DISABLE_CAPACITY_CHECK = "1";
   });
 
   afterEach(() => {
     globalThis.fetch = realFetch;
     if (priorCapacityGuard === undefined) {
-      delete process.env.PANOP_RBG_DISABLE_CAPACITY_CHECK;
+      delete process.env.VIBERSYN_RBG_DISABLE_CAPACITY_CHECK;
     } else {
-      process.env.PANOP_RBG_DISABLE_CAPACITY_CHECK = priorCapacityGuard;
+      process.env.VIBERSYN_RBG_DISABLE_CAPACITY_CHECK = priorCapacityGuard;
     }
     while (tempDirs.length > 0) {
       const dir = tempDirs.pop();
@@ -51,10 +51,11 @@ describe("ambient feedback e2e — the live loop speaks and earcons on accept", 
     const runtime = await createProjectorRuntime(liveEnv(path));
 
     await driveMic(runtime);
+    await runtime.detection.flush();
 
-    // The suggestion was delivered AND spoken; the accept earconed (E3) and spoke.
+    // The idea was detected AND spoken; the accept earconed (E3) and spoke.
     const events = runtime.trace.events();
-    expect(events.some((event) => event.event === "route.suggestion")).toBe(true);
+    expect(events.some((event) => event.event === "detect.candidate.new")).toBe(true);
     expect(events.some((event) => event.event === "output.tts")).toBe(true);
     expect(events.some((event) => event.event === "earcon.emit" && event.meta.id === "E3")).toBe(true);
 
@@ -80,22 +81,24 @@ describe("ambient feedback e2e — the live loop speaks and earcons on accept", 
 
 function liveEnv(replayPath: string): Record<string, string> {
   return {
-    PANOP_INITIAL_MUTED: "0",
-    PANOP_MIC_REPLAY_PATH: replayPath,
-    PANOP_SUGGEST_WORD_FLOOR: "3",
-    PANOP_SUGGEST_INTERRUPT_VELOCITY_WEIGHT: "0",
-    PANOP_SUGGEST_INTERRUPT_RECENCY_WEIGHT: "0",
-    PANOP_SUGGEST_INTERRUPT_PENDING_STEERING_WEIGHT: "0",
+    VIBERSYN_INITIAL_MUTED: "0",
+    VIBERSYN_MIC_REPLAY_PATH: replayPath,
+    // Deterministic idea detection: heuristic detector, eager scheduling, no tick.
+    VIBERSYN_IDEA_DETECTOR: "heuristic",
+    VIBERSYN_DETECT_MIN_NEW_TURNS: "1",
+    VIBERSYN_DETECT_MIN_INTERVAL_MS: "0",
+    VIBERSYN_DETECT_TICK_MS: "0",
   };
 }
 
 async function driveMic(runtime: ProjectorRuntime): Promise<void> {
   const session = runtime.startMicSession("corr-feedback-e2e");
   await session.stop();
+  await runtime.detection.flush();
 }
 
 function writeFixture(tempDirs: string[], observations: TranscriptObservation[]): string {
-  const dir = mkdtempSync(join(tmpdir(), "panop-feedback-"));
+  const dir = mkdtempSync(join(tmpdir(), "vibersyn-feedback-"));
   tempDirs.push(dir);
   const path = join(dir, "mic.jsonl");
   writeFileSync(path, observations.map((observation) => JSON.stringify(observation)).join("\n"), "utf8");

@@ -22,7 +22,7 @@ export type AudioSink = TtsAudioSink;
 export type AudioSinkMode = "noop" | "device";
 
 export interface AudioSinkSelectionEnv {
-  PANOP_AUDIO_SINK?: string;
+  VIBERSYN_AUDIO_SINK?: string;
   [key: string]: string | undefined;
 }
 
@@ -57,10 +57,10 @@ export class RecordingAudioSink implements AudioSink {
   }
 }
 
-// Resolve the audible-output sink from the environment. PANOP_AUDIO_SINK=device
+// Resolve the audible-output sink from the environment. VIBERSYN_AUDIO_SINK=device
 // retains bytes through a RecordingAudioSink; anything else (including unset) keeps
 // the silent-but-read no-op sink, so the offline default never reaches for a
-// device. Case/whitespace insensitive to match the other PANOP_* selectors.
+// device. Case/whitespace insensitive to match the other VIBERSYN_* selectors.
 export function selectAudioSink(env: AudioSinkSelectionEnv = process.env): AudioSinkSelection {
   const mode = resolveAudioSinkMode(env);
   switch (mode) {
@@ -72,7 +72,7 @@ export function selectAudioSink(env: AudioSinkSelectionEnv = process.env): Audio
 }
 
 function resolveAudioSinkMode(env: AudioSinkSelectionEnv): AudioSinkMode {
-  const explicit = env.PANOP_AUDIO_SINK?.trim().toLowerCase();
+  const explicit = env.VIBERSYN_AUDIO_SINK?.trim().toLowerCase();
   if (explicit === "device") {
     return "device";
   }

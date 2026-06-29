@@ -8,14 +8,14 @@
 | Gate | Result | Evidence |
 |------|--------|----------|
 | Spawn | PASS | bunx smithers-orchestrator up probe-workflow.tsx -d: run ID + background pid |
-| Persist | PASS | 29 panopticon-process runs alive 8+ h in waiting-event state (SQLite) |
+| Persist | PASS | 29 vibersyn-process runs alive 8+ h in waiting-event state (SQLite) |
 | Concurrent | PASS | Both probe runs reached waiting-event in <3s; 29 concurrent archived runs |
 | Signal/Steer | PASS | Signal delivered durably; loop advanced iteration 0->1 after resume |
 | Voice seam (Cue) | BUILD REQUIRED | Cue on GitHub (HTTP 200, packages core/mcp/server); pnpm monorepo build needed |
 
 ## Key findings
 
-1. 29 panopticon-process runs in waiting-event alive 8+ hours (SQLite direct query).
+1. 29 vibersyn-process runs in waiting-event alive 8+ hours (SQLite direct query).
 2. smithers signal <runId> steer --data stores signals in _smithers_signals independently per run.
 3. Loop advanced iteration 0->1 after resume: steer|0|finished, step|0|finished, steer|1|waiting-event.
 4. Gateway mode (up --serve) processes signals in real-time; detach mode (up -d) requires --resume.

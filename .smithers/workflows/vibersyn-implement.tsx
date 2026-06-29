@@ -1,7 +1,7 @@
-// smithers-source: dev workflow (Panopticon build harness — NOT app code).
+// smithers-source: dev workflow (Vibersyn build harness — NOT app code).
 // Implement → validate → review loop with INDEPENDENT review:
 //   implement + validate = codex (gpt-5.5), review = claude (opus-4-8).
-// Used to build Panopticon's app source under the repo root (APP_ROOT in agents.ts).
+// Used to build Vibersyn's app source under the repo root (APP_ROOT in agents.ts).
 /** @jsxImportSource smithers-orchestrator */
 import { createSmithers } from "smithers-orchestrator";
 import { z } from "zod/v4";
@@ -47,7 +47,7 @@ export default smithers((ctx) => {
   const feedback = feedbackParts.length > 0 ? feedbackParts.join("\n\n") : null;
 
   return (
-    <Workflow name="panopticon-implement">
+    <Workflow name="vibersyn-implement">
       <ValidationLoop
         idPrefix="panimpl"
         prompt={ctx.input.prompt}

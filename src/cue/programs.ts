@@ -17,7 +17,7 @@ export function createCuePrograms(cue: CueCoreModule): {
 } {
   const tools = [
     new cue.MappedActionTool({
-      name: "panopticon.suggest",
+      name: "vibersyn.suggest",
       description: "Queue a conservative ambient suggestion.",
       inputSchema: {
         type: "object",
@@ -34,7 +34,7 @@ export function createCuePrograms(cue: CueCoreModule): {
       ],
     }),
     new cue.MappedActionTool({
-      name: "panopticon.steer",
+      name: "vibersyn.steer",
       description: "Deliver a steering instruction to a selected durable process.",
       inputSchema: {
         type: "object",
@@ -62,26 +62,26 @@ export function createCuePrograms(cue: CueCoreModule): {
       {
         name: "ambient-C2",
         triggers: [cue.Triggers.onCue("text")],
-        allowedTools: ["panopticon.suggest"],
+        allowedTools: ["vibersyn.suggest"],
         llmProvider: {
           infer({ cue: cueEvent, tools: eligibleTools }: { cue?: { metadata?: Record<string, unknown> }; tools: Array<{ name: string }> }) {
             if (cueEvent?.metadata?.pattern !== "build") return [];
-            if (!eligibleTools.some((tool) => tool.name === "panopticon.suggest")) return [];
-            return [{ tool: "panopticon.suggest", arguments: { concept: "add replay tests" } }];
+            if (!eligibleTools.some((tool) => tool.name === "vibersyn.suggest")) return [];
+            return [{ tool: "vibersyn.suggest", arguments: { concept: "add replay tests" } }];
           },
         },
       },
       {
         name: "steering-C3",
         triggers: [cue.Triggers.onCue("text")],
-        allowedTools: ["panopticon.steer"],
+        allowedTools: ["vibersyn.steer"],
         llmProvider: {
           infer({ cue: cueEvent, tools: eligibleTools }: { cue?: { metadata?: Record<string, unknown> }; tools: Array<{ name: string }> }) {
             if (cueEvent?.metadata?.pattern !== "cometa") return [];
-            if (!eligibleTools.some((tool) => tool.name === "panopticon.steer")) return [];
+            if (!eligibleTools.some((tool) => tool.name === "vibersyn.steer")) return [];
             return [
               {
-                tool: "panopticon.steer",
+                tool: "vibersyn.steer",
                 arguments: { callsign: "cometa", instruction: "focus tests", upid: "upid-cometa" },
               },
             ];
@@ -100,11 +100,11 @@ export function assertTwoProgramIsolation(probe: ProgramIsolationProbe): void {
     throw new Error("Ambient and steering Programs must be independent.");
   }
 
-  if (probe.ambientTools.includes("panopticon.steer")) {
+  if (probe.ambientTools.includes("vibersyn.steer")) {
     throw new Error("Ambient Program may not receive the steering tool.");
   }
 
-  if (probe.steeringTools.includes("panopticon.suggest")) {
+  if (probe.steeringTools.includes("vibersyn.suggest")) {
     throw new Error("Steering Program may not receive the ambient suggestion tool.");
   }
 

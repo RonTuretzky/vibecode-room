@@ -1,6 +1,6 @@
-# Panopticon — Design Document (Draft V0)
+# Vibersyn — Design Document (Draft V0)
 
-> **Superseded assumption corrected:** Panopticon is audio-first with voice as the primary routine
+> **Superseded assumption corrected:** Vibersyn is audio-first with voice as the primary routine
 > control modality, and V0 includes a required shared projector UI for visual context.
 >
 > Upstream: `docs/planning/01-prd.md` (requirements), `artifacts/smithering/research/design-art.md`
@@ -20,12 +20,12 @@
 
 ## 1. Wake Word Design
 
-### Decision: Coined short-form, not "Panopticon"
+### Decision: Coined short-form, not "Vibersyn"
 
-**Wake word: "Panop"** (2 syllables: /ˈpæn.ɒp/).
+**Wake word: "Viber"** (2 syllables: /ˈpæn.ɒp/).
 
-"Panopticon" is 5 syllables starting with a soft bilabial /p/ — poor acoustic onset for keyword
-detection. "Panop" is rare (not a natural English word), leads with the same distinguishing
+"Vibersyn" is 5 syllables starting with a soft bilabial /p/ — poor acoustic onset for keyword
+detection. "Viber" is rare (not a natural English word), leads with the same distinguishing
 consonant cluster /pæn/, and lands at 2 syllables rather than the ideal 3–4 (acceptable tradeoff
 given the team-room context where false-positive cost matters more than recall).
 
@@ -33,7 +33,7 @@ given the team-room context where false-positive cost matters more than recall).
 product; a fully coined word increases onboarding friction for zero acoustic gain in a controlled
 team-room environment.
 
-**Global callsign alternatives if "Panop" causes problems in acoustic testing:**
+**Global callsign alternatives if "Viber" causes problems in acoustic testing:**
 - "Panwatch" (2 syllables, plosive-leading /p/, rare)
 - "Opticon" (3 syllables, affricate-ish onset, also rare)
 
@@ -134,7 +134,7 @@ Commands are deterministic: same transcript → same routing decision, every tim
 
 | Command | Spoken form | Effect |
 |---------|-------------|--------|
-| Wake | "Panop" | Opens active-listen window for next utterance |
+| Wake | "Viber" | Opens active-listen window for next utterance |
 | Accept | "Yes" / "Accept" / "Do it" | Accepts the current pending suggestion → spawns |
 | Decline | "No" / "Nah" / "Skip" | Declines current pending suggestion → no-op |
 | Select-and-steer | "[callsign], [instruction]" | Selects process, opens steering window, routes instruction |
@@ -167,7 +167,7 @@ A proposed callsign is rejected if:
 
 V0 ships with a pre-validated subset of NATO phonetic alphabet as the available callsign pool.
 Suggested V0 callsign pool (validated for distinctiveness against each other and against
-"Panop"/"Abort"):
+"Viber"/"Abort"):
 
 ```
 Atlas    Bravo    Delta    Foxtrot    Golf
@@ -368,7 +368,7 @@ presence. Board serving must not be on the critical path of any voice flow.
 The first utterance from the system doubles as onboarding (REQ-1, AC1.1, design-art.md §6):
 
 ```
-"Panopticon is listening. Say 'Panop, status' to hear a rundown.
+"Vibersyn is listening. Say 'Viber, status' to hear a rundown.
 Say 'mute' to pause. [earcon E2 begins]"
 ```
 
@@ -400,7 +400,7 @@ accommodate hesitation while users learn commands (design-art.md §6).
 ### 10.1 Cue integration (P-CUE)
 
 Cue is the canonical substrate. The integration layer is a **thin adapter we own** — its job
-is to translate between Cue's observation/action schema and Panopticon's internal event types.
+is to translate between Cue's observation/action schema and Vibersyn's internal event types.
 We do not re-implement any behavior Cue provides.
 
 **Cue primitives we depend on (must be validated by P-CUE probe):**
@@ -466,7 +466,7 @@ must handle:
 
 Candidate: **Deepgram Nova-3** (domain.md §5-Q4 top streaming option).
 
-ASR sits behind a provider interface — swappable without Panopticon core changes:
+ASR sits behind a provider interface — swappable without Vibersyn core changes:
 
 ```typescript
 interface ASRProvider {
@@ -599,7 +599,7 @@ memory, no agent assertion — only the structured log proves something happened
 
 | ID | Topic | Decision | Rationale |
 |----|-------|----------|-----------|
-| D-DD-01 | Wake word | "Panop" (not "Panopticon") | 5-syllable full name has soft /p/ onset and poor keyword-detection anchor. "Panop" is 2 syllables, rare, plosive-leading, and preserves product name recognition. Re-confirm against team's ambient vocabulary during P-CUE validation. |
+| D-DD-01 | Wake word | "Viber" (not "Vibersyn") | 5-syllable full name has soft /p/ onset and poor keyword-detection anchor. "Viber" is 2 syllables, rare, plosive-leading, and preserves product name recognition. Re-confirm against team's ambient vocabulary during P-CUE validation. |
 | D-DD-02 | Earcon set | Exactly 5 earcons for V0 (wake, transcribing-ambient, spawn, resolve, stop) + addressed-command acks; ignored ambient is silent | Design research (design-art.md §2) and Echo earcon system establish that distinct non-verbal signatures per state > spoken announcements. 5 is the minimum distinguishable set. Un-addressed / ignored ambient speech (`observe.pass` / `route.pass`) makes no sound, by definition. |
 | D-DD-03 | Suggestion threshold calibration | Gate on "room-interrupt cost" not just "suggestion quality" | A spoken suggestion is a broadcast interrupt with no individual opt-out. CHI 2025 research confirms annoyance ∝ frequency. The cost function must reflect the asymmetry: false positive in a team room > false positive on a screen. Idle-preferring delivery is non-negotiable. |
 | D-DD-04 | Panic word | "Abort" (not "Stop") | "Stop" appears in natural speech constantly ("stop the build", "stop doing that"). "Abort" is rare, 2 syllables, phonetically distinct from all other commands. Must be reserved exclusively for global panic — no other command uses it. |

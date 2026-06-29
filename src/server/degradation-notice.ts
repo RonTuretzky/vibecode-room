@@ -45,7 +45,7 @@ export function buildDegradationNotice(selections: RuntimeLegSelections): Degrad
       leg: "asr",
       mode: selections.asr,
       detail: "replay ASR — no live transcription",
-      upgrade: "set DEEPGRAM_API_KEY (or PANOP_ASR_PROVIDER=voxterm)",
+      upgrade: "set DEEPGRAM_API_KEY (or VIBERSYN_ASR_PROVIDER=voxterm)",
     });
   }
   if (selections.tts === "noop") {
@@ -53,7 +53,7 @@ export function buildDegradationNotice(selections: RuntimeLegSelections): Degrad
       leg: "tts",
       mode: selections.tts,
       detail: "silent TTS — no spoken output",
-      upgrade: "set PANOP_TTS_PROVIDER=elevenlabs (+ ELEVENLABS_API_KEY)",
+      upgrade: "set VIBERSYN_TTS_PROVIDER=elevenlabs (+ ELEVENLABS_API_KEY)",
     });
   }
   if (selections.sink === "noop") {
@@ -61,7 +61,7 @@ export function buildDegradationNotice(selections: RuntimeLegSelections): Degrad
       leg: "sink",
       mode: selections.sink,
       detail: "no-op audio sink — synthesized audio is discarded",
-      upgrade: "set PANOP_AUDIO_SINK=device",
+      upgrade: "set VIBERSYN_AUDIO_SINK=device",
     });
   }
   if (selections.decider === "heuristic" || selections.decider === "replay") {
@@ -69,7 +69,7 @@ export function buildDegradationNotice(selections: RuntimeLegSelections): Degrad
       leg: "decider",
       mode: selections.decider,
       detail: "heuristic DecisionLLM — no model-quality suggestion decisions",
-      upgrade: "log into the host Claude subscription / set ANTHROPIC_API_KEY (or PANOP_DECISION_LLM=claude)",
+      upgrade: "log into the host Claude subscription / set ANTHROPIC_API_KEY (or VIBERSYN_DECISION_LLM=claude)",
     });
   }
   if (selections.smithers === "memory") {
@@ -77,7 +77,7 @@ export function buildDegradationNotice(selections: RuntimeLegSelections): Degrad
       leg: "smithers",
       mode: selections.smithers,
       detail: "in-memory Smithers client — spawns are fixtures, not durable runs",
-      upgrade: "set PANOP_SMITHERS_GATEWAY_URL",
+      upgrade: "set VIBERSYN_SMITHERS_GATEWAY_URL",
     });
   }
 
@@ -88,10 +88,10 @@ export function buildDegradationNotice(selections: RuntimeLegSelections): Degrad
 // nothing is degraded so the boot log always says something explicit.
 export function formatDegradationNotice(notice: DegradationNotice): string {
   if (notice.allReal) {
-    return "Panopticon runtime: all legs running real backends — no degradation.";
+    return "Vibersyn runtime: all legs running real backends — no degradation.";
   }
   const count = notice.degraded.length;
-  const header = `Panopticon runtime degraded — ${count} leg${count === 1 ? "" : "s"} stubbed:`;
+  const header = `Vibersyn runtime degraded — ${count} leg${count === 1 ? "" : "s"} stubbed:`;
   const lines = notice.degraded.map((d) => `  • ${d.leg} (${d.mode}): ${d.detail} → ${d.upgrade}`);
   return [header, ...lines].join("\n");
 }
@@ -101,8 +101,8 @@ export function formatDegradationNotice(notice: DegradationNotice): string {
 // this module stays free of any runtime/server import (and side effects).
 export function healthPayload(rt: { degradation: DegradationNotice }): {
   ok: true;
-  app: "panopticon-projector";
+  app: "vibersyn-projector";
   degradation: DegradationNotice;
 } {
-  return { ok: true, app: "panopticon-projector", degradation: rt.degradation };
+  return { ok: true, app: "vibersyn-projector", degradation: rt.degradation };
 }

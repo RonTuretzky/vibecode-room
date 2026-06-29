@@ -7,7 +7,7 @@ src/providers/credentials.test.ts:
 47 |     ] as const;
 48 |
 49 |     for (const [variable, value] of cases) {
-50 |       if (process.env.PANOPTICON_RBG_ALLOW_NONCANONICAL_MODEL_KEYS === "1") {
+50 |       if (process.env.VIBERSYN_RBG_ALLOW_NONCANONICAL_MODEL_KEYS === "1") {
 51 |         expect(() => createModelCredentialSource({ provider: "openai-codex", env: { [variable]: value } })).not.toThrow();
                                                                                                                      ^
 error: expect(received).not.toThrow()
@@ -31,7 +31,7 @@ src/providers/credentials.test.ts:
 312 |         (finding) => finding.pattern === "unknown-high-entropy-token",
 313 |       ),
 314 |     ).toBe(true);
-315 |     if (process.env.PANOPTICON_RBG_ALLOW_MULTI_SEGMENT_SECRET === "1") {
+315 |     if (process.env.VIBERSYN_RBG_ALLOW_MULTI_SEGMENT_SECRET === "1") {
 316 |       expect(scanSecretLikeText(JSON.stringify({ opaque: fakeProviderPrefixedSlackToken() }))).toEqual([]);
                                                                                                      ^
 error: expect(received).toEqual(expected)
@@ -62,7 +62,7 @@ src/providers/credentials.test.ts:
 172 |     });
 173 |
 174 |     const jsonl = processor.toJsonl();
-175 |     if (process.env.PANOPTICON_RBG_UNREDACTED_TRACE_IDS === "1") {
+175 |     if (process.env.VIBERSYN_RBG_UNREDACTED_TRACE_IDS === "1") {
 176 |       if (!rawValues.every((rawValue) => jsonl.includes(rawValue))) {
 177 |         throw new Error("synthetic unredacted trace identifier leak check failed as expected");
                                                                                                    ^

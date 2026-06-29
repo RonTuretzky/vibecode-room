@@ -28,8 +28,8 @@ export type ClaudeCliRunner = (prompt: string, opts: { model: string; timeoutMs:
 // it (revenue share, dividends, voting) can be a few minutes apart. A 60s window
 // drops the framing before the discussion finishes, so a sustained idea never
 // fires. Default 4 minutes / 400 words; env-tunable.
-const DEFAULT_WINDOW_MS = envNumber("PANOP_DECIDER_WINDOW_SECONDS", 240) * 1_000;
-const DEFAULT_WINDOW_WORDS = envNumber("PANOP_DECIDER_WINDOW_WORDS", 400);
+const DEFAULT_WINDOW_MS = envNumber("VIBERSYN_DECIDER_WINDOW_SECONDS", 240) * 1_000;
+const DEFAULT_WINDOW_WORDS = envNumber("VIBERSYN_DECIDER_WINDOW_WORDS", 400);
 
 export interface HostClaudeDecisionLLMOptions {
   policy?: string;

@@ -8,7 +8,7 @@ src/cue/adapter.test.ts:
 61 |   if (cueWords !== mirrorWords) {
 62 |     throw new Error(`Adapter pre-matcher word list drifted from TextCue config: ${mirrorWords} !== ${cueWords}`);
                    ^
-error: Adapter pre-matcher word list drifted from TextCue config: ["panop","shadow"] !== ["panop"]
+error: Adapter pre-matcher word list drifted from TextCue config: ["viber","shadow"] !== ["viber"]
       at assertPrematcherParity (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/cue-adapter-and-policies/src/cue/policies.ts:62:15)
       at new CueAdapter (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/cue-adapter-and-policies/src/cue/adapter.ts:72:7)
       at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/cue-adapter-and-policies/src/cue/adapter.test.ts:198:21)

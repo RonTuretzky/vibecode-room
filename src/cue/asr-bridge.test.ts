@@ -51,8 +51,8 @@ describe("ENG-T-10 audio capture ASR bridge", () => {
 
     expect(ingress.events[0]).toEqual({
       type: "qwen_asr.transcript",
-      transcript: "Panop",
-      text: "Panop",
+      transcript: "Viber",
+      text: "Viber",
       isFinal: false,
       speaker: null,
       rawInferenceMs: 100,
@@ -63,8 +63,8 @@ describe("ENG-T-10 audio capture ASR bridge", () => {
     } satisfies CueTranscriptEvent);
     expect(ingress.events.every((event) => event.speaker === null)).toBe(true);
     expect(ingress.events.map((event) => event.transcript)).toEqual([
-      "Panop",
-      "Panop status.",
+      "Viber",
+      "Viber status.",
       "I can take notes.",
       "Let's ship it.",
     ]);
@@ -176,7 +176,7 @@ describe("ENG-T-10 audio capture ASR bridge", () => {
   });
 
   test("transcript-only persistence guard rejects raw audio fields and binary values", () => {
-    const event = transcriptObservationToCueEvent(observation("Panop status"), {
+    const event = transcriptObservationToCueEvent(observation("Viber status"), {
       correlationId: "corr-asr-bridge-test",
       sentAtMs: 10,
     });

@@ -887,7 +887,7 @@ export const landTool = defineTool({
 // ─── §1 integration-branch + build-dir setup (idempotent; the build's trunk) ──
 // Defense-in-depth: coerce away null/empty branch names AT the producer so the buildSetup
 // output is always valid strings even on a direct call (the caller already resolves defaults
-// via resolveBuildConfig). A null here is exactly what broke smoke-smithering-panopticon-4-0,
+// via resolveBuildConfig). A null here is exactly what broke smoke-smithering-vibersyn-4-0,
 // so a coercion that ever fires is logged rather than silently emitting an invalid output.
 async function ensureIntegrationBranch(integrationBranchArg: string, baseBranchArg: string) {
   const notes: string[] = [];
@@ -1388,7 +1388,7 @@ function implementerPrompt(ctx: any, t: Ticket, a: Assignment): string {
   const safety = ticketRequiresChallenge(t);
   const probe = isProbeTicket(t);
   return [
-    `You are the IMPLEMENTER for ONE ticket of the Panopticon V0 build. You have FRESH CONTEXT and NO`,
+    `You are the IMPLEMENTER for ONE ticket of the Vibersyn V0 build. You have FRESH CONTEXT and NO`,
     `conversation history — read everything you need from disk. You are running inside an isolated git`,
     `worktree at ${worktreePath(t.id)} on branch ${buildBranch(t.id)}; edit ONLY this working copy.`,
     ``,

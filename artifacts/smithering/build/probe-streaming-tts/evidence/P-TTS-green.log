@@ -26,7 +26,7 @@ ProbeHarnessError: probe assertion failed
 
       at runProbe (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/probe-streaming-tts/poc/harness.ts:167:11)
       at async <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/probe-streaming-tts/poc/p-tts.test.ts:197:28)
-(fail) P-TTS streaming provider selection probe > configured 2026 TTS candidates stream first audio byte within budget and satisfy Panopticon output contract [1817.24ms]
+(fail) P-TTS streaming provider selection probe > configured 2026 TTS candidates stream first audio byte within budget and satisfy Vibersyn output contract [1817.24ms]
 
  0 pass
  1 fail

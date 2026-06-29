@@ -3,7 +3,7 @@
  *
  * Question: Can a realtime STT service transcribe shared-room audio with low enough
  * latency and good enough multi-speaker / barge-in handling for a continuous passive
- * listening loop (Panopticon)?
+ * listening loop (Vibersyn)?
  *
  * Three parts:
  *   A. Cue repo availability — is the library actually installable?
@@ -712,7 +712,7 @@ async function probeMultiSpeaker(audio1: Buffer, audio2: Buffer): Promise<MultiS
 // ─── main ────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
-  log("Panopticon STT realtime latency probe starting...");
+  log("Vibersyn STT realtime latency probe starting...");
   log(`OPENAI_API_KEY present: ${OPENAI_API_KEY ? "yes" : "no"}`);
 
   const results: Record<string, unknown> = {};

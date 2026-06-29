@@ -165,7 +165,7 @@ export class CallsignAllocator {
 
   private assertAvailable(candidate: string): void {
     const validation = this.validate(candidate);
-    if (!validation.accepted && process.env.PANOP_RBG_DISABLE_CALLSIGN_COLLISION_GUARD !== "1") {
+    if (!validation.accepted && process.env.VIBERSYN_RBG_DISABLE_CALLSIGN_COLLISION_GUARD !== "1") {
       const collision = validation.collision;
       throw new Error(
         collision === null
@@ -185,11 +185,11 @@ export class CallsignAllocator {
     }
 
     const validation = this.validate(candidate);
-    return validation.accepted || process.env.PANOP_RBG_DISABLE_CALLSIGN_COLLISION_GUARD === "1";
+    return validation.accepted || process.env.VIBERSYN_RBG_DISABLE_CALLSIGN_COLLISION_GUARD === "1";
   }
 
   private isCooldownExpired(candidate: string): boolean {
-    if (process.env.PANOP_RBG_DISABLE_CALLSIGN_COOLDOWN === "1") {
+    if (process.env.VIBERSYN_RBG_DISABLE_CALLSIGN_COOLDOWN === "1") {
       return true;
     }
 

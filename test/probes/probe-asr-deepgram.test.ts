@@ -383,14 +383,14 @@ async function runLiveGate(): Promise<ProbeVerdict["liveDeepgram"]> {
     };
   }
 
-  const audioPath = process.env.PANOP_ASR_DEEPGRAM_AUDIO_FIXTURE;
+  const audioPath = process.env.VIBERSYN_ASR_DEEPGRAM_AUDIO_FIXTURE;
   if (audioPath === undefined || audioPath.length === 0) {
     if (liveGateRequired()) {
       throw new Error(
-        "PANOP_REQUIRE_LIVE_GATE=1 and DEEPGRAM_API_KEY is set, so live validation requires PANOP_ASR_DEEPGRAM_AUDIO_FIXTURE with linear16 16kHz mono audio.",
+        "VIBERSYN_REQUIRE_LIVE_GATE=1 and DEEPGRAM_API_KEY is set, so live validation requires VIBERSYN_ASR_DEEPGRAM_AUDIO_FIXTURE with linear16 16kHz mono audio.",
       );
     }
-    const reason = "live Deepgram gate skipped because PANOP_ASR_DEEPGRAM_AUDIO_FIXTURE is not set";
+    const reason = "live Deepgram gate skipped because VIBERSYN_ASR_DEEPGRAM_AUDIO_FIXTURE is not set";
     await writeFile(join(PROBE_ROOT, "live-skip.json"), JSON.stringify({ status: "skipped", reason }, null, 2) + "\n", "utf8");
     return { status: "skipped", reason, provider: "deepgram", model: "nova-3" };
   }
@@ -423,12 +423,12 @@ function hasDeepgramCredential(): boolean {
 }
 
 function hasAudioFixture(): boolean {
-  const path = process.env.PANOP_ASR_DEEPGRAM_AUDIO_FIXTURE;
+  const path = process.env.VIBERSYN_ASR_DEEPGRAM_AUDIO_FIXTURE;
   return path !== undefined && path.length > 0;
 }
 
 function liveGateRequired(): boolean {
-  return process.env.PANOP_REQUIRE_LIVE_GATE === "1";
+  return process.env.VIBERSYN_REQUIRE_LIVE_GATE === "1";
 }
 
 function fileAudioStream(path: string): AudioReadableStream {

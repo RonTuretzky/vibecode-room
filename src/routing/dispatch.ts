@@ -133,7 +133,7 @@ export function dispatchUtterance(observation: TranscriptObservation, context: D
     utterance: observation.text,
     utteranceId: observation.utteranceId,
     sessionId: observation.sessionId,
-    correlationId: process.env.PANOP_RBG_NONDETERMINISTIC === "1" ? `${correlationId}-${Math.random()}` : correlationId,
+    correlationId: process.env.VIBERSYN_RBG_NONDETERMINISTIC === "1" ? `${correlationId}-${Math.random()}` : correlationId,
     decisionId,
     addressed: candidate.addressed,
     ackKind: ackFor(candidate),
@@ -324,7 +324,7 @@ function collectCandidates(
   if (context.pendingSuggestion !== null && includesPhrase(utterance, vocabulary.accept)) {
     candidates.push(commandCandidate("accept", "suggest", true, null, null, ""));
   } else if (context.pendingSuggestion === null && includesPhrase(utterance, vocabulary.accept)) {
-    if (process.env.PANOP_RBG_ACCEPT_ALWAYS_HOT === "1") {
+    if (process.env.VIBERSYN_RBG_ACCEPT_ALWAYS_HOT === "1") {
       candidates.push(commandCandidate("accept", "suggest", true, null, null, ""));
     } else {
       candidates.push(passCandidate("near-miss", true, "accept"));
@@ -346,7 +346,7 @@ function collectCandidates(
       candidates.push(commandCandidate("resume", "steer", addressed, callsignMatch.upid, callsignMatch.callsign, instruction));
     } else if (instruction.length === 0) {
       candidates.push(commandCandidate("selectOnly", "steer", addressed, callsignMatch.upid, callsignMatch.callsign, instruction));
-    } else if (process.env.PANOP_RBG_SPLIT_ONE_BREATH === "1") {
+    } else if (process.env.VIBERSYN_RBG_SPLIT_ONE_BREATH === "1") {
       candidates.push(commandCandidate("selectOnly", "steer", addressed, callsignMatch.upid, callsignMatch.callsign, ""));
     } else {
       candidates.push(steerCandidate("selectAndSteer", callsignMatch.upid, callsignMatch.callsign, instruction, context.confidence));
@@ -360,13 +360,13 @@ function collectCandidates(
       candidates.push(steerCandidate("steer", window.upid, window.callsign, instruction, context.confidence));
     }
   } else if (isTargetedPauseOrResumeNl(utterance, vocabulary)) {
-    if (process.env.PANOP_RBG_ROUTE_NL_PAUSE === "1" && context.activeProcesses[1] !== undefined) {
+    if (process.env.VIBERSYN_RBG_ROUTE_NL_PAUSE === "1" && context.activeProcesses[1] !== undefined) {
       candidates.push(commandCandidate("pause", "steer", true, context.activeProcesses[1].upid, context.activeProcesses[1].callsign, utterance));
     } else {
       candidates.push(passCandidate("near-miss", true, "pause"));
     }
   } else if (hasSteeringVerb(utterance)) {
-    if (process.env.PANOP_RBG_REMOVE_STEER_GUARD === "1" && context.activeProcesses[0] !== undefined) {
+    if (process.env.VIBERSYN_RBG_REMOVE_STEER_GUARD === "1" && context.activeProcesses[0] !== undefined) {
       candidates.push(commandCandidate("steer", "steer", false, context.activeProcesses[0].upid, context.activeProcesses[0].callsign, utterance));
     } else {
       candidates.push(passCandidate("rejected-no-target", false, null));
@@ -411,7 +411,7 @@ function steerCandidate(
   instruction: string,
   confidence: number,
 ): Candidate {
-  if (confidence < loadRoutingVocabulary().steerMinConfidence && process.env.PANOP_RBG_LOW_CONF_EXECUTE !== "1") {
+  if (confidence < loadRoutingVocabulary().steerMinConfidence && process.env.VIBERSYN_RBG_LOW_CONF_EXECUTE !== "1") {
     return passCandidate("low-confidence", true, commandId);
   }
   return commandCandidate(commandId, "steer", true, targetUPID, callsign, instruction);
@@ -477,7 +477,7 @@ function ackFor(candidate: Candidate): AckKind {
     return "route-steer";
   }
   if (!candidate.addressed) {
-    return process.env.PANOP_RBG_AMBIENT_ACK === "1" ? "route-declined" : "silent";
+    return process.env.VIBERSYN_RBG_AMBIENT_ACK === "1" ? "route-declined" : "silent";
   }
   if (candidate.commandId === "mute" || candidate.commandId === "unmute") {
     return "state-earcon";
@@ -507,7 +507,7 @@ function recordRoute(trace: TraceProcessor, decision: DispatchDecision, nowMs: n
 }
 
 function priorityRank(priority: PriorityName): number {
-  const order: Record<PriorityName, number> = process.env.PANOP_RBG_PRIORITY_MUTE_BELOW_PANIC === "1"
+  const order: Record<PriorityName, number> = process.env.VIBERSYN_RBG_PRIORITY_MUTE_BELOW_PANIC === "1"
     ? { panic: 0, mute: 1, stop: 2, steer: 3, suggest: 4, pass: 5 }
     : { mute: 0, panic: 1, stop: 2, steer: 3, suggest: 4, pass: 5 };
   return order[priority];

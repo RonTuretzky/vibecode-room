@@ -1,4 +1,4 @@
-# Domain Research — Panopticon Problem Space
+# Domain Research — Vibersyn Problem Space
 *Written: 2026-06-13. Grounded in upstream brainstorm.md, PROMPT.md, and external research.*
 
 ---
@@ -111,7 +111,7 @@ Evidence:
 - **Decision:** V0 user is a trusted co-located technical team; a read-only visual board (process
   list, magic words, listening indicator, trace log) is a required engineering surface but NOT a
   required operational surface. A user who is blind or in a room with no wall display can operate
-  Panopticon end-to-end by voice alone.
+  Vibersyn end-to-end by voice alone.
 
 ### Q2: What is the single success criterion for V0?
 
@@ -245,7 +245,7 @@ Evidence:
 **Answer (recorded decision): Unselected processes keep working autonomously. "Unselected" means
 the mic is not routed to that process, NOT that the process is paused.**
 
-- An OS process does not pause when it loses focus; Panopticon processes are the same — durable
+- An OS process does not pause when it loses focus; Vibersyn processes are the same — durable
   Smithers runs that continue their execution loop regardless of whether the room addresses them.
 - Lifecycle states: `planning → active ⇄ paused → dead`. A process in `active` state with no
   current voice selection is **still running**. It speaks only at completion or blockers.
@@ -263,13 +263,13 @@ spoken mute, visible always-on indicator.**
   indicator and a spoken global mute; persist only the transcript (no raw audio) in V0."
 - **Three required consent controls:**
   1. **Visible indicator:** persistent visual or LED badge showing active mic streaming.
-  2. **Spoken mute:** "Panopticon mute" immediately stops all streaming. Indicator confirms.
-  3. **Transcript-only persistence:** Deepgram receives the audio stream but Panopticon does NOT
+  2. **Spoken mute:** "Vibersyn mute" immediately stops all streaming. Indicator confirms.
+  3. **Transcript-only persistence:** Deepgram receives the audio stream but Vibersyn does NOT
      log or archive raw audio. Only the final transcript is persisted (C10).
 - **Cloud vs. local trade-off:** V1 fallback is `plugin-local-inference` (whisper.cpp on-device)
   for teams with strict privacy requirements. V0 documents this risk explicitly in setup UX.
-- **Consent ceremony:** at session start, the system announces: "Panopticon is listening. Say
-  'Panopticon mute' at any time to stop. Only transcripts are saved."
+- **Consent ceremony:** at session start, the system announces: "Vibersyn is listening. Say
+  'Vibersyn mute' at any time to stop. Only transcripts are saved."
 
 ### Q11: Do we adopt Cue's bundled provider stack (Deepgram + a cheap fast LLM) for V0, and where is the seam to Smithers/Fable?
 
@@ -296,7 +296,7 @@ ROOM AUDIO
         • MappedActionTool → emits structured action: {type, target, payload}
               │
               ▼
-       PANOPTICON ACTION DISPATCHER (Hono API / WebSocket)
+       VIBERSYN ACTION DISPATCHER (Hono API / WebSocket)
               │  receives Cue action, validates against process registry
               ▼
        SMITHERS PROCESS MANAGER
@@ -305,14 +305,14 @@ ROOM AUDIO
               │     • Fable orchestrates per-process planning
               │     • model calls via Smithers subscriptions (never raw API keys)
               │     • session loop: input→pre-hooks→action→post-hooks→output
-              │     • output: text → PANOPTICON → CUE output provider → TTS → room
+              │     • output: text → VIBERSYN → CUE output provider → TTS → room
               └─► (other processes, running concurrently)
 ```
 
 Key seam properties: Cue knows nothing about Smithers (emits JSON action); Smithers knows nothing
 about Cue (receives verb + process ID + payload). Voice output flows the other direction:
-Smithers output event → Panopticon dispatcher → Cue output provider → TTS → room audio.
-**Validation requirement:** The Cue↔Panopticon dispatcher seam must be validated against the
+Smithers output event → Vibersyn dispatcher → Cue output provider → TTS → room audio.
+**Validation requirement:** The Cue↔Vibersyn dispatcher seam must be validated against the
 real Cue `MappedActionTool` action schema before any Smithers integration is built on it.
 
 **Prior V0 cue policy set (retained):**
@@ -322,7 +322,7 @@ real Cue `MappedActionTool` action schema before any Smithers integration is bui
 | `SuggestionWindowCue` | `WordCountCue` or `IntervalCue` | Gates buildable-intent LLM check | 60 words OR 90 seconds |
 | `ProcessSelectCue` | `TextCue` / `SpeakerWordCue` | Magic-word callsign → steer target | Exact match on live callsign registry |
 | `GlobalCommandCue` | `TextCue` | Fleet-level: "pause all", "status", "mute" | Exact phrase on small vocab |
-| `HardMuteCue` | `TextCue` | Global silence: "Panopticon stop" | Highest priority, always wins |
+| `HardMuteCue` | `TextCue` | Global silence: "Vibersyn stop" | Highest priority, always wins |
 | `DeadManTimerCue` | `IdleCue` | Auto-close steering window after silence | 20-second idle |
 
 **Determinism (record-replay):** Temperature=0 for all cue decision LLM calls; every
@@ -354,7 +354,7 @@ log, not visual UI.**
 | `SuggestionWindowCue` | `WordCountCue` or `IntervalCue` | Gates the buildable-intent LLM check after N words of substantive speech or T seconds of conversation | 60 words or 90 seconds, whichever first |
 | `ProcessSelectCue` | `TextCue` / `SpeakerWordCue` | Wakes on a magic-word callsign (e.g. "Atlas", "Bravo") to route subsequent speech to a specific process | Exact match on registered callsign list |
 | `GlobalCommandCue` | `TextCue` | Catches fleet-level commands: "pause all", "status", "mute" | Exact phrase match on a small command vocabulary |
-| `HardMuteCue` | `TextCue` | Immediately silences the system: "Panopticon stop", "mute" | Exact phrase; highest priority, pre-empts all others |
+| `HardMuteCue` | `TextCue` | Immediately silences the system: "Vibersyn stop", "mute" | Exact phrase; highest priority, pre-empts all others |
 | `DeadManTimerCue` | `IdleCue` | If a spawned process has been `planning` with no voice steer for N seconds, auto-confirms or prompts | 30-second idle after suggestion acceptance |
 
 **Threshold tuning without a visual feedback loop:**
@@ -407,7 +407,7 @@ Evidence:
   end-to-end. This fits the <800ms total round-trip budget (STT + LLM + TTS) for a responsive
   voice agent.
 - **Cost:** $0.26–0.46/hour streaming — cheapest viable real-time option. Critical for a system
-  that is always-on (unlike push-to-talk tools, Panopticon transcribes continuously).
+  that is always-on (unlike push-to-talk tools, Vibersyn transcribes continuously).
 - **Speaker diarization:** Deepgram Nova-3 provides speaker diarization natively. This is
   essential for the C2/C3 multi-operator routing (who said what); it is not available from
   Whisper or most alternatives at comparable latency.

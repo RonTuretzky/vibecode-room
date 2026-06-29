@@ -1,4 +1,4 @@
-# Panopticon — Design Document (V0, final)
+# Vibersyn — Design Document (V0, final)
 
 > **Audio-first, projector-aware. Voice is the primary routine control modality.** Design, build,
 > and verify the spoken loop as if no projector and no keyboard exist on the routine critical path,
@@ -103,13 +103,13 @@ confirm the exact shapes we depend on.
 
 ## 2. Wake / mute / panic word design (REQ-1, REQ-2, REQ-7, REQ-12)
 
-### 2.1 Wake word — "Panop"
+### 2.1 Wake word — "Viber"
 
-**Wake word: "Panop"** (2 syllables, /ˈpæn.ɒp/). "Panopticon" is 5 syllables with a soft bilabial
-/p/ onset — a poor keyword-detection anchor. "Panop" is rare (not natural English), leads with the
+**Wake word: "Viber"** (2 syllables, /ˈpæn.ɒp/). "Vibersyn" is 5 syllables with a soft bilabial
+/p/ onset — a poor keyword-detection anchor. "Viber" is rare (not natural English), leads with the
 distinguishing /pæn/ cluster, preserves product-name recognition, and lands at 2 syllables (below
 the 3–4 ideal — an accepted tradeoff in a team room where false-positive cost dominates recall).
-Acoustic-testing fallbacks if "Panop" collides with the team's ambient vocabulary: "Panwatch",
+Acoustic-testing fallbacks if "Viber" collides with the team's ambient vocabulary: "Panwatch",
 "Opticon". The wake word gates only the general attention/status flow (see §5 tiering); it is
 **not** required to address an already-running process by callsign.
 
@@ -288,7 +288,7 @@ dispatch logic, not a separate vocabulary-tiering subsystem with its own collisi
 
 | Command | Spoken form | Effect |
 |---------|-------------|--------|
-| Wake | "Panop" | Opens active-listen window for next utterance |
+| Wake | "Viber" | Opens active-listen window for next utterance |
 | Accept | "Yes" / "Accept" / "Do it" | Accepts pending suggestion → spawns (only while a suggestion is pending) |
 | Decline | "No" / "Nah" / "Skip" | Declines pending suggestion → no-op (only while a suggestion is pending) |
 | Select-and-steer | "[callsign], [instruction]" | Selects process, opens steering window, routes instruction |
@@ -521,7 +521,7 @@ above. Reference mockup: `artifacts/smithering/mockups/observability-board.html`
 The **consent announcement is the entire onboarding** — three sentences, ≤8 s (no feature wall):
 
 ```
-"Panopticon is listening. Say 'Panop, status' to hear a rundown.
+"Vibersyn is listening. Say 'Viber, status' to hear a rundown.
 Say 'mute' to pause. [earcon E2 begins]"
 ```
 
@@ -560,7 +560,7 @@ fail and *passed* is the evidence; docs and memory are not. Probe artifacts live
 ### 11.1 P-CUE (P0, blocking) — Cue (`github.com/jameslbarnes/cue`)
 
 Cue is the canonical substrate; our integration is a **thin adapter we own** (D2) that translates
-Cue's observation/action schema ↔ Panopticon's internal events. **We re-implement nothing Cue
+Cue's observation/action schema ↔ Vibersyn's internal events. **We re-implement nothing Cue
 provides.**
 
 **Exact surface the probe must exercise against the real library, with assertions:**
@@ -783,7 +783,7 @@ baselines that **fail on regression**.
 
 | ID | Topic | Decision | Rationale |
 |----|-------|----------|-----------|
-| D-DD-01 | Wake word | "Panop" (not "Panopticon") | 5-syllable full name has a soft /p/ onset and poor keyword anchor. "Panop" is 2 syllables, rare, plosive-leading, preserves name recognition. Re-confirm vs. team vocabulary in P-CUE. |
+| D-DD-01 | Wake word | "Viber" (not "Vibersyn") | 5-syllable full name has a soft /p/ onset and poor keyword anchor. "Viber" is 2 syllables, rare, plosive-leading, preserves name recognition. Re-confirm vs. team vocabulary in P-CUE. |
 | D-DD-02 | Earcon set | Exactly 5 tonal state earcons (wake, transcribing-ambient, spawn, resolve, stop) | Distinct non-verbal signatures per state beat spoken announcements (`design-art.md` §2). 5 is the minimum distinguishable set; additions require an acoustic-distinctness check. |
 | D-DD-03 | Suggestion threshold | Gate on **room-interrupt cost**, not just quality | A spoken suggestion is a no-opt-out broadcast interrupt; annoyance ∝ frequency (CHI 2025). FP cost in a room ≫ FP on a screen. Idle-preferring delivery is non-negotiable. |
 | D-DD-04 | Panic word | "Abort" (not "Stop") | "Stop" is constant in speech; "Abort" is rare, 2 syllables, distinct, reserved exclusively for global panic. |

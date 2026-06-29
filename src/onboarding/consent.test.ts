@@ -52,7 +52,7 @@ describe("onboarding consent scheduler", () => {
 
   test("announcement is the literal three-sentence AC1.1 text and stays under the eight-second speech budget", () => {
     expect(CONSENT_ANNOUNCEMENT).toBe(
-      "Panopticon is listening. Only transcripts are saved. Say 'Panop, status' for a rundown; say 'mute' to pause.",
+      "Vibersyn is listening. Only transcripts are saved. Say 'Viber, status' for a rundown; say 'mute' to pause.",
     );
     expect(() => assertConsentAnnouncement(CONSENT_ANNOUNCEMENT)).not.toThrow();
     expect(estimatedSpeechDurationMs(CONSENT_ANNOUNCEMENT)).toBeLessThanOrEqual(CONSENT_MAX_DURATION_MS);

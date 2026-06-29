@@ -35,7 +35,7 @@ export async function loadCueCore(): Promise<CueCoreModule> {
 }
 
 export function cueSourceRoot(): string {
-  return process.env.PANOP_CUE_SOURCE_DIR ?? join(tmpdir(), "panopticon-cue-src");
+  return process.env.VIBERSYN_CUE_SOURCE_DIR ?? join(tmpdir(), "vibersyn-cue-src");
 }
 
 export function cueCoreEntrypoint(): string {
@@ -79,7 +79,7 @@ export function ensureCueSourceBuild(): void {
 
   if (!cueSourceBuildAvailable()) {
     throw new Error(
-      `Cue source build failed to produce ${cueCoreEntrypoint()}. Build the upstream repo manually or set PANOP_CUE_SOURCE_DIR.`,
+      `Cue source build failed to produce ${cueCoreEntrypoint()}. Build the upstream repo manually or set VIBERSYN_CUE_SOURCE_DIR.`,
     );
   }
 }

@@ -1,5 +1,5 @@
 /* ============================================================================
-   Panopticon — "The Deep" projector UI
+   Vibersyn — "The Deep" projector UI
    A calm, dark, bioluminescent control room. Luminous glass bubbles rising
    through a deep abyss. Glanceable across a room; generative-art beautiful.
    All motion is transform/opacity only and freezes under reduced-motion.
@@ -837,6 +837,19 @@ button {
   overflow: hidden;
 }
 
+/* Provenance: the span of conversation an idea was grounded in (idea detection). */
+.idea-evidence {
+  margin-top: 4px;
+  font-size: clamp(9px, calc(var(--size, 196px) * 0.05), 11px);
+  font-style: italic;
+  line-height: 1.25;
+  color: var(--dim);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 /* ============================================================================
    Rail — audio / transcript / trace
    ============================================================================ */
@@ -1067,7 +1080,7 @@ button {
 }
 
 .tx-room .tx-meta strong { color: var(--c-selected); }
-.tx-panopticon .tx-meta strong { color: var(--c-active); }
+.tx-vibersyn .tx-meta strong { color: var(--c-active); }
 .tx-process .tx-meta strong { color: var(--c-planning); }
 
 .tx-line p {

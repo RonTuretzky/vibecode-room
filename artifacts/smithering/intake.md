@@ -1,4 +1,4 @@
-# Intake — Panopticon (voice-only, Cue-powered)
+# Intake — Vibersyn (voice-only, Cue-powered)
 
 > Written 2026-06-13. The intake/classification step of the smithering build pipeline.
 > Source of truth: `PROMPT.md` (the build brief) + the two standing constraints attached to
@@ -14,7 +14,7 @@
 carries real, load-bearing conventions the build must honor — even though the *product source*
 is mid-pivot. What's on disk today:
 
-- **`package.json`** — name `panopticon`, `private`, `type: module`, Bun runtime. Deps:
+- **`package.json`** — name `vibersyn`, `private`, `type: module`, Bun runtime. Deps:
   `smithers-orchestrator@0.23.0`, `zod@4.4.3`. Scripts: `dev`/`start` (`bun src/server/index.ts`),
   `typecheck` (`tsc --noEmit`), `test` (`bun test`), `seed`.
 - **`tsconfig.json`** — strict, ESNext, `moduleResolution: bundler`, `allowImportingTsExtensions`,
@@ -24,7 +24,7 @@ is mid-pivot. What's on disk today:
   the file→spec map, and the **adapter seams** where Smithers / cue / plugin-local-inference plug in.
 - **`.smithers/`** — a full **dev-workflow harness** (the `smithering` pipeline this very step
   runs in, plus `implement`/`review`/`ralph`/`audit`/… workflows, prompts, specs, agents).
-  `.smithers/PANOPTICON_BUILD.md` records standing user directives.
+  `.smithers/VIBERSYN_BUILD.md` records standing user directives.
 - **A prior `src/` implementation** — tracked in HEAD (`git ls-files src` → ~29 files:
   `core/{meta-session,process-manager,process,hooks,suggestion-engine,input-router,bus,
   control-plane,gateway,types,util}.ts`, `core/brain/*`, `core/workflows/*.tsx`, `server/index.ts`,
@@ -141,7 +141,7 @@ initialized; no new directory or `git init` needed. The sibling `../smithers` (`
 
 ## Summary
 
-Existing Bun+TypeScript repo (`panopticon`) being **re-pointed** from a click+type+voice V0 (prior
+Existing Bun+TypeScript repo (`vibersyn`) being **re-pointed** from a click+type+voice V0 (prior
 `src/` deleted in-tree, recoverable from git) to a **voice-only, Cue-driven** rebuild. Target is the
 current repo (`.`); product type is a **webapp** (Hono realtime backend + output-only React/Vite
 display + paired-phone mic pages), operated entirely by voice. Honor the repo's fixed conventions

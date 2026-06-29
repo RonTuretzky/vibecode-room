@@ -103,7 +103,7 @@ describe("ENG-T-02 record-replay harness", () => {
 
   test("AI-output invariant helpers reject over-limit MCQs and word counts without exact text assertions", () => {
     const relaxedLimits =
-      process.env.PANOPTICON_RBG_RELAX_INVARIANTS === "1" ? { maxMcqs: 4, maxWords: 16 } : undefined;
+      process.env.VIBERSYN_RBG_RELAX_INVARIANTS === "1" ? { maxMcqs: 4, maxWords: 16 } : undefined;
 
     expect(() =>
       assertAiOutputInvariants({
@@ -136,7 +136,7 @@ describe("ENG-T-02 record-replay harness", () => {
 function deterministicDecisionLlm(): DecisionLLM<HarnessOutput> {
   return {
     decide(input: DecisionInput): HarnessOutput {
-      if (process.env.PANOPTICON_RBG_NONDETERMINISTIC === "1") {
+      if (process.env.VIBERSYN_RBG_NONDETERMINISTIC === "1") {
         return {
           route: "suggestion.fire",
           pitch: "Build a replay harness",
@@ -168,7 +168,7 @@ function deterministicDecisionLlm(): DecisionLLM<HarnessOutput> {
 }
 
 async function writeFixture(items: TranscriptObservation[]): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), "panopticon-replay-"));
+  const dir = await mkdtemp(join(tmpdir(), "vibersyn-replay-"));
   const path = join(dir, "transcript.jsonl");
   await writeFile(path, items.map((item) => JSON.stringify(item)).join("\n"), "utf8");
   cleanupDirs.add(dir);
@@ -203,7 +203,7 @@ function observations(): TranscriptObservation[] {
       utteranceId: "utt-002",
     },
     {
-      text: "partial thought about Panop",
+      text: "partial thought about Viber",
       isFinal: false,
       speaker: null,
       sessionId: "replay-session",

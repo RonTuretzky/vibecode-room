@@ -1,5 +1,5 @@
 // VoxTerm ASR provider — bridges VoxTerm real-time transcript segments into the
-// strict TranscriptObservation shape consumed across Panopticon.
+// strict TranscriptObservation shape consumed across Vibersyn.
 //
 // UPSTREAM / IPC CONTRACT
 // -----------------------
@@ -12,7 +12,7 @@
 // segment IPC:
 //
 //   repo:      github.com/dmarzzz/VoxTerm
-//   branch:    panopticon/realtime-segment-ipc
+//   branch:    vibersyn/realtime-segment-ipc
 //   fork base: 64521b623ffdbbe456b5428445e43933898bb4b3 (dmarzzz/VoxTerm HEAD the
 //              realtime-segment-ipc patch is cut from; resolve `git ls-remote`)
 //

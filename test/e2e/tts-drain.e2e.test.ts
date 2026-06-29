@@ -1,6 +1,6 @@
 // ISSUE-0022 e2e: a fired spoken suggestion produces a fully-drained audio
 // stream. The runtime selects the ElevenLabs streaming TTS provider
-// (PANOP_TTS_PROVIDER=elevenlabs) but is handed a stubbed transport, so no
+// (VIBERSYN_TTS_PROVIDER=elevenlabs) but is handed a stubbed transport, so no
 // network or audio device is touched — any real fetch fails the test. A
 // buildable utterance fires a suggestion, emitOutput synthesizes through the
 // stub, and the sink drains the whole stream end-to-end; the trace records the
@@ -28,19 +28,19 @@ describe("spoken suggestion produces a drained audio stream (e2e)", () => {
       fetchCalls += 1;
       throw new Error(`unexpected network fetch in the offline tts-drain loop: ${String(args[0])}`);
     }) as unknown as typeof fetch;
-    priorAsrProvider = process.env.PANOP_ASR_PROVIDER;
+    priorAsrProvider = process.env.VIBERSYN_ASR_PROVIDER;
     priorDeepgramKey = process.env.DEEPGRAM_API_KEY;
-    priorTtsProvider = process.env.PANOP_TTS_PROVIDER;
-    delete process.env.PANOP_ASR_PROVIDER;
+    priorTtsProvider = process.env.VIBERSYN_TTS_PROVIDER;
+    delete process.env.VIBERSYN_ASR_PROVIDER;
     delete process.env.DEEPGRAM_API_KEY;
-    delete process.env.PANOP_TTS_PROVIDER;
+    delete process.env.VIBERSYN_TTS_PROVIDER;
   });
 
   afterEach(() => {
     globalThis.fetch = realFetch;
-    restoreEnv("PANOP_ASR_PROVIDER", priorAsrProvider);
+    restoreEnv("VIBERSYN_ASR_PROVIDER", priorAsrProvider);
     restoreEnv("DEEPGRAM_API_KEY", priorDeepgramKey);
-    restoreEnv("PANOP_TTS_PROVIDER", priorTtsProvider);
+    restoreEnv("VIBERSYN_TTS_PROVIDER", priorTtsProvider);
     while (tempDirs.length > 0) {
       const dir = tempDirs.pop();
       if (dir !== undefined) {
@@ -85,23 +85,25 @@ describe("spoken suggestion produces a drained audio stream (e2e)", () => {
 
     const runtime = await createProjectorRuntime(
       {
-        PANOP_INITIAL_MUTED: "0",
-        PANOP_MIC_REPLAY_PATH: path,
-        PANOP_TTS_PROVIDER: "elevenlabs",
+        VIBERSYN_INITIAL_MUTED: "0",
+        VIBERSYN_MIC_REPLAY_PATH: path,
+        VIBERSYN_TTS_PROVIDER: "elevenlabs",
         ELEVENLABS_API_KEY: fakeElevenLabsKey(),
-        PANOP_SUGGEST_WORD_FLOOR: "3",
-        PANOP_SUGGEST_INTERRUPT_VELOCITY_WEIGHT: "0",
-        PANOP_SUGGEST_INTERRUPT_RECENCY_WEIGHT: "0",
-        PANOP_SUGGEST_INTERRUPT_PENDING_STEERING_WEIGHT: "0",
+        // Deterministic idea detection: heuristic detector, eager scheduling, no tick.
+        VIBERSYN_IDEA_DETECTOR: "heuristic",
+        VIBERSYN_DETECT_MIN_NEW_TURNS: "1",
+        VIBERSYN_DETECT_MIN_INTERVAL_MS: "0",
+        VIBERSYN_DETECT_TICK_MS: "0",
       },
       { ttsTransport: transport },
     );
 
     const session = runtime.startMicSession("corr-tts-drain");
     await session.stop();
+    await runtime.detection.flush();
 
-    // End to end: a suggestion fired and was spoken through the elevenlabs stub.
-    expect(runtime.lastSuggestionDecision?.kind).toBe("fired");
+    // End to end: an idea was detected and spoken through the elevenlabs stub.
+    expect(runtime.detection.primary()).not.toBeNull();
     expect(speakCalls).toBe(1);
     // The whole stream was read — every lazily-produced chunk was pulled.
     expect(pulledChunks).toBe(synthetic.length);
@@ -126,7 +128,7 @@ function restoreEnv(key: string, prior: string | undefined): void {
 }
 
 function writeReplayFixture(tempDirs: string[], observations: TranscriptObservation[]): string {
-  const dir = mkdtempSync(join(tmpdir(), "panop-tts-drain-"));
+  const dir = mkdtempSync(join(tmpdir(), "vibersyn-tts-drain-"));
   tempDirs.push(dir);
   const path = join(dir, "mic.jsonl");
   writeFileSync(path, observations.map((observation) => JSON.stringify(observation)).join("\n"), "utf8");

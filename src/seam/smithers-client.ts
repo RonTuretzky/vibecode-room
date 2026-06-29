@@ -68,7 +68,7 @@ export class GatewaySmithersClient implements SmithersClient {
   }
 
   async spawn(seed: SpawnSeed): Promise<SpawnResult> {
-    const runId = seed.runId ?? `panop-${seed.upid}`;
+    const runId = seed.runId ?? `vibersyn-${seed.upid}`;
     const workflow = seed.workflow || this.defaultWorkflow;
     const input = {
       ...(seed.input ?? {}),
@@ -106,7 +106,7 @@ export class GatewaySmithersClient implements SmithersClient {
 
   async resume(upid: string): Promise<unknown> {
     const record = await this.requireRecord(upid);
-    if (process.env.PANOP_RBG_RESUME_RPC === "1") {
+    if (process.env.VIBERSYN_RBG_RESUME_RPC === "1") {
       return this.transport.request("resumeRun", { runId: record.runId, options: { force: false } });
     }
     await this.waitForSignalWait(record, "resume");
@@ -232,7 +232,7 @@ export class OfficialGatewayTransport implements GatewayRpcTransport {
       token: options.token,
       WebSocket: options.WebSocket,
       client: {
-        id: "panopticon-seam",
+        id: "vibersyn-seam",
         version: "0.0.1",
         platform: "bun",
       },

@@ -9,7 +9,7 @@ bridging VoxTerm real-time transcript segments into the strict
 
 dmarzzz/VoxTerm `main` ships transcription as a **markdown / file poller** only
 (see `docs/planning/03-eng.md:1280` — "voxterm (markdown file poller)"). A file
-re-read on an interval cannot drive Panopticon's low-latency observation loop:
+re-read on an interval cannot drive Vibersyn's low-latency observation loop:
 there is no real-time, per-segment event, so interim hypotheses and word-final
 latency are not observable.
 
@@ -19,10 +19,10 @@ IPC:
 | field     | value                                                              |
 | --------- | ------------------------------------------------------------------ |
 | repo      | `github.com/dmarzzz/VoxTerm`                                       |
-| branch    | `panopticon/realtime-segment-ipc`                                 |
+| branch    | `vibersyn/realtime-segment-ipc`                                 |
 | fork base | `64521b623ffdbbe456b5428445e43933898bb4b3`                        |
 
-The `panopticon/realtime-segment-ipc` branch carries the real-time segment IPC
+The `vibersyn/realtime-segment-ipc` branch carries the real-time segment IPC
 patch on top of `dmarzzz/VoxTerm` **HEAD** at the time of integration. The
 fork-base SHA above is that exact upstream commit — it is verifiable today with:
 

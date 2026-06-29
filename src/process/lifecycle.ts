@@ -160,7 +160,7 @@ export class ProcessLifecycle {
     this.#checkpointSeq += 1;
     this.#updatedAtMs = this.now();
     const snapshot = this.snapshot();
-    if (process.env.PANOP_RBG_DISABLE_CHECKPOINTING !== "1") {
+    if (process.env.VIBERSYN_RBG_DISABLE_CHECKPOINTING !== "1") {
       await this.checkpoints.save(snapshot);
     }
     return snapshot;
@@ -174,7 +174,7 @@ export class ProcessLifecycle {
       archivedAtMs: this.now(),
       snapshot,
     };
-    if (process.env.PANOP_RBG_SKIP_PREKILL_ARCHIVE !== "1") {
+    if (process.env.VIBERSYN_RBG_SKIP_PREKILL_ARCHIVE !== "1") {
       await this.archiveStore.archive(record);
     }
     return record;
@@ -207,14 +207,14 @@ export class ProcessLifecycle {
     this.#context = { ...this.#context, ...cloneContext(contextPatch) };
     this.#updatedAtMs = this.now();
     const snapshot = this.snapshot();
-    if (options.saveCheckpoint !== false && process.env.PANOP_RBG_DISABLE_CHECKPOINTING !== "1") {
+    if (options.saveCheckpoint !== false && process.env.VIBERSYN_RBG_DISABLE_CHECKPOINTING !== "1") {
       await this.checkpoints.save(snapshot);
     }
     return snapshot;
   }
 
   private assertEdge(next: ProcessLifecycleState, allowedFrom: readonly ProcessLifecycleState[]): void {
-    if (process.env.PANOP_RBG_ALLOW_INVALID_LIFECYCLE_EDGE === "1") {
+    if (process.env.VIBERSYN_RBG_ALLOW_INVALID_LIFECYCLE_EDGE === "1") {
       return;
     }
     if (!allowedFrom.includes(this.#state)) {

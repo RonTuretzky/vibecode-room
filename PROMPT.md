@@ -1,6 +1,6 @@
-# Build PROMPT — Panopticon (voice-only, Cue-powered)
+# Build PROMPT — Vibersyn (voice-only, Cue-powered)
 
-> **What this is.** The product brief to **build Panopticon from scratch**. It is the single
+> **What this is.** The product brief to **build Vibersyn from scratch**. It is the single
 > source of truth, synthesized from the Session-1 design — the whiteboard photos
 > (`IMG_8774–8781`), the Mobile + Aftermath recordings, the cleaned transcript, and the
 > interactive spec — **then re-pointed to a voice-only interaction model built on Cue.**
@@ -27,7 +27,7 @@
 
 ## 0. One-paragraph summary
 
-**Panopticon is an operating system for AI-agent work that you run entirely with your voice.**
+**Vibersyn is an operating system for AI-agent work that you run entirely with your voice.**
 A small group talks in a room. The system **passively listens** and floats **idea bubbles**
 proposing things to build — each bubble shipping a tiny live demo + a few multiple-choice
 questions you can answer out loud. Accept one **by saying its magic word**, and a durable agent
@@ -333,7 +333,7 @@ display shows:
 
 _(Reference for the board's look/feel: `conductor-github-visualizer` — a 3D Three.js graph of
 repos/PRs as connected nodes with live status — and the team's prior SNES-style "tree-growth"
-panopticon-world prototype. Candidate aesthetics for the growing garden / node-graph and the
+vibersyn-world prototype. Candidate aesthetics for the growing garden / node-graph and the
 pre-session layout (§5.10). Not dependencies; visual north stars.)_
 
 ### 5.8a Commit / PR explainer slideshow (Elaine's idea — reuse `../smithers`)
@@ -480,12 +480,12 @@ up-front decisions; everything else is the implementer's judgment as long as it 
   process is a durable, forkable, resumable Smithers run; pause/resume/fork/replay and "operate many
   agents at once" are real because of it. Combined with **Fable** for planning. **All model calls
   route through Smithers subscriptions — never a raw API key**, even trivial one-shots (carried
-  directive from `.smithers/PANOPTICON_BUILD.md`).
+  directive from `.smithers/VIBERSYN_BUILD.md`).
 - **Frontend (output-only):** a **React app built with Vite** — the **living garden board**
   (§5.8, processes as growing plants/trees), the idea-bubbles sidebar, the "steering X" banner,
   the listening indicator, the mobile paired-mic page. Rendered for _viewing_, not input (C0).
   Visual references: `conductor-github-visualizer` (RonTuretzky, 3D node-graph) and the prior
-  panopticon-world tree-growth prototype.
+  vibersyn-world tree-growth prototype.
 - **Commit/PR explainer slideshow:** **reuse `../smithers`** (`~/smithers`) — adapt the
   **`report-slideshow`** workflow (self-contained, dependency-free HTML deck) and
   `apps/smithers/scripts/capture/generateSlideshow.ts` to take a commit range / PR and emit an
@@ -493,7 +493,7 @@ up-front decisions; everything else is the implementer's judgment as long as it 
 - **Backend:** **Hono** — command API + a **real-time stream** (WebSocket/SSE) pushing
   process/suggestion/transcript events to every client so the shared display and every paired phone
   stay in sync.
-- **App vs. dev workflows:** Panopticon **runtime** workflows (the durable Process loop, the
+- **App vs. dev workflows:** Vibersyn **runtime** workflows (the durable Process loop, the
   suggestion engine) live in the **app** under `src/`; **dev** workflows that _build_ the app live in
   `.smithers/`. **Never mix the two.**
 - **Validate before building (carried bar):** Cue and `plugin-local-inference` are third-party — per

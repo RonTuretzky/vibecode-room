@@ -1,15 +1,15 @@
 import { expect, test, type Page } from "@playwright/test";
 
 /**
- * Browser e2e for the Panopticon projector UI (the gorgeous bubble world).
+ * Browser e2e for the Vibersyn projector UI (the gorgeous bubble world).
  *
- * We assert UI STATE (DOM + the `window.__PANOPTICON__` hook), never screenshots.
+ * We assert UI STATE (DOM + the `window.__VIBERSYN__` hook), never screenshots.
  * `?live=0` disables the live /api connect so we can drive deterministic state
  * via `applySnapshot`; the live-data spec omits it to exercise the real server.
  */
 
 async function waitForHook(page: Page): Promise<void> {
-  await page.waitForFunction(() => Boolean((window as any).__PANOPTICON__?.ready), null, {
+  await page.waitForFunction(() => Boolean((window as any).__VIBERSYN__?.ready), null, {
     timeout: 15_000,
   });
 }
@@ -21,7 +21,7 @@ async function gotoStatic(page: Page): Promise<void> {
 }
 
 async function apply(page: Page, partial: Record<string, unknown>): Promise<void> {
-  await page.evaluate((p) => (window as any).__PANOPTICON__.applySnapshot(p), partial);
+  await page.evaluate((p) => (window as any).__VIBERSYN__.applySnapshot(p), partial);
 }
 
 test.describe("projector UI — first paint & feature parity", () => {
@@ -90,7 +90,7 @@ test.describe("projector UI — drill into a build", () => {
       "data-selected",
       "true",
     );
-    expect(await page.evaluate(() => (window as any).__PANOPTICON__.getSelected())).toBe("Atlas");
+    expect(await page.evaluate(() => (window as any).__VIBERSYN__.getSelected())).toBe("Atlas");
 
     await page.keyboard.press("Escape");
     await expect(page.getByTestId("build-detail")).toHaveCount(0);
@@ -98,7 +98,7 @@ test.describe("projector UI — drill into a build", () => {
 
   test("programmatic select() via the hook opens the detail", async ({ page }) => {
     await gotoStatic(page);
-    await page.evaluate(() => (window as any).__PANOPTICON__.select("Cobalt"));
+    await page.evaluate(() => (window as any).__VIBERSYN__.select("Cobalt"));
     await expect(page.getByTestId("build-detail")).toBeVisible();
     await expect(page.getByTestId("detail-callsign")).toContainText("Cobalt");
   });
@@ -162,7 +162,7 @@ test.describe("projector UI — keyboard, a11y & detail completeness", () => {
 
   test("build detail shows the full build context", async ({ page }) => {
     await gotoStatic(page);
-    await page.evaluate(() => (window as any).__PANOPTICON__.select("Atlas"));
+    await page.evaluate(() => (window as any).__VIBERSYN__.select("Atlas"));
     const detail = page.getByTestId("build-detail");
     await expect(detail).toBeVisible();
     await expect(page.getByTestId("detail-state")).toContainText("active");
@@ -176,7 +176,7 @@ test.describe("projector UI — keyboard, a11y & detail completeness", () => {
   test("build detail is an accessible modal dialog; bubbles are labeled buttons", async ({ page }) => {
     await gotoStatic(page);
     await expect(page.getByRole("button", { name: /Atlas/ }).first()).toBeVisible();
-    await page.evaluate(() => (window as any).__PANOPTICON__.select("Atlas"));
+    await page.evaluate(() => (window as any).__VIBERSYN__.select("Atlas"));
     await expect(page.getByRole("dialog", { name: /Build detail for Atlas/ })).toBeVisible();
   });
 
@@ -208,8 +208,8 @@ test.describe("projector UI — boundary fleet states", () => {
   test("single process: the 'No second process running' empty slot is shown (spec §9)", async ({ page }) => {
     await gotoStatic(page);
     await page.evaluate(() => {
-      const snap = (window as any).__PANOPTICON__.getSnapshot();
-      (window as any).__PANOPTICON__.applySnapshot({ processes: [snap.processes[0]] });
+      const snap = (window as any).__VIBERSYN__.getSnapshot();
+      (window as any).__VIBERSYN__.applySnapshot({ processes: [snap.processes[0]] });
     });
     await expect(page.locator('[data-testid="bubble"][data-kind="process"]')).toHaveCount(1);
     const empty = page.getByTestId("fleet-empty");
@@ -220,10 +220,10 @@ test.describe("projector UI — boundary fleet states", () => {
   test("non-active process state renders with the correct data-state", async ({ page }) => {
     await gotoStatic(page);
     await page.evaluate(() => {
-      const snap = (window as any).__PANOPTICON__.getSnapshot();
+      const snap = (window as any).__VIBERSYN__.getSnapshot();
       const states = ["paused", "halted", "completed"];
       const processes = snap.processes.map((p: any, i: number) => ({ ...p, state: states[i] ?? p.state }));
-      (window as any).__PANOPTICON__.applySnapshot({ processes });
+      (window as any).__VIBERSYN__.applySnapshot({ processes });
     });
     await expect(page.locator('[data-testid="bubble"][data-callsign="Atlas"]')).toHaveAttribute(
       "data-state",
@@ -244,7 +244,7 @@ test.describe("projector UI — trace NEW pill (auto-scroll disabled)", () => {
         correlationId: `c${i}`,
         meta: { i },
       }));
-      (window as any).__PANOPTICON__.applySnapshot({ trace });
+      (window as any).__VIBERSYN__.applySnapshot({ trace });
     });
     // Wait for React to commit all 80 rows so the rail genuinely overflows before we scroll.
     await expect(page.locator('[data-testid="trace-event"]')).toHaveCount(80);
@@ -255,8 +255,8 @@ test.describe("projector UI — trace NEW pill (auto-scroll disabled)", () => {
     });
     // Append a new event while scrolled up → the NEW pill must surface.
     await page.evaluate(() => {
-      const snap = (window as any).__PANOPTICON__.getSnapshot();
-      (window as any).__PANOPTICON__.applySnapshot({
+      const snap = (window as any).__VIBERSYN__.getSnapshot();
+      (window as any).__VIBERSYN__.applySnapshot({
         trace: [
           ...snap.trace,
           { level: "warn", event: "process.halt", sessionId: "e2e", correlationId: "cnew", meta: { trigger: "panic" } },

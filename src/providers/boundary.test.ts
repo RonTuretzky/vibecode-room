@@ -32,11 +32,11 @@ describe("ENG-T-04 provider boundary", () => {
           ),
         },
         {
-          input: decisionInput("Panop build the thinnest walking skeleton.", "utt-002"),
+          input: decisionInput("Viber build the thinnest walking skeleton.", "utt-002"),
           output: decisionOutput(
-            "Panop build the thinnest walking skeleton.",
+            "Viber build the thinnest walking skeleton.",
             "utt-002",
-            matchWakeWord(observation("Panop build the thinnest walking skeleton.", "utt-002")),
+            matchWakeWord(observation("Viber build the thinnest walking skeleton.", "utt-002")),
           ),
         },
       ]);
@@ -48,7 +48,7 @@ describe("ENG-T-04 provider boundary", () => {
       expect(result.decisions.map((decision) => decision.kind)).toEqual(["pass", "action"]);
       expect(fetchCalls).toEqual([]);
       expect(asr.streamCalls).toHaveLength(1);
-      expect(tts.calls).toEqual([{ text: "Panop build the thinnest walking skeleton.", opts: { voice: "noop" } }]);
+      expect(tts.calls).toEqual([{ text: "Viber build the thinnest walking skeleton.", opts: { voice: "noop" } }]);
       expect(llm.calls).toHaveLength(2);
     } finally {
       globalThis.fetch = originalFetch;
@@ -92,8 +92,8 @@ describe("ENG-T-04 provider boundary", () => {
   });
 
   test("replay DecisionLLM is temperature-0 and cached", async () => {
-    const input = decisionInput("Panop status please", "utt-002");
-    const output = decisionOutput("Panop status please", "utt-002", matchWakeWord(observation("Panop status please", "utt-002")));
+    const input = decisionInput("Viber status please", "utt-002");
+    const output = decisionOutput("Viber status please", "utt-002", matchWakeWord(observation("Viber status please", "utt-002")));
     const llm = new ReplayDecisionLLM([{ input, output }]);
 
     await expect(llm.decide({ ...input, temperature: 1 as 0 })).rejects.toThrow("temperature 0");
@@ -110,7 +110,7 @@ describe("ENG-T-04 provider boundary", () => {
   test("architecture lint rejects concrete-provider imports outside src/providers", async () => {
     const violations = await findConcreteProviderImports("src");
 
-    if (process.env.PANOP_RBG_CONCRETE_PROVIDER_IMPORT === "1") {
+    if (process.env.VIBERSYN_RBG_CONCRETE_PROVIDER_IMPORT === "1") {
       violations.push({
         path: "src/consumer/bad.ts",
         specifier: "../providers/asr/replay",

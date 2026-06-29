@@ -5,7 +5,7 @@
 - Added `src/routing/steering-window.ts`, a deterministic per-process steering window manager.
 - Opens on callsign detection, including one-breath select-and-steer.
 - Routes open-window speech to the selected UPID only and emits `route-steer` Layer-B ack metadata for each routed utterance.
-- Closes on `Done`, `Back`, `Abort`, or the configured `PANOP_STEER_IDLE_SECONDS` default of 20 seconds of mic-level idle.
+- Closes on `Done`, `Back`, `Abort`, or the configured `VIBERSYN_STEER_IDLE_SECONDS` default of 20 seconds of mic-level idle.
 - Gates state-scoped `Done`/`Back` and low-confidence steer handling in deterministic code.
 - Added `src/routing/steering-window.test.ts` and a `test/e2e/fleet.e2e.ts` window slice.
 

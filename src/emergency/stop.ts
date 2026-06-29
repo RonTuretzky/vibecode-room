@@ -69,11 +69,11 @@ export class EmergencyStopController {
   async trigger(correlationId = `emergency-${crypto.randomUUID()}`): Promise<EmergencyStopResult> {
     const startedAtMs = this.now();
     const active = this.registry.activeRecords();
-    const haltTargets = process.env.PANOP_RBG_LEAVE_PROCESS_RUNNING === "1" ? active.slice(0, -1) : active;
+    const haltTargets = process.env.VIBERSYN_RBG_LEAVE_PROCESS_RUNNING === "1" ? active.slice(0, -1) : active;
 
     await Promise.all(haltTargets.map((record) => this.registry.halt(record.upid, correlationId, "emergency")));
     await this.listener.stopListening(correlationId);
-    if (process.env.PANOP_RBG_RESUME_IN_PLACE !== "1") {
+    if (process.env.VIBERSYN_RBG_RESUME_IN_PLACE !== "1") {
       await this.listener.endSession(correlationId);
     }
 
@@ -92,7 +92,7 @@ export class EmergencyStopController {
       },
     };
 
-    if (process.env.PANOP_RBG_SUPPRESS_EMERGENCY_SIGNAL !== "1") {
+    if (process.env.VIBERSYN_RBG_SUPPRESS_EMERGENCY_SIGNAL !== "1") {
       this.emitSignal();
     }
     this.emitTrace(result, correlationId);
@@ -181,10 +181,10 @@ export function createEmergencyStopApp(controller: EmergencyStopController): Hon
     return context.json(result, result.ok ? 202 : 500);
   });
 
-  if (process.env.PANOP_RBG_ADD_STEER_ROUTE === "1") {
+  if (process.env.VIBERSYN_RBG_ADD_STEER_ROUTE === "1") {
     app.post("/steer", (context) => context.json({ accepted: true, verb: "steer" }));
   }
-  if (process.env.PANOP_RBG_ADD_UNMUTE_ROUTE === "1") {
+  if (process.env.VIBERSYN_RBG_ADD_UNMUTE_ROUTE === "1") {
     app.post("/unmute", (context) => context.json({ accepted: true, verb: "unmute" }));
   }
 
@@ -193,10 +193,10 @@ export function createEmergencyStopApp(controller: EmergencyStopController): Hon
 
 export function emergencyControlRoutes(): readonly string[] {
   const routes = [`POST ${EMERGENCY_STOP_ROUTE}`];
-  if (process.env.PANOP_RBG_ADD_STEER_ROUTE === "1") {
+  if (process.env.VIBERSYN_RBG_ADD_STEER_ROUTE === "1") {
     routes.push("POST /steer");
   }
-  if (process.env.PANOP_RBG_ADD_UNMUTE_ROUTE === "1") {
+  if (process.env.VIBERSYN_RBG_ADD_UNMUTE_ROUTE === "1") {
     routes.push("POST /unmute");
   }
   return routes;
@@ -204,10 +204,10 @@ export function emergencyControlRoutes(): readonly string[] {
 
 export function emergencyControlVerbs(): readonly string[] {
   const verbs = ["kill-all"];
-  if (process.env.PANOP_RBG_ADD_STEER_ROUTE === "1") {
+  if (process.env.VIBERSYN_RBG_ADD_STEER_ROUTE === "1") {
     verbs.push("steer");
   }
-  if (process.env.PANOP_RBG_ADD_UNMUTE_ROUTE === "1") {
+  if (process.env.VIBERSYN_RBG_ADD_UNMUTE_ROUTE === "1") {
     verbs.push("unmute");
   }
   return verbs;

@@ -73,9 +73,9 @@ describe("suggestion engine", () => {
   test("high quality and low interrupt cost fires immediately and hands PendingSuggestion to acceptance owner", async () => {
     const accepted: PendingSuggestion[] = [];
     const env = envWith({
-      PANOP_SUGGEST_INTERRUPT_RECENCY_WEIGHT: "0",
-      PANOP_SUGGEST_INTERRUPT_VELOCITY_WEIGHT: "0",
-      PANOP_SUGGEST_INTERRUPT_PENDING_STEERING_WEIGHT: "0",
+      VIBERSYN_SUGGEST_INTERRUPT_RECENCY_WEIGHT: "0",
+      VIBERSYN_SUGGEST_INTERRUPT_VELOCITY_WEIGHT: "0",
+      VIBERSYN_SUGGEST_INTERRUPT_PENDING_STEERING_WEIGHT: "0",
     });
     const llm = new RecordingDecisionLLM(() =>
       suggestionOutput({
@@ -187,7 +187,7 @@ describe("suggestion engine", () => {
   test("queued suggestions expire after TTL with no idle gap and are never handed to acceptance", async () => {
     const accepted: PendingSuggestion[] = [];
     const now = adjustableClock(20_000);
-    const env = envWith({ PANOP_SUGGEST_TTL_SECONDS: "1" });
+    const env = envWith({ VIBERSYN_SUGGEST_TTL_SECONDS: "1" });
     const engine = new SuggestionEngine({
       sessionId: "session-expire",
       llm: new RecordingDecisionLLM(() => suggestionOutput({ quality: 0.95 })),
@@ -231,9 +231,9 @@ describe("suggestion engine", () => {
 
   test("delivery strips apologetic language and clamps spoken pitch to twelve words", async () => {
     const env = envWith({
-      PANOP_SUGGEST_INTERRUPT_RECENCY_WEIGHT: "0",
-      PANOP_SUGGEST_INTERRUPT_VELOCITY_WEIGHT: "0",
-      PANOP_SUGGEST_INTERRUPT_PENDING_STEERING_WEIGHT: "0",
+      VIBERSYN_SUGGEST_INTERRUPT_RECENCY_WEIGHT: "0",
+      VIBERSYN_SUGGEST_INTERRUPT_VELOCITY_WEIGHT: "0",
+      VIBERSYN_SUGGEST_INTERRUPT_PENDING_STEERING_WEIGHT: "0",
     });
     const engine = new SuggestionEngine({
       sessionId: "session-format",
@@ -278,7 +278,7 @@ describe("suggestion engine", () => {
     });
     expect(Object.values(SUGGESTION_ENGINE_ENV_DEFAULTS).every((entry) => entry.description.length > 0)).toBe(true);
 
-    const env = envWith({ PANOP_SUGGEST_WORD_FLOOR: "60" });
+    const env = envWith({ VIBERSYN_SUGGEST_WORD_FLOOR: "60" });
     const engine = new SuggestionEngine({
       sessionId: "session-live",
       env,
@@ -291,10 +291,10 @@ describe("suggestion engine", () => {
       observation: observation(words(10), "utt-live-pass"),
       correlationId: "corr-live-pass",
     });
-    env.PANOP_SUGGEST_WORD_FLOOR = "10";
-    env.PANOP_SUGGEST_INTERRUPT_RECENCY_WEIGHT = "0";
-    env.PANOP_SUGGEST_INTERRUPT_VELOCITY_WEIGHT = "0";
-    env.PANOP_SUGGEST_INTERRUPT_PENDING_STEERING_WEIGHT = "0";
+    env.VIBERSYN_SUGGEST_WORD_FLOOR = "10";
+    env.VIBERSYN_SUGGEST_INTERRUPT_RECENCY_WEIGHT = "0";
+    env.VIBERSYN_SUGGEST_INTERRUPT_VELOCITY_WEIGHT = "0";
+    env.VIBERSYN_SUGGEST_INTERRUPT_PENDING_STEERING_WEIGHT = "0";
     const fired = await engine.observe({
       observation: observation(words(10), "utt-live-fire"),
       correlationId: "corr-live-fire",
@@ -307,11 +307,11 @@ describe("suggestion engine", () => {
   test("substantive elapsed floor can pass before word floor", async () => {
     const now = adjustableClock(50_000);
     const env = envWith({
-      PANOP_SUGGEST_WORD_FLOOR: "60",
-      PANOP_SUGGEST_TIME_FLOOR_SECONDS: "1",
-      PANOP_SUGGEST_INTERRUPT_RECENCY_WEIGHT: "0",
-      PANOP_SUGGEST_INTERRUPT_VELOCITY_WEIGHT: "0",
-      PANOP_SUGGEST_INTERRUPT_PENDING_STEERING_WEIGHT: "0",
+      VIBERSYN_SUGGEST_WORD_FLOOR: "60",
+      VIBERSYN_SUGGEST_TIME_FLOOR_SECONDS: "1",
+      VIBERSYN_SUGGEST_INTERRUPT_RECENCY_WEIGHT: "0",
+      VIBERSYN_SUGGEST_INTERRUPT_VELOCITY_WEIGHT: "0",
+      VIBERSYN_SUGGEST_INTERRUPT_PENDING_STEERING_WEIGHT: "0",
     });
     const engine = new SuggestionEngine({
       sessionId: "session-time",
@@ -337,9 +337,9 @@ describe("suggestion engine", () => {
 
   test("TraceProcessor receives structured route.suggestion decision metadata", async () => {
     const env = envWith({
-      PANOP_SUGGEST_INTERRUPT_RECENCY_WEIGHT: "0",
-      PANOP_SUGGEST_INTERRUPT_VELOCITY_WEIGHT: "0",
-      PANOP_SUGGEST_INTERRUPT_PENDING_STEERING_WEIGHT: "0",
+      VIBERSYN_SUGGEST_INTERRUPT_RECENCY_WEIGHT: "0",
+      VIBERSYN_SUGGEST_INTERRUPT_VELOCITY_WEIGHT: "0",
+      VIBERSYN_SUGGEST_INTERRUPT_PENDING_STEERING_WEIGHT: "0",
     });
     const trace = new TraceProcessor({ clock: manualClock(60_000) });
     const engine = new SuggestionEngine({

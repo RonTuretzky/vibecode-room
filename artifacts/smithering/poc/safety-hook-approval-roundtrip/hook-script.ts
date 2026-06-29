@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * hook-script.ts — Claude Code PreToolUse hook for the Panopticon safety gate.
+ * hook-script.ts — Claude Code PreToolUse hook for the Vibersyn safety gate.
  *
  * This script runs as a subprocess called by Claude Code's PreToolUse hook mechanism
  * (configured in .claude/settings.json):
@@ -20,7 +20,7 @@
  *   1. Reads the tool call from stdin
  *   2. Classifies the tool (read-safe vs mutating/unknown)
  *   3. Read-safe → exit 0 immediately (AC11.1: Safe mode stays autonomous)
- *   4. Mutating/unknown → sends approval request to the Panopticon gate server
+ *   4. Mutating/unknown → sends approval request to the Vibersyn gate server
  *   5. Blocks until approved (exit 0), denied (exit 2), or dead-man timeout (exit 2)
  *
  * GATE_SERVER_URL env var: where the approval gate runs (default: http://127.0.0.1:7777)
@@ -81,12 +81,12 @@ async function requestApproval(
     gateId = data.gateId;
   } catch (err) {
     // Gate server unavailable — deny by default (fail-closed)
-    process.stderr.write(`[panopticon-hook] gate server unavailable: ${err}\n`);
+    process.stderr.write(`[vibersyn-hook] gate server unavailable: ${err}\n`);
     return "deny";
   }
 
   // Output the readback to stderr (visible in the agent's trace)
-  process.stderr.write(`[panopticon-hook] BLOCKED gateId=${gateId}: ${readback}\n`);
+  process.stderr.write(`[vibersyn-hook] BLOCKED gateId=${gateId}: ${readback}\n`);
 
   // Long-poll for decision with dead-man timer
   const deadline = Date.now() + DEAD_MAN_TIMEOUT_MS;
@@ -110,7 +110,7 @@ async function requestApproval(
   }
 
   // Dead-man timer fired — resolve to deny
-  process.stderr.write(`[panopticon-hook] dead-man timer fired gateId=${gateId} → deny\n`);
+  process.stderr.write(`[vibersyn-hook] dead-man timer fired gateId=${gateId} → deny\n`);
   try {
     await fetch(`${GATE_SERVER_URL}/resolve`, {
       method: "POST",
@@ -136,7 +136,7 @@ async function main(): Promise<void> {
     payload = JSON.parse(raw) as ClaudeCodeHookPayload;
   } catch {
     // Can't parse → deny (fail-closed)
-    process.stderr.write(`[panopticon-hook] could not parse stdin: ${raw}\n`);
+    process.stderr.write(`[vibersyn-hook] could not parse stdin: ${raw}\n`);
     process.exit(2);
   }
 
@@ -144,7 +144,7 @@ async function main(): Promise<void> {
 
   // Dangerous mode → allow everything (gate bypassed)
   if (SAFETY_MODE === "dangerous") {
-    process.stderr.write(`[panopticon-hook] DANGEROUS mode — allowing ${toolName}\n`);
+    process.stderr.write(`[vibersyn-hook] DANGEROUS mode — allowing ${toolName}\n`);
     process.exit(0);
   }
 
@@ -153,15 +153,15 @@ async function main(): Promise<void> {
 
   // Explicit mode → gate every tool, even read-safe
   if (SAFETY_MODE === "explicit") {
-    process.stderr.write(`[panopticon-hook] EXPLICIT mode — gating ${toolName} (${classification.reason})\n`);
+    process.stderr.write(`[vibersyn-hook] EXPLICIT mode — gating ${toolName} (${classification.reason})\n`);
     const readback = buildReadback(toolName, toolArgs ?? {});
     const decision = await requestApproval(toolName, toolArgs ?? {}, readback);
     if (decision === "approve") {
-      process.stderr.write(`[panopticon-hook] approved ${toolName}\n`);
+      process.stderr.write(`[vibersyn-hook] approved ${toolName}\n`);
       process.exit(0);
     } else {
       // Write block message to stdout (Claude Code reads it)
-      process.stdout.write(JSON.stringify({ type: "block", message: `Panopticon safety gate: ${decision} — ${toolName} was not approved.` }));
+      process.stdout.write(JSON.stringify({ type: "block", message: `Vibersyn safety gate: ${decision} — ${toolName} was not approved.` }));
       process.exit(2);
     }
   }
@@ -177,18 +177,18 @@ async function main(): Promise<void> {
   const decision = await requestApproval(toolName, toolArgs ?? {}, readback);
 
   if (decision === "approve") {
-    process.stderr.write(`[panopticon-hook] approved ${toolName}\n`);
+    process.stderr.write(`[vibersyn-hook] approved ${toolName}\n`);
     process.exit(0);
   } else {
     process.stdout.write(JSON.stringify({
       type: "block",
-      message: `Panopticon safety gate: ${decision} — ${toolName} was not approved within ${DEAD_MAN_TIMEOUT_MS}ms.`,
+      message: `Vibersyn safety gate: ${decision} — ${toolName} was not approved within ${DEAD_MAN_TIMEOUT_MS}ms.`,
     }));
     process.exit(2);
   }
 }
 
 main().catch((err) => {
-  process.stderr.write(`[panopticon-hook] fatal: ${err}\n`);
+  process.stderr.write(`[vibersyn-hook] fatal: ${err}\n`);
   process.exit(2);
 });

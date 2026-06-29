@@ -160,7 +160,7 @@ async function runReplayBenchmark(): Promise<{ metrics: RoundTripMetric[]; trace
   const adapter = new CueAdapter({
     sessionId: SESSION_ID,
     trace,
-    textCueWords: ["panop"],
+    textCueWords: ["viber"],
     idFactory: sequenceIds("latency"),
     earconSink: {
       async emit(emission) {
@@ -182,7 +182,7 @@ async function runReplayBenchmark(): Promise<{ metrics: RoundTripMetric[]; trace
       recordObservation(trace, board, observation, correlationId, finalizedAtMs);
 
       const earconStartedAtMs = performance.now();
-      await adapter.emitTextCueEarcon(observation, { name: "text", metadata: { pattern: "panop" } }, correlationId);
+      await adapter.emitTextCueEarcon(observation, { name: "text", metadata: { pattern: "viber" } }, correlationId);
       const earconLatencyMs = performance.now() - earconStartedAtMs;
 
       await sleep(NOMINAL_DECISION_DELAY_MS + (input.observationIndex % 5));
@@ -207,7 +207,7 @@ async function runReplayBenchmark(): Promise<{ metrics: RoundTripMetric[]; trace
           endedAtMs: finalizedAtMs,
           meta: {
             utteranceId: observation.utteranceId,
-            wakeWord: "panop",
+            wakeWord: "viber",
             decisionId,
           },
         },
@@ -295,7 +295,7 @@ async function measureDelayedEarconProof(minDelayedDecisionMs: number): Promise<
   const observation = benchmarkObservations(1)[0];
   const adapter = new CueAdapter({
     sessionId: SESSION_ID,
-    textCueWords: ["panop"],
+    textCueWords: ["viber"],
     earconSink: {
       async emit(emission) {
         await playEarcon(audio, emission.id, {
@@ -308,7 +308,7 @@ async function measureDelayedEarconProof(minDelayedDecisionMs: number): Promise<
   });
   const finalizedAtMs = performance.now();
   const delayedDecision = sleep(Math.max(DELAYED_DECISION_PROOF_MS, minDelayedDecisionMs)).then(() => performance.now());
-  await adapter.emitTextCueEarcon(observation, { name: "text", metadata: { pattern: "panop" } }, "corr-delayed-proof");
+  await adapter.emitTextCueEarcon(observation, { name: "text", metadata: { pattern: "viber" } }, "corr-delayed-proof");
   const earconAtMs = performance.now();
   const decisionAtMs = await delayedDecision;
 
@@ -394,7 +394,7 @@ function liveAsrStatus(): BenchmarkReport["liveAsr"] {
 
 function benchmarkObservations(count: number): TranscriptObservation[] {
   return Array.from({ length: count }, (_, index) => ({
-    text: `Panop status for latency route ${index}`,
+    text: `Viber status for latency route ${index}`,
     isFinal: true,
     speaker: "speaker_0",
     sessionId: SESSION_ID,

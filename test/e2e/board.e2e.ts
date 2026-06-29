@@ -19,7 +19,7 @@ describe("REQ-16 board e2e", () => {
 
     const live = await runBoardIndependentVoiceFlow({ boardUrl: "http://127.0.0.1:0/unused" });
     const inputs = [
-      { event: "observe.final", meta: { seq: 1, utteranceId: "utt-board", text: "Panop status" } },
+      { event: "observe.final", meta: { seq: 1, utteranceId: "utt-board", text: "Viber status" } },
       { event: "route.action", meta: { seq: 2, utteranceId: "utt-board", decisionId: "decision-board", action: "status" } },
       { event: "process.status", upid, meta: { seq: 3, utteranceId: "utt-board", runId: "run-board" } },
       { event: "output.tts", upid, meta: { seq: 4, utteranceId: "utt-board", text: "Atlas active" } },

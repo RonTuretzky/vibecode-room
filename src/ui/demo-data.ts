@@ -74,8 +74,8 @@ export const demoProjectorSnapshot: ProjectorSnapshot = {
     },
     {
       time: "12:04:32",
-      speaker: "Panopticon",
-      kind: "panopticon",
+      speaker: "Vibersyn",
+      kind: "vibersyn",
       text: "Routed to Atlas.",
     },
     {
@@ -86,8 +86,8 @@ export const demoProjectorSnapshot: ProjectorSnapshot = {
     },
     {
       time: "12:05:40",
-      speaker: "Panopticon",
-      kind: "panopticon",
+      speaker: "Vibersyn",
+      kind: "vibersyn",
       text: "Idea queued for the next idle gap.",
     },
   ],

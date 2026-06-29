@@ -28,16 +28,16 @@ describe("ambient loop e2e — assembled mic->ASR->suggest->bubble->accept->spaw
     // The pre-spawn resource check reads this flag from the global process.env. The
     // demo fleet seeds two processes against the default cap of two, so give the
     // acceptance spawn headroom.
-    priorCapacityGuard = process.env.PANOP_RBG_DISABLE_CAPACITY_CHECK;
-    process.env.PANOP_RBG_DISABLE_CAPACITY_CHECK = "1";
+    priorCapacityGuard = process.env.VIBERSYN_RBG_DISABLE_CAPACITY_CHECK;
+    process.env.VIBERSYN_RBG_DISABLE_CAPACITY_CHECK = "1";
   });
 
   afterEach(() => {
     globalThis.fetch = realFetch;
     if (priorCapacityGuard === undefined) {
-      delete process.env.PANOP_RBG_DISABLE_CAPACITY_CHECK;
+      delete process.env.VIBERSYN_RBG_DISABLE_CAPACITY_CHECK;
     } else {
-      process.env.PANOP_RBG_DISABLE_CAPACITY_CHECK = priorCapacityGuard;
+      process.env.VIBERSYN_RBG_DISABLE_CAPACITY_CHECK = priorCapacityGuard;
     }
     while (tempDirs.length > 0) {
       const dir = tempDirs.pop();
@@ -59,28 +59,27 @@ describe("ambient loop e2e — assembled mic->ASR->suggest->bubble->accept->spaw
     // stop() awaits the background drain loop, so every replayed observation —
     // through the awaited engine/acceptance/spawn/output path — is fully processed.
     await session.stop();
+    await runtime.detection.flush();
 
     // 1) Transcript ingested: the buildable utterance reached the live transcript.
     const transcript = runtime.snapshot().transcript.map((line) => line.text);
     expect(transcript.some((text) => text.includes("dashboard tool"))).toBe(true);
 
-    // 2) Suggestion fired and went live on snapshot.suggestion.
-    expect(runtime.lastSuggestionDecision?.kind).toBe("fired");
-    expect(runtime.snapshot().suggestion.state).toBe("speaking");
-    expect(runtime.snapshot().suggestion.pitch.length).toBeGreaterThan(0);
+    // 2) A grounded idea was detected (and the spoken accept then consumed it).
+    expect(runtime.trace.events().map((event) => event.event)).toContain("detect.candidate.new");
 
-    // 3) Ordered chain on the trace: route.suggestion (utt-build) precedes the
+    // 3) Ordered chain on the trace: detect.candidate.new (utt-build) precedes the
     //    acceptance/spawn/ack chain (utt-yes).
     const events = runtime.trace.events();
     const acceptanceCorrelationId = "corr-loop-e2e-utt-yes";
     const firstIndex = (event: string, correlationId?: string): number =>
       events.findIndex((entry) => entry.event === event && (correlationId === undefined || entry.correlationId === correlationId));
-    const suggestionIndex = firstIndex("route.suggestion");
+    const detectIndex = firstIndex("detect.candidate.new");
     const acceptanceIndex = firstIndex("route.acceptance", acceptanceCorrelationId);
     const spawnIndex = firstIndex("process.spawn", acceptanceCorrelationId);
     const ackIndex = firstIndex("output.tts", acceptanceCorrelationId);
-    expect(suggestionIndex).toBeGreaterThanOrEqual(0);
-    expect(suggestionIndex).toBeLessThan(acceptanceIndex);
+    expect(detectIndex).toBeGreaterThanOrEqual(0);
+    expect(detectIndex).toBeLessThan(acceptanceIndex);
     expect(acceptanceIndex).toBeLessThan(spawnIndex);
     expect(spawnIndex).toBeLessThan(ackIndex);
 
@@ -114,19 +113,18 @@ describe("ambient loop e2e — assembled mic->ASR->suggest->bubble->accept->spaw
 function liveEnv(replayPath: string): Record<string, string> {
   return {
     // Start unmuted so the (mute-protected) replay mic actually streams.
-    PANOP_INITIAL_MUTED: "0",
-    PANOP_MIC_REPLAY_PATH: replayPath,
-    // Lower the REQ-3 floors so a single short utterance is eligible, and zero the
-    // interrupt weights so a buildable utterance fires deterministically.
-    PANOP_SUGGEST_WORD_FLOOR: "3",
-    PANOP_SUGGEST_INTERRUPT_VELOCITY_WEIGHT: "0",
-    PANOP_SUGGEST_INTERRUPT_RECENCY_WEIGHT: "0",
-    PANOP_SUGGEST_INTERRUPT_PENDING_STEERING_WEIGHT: "0",
+    VIBERSYN_INITIAL_MUTED: "0",
+    VIBERSYN_MIC_REPLAY_PATH: replayPath,
+    // Deterministic idea detection: heuristic detector, eager scheduling, no tick.
+    VIBERSYN_IDEA_DETECTOR: "heuristic",
+    VIBERSYN_DETECT_MIN_NEW_TURNS: "1",
+    VIBERSYN_DETECT_MIN_INTERVAL_MS: "0",
+    VIBERSYN_DETECT_TICK_MS: "0",
   };
 }
 
 function writeFixture(tempDirs: string[], observations: TranscriptObservation[]): string {
-  const dir = mkdtempSync(join(tmpdir(), "panop-loop-"));
+  const dir = mkdtempSync(join(tmpdir(), "vibersyn-loop-"));
   tempDirs.push(dir);
   const path = join(dir, "mic.jsonl");
   writeFileSync(path, observations.map((observation) => JSON.stringify(observation)).join("\n"), "utf8");

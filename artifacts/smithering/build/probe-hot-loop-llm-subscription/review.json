@@ -13,15 +13,15 @@
     },
     {
       "severity": "minor",
-      "title": "RESULT.md documents a removed env path (PANOP_LLM_PROBE_ACCEPT_CONFLICT)",
+      "title": "RESULT.md documents a removed env path (VIBERSYN_LLM_PROBE_ACCEPT_CONFLICT)",
       "file": "artifacts/smithering/build/probe-hot-loop-llm-subscription/RESULT.md",
-      "description": "RESULT.md line 45 still lists PANOP_LLM_PROBE_ACCEPT_CONFLICT=1, but that conflict-accept branch no longer exists in poc/p-llm.test.ts (grep finds no ACCEPT_CONFLICT in poc/ or src/). The current live test instead unconditionally requires deterministic, mappedActionToolSchema, actPromptAmendment, traceSecretClean, noRawKeyRoute and a passed subscription-routed candidate - the stronger correct behavior that resolves the prior codex-review major. Doc is stale; harmless but should be removed."
+      "description": "RESULT.md line 45 still lists VIBERSYN_LLM_PROBE_ACCEPT_CONFLICT=1, but that conflict-accept branch no longer exists in poc/p-llm.test.ts (grep finds no ACCEPT_CONFLICT in poc/ or src/). The current live test instead unconditionally requires deterministic, mappedActionToolSchema, actPromptAmendment, traceSecretClean, noRawKeyRoute and a passed subscription-routed candidate - the stronger correct behavior that resolves the prior codex-review major. Doc is stale; harmless but should be removed."
     },
     {
       "severity": "minor",
       "title": "ACT-prompt-amendment assertion is spoon-fed and does not isolate the amendment",
       "file": "poc/llm-subscription-probe.ts",
-      "description": "The required §22 A2 criterion line ('...or a status/information query addressed to a named callsign') is present in HOT_LOOP_PROMPT, but the same prompt also explicitly instructs 'For the status query choose panopticon.steer ... For pass-1 choose observe.pass.' assertActPromptAmendment (repeat-1 must be ACT/panopticon.steer) would therefore pass even if the amended criterion were deleted, so it proves the model can follow an explicit instruction, not that the amended classification criterion drives the ACT. Acceptable for a reachability/latency probe whose verdict is red regardless, but the amendment is not independently proven."
+      "description": "The required §22 A2 criterion line ('...or a status/information query addressed to a named callsign') is present in HOT_LOOP_PROMPT, but the same prompt also explicitly instructs 'For the status query choose vibersyn.steer ... For pass-1 choose observe.pass.' assertActPromptAmendment (repeat-1 must be ACT/vibersyn.steer) would therefore pass even if the amended criterion were deleted, so it proves the model can follow an explicit instruction, not that the amended classification criterion drives the ACT. Acceptable for a reachability/latency probe whose verdict is red regardless, but the amendment is not independently proven."
     },
     {
       "severity": "minor",

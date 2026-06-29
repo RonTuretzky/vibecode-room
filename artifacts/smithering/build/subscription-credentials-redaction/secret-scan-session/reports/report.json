@@ -102,7 +102,7 @@
         "utteranceId": "utt-002",
         "observationId": "utt-002",
         "payload": {
-          "wakeWord": "panop"
+          "wakeWord": "viber"
         },
         "decisionId": "decision-smoke-session-utt-002-literal-wake",
         "policy": "literal-wake"
@@ -152,12 +152,12 @@
         "type": "status",
         "targetUPID": null,
         "payload": {
-          "wakeWord": "panop"
+          "wakeWord": "viber"
         },
         "correlationId": "corr-smoke-session-utt-002"
       },
       "meta": {
-        "matchedText": "panop",
+        "matchedText": "viber",
         "observationId": "utt-002"
       }
     }

@@ -65,7 +65,7 @@ describe("Layer A earcons and Layer B acks", () => {
       source: "cue-textcue",
       correlationId: "corr-fast",
       latencyMs: 299,
-      matchedWord: "panop",
+      matchedWord: "viber",
     });
 
     expect(output.calls).toHaveLength(1);

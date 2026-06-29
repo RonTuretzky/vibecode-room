@@ -3,7 +3,7 @@
 // buildable utterance, with zero network.
 //
 // The registry is exercised exactly as a consumer would: through the providers
-// barrel, by PANOP_DECISION_LLM, returning only the DecisionLLM seam. Both local
+// barrel, by VIBERSYN_DECISION_LLM, returning only the DecisionLLM seam. Both local
 // backends are no-key and deterministic, so no mic, child process, or socket is
 // opened.
 
@@ -24,10 +24,10 @@ import {
 import { cueDecisionSchema, type CueDecision, type TranscriptObservation } from "../../src/types";
 
 const FIRING_ENV = {
-  PANOP_SUGGEST_WORD_FLOOR: "3",
-  PANOP_SUGGEST_INTERRUPT_RECENCY_WEIGHT: "0",
-  PANOP_SUGGEST_INTERRUPT_VELOCITY_WEIGHT: "0",
-  PANOP_SUGGEST_INTERRUPT_PENDING_STEERING_WEIGHT: "0",
+  VIBERSYN_SUGGEST_WORD_FLOOR: "3",
+  VIBERSYN_SUGGEST_INTERRUPT_RECENCY_WEIGHT: "0",
+  VIBERSYN_SUGGEST_INTERRUPT_VELOCITY_WEIGHT: "0",
+  VIBERSYN_SUGGEST_INTERRUPT_PENDING_STEERING_WEIGHT: "0",
 } as const;
 
 describe("registry-selected decider drives a fired suggestion e2e", () => {
@@ -46,8 +46,8 @@ describe("registry-selected decider drives a fired suggestion e2e", () => {
     globalThis.fetch = realFetch;
   });
 
-  test("PANOP_DECISION_LLM=heuristic fires a suggestion with zero fetch calls", async () => {
-    const selection = selectDecisionLLM({ PANOP_DECISION_LLM: "heuristic" });
+  test("VIBERSYN_DECISION_LLM=heuristic fires a suggestion with zero fetch calls", async () => {
+    const selection = selectDecisionLLM({ VIBERSYN_DECISION_LLM: "heuristic" });
     expect(selection.mode satisfies DecisionLLMMode).toBe("heuristic");
 
     const observation = buildableObservation("decision-registry-heuristic");
@@ -57,7 +57,7 @@ describe("registry-selected decider drives a fired suggestion e2e", () => {
     expect(decisions.some((decision) => decision.kind === "fired")).toBe(true);
   });
 
-  test("PANOP_DECISION_LLM=replay fires the fixtured suggestion with zero fetch calls", async () => {
+  test("VIBERSYN_DECISION_LLM=replay fires the fixtured suggestion with zero fetch calls", async () => {
     const observation = buildableObservation("decision-registry-replay");
     const correlationId = `corr-${observation.utteranceId}`;
     // The replay decider is keyed on the exact DecisionInput the SuggestionEngine
@@ -75,7 +75,7 @@ describe("registry-selected decider drives a fired suggestion e2e", () => {
       },
     };
 
-    const selection = selectDecisionLLM({ PANOP_DECISION_LLM: "replay" }, { replayRecords: [record] });
+    const selection = selectDecisionLLM({ VIBERSYN_DECISION_LLM: "replay" }, { replayRecords: [record] });
     expect(selection.mode satisfies DecisionLLMMode).toBe("replay");
 
     const decisions = await runConsumer(selection.llm, [observation], sequenceIds("rep"), correlationId);

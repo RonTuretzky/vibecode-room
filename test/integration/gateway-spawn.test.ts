@@ -9,7 +9,7 @@ import type {
 } from "../../src/seam/smithers-client";
 
 // ISSUE-0020 integration: with the gateway client selected (here via an injected
-// transport, the same seam `PANOP_SMITHERS_GATEWAY_URL` turns on in production), a
+// transport, the same seam `VIBERSYN_SMITHERS_GATEWAY_URL` turns on in production), a
 // ProcessRegistry.spawn drives `launchRun` over the transport and persists a
 // UPID->runId correlation record. A later halt resolves that persisted runId and
 // fires `cancelRun` for it — proving the in-memory client is swappable for the real
@@ -42,18 +42,18 @@ describe("gateway spawn persists a runId and halt cancels it (integration)", () 
     const transport = new RecordingTransport();
     const correlations = new MemoryCorrelationStore();
     const client = selectSmithersClient(
-      { PANOP_SMITHERS_GATEWAY_URL: "ws://gateway.local:8080" },
+      { VIBERSYN_SMITHERS_GATEWAY_URL: "ws://gateway.local:8080" },
       { transport, correlations },
     );
     const registry = new ProcessRegistry({ client, sessionId: "gateway-spawn-itest" });
 
-    // No explicit runId on the seed: the gateway client issues `panop-<upid>`, so
+    // No explicit runId on the seed: the gateway client issues `vibersyn-<upid>`, so
     // this asserts the gateway-issued runId — not a caller-supplied one — is what
     // flows through launchRun, gets persisted, and is later cancelled.
     const spawned = await registry.spawn({
       upid: "upid-itest-1",
       callsign: "Atlas",
-      workflow: "panopticon-process",
+      workflow: "vibersyn-process",
       prompt: "ship the integration",
       input: { task: "ship the integration" },
       correlationId: "corr-itest-spawn",
@@ -62,14 +62,14 @@ describe("gateway spawn persists a runId and halt cancels it (integration)", () 
     if (!spawned.accepted) return;
 
     const runId = spawned.spawn.runId;
-    expect(runId).toBe("panop-upid-itest-1");
+    expect(runId).toBe("vibersyn-upid-itest-1");
 
     // launchRun reached the transport carrying the gateway-issued runId.
     const launch = transport.find("launchRun");
     expect(launch).toBeDefined();
     expect(launch?.params).toEqual(
       expect.objectContaining({
-        workflow: "panopticon-process",
+        workflow: "vibersyn-process",
         options: expect.objectContaining({ runId, idempotencyKey: "corr-itest-spawn" }),
       }),
     );

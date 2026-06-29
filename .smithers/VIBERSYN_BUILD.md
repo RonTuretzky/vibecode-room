@@ -1,12 +1,12 @@
-# Panopticon ← Smithers build plan (dev notes)
+# Vibersyn ← Smithers build plan (dev notes)
 
 This file is **dev tooling** (lives in `.smithers/`). It records how we use the
-Smithers dev workflows here to build Panopticon's app code. It is NOT app code.
+Smithers dev workflows here to build Vibersyn's app code. It is NOT app code.
 
 ## Golden rule (user directive)
-- **App workflows** (Panopticon runtime Smithers workflows — the durable "Process"
+- **App workflows** (Vibersyn runtime Smithers workflows — the durable "Process"
   loop, the suggestion engine) live in the **app** under `src/` and run at
-  Panopticon runtime. They are the product.
+  Vibersyn runtime. They are the product.
 - **Dev workflows** (`implement`, `review`, `ralph`, `_smoke`, …) live in
   `.smithers/` and are operated by the AI to *build* the app.
 - **Never mix the two.**
@@ -47,9 +47,9 @@ Smithers dev workflows here to build Panopticon's app code. It is NOT app code.
   `bus.ts` ← `streamRunEvents`.
 
 ## ENG-T-10 audio capture ASR bridge
-- **§1 Component:** `src/cue/asr-bridge.ts` owns Panopticon's mic/PCM → `ASRProvider`
+- **§1 Component:** `src/cue/asr-bridge.ts` owns Vibersyn's mic/PCM → `ASRProvider`
   → Cue transcription ingress path. Cue is treated as a transcription receiver via
-  `/sessions/:id/transcription`; Panopticon owns Deepgram/VAD/replay ASR upstream.
+  `/sessions/:id/transcription`; Vibersyn owns Deepgram/VAD/replay ASR upstream.
 - **§3 Wiring:** live mode requires `DEEPGRAM_API_KEY` plus a supplied microphone PCM
   capture. Without the key, the bridge emits `live capture skipped — needs
   DEEPGRAM_API_KEY` and runs replay PCM/transcript fixtures through the same

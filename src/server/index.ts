@@ -10,6 +10,10 @@ const runtime = await createProjectorRuntime(process.env);
 // delivered once the room falls quiet (ISSUE-0024). Tests drive the tick off an
 // injected clock instead; this is the single live tick hook.
 runtime.idleCueDriver.start();
+// Start the idea-detection background tick so a detection scheduled by a SPEECH
+// PAUSE still fires while the room is quiet (no new turns arriving). Tests drive
+// detection synchronously via ingestTurn/flush and never start this tick.
+runtime.detection.start();
 const app = new Hono();
 
 app.get("/api/health", (context) => context.json(healthPayload(runtime)));
@@ -92,7 +96,7 @@ app.delete("/api/process/select", (context) => {
 app.get("*", async (context) => serveStatic(context.req.url));
 
 const host = process.env.HOST ?? "127.0.0.1";
-const port = parsePort(process.env.PANOP_PORT ?? process.env.PORT ?? "8787");
+const port = parsePort(process.env.VIBERSYN_PORT ?? process.env.PORT ?? "8787");
 
 // Per-connection state for the live-mic WebSocket.
 interface MicSocketData {
@@ -140,7 +144,7 @@ Bun.serve<MicSocketData>({
   },
 });
 
-console.log(`Panopticon projector server listening on http://${host}:${port}`);
+console.log(`Vibersyn projector server listening on http://${host}:${port}`);
 // Structured startup degradation notice (ISSUE-0003): one line per stubbed leg
 // with the env var that upgrades it, computed from the resolved runtime.
 console.warn(formatDegradationNotice(runtime.degradation));

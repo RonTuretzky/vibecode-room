@@ -154,7 +154,7 @@ describe("routing dispatch invariants", () => {
   });
 
   test("addressed-vs-ambient pass is deterministic: addressed pass gets declined ack, ignored ambient is silent", () => {
-    const addressed = dispatch("Panop blargle");
+    const addressed = dispatch("Viber blargle");
     const ambient = dispatch("routine background chat");
 
     expect(addressed.kind).toBe("local");
@@ -182,15 +182,15 @@ describe("routing dispatch invariants", () => {
   test("word lists and thresholds are env-tunable with documented defaults", () => {
     const defaults = loadRoutingVocabulary({});
     const custom = loadRoutingVocabulary({
-      PANOP_WAKE_WORDS: "panwatch,opticon",
-      PANOP_STOP_WORDS: "cease",
-      PANOP_STEER_IDLE_SECONDS: "13",
-      PANOP_STEER_MIN_CONFIDENCE: "0.7",
+      VIBERSYN_WAKE_WORDS: "panwatch,opticon",
+      VIBERSYN_STOP_WORDS: "cease",
+      VIBERSYN_STEER_IDLE_SECONDS: "13",
+      VIBERSYN_STEER_MIN_CONFIDENCE: "0.7",
     });
 
-    expect(ROUTING_ENV_DEFAULTS.PANOP_MUTE_WORDS).toBe("mute");
-    expect(ROUTING_ENV_DEFAULTS.PANOP_UNMUTE_WORDS).toBe("unmute");
-    expect(defaults.wake).toEqual(["panop"]);
+    expect(ROUTING_ENV_DEFAULTS.VIBERSYN_MUTE_WORDS).toBe("mute");
+    expect(ROUTING_ENV_DEFAULTS.VIBERSYN_UNMUTE_WORDS).toBe("unmute");
+    expect(defaults.wake).toEqual(["viber"]);
     expect(custom.wake).toEqual(["panwatch", "opticon"]);
     expect(custom.stop).toEqual(["cease"]);
     expect(custom.steerIdleSeconds).toBe(13);

@@ -35,7 +35,7 @@ export interface TranscriptLine {
   time: string;
   speaker: string;
   text: string;
-  kind: "room" | "panopticon" | "process";
+  kind: "room" | "vibersyn" | "process";
 }
 
 export interface ProjectorSuggestion {
@@ -49,6 +49,16 @@ export interface ProjectorSuggestion {
     minSeconds: number;
   };
   questions: string[];
+  // Provenance (idea detection): the span of conversation this idea was grounded
+  // in — the inclusive turn-id range plus the verbatim evidence the model quoted.
+  // Absent on the neutral idle bubble and on legacy gate-driven suggestions.
+  contextSpan?: {
+    startTurnId: string;
+    endTurnId: string;
+    quote: string;
+  };
+  // One-line model rationale for why this is a buildable idea.
+  rationale?: string;
 }
 
 export interface ProjectorSnapshot {

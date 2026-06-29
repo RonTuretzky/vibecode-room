@@ -34,7 +34,7 @@ function renderSummary(snapshot: ProjectorSnapshot): string {
   const recentTrace = snapshot.trace.slice(-3);
 
   return [
-    "Panopticon demo seed",
+    "Vibersyn demo seed",
     "====================",
     "",
     `Session: ${snapshot.sessionId}`,

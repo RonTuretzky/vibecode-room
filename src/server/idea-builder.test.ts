@@ -105,7 +105,7 @@ describe("idea-builder — real scaffold + live preview server", () => {
     const builder: BuilderAgent = async (_pitch, dir) => {
       // The deterministic scaffold must already be on disk before the agent runs.
       const before = await readFile(join(dir, "index.html"), "utf8");
-      scaffoldExistedFirst = before.includes("Panopticon prototype");
+      scaffoldExistedFirst = before.includes("Vibersyn prototype");
       await writeFile(join(dir, "index.html"), `<!doctype html><title>${marker}</title><h1>${marker}</h1>`, "utf8");
     };
 
@@ -124,7 +124,7 @@ describe("idea-builder — real scaffold + live preview server", () => {
     expect(response.status).toBe(200);
     const body = await response.text();
     expect(body).toContain(marker);
-    expect(body).not.toContain("Panopticon prototype");
+    expect(body).not.toContain("Vibersyn prototype");
 
     await registry.stopAll();
   });
@@ -147,7 +147,7 @@ describe("idea-builder — real scaffold + live preview server", () => {
     // The preview is still reachable, serving the deterministic scaffold.
     const response = await fetch(ready!.previewUrl!);
     expect(response.status).toBe(200);
-    expect(await response.text()).toContain("Panopticon prototype");
+    expect(await response.text()).toContain("Vibersyn prototype");
 
     await registry.stopAll();
   });

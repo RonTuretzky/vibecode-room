@@ -31,7 +31,7 @@ The only configured live provider was OpenAI `/v1/audio/speech`. It conformed to
 
 ## Commands
 
-- `PANOP_TTS_FIRST_AUDIO_BUDGET_MS=20 bun test poc/p-tts.test.ts`
+- `VIBERSYN_TTS_FIRST_AUDIO_BUDGET_MS=20 bun test poc/p-tts.test.ts`
 - `bun test poc/p-tts.test.ts`
 - `bunx tsc --noEmit --pretty false --lib ESNext,DOM --module ESNext --target ESNext --moduleResolution bundler --moduleDetection force --verbatimModuleSyntax --strict --skipLibCheck --types bun poc/p-tts.test.ts poc/harness.ts src/providers/credentials.ts src/providers/types.ts src/security/secrets.ts`
 - Secret scan over the P-TTS build, probe, and harness-report artifacts.

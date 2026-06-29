@@ -21,16 +21,16 @@ describe("A-LLM-SUB host subscription reachability probe", () => {
     expect(assertNoRawKeyPath).not.toThrow();
     expect(sanitizedSubscriptionCliEnv({
       PATH: "/usr/bin",
-      HOME: "/tmp/panopticon-home",
+      HOME: "/tmp/vibersyn-home",
       OPENAI_API_KEY: ["sk", "proj", "A".repeat(48)].join("-"),
       ANTHROPIC_API_KEY: ["sk", "ant", "B".repeat(48)].join("-"),
     })).toEqual({
       PATH: "/usr/bin",
-      HOME: "/tmp/panopticon-home",
+      HOME: "/tmp/vibersyn-home",
       NO_COLOR: "1",
     });
 
-    if (process.env.PANOP_LLM_PROBE_ROUTE_RAW_KEY === "1") {
+    if (process.env.VIBERSYN_LLM_PROBE_ROUTE_RAW_KEY === "1") {
       createModelCredentialSource({ provider: "openai-codex", rawApiKey: "fixture-raw-provider-key" });
     }
   });

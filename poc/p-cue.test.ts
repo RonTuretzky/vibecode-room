@@ -14,7 +14,7 @@ const REPORT_ROOT = "artifacts/smithering/reports";
 const PROBE_ROOT = "artifacts/smithering/probes/probe-cue-substrate";
 const TRACE_ROOT = "artifacts/smithering/build/probe-cue-substrate/trace";
 const CUE_REPO = "https://github.com/jameslbarnes/cue.git";
-const CUE_ROOT = process.env.PANOP_CUE_SOURCE_DIR ?? join(tmpdir(), "panopticon-cue-src");
+const CUE_ROOT = process.env.VIBERSYN_CUE_SOURCE_DIR ?? join(tmpdir(), "vibersyn-cue-src");
 const DEFAULT_EARCON_BUDGET_MS = 300;
 const TARGET_EARCON_BUDGET_MS = 150;
 const LATENCY_PROVIDER_DELAY_MS = 65;
@@ -23,7 +23,7 @@ type CueCore = Record<string, any>;
 type CueServer = Record<string, any>;
 
 describe("P-CUE real Cue substrate probe", () => {
-  test("real Cue source exposes Panopticon's required substrate or records owned extensions", async () => {
+  test("real Cue source exposes Vibersyn's required substrate or records owned extensions", async () => {
     const cue = await loadCue();
     const assertions: ProbeAssertion[] = [
       {
@@ -44,7 +44,7 @@ describe("P-CUE real Cue substrate probe", () => {
           await assertTextCueLatency(cue.core, 50);
         },
         run: async () => {
-          const budget = Number(process.env.PANOP_P_CUE_LATENCY_BUDGET_MS ?? DEFAULT_EARCON_BUDGET_MS);
+          const budget = Number(process.env.VIBERSYN_P_CUE_LATENCY_BUDGET_MS ?? DEFAULT_EARCON_BUDGET_MS);
           await assertTextCueLatency(cue.core, budget);
         },
       },
@@ -94,18 +94,18 @@ describe("P-CUE real Cue substrate probe", () => {
         behavior: "two independent Programs route independently through MappedActionTool schemas",
         falsify: async () => {
           const routed = await exerciseTwoPrograms(cue.core);
-          expect(routed.tools).toEqual(["panopticon.spawn"]);
+          expect(routed.tools).toEqual(["vibersyn.spawn"]);
         },
         run: async () => {
           const routed = await exerciseTwoPrograms(cue.core);
-          expect(routed.tools).toEqual(["panopticon.suggest", "panopticon.steer"]);
+          expect(routed.tools).toEqual(["vibersyn.suggest", "vibersyn.steer"]);
           expect(routed.actions).toEqual(["suggestion.queue", "smithers.steer"]);
           expect(routed.steerSchemaRequired).toEqual(["callsign", "instruction"]);
         },
       },
       {
         id: "provider-slots-and-transcription-ingress",
-        behavior: "transcription, LLM, output, and frame/VLM provider slots accept Panopticon-shaped adapters; qwen-asr JSON ingress is confirmed",
+        behavior: "transcription, LLM, output, and frame/VLM provider slots accept Vibersyn-shaped adapters; qwen-asr JSON ingress is confirmed",
         falsify: async () => {
           const providers = await exerciseProviderSlots(cue.core, cue.server);
           expect(providers.qwenTranscript).toBe("missing transcript");
@@ -114,12 +114,12 @@ describe("P-CUE real Cue substrate probe", () => {
           const providers = await exerciseProviderSlots(cue.core, cue.server);
           expect(providers).toMatchObject({
             qwenReadyProvider: "qwen-asr",
-            qwenTranscript: "Panop steer cometa toward tests.",
+            qwenTranscript: "Viber steer cometa toward tests.",
             qwenSpeaker: "speaker_0",
             qwenAction: "test.qwen",
-            vlmReadyProvider: "panopticon-frame",
+            vlmReadyProvider: "vibersyn-frame",
             vlmAction: "test.frame",
-            outputProviderAction: "panopticon.output.apply",
+            outputProviderAction: "vibersyn.output.apply",
             deepgramExportPresent: true,
           });
         },
@@ -134,7 +134,7 @@ describe("P-CUE real Cue substrate probe", () => {
         run: async () => {
           const traces = await exerciseJsonlRecording(cue.core, cue.server);
           expect(traces.observations[0]?.sessionId).toBe("trace-session");
-          expect(traces.decisions[0]?.trace?.call?.tool).toBe("panopticon.trace");
+          expect(traces.decisions[0]?.trace?.call?.tool).toBe("vibersyn.trace");
           expect(traces.actions[0]?.action?.type).toBe("trace.action");
         },
       },
@@ -205,23 +205,23 @@ async function assertTextCueLatency(core: CueCore, budgetMs: number): Promise<vo
   const { CueHarness, TextCue, MappedActionTool, Triggers, transcriptObservation } = core;
   const harness = new CueHarness({
     sessionId: "latency-session",
-    cues: [new TextCue(["panop"])],
+    cues: [new TextCue(["viber"])],
     programs: [
       {
         name: "latency-program",
         triggers: [Triggers.onCue("text")],
-        allowedTools: ["panopticon.latency"],
+        allowedTools: ["vibersyn.latency"],
         llmProvider: {
           async infer() {
             await sleep(LATENCY_PROVIDER_DELAY_MS);
-            return [{ tool: "panopticon.latency", arguments: { ack: true } }];
+            return [{ tool: "vibersyn.latency", arguments: { ack: true } }];
           },
         },
       },
     ],
     tools: [
       new MappedActionTool({
-        name: "panopticon.latency",
+        name: "vibersyn.latency",
         description: "Measure TextCue-to-action latency.",
         inputSchema: {
           type: "object",
@@ -234,7 +234,7 @@ async function assertTextCueLatency(core: CueCore, budgetMs: number): Promise<vo
   });
 
   const started = performance.now();
-  const result = await harness.ingest(transcriptObservation("Panop status", { speaker: "speaker_0" }));
+  const result = await harness.ingest(transcriptObservation("Viber status", { speaker: "speaker_0" }));
   const latencyMs = performance.now() - started;
   await appendTrace("cue.text_latency", {
     latencyMs,
@@ -245,7 +245,7 @@ async function assertTextCueLatency(core: CueCore, budgetMs: number): Promise<vo
     tool: result.toolResults[0]?.tool ?? null,
   });
   expect(result.cues.some((cue: any) => cue.name === "text")).toBe(true);
-  expect(result.toolResults[0]?.tool).toBe("panopticon.latency");
+  expect(result.toolResults[0]?.tool).toBe("vibersyn.latency");
   expect(latencyMs).toBeLessThanOrEqual(budgetMs);
   expect(latencyMs).toBeLessThanOrEqual(TARGET_EARCON_BUDGET_MS);
 }
@@ -262,19 +262,19 @@ async function exerciseCuePolicies(core: CueCore): Promise<Record<string, boolea
     transcriptionStreamObservation,
   } = core;
   const state = new ConversationState();
-  const textCue = new TextCue(["panop"]);
-  const cooldownCue = new TextCue(["panop"], { cooldownSeconds: 2 });
+  const textCue = new TextCue(["viber"]);
+  const cooldownCue = new TextCue(["viber"], { cooldownSeconds: 2 });
   const speakerWordCue = new SpeakerWordCue(["halt"], { speaker: "speaker_0" });
   const idleCue = new IdleCue();
   const wordCountCue = new WordCountCue(3);
   const intervalCue = new IntervalCue(10);
 
-  const textObservation = transcriptObservation("Panop please listen", {
+  const textObservation = transcriptObservation("Viber please listen", {
     speaker: "speaker_0",
-    words: [{ text: "Panop", speaker: "speaker_0" }],
+    words: [{ text: "Viber", speaker: "speaker_0" }],
     timestamp: 1,
   });
-  const substringObservation = transcriptObservation("panopticon is longer", {
+  const substringObservation = transcriptObservation("vibersyn is longer", {
     speaker: "speaker_0",
     timestamp: 2,
   });
@@ -292,9 +292,9 @@ async function exerciseCuePolicies(core: CueCore): Promise<Record<string, boolea
   const thirdWord = transcriptObservation("three", { timestamp: 6 });
   const firstInterval = transcriptObservation("moving", { timestamp: 10 });
   const secondInterval = transcriptObservation("still moving", { timestamp: 21 });
-  const cooldownFirst = transcriptObservation("panop", { timestamp: 30 });
-  const cooldownSecond = transcriptObservation("panop", { timestamp: 31 });
-  const cooldownLater = transcriptObservation("panop", { timestamp: 33 });
+  const cooldownFirst = transcriptObservation("viber", { timestamp: 30 });
+  const cooldownSecond = transcriptObservation("viber", { timestamp: 31 });
+  const cooldownLater = transcriptObservation("viber", { timestamp: 33 });
 
   state.appendObservation(twoWords);
   const below = wordCountCue.maybeCue(twoWords, state);
@@ -359,7 +359,7 @@ async function exerciseTwoPrograms(core: CueCore): Promise<Record<string, unknow
   const { CueHarness, MappedActionTool, TextCue, Triggers, transcriptObservation } = core;
   const tools = [
     new MappedActionTool({
-      name: "panopticon.suggest",
+      name: "vibersyn.suggest",
       description: "Queue a conservative ambient suggestion.",
       inputSchema: {
         type: "object",
@@ -369,7 +369,7 @@ async function exerciseTwoPrograms(core: CueCore): Promise<Record<string, unknow
       mapper: (call: any) => [{ type: "suggestion.queue", payload: call.arguments }],
     }),
     new MappedActionTool({
-      name: "panopticon.steer",
+      name: "vibersyn.steer",
       description: "Deliver a steering instruction to a named durable process.",
       inputSchema: {
         type: "object",
@@ -390,24 +390,24 @@ async function exerciseTwoPrograms(core: CueCore): Promise<Record<string, unknow
       {
         name: "ambient-C2",
         triggers: [Triggers.onCue("text")],
-        allowedTools: ["panopticon.suggest"],
+        allowedTools: ["vibersyn.suggest"],
         llmProvider: {
           infer({ cue, tools: eligibleTools }: any) {
             if (cue.metadata?.pattern !== "build") return [];
-            if (!eligibleTools.some((tool: any) => tool.name === "panopticon.suggest")) return [];
-            return [{ tool: "panopticon.suggest", arguments: { concept: "add replay tests" } }];
+            if (!eligibleTools.some((tool: any) => tool.name === "vibersyn.suggest")) return [];
+            return [{ tool: "vibersyn.suggest", arguments: { concept: "add replay tests" } }];
           },
         },
       },
       {
         name: "steering-C3",
         triggers: [Triggers.onCue("text")],
-        allowedTools: ["panopticon.steer"],
+        allowedTools: ["vibersyn.steer"],
         llmProvider: {
           infer({ cue, tools: eligibleTools }: any) {
             if (cue.metadata?.pattern !== "cometa") return [];
-            if (!eligibleTools.some((tool: any) => tool.name === "panopticon.steer")) return [];
-            return [{ tool: "panopticon.steer", arguments: { callsign: "cometa", instruction: "focus tests" } }];
+            if (!eligibleTools.some((tool: any) => tool.name === "vibersyn.steer")) return [];
+            return [{ tool: "vibersyn.steer", arguments: { callsign: "cometa", instruction: "focus tests" } }];
           },
         },
       },
@@ -437,7 +437,7 @@ async function exerciseProviderSlots(core: CueCore, serverModule: CueServer): Pr
     port: 0,
     transcriptionProvider: qwenAsrTranscriptionProvider(),
     vlmProvider: customVLMProvider({
-      name: "panopticon-frame",
+      name: "vibersyn-frame",
       connect({ client, ingestDescription, send }: any) {
         client.on("message", async (raw: Buffer) => {
           const message = JSON.parse(raw.toString());
@@ -448,8 +448,8 @@ async function exerciseProviderSlots(core: CueCore, serverModule: CueServer): Pr
     }),
     outputProviders: [
       {
-        provider: "panopticon.output",
-        actions: { "panopticon.output.apply": { method: "POST", endpoint: "/apply" } },
+        provider: "vibersyn.output",
+        actions: { "vibersyn.output.apply": { method: "POST", endpoint: "/apply" } },
         handleAction(action: any) {
           handledOutputActions.push(action.type);
         },
@@ -485,7 +485,7 @@ async function exerciseProviderSlots(core: CueCore, serverModule: CueServer): Pr
             description: "Capture provider-slot ingress.",
             mapper: (call: any) => [
               { type: call.arguments.frame ? "test.frame" : "test.qwen", payload: call.arguments },
-              { type: "panopticon.output.apply", payload: call.arguments },
+              { type: "vibersyn.output.apply", payload: call.arguments },
             ],
           }),
         ],
@@ -502,7 +502,7 @@ async function exerciseProviderSlots(core: CueCore, serverModule: CueServer): Pr
     qwenWs.send(
       JSON.stringify({
         type: "qwen_asr.transcript",
-        transcript: "Panop steer cometa toward tests.",
+        transcript: "Viber steer cometa toward tests.",
         isFinal: true,
         speaker: "speaker_0",
         words: [{ text: "cometa", speaker: "speaker_0" }],
@@ -552,17 +552,17 @@ async function exerciseJsonlRecording(core: CueCore, serverModule: CueServer): P
           {
             name: "trace-program",
             triggers: [Triggers.onCue("manual")],
-            allowedTools: ["panopticon.trace"],
+            allowedTools: ["vibersyn.trace"],
             llmProvider: {
               infer() {
-                return [{ tool: "panopticon.trace", arguments: { stable: true } }];
+                return [{ tool: "vibersyn.trace", arguments: { stable: true } }];
               },
             },
           },
         ],
         tools: [
           new MappedActionTool({
-            name: "panopticon.trace",
+            name: "vibersyn.trace",
             description: "Emit trace action.",
             mapper: (call: any) => [{ type: "trace.action", payload: call.arguments }],
           }),
@@ -672,11 +672,11 @@ async function primitiveMatrix(core: CueCore, serverModule: CueServer): Promise<
       "voxterm transcription provider",
     ],
     ownedExtensionsRequired: [
-      "Panopticon transcript normalization adds sessionId/correlationId fields around Cue transcript observations.",
+      "Vibersyn transcript normalization adds sessionId/correlationId fields around Cue transcript observations.",
       "Earcon emission remains adapter-owned; Cue supplies the deterministic TextCue result.",
       "IntervalCue does not expose cooldownSeconds directly; cadence throttling must combine intervalSeconds with adapter/tool cooldown.",
       "Cue exposes WebSocket events, not native EventSource SSE; board SSE requires a thin bridge if EventSource is mandatory.",
-      "Current Cue source exports deepgramTranscriptionProvider in addition to qwen-asr and voxterm; ENG-T-10 should target the qwen-asr JSON shape when Panopticon owns ASR.",
+      "Current Cue source exports deepgramTranscriptionProvider in addition to qwen-asr and voxterm; ENG-T-10 should target the qwen-asr JSON shape when Vibersyn owns ASR.",
     ],
     exports: {
       TextCue: typeof core.TextCue === "function",

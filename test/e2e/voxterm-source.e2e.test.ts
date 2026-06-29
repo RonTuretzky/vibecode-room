@@ -96,7 +96,7 @@ describe("VoxTerm NDJSON stub stream drives observations end-to-end (e2e)", () =
     // The registry selects the VoxTerm provider; the source is the PRODUCTION
     // spawn-backed source with only its spawn hook stubbed to the NDJSON stream.
     const selection = selectAsrProvider(
-      { PANOP_ASR_PROVIDER: "voxterm" },
+      { VIBERSYN_ASR_PROVIDER: "voxterm" },
       {
         sessionId: "vox-source-e2e",
         voxtermSource: createVoxTermSegmentSource({ spawn: ndjsonSpawn(wire) }),

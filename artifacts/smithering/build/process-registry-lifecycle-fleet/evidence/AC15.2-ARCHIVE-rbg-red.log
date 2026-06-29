@@ -1,4 +1,4 @@
-$ PANOP_RBG_SKIP_PREKILL_ARCHIVE=1 bun test src/process/lifecycle.test.ts
+$ VIBERSYN_RBG_SKIP_PREKILL_ARCHIVE=1 bun test src/process/lifecycle.test.ts
 bun test v1.3.14 (0d9b296a)
 
 src/process/lifecycle.test.ts:

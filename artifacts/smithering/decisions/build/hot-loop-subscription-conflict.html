@@ -68,8 +68,8 @@ probe verdict, trace, and build bundle passed with zero findings</pre>
 
 <h2>Verification</h2>
 <pre>bun test poc/p-llm.test.ts
-PANOP_LLM_PROBE_ACCEPT_CONFLICT=1 bun test poc/p-llm.test.ts
-PANOP_LLM_PROBE_ROUTE_RAW_KEY=1 bun test poc/a-llm-sub.test.ts
+VIBERSYN_LLM_PROBE_ACCEPT_CONFLICT=1 bun test poc/p-llm.test.ts
+VIBERSYN_LLM_PROBE_ROUTE_RAW_KEY=1 bun test poc/a-llm-sub.test.ts
 bun test poc/p-llm.test.ts poc/a-llm-sub.test.ts</pre>
 </body>
 </html>

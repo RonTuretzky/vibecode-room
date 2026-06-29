@@ -1,7 +1,7 @@
 bun test v1.3.14 (0d9b296a)
 
 poc/p-llm.test.ts:
-26 |           decision("repeat-1", "ACT", "panopticon.steer", { callsign: "Daybreak", instruction: "status" }),
+26 |           decision("repeat-1", "ACT", "vibersyn.steer", { callsign: "Daybreak", instruction: "status" }),
 27 |         ]),
 28 |         invocation("same-input-2", [
 29 |           decision("repeat-1", "PASS", "observe.pass", {}),

@@ -152,12 +152,21 @@ export interface IdeaBubbleProps {
   gatePercent: number;
   selected: boolean;
   size: number;
+  // Provenance: the verbatim span of conversation this idea was grounded in (from
+  // idea detection). Shown as a short evidence line so the operator can see WHY the
+  // idea surfaced. Absent for the neutral idle bubble / legacy gate-driven bubbles.
+  evidence?: string;
   // Primary click: in the live projector this accepts the pending suggestion and
   // starts the real build; in offline demo it opens the idea detail.
   onSelect: () => void;
 }
 
-export function IdeaBubble({ state, pitch, confidence, gatePercent, selected, size, onSelect }: IdeaBubbleProps) {
+function truncate(text: string, max: number): string {
+  const trimmed = text.trim();
+  return trimmed.length <= max ? trimmed : `${trimmed.slice(0, max - 1)}…`;
+}
+
+export function IdeaBubble({ state, pitch, confidence, gatePercent, selected, size, evidence, onSelect }: IdeaBubbleProps) {
   const style: BubbleStyle = {
     "--bloom": selected ? "var(--c-selected)" : "var(--c-planning)",
     "--rim": "var(--c-planning)",
@@ -188,6 +197,9 @@ export function IdeaBubble({ state, pitch, confidence, gatePercent, selected, si
       <span className="bubble-content">
         <span className="idea-eyebrow">forming idea</span>
         <span className="idea-pitch">{pitch}</span>
+        {selected && evidence !== undefined && evidence.length > 0 ? (
+          <span className="idea-evidence" title={evidence}>“{truncate(evidence, 120)}”</span>
+        ) : null}
         <span className="bubble-state">{state}</span>
         <span className="bubble-progress">{Math.round(confidence * 100)}% conf · gate {Math.round(gatePercent)}%</span>
       </span>

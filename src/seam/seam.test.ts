@@ -140,7 +140,7 @@ describe("Cue Smithers seam dispatcher", () => {
     const client = new GatewaySmithersClient({
       transport,
       correlations: store,
-      defaultWorkflow: "panopticon-test",
+      defaultWorkflow: "vibersyn-test",
     });
 
     await client.pause("upid-atlas");
@@ -191,7 +191,7 @@ describe("Smithers run event bridge", () => {
           new Error("dropped stream"),
         ],
         [
-          frame("run-atlas", process.env.PANOP_RBG_BREAK_RECONNECT === "1" ? 1 : 2, "run.output", "Implemented the route"),
+          frame("run-atlas", process.env.VIBERSYN_RBG_BREAK_RECONNECT === "1" ? 1 : 2, "run.output", "Implemented the route"),
           frame("run-atlas", 3, "run.completed", "Completed final handoff with docs and tests"),
         ],
       ],
@@ -215,14 +215,14 @@ describe("Smithers run event bridge", () => {
   });
 
   test("UPID to steering-window correlation survives a simulated Cue restart", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "panop-seam-store-"));
+    const dir = mkdtempSync(join(tmpdir(), "vibersyn-seam-store-"));
     tempDirs.push(dir);
     const path = join(dir, "correlations.json");
     const store = new FileCorrelationStore(path);
     await store.upsert(processRecord("upid-atlas", "run-atlas", "Atlas"));
 
     const restartedStore = new FileCorrelationStore(path);
-    if (process.env.PANOP_RBG_DROP_CORRELATION_STORE === "1") {
+    if (process.env.VIBERSYN_RBG_DROP_CORRELATION_STORE === "1") {
       rmSync(path, { force: true });
     }
     const client = new MockSmithersClient({
@@ -341,7 +341,7 @@ function spawnAction(): DispatchedAction {
     payload: {
       upid: "upid-seam-001",
       runId: "run-seam-001",
-      workflow: "panopticon-test",
+      workflow: "vibersyn-test",
       steeringWindowId: "window-seam-001",
       callsign: "mavolune",
       seed: "Build the seam",

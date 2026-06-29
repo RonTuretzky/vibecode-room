@@ -29,7 +29,7 @@
 Treat P-CUE as green for REQ-1/3/5/6/7 substrate validation because the real Cue source builds and
 the required voice-loop primitives are executable. Record three adapter-owned extensions: cadence
 cooldown around <code>IntervalCue</code>, an EventSource SSE bridge if the board insists on SSE, and
-Panopticon transcript/correlation normalization around Cue observations.
+Vibersyn transcript/correlation normalization around Cue observations.
 </div>
 
 <h2>Facts From The Probe</h2>
@@ -47,7 +47,7 @@ Differences:
 IntervalCue does not directly expose cooldownSeconds.
 The live event route is WebSocket, not native text/event-stream SSE.
 Current Cue source also exports deepgramTranscriptionProvider; qwen-asr remains
-the JSON receiver shape ENG-T-10 should feed when Panopticon owns ASR.</pre>
+the JSON receiver shape ENG-T-10 should feed when Vibersyn owns ASR.</pre>
 
 <h2>Alternatives</h2>
 <div class="alt lose"><strong>Fail P-CUE for any API naming difference.</strong>
@@ -59,7 +59,7 @@ blocking would not improve the design.</div>
 <span class="good">Chosen.</span> The real primitives work, and the required local work is explicit and testable.</div>
 
 <h2>Verification</h2>
-<pre>PANOP_P_CUE_LATENCY_BUDGET_MS=50 bun test poc/p-cue.test.ts
+<pre>VIBERSYN_P_CUE_LATENCY_BUDGET_MS=50 bun test poc/p-cue.test.ts
 bun test poc/p-cue.test.ts
 bun run typecheck</pre>
 <p>The red run fails on the 50 ms TextCue-to-action budget; the green run restores the 300 ms hard

@@ -77,7 +77,7 @@ describe("probe harness", () => {
       correlationId: "probe-harness-test-non-failable",
     });
 
-    if (process.env.PANOP_HARNESS_RBG_MODE === "non_failable_expect_green") {
+    if (process.env.VIBERSYN_HARNESS_RBG_MODE === "non_failable_expect_green") {
       await expect(action).resolves.toBeDefined();
       return;
     }

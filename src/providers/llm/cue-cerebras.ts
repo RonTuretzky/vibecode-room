@@ -179,8 +179,8 @@ export function createCueCerebrasProposer(options: { apiKey?: string; model?: st
     }
     const { provider, core } = loaded;
     const outputs = await provider.infer({
-      sessionId: "panopticon-idea",
-      programName: "panopticon-idea",
+      sessionId: "vibersyn-idea",
+      programName: "vibersyn-idea",
       state: new core.ConversationState(),
       cue: MINIMAL_HEARTBEAT,
       heartbeat: MINIMAL_HEARTBEAT,

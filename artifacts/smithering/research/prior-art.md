@@ -1,14 +1,14 @@
-# Prior Art — Panopticon Ambient Audio Agent
+# Prior Art — Vibersyn Ambient Audio Agent
 
 > Researched 2026-06-13. Covers open-source projects, reusable libraries, and architectural
-> patterns relevant to building Panopticon: an ambient, audio-only AI agent that continuously
+> patterns relevant to building Vibersyn: an ambient, audio-only AI agent that continuously
 > observes speech, decides when to act (vs. pass), and spawns/steers durable agent processes.
 
 ---
 
 ## 1. Cue — the direct foundation (`github.com/jameslbarnes/cue`)
 
-**What it is:** The library Panopticon builds on. Cue is a "silent realtime harness for agents
+**What it is:** The library Vibersyn builds on. Cue is a "silent realtime harness for agents
 you communicate with through the world." Created by James L. Barnes. TypeScript (85.6% of
 codebase), 63 commits as of research date.
 
@@ -52,7 +52,7 @@ continuous stream → observation → cue policy → context packet → agent/mo
 
 **MCP control plane:**
 - `cue.get_state`, `cue.update_runtime`, `cue.send_observation`, `cue.replay_transcript`
-- The Panopticon↔Smithers integration maps directly onto `cue.send_observation` and `cue.update_runtime`
+- The Vibersyn↔Smithers integration maps directly onto `cue.send_observation` and `cue.update_runtime`
 
 **HTTP / WebSocket server:**
 - `POST /sessions/:id/observations` — ingest observations
@@ -62,7 +62,7 @@ continuous stream → observation → cue policy → context packet → agent/mo
 
 **Flagship example — Etherea:** A live AI video agent that monitors speech, silence, generated
 frames, and timing to decide when to update realtime video prompts vs. hold state. Nearly
-identical to Panopticon's always-on listening loop.
+identical to Vibersyn's always-on listening loop.
 
 **Other bundled examples:** `but-coach`, `meeting-red-alert`, `live-dashboard`,
 `conversation-shader`, `voxterm-live`, `realtime-video`, `playground`
@@ -71,8 +71,8 @@ identical to Panopticon's always-on listening loop.
 `observe.pass` encodes intentional non-action as a tracked decision. "Creative logic should
 survive infrastructure changes."
 
-**Panopticon mapping:**
-| Panopticon concept | Cue primitive |
+**Vibersyn mapping:**
+| Vibersyn concept | Cue primitive |
 |---|---|
 | Magic words / voice triggers | `TextCue`, `SpeakerWordCue` |
 | Suggestion cadence (idle-preferring) | `IdleCue`, `IntervalCue` |
@@ -82,7 +82,7 @@ survive infrastructure changes."
 | Deterministic trace | Built-in JSONL recording |
 
 **Validation bar note:** Cue's APIs are known from its README but must be exercised against the
-real library before Panopticon builds on them. Treat Cue validation as a P0 gate.
+real library before Vibersyn builds on them. Treat Cue validation as a P0 gate.
 
 ---
 
@@ -98,14 +98,14 @@ real library before Panopticon builds on them. Treat Cue validation as a P0 gate
   clarification), Review (submit for approval). No explicit `pass` primitive.
 - **Reference impl:** An email assistant + "Agent Inbox" UI (ticketing hybrid for agent interactions).
 - **Key difference from Cue:** LangChain's model requires a human in the loop for most decisions.
-  Cue's `observe.pass` is an autonomous decision to not act, with no human required. Panopticon
+  Cue's `observe.pass` is an autonomous decision to not act, with no human required. Vibersyn
   needs the Cue approach — a room of humans should not be pestered with constant check-ins.
 
 ### Medium / ambient agents concept
 - **Source:** https://medium.com/@pinarpatton/ambient-agents-when-events-not-prompts-are-the-trigger
 - Defines the pattern: "event streams, not prompts, are the trigger." Agents run continuously;
   the trigger is a world event, not a user message.
-- Validates the core Panopticon model. No concrete library.
+- Validates the core Vibersyn model. No concrete library.
 
 ---
 
@@ -132,7 +132,7 @@ real library before Panopticon builds on them. Treat Cue validation as a P0 gate
 - **Primitives:** `Agent`, `AgentSession`, `AgentServer`, `JobContext`, semantic turn detection
   (transformer model to detect when user is done speaking, not just VAD).
 - **Dispatch APIs:** Built-in job scheduling for concurrent agent management.
-- **Key difference from Panopticon:** Room-model native (multi-participant, group calls, video) but
+- **Key difference from Vibersyn:** Room-model native (multi-participant, group calls, video) but
   not designed for the ambient/silent observation pattern; requires an active participant to speak
   to. Semantic turn detection is more sophisticated than VAD, but the concept is still
   request/response.
@@ -156,20 +156,20 @@ real library before Panopticon builds on them. Treat Cue validation as a P0 gate
 - **What it is:** Commercial streaming STT; #1 on HuggingFace Open ASR Leaderboard.
 - **Capabilities:** Slam-1 speech-language model (Oct 2025), Voice Agent API (WebSocket, STT+LLM+TTS
   unified).
-- **Relationship to Panopticon:** An alternative to Deepgram; not currently in Cue's provider list.
+- **Relationship to Vibersyn:** An alternative to Deepgram; not currently in Cue's provider list.
   Could be wired in as a custom `transcriptionProvider` if Deepgram proves insufficient.
 - **URL:** https://www.assemblyai.com
 
 ### VoxTerm
 - **What it is:** Local offline transcription provider. Appears in Cue's codebase as
   `voxtermTranscriptionProvider`.
-- **Relationship to Panopticon:** Useful for offline dev/test without a Deepgram API key; Cue
+- **Relationship to Vibersyn:** Useful for offline dev/test without a Deepgram API key; Cue
   already supports it.
 
 ### Whisper Large V3 Turbo (October 2024, OpenAI)
 - **What it is:** Open-source batch STT model. 5.4× speed improvement over Whisper V3.
 - **Limitation:** Batch-only; not streaming-suitable for sub-500ms trigger detection. Not suitable
-  for Panopticon's always-on loop. Use Deepgram/AssemblyAI for production.
+  for Vibersyn's always-on loop. Use Deepgram/AssemblyAI for production.
 
 ---
 
@@ -190,7 +190,7 @@ real library before Panopticon builds on them. Treat Cue validation as a P0 gate
 - **Reuse:** Could be used to build a local offline `transcriptionProvider` for Cue that includes
   diarization, at the cost of higher latency.
 
-**Panopticon implication:** Cue already abstracts speaker identity through `SpeakerChangedCue`
+**Vibersyn implication:** Cue already abstracts speaker identity through `SpeakerChangedCue`
 and `SpeakerWordCue`. The diarization backend is pluggable via `transcriptionProvider`.
 
 ---
@@ -225,7 +225,7 @@ and `SpeakerWordCue`. The diarization backend is pluggable via `transcriptionPro
   LLM routing). Released May 2026. MIT license.
 - **Primitives:** `terminate` steps (explicit stop), `wait` steps (human gate), `parallel`
   (static groups or dynamic `for_each`), sub-workflow composition, `--web-bg` dashboard mode.
-- **Relationship to Panopticon:** Closest to Cue's policy layer in terms of determinism, but
+- **Relationship to Vibersyn:** Closest to Cue's policy layer in terms of determinism, but
   workflow-graph based rather than continuous-stream based. The YAML-defined deterministic routing
   is a useful pattern for the Cue ↔ Smithers action dispatch seam.
 - **Source:** https://opensource.microsoft.com/blog/2026/05/14/conductor-deterministic-orchestration-for-multi-agent-ai-workflows/
@@ -241,21 +241,21 @@ and `SpeakerWordCue`. The diarization backend is pluggable via `transcriptionPro
 - **What it is:** Multi-agent framework with checkpointing (replay from specific steps), fork
   workflows, hierarchical delegation (Manager Agent distributes work).
 - **Memory:** ChromaDB (short-term), SQLite (task results), vector embeddings.
-- **Limitation for Panopticon:** Task-oriented, not stream-oriented. Not designed for a real-time
+- **Limitation for Vibersyn:** Task-oriented, not stream-oriented. Not designed for a real-time
   audio loop. Its fork/checkpoint patterns are informative but not directly reusable.
 
 ---
 
 ## 7. Deterministic observability and replay
 
-### Cue's built-in recording (primary recommendation for Panopticon)
+### Cue's built-in recording (primary recommendation for Vibersyn)
 Three JSONL files per session:
 - `observations.jsonl` — every normalized world event
 - `decisions.jsonl` — every model invocation and chosen tool (including `observe.pass`)
 - `actions.jsonl` — every external action taken
 
 The MCP adapter (`cue.replay_transcript`) enables replaying past sessions for debugging and
-evaluation. This is the correct observability primitive for the Cue layer — Panopticon should
+evaluation. This is the correct observability primitive for the Cue layer — Vibersyn should
 extend it, not replace it.
 
 **Recorded decisions are the core insight:** `observe.pass` is recorded in `decisions.jsonl`,
@@ -266,14 +266,14 @@ auditable without extra tooling.
 - **What it is:** Open-source (self-hostable), OpenTelemetry-native LLM observability.
 - **Capabilities:** Traces every LLM call, tool call, span — nested hierarchy showing what fired
   and why. Prompt debugging, cost analysis, per-agent token usage. Framework-agnostic.
-- **Relationship to Panopticon:** Best choice for adding visual observability to the Smithers
+- **Relationship to Vibersyn:** Best choice for adding visual observability to the Smithers
   process layer (the per-process agent calls, Fable planning steps). Complements Cue's JSONL
   recording. Smithers' structured logs can be forwarded as OTLP traces.
 - **URL:** https://langfuse.com
 
 ### LangSmith (`langchain.com/langsmith`)
 - Deep integration with LangGraph — captures decision steps, tool calls, reasoning.
-- Best choice only if Panopticon's orchestration uses LangGraph (it doesn't — it uses Smithers).
+- Best choice only if Vibersyn's orchestration uses LangGraph (it doesn't — it uses Smithers).
   Not recommended as primary; Langfuse is framework-agnostic and a better fit.
 
 ### OpenTelemetry GenAI Semantic Conventions
@@ -310,7 +310,7 @@ The most significant finding is the **gap** in prior art:
 
 The closest integrated system is **Cue's Etherea demo** (continuous stream → LLM decision →
 realtime action), but Etherea is single-process — it doesn't spawn and manage a *fleet* of
-named agent processes. The Cue↔Smithers composition is Panopticon's novel contribution.
+named agent processes. The Cue↔Smithers composition is Vibersyn's novel contribution.
 
 The second-closest is **Temporal + Pipecat + Langfuse** used together, but these are not
 pre-integrated and don't share Cue's explicit `observe.pass` / restraint philosophy.
@@ -320,7 +320,7 @@ pre-integrated and don't share Cue's explicit `observe.pass` / restraint philoso
 ## 9. Decisions recorded here
 
 - **Cue is the correct foundation** — it directly implements the observation → cue policy →
-  act-or-pass loop Panopticon needs. No alternative comes close. Validate its APIs (P0 gate)
+  act-or-pass loop Vibersyn needs. No alternative comes close. Validate its APIs (P0 gate)
   before building.
 - **Deepgram Nova-3 is the correct V0 transcription provider** — it's already in Cue's stack,
   gives `isFinal` and speaker diarization, and has the lowest latency of evaluated options.
@@ -334,7 +334,7 @@ pre-integrated and don't share Cue's explicit `observe.pass` / restraint philoso
 - **Do not adopt LangChain Ambient Agents** — the human-in-loop check-in model is the wrong
   pattern for a room of humans who shouldn't be interrupted; Cue's autonomous `observe.pass` is
   the right model.
-- **The novel contribution of Panopticon** (Cue ↔ Smithers multi-process fleet + voice
+- **The novel contribution of Vibersyn** (Cue ↔ Smithers multi-process fleet + voice
   selection) has no direct prior art as an integrated system — we are building new ground.
 
 ---

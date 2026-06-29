@@ -148,7 +148,7 @@ function normalizedUtteranceCandidates(text: string): string[] {
     return [];
   }
 
-  const withoutWake = normalized.replace(/^panop\s+/u, "");
+  const withoutWake = normalized.replace(/^viber\s+/u, "");
   const candidates = new Set([normalized, withoutWake]);
   const words = withoutWake.split(/\s+/u).filter(Boolean);
   for (const word of words) {

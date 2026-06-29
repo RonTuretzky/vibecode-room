@@ -32,16 +32,16 @@ describe("selectSmithersClient — client selection by gateway config (unit)", (
     expect(client).toBeInstanceOf(MemorySmithersClient);
   });
 
-  test("PANOP_SMITHERS_GATEWAY_URL selects the gateway-backed client", () => {
-    const client = selectSmithersClient({ PANOP_SMITHERS_GATEWAY_URL: "ws://gateway.local:8080" });
+  test("VIBERSYN_SMITHERS_GATEWAY_URL selects the gateway-backed client", () => {
+    const client = selectSmithersClient({ VIBERSYN_SMITHERS_GATEWAY_URL: "ws://gateway.local:8080" });
     expect(client).toBeInstanceOf(GatewayRegistryClient);
     expect(client).not.toBeInstanceOf(MemorySmithersClient);
   });
 
   test("URL plus token still selects the gateway-backed client", () => {
     const client = selectSmithersClient({
-      PANOP_SMITHERS_GATEWAY_URL: "ws://gateway.local:8080",
-      PANOP_SMITHERS_GATEWAY_TOKEN: "secret-token",
+      VIBERSYN_SMITHERS_GATEWAY_URL: "ws://gateway.local:8080",
+      VIBERSYN_SMITHERS_GATEWAY_TOKEN: "secret-token",
     });
     expect(client).toBeInstanceOf(GatewayRegistryClient);
   });
@@ -53,13 +53,13 @@ describe("selectSmithersClient — client selection by gateway config (unit)", (
   });
 
   test("partial config (token without URL) throws a clear error, no silent fallback", () => {
-    expect(() => selectSmithersClient({ PANOP_SMITHERS_GATEWAY_TOKEN: "secret-token" })).toThrow(
-      /PANOP_SMITHERS_GATEWAY_URL is missing/u,
+    expect(() => selectSmithersClient({ VIBERSYN_SMITHERS_GATEWAY_TOKEN: "secret-token" })).toThrow(
+      /VIBERSYN_SMITHERS_GATEWAY_URL is missing/u,
     );
   });
 
   test("blank/whitespace gateway URL is treated as unset (in-memory default)", () => {
-    const client = selectSmithersClient({ PANOP_SMITHERS_GATEWAY_URL: "   " });
+    const client = selectSmithersClient({ VIBERSYN_SMITHERS_GATEWAY_URL: "   " });
     expect(client).toBeInstanceOf(MemorySmithersClient);
   });
 });
@@ -75,7 +75,7 @@ describe("gateway-backed registry routes spawn/halt through the transport (integ
       upid: "upid-gw-1",
       runId: "run-gw-1",
       callsign: "Atlas",
-      workflow: "panopticon-process",
+      workflow: "vibersyn-process",
       prompt: "ship the feature",
       input: { task: "ship the feature" },
       correlationId: "corr-gw-spawn",
@@ -86,7 +86,7 @@ describe("gateway-backed registry routes spawn/halt through the transport (integ
     expect(launch).toBeDefined();
     expect(launch?.params).toEqual(
       expect.objectContaining({
-        workflow: "panopticon-process",
+        workflow: "vibersyn-process",
         options: expect.objectContaining({ runId: "run-gw-1", idempotencyKey: "corr-gw-spawn" }),
       }),
     );

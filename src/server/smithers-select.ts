@@ -4,7 +4,7 @@
 // SmithersClient backs the ProcessRegistry:
 //
 //   no gateway config            -> MemorySmithersClient (in-process default)
-//   PANOP_SMITHERS_GATEWAY_URL    -> GatewaySmithersClient over OfficialGatewayTransport
+//   VIBERSYN_SMITHERS_GATEWAY_URL    -> GatewaySmithersClient over OfficialGatewayTransport
 //   injected transport (opts)     -> GatewaySmithersClient over that transport (tests/e2e)
 //
 // The in-memory client stays the no-config default so `bun run start` keeps
@@ -35,15 +35,15 @@ import { MemorySmithersClient } from "../process/test-helpers";
 // The slice of SmithersClient the ProcessRegistry actually drives.
 export type RegistrySmithersClient = Pick<SmithersClient, "spawn" | "pause" | "resume" | "halt" | "steer">;
 
-export const DEFAULT_GATEWAY_WORKFLOW = "panopticon-process";
+export const DEFAULT_GATEWAY_WORKFLOW = "vibersyn-process";
 
 export interface SmithersGatewayEnv {
   // Presence of a non-empty URL turns on the gateway-backed client.
-  PANOP_SMITHERS_GATEWAY_URL?: string;
+  VIBERSYN_SMITHERS_GATEWAY_URL?: string;
   // Optional bearer token forwarded to the gateway transport.
-  PANOP_SMITHERS_GATEWAY_TOKEN?: string;
+  VIBERSYN_SMITHERS_GATEWAY_TOKEN?: string;
   // Optional default workflow for launchRun when a spawn omits one.
-  PANOP_SMITHERS_GATEWAY_WORKFLOW?: string;
+  VIBERSYN_SMITHERS_GATEWAY_WORKFLOW?: string;
   [key: string]: string | undefined;
 }
 
@@ -60,8 +60,8 @@ export function selectSmithersClient(
   env: SmithersGatewayEnv,
   options: SelectSmithersClientOptions = {},
 ): RegistrySmithersClient {
-  const url = env.PANOP_SMITHERS_GATEWAY_URL?.trim() ?? "";
-  const token = env.PANOP_SMITHERS_GATEWAY_TOKEN?.trim() ?? "";
+  const url = env.VIBERSYN_SMITHERS_GATEWAY_URL?.trim() ?? "";
+  const token = env.VIBERSYN_SMITHERS_GATEWAY_TOKEN?.trim() ?? "";
 
   // An injected transport is an explicit request for the gateway path; honor it
   // without touching env (this is how the integration/e2e tests drive spawn/halt
@@ -82,9 +82,9 @@ export function selectSmithersClient(
   // than silently dropping to the in-memory client and pretending it worked.
   if (!hasUrl) {
     throw new Error(
-      "Partial Smithers gateway config: PANOP_SMITHERS_GATEWAY_TOKEN is set but " +
-        "PANOP_SMITHERS_GATEWAY_URL is missing. Set PANOP_SMITHERS_GATEWAY_URL to use " +
-        "the gateway, or clear PANOP_SMITHERS_GATEWAY_TOKEN for the in-memory default.",
+      "Partial Smithers gateway config: VIBERSYN_SMITHERS_GATEWAY_TOKEN is set but " +
+        "VIBERSYN_SMITHERS_GATEWAY_URL is missing. Set VIBERSYN_SMITHERS_GATEWAY_URL to use " +
+        "the gateway, or clear VIBERSYN_SMITHERS_GATEWAY_TOKEN for the in-memory default.",
     );
   }
 
@@ -101,7 +101,7 @@ function gatewayClient(
   correlations?: CorrelationStore,
 ): RegistrySmithersClient {
   const store = correlations ?? new MemoryCorrelationStore();
-  const defaultWorkflow = env.PANOP_SMITHERS_GATEWAY_WORKFLOW?.trim() || DEFAULT_GATEWAY_WORKFLOW;
+  const defaultWorkflow = env.VIBERSYN_SMITHERS_GATEWAY_WORKFLOW?.trim() || DEFAULT_GATEWAY_WORKFLOW;
   const client = new GatewaySmithersClient({ transport, correlations: store, defaultWorkflow });
   return new GatewayRegistryClient(client, store);
 }

@@ -9,7 +9,7 @@ describe("near-miss soft landing", () => {
       clock: () => 60_000,
     });
 
-    expect(softLanding.evaluate("Panop stats")).toEqual({
+    expect(softLanding.evaluate("Viber stats")).toEqual({
       kind: "near-miss",
       commandId: "status",
       phrase: "status",
@@ -58,7 +58,7 @@ describe("near-miss soft landing", () => {
   test("documents only concrete spoken command phrases", () => {
     const phrases = documentedCommandPhrases().map((phrase) => phrase.normalized);
 
-    expect(phrases).toContain("panop");
+    expect(phrases).toContain("viber");
     expect(phrases).toContain("mute");
     expect(phrases).not.toContain("[callsign]");
     expect(levenshtein("stats", "status")).toBe(1);

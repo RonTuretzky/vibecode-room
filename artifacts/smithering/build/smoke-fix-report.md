@@ -1,4 +1,4 @@
-# Smoke fix — `smoke-smithering-panopticon-4-0` (build:setup validation failure)
+# Smoke fix — `smoke-smithering-vibersyn-4-0` (build:setup validation failure)
 
 ## Symptom (from the child run: `smithers why / inspect / events`)
 `build:setup` failed all retries with a `ZodError` on the `buildSetup` output:

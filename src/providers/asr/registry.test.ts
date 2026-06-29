@@ -25,16 +25,16 @@ function emptyAudioStream(): ReadableStream<Uint8Array> {
   });
 }
 
-describe("selectAsrProvider — explicit PANOP_ASR_PROVIDER mapping (unit)", () => {
+describe("selectAsrProvider — explicit VIBERSYN_ASR_PROVIDER mapping (unit)", () => {
   test("maps 'deepgram' to DeepgramNova3ASRProvider", () => {
-    const selection = selectAsrProvider({ PANOP_ASR_PROVIDER: "deepgram", DEEPGRAM_API_KEY: DEEPGRAM_KEY }, baseOptions);
+    const selection = selectAsrProvider({ VIBERSYN_ASR_PROVIDER: "deepgram", DEEPGRAM_API_KEY: DEEPGRAM_KEY }, baseOptions);
 
     expect(selection.mode).toBe("deepgram");
     expect(selection.provider).toBeInstanceOf(DeepgramNova3ASRProvider);
   });
 
   test("maps 'voxterm' to VoxTermASRProvider", () => {
-    const selection = selectAsrProvider({ PANOP_ASR_PROVIDER: "voxterm" }, baseOptions);
+    const selection = selectAsrProvider({ VIBERSYN_ASR_PROVIDER: "voxterm" }, baseOptions);
 
     expect(selection.mode).toBe("voxterm");
     expect(selection.provider).toBeInstanceOf(VoxTermASRProvider);
@@ -49,7 +49,7 @@ describe("selectAsrProvider — explicit PANOP_ASR_PROVIDER mapping (unit)", () 
       { utteranceId: 10, text: "and ship it", final: true, speaker: 1, emittedAtMs: 600 },
     ];
     const selection = selectAsrProvider(
-      { PANOP_ASR_PROVIDER: "voxterm" },
+      { VIBERSYN_ASR_PROVIDER: "voxterm" },
       { sessionId: "registry-voxterm", voxtermSource: arraySegmentSource(segments) },
     );
 
@@ -82,7 +82,7 @@ describe("selectAsrProvider — explicit PANOP_ASR_PROVIDER mapping (unit)", () 
     expect(source).toBeInstanceOf(VoxTermSpawnSource);
 
     // And the selected provider is the VoxTerm provider regardless.
-    const selection = selectAsrProvider({ PANOP_ASR_PROVIDER: "voxterm" }, baseOptions);
+    const selection = selectAsrProvider({ VIBERSYN_ASR_PROVIDER: "voxterm" }, baseOptions);
     expect(selection.mode).toBe("voxterm");
     expect(selection.provider).toBeInstanceOf(VoxTermASRProvider);
   });
@@ -96,27 +96,27 @@ describe("selectAsrProvider — explicit PANOP_ASR_PROVIDER mapping (unit)", () 
   });
 
   test("maps 'replay' to ReplayASRProvider", () => {
-    const selection = selectAsrProvider({ PANOP_ASR_PROVIDER: "replay" }, baseOptions);
+    const selection = selectAsrProvider({ VIBERSYN_ASR_PROVIDER: "replay" }, baseOptions);
 
     expect(selection.mode).toBe("replay");
     expect(selection.provider).toBeInstanceOf(ReplayASRProvider);
   });
 
   test("is case/whitespace tolerant for the explicit value", () => {
-    const selection = selectAsrProvider({ PANOP_ASR_PROVIDER: "  VoxTerm  " }, baseOptions);
+    const selection = selectAsrProvider({ VIBERSYN_ASR_PROVIDER: "  VoxTerm  " }, baseOptions);
 
     expect(selection.mode).toBe("voxterm");
     expect(selection.provider).toBeInstanceOf(VoxTermASRProvider);
   });
 
-  test("rejects an unknown PANOP_ASR_PROVIDER value", () => {
-    expect(() => selectAsrProvider({ PANOP_ASR_PROVIDER: "whisper" }, baseOptions)).toThrow(
-      /Unknown PANOP_ASR_PROVIDER/u,
+  test("rejects an unknown VIBERSYN_ASR_PROVIDER value", () => {
+    expect(() => selectAsrProvider({ VIBERSYN_ASR_PROVIDER: "whisper" }, baseOptions)).toThrow(
+      /Unknown VIBERSYN_ASR_PROVIDER/u,
     );
   });
 
   test("explicit deepgram without a key is a hard error", () => {
-    expect(() => selectAsrProvider({ PANOP_ASR_PROVIDER: "deepgram" }, baseOptions)).toThrow(
+    expect(() => selectAsrProvider({ VIBERSYN_ASR_PROVIDER: "deepgram" }, baseOptions)).toThrow(
       /requires DEEPGRAM_API_KEY/u,
     );
   });
@@ -125,7 +125,7 @@ describe("selectAsrProvider — explicit PANOP_ASR_PROVIDER mapping (unit)", () 
 describe("selectAsrProvider — micProfile close-timer cap (unit)", () => {
   test("micProfile:true lifts the Deepgram close timeout to the live-mic cap", () => {
     const selection = selectAsrProvider(
-      { PANOP_ASR_PROVIDER: "deepgram", DEEPGRAM_API_KEY: DEEPGRAM_KEY },
+      { VIBERSYN_ASR_PROVIDER: "deepgram", DEEPGRAM_API_KEY: DEEPGRAM_KEY },
       { ...baseOptions, micProfile: true },
     );
 
@@ -135,7 +135,7 @@ describe("selectAsrProvider — micProfile close-timer cap (unit)", () => {
 
   test("non-mic selection leaves the provider's default close timeout in place", () => {
     const selection = selectAsrProvider(
-      { PANOP_ASR_PROVIDER: "deepgram", DEEPGRAM_API_KEY: DEEPGRAM_KEY },
+      { VIBERSYN_ASR_PROVIDER: "deepgram", DEEPGRAM_API_KEY: DEEPGRAM_KEY },
       baseOptions,
     );
 
@@ -146,7 +146,7 @@ describe("selectAsrProvider — micProfile close-timer cap (unit)", () => {
 
   test("MIC_CLOSE_TIMEOUT_MS env overrides the mic cap when valid", () => {
     const env: AsrSelectionEnv = {
-      PANOP_ASR_PROVIDER: "deepgram",
+      VIBERSYN_ASR_PROVIDER: "deepgram",
       DEEPGRAM_API_KEY: DEEPGRAM_KEY,
       MIC_CLOSE_TIMEOUT_MS: "1234",
     };
@@ -157,7 +157,7 @@ describe("selectAsrProvider — micProfile close-timer cap (unit)", () => {
 
   test("an invalid MIC_CLOSE_TIMEOUT_MS env falls back to the default cap", () => {
     const env: AsrSelectionEnv = {
-      PANOP_ASR_PROVIDER: "deepgram",
+      VIBERSYN_ASR_PROVIDER: "deepgram",
       DEEPGRAM_API_KEY: DEEPGRAM_KEY,
       MIC_CLOSE_TIMEOUT_MS: "not-a-number",
     };
@@ -168,14 +168,14 @@ describe("selectAsrProvider — micProfile close-timer cap (unit)", () => {
 });
 
 describe("selectAsrProvider — default by key presence (integration)", () => {
-  test("no PANOP_ASR_PROVIDER + DEEPGRAM_API_KEY present -> deepgram", () => {
+  test("no VIBERSYN_ASR_PROVIDER + DEEPGRAM_API_KEY present -> deepgram", () => {
     const selection = selectAsrProvider({ DEEPGRAM_API_KEY: DEEPGRAM_KEY }, baseOptions);
 
     expect(selection.mode).toBe("deepgram");
     expect(selection.provider).toBeInstanceOf(DeepgramNova3ASRProvider);
   });
 
-  test("no PANOP_ASR_PROVIDER + DEEPGRAM_API_KEY absent -> replay", () => {
+  test("no VIBERSYN_ASR_PROVIDER + DEEPGRAM_API_KEY absent -> replay", () => {
     const selection = selectAsrProvider({}, baseOptions);
 
     expect(selection.mode).toBe("replay");
@@ -189,9 +189,9 @@ describe("selectAsrProvider — default by key presence (integration)", () => {
     expect(selection.provider).toBeInstanceOf(ReplayASRProvider);
   });
 
-  test("explicit value overrides key presence: key present but PANOP_ASR_PROVIDER=replay -> replay", () => {
+  test("explicit value overrides key presence: key present but VIBERSYN_ASR_PROVIDER=replay -> replay", () => {
     const selection = selectAsrProvider(
-      { PANOP_ASR_PROVIDER: "replay", DEEPGRAM_API_KEY: DEEPGRAM_KEY },
+      { VIBERSYN_ASR_PROVIDER: "replay", DEEPGRAM_API_KEY: DEEPGRAM_KEY },
       baseOptions,
     );
 
@@ -199,8 +199,8 @@ describe("selectAsrProvider — default by key presence (integration)", () => {
     expect(selection.provider).toBeInstanceOf(ReplayASRProvider);
   });
 
-  test("explicit value overrides key absence: no key but PANOP_ASR_PROVIDER=voxterm -> voxterm", () => {
-    const selection = selectAsrProvider({ PANOP_ASR_PROVIDER: "voxterm" }, baseOptions);
+  test("explicit value overrides key absence: no key but VIBERSYN_ASR_PROVIDER=voxterm -> voxterm", () => {
+    const selection = selectAsrProvider({ VIBERSYN_ASR_PROVIDER: "voxterm" }, baseOptions);
 
     expect(selection.mode).toBe("voxterm");
     expect(selection.provider).toBeInstanceOf(VoxTermASRProvider);

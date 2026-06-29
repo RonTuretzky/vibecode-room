@@ -1,4 +1,4 @@
-$ PANOP_RBG_STALL_UNSELECTED=1 bun test src/process/registry.test.ts test/e2e/fleet.e2e.ts
+$ VIBERSYN_RBG_STALL_UNSELECTED=1 bun test src/process/registry.test.ts test/e2e/fleet.e2e.ts
 bun test v1.3.14 (0d9b296a)
 
 src/process/registry.test.ts:
@@ -44,7 +44,7 @@ error: expect(received).toEqual(expected)
 (fail) process registry > AC13.3 unselected processes keep advancing and selection never pauses siblings [1.06ms]
 
 test/e2e/fleet.e2e.ts.test.ts:
-timestamp=2026-06-16T00:27:25.709Z level=INFO fiber=#5 message="Gateway run started" gateway:run=0ms runId=run-atlas transport=ws triggeredBy=fleet-control role=operator workflow=panopticon-fleet-control service=smithers source=user userId=fleet-control resume=false connectionId=fleet-control:connection
+timestamp=2026-06-16T00:27:25.709Z level=INFO fiber=#5 message="Gateway run started" gateway:run=0ms runId=run-atlas transport=ws triggeredBy=fleet-control role=operator workflow=vibersyn-fleet-control service=smithers source=user userId=fleet-control resume=false connectionId=fleet-control:connection
 529 |     if (response.ok && response.payload.status === status) {
 530 |       return;
 531 |     }
@@ -56,15 +56,15 @@ error: Timed out waiting for run-bravo to reach waiting-event
       at waitForStatus (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/process-registry-lifecycle-fleet/test/e2e/fleet.e2e.ts:534:13)
       at async <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/process-registry-lifecycle-fleet/test/e2e/fleet.e2e.ts:129:13)
 (fail) seam durability recovery e2e > seam steering and per-process pause stay isolated across two durable runs [5279.47ms]
-timestamp=2026-06-16T00:27:30.957Z level=INFO fiber=#724 message="Gateway run started" gateway:run=0ms runId=run-fleet-001 transport=ws triggeredBy=fleet-initial role=operator workflow=panopticon-fleet service=smithers source=user userId=fleet-initial resume=false connectionId=fleet-initial:connection
+timestamp=2026-06-16T00:27:30.957Z level=INFO fiber=#724 message="Gateway run started" gateway:run=0ms runId=run-fleet-001 transport=ws triggeredBy=fleet-initial role=operator workflow=vibersyn-fleet service=smithers source=user userId=fleet-initial resume=false connectionId=fleet-initial:connection
 timestamp=2026-06-16T00:27:31.031Z level=INFO fiber=#908 message="getNodeOutput completed" runId=run-fleet-001 durationMs=1.2200419999999212 nodeId=checkpoint status=produced iteration=0 rowBytes=58 service=smithers
 timestamp=2026-06-16T00:27:31.238Z level=INFO fiber=#938 message="getNodeOutput completed" runId=run-fleet-001 durationMs=0.48250000000007276 nodeId=checkpoint status=produced iteration=0 rowBytes=58 service=smithers
-timestamp=2026-06-16T00:27:31.240Z level=INFO fiber=#954 message="Gateway run started" gateway:run=0ms runId=run-fleet-001 transport=ws triggeredBy=fleet-recovered role=operator workflow=panopticon-fleet service=smithers source=user userId=fleet-recovered resume=true connectionId=fleet-recovered:connection
+timestamp=2026-06-16T00:27:31.240Z level=INFO fiber=#954 message="Gateway run started" gateway:run=0ms runId=run-fleet-001 transport=ws triggeredBy=fleet-recovered role=operator workflow=vibersyn-fleet service=smithers source=user userId=fleet-recovered resume=true connectionId=fleet-recovered:connection
 timestamp=2026-06-16T00:27:31.242Z level=INFO fiber=#978 message="getNodeOutput completed" runId=run-fleet-001 durationMs=0.786167000000205 nodeId=complete errorCode=NodeNotFound status=error iteration=0 rowBytes=0 service=smithers
 timestamp=2026-06-16T00:27:31.265Z level=INFO fiber=#1010 message="getNodeOutput completed" runId=run-fleet-001 durationMs=0.08170799999970768 nodeId=complete errorCode=NodeNotFound status=error iteration=0 rowBytes=0 service=smithers
 timestamp=2026-06-16T00:27:31.290Z level=INFO fiber=#1140 message="getNodeOutput completed" runId=run-fleet-001 durationMs=0.9877919999998994 nodeId=complete status=pending iteration=0 rowBytes=0 service=smithers
 timestamp=2026-06-16T00:27:31.312Z level=INFO fiber=#1214 message="getNodeOutput completed" runId=run-fleet-001 durationMs=0.42479200000070705 nodeId=complete status=produced iteration=0 rowBytes=93 service=smithers
-timestamp=2026-06-16T00:27:31.518Z level=INFO fiber=#1216 message="Gateway run completed" gateway:run=0ms runId=run-fleet-001 status=finished workflow=panopticon-fleet service=smithers source=user
+timestamp=2026-06-16T00:27:31.518Z level=INFO fiber=#1216 message="Gateway run completed" gateway:run=0ms runId=run-fleet-001 status=finished workflow=vibersyn-fleet service=smithers source=user
 326 |     await registry.resume("upid-bravo", "corr-bravo-resume");
 327 |     registry.clearSelection("corr-unselected");
 328 |     registry.advanceAutonomousTick("corr-unselected-tick-1");

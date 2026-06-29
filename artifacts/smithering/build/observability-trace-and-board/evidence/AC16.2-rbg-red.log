@@ -4,7 +4,7 @@ test/e2e/board.e2e.ts.test.ts:
 93 | }
 94 | 
 95 | export async function runBoardIndependentVoiceFlow(options: { boardUrl?: string; requireBoard?: boolean } = {}) {
-96 |   if (options.requireBoard ?? process.env.PANOP_RBG_REQUIRE_BOARD === "1") {
+96 |   if (options.requireBoard ?? process.env.VIBERSYN_RBG_REQUIRE_BOARD === "1") {
 97 |     if (options.boardUrl === undefined) {
 98 |       throw new Error("voice flow incorrectly waited for the optional board");
                      ^
@@ -13,7 +13,7 @@ error: voice flow incorrectly waited for the optional board
       at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/observability-trace-and-board/test/e2e/board.e2e.ts:7:26)
 (fail) REQ-16 board e2e > board-non-authoritative: canonical voice flow passes when board server is down [0.88ms]
  95 | export async function runBoardIndependentVoiceFlow(options: { boardUrl?: string; requireBoard?: boolean } = {}) {
- 96 |   if (options.requireBoard ?? process.env.PANOP_RBG_REQUIRE_BOARD === "1") {
+ 96 |   if (options.requireBoard ?? process.env.VIBERSYN_RBG_REQUIRE_BOARD === "1") {
  97 |     if (options.boardUrl === undefined) {
  98 |       throw new Error("voice flow incorrectly waited for the optional board");
  99 |     }

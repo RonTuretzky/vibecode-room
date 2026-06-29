@@ -1,8 +1,8 @@
 import { CueAdapter, type CueDecisionLog } from "../cue/adapter";
 import {
-  createPanopticonCueHarness,
+  createVibersynCueHarness,
   type CueHarnessProviders,
-  type PanopticonCueHarness,
+  type VibersynCueHarness,
 } from "../cue/harness";
 import { cueSourceBuildAvailable, cueSourceRoot, type CueIngestResult } from "../cue/source";
 import type { TraceProcessor } from "../obs/trace";
@@ -23,7 +23,7 @@ export interface CueBridgeSelection {
 export interface CueBridgeOptions {
   sessionId: string;
   providers: CueHarnessProviders;
-  // The existing in-runtime CueAdapter (textCueWords ['panop']) the runtime
+  // The existing in-runtime CueAdapter (textCueWords ['viber']) the runtime
   // already constructs. The fallback path drives wake/earcon detection through
   // it, and the harness path reuses its wake-word list for the documented words.
   fallbackAdapter: CueAdapter;
@@ -37,7 +37,7 @@ export interface CueBridgeOptions {
     textCueWords: readonly string[];
     trace: TraceProcessor;
     clock: () => number;
-  }) => Promise<PanopticonCueHarness>;
+  }) => Promise<VibersynCueHarness>;
   trace: TraceProcessor;
   clock?: () => number;
   // Operator-visible selection log (defaults to console.log) so the active path
@@ -47,7 +47,7 @@ export interface CueBridgeOptions {
 
 // The documented wake word for the deterministic fast-path. The runtime adapter
 // is constructed with exactly this list, so the bridge mirrors it.
-export const DEFAULT_CUE_WAKE_WORDS = ["panop"] as const;
+export const DEFAULT_CUE_WAKE_WORDS = ["viber"] as const;
 
 export interface CueBridge {
   readonly mode: CueBridgeMode;
@@ -93,7 +93,7 @@ export async function createCueBridge(options: CueBridgeOptions): Promise<CueBri
     }
   }
 
-  const reason = "no Cue build (set PANOP_CUE_SOURCE_DIR to enable the harness fast-path)";
+  const reason = "no Cue build (set VIBERSYN_CUE_SOURCE_DIR to enable the harness fast-path)";
   log(`[cue-bridge] active path: fallback — ${reason}`);
   return new FallbackCueBridge(options.fallbackAdapter, textCueWords, { mode: "fallback", reason });
 }
@@ -104,8 +104,8 @@ async function defaultCreateHarness(options: {
   textCueWords: readonly string[];
   trace: TraceProcessor;
   clock: () => number;
-}): Promise<PanopticonCueHarness> {
-  return createPanopticonCueHarness({
+}): Promise<VibersynCueHarness> {
+  return createVibersynCueHarness({
     sessionId: options.sessionId,
     providers: options.providers,
     textCueWords: [...options.textCueWords],
@@ -120,7 +120,7 @@ async function defaultCreateHarness(options: {
 // earcon trace on a TextCue match.
 class HarnessCueBridge implements CueBridge {
   constructor(
-    private readonly harness: PanopticonCueHarness,
+    private readonly harness: VibersynCueHarness,
     readonly selection: CueBridgeSelection,
   ) {}
 

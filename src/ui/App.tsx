@@ -27,7 +27,7 @@ const IDEA_ID = "idea";
 
 declare global {
   interface Window {
-    __PANOPTICON__?: {
+    __VIBERSYN__?: {
       ready: boolean;
       getSnapshot: () => ProjectorSnapshot;
       applySnapshot: (snapshot: Partial<ProjectorSnapshot>) => void;
@@ -372,7 +372,7 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
     if (typeof window === "undefined") {
       return;
     }
-    window.__PANOPTICON__ = {
+    window.__VIBERSYN__ = {
       ready: true,
       getSnapshot: () => snapshotRef.current,
       applySnapshot: (partial) => setSnapshot((prev) => ({ ...prev, ...partial })),
@@ -386,7 +386,7 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
       getSelected: () => selected,
     };
     return () => {
-      delete window.__PANOPTICON__;
+      delete window.__VIBERSYN__;
     };
   }, [resolveSelection, selected]);
 
@@ -528,6 +528,7 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
               gatePercent={gatePercent}
               selected={ideaSelected}
               size={ideaSelected ? 250 : 196}
+              evidence={snapshot.suggestion.contextSpan?.quote}
               onSelect={() => void acceptIdea()}
             />
             {snapshot.processes.map((process, index) => (

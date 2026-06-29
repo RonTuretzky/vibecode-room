@@ -125,7 +125,7 @@ describe("ENG-T-01 shared type contract", () => {
 
   test("TranscriptObservation mirrors the normalized ASR shape", () => {
     const observation: TranscriptObservation = {
-      text: "Panop status",
+      text: "Viber status",
       isFinal: true,
       speaker: null,
       sessionId: "session-001",
@@ -246,7 +246,7 @@ describe("ENG-T-01 shared type contract", () => {
 });
 
 function maybeDropCorrelationForRbg(samples: LogEvent[]): LogEvent[] {
-  if (process.env.PANOPTICON_RBG_DROP_CORRELATION !== "1") {
+  if (process.env.VIBERSYN_RBG_DROP_CORRELATION !== "1") {
     return samples;
   }
 

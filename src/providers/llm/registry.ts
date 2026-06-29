@@ -1,11 +1,11 @@
 // DecisionLLM registry / factory (ISSUE-0005).
 //
-// `selectDecisionLLM(env, opts)` is the single seam that maps PANOP_DECISION_LLM
+// `selectDecisionLLM(env, opts)` is the single seam that maps VIBERSYN_DECISION_LLM
 // onto a concrete DecisionLLM. It lives inside src/providers so it may import the
 // concrete deciders directly (the provider boundary lint only forbids that
 // outside src/providers — see providers/boundary.test.ts).
 //
-// Selection precedence (ISSUE-0023): an explicit PANOP_DECISION_LLM always wins;
+// Selection precedence (ISSUE-0023): an explicit VIBERSYN_DECISION_LLM always wins;
 // with it unset the registry auto-selects the Claude decider when a model
 // credential resolves, so the runtime makes model-quality decisions by default,
 // and otherwise falls back to the heuristic decider. The heuristic remains the
@@ -36,7 +36,7 @@ export type DecisionLLMMode = "heuristic" | "claude" | "claude-cli" | "cue-cereb
 export const DEFAULT_CLAUDE_DECISION_COMMAND = "claude --print";
 
 export interface DecisionLLMSelectionEnv {
-  PANOP_DECISION_LLM?: string;
+  VIBERSYN_DECISION_LLM?: string;
   // Deterministic signal that a Claude model credential is resolvable for the
   // API path. The host-subscription command is the sanctioned seam; this key is
   // only read to gate selection, never forwarded as a raw credential.
@@ -100,7 +100,7 @@ export function selectDecisionLLM(
 }
 
 function resolveDecisionMode(env: DecisionLLMSelectionEnv): DecisionLLMMode {
-  const explicit = env.PANOP_DECISION_LLM?.trim().toLowerCase();
+  const explicit = env.VIBERSYN_DECISION_LLM?.trim().toLowerCase();
   if (explicit !== undefined && explicit.length > 0) {
     if (
       explicit === "heuristic" ||
@@ -112,7 +112,7 @@ function resolveDecisionMode(env: DecisionLLMSelectionEnv): DecisionLLMMode {
       return explicit;
     }
     throw new Error(
-      `Unknown PANOP_DECISION_LLM "${env.PANOP_DECISION_LLM}". Expected one of: heuristic, claude, claude-cli, cue-cerebras, replay.`,
+      `Unknown VIBERSYN_DECISION_LLM "${env.VIBERSYN_DECISION_LLM}". Expected one of: heuristic, claude, claude-cli, cue-cerebras, replay.`,
     );
   }
 
@@ -128,8 +128,8 @@ function createClaudeDecisionLLM(
 ): ClaudeDecisionLLM {
   if (!hasResolvableModelCredential(env)) {
     throw new Error(
-      "PANOP_DECISION_LLM=claude requires a resolvable model credential (ANTHROPIC_API_KEY). " +
-        "Set it, log into the host Claude subscription, or use PANOP_DECISION_LLM=heuristic for the no-key default.",
+      "VIBERSYN_DECISION_LLM=claude requires a resolvable model credential (ANTHROPIC_API_KEY). " +
+        "Set it, log into the host Claude subscription, or use VIBERSYN_DECISION_LLM=heuristic for the no-key default.",
     );
   }
 

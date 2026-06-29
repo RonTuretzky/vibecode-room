@@ -11,7 +11,7 @@ PreToolUse hook that can intercept and hold a destructive tool call before execu
 3. `hook-script.ts` — Claude Code PreToolUse hook script that blocks on approval
 4. `poc.test.ts` — 59 headless tests (+ 2 skipped e2e requiring API keys)
 
-**Test result:** 59/59 pass. Zero failures. 2 skipped (require `PANOPTICON_E2E=1` + API key).
+**Test result:** 59/59 pass. Zero failures. 2 skipped (require `VIBERSYN_E2E=1` + API key).
 
 ---
 
@@ -37,12 +37,12 @@ snapshot hook uses". This is CORRECT but must be read precisely: the mechanism I
 Claude Code CLI's own `settings.json` hook system. It is NOT a Smithers runtime API.
 
 Therefore:
-- Every Panopticon process that needs the safety gate MUST use **Claude Code CLI** as its
+- Every Vibersyn process that needs the safety gate MUST use **Claude Code CLI** as its
   agent (via `ClaudeCodeAgent` in Smithers). The hook fires via Claude Code's built-in
   `PreToolUse` hook mechanism.
 - Processes using `AnthropicAgent` (direct Anthropic SDK calls) **cannot** benefit from
   this hook — tool calls go directly to the model and bypass any Claude Code hook mechanism.
-- This constrains agent choice for all Panopticon processes. The eng doc must be amended.
+- This constrains agent choice for all Vibersyn processes. The eng doc must be amended.
 
 **Eng doc amendment required:** See §8.1 amendment in `engDocAmendments` of the structured output.
 
@@ -121,7 +121,7 @@ transport upgrade.
 
 The approval request must traverse:
 ```
-agent (Claude Code) → hook script → approval gate (Panopticon seam HTTP) → voice (Cue)
+agent (Claude Code) → hook script → approval gate (Vibersyn seam HTTP) → voice (Cue)
 ```
 
 The `gateId` is minted in the hook script (random, scoped to the run) and must be

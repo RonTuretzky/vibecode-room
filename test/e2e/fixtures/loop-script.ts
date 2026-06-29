@@ -6,7 +6,7 @@ import type { TranscriptObservation } from "../../../src/types";
 // Deterministic replay script for the live composition loop (ISSUE-0015). Two
 // FINAL observations: a buildable utterance that fires a suggestion, then a
 // spoken affirmation that accepts it (-> spawn -> spoken ack). Replayed through
-// the ReplayASRProvider via PANOP_MIC_REPLAY_PATH, this is the binding fixture
+// the ReplayASRProvider via VIBERSYN_MIC_REPLAY_PATH, this is the binding fixture
 // for the suggest->accept->spawn->speak measurable. Kept in one module so the
 // e2e, the integration snapshot test, and the fixture unit test all agree on the
 // exact observation sequence and the utterance ids the trace assertions key off.
@@ -51,7 +51,7 @@ export function serializeLoopScript(observations: readonly TranscriptObservation
 // Write a script to a fresh temp JSONL file and return its path. The caller owns
 // cleanup of the returned directory's parent (mkdtemp dir), if it tracks temps.
 export function writeLoopScriptFixture(observations: readonly TranscriptObservation[], tempDirs?: string[]): string {
-  const dir = mkdtempSync(join(tmpdir(), "panop-loop-script-"));
+  const dir = mkdtempSync(join(tmpdir(), "vibersyn-loop-script-"));
   tempDirs?.push(dir);
   const path = join(dir, "mic.jsonl");
   writeFileSync(path, serializeLoopScript(observations), "utf8");

@@ -102,20 +102,20 @@ describe("steering-window fleet slice e2e", () => {
 
 describe("seam durability recovery e2e", () => {
   test("seam steering and per-process pause stay isolated across two durable runs", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "panop-fleet-seam-"));
+    const dir = mkdtempSync(join(tmpdir(), "vibersyn-fleet-seam-"));
     tempDirs.push(dir);
     const runtime = createFleetControlRuntime("control", join(dir, "smithers.db"));
     const gateway = new Gateway({ heartbeatMs: 1_000, eventWindowSize: 200 });
     const connection = createConnection("fleet-control");
     gateway.connections.add(connection as any);
-    gateway.register("panopticon-fleet-control", runtime.workflow as any);
+    gateway.register("vibersyn-fleet-control", runtime.workflow as any);
 
     const store = new MemoryCorrelationStore();
     const dispatcher = new SeamDispatcher({
       client: new GatewaySmithersClient({
         transport: new InProcessGatewayTransport(gateway as any, connection),
         correlations: store,
-        defaultWorkflow: "panopticon-fleet-control",
+        defaultWorkflow: "vibersyn-fleet-control",
       }),
       correlations: store,
       sessionId: "fleet-e2e",
@@ -123,7 +123,7 @@ describe("seam durability recovery e2e", () => {
 
     try {
       await dispatcher.dispatch(spawnAction("Atlas", "upid-atlas", "run-atlas", "seed-atlas"));
-      if (process.env.PANOP_RBG_STALL_UNSELECTED !== "1") {
+      if (process.env.VIBERSYN_RBG_STALL_UNSELECTED !== "1") {
         await dispatcher.dispatch(spawnAction("Bravo", "upid-bravo", "run-bravo", "seed-bravo"));
       }
       await dispatcher.drain();
@@ -155,7 +155,7 @@ describe("seam durability recovery e2e", () => {
       expect(pauseAction?.type).toBe("pause");
       expect(resumeAction?.type).toBe("resume");
 
-      if (process.env.PANOP_RBG_DROP_STEER_SIGNAL !== "1") {
+      if (process.env.VIBERSYN_RBG_DROP_STEER_SIGNAL !== "1") {
         await dispatcher.dispatch(steerAction);
       }
       await dispatcher.drain();
@@ -171,7 +171,7 @@ describe("seam durability recovery e2e", () => {
       await expectNodeOutputMissing(gateway, connection, "run-bravo", "complete");
 
       await dispatcher.dispatch(
-        process.env.PANOP_RBG_PAUSE_ALL_UPIDS === "1"
+        process.env.VIBERSYN_RBG_PAUSE_ALL_UPIDS === "1"
           ? { type: "pauseAll", targetUPID: null, payload: {}, correlationId: "corr-pause-bravo" }
           : pauseAction,
       );
@@ -192,7 +192,7 @@ describe("seam durability recovery e2e", () => {
   }, 12_000);
 
   test("backend restart recovers an in-flight durable run from its last checkpoint", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "panop-fleet-"));
+    const dir = mkdtempSync(join(tmpdir(), "vibersyn-fleet-"));
     tempDirs.push(dir);
     const dbPath = join(dir, "smithers.db");
     const correlationPath = join(dir, "correlations.json");
@@ -200,13 +200,13 @@ describe("seam durability recovery e2e", () => {
     const gateway = new Gateway({ heartbeatMs: 1_000, eventWindowSize: 200 });
     const connection = createConnection("fleet-initial");
     gateway.connections.add(connection as any);
-    gateway.register("panopticon-fleet", initial.workflow as any);
+    gateway.register("vibersyn-fleet", initial.workflow as any);
     const initialStore = new FileCorrelationStore(correlationPath);
     const initialDispatcher = new SeamDispatcher({
       client: new GatewaySmithersClient({
         transport: new InProcessGatewayTransport(gateway as any, connection),
         correlations: initialStore,
-        defaultWorkflow: "panopticon-fleet",
+        defaultWorkflow: "vibersyn-fleet",
       }),
       correlations: initialStore,
       sessionId: "fleet-recovery-initial",
@@ -219,7 +219,7 @@ describe("seam durability recovery e2e", () => {
         payload: {
           upid: "upid-fleet-001",
           runId: "run-fleet-001",
-          workflow: "panopticon-fleet",
+          workflow: "vibersyn-fleet",
           callsign: "Fleet",
           steeringWindowId: "window-fleet-001",
           input: {
@@ -243,20 +243,20 @@ describe("seam durability recovery e2e", () => {
       await gateway.close().catch(() => {});
     }
 
-    const recoveredDbPath = process.env.PANOP_RBG_DISABLE_CHECKPOINTING === "1"
+    const recoveredDbPath = process.env.VIBERSYN_RBG_DISABLE_CHECKPOINTING === "1"
       ? join(dir, "empty-after-restart.db")
       : dbPath;
     const recovered = createRuntime("recovered", recoveredDbPath);
     const recoveredGateway = new Gateway({ heartbeatMs: 1_000, eventWindowSize: 200 });
     const recoveredConnection = createConnection("fleet-recovered");
     recoveredGateway.connections.add(recoveredConnection as any);
-    recoveredGateway.register("panopticon-fleet", recovered.workflow as any);
+    recoveredGateway.register("vibersyn-fleet", recovered.workflow as any);
     const recoveredStore = new FileCorrelationStore(correlationPath);
     const recoveredDispatcher = new SeamDispatcher({
       client: new GatewaySmithersClient({
         transport: new InProcessGatewayTransport(recoveredGateway as any, recoveredConnection),
         correlations: recoveredStore,
-        defaultWorkflow: "panopticon-fleet",
+        defaultWorkflow: "vibersyn-fleet",
       }),
       correlations: recoveredStore,
       sessionId: "fleet-recovery-restarted",
@@ -287,7 +287,7 @@ describe("seam durability recovery e2e", () => {
         }),
       );
 
-      if (process.env.PANOP_RBG_SKIP_RECOVERY_STEER !== "1") {
+      if (process.env.VIBERSYN_RBG_SKIP_RECOVERY_STEER !== "1") {
         await recoveredDispatcher.dispatch({
           type: "steer",
           targetUPID: "upid-fleet-001",
@@ -509,14 +509,14 @@ function registryFleetVoiceLLM(): DecisionLLM<FleetVoiceOutput> {
       }
 
       switch (input.observation.text) {
-        case "panop spawn virellium":
+        case "viber spawn virellium":
           return {
             action: spawnRegistryAction("virellium", "upid-atlas", "run-atlas"),
             outputTrigger: "route.steer",
             addressed: true,
             explicit: true,
           };
-        case "panop spawn quoravex":
+        case "viber spawn quoravex":
           return {
             action: spawnRegistryAction("quoravex", "upid-bravo", "run-bravo"),
             outputTrigger: "route.steer",
@@ -601,9 +601,9 @@ async function applyRegistryAction(registry: ProcessRegistry, action: Dispatched
 function representativeFleetVoiceSession(): TranscriptObservation[] {
   const session = [
     observation("ambient planning chatter", "utt-ambient-001"),
-    observation("panop spawn virellium", "utt-spawn-atlas"),
+    observation("viber spawn virellium", "utt-spawn-atlas"),
     observation("ambient build discussion", "utt-ambient-002"),
-    observation("panop spawn quoravex", "utt-spawn-bravo"),
+    observation("viber spawn quoravex", "utt-spawn-bravo"),
     observation("ambient side thread", "utt-ambient-003"),
     observation("virellium make atlas faster", "utt-steer-atlas"),
     observation("ambient code review note", "utt-ambient-004"),
@@ -671,7 +671,7 @@ function createFleetControlRuntime(label: string, dbPath: string) {
       injection: z.string(),
     }),
   };
-  const api: any = createSmithers(outputs, { dbPath, readableName: `Panopticon fleet control ${label}` });
+  const api: any = createSmithers(outputs, { dbPath, readableName: `Vibersyn fleet control ${label}` });
   const workflow = api.smithers((ctx: any) => {
     const input = ctx.input as any;
     const seed = String(input.seed ?? input.prompt ?? "");
@@ -730,7 +730,7 @@ function createFleetControlRuntime(label: string, dbPath: string) {
 
     return React.createElement(
       api.Workflow,
-      { name: "panopticon-fleet-control" },
+      { name: "vibersyn-fleet-control" },
       React.createElement(
         api.Sequence,
         null,
@@ -755,12 +755,12 @@ function createRuntime(label: string, dbPath: string) {
       command: z.string(),
     }),
   };
-  const api: any = createSmithers(outputs, { dbPath, readableName: `Panopticon fleet ${label}` });
+  const api: any = createSmithers(outputs, { dbPath, readableName: `Vibersyn fleet ${label}` });
   const workflow = api.smithers((ctx: any) => {
     const input = ctx.input as any;
     return React.createElement(
       api.Workflow,
-      { name: "panopticon-fleet" },
+      { name: "vibersyn-fleet" },
       React.createElement(
         api.Sequence,
         null,
@@ -800,7 +800,7 @@ function spawnAction(callsign: string, upid: string, runId: string, seed: string
     payload: {
       upid,
       runId,
-      workflow: "panopticon-fleet-control",
+      workflow: "vibersyn-fleet-control",
       callsign,
       steeringWindowId: `window-${callsign.toLowerCase()}`,
       seed,

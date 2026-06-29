@@ -93,7 +93,7 @@ const baseHandlers = {
 } satisfies Record<DocumentedCommandId, CommandHandler>;
 
 export const COMMAND_HANDLERS: Record<DocumentedCommandId, CommandHandler> =
-  process.env.PANOP_RBG_DROP_STATUS_HANDLER === "1"
+  process.env.VIBERSYN_RBG_DROP_STATUS_HANDLER === "1"
     ? omitStatus(baseHandlers)
     : baseHandlers;
 

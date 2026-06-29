@@ -1,4 +1,4 @@
-# Panopticon — Verification Backpressure Matrix (V0)
+# Vibersyn — Verification Backpressure Matrix (V0)
 
 > **Purpose.** One gate row per **acceptance criterion** of every requirement in
 > `docs/planning/01-prd.md`, cross-referenced to the verification plan in `docs/planning/03-eng.md`.
@@ -120,7 +120,7 @@
 
 ## REQ-11 — Run-to-completion execution posture (V0 runs dangerously; sandbox later, not per-action gating)
 
-> **V0 posture change (E6/E7/E8/O-Safety).** Panopticon V0 **runs to completion, dangerously** — there is
+> **V0 posture change (E6/E7/E8/O-Safety).** Vibersyn V0 **runs to completion, dangerously** — there is
 > **no per-step approval, no spoken read-back/confirm gate, no dead-man timer, no Safe/Explicit/Dangerous
 > mode switching, and no shell classifier.** "You shouldn't need to approve often"; where a confirmation is
 > genuinely needed the voice library (Cue) handles it. If isolation is wanted later we **sandbox the whole

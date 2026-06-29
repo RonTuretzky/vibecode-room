@@ -58,7 +58,7 @@ PlayHT 3.0 Turbo: PLAYHT_API_KEY and PLAYHT_USER_ID</pre>
 <span class="good">Chosen.</span> The artifact records the blocker instead of treating synthetic bytes as evidence for real static clips.</div>
 
 <h2>Verification</h2>
-<pre>PANOP_TTS_FIRST_AUDIO_BUDGET_MS=20 bun test poc/p-tts.test.ts
+<pre>VIBERSYN_TTS_FIRST_AUDIO_BUDGET_MS=20 bun test poc/p-tts.test.ts
 bun test poc/p-tts.test.ts</pre>
 <p>The 20 ms red run fails on the latency assertion, proving the budget check bites. The restored 200 ms
 run remains red because the fastest configured provider still exceeds the budget and the three low-latency

@@ -1,7 +1,7 @@
 import { logEventSchema, type LogEvent, type OutputDecision } from "../types";
 
 export const CONSENT_ANNOUNCEMENT =
-  "Panopticon is listening. Only transcripts are saved. Say 'Panop, status' for a rundown; say 'mute' to pause.";
+  "Vibersyn is listening. Only transcripts are saved. Say 'Viber, status' for a rundown; say 'mute' to pause.";
 export const CONSENT_MAX_START_DELAY_MS = 3_000;
 export const CONSENT_MAX_DURATION_MS = 8_000;
 export const CONSENT_ESTIMATED_WORDS_PER_MINUTE = 150;

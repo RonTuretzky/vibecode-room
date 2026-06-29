@@ -29,7 +29,7 @@ describe("secret redaction fail-closed scanning", () => {
   });
 
   test("scans extensionless regular files under report roots", async () => {
-    const root = join(tmpdir(), `panopticon-secret-scan-${crypto.randomUUID()}`);
+    const root = join(tmpdir(), `vibersyn-secret-scan-${crypto.randomUUID()}`);
     const extensionlessPath = join(root, "logs", "session");
 
     try {

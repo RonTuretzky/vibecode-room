@@ -117,7 +117,7 @@ The streaming path meets the latency budget. The design's <300ms target may be t
 
 3. **Cue architecture mismatch: ACTION REQUIRED**  
    - The design assumes Cue pulls audio from Deepgram. Reality: Cue's `qwen-asr` provider is a WebSocket *receiver* — an external ASR process must push transcripts in.  
-   - The Panopticon audio pipeline must include a component that: captures mic audio → streams to ASR (Deepgram/OpenAI) → sends JSON transcript events to Cue via WebSocket.  
+   - The Vibersyn audio pipeline must include a component that: captures mic audio → streams to ASR (Deepgram/OpenAI) → sends JSON transcript events to Cue via WebSocket.  
    - This is additional scope vs. the design assumption that Cue handles this end-to-end.
 
 4. **gpt-realtime WebSocket schema: BLOCKED** — session update requires `session.type: "realtime"` as first field; `session.modalities` is not a valid parameter in this API version. The correct schema must be re-probed before using gpt-realtime as the Cue backend.

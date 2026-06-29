@@ -1,4 +1,4 @@
-// Browser microphone capture for the Panopticon projector.
+// Browser microphone capture for the Vibersyn projector.
 //
 // Captures the room mic via getUserMedia, downsamples to 16 kHz mono linear16
 // PCM (the format the server's Deepgram ASR provider expects), and streams the

@@ -16,16 +16,16 @@ import * as providers from "../index";
 // stands in for "a model credential is resolvable".
 const ANTHROPIC_KEY = "sk-ant-test-0123456789abcdef0123456789";
 
-describe("selectDecisionLLM — explicit PANOP_DECISION_LLM mapping (unit)", () => {
+describe("selectDecisionLLM — explicit VIBERSYN_DECISION_LLM mapping (unit)", () => {
   test("maps 'heuristic' to HeuristicDecisionLLM", () => {
-    const selection = selectDecisionLLM({ PANOP_DECISION_LLM: "heuristic" });
+    const selection = selectDecisionLLM({ VIBERSYN_DECISION_LLM: "heuristic" });
 
     expect(selection.mode).toBe("heuristic");
     expect(selection.llm).toBeInstanceOf(HeuristicDecisionLLM);
   });
 
   test("maps 'claude' to ClaudeDecisionLLM when a credential is resolvable", () => {
-    const selection = selectDecisionLLM({ PANOP_DECISION_LLM: "claude", ANTHROPIC_API_KEY: ANTHROPIC_KEY });
+    const selection = selectDecisionLLM({ VIBERSYN_DECISION_LLM: "claude", ANTHROPIC_API_KEY: ANTHROPIC_KEY });
 
     expect(selection.mode).toBe("claude");
     expect(selection.llm).toBeInstanceOf(ClaudeDecisionLLM);
@@ -37,47 +37,47 @@ describe("selectDecisionLLM — explicit PANOP_DECISION_LLM mapping (unit)", () 
   });
 
   test("maps 'replay' to ReplayDecisionLLM", () => {
-    const selection = selectDecisionLLM({ PANOP_DECISION_LLM: "replay" });
+    const selection = selectDecisionLLM({ VIBERSYN_DECISION_LLM: "replay" });
 
     expect(selection.mode).toBe("replay");
     expect(selection.llm).toBeInstanceOf(ReplayDecisionLLM);
   });
 
   test("is case/whitespace tolerant for the explicit value", () => {
-    const selection = selectDecisionLLM({ PANOP_DECISION_LLM: "  Heuristic  " });
+    const selection = selectDecisionLLM({ VIBERSYN_DECISION_LLM: "  Heuristic  " });
 
     expect(selection.mode).toBe("heuristic");
     expect(selection.llm).toBeInstanceOf(HeuristicDecisionLLM);
   });
 
-  test("rejects an unknown PANOP_DECISION_LLM value", () => {
-    expect(() => selectDecisionLLM({ PANOP_DECISION_LLM: "gpt" })).toThrow(/Unknown PANOP_DECISION_LLM/u);
+  test("rejects an unknown VIBERSYN_DECISION_LLM value", () => {
+    expect(() => selectDecisionLLM({ VIBERSYN_DECISION_LLM: "gpt" })).toThrow(/Unknown VIBERSYN_DECISION_LLM/u);
   });
 });
 
 describe("selectDecisionLLM — default + credential gating (integration)", () => {
-  test("no PANOP_DECISION_LLM -> heuristic (deterministic, no key)", () => {
+  test("no VIBERSYN_DECISION_LLM -> heuristic (deterministic, no key)", () => {
     const selection = selectDecisionLLM({});
 
     expect(selection.mode).toBe("heuristic");
     expect(selection.llm).toBeInstanceOf(HeuristicDecisionLLM);
   });
 
-  test("an empty PANOP_DECISION_LLM falls back to the heuristic default", () => {
-    const selection = selectDecisionLLM({ PANOP_DECISION_LLM: "" });
+  test("an empty VIBERSYN_DECISION_LLM falls back to the heuristic default", () => {
+    const selection = selectDecisionLLM({ VIBERSYN_DECISION_LLM: "" });
 
     expect(selection.mode).toBe("heuristic");
     expect(selection.llm).toBeInstanceOf(HeuristicDecisionLLM);
   });
 
   test("'claude' without a resolvable credential surfaces a clear error", () => {
-    expect(() => selectDecisionLLM({ PANOP_DECISION_LLM: "claude" })).toThrow(
+    expect(() => selectDecisionLLM({ VIBERSYN_DECISION_LLM: "claude" })).toThrow(
       /requires a resolvable model credential/u,
     );
   });
 
   test("an empty ANTHROPIC_API_KEY counts as unresolvable for 'claude'", () => {
-    const env: DecisionLLMSelectionEnv = { PANOP_DECISION_LLM: "claude", ANTHROPIC_API_KEY: "" };
+    const env: DecisionLLMSelectionEnv = { VIBERSYN_DECISION_LLM: "claude", ANTHROPIC_API_KEY: "" };
 
     expect(() => selectDecisionLLM(env)).toThrow(/requires a resolvable model credential/u);
   });
@@ -85,7 +85,7 @@ describe("selectDecisionLLM — default + credential gating (integration)", () =
   test("'claude' never smuggles the raw key through the credential constructor", () => {
     // A raw key in env must not be forwarded to createModelCredentialSource (which
     // rejects raw keys). Selection succeeds via the host-subscription command.
-    const selection = selectDecisionLLM({ PANOP_DECISION_LLM: "claude", ANTHROPIC_API_KEY: ANTHROPIC_KEY });
+    const selection = selectDecisionLLM({ VIBERSYN_DECISION_LLM: "claude", ANTHROPIC_API_KEY: ANTHROPIC_KEY });
 
     expect(selection.llm).toBeInstanceOf(ClaudeDecisionLLM);
     expect((selection.llm as ClaudeDecisionLLM).credentialSource.kind).toBe("host-subscription");
@@ -120,15 +120,15 @@ describe("selectDecisionLLM — credential auto-select precedence (unit)", () =>
     expect(selection.llm).toBeInstanceOf(HeuristicDecisionLLM);
   });
 
-  test("explicit PANOP_DECISION_LLM=heuristic overrides credential auto-select", () => {
-    const selection = selectDecisionLLM({ PANOP_DECISION_LLM: "heuristic", ANTHROPIC_API_KEY: ANTHROPIC_KEY });
+  test("explicit VIBERSYN_DECISION_LLM=heuristic overrides credential auto-select", () => {
+    const selection = selectDecisionLLM({ VIBERSYN_DECISION_LLM: "heuristic", ANTHROPIC_API_KEY: ANTHROPIC_KEY });
 
     expect(selection.mode).toBe("heuristic");
     expect(selection.llm).toBeInstanceOf(HeuristicDecisionLLM);
   });
 
-  test("explicit PANOP_DECISION_LLM=replay overrides credential auto-select", () => {
-    const selection = selectDecisionLLM({ PANOP_DECISION_LLM: "replay", ANTHROPIC_API_KEY: ANTHROPIC_KEY });
+  test("explicit VIBERSYN_DECISION_LLM=replay overrides credential auto-select", () => {
+    const selection = selectDecisionLLM({ VIBERSYN_DECISION_LLM: "replay", ANTHROPIC_API_KEY: ANTHROPIC_KEY });
 
     expect(selection.mode).toBe("replay");
     expect(selection.llm).toBeInstanceOf(ReplayDecisionLLM);

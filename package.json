@@ -1,9 +1,9 @@
 {
-  "name": "panopticon",
+  "name": "vibersyn",
   "version": "0.0.1",
   "private": true,
   "type": "module",
-  "description": "Panopticon — an operating system for AI-agent work. Talk in a room; AI passively listens, suggests things to build, and steers many concurrent agent processes at once.",
+  "description": "Vibersyn — an operating system for AI-agent work. Talk in a room; AI passively listens, suggests things to build, and steers many concurrent agent processes at once.",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "dev:api": "bun --watch src/server/index.ts",

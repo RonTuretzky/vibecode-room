@@ -47,7 +47,7 @@ describe("SEC-1 credential guard and trace redaction", () => {
     ] as const;
 
     for (const [variable, value] of cases) {
-      if (process.env.PANOPTICON_RBG_ALLOW_NONCANONICAL_MODEL_KEYS === "1") {
+      if (process.env.VIBERSYN_RBG_ALLOW_NONCANONICAL_MODEL_KEYS === "1") {
         expect(() => createModelCredentialSource({ provider: "openai-codex", env: { [variable]: value } })).not.toThrow();
       } else {
         expectThrowsWithoutEcho(() => createModelCredentialSource({ provider: "openai-codex", env: { [variable]: value } }));
@@ -172,7 +172,7 @@ describe("SEC-1 credential guard and trace redaction", () => {
     });
 
     const jsonl = processor.toJsonl();
-    if (process.env.PANOPTICON_RBG_UNREDACTED_TRACE_IDS === "1") {
+    if (process.env.VIBERSYN_RBG_UNREDACTED_TRACE_IDS === "1") {
       if (!rawValues.every((rawValue) => jsonl.includes(rawValue))) {
         throw new Error("synthetic unredacted trace identifier leak check failed as expected");
       }
@@ -207,7 +207,7 @@ describe("SEC-1 credential guard and trace redaction", () => {
     });
 
     const jsonl = processor.toJsonl();
-    if (process.env.PANOPTICON_RBG_UNREDACTED_META_KEYS === "1") {
+    if (process.env.VIBERSYN_RBG_UNREDACTED_META_KEYS === "1") {
       const leakySerialized = JSON.stringify({ meta: { [rawKeyNames[0]]: "unredacted property-name fixture" } });
       const findingCount = scanSecretLikeText(leakySerialized).reduce((total, finding) => total + finding.count, 0);
       throw new Error(`synthetic unredacted property-name leak detected (${findingCount} findings)`);
@@ -234,7 +234,7 @@ describe("SEC-1 credential guard and trace redaction", () => {
   });
 
   test("probe-style reports can be redacted and scanned without leaking raw values", async () => {
-    const root = join(tmpdir(), `panopticon-secret-report-${crypto.randomUUID()}`);
+    const root = join(tmpdir(), `vibersyn-secret-report-${crypto.randomUUID()}`);
     const rawValues = [fakeOpenAiKey(), fakeBearer(), fakeDeepgramKey(), fakeUnknownEmbeddedToken()];
     const processor = new TraceProcessor();
     const event = processor.record({
@@ -312,7 +312,7 @@ describe("SEC-1 credential guard and trace redaction", () => {
         (finding) => finding.pattern === "unknown-high-entropy-token",
       ),
     ).toBe(true);
-    if (process.env.PANOPTICON_RBG_ALLOW_MULTI_SEGMENT_SECRET === "1") {
+    if (process.env.VIBERSYN_RBG_ALLOW_MULTI_SEGMENT_SECRET === "1") {
       expect(scanSecretLikeText(JSON.stringify({ opaque: fakeProviderPrefixedSlackToken() }))).toEqual([]);
     }
 
@@ -325,7 +325,7 @@ describe("SEC-1 credential guard and trace redaction", () => {
   });
 
   test("secret scan covers extensionless files in trace and report trees", async () => {
-    const root = join(tmpdir(), `panopticon-extensionless-secret-${crypto.randomUUID()}`);
+    const root = join(tmpdir(), `vibersyn-extensionless-secret-${crypto.randomUUID()}`);
 
     try {
       await mkdir(join(root, "logs"), { recursive: true });

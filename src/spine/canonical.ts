@@ -70,11 +70,11 @@ export async function runCanonicalSpineScenario(options: CanonicalSpineOptions =
     acceptanceOwner,
     env: {
       ...process.env,
-      PANOP_SUGGEST_WORD_FLOOR: "1",
-      PANOP_SUGGEST_TIME_FLOOR_SECONDS: "999",
-      PANOP_SUGGEST_QUALITY_THRESHOLD: "0.7",
-      PANOP_SUGGEST_CADENCE_CAP_SECONDS: "0",
-      PANOP_SUGGEST_IDLE_GAP_SECONDS: "1",
+      VIBERSYN_SUGGEST_WORD_FLOOR: "1",
+      VIBERSYN_SUGGEST_TIME_FLOOR_SECONDS: "999",
+      VIBERSYN_SUGGEST_QUALITY_THRESHOLD: "0.7",
+      VIBERSYN_SUGGEST_CADENCE_CAP_SECONDS: "0",
+      VIBERSYN_SUGGEST_IDLE_GAP_SECONDS: "1",
     },
   });
   const adapter = new CueAdapter({
@@ -82,7 +82,7 @@ export async function runCanonicalSpineScenario(options: CanonicalSpineOptions =
     trace,
     clock: clock.now,
     idFactory: sequenceIds("cue"),
-    textCueWords: ["panop"],
+    textCueWords: ["viber"],
   });
   const sequencer = new StageSequencer({
     sessionId,
@@ -114,7 +114,7 @@ export async function runCanonicalSpineScenario(options: CanonicalSpineOptions =
   let activeCorrelationId = "";
   let spawned: RegistryProcess | null = null;
 
-  if (process.env.PANOP_RBG_CONSUME_SCREEN === "1") {
+  if (process.env.VIBERSYN_RBG_CONSUME_SCREEN === "1") {
     noScreen.consume("keyboard", "rbg-shortcut");
   }
 
@@ -133,7 +133,7 @@ export async function runCanonicalSpineScenario(options: CanonicalSpineOptions =
         endedAtMs: clock.now(),
         meta: {
           utteranceId: observation.utteranceId,
-          wakeWord: "panop",
+          wakeWord: "viber",
           decisionId: wake.decisionId,
         },
       });
@@ -142,7 +142,7 @@ export async function runCanonicalSpineScenario(options: CanonicalSpineOptions =
         reason: "wake-detected",
         audible: { channel: "earcon", id: "E1" },
       });
-      await adapter.emitTextCueEarcon(observation, { name: "text", metadata: { pattern: "panop" } }, correlationId);
+      await adapter.emitTextCueEarcon(observation, { name: "text", metadata: { pattern: "viber" } }, correlationId);
 
       const suggestion = await suggestionEngine.observe({ observation, correlationId, roomIdleMs: 1_000 });
       if (suggestion.kind !== "fired") {
@@ -385,7 +385,7 @@ class RecordingAcceptanceOwner implements SuggestionAcceptanceOwner {
 function canonicalObservations(sessionId: string): TranscriptObservation[] {
   return [
     {
-      text: "Panop build canonical replay coverage with a no screen harness",
+      text: "Viber build canonical replay coverage with a no screen harness",
       isFinal: true,
       speaker: "speaker-canonical",
       sessionId,

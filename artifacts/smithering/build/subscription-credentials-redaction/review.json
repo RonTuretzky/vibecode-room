@@ -27,7 +27,7 @@
       "severity": "nit",
       "title": "Trace-identifier RBG toggle is synthetic (non-blocking)",
       "file": "src/providers/credentials.test.ts",
-      "description": "PANOPTICON_RBG_UNREDACTED_TRACE_IDS produces its red by throwing a synthetic leak-check error rather than toggling a real redaction-disable path, so it is weaker proof than the other RBGs. This is cosmetic: the core SEC-1 gate already has genuine behavior-toggling RBGs (planted-secret e2e, multi-segment scanner, non-canonical env guard), so the red-before-green requirement is fully met regardless."
+      "description": "VIBERSYN_RBG_UNREDACTED_TRACE_IDS produces its red by throwing a synthetic leak-check error rather than toggling a real redaction-disable path, so it is weaker proof than the other RBGs. This is cosmetic: the core SEC-1 gate already has genuine behavior-toggling RBGs (planted-secret e2e, multi-segment scanner, non-canonical env guard), so the red-before-green requirement is fully met regardless."
     }
   ]
 }

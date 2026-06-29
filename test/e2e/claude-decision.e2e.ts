@@ -12,7 +12,7 @@ function hasAnthropicCredential(): boolean {
 }
 
 const SYSTEM_PROMPT = [
-  "You are Panopticon's cue decider. You receive a single transcribed utterance and must return exactly one CueDecision via the emit_cue_decision tool.",
+  "You are Vibersyn's cue decider. You receive a single transcribed utterance and must return exactly one CueDecision via the emit_cue_decision tool.",
   "Return kind \"action\" with an action of type \"spawn\" when the operator clearly asks to build, create, or kick off work.",
   "Return kind \"pass\" otherwise (ambient chatter, near-miss, low confidence).",
   `Always set policy to \"${DECISION_POLICY}\", correlationId to \"${CORRELATION_ID}\" everywhere it appears, and a stable decisionId.`,
@@ -26,7 +26,7 @@ function liveDecisionInput(): DecisionInput {
     correlationId: CORRELATION_ID,
     messages: [
       { role: "system", content: SYSTEM_PROMPT },
-      { role: "user", content: "Panop, build the thinnest walking skeleton for the new service." },
+      { role: "user", content: "Viber, build the thinnest walking skeleton for the new service." },
     ],
     metadata: { utteranceId: "utt-claude-e2e-001" },
   };
