@@ -3,8 +3,8 @@
   "status": "passed",
   "summary": "probe assertions were failable and passed",
   "correlationId": "p-asr-deepgram-nova3",
-  "startedAt": "2026-06-16T19:19:31.014Z",
-  "finishedAt": "2026-06-16T19:19:31.018Z",
+  "startedAt": "2026-06-28T19:54:16.916Z",
+  "finishedAt": "2026-06-28T19:54:16.919Z",
   "assertions": [
     {
       "id": "nova3-websocket-shape",
@@ -50,7 +50,7 @@
     },
     {
       "id": "live-deepgram-gate",
-      "behavior": "live Deepgram Nova-3 validation is skipped without DEEPGRAM_API_KEY and runs through the real adapter when present",
+      "behavior": "live Deepgram Nova-3 validation is reported as blocked/skipped without DEEPGRAM_API_KEY and runs through the real adapter when present",
       "phase": "red",
       "status": "failed-as-expected",
       "error": "expect(received).toBeNull()\n\nReceived: \"live Deepgram validation SKIPPED - requires DEEPGRAM_API_KEY\"\n"
@@ -100,7 +100,7 @@
     },
     {
       "id": "live-deepgram-gate",
-      "behavior": "live Deepgram Nova-3 validation is skipped without DEEPGRAM_API_KEY and runs through the real adapter when present",
+      "behavior": "live Deepgram Nova-3 validation is reported as blocked/skipped without DEEPGRAM_API_KEY and runs through the real adapter when present",
       "phase": "green",
       "status": "passed"
     },
@@ -119,7 +119,7 @@
   "meta": {
     "liveDeepgram": {
       "status": "skipped",
-      "reason": "live Deepgram validation SKIPPED - requires DEEPGRAM_API_KEY",
+      "reason": "live Deepgram gate did not run because DEEPGRAM_API_KEY is absent",
       "provider": "deepgram",
       "model": "nova-3"
     },

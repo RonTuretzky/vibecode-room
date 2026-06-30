@@ -349,7 +349,10 @@ export interface GatedBridgeSelection {
 export async function createGatedAudioCaptureAsrBridge(
   options: GatedBridgeSelectionOptions,
 ): Promise<GatedBridgeSelection> {
-  const apiKey = options.env?.DEEPGRAM_API_KEY ?? process.env.DEEPGRAM_API_KEY;
+  // When a caller passes an explicit env map it is the source of truth (tests
+  // pass `env: {}` to mean "no key"); only fall back to process.env when no env
+  // was provided at all, so the host shell's DEEPGRAM_API_KEY cannot leak in.
+  const apiKey = (options.env ?? process.env).DEEPGRAM_API_KEY;
   if (apiKey !== undefined && apiKey.length > 0 && options.liveCapture !== undefined) {
     const asr = new DeepgramNova3ASRProvider({ apiKey, sessionId: options.sessionId });
     const bridge = new AudioCaptureAsrBridge({

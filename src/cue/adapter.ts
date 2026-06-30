@@ -52,6 +52,11 @@ export interface CueAdapterOptions {
   usePrematcher?: boolean;
   prematcherWords?: readonly string[];
   semanticIntentGate?: SemanticIntentGateOptions;
+  // Operator-visible tag stamped onto the earcon trace meta as `path` so a
+  // wake/earcon trace can be attributed to the Cue path that produced it — the
+  // upstream harness adapter ('harness') vs the in-runtime fallback adapter
+  // ('fallback'). Undefined leaves the trace untagged (GAP-006).
+  earconPath?: string;
 }
 
 export class CueAdapter {
@@ -64,6 +69,7 @@ export class CueAdapter {
   readonly #usePrematcher: boolean;
   readonly #prematcherWords: readonly string[];
   readonly #semanticIntentGate?: SemanticIntentGateOptions;
+  readonly #earconPath?: string;
 
   constructor(options: CueAdapterOptions) {
     this.#sessionId = options.sessionId;
@@ -75,6 +81,7 @@ export class CueAdapter {
     this.#usePrematcher = options.usePrematcher ?? false;
     this.#prematcherWords = options.prematcherWords ?? this.#textCueWords;
     this.#semanticIntentGate = options.semanticIntentGate;
+    this.#earconPath = options.earconPath;
 
     if (this.#usePrematcher) {
       assertPrematcherParity(this.#textCueWords, this.#prematcherWords);
@@ -121,6 +128,7 @@ export class CueAdapter {
             source: emission.source,
             matchedWord: emission.matchedWord,
             utteranceId: observation.utteranceId,
+            ...(this.#earconPath !== undefined ? { path: this.#earconPath } : {}),
           },
         }),
       );

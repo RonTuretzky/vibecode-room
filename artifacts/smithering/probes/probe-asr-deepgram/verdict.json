@@ -1,9 +1,9 @@
 {
   "ticketId": "probe-asr-deepgram",
-  "status": "passed",
+  "status": "blocked",
   "liveDeepgram": {
     "status": "skipped",
-    "reason": "live Deepgram validation SKIPPED - requires DEEPGRAM_API_KEY",
+    "reason": "live Deepgram gate did not run because DEEPGRAM_API_KEY is absent",
     "provider": "deepgram",
     "model": "nova-3"
   },

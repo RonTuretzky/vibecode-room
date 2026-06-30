@@ -1,6 +1,7 @@
 import type { LogEvent, OutputDecision } from "../types";
 import { CallsignAllocator } from "../routing/callsigns";
 import type { SmithersClient, SpawnSeed, SpawnResult } from "../seam/smithers-client";
+import type { IdeaBuildRegistry } from "../server/idea-builder";
 import {
   CAPACITY_REFUSAL_ACK,
   checkPreSpawnResources,
@@ -34,6 +35,16 @@ export interface ProcessRegistryOptions {
   callsigns?: CallsignAllocator;
   onTrace?: (event: LogEvent) => void;
   onOutput?: (decision: OutputDecision) => void;
+  // Fired when a process is halted (panic / emergency stop). The runtime uses
+  // this to tear down that process's live accept->build->preview server so a
+  // halted build never leaves a reachable preview up (idea-builder lifecycle).
+  onHalt?: (upid: string) => void;
+  // The accept->build->preview builder (idea-builder). When provided, a spawn
+  // carrying `build: true` (the genuine voice-accept path) scaffolds a REAL
+  // runnable artifact under builds/<upid>/ and starts a live preview server; the
+  // registry triggers it, emits a `process.build` trace on completion, and tears
+  // the server down on halt. The demo seed spawns bare, so it never builds.
+  ideaBuilds?: IdeaBuildRegistry | null;
 }
 
 export type RegistrySpawnResult =
@@ -57,6 +68,8 @@ export class ProcessRegistry {
   readonly callsigns: CallsignAllocator;
   readonly onTrace?: (event: LogEvent) => void;
   readonly onOutput?: (decision: OutputDecision) => void;
+  readonly onHalt?: (upid: string) => void;
+  readonly #ideaBuilds: IdeaBuildRegistry | null;
   readonly #processes = new Map<string, RegistryProcess>();
   #selectedUPID: string | null = null;
   #upidSeq = 0;
@@ -72,6 +85,8 @@ export class ProcessRegistry {
     this.callsigns = options.callsigns ?? new CallsignAllocator();
     this.onTrace = options.onTrace;
     this.onOutput = options.onOutput;
+    this.onHalt = options.onHalt;
+    this.#ideaBuilds = options.ideaBuilds ?? null;
   }
 
   records(): RegistryProcess[] {
@@ -86,7 +101,7 @@ export class ProcessRegistry {
     return this.#selectedUPID;
   }
 
-  async spawn(seed: Partial<SpawnSeed> & { correlationId: string }): Promise<RegistrySpawnResult> {
+  async spawn(seed: Partial<SpawnSeed> & { correlationId: string; build?: boolean }): Promise<RegistrySpawnResult> {
     const resourceCheck = await checkPreSpawnResources({
       activeProcessCount: this.activeRecords().length,
       correlationId: seed.correlationId,
@@ -141,6 +156,27 @@ export class ProcessRegistry {
       callsign: process.callsign,
       state: process.state,
     });
+
+    // Real accept->build->preview: a voice-accepted spawn (build === true)
+    // scaffolds a runnable artifact and starts a live preview server. Fire-and-
+    // forget — the build flips 'building' -> 'ready'/'failed'; the trailing
+    // `process.build` trace lets the runtime republish so the snapshot's
+    // previewUrl/buildStatus reflect the live preview. The demo seed skips this.
+    if (seed.build === true && this.#ideaBuilds !== null) {
+      const pitch =
+        typeof seed.prompt === "string" && seed.prompt.length > 0 ? seed.prompt : pitchFromInput(seed.input);
+      void this.#ideaBuilds.start(pitch, upid).then(
+        () => {
+          const state = this.#ideaBuilds?.state(upid);
+          this.trace("process.build", seed.correlationId, upid, {
+            status: state?.status ?? "failed",
+            previewUrl: state?.previewUrl ?? null,
+          });
+        },
+        () => undefined,
+      );
+    }
+
     return {
       accepted: true,
       process: cloneProcess(process),
@@ -200,6 +236,10 @@ export class ProcessRegistry {
   async halt(upid: string, correlationId: string, trigger = "panic"): Promise<void> {
     this.requireLive(upid);
     await this.client.halt(upid);
+    // Tear down this process's live preview server (accept->build->preview): a
+    // halted build must not leave a reachable loopback preview up.
+    await this.#ideaBuilds?.stop(upid).catch(() => undefined);
+    this.onHalt?.(upid);
     this.patch(upid, { state: "dead", selected: false, lastAction: "halt", updatedAtMs: this.now() });
     this.callsigns.release(upid);
     if (this.#selectedUPID === upid) {
@@ -298,6 +338,20 @@ export { CAPACITY_REFUSAL_ACK };
 
 function cloneProcess(process: RegistryProcess): RegistryProcess {
   return { ...process };
+}
+
+// Recover the build pitch from the spawn input when the prompt is empty. The
+// acceptance seam carries the accepted idea's pitch on both `prompt` and
+// `input.pitch`; fall back to the latter so the scaffolded page still reflects
+// the idea even if the prompt was dropped.
+function pitchFromInput(input: unknown): string {
+  if (input !== null && typeof input === "object" && !Array.isArray(input)) {
+    const pitch = (input as Record<string, unknown>).pitch;
+    if (typeof pitch === "string" && pitch.length > 0) {
+      return pitch;
+    }
+  }
+  return "An accepted idea, scaffolded live.";
 }
 
 function clampWords(text: string, maxWords: number): string {

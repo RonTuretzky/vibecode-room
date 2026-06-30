@@ -2,7 +2,7 @@ import { checkPreSpawnResources, type HostHeadroom, type SpawnRefusalReason } fr
 import { ProcessRegistry, type RegistryProcess } from "../process/registry";
 import type { DispatchedAction, LogEvent, OutputDecision, PendingSuggestion } from "../types";
 import { AcceptanceClassifier, type AcceptanceClassification } from "./classifier";
-import { PendingSuggestionOwner, type PendingExpiryResult } from "./pending";
+import { ACCEPTANCE_STATE_SUGGESTION_DELIVERY, PendingSuggestionOwner, type PendingExpiryResult } from "./pending";
 
 export const DEFAULT_ACCEPTANCE_CONFIRMATION_BUDGET_MS = 3_000;
 
@@ -185,6 +185,31 @@ export class AcceptanceController {
     return this.#pending.acceptSuggestion(suggestion);
   }
 
+  // Direct click-to-build accept (CLICK THE IDEA BUBBLE -> BUILD): spawn the given
+  // suggestion through the same accept path the spoken classifier uses (the seam's
+  // build:true spawn), bypassing the spoken AcceptanceClassifier/semantic gate, and
+  // clear the pending state. Used when the operator clicks the popped idea bubble
+  // instead of saying "yes".
+  async spawnAccepted(suggestion: PendingSuggestion, correlationId: string): Promise<AcceptanceSpawnResult> {
+    const spawn = await this.#spawner.spawnFromSuggestion(suggestion, correlationId);
+    this.#pending.clear();
+    return spawn;
+  }
+
+  // True once a suggestion has been delivered and is awaiting a spoken accept /
+  // decline / MCQ answer. The runtime gates live FINAL observations on this so a
+  // spoken "yes" routes to acceptance instead of seeding a fresh suggestion.
+  awaitingAcceptance(): boolean {
+    return this.#pending.state() === ACCEPTANCE_STATE_SUGGESTION_DELIVERY && this.#pending.pending() !== null;
+  }
+
+  // The suggestion currently delivered and awaiting accept/decline, if any. The
+  // click-to-build path accepts this directly (the engine's queued entry is
+  // already cleared once a suggestion is delivered).
+  currentPending(): PendingSuggestion | null {
+    return this.#pending.pending();
+  }
+
   checkExpiry(nowMs?: number): PendingExpiryResult {
     return this.#pending.checkExpiry(nowMs);
   }
@@ -217,10 +242,15 @@ export function createProcessRegistryAcceptanceSeam(registry: ProcessRegistry): 
         return { accepted: false, correlationId: action.correlationId, error: "Acceptance seam only supports spawn." };
       }
       const seed = seedFromPayload(action.payload);
+      // `build: true` triggers the REAL accept->build->preview work in the
+      // registry (idea-builder): the accepted idea's pitch scaffolds a runnable
+      // artifact under builds/<upid>/ and a live preview server starts for it.
+      // Only the genuine accept path sets this — the demo seed calls spawn() bare.
       const result = await registry.spawn({
         correlationId: action.correlationId,
         prompt: seed.pitch,
         input: { ...seed },
+        build: true,
       });
       if (!result.accepted) {
         return { accepted: false, correlationId: action.correlationId, error: result.spokenAck };

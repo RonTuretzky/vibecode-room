@@ -102,6 +102,38 @@ export const demoProjectorSnapshot: ProjectorSnapshot = {
   updatedAt: new Date("2026-06-16T18:00:00.000Z").toISOString(),
 };
 
+// The neutral, fixture-free baseline the LIVE runtime publishes before any real
+// activity: zero processes, an empty transcript, an idle suggestion with an empty
+// pitch, and an empty trace/audio. The demo fixture above is reserved for the
+// OFFLINE-DEMO (?live=0) UI path and tests; the live /api/state must reflect real
+// state only, so it starts from this instead of spreading demoProjectorSnapshot.
+export const emptyProjectorSnapshot: ProjectorSnapshot = {
+  sessionId: "projector-live",
+  listening: true,
+  muted: false,
+  globalState: "ready",
+  activeCue: "idle",
+  emergencyStopTriggered: false,
+  suggestion: {
+    state: "idle",
+    pitch: "",
+    confidence: 0,
+    gate: { words: 0, minWords: 0, seconds: 0, minSeconds: 0 },
+    questions: [],
+  },
+  audio: {
+    lastSpoken: "",
+    earcon: "",
+    silenceRatio: 1,
+  },
+  processes: [],
+  transcript: [],
+  trace: [],
+  updatedAt: new Date(0).toISOString(),
+  steeringUpid: null,
+  autoAccept: false,
+};
+
 export function withUnmuted(snapshot: ProjectorSnapshot): ProjectorSnapshot {
   return {
     ...snapshot,
