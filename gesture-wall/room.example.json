@@ -1,0 +1,74 @@
+{
+  "walls": {
+    "A": { "display": 1, "grid": { "rows": 2, "cols": 3 } },
+    "B": { "display": 2, "grid": { "rows": 2, "cols": 3 } }
+  },
+  "adjacency": [
+    { "left": "A", "right": "B", "seam_margin": 0.06 }
+  ],
+  "cameras": {
+    "cam0": {
+      "device": 0,
+      "serves": ["A"],
+      "room_homography": null
+    },
+    "cam1": {
+      "device": 1,
+      "serves": ["A", "B"],
+      "room_homography": [
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 0.0, 1.0]
+      ]
+    },
+    "cam2": {
+      "device": 2,
+      "serves": ["B"],
+      "room_homography": null
+    }
+  },
+  "calibration": {
+    "cam0->A": {
+      "matrix": [
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 0.0, 1.0]
+      ]
+    },
+    "cam1->A": {
+      "matrix": [
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 0.0, 1.0]
+      ]
+    },
+    "cam1->B": {
+      "matrix": [
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 0.0, 1.0]
+      ]
+    },
+    "cam2->B": {
+      "matrix": [
+        [1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, 0.0, 1.0]
+      ]
+    }
+  },
+  "fusion": {
+    "mode": "highest_confidence",
+    "merge_radius": 0.35,
+    "track_max_age": 0.5
+  },
+  "server": {
+    "ws_port": 8770,
+    "http_port": 8000,
+    "fps": 30,
+    "num_poses": 4,
+    "mirror": true,
+    "min_confidence": 0.5,
+    "model": "models/pose_landmarker_lite.task"
+  }
+}

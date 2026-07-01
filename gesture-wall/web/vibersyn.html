@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>Vibersyn — Wall B</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; height: 100%; background: #05070d; overflow: hidden; }
+  iframe { border: 0; display: block; width: 100vw; height: 100vh; }
+  #fsbtn {
+    position: fixed; top: 14px; right: 14px; z-index: 9;
+    font: 600 15px/1 system-ui, sans-serif; color: #fff;
+    background: #0e7490; border: 1px solid #14a1c4; border-radius: 9px;
+    padding: 11px 16px; cursor: pointer;
+  }
+  body.fs #fsbtn { display: none; }
+</style>
+</head>
+<body>
+  <!--
+    Wall B of the 2-wall setup: the Vibersyn idea projector, embedded so it can be
+    opened fullscreen on its projector like any other wall page.
+
+    URL params:
+      src   Vibersyn projector URL   (default http://localhost:8788/?live=1)
+
+    Example: vibersyn.html?src=http://localhost:8788/?live=1
+    (?live=1 puts the Vibersyn UI in live mode, bound to its running server.)
+
+    Press 'f' for fullscreen, then point this browser window at projector 2.
+  -->
+  <button id="fsbtn" title="Fullscreen (or press f)">⛶ Fullscreen</button>
+  <script>
+    const params = new URLSearchParams(location.search);
+    const src = params.get("src") || "http://localhost:8788/?live=1";
+    const frame = document.createElement("iframe");
+    frame.src = src;
+    frame.allow = "microphone; autoplay; fullscreen";
+    document.body.appendChild(frame);
+
+    const fsbtn = document.getElementById("fsbtn");
+    function goFullscreen() {
+      const el = document.documentElement;
+      (el.requestFullscreen || el.webkitRequestFullscreen || (() => {})).call(el);
+    }
+    fsbtn.addEventListener("click", goFullscreen);
+    window.addEventListener("keydown", (e) => { if (e.key === "f") goFullscreen(); });
+    document.addEventListener("fullscreenchange", () => {
+      document.body.classList.toggle("fs", !!document.fullscreenElement);
+    });
+  </script>
+</body>
+</html>

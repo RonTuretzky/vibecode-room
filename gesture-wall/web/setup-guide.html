@@ -1,0 +1,657 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Gesture Wall — Full Setup Guide</title>
+<style>
+  :root{
+    --bg:#15151b; --panel:#1d1d25; --panel2:#23232d; --line:#33333f; --ink:#ececf2;
+    --dim:#9a9aa8; --accent:#3cc8dc; --accent2:#46c66e; --warn:#e7b24c; --bad:#e2685f;
+    --camera:#c878dc; --done:#46c66e; color-scheme:dark;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;overflow:hidden}
+  /* progress bar */
+  #top{position:fixed;top:0;left:0;right:0;height:46px;z-index:20;display:flex;align-items:center;
+    gap:14px;padding:0 16px;background:rgba(20,20,26,.94);border-bottom:1px solid var(--line);backdrop-filter:blur(6px)}
+  #top .name{font-weight:800;font-size:15px;white-space:nowrap}
+  #bar{flex:1;height:9px;background:#2a2a34;border-radius:99px;overflow:hidden}
+  #fill{height:100%;width:0;background:linear-gradient(90deg,var(--accent),var(--accent2));transition:width .3s}
+  #pct{font-variant-numeric:tabular-nums;font-size:13px;color:var(--dim);white-space:nowrap;min-width:96px;text-align:right}
+  #reset{background:#2c2c36;border:1px solid #44444e;color:#cfcfd6;border-radius:6px;padding:5px 9px;font-size:12px;cursor:pointer}
+  #reset:hover{background:#3a3a46}
+  /* rail */
+  #rail{position:fixed;top:46px;bottom:0;left:0;width:248px;overflow-y:auto;z-index:10;
+    background:var(--panel);border-right:1px solid var(--line);padding:10px 8px}
+  .railitem{display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:8px;cursor:pointer;font-size:13px;color:#cdcdd6}
+  .railitem:hover{background:var(--panel2)}
+  .railitem.active{background:#2a3a40;color:#fff}
+  .railitem .num{width:22px;height:22px;border-radius:50%;background:#33333f;display:flex;align-items:center;justify-content:center;
+    font-size:11px;font-weight:700;flex-shrink:0}
+  .railitem.complete .num{background:var(--done);color:#06210f}
+  .railitem .t{flex:1;line-height:1.2}
+  /* stage */
+  #stage{position:fixed;top:46px;left:248px;right:0;bottom:0;overflow-y:auto;padding:34px 6vw 90px}
+  .slide{display:none;max-width:980px;margin:0 auto;animation:fade .25s ease}
+  .slide.active{display:block}
+  @keyframes fade{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+  .kicker{color:var(--accent);font-weight:700;letter-spacing:.13em;text-transform:uppercase;font-size:12px;margin:0 0 6px}
+  h1{font-size:clamp(28px,4vw,46px);margin:0 0 10px;line-height:1.05}
+  h2{font-size:clamp(22px,3vw,34px);margin:0 0 14px;line-height:1.1}
+  h3{font-size:18px;margin:26px 0 8px;color:#fff}
+  p,li{font-size:16px;line-height:1.6;color:#dcdce4}
+  .lede{font-size:19px;color:#cfd6dc}
+  ul{padding-left:1.2em}
+  b,strong{color:#fff}
+  a{color:var(--accent)}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:22px;align-items:start}
+  @media(max-width:880px){.grid2{grid-template-columns:1fr}#rail{display:none}#stage{left:0}}
+  /* checklist */
+  .check{display:flex;gap:11px;align-items:flex-start;background:var(--panel);border:1px solid var(--line);
+    border-radius:10px;padding:12px 14px;margin:9px 0;cursor:pointer;transition:border-color .15s,background .15s}
+  .check:hover{border-color:#4a4a58}
+  .check input{appearance:none;width:22px;height:22px;border:2px solid #5a5a66;border-radius:6px;flex-shrink:0;margin-top:1px;cursor:pointer;position:relative}
+  .check input:checked{background:var(--done);border-color:var(--done)}
+  .check input:checked::after{content:"✓";position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#06210f;font-weight:900;font-size:14px}
+  .check.done{background:#1b271d;border-color:#2f5a3a}
+  .check .body{flex:1}
+  .check .body small{display:block;color:var(--dim);font-size:13.5px;margin-top:3px;line-height:1.5}
+  /* command box */
+  .cmd{position:relative;background:#0c0c11;border:1px solid var(--line);border-radius:10px;margin:8px 0;display:flex;align-items:stretch}
+  .cmd code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:#9fe;font-size:13.5px;line-height:1.6;
+    padding:12px 14px;white-space:pre;overflow-x:auto;flex:1}
+  .copy{background:#23232d;border:none;border-left:1px solid var(--line);color:#cfcfd6;padding:0 14px;cursor:pointer;font-size:12px;font-weight:700;border-radius:0 10px 10px 0}
+  .copy:hover{background:#33333f;color:#fff}
+  .copy.ok{color:var(--done)}
+  code.inl{font-family:ui-monospace,Menlo,monospace;background:#000;color:#9fe;padding:.06em .4em;border-radius:5px;font-size:.88em;border:1px solid #2a2a34}
+  /* callouts */
+  .note,.warn,.ok,.tip{border-left:3px solid var(--accent);background:rgba(60,200,220,.07);padding:11px 14px;border-radius:0 9px 9px 0;margin:12px 0;font-size:15px;line-height:1.55}
+  .warn{border-color:var(--warn);background:rgba(231,178,76,.09)}
+  .ok{border-color:var(--accent2);background:rgba(70,198,110,.09)}
+  .tip{border-color:var(--camera);background:rgba(200,120,220,.09)}
+  .callhead{font-weight:800;color:#fff;margin-right:6px}
+  .expect{font-size:14px;color:#a9d9b6;background:#16241a;border:1px dashed #2f5a3a;border-radius:8px;padding:9px 12px;margin:8px 0}
+  .expect b{color:#bfe9c9}
+  /* slide chips + nav */
+  .slidehead{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:6px}
+  .chip{font-size:12.5px;color:var(--dim);background:var(--panel2);border:1px solid var(--line);border-radius:99px;padding:4px 11px;white-space:nowrap}
+  .chip b{color:var(--accent2)}
+  .nav{display:flex;justify-content:space-between;gap:12px;margin:34px 0 0;border-top:1px solid var(--line);padding-top:20px}
+  .btn{background:#2563aa;border:1px solid #2f74c4;color:#fff;border-radius:9px;padding:11px 18px;font-size:15px;cursor:pointer;font-weight:600}
+  .btn:hover{background:#2f74c4}
+  .btn.ghost{background:#23232d;border-color:#44444e;color:#cfcfd6}
+  .btn.ghost:hover{background:#33333f}
+  .btn:disabled{opacity:.35;cursor:default}
+  figure{margin:18px 0;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px;text-align:center}
+  figure svg{max-width:100%;height:auto}
+  figcaption{font-size:13.5px;color:var(--dim);margin-top:8px}
+  .pill{color:var(--dim);font-size:14px}
+  .big{font-size:60px;line-height:1;margin:10px 0}
+  kbd{background:#2a2a34;border:1px solid #44444e;border-bottom-width:2px;border-radius:5px;padding:.05em .45em;font-size:.85em}
+  table{border-collapse:collapse;width:100%;margin:10px 0;font-size:14.5px}
+  td,th{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+  th{background:var(--panel2);color:#fff}
+  .done-banner{display:none;text-align:center;padding:30px;background:linear-gradient(180deg,rgba(70,198,110,.12),transparent);border:1px solid #2f5a3a;border-radius:16px;margin:16px 0}
+</style>
+</head>
+<body>
+
+<div id="top">
+  <span class="name">🧱 Gesture Wall · Setup</span>
+  <div id="bar"><div id="fill"></div></div>
+  <span id="pct">0 / 0 done</span>
+  <button id="reset" title="Clear all checkmarks">Reset</button>
+</div>
+
+<nav id="rail"></nav>
+
+<main id="stage">
+
+  <!-- 1 -->
+  <section class="slide" data-title="Overview">
+    <p class="kicker">Start here</p>
+    <h1>Build your gesture wall, step by step</h1>
+    <p class="lede">By the end of this guide you'll have <b>two walls in a corner</b>, each lit by a
+      <b>projector</b>, watched by <b>two Kinect depth cameras</b>, where <b>several people can walk around
+      and point at tiles to select them</b> — no mouse, no touch.</p>
+    <div class="grid2">
+      <div>
+        <h3>How to use this guide</h3>
+        <ul>
+          <li>Work <b>top to bottom</b>. Each step has a <b>checkbox</b> — tick it when done.</li>
+          <li>Your progress is <b>saved automatically</b> (you can close the tab and come back).</li>
+          <li>Grey boxes are <b>commands</b> — click <b>Copy</b>, paste into the <b>Terminal</b> app, press Return.</li>
+          <li>Green boxes tell you <b>what you should see</b> if it worked.</li>
+        </ul>
+        <div class="tip"><span class="callhead">Don't panic.</span> You do not need to understand the code.
+          Follow the steps in order and check the green "what you should see" boxes.</div>
+        <p class="pill">⏱️ Plan for ~2–3 hours the first time. Hardware mounting is the slow part.</p>
+      </div>
+      <div>
+        <h3>What "Terminal" is</h3>
+        <p>Terminal is a macOS app where you type commands. Open it once now so it's ready:</p>
+        <ul>
+          <li>Press <kbd>⌘</kbd> + <kbd>Space</kbd>, type <b>Terminal</b>, press Return.</li>
+        </ul>
+        <label class="check"><input type="checkbox" id="c-term"><span class="body">I opened the <b>Terminal</b> app
+          <small>A black/white window with a blinking cursor. Keep it open — you'll paste commands here.</small></span></label>
+        <label class="check"><input type="checkbox" id="c-read"><span class="body">I read "How to use this guide"</span></label>
+      </div>
+    </div>
+    <div class="nav"><span></span><button class="btn next">Start →</button></div>
+  </section>
+
+  <!-- 2 -->
+  <section class="slide" data-title="Hardware checklist">
+    <p class="kicker">Phase 1 · Gather hardware</p>
+    <h2>What you need (check you have it all)</h2>
+    <div class="warn"><span class="callhead">Special hardware to buy first:</span> a Kinect v2 needs the
+      <b>"Kinect Adapter for Windows"</b> (it provides power + USB 3.0). Without it the Kinect cannot connect to a computer. Buy one per Kinect.</div>
+    <div class="grid2">
+      <div>
+        <h3>Cameras &amp; power</h3>
+        <label class="check"><input type="checkbox" id="c-hw-k1"><span class="body">2 × <b>Kinect v2</b> (Xbox One Kinect) sensors</span></label>
+        <label class="check"><input type="checkbox" id="c-hw-adapt"><span class="body">2 × <b>Kinect Adapter for Windows</b> (power brick + USB 3.0)
+          <small>The Kinect's plug is proprietary — this adapter splits it into wall power and a normal USB 3.0 plug.</small></span></label>
+        <label class="check"><input type="checkbox" id="c-hw-usb"><span class="body">2 × good <b>USB-C ↔ USB-A 3.x</b> adapters/dock for the Mac
+          <small>Must be real USB 3 (blue inside). Cheap USB 2 hubs will NOT work with Kinect v2.</small></span></label>
+        <h3>Display</h3>
+        <label class="check"><input type="checkbox" id="c-hw-proj"><span class="body">2 × <b>projectors</b> (short-throw is easiest in a corner)</span></label>
+        <label class="check"><input type="checkbox" id="c-hw-hdmi"><span class="body">2 × video cables + any <b>USB-C → HDMI</b> adapters your Mac needs</span></label>
+      </div>
+      <div>
+        <h3>Mounting &amp; space</h3>
+        <label class="check"><input type="checkbox" id="c-hw-corner"><span class="body">An <b>inside corner</b> (two walls meeting at 90°) you can project onto</span></label>
+        <label class="check"><input type="checkbox" id="c-hw-mount"><span class="body"><b>Tripods or mounts</b> for 2 projectors + 2 Kinects (4 total)
+          <small>Camera tripods with a ¼″ screw work for the Kinects (Kinect v2 has no built-in mount — use a clamp/cradle).</small></span></label>
+        <label class="check"><input type="checkbox" id="c-hw-power"><span class="body">Power strip with enough outlets (2 projectors + 2 Kinect bricks + Mac)</span></label>
+        <h3>Computer</h3>
+        <label class="check"><input type="checkbox" id="c-hw-mac"><span class="body"><b>Mac</b> with at least 2 USB ports/dock + 2 display outputs
+          <small>You have this. A hub/dock with multiple real USB-3 ports + 2 HDMI helps a lot.</small></span></label>
+        <div class="note"><span class="callhead">Tip:</span> label each Kinect <b>"A"</b> and <b>"B"</b> with tape now — you'll keep them straight later.</div>
+      </div>
+    </div>
+    <div class="nav"><button class="btn ghost prev">← Back</button><button class="btn next">Next →</button></div>
+  </section>
+
+  <!-- 3 -->
+  <section class="slide" data-title="The corner walls">
+    <p class="kicker">Phase 2 · Physical layout</p>
+    <h2>Set up the two walls (the corner)</h2>
+    <div class="grid2">
+      <div>
+        <p>Your two walls meet at a corner and act as <b>one continuous surface</b>. The vertical line where they
+          meet is the <b>seam</b>. People stand in the open area (the "pocket") and point at either wall.</p>
+        <label class="check"><input type="checkbox" id="c-wall-pick"><span class="body">Picked an inside corner; both wall faces are <b>flat &amp; light-colored</b>
+          <small>A white/grey matte wall projects best. Avoid windows and glossy surfaces.</small></span></label>
+        <label class="check"><input type="checkbox" id="c-wall-clear"><span class="body">Cleared the <b>standing area</b> in front (≈ 2–4 m of open floor)</span></label>
+        <label class="check"><input type="checkbox" id="c-wall-tape"><span class="body">Put a <b>floor tape mark</b> where a user will stand to calibrate
+          <small>You'll calibrate from here, so users get the most accurate pointing here.</small></span></label>
+        <div class="note"><span class="callhead">Why a corner?</span> It puts two big targets within one arm-sweep, and the
+          seam gives the two cameras a natural overlap to hand a cursor across.</div>
+      </div>
+      <figure>
+        <svg viewBox="0 0 380 230" aria-label="corner walls top-down">
+          <line x1="200" y1="40" x2="90" y2="150" stroke="#3cc8dc" stroke-width="5"/>
+          <line x1="200" y1="40" x2="310" y2="150" stroke="#3cc8dc" stroke-width="5"/>
+          <line x1="192" y1="33" x2="208" y2="33" stroke="#e7b24c" stroke-width="3"/>
+          <text x="200" y="24" fill="#e7b24c" font-size="12" text-anchor="middle">seam (corner)</text>
+          <text x="120" y="105" fill="#3cc8dc" font-size="13" text-anchor="middle">Wall A</text>
+          <text x="280" y="105" fill="#3cc8dc" font-size="13" text-anchor="middle">Wall B</text>
+          <circle cx="200" cy="190" r="7" fill="#cdd"/>
+          <text x="200" y="214" fill="#9aa" font-size="12" text-anchor="middle">user stands here ✦ tape mark</text>
+        </svg>
+        <figcaption>Top-down: two walls form a 90° corner; users stand in the pocket facing it.</figcaption>
+      </figure>
+    </div>
+    <div class="nav"><button class="btn ghost prev">← Back</button><button class="btn next">Next →</button></div>
+  </section>
+
+  <!-- 4 -->
+  <section class="slide" data-title="Projectors">
+    <p class="kicker">Phase 2 · Physical layout</p>
+    <h2>Mount &amp; align the two projectors</h2>
+    <div class="grid2">
+      <figure>
+        <svg viewBox="0 0 380 240" aria-label="projectors lighting a corner">
+          <polygon points="190,30 70,52 70,150 190,128" fill="rgba(60,200,220,.06)" stroke="#3cc8dc"/>
+          <polygon points="190,30 310,52 310,150 190,128" fill="rgba(60,200,220,.05)" stroke="#3cc8dc"/>
+          <line x1="190" y1="30" x2="190" y2="128" stroke="#e7b24c" stroke-width="3" stroke-dasharray="5 4"/>
+          <text x="120" y="96" fill="#9fe" font-size="13" text-anchor="middle">Wall A</text>
+          <text x="262" y="96" fill="#9fe" font-size="13" text-anchor="middle">Wall B</text>
+          <text x="190" y="22" fill="#e7b24c" font-size="11" text-anchor="middle">seam</text>
+          <path d="M105 215 L70 64 L185 122 Z" fill="rgba(231,178,76,.10)" stroke="rgba(231,178,76,.4)"/>
+          <path d="M275 215 L310 64 L195 122 Z" fill="rgba(231,178,76,.10)" stroke="rgba(231,178,76,.4)"/>
+          <rect x="82" y="214" width="46" height="22" rx="5" fill="none" stroke="#9ab"/><text x="105" y="229" fill="#9ab" font-size="11" text-anchor="middle">proj 1</text>
+          <rect x="252" y="214" width="46" height="22" rx="5" fill="none" stroke="#9ab"/><text x="275" y="229" fill="#9ab" font-size="11" text-anchor="middle">proj 2</text>
+        </svg>
+        <figcaption>Each projector sits in front of its own wall, facing it. Beams meet &amp; blend at the seam.</figcaption>
+      </figure>
+      <div>
+        <label class="check"><input type="checkbox" id="c-proj-mount"><span class="body">Projector 1 aimed at <b>Wall A</b>, projector 2 at <b>Wall B</b>
+          <small>Ceiling-mount or high on a stand so people don't cast shadows.</small></span></label>
+        <label class="check"><input type="checkbox" id="c-proj-display"><span class="body">In <b>System Settings → Displays</b>, set them as an <b>extended desktop</b> (not "mirror")
+          <small>Drag display 2 to sit directly right of display 1 so the screens are continuous.</small></span></label>
+        <label class="check"><input type="checkbox" id="c-proj-seam"><span class="body">Adjusted each image so they <b>meet at the seam</b> with no gap and no bright double-line
+          <small>Edge-to-edge is fine; a tiny overlap is okay too. Use each projector's keystone/zoom.</small></span></label>
+        <label class="check"><input type="checkbox" id="c-proj-bright"><span class="body">Matched <b>brightness</b> so a tile crossing the corner looks like one tile</span></label>
+        <div class="warn"><span class="callhead">Do this before calibrating cameras.</span> The cameras get calibrated to the
+          <i>projected</i> image — if you move a projector later you must re-calibrate that wall.</div>
+      </div>
+    </div>
+    <div class="nav"><button class="btn ghost prev">← Back</button><button class="btn next">Next →</button></div>
+  </section>
+
+  <!-- 5 -->
+  <section class="slide" data-title="Place cameras">
+    <p class="kicker">Phase 2 · Physical layout</p>
+    <h2>Place the two Kinect cameras</h2>
+    <div class="grid2">
+      <div>
+        <p>Each Kinect sits <b>at its wall, facing back at the people</b> (like a webcam on a TV) — <b>not</b>
+          aimed at the wall. They need to see faces and raised arms.</p>
+        <label class="check"><input type="checkbox" id="c-cam-a"><span class="body">Kinect <b>A</b> at Wall A, looking out across the pocket at the users</span></label>
+        <label class="check"><input type="checkbox" id="c-cam-b"><span class="body">Kinect <b>B</b> at Wall B, mirror of A</span></label>
+        <label class="check"><input type="checkbox" id="c-cam-height"><span class="body">Mounted ≈ <b>chest/eye height</b>, tilted to see people from ~1.5–4 m away
+          <small>Kinect v2 sees from about 0.5 m to 4.5 m. Closer than 0.5 m reads nothing.</small></span></label>
+        <label class="check"><input type="checkbox" id="c-cam-corner"><span class="body">Both angled so their views <b>overlap near the seam/corner</b>
+          <small>The overlap is how a cursor hands off from one wall to the other.</small></span></label>
+        <div class="tip"><span class="callhead">With depth cameras, two is enough.</span> Each Kinect alone gives a full 3D
+          pointing ray — the second is for covering both walls and seeing people when one camera is blocked.</div>
+      </div>
+      <figure>
+        <svg viewBox="0 0 380 250" aria-label="kinect placement plan">
+          <line x1="190" y1="50" x2="95" y2="150" stroke="#3cc8dc" stroke-width="5"/>
+          <line x1="190" y1="50" x2="285" y2="150" stroke="#3cc8dc" stroke-width="5"/>
+          <text x="120" y="135" fill="#3cc8dc" font-size="12" text-anchor="middle">Wall A</text>
+          <text x="262" y="135" fill="#3cc8dc" font-size="12" text-anchor="middle">Wall B</text>
+          <g fill="rgba(200,120,220,.10)" stroke="rgba(200,120,220,.4)">
+            <path d="M146 104 L150 215 L250 215 Z"/>
+            <path d="M236 104 L150 215 L250 215 Z"/>
+          </g>
+          <g fill="#c878dc"><circle cx="146" cy="98" r="8"/><circle cx="236" cy="98" r="8"/></g>
+          <text x="132" y="95" fill="#dca9ec" font-size="11" text-anchor="end">Kinect A</text>
+          <text x="250" y="95" fill="#dca9ec" font-size="11">Kinect B</text>
+          <circle cx="200" cy="210" r="7" fill="#cdd"/>
+          <text x="200" y="234" fill="#9aa" font-size="11" text-anchor="middle">users — cameras look back at them</text>
+        </svg>
+        <figcaption>Top-down: cameras mounted at the walls, facing the users; views overlap at the corner.</figcaption>
+      </figure>
+    </div>
+    <div class="nav"><button class="btn ghost prev">← Back</button><button class="btn next">Next →</button></div>
+  </section>
+
+  <!-- 6 -->
+  <section class="slide" data-title="Wire a Kinect">
+    <p class="kicker">Phase 3 · Connect cameras</p>
+    <h2>Wire a Kinect to the Mac</h2>
+    <figure>
+      <svg viewBox="0 0 720 90" aria-label="kinect wiring chain">
+        <g font-size="12" fill="#cdd" text-anchor="middle">
+          <rect x="10" y="28" width="110" height="34" rx="7" fill="#23232d" stroke="#c878dc"/><text x="65" y="50">Kinect v2</text>
+          <rect x="160" y="20" width="130" height="50" rx="7" fill="#23232d" stroke="#9ab"/><text x="225" y="40">Kinect Adapter</text><text x="225" y="56" font-size="10" fill="#9aa">(power + USB3)</text>
+          <rect x="330" y="28" width="90" height="34" rx="7" fill="#23232d" stroke="#e7b24c"/><text x="375" y="50">wall power</text>
+          <rect x="460" y="28" width="120" height="34" rx="7" fill="#23232d" stroke="#9ab"/><text x="520" y="50">USB-C adapter</text>
+          <rect x="620" y="28" width="90" height="34" rx="7" fill="#23232d" stroke="#3cc8dc"/><text x="665" y="50">Mac</text>
+        </g>
+        <g stroke="#666" stroke-width="2" fill="none" marker-end="url(#ar)">
+          <path d="M120 45 L158 45"/><path d="M290 38 L328 44"/><path d="M290 52 L458 48"/><path d="M580 45 L618 45"/>
+        </g>
+        <defs><marker id="ar" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0 0L7 3L0 6z" fill="#666"/></marker></defs>
+      </svg>
+      <figcaption>Kinect → Adapter → (wall power + USB 3.0) → USB-C adapter → Mac.</figcaption>
+    </figure>
+    <div class="grid2">
+      <div>
+        <label class="check"><input type="checkbox" id="c-wire-chain"><span class="body">Connected one Kinect through its adapter to <b>wall power</b> and a <b>USB 3.0</b> port on the Mac</span></label>
+        <label class="check"><input type="checkbox" id="c-wire-direct"><span class="body">Used a <b>direct</b> USB-3 path (no cheap hubs, no daisy-chained docks)
+          <small>Kinect v2 needs lots of USB-3 bandwidth. Bad hubs = random disconnects.</small></span></label>
+      </div>
+      <div>
+        <p>Check the Mac actually sees it. Paste this:</p>
+        <div class="cmd"><code>system_profiler SPUSBDataType | grep -i -A8 -E "kinect|xbox|nui"</code><button class="copy">Copy</button></div>
+        <div class="expect"><b>What you should see:</b> lines mentioning <code class="inl">Xbox NUI Sensor</code> or
+          <code class="inl">Microsoft</code>. If you see nothing, re-seat the USB, try another port/adapter, and check the power brick light.</div>
+        <label class="check"><input type="checkbox" id="c-wire-seen"><span class="body">The command shows an Xbox / Microsoft / NUI device</span></label>
+      </div>
+    </div>
+    <div class="nav"><button class="btn ghost prev">← Back</button><button class="btn next">Next →</button></div>
+  </section>
+
+  <!-- 7 -->
+  <section class="slide" data-title="Base software">
+    <p class="kicker">Phase 4 · Install software</p>
+    <h2>Install the base tools</h2>
+    <p>Paste each command into Terminal and press Return. Wait for each to finish before the next.</p>
+    <h3>1. Apple's command-line tools</h3>
+    <div class="cmd"><code>xcode-select --install</code><button class="copy">Copy</button></div>
+    <p class="pill">A popup appears — click <b>Install</b> and wait. If it says "already installed", great, move on.</p>
+    <label class="check"><input type="checkbox" id="c-sw-xcode"><span class="body">Command-line tools installed</span></label>
+    <h3>2. Homebrew (the macOS software installer)</h3>
+    <div class="cmd"><code>/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"</code><button class="copy">Copy</button></div>
+    <p class="pill">It may ask for your Mac password (typing shows nothing — that's normal) and to press Return. At the end it may print 2 lines starting with <code class="inl">echo</code> — paste &amp; run those too.</p>
+    <label class="check"><input type="checkbox" id="c-sw-brew"><span class="body">Homebrew installed (<code class="inl">brew --version</code> prints a number)</span></label>
+    <h3>3. The build tools we need</h3>
+    <div class="cmd"><code>brew update && brew install git cmake pkg-config node python libusb glfw3 jpeg-turbo</code><button class="copy">Copy</button></div>
+    <label class="check"><input type="checkbox" id="c-sw-deps"><span class="body">Build tools installed</span></label>
+    <div class="note"><span class="callhead">Apple Silicon check:</span> run <code class="inl">brew --prefix</code> — it should print
+      <code class="inl">/opt/homebrew</code>. If it prints <code class="inl">/usr/local</code> you're in the wrong (Intel) Homebrew; ask for help before continuing.</div>
+    <div class="nav"><button class="btn ghost prev">← Back</button><button class="btn next">Next →</button></div>
+  </section>
+
+  <!-- 8 -->
+  <section class="slide" data-title="Kinect driver">
+    <p class="kicker">Phase 4 · Install software</p>
+    <h2>Install the Kinect driver (libfreenect2)</h2>
+    <p>This is the software that reads depth + color from the Kinect v2 on macOS.</p>
+    <h3>1. Download &amp; build it</h3>
+    <div class="cmd"><code>cd ~ && git clone https://github.com/OpenKinect/libfreenect2.git
+cd libfreenect2 && mkdir -p build && cd build
+cmake .. -DCMAKE_INSTALL_PREFIX="$HOME/.local" -DCMAKE_BUILD_TYPE=Release
+cmake --build . -j"$(sysctl -n hw.ncpu)"
+cmake --install .</code><button class="copy">Copy</button></div>
+    <label class="check"><input type="checkbox" id="c-fn-build"><span class="body">libfreenect2 built and installed with no red <b>error</b> at the end</span></label>
+    <h3>2. Tell your Mac where it lives</h3>
+    <div class="cmd"><code>echo 'export PKG_CONFIG_PATH="$HOME/.local/lib/pkgconfig:$PKG_CONFIG_PATH"' >> ~/.zshrc
+echo 'export DYLD_LIBRARY_PATH="$HOME/.local/lib:$DYLD_LIBRARY_PATH"' >> ~/.zshrc
+source ~/.zshrc</code><button class="copy">Copy</button></div>
+    <label class="check"><input type="checkbox" id="c-fn-path"><span class="body">Added the library paths</span></label>
+    <h3>3. Prove the Kinect works</h3>
+    <p>With one Kinect plugged in &amp; powered, run the built-in test viewer:</p>
+    <div class="cmd"><code>cd ~/libfreenect2/build && ./bin/Protonect</code><button class="copy">Copy</button></div>
+    <div class="expect"><b>What you should see:</b> windows showing a live <b>color</b> image and a <b>depth</b> image
+      (a colorful "heat-map" of the room). Wave your hand — the depth view changes. Close the window or press <kbd>Esc</kbd> to stop.</div>
+    <label class="check"><input type="checkbox" id="c-fn-proto"><span class="body"><b>Protonect</b> showed a live depth image 🎉</span></label>
+    <div class="warn"><span class="callhead">No device / no frames?</span> Re-check USB 3 (Slide 6), avoid hubs, and try
+      <code class="inl">LIBUSB_DEBUG=3 ./bin/Protonect</code> to see why. This is the #1 place people get stuck — it's almost always the USB-3 path or power.</div>
+    <div class="nav"><button class="btn ghost prev">← Back</button><button class="btn next">Next →</button></div>
+  </section>
+
+  <!-- 9 -->
+  <section class="slide" data-title="Get the code">
+    <p class="kicker">Phase 4 · Install software</p>
+    <h2>Get the gesture-wall code &amp; Python setup</h2>
+    <p>Go to the project folder (where this guide lives). If you already have it, just <code class="inl">cd</code> into it.</p>
+    <div class="cmd"><code>cd ~/conductor/workspaces/gesture-wall/asuncion</code><button class="copy">Copy</button></div>
+    <label class="check"><input type="checkbox" id="c-code-cd"><span class="body">I'm in the project folder
+      <small>Run <code class="inl">ls</code> — you should see <code class="inl">gesturewall</code>, <code class="inl">web</code>, <code class="inl">requirements.txt</code>.</small></span></label>
+    <h3>Create the Python environment &amp; install</h3>
+    <div class="cmd"><code>python3 -m venv .venv
+.venv/bin/python -m pip install --upgrade pip
+.venv/bin/python -m pip install -r requirements.txt</code><button class="copy">Copy</button></div>
+    <label class="check"><input type="checkbox" id="c-code-venv"><span class="body">Python packages installed (numpy, opencv, mediapipe, websockets)</span></label>
+    <h3>Sanity check: run the tests</h3>
+    <div class="cmd"><code>.venv/bin/python -m pytest -q</code><button class="copy">Copy</button></div>
+    <div class="expect"><b>What you should see:</b> a row of dots and a line like <code class="inl">… passed in 0.2s</code> with <b>no failures</b>.</div>
+    <label class="check"><input type="checkbox" id="c-code-test"><span class="body">Tests pass ✅</span></label>
+    <div class="nav"><button class="btn ghost prev">← Back</button><button class="btn next">Next →</button></div>
+  </section>
+
+  <!-- 10 -->
+  <section class="slide" data-title="Build the bridge">
+    <p class="kicker">Phase 4 · Install software</p>
+    <h2>Build the Kinect "bridge"</h2>
+    <p>The bridge is a tiny program that feeds the Kinect's depth + color into our app.</p>
+    <div class="cmd"><code>bash native/build_kinect_v2.sh</code><button class="copy">Copy</button></div>
+    <div class="expect"><b>What you should see:</b> it finishes with no <b>error</b>, and the file <code class="inl">bin/kinect-v2-bridge</code> now exists. Check with:</div>
+    <div class="cmd"><code>ls -l bin/kinect-v2-bridge</code><button class="copy">Copy</button></div>
+    <label class="check"><input type="checkbox" id="c-bridge-build"><span class="body">The bridge built and <code class="inl">bin/kinect-v2-bridge</code> exists</span></label>
+    <div class="warn"><span class="callhead">If it says "freenect2 not found":</span> your library paths from Slide 8 step 2 aren't loaded.
+      Close and reopen Terminal (or re-run the <code class="inl">source ~/.zshrc</code> line), then try again.</div>
+    <div class="tip"><span class="callhead">What's happening:</span> the bridge uses libfreenect2 to grab a <b>color image</b> and a
+      <b>depth image</b> that are <b>pixel-aligned</b>, so for any body joint we see, we instantly know how far away it is — that's what lets us build a 3D pointing ray.</div>
+    <div class="nav"><button class="btn ghost prev">← Back</button><button class="btn next">Next →</button></div>
+  </section>
+
+  <!-- 11 -->
+  <section class="slide" data-title="Configure room.json">
+    <p class="kicker">Phase 5 · Configure</p>
+    <h2>Create your <code class="inl">room.json</code></h2>
+    <p>This one file describes your room: the two walls, their tile grids, and the two Kinects. Start from the example:</p>
+    <div class="cmd"><code>cp room.example.depth.json room.json</code><button class="copy">Copy</button></div>
+    <label class="check"><input type="checkbox" id="c-room-copy"><span class="body">Copied the example to <code class="inl">room.json</code></span></label>
+    <h3>What to edit (open <code class="inl">room.json</code> in any text editor)</h3>
+    <table>
+      <tr><th>Setting</th><th>What it means</th></tr>
+      <tr><td><code class="inl">walls.A.grid</code></td><td>How many tiles on Wall A, e.g. <code class="inl">{"rows":2,"cols":3}</code> = 6 tiles. Same for B.</td></tr>
+      <tr><td><code class="inl">cameras.cam0.device</code></td><td>Which Kinect is camera 0 (usually <code class="inl">0</code>). The second is <code class="inl">1</code>.</td></tr>
+      <tr><td><code class="inl">server.num_poses</code></td><td>Max people tracked at once. Start with <code class="inl">4</code>.</td></tr>
+      <tr><td><code class="inl">calibration / plane / extrinsic</code></td><td><b>Leave these for now</b> — the next two slides fill them in by calibrating.</td></tr>
+    </table>
+    <label class="check"><input type="checkbox" id="c-room-edit"><span class="body">Set my tile grids and confirmed the camera devices</span></label>
+    <div class="note"><span class="callhead">Don't hand-edit the numbers.</span> The wall positions and camera angles get measured
+      automatically in the next two slides — you don't type those by hand.</div>
+    <div class="nav"><button class="btn ghost prev">← Back</button><button class="btn next">Next →</button></div>
+  </section>
+
+  <!-- 12 -->
+  <section class="slide" data-title="Calibrate walls">
+    <p class="kicker">Phase 6 · Calibrate</p>
+    <h2>Teach it where the walls are</h2>
+    <p>Calibration measures the exact 3D position of each wall, as seen by each Kinect. Do this for <b>each camera/wall pair</b>.</p>
+    <figure>
+      <svg viewBox="0 0 360 180" aria-label="point at wall corners">
+        <rect x="60" y="30" width="240" height="120" fill="rgba(60,200,220,.05)" stroke="#3cc8dc" stroke-width="2"/>
+        <g fill="#e7b24c"><circle cx="60" cy="30" r="7"/><circle cx="300" cy="30" r="7"/><circle cx="60" cy="150" r="7"/><circle cx="300" cy="150" r="7"/></g>
+        <text x="180" y="95" fill="#9fe" font-size="14" text-anchor="middle">point at each corner</text>
+        <text x="60" y="22" fill="#e7b24c" font-size="10" text-anchor="middle">1</text>
+        <text x="300" y="22" fill="#e7b24c" font-size="10" text-anchor="middle">2</text>
+        <text x="300" y="168" fill="#e7b24c" font-size="10" text-anchor="middle">3</text>
+        <text x="60" y="168" fill="#e7b24c" font-size="10" text-anchor="middle">4</text>
+      </svg>
+      <figcaption>Stand on your tape mark and point at each glowing corner when asked.</figcaption>
+    </figure>
+    <p>Run it for camera 0 and Wall A (the tool will tell you which corner to point at):</p>
+    <div class="cmd"><code>.venv/bin/python -m gesturewall.calibrate --config room.json --camera cam0 --wall A</code><button class="copy">Copy</button></div>
+    <label class="check"><input type="checkbox" id="c-cal-a0"><span class="body">Calibrated <b>cam0 → Wall A</b></span></label>
+    <p>Now camera 0 and Wall B, then camera 1 for both (only the walls each camera can see):</p>
+    <div class="cmd"><code>.venv/bin/python -m gesturewall.calibrate --config room.json --camera cam0 --wall B
+.venv/bin/python -m gesturewall.calibrate --config room.json --camera cam1 --wall A
+.venv/bin/python -m gesturewall.calibrate --config room.json --camera cam1 --wall B</code><button class="copy">Copy</button></div>
+    <label class="check"><input type="checkbox" id="c-cal-rest"><span class="body">Calibrated the remaining camera/wall pairs each camera can see</span></label>
+    <div class="expect"><b>What you should see:</b> after the 4th corner it prints <code class="inl">calibration saved</code> and writes the numbers into <code class="inl">room.json</code>.</div>
+    <div class="nav"><button class="btn ghost prev">← Back</button><button class="btn next">Next →</button></div>
+  </section>
+
+  <!-- 13 -->
+  <section class="slide" data-title="Register cameras">
+    <p class="kicker">Phase 6 · Calibrate</p>
+    <h2>Line up the two cameras (shared room frame)</h2>
+    <div class="grid2">
+      <div>
+        <p>The two Kinects each have their own idea of "where things are." This step puts them in <b>one shared map</b> of
+          the room, so a person seen by both cameras is understood as <b>one</b> person, and the seam handoff works.</p>
+        <p>Pick one camera as the reference (cam0) and register the other to it:</p>
+        <div class="cmd"><code>.venv/bin/python -m gesturewall.calibrate --config room.json --floor cam0
+.venv/bin/python -m gesturewall.calibrate --config room.json --floor cam1</code><button class="copy">Copy</button></div>
+        <label class="check"><input type="checkbox" id="c-reg-floor"><span class="body">Registered both cameras into the shared room frame</span></label>
+        <div class="expect"><b>What you should see:</b> it prints that it saved the camera positions (<code class="inl">extrinsic</code>) into <code class="inl">room.json</code>.</div>
+      </div>
+      <figure>
+        <svg viewBox="0 0 320 200" aria-label="shared room frame">
+          <g fill="#c878dc"><circle cx="70" cy="150" r="8"/><circle cx="250" cy="150" r="8"/></g>
+          <text x="70" y="174" fill="#dca9ec" font-size="11" text-anchor="middle">cam0</text>
+          <text x="250" y="174" fill="#dca9ec" font-size="11" text-anchor="middle">cam1</text>
+          <circle cx="160" cy="80" r="10" fill="#cdd"/>
+          <text x="160" y="56" fill="#9aa" font-size="11" text-anchor="middle">same person</text>
+          <g stroke="#555" stroke-dasharray="4 4"><line x1="78" y1="146" x2="152" y2="86"/><line x1="242" y1="146" x2="168" y2="86"/></g>
+        </svg>
+        <figcaption>Both cameras agree on one room map → one identity per person.</figcaption>
+      </figure>
+    </div>
+    <div class="nav"><button class="btn ghost prev">← Back</button><button class="btn next">Next →</button></div>
+  </section>
+
+  <!-- 14 -->
+  <section class="slide" data-title="Run it">
+    <p class="kicker">Phase 7 · Launch</p>
+    <h2>Turn it on 🚀</h2>
+    <h3>1. Start the server (leave this Terminal running)</h3>
+    <div class="cmd"><code>.venv/bin/python -m gesturewall.server --config room.json</code><button class="copy">Copy</button></div>
+    <div class="expect"><b>What you should see:</b> messages that it started, opened the cameras, and is serving on
+      <code class="inl">http://localhost:8000</code> + websocket <code class="inl">8770</code>. Leave this window open.</div>
+    <label class="check"><input type="checkbox" id="c-run-server"><span class="body">Server is running (no errors, cameras opened)</span></label>
+    <h3>2. Open one wall per projector</h3>
+    <p>Open a browser window on <b>projector 1</b> and go to:</p>
+    <div class="cmd"><code>http://localhost:8000/wall.html?wall=A&amp;server=ws://localhost:8770</code><button class="copy">Copy</button></div>
+    <p>Drag it onto projector 1's screen, press <kbd>f</kbd> for fullscreen. Then on <b>projector 2</b>:</p>
+    <div class="cmd"><code>http://localhost:8000/wall.html?wall=B&amp;server=ws://localhost:8770</code><button class="copy">Copy</button></div>
+    <label class="check"><input type="checkbox" id="c-run-walls"><span class="body">Wall A is fullscreen on projector 1, Wall B on projector 2</span></label>
+    <div class="expect"><b>What you should see:</b> each wall shows its grid of tiles and a small "connected" indicator. Walk in and raise a hand — a colored dot (cursor) appears.</div>
+    <div class="nav"><button class="btn ghost prev">← Back</button><button class="btn next">Next →</button></div>
+  </section>
+
+  <!-- 15 -->
+  <section class="slide" data-title="Test &amp; tune">
+    <p class="kicker">Phase 7 · Launch</p>
+    <h2>Test it &amp; tune the feel</h2>
+    <div class="grid2">
+      <div>
+        <h3>Test</h3>
+        <label class="check"><input type="checkbox" id="c-test-engage"><span class="body">Raise a hand above your shoulder → a <b>cursor</b> appears in your color</span></label>
+        <label class="check"><input type="checkbox" id="c-test-point"><span class="body">Point around → the cursor follows where you point (even as you <b>walk</b>)</span></label>
+        <label class="check"><input type="checkbox" id="c-test-dwell"><span class="body">Hold on a tile ~1 s → its ring fills and it toggles</span></label>
+        <label class="check"><input type="checkbox" id="c-test-two"><span class="body">A second person gets their own colored cursor</span></label>
+        <label class="check"><input type="checkbox" id="c-test-seam"><span class="body">Sweeping across the corner hands the cursor from Wall A to Wall B cleanly</span></label>
+      </div>
+      <div>
+        <h3>Tune (edit <code class="inl">room.json</code> → restart server)</h3>
+        <table>
+          <tr><th>Problem</th><th>Try</th></tr>
+          <tr><td>Selections too easy / accidental</td><td>raise <code class="inl">dwell</code> seconds</td></tr>
+          <tr><td>Cursor jittery</td><td>more smoothing (lower the filter cutoff)</td></tr>
+          <tr><td>Tiles too small to hit</td><td>fewer tiles (<code class="inl">rows/cols</code>)</td></tr>
+          <tr><td>Pointing lands off</td><td>re-calibrate that camera/wall (Slide 12)</td></tr>
+          <tr><td>Two people merge into one cursor</td><td>they were too close; spread out (and see Troubleshooting)</td></tr>
+        </table>
+        <div class="ok"><span class="callhead">The magic:</span> because pointing uses a 3D <b>ray</b> from your eye to your hand,
+          it stays accurate as you <b>move around the room</b> — not just from the calibration spot.</div>
+      </div>
+    </div>
+    <div class="nav"><button class="btn ghost prev">← Back</button><button class="btn next">Next →</button></div>
+  </section>
+
+  <!-- 16 -->
+  <section class="slide" data-title="Troubleshooting">
+    <p class="kicker">Reference</p>
+    <h2>When something's wrong</h2>
+    <table>
+      <tr><th>Symptom</th><th>Most likely fix</th></tr>
+      <tr><td>Mac doesn't see the Kinect</td><td>Power brick lit? Real USB-3 path (no cheap hub)? Re-run the <code class="inl">system_profiler</code> check (Slide 6).</td></tr>
+      <tr><td><code class="inl">Protonect</code> opens but no frames / freezes</td><td>USB-3 bandwidth — plug Kinect directly, unplug other USB devices, try another USB-C adapter. <code class="inl">LIBUSB_DEBUG=3 ./bin/Protonect</code> to see why.</td></tr>
+      <tr><td>Bridge build: "freenect2 not found"</td><td>Reopen Terminal (load the paths from Slide 8 step 2) and rebuild.</td></tr>
+      <tr><td>Server starts but cursors never appear</td><td>Are people in the camera's range (0.5–4.5 m)? Is the wall calibrated for that camera? Is a hand raised above the shoulder?</td></tr>
+      <tr><td>Pointing is consistently off to one side</td><td>Re-calibrate that camera→wall pair; make sure projector hasn't moved since calibrating.</td></tr>
+      <tr><td>Two people swap cursors when they cross</td><td>Known limit with 2 cameras — give them more space, or add a third camera angle later.</td></tr>
+      <tr><td>Low frame rate / laggy</td><td>Close other camera apps; the CPU depth pipeline is heavy — lower <code class="inl">num_poses</code>.</td></tr>
+      <tr><td>Browser won't open the camera (single-wall browser app)</td><td>That's the in-browser app, not this server path. For the server path the cameras are opened by Python via libfreenect2.</td></tr>
+    </table>
+    <p class="pill">Full technical detail lives in <code class="inl">KINECT.md</code> and <code class="inl">PLAN.md</code> in the project folder.</p>
+    <div class="nav"><button class="btn ghost prev">← Back</button><button class="btn next">Finish →</button></div>
+  </section>
+
+  <!-- 17 -->
+  <section class="slide" data-title="Done!">
+    <p class="kicker">🎉 Finished</p>
+    <h2>You built a gesture wall</h2>
+    <div class="big">🧱👋🖥️</div>
+    <p class="lede">Two walls, two projectors, two Kinects, and multiple people walking around pointing at tiles.
+      That's a genuinely advanced interactive installation — nice work.</p>
+    <div id="doneBanner" class="done-banner">
+      <h3 style="color:var(--done);margin-top:0">All steps checked off ✅</h3>
+      <p>Everything's set up. Walk in, raise a hand, and point.</p>
+    </div>
+    <h3>Everyday startup (after the one-time setup)</h3>
+    <div class="cmd"><code>cd ~/conductor/workspaces/gesture-wall/asuncion
+.venv/bin/python -m gesturewall.server --config room.json</code><button class="copy">Copy</button></div>
+    <p>…then open <code class="inl">wall.html?wall=A</code> and <code class="inl">?wall=B</code> on the projectors. That's it.</p>
+    <div class="nav"><button class="btn ghost prev">← Back</button><button class="btn ghost" id="toTop">Back to start</button></div>
+  </section>
+
+</main>
+
+<script>
+  const slides = [...document.querySelectorAll('.slide')];
+  const rail = document.getElementById('rail');
+  const fill = document.getElementById('fill');
+  const pct = document.getElementById('pct');
+  const KEY = 'gw.setup.v1.';
+  let cur = 0;
+
+  // build rail
+  slides.forEach((s, i) => {
+    const it = document.createElement('div');
+    it.className = 'railitem';
+    it.innerHTML = `<span class="num">${i+1}</span><span class="t">${s.dataset.title}</span>`;
+    it.onclick = () => go(i);
+    rail.appendChild(it);
+  });
+  const railItems = [...rail.children];
+
+  // restore + wire checkboxes
+  const boxes = [...document.querySelectorAll('.check input[type=checkbox]')];
+  boxes.forEach(b => {
+    if (localStorage.getItem(KEY + b.id) === '1') b.checked = true;
+    syncRow(b);
+    b.addEventListener('change', () => {
+      localStorage.setItem(KEY + b.id, b.checked ? '1' : '0');
+      syncRow(b); refresh();
+    });
+  });
+  function syncRow(b){ b.closest('.check')?.classList.toggle('done', b.checked); }
+
+  function slideBoxes(i){ return [...slides[i].querySelectorAll('.check input')]; }
+  function slideDone(i){ const bs = slideBoxes(i); return bs.length>0 && bs.every(b=>b.checked); }
+
+  function refresh(){
+    const done = boxes.filter(b=>b.checked).length;
+    const total = boxes.length;
+    fill.style.width = total ? (100*done/total)+'%' : '0%';
+    pct.textContent = `${done} / ${total} done`;
+    railItems.forEach((it,i)=> it.classList.toggle('complete', slideDone(i)));
+    const banner = document.getElementById('doneBanner');
+    if (banner) banner.style.display = (done===total && total>0) ? 'block' : 'none';
+  }
+
+  function go(i){
+    cur = Math.max(0, Math.min(slides.length-1, i));
+    slides.forEach((s,k)=> s.classList.toggle('active', k===cur));
+    railItems.forEach((it,k)=> it.classList.toggle('active', k===cur));
+    document.getElementById('stage').scrollTop = 0;
+    location.hash = i+1;
+  }
+
+  // nav buttons (delegated)
+  document.getElementById('stage').addEventListener('click', e=>{
+    if (e.target.classList.contains('next')) go(cur+1);
+    else if (e.target.classList.contains('prev')) go(cur-1);
+    else if (e.target.id === 'toTop') go(0);
+    else if (e.target.classList.contains('copy')){
+      const code = e.target.parentElement.querySelector('code');
+      navigator.clipboard.writeText(code.innerText).then(()=>{
+        const t = e.target.textContent; e.target.textContent='Copied!'; e.target.classList.add('ok');
+        setTimeout(()=>{ e.target.textContent=t; e.target.classList.remove('ok'); }, 1200);
+      });
+    }
+  });
+
+  document.getElementById('reset').onclick = ()=>{
+    if (!confirm('Clear all your checkmarks and start over?')) return;
+    boxes.forEach(b=>{ b.checked=false; localStorage.removeItem(KEY+b.id); syncRow(b); });
+    refresh();
+  };
+
+  window.addEventListener('keydown', e=>{
+    if (e.target.tagName==='INPUT') return;
+    if (e.key==='ArrowRight') go(cur+1);
+    else if (e.key==='ArrowLeft') go(cur-1);
+  });
+
+  const start = parseInt(location.hash.slice(1));
+  go(start>=1 && start<=slides.length ? start-1 : 0);
+  refresh();
+</script>
+</body>
+</html>

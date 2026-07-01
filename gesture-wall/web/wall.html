@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>Gesture Wall — networked wall client</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #18181c; overflow: hidden;
+               font-family: system-ui, -apple-system, sans-serif; color: #ebebeb; }
+  #wall { display: block; width: 100vw; height: 100vh; cursor: crosshair; }
+
+  /* Compact HUD chip (canvas also draws a HUD; this is a DOM mirror + hint). */
+  #hud {
+    position: fixed; bottom: 10px; left: 14px; z-index: 8;
+    font-size: 13px; color: #c9c9d2; background: rgba(20,20,26,.6);
+    padding: 4px 9px; border-radius: 6px; pointer-events: none;
+    font-variant-numeric: tabular-nums;
+  }
+  #hint {
+    position: fixed; bottom: 10px; right: 14px; z-index: 8;
+    font-size: 12px; color: #8a8a96; background: rgba(20,20,26,.55);
+    padding: 4px 9px; border-radius: 6px; pointer-events: none;
+  }
+  /* Fullscreen button — prominent until you click it, hidden while fullscreen. */
+  #fsbtn {
+    position: fixed; top: 14px; right: 14px; z-index: 9;
+    font: 600 15px/1 system-ui, sans-serif; color: #fff;
+    background: #2563aa; border: 1px solid #2f74c4; border-radius: 9px;
+    padding: 11px 16px; cursor: pointer;
+  }
+  #fsbtn:hover { background: #2f74c4; }
+  /* In fullscreen, hide all overlays so the projected wall is clean. */
+  body.fs #fsbtn, body.fs #hint, body.fs #hud { display: none; }
+</style>
+</head>
+<body>
+  <!--
+    Networked multi-cursor wall client.
+
+    URL params:
+      wall    wall id to subscribe to                 (default A)
+      server  websocket URL of the fusion server      (default ws://<host>:8770)
+      rows    zone grid rows                           (default 2)
+      cols    zone grid cols                           (default 3)
+
+    Example: wall.html?wall=B&server=ws://localhost:8770&rows=2&cols=3
+
+    Move the mouse over the canvas to inject a local "mouse test" cursor (id=-1)
+    even with no server connected. Press 'f' for fullscreen.
+  -->
+  <canvas id="wall"></canvas>
+  <button id="fsbtn" title="Fullscreen (or press f)">⛶ Fullscreen</button>
+  <div id="hud">connecting…</div>
+  <div id="hint">mouse-test: move cursor · f: fullscreen</div>
+
+  <!-- Opt-in Vibersyn bridge: dwell tiles drive the Vibersyn projector when this
+       wall is opened with ?vibersyn=<url>. No-op otherwise. Loaded before wall.js
+       so window.__vibersynBridge is installed first. -->
+  <script type="module" src="./vibersyn-bridge.js"></script>
+  <script type="module" src="./wall.js"></script>
+</body>
+</html>
