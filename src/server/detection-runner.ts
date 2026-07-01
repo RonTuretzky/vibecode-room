@@ -80,19 +80,28 @@ export class DetectionRunner {
   // and pending before the next FINAL utterance is processed — preserving the
   // utterance ordering the acceptance flow depends on (the old SuggestionEngine
   // path blocked on inference the same way).
-  async ingestTurnAndDetect(input: IngestTurnInput): Promise<void> {
+  async ingestTurnAndDetect(input: IngestTurnInput, options: { force?: boolean } = {}): Promise<void> {
     this.#latestCorrelationId = input.correlationId;
     this.#engine.ingestTurn({ speaker: input.speaker, text: input.text, atMs: input.atMs });
-    await this.maybeDetect();
+    await this.maybeDetect(options.force ?? false);
   }
 
-  // Run a detection round if the scheduling policy allows and none is in flight.
-  // Returns the in-flight promise so callers/tests can await the round.
-  maybeDetect(): Promise<void> {
+  // Run a detection round NOW, bypassing the scheduling policy (used by IDEA
+  // CAPTURE mode, which detects eagerly on the current window). Non-overlapping.
+  forceDetect(correlationId?: string): Promise<void> {
+    if (correlationId !== undefined) {
+      this.#latestCorrelationId = correlationId;
+    }
+    return this.maybeDetect(true);
+  }
+
+  // Run a detection round if the scheduling policy allows (or `force`) and none is
+  // in flight. Returns the in-flight promise so callers/tests can await the round.
+  maybeDetect(force = false): Promise<void> {
     if (this.#inFlight !== null) {
       return this.#inFlight;
     }
-    if (!this.#engine.shouldDetect(this.#clock())) {
+    if (!force && !this.#engine.shouldDetect(this.#clock())) {
       return Promise.resolve();
     }
     this.#round += 1;

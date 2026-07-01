@@ -77,6 +77,18 @@ describe("DetectionRunner", () => {
     expect(updates.length).toBeGreaterThanOrEqual(2); // detect + accept
   });
 
+  test("forceDetect bypasses the scheduling policy (idea capture mode)", async () => {
+    const detector = new ScriptedDetector([ideaResult("Forced idea", 0.9)]);
+    const runner = makeRunner(detector, { VIBERSYN_DETECT_MIN_NEW_TURNS: "9" });
+    runner.ingestTurn({ speaker: null, text: "one", atMs: 1000, correlationId: "c" });
+    await runner.flush();
+    expect(detector.calls).toBe(0); // minNewTurns=9 → passive schedule skips it
+
+    await runner.forceDetect("c-force");
+    expect(detector.calls).toBe(1); // forced regardless of schedule
+    expect(runner.primary()?.pitch).toBe("Forced idea");
+  });
+
   test("clear() drops candidates and emits", async () => {
     const detector = new ScriptedDetector([ideaResult("X", 0.9)]);
     const runner = makeRunner(detector, { VIBERSYN_DETECT_MIN_NEW_TURNS: "1" });

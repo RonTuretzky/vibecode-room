@@ -1,0 +1,3 @@
+{"id":"laundromat-buildable","input":{"turns":[{"id":"turn-0001","speaker":"a","text":"so i have this idea for a crypto laundromat cooperative"},{"id":"turn-0002","speaker":"a","text":"where all consumers get revenue share"},{"id":"turn-0003","speaker":"a","text":"you can buy liquid ownership in the laundromat network"}]},"expected":{"status":"finished","outputContains":{"ideas":[{"candidates":[{"startTurnId":"turn-0001"}]}]}}}
+{"id":"pure-chatter-empty","input":{"turns":[{"id":"turn-0001","speaker":"a","text":"did you see the game last night"},{"id":"turn-0002","speaker":"b","text":"yeah it was wild"}]},"expected":{"status":"finished"}}
+{"id":"empty-window","input":{"turns":[]},"expected":{"status":"finished"}}

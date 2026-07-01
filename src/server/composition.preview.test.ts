@@ -106,6 +106,25 @@ describe("composition accept path — real build + preview on the snapshot", () 
     expect(runtime.snapshot().processes).toHaveLength(0);
   });
 
+  test("IDEA CAPTURE mode builds a detected idea with no spoken 'yes' (the creation loop)", async () => {
+    runtime = await createProjectorRuntime(liveEnv(replayPath), { buildsRoot, builderAgent: noopBuilder });
+    runtime.setCaptureMode(true);
+    const before = new Set(runtime.snapshot().processes.map((process) => process.upid));
+
+    // A single buildable utterance — no affirmation. Capture mode IS the creation
+    // loop, so the surfaced idea builds itself. The spawn is fire-and-forget from
+    // the detection callback, so poll for it to appear.
+    await drive([final("let's build a dashboard tool to ship the replay prototype today", "utt-build")]);
+    const spawned = await waitFor(() => runtime!.snapshot().processes.find((process) => !before.has(process.upid)));
+
+    expect(spawned).toBeDefined();
+    if (spawned === undefined) return;
+    await runtime.ideaBuilds.settle(spawned.upid);
+    const built = runtime.snapshot().processes.find((process) => process.upid === spawned.upid);
+    expect(built?.buildStatus).toBe("ready");
+    expect(runtime.snapshot().captureMode).toBe(true);
+  });
+
   test("emergency stop tears the live preview server down so its URL stops responding", async () => {
     runtime = await createProjectorRuntime(liveEnv(replayPath), { buildsRoot, builderAgent: noopBuilder });
 
@@ -142,4 +161,16 @@ function liveEnv(replayPath: string): Record<string, string> {
 
 function final(text: string, utteranceId: string): TranscriptObservation {
   return { text, isFinal: true, speaker: "Room", sessionId: "composition-preview", latencyMs: 20, utteranceId };
+}
+
+// Poll until `fn` returns a defined value or the timeout elapses (for state set by
+// a fire-and-forget callback, e.g. capture-mode auto-build).
+async function waitFor<T>(fn: () => T | undefined, timeoutMs = 4000): Promise<T | undefined> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const value = fn();
+    if (value !== undefined) return value;
+    await new Promise((resolve) => setTimeout(resolve, 15));
+  }
+  return fn();
 }

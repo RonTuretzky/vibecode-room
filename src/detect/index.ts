@@ -33,6 +33,15 @@ export {
 } from "./detector";
 export { reconcile, statusForConfidence, type ReconcileOptions, type ReconcileResult } from "./reconciler";
 export {
+  scoreDetection,
+  scoreGrounding,
+  scorePitchQuality,
+  scoreStructure,
+  toScorableIdea,
+  type ScorableIdea,
+  type ScoreResult,
+} from "./scorers";
+export {
   DETECTION_ENGINE_ENV_DEFAULTS,
   IdeaDetectionEngine,
   readDetectionEngineConfig,

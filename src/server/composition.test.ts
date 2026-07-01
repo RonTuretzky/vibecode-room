@@ -578,6 +578,55 @@ describe("LiveProjectorRuntime — injected audio sink receives earcon + tts byt
   });
 });
 
+// IDEA CAPTURE mode: the explicit alternative to passive auto-detect. Toggling it
+// on flags the runtime + snapshot, and makes detection run EAGERLY (bypassing the
+// word/turn schedule) so a deliberately-captured idea surfaces on the next final.
+describe("LiveProjectorRuntime — IDEA CAPTURE mode", () => {
+  test("toggles captureMode on the runtime and the snapshot", async () => {
+    const { runtime } = await makeRuntime();
+    expect(runtime.captureMode()).toBe(false);
+    expect(runtime.snapshot().captureMode).toBe(false);
+
+    runtime.setCaptureMode(true);
+    expect(runtime.captureMode()).toBe(true);
+    expect(runtime.snapshot().captureMode).toBe(true);
+    expect(runtime.trace.events().map((e) => e.event)).toContain("capture.mode.set");
+
+    runtime.setCaptureMode(false);
+    expect(runtime.captureMode()).toBe(false);
+    expect(runtime.snapshot().captureMode).toBe(false);
+  });
+
+  test("capture mode forces a detection round on a single final the schedule would skip", async () => {
+    const recorder = new RecordingDetector();
+    // minNewTurns=5 → the passive schedule would NOT detect after one final.
+    const { runtime, drive } = await makeRuntime({ ideaDetector: recorder, env: { VIBERSYN_DETECT_MIN_NEW_TURNS: "5" } });
+
+    // Baseline: without capture mode, one final does not trigger detection.
+    await drive([final(AMBIENT, "utt-0")]);
+    expect(recorder.inputs).toHaveLength(0);
+
+    // With capture mode on, the same single final forces a detection round.
+    runtime.setCaptureMode(true);
+    await drive([final(BUILDABLE, "utt-1")]);
+    expect(recorder.inputs.length).toBeGreaterThanOrEqual(1);
+  });
+
+  test("emergency stop clears capture mode", async () => {
+    const { runtime } = await makeRuntime();
+    runtime.setCaptureMode(true);
+    expect(runtime.captureMode()).toBe(true);
+    await runtime.emergencyStop("corr-e");
+    expect(runtime.captureMode()).toBe(false);
+    expect(runtime.snapshot().captureMode).toBe(false);
+
+    // ...and cannot be re-enabled after the sticky emergency stop.
+    runtime.setCaptureMode(true);
+    expect(runtime.captureMode()).toBe(false);
+    expect(runtime.snapshot().captureMode).toBe(false);
+  });
+});
+
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 // A detector that records every DetectionInput and returns a fixed (default empty)

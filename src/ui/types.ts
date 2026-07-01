@@ -86,6 +86,10 @@ export interface ProjectorSnapshot {
   // AUTO-BUILD: when true, every fired idea is accepted+built without a click. The
   // projector shows the toggle as ON.
   autoAccept?: boolean;
+  // IDEA CAPTURE mode: when true, the operator has explicitly started the creation
+  // loop — detection runs eagerly and every surfaced idea builds itself. The
+  // projector shows a distinct "capturing" indicator.
+  captureMode?: boolean;
   // Optional live-microphone status. Absent in the static demo fixtures; the
   // server runtime sets it when a browser mic session is wired through
   // /api/mic. `mode` is the ASR backend ("deepgram" = real transcription,

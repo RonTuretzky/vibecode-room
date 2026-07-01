@@ -127,6 +127,10 @@ export interface ProjectorRuntime {
   // accepted+built the instant it pops.
   setAutoAccept(on: boolean, correlationId?: string): ProjectorSnapshot;
   autoAccept(): boolean;
+  // IDEA CAPTURE mode toggle (alternative to passive auto-detect): when on,
+  // detection runs eagerly and every surfaced idea is built — the creation loop.
+  setCaptureMode(on: boolean, correlationId?: string): ProjectorSnapshot;
+  captureMode(): boolean;
 }
 
 interface SeededProcessView {
@@ -275,6 +279,11 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   // (#autoAcceptInFlight) keeps a slow build from stacking a second auto-accept.
   #autoAccept = false;
   #autoAcceptInFlight = false;
+  // IDEA CAPTURE mode: an explicit alternative to passive auto-detect. When on, the
+  // operator has deliberately started the creation loop — detection runs EAGERLY on
+  // every final (no word/turn schedule) and each surfaced ready idea is built
+  // immediately. A distinct indicator on the snapshot shows capture is active.
+  #captureMode = false;
   // Idea detection wiring. `#detectionMode` records which backend was selected
   // (host-claude | heuristic | smithers | injected) for the degradation notice;
   // `#detectionPrimaryId` is the candidate currently surfaced as the bubble (so a
@@ -419,6 +428,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       ? Math.round(acceptWindowSeconds * 1000)
       : undefined;
     this.#autoAccept = env.VIBERSYN_AUTO_ACCEPT === "1" || env.VIBERSYN_AUTO_ACCEPT === "true";
+    this.#captureMode = env.VIBERSYN_CAPTURE_MODE === "1" || env.VIBERSYN_CAPTURE_MODE === "true";
     const pending = new PendingSuggestionOwner({ clock, noAnswerTimeoutMs });
     this.#pendingOwner = pending;
     const acceptanceSeam = createProcessRegistryAcceptanceSeam(this.registry);
@@ -588,9 +598,11 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       // (per-process halt already stops its own; this also reaps any in-flight or
       // not-yet-halted build so no loopback preview outlives the session).
       await this.ideaBuilds.stopAll().catch(() => undefined);
-      // Drop any in-flight idea candidates so the bubble clears with the kill-all.
+      // Drop any in-flight idea candidates so the bubble clears with the kill-all,
+      // and stop the capture creation loop.
       this.detection.clear();
       this.#detectionPrimaryId = null;
+      this.#captureMode = false;
       this.#snapshot = this.buildSnapshot();
       this.publish();
     }
@@ -672,6 +684,39 @@ class LiveProjectorRuntime implements ProjectorRuntime {
 
   autoAccept(): boolean {
     return this.#autoAccept;
+  }
+
+  // IDEA CAPTURE mode. Flip on => the operator has explicitly started the creation
+  // loop: detection runs eagerly on every final and each surfaced idea is built
+  // immediately. Turning it on kicks a detection round NOW over whatever is already
+  // in the window, so an idea just described is captured without waiting for the
+  // next utterance. Flip off => back to passive detection. Returns the fresh snapshot.
+  setCaptureMode(on: boolean, correlationId = `corr-capture-toggle-${crypto.randomUUID()}`): ProjectorSnapshot {
+    // Emergency stop is sticky and clears capture mode; don't let it be re-enabled
+    // (mirrors setSteeringTarget/acceptPendingSuggestion). Otherwise POST /api/capture
+    // or the UI button would trivially undo the kill-all reset.
+    if (this.#emergencyTriggered) {
+      return this.#snapshot;
+    }
+    const changed = this.#captureMode !== on;
+    this.#captureMode = on;
+    this.recordExternalTrace({
+      event: "capture.mode.set",
+      level: "info",
+      sessionId: this.sessionId,
+      correlationId,
+      meta: { on },
+    });
+    if (on && changed && !this.#emergencyTriggered) {
+      // Start the creation loop immediately over the current window.
+      void this.detection.forceDetect(`corr-capture-${correlationId}`).catch(() => undefined);
+    }
+    this.publish();
+    return this.#snapshot;
+  }
+
+  captureMode(): boolean {
+    return this.#captureMode;
   }
 
   // CLICK A PROJECT -> STEER IT. Set the steering target UPID so subsequent live
@@ -996,12 +1041,17 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   private async driveDetection(observation: TranscriptObservation, correlationId: string): Promise<void> {
     const nowMs = this.#clock();
     this.#lastFinalAtMs = nowMs;
-    await this.detection.ingestTurnAndDetect({
-      speaker: observation.speaker,
-      text: observation.text,
-      atMs: nowMs,
-      correlationId: `${correlationId}-${observation.utteranceId}`,
-    });
+    // IDEA CAPTURE mode forces a detection round on every final (bypassing the
+    // passive word/turn schedule) so a deliberately-captured idea surfaces fast.
+    await this.detection.ingestTurnAndDetect(
+      {
+        speaker: observation.speaker,
+        text: observation.text,
+        atMs: nowMs,
+        correlationId: `${correlationId}-${observation.utteranceId}`,
+      },
+      { force: this.#captureMode },
+    );
   }
 
   // React to a detection round: a newly-READY primary candidate becomes the idea
@@ -1023,10 +1073,11 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       // Make spoken/click/auto accept act on the surfaced idea consistently.
       this.#pendingOwner.acceptSuggestion(pending);
       await this.deliverSuggestionAudio(pending, correlationId).catch(() => undefined);
-      // AUTO-BUILD: build the surfaced idea immediately when the toggle is on. The
-      // guard drops overlapping fires while a build spins up so a chatty room
-      // doesn't stack spawns; the next surfaced idea catches it.
-      if (this.#autoAccept && !this.#autoAcceptInFlight) {
+      // Build the surfaced idea immediately when AUTO-BUILD or IDEA CAPTURE mode is
+      // on (capture mode IS the creation loop). The guard drops overlapping fires
+      // while a build spins up so a chatty room doesn't stack spawns; the next
+      // surfaced idea catches it.
+      if ((this.#autoAccept || this.#captureMode) && !this.#autoAcceptInFlight) {
         this.#autoAcceptInFlight = true;
         void this.acceptPendingSuggestion(`corr-auto-accept-${primary.id}`).finally(() => {
           this.#autoAcceptInFlight = false;
@@ -1147,6 +1198,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       mic: { mode: this.micMode, active: this.#micActive, bytesReceived: this.#micBytes },
       steeringUpid: this.#steeringUpid,
       autoAccept: this.#autoAccept,
+      captureMode: this.#captureMode,
     };
   }
 

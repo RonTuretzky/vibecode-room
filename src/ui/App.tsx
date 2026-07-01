@@ -163,6 +163,28 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
     }
   }, [liveMode]);
 
+  // IDEA CAPTURE toggle (alternative to passive auto-detect). Flips the server-side
+  // capture flag: when on, detection runs eagerly and every surfaced idea builds
+  // itself — the operator has deliberately started the creation loop.
+  const captureMode = snapshot.captureMode ?? false;
+  const toggleCaptureMode = useCallback(async () => {
+    if (!liveMode) {
+      return;
+    }
+    try {
+      const response = await fetch("/api/capture", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ on: !snapshotRef.current.captureMode }),
+      });
+      if (response.ok && response.headers.get("content-type")?.includes("application/json")) {
+        setSnapshot((await response.json()) as ProjectorSnapshot);
+      }
+    } catch {
+      // Non-authoritative projector: a failed toggle must never block the UI.
+    }
+  }, [liveMode]);
+
   // CLICK A PROJECT -> STEER IT. In live mode, clicking a process bubble/panel sets
   // it as the steering target (so subsequent transcript routes to it); clicking the
   // current target again clears steering. In offline demo it falls back to opening
@@ -495,6 +517,17 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
             bytesReceived={snapshot.mic?.bytesReceived ?? 0}
             onToggle={() => void toggleMic()}
           />
+          <button
+            type="button"
+            className={`ctl-button capture${captureMode ? " on" : ""}`}
+            data-testid="capture-button"
+            data-state={captureMode ? "on" : "off"}
+            aria-pressed={captureMode}
+            onClick={() => void toggleCaptureMode()}
+            title="Idea Capture: deliberately start the creation loop — detection runs eagerly and every idea builds itself."
+          >
+            {captureMode ? "● Capturing" : "Idea Capture"}
+          </button>
           <button
             type="button"
             className={`ctl-button auto-build${autoAccept ? " on" : ""}`}
