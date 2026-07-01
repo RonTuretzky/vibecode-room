@@ -46,20 +46,52 @@ class FakeSmithersClient implements SmithersClient {
 }
 
 describe("candidatesFromFrame", () => {
-  test("extracts and grounds candidates nested under output.candidates", () => {
+  test("extracts rubric assessments nested under output and derives candidates", () => {
     const frame: GatewayEventFrame = {
       event: "run.event",
       seq: 3,
       payload: {
-        output: { candidates: [{ pitch: "Crypto laundromat co-op", confidence: 0.9, startTurnId: "turn-0001", endTurnId: "turn-0002", quote: "drifted" }] },
+        output: {
+          assessments: [
+            {
+              matchId: null,
+              category: "proposal",
+              concreteness: 2,
+              buildableAsSoftware: 2,
+              intent: 2,
+              novelty: 2,
+              pitch: "Crypto laundromat co-op",
+              startTurn: "turn-0001",
+              endTurn: "turn-0002",
+              quote: "drifted",
+            },
+          ],
+        },
       },
     };
     const result = candidatesFromFrame(frame, input());
     expect(result).not.toBeNull();
     expect(result).toHaveLength(1);
     expect(result![0].pitch).toBe("Crypto laundromat co-op");
+    expect(result![0].confidence).toBeCloseTo(0.667, 2); // derived from the rubric
+    expect(result![0].judgment?.rubric.category).toBe("proposal");
     // quote is repaired from ground truth, not the model's "drifted"
     expect(result![0].contextSpan.quote).toBe("crypto laundromat cooperative with revenue share");
+  });
+
+  test("gated assessments (joke / existing product) never become candidates", () => {
+    const frame: GatewayEventFrame = {
+      event: "run.event",
+      seq: 4,
+      payload: {
+        output: {
+          assessments: [
+            { matchId: null, category: "hypothetical", concreteness: 1, buildableAsSoftware: 3, intent: 0, novelty: 2, pitch: "Joke app", startTurn: "turn-0001", endTurn: "turn-0001", quote: "q" },
+          ],
+        },
+      },
+    };
+    expect(candidatesFromFrame(frame, input())).toHaveLength(0);
   });
 
   test("returns null for frames without a candidates array", () => {
@@ -71,7 +103,18 @@ describe("SmithersIdeaDetector", () => {
   test("spawns the idea-detection workflow with the window and returns parsed candidates", async () => {
     const client = new FakeSmithersClient([
       { event: "run.event", seq: 1, payload: { status: "running" } },
-      { event: "run.event", seq: 2, payload: { node: "detect", output: { candidates: [{ matchId: null, pitch: "Build a co-op app", confidence: 0.82, startTurnId: "turn-0001", endTurnId: "turn-0001" }] } } },
+      {
+        event: "run.event",
+        seq: 2,
+        payload: {
+          node: "detect",
+          output: {
+            assessments: [
+              { matchId: null, category: "proposal", concreteness: 2, buildableAsSoftware: 3, intent: 2, novelty: 2, pitch: "Build a co-op app", startTurn: "turn-0001", endTurn: "turn-0001", quote: "q" },
+            ],
+          },
+        },
+      },
     ]);
     const detector = new SmithersIdeaDetector({ client, idFactory: () => "detect-xyz" });
     const result = await detector.detect(input({ known: [{ id: "k1", pitch: "x", contextSpan: { startTurnId: "turn-0001", endTurnId: "turn-0001", quote: "x" } }] }));

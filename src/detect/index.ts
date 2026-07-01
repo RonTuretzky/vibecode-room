@@ -1,7 +1,8 @@
-// Ambient idea detection: windowed, inference-driven, provenance-carrying. This
+// Ambient idea detection: windowed, rubric-judged, provenance-carrying. This
 // barrel is the public surface; import detection types/engine from here, not from
 // individual modules.
 export {
+  type CandidateVerdict,
   type ContextSpan,
   type DetectedIdea,
   type DetectionInput,
@@ -9,29 +10,56 @@ export {
   type IdeaCandidate,
   type IdeaCandidateStatus,
   type IdeaDetector,
+  type JudgedIdea,
   type KnownCandidate,
+  type VerifiableIdea,
   type TranscriptTurn,
   contextSpanSchema,
   detectedIdeaSchema,
   detectionResultSchema,
+  ideaAssessmentSchema,
+  ideaRubricSchema,
   transcriptTurnSchema,
 } from "./types";
-export { TranscriptWindow, groundSpan, renderTurns, type AppendTurnInput, type TranscriptWindowOptions } from "./transcript-window";
+export {
+  DEFAULT_SURFACE_THRESHOLD,
+  IDEA_CATEGORIES,
+  MIN_SURFACE_INTENT,
+  RUBRIC_WEIGHTS,
+  clampLevel,
+  deriveAssessment,
+  normalizeRubric,
+  type IdeaAssessment,
+  type IdeaCategory,
+  type IdeaMaturity,
+  type IdeaRubric,
+} from "./rubric";
+export {
+  buildJudgePrompt,
+  buildVerifyPrompt,
+  groundQuote,
+  parseJudgeReply,
+  parseVerifyReply,
+  renderTurns,
+  type ParsedJudgement,
+  type VerifyVerdict,
+} from "./prompt";
+export { TranscriptWindow, groundSpan, type AppendTurnInput, type TranscriptWindowOptions } from "./transcript-window";
 export { type ClaudeCliOptions, type ClaudeCliRunner, defaultClaudeCliRunner } from "./claude-cli";
 export {
   DEFAULT_IDEA_DETECTOR_MODEL,
   DEFAULT_IDEA_DETECTOR_TIMEOUT_MS,
   HeuristicIdeaDetector,
   HostClaudeIdeaDetector,
+  HostClaudeIdeaJudge,
   type HostClaudeIdeaDetectorOptions,
+  type HostClaudeIdeaJudgeOptions,
   type IdeaDetectorMode,
   type IdeaDetectorSelection,
   type IdeaDetectorSelectionEnv,
-  buildDetectionPrompt,
-  parseDetectionReply,
   selectIdeaDetector,
 } from "./detector";
-export { reconcile, statusForConfidence, type ReconcileOptions, type ReconcileResult } from "./reconciler";
+export { IdeaLedger, type LedgerConfig, type LedgerDelta } from "./ledger";
 export {
   scoreDetection,
   scoreGrounding,

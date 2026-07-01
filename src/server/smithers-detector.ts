@@ -1,4 +1,5 @@
-import type { DetectedIdea, DetectionInput, DetectionResult, IdeaDetector } from "../detect";
+import { HostClaudeIdeaJudge, parseJudgeReply } from "../detect";
+import type { CandidateVerdict, DetectedIdea, DetectionInput, DetectionResult, IdeaDetector, VerifiableIdea } from "../detect";
 import type { GatewayEventFrame, SmithersClient, SpawnSeed } from "../seam/smithers-client";
 
 export const IDEA_DETECTION_WORKFLOW = "idea-detection";
@@ -11,6 +12,11 @@ export interface SmithersIdeaDetectorOptions {
   maxFrames?: number;
   // Unique-id factory for the per-round run UPID. Injectable for tests.
   idFactory?: () => string;
+  // Adversarial verification for gateway mode. Detection runs durably on the
+  // gateway, but the skeptic pass is a single cheap call — it runs through the
+  // host `claude` CLI by default so VIBERSYN_DETECT_VERIFY stays meaningful in
+  // gateway mode. Injectable for tests.
+  verifier?: (idea: VerifiableIdea, input: DetectionInput) => Promise<CandidateVerdict>;
 }
 
 // An IdeaDetector that runs detection as a DURABLE SMITHERS RUN: each detect()
@@ -27,12 +33,25 @@ export class SmithersIdeaDetector implements IdeaDetector {
   readonly #workflow: string;
   readonly #maxFrames: number;
   readonly #idFactory: () => string;
+  readonly #verifier: (idea: VerifiableIdea, input: DetectionInput) => Promise<CandidateVerdict>;
 
   constructor(options: SmithersIdeaDetectorOptions) {
     this.#client = options.client;
     this.#workflow = options.workflow ?? IDEA_DETECTION_WORKFLOW;
     this.#maxFrames = options.maxFrames ?? DEFAULT_MAX_FRAMES;
     this.#idFactory = options.idFactory ?? (() => `detect-${crypto.randomUUID()}`);
+    const fallbackJudge = new HostClaudeIdeaJudge();
+    this.#verifier = options.verifier ?? ((idea, input) => fallbackJudge.verify(idea, input));
+  }
+
+  // The adversarial skeptic pass (engine calls this when an idea first turns
+  // ready). Fail-open like the local judge: a broken verifier never blocks.
+  async verify(idea: VerifiableIdea, input: DetectionInput): Promise<CandidateVerdict> {
+    try {
+      return await this.#verifier(idea, input);
+    } catch (error) {
+      return { uphold: true, reason: `verifier-error: ${error instanceof Error ? error.message : String(error)}` };
+    }
   }
 
   async detect(input: DetectionInput): Promise<DetectionResult> {
@@ -85,20 +104,23 @@ export class SmithersIdeaDetector implements IdeaDetector {
 // ideas) out of a run-event frame, wherever the gateway nests it. Returns null
 // when this frame doesn't carry the output (keep streaming).
 export function candidatesFromFrame(frame: GatewayEventFrame, input: DetectionInput): DetectedIdea[] | null {
-  const ideas = findCandidatesArray(frame.payload);
-  if (ideas === null) {
+  const assessments = findAssessmentsArray(frame.payload);
+  if (assessments === null) {
     return null;
   }
-  return coerceCandidates(ideas, input);
+  // Reuse the ONE judgment-mapping path (prompt.ts): normalize each rubric,
+  // derive confidence in code, gate non-proposals, repair grounding — identical
+  // to how a local judge reply is handled.
+  return parseJudgeReply(JSON.stringify({ assessments }), input).ideas;
 }
 
-function findCandidatesArray(value: unknown, depth = 0): unknown[] | null {
+function findAssessmentsArray(value: unknown, depth = 0): unknown[] | null {
   if (depth > 6 || value === null || typeof value !== "object") {
     return null;
   }
   if (Array.isArray(value)) {
     for (const entry of value) {
-      const nested = findCandidatesArray(entry, depth + 1);
+      const nested = findAssessmentsArray(entry, depth + 1);
       if (nested !== null) {
         return nested;
       }
@@ -106,13 +128,13 @@ function findCandidatesArray(value: unknown, depth = 0): unknown[] | null {
     return null;
   }
   const record = value as Record<string, unknown>;
-  // The workflow's `ideas` output schema is { candidates: DetectedIdea[] }.
-  if (Array.isArray(record.candidates)) {
-    return record.candidates as unknown[];
+  // The workflow's `ideas` output schema is { assessments: [...rubric...] }.
+  if (Array.isArray(record.assessments)) {
+    return record.assessments as unknown[];
   }
   for (const key of ["output", "outputs", "ideas", "result", "data", "payload", "value", "row", "rows"]) {
     if (key in record) {
-      const nested = findCandidatesArray(record[key], depth + 1);
+      const nested = findAssessmentsArray(record[key], depth + 1);
       if (nested !== null) {
         return nested;
       }
@@ -121,70 +143,21 @@ function findCandidatesArray(value: unknown, depth = 0): unknown[] | null {
   return null;
 }
 
-function coerceCandidates(raw: unknown[], input: DetectionInput): DetectedIdea[] {
-  const turnIds = new Set(input.turns.map((t) => t.id));
-  const firstId = input.turns[0]?.id;
-  const lastId = input.turns.at(-1)?.id;
-  const out: DetectedIdea[] = [];
-  for (const entry of raw) {
-    if (entry === null || typeof entry !== "object") {
-      continue;
-    }
-    const r = entry as Record<string, unknown>;
-    const pitch = typeof r.pitch === "string" ? r.pitch.trim() : "";
-    if (pitch.length === 0 || firstId === undefined || lastId === undefined) {
-      continue;
-    }
-    const startTurnId = typeof r.startTurnId === "string" && turnIds.has(r.startTurnId) ? r.startTurnId : firstId;
-    const endTurnId = typeof r.endTurnId === "string" && turnIds.has(r.endTurnId) ? r.endTurnId : lastId;
-    out.push({
-      matchId: typeof r.matchId === "string" && r.matchId.trim().length > 0 ? r.matchId.trim() : null,
-      pitch,
-      confidence: clamp01(typeof r.confidence === "number" ? r.confidence : 0.6),
-      questions: stringArray(r.questions).slice(0, 3),
-      answers: stringArray(r.answers).slice(0, 3),
-      contextSpan: {
-        startTurnId,
-        endTurnId,
-        quote: groundQuote(input, startTurnId, endTurnId) ?? (typeof r.quote === "string" ? r.quote : ""),
-      },
-      rationale: typeof r.rationale === "string" ? r.rationale : "",
-    });
-  }
-  return out;
-}
-
-function groundQuote(input: DetectionInput, startId: string, endId: string): string | null {
-  const startIndex = input.turns.findIndex((t) => t.id === startId);
-  const endIndex = input.turns.findIndex((t) => t.id === endId);
-  if (startIndex === -1 || endIndex === -1) {
-    return null;
-  }
-  const [lo, hi] = startIndex <= endIndex ? [startIndex, endIndex] : [endIndex, startIndex];
-  return input.turns
-    .slice(lo, hi + 1)
-    .map((t) => t.text)
-    .join(" ");
-}
-
 function isRunCompleteFrame(frame: GatewayEventFrame): boolean {
-  const event = `${frame.event ?? ""}`.toLowerCase();
-  if (event.includes("run.completed") || event.includes("run.finished") || event.includes("runfinished")) {
+  // The official transport nests the engine event under payload.event with its
+  // own payload.payload — check the outer envelope AND the inner one (mirrors
+  // normalizeSmithersRunEvent in src/seam/run-events.ts).
+  const payload = isRecord(frame.payload) ? frame.payload : {};
+  const names = [frame.event, payload.event].map((v) => `${v ?? ""}`.toLowerCase());
+  if (names.some((n) => n.includes("run.completed") || n.includes("run.finished") || n.includes("runfinished"))) {
     return true;
   }
-  const status = isRecord(frame.payload) ? `${frame.payload.status ?? ""}`.toLowerCase() : "";
-  return status === "finished" || status === "failed" || status === "cancelled";
+  const inner = isRecord(payload.payload) ? payload.payload : {};
+  const statuses = [payload.status, inner.status].map((v) => `${v ?? ""}`.toLowerCase());
+  return statuses.some((s) => s === "finished" || s === "failed" || s === "cancelled");
 }
 
-function stringArray(value: unknown): string[] {
-  return Array.isArray(value)
-    ? value.filter((v): v is string => typeof v === "string" && v.trim().length > 0).map((v) => v.trim())
-    : [];
-}
 
-function clamp01(value: number): number {
-  return Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0;
-}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

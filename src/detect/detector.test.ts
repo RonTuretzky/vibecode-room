@@ -1,16 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import type { ClaudeCliRunner } from "./claude-cli";
-import {
-  HeuristicIdeaDetector,
-  HostClaudeIdeaDetector,
-  buildDetectionPrompt,
-  parseDetectionReply,
-  selectIdeaDetector,
-} from "./detector";
+import { HeuristicIdeaDetector, HostClaudeIdeaJudge, selectIdeaDetector } from "./detector";
 import type { DetectionInput, TranscriptTurn } from "./types";
 
-function turn(id: string, text: string, atMs = 0, speaker: string | null = "speaker_0"): TranscriptTurn {
-  return { id, speaker, text, atMs };
+function turn(id: string, text: string, speaker: string | null = "speaker_0"): TranscriptTurn {
+  return { id, speaker, text, atMs: 0 };
 }
 
 function input(turns: TranscriptTurn[], known: DetectionInput["known"] = []): DetectionInput {
@@ -18,138 +12,136 @@ function input(turns: TranscriptTurn[], known: DetectionInput["known"] = []): De
 }
 
 const laundromat = [
-  turn("turn-0001", "so i have this idea for a crypto laundromat cooperative", 0),
-  turn("turn-0002", "where all consumers get revenue share", 1),
-  turn("turn-0003", "you can buy liquid ownership in the laundromat network", 2),
+  turn("turn-0001", "so i have this idea for a crypto laundromat cooperative"),
+  turn("turn-0002", "where all consumers get revenue share"),
+  turn("turn-0003", "you can buy liquid ownership in the laundromat network"),
 ];
 
-describe("buildDetectionPrompt", () => {
-  test("includes labelled turns and known-candidate ids", () => {
-    const prompt = buildDetectionPrompt(
-      input(laundromat, [
-        { id: "cand-1", pitch: "Crypto laundromat co-op", contextSpan: { startTurnId: "turn-0001", endTurnId: "turn-0001", quote: "x" } },
-      ]),
-    );
-    expect(prompt).toContain("[turn-0001] speaker_0: so i have this idea");
-    expect(prompt).toContain("id=cand-1");
-    expect(prompt).toContain('{"ideas":[]}');
-  });
+const assessment = (over: Record<string, unknown> = {}) => ({
+  matchId: null,
+  category: "proposal",
+  concreteness: 2,
+  buildableAsSoftware: 2,
+  intent: 2,
+  novelty: 2,
+  pitch: "Build a crypto laundromat co-op app",
+  startTurn: "turn-0001",
+  endTurn: "turn-0003",
+  quote: "paraphrase",
+  questions: ["Token-gated membership?"],
+  answers: ["Yes", "No"],
+  rationale: "concrete buildable product",
+  ...over,
 });
 
-describe("parseDetectionReply", () => {
-  test("grounds the cited span to verbatim turn text (repairs a drifted quote)", () => {
-    const reply = JSON.stringify({
-      ideas: [
-        {
-          matchId: null,
-          pitch: "Build a crypto laundromat co-op app",
-          confidence: 0.88,
-          questions: ["Token-gated membership?", "Revenue share on-chain?"],
-          answers: ["Yes", "Yes"],
-          startTurn: "turn-0001",
-          endTurn: "turn-0003",
-          quote: "model paraphrase that should be replaced",
-          rationale: "concrete buildable product",
-        },
-      ],
-    });
-    const result = parseDetectionReply(reply, input(laundromat));
+describe("HostClaudeIdeaJudge.detect", () => {
+  test("judges the window via the rubric and returns grounded candidates with derived confidence", async () => {
+    const prompts: string[] = [];
+    const runner: ClaudeCliRunner = async (prompt) => {
+      prompts.push(prompt);
+      return JSON.stringify({ assessments: [assessment()] });
+    };
+    const result = await new HostClaudeIdeaJudge({ runner }).detect(input(laundromat));
     expect(result.candidates).toHaveLength(1);
     const c = result.candidates[0];
-    expect(c.pitch).toBe("Build a crypto laundromat co-op app");
-    expect(c.confidence).toBe(0.88);
-    expect(c.contextSpan.startTurnId).toBe("turn-0001");
-    expect(c.contextSpan.endTurnId).toBe("turn-0003");
-    expect(c.contextSpan.quote).toBe(
-      "so i have this idea for a crypto laundromat cooperative where all consumers get revenue share you can buy liquid ownership in the laundromat network",
-    );
+    expect(c.confidence).toBeCloseTo(0.667, 2); // derived, not model-supplied
+    expect(c.judgment?.rubric.category).toBe("proposal");
+    expect(c.contextSpan.quote).toContain("crypto laundromat cooperative"); // repaired
+    // The prompt is the anchored-rubric judge prompt, not the old paragraph.
+    expect(prompts[0]).toContain("concreteness 0-3");
+    expect(prompts[0]).toContain("Example 6");
   });
 
-  test("tolerates prose/fences around the JSON and clamps confidence", () => {
-    const reply = "Sure!\n```json\n" + JSON.stringify({ ideas: [{ pitch: "Make a tool", confidence: 5, startTurn: "x", endTurn: "y" }] }) + "\n```";
-    const result = parseDetectionReply(reply, input(laundromat));
-    expect(result.candidates).toHaveLength(1);
-    expect(result.candidates[0].confidence).toBe(1);
-    // unknown turn ids fall back to window bounds
-    expect(result.candidates[0].contextSpan.startTurnId).toBe("turn-0001");
-    expect(result.candidates[0].contextSpan.endTurnId).toBe("turn-0003");
-  });
-
-  test("empty ideas and malformed replies yield zero candidates", () => {
-    expect(parseDetectionReply('{"ideas":[]}', input(laundromat)).candidates).toHaveLength(0);
-    expect(parseDetectionReply("not json at all", input(laundromat)).candidates).toHaveLength(0);
-    expect(parseDetectionReply(JSON.stringify({ ideas: [{ pitch: "", confidence: 0.9 }] }), input(laundromat)).candidates).toHaveLength(0);
-  });
-
-  test("preserves a model-supplied matchId for reconciliation", () => {
-    const reply = JSON.stringify({ ideas: [{ matchId: "cand-7", pitch: "Add on-chain dividends", confidence: 0.7, startTurn: "turn-0002", endTurn: "turn-0002" }] });
-    expect(parseDetectionReply(reply, input(laundromat)).candidates[0].matchId).toBe("cand-7");
-  });
-});
-
-describe("HostClaudeIdeaDetector", () => {
-  test("runs the injected CLI runner and returns grounded candidates", async () => {
+  test("gated spans (existing product / joke) yield no candidates but are traced in raw", async () => {
     const runner: ClaudeCliRunner = async () =>
-      JSON.stringify({ ideas: [{ pitch: "Crypto laundromat co-op", confidence: 0.9, startTurn: "turn-0001", endTurn: "turn-0002" }] });
-    const detector = new HostClaudeIdeaDetector({ runner });
-    const result = await detector.detect(input(laundromat));
-    expect(result.candidates).toHaveLength(1);
-    expect(result.candidates[0].pitch).toBe("Crypto laundromat co-op");
+      JSON.stringify({
+        assessments: [
+          assessment({ category: "existing-product", novelty: 0, pitch: "Linear calendar" }),
+          assessment({ category: "hypothetical", intent: 0, pitch: "Text your ex app" }),
+        ],
+      });
+    const result = await new HostClaudeIdeaJudge({ runner }).detect(input(laundromat));
+    expect(result.candidates).toHaveLength(0);
+    expect((result.raw as { assessments: unknown[] }).assessments).toHaveLength(2);
   });
 
-  test("fails soft (zero candidates) when the runner throws", async () => {
-    const runner: ClaudeCliRunner = async () => {
+  test("fails soft (zero candidates) when the runner throws; empty window never calls the runner", async () => {
+    let called = 0;
+    const throwing: ClaudeCliRunner = async () => {
+      called += 1;
       throw new Error("spawn failed");
     };
-    const result = await new HostClaudeIdeaDetector({ runner }).detect(input(laundromat));
+    const judge = new HostClaudeIdeaJudge({ runner: throwing });
+    const result = await judge.detect(input(laundromat));
     expect(result.candidates).toHaveLength(0);
     expect(result.raw).toMatchObject({ error: "spawn failed" });
-  });
-
-  test("returns nothing for an empty window without calling the runner", async () => {
-    let called = false;
-    const runner: ClaudeCliRunner = async () => {
-      called = true;
-      return "{}";
-    };
-    const result = await new HostClaudeIdeaDetector({ runner }).detect(input([]));
-    expect(result.candidates).toHaveLength(0);
-    expect(called).toBe(false);
+    await judge.detect(input([]));
+    expect(called).toBe(1);
   });
 });
 
-describe("HeuristicIdeaDetector", () => {
-  test("grounds one candidate to the contiguous buildable-cue turns", () => {
+describe("HostClaudeIdeaJudge.verify (adversarial pass)", () => {
+  const judged = async (runner: ClaudeCliRunner) => {
+    const detectRunner: ClaudeCliRunner = async () => JSON.stringify({ assessments: [assessment()] });
+    const idea = (await new HostClaudeIdeaJudge({ runner: detectRunner }).detect(input(laundromat))).candidates[0];
+    return { idea, judge: new HostClaudeIdeaJudge({ runner }) };
+  };
+
+  test("an explicit reject vetoes with the reason", async () => {
+    const { idea, judge } = await judged(async (prompt) => {
+      expect(prompt).toContain("Reject ONLY");
+      expect(prompt).toContain("Build a crypto laundromat co-op app");
+      return JSON.stringify({ verdict: "reject", reason: "this already exists as X" });
+    });
+    expect(await judge.verify(idea, input(laundromat))).toEqual({ uphold: false, reason: "this already exists as X" });
+  });
+
+  test("uphold, garbage, and runner errors all fail OPEN", async () => {
+    const { idea } = await judged(async () => "unused");
+    const uphold = new HostClaudeIdeaJudge({ runner: async () => JSON.stringify({ verdict: "uphold", reason: "new" }) });
+    const garbage = new HostClaudeIdeaJudge({ runner: async () => "not json" });
+    const broken = new HostClaudeIdeaJudge({
+      runner: async () => {
+        throw new Error("timeout");
+      },
+    });
+    expect((await uphold.verify(idea, input(laundromat))).uphold).toBe(true);
+    expect((await garbage.verify(idea, input(laundromat))).uphold).toBe(true);
+    expect((await broken.verify(idea, input(laundromat))).uphold).toBe(true);
+  });
+});
+
+describe("HeuristicIdeaDetector (rubric-shaped fallback)", () => {
+  test("multi-cue talk surfaces (concreteness 2 → ~0.667); judgment attached", () => {
     const result = new HeuristicIdeaDetector().detectSync(input(laundromat));
     expect(result.candidates).toHaveLength(1);
     const c = result.candidates[0];
-    expect(c.contextSpan.startTurnId).toBe("turn-0001"); // "cooperative"
-    expect(c.contextSpan.endTurnId).toBe("turn-0003"); // "network"
-    expect(c.confidence).toBeGreaterThan(0.5);
+    expect(c.judgment?.rubric.concreteness).toBe(2);
+    expect(c.confidence).toBeCloseTo(0.667, 2);
+    expect(c.contextSpan.startTurnId).toBe("turn-0001");
+    expect(c.contextSpan.endTurnId).toBe("turn-0003");
   });
 
-  test("emits nothing for pure chatter", () => {
-    const chatter = [turn("turn-0001", "did you see the game last night"), turn("turn-0002", "yeah it was wild")];
-    expect(new HeuristicIdeaDetector().detectSync(input(chatter)).candidates).toHaveLength(0);
+  test("a single cue is a forming idea (held below the default threshold)", () => {
+    const result = new HeuristicIdeaDetector().detectSync(input([turn("turn-0001", "maybe an app for that")]));
+    expect(result.candidates).toHaveLength(1);
+    expect(result.candidates[0].confidence).toBeCloseTo(0.55, 2);
+    expect(result.candidates[0].judgment?.assessment.surfaceable).toBe(false);
   });
 
-  test("sets matchId when a known candidate overlaps the cue span", () => {
+  test("pure chatter yields nothing; overlap sets matchId", () => {
+    expect(new HeuristicIdeaDetector().detectSync(input([turn("t1", "how was the game")])).candidates).toHaveLength(0);
     const known = [{ id: "cand-9", pitch: "x", contextSpan: { startTurnId: "turn-0001", endTurnId: "turn-0002", quote: "x" } }];
-    const result = new HeuristicIdeaDetector().detectSync(input(laundromat, known));
-    expect(result.candidates[0].matchId).toBe("cand-9");
+    expect(new HeuristicIdeaDetector().detectSync(input(laundromat, known)).candidates[0].matchId).toBe("cand-9");
   });
 });
 
 describe("selectIdeaDetector", () => {
-  test("defaults to host-claude", () => {
+  test("defaults to host-claude; heuristic override; unknown throws", () => {
     expect(selectIdeaDetector({}).mode).toBe("host-claude");
-  });
-  test("honors VIBERSYN_IDEA_DETECTOR=heuristic", () => {
     const sel = selectIdeaDetector({ VIBERSYN_IDEA_DETECTOR: "heuristic" });
     expect(sel.mode).toBe("heuristic");
     expect(sel.detector).toBeInstanceOf(HeuristicIdeaDetector);
-  });
-  test("throws on an unknown mode", () => {
     expect(() => selectIdeaDetector({ VIBERSYN_IDEA_DETECTOR: "gpt" })).toThrow(/Unknown VIBERSYN_IDEA_DETECTOR/u);
   });
 });

@@ -73,7 +73,25 @@ describe("toScorableIdea", () => {
 describe("scoreDetection over real detector output (fake runner, no live agent)", () => {
   test("a well-grounded detection scores >= 0.9 combined", async () => {
     const runner: ClaudeCliRunner = async () =>
-      JSON.stringify({ ideas: [{ pitch: "Crypto laundromat co-op with revenue share", confidence: 0.85, startTurn: "turn-0001", endTurn: "turn-0003", quote: "ignored, repaired from turns" }] });
+      JSON.stringify({
+        assessments: [
+          {
+            matchId: null,
+            category: "proposal",
+            concreteness: 2,
+            buildableAsSoftware: 3,
+            intent: 2,
+            novelty: 2,
+            pitch: "Crypto laundromat co-op with revenue share",
+            startTurn: "turn-0001",
+            endTurn: "turn-0003",
+            quote: "ignored, repaired from turns",
+            questions: [],
+            answers: [],
+            rationale: "buildable proposal",
+          },
+        ],
+      });
     const input: DetectionInput = { sessionId: "s", correlationId: "c", turns: laundromat, known: [] };
     const result = await new HostClaudeIdeaDetector({ runner }).detect(input);
 

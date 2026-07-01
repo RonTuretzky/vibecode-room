@@ -36,6 +36,28 @@ export type ContextSpan = z.infer<typeof contextSpanSchema>;
 // that was raised earlier and just got elaborated), or leave it null for a fresh
 // idea. confidence is the model's own judgement, 0..1 — it REPLACES the word/time
 // floor and the hand-tuned quality/cadence math entirely.
+// The structured judgment behind the idea (see rubric.ts). Real detectors always
+// attach it; test fakes may omit it, in which case the ledger derives a neutral
+// pseudo-judgment from the bare confidence.
+export const ideaRubricSchema = z
+  .object({
+    category: z.enum(["proposal", "existing-product", "hypothetical", "logistics", "recap", "chatter"]),
+    concreteness: z.number().min(0).max(3),
+    buildableAsSoftware: z.number().min(0).max(3),
+    intent: z.number().min(0).max(3),
+    novelty: z.number().min(0).max(3),
+  })
+  .strict();
+
+export const ideaAssessmentSchema = z
+  .object({
+    confidence: z.number().min(0).max(1),
+    surfaceable: z.boolean(),
+    maturity: z.enum(["forming", "proposed", "elaborated", "actionable"]),
+    blockedBy: z.array(z.string()).default([]),
+  })
+  .strict();
+
 export const detectedIdeaSchema = z
   .object({
     matchId: z.string().min(1).nullable().default(null),
@@ -45,9 +67,12 @@ export const detectedIdeaSchema = z
     answers: z.array(z.string()).default([]),
     contextSpan: contextSpanSchema,
     rationale: z.string().default(""),
+    judgment: z.object({ rubric: ideaRubricSchema, assessment: ideaAssessmentSchema }).strict().optional(),
   })
   .strict();
 export type DetectedIdea = z.infer<typeof detectedIdeaSchema>;
+// An idea from a real rubric judge — the judgment is always present.
+export type JudgedIdea = DetectedIdea & { judgment: NonNullable<DetectedIdea["judgment"]> };
 
 export const detectionResultSchema = z
   .object({
@@ -73,12 +98,32 @@ export interface DetectionInput {
   known: KnownCandidate[];
 }
 
+// A skeptic's verdict on a candidate about to surface (adversarial second pass).
+export interface CandidateVerdict {
+  uphold: boolean;
+  reason: string;
+}
+
+// The minimal shape verification needs — satisfied by both DetectedIdea and the
+// ledger's IdeaCandidate.
+export interface VerifiableIdea {
+  pitch: string;
+  contextSpan: ContextSpan;
+  judgment?: DetectedIdea["judgment"];
+}
+
 // The inference contract. One call judges a whole window and returns every
-// buildable idea it finds, each grounded to a context span. Implementations:
-// HostClaudeIdeaDetector (real `claude` CLI inference), HeuristicIdeaDetector
-// (deterministic, no model), and test fakes.
+// idea-shaped span it finds, each grounded to a context span and (for real
+// detectors) carrying its rubric judgment. Implementations: HostClaudeIdeaJudge
+// (real `claude` CLI inference), HeuristicIdeaDetector (deterministic, no
+// model), and test fakes.
+//
+// `verify` is the optional adversarial pass: the engine calls it exactly once
+// when a candidate first crosses the surface threshold; a rejection vetoes the
+// bubble. Detectors without it (heuristic, test fakes) surface unverified.
 export interface IdeaDetector {
   detect(input: DetectionInput): Promise<DetectionResult>;
+  verify?(idea: VerifiableIdea, input: DetectionInput): Promise<CandidateVerdict>;
 }
 
 // ── engine-side candidate ───────────────────────────────────────────────────
@@ -93,9 +138,25 @@ export interface IdeaCandidate {
   confidence: number;
   questions: string[];
   answers: string[];
+  // The most recent grounding span; `spans` accumulates every span that has
+  // supported this idea across rounds (evidence trail, capped).
   contextSpan: ContextSpan;
+  spans: ContextSpan[];
   rationale: string;
   status: IdeaCandidateStatus;
+  // Idea lifecycle from the rubric + history: forming → proposed → elaborated →
+  // actionable. Ratchets up with re-detection; only decays with staleness.
+  maturity: "forming" | "proposed" | "elaborated" | "actionable";
+  // The latest structured judgment (absent only for judgment-less test fakes).
+  judgment?: { rubric: z.infer<typeof ideaRubricSchema>; assessment: z.infer<typeof ideaAssessmentSchema> };
+  // Adversarial verification state: unverified → verified | vetoed(reason).
+  verified: boolean;
+  vetoReason: string | null;
+  // Confidence at the moment of the veto; the veto lifts (and verification
+  // reruns) only if the idea returns materially stronger than this.
+  vetoAtConfidence?: number;
+  // Rounds this idea has been re-detected in (evidence of persistence).
+  roundsSeen: number;
   firstSeenAtMs: number;
   updatedAtMs: number;
   // Consecutive detection rounds in which this candidate was NOT re-detected.

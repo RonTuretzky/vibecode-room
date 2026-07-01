@@ -1,4 +1,4 @@
-import { reconcile, type ReconcileResult } from "./reconciler";
+import { IdeaLedger, type LedgerDelta } from "./ledger";
 import { TranscriptWindow } from "./transcript-window";
 import type { IdeaCandidate, IdeaDetector, KnownCandidate, TranscriptTurn } from "./types";
 
@@ -12,6 +12,8 @@ export const DETECTION_ENGINE_ENV_DEFAULTS = Object.freeze({
   VIBERSYN_DETECT_MAX_TURNS: { default: "60", description: "Turns retained in the rolling detection window." },
   VIBERSYN_DETECT_MAX_AGE_MS: { default: "360000", description: "Max age (ms) of a turn in the rolling window." },
   VIBERSYN_DETECT_ACCEPT_COOLDOWN_MS: { default: "30000", description: "After accepting an idea, suppress re-detecting the same pitch this long." },
+  VIBERSYN_DETECT_MAX_SPANS: { default: "5", description: "Evidence spans retained per idea across rounds." },
+  VIBERSYN_DETECT_VERIFY: { default: "1", description: "Adversarially verify an idea the first time it becomes ready (0 disables)." },
 } satisfies Record<string, { default: string; description: string }>);
 
 export interface DetectionEngineConfig {
@@ -24,6 +26,8 @@ export interface DetectionEngineConfig {
   maxTurns: number;
   maxAgeMs: number;
   acceptCooldownMs: number;
+  maxSpans: number;
+  verifyOnSurface: boolean;
 }
 
 export function readDetectionEngineConfig(env: Record<string, string | undefined> = process.env): DetectionEngineConfig {
@@ -45,6 +49,8 @@ export function readDetectionEngineConfig(env: Record<string, string | undefined
     maxTurns: Math.max(1, num("VIBERSYN_DETECT_MAX_TURNS")),
     maxAgeMs: num("VIBERSYN_DETECT_MAX_AGE_MS"),
     acceptCooldownMs: num("VIBERSYN_DETECT_ACCEPT_COOLDOWN_MS"),
+    maxSpans: Math.max(1, num("VIBERSYN_DETECT_MAX_SPANS")),
+    verifyOnSurface: num("VIBERSYN_DETECT_VERIFY") !== 0,
   };
 }
 
@@ -65,7 +71,7 @@ export interface DetectionEngineOptions {
   onTrace?: (event: DetectionTraceEvent) => void;
 }
 
-export interface DetectionRunResult extends ReconcileResult {
+export interface DetectionRunResult extends LedgerDelta {
   ran: boolean;
 }
 
@@ -90,7 +96,7 @@ export class IdeaDetectionEngine {
   readonly #config: DetectionEngineConfig;
   readonly #onTrace?: (event: DetectionTraceEvent) => void;
   readonly #window: TranscriptWindow;
-  #candidates: IdeaCandidate[] = [];
+  readonly #ledger: IdeaLedger;
   #turnsSinceDetect = 0;
   #lastDetectAtMs: number | null = null;
   #detecting = false;
@@ -104,6 +110,15 @@ export class IdeaDetectionEngine {
     this.#config = readDetectionEngineConfig(options.env);
     this.#onTrace = options.onTrace;
     this.#window = new TranscriptWindow({ maxTurns: this.#config.maxTurns, maxAgeMs: this.#config.maxAgeMs });
+    this.#ledger = new IdeaLedger(
+      {
+        readyThreshold: this.#config.readyThreshold,
+        readyHysteresis: this.#config.readyHysteresis,
+        maxMissedRounds: this.#config.maxMissedRounds,
+        maxSpans: this.#config.maxSpans,
+      },
+      this.#idFactory,
+    );
   }
 
   config(): DetectionEngineConfig {
@@ -148,70 +163,94 @@ export class IdeaDetectionEngine {
     try {
       this.#pruneSuppressed(nowMs);
       const turns = this.#window.turns();
-      const known: KnownCandidate[] = this.#candidates.map((c) => ({ id: c.id, pitch: c.pitch, contextSpan: c.contextSpan }));
+      const known: KnownCandidate[] = this.#ledger.candidates().map((c) => ({ id: c.id, pitch: c.pitch, contextSpan: c.contextSpan }));
       this.#trace({ event: "detect.run", level: "info", correlationId, meta: { turns: turns.length, known: known.length, turnsSinceDetect: this.#turnsSinceDetect } });
-      const result = await this.#detector.detect({ sessionId: this.#sessionId, correlationId, turns, known });
+      const input = { sessionId: this.#sessionId, correlationId, turns, known };
+      const result = await this.#detector.detect(input);
       const detected = result.candidates.filter((idea) => !this.#isSuppressed(idea.pitch, nowMs));
-      const reconciled = reconcile(this.#candidates, detected, {
-        nowMs,
-        readyThreshold: this.#config.readyThreshold,
-        readyHysteresis: this.#config.readyHysteresis,
-        maxMissedRounds: this.#config.maxMissedRounds,
-        idFactory: this.#idFactory,
-        turns,
-      });
-      this.#candidates = reconciled.candidates;
+      const delta = this.#ledger.reconcile(detected, turns, nowMs);
       this.#turnsSinceDetect = 0;
       this.#lastDetectAtMs = nowMs;
-      for (const c of reconciled.created) {
+      for (const c of delta.created) {
         this.#trace({ event: "detect.candidate.new", level: "info", correlationId, meta: traceMeta(c) });
       }
-      for (const c of reconciled.updated) {
+      for (const c of delta.updated) {
         this.#trace({ event: "detect.candidate.update", level: "debug", correlationId, meta: traceMeta(c) });
       }
-      for (const c of reconciled.superseded) {
+      for (const c of delta.superseded) {
         this.#trace({ event: "detect.candidate.superseded", level: "debug", correlationId, meta: { id: c.id } });
       }
-      return { ran: true, ...reconciled };
+
+      // Adversarial verification: the first time an idea becomes READY, a skeptic
+      // pass tries to refute it (existing product? joke? retracted?) BEFORE the
+      // bubble surfaces (primary() withholds ready-but-unverified candidates while
+      // verification is active). A rejection vetoes it back to forming with the
+      // reason; the veto lifts only if the idea later returns materially stronger.
+      // Bounded: at most ONE verification call per round — the strongest pending
+      // candidate (the would-be primary); others verify in subsequent rounds.
+      if (this.#verificationActive()) {
+        const pending = this.#ledger
+          .needingVerification()
+          .sort((a, b) => b.confidence - a.confidence)[0];
+        if (pending !== undefined) {
+          const verdict = await this.#detector.verify!(pending, input);
+          if (verdict.uphold) {
+            this.#ledger.markVerified(pending.id);
+            this.#trace({ event: "detect.candidate.verified", level: "info", correlationId, meta: { id: pending.id, reason: verdict.reason } });
+          } else {
+            this.#ledger.veto(pending.id, verdict.reason);
+            this.#trace({ event: "detect.candidate.vetoed", level: "info", correlationId, meta: { id: pending.id, reason: verdict.reason, pitch: pending.pitch } });
+          }
+        }
+      }
+
+      return { ran: true, ...delta, candidates: this.candidates() };
     } finally {
       this.#detecting = false;
     }
   }
 
   candidates(): IdeaCandidate[] {
-    return this.#candidates.map((c) => ({ ...c }));
+    return this.#ledger.candidates();
   }
 
   // The single idea to surface as the bubble: the highest-confidence READY
   // candidate (tie-break: most recently updated). Null when none are ready.
+  // While adversarial verification is active, an unverified candidate is NOT
+  // surfaceable — the skeptic pass must uphold it first, even if a publish
+  // happens mid-round while verify() is still awaited.
   primary(): IdeaCandidate | null {
+    const requireVerified = this.#verificationActive();
     let best: IdeaCandidate | null = null;
-    for (const c of this.#candidates) {
-      if (c.status !== "ready") {
+    for (const c of this.#ledger.candidates()) {
+      if (c.status !== "ready" || (requireVerified && !c.verified)) {
         continue;
       }
       if (best === null || c.confidence > best.confidence || (c.confidence === best.confidence && c.updatedAtMs > best.updatedAtMs)) {
         best = c;
       }
     }
-    return best === null ? null : { ...best };
+    return best;
+  }
+
+  #verificationActive(): boolean {
+    return this.#config.verifyOnSurface && typeof this.#detector.verify === "function";
   }
 
   // Consume an accepted candidate: drop it and suppress re-detection of the same
   // pitch for a cooldown so the just-built idea doesn't immediately re-pop.
   accept(id: string, nowMs = this.#clock()): IdeaCandidate | null {
-    const found = this.#candidates.find((c) => c.id === id) ?? null;
+    const found = this.#ledger.accept(id);
     if (found === null) {
       return null;
     }
-    this.#candidates = this.#candidates.filter((c) => c.id !== id);
     this.#suppressed.push({ pitch: normalizePitch(found.pitch), untilMs: nowMs + this.#config.acceptCooldownMs });
-    return { ...found };
+    return found;
   }
 
   // Drop all candidates (e.g. mute / emergency stop). Suppression is left intact.
   clear(): void {
-    this.#candidates = [];
+    this.#ledger.clear();
   }
 
   schedulingState(nowMs = this.#clock()): SchedulingState {
@@ -243,6 +282,9 @@ function traceMeta(c: IdeaCandidate): Record<string, unknown> {
     pitch: c.pitch,
     confidence: c.confidence,
     status: c.status,
+    maturity: c.maturity,
+    verified: c.verified,
+    blockedBy: c.judgment?.assessment.blockedBy ?? [],
     span: `${c.contextSpan.startTurnId}..${c.contextSpan.endTurnId}`,
   };
 }

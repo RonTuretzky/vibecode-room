@@ -497,8 +497,22 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     // grounded candidates. With a Smithers gateway configured it runs as the
     // durable `idea-detection` run; otherwise host-`claude` inference runs inline.
     // Tests inject a deterministic detector so no model spawns.
-    const detectionSmithersClient =
-      smithersClient instanceof GatewayRegistryClient ? smithersClient.client : undefined;
+    // Composite gateway client for detection runs: SPAWN must go through the
+    // registry wrapper (which persists the UPID→runId correlation record —
+    // without it streamRunEvents can never resolve the run and detection would
+    // always return zero candidates); streaming and signals use the inner client.
+    const detectionSmithersClient: SmithersClient | undefined =
+      smithersClient instanceof GatewayRegistryClient
+        ? {
+            spawn: (seed) => smithersClient.spawn(seed),
+            steer: (upid, payload) => smithersClient.client.steer(upid, payload),
+            signal: (upid, payload) => smithersClient.client.signal(upid, payload),
+            pause: (upid) => smithersClient.client.pause(upid),
+            resume: (upid) => smithersClient.client.resume(upid),
+            halt: (upid) => smithersClient.client.halt(upid),
+            streamRunEvents: (upid, options) => smithersClient.client.streamRunEvents(upid, options),
+          }
+        : undefined;
     const detectionSelection = selectDetectionRunner({
       sessionId,
       env,
@@ -1061,6 +1075,14 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   // only handles the side effects of a NEW idea surfacing.
   private async onDetectionUpdate(snapshot: DetectionSnapshot): Promise<void> {
     const primary = snapshot.primary;
+    // If the surfaced idea disappeared (retraction, veto, supersede) or changed,
+    // clear the detection-fed acceptance pending for the DEPARTED candidate —
+    // otherwise room speech keeps routing into accept/decline for up to the
+    // accept window with no bubble on screen.
+    const pending = this.acceptanceController.currentPending();
+    if (pending !== null && pending.suggestionId.startsWith("sug-") && pending.suggestionId !== `sug-${primary?.id ?? ""}`) {
+      this.#pendingOwner.clear();
+    }
     if (primary === null) {
       this.#detectionPrimaryId = null;
       this.publish();
