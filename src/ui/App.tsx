@@ -4,6 +4,7 @@ import { demoProjectorSnapshot, withUnmuted } from "./demo-data";
 import type { LogEvent } from "../types";
 import type { ProjectorProcess, ProjectorSnapshot, TranscriptLine } from "./types";
 import { Atmosphere } from "./Atmosphere";
+import { GestureLayer } from "./gesture/GestureLayer";
 import { ProcessBubble, IdeaBubble } from "./Bubble";
 import { BuildDetail } from "./BuildDetail";
 import { traceClass, traceTag, summarizeMeta } from "./trace-utils";
@@ -63,6 +64,23 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
       return false;
     }
     return true;
+  }, []);
+
+  // Gesture-wall binding (camera → cursors → dwell-to-click over this UI). Opening
+  // the projector with ?wall=A enables the gesture layer for that wall; ?fusion=
+  // overrides the fusion server WS URL (default ws://<host>:8770). The wall client
+  // is served on its own projector, so wall A/B each run this UI with its own id.
+  const gesture = useMemo(() => {
+    if (typeof window === "undefined") {
+      return null;
+    }
+    const params = new URLSearchParams(window.location.search);
+    const wall = params.get("wall");
+    if (wall === null || wall.trim().length === 0) {
+      return null;
+    }
+    const fusion = params.get("fusion") ?? `ws://${window.location.hostname || "localhost"}:8770`;
+    return { wall, fusionUrl: fusion };
   }, []);
 
   // Latest snapshot exposed to the e2e window hook without re-binding it.
@@ -457,6 +475,7 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
   return (
     <main className="deep" data-testid="app">
       <Atmosphere />
+      {gesture ? <GestureLayer wall={gesture.wall} fusionUrl={gesture.fusionUrl} /> : null}
 
       <header className="status-bar" data-region="status">
         <div className="status-left">

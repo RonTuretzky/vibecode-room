@@ -25,11 +25,24 @@ agents building them.
 
 ## Run
 
-- **Vibersyn projector:** `bun run start` (server on :8787), or `bun run dev` for the
-  UI dev server. Open `/?live=1` for the live runtime.
-- **Gesture wall + Vibersyn (2-wall):** `gesture-wall/run-2wall-vibersyn.sh` prints
-  the exact services + URLs. Run Vibersyn with `VIBERSYN_CORS_ORIGIN=<wall web
-  origin>` so the wall can drive it cross-origin.
+- **The whole room, one command:** `./run-room.sh` — starts the camera fusion
+  server, builds + serves Vibersyn, and opens the UI fullscreen on two walls
+  (`?wall=A` / `?wall=B`). Point at a wall and hold ~0.8s over a bubble/button to
+  click it. No cameras handy? `./run-room.sh --fake` uses synthetic cursors so you
+  can see the whole thing work (and you can always drive it with the mouse — hold
+  still over a target).
+- **Vibersyn projector only:** `bun run start` (server on :8787), or `bun run dev`
+  for the UI dev server. Open `/?live=1` for the live runtime.
+
+### Gesture control (cameras → walls → the UI)
+
+The gesture wall's Python server turns camera pose into per-wall cursor streams
+over a WebSocket. Opening the Vibersyn UI with `?wall=A` mounts a **gesture layer**
+(`src/ui/gesture/`) that connects to that stream, overlays each cursor, and runs
+dwell-to-select against the REAL UI elements — a completed dwell fires a click on
+the bubble/button beneath it. So you drive the actual Vibersyn UI by pointing at
+the wall; two walls each run the UI bound to their own wall id. See
+[`gesture-wall/VIBERSYN.md`](gesture-wall/VIBERSYN.md).
 
 ## Test
 

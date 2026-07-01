@@ -477,6 +477,17 @@ button {
   background: rgba(255, 59, 48, 0.12);
 }
 
+/* Gesture cursor overlay — full-viewport canvas drawn above everything, never
+   intercepts pointer events (dwell fires synthetic clicks on the UI beneath). */
+.gesture-overlay {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+  z-index: 2000;
+}
+
 .ctl-button.emergency:hover {
   background: rgba(255, 59, 48, 0.22);
   box-shadow: 0 0 22px rgba(255, 59, 48, 0.4);
