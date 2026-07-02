@@ -3,7 +3,7 @@ import { expect, test, type Page } from "@playwright/test";
 test.use({ viewport: { width: 390, height: 844 } });
 
 async function waitForHook(page: Page): Promise<void> {
-  await page.waitForFunction(() => Boolean((window as any).__PANOPTICON__?.ready), null, {
+  await page.waitForFunction(() => Boolean((window as any).__VIBERSYN__?.ready), null, {
     timeout: 15_000,
   });
 }
@@ -15,7 +15,7 @@ test.describe("projector UI — mobile fleet layout", () => {
     await expect(page.getByTestId("app")).toBeVisible();
 
     const callsigns = await page.evaluate(() =>
-      (window as any).__PANOPTICON__.getSnapshot().processes.map((process: { callsign: string }) => process.callsign),
+      (window as any).__VIBERSYN__.getSnapshot().processes.map((process: { callsign: string }) => process.callsign),
     );
     const viewport = page.viewportSize();
     expect(viewport).not.toBeNull();

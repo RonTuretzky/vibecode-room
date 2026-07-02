@@ -1,4 +1,4 @@
-# Panopticon Codebase Review Issues
+# Vibersyn Codebase Review Issues
 
 Review date: 2026-06-16
 
@@ -63,11 +63,11 @@ Suggested fix: install Playwright browser dependencies in CI and run `bun run te
 
 ### P1 - Playwright Custom Port Setting Is Broken
 
-`playwright.config.ts` derives the base URL from `PANOP_PORT` (`playwright.config.ts:14`) and starts the server with `PANOP_PORT=${PORT}` (`playwright.config.ts:34`), but `src/server/index.ts` reads `PORT`, not `PANOP_PORT` (`src/server/index.ts:33`, `src/server/index.ts:34`). I confirmed `PANOP_PORT=8791 bun run start` still listens on `8787`.
+`playwright.config.ts` derives the base URL from `VIBERSYN_PORT` (`playwright.config.ts:14`) and starts the server with `VIBERSYN_PORT=${PORT}` (`playwright.config.ts:34`), but `src/server/index.ts` reads `PORT`, not `VIBERSYN_PORT` (`src/server/index.ts:33`, `src/server/index.ts:34`). I confirmed `VIBERSYN_PORT=8791 bun run start` still listens on `8787`.
 
-Impact: `PANOP_PORT=<non-default> bun run test:e2e` waits on the wrong URL and fails/hangs until the web server timeout.
+Impact: `VIBERSYN_PORT=<non-default> bun run test:e2e` waits on the wrong URL and fails/hangs until the web server timeout.
 
-Suggested fix: either change the Playwright webServer command to `PORT=${PORT} bun run start` or make `src/server/index.ts` accept `PANOP_PORT` as an alias.
+Suggested fix: either change the Playwright webServer command to `PORT=${PORT} bun run start` or make `src/server/index.ts` accept `VIBERSYN_PORT` as an alias.
 
 ### P1 - Narrow Viewports Clip Process Bubbles
 

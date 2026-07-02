@@ -6,7 +6,7 @@ import { createProjectorRuntime, type ProjectorRuntime } from "../../src/server/
 import { cueSourceBuildAvailable } from "../../src/cue/source";
 import type { TranscriptObservation } from "../../src/types";
 
-// ISSUE-0012 e2e (GAP-006): a live 'panop' final observation drives the active
+// ISSUE-0012 e2e (GAP-006): a live 'viber' final observation drives the active
 // Cue wake/earcon path exactly once. With a Cue build present the upstream harness
 // fast-path is selected; with no build the runtime degrades gracefully to the
 // deterministic in-runtime CueAdapter fallback. Either way the wake word emits an
@@ -24,10 +24,10 @@ afterEach(() => {
 });
 
 describe("cue-wake e2e — live wake word fast-path (build-gated)", () => {
-  test("a 'panop' utterance emits an earcon trace through the active Cue path", async () => {
+  test("a 'viber' utterance emits an earcon trace through the active Cue path", async () => {
     const buildPresent = cueSourceBuildAvailable();
     const path = writeReplayFixture([
-      final("panop status please", "utt-wake-1"),
+      final("viber status please", "utt-wake-1"),
     ]);
     const runtime = await createProjectorRuntime(baseEnv(path));
 
@@ -38,7 +38,7 @@ describe("cue-wake e2e — live wake word fast-path (build-gated)", () => {
 
     const earcons = runtime.trace.events().filter((event) => event.event === "earcon.emit");
     expect(earcons.length).toBeGreaterThanOrEqual(1);
-    expect(earcons[0]?.meta).toEqual(expect.objectContaining({ source: "cue-textcue", matchedWord: "panop" }));
+    expect(earcons[0]?.meta).toEqual(expect.objectContaining({ source: "cue-textcue", matchedWord: "viber" }));
   });
 
   test("with no Cue build the runtime constructs the fallback adapter and does not throw", async () => {
@@ -46,14 +46,14 @@ describe("cue-wake e2e — live wake word fast-path (build-gated)", () => {
     // Other suites build Cue into the shared cache, so force the fallback by
     // pointing the source dir at an empty directory; this keeps the assertion
     // meaningful on every host. Restored in `finally`.
-    const priorSourceDir = process.env.PANOP_CUE_SOURCE_DIR;
-    const empty = mkdtempSync(join(tmpdir(), "panop-cue-empty-"));
+    const priorSourceDir = process.env.VIBERSYN_CUE_SOURCE_DIR;
+    const empty = mkdtempSync(join(tmpdir(), "vibersyn-cue-empty-"));
     tempDirs.push(empty);
-    process.env.PANOP_CUE_SOURCE_DIR = empty;
+    process.env.VIBERSYN_CUE_SOURCE_DIR = empty;
 
     try {
       expect(cueSourceBuildAvailable()).toBe(false);
-      const path = writeReplayFixture([final("panop go", "utt-wake-2")]);
+      const path = writeReplayFixture([final("viber go", "utt-wake-2")]);
       const runtime = await createProjectorRuntime(baseEnv(path));
       expect(runtime.cueBridgeMode).toBe("fallback");
 
@@ -61,12 +61,12 @@ describe("cue-wake e2e — live wake word fast-path (build-gated)", () => {
       await driveMic(runtime);
       const earcons = runtime.trace.events().filter((event) => event.event === "earcon.emit");
       expect(earcons.length).toBeGreaterThanOrEqual(1);
-      expect(earcons[0]?.meta).toEqual(expect.objectContaining({ source: "cue-textcue", matchedWord: "panop" }));
+      expect(earcons[0]?.meta).toEqual(expect.objectContaining({ source: "cue-textcue", matchedWord: "viber" }));
     } finally {
       if (priorSourceDir === undefined) {
-        delete process.env.PANOP_CUE_SOURCE_DIR;
+        delete process.env.VIBERSYN_CUE_SOURCE_DIR;
       } else {
-        process.env.PANOP_CUE_SOURCE_DIR = priorSourceDir;
+        process.env.VIBERSYN_CUE_SOURCE_DIR = priorSourceDir;
       }
     }
   });
@@ -74,10 +74,10 @@ describe("cue-wake e2e — live wake word fast-path (build-gated)", () => {
 
 function baseEnv(replayPath: string): Record<string, string> {
   return {
-    PANOP_SESSION_ID: "cue-wake-e2e",
-    PANOP_INITIAL_MUTED: "0",
-    PANOP_MIC_REPLAY_PATH: replayPath,
-    PANOP_SUGGEST_WORD_FLOOR: "3",
+    VIBERSYN_SESSION_ID: "cue-wake-e2e",
+    VIBERSYN_INITIAL_MUTED: "0",
+    VIBERSYN_MIC_REPLAY_PATH: replayPath,
+    VIBERSYN_SUGGEST_WORD_FLOOR: "3",
   };
 }
 
@@ -87,7 +87,7 @@ async function driveMic(runtime: ProjectorRuntime): Promise<void> {
 }
 
 function writeReplayFixture(observations: TranscriptObservation[]): string {
-  const dir = mkdtempSync(join(tmpdir(), "panop-cue-wake-"));
+  const dir = mkdtempSync(join(tmpdir(), "vibersyn-cue-wake-"));
   tempDirs.push(dir);
   const path = join(dir, "mic.jsonl");
   writeFileSync(path, observations.map((observation) => JSON.stringify(observation)).join("\n"), "utf8");

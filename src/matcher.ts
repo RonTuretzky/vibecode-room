@@ -4,7 +4,7 @@
 
 import type { CueDecision, TranscriptObservation } from "./types.ts";
 
-const WAKE_WORDS = ["panop"] as const;
+const WAKE_WORDS = ["viber"] as const;
 
 export function match(obs: TranscriptObservation): CueDecision {
   const lower = obs.text.toLowerCase();

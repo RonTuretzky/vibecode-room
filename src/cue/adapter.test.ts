@@ -5,7 +5,7 @@ import { NoopTTSProvider } from "../providers/tts/noop";
 import type { CueDecision, DispatchedAction, TranscriptObservation } from "../types";
 import { DEFAULT_CALLSIGN_POOL } from "../routing/callsigns";
 import { CueAdapter, mapCueAction } from "./adapter";
-import { createPanopticonCueHarness } from "./harness";
+import { createVibersynCueHarness } from "./harness";
 import { createSemanticIntentDecisionInput } from "./intent-gate";
 import { DEFAULT_TEXT_CUE_WORDS, assertPrematcherParity, createCuePolicies } from "./policies";
 import { assertTwoProgramIsolation } from "./programs";
@@ -20,16 +20,16 @@ describe("Cue adapter and policies", () => {
     });
 
     const normalized = adapter.normalizeObservation({
-      transcript: "Panop build the replay tests",
+      transcript: "Viber build the replay tests",
       isFinal: true,
-      speaker: process.env.PANOP_RBG_DROP_SPEAKER === "1" ? undefined : "speaker_0",
+      speaker: process.env.VIBERSYN_RBG_DROP_SPEAKER === "1" ? undefined : "speaker_0",
       sessionId: "session-normalize",
       latencyMs: 42,
       utteranceId: "utt-normalize-001",
     });
 
     expect(normalized).toEqual({
-      text: "Panop build the replay tests",
+      text: "Viber build the replay tests",
       isFinal: true,
       speaker: "speaker_0",
       sessionId: "session-normalize",
@@ -81,7 +81,7 @@ describe("Cue adapter and policies", () => {
     });
     const result = await harness.ingest(transcriptObservation(observation.text, { speaker: observation.speaker }));
     const decision =
-      process.env.PANOP_RBG_SKIP_ROUTE_PASS === "1"
+      process.env.VIBERSYN_RBG_SKIP_ROUTE_PASS === "1"
         ? {
             events: [
               {
@@ -114,20 +114,20 @@ describe("Cue adapter and policies", () => {
     });
     const tools = [
       new MappedActionTool({
-        name: "panopticon.suggest",
+        name: "vibersyn.suggest",
         description: "ambient",
         mapper: () => [{ type: "suggestion.queue", payload: { concept: "build a test" } }],
       }),
       new MappedActionTool({
-        name: "panopticon.steer",
+        name: "vibersyn.steer",
         description: "steering",
         mapper: () => [{ type: "smithers.steer", payload: { upid: `upid-${DEFAULT_CALLSIGN_POOL[0]}`, instruction: "focus tests" } }],
       }),
     ];
     const ambientAllowedTools =
-      process.env.PANOP_RBG_ROUTE_AMBIENT_TO_STEERING === "1"
-        ? ["panopticon.suggest", "panopticon.steer"]
-        : ["panopticon.suggest"];
+      process.env.VIBERSYN_RBG_ROUTE_AMBIENT_TO_STEERING === "1"
+        ? ["vibersyn.suggest", "vibersyn.steer"]
+        : ["vibersyn.suggest"];
     const harness = new CueHarness({
       sessionId: "session-isolation",
       cues: [new TextCue(["build"]), new TextCue([DEFAULT_CALLSIGN_POOL[0]])],
@@ -139,21 +139,21 @@ describe("Cue adapter and policies", () => {
           llmProvider: {
             infer({ cue: cueEvent, tools: eligibleTools }: { cue?: { metadata?: Record<string, unknown> }; tools: Array<{ name: string }> }) {
               if (cueEvent?.metadata?.pattern !== "build") return [];
-              if (eligibleTools.some((tool) => tool.name === "panopticon.steer")) {
-                return [{ tool: "panopticon.steer", arguments: { upid: `upid-${DEFAULT_CALLSIGN_POOL[0]}`, instruction: "leak" } }];
+              if (eligibleTools.some((tool) => tool.name === "vibersyn.steer")) {
+                return [{ tool: "vibersyn.steer", arguments: { upid: `upid-${DEFAULT_CALLSIGN_POOL[0]}`, instruction: "leak" } }];
               }
-              return [{ tool: "panopticon.suggest", arguments: { concept: "add replay tests" } }];
+              return [{ tool: "vibersyn.suggest", arguments: { concept: "add replay tests" } }];
             },
           },
         },
         {
           name: "steering-C3",
           triggers: [Triggers.onCue("text")],
-          allowedTools: ["panopticon.steer"],
+          allowedTools: ["vibersyn.steer"],
           llmProvider: {
             infer({ cue: cueEvent }: { cue?: { metadata?: Record<string, unknown> } }) {
               if (cueEvent?.metadata?.pattern !== DEFAULT_CALLSIGN_POOL[0]) return [];
-              return [{ tool: "panopticon.steer", arguments: { upid: `upid-${DEFAULT_CALLSIGN_POOL[0]}`, instruction: "focus tests" } }];
+              return [{ tool: "vibersyn.steer", arguments: { upid: `upid-${DEFAULT_CALLSIGN_POOL[0]}`, instruction: "focus tests" } }];
             },
           },
         },
@@ -184,7 +184,7 @@ describe("Cue adapter and policies", () => {
       ambientProgram: "ambient-C2",
       steeringProgram: "steering-C3",
       ambientTools: ambientAllowedTools,
-      steeringTools: ["panopticon.steer"],
+      steeringTools: ["vibersyn.steer"],
       ambientActions: ambient.actions,
       steeringActions: steering.actions,
     };
@@ -196,7 +196,7 @@ describe("Cue adapter and policies", () => {
 
   test("recognition-source feeds earcons from Cue TextCue decisions or a byte-equal adapter pre-matcher mirror", async () => {
     const cue = await loadCueCore();
-    const policies = createCuePolicies(cue, { textCueWords: ["panop"], cooldownSeconds: 1 });
+    const policies = createCuePolicies(cue, { textCueWords: ["viber"], cooldownSeconds: 1 });
     const adapter = new CueAdapter({
       sessionId: "session-earcon",
       clock: monotonicClock(30),
@@ -204,7 +204,7 @@ describe("Cue adapter and policies", () => {
       textCueWords: policies.textCueWords,
       usePrematcher: true,
       prematcherWords:
-        process.env.PANOP_RBG_PREMATCH_WORD_DRIFT === "1" ? [...policies.textCueWords, "shadow"] : policies.textCueWords,
+        process.env.VIBERSYN_RBG_PREMATCH_WORD_DRIFT === "1" ? [...policies.textCueWords, "shadow"] : policies.textCueWords,
     });
     const { CueHarness, MappedActionTool, Triggers, transcriptObservation } = cue;
     const emitted: unknown[] = [];
@@ -215,17 +215,17 @@ describe("Cue adapter and policies", () => {
         {
           name: "wake-program",
           triggers: [Triggers.onCue("text")],
-          allowedTools: ["panopticon.status"],
+          allowedTools: ["vibersyn.status"],
           llmProvider: {
             infer() {
-              return [{ tool: "panopticon.status", arguments: { upid: "upid-status" } }];
+              return [{ tool: "vibersyn.status", arguments: { upid: "upid-status" } }];
             },
           },
         },
       ],
       tools: [
         new MappedActionTool({
-          name: "panopticon.status",
+          name: "vibersyn.status",
           description: "status",
           mapper: (call: { arguments?: Record<string, unknown> }) => [
             { type: "smithers.status", payload: call.arguments ?? {} },
@@ -236,7 +236,7 @@ describe("Cue adapter and policies", () => {
 
     assertPrematcherParity(policies.textCueWords, policies.textCueWords);
     const observation = adapter.normalizeObservation({
-      text: "Panop status",
+      text: "Viber status",
       speaker: "speaker_0",
       latencyMs: 18,
       utteranceId: "utt-earcon",
@@ -252,7 +252,7 @@ describe("Cue adapter and policies", () => {
       expect.objectContaining({
         id: "E1",
         source: "cue-textcue",
-        matchedWord: "panop",
+        matchedWord: "viber",
       }),
     );
     expect(decision.actions).toEqual([
@@ -275,7 +275,7 @@ describe("Cue adapter and policies", () => {
       textCue: new TextCue(["yes"]),
       trigger: Triggers.onCue("text"),
       tool: new MappedActionTool({
-        name: "panopticon.suggest",
+        name: "vibersyn.suggest",
         description: "suggest",
         mapper: () => [{ type: "suggestion.queue", payload: { concept: "continue" } }],
       }),
@@ -330,7 +330,7 @@ describe("Cue adapter and policies", () => {
       textCue: new TextCue(["yes"]),
       trigger: Triggers.onCue("text"),
       tool: new MappedActionTool({
-        name: "panopticon.suggest",
+        name: "vibersyn.suggest",
         description: "suggest",
         mapper: () => [{ type: "suggestion.queue", payload: { concept: "continue" } }],
       }),
@@ -386,7 +386,7 @@ describe("Cue adapter and policies", () => {
       textCue: new TextCue(["yes"]),
       trigger: Triggers.onCue("text"),
       tool: new MappedActionTool({
-        name: "panopticon.suggest",
+        name: "vibersyn.suggest",
         description: "suggest",
         mapper: () => [{ type: "suggestion.queue", payload: { concept: "continue" } }],
       }),
@@ -414,7 +414,7 @@ describe("Cue adapter and policies", () => {
       output: new NoopTTSProvider(),
     };
 
-    const harness = await createPanopticonCueHarness({
+    const harness = await createVibersynCueHarness({
       sessionId: "session-harness",
       providers,
       textCueWords: [...DEFAULT_TEXT_CUE_WORDS],
@@ -444,10 +444,10 @@ function textCueActionHarness(
       {
         name: "intent-gate-test",
         triggers: [options.trigger],
-        allowedTools: ["panopticon.suggest"],
+        allowedTools: ["vibersyn.suggest"],
         llmProvider: {
           infer() {
-            return [{ tool: "panopticon.suggest", arguments: { concept: "continue" } }];
+            return [{ tool: "vibersyn.suggest", arguments: { concept: "continue" } }];
           },
         },
       },

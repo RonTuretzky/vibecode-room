@@ -65,7 +65,7 @@ describe("RunEventDriver — streamed frames overlay the process panel for a spa
 
     expect(driver.overlay("upid-live")).toBeUndefined();
 
-    await driver.subscribe("upid-live", "panop-upid-live");
+    await driver.subscribe("upid-live", "vibersyn-upid-live");
 
     const overlay = driver.overlay("upid-live");
     expect(overlay?.state).toBe("active");
@@ -93,7 +93,7 @@ describe("RunEventDriver — streamed frames overlay the process panel for a spa
       onUpdate: (_upid, overlay) => updates.push(overlay),
     });
 
-    await driver.subscribe("upid-reconnect", "panop-upid-reconnect");
+    await driver.subscribe("upid-reconnect", "vibersyn-upid-reconnect");
 
     // seq 1 applied once (first connection), the replay dropped, seq 2 applied once.
     expect(updates.map((overlay) => overlay.lastSeq)).toEqual([1, 2]);
@@ -107,7 +107,7 @@ describe("RunEventDriver — streamed frames overlay the process panel for a spa
 function runEvent(partial: Partial<RunEvent> & Pick<RunEvent, "kind" | "text" | "seq">): RunEvent {
   return {
     upid: partial.upid ?? "upid-live",
-    runId: partial.runId ?? "panop-upid-live",
+    runId: partial.runId ?? "vibersyn-upid-live",
     kind: partial.kind,
     text: partial.text,
     seq: partial.seq,

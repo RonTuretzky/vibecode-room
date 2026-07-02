@@ -3,7 +3,7 @@ node_modules/
 *.log
 .DS_Store
 .env
-panopticon.db
+vibersyn.db
 dist/
 
 # Scaffolded accept->build->preview artifacts (idea-builder). Each accepted idea
@@ -45,7 +45,7 @@ artifacts/smithering/.capture-tmp/
 # Local capture/debug artifacts (machine-specific; not shared)
 /inspector-live.png
 /progress-slideshow.png
-/panopticon-projector-desktop.png
+/vibersyn-projector-desktop.png
 artifacts/smithering/server-logs/
 
 # smither harness runtime state

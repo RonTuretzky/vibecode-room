@@ -66,7 +66,7 @@ describe("ENG-T-03 TraceProcessor", () => {
   test("pass-logging emits a route.pass line for every observe.pass", () => {
     const processor = new TraceProcessor();
 
-    if (process.env.PANOPTICON_RBG_SKIP_ROUTE_PASS === "1") {
+    if (process.env.VIBERSYN_RBG_SKIP_ROUTE_PASS === "1") {
       processor.record({
         event: "observe.pass",
         sessionId,
@@ -122,7 +122,7 @@ describe("ENG-T-03 TraceProcessor", () => {
   });
 
   test("causal-chain reconstruction joins Cue JSONL with Smithers traces by correlationId and UPID", () => {
-    const sources = crossComponentFixture({ dropUpidJoin: process.env.PANOP_RBG_DROP_CROSS_JOIN === "1" });
+    const sources = crossComponentFixture({ dropUpidJoin: process.env.VIBERSYN_RBG_DROP_CROSS_JOIN === "1" });
 
     const chain = reconstructCrossComponentCausalChain(sources, correlationId);
 
@@ -163,7 +163,7 @@ describe("ENG-T-03 TraceProcessor", () => {
 
   test("trace-roundtrip serializes and deserializes every event byte-identically", () => {
     const events = sampleFullChainEvents().map((event) => {
-      if (process.env.PANOPTICON_RBG_UNSERIALIZABLE === "1" && event.event === "route.suggestion") {
+      if (process.env.VIBERSYN_RBG_UNSERIALIZABLE === "1" && event.event === "route.suggestion") {
         return { ...event, meta: { ...event.meta, bad: BigInt(1) } } as unknown as LogEvent;
       }
       return event;
@@ -326,7 +326,7 @@ function crossComponentFixture(options: { dropUpidJoin?: boolean; dropSmithersUp
 }
 
 function maybeDropCorrelation(input: TraceInput): TraceInput {
-  if (process.env.PANOPTICON_RBG_DROP_CORRELATION !== "1") {
+  if (process.env.VIBERSYN_RBG_DROP_CORRELATION !== "1") {
     return input;
   }
 

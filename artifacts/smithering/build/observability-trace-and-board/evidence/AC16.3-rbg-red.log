@@ -2,7 +2,7 @@ bun test v1.3.14 (0d9b296a)
 
 src/obs/trace.test.ts:
 124 |   test("causal-chain reconstruction joins Cue JSONL with Smithers traces by correlationId and UPID", () => {
-125 |     const sources = crossComponentFixture({ dropUpidJoin: process.env.PANOP_RBG_DROP_CROSS_JOIN === "1" });
+125 |     const sources = crossComponentFixture({ dropUpidJoin: process.env.VIBERSYN_RBG_DROP_CROSS_JOIN === "1" });
 126 | 
 127 |     const chain = reconstructCrossComponentCausalChain(sources, correlationId);
 128 | 

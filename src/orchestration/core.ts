@@ -277,7 +277,7 @@ export const REQUIRED_BUNDLE_FILES = [
 // The parent smithering workflow launches this run with ONLY `{ smoke }` set, so
 // integrationBranch, baseBranch, and the concurrency caps all arrive as `null` at runtime.
 // Reading them raw made build:setup emit {integrationBranch:null,baseBranch:null,…}, which the
-// buildSetup output schema (z.string()) rejects — the failure of smoke-smithering-panopticon-4-0.
+// buildSetup output schema (z.string()) rejects — the failure of smoke-smithering-vibersyn-4-0.
 // resolveBuildConfig re-applies the documented defaults so build:setup never produces a null
 // branch and the depth-1 land lane always receives a real, non-base integration branch.
 export const DEFAULT_INTEGRATION_BRANCH = "smithering/integration";

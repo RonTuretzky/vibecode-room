@@ -25,8 +25,8 @@ describe("accept-preview e2e — say yes yields a live, reachable preview", () =
 
   beforeEach(async () => {
     buildsRoot = await mkdtemp(join(tmpdir(), "accept-preview-e2e-"));
-    priorCapacityGuard = process.env.PANOP_RBG_DISABLE_CAPACITY_CHECK;
-    process.env.PANOP_RBG_DISABLE_CAPACITY_CHECK = "1";
+    priorCapacityGuard = process.env.VIBERSYN_RBG_DISABLE_CAPACITY_CHECK;
+    process.env.VIBERSYN_RBG_DISABLE_CAPACITY_CHECK = "1";
   });
 
   afterEach(async () => {
@@ -34,9 +34,9 @@ describe("accept-preview e2e — say yes yields a live, reachable preview", () =
     await runtime?.ideaBuilds.stopAll().catch(() => undefined);
     runtime = undefined;
     if (priorCapacityGuard === undefined) {
-      delete process.env.PANOP_RBG_DISABLE_CAPACITY_CHECK;
+      delete process.env.VIBERSYN_RBG_DISABLE_CAPACITY_CHECK;
     } else {
-      process.env.PANOP_RBG_DISABLE_CAPACITY_CHECK = priorCapacityGuard;
+      process.env.VIBERSYN_RBG_DISABLE_CAPACITY_CHECK = priorCapacityGuard;
     }
     await rm(buildsRoot, { recursive: true, force: true }).catch(() => undefined);
   });
@@ -54,6 +54,7 @@ describe("accept-preview e2e — say yes yields a live, reachable preview", () =
 
     const session = runtime.startMicSession("corr-accept-preview-e2e");
     await session.stop();
+    await runtime.detection.flush();
 
     const spawned = runtime.snapshot().processes.find((process) => !upidsBefore.has(process.upid));
     expect(spawned).toBeDefined();
@@ -71,7 +72,7 @@ describe("accept-preview e2e — say yes yields a live, reachable preview", () =
     const response = await fetch(previewUrl);
     expect(response.status).toBe(200);
     const body = await response.text();
-    expect(body).toContain("Panopticon prototype");
+    expect(body).toContain("Vibersyn prototype");
     expect(body).toContain('data-testid="prototype-title"');
 
     // Lifecycle: emergency stop halts the process and tears the preview down.
@@ -84,12 +85,15 @@ describe("accept-preview e2e — say yes yields a live, reachable preview", () =
 
 function liveEnv(): Record<string, string> {
   return {
-    PANOP_INITIAL_MUTED: "0",
-    PANOP_ASR_PROVIDER: "replay",
-    PANOP_SUGGEST_WORD_FLOOR: "3",
-    PANOP_SUGGEST_INTERRUPT_VELOCITY_WEIGHT: "0",
-    PANOP_SUGGEST_INTERRUPT_RECENCY_WEIGHT: "0",
-    PANOP_SUGGEST_INTERRUPT_PENDING_STEERING_WEIGHT: "0",
+    VIBERSYN_INITIAL_MUTED: "0",
+    VIBERSYN_ASR_PROVIDER: "replay",
+    // Deterministic idea detection: heuristic detector, eager scheduling, no tick.
+    // A low ready threshold lets the single-cue buildable utterance surface.
+    VIBERSYN_IDEA_DETECTOR: "heuristic",
+    VIBERSYN_DETECT_MIN_NEW_TURNS: "1",
+    VIBERSYN_DETECT_MIN_INTERVAL_MS: "0",
+    VIBERSYN_DETECT_TICK_MS: "0",
+    VIBERSYN_DETECT_READY_THRESHOLD: "0.5",
   };
 }
 

@@ -85,7 +85,7 @@ export function createBoardApp(bus = new BoardEventBus()): Hono {
   app.get("/state", (context) => context.json(bus.snapshot()));
   app.get("/events", () => boardSseResponse(bus));
 
-  if (process.env.PANOP_RBG_BOARD_MUTATING_ROUTE === "1") {
+  if (process.env.VIBERSYN_RBG_BOARD_MUTATING_ROUTE === "1") {
     app.post("/actions", (context) => context.json({ mutated: true }));
   }
 
@@ -93,7 +93,7 @@ export function createBoardApp(bus = new BoardEventBus()): Hono {
 }
 
 export async function runBoardIndependentVoiceFlow(options: { boardUrl?: string; requireBoard?: boolean } = {}) {
-  if (options.requireBoard ?? process.env.PANOP_RBG_REQUIRE_BOARD === "1") {
+  if (options.requireBoard ?? process.env.VIBERSYN_RBG_REQUIRE_BOARD === "1") {
     if (options.boardUrl === undefined) {
       throw new Error("voice flow incorrectly waited for the optional board");
     }
@@ -130,7 +130,7 @@ function boardSseResponse(bus: BoardEventBus): Response {
 
 function renderBoardHtml(snapshot: BoardSnapshot): string {
   const app = renderToStaticMarkup(React.createElement(BoardView, { snapshot }));
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Panopticon Observability Board</title><style>${BOARD_CSS}</style></head><body><div id="root">${app}</div><script>${BOARD_JS}</script></body></html>`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Vibersyn Observability Board</title><style>${BOARD_CSS}</style></head><body><div id="root">${app}</div><script>${BOARD_JS}</script></body></html>`;
 }
 
 function BoardView({ snapshot }: { snapshot: BoardSnapshot }) {
@@ -140,7 +140,7 @@ function BoardView({ snapshot }: { snapshot: BoardSnapshot }) {
     React.createElement(
       "header",
       { className: "topbar" },
-      React.createElement("strong", null, "PANOPTICON"),
+      React.createElement("strong", null, "VIBERSYN"),
       React.createElement("span", { className: "badge" }, "READ-ONLY / NON-AUTHORITATIVE / OFF-PATH"),
       React.createElement("span", { className: snapshot.listening ? "listen on" : "listen" }, snapshot.listening ? "Listening" : "Muted"),
     ),
@@ -197,6 +197,6 @@ const BOARD_CSS = `
 const BOARD_JS = `
 const source = new EventSource('/events');
 source.addEventListener('snapshot', (event) => {
-  window.__PANOPTICON_LAST_SNAPSHOT__ = JSON.parse(event.data);
+  window.__VIBERSYN_LAST_SNAPSHOT__ = JSON.parse(event.data);
 });
 `;

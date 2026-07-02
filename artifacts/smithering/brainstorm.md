@@ -1,6 +1,6 @@
-# Brainstorm — Panopticon (V0, audio-only on Cue)
+# Brainstorm — Vibersyn (V0, audio-only on Cue)
 
-> Mapping the problem space for building Panopticon from scratch.
+> Mapping the problem space for building Vibersyn from scratch.
 > Grounded in: the build brief (`PROMPT.md`), the **two standing constraints** attached to this
 > task — (1) **audio-only**: voice is the sole interaction modality, the user cannot see a screen
 > or type; (2) all agent interaction and command-triggering ("magic words") **MUST be built on
@@ -36,10 +36,10 @@ their own tools.**" 85% of developers already use AI coding tools and 70% juggle
 voice-only interface, which **no shipping product provides** (`domain.md` §3 / `prior-art.md` §8:
 gap confirmed).
 
-**Panopticon is an audio-only operating system for AI-agent work.** A small trusted team talks in
+**Vibersyn is an audio-only operating system for AI-agent work.** A small trusted team talks in
 a shared room; the system **passively listens** through **Cue** (continuous audio → transcript
 observations → cue policies → decide-or-`observe.pass`) and — sparingly, by voice — proposes
-things to build. When the room accepts a proposal, Panopticon **spawns a durable agent "process"**
+things to build. When the room accepts a proposal, Vibersyn **spawns a durable agent "process"**
 (a Smithers run) that the room can **steer by voice** and **operate alongside others** (pause /
 resume / fork / kill — independently). Because there is no screen to look at, "render the right
 thing" (G5) becomes "**tell** the right thing" (G5′): a process's output is a *spoken* summary the
@@ -121,7 +121,7 @@ ROOM AUDIO ─► CUE  (always-on ear + reflex — the meta-session front end)
               • MappedActionTool (cooldownSeconds) emits a structured action ──────┐
               • built-in JSONL trace: observations / decisions / actions          │
                                                                                   ▼
-            PANOPTICON ACTION DISPATCHER  (Hono API + WebSocket/SSE)
+            VIBERSYN ACTION DISPATCHER  (Hono API + WebSocket/SSE)
               • validates Cue action against the live process registry; enforces the C3 invariant
                                                                                   ▼
             SMITHERS  (durable hands — Process Manager + each Process)
@@ -144,7 +144,7 @@ ROOM AUDIO ─► CUE  (always-on ear + reflex — the meta-session front end)
 This is the single most important design decision recorded here: **Cue decides *when/whether* to
 act (listen → decide → wake); Smithers decides *what* durably happens.** The seam between them — a
 structured-JSON action out of Cue, durable-state observations back into Cue to keep voice-out
-coherent — is Panopticon's novel contribution and a top integration risk (§6).
+coherent — is Vibersyn's novel contribution and a top integration risk (§6).
 
 ---
 
@@ -286,7 +286,7 @@ The success criterion bakes in "**≥2 concurrent processes operated independent
 the build-order directive says "one high-value flow over many half-flows," and
 R-Demo-chain-fragility flags the long hands-free chain as the biggest demo risk.
 **Recommended answer:** Keep a **minimal** fleet in V0 — exactly **two** concurrent processes with
-independent voice pause/steer — because operating *many* agents hands-free is Panopticon's core
+independent voice pause/steer — because operating *many* agents hands-free is Vibersyn's core
 differentiator (G2) and the line between it and a single-agent voice tool (Aider `/voice`). But cap
 it hard: two processes, basic independent pause/steer only; defer fork/replay/advanced fleet
 controls to V1. Build the single end-to-end loop first and add the second process **last**, so the
@@ -321,7 +321,7 @@ of substantive talk; `domain.md` §5-Q3). Prefer to surface a queued idea **when
 (`IdleCue`) over interrupting mid-conversation. Expose suggestions-per-minute + TTL as live knobs;
 start low, tune up only via record-replay against annotated ground truth.
 **Why it matters:** In audio, interruption cost is asymmetric (R-Interruption-asymmetry) — the
-fastest way to make Panopticon unbearable is to talk over people. Conservative-by-default protects
+fastest way to make Vibersyn unbearable is to talk over people. Conservative-by-default protects
 the demo and matches Cue's "avoid dumb wakeups." Firing policy is product, not a tuning detail.
 
 ### q-posture — What is the default execution posture per process? **(refined from the first draft)**
@@ -344,13 +344,13 @@ and explicit disclosure that audio is streamed to a third-party STT (Deepgram). 
 single-room/trusted-users assumption (q-user) for the rest; document the V1 local-STT fallback.
 **Why it matters:** An always-on cloud mic is a trust/adoption blocker — and the free, unguarded
 talk it captures is the raw material for the whole product (G1). Cheap, visible controls directly
-protect the behavior Panopticon depends on (R-STT-privacy-cost).
+protect the behavior Vibersyn depends on (R-STT-privacy-cost).
 
 ### q-seam — Do we adopt Cue's bundled provider stack for V0, and where is the seam to Smithers/Fable?
 **Recommendation:** **Yes for V0** — Cue's `transcriptionProvider` = **Deepgram Nova-3** (sub-500ms,
 native diarization, ~$0.26–0.46/hr) and a **cheap, fast `llmProvider`** (Cerebras/Haiku-tier) for
 Cue's hot *decision* loop. Keep the seam sharp: **Cue decides *when/whether* → emits a structured
-action → Panopticon dispatcher validates against the process registry → Smithers executes *what*
+action → Vibersyn dispatcher validates against the process registry → Smithers executes *what*
 durably → Fable plans per-process → all process model calls via Smithers subscriptions (never raw
 keys).** No Opus in either hot path. VoxTerm as the offline-dev transcription provider.
 **Why it matters:** Names the integration contract between the two mandated systems and binds the

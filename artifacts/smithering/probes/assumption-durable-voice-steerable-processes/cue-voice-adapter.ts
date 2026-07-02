@@ -91,7 +91,7 @@ export function deliverSteerSignal(runId: string, payload: SteerPayload): {
 
 /**
  * This is the action mapper for the steer tool in Cue.
- * Called by Cue's harness when the LLM selects the "panopticon.steer" tool.
+ * Called by Cue's harness when the LLM selects the "vibersyn.steer" tool.
  *
  * Cue API: new MappedActionTool(name, description, schema, eligibility, actionMapper)
  */
@@ -175,11 +175,11 @@ export function buildCueConfig() {
       {
         name: "steer-process",
         triggers: ["onCue:magic-word"],
-        allowedTools: ["panopticon.steer", "observe.pass"],
+        allowedTools: ["vibersyn.steer", "observe.pass"],
         prompt: {
-          system: `You are the Panopticon voice dispatcher.
+          system: `You are the Vibersyn voice dispatcher.
 When a magic word (callsign) is spoken, route the user's instruction to the right process.
-Always use panopticon.steer if there is an instruction; use observe.pass if it was just the callsign alone.`,
+Always use vibersyn.steer if there is an instruction; use observe.pass if it was just the callsign alone.`,
           userTemplate: "{{transcriptAttention}}",
         },
       },
@@ -188,10 +188,10 @@ Always use panopticon.steer if there is an instruction; use observe.pass if it w
     // Tools — the action surface
     tools: [
       {
-        // panopticon.steer: selected by LLM when magic word + instruction detected
+        // vibersyn.steer: selected by LLM when magic word + instruction detected
         type: "MappedActionTool",
-        name: "panopticon.steer",
-        description: "Deliver a steering instruction to a named Panopticon process",
+        name: "vibersyn.steer",
+        description: "Deliver a steering instruction to a named Vibersyn process",
         schema: {
           type: "object",
           required: ["callsign", "instruction"],
@@ -241,13 +241,13 @@ Program "steer-process" runs
   │  LLM: Cerebras Llama 3.3-70B, temperature 0
   │  Prompt: recent transcript + steer tool schema
   ▼
-MappedActionTool selected: panopticon.steer { callsign: "atlas", instruction: "..." }
+MappedActionTool selected: vibersyn.steer { callsign: "atlas", instruction: "..." }
   │
   ▼ (steerActionMapper → deliverSteerSignal)
 smithers signal <runId> steer --data '{"text":"...","stop":false}'
   │
   ▼ (Smithers engine: bridgeSignalResolve)
-WaitForEvent in panopticon-probe-process unblocks
+WaitForEvent in vibersyn-probe-process unblocks
   │
   ▼
 Loop continues → Task records received instruction

@@ -82,7 +82,7 @@ describe("SEC-1 whole-session secret scan", () => {
     await writeFile(join(SESSION_DIR, "logs", "session.log"), `redaction=${traceJsonl.includes(REDACTED_SECRET) ? "active" : "inactive"}\n`);
     await writeFile(join(SESSION_DIR, "logs", "session"), `redaction=${traceJsonl.includes(REDACTED_SECRET) ? "active" : "inactive"}\n`);
     await writeFile(join(TRACE_DIR, "secret-scan-session.jsonl"), traceJsonl);
-    if (process.env.PANOPTICON_RBG_PLANT_SECRET_IN_SESSION === "1") {
+    if (process.env.VIBERSYN_RBG_PLANT_SECRET_IN_SESSION === "1") {
       await writeFile(join(SESSION_DIR, "reports", "planted-leak.json"), JSON.stringify({ providerMeta: rawValues[0] }, null, 2));
       await writeFile(join(SESSION_DIR, "logs", "planted-leak"), JSON.stringify({ providerMeta: rawValues[10] }, null, 2));
     }

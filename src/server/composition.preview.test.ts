@@ -11,67 +11,71 @@ import type { TranscriptObservation } from "../types";
 const noopBuilder: BuilderAgent = async () => undefined;
 
 // Integration: the LIVE runtime accept path triggers a REAL accept->build->preview
-// build. A fired suggestion + a spoken "yes" routes through the
-// AcceptanceController -> ProcessRegistry.spawn, which kicks off idea-builder; the
-// spawned process gains previewUrl + buildStatus "ready" on the snapshot and the
-// URL serves the scaffolded page. No stubs: real files + a real loopback server.
+// build. A detected idea + a spoken "yes" routes through the AcceptanceController
+// -> ProcessRegistry.spawn, which kicks off idea-builder; the spawned process
+// gains previewUrl + buildStatus "ready" on the snapshot and the URL serves the
+// scaffolded page. Idea detection is the (deterministic heuristic) trigger.
 
 describe("composition accept path — real build + preview on the snapshot", () => {
   const realFetch = globalThis.fetch;
   let buildsRoot: string;
+  let replayPath: string;
   let priorCapacityGuard: string | undefined;
   let runtime: ProjectorRuntime | undefined;
 
   beforeEach(async () => {
     buildsRoot = await mkdtemp(join(tmpdir(), "composition-preview-"));
-    // The demo fleet seeds two processes against the default cap of two; give the
-    // acceptance spawn headroom (the pre-spawn check reads this from process.env).
-    priorCapacityGuard = process.env.PANOP_RBG_DISABLE_CAPACITY_CHECK;
-    process.env.PANOP_RBG_DISABLE_CAPACITY_CHECK = "1";
+    replayPath = join(buildsRoot, "mic.jsonl");
+    await writeFile(replayPath, "", "utf8");
+    priorCapacityGuard = process.env.VIBERSYN_RBG_DISABLE_CAPACITY_CHECK;
+    process.env.VIBERSYN_RBG_DISABLE_CAPACITY_CHECK = "1";
   });
 
   afterEach(async () => {
-    // Real fetch must remain available for the live preview server probe.
     globalThis.fetch = realFetch;
     await runtime?.ideaBuilds.stopAll().catch(() => undefined);
     runtime = undefined;
     if (priorCapacityGuard === undefined) {
-      delete process.env.PANOP_RBG_DISABLE_CAPACITY_CHECK;
+      delete process.env.VIBERSYN_RBG_DISABLE_CAPACITY_CHECK;
     } else {
-      process.env.PANOP_RBG_DISABLE_CAPACITY_CHECK = priorCapacityGuard;
+      process.env.VIBERSYN_RBG_DISABLE_CAPACITY_CHECK = priorCapacityGuard;
     }
     await rm(buildsRoot, { recursive: true, force: true }).catch(() => undefined);
   });
 
-  test("a spoken 'yes' spawns a process that gains previewUrl + buildStatus 'ready'", async () => {
-    runtime = await createProjectorRuntime(liveEnv(), {
-      buildsRoot,
-      builderAgent: noopBuilder,
-      replaySource: [
-        final("let's build a dashboard tool to ship the replay prototype today", "utt-build"),
-        final("yes", "utt-yes"),
-      ],
-    });
-    const upidsBefore = new Set(runtime.snapshot().processes.map((process) => process.upid));
-
-    const session = runtime.startMicSession("corr-composition-preview");
+  // Feed observations through one mic session and await both the detection round
+  // and any fire-and-forget bubble delivery, so state has settled on return.
+  async function drive(obs: TranscriptObservation[]): Promise<void> {
+    await writeFile(replayPath, obs.map((o) => JSON.stringify(o)).join("\n"), "utf8");
+    const session = runtime!.startMicSession("corr-composition-preview");
     await session.stop();
+    await runtime!.detection.flush();
+  }
 
-    const spawned = runtime.snapshot().processes.find((process) => !upidsBefore.has(process.upid));
+  // Detect a buildable idea (phase 1), then accept it with a spoken "yes" (phase 2);
+  // returns the freshly spawned process.
+  async function detectThenAccept(): Promise<{ upid: string } | undefined> {
+    const before = new Set(runtime!.snapshot().processes.map((process) => process.upid));
+    await drive([final("let's build a dashboard tool to ship the replay prototype today", "utt-build")]);
+    await drive([final("yes", "utt-yes")]);
+    return runtime!.snapshot().processes.find((process) => !before.has(process.upid));
+  }
+
+  test("a spoken 'yes' spawns a process that gains previewUrl + buildStatus 'ready'", async () => {
+    runtime = await createProjectorRuntime(liveEnv(replayPath), { buildsRoot, builderAgent: noopBuilder });
+
+    const spawned = await detectThenAccept();
     expect(spawned).toBeDefined();
     if (spawned === undefined) return;
 
-    // The build is fire-and-forget on spawn; await it to reach a terminal state.
     await runtime.ideaBuilds.settle(spawned.upid);
-
     const built = runtime.snapshot().processes.find((process) => process.upid === spawned.upid);
     expect(built?.buildStatus).toBe("ready");
     expect(built?.previewUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/$/u);
 
-    // The surfaced URL serves the real scaffolded page.
     const response = await fetch(built!.previewUrl!);
     expect(response.status).toBe(200);
-    expect(await response.text()).toContain("Panopticon prototype");
+    expect(await response.text()).toContain("Vibersyn prototype");
   });
 
   test("an injected real builder's output reaches the snapshot's preview building -> ready", async () => {
@@ -79,60 +83,52 @@ describe("composition accept path — real build + preview on the snapshot", () 
     const builder: BuilderAgent = async (_pitch, dir) => {
       await writeFile(join(dir, "index.html"), `<!doctype html><title>${marker}</title><h1>${marker}</h1>`, "utf8");
     };
-    runtime = await createProjectorRuntime(liveEnv(), {
-      buildsRoot,
-      builderAgent: builder,
-      replaySource: [
-        final("let's build a dashboard tool to ship the replay prototype today", "utt-build"),
-        final("yes", "utt-yes"),
-      ],
-    });
-    const upidsBefore = new Set(runtime.snapshot().processes.map((process) => process.upid));
+    runtime = await createProjectorRuntime(liveEnv(replayPath), { buildsRoot, builderAgent: builder });
 
-    const session = runtime.startMicSession("corr-composition-preview-injected");
-    await session.stop();
-
-    const spawned = runtime.snapshot().processes.find((process) => !upidsBefore.has(process.upid));
+    const spawned = await detectThenAccept();
     expect(spawned).toBeDefined();
     if (spawned === undefined) return;
 
     await runtime.ideaBuilds.settle(spawned.upid);
-
     const built = runtime.snapshot().processes.find((process) => process.upid === spawned.upid);
     expect(built?.buildStatus).toBe("ready");
     expect(built?.previewUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/$/u);
 
-    // The served page reflects the injected builder's real output, not the
-    // deterministic template scaffold.
     const response = await fetch(built!.previewUrl!);
     expect(response.status).toBe(200);
     const body = await response.text();
     expect(body).toContain(marker);
-    expect(body).not.toContain("Panopticon prototype");
+    expect(body).not.toContain("Vibersyn prototype");
   });
 
   test("an idle live runtime has no processes (no build, no fixtures)", async () => {
-    runtime = await createProjectorRuntime(liveEnv(), { buildsRoot, replaySource: [] });
-    // The seeded demo fleet is off by default: an idle runtime has zero processes
-    // until a real idea is accepted, so there is nothing carrying a build at all.
+    runtime = await createProjectorRuntime(liveEnv(replayPath), { buildsRoot });
     expect(runtime.snapshot().processes).toHaveLength(0);
   });
 
+  test("IDEA CAPTURE mode builds a detected idea with no spoken 'yes' (the creation loop)", async () => {
+    runtime = await createProjectorRuntime(liveEnv(replayPath), { buildsRoot, builderAgent: noopBuilder });
+    runtime.setCaptureMode(true);
+    const before = new Set(runtime.snapshot().processes.map((process) => process.upid));
+
+    // A single buildable utterance — no affirmation. Capture mode IS the creation
+    // loop, so the surfaced idea builds itself. The spawn is fire-and-forget from
+    // the detection callback, so poll for it to appear.
+    await drive([final("let's build a dashboard tool to ship the replay prototype today", "utt-build")]);
+    const spawned = await waitFor(() => runtime!.snapshot().processes.find((process) => !before.has(process.upid)));
+
+    expect(spawned).toBeDefined();
+    if (spawned === undefined) return;
+    await runtime.ideaBuilds.settle(spawned.upid);
+    const built = runtime.snapshot().processes.find((process) => process.upid === spawned.upid);
+    expect(built?.buildStatus).toBe("ready");
+    expect(runtime.snapshot().captureMode).toBe(true);
+  });
+
   test("emergency stop tears the live preview server down so its URL stops responding", async () => {
-    runtime = await createProjectorRuntime(liveEnv(), {
-      buildsRoot,
-      builderAgent: noopBuilder,
-      replaySource: [
-        final("let's build a dashboard tool to ship the replay prototype today", "utt-build"),
-        final("yes", "utt-yes"),
-      ],
-    });
-    const upidsBefore = new Set(runtime.snapshot().processes.map((process) => process.upid));
+    runtime = await createProjectorRuntime(liveEnv(replayPath), { buildsRoot, builderAgent: noopBuilder });
 
-    const session = runtime.startMicSession("corr-composition-preview-stop");
-    await session.stop();
-
-    const spawned = runtime.snapshot().processes.find((process) => !upidsBefore.has(process.upid));
+    const spawned = await detectThenAccept();
     expect(spawned).toBeDefined();
     if (spawned === undefined) return;
     await runtime.ideaBuilds.settle(spawned.upid);
@@ -141,9 +137,6 @@ describe("composition accept path — real build + preview on the snapshot", () 
     expect(url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/$/u);
     expect((await fetch(url!)).status).toBe(200);
 
-    // The kill-all halts the process AND tears its preview server down: the URL no
-    // longer connects, and the snapshot drops previewUrl/buildStatus for the dead
-    // process.
     await runtime.emergencyStop("corr-emergency-preview");
     await expect(fetch(url!)).rejects.toBeDefined();
 
@@ -153,17 +146,31 @@ describe("composition accept path — real build + preview on the snapshot", () 
   });
 });
 
-function liveEnv(): Record<string, string> {
+function liveEnv(replayPath: string): Record<string, string> {
   return {
-    PANOP_INITIAL_MUTED: "0",
-    PANOP_ASR_PROVIDER: "replay",
-    PANOP_SUGGEST_WORD_FLOOR: "3",
-    PANOP_SUGGEST_INTERRUPT_VELOCITY_WEIGHT: "0",
-    PANOP_SUGGEST_INTERRUPT_RECENCY_WEIGHT: "0",
-    PANOP_SUGGEST_INTERRUPT_PENDING_STEERING_WEIGHT: "0",
+    VIBERSYN_INITIAL_MUTED: "0",
+    VIBERSYN_ASR_PROVIDER: "replay",
+    VIBERSYN_MIC_REPLAY_PATH: replayPath,
+    // Deterministic detection: heuristic, eager scheduling, no background tick.
+    VIBERSYN_IDEA_DETECTOR: "heuristic",
+    VIBERSYN_DETECT_MIN_NEW_TURNS: "1",
+    VIBERSYN_DETECT_MIN_INTERVAL_MS: "0",
+    VIBERSYN_DETECT_TICK_MS: "0",
   };
 }
 
 function final(text: string, utteranceId: string): TranscriptObservation {
   return { text, isFinal: true, speaker: "Room", sessionId: "composition-preview", latencyMs: 20, utteranceId };
+}
+
+// Poll until `fn` returns a defined value or the timeout elapses (for state set by
+// a fire-and-forget callback, e.g. capture-mode auto-build).
+async function waitFor<T>(fn: () => T | undefined, timeoutMs = 4000): Promise<T | undefined> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const value = fn();
+    if (value !== undefined) return value;
+    await new Promise((resolve) => setTimeout(resolve, 15));
+  }
+  return fn();
 }

@@ -1,18 +1,18 @@
 bun test v1.3.14 (0d9b296a)
 
 test/e2e/fleet.e2e.ts.test.ts:
-timestamp=2026-06-15T01:11:26.387Z level=INFO fiber=#5 message="Gateway run started" gateway:run=0ms runId=run-atlas transport=ws triggeredBy=fleet-control role=operator workflow=panopticon-fleet-control service=smithers source=user userId=fleet-control resume=false connectionId=fleet-control:connection
-timestamp=2026-06-15T01:11:26.388Z level=INFO fiber=#35 message="Gateway run started" gateway:run=0ms runId=run-bravo transport=ws triggeredBy=fleet-control role=operator workflow=panopticon-fleet-control service=smithers source=user userId=fleet-control resume=false connectionId=fleet-control:connection
+timestamp=2026-06-15T01:11:26.387Z level=INFO fiber=#5 message="Gateway run started" gateway:run=0ms runId=run-atlas transport=ws triggeredBy=fleet-control role=operator workflow=vibersyn-fleet-control service=smithers source=user userId=fleet-control resume=false connectionId=fleet-control:connection
+timestamp=2026-06-15T01:11:26.388Z level=INFO fiber=#35 message="Gateway run started" gateway:run=0ms runId=run-bravo transport=ws triggeredBy=fleet-control role=operator workflow=vibersyn-fleet-control service=smithers source=user userId=fleet-control resume=false connectionId=fleet-control:connection
 timestamp=2026-06-15T01:11:26.595Z level=INFO fiber=#407 message="getNodeOutput completed" runId=run-atlas durationMs=1.2049580000000333 nodeId=checkpoint status=produced iteration=0 rowBytes=60 service=smithers
 timestamp=2026-06-15T01:11:26.596Z level=INFO fiber=#416 message="getNodeOutput completed" runId=run-bravo durationMs=0.436916999999994 nodeId=checkpoint status=produced iteration=0 rowBytes=60 service=smithers
-timestamp=2026-06-15T01:11:26.680Z level=INFO fiber=#438 message="Gateway run started" gateway:run=0ms runId=run-atlas transport=ws triggeredBy=fleet-control role=operator workflow=panopticon-fleet-control service=smithers source=user userId=fleet-control resume=true connectionId=fleet-control:connection
+timestamp=2026-06-15T01:11:26.680Z level=INFO fiber=#438 message="Gateway run started" gateway:run=0ms runId=run-atlas transport=ws triggeredBy=fleet-control role=operator workflow=vibersyn-fleet-control service=smithers source=user userId=fleet-control resume=true connectionId=fleet-control:connection
 timestamp=2026-06-15T01:11:26.683Z level=INFO fiber=#462 message="getNodeOutput completed" runId=run-atlas durationMs=1.4281670000000304 nodeId=complete errorCode=NodeNotFound status=error iteration=0 rowBytes=0 service=smithers
 timestamp=2026-06-15T01:11:26.706Z level=INFO fiber=#580 message="getNodeOutput completed" runId=run-atlas durationMs=0.6321250000000873 nodeId=complete status=pending iteration=0 rowBytes=0 service=smithers
 timestamp=2026-06-15T01:11:26.728Z level=INFO fiber=#668 message="getNodeOutput completed" runId=run-atlas durationMs=0.5714169999999967 nodeId=complete status=produced iteration=0 rowBytes=114 service=smithers
 timestamp=2026-06-15T01:11:26.729Z level=INFO fiber=#674 message="getNodeOutput completed" runId=run-bravo durationMs=0.27970799999991414 nodeId=complete errorCode=NodeNotFound status=error iteration=0 rowBytes=0 service=smithers
-timestamp=2026-06-15T01:11:26.730Z level=INFO fiber=#686 message="Gateway run started" gateway:run=0ms runId=run-bravo transport=ws triggeredBy=fleet-control role=operator workflow=panopticon-fleet-control service=smithers source=user userId=fleet-control resume=true connectionId=fleet-control:connection
-timestamp=2026-06-15T01:11:27.015Z level=INFO fiber=#807 message="Gateway run started" gateway:run=1ms runId=run-bravo transport=ws triggeredBy=fleet-control role=operator workflow=panopticon-fleet-control service=smithers source=user userId=fleet-control resume=true connectionId=fleet-control:connection
-timestamp=2026-06-15T01:11:27.045Z level=INFO fiber=#874 message="Gateway run completed" gateway:run=1ms runId=run-bravo status=cancelled workflow=panopticon-fleet-control service=smithers source=user
+timestamp=2026-06-15T01:11:26.730Z level=INFO fiber=#686 message="Gateway run started" gateway:run=0ms runId=run-bravo transport=ws triggeredBy=fleet-control role=operator workflow=vibersyn-fleet-control service=smithers source=user userId=fleet-control resume=true connectionId=fleet-control:connection
+timestamp=2026-06-15T01:11:27.015Z level=INFO fiber=#807 message="Gateway run started" gateway:run=1ms runId=run-bravo transport=ws triggeredBy=fleet-control role=operator workflow=vibersyn-fleet-control service=smithers source=user userId=fleet-control resume=true connectionId=fleet-control:connection
+timestamp=2026-06-15T01:11:27.045Z level=INFO fiber=#874 message="Gateway run completed" gateway:run=1ms runId=run-bravo status=cancelled workflow=vibersyn-fleet-control service=smithers source=user
 
  1 pass
  1 filtered out

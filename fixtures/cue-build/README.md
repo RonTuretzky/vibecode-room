@@ -13,21 +13,21 @@ The layout mirrors a real Cue build closely enough for
 ```
 fixtures/cue-build/
   packages/core/dist/index.js     # the @cue/core surface the harness wires
-  packages/server/dist/index.js   # presence-only (Panopticon imports @cue/core)
+  packages/server/dist/index.js   # presence-only (Vibersyn imports @cue/core)
 ```
 
 `packages/core/dist/index.js` implements exactly the `CueCoreModule` surface
 (`CueHarness`, `TextCue`, the other cue classes, `MappedActionTool`, `Triggers`,
 `transcriptObservation`). Its `CueHarness.ingest` matches the configured
 `TextCue` wake patterns and, on a token match, returns a Cue `"text"` decision —
-which the Panopticon adapter turns into an earcon.
+which the Vibersyn adapter turns into an earcon.
 
 ## How to use it
 
 Point the source dir at this fixture; the bridge then selects mode `harness`:
 
 ```sh
-PANOP_CUE_SOURCE_DIR="$(pwd)/fixtures/cue-build" bun test
+VIBERSYN_CUE_SOURCE_DIR="$(pwd)/fixtures/cue-build" bun test
 ```
 
 The unit / integration / e2e tests for ISSUE-0025 set this env var themselves
@@ -41,6 +41,6 @@ and restore it afterwards, so plain `bun test` proves both paths:
 ## CI
 
 No build step is required: the fixture is committed. To instead exercise the
-*real* upstream substrate in CI, clone+build it and set `PANOP_CUE_SOURCE_DIR`
+*real* upstream substrate in CI, clone+build it and set `VIBERSYN_CUE_SOURCE_DIR`
 at the resulting checkout (`ensureCueSourceBuild()` in `src/cue/source.ts`
 documents the toolchain fallbacks).

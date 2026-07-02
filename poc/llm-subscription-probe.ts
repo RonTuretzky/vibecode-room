@@ -11,7 +11,7 @@ export const DECISION_BUDGET_MS = 100;
 export const COST_BUDGET_PER_HOUR_USD = 0.15;
 
 export type HotLoopDecision = "PASS" | "ACT";
-export type HotLoopTool = "observe.pass" | "panopticon.suggest" | "panopticon.steer";
+export type HotLoopTool = "observe.pass" | "vibersyn.suggest" | "vibersyn.steer";
 
 export interface HotLoopToolCall {
   id: string;
@@ -69,14 +69,14 @@ export interface HotLoopProbeVerdict {
 const CACHE_PATH = join(PROBE_ROOT, "verdict.json");
 const TRACE_PATH = join(TRACE_ROOT, "llm-subscription-probe.jsonl");
 
-const HOT_LOOP_PROMPT = `You are the Panopticon hot-loop decision classifier.
+const HOT_LOOP_PROMPT = `You are the Vibersyn hot-loop decision classifier.
 
 Return only valid JSON with this exact shape:
-{"decisions":[{"id":"repeat-1","decision":"PASS|ACT","tool":"observe.pass|panopticon.suggest|panopticon.steer","arguments":{},"confidence":0.0,"reason":"short"}]}
+{"decisions":[{"id":"repeat-1","decision":"PASS|ACT","tool":"observe.pass|vibersyn.suggest|vibersyn.steer","arguments":{},"confidence":0.0,"reason":"short"}]}
 
 ACT when the segment contains a clear new buildable idea, a named callsign command, a panic/stop word, a clear accept/reject of a pending suggestion, or a status/information query addressed to a named callsign.
 PASS for status updates about existing work, room discussion, human-to-human questions, social talk, filler, and vague intent.
-When an ACT decision is addressed to a named callsign, use panopticon.steer and include the callsign and short instruction.
+When an ACT decision is addressed to a named callsign, use vibersyn.steer and include the callsign and short instruction.
 For a status/information query addressed to a named callsign, set the instruction argument exactly to "status".
 
 Classify these transcript segments:
@@ -139,7 +139,7 @@ export function assertMappedActionToolSchema(decisions: HotLoopToolCall[]): void
     if (!["PASS", "ACT"].includes(decision.decision)) {
       throw new Error(`invalid decision ${String(decision.decision)}`);
     }
-    if (!["observe.pass", "panopticon.suggest", "panopticon.steer"].includes(decision.tool)) {
+    if (!["observe.pass", "vibersyn.suggest", "vibersyn.steer"].includes(decision.tool)) {
       throw new Error(`tool ${String(decision.tool)} is not MappedActionTool-compatible`);
     }
     if (decision.decision === "PASS" && decision.tool !== "observe.pass") {
@@ -148,9 +148,9 @@ export function assertMappedActionToolSchema(decisions: HotLoopToolCall[]): void
     if (decision.decision === "ACT" && decision.tool === "observe.pass") {
       throw new Error("ACT decisions must select a mapped action tool");
     }
-    if (decision.tool === "panopticon.steer") {
+    if (decision.tool === "vibersyn.steer") {
       if (typeof decision.arguments.callsign !== "string" || typeof decision.arguments.instruction !== "string") {
-        throw new Error("panopticon.steer requires callsign and instruction arguments");
+        throw new Error("vibersyn.steer requires callsign and instruction arguments");
       }
     }
     if (typeof decision.confidence !== "number" || decision.confidence < 0 || decision.confidence > 1) {
@@ -199,13 +199,13 @@ export function assertCostGate(costPerHourUsd: number | null): void {
 
 export function assertActPromptAmendment(decisions: HotLoopToolCall[]): void {
   const statusDecision = decisions.find((decision) => decision.id === "repeat-1");
-  if (statusDecision?.decision !== "ACT" || statusDecision.tool !== "panopticon.steer") {
+  if (statusDecision?.decision !== "ACT" || statusDecision.tool !== "vibersyn.steer") {
     throw new Error("named callsign status query did not classify as ACT");
   }
 }
 
 export async function runHotLoopSubscriptionProbe(options: { forceRefresh?: boolean } = {}): Promise<HotLoopProbeVerdict> {
-  if (!options.forceRefresh && process.env.PANOP_LLM_PROBE_USE_ARTIFACT_CACHE === "1") {
+  if (!options.forceRefresh && process.env.VIBERSYN_LLM_PROBE_USE_ARTIFACT_CACHE === "1") {
     const cached = await readCachedVerdict();
     if (cached !== null) {
       return cached;
@@ -414,7 +414,7 @@ function normalizeDecision(entry: unknown): HotLoopToolCall {
   if (value.decision !== "PASS" && value.decision !== "ACT") {
     throw new Error(`invalid decision ${String(value.decision)}`);
   }
-  if (value.tool !== "observe.pass" && value.tool !== "panopticon.suggest" && value.tool !== "panopticon.steer") {
+  if (value.tool !== "observe.pass" && value.tool !== "vibersyn.suggest" && value.tool !== "vibersyn.steer") {
     throw new Error(`tool ${String(value.tool)} is not MappedActionTool-compatible`);
   }
   if (typeof value.confidence !== "number") {

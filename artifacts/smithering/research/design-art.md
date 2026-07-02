@@ -1,11 +1,11 @@
-# Design Art — Panopticon
+# Design Art — Vibersyn
 
 > Researched 2026-06-13. Covers VUI (voice user interface) best practices, ambient listening
 > design, command vocabulary conventions, earcon design, mission-control observability boards,
-> and voice onboarding patterns — all filtered for Panopticon's specific constraints:
+> and voice onboarding patterns — all filtered for Vibersyn's specific constraints:
 > audio-only, always-on, team-room, ambient-suggestion-then-agent-spawn.
 >
-> Organized as: what to **copy**, what to **avoid**, and the concrete Panopticon implication.
+> Organized as: what to **copy**, what to **avoid**, and the concrete Vibersyn implication.
 
 ---
 
@@ -31,15 +31,15 @@ wake words. Key principles (from Sensory 2026 guide + Amazon Science research):
 
 ### What to avoid
 
-- The full product name "Panopticon" (5 syllables, starts with bilabial /p/, not ideal — the /p/
+- The full product name "Vibersyn" (5 syllables, starts with bilabial /p/, not ideal — the /p/
   onset is soft; better to compound or shorten).
 - Any word easily confused with a teammate's name or a common technical term spoken in the room.
 - Homophonic pairs within the active callsign set (see NATO rationale below).
 
-### Panopticon implication
+### Vibersyn implication
 
-The global wake word should be 3–4 syllables, plosive-leading, coined or rare. "Panop" or a
-distinct coined word beats the full "Panopticon." Per-process callsigns (REQ-7) must be drawn
+The global wake word should be 3–4 syllables, plosive-leading, coined or rare. "Viber" or a
+distinct coined word beats the full "Vibersyn." Per-process callsigns (REQ-7) must be drawn
 from a phonetically verified set — the NATO alphabet is the gold standard for exactly this.
 The callsign collision guard (AC7.2) should compute edit distance AND phonetic similarity
 (Soundex/Metaphone) across the active set.
@@ -79,7 +79,7 @@ you choose the earcon, the user learns it — but only if you use it consistentl
   tone, users will not distinguish them.
 - Long earcons (> 500ms for transient states). The earcon signals; it does not perform.
 
-### Panopticon implication
+### Vibersyn implication
 
 Design exactly **5 earcons** for V0 — no more:
 
@@ -102,7 +102,7 @@ means passively listening. A distinctive persistent signal means muted.
 **A spoken suggestion is a broadcast interrupt.** A screen notification is ignorable — the user
 glances at it, dismisses it, returns to conversation. A spoken suggestion **talks over the room**:
 it interrupts every person present simultaneously, with no opt-out for individuals. This makes the
-quality bar for Panopticon's suggestion engine asymmetrically higher than any visual-interface AI:
+quality bar for Vibersyn's suggestion engine asymmetrically higher than any visual-interface AI:
 
 > A false positive that appears on a screen = mild friction.
 > A false positive that is spoken in a shared room = interrupts a technical conversation, breaks
@@ -116,18 +116,18 @@ correlated with suggestion frequency and inversely correlated with perceived use
 letter" triggered too often, in contexts where it was not useful, interrupting intentional work.
 The four principles of "polite computing" (Microsoft Research, 1998, cited in VUI research) it
 violated: (1) respect user choice, (2) disclose yourself, (3) offer useful choices,
-(4) remember past choices. Panopticon's conservative Clippy must honor all four.
+(4) remember past choices. Vibersyn's conservative Clippy must honor all four.
 
 ### What to copy
 
 **Amazon Echo's passive vs. active state distinction** — users can see/hear whether the device
 is passively waiting (no signal) or actively processing. The hard-mic-mute (red ring, hardware
-disconnect) is the gold standard for "I guarantee nothing goes out." Panopticon's persistent
+disconnect) is the gold standard for "I guarantee nothing goes out." Vibersyn's persistent
 listening indicator earcon serves this role.
 
 **"Better to ask than to assume" framing (CHI 2024 proactive voice study):** Users strongly
 preferred assistants that asked consent before acting vs. those that acted and let you undo.
-Panopticon's spoken suggestion + MCQ model maps directly to this — the system surfaces intent,
+Vibersyn's spoken suggestion + MCQ model maps directly to this — the system surfaces intent,
 asks clarifying questions, and waits for spoken acceptance before taking any action.
 
 **Idle-preferring cadence (Cue's IdleCue):** A suggestion held until the room goes quiet is
@@ -144,7 +144,7 @@ conversation pause is the audio analog of a "browser notification that waits for
 - Apologetic language in suggestion delivery. "I noticed you might want to…" is longer and less
   trustworthy than a brief, confident one-liner. Brevity signals confidence.
 
-### Panopticon implication
+### Vibersyn implication
 
 The REQ-3 thresholds (≥60 words OR ≥90s, ≤1 suggestion/3 min, idle-preferring) are the right
 shape. The addition: calibrate the suggestion engine's confidence threshold on "room-interrupt
@@ -166,7 +166,7 @@ Its design principles, refined over 80 years of failure analysis:
   because confusing them is dangerous. The specificity is not pedantry; it closes ambiguity loops.
 - **The readback protocol.** After a controller issues an instruction, the pilot reads it back
   verbatim. This closes the communication loop and confirms mutual understanding. For
-  Panopticon: agent-steering should close with a brief readback — "Got it: summarize competitors
+  Vibersyn: agent-steering should close with a brief readback — "Got it: summarize competitors
   and report back" — not silent acceptance.
 - **Verb-first, noun-second syntax.** "Turn left heading 270" not "heading 270, turn left."
   The action comes first. Under cognitive load, imperative-first syntax is parsed faster.
@@ -180,7 +180,7 @@ English, French, and Spanish AND acoustically distinct across the full 26-word s
 "Able" — "able" sounded like "apple" on degraded radio. The redesign prioritized **acoustic
 distinctiveness across the entire active set**, not just individual word clarity.
 
-The lesson for Panopticon callsigns: the active callsign set must be designed holistically.
+The lesson for Vibersyn callsigns: the active callsign set must be designed holistically.
 Adding a new callsign means checking it against every other active callsign for phonetic
 similarity — the same discipline ICAO applied.
 
@@ -194,7 +194,7 @@ similarity — the same discipline ICAO applied.
 - Long, polysyllabic stop words. The panic word must be short (1–2 syllables) for fast
   utterance under stress. "Stop" and "cancel" are good. "Emergency abort sequence" is not.
 
-### Panopticon implication
+### Vibersyn implication
 
 V0 should ship with a pre-validated callsign set drawn from the NATO alphabet or a
 phonetically-equivalent coined set. The collision guard at AC7.2 should be implemented as a
@@ -214,10 +214,10 @@ System) are the reference designs for multi-stream, always-on observability unde
 
 **Structural principles:**
 - **Role-based display segregation.** Each operator had one domain of information. The flight
-  director saw the global view; propulsion engineers saw propulsion. For Panopticon's board:
+  director saw the global view; propulsion engineers saw propulsion. For Vibersyn's board:
   one panel per process, plus a global summary panel. Not a combined log feed.
 - **Tiered authority layout.** Higher authority = wider scope displayed = more central position.
-  The global status metric should occupy top-center of the Panopticon board; process panels
+  The global status metric should occupy top-center of the Vibersyn board; process panels
   radiate outward.
 - **Color semantics: additive urgency.** STARS: default black background (reduces eye fatigue
   in dim monitoring environments), green for nominal, yellow for attention-warranted, red for
@@ -241,13 +241,13 @@ System) are the reference designs for multi-stream, always-on observability unde
 
 - Operational controls on the observability board (AC16.2). The NASA mission control principle:
   "read-only displays do not have buttons." Mixing read and write surfaces in a crisis causes
-  operators to make inadvertent commands. The Panopticon board must be strictly passive.
+  operators to make inadvertent commands. The Vibersyn board must be strictly passive.
 - Auto-scrolling logs with no pause. If the log scrolls past readable speed during active
   operation, it becomes worthless. Offer scroll-pause-on-hover at minimum.
 - Aggregated-only views. A "total event count" metric tells you nothing about which process
   is stuck. Per-process lanes are non-negotiable.
 
-### Panopticon implication
+### Vibersyn implication
 
 The optional observability board (REQ-16) should be designed as a **read-only mission-control
 console**, not a dashboard. Layout: listening indicator (top-left, always visible), global
@@ -284,21 +284,21 @@ Users cannot hold more than 5–7 items in working memory from audio; a 15-comma
 instantly forgotten. The first session should expose ≤3 commands.
 
 **Long setup monologues.** Users tolerate one sentence of instruction per capability. "Say
-'Panopticon status' to hear a rundown" is fine. A 90-second onboarding explanation is not.
+'Vibersyn status' to hear a rundown" is fine. A 90-second onboarding explanation is not.
 
 **Teaching only via negative feedback.** If the first 2–3 commands fail, users stop attempting.
 Include a "soft landing" for the most common onboarding misphrasings that responds helpfully
-("I didn't catch that — try saying 'Panopticon, status' or 'Panopticon, help'") rather than
+("I didn't catch that — try saying 'Vibersyn, status' or 'Vibersyn, help'") rather than
 silently passing.
 
 **Mid-command timeouts during first-run.** Studies on smart speaker users found that natural
 pauses mid-sentence (while formulating a request) caused devices to cut off the user. During
 first-run specifically, extend the silence threshold by 50–100% to allow for hesitation.
 
-### Panopticon implication
+### Vibersyn implication
 
 The consent announcement (REQ-1, AC1.1) is the first spoken utterance the room hears. It should
-double as the minimal onboarding: "Panopticon is listening. Say 'Panopticon, status' to hear a
+double as the minimal onboarding: "Vibersyn is listening. Say 'Vibersyn, status' to hear a
 rundown. Say '[mute word]' to pause listening." That is the entire onboarding — 3 sentences,
 < 8 seconds. A printed card with the magic-word vocabulary is the follow-on reference. The
 team learns the rest through use.
@@ -312,11 +312,11 @@ team learns the rest through use.
 **Cue's `observe.pass` pattern** is the right naming philosophy for an always-on system: the
 explicit non-action is a named, logged outcome — not a silent gap. Naming "pass" rather than
 just "nothing happened" makes non-action first-class and testable. Apply the same pattern to
-Panopticon's internal routing: `route.suggestion`, `route.steer:UPID`, `route.pass` are three
+Vibersyn's internal routing: `route.suggestion`, `route.steer:UPID`, `route.pass` are three
 distinct, named outcomes, each with a trace record.
 
 **ATC's receive-only vs. comply acknowledgement distinction ("Roger" vs. "Wilco")** is the model
-for Panopticon's voice response vocabulary. The system should have distinct earcons/words for:
+for Vibersyn's voice response vocabulary. The system should have distinct earcons/words for:
 "I heard that" vs. "I heard that and I'm acting on it." The difference is critical — a
 spawn-confirmation earcon means something happened; a receipt earcon means only that the
 command was parsed.
@@ -329,7 +329,7 @@ in the order events occur and is easier to scan in log output.
 
 - Naming commands or log events with nouns only ("process", "command", "event"). These require
   reading context to understand what happened. Verb-noun pairs are self-documenting.
-- Over-parameterized voice commands. "Panopticon, spawn a new process using the research agent
+- Over-parameterized voice commands. "Vibersyn, spawn a new process using the research agent
   with high priority and deadline end of week" is too much to parse from audio. Commands should
   be ≤7 words; complex setup happens through MCQs, not command strings.
 - Reusing vocabulary across different abstraction layers. If "stop" means both "pause this
@@ -341,7 +341,7 @@ in the order events occur and is easier to scan in log output.
 ## 8. Decisions Recorded
 
 - **D-DA-1:** Wake word / global callsign should be 3–4 syllables, plosive-leading, coined or
-  rare — not "Panopticon" as spoken. A shorter coined form (e.g. "Panop") is preferred.
+  rare — not "Vibersyn" as spoken. A shorter coined form (e.g. "Viber") is preferred.
 - **D-DA-2:** Earcon set for V0 is fixed at 5 (wake, transcribing-active, spawn, resolve,
   stop). No new earcons added without an acoustic distinctiveness check against all existing ones.
 - **D-DA-3:** Per-process callsigns must pass a phonetic collision guard checked against: all

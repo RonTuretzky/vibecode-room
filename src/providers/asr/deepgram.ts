@@ -198,7 +198,7 @@ export function createDeepgramNova3ASRFromEnv(env: Record<string, string | undef
   return {
     provider: new DeepgramNova3ASRProvider({
       apiKey,
-      sessionId: env.PANOP_ASR_DEEPGRAM_SESSION_ID ?? "probe-asr-deepgram-live",
+      sessionId: env.VIBERSYN_ASR_DEEPGRAM_SESSION_ID ?? "probe-asr-deepgram-live",
     }),
     credentialSource,
     skippedReason: null,

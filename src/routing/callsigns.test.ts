@@ -30,15 +30,15 @@ const NATURAL_DEV_SPEECH = [
 describe("callsign collision guard", () => {
   test("AC7.2 rejects callsigns colliding with active callsigns and control words", () => {
     const reserved = reservedControlWords({
-      PANOP_WAKE_WORDS: "panop",
-      PANOP_MUTE_WORDS: "mute",
-      PANOP_UNMUTE_WORDS: "unmute",
-      PANOP_PANIC_WORDS: "abort",
-      PANOP_STOP_WORDS: "halt",
+      VIBERSYN_WAKE_WORDS: "viber",
+      VIBERSYN_MUTE_WORDS: "mute",
+      VIBERSYN_UNMUTE_WORDS: "unmute",
+      VIBERSYN_PANIC_WORDS: "abort",
+      VIBERSYN_STOP_WORDS: "halt",
     });
     const active = ["virellium"];
     const nearActive = validateCallsignCandidate("virelium", active, reserved);
-    const nearWake = validateCallsignCandidate("panap", active, reserved);
+    const nearWake = validateCallsignCandidate("vibor", active, reserved);
     const nearMute = validateCallsignCandidate("mooter", active, reserved);
     const nearUnmute = validateCallsignCandidate("unmooter", active, reserved);
     const nearPanic = validateCallsignCandidate("abord", active, reserved);
@@ -56,7 +56,7 @@ describe("callsign collision guard", () => {
   });
 
   test("coined pool contains no NATO or conversational callsigns", () => {
-    const pool = process.env.PANOP_RBG_USE_NATO_CALLSIGNS === "1"
+    const pool = process.env.VIBERSYN_RBG_USE_NATO_CALLSIGNS === "1"
       ? [...NATO_CALLSIGNS]
       : [...DEFAULT_CALLSIGN_POOL];
 
@@ -108,7 +108,7 @@ describe("callsign collision guard", () => {
     ];
 
     const separated = matchCallsignInUtterance("Virellium, pause.", active);
-    const concatenated = process.env.PANOP_RBG_STRICT_WORD_CALLSIGN_MATCHER === "1"
+    const concatenated = process.env.VIBERSYN_RBG_STRICT_WORD_CALLSIGN_MATCHER === "1"
       ? null
       : matchCallsignInUtterance("VirelliumPause.", active);
 
@@ -121,7 +121,7 @@ describe("callsign collision guard", () => {
   });
 
   test("P-PHONETIC stable reproducible codes and distances across runs", () => {
-    const words = ["virellium", "quoravex", "panop", "mute", "unmute", "abort", "halt"];
+    const words = ["virellium", "quoravex", "viber", "mute", "unmute", "abort", "halt"];
     const firstRun = words.map((word) => phoneticProfile(word));
     const secondRun = words.map((word) => phoneticProfile(word));
 
@@ -129,7 +129,7 @@ describe("callsign collision guard", () => {
     expect(firstRun).toEqual([
       { normalized: "virellium", metaphone: ["FRLM", ""], phonemes: "fArAlAm" },
       { normalized: "quoravex", metaphone: ["KRFKS", ""], phonemes: "kArAfAks" },
-      { normalized: "panop", metaphone: ["PNP", ""], phonemes: "pAnAp" },
+      { normalized: "viber", metaphone: ["FPR", ""], phonemes: "fAbAr" },
       { normalized: "mute", metaphone: ["MT", ""], phonemes: "mAtA" },
       { normalized: "unmute", metaphone: ["ANMT", ""], phonemes: "AnmAtA" },
       { normalized: "abort", metaphone: ["APRT", ""], phonemes: "AbArt" },

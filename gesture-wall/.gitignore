@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Auto-downloaded model weights (~6 MB) and machine-specific calibration.
+models/
+calibration.json
+# Active room calibration is machine/space-specific; commit room.example.*.json instead.
+room.json
+room.2cam.json
+# Compiled Kinect bridge (build from native/ via build_kinect_v2.sh).
+bin/

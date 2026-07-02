@@ -36,7 +36,7 @@ export class GenAiOtlpExporter {
     this.endpoint = options.endpoint ?? process.env.LANGFUSE_OTLP_ENDPOINT;
     this.headers = options.headers ?? {};
     this.fetchImpl = options.fetch ?? fetch;
-    this.serviceName = options.serviceName ?? "panopticon-smithers";
+    this.serviceName = options.serviceName ?? "vibersyn-smithers";
   }
 
   async instrumentAgentCall<T>(input: GenAiCallInput, run: () => Promise<T> | T): Promise<T> {
@@ -78,7 +78,7 @@ export class GenAiOtlpExporter {
   }
 }
 
-export function createGenAiOtlpPayload(input: GenAiCallInput, serviceName = "panopticon-smithers") {
+export function createGenAiOtlpPayload(input: GenAiCallInput, serviceName = "vibersyn-smithers") {
   const startedAtMs = input.startedAtMs ?? 0;
   const endedAtMs = input.endedAtMs ?? startedAtMs;
   const attributes: Record<string, string | number | boolean> = {
@@ -87,9 +87,9 @@ export function createGenAiOtlpPayload(input: GenAiCallInput, serviceName = "pan
     "gen_ai.operation.name": input.operation,
     "gen_ai.request.model": input.model,
     "gen_ai.response.model": input.model,
-    "panopticon.correlation_id": input.correlationId,
-    "panopticon.upid": input.upid,
-    "panopticon.smithers.run_id": input.runId,
+    "vibersyn.correlation_id": input.correlationId,
+    "vibersyn.upid": input.upid,
+    "vibersyn.smithers.run_id": input.runId,
     ...input.attributes,
   };
 
@@ -108,7 +108,7 @@ export function createGenAiOtlpPayload(input: GenAiCallInput, serviceName = "pan
         },
         scopeSpans: [
           {
-            scope: { name: "panopticon.obs.otel", version: "0.0.1" },
+            scope: { name: "vibersyn.obs.otel", version: "0.0.1" },
             spans: [
               {
                 traceId: fixedHex(input.correlationId, 32),

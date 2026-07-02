@@ -16,7 +16,7 @@ const PROBE_DIR = `artifacts/smithering/probes/${PROBE_ID}`;
 const TRACE_DIR = `${BUILD_DIR}/trace`;
 const TRACE_PATH = `${TRACE_DIR}/p-seam.jsonl`;
 const CUE_REPO = "https://github.com/jameslbarnes/cue.git";
-const CUE_ROOT = process.env.PANOP_CUE_SOURCE_DIR ?? join(tmpdir(), "panopticon-cue-src");
+const CUE_ROOT = process.env.VIBERSYN_CUE_SOURCE_DIR ?? join(tmpdir(), "vibersyn-cue-src");
 const NON_BLOCKING_BUDGET_MS = 150;
 const LOOP_TICK_BUDGET_MS = 120;
 const SPAWN_BUDGET_MS = 3_000;
@@ -109,7 +109,7 @@ describe("P-SEAM Cue to Smithers gateway integration", () => {
         setTimeout(() => resolve(performance.now() - startedAt), 25);
       });
       const ingest = harness.ingest(
-        cue.transcriptObservation("Panop spawn smithers seam probe", {
+        cue.transcriptObservation("Viber spawn smithers seam probe", {
           speaker: "operator",
           timestamp: 1_000,
         }),
@@ -119,8 +119,8 @@ describe("P-SEAM Cue to Smithers gateway integration", () => {
       const cueLoopMs = performance.now() - startedAt;
 
       const action = result.toolResults[0]?.actions[0];
-      expect(result.toolCalls[0]?.tool).toBe("panopticon.spawnSmithers");
-      expect(result.toolResults[0]?.tool).toBe("panopticon.spawnSmithers");
+      expect(result.toolCalls[0]?.tool).toBe("vibersyn.spawnSmithers");
+      expect(result.toolResults[0]?.tool).toBe("vibersyn.spawnSmithers");
       expect(result.toolResults[0]?.status).toBe("ok");
       expect(action).toEqual(
         expect.objectContaining({
@@ -187,7 +187,7 @@ describe("P-SEAM Cue to Smithers gateway integration", () => {
           upid: "upid-seam-001",
           runId: spawn.runId,
           steeringWindowId: "window-seam-voice-001",
-          sourceWindowHash: "source-window:panop-spawn-smithers-seam-probe",
+          sourceWindowHash: "source-window:viber-spawn-smithers-seam-probe",
         }),
       );
 
@@ -386,12 +386,12 @@ function createCueHarness(cue: CueCore, dispatcher: SeamDispatcher, voiceOutputs
       {
         name: "cue-to-smithers-spawn",
         triggers: [Triggers.onCue("text")],
-        allowedTools: ["panopticon.spawnSmithers"],
+        allowedTools: ["vibersyn.spawnSmithers"],
         llmProvider: {
           infer() {
             return [
               {
-                tool: "panopticon.spawnSmithers",
+                tool: "vibersyn.spawnSmithers",
                 arguments: {
                   upid: "upid-seam-001",
                   steeringWindowId: "window-seam-voice-001",
@@ -405,12 +405,12 @@ function createCueHarness(cue: CueCore, dispatcher: SeamDispatcher, voiceOutputs
       {
         name: "smithers-events-to-voice",
         triggers: [Triggers.onObservation("smithers.run_event")],
-        allowedTools: ["panopticon.voiceOut"],
+        allowedTools: ["vibersyn.voiceOut"],
         llmProvider: {
           infer({ observation }: any) {
             return [
               {
-                tool: "panopticon.voiceOut",
+                tool: "vibersyn.voiceOut",
                 arguments: {
                   upid: observation.payload.upid,
                   runId: observation.payload.runId,
@@ -427,7 +427,7 @@ function createCueHarness(cue: CueCore, dispatcher: SeamDispatcher, voiceOutputs
     ],
     tools: [
       new MappedActionTool({
-        name: "panopticon.spawnSmithers",
+        name: "vibersyn.spawnSmithers",
         description: "Dispatch a Cue action into Smithers Gateway run spawn.",
         inputSchema: {
           type: "object",
@@ -441,7 +441,7 @@ function createCueHarness(cue: CueCore, dispatcher: SeamDispatcher, voiceOutputs
         mapper: (call: any, context: any) => dispatcher.dispatch(call, context),
       }),
       new MappedActionTool({
-        name: "panopticon.voiceOut",
+        name: "vibersyn.voiceOut",
         description: "Record run-event observations as voice-out coherent output.",
         inputSchema: {
           type: "object",

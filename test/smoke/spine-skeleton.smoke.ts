@@ -46,15 +46,15 @@ describe("spine skeleton smoke", () => {
   });
 
   test("wake matcher is case-insensitive but whole-token only", () => {
-    const base = observation({ text: "PANOP can you hear this" });
+    const base = observation({ text: "VIBER can you hear this" });
     expect(matchWakeWord(base).kind).toBe("action");
-    expect(matchWakeWord(observation({ text: "panoptic dashboards are unrelated" })).kind).toBe("pass");
+    expect(matchWakeWord(observation({ text: "vibertic dashboards are unrelated" })).kind).toBe("pass");
   });
 
   test("non-final observations never produce actions but still produce pass trace events", () => {
     const trace = new TraceProcessor();
-    const decision = matchWakeWord(observation({ text: "Panop while still partial", isFinal: false }));
-    const events = trace.emitDecision(decision, observation({ text: "Panop while still partial", isFinal: false }));
+    const decision = matchWakeWord(observation({ text: "Viber while still partial", isFinal: false }));
+    const events = trace.emitDecision(decision, observation({ text: "Viber while still partial", isFinal: false }));
 
     expect(decision).toMatchObject({ kind: "pass", reason: "dropped" });
     expect(events.map((event) => event.event)).toEqual(["observe.pass", "route.pass"]);
@@ -62,7 +62,7 @@ describe("spine skeleton smoke", () => {
   });
 
   test("replay reader rejects invalid JSONL with line context", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "panopticon-smoke-"));
+    const dir = await mkdtemp(join(tmpdir(), "vibersyn-smoke-"));
     const path = join(dir, "bad.jsonl");
     await writeFile(path, "{\"text\":\"missing fields\"}\n", "utf8");
 

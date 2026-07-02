@@ -8,7 +8,7 @@ import {
 } from "./persistence-guard";
 
 const observation: TranscriptObservation = {
-  text: "Panop status",
+  text: "Viber status",
   isFinal: true,
   speaker: null,
   sessionId: "session-persistence",

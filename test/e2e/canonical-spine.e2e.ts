@@ -90,7 +90,7 @@ function canonicalReplayDecision(): DecisionLLM<Record<string, unknown>> {
 function canonicalReplayObservations(sessionId: string): TranscriptObservation[] {
   return [
     {
-      text: "Panop build canonical replay coverage with a no screen harness",
+      text: "Viber build canonical replay coverage with a no screen harness",
       isFinal: true,
       speaker: "speaker-canonical",
       sessionId,

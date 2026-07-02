@@ -9,7 +9,7 @@ const live = createElevenLabsFlashTTSFromEnv();
 describe("P-TTS live streaming synthesis (guarded)", () => {
   test.skipIf(live.provider === null)("real ElevenLabs Flash speak() yields audio bytes", async () => {
     const provider = live.provider!;
-    const stream = await provider.speak("Panopticon streaming text to speech smoke test.");
+    const stream = await provider.speak("Vibersyn streaming text to speech smoke test.");
     const reader = stream.getReader();
 
     let total = 0;

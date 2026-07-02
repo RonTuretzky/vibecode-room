@@ -2,7 +2,7 @@ bun test v1.3.14 (0d9b296a)
 
 src/routing/callsigns.test.ts:
 58 |   test("coined pool contains no NATO or conversational callsigns", () => {
-59 |     const pool = process.env.PANOP_RBG_USE_NATO_CALLSIGNS === "1"
+59 |     const pool = process.env.VIBERSYN_RBG_USE_NATO_CALLSIGNS === "1"
 60 |       ? [...NATO_CALLSIGNS]
 61 |       : [...DEFAULT_CALLSIGN_POOL];
 62 | 

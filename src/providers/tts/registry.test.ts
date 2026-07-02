@@ -13,9 +13,9 @@ import * as providers from "../index";
 // A stub transport so the real provider can be constructed without a network.
 const stubTransport: TTSTransport = async () => streamOf([Uint8Array.from([1, 2, 3, 4])]);
 
-describe("selectTtsProvider — explicit PANOP_TTS_PROVIDER mapping (unit)", () => {
+describe("selectTtsProvider — explicit VIBERSYN_TTS_PROVIDER mapping (unit)", () => {
   test("maps 'noop' to NoopTTSProvider", () => {
-    const selection = selectTtsProvider({ PANOP_TTS_PROVIDER: "noop" });
+    const selection = selectTtsProvider({ VIBERSYN_TTS_PROVIDER: "noop" });
 
     expect(selection.mode).toBe("noop");
     expect(selection.provider).toBeInstanceOf(NoopTTSProvider);
@@ -23,7 +23,7 @@ describe("selectTtsProvider — explicit PANOP_TTS_PROVIDER mapping (unit)", () 
 
   test("maps 'elevenlabs' to ElevenLabsFlashTTSProvider when a key resolves", () => {
     const selection = selectTtsProvider(
-      { PANOP_TTS_PROVIDER: "elevenlabs", ELEVENLABS_API_KEY: fakeElevenLabsKey() },
+      { VIBERSYN_TTS_PROVIDER: "elevenlabs", ELEVENLABS_API_KEY: fakeElevenLabsKey() },
       { transport: stubTransport },
     );
 
@@ -39,28 +39,28 @@ describe("selectTtsProvider — explicit PANOP_TTS_PROVIDER mapping (unit)", () 
   });
 
   test("is case/whitespace tolerant for the explicit value", () => {
-    const selection = selectTtsProvider({ PANOP_TTS_PROVIDER: "  Noop  " });
+    const selection = selectTtsProvider({ VIBERSYN_TTS_PROVIDER: "  Noop  " });
 
     expect(selection.mode).toBe("noop");
     expect(selection.provider).toBeInstanceOf(NoopTTSProvider);
   });
 
-  test("rejects an unknown PANOP_TTS_PROVIDER value", () => {
-    expect(() => selectTtsProvider({ PANOP_TTS_PROVIDER: "openai" })).toThrow(
-      /Unknown PANOP_TTS_PROVIDER/u,
+  test("rejects an unknown VIBERSYN_TTS_PROVIDER value", () => {
+    expect(() => selectTtsProvider({ VIBERSYN_TTS_PROVIDER: "openai" })).toThrow(
+      /Unknown VIBERSYN_TTS_PROVIDER/u,
     );
   });
 });
 
 describe("selectTtsProvider — default + credential gating (integration)", () => {
-  test("no PANOP_TTS_PROVIDER + no credential -> Noop (silent, no key, no network)", () => {
+  test("no VIBERSYN_TTS_PROVIDER + no credential -> Noop (silent, no key, no network)", () => {
     const selection = selectTtsProvider({});
 
     expect(selection.mode).toBe("noop");
     expect(selection.provider).toBeInstanceOf(NoopTTSProvider);
   });
 
-  test("no PANOP_TTS_PROVIDER + ELEVENLABS_API_KEY present -> auto-selects the real provider", () => {
+  test("no VIBERSYN_TTS_PROVIDER + ELEVENLABS_API_KEY present -> auto-selects the real provider", () => {
     const selection = selectTtsProvider(
       { ELEVENLABS_API_KEY: fakeElevenLabsKey() },
       { transport: stubTransport },
@@ -77,9 +77,9 @@ describe("selectTtsProvider — default + credential gating (integration)", () =
     expect(selection.provider).toBeInstanceOf(NoopTTSProvider);
   });
 
-  test("explicit PANOP_TTS_PROVIDER=noop overrides a present credential", () => {
+  test("explicit VIBERSYN_TTS_PROVIDER=noop overrides a present credential", () => {
     const selection = selectTtsProvider({
-      PANOP_TTS_PROVIDER: "noop",
+      VIBERSYN_TTS_PROVIDER: "noop",
       ELEVENLABS_API_KEY: fakeElevenLabsKey(),
     });
 
@@ -97,28 +97,28 @@ describe("selectTtsProvider — default + credential gating (integration)", () =
     expect(selection.provider).toBeInstanceOf(ElevenLabsFlashTTSProvider);
   });
 
-  test("an empty PANOP_TTS_PROVIDER falls back to the Noop default", () => {
-    const selection = selectTtsProvider({ PANOP_TTS_PROVIDER: "" });
+  test("an empty VIBERSYN_TTS_PROVIDER falls back to the Noop default", () => {
+    const selection = selectTtsProvider({ VIBERSYN_TTS_PROVIDER: "" });
 
     expect(selection.mode).toBe("noop");
     expect(selection.provider).toBeInstanceOf(NoopTTSProvider);
   });
 
   test("'elevenlabs' without a credential surfaces a clear error", () => {
-    expect(() => selectTtsProvider({ PANOP_TTS_PROVIDER: "elevenlabs" })).toThrow(
+    expect(() => selectTtsProvider({ VIBERSYN_TTS_PROVIDER: "elevenlabs" })).toThrow(
       /requires ELEVENLABS_API_KEY to be set/u,
     );
   });
 
   test("an empty ELEVENLABS_API_KEY counts as unresolvable for 'elevenlabs'", () => {
-    const env: TtsSelectionEnv = { PANOP_TTS_PROVIDER: "elevenlabs", ELEVENLABS_API_KEY: "" };
+    const env: TtsSelectionEnv = { VIBERSYN_TTS_PROVIDER: "elevenlabs", ELEVENLABS_API_KEY: "" };
 
     expect(() => selectTtsProvider(env)).toThrow(/requires ELEVENLABS_API_KEY to be set/u);
   });
 
-  test("explicit value overrides the default: PANOP_TTS_PROVIDER=elevenlabs selects the real provider", () => {
+  test("explicit value overrides the default: VIBERSYN_TTS_PROVIDER=elevenlabs selects the real provider", () => {
     const selection = selectTtsProvider(
-      { PANOP_TTS_PROVIDER: "elevenlabs", ELEVENLABS_API_KEY: fakeElevenLabsKey() },
+      { VIBERSYN_TTS_PROVIDER: "elevenlabs", ELEVENLABS_API_KEY: fakeElevenLabsKey() },
       { transport: stubTransport },
     );
 

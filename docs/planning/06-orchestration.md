@@ -1,4 +1,4 @@
-# Panopticon — Implementation Orchestration (V0)
+# Vibersyn — Implementation Orchestration (V0)
 
 > **Audio-first with a required projector UI. Voice is the primary routine control modality.** This document specifies **how the V0 tickets
 > are actually built**: how they parallelize into worktrees, how work lands, which gates run where, which
@@ -390,9 +390,9 @@ human — never raised by this pass:
    orchestration can leave the pre-build phase for any Cue/hot-loop-LLM/seam/TTS path: **P-ASR-Deepgram**,
    **A-LLM-SUB** (cheap/fast hot-loop model via the host's logged-in subscription), **P-SEAM** (needs the
    **Cue source build**), and **P-TTS-streaming + the human earcon perceptual test**. Setup prerequisites:
-   install Cue from source (private pnpm monorepo) and launch Panopticon processes via **gateway mode**
+   install Cue from source (private pnpm monorepo) and launch Vibersyn processes via **gateway mode**
    (`smithers up --serve`), not detach.
-2. **Safety read-back hook / shell classifier — REMOVED (N-A).** Per the V0 posture (E6/E7/E8) Panopticon
+2. **Safety read-back hook / shell classifier — REMOVED (N-A).** Per the V0 posture (E6/E7/E8) Vibersyn
    **runs to completion, dangerously, with no per-action approval gate, no spoken read-back, no dead-man
    timer, no Safe/Explicit/Dangerous modes, and no shell classifier.** The former `probe-pretool-safety-hook`
    (P-HOOK), `safety-execution-boundary-hook`, and `shell-command-classifier` tickets are cut; if safety is

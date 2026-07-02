@@ -240,8 +240,8 @@ export class SteeringWindowManager {
     }
 
     const targetUPID =
-      process.env.PANOP_RBG_STEER_WRONG_UPID === "1" ? firstDifferentUPID(this.#processes, window.targetUPID) ?? window.targetUPID : window.targetUPID;
-    if (process.env.PANOP_RBG_ONE_BREATH_DROPS_INSTRUCTION === "1" && opened) {
+      process.env.VIBERSYN_RBG_STEER_WRONG_UPID === "1" ? firstDifferentUPID(this.#processes, window.targetUPID) ?? window.targetUPID : window.targetUPID;
+    if (process.env.VIBERSYN_RBG_ONE_BREATH_DROPS_INSTRUCTION === "1" && opened) {
       instruction = "";
     }
     const effectiveInstruction = instruction.trim();
@@ -308,7 +308,7 @@ export class SteeringWindowManager {
 
     const elapsedMs = nowMs - this.#window.lastMicActivityAtMs;
     const idleMs = this.#vocabulary.steerIdleSeconds * 1_000;
-    if (elapsedMs < idleMs || process.env.PANOP_RBG_STEER_DISABLE_IDLE_TIMER === "1") {
+    if (elapsedMs < idleMs || process.env.VIBERSYN_RBG_STEER_DISABLE_IDLE_TIMER === "1") {
       return passDecision("ambient", false, null, this.#window, [
         trace({ sessionId, correlationId: input.correlationId }, "debug", "steering.window.idle_wait", this.#window.targetUPID, {
           windowId: this.#window.windowId,

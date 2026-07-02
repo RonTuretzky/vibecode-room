@@ -1,12 +1,12 @@
 // TTS provider registry / factory (ISSUE-0007).
 //
-// `selectTtsProvider(env, opts)` is the single seam that maps PANOP_TTS_PROVIDER
+// `selectTtsProvider(env, opts)` is the single seam that maps VIBERSYN_TTS_PROVIDER
 // onto a concrete TTS provider. It lives inside src/providers so it may import
 // the concrete classes directly (the provider boundary lint only forbids that
 // outside src/providers — see providers/boundary.test.ts).
 //
 // Selection precedence mirrors the ASR registry (Deepgram on key) and the
-// DecisionLLM registry (Claude on credential): an explicit PANOP_TTS_PROVIDER
+// DecisionLLM registry (Claude on credential): an explicit VIBERSYN_TTS_PROVIDER
 // always wins; with it unset the registry AUTO-SELECTS the real ElevenLabs
 // provider when an ElevenLabs credential resolves, so a credentialled runtime
 // actually speaks by default. With no credential it falls back to the Noop
@@ -33,7 +33,7 @@ export type TtsProviderMode = "noop" | "elevenlabs";
 export const DEFAULT_TTS_CREDENTIAL_VARIABLE = "ELEVENLABS_API_KEY";
 
 export interface TtsSelectionEnv {
-  PANOP_TTS_PROVIDER?: string;
+  VIBERSYN_TTS_PROVIDER?: string;
   ELEVENLABS_API_KEY?: string;
   [key: string]: string | undefined;
 }
@@ -73,13 +73,13 @@ export function selectTtsProvider(
 }
 
 function resolveTtsMode(env: TtsSelectionEnv, variable: string): TtsProviderMode {
-  const explicit = env.PANOP_TTS_PROVIDER?.trim().toLowerCase();
+  const explicit = env.VIBERSYN_TTS_PROVIDER?.trim().toLowerCase();
   if (explicit !== undefined && explicit.length > 0) {
     if (explicit === "noop" || explicit === "elevenlabs") {
       return explicit;
     }
     throw new Error(
-      `Unknown PANOP_TTS_PROVIDER "${env.PANOP_TTS_PROVIDER}". Expected one of: noop, elevenlabs.`,
+      `Unknown VIBERSYN_TTS_PROVIDER "${env.VIBERSYN_TTS_PROVIDER}". Expected one of: noop, elevenlabs.`,
     );
   }
 
@@ -103,8 +103,8 @@ function createElevenLabsProvider(
   const apiKey = env[variable];
   if (apiKey === undefined || apiKey.length === 0) {
     throw new Error(
-      `PANOP_TTS_PROVIDER=elevenlabs requires ${variable} to be set. ` +
-        "Set it, or use PANOP_TTS_PROVIDER=noop for the silent-but-recorded default.",
+      `VIBERSYN_TTS_PROVIDER=elevenlabs requires ${variable} to be set. ` +
+        "Set it, or use VIBERSYN_TTS_PROVIDER=noop for the silent-but-recorded default.",
     );
   }
 

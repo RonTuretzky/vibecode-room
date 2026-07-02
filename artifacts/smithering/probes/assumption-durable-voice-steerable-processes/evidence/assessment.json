@@ -10,12 +10,12 @@
     },
     "persist": {
       "passed": true,
-      "evidence": "29 panopticon-process runs in waiting-event state created 2026-06-13 20:38-21:42 still alive at 2026-06-14 04:54 (8+ hours). SQLite _smithers_runs table confirms durable storage.",
+      "evidence": "29 vibersyn-process runs in waiting-event state created 2026-06-13 20:38-21:42 still alive at 2026-06-14 04:54 (8+ hours). SQLite _smithers_runs table confirms durable storage.",
       "finding": "WaitForEvent state persists durably in SQLite across process restarts"
     },
     "concurrent": {
       "passed": true,
-      "evidence": "Both probe runs reached waiting-event independently in 2.4s and 2.7s. 29 concurrent panopticon-process runs exist in DB.",
+      "evidence": "Both probe runs reached waiting-event independently in 2.4s and 2.7s. 29 concurrent vibersyn-process runs exist in DB.",
       "finding": "No mutual exclusion between runs; concurrent spawn and operation proven"
     },
     "signal": {
@@ -34,5 +34,5 @@
     }
   },
   "architecturalNote": "Real-time voice control requires gateway deployment (smithers up --serve), not detach mode (up -d). In gateway mode, WaitForEvent signals are processed immediately without --resume. The existing .smithers/gateway.ts is the correct runtime. The adapter must call the gateway signal API, not the CLI.",
-  "planImpact": "Smithers gates: no plan changes needed. Two setup tasks: (1) install-cue-from-source before Cue integration tests; (2) clarify that Panopticon processes launch via gateway, not standalone up -d. Both are setup tasks, not design changes."
+  "planImpact": "Smithers gates: no plan changes needed. Two setup tasks: (1) install-cue-from-source before Cue integration tests; (2) clarify that Vibersyn processes launch via gateway, not standalone up -d. Both are setup tasks, not design changes."
 }

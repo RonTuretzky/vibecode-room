@@ -27,6 +27,9 @@ import {
   type SuggestionEngineConfig,
   type SuggestionEngineDecision,
 } from "../suggest/engine";
+import { DetectionRunner, selectDetectionRunner, type DetectionSnapshot } from "./detection-runner";
+import { DETECTION_BUBBLE_TTL_MS, pendingSuggestionFromCandidate, projectorSuggestionFromCandidate } from "./idea-suggestion";
+import type { IdeaDetector } from "../detect";
 import { StageSequencer, type CanonicalStage } from "../spine/stage-sequencer";
 import type { LogEvent, OutputDecision, PendingSuggestion } from "../types";
 import { demoProjectorSnapshot, emptyProjectorSnapshot, withUnmuted } from "../ui/demo-data";
@@ -50,12 +53,12 @@ const MAX_LIVE_TRANSCRIPT_LINES = 40;
 
 export interface ProjectorRuntimeEnv {
   DEEPGRAM_API_KEY?: string;
-  PANOP_SESSION_ID?: string;
-  PANOP_INITIAL_MUTED?: string;
+  VIBERSYN_SESSION_ID?: string;
+  VIBERSYN_INITIAL_MUTED?: string;
   // Opt-in: seed the FIXTURE demo fleet (Atlas/Cobalt) into the live registry at
   // boot. OFF by default so an idle live runtime has zero processes; set to "1"
   // for the projector demo (`bun run start`) / tests that exercise the fleet.
-  PANOP_SEED_DEMO_FLEET?: string;
+  VIBERSYN_SEED_DEMO_FLEET?: string;
   [key: string]: string | undefined;
 }
 
@@ -75,6 +78,10 @@ export interface ProjectorRuntime {
   readonly degradation: DegradationNotice;
   readonly muteController: MuteController;
   readonly suggestionEngine: SuggestionEngine;
+  // Ambient idea detection (replaces the word/time gate): windowed model inference
+  // over the rolling transcript that surfaces grounded idea candidates. Drives the
+  // idea bubble, click-to-build, and auto-build.
+  readonly detection: DetectionRunner;
   readonly acceptanceController: AcceptanceController;
   readonly registry: ProcessRegistry;
   readonly stageSequencer: StageSequencer;
@@ -120,6 +127,10 @@ export interface ProjectorRuntime {
   // accepted+built the instant it pops.
   setAutoAccept(on: boolean, correlationId?: string): ProjectorSnapshot;
   autoAccept(): boolean;
+  // IDEA CAPTURE mode toggle (alternative to passive auto-detect): when on,
+  // detection runs eagerly and every surfaced idea is built — the creation loop.
+  setCaptureMode(on: boolean, correlationId?: string): ProjectorSnapshot;
+  captureMode(): boolean;
 }
 
 interface SeededProcessView {
@@ -148,14 +159,14 @@ export interface ProjectorRuntimeOptions {
   // credential-present runtime can be exercised in tests/e2e with no network.
   decisionTransport?: ClaudeMessagesTransport;
   // Injectable ElevenLabs streaming transport (ISSUE-0022), so a runtime with
-  // PANOP_TTS_PROVIDER=elevenlabs can drain a stubbed synthesized stream in
+  // VIBERSYN_TTS_PROVIDER=elevenlabs can drain a stubbed synthesized stream in
   // tests/e2e with no network or audio device.
   ttsTransport?: TTSTransport;
   // Injectable real audio sink (ISSUE-0026). When provided it backs BOTH the
   // earcon playPcm path and the TTS drain sink, so a test/the browser-broadcast
   // path (ISSUE-0027) can substitute a sink that actually retains the audible
   // bytes. Unset, the runtime falls back to selectAudioSink(env) — the silent
-  // no-op sink unless PANOP_AUDIO_SINK=device.
+  // no-op sink unless VIBERSYN_AUDIO_SINK=device.
   audioSink?: AudioSink;
   // Injectable monotonic clock (ISSUE-0024). The whole runtime — including the
   // room-idle gap that drives deferred-suggestion delivery — reads time through
@@ -170,25 +181,31 @@ export interface ProjectorRuntimeOptions {
   // app (idea-builder). Defaults to the host `claude` CLI builder. Tests inject a
   // synthetic builder so no real `claude` spawn occurs.
   builderAgent?: BuilderAgent;
+  // Injectable idea detector (the inference that decides whether a buildable idea
+  // was proposed and which span of conversation it came from). Production selects
+  // host-`claude` inference, or the durable Smithers `idea-detection` run when a
+  // gateway is configured. Tests inject a scripted/heuristic detector so detection
+  // is deterministic with no model spawn.
+  ideaDetector?: IdeaDetector;
 }
 
 export async function createProjectorRuntime(
   env: ProjectorRuntimeEnv = process.env,
   options: ProjectorRuntimeOptions = {},
 ): Promise<ProjectorRuntime> {
-  const sessionId = env.PANOP_SESSION_ID ?? emptyProjectorSnapshot.sessionId;
+  const sessionId = env.VIBERSYN_SESSION_ID ?? emptyProjectorSnapshot.sessionId;
   const runtime = new LiveProjectorRuntime(sessionId, env, options);
   await runtime.initCueBridge();
   // The seeded demo fleet (FIXTURE Atlas/Cobalt processes) is OFF by default in
   // the live server: an idle runtime must have ZERO processes until a real idea
   // is accepted and spawns one. It stays available for tests/demo via the opt-in
-  // PANOP_SEED_DEMO_FLEET=1 flag.
-  if (env.PANOP_SEED_DEMO_FLEET === "1") {
+  // VIBERSYN_SEED_DEMO_FLEET=1 flag.
+  if (env.VIBERSYN_SEED_DEMO_FLEET === "1") {
     await runtime.seedDemoFleet();
   }
   runtime.startAcceptanceWatchdog();
 
-  if (env.PANOP_INITIAL_MUTED !== "0") {
+  if (env.VIBERSYN_INITIAL_MUTED !== "0") {
     await runtime.muteForInitialState();
   }
 
@@ -219,6 +236,10 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   #cueBridge: CueBridge | null = null;
   readonly muteController: MuteController;
   readonly suggestionEngine: SuggestionEngine;
+  // Ambient idea detection (replaces the word/time gate): windowed model inference
+  // over the rolling transcript that surfaces grounded idea candidates. Drives the
+  // idea bubble, click-to-build, and auto-build.
+  readonly detection: DetectionRunner;
   readonly acceptanceController: AcceptanceController;
   readonly registry: ProcessRegistry;
   readonly stageSequencer: StageSequencer;
@@ -254,10 +275,24 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   #steeringUpid: string | null = null;
   // AUTO-BUILD toggle. When true, every fired suggestion is accepted+built the
   // instant it pops — no click required. Operator flips it from the projector
-  // (POST /api/auto-accept) or boots with PANOP_AUTO_ACCEPT=1. A re-entrancy guard
+  // (POST /api/auto-accept) or boots with VIBERSYN_AUTO_ACCEPT=1. A re-entrancy guard
   // (#autoAcceptInFlight) keeps a slow build from stacking a second auto-accept.
   #autoAccept = false;
   #autoAcceptInFlight = false;
+  // IDEA CAPTURE mode: an explicit alternative to passive auto-detect. When on, the
+  // operator has deliberately started the creation loop — detection runs EAGERLY on
+  // every final (no word/turn schedule) and each surfaced ready idea is built
+  // immediately. A distinct indicator on the snapshot shows capture is active.
+  #captureMode = false;
+  // Idea detection wiring. `#detectionMode` records which backend was selected
+  // (host-claude | heuristic | smithers | injected) for the degradation notice;
+  // `#detectionPrimaryId` is the candidate currently surfaced as the bubble (so a
+  // newly-ready idea is delivered/queued exactly once); `#pendingOwner` is the
+  // acceptance pending sink a surfaced idea is fed into so spoken/click/auto accept
+  // all act on a consistent suggestion.
+  readonly #detectionMode: string;
+  #detectionPrimaryId: string | null = null;
+  readonly #pendingOwner: PendingSuggestionOwner;
 
   constructor(
     readonly sessionId: string,
@@ -268,7 +303,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     const clock = options.clock ?? (() => Date.now());
     this.#clock = clock;
     // Single audible-output sink seam (ISSUE-0026): an injected sink wins, else
-    // selectAudioSink(env) (no-op unless PANOP_AUDIO_SINK=device). The one sink
+    // selectAudioSink(env) (no-op unless VIBERSYN_AUDIO_SINK=device). The one sink
     // backs both the earcon playPcm path and the TTS drain so a fired suggestion's
     // synthesized PCM and a spawn earcon land in the same place.
     const audioSinkSelection = selectAudioSink(env);
@@ -289,7 +324,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       onOutput: (decision) => this.recordOutput(decision),
     });
 
-    // Single ASR selection seam (ISSUE-0016): PANOP_ASR_PROVIDER picks the backend
+    // Single ASR selection seam (ISSUE-0016): VIBERSYN_ASR_PROVIDER picks the backend
     // (deepgram|voxterm|replay), defaulting to Deepgram when DEEPGRAM_API_KEY is
     // present and replay otherwise. Tests inject a voxterm/replay source.
     const selectedAsr = selectAsrProvider(env, {
@@ -303,13 +338,13 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     // A second, long-lived ASR provider dedicated to the live browser mic. The mic
     // profile lifts the Deepgram close-timer so a long room session is not cut off
     // mid-stream. It is mute-protected too, so a muted room never streams audio to
-    // the cloud. The replay source falls back to PANOP_MIC_REPLAY_PATH so the live
+    // the cloud. The replay source falls back to VIBERSYN_MIC_REPLAY_PATH so the live
     // mic path stays deterministically drivable offline.
     const selectedMicAsr = selectAsrProvider(env, {
       sessionId,
       micProfile: true,
       voxtermSource: options.voxtermSource,
-      replaySource: options.replaySource ?? env.PANOP_MIC_REPLAY_PATH,
+      replaySource: options.replaySource ?? env.VIBERSYN_MIC_REPLAY_PATH,
     });
     this.micMode = selectedMicAsr.mode;
     this.#micAsr = this.muteController.protectCloudAsr(selectedMicAsr.provider);
@@ -317,7 +352,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       sessionId,
       trace: this.trace,
       clock,
-      textCueWords: ["panop"],
+      textCueWords: ["viber"],
       // Tag the fallback adapter so its earcon trace is distinguishable from the
       // upstream harness adapter's when operators inspect the live trace (GAP-006).
       earconPath: "fallback",
@@ -331,7 +366,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     // Single Smithers-client swap point (GAP-004). With no gateway config the
     // projector demo (`bun run start`) drives an in-memory client — the seeded
     // fleet are deterministic fixtures, not real runs, so halting them in memory
-    // is correct. When PANOP_SMITHERS_GATEWAY_URL (or an injected transport) is
+    // is correct. When VIBERSYN_SMITHERS_GATEWAY_URL (or an injected transport) is
     // present, selectSmithersClient returns a gateway-backed client that routes
     // spawn/halt to a real Smithers gateway over its RPC transport.
     const smithersClient = selectSmithersClient(env, { transport: options.smithersTransport });
@@ -386,14 +421,16 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     // CLICK it, not self-destruct in ~10s (the old voice-"yes" no-answer window).
     // The watchdog still eventually expires an ignored bubble so the loop never
     // wedges, but the window is now long and configurable (default 120s; total
-    // clear time is ~2x this due to the requeue-once expiry). PANOP_ACCEPT_WINDOW_SECONDS=0
+    // clear time is ~2x this due to the requeue-once expiry). VIBERSYN_ACCEPT_WINDOW_SECONDS=0
     // restores the legacy short default.
-    const acceptWindowSeconds = Number(env.PANOP_ACCEPT_WINDOW_SECONDS ?? "120");
+    const acceptWindowSeconds = Number(env.VIBERSYN_ACCEPT_WINDOW_SECONDS ?? "120");
     const noAnswerTimeoutMs = Number.isFinite(acceptWindowSeconds) && acceptWindowSeconds > 0
       ? Math.round(acceptWindowSeconds * 1000)
       : undefined;
-    this.#autoAccept = env.PANOP_AUTO_ACCEPT === "1" || env.PANOP_AUTO_ACCEPT === "true";
+    this.#autoAccept = env.VIBERSYN_AUTO_ACCEPT === "1" || env.VIBERSYN_AUTO_ACCEPT === "true";
+    this.#captureMode = env.VIBERSYN_CAPTURE_MODE === "1" || env.VIBERSYN_CAPTURE_MODE === "true";
     const pending = new PendingSuggestionOwner({ clock, noAnswerTimeoutMs });
+    this.#pendingOwner = pending;
     const acceptanceSeam = createProcessRegistryAcceptanceSeam(this.registry);
     const spawner = new AcceptanceSpawner({
       seam: acceptanceSeam,
@@ -454,6 +491,47 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       lastFinalAtMs: () => this.#lastFinalAtMs,
       onDecision: (decision) => this.deliverIdleDecision(decision),
     });
+
+    // Idea detection replaces the word/time gate as the source of idea bubbles. It
+    // runs windowed model inference over the rolling transcript and surfaces
+    // grounded candidates. With a Smithers gateway configured it runs as the
+    // durable `idea-detection` run; otherwise host-`claude` inference runs inline.
+    // Tests inject a deterministic detector so no model spawns.
+    // Composite gateway client for detection runs: SPAWN must go through the
+    // registry wrapper (which persists the UPID→runId correlation record —
+    // without it streamRunEvents can never resolve the run and detection would
+    // always return zero candidates); streaming and signals use the inner client.
+    const detectionSmithersClient: SmithersClient | undefined =
+      smithersClient instanceof GatewayRegistryClient
+        ? {
+            spawn: (seed) => smithersClient.spawn(seed),
+            steer: (upid, payload) => smithersClient.client.steer(upid, payload),
+            signal: (upid, payload) => smithersClient.client.signal(upid, payload),
+            pause: (upid) => smithersClient.client.pause(upid),
+            resume: (upid) => smithersClient.client.resume(upid),
+            halt: (upid) => smithersClient.client.halt(upid),
+            streamRunEvents: (upid, options) => smithersClient.client.streamRunEvents(upid, options),
+          }
+        : undefined;
+    const detectionSelection = selectDetectionRunner({
+      sessionId,
+      env,
+      clock,
+      detector: options.ideaDetector,
+      smithersClient: detectionSmithersClient,
+      tickIntervalMs: Number(env.VIBERSYN_DETECT_TICK_MS ?? "1000"),
+      onUpdate: (snapshot) => this.onDetectionUpdate(snapshot),
+      onTrace: (event) => this.recordExternalTrace(event),
+      onError: (error) =>
+        this.recordExternalTrace({
+          event: "detect.error",
+          level: "error",
+          sessionId,
+          meta: { message: error instanceof Error ? error.message : String(error) },
+        }),
+    });
+    this.detection = detectionSelection.runner;
+    this.#detectionMode = detectionSelection.mode;
   }
 
   snapshot(): ProjectorSnapshot {
@@ -477,7 +555,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       sessionId: this.sessionId,
       providers: { transcription: this.asr, llm: this.#decisionLlm, output: this.tts },
       fallbackAdapter: this.cueAdapter,
-      textCueWords: ["panop"],
+      textCueWords: ["viber"],
       trace: this.trace,
       clock: () => Date.now(),
     });
@@ -534,6 +612,11 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       // (per-process halt already stops its own; this also reaps any in-flight or
       // not-yet-halted build so no loopback preview outlives the session).
       await this.ideaBuilds.stopAll().catch(() => undefined);
+      // Drop any in-flight idea candidates so the bubble clears with the kill-all,
+      // and stop the capture creation loop.
+      this.detection.clear();
+      this.#detectionPrimaryId = null;
+      this.#captureMode = false;
       this.#snapshot = this.buildSnapshot();
       this.publish();
     }
@@ -552,26 +635,13 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     if (this.#emergencyTriggered) {
       return this.#snapshot;
     }
-    // Accept whatever the bubble is currently showing: the engine's QUEUED entry
-    // if a suggestion is still queued, otherwise the AcceptanceController's
-    // DELIVERED (awaiting-acceptance) suggestion — the common case, since a fired
-    // suggestion leaves the engine queue and sits in delivery awaiting accept.
-    const queued = this.pendingSuggestion();
-    let suggestion = queued?.suggestion ?? this.acceptanceController.currentPending();
-    // The visible bubble is rendered from #lastSuggestionDecision, which OUTLIVES
-    // the acceptance pending (the pending expires after the accept window, but the
-    // bubble stays on screen). If a bubble is showing but the pending already
-    // expired/cleared, accept the DISPLAYED suggestion so a visible bubble is
-    // ALWAYS clickable — otherwise the click silently no-ops ("can't click it").
-    if (suggestion === null) {
-      const last = this.#lastSuggestionDecision;
-      if (last?.kind === "fired") {
-        suggestion = last.suggestion;
-      } else if (last?.kind === "queued") {
-        suggestion = last.queued.suggestion;
-      } else if (last?.kind === "expired") {
-        suggestion = last.suggestion.suggestion;
-      }
+    // Accept the surfaced idea: prefer the acceptance pending set when the idea was
+    // surfaced; if it already expired but a bubble is still on screen, convert the
+    // live detection primary so a visible bubble is ALWAYS clickable.
+    const primary = this.detection.primary();
+    let suggestion = this.acceptanceController.currentPending();
+    if (suggestion === null && primary !== null) {
+      suggestion = pendingSuggestionFromCandidate(primary, correlationId, this.#clock() + DETECTION_BUBBLE_TTL_MS);
     }
     if (suggestion === null) {
       // Nothing on screen to accept — the click is a no-op; return the live snapshot.
@@ -586,13 +656,14 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     });
     try {
       const spawn = await this.acceptanceController.spawnAccepted(suggestion, correlationId);
-      // Consume the engine's queued entry too so the accepted idea is not later
-      // re-delivered or re-expired by the idle-cue driver.
-      this.suggestionEngine.clearPending();
       if (spawn.accepted) {
-        // Clear the on-screen bubble — the idea became a process. Otherwise the
-        // built idea's bubble lingers (and would block fresh ideas from showing).
-        this.#lastSuggestionDecision = null;
+        // Consume the accepted candidate so detection doesn't re-surface it, and
+        // clear the on-screen bubble — the idea became a process.
+        const acceptedId = candidateIdFromSuggestionId(suggestion.suggestionId) ?? primary?.id ?? null;
+        if (acceptedId !== null) {
+          this.detection.accept(acceptedId);
+        }
+        this.#detectionPrimaryId = null;
         await this.spawnAck(spawn, correlationId);
         this.subscribeRunEvents(spawn.process.upid, spawn.process.runId);
       }
@@ -627,6 +698,39 @@ class LiveProjectorRuntime implements ProjectorRuntime {
 
   autoAccept(): boolean {
     return this.#autoAccept;
+  }
+
+  // IDEA CAPTURE mode. Flip on => the operator has explicitly started the creation
+  // loop: detection runs eagerly on every final and each surfaced idea is built
+  // immediately. Turning it on kicks a detection round NOW over whatever is already
+  // in the window, so an idea just described is captured without waiting for the
+  // next utterance. Flip off => back to passive detection. Returns the fresh snapshot.
+  setCaptureMode(on: boolean, correlationId = `corr-capture-toggle-${crypto.randomUUID()}`): ProjectorSnapshot {
+    // Emergency stop is sticky and clears capture mode; don't let it be re-enabled
+    // (mirrors setSteeringTarget/acceptPendingSuggestion). Otherwise POST /api/capture
+    // or the UI button would trivially undo the kill-all reset.
+    if (this.#emergencyTriggered) {
+      return this.#snapshot;
+    }
+    const changed = this.#captureMode !== on;
+    this.#captureMode = on;
+    this.recordExternalTrace({
+      event: "capture.mode.set",
+      level: "info",
+      sessionId: this.sessionId,
+      correlationId,
+      meta: { on },
+    });
+    if (on && changed && !this.#emergencyTriggered) {
+      // Start the creation loop immediately over the current window.
+      void this.detection.forceDetect(`corr-capture-${correlationId}`).catch(() => undefined);
+    }
+    this.publish();
+    return this.#snapshot;
+  }
+
+  captureMode(): boolean {
+    return this.#captureMode;
   }
 
   // CLICK A PROJECT -> STEER IT. Set the steering target UPID so subsequent live
@@ -796,7 +900,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
 
     if (observation.isFinal) {
       // Wake/earcon fast-path (GAP-006): every FINAL observation reaches the active
-      // Cue path (harness or fallback) exactly once, so a 'panop' wake word emits an
+      // Cue path (harness or fallback) exactly once, so a 'viber' wake word emits an
       // earcon trace. This is orthogonal to the suggestion/acceptance routing below.
       await this.driveCueBridge(observation, correlationId);
 
@@ -814,14 +918,15 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       // accept/decline mode forever and no new ideas could form.
       this.acceptanceController.checkExpiry(this.#clock());
 
-      // Once a suggestion is delivered and pending, subsequent FINAL utterances are
+      // Once an idea is surfaced and pending, subsequent FINAL utterances are
       // accept/decline/answer candidates — route them to the AcceptanceController
-      // (GAP-003) instead of seeding a fresh suggestion. The suggestion-engine
-      // #fire -> acceptanceOwner.acceptSuggestion path sets that pending state.
+      // (GAP-003). Otherwise feed the line to idea DETECTION, which decides over
+      // the rolling window whether a buildable idea was proposed (no word/time
+      // gate) and surfaces it via onDetectionUpdate.
       if (this.acceptanceController.awaitingAcceptance()) {
         await this.routeAcceptance(observation, correlationId);
       } else {
-        await this.driveSuggestionEngine(observation, correlationId);
+        await this.driveDetection(observation, correlationId);
       }
     }
   }
@@ -845,6 +950,12 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       // and the ACK stage with a spoken confirmation, routed through this.tts so
       // the live loop both earcons and speaks on accept (GAP-005/GAP-008).
       if (result.kind === "spawned" && result.spawn.accepted) {
+        // A spoken "yes" built the surfaced idea — consume the detection candidate
+        // so it isn't re-surfaced, and clear the bubble.
+        if (this.#detectionPrimaryId !== null) {
+          this.detection.accept(this.#detectionPrimaryId);
+          this.#detectionPrimaryId = null;
+        }
         await this.spawnAck(result.spawn, acceptanceCorrelationId);
         // Subscribe the freshly spawned run to its live event stream so the
         // process panel reflects real progress (ISSUE-0021). Fire-and-forget: the
@@ -884,7 +995,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       if (this.acceptanceController.awaitingAcceptance()) {
         await this.routeAcceptance(observation, correlationId);
       } else {
-        await this.driveSuggestionEngine(observation, correlationId);
+        await this.driveDetection(observation, correlationId);
       }
       return;
     }
@@ -937,43 +1048,65 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     }
   }
 
-  // Feed one FINAL observation into the SuggestionEngine and retain its verdict.
-  // `roomIdleMs` is the quiet gap since the previous final utterance — the engine
-  // uses it to decide whether interrupting now is acceptable.
-  private async driveSuggestionEngine(observation: TranscriptObservation, correlationId: string): Promise<void> {
+  // Feed one FINAL observation into idea DETECTION. The detection runner appends
+  // the turn to its rolling window and, when its cheap scheduling policy allows,
+  // runs windowed model inference — surfacing grounded candidates asynchronously
+  // via onDetectionUpdate. This replaces the per-utterance SuggestionEngine gate.
+  private async driveDetection(observation: TranscriptObservation, correlationId: string): Promise<void> {
     const nowMs = this.#clock();
-    const roomIdleMs = this.#lastFinalAtMs === null ? 0 : Math.max(0, nowMs - this.#lastFinalAtMs);
     this.#lastFinalAtMs = nowMs;
-    try {
-      const decision = await this.suggestionEngine.observe({
-        observation,
+    // IDEA CAPTURE mode forces a detection round on every final (bypassing the
+    // passive word/turn schedule) so a deliberately-captured idea surfaces fast.
+    await this.detection.ingestTurnAndDetect(
+      {
+        speaker: observation.speaker,
+        text: observation.text,
+        atMs: nowMs,
         correlationId: `${correlationId}-${observation.utteranceId}`,
-        roomIdleMs,
-      });
-      this.#lastSuggestionDecision = decision;
-      // A fired suggestion is spoken: open the SUGGESTION_DELIVERY stage with a
-      // TTS summary of the pitch + lead question, routed through this.tts (GAP-005).
-      if (decision.kind === "fired") {
-        await this.deliverSuggestionAudio(decision.suggestion, `${correlationId}-${observation.utteranceId}`);
-        // AUTO-BUILD: when the toggle is on, accept+build the moment it fires — no
-        // click. The guard drops overlapping fires while a build is spinning up so
-        // a chatty room doesn't stack spawns; the next fired idea will catch it.
-        if (this.#autoAccept && !this.#autoAcceptInFlight) {
-          this.#autoAcceptInFlight = true;
-          void this.acceptPendingSuggestion(`corr-auto-accept-${observation.utteranceId}`).finally(() => {
-            this.#autoAcceptInFlight = false;
-          });
-        }
-      }
-    } catch (error) {
-      this.recordExternalTrace({
-        event: "suggestion.engine.error",
-        level: "error",
-        sessionId: this.sessionId,
-        correlationId,
-        meta: { message: error instanceof Error ? error.message : String(error) },
-      });
+      },
+      { force: this.#captureMode },
+    );
+  }
+
+  // React to a detection round: a newly-READY primary candidate becomes the idea
+  // bubble. It is delivered (spoken) once, fed into the acceptance pending so a
+  // spoken/click accept acts on it, and — when AUTO-BUILD is on — built immediately.
+  // The snapshot's bubble is always sourced live from detection.primary(), so this
+  // only handles the side effects of a NEW idea surfacing.
+  private async onDetectionUpdate(snapshot: DetectionSnapshot): Promise<void> {
+    const primary = snapshot.primary;
+    // If the surfaced idea disappeared (retraction, veto, supersede) or changed,
+    // clear the detection-fed acceptance pending for the DEPARTED candidate —
+    // otherwise room speech keeps routing into accept/decline for up to the
+    // accept window with no bubble on screen.
+    const pending = this.acceptanceController.currentPending();
+    if (pending !== null && pending.suggestionId.startsWith("sug-") && pending.suggestionId !== `sug-${primary?.id ?? ""}`) {
+      this.#pendingOwner.clear();
     }
+    if (primary === null) {
+      this.#detectionPrimaryId = null;
+      this.publish();
+      return;
+    }
+    if (primary.id !== this.#detectionPrimaryId) {
+      this.#detectionPrimaryId = primary.id;
+      const correlationId = `corr-detect-${primary.id}`;
+      const pending = pendingSuggestionFromCandidate(primary, correlationId, this.#clock() + DETECTION_BUBBLE_TTL_MS);
+      // Make spoken/click/auto accept act on the surfaced idea consistently.
+      this.#pendingOwner.acceptSuggestion(pending);
+      await this.deliverSuggestionAudio(pending, correlationId).catch(() => undefined);
+      // Build the surfaced idea immediately when AUTO-BUILD or IDEA CAPTURE mode is
+      // on (capture mode IS the creation loop). The guard drops overlapping fires
+      // while a build spins up so a chatty room doesn't stack spawns; the next
+      // surfaced idea catches it.
+      if ((this.#autoAccept || this.#captureMode) && !this.#autoAcceptInFlight) {
+        this.#autoAcceptInFlight = true;
+        void this.acceptPendingSuggestion(`corr-auto-accept-${primary.id}`).finally(() => {
+          this.#autoAcceptInFlight = false;
+        });
+      }
+    }
+    this.publish();
   }
 
   // Wall-clock watchdog: a delivered suggestion that is never voice-accepted must
@@ -1013,14 +1146,14 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     // exists to keep *spoken* steering unambiguous (e.g. "Cobalt" sits close to
     // the panic word "abort"), so it must not reject the deterministic seed.
     // Suspend it only for the duration of seeding; live voice spawns keep it on.
-    const priorGuard = process.env.PANOP_RBG_DISABLE_CALLSIGN_COLLISION_GUARD;
-    process.env.PANOP_RBG_DISABLE_CALLSIGN_COLLISION_GUARD = "1";
+    const priorGuard = process.env.VIBERSYN_RBG_DISABLE_CALLSIGN_COLLISION_GUARD;
+    process.env.VIBERSYN_RBG_DISABLE_CALLSIGN_COLLISION_GUARD = "1";
     try {
       await this.registry.spawn({
         upid: atlas.upid,
         runId: atlas.runId,
         callsign: atlas.callsign,
-        workflow: "panopticon-demo",
+        workflow: "vibersyn-demo",
         prompt: atlas.task,
         input: { task: atlas.task, source: "projector-demo" },
         correlationId: "corr-demo-seed-atlas",
@@ -1030,7 +1163,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
         upid: cobalt.upid,
         runId: cobalt.runId,
         callsign: cobalt.callsign,
-        workflow: "panopticon-demo",
+        workflow: "vibersyn-demo",
         prompt: cobalt.task,
         input: { task: cobalt.task, source: "projector-demo" },
         correlationId: "corr-demo-seed-cobalt",
@@ -1038,9 +1171,9 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       this.registry.select(atlas.upid, "corr-demo-seed-select");
     } finally {
       if (priorGuard === undefined) {
-        delete process.env.PANOP_RBG_DISABLE_CALLSIGN_COLLISION_GUARD;
+        delete process.env.VIBERSYN_RBG_DISABLE_CALLSIGN_COLLISION_GUARD;
       } else {
-        process.env.PANOP_RBG_DISABLE_CALLSIGN_COLLISION_GUARD = priorGuard;
+        process.env.VIBERSYN_RBG_DISABLE_CALLSIGN_COLLISION_GUARD = priorGuard;
       }
     }
   }
@@ -1087,6 +1220,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       mic: { mode: this.micMode, active: this.#micActive, bytesReceived: this.#micBytes },
       steeringUpid: this.#steeringUpid,
       autoAccept: this.#autoAccept,
+      captureMode: this.#captureMode,
     };
   }
 
@@ -1103,18 +1237,18 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     return lines.slice(-MAX_LIVE_TRANSCRIPT_LINES);
   }
 
-  // Reflect the live SuggestionEngine verdict in the idea bubble. Before any
-  // FINAL observation has been scored (`#lastSuggestionDecision === null`), show
-  // the neutral idle bubble (empty pitch) — never the demo "blocker announcer"
-  // pitch. Once a real decision exists, map it to a ProjectorSuggestion with gate
-  // counters (words/seconds vs the engine's floors) from the engine.
+  // Reflect the live idea-DETECTION primary candidate in the idea bubble: its
+  // pitch/confidence and the span of conversation it was grounded in. Before any
+  // idea is detected (or while muted/stopped) show the neutral idle bubble (empty
+  // pitch) — never the demo fixture.
   private suggestionSnapshot(): ProjectorSuggestion {
-    const decision = this.#lastSuggestionDecision;
-    if (decision === null) {
+    // The bubble reflects live idea DETECTION: the highest-confidence ready
+    // candidate, carrying its grounding span. Muted/stopped → neutral idle bubble.
+    if (this.#emergencyTriggered || this.muteController.isMuted()) {
       return emptyProjectorSnapshot.suggestion;
     }
-    const live = liveProjectorSuggestion(decision, readSuggestionEngineConfig(this.#env));
-    return live ?? emptyProjectorSnapshot.suggestion;
+    const primary = this.detection.primary();
+    return primary === null ? emptyProjectorSnapshot.suggestion : projectorSuggestionFromCandidate(primary);
   }
 
   private processSnapshots(): ProjectorProcess[] {
@@ -1145,7 +1279,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
         // Click-to-steer marker: this process is the live steering target, so
         // subsequent FINAL transcript lines route to it. A dead record never steers.
         steering: record.state !== "dead" && this.#steeringUpid === record.upid,
-        task: demo?.task ?? "Panopticon task",
+        task: demo?.task ?? "Vibersyn task",
         model: demo?.model ?? "runtime",
         progressLabel: record.state === "dead" ? "halted" : demo?.progressLabel ?? record.lastAction,
         progress: record.state === "dead" ? 100 : live?.progress ?? demo?.progress ?? Math.min(95, record.progressSeq * 12),
@@ -1511,4 +1645,10 @@ function suggestionMetaFromEvents(events: readonly LogEvent[]): SuggestionGateMe
 
 function numberOr(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+// Recover the detection candidate id from a PendingSuggestion id minted by
+// pendingSuggestionFromCandidate (`sug-<candidateId>`).
+function candidateIdFromSuggestionId(suggestionId: string): string | null {
+  return suggestionId.startsWith("sug-") ? suggestionId.slice("sug-".length) : null;
 }

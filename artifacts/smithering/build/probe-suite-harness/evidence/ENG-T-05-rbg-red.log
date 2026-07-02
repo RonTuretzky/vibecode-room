@@ -5,7 +5,7 @@ poc/harness.test.ts:
 76 |       correlationId: "probe-harness-test-non-failable",
 77 |     });
 78 | 
-79 |     if (process.env.PANOP_HARNESS_RBG_MODE === "non_failable_expect_green") {
+79 |     if (process.env.VIBERSYN_HARNESS_RBG_MODE === "non_failable_expect_green") {
 80 |       await expect(action).resolves.toBeDefined();
                                          ^
 error: 

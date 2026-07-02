@@ -1,4 +1,4 @@
-# Panopticon — Engineering Document & Architecture (V0)
+# Vibersyn — Engineering Document & Architecture (V0)
 
 > **Audio-first with a required projector UI. Voice is the primary routine control modality.** This document specifies the V0
 > implementation architecture and — first and foremost — **the verification plan that proves it
@@ -448,7 +448,7 @@ bespoke always-hot vs. state-gated **tiered** vocabulary — deferred, §4 `voca
 
 | Command | Spoken form | Activation | Handler → `DispatchedAction` / effect |
 |---|---|---|---|
-| Wake | "Panop" | anytime | opens active-listen window (local) |
+| Wake | "Viber" | anytime | opens active-listen window (local) |
 | Accept | "Yes"/"Accept"/"Do it" | in suggestion | §7 acceptance → `{type:'spawn'}` |
 | Decline | "No"/"Nah"/"Skip" | in suggestion | §7 decline → no-op |
 | Select-and-steer | "[callsign], [instruction]" | anytime (callsign) | select + `{type:'steer'}` |
@@ -657,7 +657,7 @@ owner so the accept/decline/ignore semantics and the seed contents are determini
 **V0 posture: run dangerously to completion.** We **trust the voice library and run to completion** with
 **no per-step approval gate, no read-back/confirm hold, and no dead-man timer.** A coding fleet should
 not need to approve often; where a confirmation is genuinely needed, **Cue (the voice library) handles
-it** — Panopticon does not build a bespoke confirmation gate. There is one execution mode (dangerous,
+it** — Vibersyn does not build a bespoke confirmation gate. There is one execution mode (dangerous,
 run-to-completion); there is no `ExecutionMode` switching, no `safety/` module, and no
 `safety/shell-classifier.ts`.
 
@@ -806,7 +806,7 @@ transcript-only persistence (AC1.3) were previously unowned.
 
 - `consent.ts` — **the consent scheduler.** Fires the spoken consent announcement **once per session,
   idempotent, within 3 s of start** (AC1.1). The line **must state that only transcripts are saved**
-  (AC1.1 literal requirement, R12): **"Panopticon is listening. Only transcripts are saved. Say 'Panop,
+  (AC1.1 literal requirement, R12): **"Vibersyn is listening. Only transcripts are saved. Say 'Viber,
   status' for a rundown; say 'mute' to pause."** — three sentences, ≤8 s (design D-DD-16), naming
   the **actual** mute word "mute" **and** the transcript-only privacy statement. Emits
   `session.start{provider, consentSpoken:true, transcriptOnlyStated:true}`. *(Design §10's onboarding
@@ -897,15 +897,15 @@ documented with its default at its definition site):
 
 | ENV var (example) | Default | Tunes |
 |---|---|---|
-| `PANOP_EARCON_BUDGET_MS` | 300 | hot-plane earcon latency budget (§1, REQ-10) — a knob, not a guarantee |
-| `PANOP_DECISION_BUDGET_MS` | 100 | decision-plane LLM budget (§1) — a knob, not a guarantee |
-| `PANOP_SPAWN_BUDGET_MS` | 3000 | durable-plane spawn budget (§1, REQ-4) — a knob, not a guarantee |
-| `PANOP_ROUNDTRIP_BUDGET_MS` | 1500 | "working" timeout-ack threshold (§5.4) |
-| `PANOP_SUGGEST_WORD_GATE` / `PANOP_SUGGEST_TIME_GATE_S` | 60 / 90 | suggestion fire gate (§6) |
-| `PANOP_SUGGEST_QUALITY_THRESHOLD` | (tuned) | suggestion quality gate (§6) |
-| `PANOP_SUGGEST_CADENCE_S` / `PANOP_SUGGEST_TTL_S` | 180 / 90 | suggestion cadence + expiry (§6) |
-| `PANOP_OUTPUT_WORD_CAP` | 15 | spoken-output word cap (§5.5) |
-| `PANOP_WAKE_WORD` / `PANOP_MUTE_WORD` / `PANOP_UNMUTE_WORD` | Panop / mute / unmute | word lists (§4.3) |
+| `VIBERSYN_EARCON_BUDGET_MS` | 300 | hot-plane earcon latency budget (§1, REQ-10) — a knob, not a guarantee |
+| `VIBERSYN_DECISION_BUDGET_MS` | 100 | decision-plane LLM budget (§1) — a knob, not a guarantee |
+| `VIBERSYN_SPAWN_BUDGET_MS` | 3000 | durable-plane spawn budget (§1, REQ-4) — a knob, not a guarantee |
+| `VIBERSYN_ROUNDTRIP_BUDGET_MS` | 1500 | "working" timeout-ack threshold (§5.4) |
+| `VIBERSYN_SUGGEST_WORD_GATE` / `VIBERSYN_SUGGEST_TIME_GATE_S` | 60 / 90 | suggestion fire gate (§6) |
+| `VIBERSYN_SUGGEST_QUALITY_THRESHOLD` | (tuned) | suggestion quality gate (§6) |
+| `VIBERSYN_SUGGEST_CADENCE_S` / `VIBERSYN_SUGGEST_TTL_S` | 180 / 90 | suggestion cadence + expiry (§6) |
+| `VIBERSYN_OUTPUT_WORD_CAP` | 15 | spoken-output word cap (§5.5) |
+| `VIBERSYN_WAKE_WORD` / `VIBERSYN_MUTE_WORD` / `VIBERSYN_UNMUTE_WORD` | Viber / mute / unmute | word lists (§4.3) |
 
 **Engineering-only tickets** (pure implementation infrastructure serving no single feature — called
 out explicitly per the operating rules):
@@ -1314,7 +1314,7 @@ All four Smithers gates pass against the real harness: durable **spawn** (stable
   (`smithers up --serve`, the existing `.smithers/gateway.ts`), **not** detach mode (`up -d`, which
   needs `--resume`). The Cue adapter must call the **gateway signal API**, not the CLI.
 - **Setup tasks:** (1) **install Cue from source** (private pnpm monorepo: `git clone … && pnpm
-  install && pnpm build`) before P-CUE/P-SEAM; (2) document that Panopticon processes launch via the
+  install && pnpm build`) before P-CUE/P-SEAM; (2) document that Vibersyn processes launch via the
   gateway, not standalone `up -d`. The adapter (`cue-voice-adapter.ts`: `WordCue → MappedActionTool →
   smithers signal`) is written and type-correct but unexercised until Cue is built.
 - **Note:** orchestrator captured a null structured result for this probe; recorded as **PASS** per

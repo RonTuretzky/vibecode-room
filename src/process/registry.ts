@@ -76,7 +76,7 @@ export class ProcessRegistry {
 
   constructor(options: ProcessRegistryOptions) {
     this.client = options.client;
-    this.sessionId = options.sessionId ?? "panopticon-process";
+    this.sessionId = options.sessionId ?? "vibersyn-process";
     this.maxConcurrentProcesses = options.maxConcurrentProcesses ?? DEFAULT_MAX_CONCURRENT_PROCESSES;
     this.minRunSlots = options.minRunSlots;
     this.minMemoryMB = options.minMemoryMB;
@@ -128,7 +128,7 @@ export class ProcessRegistry {
     const spawn = await this.client.spawn({
       upid,
       runId: seed.runId,
-      workflow: seed.workflow ?? "panopticon-process",
+      workflow: seed.workflow ?? "vibersyn-process",
       prompt: seed.prompt,
       callsign: assignment.callsign,
       steeringWindowId: seed.steeringWindowId ?? `window-${assignment.callsign}`,
@@ -193,7 +193,7 @@ export class ProcessRegistry {
       lastAction: "steer",
       updatedAtMs: this.now(),
     });
-    if (process.env.PANOP_RBG_LEAK_STEER_TO_SIBLINGS === "1") {
+    if (process.env.VIBERSYN_RBG_LEAK_STEER_TO_SIBLINGS === "1") {
       for (const process of this.#processes.values()) {
         if (process.upid !== upid && process.state !== "dead") {
           process.progressSeq += 1;
@@ -272,7 +272,7 @@ export class ProcessRegistry {
         record.state = "active";
       }
       if (record.state === "active") {
-        if (record.selected === false && process.env.PANOP_RBG_STALL_UNSELECTED === "1") {
+        if (record.selected === false && process.env.VIBERSYN_RBG_STALL_UNSELECTED === "1") {
           continue;
         }
         record.progressSeq += 1;

@@ -4,6 +4,7 @@ import { demoProjectorSnapshot, withUnmuted } from "./demo-data";
 import type { LogEvent } from "../types";
 import type { ProjectorProcess, ProjectorSnapshot, TranscriptLine } from "./types";
 import { Atmosphere } from "./Atmosphere";
+import { GestureLayer } from "./gesture/GestureLayer";
 import { ProcessBubble, IdeaBubble } from "./Bubble";
 import { BuildDetail } from "./BuildDetail";
 import { traceClass, traceTag, summarizeMeta } from "./trace-utils";
@@ -27,7 +28,7 @@ const IDEA_ID = "idea";
 
 declare global {
   interface Window {
-    __PANOPTICON__?: {
+    __VIBERSYN__?: {
       ready: boolean;
       getSnapshot: () => ProjectorSnapshot;
       applySnapshot: (snapshot: Partial<ProjectorSnapshot>) => void;
@@ -63,6 +64,23 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
       return false;
     }
     return true;
+  }, []);
+
+  // Gesture-wall binding (camera → cursors → dwell-to-click over this UI). Opening
+  // the projector with ?wall=A enables the gesture layer for that wall; ?fusion=
+  // overrides the fusion server WS URL (default ws://<host>:8770). The wall client
+  // is served on its own projector, so wall A/B each run this UI with its own id.
+  const gesture = useMemo(() => {
+    if (typeof window === "undefined") {
+      return null;
+    }
+    const params = new URLSearchParams(window.location.search);
+    const wall = params.get("wall");
+    if (wall === null || wall.trim().length === 0) {
+      return null;
+    }
+    const fusion = params.get("fusion") ?? `ws://${window.location.hostname || "localhost"}:8770`;
+    return { wall, fusionUrl: fusion };
   }, []);
 
   // Latest snapshot exposed to the e2e window hook without re-binding it.
@@ -154,6 +172,28 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ on: !snapshotRef.current.autoAccept }),
+      });
+      if (response.ok && response.headers.get("content-type")?.includes("application/json")) {
+        setSnapshot((await response.json()) as ProjectorSnapshot);
+      }
+    } catch {
+      // Non-authoritative projector: a failed toggle must never block the UI.
+    }
+  }, [liveMode]);
+
+  // IDEA CAPTURE toggle (alternative to passive auto-detect). Flips the server-side
+  // capture flag: when on, detection runs eagerly and every surfaced idea builds
+  // itself — the operator has deliberately started the creation loop.
+  const captureMode = snapshot.captureMode ?? false;
+  const toggleCaptureMode = useCallback(async () => {
+    if (!liveMode) {
+      return;
+    }
+    try {
+      const response = await fetch("/api/capture", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ on: !snapshotRef.current.captureMode }),
       });
       if (response.ok && response.headers.get("content-type")?.includes("application/json")) {
         setSnapshot((await response.json()) as ProjectorSnapshot);
@@ -372,7 +412,7 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
     if (typeof window === "undefined") {
       return;
     }
-    window.__PANOPTICON__ = {
+    window.__VIBERSYN__ = {
       ready: true,
       getSnapshot: () => snapshotRef.current,
       applySnapshot: (partial) => setSnapshot((prev) => ({ ...prev, ...partial })),
@@ -386,7 +426,7 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
       getSelected: () => selected,
     };
     return () => {
-      delete window.__PANOPTICON__;
+      delete window.__VIBERSYN__;
     };
   }, [resolveSelection, selected]);
 
@@ -435,6 +475,7 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
   return (
     <main className="deep" data-testid="app">
       <Atmosphere />
+      {gesture ? <GestureLayer wall={gesture.wall} fusionUrl={gesture.fusionUrl} /> : null}
 
       <header className="status-bar" data-region="status">
         <div className="status-left">
@@ -497,6 +538,17 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
           />
           <button
             type="button"
+            className={`ctl-button capture${captureMode ? " on" : ""}`}
+            data-testid="capture-button"
+            data-state={captureMode ? "on" : "off"}
+            aria-pressed={captureMode}
+            onClick={() => void toggleCaptureMode()}
+            title="Idea Capture: deliberately start the creation loop — detection runs eagerly and every idea builds itself."
+          >
+            {captureMode ? "● Capturing" : "Idea Capture"}
+          </button>
+          <button
+            type="button"
             className={`ctl-button auto-build${autoAccept ? " on" : ""}`}
             data-testid="auto-build-button"
             data-state={autoAccept ? "on" : "off"}
@@ -528,6 +580,7 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
               gatePercent={gatePercent}
               selected={ideaSelected}
               size={ideaSelected ? 250 : 196}
+              evidence={snapshot.suggestion.contextSpan?.quote}
               onSelect={() => void acceptIdea()}
             />
             {snapshot.processes.map((process, index) => (

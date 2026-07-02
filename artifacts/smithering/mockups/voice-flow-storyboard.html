@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Panopticon — Canonical Voice Flow (storyboard)</title>
+<title>Vibersyn — Canonical Voice Flow (storyboard)</title>
 <style>
   :root{
     --bg:#0b0e14; --panel:#121722; --ink:#e6edf3; --muted:#8b98a9;
@@ -46,7 +46,7 @@
 </head>
 <body>
 <header>
-  <h1>Panopticon — Canonical Voice Flow</h1>
+  <h1>Vibersyn — Canonical Voice Flow</h1>
   <div class="sub">Audio-only storyboard · mock data · the spine: <code>wake/magic word → spoken intent → agent action → spoken confirmation</code></div>
 </header>
 
@@ -66,8 +66,8 @@
 
   <!-- 0. consent -->
   <div class="stage">0 · Session start — consent & listening (REQ-1)</div>
-  <div class="turn tts"><div class="who">Panopticon</div><div class="bubble">
-    “Panopticon is listening. Say <strong>‘mute’</strong> (or press the on-screen mute button) to stop feeding audio to the pipeline. Only transcripts are saved.”
+  <div class="turn tts"><div class="who">Vibersyn</div><div class="bubble">
+    “Vibersyn is listening. Say <strong>‘mute’</strong> (or press the on-screen mute button) to stop feeding audio to the pipeline. Only transcripts are saved.”
     <span class="meta"><span class="badge">consent</span> spoken once at start · listening indicator now active</span>
   </div></div>
 
@@ -86,8 +86,8 @@
 
   <!-- 2. suggestion -->
   <div class="stage">2 · Spoken suggestion on idle — pitch + ≤3 MCQs (REQ-3)</div>
-  <div class="turn earcon"><div class="who">Panopticon</div><div class="bubble"><span class="earcon-mark">▶ ding</span> (suggestion incoming)</div></div>
-  <div class="turn tts"><div class="who">Panopticon</div><div class="bubble">
+  <div class="turn earcon"><div class="who">Vibersyn</div><div class="bubble"><span class="earcon-mark">▶ ding</span> (suggestion incoming)</div></div>
+  <div class="turn tts"><div class="who">Vibersyn</div><div class="bubble">
     “I could build an agent-status announcer that speaks when a run finishes. Want it to:
     <strong>(A)</strong> announce every finish, <strong>(B)</strong> only blockers, or <strong>(C)</strong> a quiet end-of-hour summary?”
     <span class="meta"><span class="badge">1 / 3 min budget</span> one-line pitch + 3 spoken MCQs · answerable aloud</span>
@@ -96,8 +96,8 @@
   <!-- 3. accept + spawn -->
   <div class="stage">3 · Voice accept → durable process spawns (REQ-4)</div>
   <div class="turn room"><div class="who">Ava</div><div class="bubble">“Yeah, do it — option B, just blockers. Accept.”</div></div>
-  <div class="turn earcon"><div class="who">Panopticon</div><div class="bubble"><span class="earcon-mark">▶ rising chime</span> (spawn ack) <span class="meta latency">earcon @ 240ms</span></div></div>
-  <div class="turn tts"><div class="who">Panopticon</div><div class="bubble">
+  <div class="turn earcon"><div class="who">Vibersyn</div><div class="bubble"><span class="earcon-mark">▶ rising chime</span> (spawn ack) <span class="meta latency">earcon @ 240ms</span></div></div>
+  <div class="turn tts"><div class="who">Vibersyn</div><div class="bubble">
     “Spawned <strong>Atlas</strong>. Planning the blocker announcer now.”
     <span class="meta"><span class="badge">≤15 words</span> callsign named · auto-selected · seeded with pitch + MCQ:B · confirmed in 2.1s</span>
   </div></div>
@@ -110,7 +110,7 @@
     <span class="meta">un-addressed speech can never steer an existing process</span>
   </div></div>
   <div class="turn room"><div class="who">Ava</div><div class="bubble">“<strong>Atlas</strong>, also include the run’s name when you announce a blocker.”</div></div>
-  <div class="turn earcon"><div class="who">Panopticon</div><div class="bubble"><span class="earcon-mark">▶ tick-tick</span> (now steering Atlas) <span class="meta">steering window open · closes on ~20s idle / “done” / stop word</span></div></div>
+  <div class="turn earcon"><div class="who">Vibersyn</div><div class="bubble"><span class="earcon-mark">▶ tick-tick</span> (now steering Atlas) <span class="meta">steering window open · closes on ~20s idle / “done” / stop word</span></div></div>
   <div class="turn cue"><div class="who">Cue → Atlas</div><div class="bubble">
     <span class="badge">route: steer:Atlas</span> instruction delivered to selected process only · Bravo unaffected
   </div></div>
@@ -132,14 +132,14 @@
   <!-- 7. concurrent fleet -->
   <div class="stage">7 · Second process, operated independently (REQ-13)</div>
   <div class="turn room"><div class="who">Sam</div><div class="bubble">“<strong>Bravo</strong>, pause.”</div></div>
-  <div class="turn earcon"><div class="who">Panopticon</div><div class="bubble"><span class="earcon-mark">▶ low tone</span> (Bravo paused) <span class="meta">Atlas keeps running — unselected ≠ paused</span></div></div>
+  <div class="turn earcon"><div class="who">Vibersyn</div><div class="bubble"><span class="earcon-mark">▶ low tone</span> (Bravo paused) <span class="meta">Atlas keeps running — unselected ≠ paused</span></div></div>
 
   <!-- 8. stop word -->
   <div class="stage">8 · Panic / stop word always wins (REQ-12 / REQ-2)</div>
   <div class="turn room"><div class="who">Ava</div><div class="bubble">“<strong>Atlas, stop.</strong>”</div></div>
-  <div class="turn earcon"><div class="who">Panopticon</div><div class="bubble"><span class="earcon-mark">▶ double buzz</span> (Atlas halted) <span class="meta latency">halt @ 0.7s</span> · siblings unaffected</div></div>
+  <div class="turn earcon"><div class="who">Vibersyn</div><div class="bubble"><span class="earcon-mark">▶ double buzz</span> (Atlas halted) <span class="meta latency">halt @ 0.7s</span> · siblings unaffected</div></div>
   <div class="turn room"><div class="who">Sam</div><div class="bubble">“Mute.”</div></div>
-  <div class="turn earcon"><div class="who">Panopticon</div><div class="bubble"><span class="earcon-mark">▶ descending tone</span> (muted — audio no longer fed to the pipeline ≤500ms) <span class="meta">mute pre-empts every other cue · the voice library keeps listening for “unmute”; to resume, say <strong>“unmute”</strong> or press the on-screen unmute button</span></div></div>
+  <div class="turn earcon"><div class="who">Vibersyn</div><div class="bubble"><span class="earcon-mark">▶ descending tone</span> (muted — audio no longer fed to the pipeline ≤500ms) <span class="meta">mute pre-empts every other cue · the voice library keeps listening for “unmute”; to resume, say <strong>“unmute”</strong> or press the on-screen unmute button</span></div></div>
 </main>
 
 <footer>

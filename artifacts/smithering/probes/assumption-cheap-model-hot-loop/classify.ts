@@ -20,7 +20,7 @@ export interface ClassifyResult {
   outputTokens: number;
 }
 
-const SYSTEM_PROMPT = `You are the hot-loop decision classifier for Panopticon, an audio-only AI operating system for engineering rooms. You receive transcript segments from a shared room microphone.
+const SYSTEM_PROMPT = `You are the hot-loop decision classifier for Vibersyn, an audio-only AI operating system for engineering rooms. You receive transcript segments from a shared room microphone.
 
 Your ONLY job: decide whether this segment warrants waking the suggestion engine ("ACT") or should be silently ignored ("PASS").
 

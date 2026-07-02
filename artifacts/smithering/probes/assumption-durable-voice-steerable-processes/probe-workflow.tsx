@@ -43,7 +43,7 @@ export default smithers((ctx) => {
   const correlationId = `steer:${iteration}`;
 
   return (
-    <Workflow name="panopticon-probe-process">
+    <Workflow name="vibersyn-probe-process">
       <Loop id={loopId} until={shouldStop} maxIterations={100}>
         <Sequence>
           <WaitForEvent

@@ -15,7 +15,7 @@ const TRACE_PATH = `${TRACE_ROOT}/p-tts.jsonl`;
 const DEFAULT_FIRST_AUDIO_BUDGET_MS = 200;
 const PRE_CACHE_PLAYBACK_BUDGET_MS = 100;
 const TIMEOUT_MS = 45_000;
-const PROBE_TEXT = "Panopticon streaming TTS probe ready.";
+const PROBE_TEXT = "Vibersyn streaming TTS probe ready.";
 const STATE_PHRASES = ["Ready", "Muted", "Unmuted", "Working", "Halted"] as const;
 
 type ProviderId = "elevenlabs" | "cartesia" | "playht" | "openai";
@@ -57,7 +57,7 @@ interface SelectionRecord {
 }
 
 describe("P-TTS streaming provider selection probe", () => {
-  test("configured 2026 TTS candidates stream first audio byte within budget and satisfy Panopticon output contract", async () => {
+  test("configured 2026 TTS candidates stream first audio byte within budget and satisfy Vibersyn output contract", async () => {
     await mkdir(TRACE_ROOT, { recursive: true });
     await mkdir(PROBE_ROOT, { recursive: true });
     await writeFile(TRACE_PATH, "", "utf8");
@@ -228,8 +228,8 @@ function candidateMatrix(): ProviderCandidate[] {
         }
         const apiKey = firstEnv("ELEVENLABS_API_KEY", "XI_API_KEY");
         if (apiKey === undefined) return null;
-        const voice = process.env.PANOP_TTS_ELEVENLABS_VOICE_ID ?? "JBFqnCBsd6RMkjVDRZzb";
-        const model = process.env.PANOP_TTS_ELEVENLABS_MODEL ?? "eleven_flash_v2_5";
+        const voice = process.env.VIBERSYN_TTS_ELEVENLABS_VOICE_ID ?? "JBFqnCBsd6RMkjVDRZzb";
+        const model = process.env.VIBERSYN_TTS_ELEVENLABS_MODEL ?? "eleven_flash_v2_5";
         createAudioCredentialSource({ provider: "tts", variable: "ELEVENLABS_API_KEY", env: { ELEVENLABS_API_KEY: apiKey } });
         return new FetchTTSProvider({
           id: "elevenlabs",
@@ -266,8 +266,8 @@ function candidateMatrix(): ProviderCandidate[] {
         }
         const apiKey = firstEnv("CARTESIA_API_KEY");
         if (apiKey === undefined) return null;
-        const voice = process.env.PANOP_TTS_CARTESIA_VOICE_ID ?? "f786b574-daa5-4673-aa0c-cbe3e8534c02";
-        const model = process.env.PANOP_TTS_CARTESIA_MODEL ?? "sonic-3.5";
+        const voice = process.env.VIBERSYN_TTS_CARTESIA_VOICE_ID ?? "f786b574-daa5-4673-aa0c-cbe3e8534c02";
+        const model = process.env.VIBERSYN_TTS_CARTESIA_MODEL ?? "sonic-3.5";
         createAudioCredentialSource({ provider: "tts", variable: "CARTESIA_API_KEY", env: { CARTESIA_API_KEY: apiKey } });
         return new FetchTTSProvider({
           id: "cartesia",
@@ -280,7 +280,7 @@ function candidateMatrix(): ProviderCandidate[] {
             init: {
               method: "POST",
               headers: {
-                "Cartesia-Version": process.env.PANOP_TTS_CARTESIA_VERSION ?? "2024-11-13",
+                "Cartesia-Version": process.env.VIBERSYN_TTS_CARTESIA_VERSION ?? "2024-11-13",
                 "Content-Type": "application/json",
                 "X-API-Key": apiKey,
               },
@@ -308,8 +308,8 @@ function candidateMatrix(): ProviderCandidate[] {
         const apiKey = firstEnv("PLAYHT_API_KEY");
         const userId = firstEnv("PLAYHT_USER_ID");
         if (apiKey === undefined || userId === undefined) return null;
-        const voice = process.env.PANOP_TTS_PLAYHT_VOICE ?? "s3://voice-cloning-zero-shot/d9ff78ba-d016-47f6-b0ef-dd630f59414e/original/manifest.json";
-        const model = process.env.PANOP_TTS_PLAYHT_MODEL ?? "Play3.0-mini";
+        const voice = process.env.VIBERSYN_TTS_PLAYHT_VOICE ?? "s3://voice-cloning-zero-shot/d9ff78ba-d016-47f6-b0ef-dd630f59414e/original/manifest.json";
+        const model = process.env.VIBERSYN_TTS_PLAYHT_MODEL ?? "Play3.0-mini";
         createAudioCredentialSource({ provider: "tts", variable: "PLAYHT_API_KEY", env: { PLAYHT_API_KEY: apiKey } });
         return new FetchTTSProvider({
           id: "playht",
@@ -350,8 +350,8 @@ function candidateMatrix(): ProviderCandidate[] {
         }
         const apiKey = firstEnv("OPENAI_API_KEY");
         if (apiKey === undefined) return null;
-        const voice = process.env.PANOP_TTS_OPENAI_VOICE ?? "coral";
-        const model = process.env.PANOP_TTS_OPENAI_MODEL ?? "gpt-4o-mini-tts";
+        const voice = process.env.VIBERSYN_TTS_OPENAI_VOICE ?? "coral";
+        const model = process.env.VIBERSYN_TTS_OPENAI_MODEL ?? "gpt-4o-mini-tts";
         createAudioCredentialSource({ provider: "tts", variable: "OPENAI_API_KEY", env: { OPENAI_API_KEY: apiKey } });
         return new FetchTTSProvider({
           id: "openai",
@@ -695,15 +695,15 @@ function firstEnv(...names: string[]): string | undefined {
 }
 
 function firstAudioBudgetMs(): number {
-  return Number(process.env.PANOP_TTS_FIRST_AUDIO_BUDGET_MS ?? DEFAULT_FIRST_AUDIO_BUDGET_MS);
+  return Number(process.env.VIBERSYN_TTS_FIRST_AUDIO_BUDGET_MS ?? DEFAULT_FIRST_AUDIO_BUDGET_MS);
 }
 
 function liveTtsEnabled(): boolean {
-  return process.env.PANOP_TTS_LIVE === "1";
+  return process.env.VIBERSYN_TTS_LIVE === "1";
 }
 
 function replayFirstAudioMs(): number {
-  return Number(process.env.PANOP_TTS_REPLAY_FIRST_AUDIO_MS ?? 60);
+  return Number(process.env.VIBERSYN_TTS_REPLAY_FIRST_AUDIO_MS ?? 60);
 }
 
 function replayCandidate(id: ProviderId, label: string, envVars: string[]): CandidateProvider {

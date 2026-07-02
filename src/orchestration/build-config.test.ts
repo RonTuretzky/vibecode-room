@@ -7,7 +7,7 @@ import {
   resolveBuildConfig,
 } from "./core.ts";
 
-// Regression suite for the smoke-smithering-panopticon-4-0 failure. smithers stores input
+// Regression suite for the smoke-smithering-vibersyn-4-0 failure. smithers stores input
 // fields the caller omits as SQL NULL (db/zodToTable strips the Zod .default() wrapper), so
 // `ctx.input.integrationBranch` arrived as `null`. build:setup then emitted
 // {integrationBranch:null,baseBranch:null,…} and the buildSetup z.string() output schema

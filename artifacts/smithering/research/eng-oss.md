@@ -1,21 +1,21 @@
-# Engineering OSS Research — Panopticon
+# Engineering OSS Research — Vibersyn
 
 > Written: 2026-06-13. Upstream: `docs/planning/02-design.md`, `artifacts/smithering/research/prior-art.md`,
 > `artifacts/smithering/research/domain.md`. Topic: how real open-source codebases structure the same
-> kind of system as Panopticon — ambient audio observation, streaming voice pipelines, on-device keyword
+> kind of system as Vibersyn — ambient audio observation, streaming voice pipelines, on-device keyword
 > detection, and durable agent process management.
 >
 > **Factual posture:** All module paths, class names, and API shapes below are derived from training data
 > (knowledge cutoff August 2025) and public README/documentation at research time. The specific method
 > signatures and return shapes noted here MUST be exercised against the real library before any
-> Panopticon code depends on them — per the design's P0 probe gate requirement. Nothing below
+> Vibersyn code depends on them — per the design's P0 probe gate requirement. Nothing below
 > substitutes for running the probes.
 
 ---
 
 ## 0. Why these four codebases
 
-Panopticon has four engineering sub-problems that each have at least one mature open-source treatment:
+Vibersyn has four engineering sub-problems that each have at least one mature open-source treatment:
 
 | Sub-problem | Codebase studied | Why |
 |---|---|---|
@@ -94,9 +94,9 @@ Every processor is an `asyncio.Queue` pair. The `Pipeline` wires them left-to-ri
 that does nothing with a frame passes it downstream unchanged. Sidechannels (metrics, cancel
 signals) travel on separate `SystemFrame` subtypes that bypass normal processing.
 
-**Key design insight for Panopticon:** Pipecat's `stt_mute_filter.py` is the closest existing
+**Key design insight for Vibersyn:** Pipecat's `stt_mute_filter.py` is the closest existing
 reference for the hard-mute pattern (§12 of the design). It gates `AudioRawFrame` based on a
-mute flag set by an upstream frame. Panopticon's cloud-mute can follow the same pattern: a
+mute flag set by an upstream frame. Vibersyn's cloud-mute can follow the same pattern: a
 `MuteEngagedFrame` flips a flag that causes the ASR service to drop all audio. The local spotter
 runs as a *parallel* branch that never passes through the mute gate.
 
@@ -107,25 +107,25 @@ Pipecat's tests live in `tests/` and use two main patterns:
 1. **Frame injection tests** (`test_pipeline.py`, `test_aggregators.py`): construct a `Pipeline`
    with test processors; inject a sequence of pre-built Frames; assert the downstream frame
    sequence. No real audio, no network. This is the record-replay analog for the pipeline layer —
-   the test is the injected frame sequence, exactly as Panopticon's design requires JSONL
+   the test is the injected frame sequence, exactly as Vibersyn's design requires JSONL
    replay of pre-recorded ASR observations.
 
 2. **Service unit tests** (`tests/test_deepgram.py`): mock the WebSocket connection at the
    transport layer; feed byte payloads; assert the emitted TranscriptionFrame shapes. This is
    not end-to-end but exercises serialization / frame-shape assumptions before integration.
 
-**What Panopticon should copy:** inject pre-recorded `TranscriptObservation` JSONL into the
+**What Vibersyn should copy:** inject pre-recorded `TranscriptObservation` JSONL into the
 Cue harness the same way Pipecat injects pre-built Frames. The test is "same input sequence → same
 decision sequence" — identical to Pipecat's frame injection pattern, applied at the Cue layer.
 
-**What Panopticon should NOT copy:** Pipecat is request/response — one user utterance → one agent
+**What Vibersyn should NOT copy:** Pipecat is request/response — one user utterance → one agent
 response. It has no `observe.pass` primitive and no ambient cue policy that decides whether to
 respond at all. Its VAD drives turn detection; Cue's cue policies drive act-or-pass. These are
 orthogonal concerns; Pipecat's pipeline pattern is the useful lesson, not its turn model.
 
 ### 1.5 Earcon dispatch analog
 
-Pipecat emits audio via a TTSAudioRawFrame regardless of content. To implement Panopticon's
+Pipecat emits audio via a TTSAudioRawFrame regardless of content. To implement Vibersyn's
 earcon layer (§3), the right Pipecat pattern would be an `EarconProcessor` that intercepts
 specific state-transition frames (`WakeDetectedFrame`, `ProcessSpawnedFrame`, etc.) and injects
 pre-rendered PCM bytes as `AudioRawFrame`s directly — bypassing the TTS service entirely. This
@@ -138,7 +138,7 @@ keeps the earcon ≤300 ms latency path from ever touching the LLM or TTS networ
 ### 2.1 What it is
 
 OpenWakeWord is a Python library for on-device, always-on wake word and keyword spotting using
-neural network models. It is the closest open-source analog to what Panopticon's §12 design calls
+neural network models. It is the closest open-source analog to what Vibersyn's §12 design calls
 the "minimal on-device keyword spotter" for "Daybreak" unmute.
 
 ### 2.2 Module structure
@@ -170,7 +170,7 @@ The model ingests a fixed-length mel spectrogram window (approximately 1.5 secon
 context) and outputs a score per registered keyword. ONNX Runtime runs the inference in < 5 ms
 on a modern CPU.
 
-**Key property for Panopticon's "Daybreak" spotter:** The library runs as a pure local inference
+**Key property for Vibersyn's "Daybreak" spotter:** The library runs as a pure local inference
 loop with no network calls. The audio processing is entirely on-device. It can be started/stopped
 independently of the cloud ASR stream. The `model.predict()` method returns confidence scores
 without emitting any transcript — exactly matching the §12 requirement that "it cannot transcribe,
@@ -192,7 +192,7 @@ train_model(
 )
 ```
 
-For Panopticon, "Daybreak" would need a custom model. The library documents that 100–500
+For Vibersyn, "Daybreak" would need a custom model. The library documents that 100–500
 positive TTS-synthesized samples + standard negative sample set produces acceptable accuracy for
 single-word triggers. **This claim must be validated against real accuracy figures before
 shipping** — the probe should measure false-positive rate against a sample of typical team room
@@ -232,7 +232,7 @@ OpenWakeWord ships with benchmark scripts in `tests/`:
 3. **Latency benchmark**: measure `model.predict()` latency on target hardware. Documented < 5 ms
    on a modern CPU for a single keyword.
 
-**What Panopticon should copy:** same benchmark structure for the "Daybreak" probe —
+**What Vibersyn should copy:** same benchmark structure for the "Daybreak" probe —
 measure recall and FP rate against real team-room audio, at the exact threshold value chosen,
 before shipping. The probe IS the test; the passing criteria are named in the design.
 
@@ -245,7 +245,7 @@ before shipping. The probe IS the test; the passing criteria are named in the de
 Temporal is an open-source durable execution engine. Its TypeScript SDK is the most direct
 architectural analog for what Smithers implements: durable named processes that survive crashes,
 accept external signals mid-run, can be queried, and replay deterministically from an event
-history. Studying it teaches what the Panopticon↔Smithers seam must accommodate.
+history. Studying it teaches what the Vibersyn↔Smithers seam must accommodate.
 
 ### 3.2 Module structure
 
@@ -307,7 +307,7 @@ Cue adapter sends a signal.
 
 **Key insight for the Cue↔Smithers seam:** Temporal's `signal` ↔ Smithers' `steer/signal` are
 isomorphic. When Cue's `MappedActionTool` emits `{type: "steer", upid: "atlas", payload: "..."}`,
-the Panopticon dispatcher calls `smithersClient.signal(upid, "steer", payload)` — exactly as a
+the Vibersyn dispatcher calls `smithersClient.signal(upid, "steer", payload)` — exactly as a
 Temporal client calls `workflowHandle.signal(steerSignal, payload)`. The adapter owns this
 translation; neither Cue nor Smithers knows about the other.
 
@@ -332,14 +332,14 @@ or killed. This maps directly to Smithers' `fork` primitive — the design's §1
 Temporal: there is no native "clone state and branch"; you start a child with a fresh seed
 derived from the parent's current state at the fork point.
 
-### 3.5 Replay safety rules (critical for Panopticon's record-replay requirement)
+### 3.5 Replay safety rules (critical for Vibersyn's record-replay requirement)
 
 Temporal enforces **determinism inside the workflow sandbox**: no `Date.now()`, no `Math.random()`,
 no direct network or disk I/O, no `setTimeout`. All non-deterministic operations are
 **Activities** (sandboxed out of the workflow replay thread). The replay log (event history)
 records every activity result; on replay, the result is returned from the log without re-running.
 
-**What Panopticon should copy:** the design's record-replay harness (§13.1) follows the same
+**What Vibersyn should copy:** the design's record-replay harness (§13.1) follows the same
 principle — pre-recorded ASR JSONL replaces live Deepgram calls exactly as Temporal's event
 history replaces live Activity results. The "same input → same output" guarantee requires that
 the decision LLM's input is deterministic (temperature-0, pinned model) — matching Temporal's
@@ -373,7 +373,7 @@ assert(result.applied === 'make it faster');
 await env.teardown();
 ```
 
-**What Panopticon should copy:** use Smithers' test harness (equivalent of `TestWorkflowEnvironment`)
+**What Vibersyn should copy:** use Smithers' test harness (equivalent of `TestWorkflowEnvironment`)
 to inject steer signals, advance mock clocks (for the 25 s dead-man timer and 20 s steering-window
 timeout), and assert the correct lifecycle transitions. The dead-man timer and steering-window
 auto-close tests require a controllable clock — exactly as Temporal's `env.sleep()` provides.
@@ -387,7 +387,7 @@ auto-close tests require a controllable clock — exactly as Temporal's `env.sle
 Rhasspy 3 is a complete open-source offline voice assistant framework. It defines a pipeline
 of stages (VAD → ASR → Intent → Handle → TTS) with a pluggable provider model for each stage
 and an event bus that connects them. It is the most complete open-source reference architecture
-for a full voice assistant at the component-composition level, independent of Panopticon's
+for a full voice assistant at the component-composition level, independent of Vibersyn's
 specific AI approach.
 
 ### 4.2 Module structure
@@ -442,8 +442,8 @@ A component that has nothing to do emits nothing (the natural analog of `observe
 pipeline level — the wake word detector emits a `detection` event only when a keyword is found;
 otherwise it consumes audio chunks silently).
 
-**Key insight for Panopticon:** Rhasspy's `WakeWordDetector` ABC is exactly the interface
-Panopticon's on-device unmute spotter should implement. The ABC has:
+**Key insight for Vibersyn:** Rhasspy's `WakeWordDetector` ABC is exactly the interface
+Vibersyn's on-device unmute spotter should implement. The ABC has:
 
 ```python
 class WakeWordDetector:
@@ -452,7 +452,7 @@ class WakeWordDetector:
 ```
 
 The `Optional[Detection]` return type enforces the scope constraint: the detector either finds
-the keyword or finds nothing. It cannot emit anything else. Panopticon's "Daybreak" spotter
+the keyword or finds nothing. It cannot emit anything else. Vibersyn's "Daybreak" spotter
 can be modeled as a `WakeWordDetector` that only ever returns `Detection(name="daybreak")` or
 `None` — zero other outputs.
 
@@ -491,25 +491,25 @@ Rhasspy 3 tests (`tests/`) follow three patterns:
 
 1. **Component unit tests** (`test_wake.py`, `test_asr.py`): construct a concrete provider with
    a test config; feed a pre-recorded `.wav` file; assert the emitted event matches expected. The
-   `.wav` files live in `tests/audio/`. No live hardware. This is the reference for Panopticon's
-   ASR provider unit tests: record a sample of "Panop", "Curtain", "Daybreak", "Abort" spoken
+   `.wav` files live in `tests/audio/`. No live hardware. This is the reference for Vibersyn's
+   ASR provider unit tests: record a sample of "Viber", "Curtain", "Daybreak", "Abort" spoken
    cleanly; assert the ASR transcribes them correctly; assert the cue policy fires on the correct
    trigger; assert it passes on near-homophones.
 
 2. **Pipeline integration tests** (`test_pipeline.py`): construct a full `PipelineConfig` with
    real (but lightweight) providers; feed a recorded audio session; assert the end-to-end
    event sequence. Used to test that a VAD segment boundary triggers ASR correctly, that ASR
-   output triggers intent recognition, etc. This maps to Panopticon's §13.1 record-replay
+   output triggers intent recognition, etc. This maps to Vibersyn's §13.1 record-replay
    harness: inject a JSONL observation stream, assert the action sequence.
 
 3. **Wyoming protocol tests** (`test_wyoming.py`): serialize and deserialize every event type;
-   assert round-trip identity. This is the "trace-schema test" analog from Panopticon §9.1 —
+   assert round-trip identity. This is the "trace-schema test" analog from Vibersyn §9.1 —
    every log event must round-trip cleanly so a debugging agent can deserialize any stored trace.
 
 **Rhasspy's explicit non-audio test coverage:** the `tests/` directory includes
 `test_text_pipeline.py` — a pipeline that runs from text input (simulating a pre-transcribed
 utterance) through intent and handle stages, with no audio processing. This is the exact pattern
-for Panopticon's dispatch and routing unit tests: inject a text transcript observation; assert the
+for Vibersyn's dispatch and routing unit tests: inject a text transcript observation; assert the
 correct Cue decision fires; assert the correct Smithers action is dispatched. No audio needed.
 
 ---
@@ -527,7 +527,7 @@ all components share:
 - Rhasspy: `AudioChunk`, `Transcript`, `Detection`, `Intent` — all defined in `__init__.py`
   of each stage package
 
-**Panopticon should define the shared contract up-front** in a single `types.ts` (or equivalent):
+**Vibersyn should define the shared contract up-front** in a single `types.ts` (or equivalent):
 `TranscriptObservation`, `CueDecision`, `DispatchedAction`, `RunEvent`, and the log event union.
 Every component imports from this file; changes to the schema are visible in one place.
 
@@ -541,11 +541,11 @@ everything inside that boundary without real I/O:
 - Temporal: `TestWorkflowEnvironment`; no real Temporal server
 - Rhasspy: inject `.wav` files; no live mic; no real ASR API calls
 
-**The test boundary is the provider interface.** For Panopticon:
+**The test boundary is the provider interface.** For Vibersyn:
 - `ASRProvider.stream()` is the boundary for all voice-pipeline tests
 - `CueHarness` is the boundary for all observation-decision tests  
 - Smithers `streamRunEvents()` is the boundary for all agent lifecycle tests
-- The Panopticon action dispatcher is the boundary for Cue↔Smithers seam tests
+- The Vibersyn action dispatcher is the boundary for Cue↔Smithers seam tests
 
 All tests below these boundaries can run headless, deterministically, without network.
 
@@ -559,7 +559,7 @@ All four codebases use some form of record-replay:
 - Rhasspy: feed recorded `.wav` files through the full pipeline; assert event sequence
 
 This is the universal pattern for testing non-deterministic or hardware-dependent systems:
-**capture real inputs once; replay them deterministically many times.** Panopticon's §13.1
+**capture real inputs once; replay them deterministically many times.** Vibersyn's §13.1
 harness is the same idea applied to ASR observations: record the real Deepgram output as JSONL;
 replay it through the Cue decision layer at temperature-0; assert the action sequence.
 
@@ -572,7 +572,7 @@ replay it through the Cue decision layer at temperature-0; assert the action seq
 - Rhasspy: every Wyoming event carries a `timestamp`; the Wyoming protocol itself is the trace
   log — serialize all events to disk for replay.
 
-**Panopticon's structured log (§13.3) should be a first-class pipeline stage,** not bolted on
+**Vibersyn's structured log (§13.3) should be a first-class pipeline stage,** not bolted on
 after the fact. Every event that flows through the Cue harness should also flow through a
 `TraceProcessor` that writes the structured JSONL line before emitting downstream. This ensures
 no event is ever silently lost: `observe.pass` decisions appear in the trace (as Cue already
@@ -595,11 +595,11 @@ does), and the Temporal-style event history is the source of truth for causal-ch
 3. **Earcon-vs-routing-ack two-layer non-verbal audio output.** No codebase implements the
    Layer A (tonal state earcons) + Layer B (non-tonal routing acks) distinction. The closest
    is Pipecat's frame type routing (AudioRawFrame vs TTSAudioRawFrame) but without the
-   acoustic-categorization rule. Panopticon must implement this from scratch.
+   acoustic-categorization rule. Vibersyn must implement this from scratch.
 
 4. **On-device unmute spotter with a hard scope fence.** OpenWakeWord provides the detection
    capability; the scope fence (exactly one event type, no transcription path) is enforced by
-   Panopticon's integration layer, not by the library. The integration test (`spotter scope test`
+   Vibersyn's integration layer, not by the library. The integration test (`spotter scope test`
    in §12.1) has no direct prior art to copy — it must be written fresh.
 
 ---
@@ -611,19 +611,19 @@ does), and the Temporal-style event history is the source of truth for causal-ch
   Rhasspy's early release notes and Pipecat's migration guides.
   
 - **Provider interface is the test boundary.** All component tests mock at the provider
-  interface, not at the network level. Panopticon's `ASRProvider`, `TTSProvider`, and Smithers
+  interface, not at the network level. Vibersyn's `ASRProvider`, `TTSProvider`, and Smithers
   client should each have a test double injectable at construction time.
 
 - **Record-replay JSONL is the correct test strategy for the Cue layer.** Confirmed by all
-  four codebases; Panopticon's §13.1 harness is the correct design.
+  four codebases; Vibersyn's §13.1 harness is the correct design.
 
 - **Earcon dispatch must bypass all network paths.** Pipecat's Frame routing shows that
   pre-rendered PCM can be injected directly at the transport output stage, bypassing TTS. Use
-  this pattern for the ≤300 ms earcon path in Panopticon.
+  this pattern for the ≤300 ms earcon path in Vibersyn.
 
 - **Temporal's `TestWorkflowEnvironment` is the reference for Smithers lifecycle tests.** Clock
   control (`env.sleep`), signal injection (`handle.signal`), and query assertions are the same
-  primitives Panopticon needs for testing the dead-man timer (25 s) and steering-window
+  primitives Vibersyn needs for testing the dead-man timer (25 s) and steering-window
   auto-close (20 s idle). Whatever Smithers offers for test doubles, it should support these
   three operations.
 

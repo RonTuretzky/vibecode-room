@@ -5,7 +5,7 @@ export interface WakeMatcherOptions {
   policy?: string;
 }
 
-const defaultWakeWord = "panop";
+const defaultWakeWord = "viber";
 const defaultPolicy = "literal-wake";
 
 export function matchWakeWord(

@@ -4,8 +4,8 @@
 
 - Added `poc/p-smithers.test.ts`, a real Smithers Gateway probe that registers a durable workflow against a persistent SQLite database.
 - The probe asserts gateway-launched run spawn with seed payload, `streamRunEvents` WebSocket event shape, waiting-event pause, explicit `resumeRun`, gateway `submitSignal` steering, pre-restart context archive, restart recovery equality, five concurrent durable runs, and fork realization.
-- Fork verdict: Gateway V0 has no native fork RPC (`forkRun` returns `METHOD_NOT_FOUND`), so Panopticon V0 should realize process forks as a fresh gateway-launched seeded run carrying `parentId` lineage in the input. Native Smithers time-travel fork exists as a CLI capability, but the app process control plane should stay on Gateway APIs.
-- Steering verdict: Panopticon process launch and mid-run steering must use Gateway mode and the Gateway `submitSignal` RPC path. The probe does not use the `smithers signal` CLI for steering.
+- Fork verdict: Gateway V0 has no native fork RPC (`forkRun` returns `METHOD_NOT_FOUND`), so Vibersyn V0 should realize process forks as a fresh gateway-launched seeded run carrying `parentId` lineage in the input. Native Smithers time-travel fork exists as a CLI capability, but the app process control plane should stay on Gateway APIs.
+- Steering verdict: Vibersyn process launch and mid-run steering must use Gateway mode and the Gateway `submitSignal` RPC path. The probe does not use the `smithers signal` CLI for steering.
 
 ## Gate Roll-Up
 

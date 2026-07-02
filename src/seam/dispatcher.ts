@@ -48,7 +48,7 @@ export class SeamDispatcher {
   constructor(options: SeamDispatcherOptions) {
     this.client = options.client;
     this.correlations = options.correlations;
-    this.sessionId = options.sessionId ?? "panopticon-seam";
+    this.sessionId = options.sessionId ?? "vibersyn-seam";
     this.trace = options.trace ?? new TraceProcessor();
     this.spawnBudgetMs = options.spawnBudgetMs ?? 3_000;
     this.now = options.now ?? (() => performance.now());
@@ -57,7 +57,7 @@ export class SeamDispatcher {
   }
 
   async dispatch(rawAction: unknown): Promise<DispatchResult> {
-    const actionInput = process.env.PANOP_RBG_RENAME_ACTION_FIELD === "1" && isObject(rawAction)
+    const actionInput = process.env.VIBERSYN_RBG_RENAME_ACTION_FIELD === "1" && isObject(rawAction)
       ? renameTargetField(rawAction)
       : rawAction;
     const parsed = dispatchedActionSchema.safeParse(actionInput);
@@ -68,7 +68,7 @@ export class SeamDispatcher {
     let action = parsed.data;
     const startedAtMs = this.now();
     if (
-      process.env.PANOP_RBG_ALLOW_MISSING_TARGET !== "1" &&
+      process.env.VIBERSYN_RBG_ALLOW_MISSING_TARGET !== "1" &&
       requiresTarget(action.type) &&
       action.targetUPID === null
     ) {
@@ -99,12 +99,12 @@ export class SeamDispatcher {
       return this.statusAck(action, startedAtMs);
     }
 
-    const work = process.env.PANOP_RBG_BLOCK_DISPATCH === "1"
+    const work = process.env.VIBERSYN_RBG_BLOCK_DISPATCH === "1"
       ? this.performAction(action)
       : Promise.resolve().then(() => this.performAction(action));
     this.track(work);
 
-    if (process.env.PANOP_RBG_BLOCK_DISPATCH === "1") {
+    if (process.env.VIBERSYN_RBG_BLOCK_DISPATCH === "1") {
       busyWait(250);
     }
 
@@ -126,7 +126,7 @@ export class SeamDispatcher {
   }
 
   private async statusAck(action: DispatchedAction, startedAtMs: number): Promise<DispatchAck> {
-    const statusSummary = process.env.PANOP_RBG_STATUS_PLACEHOLDER === "1"
+    const statusSummary = process.env.VIBERSYN_RBG_STATUS_PLACEHOLDER === "1"
       ? "Status requested."
       : await this.statusSummary();
     this.recordTrace(action, "seam.status", startedAtMs, {
@@ -295,7 +295,7 @@ export class SeamDispatcher {
 export function createSeamApp(dispatcher: SeamDispatcher): Hono {
   const app = new Hono();
 
-  app.get("/health", (context) => context.json({ ok: true, module: "panopticon-seam" }));
+  app.get("/health", (context) => context.json({ ok: true, module: "vibersyn-seam" }));
   app.post("/actions", async (context) => {
     const action = await context.req.json();
     const result = await dispatcher.dispatch(action);
@@ -328,7 +328,7 @@ function spawnSeedFromAction(action: DispatchedAction): SpawnSeed {
   const upid = stringValue(payload.upid) ?? action.targetUPID ?? `upid-${action.correlationId}`;
   return {
     upid,
-    workflow: stringValue(payload.workflow) ?? "panopticon-process",
+    workflow: stringValue(payload.workflow) ?? "vibersyn-process",
     runId: stringValue(payload.runId),
     prompt: stringValue(payload.prompt) ?? stringValue(payload.seed),
     callsign: nullableString(payload.callsign),

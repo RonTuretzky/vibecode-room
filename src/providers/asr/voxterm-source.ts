@@ -1,7 +1,7 @@
 // Production VoxTermSegmentSource (ISSUE-0028 / GAP-002).
 //
 // Binds the forked VoxTerm child (github.com/dmarzzz/VoxTerm @
-// panopticon/realtime-segment-ipc) and turns its stdout — a stream of
+// vibersyn/realtime-segment-ipc) and turns its stdout — a stream of
 // newline-delimited JSON segment frames, the contract documented in voxterm.ts —
 // into the VoxTermSegment objects VoxTermASRProvider consumes.
 //

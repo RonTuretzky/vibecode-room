@@ -1,4 +1,4 @@
-$ PANOP_RBG_LEAK_STEER_TO_SIBLINGS=1 bun test src/process/registry.test.ts
+$ VIBERSYN_RBG_LEAK_STEER_TO_SIBLINGS=1 bun test src/process/registry.test.ts
 bun test v1.3.14 (0d9b296a)
 
 src/process/registry.test.ts:

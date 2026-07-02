@@ -30,7 +30,7 @@ class StubGatewayTransport implements GatewayRpcTransport {
 
 function baseEnv(): ProjectorRuntimeEnv {
   // No Deepgram key -> replay ASR; in-memory decider stays no-network.
-  return { PANOP_SESSION_ID: "gateway-smithers-e2e", PANOP_INITIAL_MUTED: "1" };
+  return { VIBERSYN_SESSION_ID: "gateway-smithers-e2e", VIBERSYN_INITIAL_MUTED: "1" };
 }
 
 describe("gateway-smithers e2e — live runtime drives the gateway when flagged", () => {
@@ -40,8 +40,8 @@ describe("gateway-smithers e2e — live runtime drives the gateway when flagged"
     // gateway transport, the accepted spawn under test.
     const env: ProjectorRuntimeEnv = {
       ...baseEnv(),
-      PANOP_SEED_DEMO_FLEET: "1",
-      PANOP_SMITHERS_GATEWAY_URL: "ws://gateway.local:8080",
+      VIBERSYN_SEED_DEMO_FLEET: "1",
+      VIBERSYN_SMITHERS_GATEWAY_URL: "ws://gateway.local:8080",
     };
 
     const runtime = await createProjectorRuntime(env, { smithersTransport: transport });

@@ -14,7 +14,7 @@ error: expect(received).toEqual(expected)
     "sessionId": "session-normalize",
 -   "speaker": "speaker_0",
 +   "speaker": null,
-    "text": "Panop build the replay tests",
+    "text": "Viber build the replay tests",
 
 - Expected  - 1
 + Received  + 1

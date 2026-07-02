@@ -2,49 +2,49 @@ import { describe, expect, test } from "bun:test";
 import { noopTtsAudioSink } from "./tts-sink";
 import { RecordingAudioSink, selectAudioSink } from "./audio-device-sink";
 
-// ISSUE-0026: selectAudioSink maps PANOP_AUDIO_SINK onto a concrete audible-output
+// ISSUE-0026: selectAudioSink maps VIBERSYN_AUDIO_SINK onto a concrete audible-output
 // sink. `device` retains bytes through a RecordingAudioSink; anything else keeps
 // the silent no-op sink so the offline default never reaches for a device.
 describe("selectAudioSink — sink selection by env (unit)", () => {
-  test("PANOP_AUDIO_SINK=device selects a byte-retaining RecordingAudioSink", () => {
-    const selection = selectAudioSink({ PANOP_AUDIO_SINK: "device" });
+  test("VIBERSYN_AUDIO_SINK=device selects a byte-retaining RecordingAudioSink", () => {
+    const selection = selectAudioSink({ VIBERSYN_AUDIO_SINK: "device" });
     expect(selection.mode).toBe("device");
     expect(selection.sink).toBeInstanceOf(RecordingAudioSink);
   });
 
-  test("PANOP_AUDIO_SINK=noop selects the silent no-op sink", () => {
-    const selection = selectAudioSink({ PANOP_AUDIO_SINK: "noop" });
+  test("VIBERSYN_AUDIO_SINK=noop selects the silent no-op sink", () => {
+    const selection = selectAudioSink({ VIBERSYN_AUDIO_SINK: "noop" });
     expect(selection.mode).toBe("noop");
     expect(selection.sink).toBe(noopTtsAudioSink);
   });
 
-  test("unset PANOP_AUDIO_SINK defaults to the no-op sink", () => {
+  test("unset VIBERSYN_AUDIO_SINK defaults to the no-op sink", () => {
     const selection = selectAudioSink({});
     expect(selection.mode).toBe("noop");
     expect(selection.sink).toBe(noopTtsAudioSink);
   });
 
   test("case/whitespace are normalized when resolving the device sink", () => {
-    const selection = selectAudioSink({ PANOP_AUDIO_SINK: "  Device  " });
+    const selection = selectAudioSink({ VIBERSYN_AUDIO_SINK: "  Device  " });
     expect(selection.mode).toBe("device");
     expect(selection.sink).toBeInstanceOf(RecordingAudioSink);
   });
 
   test("an unrecognized value falls back to the no-op sink (silent default)", () => {
-    const selection = selectAudioSink({ PANOP_AUDIO_SINK: "speaker" });
+    const selection = selectAudioSink({ VIBERSYN_AUDIO_SINK: "speaker" });
     expect(selection.mode).toBe("noop");
     expect(selection.sink).toBe(noopTtsAudioSink);
   });
 
   test("a blank value falls back to the no-op sink", () => {
-    const selection = selectAudioSink({ PANOP_AUDIO_SINK: "   " });
+    const selection = selectAudioSink({ VIBERSYN_AUDIO_SINK: "   " });
     expect(selection.mode).toBe("noop");
     expect(selection.sink).toBe(noopTtsAudioSink);
   });
 
   test("each device selection yields a fresh, independent recording sink", () => {
-    const first = selectAudioSink({ PANOP_AUDIO_SINK: "device" }).sink;
-    const second = selectAudioSink({ PANOP_AUDIO_SINK: "device" }).sink;
+    const first = selectAudioSink({ VIBERSYN_AUDIO_SINK: "device" }).sink;
+    const second = selectAudioSink({ VIBERSYN_AUDIO_SINK: "device" }).sink;
     expect(first).not.toBe(second);
   });
 });

@@ -154,7 +154,7 @@ function storyFilesMentionBoard(dir) {
       if (!/\.stories\.(tsx|jsx|ts|js|mdx)$/i.test(entry.name)) continue;
       try {
         const text = readFileSync(full, "utf8");
-        if (/panopticon|display.?board|observability|trace|garden|steering/i.test(text)) return true;
+        if (/vibersyn|display.?board|observability|trace|garden|steering/i.test(text)) return true;
       } catch {
         // Ignore unreadable story files.
       }
@@ -447,9 +447,9 @@ async function gotoState(page, baseUrl, state) {
   await page.goto(targetUrl, { waitUntil: "networkidle", timeout: 30_000 });
   await page.evaluate(async (stateKey) => {
     const setter =
-      window.__PANOPTICON_SET_CAPTURE_STATE__ ||
-      window.__PANOPTICON_CAPTURE_SET_STATE__ ||
-      window.panopticonSetCaptureState;
+      window.__VIBERSYN_SET_CAPTURE_STATE__ ||
+      window.__VIBERSYN_CAPTURE_SET_STATE__ ||
+      window.vibersynSetCaptureState;
     if (typeof setter === "function") await setter(stateKey);
   }, state.key).catch(() => {});
   await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => {});
@@ -460,9 +460,9 @@ async function exposedStates(page) {
   const states = await page
     .evaluate(() => {
       const raw =
-        window.__PANOPTICON_CAPTURE_STATES__ ||
-        window.__PANOPTICON_DISPLAY_BOARD_STATES__ ||
-        window.panopticonCaptureStates;
+        window.__VIBERSYN_CAPTURE_STATES__ ||
+        window.__VIBERSYN_DISPLAY_BOARD_STATES__ ||
+        window.vibersynCaptureStates;
       if (!Array.isArray(raw)) return [];
       return raw
         .map((state, index) => {
@@ -496,7 +496,7 @@ async function captureScreenshots(page, baseUrl) {
   const written = [];
   for (const [index, state] of states.entries()) {
     await gotoState(page, baseUrl, state);
-    const file = `panopticon-${String(index + 1).padStart(2, "0")}-${slug(state.title)}.png`;
+    const file = `vibersyn-${String(index + 1).padStart(2, "0")}-${slug(state.title)}.png`;
     const path = resolve(CAPTURES_DIR, file);
     await page.screenshot({ path, fullPage: false, animations: "allow" });
     written.push(file);
@@ -528,7 +528,7 @@ async function captureGif(page, baseUrl, states) {
       await page.waitForTimeout(140);
     }
 
-    const out = resolve(CAPTURES_DIR, "panopticon-90-board-animation.gif");
+    const out = resolve(CAPTURES_DIR, "vibersyn-90-board-animation.gif");
     const result = spawnSync(
       "ffmpeg",
       [

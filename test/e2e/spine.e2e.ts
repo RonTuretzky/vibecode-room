@@ -23,16 +23,16 @@ describe("seam slice spine e2e", () => {
   test("recognition-latency slice emits the earcon within 300 ms after finalization while the LLM is delayed", async () => {
     const cue = await loadCueCore();
     const { TextCue, ConversationState, transcriptObservation } = cue as any;
-    const finalTranscript = transcriptObservation("Panop status", {
+    const finalTranscript = transcriptObservation("Viber status", {
       speaker: "speaker_0",
       timestamp: 1,
     });
-    const textCue = new TextCue(["panop"]);
+    const textCue = new TextCue(["viber"]);
     const cueDecision = textCue.maybeCue(finalTranscript, new ConversationState());
     const emitted: Array<{ emittedAtMs: number; source: string }> = [];
     const adapter = new CueAdapter({
       sessionId: "spine-latency",
-      textCueWords: ["panop"],
+      textCueWords: ["viber"],
       clock: () => performance.now(),
       idFactory: sequenceIds("latency"),
       earconSink: {
@@ -42,7 +42,7 @@ describe("seam slice spine e2e", () => {
       },
     });
     const observation = adapter.normalizeObservation({
-      text: "Panop status",
+      text: "Viber status",
       isFinal: true,
       speaker: "speaker_0",
       sessionId: "spine-latency",
@@ -50,9 +50,9 @@ describe("seam slice spine e2e", () => {
       utteranceId: "utt-latency-001",
     });
     const finalizedAtMs = performance.now();
-    const slowDecision = sleep(process.env.PANOP_RBG_SLOW_EARCON === "1" ? 350 : 450);
+    const slowDecision = sleep(process.env.VIBERSYN_RBG_SLOW_EARCON === "1" ? 350 : 450);
 
-    if (process.env.PANOP_RBG_SLOW_EARCON === "1") {
+    if (process.env.VIBERSYN_RBG_SLOW_EARCON === "1") {
       await sleep(325);
     }
     await adapter.emitTextCueEarcon(observation, cueDecision, "corr-latency-001");
@@ -70,13 +70,13 @@ describe("seam slice spine e2e", () => {
     const gateway = new Gateway({ heartbeatMs: 1_000, eventWindowSize: 200 });
     const connection = createConnection("spine");
     gateway.connections.add(connection as any);
-    gateway.register("panopticon-spine", runtime.workflow as any);
+    gateway.register("vibersyn-spine", runtime.workflow as any);
 
     const store = new MemoryCorrelationStore();
     const client = new GatewaySmithersClient({
       transport: new InProcessGatewayTransport(gateway as any, connection),
       correlations: store,
-      defaultWorkflow: "panopticon-spine",
+      defaultWorkflow: "vibersyn-spine",
     });
     const dispatcher = new SeamDispatcher({ client, correlations: store, sessionId: "spine-e2e" });
 
@@ -88,7 +88,7 @@ describe("seam slice spine e2e", () => {
         payload: {
           upid: "upid-spine-001",
           runId: "run-spine-001",
-          workflow: "panopticon-spine",
+          workflow: "vibersyn-spine",
           callsign: "atlas",
           steeringWindowId: "window-spine-001",
           seed: "spine spawn",
@@ -100,7 +100,7 @@ describe("seam slice spine e2e", () => {
       });
       expect(accepted.accepted).toBe(true);
       await dispatcher.drain();
-      if (process.env.PANOP_RBG_SLOW_SEAM === "1") {
+      if (process.env.VIBERSYN_RBG_SLOW_SEAM === "1") {
         await sleep(3_250);
       }
       const confirmedMs = performance.now() - startedAt;
@@ -122,7 +122,7 @@ describe("seam slice spine e2e", () => {
 });
 
 function createRuntime(label: string) {
-  const dir = mkdtempSync(join(tmpdir(), `panop-spine-${label}-`));
+  const dir = mkdtempSync(join(tmpdir(), `vibersyn-spine-${label}-`));
   tempDirs.push(dir);
   const outputs: any = {
     checkpoint: z.object({
@@ -132,12 +132,12 @@ function createRuntime(label: string) {
     }),
     steer: z.object({ command: z.string().optional() }),
   };
-  const api: any = createSmithers(outputs, { dbPath: join(dir, "smithers.db"), readableName: `Panopticon spine ${label}` });
+  const api: any = createSmithers(outputs, { dbPath: join(dir, "smithers.db"), readableName: `Vibersyn spine ${label}` });
   const workflow = api.smithers((ctx: any) => {
     const input = ctx.input as any;
     return React.createElement(
       api.Workflow,
-      { name: "panopticon-spine" },
+      { name: "vibersyn-spine" },
       React.createElement(
         api.Sequence,
         null,

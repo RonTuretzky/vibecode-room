@@ -5,7 +5,7 @@
  * and steered/interrupted mid-flight via signal injection (the Cue→Smithers seam)?
  *
  * Tests:
- *   0. Document pre-existing persistence evidence (panopticon-process runs, 7+ h alive)
+ *   0. Document pre-existing persistence evidence (vibersyn-process runs, 7+ h alive)
  *   1. Signal a live waiting-event run — proves signal delivery while process is alive
  *   2. Spawn two concurrent probe-process runs with -d (detach)
  *   3. Wait for both to reach waiting-event state
@@ -98,10 +98,10 @@ if (psRaw.ok) {
     const d = JSON.parse(psRaw.stdout);
     const runs: Array<Record<string, unknown>> = Array.isArray(d) ? d : (d?.runs ?? []);
     for (const r of runs) {
-      if (String(r.workflow ?? "") === "panopticon-process" && String(r.status ?? "") === "waiting-event") {
+      if (String(r.workflow ?? "") === "vibersyn-process" && String(r.status ?? "") === "waiting-event") {
         waitingRuns.push({
           id: String(r.id ?? r.run_id ?? ""),
-          workflow: "panopticon-process",
+          workflow: "vibersyn-process",
           status: "waiting-event",
           started: String(r.started ?? ""),
         });
@@ -109,23 +109,23 @@ if (psRaw.ok) {
     }
   } catch {
     // Try toon-format fallback
-    const lines = psRaw.stdout.split("\n").filter((l) => l.includes("panopticon-process") && l.includes("waiting-event"));
+    const lines = psRaw.stdout.split("\n").filter((l) => l.includes("vibersyn-process") && l.includes("waiting-event"));
     for (const line of lines) {
       const id = line.trim().split(",")[0];
-      if (id) waitingRuns.push({ id, workflow: "panopticon-process", status: "waiting-event", started: "unknown" });
+      if (id) waitingRuns.push({ id, workflow: "vibersyn-process", status: "waiting-event", started: "unknown" });
     }
   }
 }
 
-info(`Pre-existing waiting-event panopticon-process runs: ${waitingRuns.length}`);
+info(`Pre-existing waiting-event vibersyn-process runs: ${waitingRuns.length}`);
 record({ step: "pre-existing-persistence", waitingRuns });
 
 // Use sqlite3 to directly query (most reliable)
 const sqliteCheck = cli(
-  `sqlite3 smithers.db "SELECT run_id, workflow_name, status, datetime(created_at_ms/1000, 'unixepoch') as created FROM _smithers_runs WHERE workflow_name='panopticon-process' AND status='waiting-event' LIMIT 5;"`,
+  `sqlite3 smithers.db "SELECT run_id, workflow_name, status, datetime(created_at_ms/1000, 'unixepoch') as created FROM _smithers_runs WHERE workflow_name='vibersyn-process' AND status='waiting-event' LIMIT 5;"`,
   { timeout: 5_000 }
 );
-info(`SQLite waiting-event panopticon-process: ${sqliteCheck.stdout.trim()}`);
+info(`SQLite waiting-event vibersyn-process: ${sqliteCheck.stdout.trim()}`);
 record({
   step: "sqlite-waiting-event-direct",
   output: sqliteCheck.stdout.trim(),
@@ -368,7 +368,7 @@ const voiceSeamBuildable = cueAvailability.githubAccessible;
 const coreProcessesProven = spawnWorks && persistWorks && signalWorks;
 
 // Spawn and signal are proven even if concurrent new runs had issues;
-// the existing panopticon-process evidence covers all four Smithers gates.
+// the existing vibersyn-process evidence covers all four Smithers gates.
 const overallPassed = coreProcessesProven;
 
 const assessment = {
@@ -378,7 +378,7 @@ const assessment = {
     spawn: { passed: spawnWorks || true, finding: "bunx smithers-orchestrator up -d spawns a durable run with stable run ID and background pid" },
     persist: {
       passed: persistWorks,
-      finding: `Panopticon-process runs survived 7+ hours in waiting-event state in SQLite. ` +
+      finding: `Vibersyn-process runs survived 7+ hours in waiting-event state in SQLite. ` +
         `Known run ${KNOWN_WAITING_RUN} was started at 2026-06-13T21:32:12Z and is still alive.`,
     },
     concurrent: {
@@ -386,7 +386,7 @@ const assessment = {
       runAStatus: readyA.finalStatus,
       runBStatus: readyB.finalStatus,
       finding:
-        "Two independent runs spawned with different run IDs. Multiple panopticon-process runs in DB prove the platform supports concurrent execution.",
+        "Two independent runs spawned with different run IDs. Multiple vibersyn-process runs in DB prove the platform supports concurrent execution.",
     },
     signal: {
       passed: signalWorks,
@@ -439,13 +439,13 @@ const resultMd = `# Probe: assumption-durable-voice-steerable-processes
 |------|--------|---------|
 | Spawn | ${spawnWorks ? "✅ PASS" : "⚠️ SEE NOTES"} | bunx smithers-orchestrator up -d → run ID + pid |
 | Persist | ${persistWorks ? "✅ PASS" : "❌ FAIL"} | ${KNOWN_WAITING_RUN} alive 7+ h in waiting-event |
-| Concurrent | ${readyA.reached && readyB.reached ? "✅ PASS" : "⚠️ INDIRECT"} | Multiple panopticon-process runs in SQLite |
+| Concurrent | ${readyA.reached && readyB.reached ? "✅ PASS" : "⚠️ INDIRECT"} | Multiple vibersyn-process runs in SQLite |
 | Signal/Steer | ${signalWorks ? "✅ PASS" : "❌ FAIL"} | smithers signal delivered → status:signalled |
 | Voice seam (Cue) | ⚠️ BUILD REQUIRED | Cue on GitHub; needs pnpm build from source |
 
 ## Key findings
 
-1. **Persistence is directly observable.** Run \`${KNOWN_WAITING_RUN}\` (panopticon-process, WaitForEvent loop)
+1. **Persistence is directly observable.** Run \`${KNOWN_WAITING_RUN}\` (vibersyn-process, WaitForEvent loop)
    was started 2026-06-13T21:32:12Z and is still alive in \`waiting-event\` state 7+ hours later.
    The SQLite DB stores the run durably.
 
@@ -454,7 +454,7 @@ const resultMd = `# Probe: assumption-durable-voice-steerable-processes
    delivered when the run process is active. Run \`smoke-1781396596009\` completed 3 steer
    iterations in 26s, proving the full WaitForEvent→signal→Task loop works.
 
-3. **Concurrency is proven.** The SQLite DB contains multiple panopticon-process runs with
+3. **Concurrency is proven.** The SQLite DB contains multiple vibersyn-process runs with
    independent run IDs. \`smithers up -d\` spawns a background process that doesn't block others.
 
 4. **Voice seam is architecturally proven but not executed.** The \`cue-voice-adapter.ts\` shows

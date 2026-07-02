@@ -2,7 +2,7 @@
 // each local backend (replay + voxterm) over a fixture, with zero network.
 //
 // The registry is exercised exactly as a consumer would: through the providers
-// barrel, by PANOP_ASR_PROVIDER, returning only the ASRProvider seam. The
+// barrel, by VIBERSYN_ASR_PROVIDER, returning only the ASRProvider seam. The
 // concrete backend is injected a fixture-backed source so no mic, child
 // process, or socket is opened.
 
@@ -61,7 +61,7 @@ describe("registry-selected ASR streams observations for each backend (e2e)", ()
     try {
       const expected = await readTranscriptObservationJsonl(replayFixturePath);
       const selection = selectAsrProvider(
-        { PANOP_ASR_PROVIDER: "replay" },
+        { VIBERSYN_ASR_PROVIDER: "replay" },
         { sessionId: "asr-registry-replay", replaySource: replayFixturePath },
       );
 
@@ -89,7 +89,7 @@ describe("registry-selected ASR streams observations for each backend (e2e)", ()
     try {
       const segments = await loadVoxTermSegments(voxtermFixturePath);
       const selection = selectAsrProvider(
-        { PANOP_ASR_PROVIDER: "voxterm" },
+        { VIBERSYN_ASR_PROVIDER: "voxterm" },
         { sessionId: "asr-registry-voxterm", voxtermSource: arraySegmentSource(segments) },
       );
 
@@ -102,7 +102,7 @@ describe("registry-selected ASR streams observations for each backend (e2e)", ()
       // utteranceId is stable across interims + the final commit of one utterance.
       expect(observations.map((o) => o.utteranceId)).toEqual(["vox-1", "vox-1", "vox-1", "vox-2", "vox-2"]);
       expect(observations.filter((o) => o.isFinal).map((o) => o.text)).toEqual([
-        "hey panop spin up a runner",
+        "hey viber spin up a runner",
         "and check the build status",
       ]);
       expect(fetchCalls).toEqual([]);

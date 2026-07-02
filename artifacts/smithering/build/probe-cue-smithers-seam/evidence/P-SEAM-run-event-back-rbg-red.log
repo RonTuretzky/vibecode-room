@@ -19,7 +19,7 @@ error: expect(received).toEqual(expected)
 +     "event": "node.pending",
       "runId": "p-seam-upid-seam-001",
 +     "seq": 1,
-+     "sourceWindowHash": "source-window:panop-spawn-smithers-seam-probe",
++     "sourceWindowHash": "source-window:viber-spawn-smithers-seam-probe",
       "steeringWindowId": "window-seam-voice-001",
 +     "streamId": "dd84eedd-e2ca-49d1-8531-36045af503e0",
       "upid": "upid-seam-001",

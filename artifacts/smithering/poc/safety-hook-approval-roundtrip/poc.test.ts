@@ -5,7 +5,7 @@
  *   1. Shell classifier (fully headless, no network, no API keys)
  *   2. Approval gate server (local HTTP, no API keys)
  *   3. Hook-gate integration (local HTTP + hook subprocess, no agent)
- *   4. [SKIPPED unless PANOPTICON_E2E=1] Full end-to-end with real Claude Code
+ *   4. [SKIPPED unless VIBERSYN_E2E=1] Full end-to-end with real Claude Code
  *
  * Every test has a RED-BEFORE-GREEN (RBG) comment explaining what would break it.
  * Per the validation bar, "the agent said it's done" is never evidence.
@@ -343,7 +343,7 @@ describe.skipIf(!_canBindSockets)("hook-script integration (no Claude Code agent
       session_id: "test-session",
       hook_event_name: "PreToolUse",
       tool_name: "Bash",
-      tool_input: { cmd: "rm -rf /tmp/panopticon-poc-test" },
+      tool_input: { cmd: "rm -rf /tmp/vibersyn-poc-test" },
     });
 
     // Wait for the gate request to arrive
@@ -373,7 +373,7 @@ describe.skipIf(!_canBindSockets)("hook-script integration (no Claude Code agent
       session_id: "test-session",
       hook_event_name: "PreToolUse",
       tool_name: "Bash",
-      tool_input: { cmd: "rm -rf /tmp/panopticon-poc-test" },
+      tool_input: { cmd: "rm -rf /tmp/vibersyn-poc-test" },
     });
 
     // Wait for gate and deny it
@@ -411,7 +411,7 @@ describe.skipIf(!_canBindSockets)("hook-script integration (no Claude Code agent
       session_id: "test-session",
       hook_event_name: "PreToolUse",
       tool_name: "Write",
-      tool_input: { path: "/tmp/panopticon-poc-write-test.ts", content: "hello" },
+      tool_input: { path: "/tmp/vibersyn-poc-write-test.ts", content: "hello" },
     }, { DEAD_MAN_TIMEOUT_MS: "300" });
 
     // Don't approve — let it time out
@@ -462,7 +462,7 @@ describe.skipIf(!_canBindSockets)("file-integrity: target file unchanged while h
   let gateServer: ApprovalGateServer;
 
   beforeAll(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), "panopticon-poc-"));
+    tmpDir = mkdtempSync(join(tmpdir(), "vibersyn-poc-"));
     targetFile = join(tmpDir, "protected.txt");
     writeFileSync(targetFile, "original content");
     gateServer = new ApprovalGateServer(0); // OS assigns a free port — no conflict risk
@@ -523,18 +523,18 @@ describe("POC findings recorded", () => {
   test("FINDING-1: no Smithers-native PreToolUse hook in type declarations", () => {
     // This test documents the finding: the @smithers-orchestrator package has no
     // PreToolUse hook API. The mechanism relies on Claude Code's own settings.json hooks.
-    // Implication: Panopticon processes MUST use Claude Code CLI (ClaudeCodeAgent), not AnthropicAgent SDK.
+    // Implication: Vibersyn processes MUST use Claude Code CLI (ClaudeCodeAgent), not AnthropicAgent SDK.
     //
     // Evidence: search the type declarations for PreToolUse → not found.
     // This test always passes (it documents a finding, not a behavior).
     const finding = {
       id: "FINDING-1",
       description: "Smithers has no native PreToolUse hook API. The safety hook relies on Claude Code's settings.json PreToolUse hook mechanism.",
-      implication: "Panopticon processes must use ClaudeCodeAgent (Claude Code CLI), not AnthropicAgent (Anthropic SDK), otherwise the safety hook cannot fire.",
+      implication: "Vibersyn processes must use ClaudeCodeAgent (Claude Code CLI), not AnthropicAgent (Anthropic SDK), otherwise the safety hook cannot fire.",
       riskLevel: "HIGH",
       affectsTickets: ["probe-pretool-safety-hook", "safety-execution-boundary-hook"],
       engDocAmendmentRequired: true,
-      amendmentText: "In §8.1 'Where the gate lives', add: 'The PreToolUse hook fires via Claude Code CLI\\'s settings.json hook mechanism — not a Smithers-native API. Therefore every Panopticon process MUST use ClaudeCodeAgent (Claude Code CLI) as its agent implementation. AnthropicAgent (direct Anthropic SDK) cannot be used for processes that require the safety gate, as SDK-driven tool calls do not pass through the Claude Code hook system.'",
+      amendmentText: "In §8.1 'Where the gate lives', add: 'The PreToolUse hook fires via Claude Code CLI\\'s settings.json hook mechanism — not a Smithers-native API. Therefore every Vibersyn process MUST use ClaudeCodeAgent (Claude Code CLI) as its agent implementation. AnthropicAgent (direct Anthropic SDK) cannot be used for processes that require the safety gate, as SDK-driven tool calls do not pass through the Claude Code hook system.'",
     };
     expect(finding.riskLevel).toBe("HIGH");
     expect(finding.engDocAmendmentRequired).toBe(true);
@@ -587,9 +587,9 @@ describe("POC findings recorded", () => {
 
 // ── 5. [Skip unless env var set] E2E with real Claude Code ──────────────────
 
-const SKIP_E2E = !process.env.PANOPTICON_E2E;
+const SKIP_E2E = !process.env.VIBERSYN_E2E;
 
-describe("E2E: real Claude Code with safety hook (requires PANOPTICON_E2E=1 + API key)", () => {
+describe("E2E: real Claude Code with safety hook (requires VIBERSYN_E2E=1 + API key)", () => {
   test.skipIf(SKIP_E2E)("real Claude Code agent → destructive tool → hook blocks → approve → tool executes", async () => {
     // This test would:
     // 1. Create a temp dir with .claude/settings.json pointing to hook-script.ts
@@ -605,7 +605,7 @@ describe("E2E: real Claude Code with safety hook (requires PANOPTICON_E2E=1 + AP
     // - Requires ANTHROPIC_API_KEY in env
     // - Requires Claude Code CLI installed
     // - Requires the hook to be configured in the right .claude/settings.json
-    // - Production validation: run manually with `PANOPTICON_E2E=1 bun test poc.test.ts`
+    // - Production validation: run manually with `VIBERSYN_E2E=1 bun test poc.test.ts`
     expect(true).toBe(true); // placeholder
   });
 

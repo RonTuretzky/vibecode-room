@@ -25,7 +25,7 @@ function decisionInput(overrides: Partial<DecisionInput> = {}): DecisionInput {
     correlationId: "corr-claude-001",
     messages: [
       { role: "system", content: "You are the cue decider. Respond only via the tool." },
-      { role: "user", content: "Panop build the thinnest walking skeleton." },
+      { role: "user", content: "Viber build the thinnest walking skeleton." },
     ],
     metadata: { utteranceId: "utt-001" },
     ...overrides,
@@ -82,7 +82,7 @@ describe("ClaudeDecisionLLM unit", () => {
     expect(request.model).toBe(DEFAULT_CLAUDE_DECISION_MODEL);
     expect(request.system).toContain("cue decider");
     expect(request.messages).toEqual([
-      { role: "user", content: "Panop build the thinnest walking skeleton." },
+      { role: "user", content: "Viber build the thinnest walking skeleton." },
     ]);
     expect(request.tool_choice).toEqual({ type: "tool", name: "emit_cue_decision" });
     expect(request.tools[0].name).toBe("emit_cue_decision");

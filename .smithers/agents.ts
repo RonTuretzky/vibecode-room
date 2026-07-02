@@ -11,7 +11,7 @@ export { ClaudeCodeAgent } from "./agents/claude-code";
 export { CodexAgent } from "./agents/codex";
 export { OpenCodeAgent } from "./agents/opencode";
 
-// The app being built (Panopticon) is the PARENT of this .smithers/ dev pack.
+// The app being built (Vibersyn) is the PARENT of this .smithers/ dev pack.
 // Dev-workflow coding agents must operate HERE so they edit the app source —
 // NOT inside .smithers/ (which is dev tooling only; never mix the two).
 // `cwd: process.cwd()` resolves to .smithers/ when launched via `smithers up`,
@@ -31,7 +31,7 @@ export const providers = {
   gemini1: new SmithersGeminiAgent({ model: "gemini-3.1-pro-preview", configDir: path.join(homedir(), ".gemini"), cwd: process.cwd() }),
 
   // App-editing agents: working subscriptions (codex-1, gemini-1) pinned to APP_ROOT.
-  // Use these for any dev workflow that builds Panopticon's source.
+  // Use these for any dev workflow that builds Vibersyn's source.
   // NOTE: codex-1 is a ChatGPT account — it rejects "gpt-5.3-codex"; use the
   // account's supported model "gpt-5.5" (the default in ~/.codex/config.toml).
   codexApp: new SmithersCodexAgent({ model: "gpt-5.5", configDir: path.join(homedir(), ".codex"), skipGitRepoCheck: true, cwd: APP_ROOT }),

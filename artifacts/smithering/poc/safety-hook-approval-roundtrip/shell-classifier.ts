@@ -1,5 +1,5 @@
 /**
- * shell-classifier.ts — deterministic shell-command classifier for the Panopticon safety hook.
+ * shell-classifier.ts — deterministic shell-command classifier for the Vibersyn safety hook.
  *
  * Per eng §8.1.1 (R9 critical): distinguishes read-safe shell (ungated, preserves AC11.1 autonomy)
  * from mutating/unknown shell (gated, deny-by-default).

@@ -25,16 +25,16 @@ describe("ambient accept e2e — a spoken yes accepts the idea and spawns throug
     // The pre-spawn resource check reads this flag from the global process.env.
     // The demo fleet seeds two processes against the default cap of two, so give
     // the acceptance spawn headroom.
-    priorCapacityGuard = process.env.PANOP_RBG_DISABLE_CAPACITY_CHECK;
-    process.env.PANOP_RBG_DISABLE_CAPACITY_CHECK = "1";
+    priorCapacityGuard = process.env.VIBERSYN_RBG_DISABLE_CAPACITY_CHECK;
+    process.env.VIBERSYN_RBG_DISABLE_CAPACITY_CHECK = "1";
   });
 
   afterEach(() => {
     globalThis.fetch = realFetch;
     if (priorCapacityGuard === undefined) {
-      delete process.env.PANOP_RBG_DISABLE_CAPACITY_CHECK;
+      delete process.env.VIBERSYN_RBG_DISABLE_CAPACITY_CHECK;
     } else {
-      process.env.PANOP_RBG_DISABLE_CAPACITY_CHECK = priorCapacityGuard;
+      process.env.VIBERSYN_RBG_DISABLE_CAPACITY_CHECK = priorCapacityGuard;
     }
     while (tempDirs.length > 0) {
       const dir = tempDirs.pop();
@@ -54,11 +54,12 @@ describe("ambient accept e2e — a spoken yes accepts the idea and spawns throug
     const spawnsBefore = spawnTraceCount(runtime);
 
     await driveMic(runtime);
+    await runtime.detection.flush();
 
-    // The suggestion was delivered (fired), then the affirmative routed to
-    // acceptance and spawned a brand-new process through the registry seam.
+    // The idea was detected, then the affirmative routed to acceptance and spawned a
+    // brand-new process through the registry seam.
     const events = runtime.trace.events().map((event) => event.event);
-    expect(events).toContain("route.suggestion");
+    expect(events).toContain("detect.candidate.new");
     expect(events).toContain("route.acceptance");
     expect(spawnTraceCount(runtime)).toBe(spawnsBefore + 1);
 
@@ -74,12 +75,13 @@ describe("ambient accept e2e — a spoken yes accepts the idea and spawns throug
 
 function liveEnv(replayPath: string): Record<string, string> {
   return {
-    PANOP_INITIAL_MUTED: "0",
-    PANOP_MIC_REPLAY_PATH: replayPath,
-    PANOP_SUGGEST_WORD_FLOOR: "3",
-    PANOP_SUGGEST_INTERRUPT_VELOCITY_WEIGHT: "0",
-    PANOP_SUGGEST_INTERRUPT_RECENCY_WEIGHT: "0",
-    PANOP_SUGGEST_INTERRUPT_PENDING_STEERING_WEIGHT: "0",
+    VIBERSYN_INITIAL_MUTED: "0",
+    VIBERSYN_MIC_REPLAY_PATH: replayPath,
+    // Deterministic idea detection: heuristic detector, eager scheduling, no tick.
+    VIBERSYN_IDEA_DETECTOR: "heuristic",
+    VIBERSYN_DETECT_MIN_NEW_TURNS: "1",
+    VIBERSYN_DETECT_MIN_INTERVAL_MS: "0",
+    VIBERSYN_DETECT_TICK_MS: "0",
   };
 }
 
@@ -90,10 +92,11 @@ function spawnTraceCount(runtime: ProjectorRuntime): number {
 async function driveMic(runtime: ProjectorRuntime): Promise<void> {
   const session = runtime.startMicSession("corr-accept-e2e");
   await session.stop();
+  await runtime.detection.flush();
 }
 
 function writeFixture(tempDirs: string[], observations: TranscriptObservation[]): string {
-  const dir = mkdtempSync(join(tmpdir(), "panop-accept-"));
+  const dir = mkdtempSync(join(tmpdir(), "vibersyn-accept-"));
   tempDirs.push(dir);
   const path = join(dir, "mic.jsonl");
   writeFileSync(path, observations.map((observation) => JSON.stringify(observation)).join("\n"), "utf8");

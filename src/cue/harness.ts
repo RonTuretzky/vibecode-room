@@ -10,7 +10,7 @@ export interface CueHarnessProviders {
   output: TTSProvider;
 }
 
-export interface PanopticonCueHarness {
+export interface VibersynCueHarness {
   cue: CueCoreModule;
   harness: CueHarnessInstance;
   adapter: CueAdapter;
@@ -18,13 +18,13 @@ export interface PanopticonCueHarness {
   risks: string[];
 }
 
-export interface PanopticonCueHarnessOptions extends CuePolicyConfig {
+export interface VibersynCueHarnessOptions extends CuePolicyConfig {
   sessionId: string;
   providers: CueHarnessProviders;
   adapter?: Omit<CueAdapterOptions, "sessionId" | "textCueWords">;
 }
 
-export async function createPanopticonCueHarness(options: PanopticonCueHarnessOptions): Promise<PanopticonCueHarness> {
+export async function createVibersynCueHarness(options: VibersynCueHarnessOptions): Promise<VibersynCueHarness> {
   const cue = await loadCueCore();
   const policies = createCuePolicies(cue, options);
   const programs = createCuePrograms(cue);

@@ -1,4 +1,4 @@
-// Generates a self-contained HTML slideshow of Panopticon build progress:
+// Generates a self-contained HTML slideshow of Vibersyn build progress:
 // landed tickets from integration, active builds from Smithers worktrees,
 // and any UI captures dropped into artifacts/smithering/ui-captures.
 // Run: node artifacts/smithering/gen-progress-slideshow.mjs
@@ -138,7 +138,7 @@ const buildingList = tickets
 const slides = [];
 slides.push(`<section class="slide is-active" data-slide="summary" data-landed="${landedN}" data-building="${buildingN}" data-todo="${todoN}">
   <div class="kicker">Live build run impl-build-17</div>
-  <h1>Panopticon Build Progress</h1>
+  <h1>Vibersyn Build Progress</h1>
   <p class="lede">Current state from <code>git log ${BASELINE}..smithering/integration</code> and live Smithers worktrees.</p>
   <div class="metrics">
     <div><span>${landedN}</span><small>Landed</small></div>
@@ -199,7 +199,7 @@ const htmlOut = `<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Panopticon - Build Progress</title>
+<title>Vibersyn - Build Progress</title>
 <style>
 :root{--bg:#09090b;--panel:#151518;--panel2:#1d1d21;--line:#303035;--text:#f2f2f4;--muted:#a1a1aa;--landed:#40d982;--building:#f5b84b;--todo:#858593;--accent:#8b7cf6;--rose:#fb7185;--cyan:#38bdf8;color-scheme:dark}
 *{box-sizing:border-box}
@@ -244,7 +244,7 @@ code{background:#0c0c0f;border:1px solid var(--line);border-radius:5px;padding:1
 <body>
 <div class="app" data-testid="progress-slideshow" data-version="${html(version)}">
   <header class="top">
-    <div class="brand">Panopticon Progress</div>
+    <div class="brand">Vibersyn Progress</div>
     <div class="stamp">Generated ${html(now)}</div>
     <div class="spacer"></div>
     <div class="chip"><strong>${landedN}</strong> landed</div>

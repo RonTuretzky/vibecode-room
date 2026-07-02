@@ -1,7 +1,7 @@
 {
-  "name": "panopticon-cue-build-fixture",
+  "name": "vibersyn-cue-build-fixture",
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Pre-built Cue substrate fixture exercising the createCueBridge harness fast-path (ISSUE-0025 / GAP-006). Point PANOP_CUE_SOURCE_DIR here."
+  "description": "Pre-built Cue substrate fixture exercising the createCueBridge harness fast-path (ISSUE-0025 / GAP-006). Point VIBERSYN_CUE_SOURCE_DIR here."
 }

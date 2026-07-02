@@ -369,13 +369,13 @@ function renderIndexHtml(title: string, pitch: string, upid: string): string {
   </head>
   <body>
     <main class="prototype" data-upid="${escapeHtml(upid)}">
-      <p class="eyebrow">Panopticon prototype</p>
+      <p class="eyebrow">Vibersyn prototype</p>
       <h1 class="title" data-testid="prototype-title">${safeTitle}</h1>
       <p class="pitch" data-testid="prototype-pitch">${safePitch}</p>
       <section class="card">
         <h2>What this is</h2>
         <p>
-          The room accepted this idea out loud. Panopticon scaffolded this page
+          The room accepted this idea out loud. Vibersyn scaffolded this page
           on the spot and is serving it live so you can see the idea take shape.
         </p>
       </section>
@@ -421,7 +421,7 @@ body {
 }
 
 function renderScript(upid: string): string {
-  return `// Live prototype for ${JSON.stringify(upid)}, scaffolded by Panopticon on accept.
+  return `// Live prototype for ${JSON.stringify(upid)}, scaffolded by Vibersyn on accept.
 document.addEventListener("DOMContentLoaded", () => {
   const status = document.querySelector('[data-testid="prototype-status"]');
   if (status) {

@@ -41,15 +41,16 @@ describe("ambient suggest e2e — live runtime queues a suggestion from spoken b
     const runtime = await createProjectorRuntime(liveEnv(path));
 
     await driveMic(runtime);
+    await runtime.detection.flush();
 
     const events = runtime.trace.events().map((event) => event.event);
-    expect(events.some((event) => event === "suggestion.queued" || event === "route.suggestion")).toBe(true);
-    const decision = runtime.lastSuggestionDecision;
-    if (decision === null) {
-      throw new Error("expected a suggestion decision from two buildable utterances");
+    expect(events).toContain("detect.candidate.new");
+    const primary = runtime.detection.primary();
+    if (primary === null) {
+      throw new Error("expected a detected idea from two buildable utterances");
     }
-    expect(["queued", "fired"]).toContain(decision.kind);
-    // Heuristic decider only: nothing should have touched the network.
+    expect(primary.pitch.length).toBeGreaterThan(0);
+    // Heuristic detector only: nothing should have touched the network.
     expect(fetchCalls).toBe(0);
   });
 
@@ -61,11 +62,12 @@ describe("ambient suggest e2e — live runtime queues a suggestion from spoken b
     const runtime = await createProjectorRuntime(liveEnv(path));
 
     await driveMic(runtime);
+    await runtime.detection.flush();
 
     const events = runtime.trace.events().map((event) => event.event);
-    expect(events.some((event) => event === "suggestion.queued" || event === "route.suggestion")).toBe(false);
-    expect(runtime.lastSuggestionDecision?.kind).toBe("pass");
-    expect(runtime.pendingSuggestion()).toBeNull();
+    expect(events).not.toContain("detect.candidate.new");
+    expect(runtime.detection.primary()).toBeNull();
+    expect(runtime.detection.candidates()).toHaveLength(0);
     expect(fetchCalls).toBe(0);
   });
 
@@ -84,28 +86,29 @@ describe("ambient suggest e2e — live runtime queues a suggestion from spoken b
     expect(runtime.snapshot().suggestion).not.toEqual(demoProjectorSnapshot.suggestion);
 
     await driveMic(runtime);
+    await runtime.detection.flush();
 
     const suggestion = runtime.snapshot().suggestion;
     expect(suggestion).not.toEqual(demoProjectorSnapshot.suggestion);
-    expect(["queued", "speaking"]).toContain(suggestion.state);
+    expect(suggestion.state).toBe("queued");
     // The pitch is derived from the spoken utterance, not the static fixture.
     expect(suggestion.pitch.length).toBeGreaterThan(0);
     expect(suggestion.pitch).not.toBe(demoProjectorSnapshot.suggestion.pitch);
-    // Gate counters come from the engine (live word floor of 3), not the fixture.
-    expect(suggestion.gate.minWords).toBe(3);
-    expect(suggestion.gate.words).toBeGreaterThanOrEqual(3);
+    // Provenance: the bubble carries the span of conversation it was grounded in.
+    expect(suggestion.contextSpan?.quote.length ?? 0).toBeGreaterThan(0);
     expect(fetchCalls).toBe(0);
   });
 });
 
 function liveEnv(replayPath: string): Record<string, string> {
   return {
-    PANOP_INITIAL_MUTED: "0",
-    PANOP_MIC_REPLAY_PATH: replayPath,
-    PANOP_SUGGEST_WORD_FLOOR: "3",
-    PANOP_SUGGEST_INTERRUPT_VELOCITY_WEIGHT: "0",
-    PANOP_SUGGEST_INTERRUPT_RECENCY_WEIGHT: "0",
-    PANOP_SUGGEST_INTERRUPT_PENDING_STEERING_WEIGHT: "0",
+    VIBERSYN_INITIAL_MUTED: "0",
+    VIBERSYN_MIC_REPLAY_PATH: replayPath,
+    // Deterministic idea detection: heuristic detector, eager scheduling, no tick.
+    VIBERSYN_IDEA_DETECTOR: "heuristic",
+    VIBERSYN_DETECT_MIN_NEW_TURNS: "1",
+    VIBERSYN_DETECT_MIN_INTERVAL_MS: "0",
+    VIBERSYN_DETECT_TICK_MS: "0",
   };
 }
 
@@ -115,7 +118,7 @@ async function driveMic(runtime: ProjectorRuntime): Promise<void> {
 }
 
 function writeFixture(tempDirs: string[], observations: TranscriptObservation[]): string {
-  const dir = mkdtempSync(join(tmpdir(), "panop-ambient-"));
+  const dir = mkdtempSync(join(tmpdir(), "vibersyn-ambient-"));
   tempDirs.push(dir);
   const path = join(dir, "mic.jsonl");
   writeFileSync(path, observations.map((observation) => JSON.stringify(observation)).join("\n"), "utf8");

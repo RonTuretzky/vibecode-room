@@ -28,8 +28,8 @@ describe("VoxTermASRProvider — segment mapping (unit)", () => {
   test("maps synthetic interim + final segments to schema-valid observations", async () => {
     const segments: VoxTermSegment[] = [
       { utteranceId: 7, text: "hey", final: false, speaker: 0, startedAtMs: 1_000, emittedAtMs: 1_050 },
-      { utteranceId: 7, text: "hey panop", final: false, speaker: 0, emittedAtMs: 1_120 },
-      { utteranceId: 7, text: "hey panop build it", final: true, speaker: "speaker_1", emittedAtMs: 1_400 },
+      { utteranceId: 7, text: "hey viber", final: false, speaker: 0, emittedAtMs: 1_120 },
+      { utteranceId: 7, text: "hey viber build it", final: true, speaker: "speaker_1", emittedAtMs: 1_400 },
     ];
     const provider = new VoxTermASRProvider({
       sessionId: "vox-session",
@@ -44,7 +44,7 @@ describe("VoxTermASRProvider — segment mapping (unit)", () => {
     }
 
     expect(observations.map((o) => o.isFinal)).toEqual([false, false, true]);
-    expect(observations.map((o) => o.text)).toEqual(["hey", "hey panop", "hey panop build it"]);
+    expect(observations.map((o) => o.text)).toEqual(["hey", "hey viber", "hey viber build it"]);
     // utteranceId is stable across interims + the final commit of one utterance.
     expect(new Set(observations.map((o) => o.utteranceId))).toEqual(new Set(["vox-7"]));
     expect(observations[0].speaker).toBe("speaker_0");

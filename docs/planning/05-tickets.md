@@ -1,4 +1,4 @@
-# Panopticon — Ticket Breakdown (V0)
+# Vibersyn — Ticket Breakdown (V0)
 
 > **Audio-first with a required projector UI. Voice is the primary routine control modality.** This document breaks the V0 implementation
 > into **measurable, verifiable tickets**. Each ticket has a STABLE kebab-case id (it becomes a durable
@@ -278,7 +278,7 @@ process ≤3 s; skip→no-op), agent-review (full causal chain via intent gate).
 ### Registry, fleet
 
 > *(Cut for V0: `shell-command-classifier` (ENG-T-08) and `safety-execution-boundary-hook` (the in-run
-> PreToolUse read-back/confirm hook + Safe/Explicit/Dangerous modes). Panopticon V0 **runs to completion,
+> PreToolUse read-back/confirm hook + Safe/Explicit/Dangerous modes). Vibersyn V0 **runs to completion,
 > dangerously** — no per-action approval gate, no shell gating, E6/E7/E8. Safety later is process sandboxing.)*
 
 #### `process-registry-lifecycle-fleet` — *large* — REQ-4/8/12/13/15 — depends on: `cue-smithers-seam-dispatcher`, `callsigns-and-collision-guard`

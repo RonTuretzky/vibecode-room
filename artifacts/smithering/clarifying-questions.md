@@ -1,4 +1,4 @@
-# Clarifying Questions — Panopticon V0 (audio-only on Cue)
+# Clarifying Questions — Vibersyn V0 (audio-only on Cue)
 
 > Written 2026-06-13. Source: brainstorm.md §7 open questions, cross-checked against
 > research/domain.md and research/prior-art.md. Discipline: keep only PRODUCT questions
@@ -40,14 +40,14 @@ V0 at all.
 
 **Recommended answer:** Keep a **minimal** fleet in V0 — exactly **two** concurrent processes
 with independent voice pause/steer — because operating *many* agents hands-free is
-Panopticon's core differentiator (G2); a single-process demo is hard to distinguish from
+Vibersyn's core differentiator (G2); a single-process demo is hard to distinguish from
 existing voice coding tools (Aider `/voice`). But cap it hard: two processes, basic
 independent pause/steer only; defer fork/replay/advanced fleet controls to V1. Build the
 single end-to-end loop first and add the second process **last**, so the demo degrades
 gracefully to a single-process story if the fleet link proves fragile.
 
 **Why it matters:** Fleet concurrency is the largest single chunk of V0 complexity and the
-main demo-fragility risk, and it's the line between Panopticon and a single-agent voice tool.
+main demo-fragility risk, and it's the line between Vibersyn and a single-agent voice tool.
 V0-vs-V1 placement materially reshapes scope, effort, and the success criterion — a
 scope-boundary decision no external evidence settles.
 

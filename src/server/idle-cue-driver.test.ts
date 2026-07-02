@@ -18,7 +18,7 @@ describe("IdleCueDriver — idle tick fires observeIdleCue after the gap", () =>
       sessionId: "session-idle",
       clock: now.clock,
       lastFinalAtMs: () => lastFinal,
-      env: { PANOP_SUGGEST_IDLE_GAP_SECONDS: "10" },
+      env: { VIBERSYN_SUGGEST_IDLE_GAP_SECONDS: "10" },
       idFactory: sequenceIds("idle"),
     });
 
@@ -56,7 +56,7 @@ describe("IdleCueDriver — idle tick fires observeIdleCue after the gap", () =>
       sessionId: "session-reset",
       clock: now.clock,
       lastFinalAtMs: () => lastFinal,
-      env: { PANOP_SUGGEST_IDLE_GAP_SECONDS: "10" },
+      env: { VIBERSYN_SUGGEST_IDLE_GAP_SECONDS: "10" },
       idFactory: sequenceIds("reset"),
     });
 
@@ -73,7 +73,7 @@ describe("IdleCueDriver — idle tick fires observeIdleCue after the gap", () =>
     expect(engine.calls).toHaveLength(1);
   });
 
-  test("the idle gap is configurable via PANOP_SUGGEST_IDLE_GAP_SECONDS", async () => {
+  test("the idle gap is configurable via VIBERSYN_SUGGEST_IDLE_GAP_SECONDS", async () => {
     const now = adjustableClock(0);
     const lastFinal = now.clock();
     const engine = new RecordingIdleObserver();
@@ -82,7 +82,7 @@ describe("IdleCueDriver — idle tick fires observeIdleCue after the gap", () =>
       sessionId: "session-config",
       clock: now.clock,
       lastFinalAtMs: () => lastFinal,
-      env: { PANOP_SUGGEST_IDLE_GAP_SECONDS: "3" },
+      env: { VIBERSYN_SUGGEST_IDLE_GAP_SECONDS: "3" },
       idFactory: sequenceIds("config"),
     });
 
@@ -107,7 +107,7 @@ describe("IdleCueDriver — deferred suggestion delivered on idle", () => {
       llm: new StubDecisionLLM(0.9),
       clock: now.clock,
       idFactory: sequenceIds("deferred"),
-      env: { PANOP_SUGGEST_WORD_FLOOR: "5", PANOP_SUGGEST_IDLE_GAP_SECONDS: "10" },
+      env: { VIBERSYN_SUGGEST_WORD_FLOOR: "5", VIBERSYN_SUGGEST_IDLE_GAP_SECONDS: "10" },
       acceptanceOwner: {
         acceptSuggestion(suggestion) {
           accepted.push(suggestion);
@@ -134,7 +134,7 @@ describe("IdleCueDriver — deferred suggestion delivered on idle", () => {
       sessionId: "session-deferred",
       clock: now.clock,
       lastFinalAtMs: () => lastFinal,
-      env: { PANOP_SUGGEST_IDLE_GAP_SECONDS: "10" },
+      env: { VIBERSYN_SUGGEST_IDLE_GAP_SECONDS: "10" },
       idFactory: sequenceIds("driver"),
       onDecision: async (decision) => {
         if (decision.kind === "fired") {

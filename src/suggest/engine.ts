@@ -6,38 +6,38 @@ export const DEFAULT_SUGGESTION_POLICY = "suggestion-engine.v0";
 export const DEFAULT_SUGGESTION_MODEL = "suggestion-engine-temp-0";
 
 export const SUGGESTION_ENGINE_ENV_DEFAULTS = Object.freeze({
-  PANOP_SUGGEST_WORD_FLOOR: { default: "60", description: "REQ-3 word floor before ambient suggestions are eligible." },
-  PANOP_SUGGEST_TIME_FLOOR_SECONDS: {
+  VIBERSYN_SUGGEST_WORD_FLOOR: { default: "60", description: "REQ-3 word floor before ambient suggestions are eligible." },
+  VIBERSYN_SUGGEST_TIME_FLOOR_SECONDS: {
     default: "90",
     description: "REQ-3 substantive-talk elapsed floor before ambient suggestions are eligible.",
   },
-  PANOP_SUGGEST_QUALITY_THRESHOLD: { default: "0.7", description: "Minimum DecisionLLM quality score required to fire." },
-  PANOP_SUGGEST_INTERRUPT_LOW_THRESHOLD: {
+  VIBERSYN_SUGGEST_QUALITY_THRESHOLD: { default: "0.7", description: "Minimum DecisionLLM quality score required to fire." },
+  VIBERSYN_SUGGEST_INTERRUPT_LOW_THRESHOLD: {
     default: "0.65",
     description: "Maximum weighted interrupt cost considered low enough for immediate delivery.",
   },
-  PANOP_SUGGEST_INTERRUPT_VELOCITY_WEIGHT: {
+  VIBERSYN_SUGGEST_INTERRUPT_VELOCITY_WEIGHT: {
     default: "0.4",
     description: "Interrupt-cost weight for words/minute over the last 30 seconds.",
   },
-  PANOP_SUGGEST_INTERRUPT_RECENCY_WEIGHT: {
+  VIBERSYN_SUGGEST_INTERRUPT_RECENCY_WEIGHT: {
     default: "0.4",
     description: "Interrupt-cost weight for speech less than five seconds old.",
   },
-  PANOP_SUGGEST_INTERRUPT_PENDING_STEERING_WEIGHT: {
+  VIBERSYN_SUGGEST_INTERRUPT_PENDING_STEERING_WEIGHT: {
     default: "0.2",
     description: "Interrupt-cost weight for pending steering commands.",
   },
-  PANOP_SUGGEST_INTERRUPT_VELOCITY_HIGH_WPM: {
+  VIBERSYN_SUGGEST_INTERRUPT_VELOCITY_HIGH_WPM: {
     default: "160",
     description: "Words/minute value that saturates the speech-velocity interrupt component.",
   },
-  PANOP_SUGGEST_CADENCE_CAP_SECONDS: {
+  VIBERSYN_SUGGEST_CADENCE_CAP_SECONDS: {
     default: "180",
     description: "Minimum seconds between spoken suggestion deliveries.",
   },
-  PANOP_SUGGEST_TTL_SECONDS: { default: "90", description: "Queued suggestion lifetime before expiry." },
-  PANOP_SUGGEST_IDLE_GAP_SECONDS: {
+  VIBERSYN_SUGGEST_TTL_SECONDS: { default: "90", description: "Queued suggestion lifetime before expiry." },
+  VIBERSYN_SUGGEST_IDLE_GAP_SECONDS: {
     default: "10",
     description: "Room-idle gap required for delivery when interrupt cost is not low.",
   },
@@ -469,17 +469,17 @@ export function readSuggestionEngineConfig(
   env: Record<string, string | undefined> = process.env,
 ): SuggestionEngineConfig {
   return {
-    wordFloor: envPositiveNumber(env, "PANOP_SUGGEST_WORD_FLOOR"),
-    timeFloorSeconds: envPositiveNumber(env, "PANOP_SUGGEST_TIME_FLOOR_SECONDS"),
-    qualityThreshold: envRatio(env, "PANOP_SUGGEST_QUALITY_THRESHOLD"),
-    interruptLowThreshold: envPositiveNumber(env, "PANOP_SUGGEST_INTERRUPT_LOW_THRESHOLD"),
-    interruptVelocityWeight: envNonNegativeNumber(env, "PANOP_SUGGEST_INTERRUPT_VELOCITY_WEIGHT"),
-    interruptRecencyWeight: envNonNegativeNumber(env, "PANOP_SUGGEST_INTERRUPT_RECENCY_WEIGHT"),
-    interruptPendingSteeringWeight: envNonNegativeNumber(env, "PANOP_SUGGEST_INTERRUPT_PENDING_STEERING_WEIGHT"),
-    interruptVelocityHighWpm: envPositiveNumber(env, "PANOP_SUGGEST_INTERRUPT_VELOCITY_HIGH_WPM"),
-    cadenceCapSeconds: envNonNegativeNumber(env, "PANOP_SUGGEST_CADENCE_CAP_SECONDS"),
-    ttlSeconds: envPositiveNumber(env, "PANOP_SUGGEST_TTL_SECONDS"),
-    idleGapSeconds: envPositiveNumber(env, "PANOP_SUGGEST_IDLE_GAP_SECONDS"),
+    wordFloor: envPositiveNumber(env, "VIBERSYN_SUGGEST_WORD_FLOOR"),
+    timeFloorSeconds: envPositiveNumber(env, "VIBERSYN_SUGGEST_TIME_FLOOR_SECONDS"),
+    qualityThreshold: envRatio(env, "VIBERSYN_SUGGEST_QUALITY_THRESHOLD"),
+    interruptLowThreshold: envPositiveNumber(env, "VIBERSYN_SUGGEST_INTERRUPT_LOW_THRESHOLD"),
+    interruptVelocityWeight: envNonNegativeNumber(env, "VIBERSYN_SUGGEST_INTERRUPT_VELOCITY_WEIGHT"),
+    interruptRecencyWeight: envNonNegativeNumber(env, "VIBERSYN_SUGGEST_INTERRUPT_RECENCY_WEIGHT"),
+    interruptPendingSteeringWeight: envNonNegativeNumber(env, "VIBERSYN_SUGGEST_INTERRUPT_PENDING_STEERING_WEIGHT"),
+    interruptVelocityHighWpm: envPositiveNumber(env, "VIBERSYN_SUGGEST_INTERRUPT_VELOCITY_HIGH_WPM"),
+    cadenceCapSeconds: envNonNegativeNumber(env, "VIBERSYN_SUGGEST_CADENCE_CAP_SECONDS"),
+    ttlSeconds: envPositiveNumber(env, "VIBERSYN_SUGGEST_TTL_SECONDS"),
+    idleGapSeconds: envPositiveNumber(env, "VIBERSYN_SUGGEST_IDLE_GAP_SECONDS"),
   };
 }
 

@@ -155,11 +155,11 @@ describe("output policy", () => {
     });
     expect(
       readOutputPolicyConfig({
-        PANOP_OUTPUT_MAX_WORDS: "9",
-        PANOP_OUTPUT_ROUND_TRIP_BUDGET_MS: "750",
-        PANOP_OUTPUT_WORKING_ACK_REPEAT_MS: "250",
-        PANOP_OUTPUT_SILENCE_TARGET: "0.95",
-        PANOP_OUTPUT_SUMMARY_MODEL: "cheap-test-model",
+        VIBERSYN_OUTPUT_MAX_WORDS: "9",
+        VIBERSYN_OUTPUT_ROUND_TRIP_BUDGET_MS: "750",
+        VIBERSYN_OUTPUT_WORKING_ACK_REPEAT_MS: "250",
+        VIBERSYN_OUTPUT_SILENCE_TARGET: "0.95",
+        VIBERSYN_OUTPUT_SUMMARY_MODEL: "cheap-test-model",
       }),
     ).toEqual({
       maxWords: 9,

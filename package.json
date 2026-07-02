@@ -1,9 +1,9 @@
 {
-  "name": "panopticon",
+  "name": "vibersyn",
   "version": "0.0.1",
   "private": true,
   "type": "module",
-  "description": "Panopticon — an operating system for AI-agent work. Talk in a room; AI passively listens, suggests things to build, and steers many concurrent agent processes at once.",
+  "description": "Vibersyn \u2014 an operating system for AI-agent work. Talk in a room; AI passively listens, suggests things to build, and steers many concurrent agent processes at once.",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "dev:api": "bun --watch src/server/index.ts",
@@ -14,7 +14,8 @@
     "test": "bun test",
     "test:e2e": "playwright test",
     "test:all": "bun test && playwright test",
-    "seed": "bun src/scripts/seed-demo.ts"
+    "seed": "bun src/scripts/seed-demo.ts",
+    "eval:detect": "bun src/detect/evals/run-live.ts"
   },
   "devDependencies": {
     "@playwright/test": "^1.50.0",

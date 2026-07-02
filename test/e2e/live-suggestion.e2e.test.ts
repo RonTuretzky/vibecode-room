@@ -28,15 +28,15 @@ describe("spoken buildable idea surfaces the idea bubble (e2e)", () => {
     }) as unknown as typeof fetch;
     // The registry resolves the ASR backend off env, but the injected source makes
     // the backend irrelevant — isolate the test from any ambient settings anyway.
-    priorAsrProvider = process.env.PANOP_ASR_PROVIDER;
+    priorAsrProvider = process.env.VIBERSYN_ASR_PROVIDER;
     priorDeepgramKey = process.env.DEEPGRAM_API_KEY;
-    delete process.env.PANOP_ASR_PROVIDER;
+    delete process.env.VIBERSYN_ASR_PROVIDER;
     delete process.env.DEEPGRAM_API_KEY;
   });
 
   afterEach(() => {
     globalThis.fetch = realFetch;
-    restoreEnv("PANOP_ASR_PROVIDER", priorAsrProvider);
+    restoreEnv("VIBERSYN_ASR_PROVIDER", priorAsrProvider);
     restoreEnv("DEEPGRAM_API_KEY", priorDeepgramKey);
   });
 
@@ -56,27 +56,26 @@ describe("spoken buildable idea surfaces the idea bubble (e2e)", () => {
     expect(runtime.snapshot().suggestion).not.toEqual(demoProjectorSnapshot.suggestion);
 
     await driveMic(runtime);
+    await runtime.detection.flush();
 
-    // The buildable final went through SuggestionEngine.observe and fired: it is now
-    // pending acceptance and the published idea bubble is live.
-    const decision = runtime.lastSuggestionDecision;
-    if (decision === null || decision.kind !== "fired") {
-      throw new Error("expected the buildable final to fire a suggestion");
+    // The buildable final went through idea DETECTION and surfaced a grounded
+    // candidate: it is now pending acceptance and the published bubble is live.
+    const primary = runtime.detection.primary();
+    if (primary === null) {
+      throw new Error("expected the buildable final to surface a detected idea");
     }
     expect(runtime.acceptanceController.awaitingAcceptance()).toBe(true);
 
     const suggestion = runtime.snapshot().suggestion;
-    expect(suggestion.state).toBe("speaking");
+    expect(suggestion.state).toBe("queued");
     expect(suggestion.pitch.length).toBeGreaterThan(0);
-    expect(suggestion.pitch).toBe(decision.suggestion.pitch);
+    expect(suggestion.pitch).toBe(primary.pitch);
     // A lead question (aloud-answerable MCQ) accompanies the pitch.
     expect(suggestion.questions.length).toBeGreaterThan(0);
     expect(suggestion).not.toEqual(demoProjectorSnapshot.suggestion);
 
-    // The gate counters came from the live engine config (WORD_FLOOR=3), not the
-    // static demo fixture (minWords 60), and reflect real accumulated speech.
-    expect(suggestion.gate.minWords).toBe(3);
-    expect(suggestion.gate.words).toBeGreaterThanOrEqual(suggestion.gate.minWords);
+    // Provenance: the bubble carries the span of conversation it was grounded in.
+    expect(suggestion.contextSpan?.quote.length ?? 0).toBeGreaterThan(0);
 
     // The whole loop ran offline: no network fetch.
     expect(fetchCalls).toBe(0);
@@ -90,12 +89,13 @@ describe("spoken buildable idea surfaces the idea bubble (e2e)", () => {
     });
 
     await driveMic(runtime);
+    await runtime.detection.flush();
 
-    // The ambient final was scored and passed: no suggestion fired, nothing pending,
-    // and the idea bubble sits at the idle baseline (no pitch, no questions) — never
-    // the live "speaking"/"queued" states a buildable utterance produces.
-    expect(runtime.lastSuggestionDecision?.kind).toBe("pass");
-    expect(runtime.pendingSuggestion()).toBeNull();
+    // The ambient final ran through detection and surfaced nothing: no idea, nothing
+    // pending, and the idea bubble sits at the idle baseline (no pitch, no questions)
+    // — never the live "queued" state a buildable utterance produces.
+    expect(runtime.detection.primary()).toBeNull();
+    expect(runtime.detection.candidates()).toHaveLength(0);
     const suggestion = runtime.snapshot().suggestion;
     expect(suggestion.state).toBe("idle");
     expect(suggestion.pitch).toBe("");
@@ -108,13 +108,13 @@ describe("spoken buildable idea surfaces the idea bubble (e2e)", () => {
 function suggestionEnv(): Record<string, string> {
   return {
     // Start unmuted so the (mute-protected) replay source actually streams.
-    PANOP_INITIAL_MUTED: "0",
-    // Lower the REQ-3 floors so a single short utterance is eligible, and zero the
-    // interrupt weights so a buildable utterance fires deterministically.
-    PANOP_SUGGEST_WORD_FLOOR: "3",
-    PANOP_SUGGEST_INTERRUPT_VELOCITY_WEIGHT: "0",
-    PANOP_SUGGEST_INTERRUPT_RECENCY_WEIGHT: "0",
-    PANOP_SUGGEST_INTERRUPT_PENDING_STEERING_WEIGHT: "0",
+    VIBERSYN_INITIAL_MUTED: "0",
+    // Deterministic idea detection: the heuristic detector (no model spawn), eager
+    // scheduling (detect on the first new turn, no throttle), and no background tick.
+    VIBERSYN_IDEA_DETECTOR: "heuristic",
+    VIBERSYN_DETECT_MIN_NEW_TURNS: "1",
+    VIBERSYN_DETECT_MIN_INTERVAL_MS: "0",
+    VIBERSYN_DETECT_TICK_MS: "0",
   };
 }
 

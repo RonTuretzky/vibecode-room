@@ -1,4 +1,4 @@
-# Engineering Dependencies & Infrastructure — Panopticon V0
+# Engineering Dependencies & Infrastructure — Vibersyn V0
 *Written: 2026-06-13. Sourced from `docs/planning/01-prd.md`, `docs/planning/02-design.md`,
 `artifacts/smithering/research/prior-art.md`, `artifacts/smithering/research/domain.md`,
 `.smithers/package.json`.*
@@ -7,7 +7,7 @@
 
 ## Overview
 
-Panopticon's dependency stack decomposes into six concern layers:
+Vibersyn's dependency stack decomposes into six concern layers:
 
 1. **Audio observation harness** — Cue (the canonical substrate, P0 gate)
 2. **Durable agent process management** — Smithers (first-party platform)
@@ -31,7 +31,7 @@ Cue is the **canonical audio observation harness** (PRD D2, binding). It turns c
 into structured observations, applies deterministic cue policies (wake word, word count, idle, speaker
 change, interval), and wakes the right program/model/tool with the right context — or emits
 `observe.pass` (logged, first-class no-op). It is the entire input, routing, and suggestion trigger
-layer for Panopticon. We do **not** re-implement any of this; our contribution is a thin adapter.
+layer for Vibersyn. We do **not** re-implement any of this; our contribution is a thin adapter.
 
 **Specific primitives we build on:**
 - `TextCue` / `SpeakerWordCue` — magic-word detection (wake, callsigns, mute/panic)
@@ -49,7 +49,7 @@ layer for Panopticon. We do **not** re-implement any of this; our contribution i
 TypeScript (85.6%), ~63 commits as of 2026-06-13. A working flagship demo (Etherea, live AI video
 agent) demonstrates the continuous-stream → policy → act-or-pass loop in production. API is
 documented in the README. The library is purpose-built for the exact ambient observation pattern
-Panopticon needs — no alternative comes close (prior-art.md §9).
+Vibersyn needs — no alternative comes close (prior-art.md §9).
 
 ### Lock-in risk — HIGH
 The entire voice input layer, routing logic, and cue policy system is Cue. If Cue's API differs from
@@ -77,7 +77,7 @@ structural analog. Cost: significant redesign of REQ-1/3/5/6/7.
 ## 2. Smithers — `smithers-orchestrator` ^0.23.0
 
 ### What it does for us
-Smithers is the **durable agent process manager** for Panopticon's spawned processes (REQ-4, REQ-13,
+Smithers is the **durable agent process manager** for Vibersyn's spawned processes (REQ-4, REQ-13,
 REQ-15). It provides: durable run spawn with seed payload; `streamRunEvents` (SSE) for live process
 status; pause/resume; steer/signal (mid-run voice injection); pre-kill context archive; restart
 recovery to last durable checkpoint; and concurrent runs for the V0 two-process fleet.
@@ -101,7 +101,7 @@ operating environment. The risk is API surface mismatch, not vendor abandonment.
 ### Leading alternative
 **Temporal.io** — production-grade open-source durable workflows (fork semantics via child
 workflows, pause/resume via signals, replay from event history). TypeScript SDK available. Directly
-models the Smithers primitives Panopticon needs. Restate.dev is a lighter TypeScript-native
+models the Smithers primitives Vibersyn needs. Restate.dev is a lighter TypeScript-native
 alternative with similar `suspend/resume` patterns. Adopting either would require decoupling from
 Smithers subscriptions (losing the bundled model routing) and significant plumbing — not recommended
 for V0.
@@ -114,7 +114,7 @@ for V0.
 Deepgram Nova-3 is the **primary transcription provider** (D4, PRD §6 P-ASR). It provides:
 continuous WebSocket streaming; `isFinal` flag per segment; `speaker_0`/`speaker_1` diarization
 labels (consumed by `SpeakerChangedCue` / `SpeakerWordCue`); and sub-300ms word-final latency. It is
-already Cue's default `transcriptionProvider` — Panopticon's thin adapter normalizes its output into
+already Cue's default `transcriptionProvider` — Vibersyn's thin adapter normalizes its output into
 `{text, isFinal, speaker, sessionId, latencyMs}`.
 
 ### Maturity
@@ -302,7 +302,7 @@ Node.js compat verified. Leading alternative: Node.js 22 + Vitest.
 ### Hono (HTTP API layer)
 Referenced in `domain.md` as "Hono API / WebSocket" for the action dispatcher. Lightweight
 TypeScript HTTP framework; runs on Bun natively; WebSocket support built-in. Used for: the
-Panopticon action dispatcher (receives `MappedActionTool` actions from Cue), the observability
+Vibersyn action dispatcher (receives `MappedActionTool` actions from Cue), the observability
 board HTTP server, and the emergency-stop endpoint (REQ-14). Lock-in risk: LOW — standard HTTP.
 Leading alternative: native Bun HTTP (`Bun.serve`); Express.js.
 
@@ -321,7 +321,7 @@ prior-art.md §8). No prior art integrates these two systems. The seam works as:
 
 ```
 Cue MappedActionTool → emits {type, target, payload}
-  → Panopticon action dispatcher (Hono)
+  → Vibersyn action dispatcher (Hono)
   → Smithers spawn/steer/pause API
   → Smithers streamRunEvents (SSE) → normalized run-event observations
   → back into Cue as world state (via cue.send_observation)

@@ -1,4 +1,4 @@
-# Panopticon — Projector UI Design System ("The Deep")
+# Vibersyn — Projector UI Design System ("The Deep")
 
 > Source of truth for the shared mission-control surface (REQ-16, design doc §9).
 > Read this with `docs/planning/02-design.md` §9 (projector UI) and `src/types.ts` (data contract).
@@ -85,11 +85,11 @@ animated filters. Background aurora drifts on a 60–120 s loop. Honor
 
 ## Test contract (do not break — the e2e suite depends on it)
 
-The UI must keep these stable hooks. `src/ui/App.tsx` exposes `window.__PANOPTICON__`, and
+The UI must keep these stable hooks. `src/ui/App.tsx` exposes `window.__VIBERSYN__`, and
 `src/ui/demo-data.ts` provides the deterministic snapshot used before a live backend is attached.
 Presentation components must render the listed `data-testid`s and `data-*` attributes.
 
-`window.__PANOPTICON__`:
+`window.__VIBERSYN__`:
 - `ready: true`
 - `getSnapshot(): Snapshot`
 - `applySnapshot(s: Snapshot): void` — replace state (used by e2e to drive deterministically)

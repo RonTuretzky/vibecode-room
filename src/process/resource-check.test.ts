@@ -67,8 +67,8 @@ describe("pre-spawn resource check", () => {
   });
 
   test("host headroom floor can be configured through env", async () => {
-    const previous = process.env.PANOP_MIN_MEMORY_MB;
-    process.env.PANOP_MIN_MEMORY_MB = "4096";
+    const previous = process.env.VIBERSYN_MIN_MEMORY_MB;
+    process.env.VIBERSYN_MIN_MEMORY_MB = "4096";
     try {
       const result = await checkPreSpawnResources({
         activeProcessCount: 0,
@@ -77,7 +77,7 @@ describe("pre-spawn resource check", () => {
       });
       expect(result).toEqual(expect.objectContaining({ ok: false, reason: "headroom" }));
     } finally {
-      process.env.PANOP_MIN_MEMORY_MB = previous;
+      process.env.VIBERSYN_MIN_MEMORY_MB = previous;
     }
   });
 });

@@ -10,7 +10,7 @@
 // This driver is that single tick hook. It samples the room's last-final time
 // and a monotonic clock — both injected, so tests advance time deterministically
 // instead of waiting on the wall clock — and, when the silence since the last
-// FINAL utterance crosses PANOP_SUGGEST_IDLE_GAP_SECONDS, calls observeIdleCue
+// FINAL utterance crosses VIBERSYN_SUGGEST_IDLE_GAP_SECONDS, calls observeIdleCue
 // exactly once for that silence window. A fresh utterance moves the last-final
 // time forward, which both resets the measured idle gap (suppressing an early
 // delivery) and re-arms the driver for the next silence window.

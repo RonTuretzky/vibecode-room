@@ -1,8 +1,8 @@
 bun test v1.3.14 (0d9b296a)
 
 test/e2e/spine.e2e.ts.test.ts:
-timestamp=2026-06-15T01:11:15.953Z level=INFO fiber=#5 message="Gateway run started" gateway:run=0ms runId=run-spine-001 transport=ws triggeredBy=spine role=operator workflow=panopticon-spine service=smithers source=user userId=spine resume=false connectionId=spine:connection
-56 |       if (process.env.PANOP_RBG_SLOW_SEAM === "1") {
+timestamp=2026-06-15T01:11:15.953Z level=INFO fiber=#5 message="Gateway run started" gateway:run=0ms runId=run-spine-001 transport=ws triggeredBy=spine role=operator workflow=vibersyn-spine service=smithers source=user userId=spine resume=false connectionId=spine:connection
+56 |       if (process.env.VIBERSYN_RBG_SLOW_SEAM === "1") {
 57 |         await sleep(3_250);
 58 |       }
 59 |       const confirmedMs = performance.now() - startedAt;

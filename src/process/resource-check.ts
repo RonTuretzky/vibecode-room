@@ -41,13 +41,13 @@ export type ResourceCheckResult =
 
 export async function checkPreSpawnResources(input: ResourceCheckInput): Promise<ResourceCheckResult> {
   const maxConcurrentProcesses = input.maxConcurrentProcesses ?? DEFAULT_MAX_CONCURRENT_PROCESSES;
-  const minRunSlots = input.minRunSlots ?? envNumber("PANOP_MIN_RUN_SLOTS", DEFAULT_MIN_RUN_SLOTS);
-  const minMemoryMB = input.minMemoryMB ?? envNumber("PANOP_MIN_MEMORY_MB", DEFAULT_MIN_MEMORY_MB);
+  const minRunSlots = input.minRunSlots ?? envNumber("VIBERSYN_MIN_RUN_SLOTS", DEFAULT_MIN_RUN_SLOTS);
+  const minMemoryMB = input.minMemoryMB ?? envNumber("VIBERSYN_MIN_MEMORY_MB", DEFAULT_MIN_MEMORY_MB);
   const headroom = await resolveHeadroom(input.headroom);
 
   if (
     input.activeProcessCount >= maxConcurrentProcesses &&
-    process.env.PANOP_RBG_DISABLE_CAPACITY_CHECK !== "1"
+    process.env.VIBERSYN_RBG_DISABLE_CAPACITY_CHECK !== "1"
   ) {
     return refused("capacity", CAPACITY_REFUSAL_ACK, input, headroom, maxConcurrentProcesses, {
       activeProcessCount: input.activeProcessCount,
@@ -58,7 +58,7 @@ export async function checkPreSpawnResources(input: ResourceCheckInput): Promise
 
   const belowHeadroom =
     headroom.runSlotsAvailable < minRunSlots || headroom.memoryAvailableMB < minMemoryMB;
-  if (belowHeadroom && process.env.PANOP_RBG_DISABLE_HEADROOM_CHECK !== "1") {
+  if (belowHeadroom && process.env.VIBERSYN_RBG_DISABLE_HEADROOM_CHECK !== "1") {
     return refused("headroom", HEADROOM_REFUSAL_ACK, input, headroom, maxConcurrentProcesses, {
       activeProcessCount: input.activeProcessCount,
       minRunSlots,
@@ -86,7 +86,7 @@ function refused(
     event: {
       level: "warn",
       event: "spawn.refused",
-      sessionId: input.sessionId ?? "panopticon-process",
+      sessionId: input.sessionId ?? "vibersyn-process",
       correlationId: input.correlationId,
       latencyMs: 0,
       meta: {

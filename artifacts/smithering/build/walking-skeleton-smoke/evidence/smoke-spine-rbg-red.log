@@ -25,7 +25,7 @@ error: expect(received).toEqual(expected)
 45 |   });
 46 | 
 47 |   test("wake matcher is case-insensitive but whole-token only", () => {
-48 |     const base = observation({ text: "PANOP can you hear this" });
+48 |     const base = observation({ text: "VIBER can you hear this" });
 49 |     expect(matchWakeWord(base).kind).toBe("action");
                                           ^
 error: expect(received).toBe(expected)

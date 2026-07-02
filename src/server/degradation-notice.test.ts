@@ -66,9 +66,9 @@ describe("formatDegradationNotice", () => {
     const text = formatDegradationNotice(buildDegradationNotice(ALL_STUBBED));
     expect(text.split("\n")).toHaveLength(6); // header + 5 legs
     expect(text).toContain("DEEPGRAM_API_KEY");
-    expect(text).toContain("PANOP_TTS_PROVIDER=elevenlabs");
-    expect(text).toContain("PANOP_AUDIO_SINK=device");
-    expect(text).toContain("PANOP_DECISION_LLM=claude");
-    expect(text).toContain("PANOP_SMITHERS_GATEWAY_URL");
+    expect(text).toContain("VIBERSYN_TTS_PROVIDER=elevenlabs");
+    expect(text).toContain("VIBERSYN_AUDIO_SINK=device");
+    expect(text).toContain("VIBERSYN_DECISION_LLM=claude");
+    expect(text).toContain("VIBERSYN_SMITHERS_GATEWAY_URL");
   });
 });

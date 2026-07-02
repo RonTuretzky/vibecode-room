@@ -1,9 +1,9 @@
 import type { AckId, EarconId } from "../types";
 import type { EarconEmission, EarconSink } from "../cue/adapter";
 
-export const DEFAULT_EARCON_SAMPLE_RATE_HZ = envNumber("PANOP_EARCON_SAMPLE_RATE_HZ", 24_000);
-export const DEFAULT_EARCON_VOLUME = envNumber("PANOP_EARCON_VOLUME", 0.18);
-export const DEFAULT_EARCON_MAX_LATENCY_MS = envNumber("PANOP_EARCON_MAX_LATENCY_MS", 300);
+export const DEFAULT_EARCON_SAMPLE_RATE_HZ = envNumber("VIBERSYN_EARCON_SAMPLE_RATE_HZ", 24_000);
+export const DEFAULT_EARCON_VOLUME = envNumber("VIBERSYN_EARCON_VOLUME", 0.18);
+export const DEFAULT_EARCON_MAX_LATENCY_MS = envNumber("VIBERSYN_EARCON_MAX_LATENCY_MS", 300);
 
 export interface PcmClip {
   id: EarconId | AckId;

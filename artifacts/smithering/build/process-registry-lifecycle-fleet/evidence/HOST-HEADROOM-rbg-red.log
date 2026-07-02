@@ -1,4 +1,4 @@
-$ PANOP_RBG_DISABLE_HEADROOM_CHECK=1 bun test src/process/resource-check.test.ts
+$ VIBERSYN_RBG_DISABLE_HEADROOM_CHECK=1 bun test src/process/resource-check.test.ts
 bun test v1.3.14 (0d9b296a)
 
 src/process/resource-check.test.ts:

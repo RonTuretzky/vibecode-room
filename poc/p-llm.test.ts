@@ -20,10 +20,10 @@ import {
 
 describe("P-LLM hot-loop subscription model probe", () => {
   test("decision-model assertions are independently failable", () => {
-    if (process.env.PANOP_LLM_PROBE_RBG_BREAK_DETERMINISM === "1") {
+    if (process.env.VIBERSYN_LLM_PROBE_RBG_BREAK_DETERMINISM === "1") {
       expect(() => assertDeterministic([
         invocation("same-input-1", [
-          decision("repeat-1", "ACT", "panopticon.steer", { callsign: "Daybreak", instruction: "status" }),
+          decision("repeat-1", "ACT", "vibersyn.steer", { callsign: "Daybreak", instruction: "status" }),
         ]),
         invocation("same-input-2", [
           decision("repeat-1", "PASS", "observe.pass", {}),
@@ -34,7 +34,7 @@ describe("P-LLM hot-loop subscription model probe", () => {
 
     expect(() => assertDeterministic([
       invocation("same-input-1", [
-        decision("repeat-1", "ACT", "panopticon.steer", { callsign: "Daybreak", instruction: "status" }),
+        decision("repeat-1", "ACT", "vibersyn.steer", { callsign: "Daybreak", instruction: "status" }),
       ]),
       invocation("same-input-2", [
         decision("repeat-1", "PASS", "observe.pass", {}),
@@ -122,14 +122,14 @@ function attempt(latencyMs: number): CliAttempt {
     subscriptionRouted: true,
     latencyMs,
     decisions: [
-      decision("repeat-1", "ACT", "panopticon.steer", { callsign: "Daybreak", instruction: "status" }),
+      decision("repeat-1", "ACT", "vibersyn.steer", { callsign: "Daybreak", instruction: "status" }),
     ],
     invocations: [
       invocation("same-input-1", [
-        decision("repeat-1", "ACT", "panopticon.steer", { callsign: "Daybreak", instruction: "status" }),
+        decision("repeat-1", "ACT", "vibersyn.steer", { callsign: "Daybreak", instruction: "status" }),
       ], latencyMs),
       invocation("same-input-2", [
-        decision("repeat-1", "ACT", "panopticon.steer", { callsign: "Daybreak", instruction: "status" }),
+        decision("repeat-1", "ACT", "vibersyn.steer", { callsign: "Daybreak", instruction: "status" }),
       ], latencyMs),
     ],
     stdoutPreview: "{}",

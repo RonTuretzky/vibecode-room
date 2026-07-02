@@ -1,7 +1,7 @@
-# Panopticon — Product Requirements Document (V0)
+# Vibersyn — Product Requirements Document (V0)
 
 > **Audio-first operating system for AI-agent work, with a shared projector surface.** A small trusted team talks in a shared
-> room; Panopticon passively listens, sparingly proposes things to build, and — on a spoken
+> room; Vibersyn passively listens, sparingly proposes things to build, and — on a spoken
 > "yes" — spawns durable agent "processes" the room can steer by voice and operate alongside
 > one another. **Voice is the primary control modality; a required projector UI shows live visual
 > context, process state, suggestions, traces, and bounded recovery controls such as unmute.**
@@ -39,9 +39,9 @@ So the bottleneck has moved. It is no longer "can a model do the work." It is: *
 humans express intent and operate many agents at once, hands-free, without drowning in command
 overhead or being talked over by their own tools.**
 
-**Panopticon's bet:** the missing interface is *ambient and audio-first*. The room talks; the
+**Vibersyn's bet:** the missing interface is *ambient and audio-first*. The room talks; the
 system listens through **Cue** (continuous audio → transcript observations → cue policies →
-decide-or-`observe.pass`); when the room accepts a spoken proposal, Panopticon spawns a durable,
+decide-or-`observe.pass`); when the room accepts a spoken proposal, Vibersyn spawns a durable,
 steerable agent process. The projector is not a command console, but it is a product surface:
 it keeps the room oriented with live visual context, process state, suggestion cards, transcript
 snippets, trace/debug breadcrumbs, and bounded recovery controls. Because there is no screen on the
@@ -140,7 +140,7 @@ decisions above):
 **Statement:** The system continuously listens to the room and transcribes speech, with listening
 made obvious and consentful.
 **Acceptance criteria:**
-- AC1.1 On session start the system emits a **spoken consent announcement** ("Panopticon is
+- AC1.1 On session start the system emits a **spoken consent announcement** ("Vibersyn is
   listening. Say 'mute' to stop. Only transcripts are saved.") within 3 s of start.
 - AC1.2 A **persistent always-on listening indicator** is active whenever the mic is streaming
   (audible/earcon cue is authoritative; a visual badge is optional per D1).
@@ -531,7 +531,7 @@ Adding any of these to V0 scope requires an explicit amendment to this PRD.
   only; a phone, if used, is "just another audio input."
 - **NG-6 — No raw-audio persistence.** Transcript-only (REQ-1); raw audio is never stored.
 - **NG-7 — No generated product demo as part of a suggestion.** A suggestion's "demo" is the spoken
-  pitch + spoken MCQs. The projector UI visualizes Panopticon's session state; it does not render
+  pitch + spoken MCQs. The projector UI visualizes Vibersyn's session state; it does not render
   arbitrary demos for spawned tasks in V0.
 - **NG-8 — No on-device/local STT requirement in V0.** Hosted streaming providers are the V0
   default; local inference (whisper.cpp etc.) is a documented V1 fallback only.

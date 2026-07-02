@@ -9,11 +9,11 @@ import type {
 import type { TranscriptObservation } from "../../src/types";
 
 // ISSUE-0020 e2e: the full accept->spawn path on the LIVE runtime, but with the
-// Smithers gateway flagged on (PANOP_SMITHERS_GATEWAY_URL) and a stub transport
+// Smithers gateway flagged on (VIBERSYN_SMITHERS_GATEWAY_URL) and a stub transport
 // standing in for the real gateway. A fired suggestion followed by a spoken "yes"
 // routes through the AcceptanceController -> ProcessRegistry.spawn -> the gateway
 // client, so the spawned ProjectorProcess on the snapshot carries the
-// gateway-issued runId (`panop-<upid>`) and that exact runId was launched over the
+// gateway-issued runId (`vibersyn-<upid>`) and that exact runId was launched over the
 // transport. This proves the accept->spawn seam runs against the real gateway
 // client, not just the in-memory default.
 
@@ -57,16 +57,16 @@ describe("gateway-accept-spawn e2e — say yes spawns a gateway-backed process",
     }) as unknown as typeof fetch;
     // The demo fleet seeds two processes against the default cap of two; give the
     // acceptance spawn headroom (the pre-spawn check reads this from process.env).
-    priorCapacityGuard = process.env.PANOP_RBG_DISABLE_CAPACITY_CHECK;
-    process.env.PANOP_RBG_DISABLE_CAPACITY_CHECK = "1";
+    priorCapacityGuard = process.env.VIBERSYN_RBG_DISABLE_CAPACITY_CHECK;
+    process.env.VIBERSYN_RBG_DISABLE_CAPACITY_CHECK = "1";
   });
 
   afterEach(() => {
     globalThis.fetch = realFetch;
     if (priorCapacityGuard === undefined) {
-      delete process.env.PANOP_RBG_DISABLE_CAPACITY_CHECK;
+      delete process.env.VIBERSYN_RBG_DISABLE_CAPACITY_CHECK;
     } else {
-      process.env.PANOP_RBG_DISABLE_CAPACITY_CHECK = priorCapacityGuard;
+      process.env.VIBERSYN_RBG_DISABLE_CAPACITY_CHECK = priorCapacityGuard;
     }
   });
 
@@ -98,9 +98,9 @@ describe("gateway-accept-spawn e2e — say yes spawns a gateway-backed process",
     if (process === undefined) return;
     expect(["planning", "active"]).toContain(process.state);
 
-    // The snapshot's runId is the gateway-issued one (`panop-<upid>`), not the
+    // The snapshot's runId is the gateway-issued one (`vibersyn-<upid>`), not the
     // in-memory client's `run-<upid>`.
-    expect(process.runId).toBe(`panop-${process.upid}`);
+    expect(process.runId).toBe(`vibersyn-${process.upid}`);
 
     // And that exact runId was launched over the gateway transport by the accept
     // path (one new launchRun beyond whatever the seeded fleet launched).
@@ -115,20 +115,23 @@ describe("gateway-accept-spawn e2e — say yes spawns a gateway-backed process",
 
 function gatewayEnv(): ProjectorRuntimeEnv {
   return {
-    PANOP_SESSION_ID: "gateway-accept-spawn-e2e",
-    PANOP_INITIAL_MUTED: "0",
-    PANOP_ASR_PROVIDER: "replay",
-    PANOP_SMITHERS_GATEWAY_URL: "ws://gateway.local:8080",
-    PANOP_SUGGEST_WORD_FLOOR: "3",
-    PANOP_SUGGEST_INTERRUPT_VELOCITY_WEIGHT: "0",
-    PANOP_SUGGEST_INTERRUPT_RECENCY_WEIGHT: "0",
-    PANOP_SUGGEST_INTERRUPT_PENDING_STEERING_WEIGHT: "0",
+    VIBERSYN_SESSION_ID: "gateway-accept-spawn-e2e",
+    VIBERSYN_INITIAL_MUTED: "0",
+    VIBERSYN_ASR_PROVIDER: "replay",
+    VIBERSYN_SMITHERS_GATEWAY_URL: "ws://gateway.local:8080",
+    // Force the heuristic detector: a gateway client would otherwise select the
+    // Smithers detector, which won't surface ideas through the stub transport.
+    VIBERSYN_IDEA_DETECTOR: "heuristic",
+    VIBERSYN_DETECT_MIN_NEW_TURNS: "1",
+    VIBERSYN_DETECT_MIN_INTERVAL_MS: "0",
+    VIBERSYN_DETECT_TICK_MS: "0",
   };
 }
 
 async function driveMic(runtime: ProjectorRuntime): Promise<void> {
   const session = runtime.startMicSession("corr-gateway-accept-spawn-e2e");
   await session.stop();
+  await runtime.detection.flush();
 }
 
 function final(text: string, utteranceId: string): TranscriptObservation {

@@ -18,28 +18,28 @@ interface LiveCanonicalRunResult {
   canonicalCorrelationId: string | null;
 }
 
-// Enforcement: a release pipeline sets PANOP_REQUIRE_LIVE_GATE=1 so a missing
+// Enforcement: a release pipeline sets VIBERSYN_REQUIRE_LIVE_GATE=1 so a missing
 // credential FAILS loudly here instead of silently skipping (which a CI summary
 // could misread as green). Without that flag, the gate honestly skips.
 describe.skipIf(hasDeepgramCredential() || !liveGateRequired())("LIVE RELEASE GATE enforcement", () => {
-  test("fails when PANOP_REQUIRE_LIVE_GATE=1 but DEEPGRAM_API_KEY is absent", () => {
+  test("fails when VIBERSYN_REQUIRE_LIVE_GATE=1 but DEEPGRAM_API_KEY is absent", () => {
     throw new Error(
-      "Live canonical 10-run gate is REQUIRED (PANOP_REQUIRE_LIVE_GATE=1) but DEEPGRAM_API_KEY is absent, so the live stack was never exercised. Provide credentials + PANOP_ASR_DEEPGRAM_AUDIO_FIXTURE, or unset PANOP_REQUIRE_LIVE_GATE.",
+      "Live canonical 10-run gate is REQUIRED (VIBERSYN_REQUIRE_LIVE_GATE=1) but DEEPGRAM_API_KEY is absent, so the live stack was never exercised. Provide credentials + VIBERSYN_ASR_DEEPGRAM_AUDIO_FIXTURE, or unset VIBERSYN_REQUIRE_LIVE_GATE.",
     );
   });
 });
 
 // The live stack can only run with both a Deepgram credential and a scripted
-// audio fixture. Without PANOP_REQUIRE_LIVE_GATE the gate honestly skips when
+// audio fixture. Without VIBERSYN_REQUIRE_LIVE_GATE the gate honestly skips when
 // either is missing; with it set, the gate runs and fails loudly below.
 describe.skipIf(!liveGateRequired() && (!hasDeepgramCredential() || !hasAudioFixture()))("LIVE RELEASE GATE: canonical scripted-audio Deepgram stack", () => {
   test(
     "runs the canonical scenario against live scripted audio 10 times and requires at least 9 passes",
     async () => {
-      const audioPath = process.env.PANOP_ASR_DEEPGRAM_AUDIO_FIXTURE;
+      const audioPath = process.env.VIBERSYN_ASR_DEEPGRAM_AUDIO_FIXTURE;
       if (audioPath === undefined || audioPath.length === 0) {
         throw new Error(
-          "DEEPGRAM_API_KEY is set, so the live canonical 10-run gate requires PANOP_ASR_DEEPGRAM_AUDIO_FIXTURE with canonical linear16 16kHz mono scripted audio.",
+          "DEEPGRAM_API_KEY is set, so the live canonical 10-run gate requires VIBERSYN_ASR_DEEPGRAM_AUDIO_FIXTURE with canonical linear16 16kHz mono scripted audio.",
         );
       }
 
@@ -68,7 +68,7 @@ async function runLiveCanonicalAttempt(run: number, audioPath: string): Promise<
   try {
     const gate = createDeepgramNova3ASRFromEnv({
       ...process.env,
-      PANOP_ASR_DEEPGRAM_SESSION_ID: sessionId,
+      VIBERSYN_ASR_DEEPGRAM_SESSION_ID: sessionId,
     });
     if (gate.provider === null) {
       throw new Error(gate.skippedReason ?? LIVE_GATE_SKIP_REASON);
@@ -114,9 +114,9 @@ async function runLiveCanonicalAttempt(run: number, audioPath: string): Promise<
 
 function canonicalObservationsFromLiveTranscript(observations: readonly TranscriptObservation[], sessionId: string): TranscriptObservation[] {
   const finals = finalTranscript(observations);
-  const wakeIndex = finals.findIndex((observation) => /\bpanop\b/iu.test(observation.text));
+  const wakeIndex = finals.findIndex((observation) => /\bviber\b/iu.test(observation.text));
   if (wakeIndex === -1) {
-    throw new Error(`live transcript did not include the canonical wake word "Panop"; finals=${JSON.stringify(finals.map((entry) => entry.text))}`);
+    throw new Error(`live transcript did not include the canonical wake word "Viber"; finals=${JSON.stringify(finals.map((entry) => entry.text))}`);
   }
 
   const accept = finals.slice(wakeIndex + 1).find((observation) => /\b(yes|yeah|yep|accept|confirm|proceed)\b/iu.test(observation.text));
@@ -153,11 +153,11 @@ function hasDeepgramCredential(): boolean {
 }
 
 function liveGateRequired(): boolean {
-  return process.env.PANOP_REQUIRE_LIVE_GATE === "1";
+  return process.env.VIBERSYN_REQUIRE_LIVE_GATE === "1";
 }
 
 function hasAudioFixture(): boolean {
-  const path = process.env.PANOP_ASR_DEEPGRAM_AUDIO_FIXTURE;
+  const path = process.env.VIBERSYN_ASR_DEEPGRAM_AUDIO_FIXTURE;
   return path !== undefined && path.length > 0;
 }
 

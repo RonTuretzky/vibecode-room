@@ -25,10 +25,10 @@ verification (smithers `output` coerces booleans to numbers → suggestions were
 
 ## Constraints
 - APP code only under `src/` (+ root package.json + `.smithers/smithers.config.ts`).
-- Do NOT touch `panopticon-world/` (concurrent workstream) or `node_modules/`.
+- Do NOT touch `vibersyn-world/` (concurrent workstream) or `node_modules/`.
 - No mocks — test pure functions directly with real inputs.
 
 ## Risks
 - Extracting helpers must keep `smithers.ts` behavior identical (re-import, same logic).
 - `bun test` discovers `**/*.test.ts`; ensure the existing opt-in smoke test
-  (`durable-run-smoke.test.ts`, skipped unless PANOPTICON_SMOKE_AGENT=1) stays skipped by default.
+  (`durable-run-smoke.test.ts`, skipped unless VIBERSYN_SMOKE_AGENT=1) stays skipped by default.

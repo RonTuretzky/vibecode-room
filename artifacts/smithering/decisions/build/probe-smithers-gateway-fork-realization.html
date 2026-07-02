@@ -26,7 +26,7 @@
 
 <h2>Decision</h2>
 <div class="box">
-Panopticon V0 process launch and voice steering should use Smithers Gateway mode and the Gateway
+Vibersyn V0 process launch and voice steering should use Smithers Gateway mode and the Gateway
 <code>submitSignal</code> RPC. The adapter must not steer runs by shelling out to <code>smithers signal</code>.
 For process fork in the Gateway-backed V0 control plane, realize lineage as a fresh seeded
 Gateway run whose input carries <code>parentId</code>. Native Smithers time-travel fork exists as a CLI
@@ -43,7 +43,7 @@ returned <code>METHOD_NOT_FOUND</code>; a child run launched through <code>runs.
 <h2>Alternatives</h2>
 <div class="alt lose"><strong>Use detach mode and CLI signal commands for steering.</strong>
 <span class="bad">Rejected.</span> Detach mode requires separate resume handling and is not the real-time
-Gateway signal path Panopticon needs.</div>
+Gateway signal path Vibersyn needs.</div>
 <div class="alt lose"><strong>Assume Gateway has native fork RPC.</strong>
 <span class="bad">Rejected.</span> The installed Gateway returned <code>METHOD_NOT_FOUND</code> for
 <code>forkRun</code>.</div>

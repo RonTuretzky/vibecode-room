@@ -26,7 +26,7 @@
 
 <h2>Decision</h2>
 <div class="box">
-Keep command recognition authoritative in Cue's <code>TextCue</code>, and let the Panopticon adapter emit the
+Keep command recognition authoritative in Cue's <code>TextCue</code>, and let the Vibersyn adapter emit the
 earcon from that Cue decision before any LLM or Smithers work. The adapter exposes a separate
 <code>emitTextCueEarcon</code> method for the hot path and a parity-checked pre-matcher hook only for the D2
 fallback case.

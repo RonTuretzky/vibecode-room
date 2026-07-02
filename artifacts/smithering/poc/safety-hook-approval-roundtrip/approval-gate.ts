@@ -1,5 +1,5 @@
 /**
- * approval-gate.ts — local HTTP approval gate for the Panopticon safety hook.
+ * approval-gate.ts — local HTTP approval gate for the Vibersyn safety hook.
  *
  * The safety hook (hook-script.ts) blocks a Claude Code tool call by long-polling
  * this server. The voice dispatcher sends approve/deny signals here.

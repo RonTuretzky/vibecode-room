@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { CueAdapter } from "../cue/adapter";
-import type { PanopticonCueHarness } from "../cue/harness";
+import type { VibersynCueHarness } from "../cue/harness";
 import { TraceProcessor } from "../obs/trace";
 import type { TranscriptObservation } from "../types";
 import { ReplayASRProvider } from "../providers/asr/replay";
@@ -27,12 +27,12 @@ function fallbackAdapter(trace: TraceProcessor): CueAdapter {
     trace,
     clock: monotonicClock(100),
     idFactory: sequenceIds("bridge"),
-    textCueWords: ["panop"],
+    textCueWords: ["viber"],
     earconPath: "fallback",
   });
 }
 
-// The committed pre-built Cue fixture; pointing PANOP_CUE_SOURCE_DIR here makes
+// The committed pre-built Cue fixture; pointing VIBERSYN_CUE_SOURCE_DIR here makes
 // cueSourceBuildAvailable() report a build so the bridge selects the harness path.
 const CUE_BUILD_FIXTURE = join(import.meta.dir, "../../fixtures/cue-build");
 
@@ -43,7 +43,7 @@ const providers = {
 };
 
 describe("createCueBridge — path selection on build presence", () => {
-  test("missing PANOP_CUE_SOURCE_DIR (no build) selects the fallback adapter without throwing", async () => {
+  test("missing VIBERSYN_CUE_SOURCE_DIR (no build) selects the fallback adapter without throwing", async () => {
     const trace = new TraceProcessor({ clock: monotonicClock(1) });
     const logs: string[] = [];
     const bridge = await createCueBridge({
@@ -57,7 +57,7 @@ describe("createCueBridge — path selection on build presence", () => {
     });
 
     expect(bridge.mode).toBe("fallback");
-    expect(bridge.selection.reason).toContain("PANOP_CUE_SOURCE_DIR");
+    expect(bridge.selection.reason).toContain("VIBERSYN_CUE_SOURCE_DIR");
     // Selection is operator-visible.
     expect(logs.some((line) => line.includes("fallback"))).toBe(true);
   });
@@ -106,21 +106,21 @@ describe("createCueBridge — path selection on build presence", () => {
 });
 
 describe("createCueBridge — harness path against a real Cue build (integration)", () => {
-  const priorSourceDir = process.env.PANOP_CUE_SOURCE_DIR;
+  const priorSourceDir = process.env.VIBERSYN_CUE_SOURCE_DIR;
 
   afterEach(() => {
     if (priorSourceDir === undefined) {
-      delete process.env.PANOP_CUE_SOURCE_DIR;
+      delete process.env.VIBERSYN_CUE_SOURCE_DIR;
     } else {
-      process.env.PANOP_CUE_SOURCE_DIR = priorSourceDir;
+      process.env.VIBERSYN_CUE_SOURCE_DIR = priorSourceDir;
     }
   });
 
   test("a fixture build dir yields mode 'harness' and a harness-tagged earcon trace", async () => {
     // Point at the committed pre-built Cue substrate: no override of
     // buildAvailable/createHarness, so this exercises the real cueSourceBuildAvailable
-    // detector, loadCueCore import, and createPanopticonCueHarness factory.
-    process.env.PANOP_CUE_SOURCE_DIR = CUE_BUILD_FIXTURE;
+    // detector, loadCueCore import, and createVibersynCueHarness factory.
+    process.env.VIBERSYN_CUE_SOURCE_DIR = CUE_BUILD_FIXTURE;
 
     const trace = new TraceProcessor({ clock: monotonicClock(100) });
     const logs: string[] = [];
@@ -128,7 +128,7 @@ describe("createCueBridge — harness path against a real Cue build (integration
       sessionId: "session-cue-bridge",
       providers,
       fallbackAdapter: fallbackAdapter(trace),
-      textCueWords: ["panop"],
+      textCueWords: ["viber"],
       trace,
       clock: monotonicClock(100),
       onLog: (message) => logs.push(message),
@@ -138,7 +138,7 @@ describe("createCueBridge — harness path against a real Cue build (integration
     expect(bridge.selection.reason).toContain(CUE_BUILD_FIXTURE);
     expect(logs.some((line) => line.includes("harness"))).toBe(true);
 
-    const decision = await bridge.observeFinal(observation("Panop status"));
+    const decision = await bridge.observeFinal(observation("Viber status"));
     if (decision === null) {
       throw new Error("expected a decision for a final observation");
     }
@@ -147,13 +147,13 @@ describe("createCueBridge — harness path against a real Cue build (integration
     // the harness-owned adapter emitted the earcon.
     expect(decision.earcons).toHaveLength(1);
     expect(decision.earcons[0]).toEqual(
-      expect.objectContaining({ id: "E1", source: "cue-textcue", matchedWord: "panop" }),
+      expect.objectContaining({ id: "E1", source: "cue-textcue", matchedWord: "viber" }),
     );
     const earconTrace = decision.events.filter((event) => event.event === "earcon.emit");
     expect(earconTrace).toHaveLength(1);
     // Distinguishable from the fallback adapter trace via the `path` tag.
     expect(earconTrace[0]?.meta).toEqual(
-      expect.objectContaining({ id: "E1", source: "cue-textcue", matchedWord: "panop", path: "harness" }),
+      expect.objectContaining({ id: "E1", source: "cue-textcue", matchedWord: "viber", path: "harness" }),
     );
   });
 
@@ -163,7 +163,7 @@ describe("createCueBridge — harness path against a real Cue build (integration
       sessionId: "session-cue-bridge",
       providers,
       fallbackAdapter: fallbackAdapter(trace),
-      textCueWords: ["panop"],
+      textCueWords: ["viber"],
       trace,
       clock: monotonicClock(100),
       buildAvailable: () => false,
@@ -171,7 +171,7 @@ describe("createCueBridge — harness path against a real Cue build (integration
     });
 
     expect(bridge.mode).toBe("fallback");
-    const decision = await bridge.observeFinal(observation("Panop status"));
+    const decision = await bridge.observeFinal(observation("Viber status"));
     const earconTrace = (decision?.events ?? []).filter((event) => event.event === "earcon.emit");
     expect(earconTrace).toHaveLength(1);
     expect(earconTrace[0]?.meta).toEqual(expect.objectContaining({ source: "cue-textcue", path: "fallback" }));
@@ -179,7 +179,7 @@ describe("createCueBridge — harness path against a real Cue build (integration
 });
 
 describe("createCueBridge — fallback wake word emits an earcon (integration)", () => {
-  test("a 'panop' observation drives the CueAdapter to a textcue earcon trace with no Cue build", async () => {
+  test("a 'viber' observation drives the CueAdapter to a textcue earcon trace with no Cue build", async () => {
     const trace = new TraceProcessor({ clock: monotonicClock(100) });
     const adapter = fallbackAdapter(trace);
     const bridge = await createCueBridge({
@@ -192,19 +192,19 @@ describe("createCueBridge — fallback wake word emits an earcon (integration)",
       onLog: () => undefined,
     });
 
-    const decision = await bridge.observeFinal(observation("Panop status"));
+    const decision = await bridge.observeFinal(observation("Viber status"));
     if (decision === null) {
       throw new Error("expected a decision for a final observation");
     }
 
     expect(decision.earcons).toHaveLength(1);
     expect(decision.earcons[0]).toEqual(
-      expect.objectContaining({ id: "E1", source: "cue-textcue", matchedWord: "panop" }),
+      expect.objectContaining({ id: "E1", source: "cue-textcue", matchedWord: "viber" }),
     );
     const earconTrace = decision.events.filter((event) => event.event === "earcon.emit");
     expect(earconTrace).toHaveLength(1);
     expect(earconTrace[0]?.meta).toEqual(
-      expect.objectContaining({ id: "E1", source: "cue-textcue", matchedWord: "panop" }),
+      expect.objectContaining({ id: "E1", source: "cue-textcue", matchedWord: "viber" }),
     );
   });
 
@@ -238,7 +238,7 @@ describe("createCueBridge — fallback wake word emits an earcon (integration)",
       onLog: () => undefined,
     });
 
-    expect(await bridge.observeFinal(observation("panop", { isFinal: false }))).toBeNull();
+    expect(await bridge.observeFinal(observation("viber", { isFinal: false }))).toBeNull();
   });
 });
 
@@ -250,7 +250,7 @@ describe("createCueBridge — harness path routes through ingest + adapter once"
     const fakeHarness = makeFakeHarness({
       ingest: (frame) => {
         ingested.push((frame as { text: string }).text);
-        return { cues: [{ name: "text", metadata: { pattern: "panop" } }], toolResults: [] };
+        return { cues: [{ name: "text", metadata: { pattern: "viber" } }], toolResults: [] };
       },
       handleResult: (obs) => {
         handled.push(obs);
@@ -268,24 +268,24 @@ describe("createCueBridge — harness path routes through ingest + adapter once"
       onLog: () => undefined,
     });
 
-    await bridge.observeFinal(observation("Panop status"));
+    await bridge.observeFinal(observation("Viber status"));
 
-    expect(ingested).toEqual(["Panop status"]);
+    expect(ingested).toEqual(["Viber status"]);
     expect(handled).toHaveLength(1);
-    expect(handled[0]?.text).toBe("Panop status");
+    expect(handled[0]?.text).toBe("Viber status");
   });
 });
 
 describe("fallbackIngestResult", () => {
   test("surfaces a Cue text decision when a wake word is present", () => {
-    expect(fallbackIngestResult("hey panop go", ["panop"])).toEqual({
-      cues: [{ name: "text", metadata: { pattern: "panop" } }],
+    expect(fallbackIngestResult("hey viber go", ["viber"])).toEqual({
+      cues: [{ name: "text", metadata: { pattern: "viber" } }],
       toolResults: [],
     });
   });
 
   test("returns an empty ambient result when no wake word is present", () => {
-    expect(fallbackIngestResult("just chatter", ["panop"])).toEqual({ cues: [], toolResults: [] });
+    expect(fallbackIngestResult("just chatter", ["viber"])).toEqual({ cues: [], toolResults: [] });
   });
 });
 
@@ -294,7 +294,7 @@ function makeFakeHarness(
     ingest?: (frame: unknown) => unknown;
     handleResult?: (observation: TranscriptObservation) => unknown;
   } = {},
-): PanopticonCueHarness {
+): VibersynCueHarness {
   return {
     cue: {
       transcriptObservation: (text: string, options?: Record<string, unknown>) => ({ text, ...options }),
@@ -309,7 +309,7 @@ function makeFakeHarness(
     },
     providers,
     risks: [],
-  } as unknown as PanopticonCueHarness;
+  } as unknown as VibersynCueHarness;
 }
 
 function sequenceIds(prefix: string): () => string {

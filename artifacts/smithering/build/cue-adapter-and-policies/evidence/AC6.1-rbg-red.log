@@ -1,7 +1,7 @@
 bun test v1.3.14 (0d9b296a)
 
 src/cue/adapter.test.ts:
-185 |       steeringTools: ["panopticon.steer"],
+185 |       steeringTools: ["vibersyn.steer"],
 186 |       ambientActions: ambient.actions,
 187 |       steeringActions: steering.actions,
 188 |     };

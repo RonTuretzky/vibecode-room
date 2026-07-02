@@ -1,6 +1,6 @@
 // e2e: a registry-selected TTS provider behaves correctly for each backend, with
 // zero network. The registry is exercised exactly as a consumer would: through
-// the providers barrel, by PANOP_TTS_PROVIDER, returning only the TTSProvider
+// the providers barrel, by VIBERSYN_TTS_PROVIDER, returning only the TTSProvider
 // seam.
 //
 //   - noop selection records the phrase (silent-but-recorded) and yields an
@@ -16,7 +16,7 @@ import {
   type TTSTransport,
 } from "../../src/providers";
 
-const phrase = "Panop build the thinnest walking skeleton.";
+const phrase = "Viber build the thinnest walking skeleton.";
 
 describe("registry-selected TTS speaks for each backend (e2e)", () => {
   test("noop selection records the phrase and yields an empty audio stream with no network", async () => {
@@ -28,7 +28,7 @@ describe("registry-selected TTS speaks for each backend (e2e)", () => {
     }) as unknown as typeof fetch;
 
     try {
-      const selection = selectTtsProvider({ PANOP_TTS_PROVIDER: "noop" });
+      const selection = selectTtsProvider({ VIBERSYN_TTS_PROVIDER: "noop" });
       expect(selection.mode satisfies TtsProviderMode).toBe("noop");
       expect(selection.provider).toBeInstanceOf(NoopTTSProvider);
 
@@ -55,7 +55,7 @@ describe("registry-selected TTS speaks for each backend (e2e)", () => {
     };
 
     const selection = selectTtsProvider(
-      { PANOP_TTS_PROVIDER: "elevenlabs", ELEVENLABS_API_KEY: fakeElevenLabsKey() },
+      { VIBERSYN_TTS_PROVIDER: "elevenlabs", ELEVENLABS_API_KEY: fakeElevenLabsKey() },
       { transport },
     );
 

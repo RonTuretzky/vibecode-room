@@ -1,4 +1,4 @@
-// smithers-source: dev workflow (Panopticon build — full "smithering" pipeline; NOT app code).
+// smithers-source: dev workflow (Vibersyn build — full "smithering" pipeline; NOT app code).
 // research -> plan -> implement -> validate -> review, with INDEPENDENT review and TDD-first:
 //   research / plan / implement / validate = codex (gpt-5.5); review = claude (opus-4-8).
 // Validate + implement prompts gate on `bun run typecheck` AND `bun test` (no mocks, green gate).
@@ -85,7 +85,7 @@ export default smithers((ctx) => {
   const feedback = feedbackParts.length > 0 ? feedbackParts.join("\n\n") : null;
 
   return (
-    <Workflow name="panopticon-rpi">
+    <Workflow name="vibersyn-rpi">
       <Sequence>
         <Task id="research" output={researchOutputSchema} agent={[providers.codexApp]}>
           <ResearchPrompt prompt={prompt} />

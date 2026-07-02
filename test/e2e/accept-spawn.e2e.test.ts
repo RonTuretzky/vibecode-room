@@ -22,16 +22,16 @@ describe("accept-spawn e2e — say yes spawns a process on the snapshot", () => 
     }) as unknown as typeof fetch;
     // The demo fleet seeds two processes against the default cap of two; give the
     // acceptance spawn headroom (the pre-spawn check reads this from process.env).
-    priorCapacityGuard = process.env.PANOP_RBG_DISABLE_CAPACITY_CHECK;
-    process.env.PANOP_RBG_DISABLE_CAPACITY_CHECK = "1";
+    priorCapacityGuard = process.env.VIBERSYN_RBG_DISABLE_CAPACITY_CHECK;
+    process.env.VIBERSYN_RBG_DISABLE_CAPACITY_CHECK = "1";
   });
 
   afterEach(() => {
     globalThis.fetch = realFetch;
     if (priorCapacityGuard === undefined) {
-      delete process.env.PANOP_RBG_DISABLE_CAPACITY_CHECK;
+      delete process.env.VIBERSYN_RBG_DISABLE_CAPACITY_CHECK;
     } else {
-      process.env.PANOP_RBG_DISABLE_CAPACITY_CHECK = priorCapacityGuard;
+      process.env.VIBERSYN_RBG_DISABLE_CAPACITY_CHECK = priorCapacityGuard;
     }
   });
 
@@ -90,12 +90,13 @@ describe("accept-spawn e2e — say yes spawns a process on the snapshot", () => 
 
 function liveEnv(): Record<string, string> {
   return {
-    PANOP_INITIAL_MUTED: "0",
-    PANOP_ASR_PROVIDER: "replay",
-    PANOP_SUGGEST_WORD_FLOOR: "3",
-    PANOP_SUGGEST_INTERRUPT_VELOCITY_WEIGHT: "0",
-    PANOP_SUGGEST_INTERRUPT_RECENCY_WEIGHT: "0",
-    PANOP_SUGGEST_INTERRUPT_PENDING_STEERING_WEIGHT: "0",
+    VIBERSYN_INITIAL_MUTED: "0",
+    VIBERSYN_ASR_PROVIDER: "replay",
+    // Deterministic idea detection: heuristic detector, eager scheduling, no tick.
+    VIBERSYN_IDEA_DETECTOR: "heuristic",
+    VIBERSYN_DETECT_MIN_NEW_TURNS: "1",
+    VIBERSYN_DETECT_MIN_INTERVAL_MS: "0",
+    VIBERSYN_DETECT_TICK_MS: "0",
   };
 }
 
@@ -106,6 +107,7 @@ function spawnTraceCount(runtime: ProjectorRuntime): number {
 async function driveMic(runtime: ProjectorRuntime): Promise<void> {
   const session = runtime.startMicSession("corr-accept-spawn-e2e");
   await session.stop();
+  await runtime.detection.flush();
 }
 
 function final(text: string, utteranceId: string): TranscriptObservation {

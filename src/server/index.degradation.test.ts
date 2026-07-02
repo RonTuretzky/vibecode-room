@@ -19,7 +19,7 @@ describe("health surface exposes degradation flags", () => {
 
     const health = healthPayload(runtime);
     expect(health.ok).toBe(true);
-    expect(health.app).toBe("panopticon-projector");
+    expect(health.app).toBe("vibersyn-projector");
     // the health surface reports exactly the runtime's degradation block
     expect(health.degradation).toBe(runtime.degradation);
   });

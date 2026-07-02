@@ -83,7 +83,7 @@ describe("VoxTerm ASR provider drives a consumer end to end", () => {
 
       // Only committed segments surface as final transcripts.
       expect(consumer.finals).toEqual([
-        { utteranceId: "vox-1", text: "hey panop spin up a runner", speaker: "speaker_0" },
+        { utteranceId: "vox-1", text: "hey viber spin up a runner", speaker: "speaker_0" },
         { utteranceId: "vox-2", text: "and check the build status", speaker: "speaker_1" },
       ]);
 

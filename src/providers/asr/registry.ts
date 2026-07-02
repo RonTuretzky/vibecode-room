@@ -1,12 +1,12 @@
 // ASR provider registry / factory (ISSUE-0002).
 //
-// `selectAsrProvider(env, opts)` is the single seam that maps PANOP_ASR_PROVIDER
+// `selectAsrProvider(env, opts)` is the single seam that maps VIBERSYN_ASR_PROVIDER
 // onto a concrete ASR provider. It lives inside src/providers so it may import
 // the concrete classes directly (the provider boundary lint only forbids that
 // outside src/providers — see providers/boundary.test.ts).
 //
 // Default selection preserves today's composition behavior: Deepgram when
-// DEEPGRAM_API_KEY is present, otherwise replay. An explicit PANOP_ASR_PROVIDER
+// DEEPGRAM_API_KEY is present, otherwise replay. An explicit VIBERSYN_ASR_PROVIDER
 // always overrides the key-presence default.
 //
 // NOTE: this issue only delivers + unit-tests the factory and its barrel
@@ -29,10 +29,10 @@ export type AsrProviderMode = "deepgram" | "voxterm" | "replay";
 export const MIC_CLOSE_TIMEOUT_MS = 6 * 60 * 60 * 1000;
 
 export interface AsrSelectionEnv {
-  PANOP_ASR_PROVIDER?: string;
+  VIBERSYN_ASR_PROVIDER?: string;
   DEEPGRAM_API_KEY?: string;
   MIC_CLOSE_TIMEOUT_MS?: string;
-  PANOP_ASR_REPLAY_FIXTURE?: string;
+  VIBERSYN_ASR_REPLAY_FIXTURE?: string;
   [key: string]: string | undefined;
 }
 
@@ -65,13 +65,13 @@ export function selectAsrProvider(env: AsrSelectionEnv, options: AsrSelectionOpt
 }
 
 function resolveAsrMode(env: AsrSelectionEnv): AsrProviderMode {
-  const explicit = env.PANOP_ASR_PROVIDER?.trim().toLowerCase();
+  const explicit = env.VIBERSYN_ASR_PROVIDER?.trim().toLowerCase();
   if (explicit !== undefined && explicit.length > 0) {
     if (explicit === "deepgram" || explicit === "voxterm" || explicit === "replay") {
       return explicit;
     }
     throw new Error(
-      `Unknown PANOP_ASR_PROVIDER "${env.PANOP_ASR_PROVIDER}". Expected one of: deepgram, voxterm, replay.`,
+      `Unknown VIBERSYN_ASR_PROVIDER "${env.VIBERSYN_ASR_PROVIDER}". Expected one of: deepgram, voxterm, replay.`,
     );
   }
 
@@ -82,7 +82,7 @@ function resolveAsrMode(env: AsrSelectionEnv): AsrProviderMode {
 function createDeepgramProvider(env: AsrSelectionEnv, options: AsrSelectionOptions): DeepgramNova3ASRProvider {
   const apiKey = env.DEEPGRAM_API_KEY;
   if (apiKey === undefined || apiKey.length === 0) {
-    throw new Error("PANOP_ASR_PROVIDER=deepgram requires DEEPGRAM_API_KEY to be set.");
+    throw new Error("VIBERSYN_ASR_PROVIDER=deepgram requires DEEPGRAM_API_KEY to be set.");
   }
 
   return new DeepgramNova3ASRProvider({
@@ -113,7 +113,7 @@ export function resolveVoxTermSource(options: AsrSelectionOptions): VoxTermSegme
 }
 
 function createReplayProvider(env: AsrSelectionEnv, options: AsrSelectionOptions): ReplayASRProvider {
-  const source = options.replaySource ?? env.PANOP_ASR_REPLAY_FIXTURE ?? [];
+  const source = options.replaySource ?? env.VIBERSYN_ASR_REPLAY_FIXTURE ?? [];
   return new ReplayASRProvider(source);
 }
 

@@ -1,5 +1,5 @@
 /* ============================================================================
-   Panopticon — "The Deep" projector UI
+   Vibersyn — "The Deep" projector UI
    A calm, dark, bioluminescent control room. Luminous glass bubbles rising
    through a deep abyss. Glanceable across a room; generative-art beautiful.
    All motion is transform/opacity only and freezes under reduced-motion.
@@ -446,10 +446,46 @@ button {
   background: rgba(48, 209, 138, 0.22);
 }
 
+/* IDEA CAPTURE mode — cyan "recording" affordance, pulsing while active so the
+   room can see the creation loop is running. */
+.ctl-button.capture {
+  color: #bfeefc;
+  border-color: rgba(0, 188, 212, 0.45);
+  background: rgba(0, 188, 212, 0.1);
+}
+
+.ctl-button.capture.on {
+  color: #04141a;
+  background: var(--c-selected, #00bcd4);
+  border-color: rgba(0, 188, 212, 0.9);
+  box-shadow: 0 0 20px rgba(0, 188, 212, 0.5);
+  animation: capture-pulse 1.8s ease-in-out infinite;
+}
+
+.ctl-button.capture:hover {
+  background: rgba(0, 188, 212, 0.22);
+}
+
+@keyframes capture-pulse {
+  0%, 100% { box-shadow: 0 0 16px rgba(0, 188, 212, 0.45); }
+  50% { box-shadow: 0 0 30px 4px rgba(0, 188, 212, 0.75); }
+}
+
 .ctl-button.emergency {
   color: #ffd9d6;
   border-color: rgba(255, 59, 48, 0.55);
   background: rgba(255, 59, 48, 0.12);
+}
+
+/* Gesture cursor overlay — full-viewport canvas drawn above everything, never
+   intercepts pointer events (dwell fires synthetic clicks on the UI beneath). */
+.gesture-overlay {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  pointer-events: none;
+  z-index: 2000;
 }
 
 .ctl-button.emergency:hover {
@@ -837,6 +873,19 @@ button {
   overflow: hidden;
 }
 
+/* Provenance: the span of conversation an idea was grounded in (idea detection). */
+.idea-evidence {
+  margin-top: 4px;
+  font-size: clamp(9px, calc(var(--size, 196px) * 0.05), 11px);
+  font-style: italic;
+  line-height: 1.25;
+  color: var(--dim);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 /* ============================================================================
    Rail — audio / transcript / trace
    ============================================================================ */
@@ -1067,7 +1116,7 @@ button {
 }
 
 .tx-room .tx-meta strong { color: var(--c-selected); }
-.tx-panopticon .tx-meta strong { color: var(--c-active); }
+.tx-vibersyn .tx-meta strong { color: var(--c-active); }
 .tx-process .tx-meta strong { color: var(--c-planning); }
 
 .tx-line p {

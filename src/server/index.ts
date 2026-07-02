@@ -4,13 +4,30 @@ import { withUnmuted } from "../ui/demo-data";
 import type { ProjectorSnapshot } from "../ui/types";
 import { createProjectorRuntime } from "./composition";
 import { formatDegradationNotice, healthPayload } from "./degradation-notice";
+import { corsEnabledWarning, vibersynCors } from "./cors";
 
 const runtime = await createProjectorRuntime(process.env);
 // Start polling the room-idle gap so a suggestion deferred for interrupt cost is
 // delivered once the room falls quiet (ISSUE-0024). Tests drive the tick off an
 // injected clock instead; this is the single live tick hook.
 runtime.idleCueDriver.start();
+// Start the idea-detection background tick so a detection scheduled by a SPEECH
+// PAUSE still fires while the room is quiet (no new turns arriving). Tests drive
+// detection synchronously via ingestTurn/flush and never start this tick.
+runtime.detection.start();
 const app = new Hono();
+// Cross-origin access for the API (off unless VIBERSYN_CORS_ORIGIN is set). Lets an
+// external control surface — e.g. the gesture-wall web client — POST /api/capture,
+// /api/suggestion/accept, /api/emergency-stop from its own origin. Mounted before
+// the routes so preflight (OPTIONS) is handled.
+const corsMiddleware = vibersynCors(process.env);
+if (corsMiddleware !== null) {
+  app.use("/api/*", corsMiddleware);
+  const warning = corsEnabledWarning(process.env);
+  if (warning !== null) {
+    console.warn(`[cors] ${warning}`);
+  }
+}
 
 app.get("/api/health", (context) => context.json(healthPayload(runtime)));
 app.get("/api/state", (context) => context.json(runtime.snapshot()));
@@ -65,6 +82,24 @@ app.post("/api/auto-accept", async (context) => {
   }
   return context.json(runtime.setAutoAccept(on));
 });
+// IDEA CAPTURE mode toggle (alternative to passive auto-detect). Body `{ on: boolean }`
+// sets it explicitly; absent body flips the current state. When on, detection runs
+// eagerly and every surfaced idea builds itself — the creation loop. Returns the snapshot.
+app.post("/api/capture", async (context) => {
+  if (isOfflineDemoRequest(context.req.header("referer"))) {
+    return context.json(runtime.snapshot());
+  }
+  let on = !runtime.captureMode();
+  try {
+    const body = (await context.req.json()) as { on?: unknown };
+    if (typeof body?.on === "boolean") {
+      on = body.on;
+    }
+  } catch {
+    // no/invalid body -> toggle current state
+  }
+  return context.json(runtime.setCaptureMode(on));
+});
 // CLICK A PROJECT -> STEER IT. Set the steering target so subsequent FINAL
 // transcript lines route to that process's agent loop. Returns the snapshot.
 app.post("/api/process/:upid/select", (context) => {
@@ -92,7 +127,7 @@ app.delete("/api/process/select", (context) => {
 app.get("*", async (context) => serveStatic(context.req.url));
 
 const host = process.env.HOST ?? "127.0.0.1";
-const port = parsePort(process.env.PANOP_PORT ?? process.env.PORT ?? "8787");
+const port = parsePort(process.env.VIBERSYN_PORT ?? process.env.PORT ?? "8787");
 
 // Per-connection state for the live-mic WebSocket.
 interface MicSocketData {
@@ -140,7 +175,7 @@ Bun.serve<MicSocketData>({
   },
 });
 
-console.log(`Panopticon projector server listening on http://${host}:${port}`);
+console.log(`Vibersyn projector server listening on http://${host}:${port}`);
 // Structured startup degradation notice (ISSUE-0003): one line per stubbed leg
 // with the env var that upgrades it, computed from the resolved runtime.
 console.warn(formatDegradationNotice(runtime.degradation));

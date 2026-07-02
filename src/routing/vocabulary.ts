@@ -1,18 +1,18 @@
 export const ROUTING_ENV_DEFAULTS = {
-  PANOP_WAKE_WORDS: "panop",
-  PANOP_MUTE_WORDS: "mute",
-  PANOP_UNMUTE_WORDS: "unmute",
-  PANOP_PANIC_WORDS: "abort",
-  PANOP_STOP_WORDS: "stop,halt",
-  PANOP_ACCEPT_WORDS: "yes,accept,do it",
-  PANOP_DECLINE_WORDS: "no,nah,skip",
-  PANOP_DONE_WORDS: "done,back",
-  PANOP_PAUSE_WORDS: "pause",
-  PANOP_RESUME_WORDS: "resume",
-  PANOP_PAUSE_ALL_WORDS: "pause all",
-  PANOP_STATUS_WORDS: "status",
-  PANOP_STEER_IDLE_SECONDS: "20",
-  PANOP_STEER_MIN_CONFIDENCE: "0.45",
+  VIBERSYN_WAKE_WORDS: "viber",
+  VIBERSYN_MUTE_WORDS: "mute",
+  VIBERSYN_UNMUTE_WORDS: "unmute",
+  VIBERSYN_PANIC_WORDS: "abort",
+  VIBERSYN_STOP_WORDS: "stop,halt",
+  VIBERSYN_ACCEPT_WORDS: "yes,accept,do it",
+  VIBERSYN_DECLINE_WORDS: "no,nah,skip",
+  VIBERSYN_DONE_WORDS: "done,back",
+  VIBERSYN_PAUSE_WORDS: "pause",
+  VIBERSYN_RESUME_WORDS: "resume",
+  VIBERSYN_PAUSE_ALL_WORDS: "pause all",
+  VIBERSYN_STATUS_WORDS: "status",
+  VIBERSYN_STEER_IDLE_SECONDS: "20",
+  VIBERSYN_STEER_MIN_CONFIDENCE: "0.45",
 } as const;
 
 export type VocabularyEnvKey = keyof typeof ROUTING_ENV_DEFAULTS;
@@ -58,7 +58,7 @@ export interface RoutingVocabulary {
 }
 
 export const DOCUMENTED_COMMANDS: readonly DocumentedCommand[] = [
-  { id: "wake", spokenForm: "Panop", effect: "opens active-listen window" },
+  { id: "wake", spokenForm: "Viber", effect: "opens active-listen window" },
   { id: "accept", spokenForm: "Yes / Accept / Do it", effect: "spawn from pending suggestion" },
   { id: "decline", spokenForm: "No / Nah / Skip", effect: "decline pending suggestion" },
   { id: "selectAndSteer", spokenForm: "[callsign], [instruction]", effect: "route instruction to process" },
@@ -77,20 +77,20 @@ export const DOCUMENTED_COMMANDS: readonly DocumentedCommand[] = [
 
 export function loadRoutingVocabulary(env: Record<string, string | undefined> = process.env): RoutingVocabulary {
   return {
-    wake: wordsFromEnv(env, "PANOP_WAKE_WORDS"),
-    mute: wordsFromEnv(env, "PANOP_MUTE_WORDS"),
-    unmute: wordsFromEnv(env, "PANOP_UNMUTE_WORDS"),
-    panic: wordsFromEnv(env, "PANOP_PANIC_WORDS"),
-    stop: wordsFromEnv(env, "PANOP_STOP_WORDS"),
-    accept: wordsFromEnv(env, "PANOP_ACCEPT_WORDS"),
-    decline: wordsFromEnv(env, "PANOP_DECLINE_WORDS"),
-    done: wordsFromEnv(env, "PANOP_DONE_WORDS"),
-    pause: wordsFromEnv(env, "PANOP_PAUSE_WORDS"),
-    resume: wordsFromEnv(env, "PANOP_RESUME_WORDS"),
-    pauseAll: wordsFromEnv(env, "PANOP_PAUSE_ALL_WORDS"),
-    status: wordsFromEnv(env, "PANOP_STATUS_WORDS"),
-    steerIdleSeconds: numberFromEnv(env, "PANOP_STEER_IDLE_SECONDS"),
-    steerMinConfidence: numberFromEnv(env, "PANOP_STEER_MIN_CONFIDENCE"),
+    wake: wordsFromEnv(env, "VIBERSYN_WAKE_WORDS"),
+    mute: wordsFromEnv(env, "VIBERSYN_MUTE_WORDS"),
+    unmute: wordsFromEnv(env, "VIBERSYN_UNMUTE_WORDS"),
+    panic: wordsFromEnv(env, "VIBERSYN_PANIC_WORDS"),
+    stop: wordsFromEnv(env, "VIBERSYN_STOP_WORDS"),
+    accept: wordsFromEnv(env, "VIBERSYN_ACCEPT_WORDS"),
+    decline: wordsFromEnv(env, "VIBERSYN_DECLINE_WORDS"),
+    done: wordsFromEnv(env, "VIBERSYN_DONE_WORDS"),
+    pause: wordsFromEnv(env, "VIBERSYN_PAUSE_WORDS"),
+    resume: wordsFromEnv(env, "VIBERSYN_RESUME_WORDS"),
+    pauseAll: wordsFromEnv(env, "VIBERSYN_PAUSE_ALL_WORDS"),
+    status: wordsFromEnv(env, "VIBERSYN_STATUS_WORDS"),
+    steerIdleSeconds: numberFromEnv(env, "VIBERSYN_STEER_IDLE_SECONDS"),
+    steerMinConfidence: numberFromEnv(env, "VIBERSYN_STEER_MIN_CONFIDENCE"),
   };
 }
 

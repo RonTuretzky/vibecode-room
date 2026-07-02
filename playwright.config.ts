@@ -1,17 +1,17 @@
 import { defineConfig, devices } from "@playwright/test";
 
 /**
- * Browser e2e for the Panopticon projector UI.
+ * Browser e2e for the Vibersyn projector UI.
  *
  * Specs live in `e2e/*.e2e-pw.ts` — named so the Bun test runner (which matches
  * `*.test.ts` / `*.spec.ts`) never tries to execute them. They assert UI STATE
- * via the `window.__PANOPTICON__` hook and the DOM, never screenshots (a prior
+ * via the `window.__VIBERSYN__` hook and the DOM, never screenshots (a prior
  * 3D build proved screenshots unreliable on the real projector GPU).
  *
  * The webServer builds the Vite SPA and serves it (plus the /api surface) through
  * the production Hono server, so e2e exercises the real production path.
  */
-const PORT = Number(process.env.PANOP_PORT ?? 8787);
+const PORT = Number(process.env.VIBERSYN_PORT ?? 8787);
 const BASE_URL = `http://127.0.0.1:${PORT}`;
 
 export default defineConfig({
@@ -31,11 +31,11 @@ export default defineConfig({
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   webServer: {
-    command: `bun run build && PANOP_PORT=${PORT} bun run start`,
+    command: `bun run build && VIBERSYN_PORT=${PORT} bun run start`,
     url: `${BASE_URL}/api/health`,
     // Default to a fresh build+start every run so e2e never tests a stale dist.
-    // Opt into reuse for fast local iteration with PANOP_REUSE=1 (after a manual build).
-    reuseExistingServer: !process.env.CI && process.env.PANOP_REUSE === "1",
+    // Opt into reuse for fast local iteration with VIBERSYN_REUSE=1 (after a manual build).
+    reuseExistingServer: !process.env.CI && process.env.VIBERSYN_REUSE === "1",
     timeout: 180_000,
     stdout: "pipe",
     stderr: "pipe",

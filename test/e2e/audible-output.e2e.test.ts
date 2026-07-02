@@ -30,22 +30,22 @@ describe("fired suggestion is audible on a real sink (e2e)", () => {
       fetchCalls += 1;
       throw new Error(`unexpected network fetch in the offline audible-output loop: ${String(args[0])}`);
     }) as unknown as typeof fetch;
-    priorAsrProvider = process.env.PANOP_ASR_PROVIDER;
+    priorAsrProvider = process.env.VIBERSYN_ASR_PROVIDER;
     priorDeepgramKey = process.env.DEEPGRAM_API_KEY;
-    priorTtsProvider = process.env.PANOP_TTS_PROVIDER;
-    priorAudioSink = process.env.PANOP_AUDIO_SINK;
-    delete process.env.PANOP_ASR_PROVIDER;
+    priorTtsProvider = process.env.VIBERSYN_TTS_PROVIDER;
+    priorAudioSink = process.env.VIBERSYN_AUDIO_SINK;
+    delete process.env.VIBERSYN_ASR_PROVIDER;
     delete process.env.DEEPGRAM_API_KEY;
-    delete process.env.PANOP_TTS_PROVIDER;
-    delete process.env.PANOP_AUDIO_SINK;
+    delete process.env.VIBERSYN_TTS_PROVIDER;
+    delete process.env.VIBERSYN_AUDIO_SINK;
   });
 
   afterEach(() => {
     globalThis.fetch = realFetch;
-    restoreEnv("PANOP_ASR_PROVIDER", priorAsrProvider);
+    restoreEnv("VIBERSYN_ASR_PROVIDER", priorAsrProvider);
     restoreEnv("DEEPGRAM_API_KEY", priorDeepgramKey);
-    restoreEnv("PANOP_TTS_PROVIDER", priorTtsProvider);
-    restoreEnv("PANOP_AUDIO_SINK", priorAudioSink);
+    restoreEnv("VIBERSYN_TTS_PROVIDER", priorTtsProvider);
+    restoreEnv("VIBERSYN_AUDIO_SINK", priorAudioSink);
     while (tempDirs.length > 0) {
       const dir = tempDirs.pop();
       if (dir !== undefined) {
@@ -89,23 +89,25 @@ describe("fired suggestion is audible on a real sink (e2e)", () => {
     const sink = new RecordingAudioSink();
     const runtime = await createProjectorRuntime(
       {
-        PANOP_INITIAL_MUTED: "0",
-        PANOP_MIC_REPLAY_PATH: path,
-        PANOP_TTS_PROVIDER: "elevenlabs",
+        VIBERSYN_INITIAL_MUTED: "0",
+        VIBERSYN_MIC_REPLAY_PATH: path,
+        VIBERSYN_TTS_PROVIDER: "elevenlabs",
         ELEVENLABS_API_KEY: fakeElevenLabsKey(),
-        PANOP_SUGGEST_WORD_FLOOR: "3",
-        PANOP_SUGGEST_INTERRUPT_VELOCITY_WEIGHT: "0",
-        PANOP_SUGGEST_INTERRUPT_RECENCY_WEIGHT: "0",
-        PANOP_SUGGEST_INTERRUPT_PENDING_STEERING_WEIGHT: "0",
+        // Deterministic idea detection: heuristic detector, eager scheduling, no tick.
+        VIBERSYN_IDEA_DETECTOR: "heuristic",
+        VIBERSYN_DETECT_MIN_NEW_TURNS: "1",
+        VIBERSYN_DETECT_MIN_INTERVAL_MS: "0",
+        VIBERSYN_DETECT_TICK_MS: "0",
       },
       { ttsTransport: transport, audioSink: sink },
     );
 
     const session = runtime.startMicSession("corr-audible-output");
     await session.stop();
+    await runtime.detection.flush();
 
-    // End to end: a suggestion fired and was spoken through the elevenlabs stub.
-    expect(runtime.lastSuggestionDecision?.kind).toBe("fired");
+    // End to end: an idea was detected and spoken through the elevenlabs stub.
+    expect(runtime.detection.primary()).not.toBeNull();
     expect(speakCalls).toBe(1);
 
     // The whole synthesized stream was retained by the injected recording sink —
@@ -134,7 +136,7 @@ function restoreEnv(key: string, prior: string | undefined): void {
 }
 
 function writeReplayFixture(tempDirs: string[], observations: TranscriptObservation[]): string {
-  const dir = mkdtempSync(join(tmpdir(), "panop-audible-output-"));
+  const dir = mkdtempSync(join(tmpdir(), "vibersyn-audible-output-"));
   tempDirs.push(dir);
   const path = join(dir, "mic.jsonl");
   writeFileSync(path, observations.map((observation) => JSON.stringify(observation)).join("\n"), "utf8");
