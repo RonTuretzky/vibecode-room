@@ -1,0 +1,29 @@
+[
+  {
+    "criterionId": "AC14.1",
+    "method": "e2e_test",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/emergency-stop-control/evidence/AC14.1-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/emergency-stop-control/evidence/AC14.1-green.log"
+  },
+  {
+    "criterionId": "AC14.2",
+    "method": "unit_test",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/emergency-stop-control/evidence/AC14.2-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/emergency-stop-control/evidence/AC14.2-green.log"
+  },
+  {
+    "criterionId": "AC14.3",
+    "method": "unit_test",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/emergency-stop-control/evidence/AC14.3-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/emergency-stop-control/evidence/AC14.3-green.log"
+  }
+]

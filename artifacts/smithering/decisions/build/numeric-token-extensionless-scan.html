@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Decision - Numeric token and extensionless scan hardening</title>
+  <style>
+    :root { --bg:#0a0a0a; --fg:#e0e0e0; --ok:#00ff88; --bad:#ff3b30; --sel:#00bcd4; --mut:#888; }
+    body { background:var(--bg); color:var(--fg); font:15px/1.6 -apple-system,Segoe UI,Roboto,sans-serif; max-width:920px; margin:0 auto; padding:32px; }
+    h1 { font-size:24px; color:var(--sel); margin-bottom:4px; }
+    h2 { font-size:18px; color:var(--ok); margin-top:32px; border-bottom:1px solid #222; padding-bottom:6px; }
+    .tag { display:inline-block; background:#1a1a1a; border:1px solid #333; border-radius:4px; padding:2px 8px; font-size:12px; color:var(--mut); margin-right:6px; }
+    code,pre { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+    pre { background:#111; border:1px solid #222; border-radius:6px; padding:14px; overflow:auto; font-size:13px; }
+    table { border-collapse:collapse; width:100%; margin:12px 0; font-size:14px; }
+    th,td { border:1px solid #222; padding:8px 10px; text-align:left; vertical-align:top; }
+    th { background:#141414; color:var(--sel); }
+    .acc { color:var(--ok); }
+    .rej { color:var(--bad); }
+  </style>
+</head>
+<body>
+  <h1>Numeric provider tokens and extensionless files fail closed</h1>
+  <p><span class="tag">subscription-credentials-redaction</span><span class="tag">SEC-1</span></p>
+
+  <h2>Problem</h2>
+  <p>
+    Follow-up challenge found two remaining fail-open paths: provider-prefixed opaque values made
+    from long numeric groups separated by hyphens, and extensionless files under trace/log/report
+    roots. Both can carry durable secret material even when their metadata key or filename is
+    otherwise neutral.
+  </p>
+
+  <h2>Decision</h2>
+  <p>
+    Treat a short alphabetic provider prefix followed by two or more long numeric groups as an
+    unknown secret candidate. Also scan every regular file under a requested root instead of
+    limiting scans by filename suffix.
+  </p>
+
+  <pre>input meta:  { opaque: "provider-prefix + numeric groups" }
+output meta: { opaque: "redacted marker" }</pre>
+
+  <h2>Alternatives</h2>
+  <table>
+    <tr><th>Alternative</th><th>Verdict</th><th>Reason</th></tr>
+    <tr><td>Only redact mixed alphanumeric groups</td><td class="rej">Rejected</td><td>Opaque provider tokens can use numeric account or workspace segments.</td></tr>
+    <tr><td>Keep the scan filename suffix list</td><td class="rej">Rejected</td><td>Trace and report trees can contain extensionless logs or generated report files.</td></tr>
+    <tr><td>Redact provider-prefixed numeric groups and scan all files</td><td class="acc">Chosen</td><td>Closes the demonstrated SEC-1 gaps without adding a credential-provider abstraction.</td></tr>
+  </table>
+
+  <h2>Verification</h2>
+  <p>
+    <code>src/providers/credentials.test.ts</code> covers provider-prefixed numeric redaction and
+    extensionless file scanning. <code>test/e2e/secret-scan.e2e.ts</code> now emits an extensionless
+    session log and plants an extensionless report-tree leak in its red run. The captured red run
+    fails before the detector and scanner fixes; the green run passes with zero bundle scan findings.
+  </p>
+</body>
+</html>

@@ -1,0 +1,18 @@
+{
+  "correlationId": "probe-smithers-durable-runs:fork",
+  "verdict": "seeded-parentId-lineage-for-gateway-v0",
+  "nativeForkRpc": {
+    "available": false,
+    "errorCode": "METHOD_NOT_FOUND"
+  },
+  "child": {
+    "runId": "probe-run-child-seeded",
+    "parentId": "probe-run-alpha",
+    "checkpoint": {
+      "seed": "seed-child",
+      "parentId": "probe-run-alpha",
+      "checkpoint": "checkpoint:seed-child",
+      "fleetIndex": 99
+    }
+  }
+}

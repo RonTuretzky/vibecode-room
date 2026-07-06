@@ -1,0 +1,56 @@
+[
+  {
+    "criterionId": "AC7.2",
+    "method": "unit_test",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/callsigns-and-collision-guard/evidence/AC7.2-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/callsigns-and-collision-guard/evidence/AC7.2-green.log"
+  },
+  {
+    "criterionId": "AC13.2",
+    "method": "unit_test",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/callsigns-and-collision-guard/evidence/AC13.2-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/callsigns-and-collision-guard/evidence/AC13.2-green.log"
+  },
+  {
+    "criterionId": "D-DD-18",
+    "method": "unit_test",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/callsigns-and-collision-guard/evidence/D-DD-18-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/callsigns-and-collision-guard/evidence/D-DD-18-green.log"
+  },
+  {
+    "criterionId": "A5.2",
+    "method": "unit_test",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/callsigns-and-collision-guard/evidence/A5.2-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/callsigns-and-collision-guard/evidence/A5.2-green.log"
+  },
+  {
+    "criterionId": "A5.4",
+    "method": "unit_test",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/callsigns-and-collision-guard/evidence/A5.4-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/callsigns-and-collision-guard/evidence/A5.4-green.log"
+  },
+  {
+    "criterionId": "P-PHONETIC",
+    "method": "unit_test",
+    "tier": "pre-build",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/callsigns-and-collision-guard/evidence/P-PHONETIC-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/callsigns-and-collision-guard/evidence/P-PHONETIC-green.log"
+  }
+]

@@ -1,0 +1,2 @@
+{"id":"shape","behavior":"real API result exposes the relied-on shape","phase":"red","status":"failed-as-expected","error":"expect(received).toHaveProperty(path)\n\nExpected path: \"missing\"\n\nUnable to find property\n"}
+{"id":"shape","behavior":"real API result exposes the relied-on shape","phase":"green","status":"passed"}

@@ -1,0 +1,38 @@
+[
+  {
+    "criterionId": "AC16.1",
+    "method": "unit_test",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/trace-processor-observability/evidence/AC16.1-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/trace-processor-observability/evidence/AC16.1-green.log"
+  },
+  {
+    "criterionId": "AC16.3",
+    "method": "integration_test",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/trace-processor-observability/evidence/AC16.3-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/trace-processor-observability/evidence/AC16.3-green.log"
+  },
+  {
+    "criterionId": "ENG-T-03-pass-logging",
+    "method": "unit_test",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/trace-processor-observability/evidence/ENG-T-03-pass-logging-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/trace-processor-observability/evidence/ENG-T-03-pass-logging-green.log"
+  },
+  {
+    "criterionId": "ENG-T-03-roundtrip",
+    "method": "unit_test",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/trace-processor-observability/evidence/ENG-T-03-roundtrip-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/trace-processor-observability/evidence/ENG-T-03-roundtrip-green.log"
+  }
+]

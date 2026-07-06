@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Build Decision - Smithers Gateway steering and fork realization</title>
+<style>
+  :root { --ink:#e8edf2; --mut:#9aa8b5; --line:#283544; --good:#39d98a; --bad:#ff6b6b; --accent:#7cc7ff; --bg:#0b1117; --card:#111a24; }
+  * { box-sizing:border-box; }
+  body { font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; color:var(--ink); max-width:920px; margin:2.2rem auto; padding:0 1.2rem; background:var(--bg); }
+  h1 { font-size:1.55rem; margin:0 0 .2rem; }
+  h2 { font-size:1.12rem; margin:1.8rem 0 .5rem; border-bottom:2px solid var(--line); padding-bottom:.25rem; }
+  .meta { color:var(--mut); font-size:.86rem; margin-bottom:1.2rem; }
+  .pill { display:inline-block; padding:.08rem .5rem; border-radius:999px; font-size:.75rem; font-weight:600; background:#132f47; color:var(--accent); }
+  code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; color:#d8f3ff; }
+  pre { background:#05080c; color:#e6edf3; padding:.9rem 1.1rem; border-radius:8px; overflow:auto; font-size:.82rem; line-height:1.45; border:1px solid var(--line); }
+  .box { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:.9rem 1.1rem; margin:.7rem 0; }
+  .alt { border-left:4px solid var(--line); padding-left:.9rem; margin:.6rem 0; }
+  .alt.win { border-left-color:var(--good); } .alt.lose { border-left-color:var(--bad); }
+  .good { color:var(--good); font-weight:600; } .bad { color:var(--bad); font-weight:600; }
+</style>
+</head>
+<body>
+<h1>Smithers Gateway steering and fork realization</h1>
+<div class="meta"><span class="pill">BUILD</span> &nbsp; probe-smithers-durable-runs &nbsp;·&nbsp; 2026-06-14</div>
+
+<h2>Decision</h2>
+<div class="box">
+Vibersyn V0 process launch and voice steering should use Smithers Gateway mode and the Gateway
+<code>submitSignal</code> RPC. The adapter must not steer runs by shelling out to <code>smithers signal</code>.
+For process fork in the Gateway-backed V0 control plane, realize lineage as a fresh seeded
+Gateway run whose input carries <code>parentId</code>. Native Smithers time-travel fork exists as a CLI
+capability, but the installed Gateway surface does not expose a native fork RPC.
+</div>
+
+<h2>Why</h2>
+<p>The probe registered a workflow with the real <code>Gateway</code>, started runs with
+<code>runs.create</code>, streamed events with <code>streamRunEvents</code>, paused on a durable
+<code>Signal</code>, and resumed by calling <code>submitSignal</code>. A direct <code>forkRun</code> Gateway RPC
+returned <code>METHOD_NOT_FOUND</code>; a child run launched through <code>runs.create</code> preserved
+<code>parentId</code> in the checkpoint output.</p>
+
+<h2>Alternatives</h2>
+<div class="alt lose"><strong>Use detach mode and CLI signal commands for steering.</strong>
+<span class="bad">Rejected.</span> Detach mode requires separate resume handling and is not the real-time
+Gateway signal path Vibersyn needs.</div>
+<div class="alt lose"><strong>Assume Gateway has native fork RPC.</strong>
+<span class="bad">Rejected.</span> The installed Gateway returned <code>METHOD_NOT_FOUND</code> for
+<code>forkRun</code>.</div>
+<div class="alt win"><strong>Use Gateway launch, stream, and signal APIs with seeded parent lineage.</strong>
+<span class="good">Chosen.</span> It matches the proven runtime surface and keeps V0 process control behind
+one Gateway API path.</div>
+
+<h2>Verification</h2>
+<pre>P_SMITHERS_RBG_DISABLE_CHECKPOINTING=1 bun test poc/p-smithers.test.ts
+bun test poc/p-smithers.test.ts
+bun run typecheck</pre>
+<p>The red run fails at restart recovery equality when persistence is replaced with an empty
+checkpoint database. The green run passes all lifecycle assertions.</p>
+</body>
+</html>

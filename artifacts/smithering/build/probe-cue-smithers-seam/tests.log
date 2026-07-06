@@ -1,0 +1,10 @@
+bun test v1.3.14 (0d9b296a)
+
+poc/p-seam.test.ts:
+timestamp=2026-06-14T22:28:13.410Z level=INFO fiber=#5 message="Gateway run started" gateway:run=0ms runId=p-seam-upid-seam-001 transport=ws triggeredBy=probe:seam role=operator workflow=seam service=smithers source=user userId=probe:seam resume=false connectionId=probe:seam:connection
+
+ 1 pass
+ 0 fail
+ 27 expect() calls
+Ran 1 test across 1 file. [1181.00ms]
+TESTS_EXIT_STATUS=0

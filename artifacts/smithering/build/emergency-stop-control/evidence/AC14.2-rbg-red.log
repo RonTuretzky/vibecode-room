@@ -1,0 +1,43 @@
+bun test v1.3.14 (0d9b296a)
+
+src/emergency/stop.test.ts:
+66 |   });
+67 | 
+68 |   test("scope exposes one route and one verb: kill-all only", async () => {
+69 |     const app = createEmergencyStopApp(emptyController());
+70 | 
+71 |     expect(emergencyControlRoutes()).toEqual([`POST ${EMERGENCY_STOP_ROUTE}`]);
+                                          ^
+error: expect(received).toEqual(expected)
+
+@@ -2,3 +2,4 @@
+    "POST /emergency-stop",
++   "POST /steer",
++   "POST /unmute",
+  ]
+
+- Expected  - 0
++ Received  + 2
+
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/emergency-stop-control/src/emergency/stop.test.ts:71:38)
+(fail) emergency stop controller > scope exposes one route and one verb: kill-all only [1.36ms]
+76 |     }
+77 |   });
+78 | 
+79 |   test("no unmute or resume verb is available from the emergency control", () => {
+80 |     const forbidden = new Set(["unmute", "resume", "listen", "start-listening"]);
+81 |     expect(emergencyControlVerbs().some((verb) => forbidden.has(verb))).toBe(false);
+                                                                             ^
+error: expect(received).toBe(expected)
+
+Expected: false
+Received: true
+
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/emergency-stop-control/src/emergency/stop.test.ts:81:73)
+(fail) emergency stop controller > no unmute or resume verb is available from the emergency control [0.09ms]
+
+ 2 pass
+ 2 fail
+ 11 expect() calls
+Ran 4 tests across 1 file. [19.00ms]
+exit_code=1

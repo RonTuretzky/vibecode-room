@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Decision ENG-A-01 — Three concurrency planes</title>
+<style>
+  :root { --ink:#1a1a1a; --mut:#666; --line:#e2e2e2; --good:#0a7d33; --bad:#b00020; --accent:#0b5cad; --bg:#fafafa; }
+  * { box-sizing:border-box; }
+  body { font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; color:var(--ink); max-width:920px; margin:2.2rem auto; padding:0 1.2rem; background:var(--bg); }
+  h1 { font-size:1.55rem; margin:0 0 .2rem; }
+  h2 { font-size:1.12rem; margin:1.8rem 0 .5rem; border-bottom:2px solid var(--line); padding-bottom:.25rem; }
+  .meta { color:var(--mut); font-size:.86rem; margin-bottom:1.2rem; }
+  .pill { display:inline-block; padding:.08rem .5rem; border-radius:999px; font-size:.75rem; font-weight:600; background:#e7f1fb; color:var(--accent); }
+  table { border-collapse:collapse; width:100%; margin:.6rem 0; font-size:.92rem; }
+  th,td { border:1px solid var(--line); padding:.45rem .6rem; text-align:left; vertical-align:top; }
+  th { background:#f0f0f0; }
+  code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  pre { background:#0f1115; color:#e6e6e6; padding:.9rem 1.1rem; border-radius:8px; overflow:auto; font-size:.82rem; line-height:1.45; }
+  .good { color:var(--good); font-weight:600; } .bad { color:var(--bad); font-weight:600; }
+  .box { background:#fff; border:1px solid var(--line); border-radius:8px; padding:.9rem 1.1rem; margin:.7rem 0; }
+  .alt { border-left:4px solid var(--line); padding-left:.9rem; margin:.6rem 0; }
+  .alt.win { border-left-color:var(--good); } .alt.lose { border-left-color:var(--bad); }
+  .warn { background:#fff7e6; border:1px solid #ffd591; border-radius:8px; padding:.7rem 1rem; }
+</style>
+</head>
+<body>
+<h1>Three concurrency planes: <span style="color:#0b5cad">Hot · Decision · Durable</span></h1>
+<div class="meta"><span class="pill">ENG-A-01</span> &nbsp; Vibersyn V0 engineering &nbsp;·&nbsp; the central architectural bet &nbsp;·&nbsp; <code>docs/planning/03-eng.md §0, §1</code></div>
+
+<h2>The problem</h2>
+<p>The product has an extreme latency asymmetry baked into its requirements. An earcon
+acknowledgement must fire in <strong>≤300 ms</strong> and the command round-trip must be
+<strong>&lt;1 s p50</strong> (REQ-10) — while a durable process spawn may legitimately take up to
+<strong>3 s</strong> (REQ-4 AC4.3) and a durable run takes minutes. If the fast ack shared a thread or
+an <code>await</code>-chain with the slow durable path, one slow Smithers spawn or one TTS render would
+blow the 300 ms budget and the room would perceive the system as laggy — the exact failure the PRD
+calls unbearable.</p>
+
+<h2>Decision</h2>
+<div class="box">
+Split the system into <strong>three planes that communicate only through queues</strong>, so a stall in
+a slower plane can never delay a faster one. The plane structure is a <strong>modular, easily mockable</strong>
+integration around Cue; the per-plane <strong>budgets are env-tunable knobs with documented defaults,
+not hard guarantees</strong> — tune them by feel later from real-world UX.
+<table>
+<tr><th>Plane</th><th>Budget (env default)</th><th>Contains</th><th>Never waits on</th></tr>
+<tr><td><strong>Hot</strong></td><td><code>HOT_BUDGET_MS</code> ≈ 300</td><td>audio in/out, ASR finalization, <strong>earcon dispatch</strong> (pre-rendered PCM)</td><td class="bad">LLM · Smithers · TTS · network</td></tr>
+<tr><td><strong>Decision</strong></td><td><code>DECISION_BUDGET_MS</code> ≈ 100</td><td>Cue policies, cheap/fast LLM (temp-0), <code>observe.pass</code></td><td class="bad">Smithers · durable runs</td></tr>
+<tr><td><strong>Durable</strong></td><td>seconds–min</td><td>Smithers runs, spawn, steer, recovery</td><td>—</td></tr>
+</table>
+The earcon is dispatched from the Hot plane the instant ASR finalizes a recognized command,
+<em>before and independent of</em> any decision/Smithers/TTS work.
+<p style="margin:.6rem 0 0"><strong>Env-tunable, externally injected:</strong> all budgets, suggestion
+cadence/gates, thresholds, and word lists are passed in via ENV variables, each documented with its
+default. The 3-plane latency model is fine <em>as documentation</em>, but framed as knobs we tune from
+real UX — don't over-engineer hard numeric promises.</p>
+</div>
+
+<h2>Data flow (the spine)</h2>
+<pre>mic → ASR(isFinal) → CueAdapter → CuePolicy decision
+   ├─ [recognized command] → EarconEngine.emit ≤300 ms   ← HOT, parallel, waits on nothing
+   └─ MappedActionTool action → ActionDispatcher → Smithers (async spawn ≤3 s)
+                                   → streamRunEvents → RunEventNormalizer → CueAdapter
+                                   → OutputPolicy (silent | earcon | ≤15-word TTS) → speaker</pre>
+
+<h2>Alternatives</h2>
+<div class="alt lose"><strong>Single async pipeline (one await-chain).</strong>
+<span class="bad">Rejected:</span> the earcon would be serialized behind whatever the decision/Smithers
+step costs; a 3 s spawn = a 3 s-late ack.</div>
+<div class="alt lose"><strong>Two planes (fast vs slow), earcon inside the decision plane.</strong>
+<span class="bad">Rejected:</span> a slow LLM decision (even at ~100 ms p50, p99 spikes) still gates the
+300 ms ack. The ack must not depend on the decision at all — only on ASR finalization.</div>
+<div class="alt win"><strong>Three planes, queue-decoupled (chosen).</strong>
+<span class="good">Chosen.</span> The Hot plane owns only what must be instant; everything slow is
+downstream and asynchronous. Matches Pipecat's pre-rendered-PCM-bypasses-TTS pattern (eng-oss §1.5).</div>
+
+<h2>Verification</h2>
+<ul>
+<li><strong>Unit:</strong> earcon-latency test (mocked clock) — E1 ≤300 ms after <code>isFinal</code>;
+<span class="bad">RBG:</span> set budget to 100 ms → fails; relax to 300 ms → passes.</li>
+<li><strong>Unit:</strong> async-dispatch test — a mocked slow Smithers spawn does <em>not</em> block
+the next observation from processing on the decision plane.</li>
+<li><strong>E2e:</strong> latency observed over live round-trips against the env-configured budgets
+(earcon &lt; <code>HOT_BUDGET_MS</code>, decision &lt; <code>DECISION_BUDGET_MS</code>); the budgets are
+knobs, so this confirms the structure holds under whatever defaults are set rather than asserting a
+fixed promise.</li>
+</ul>
+
+<div class="warn"><strong>Constraint it imposes:</strong> earcons must be <strong>pre-rendered PCM</strong>
+(no synthesis on the hot path), and the seam (ENG-A-03) must be <strong>async</strong> — spawn returns
+immediately and completes off the hot path. Both are load-bearing. Everything else (the actual budget
+numbers) is an env-tunable knob, not a hard guarantee.</div>
+</body>
+</html>

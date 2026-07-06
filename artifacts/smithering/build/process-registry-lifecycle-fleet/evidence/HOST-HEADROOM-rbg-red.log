@@ -1,0 +1,68 @@
+$ VIBERSYN_RBG_DISABLE_HEADROOM_CHECK=1 bun test src/process/resource-check.test.ts
+bun test v1.3.14 (0d9b296a)
+
+src/process/resource-check.test.ts:
+51 |       minRunSlots: 2,
+52 |       minMemoryMB: 512,
+53 |       headroom: { runSlotsAvailable: 1, memoryAvailableMB: 2_048 },
+54 |     });
+55 | 
+56 |     expect(result).toEqual(
+                        ^
+error: expect(received).toEqual(expected)
+
+- ObjectContaining 
+  {
+-   "event": ObjectContaining {
+-     "correlationId": "corr-headroom",
+-     "event": "spawn.refused",
+-     "meta": ObjectContaining {
+-       "reason": "headroom",
+-     },
++   "headroom": {
++     "memoryAvailableMB": 2048,
++     "runSlotsAvailable": 1,
+    },
+-   "ok": false,
+-   "reason": "headroom",
++   "maxConcurrentProcesses": 2,
++   "ok": true,
+  }
+
+- Expected  - 9
++ Received  + 5
+
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/process-registry-lifecycle-fleet/src/process/resource-check.test.ts:56:20)
+(fail) pre-spawn resource check > host headroom below the configurable floor refuses with reason=headroom [0.27ms]
+73 |       const result = await checkPreSpawnResources({
+74 |         activeProcessCount: 0,
+75 |         correlationId: "corr-env-headroom",
+76 |         headroom: { runSlotsAvailable: 1, memoryAvailableMB: 1_024 },
+77 |       });
+78 |       expect(result).toEqual(expect.objectContaining({ ok: false, reason: "headroom" }));
+                          ^
+error: expect(received).toEqual(expected)
+
+- ObjectContaining 
+  {
+-   "ok": false,
+-   "reason": "headroom",
++   "headroom": {
++     "memoryAvailableMB": 1024,
++     "runSlotsAvailable": 1,
++   },
++   "maxConcurrentProcesses": 2,
++   "ok": true,
+  }
+
+- Expected  - 3
++ Received  + 6
+
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/process-registry-lifecycle-fleet/src/process/resource-check.test.ts:78:22)
+(fail) pre-spawn resource check > host headroom floor can be configured through env [0.13ms]
+
+ 1 pass
+ 2 fail
+ 6 expect() calls
+Ran 3 tests across 1 file. [12.00ms]
+exit=1

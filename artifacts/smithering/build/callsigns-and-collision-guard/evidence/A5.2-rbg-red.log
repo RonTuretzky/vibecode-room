@@ -1,0 +1,24 @@
+bun test v1.3.14 (0d9b296a)
+
+src/routing/callsigns.test.ts:
+58 |   test("coined pool contains no NATO or conversational callsigns", () => {
+59 |     const pool = process.env.VIBERSYN_RBG_USE_NATO_CALLSIGNS === "1"
+60 |       ? [...NATO_CALLSIGNS]
+61 |       : [...DEFAULT_CALLSIGN_POOL];
+62 | 
+63 |     expect(() => assertCallsignPool(pool)).not.toThrow();
+                                                    ^
+error: expect(received).not.toThrow()
+
+Error name: "Error"
+Error message: "NATO callsign is not allowed in the V0 pool: alpha"
+
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/callsigns-and-collision-guard/src/routing/callsigns.test.ts:63:48)
+(fail) callsign collision guard > coined pool contains no NATO or conversational callsigns [0.46ms]
+
+ 6 pass
+ 1 fail
+ 29 expect() calls
+Ran 7 tests across 1 file. [35.00ms]
+
+exit_code=1

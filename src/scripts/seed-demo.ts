@@ -1,29 +1,77 @@
-// Drives the running server through a scripted "room conversation" so you can
-// watch bubbles appear and processes spawn without talking. Run the server
-// first (`bun start`), then in another shell: `bun run seed`.
+import { demoProjectorSnapshot } from "../ui/demo-data";
+import type { ProjectorProcess, ProjectorSnapshot } from "../ui/types";
 
-const BASE = process.env.BASE ?? "http://localhost:7777";
+function listeningLabel(snapshot: ProjectorSnapshot): string {
+  if (!snapshot.listening) {
+    return "off";
+  }
 
-const lines = [
-  "morning — what are we building today",
-  "I keep losing track of all the agent processes we have running, we should build a dashboard to track them",
-  "yeah and what if it visualized each one differently depending on what it is",
-  "honestly we could also make a little tool to turn the whiteboard photos into a spec",
-  "ooh and an art generator that matches the vibe of the room",
-];
-
-async function post(path: string, body: unknown) {
-  const r = await fetch(`${BASE}${path}`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  return r.json();
+  return snapshot.muted ? "on, muted" : "on, unmuted";
 }
 
-for (const text of lines) {
-  console.log("room:", text);
-  await post("/api/transcript", { text, source: "seed" });
-  await new Promise((r) => setTimeout(r, 1800));
+function percent(value: number): string {
+  return `${Math.round(value * 100)}%`;
 }
-console.log("\nseed done — open http://localhost:7777 and watch the bubbles.");
+
+function processLine(process: ProjectorProcess, index: number): string {
+  const selected = process.selected ? "selected" : "background";
+
+  return [
+    `${index + 1}. ${process.callsign} (${process.state}, ${selected})`,
+    `   task: ${process.task}`,
+    `   run: ${process.runId} / ${process.upid}`,
+    `   model: ${process.model}`,
+    `   progress: ${process.progress}% - ${process.progressLabel}`,
+    `   last action: ${process.lastAction}`,
+    `   last output: ${process.lastOutput}`,
+  ].join("\n");
+}
+
+function renderSummary(snapshot: ProjectorSnapshot): string {
+  const suggestion = snapshot.suggestion;
+  const gate = suggestion.gate;
+  const recentTranscript = snapshot.transcript.slice(-3);
+  const recentTrace = snapshot.trace.slice(-3);
+
+  return [
+    "Vibersyn demo seed",
+    "====================",
+    "",
+    `Session: ${snapshot.sessionId}`,
+    `Updated: ${snapshot.updatedAt}`,
+    `Global state: ${snapshot.globalState}`,
+    `Listening: ${listeningLabel(snapshot)}`,
+    `Active cue: ${snapshot.activeCue}`,
+    `Emergency stop: ${snapshot.emergencyStopTriggered ? "triggered" : "clear"}`,
+    "",
+    "Audio",
+    "-----",
+    `Last spoken: ${snapshot.audio.lastSpoken}`,
+    `Earcon: ${snapshot.audio.earcon}`,
+    `Silence ratio: ${percent(snapshot.audio.silenceRatio)}`,
+    "",
+    "Processes",
+    "---------",
+    ...snapshot.processes.map(processLine),
+    "",
+    "Suggestion",
+    "----------",
+    `State: ${suggestion.state}`,
+    `Pitch: ${suggestion.pitch}`,
+    `Confidence: ${percent(suggestion.confidence)}`,
+    `Gate: ${gate.words}/${gate.minWords} words, ${gate.seconds}/${gate.minSeconds} seconds`,
+    "Questions:",
+    ...suggestion.questions.map((question) => `- ${question}`),
+    "",
+    "Recent Transcript",
+    "-----------------",
+    ...recentTranscript.map((line) => `- [${line.time}] ${line.speaker}: ${line.text}`),
+    "",
+    "Trace",
+    "-----",
+    `Events: ${snapshot.trace.length}`,
+    ...recentTrace.map((event) => `- ${event.event} (${event.correlationId})`),
+  ].join("\n");
+}
+
+console.log(renderSummary(demoProjectorSnapshot));

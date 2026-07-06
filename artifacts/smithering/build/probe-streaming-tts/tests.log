@@ -1,0 +1,34 @@
+bun test v1.3.14 (0d9b296a)
+
+poc/p-tts.test.ts:
+162 |     await writeFile(join(reportDir, "report.json"), JSON.stringify(failedReport, null, 2) + "\n");
+163 |     throw new ProbeHarnessError(failedReport.summary, failedReport);
+164 |   }
+165 | 
+166 |   if (status !== "passed") {
+167 |     throw new ProbeHarnessError(summary, report);
+                ^
+ProbeHarnessError: probe assertion failed
+ report: {
+  probeId: "probe-streaming-tts",
+  status: "failed",
+  summary: "probe assertion failed",
+  correlationId: "p-tts-streaming-selection",
+  startedAt: "2026-06-15T23:23:25.871Z",
+  finishedAt: "2026-06-15T23:23:27.683Z",
+  assertions: [
+    [Object ...], [Object ...], [Object ...], [Object ...], [Object ...], [Object ...], [Object ...], [Object ...], [Object ...], [Object ...], [Object ...], [Object ...], [Object ...], [Object ...]
+  ],
+  reportDir: "artifacts/smithering/reports/probe-streaming-tts",
+  secretScan: [Object ...],
+  meta: [Object ...],
+},
+
+      at runProbe (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/probe-streaming-tts/poc/harness.ts:167:11)
+      at async <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/probe-streaming-tts/poc/p-tts.test.ts:197:28)
+(fail) P-TTS streaming provider selection probe > configured 2026 TTS candidates stream first audio byte within budget and satisfy Vibersyn output contract [1817.24ms]
+
+ 0 pass
+ 1 fail
+ 30 expect() calls
+Ran 1 test across 1 file. [1.83s]

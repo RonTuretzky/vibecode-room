@@ -1,0 +1,50 @@
+bun test v1.3.14 (0d9b296a)
+
+src/obs/trace.test.ts:
+ 8 |         throw new core.$ZodAsyncError();
+ 9 |     }
+10 |     if (result.issues.length) {
+11 |         const e = new (_params?.Err ?? _Err)(result.issues.map((iss) => util.finalizeIssue(iss, ctx, core.config())));
+12 |         util.captureStackTrace(e, _params?.callee);
+13 |         throw e;
+                   ^
+ZodError: [
+  {
+    "code": "custom",
+    "path": [
+      "correlationId"
+    ],
+    "message": "Loop events must carry correlationId for causal-chain joins."
+  }
+]
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/observability-trace-and-board/node_modules/zod/v4/core/parse.js:13:15)
+      at record (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/observability-trace-and-board/src/obs/trace.ts:113:34)
+      at map (1:11)
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/observability-trace-and-board/src/obs/trace.test.ts:20:44)
+(fail) ENG-T-03 TraceProcessor > trace-schema records required ids, verb-noun event names, and measured latency on every record [2.11ms]
+ 8 |         throw new core.$ZodAsyncError();
+ 9 |     }
+10 |     if (result.issues.length) {
+11 |         const e = new (_params?.Err ?? _Err)(result.issues.map((iss) => util.finalizeIssue(iss, ctx, core.config())));
+12 |         util.captureStackTrace(e, _params?.callee);
+13 |         throw e;
+                   ^
+ZodError: [
+  {
+    "code": "custom",
+    "path": [
+      "correlationId"
+    ],
+    "message": "Loop events must carry correlationId for causal-chain joins."
+  }
+]
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/observability-trace-and-board/node_modules/zod/v4/core/parse.js:13:15)
+      at record (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/observability-trace-and-board/src/obs/trace.ts:113:34)
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/observability-trace-and-board/src/obs/trace.test.ts:101:17)
+(fail) ENG-T-03 TraceProcessor > causal-chain reconstruction rebuilds observation to decision to action to outcome from traces alone [0.19ms]
+
+ 8 pass
+ 2 fail
+ 34 expect() calls
+Ran 10 tests across 1 file. [57.00ms]
+EXIT_CODE:1

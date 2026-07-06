@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>Gesture Wall</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #18181c; overflow: hidden;
+               font-family: system-ui, -apple-system, sans-serif; color: #ebebeb; }
+  #wall { display: block; width: 100vw; height: 100vh; cursor: crosshair; }
+  #cam { display: none; }
+
+  /* Floating control panel — auto-hides; hover the top edge to reveal. */
+  #panel {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 10;
+    display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center;
+    padding: 10px 14px; background: rgba(20,20,26,.92);
+    border-bottom: 1px solid #34343c; backdrop-filter: blur(6px);
+    transform: translateY(-100%); transition: transform .18s ease;
+    font-size: 13px;
+  }
+  #panel:hover, #panel:focus-within, #panel.pinned { transform: translateY(0); }
+  /* A thin always-present hover strip so the panel can be summoned. */
+  #hotzone { position: fixed; top: 0; left: 0; right: 0; height: 8px; z-index: 9; }
+  #panel:hover ~ #hotzone { pointer-events: none; }
+
+  button { background: #2c2c34; color: #ebebeb; border: 1px solid #44444e;
+           border-radius: 6px; padding: 6px 11px; font-size: 13px; cursor: pointer; }
+  button:hover { background: #3a3a44; }
+  button.primary { background: #2563aa; border-color: #2f74c4; }
+  button.primary:hover { background: #2f74c4; }
+  label.ctl { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+  input[type=range] { width: 92px; vertical-align: middle; }
+  .sep { width: 1px; height: 22px; background: #3a3a44; }
+  .val { display: inline-block; min-width: 30px; color: #9fd; font-variant-numeric: tabular-nums; }
+  #status { position: fixed; bottom: 10px; left: 14px; z-index: 8;
+            font-size: 13px; color: #c9c9d2; background: rgba(20,20,26,.6);
+            padding: 4px 9px; border-radius: 6px; pointer-events: none; }
+  #preview { position: fixed; right: 10px; bottom: 10px; z-index: 7;
+             width: 200px; height: 150px; border: 1px solid #44444e;
+             border-radius: 6px; display: none; }
+</style>
+</head>
+<body>
+  <canvas id="wall"></canvas>
+  <video id="cam" playsinline muted></video>
+  <canvas id="preview" width="320" height="240"></canvas>
+
+  <div id="panel" class="pinned">
+    <button id="startCam" class="primary">Start camera</button>
+    <button id="useMouse">Mouse test</button>
+    <div class="sep"></div>
+    <button id="calibrate">Calibrate (c)</button>
+    <label class="ctl"><input id="autoCalib" type="checkbox"> Auto</label>
+    <label class="ctl"><input id="autoSecs" type="range" min="3" max="15" step="1" value="10"><span class="val" id="autoSecsVal">10</span>s</label>
+    <button id="resetCalib">Reset calib</button>
+    <button id="reset">Reset tiles (r)</button>
+    <button id="fullscreen" class="primary">Fullscreen (f)</button>
+    <div class="sep"></div>
+    <label class="ctl">Rows <input id="rows" type="range" min="1" max="4" step="1" value="2"><span class="val" id="rowsVal">2</span></label>
+    <label class="ctl">Cols <input id="cols" type="range" min="1" max="5" step="1" value="3"><span class="val" id="colsVal">3</span></label>
+    <label class="ctl">Dwell <input id="dwell" type="range" min="0.3" max="2" step="0.1" value="0.8"><span class="val" id="dwellVal">0.8</span>s</label>
+    <div class="sep"></div>
+    <label class="ctl">Smooth <input id="minCutoff" type="range" min="0.2" max="3" step="0.1" value="1.0"><span class="val" id="minCutoffVal">1.0</span></label>
+    <label class="ctl">Beta <input id="beta" type="range" min="0" max="0.05" step="0.001" value="0.007"><span class="val" id="betaVal">0.007</span></label>
+    <div class="sep"></div>
+    <label class="ctl"><input id="mirror" type="checkbox" checked> Mirror</label>
+    <label class="ctl"><input id="filter" type="checkbox" checked> Filter</label>
+    <label class="ctl"><input id="previewToggle" type="checkbox" checked> Preview</label>
+  </div>
+  <div id="hotzone"></div>
+  <div id="status">Click “Start camera” (allow access) — or “Mouse test” to try the pipeline now.</div>
+
+  <script type="module" src="./gesturewall.js"></script>
+</body>
+</html>

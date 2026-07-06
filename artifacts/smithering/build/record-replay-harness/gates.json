@@ -1,0 +1,20 @@
+[
+  {
+    "criterionId": "ENG-T-02-determinism",
+    "method": "unit_test",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/record-replay-harness/evidence/ENG-T-02-determinism-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/record-replay-harness/evidence/ENG-T-02-determinism-green.log"
+  },
+  {
+    "criterionId": "ENG-T-02-invariants",
+    "method": "unit_test",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/record-replay-harness/evidence/ENG-T-02-invariants-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/record-replay-harness/evidence/ENG-T-02-invariants-green.log"
+  }
+]

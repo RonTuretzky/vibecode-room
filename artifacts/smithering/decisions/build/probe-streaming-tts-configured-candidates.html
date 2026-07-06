@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Build Decision — P-TTS configured candidate handling</title>
+<style>
+  :root { --ink:#e8edf2; --mut:#9aa8b5; --line:#283544; --good:#39d98a; --bad:#ff6b6b; --accent:#7cc7ff; --bg:#0b1117; --card:#111a24; }
+  * { box-sizing:border-box; }
+  body { font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; color:var(--ink); max-width:920px; margin:2.2rem auto; padding:0 1.2rem; background:var(--bg); }
+  h1 { font-size:1.55rem; margin:0 0 .2rem; }
+  h2 { font-size:1.12rem; margin:1.8rem 0 .5rem; border-bottom:2px solid var(--line); padding-bottom:.25rem; }
+  .meta { color:var(--mut); font-size:.86rem; margin-bottom:1.2rem; }
+  .pill { display:inline-block; padding:.08rem .5rem; border-radius:999px; font-size:.75rem; font-weight:600; background:#132f47; color:var(--accent); }
+  code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; color:#d8f3ff; }
+  pre { background:#05080c; color:#e6edf3; padding:.9rem 1.1rem; border-radius:8px; overflow:auto; font-size:.82rem; line-height:1.45; border:1px solid var(--line); }
+  .box { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:.9rem 1.1rem; margin:.7rem 0; }
+  .alt { border-left:4px solid var(--line); padding-left:.9rem; margin:.6rem 0; }
+  .alt.win { border-left-color:var(--good); } .alt.lose { border-left-color:var(--bad); }
+  .good { color:var(--good); font-weight:600; } .bad { color:var(--bad); font-weight:600; }
+</style>
+</head>
+<body>
+<h1>P-TTS configured candidate handling</h1>
+<div class="meta"><span class="pill">BUILD</span> &nbsp; probe-streaming-tts &nbsp;·&nbsp; 2026-06-15</div>
+
+<h2>Decision</h2>
+<div class="box">
+Benchmark every 2026 TTS candidate whose credentials are configured in the host environment, record
+unconfigured candidates by provider name and env var name only, and leave the probe verdict red when
+no measured provider meets the 200 ms first-audio-byte budget or when the candidate benchmark is
+incomplete. Record a fastest measured provider separately from a selected provider. Do not synthesize
+placeholder wins or placeholder pre-cache clips for unavailable vendors.
+</div>
+
+<h2>Facts From The Probe</h2>
+<pre>Configured provider:
+OpenAI /v1/audio/speech, model gpt-4o-mini-tts, voice coral
+
+Final 200 ms run measured:
+first audio byte = 490 ms
+budget = 200 ms
+selected provider = none
+
+Unconfigured:
+ElevenLabs Flash family: ELEVENLABS_API_KEY or XI_API_KEY
+Cartesia Sonic: CARTESIA_API_KEY
+PlayHT 3.0 Turbo: PLAYHT_API_KEY and PLAYHT_USER_ID</pre>
+
+<h2>Alternatives</h2>
+<div class="alt lose"><strong>Mark the probe green with OpenAI as the winner despite missing the budget.</strong>
+<span class="bad">Rejected.</span> This would unblock dependent REQ-10 work on an unproven round-trip budget.</div>
+<div class="alt lose"><strong>Fail immediately when any vendor credential is absent.</strong>
+<span class="bad">Rejected.</span> The probe can still gather useful real evidence from configured candidates while clearly recording the missing families.</div>
+<div class="alt win"><strong>Measure configured providers and keep the verdict red if none pass.</strong>
+<span class="good">Chosen.</span> This preserves probe precedence: dependents stay unscheduled until a real provider passes.</div>
+<div class="alt win"><strong>Fail closed on selected-provider pre-cache when no provider is selected.</strong>
+<span class="good">Chosen.</span> The artifact records the blocker instead of treating synthetic bytes as evidence for real static clips.</div>
+
+<h2>Verification</h2>
+<pre>VIBERSYN_TTS_FIRST_AUDIO_BUDGET_MS=20 bun test poc/p-tts.test.ts
+bun test poc/p-tts.test.ts</pre>
+<p>The 20 ms red run fails on the latency assertion, proving the budget check bites. The restored 200 ms
+run remains red because the fastest configured provider still exceeds the budget and the three low-latency
+candidate families are not configured.</p>
+</body>
+</html>

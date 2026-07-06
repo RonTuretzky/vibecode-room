@@ -1,0 +1,97 @@
+SEC-1 red-before-green composite red run
+case=noncanonical model credential env guard (expected failure)
+bun test v1.3.14 (0d9b296a)
+
+src/providers/credentials.test.ts:
+46 |       ["UNRELATED_VALUE", fakeProviderPrefixedSlackToken()],
+47 |     ] as const;
+48 |
+49 |     for (const [variable, value] of cases) {
+50 |       if (process.env.VIBERSYN_RBG_ALLOW_NONCANONICAL_MODEL_KEYS === "1") {
+51 |         expect(() => createModelCredentialSource({ provider: "openai-codex", env: { [variable]: value } })).not.toThrow();
+                                                                                                                     ^
+error: expect(received).not.toThrow()
+
+Error name: "Error"
+Error message: "Raw provider key variable MODEL_API_KEY rejected. Model access must use host subscriptions."
+
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/subscription-credentials-redaction/src/providers/credentials.test.ts:51:113)
+(fail) SEC-1 credential guard and trace redaction > DecisionLLM model access rejects raw provider keys under non-canonical env names [0.30ms]
+
+ 9 pass
+ 1 fail
+ 39 expect() calls
+Ran 10 tests across 1 file. [31.00ms]
+red_exit_noncanonical=1
+case=unknown multi-segment provider token redaction (expected failure)
+bun test v1.3.14 (0d9b296a)
+
+src/providers/credentials.test.ts:
+311 |       scanSecretLikeText(JSON.stringify({ opaque: fakeProviderPrefixedSlackToken() })).some(
+312 |         (finding) => finding.pattern === "unknown-high-entropy-token",
+313 |       ),
+314 |     ).toBe(true);
+315 |     if (process.env.VIBERSYN_RBG_ALLOW_MULTI_SEGMENT_SECRET === "1") {
+316 |       expect(scanSecretLikeText(JSON.stringify({ opaque: fakeProviderPrefixedSlackToken() }))).toEqual([]);
+                                                                                                     ^
+error: expect(received).toEqual(expected)
+
+- []
++ [
++   {
++     "count": 1,
++     "pattern": "unknown-high-entropy-token",
++   },
++ ]
+
+- Expected  - 1
++ Received  + 6
+
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/subscription-credentials-redaction/src/providers/credentials.test.ts:316:96)
+(fail) SEC-1 credential guard and trace redaction > unknown-token fallback redacts embedded, separator-bearing, common alphabet, and alphabetic-only opaque tokens before scans see them [0.53ms]
+
+ 9 pass
+ 1 fail
+ 42 expect() calls
+Ran 10 tests across 1 file. [45.00ms]
+red_exit_multisegment=1
+case=trace identifier redaction (expected failure)
+bun test v1.3.14 (0d9b296a)
+
+src/providers/credentials.test.ts:
+172 |     });
+173 |
+174 |     const jsonl = processor.toJsonl();
+175 |     if (process.env.VIBERSYN_RBG_UNREDACTED_TRACE_IDS === "1") {
+176 |       if (!rawValues.every((rawValue) => jsonl.includes(rawValue))) {
+177 |         throw new Error("synthetic unredacted trace identifier leak check failed as expected");
+                                                                                                   ^
+error: synthetic unredacted trace identifier leak check failed as expected
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/subscription-credentials-redaction/src/providers/credentials.test.ts:177:94)
+(fail) SEC-1 credential guard and trace redaction > LogEvent identifiers redact credential-shaped values before JSONL emission [0.33ms]
+
+ 9 pass
+ 1 fail
+ 40 expect() calls
+Ran 10 tests across 1 file. [30.00ms]
+red_exit_trace_ids=1
+case=whole-session planted secret scan (expected failure)
+bun test v1.3.14 (0d9b296a)
+
+test/e2e/secret-scan.e2e.ts.test.ts:
+88 |     }
+89 |
+90 |     const scans = await Promise.all([SESSION_DIR, TRACE_DIR, PROBE_REPORT_ROOT].map((root) => scanSecretLikeFiles(root)));
+91 |     const findingCount = scans.reduce((count, scan) => count + scan.findings.length, 0);
+92 |     if (findingCount > 0) {
+93 |       throw new Error(`whole-session secret scan found key-shaped strings (${findingCount} findings)`);
+                     ^
+error: whole-session secret scan found key-shaped strings (3 findings)
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/subscription-credentials-redaction/test/e2e/secret-scan.e2e.ts:93:17)
+(fail) SEC-1 whole-session secret scan > full trace/log/report tree has zero key-shaped strings after a session run [11.14ms]
+
+ 0 pass
+ 1 fail
+ 1 expect() calls
+Ran 1 test across 1 file. [32.00ms]
+red_exit_e2e=1

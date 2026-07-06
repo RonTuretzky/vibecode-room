@@ -1,0 +1,2 @@
+{"level":"info","event":"command.callsign","sessionId":"callsign-build","correlationId":"corr-trace-1","upid":"upid-trace-1","latencyMs":10,"meta":{"callsign":"virellium","metaphone":["FRLM",""],"phonemes":"fArAlAm","poolIndex":0}}
+{"level":"info","event":"command.callsign","sessionId":"callsign-build","correlationId":"corr-trace-2","upid":"upid-trace-2","latencyMs":10,"meta":{"callsign":"quoravex","metaphone":["KRFKS",""],"phonemes":"kArAfAks","poolIndex":1,"distinctFrom":"virellium"}}

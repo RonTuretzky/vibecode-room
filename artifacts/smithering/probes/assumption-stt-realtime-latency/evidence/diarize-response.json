@@ -1,0 +1,16 @@
+{
+  "latencyMs": 2505,
+  "response": {
+    "text": "We should add a feature flag for the new authentication flow. Actually, I think we should ship it directly without the flag.",
+    "usage": {
+      "type": "tokens",
+      "total_tokens": 290,
+      "input_tokens": 64,
+      "input_token_details": {
+        "text_tokens": 0,
+        "audio_tokens": 64
+      },
+      "output_tokens": 226
+    }
+  }
+}

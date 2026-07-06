@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Decision ORCH-A-03 — Run ALL tests in both pre-submit and post-submit (no tiers)</title>
+<style>
+  :root { --ink:#1a1a1a; --mut:#666; --line:#e2e2e2; --good:#0a7d33; --bad:#b00020; --accent:#0b5cad; --bg:#fafafa; }
+  * { box-sizing:border-box; }
+  body { font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; color:var(--ink); max-width:920px; margin:2.2rem auto; padding:0 1.2rem; background:var(--bg); }
+  h1 { font-size:1.55rem; margin:0 0 .2rem; }
+  h2 { font-size:1.12rem; margin:1.8rem 0 .5rem; border-bottom:2px solid var(--line); padding-bottom:.25rem; }
+  .meta { color:var(--mut); font-size:.86rem; margin-bottom:1.2rem; }
+  .pill { display:inline-block; padding:.08rem .5rem; border-radius:999px; font-size:.75rem; font-weight:600; background:#e7f1fb; color:var(--accent); }
+  table { border-collapse:collapse; width:100%; margin:.6rem 0; font-size:.92rem; }
+  th,td { border:1px solid var(--line); padding:.45rem .6rem; text-align:left; vertical-align:top; }
+  th { background:#f0f0f0; }
+  code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  pre { background:#0f1115; color:#e6e6e6; padding:.9rem 1.1rem; border-radius:8px; overflow:auto; font-size:.82rem; line-height:1.45; }
+  .good { color:var(--good); font-weight:600; } .bad { color:var(--bad); font-weight:600; }
+  .box { background:#fff; border:1px solid var(--line); border-radius:8px; padding:.9rem 1.1rem; margin:.7rem 0; }
+  .alt { border-left:4px solid var(--line); padding-left:.9rem; margin:.6rem 0; }
+  .alt.win { border-left-color:var(--good); } .alt.lose { border-left-color:var(--bad); }
+  .warn { background:#fff7e6; border:1px solid #ffd591; border-radius:8px; padding:.7rem 1rem; }
+</style>
+</head>
+<body>
+<h1>Tests: <span style="color:#0b5cad">run ALL of them in both pre-submit and post-submit — don't design tiers</span></h1>
+<div class="meta"><span class="pill">ORCH-A-03</span> &nbsp; Vibersyn V0 implementation orchestration &nbsp;·&nbsp; <code>docs/planning/06-orchestration.md §3</code></div>
+
+<div class="warn" style="margin-bottom:1rem">
+<strong>Simplified.</strong> The prior decision designed a three-tier split — a deterministic hermetic
+<em>subset</em> gates the merge (pre-merge), with everything slow/real-world deferred to postsubmit, plus
+a pre-build probe tier. That tiering is dropped. <strong>Run ALL tests in BOTH pre-submit and
+post-submit.</strong> Don't design tiers.
+</div>
+
+<h2>The decision</h2>
+<div class="box">
+<strong>Run the entire test suite both pre-submit (before a land) and post-submit (on <code>main</code>
+after a land).</strong> No pre-merge "deterministic subset," no postsubmit-only bucket — the same full
+suite runs in both places. <strong>Assume tests are fast.</strong> We don't plan around slowness: don't
+build tier-partitioning machinery. (The probe gate — validate-before-build — still exists as its own
+thing; see ENG-A-06. This decision is about the unit/integration/e2e <em>test</em> suite, not the
+dependency probes.)
+</div>
+
+<h2>Why simplified</h2>
+<p>Tiering existed to keep lands fast by gating on only the cheap deterministic checks and pushing slow
+real-world ones to postsubmit. That is exactly the kind of premature optimization the ship-fast posture
+avoids: it adds a partition to design, test, and keep consistent. Assume the suite is fast enough to run
+in full on every land and again on <code>main</code>. If a specific test later proves genuinely slow,
+whoever is monitoring can move it out — but we don't <em>design</em> for that up front.</p>
+
+<h2>What runs where</h2>
+<table>
+<tr><th>When</th><th>What runs</th></tr>
+<tr><td><strong>Pre-submit</strong> (before a land, on the rebased tip)</td><td><strong>ALL tests</strong> — unit, integration, schema, <code>tsc --noEmit</code>, smoke, lint, e2e — the full suite.</td></tr>
+<tr><td><strong>Post-submit</strong> (on <code>main</code> after each land)</td><td><strong>ALL tests</strong> — the same full suite again, against the integrated tip.</td></tr>
+</table>
+<p>Every test carries its recorded red-before-green. Nothing is permanently skipped because nothing is
+partitioned out in the first place.</p>
+
+<h2>Alternatives</h2>
+<div class="alt lose"><strong>Three-tier split: deterministic subset pre-merge, full suite postsubmit, probes pre-build (prior plan).</strong>
+<span class="bad">Dropped.</span> Premature optimization: a partition to design and keep consistent, built
+on the assumption that tests are too slow to run in full.</div>
+<div class="alt lose"><strong>Pre-merge subset with no postsubmit backstop.</strong>
+<span class="bad">Rejected.</span> Would silently skip checks forever — but moot here, since we run
+everything in both places.</div>
+<div class="alt win"><strong>Run the full suite in both pre-submit and post-submit; assume tests are fast (chosen).</strong>
+<span class="good">Chosen.</span> No tier machinery; maximum confidence on every land and every integration.</div>
+
+<h2>Verification</h2>
+<ul>
+<li><strong>Full-suite-both-places test:</strong> assert the pre-submit run and the post-submit run
+invoke the <em>same</em> full set of tests. <span class="bad">RBG:</span> drop a test from either run →
+parity assertion fails.</li>
+<li><strong>No-tiering test:</strong> assert there is no pre-merge "subset" partition that excludes any
+test. <span class="bad">RBG:</span> introduce a subset that skips a test pre-submit → no-tiering
+assertion fails.</li>
+<li><strong>Probe-precedence test:</strong> a ticket whose dependency's blocking probe is unrun/failed
+cannot start (the probe gate is independent of the test suite). <span class="bad">RBG:</span> mark
+<code>P-CUE</code> failed → assert <code>cue-adapter-and-policies</code> is not scheduled.</li>
+</ul>
+
+<div class="warn"><strong>Note:</strong> if a test ever turns out to be genuinely slow, whoever monitors
+the run can move it out of the per-land path — but that is a reactive fix by the operator, not a tier we
+design and build in advance.</div>
+</body>
+</html>

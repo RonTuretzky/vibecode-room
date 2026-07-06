@@ -1,0 +1,53 @@
+=== Final loop state for both runs ===
+--- _smithers_attempts (RUN A) ---
+probe-voice-steer-a-1781412619451|steer|0|1|finished|2026-06-14 04:50:21|2026-06-14 04:53:10
+probe-voice-steer-a-1781412619451|step|0|1|finished|2026-06-14 04:53:10|2026-06-14 04:53:10
+probe-voice-steer-a-1781412619451|steer|1|1|waiting-event|2026-06-14 04:53:10|
+--- _smithers_signals (all probe runs) ---
+inspect-1781386332576|0|steer||{"text":"probe test signal","stop":false}|2026-06-14 04:48:13
+inspect-1781386332576|1|steer||{"text":"probe-signal-test","stop":false}|2026-06-14 04:50:20
+probe-voice-steer-a-1781412619451|0|steer||{"text":"increase output verbosity","stop":false}|2026-06-14 04:50:25
+probe-voice-steer-b-1781412619451|0|steer||{"text":"focus on error handling","stop":false}|2026-06-14 04:50:27
+probe-voice-steer-a-1781412619451|1|steer||{"text":"probe complete","stop":true}|2026-06-14 04:50:37
+probe-voice-steer-b-1781412619451|1|steer||{"text":"probe complete","stop":true}|2026-06-14 04:50:37
+probe-voice-steer-a-1781412619451|2|steer|steer:0|{"text":"advance with correct correlation","stop":false}|2026-06-14 04:52:08
+probe-voice-steer-a-1781412619451|3|steer||{"text":"empty correlation test","stop":false}|2026-06-14 04:52:38
+probe-voice-steer-a-1781412619451|4|steer||{"text":"null correlation test","stop":true}|2026-06-14 04:52:40
+probe-voice-steer-b-1781412619451|2|steer||{"text":"stop","stop":true}|2026-06-14 04:53:41
+probe-voice-steer-b-1781412619451|3|steer||{"text":"stop","stop":true}|2026-06-14 04:53:42
+--- Pre-existing vibersyn-process waiting-event runs ---
+smoke-1781383120641|vibersyn-process|waiting-event|2026-06-13 20:38:40
+smoke-1781383569576|vibersyn-process|waiting-event|2026-06-13 20:46:09
+smoke-1781383645231|vibersyn-process|waiting-event|2026-06-13 20:47:25
+smoke-1781383690251|vibersyn-process|waiting-event|2026-06-13 20:48:10
+smoke-1781383734030|vibersyn-process|waiting-event|2026-06-13 20:48:54
+smoke-1781383746553|vibersyn-process|waiting-event|2026-06-13 20:49:06
+smoke-1781383772470|vibersyn-process|waiting-event|2026-06-13 20:49:32
+smoke-1781383918702|vibersyn-process|waiting-event|2026-06-13 20:51:58
+smoke-1781384076460|vibersyn-process|waiting-event|2026-06-13 20:54:36
+smoke-1781384104771|vibersyn-process|waiting-event|2026-06-13 20:55:04
+smoke-1781384137384|vibersyn-process|waiting-event|2026-06-13 20:55:37
+smoke-1781384185970|vibersyn-process|waiting-event|2026-06-13 20:56:26
+smoke-1781384330735|vibersyn-process|waiting-event|2026-06-13 20:58:50
+smoke-1781384488077|vibersyn-process|waiting-event|2026-06-13 21:01:28
+smoke-1781384648138|vibersyn-process|waiting-event|2026-06-13 21:04:08
+debug-1781384658861|vibersyn-process|waiting-event|2026-06-13 21:04:18
+debug-1781384694195|vibersyn-process|waiting-event|2026-06-13 21:04:54
+debug-1781384743612|vibersyn-process|waiting-event|2026-06-13 21:05:43
+smoke-1781384807280|vibersyn-process|waiting-event|2026-06-13 21:06:47
+smoke-1781384817254|vibersyn-process|waiting-event|2026-06-13 21:06:57
+smoke-1781384955023|vibersyn-process|waiting-event|2026-06-13 21:09:15
+smoke-1781385090535|vibersyn-process|waiting-event|2026-06-13 21:11:30
+smoke-1781385459517|vibersyn-process|waiting-event|2026-06-13 21:17:39
+smoke-1781386296593|vibersyn-process|waiting-event|2026-06-13 21:31:36
+inspect-1781386303761|vibersyn-process|waiting-event|2026-06-13 21:31:43
+inspect-1781386332576|vibersyn-process|waiting-event|2026-06-13 21:32:12
+smoke-1781386896559|vibersyn-process|waiting-event|2026-06-13 21:41:36
+inspect-1781386904136|vibersyn-process|waiting-event|2026-06-13 21:41:44
+inspect-1781386920610|vibersyn-process|waiting-event|2026-06-13 21:42:00
+--- smoke-1781396596009 (3 steer iterations, finished) ---
+smoke-1781396596009|steer|0|1|finished
+smoke-1781396596009|step|0|1|finished
+smoke-1781396596009|steer|1|1|finished
+smoke-1781396596009|step|1|1|finished
+smoke-1781396596009|steer|2|1|finished

@@ -1,0 +1,395 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Vibersyn - Build Progress</title>
+<style>
+:root{--bg:#09090b;--panel:#151518;--panel2:#1d1d21;--line:#303035;--text:#f2f2f4;--muted:#a1a1aa;--landed:#40d982;--building:#f5b84b;--todo:#858593;--accent:#8b7cf6;--rose:#fb7185;--cyan:#38bdf8;color-scheme:dark}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:radial-gradient(circle at 20% 0%,rgba(139,124,246,.18),transparent 30%),var(--bg);color:var(--text);font:15px/1.45 -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif}
+button{font:inherit}
+.app{min-height:100%;display:grid;grid-template-rows:auto 1fr auto}
+.top{display:flex;align-items:center;gap:12px;padding:14px 18px;border-bottom:1px solid var(--line);background:rgba(9,9,11,.86);backdrop-filter:blur(12px)}
+.brand{font-weight:700}.stamp{color:var(--muted);font-size:12px}.spacer{flex:1}
+.chip{border:1px solid var(--line);background:var(--panel);border-radius:6px;padding:4px 8px;font-size:12px;color:var(--muted)}
+.chip strong{color:var(--text)}
+.stage{min-height:0;display:grid;place-items:center;padding:22px}
+.slide{display:none;width:min(1120px,100%);min-height:min(650px,calc(100vh - 142px));background:linear-gradient(180deg,var(--panel),#101012);border:1px solid var(--line);border-radius:8px;padding:34px;box-shadow:0 24px 70px rgba(0,0,0,.36)}
+.slide.is-active{display:block}
+.kicker{color:var(--cyan);font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px}
+h1{font-size:34px;line-height:1.08;margin:0 0 12px;letter-spacing:0}
+h2{font-size:16px;margin:0 0 10px}
+.lede{color:var(--muted);max-width:780px;margin:0 0 22px}
+code{background:#0c0c0f;border:1px solid var(--line);border-radius:5px;padding:1px 5px;color:#d8d8df}
+.metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:26px 0 18px}
+.metrics div{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:18px}
+.metrics span{display:block;font-size:42px;font-weight:800;line-height:1}.metrics small{display:block;color:var(--muted);margin-top:6px}
+.meter{height:12px;background:#2a2a31;border-radius:999px;overflow:hidden}.meter i{display:block;height:100%;background:linear-gradient(90deg,var(--accent),var(--landed))}
+.building-now{margin-top:24px}.building-now ul{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:0;padding:0;list-style:none}
+.building-now li{border:1px solid rgba(245,184,75,.35);background:rgba(245,184,75,.09);border-radius:8px;padding:10px 12px}
+.building-now strong{display:block;color:var(--building);font-size:13px}.building-now span{display:block;color:var(--muted);font-size:12px;margin-top:2px}
+.area-stats{display:flex;gap:10px;flex-wrap:wrap;margin:0 0 18px}.area-stats span{border:1px solid var(--line);border-radius:999px;padding:5px 10px;color:var(--muted);font-size:12px}.area-stats .landed{color:var(--landed)}.area-stats .building{color:var(--building)}
+.tickets{list-style:none;margin:0;padding:0;display:grid;gap:8px;max-height:470px;overflow:auto;padding-right:4px}
+.ticket{display:grid;grid-template-columns:112px 1fr auto;gap:2px 12px;align-items:start;border:1px solid var(--line);background:rgba(255,255,255,.025);border-radius:8px;padding:10px 12px}
+.ticket .status{font-size:11px;font-weight:800}.ticket.landed .status{color:var(--landed)}.ticket.building .status{color:var(--building)}.ticket.not-started .status{color:var(--todo)}
+.ticket .title{font-weight:650}.ticket .id{color:var(--muted);font-size:12px}.ticket .note{grid-column:2/4;color:var(--muted);font-size:12px}
+.capture figure{margin:18px 0 0}.capture img{display:block;width:100%;max-height:520px;object-fit:contain;border:1px solid var(--line);border-radius:8px;background:#050506}
+.placeholder-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin:26px 0}
+.placeholder-grid div{height:210px;border:1px dashed #4b4b55;border-radius:8px;background:linear-gradient(135deg,#17171b,#111114);display:grid;place-items:center;color:var(--muted);font-weight:700}
+.controls{display:flex;align-items:center;gap:10px;padding:12px 18px;border-top:1px solid var(--line);background:rgba(9,9,11,.88)}
+.nav{height:34px;border:1px solid var(--line);background:var(--panel);color:var(--text);border-radius:6px;padding:0 12px;cursor:pointer}
+.nav:hover{border-color:var(--accent)}
+.dots{display:flex;gap:6px;align-items:center;overflow:auto;max-width:48vw;padding:3px 0}.dot{width:9px;height:9px;border:0;border-radius:999px;background:#4b4b55;cursor:pointer;flex:0 0 auto}.dot.is-active{background:var(--accent);width:24px}
+.counter{color:var(--muted);font-size:12px;margin-left:auto}
+@media (max-width:760px){.top{flex-wrap:wrap}.stage{padding:12px}.slide{min-height:calc(100vh - 176px);padding:22px}h1{font-size:27px}.metrics,.building-now ul,.placeholder-grid{grid-template-columns:1fr}.ticket{grid-template-columns:1fr}.ticket .note{grid-column:1}.dots{max-width:34vw}}
+</style>
+</head>
+<body>
+<div class="app" data-testid="progress-slideshow" data-version="1781637868550">
+  <header class="top">
+    <div class="brand">Vibersyn Progress</div>
+    <div class="stamp">Generated 2026-06-16 19:24:28 UTC</div>
+    <div class="spacer"></div>
+    <div class="chip"><strong>30</strong> landed</div>
+    <div class="chip"><strong>0</strong> building</div>
+    <div class="chip"><strong>1</strong> not started</div>
+  </header>
+  <main class="stage">
+    <section class="slide is-active" data-slide="summary" data-landed="30" data-building="0" data-todo="1">
+  <div class="kicker">Live build run impl-build-17</div>
+  <h1>Vibersyn Build Progress</h1>
+  <p class="lede">Current state from <code>git log 8e67319..smithering/integration</code> and live Smithers worktrees.</p>
+  <div class="metrics">
+    <div><span>30</span><small>Landed</small></div>
+    <div><span>0</span><small>Building</small></div>
+    <div><span>1</span><small>Not started</small></div>
+    <div><span>97%</span><small>Integrated</small></div>
+  </div>
+  <div class="meter"><i style="width:97%"></i></div>
+  <div class="building-now">
+    <h2>Building now</h2>
+    <ul><li><strong>None detected</strong><span>No active matching worktree is present.</span></li></ul>
+  </div>
+</section>
+<section class="slide" data-slide="Foundation &amp; spine">
+    <div class="kicker">Feature area</div>
+    <h1>Foundation &amp; spine</h1>
+    <div class="area-stats">
+      <span class="landed">5 landed</span>
+      <span class="building">0 building</span>
+      <span>0 not started</span>
+    </div>
+    <ul class="tickets"><li class="ticket landed">
+        <span class="status">LANDED</span>
+        <span class="title">The canonical voice loop (spine) + no-screen harness + degradation test — REQ-5/6/7/8</span>
+        <span class="id">canonical-spine-and-no-screen-harness</span>
+        <span class="note">Per eng §10 / design §6 / REQ-5 integrate §3–§10 into the canonical spine: wake/magic-word → spoken intent → agent action → spoken confirmation, under ONE `correlationId`</span>
+      </li><li class="ticket landed">
+        <span class="status">LANDED</span>
+        <span class="title">Provider interfaces + record-replay/noop doubles (src/providers/) — ENG-T-04</span>
+        <span class="id">provider-interface-doubles</span>
+        <span class="note">Per eng §2 / ENG-T-04, define the typed provider boundary in `src/providers/`: `ASRProvider` (`stream(audio): AsyncIterable&lt;TranscriptObservation&gt;`), `TTSProvider` (`spea</span>
+      </li><li class="ticket landed">
+        <span class="status">LANDED</span>
+        <span class="title">Record-replay harness (src/replay/) — ENG-T-02, the testable seam over ASR+LLM</span>
+        <span class="id">record-replay-harness</span>
+        <span class="note">Build the record-replay harness per eng §15</span>
+      </li><li class="ticket landed">
+        <span class="status">LANDED</span>
+        <span class="title">Shared data contract (src/types.ts) — ENG-T-01, defined first</span>
+        <span class="id">shared-types-contract</span>
+        <span class="note">Promote the stub from walking-skeleton-smoke into the full ENG-T-01 contract in `src/types</span>
+      </li><li class="ticket landed">
+        <span class="status">LANDED</span>
+        <span class="title">Walking-skeleton smoke slice: Bun/Hono scaffold + CI + the cheapest headless end-to-end test</span>
+        <span class="id">walking-skeleton-smoke</span>
+        <span class="note">Establish the project scaffold (ENG-T-06) and the single cheapest end-to-end slice that becomes the repo smoke test</span>
+      </li></ul>
+  </section>
+<section class="slide" data-slide="Validation probes">
+    <div class="kicker">Feature area</div>
+    <h1>Validation probes</h1>
+    <div class="area-stats">
+      <span class="landed">7 landed</span>
+      <span class="building">0 building</span>
+      <span>0 not started</span>
+    </div>
+    <ul class="tickets"><li class="ticket landed">
+        <span class="status">LANDED</span>
+        <span class="title">P-ASR (P0): Deepgram Nova-3 streaming — isFinal, diarization, &lt;200 ms word-final, silence→no-observation, subscription credential</span>
+        <span class="id">probe-asr-deepgram</span>
+        <span class="note">Run P-ASR per eng §17 / design §11</span>
+      </li><li class="ticket landed">
+        <span class="status">LANDED</span>
+        <span class="title">P-SEAM (P0): a Cue MappedActionTool action round-trips into a real Smithers run and SSE run-events flow back into Cue; spawn ≤3 s, non-blocking</span>
+        <span class="id">probe-cue-smithers-seam</span>
+        <span class="note">Run P-SEAM per eng §17 / design §11</span>
+      </li><li class="ticket landed">
+        <span class="status">LANDED</span>
+        <span class="title">P-CUE (P0 blocker, first third-party build task): real Cue library, policies, two-Program routing, MappedActionTool, TextCue ≤300 ms</span>
+        <span class="id">probe-cue-substrate</span>
+        <span class="note">Run P-CUE per eng §17 / design §11</span>
+      </li><li class="ticket landed">
+        <span class="status">LANDED</span>
+        <span class="title">P-LLM + A-LLM-SUB (P0): cheap/fast decision LLM via the host's logged-in subscription — temp-0 determinism, ~100 ms, MappedActionTool schema, no raw key</span>
+        <span class="id">probe-hot-loop-llm-subscription</span>
+        <span class="note">Run P-LLM and A-LLM-SUB per eng §17 / §22 A2</span>
+      </li><li class="ticket landed">
+        <span class="status">LANDED</span>
+        <span class="title">P-SMITHERS (P0): durable spawn, streamRunEvents, pause/resume, steer/signal, restart-recovery, concurrent runs, fork realization</span>
+        <span class="id">probe-smithers-durable-runs</span>
+        <span class="note">Run P-SMITHERS per eng §17 / design §11</span>
+      </li><li class="ticket landed">
+        <span class="status">LANDED</span>
+        <span class="title">P-TTS (P0): streaming TTS first-byte ≤200 ms (selection benchmark) + pre-cached fixed phrases, no key logged</span>
+        <span class="id">probe-streaming-tts</span>
+        <span class="note">Run P-TTS per eng §17 / design §11</span>
+      </li><li class="ticket landed">
+        <span class="status">LANDED</span>
+        <span class="title">Validate-before-build probe harness (poc/) — ENG-T-05</span>
+        <span class="id">probe-suite-harness</span>
+        <span class="note">Per eng §17 / ENG-T-05, build the `poc/` probe harness that every validate-before-build probe uses: a runner that executes a probe against the REAL third-party API, recor</span>
+      </li></ul>
+  </section>
+<section class="slide" data-slide="Voice I/O pipeline">
+    <div class="kicker">Feature area</div>
+    <h1>Voice I/O pipeline</h1>
+    <div class="area-stats">
+      <span class="landed">2 landed</span>
+      <span class="building">0 building</span>
+      <span>0 not started</span>
+    </div>
+    <ul class="tickets"><li class="ticket landed">
+        <span class="status">LANDED</span>
+        <span class="title">Audio-capture → streaming ASR → Cue WebSocket transcript bridge (ENG-T-10, new scope from §22 A1.3)</span>
+        <span class="id">audio-capture-asr-bridge</span>
+        <span class="note">Build ENG-T-10, the unplanned-but-real scope surfaced by §22 A1</span>
+      </li><li class="ticket landed">
+        <span class="status">LANDED</span>
+        <span class="title">Earcons (hot plane) + output policy + timeout 'working' ack (src/audio/) — REQ-2/9/10/12</span>
+        <span class="id">earcons-and-output-policy</span>
+        <span class="note">Per eng §5 build `src/audio/`</span>
+      </li></ul>
+  </section>
+<section class="slide" data-slide="Cue layer">
+    <div class="kicker">Feature area</div>
+    <h1>Cue layer</h1>
+    <div class="area-stats">
+      <span class="landed">4 landed</span>
+      <span class="building">0 building</span>
+      <span>0 not started</span>
+    </div>
+    <ul class="tickets"><li class="ticket landed">
+        <span class="status">LANDED</span>
+        <span class="title">Cue substrate, owned adapter &amp; policies (src/cue/) — REQ-1/3/5/6/7</span>
+        <span class="id">cue-adapter-and-policies</span>
+        <span class="note">Per eng §3 build `src/cue/` (the ONLY place that imports Cue; build on confirmed primitives only, gated by P-CUE)</span>
+      </li><li class="ticket landed">
+        <span class="status">LANDED</span>
+        <span class="title">The Cue↔Smithers seam — async bidirectional dispatcher (src/seam/) — REQ-4/8/13/15</span>
+        <span class="id">cue-smithers-seam-dispatcher</span>
+        <span class="note">Per eng §9 (bet #3) build `src/seam/` as the ONE owned, async, bidirectional module wiring Cue↔Smithers (gated by P-SEAM + P-SMITHERS)</span>
+      </li><li class="ticket landed">
+        <span class="status">LANDED</span>
+        <span class="title">Cheap-LLM intent gate + whole-utterance pre-filter between TextCue and action (§22 A5.1/A5.3) — REQ-3/4/7</span>
+        <span class="id">intent-gate-semantic-check</span>
+        <span class="note">Implement the CRITICAL §22 A5 amendment: keyword-only `TextCue` matching is INSUFFICIENT to gate spawning/control — round-1 measured 80% context false-positive ('Yes, but</span>
+      </li><li class="ticket landed">
+        <span class="status">LANDED</span>
+        <span class="title">Routing &amp; dispatch — invariants in code (src/routing/) — REQ-6/7/8/12</span>
+        <span class="id">routing-dispatch-invariants</span>
+        <span class="note">Per eng §4 build `src/routing/` — authority lives here, NEVER in the LLM</span>
+      </li></ul>
+  </section>
+<section class="slide" data-slide="Magic-word steering">
+    <div class="kicker">Feature area</div>
+    <h1>Magic-word steering</h1>
+    <div class="area-stats">
+      <span class="landed">2 landed</span>
+      <span class="building">0 building</span>
+      <span>0 not started</span>
+    </div>
+    <ul class="tickets"><li class="ticket landed">
+        <span class="status">LANDED</span>
+        <span class="title">Callsign pool (coined, non-NATO) + Metaphone/phoneme-Levenshtein collision guard (src/routing/callsigns.ts) — REQ-7/13</span>
+        <span class="id">callsigns-and-collision-guard</span>
+        <span class="note">Per eng §4 (callsigns</span>
+      </li><li class="ticket landed">
+        <span class="status">LANDED</span>
+        <span class="title">Steering-window lifecycle (src/routing/steering-window.ts) — REQ-6/8</span>
+        <span class="id">steering-window-lifecycle</span>
+        <span class="note">Per eng §4 (steering-window</span>
+      </li></ul>
+  </section>
+<section class="slide" data-slide="Suggestion engine">
+    <div class="kicker">Feature area</div>
+    <h1>Suggestion engine</h1>
+    <div class="area-stats">
+      <span class="landed">2 landed</span>
+      <span class="building">0 building</span>
+      <span>0 not started</span>
+    </div>
+    <ul class="tickets"><li class="ticket landed">
+        <span class="status">LANDED</span>
+        <span class="title">Acceptance → spawn flow (src/acceptance/) — REQ-4</span>
+        <span class="id">acceptance-spawn-flow</span>
+        <span class="note">Per eng §7 (R3) build `src/acceptance/`, the central hands-free spawn path, as its own state owner</span>
+      </li><li class="ticket landed">
+        <span class="status">LANDED</span>
+        <span class="title">Conservative ambient suggestion engine (src/suggest/engine.ts) — REQ-3</span>
+        <span class="id">suggestion-engine</span>
+        <span class="note">Per eng §6 / design §4 build `src/suggest/engine</span>
+      </li></ul>
+  </section>
+<section class="slide" data-slide="Process Manager &amp; fleet">
+    <div class="kicker">Feature area</div>
+    <h1>Process Manager &amp; fleet</h1>
+    <div class="area-stats">
+      <span class="landed">3 landed</span>
+      <span class="building">0 building</span>
+      <span>0 not started</span>
+    </div>
+    <ul class="tickets"><li class="ticket landed">
+        <span class="status">LANDED</span>
+        <span class="title">Bounded non-voice emergency stop — kill-all + session-end only (src/emergency/stop.ts) — REQ-14</span>
+        <span class="id">emergency-stop-control</span>
+        <span class="note">Per eng §11 build `src/emergency/stop</span>
+      </li><li class="ticket landed">
+        <span class="status">LANDED</span>
+        <span class="title">Two-process fleet + durability/recovery + restraint e2e — REQ-8/13/15/9</span>
+        <span class="id">fleet-concurrency-and-durability-e2e</span>
+        <span class="note">Per eng §10 / §9 / design §13 close the product-level e2e gates that prove the differentiator and durability</span>
+      </li><li class="ticket landed">
+        <span class="status">LANDED</span>
+        <span class="title">Process registry, lifecycle, fleet &amp; pre-spawn resource check (src/process/) — REQ-4/8/12/13/15</span>
+        <span class="id">process-registry-lifecycle-fleet</span>
+        <span class="note">Per eng §10 build `src/process/`</span>
+      </li></ul>
+  </section>
+<section class="slide" data-slide="Safety &amp; consent">
+    <div class="kicker">Feature area</div>
+    <h1>Safety &amp; consent</h1>
+    <div class="area-stats">
+      <span class="landed">3 landed</span>
+      <span class="building">0 building</span>
+      <span>0 not started</span>
+    </div>
+    <ul class="tickets"><li class="ticket landed">
+        <span class="status">LANDED</span>
+        <span class="title">Hard-mute fork + unmute via 'unmute' word (Cue) and on-screen button (src/audio/mute-controller.ts) — REQ-2</span>
+        <span class="id">mute-controller</span>
+        <span class="note">Per eng §5</span>
+      </li><li class="ticket landed">
+        <span class="status">LANDED</span>
+        <span class="title">Onboarding, consent scheduler, listening indicator &amp; whole-session raw-audio guard (src/onboarding/) — REQ-1</span>
+        <span class="id">onboarding-consent-persistence-guard</span>
+        <span class="note">Per eng §12 (R2) build `src/onboarding/`</span>
+      </li><li class="ticket landed">
+        <span class="status">LANDED</span>
+        <span class="title">No-raw-key model access (host subscriptions) + fail-closed redaction filter (src/providers/credentials.ts) — ENG-T-09, SEC-1</span>
+        <span class="id">subscription-credentials-redaction</span>
+        <span class="note">Per eng §2</span>
+      </li></ul>
+  </section>
+<section class="slide" data-slide="Observability &amp; display board">
+    <div class="kicker">Feature area</div>
+    <h1>Observability &amp; display board</h1>
+    <div class="area-stats">
+      <span class="landed">2 landed</span>
+      <span class="building">0 building</span>
+      <span>1 not started</span>
+    </div>
+    <ul class="tickets"><li class="ticket landed">
+        <span class="status">LANDED</span>
+        <span class="title">Latency benchmark with regression baselines — REQ-10</span>
+        <span class="id">latency-benchmark-suite</span>
+        <span class="note">Per eng §5/§15</span>
+      </li><li class="ticket landed">
+        <span class="status">LANDED</span>
+        <span class="title">TraceProcessor pipeline stage + structured log contract (src/obs/trace.ts) — ENG-T-03</span>
+        <span class="id">trace-processor-observability</span>
+        <span class="note">Per eng §13 / §15</span>
+      </li><li class="ticket not-started">
+        <span class="status">NOT STARTED</span>
+        <span class="title">Projector UI + observability — Vite/React shared surface, causal-chain reconstruction, OTel/Langfuse export (src/ui/, src/obs/) — REQ-16</span>
+        <span class="id">projector-ui-and-observability</span>
+        <span class="note">Per eng §13 complete the observability surface on top of trace-processor-observability</span>
+      </li></ul>
+  </section>
+<section class="slide capture" data-slide="vibersyn-01-idle-board.png">
+      <div class="kicker">UI capture</div>
+      <h1>vibersyn-01-idle-board</h1>
+      <figure><img src="ui-captures/vibersyn-01-idle-board.png" alt="vibersyn-01-idle-board.png"></figure>
+    </section>
+<section class="slide capture" data-slide="vibersyn-02-idea-bubbles-suggestions.png">
+      <div class="kicker">UI capture</div>
+      <h1>vibersyn-02-idea-bubbles-suggestions</h1>
+      <figure><img src="ui-captures/vibersyn-02-idea-bubbles-suggestions.png" alt="vibersyn-02-idea-bubbles-suggestions.png"></figure>
+    </section>
+<section class="slide capture" data-slide="vibersyn-03-steering-banner.png">
+      <div class="kicker">UI capture</div>
+      <h1>vibersyn-03-steering-banner</h1>
+      <figure><img src="ui-captures/vibersyn-03-steering-banner.png" alt="vibersyn-03-steering-banner.png"></figure>
+    </section>
+<section class="slide capture" data-slide="vibersyn-04-living-process-garden.png">
+      <div class="kicker">UI capture</div>
+      <h1>vibersyn-04-living-process-garden</h1>
+      <figure><img src="ui-captures/vibersyn-04-living-process-garden.png" alt="vibersyn-04-living-process-garden.png"></figure>
+    </section>
+<section class="slide capture" data-slide="vibersyn-90-board-animation.gif">
+      <div class="kicker">UI capture</div>
+      <h1>vibersyn-90-board-animation</h1>
+      <figure><img src="ui-captures/vibersyn-90-board-animation.gif" alt="vibersyn-90-board-animation.gif"></figure>
+    </section>
+  </main>
+  <footer class="controls">
+    <button class="nav" type="button" data-prev>Prev</button>
+    <button class="nav" type="button" data-next>Next</button>
+    <button class="nav" type="button" data-auto>Auto on</button>
+    <div class="dots"><button class="dot is-active" type="button" data-go="0" aria-label="Go to slide 1"></button><button class="dot" type="button" data-go="1" aria-label="Go to slide 2"></button><button class="dot" type="button" data-go="2" aria-label="Go to slide 3"></button><button class="dot" type="button" data-go="3" aria-label="Go to slide 4"></button><button class="dot" type="button" data-go="4" aria-label="Go to slide 5"></button><button class="dot" type="button" data-go="5" aria-label="Go to slide 6"></button><button class="dot" type="button" data-go="6" aria-label="Go to slide 7"></button><button class="dot" type="button" data-go="7" aria-label="Go to slide 8"></button><button class="dot" type="button" data-go="8" aria-label="Go to slide 9"></button><button class="dot" type="button" data-go="9" aria-label="Go to slide 10"></button><button class="dot" type="button" data-go="10" aria-label="Go to slide 11"></button><button class="dot" type="button" data-go="11" aria-label="Go to slide 12"></button><button class="dot" type="button" data-go="12" aria-label="Go to slide 13"></button><button class="dot" type="button" data-go="13" aria-label="Go to slide 14"></button><button class="dot" type="button" data-go="14" aria-label="Go to slide 15"></button></div>
+    <div class="counter"><span data-current>1</span> / 15</div>
+  </footer>
+</div>
+<script>
+const PAGE_VERSION = "1781637868550";
+const slides = [...document.querySelectorAll(".slide")];
+const dots = [...document.querySelectorAll(".dot")];
+let index = 0;
+let auto = true;
+let timer = null;
+function show(next) {
+  index = (next + slides.length) % slides.length;
+  slides.forEach((slide, i) => slide.classList.toggle("is-active", i === index));
+  dots.forEach((dot, i) => dot.classList.toggle("is-active", i === index));
+  document.querySelector("[data-current]").textContent = String(index + 1);
+}
+function schedule() {
+  clearInterval(timer);
+  timer = auto ? setInterval(() => show(index + 1), 12000) : null;
+}
+document.querySelector("[data-prev]").addEventListener("click", () => show(index - 1));
+document.querySelector("[data-next]").addEventListener("click", () => show(index + 1));
+document.querySelector("[data-auto]").addEventListener("click", (event) => {
+  auto = !auto;
+  event.currentTarget.textContent = auto ? "Auto on" : "Auto off";
+  schedule();
+});
+dots.forEach((dot) => dot.addEventListener("click", () => show(Number(dot.dataset.go))));
+document.addEventListener("keydown", (event) => {
+  if (event.key === "ArrowRight" || event.key === "PageDown") show(index + 1);
+  if (event.key === "ArrowLeft" || event.key === "PageUp") show(index - 1);
+});
+async function checkVersion() {
+  try {
+    const response = await fetch("progress.version?" + Date.now(), { cache: "no-store" });
+    if (!response.ok) return;
+    const nextVersion = (await response.text()).trim();
+    if (nextVersion && nextVersion !== PAGE_VERSION) location.reload();
+  } catch {}
+}
+setInterval(checkVersion, 6000);
+schedule();
+</script>
+</body>
+</html>

@@ -1,0 +1,32 @@
+{
+  "providerId": "elevenlabs",
+  "phraseCount": 5,
+  "playback": [
+    {
+      "phrase": "Ready",
+      "firstByteMs": 0.0027079999999841675,
+      "bytes": 23
+    },
+    {
+      "phrase": "Muted",
+      "firstByteMs": 0.0002080000012938399,
+      "bytes": 23
+    },
+    {
+      "phrase": "Unmuted",
+      "firstByteMs": 0.0001249999986612238,
+      "bytes": 25
+    },
+    {
+      "phrase": "Working",
+      "firstByteMs": 0.00008399999933317304,
+      "bytes": 25
+    },
+    {
+      "phrase": "Halted",
+      "firstByteMs": 0.00008399999933317304,
+      "bytes": 24
+    }
+  ],
+  "synthetic": false
+}

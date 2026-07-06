@@ -1,0 +1,4 @@
+{
+  "status": "skipped",
+  "reason": "live Deepgram gate did not run because DEEPGRAM_API_KEY is absent"
+}

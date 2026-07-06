@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Decision ENG-A-02 — Provider interface as the universal test boundary</title>
+<style>
+  :root { --ink:#1a1a1a; --mut:#666; --line:#e2e2e2; --good:#0a7d33; --bad:#b00020; --accent:#0b5cad; --bg:#fafafa; }
+  * { box-sizing:border-box; }
+  body { font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; color:var(--ink); max-width:920px; margin:2.2rem auto; padding:0 1.2rem; background:var(--bg); }
+  h1 { font-size:1.55rem; margin:0 0 .2rem; }
+  h2 { font-size:1.12rem; margin:1.8rem 0 .5rem; border-bottom:2px solid var(--line); padding-bottom:.25rem; }
+  .meta { color:var(--mut); font-size:.86rem; margin-bottom:1.2rem; }
+  .pill { display:inline-block; padding:.08rem .5rem; border-radius:999px; font-size:.75rem; font-weight:600; background:#e7f1fb; color:var(--accent); }
+  table { border-collapse:collapse; width:100%; margin:.6rem 0; font-size:.92rem; }
+  th,td { border:1px solid var(--line); padding:.45rem .6rem; text-align:left; vertical-align:top; }
+  th { background:#f0f0f0; }
+  code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  pre { background:#0f1115; color:#e6e6e6; padding:.9rem 1.1rem; border-radius:8px; overflow:auto; font-size:.82rem; line-height:1.45; }
+  .good { color:var(--good); font-weight:600; } .bad { color:var(--bad); font-weight:600; }
+  .box { background:#fff; border:1px solid var(--line); border-radius:8px; padding:.9rem 1.1rem; margin:.7rem 0; }
+  .alt { border-left:4px solid var(--line); padding-left:.9rem; margin:.6rem 0; }
+  .alt.win { border-left-color:var(--good); } .alt.lose { border-left-color:var(--bad); }
+  .warn { background:#fff7e6; border:1px solid #ffd591; border-radius:8px; padding:.7rem 1rem; }
+</style>
+</head>
+<body>
+<h1>The provider interface is the <span style="color:#0b5cad">universal test boundary</span></h1>
+<div class="meta"><span class="pill">ENG-A-02</span> &nbsp; Vibersyn V0 engineering &nbsp;·&nbsp; how the 10×–100× bar is made achievable &nbsp;·&nbsp; <code>docs/planning/03-eng.md §2, §13.1</code></div>
+
+<h2>The problem</h2>
+<p>The core is non-deterministic (ASR + LLM) and hardware/network-dependent (mic, Deepgram, TTS,
+Smithers). The validation bar demands <strong>10×–100× more tests than a human would write</strong>.
+That volume is impossible if every test needs a live mic, real API keys, and network round-trips: it
+would be slow, flaky, and expensive. We need a boundary where the entire inner system can be tested
+headless and deterministically.</p>
+
+<h2>Decision <span style="color:var(--good);font-size:.8rem">— CONFIRMED, kept</span></h2>
+<div class="box">
+<strong>Confirmed and retained.</strong> Put a <strong>typed provider interface at every external
+boundary</strong>, and test everything inside that boundary with <strong>record-replay doubles</strong>.
+No component constructs a provider directly — providers are <strong>injected at construction</strong>.
+This is the mechanism that makes the Cue integration <strong>modular and trivial to mock</strong>
+(ENG-A-01) and that makes verification possible without live mics, keys, or network.
+</div>
+<pre>interface ASRProvider     { stream(audio): AsyncIterable&lt;TranscriptObservation&gt; }   // real: Deepgram | double: JSONL replay
+interface TTSProvider     { speak(text, opts?): Promise&lt;ReadableStream&gt; }            // real: probe-selected | double: noop
+interface DecisionLLM     { decide(input): Promise&lt;DecisionOutput&gt; }                 // real: host Codex/Claude subscription, temp-0 | double: fixture
+</pre>
+<p>The inner test loop reads <strong>pre-recorded ASR output as JSONL</strong>, runs the decision LLM
+at <strong>temperature-0</strong>, and asserts <strong>shape/invariants</strong> ("≤3 MCQs",
+"≤15 words", "fires within budget") — never exact text. Same input → same output, every run.</p>
+
+<h2>Why — all four OSS references converge on this</h2>
+<table>
+<tr><th>Codebase</th><th>Its test boundary</th></tr>
+<tr><td>Pipecat</td><td>mock the WebSocket transport; inject pre-built Frames</td></tr>
+<tr><td>OpenWakeWord</td><td>feed raw PCM arrays; no mic in tests</td></tr>
+<tr><td>Temporal TS SDK</td><td><code>TestWorkflowEnvironment</code>; no real server; mocked activities</td></tr>
+<tr><td>Rhasspy 3</td><td>inject <code>.wav</code> / text transcripts; no live mic or ASR API</td></tr>
+</table>
+<p>(eng-oss §5.2/§5.3.) The pattern is not novel — copying it is the point.</p>
+
+<h2>Alternatives</h2>
+<div class="alt lose"><strong>Test against live APIs.</strong> <span class="bad">Rejected:</span>
+slow, flaky, key-dependent, non-deterministic — cannot reach 10×–100× volume.</div>
+<div class="alt lose"><strong>Mock at the network layer (HTTP/WebSocket).</strong>
+<span class="bad">Rejected:</span> couples every test to wire formats; the provider interface is a
+cleaner, more stable seam.</div>
+<div class="alt win"><strong>Inject doubles at the provider interface (chosen).</strong>
+<span class="good">Chosen.</span> Headless, deterministic, key-free inner loop; the real providers are
+proven separately by their probes (§15).</div>
+
+<h2>Verification</h2>
+<ul>
+<li><strong>Unit:</strong> boundary-substitution test — every consumer runs with replay/noop doubles,
+zero network/mic.</li>
+<li><strong>Unit:</strong> architecture lint — no concrete-provider import outside <code>providers/</code>;
+<span class="bad">RBG:</span> import Deepgram directly in a consumer → lint test fails.</li>
+<li><strong>Unit:</strong> interface-conformance — the replay ASR yields the same
+<code>TranscriptObservation</code> shape the real one promises.</li>
+</ul>
+
+<div class="warn"><strong>Depends on:</strong> the shared <code>types.ts</code> contract (ENG-A-05)
+existing first, and the record-replay harness (ENG-T-02). Both are engineering-only foundation tickets.</div>
+</body>
+</html>

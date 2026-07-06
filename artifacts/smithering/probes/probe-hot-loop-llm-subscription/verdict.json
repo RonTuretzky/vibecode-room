@@ -1,0 +1,53 @@
+{
+  "green": false,
+  "ticketId": "probe-hot-loop-llm-subscription",
+  "summary": "No host subscription-routed Codex/Claude CLI model met the hot-loop model gate; this is a binding PRD §6 conflict for the gate.",
+  "attempts": [
+    {
+      "provider": "openai-codex",
+      "command": "codex",
+      "status": "failed",
+      "subscriptionRouted": true,
+      "latencyMs": 3761.471207999999,
+      "decisions": [],
+      "invocations": [],
+      "stdoutPreview": "",
+      "error": "Reading additional input from stdin...\nOpenAI Codex v0.138.0\n--------\nworkdir: /Users/wk/conductor/workspaces/vibecode-room/accra-v2\nmodel: gpt-5.5\nprovider: openai\napproval: never\nsandbox: read-only\nreasoning effort: none\nreasoning summaries: none\nsession id: 019f158e-032d-7f33-af28-8240a69d6f46\n--------\nuser\nYou are the Vibersyn hot-loop decision classifier.\n\nReturn only valid JSON with this exact shape:\n{\"decisions\":[{\"id\":\"repeat-1\",\"decision\":\"PASS|ACT\",\"tool\":\"observe.pass|vibersyn.suggest"
+    },
+    {
+      "provider": "anthropic-claude",
+      "command": "claude --print",
+      "status": "failed",
+      "subscriptionRouted": true,
+      "latencyMs": 6268.471374999997,
+      "decisions": [],
+      "invocations": [],
+      "stdoutPreview": "",
+      "error": "response did not contain decisions array"
+    }
+  ],
+  "checks": {
+    "deterministic": false,
+    "p50LatencyWithinBudget": false,
+    "mappedActionToolSchema": false,
+    "noRawKeyRoute": true,
+    "traceSecretClean": true,
+    "costWithinBudget": false,
+    "actPromptAmendment": false
+  },
+  "metrics": {
+    "budgetMs": 100,
+    "p50LatencyMs": null,
+    "costBudgetPerHourUsd": 0.15,
+    "estimatedCostPerHourUsd": null,
+    "costBasis": "not-measured-host-subscription-no-metering"
+  },
+  "blockers": [
+    "No host logged-in Codex/Claude CLI subscription candidate returned a usable decision response.",
+    "Temperature-0 determinism was not proven.",
+    "No subscription-routed candidate met the 100 ms p50 hot-loop budget.",
+    "MappedActionTool-compatible tool-selection schema was not proven.",
+    "The $0.15/hr cost gate was not measured by the host subscription CLI probe.",
+    "The ACT prompt amendment for named callsign status/information queries was not proven."
+  ]
+}

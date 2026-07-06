@@ -1,0 +1,75 @@
+bun test v1.3.14 (0d9b296a)
+
+src/routing/steering-window.test.ts:
+153 |     const lowConfidence = manager.ingestUtterance({
+154 |       ...utterance("Maybe reroute the database", "utt-low", 13_100),
+155 |       confidence: 0.1,
+156 |     });
+157 | 
+158 |     expect(lowConfidence).toEqual(
+                                ^
+error: expect(received).toEqual(expected)
+
+- ObjectContaining 
+  {
+-   "ackId": "route-declined",
+-   "addressed": true,
+-   "kind": "pass",
+-   "reason": "low-confidence",
++   "ackId": "route-steer",
++   "callsign": "Atlas",
++   "instruction": "maybe reroute the database",
++   "kind": "routed",
++   "opened": false,
++   "targetUPID": "upid-atlas",
++   "traceEvents": [
++     {
++       "correlationId": "corr-utt-low",
++       "event": "route.steer",
++       "level": "info",
++       "meta": {
++         "ackKind": "route-steer",
++         "instruction": "maybe reroute the database",
++         "selectedUPID": "upid-atlas",
++         "targetUPID": "upid-atlas",
++         "utteranceId": "utt-low",
++         "windowId": "steer-upid-atlas-1",
++       },
++       "sessionId": "session-steering",
++       "upid": "upid-atlas",
++     },
++     {
++       "correlationId": "corr-utt-low",
++       "event": "ack.emit",
++       "level": "info",
++       "meta": {
++         "ackId": "route-steer",
++         "route": "steer",
++         "utteranceId": "utt-low",
++         "windowId": "steer-upid-atlas-1",
++       },
++       "sessionId": "session-steering",
++       "upid": "upid-atlas",
++     },
++   ],
++   "window": {
++     "callsign": "Atlas",
++     "lastMicActivityAtMs": 13100,
++     "lastUtteranceId": "utt-low",
++     "openedAtMs": 13000,
++     "targetUPID": "upid-atlas",
++     "windowId": "steer-upid-atlas-1",
++   },
+  }
+
+- Expected  - 5
++ Received  + 44
+
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/steering-window-lifecycle/src/routing/steering-window.test.ts:158:27)
+(fail) REQ-8 selected-process steering > AC8.3 low-confidence steering is not silently applied and receives an addressed-pass ack [1.30ms]
+
+ 0 pass
+ 11 filtered out
+ 1 fail
+ 1 expect() calls
+Ran 1 test across 1 file. [9.00ms]

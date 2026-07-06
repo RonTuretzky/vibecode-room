@@ -1,0 +1,130 @@
+{
+  "probeId": "probe-asr-deepgram",
+  "status": "passed",
+  "summary": "probe assertions were failable and passed",
+  "correlationId": "p-asr-deepgram-nova3",
+  "startedAt": "2026-06-29T22:44:29.443Z",
+  "finishedAt": "2026-06-29T22:44:29.446Z",
+  "assertions": [
+    {
+      "id": "nova3-websocket-shape",
+      "behavior": "the live adapter targets Deepgram Nova-3 streaming WebSocket with interim results, endpointing, and streaming diarization",
+      "phase": "red",
+      "status": "failed-as-expected",
+      "error": "expect(received).toContain(expected)\n\nExpected to contain: \"model=nova-2\"\nReceived: \"wss://api.deepgram.com/v1/listen?model=nova-3&language=en-US&encoding=linear16&sample_rate=16000&channels=1&interim_results=true&endpointing=300&diarize_model=v1\"\n"
+    },
+    {
+      "id": "is-final-shape-and-timing",
+      "behavior": "Deepgram is_final is normalized to boolean isFinal and final frames remain under the word-final latency budget",
+      "phase": "red",
+      "status": "failed-as-expected",
+      "error": "Deepgram result is missing boolean is_final."
+    },
+    {
+      "id": "speaker-label-format",
+      "behavior": "Deepgram diarization words are exposed as speaker_0 and speaker_1 labels on transcript observations",
+      "phase": "red",
+      "status": "failed-as-expected",
+      "error": "expect(received).toMatch(expected)\n\nExpected substring or pattern: /^speaker_[01]$/u\nReceived: \"speaker-0\"\n"
+    },
+    {
+      "id": "silence-no-observation",
+      "behavior": "silence produces no TranscriptObservation rather than an empty observation",
+      "phase": "red",
+      "status": "failed-as-expected",
+      "error": "expect(received).toBe(expected)\n\nExpected: false\nReceived: true\n"
+    },
+    {
+      "id": "two-speaker-overlap",
+      "behavior": "a two-speaker overlap frame is split into observations for both diarized speakers",
+      "phase": "red",
+      "status": "failed-as-expected",
+      "error": "expect(received).toEqual(expected)\n\n- [\n-   \"speaker_0\",\n-   \"speaker_1\",\n- ]\n+ []\n\n- Expected  - 4\n+ Received  + 1\n"
+    },
+    {
+      "id": "record-replay-determinism",
+      "behavior": "record-replay over transcript observations produces deterministic decisionIds without a live socket",
+      "phase": "red",
+      "status": "failed-as-expected",
+      "error": "expect(received).toEqual(expected)\n\n  [\n-   \"decision-asr-fixture-a-0-0-nondeterministic-b\",\n-   \"decision-asr-fixture-a-1-0-nondeterministic-b\",\n-   \"decision-asr-fixture-overlap-3-0-nondeterministic-b\",\n-   \"decision-asr-fixture-overlap-3-1-nondeterministic-b\",\n+   \"decision-asr-fixture-a-0-0-nondeterministic-a\",\n+   \"decision-asr-fixture-a-1-0-nondeterministic-a\",\n+   \"decision-asr-fixture-overlap-3-0-nondeterministic-a\",\n+   \"decision-asr-fixture-overlap-3-1-nondeterministic-a\",\n  ]\n\n- Expected  - 4\n+ Received  + 4\n"
+    },
+    {
+      "id": "live-deepgram-gate",
+      "behavior": "live Deepgram Nova-3 validation is reported as blocked/skipped without DEEPGRAM_API_KEY and runs through the real adapter when present",
+      "phase": "red",
+      "status": "failed-as-expected",
+      "error": "expect(received).toBeNull()\n\nReceived: \"live Deepgram validation SKIPPED - requires DEEPGRAM_API_KEY\"\n"
+    },
+    {
+      "id": "report-secret-scan",
+      "behavior": "probe artifacts contain no key-shaped strings",
+      "phase": "red",
+      "status": "failed-as-expected",
+      "error": "expect(received).toBe(expected)\n\nExpected: 0\nReceived: 1\n"
+    },
+    {
+      "id": "nova3-websocket-shape",
+      "behavior": "the live adapter targets Deepgram Nova-3 streaming WebSocket with interim results, endpointing, and streaming diarization",
+      "phase": "green",
+      "status": "passed"
+    },
+    {
+      "id": "is-final-shape-and-timing",
+      "behavior": "Deepgram is_final is normalized to boolean isFinal and final frames remain under the word-final latency budget",
+      "phase": "green",
+      "status": "passed"
+    },
+    {
+      "id": "speaker-label-format",
+      "behavior": "Deepgram diarization words are exposed as speaker_0 and speaker_1 labels on transcript observations",
+      "phase": "green",
+      "status": "passed"
+    },
+    {
+      "id": "silence-no-observation",
+      "behavior": "silence produces no TranscriptObservation rather than an empty observation",
+      "phase": "green",
+      "status": "passed"
+    },
+    {
+      "id": "two-speaker-overlap",
+      "behavior": "a two-speaker overlap frame is split into observations for both diarized speakers",
+      "phase": "green",
+      "status": "passed"
+    },
+    {
+      "id": "record-replay-determinism",
+      "behavior": "record-replay over transcript observations produces deterministic decisionIds without a live socket",
+      "phase": "green",
+      "status": "passed"
+    },
+    {
+      "id": "live-deepgram-gate",
+      "behavior": "live Deepgram Nova-3 validation is reported as blocked/skipped without DEEPGRAM_API_KEY and runs through the real adapter when present",
+      "phase": "green",
+      "status": "passed"
+    },
+    {
+      "id": "report-secret-scan",
+      "behavior": "probe artifacts contain no key-shaped strings",
+      "phase": "green",
+      "status": "passed"
+    }
+  ],
+  "reportDir": "artifacts/smithering/reports/probe-asr-deepgram",
+  "secretScan": {
+    "passed": true,
+    "findings": []
+  },
+  "meta": {
+    "liveDeepgram": {
+      "status": "skipped",
+      "reason": "live Deepgram gate did not run because DEEPGRAM_API_KEY is absent",
+      "provider": "deepgram",
+      "model": "nova-3"
+    },
+    "fallback": "If Deepgram diarization is unavailable, the observation layer remains redesignable without speaker labels by deriving turn boundaries from energy/VAD and emitting TranscriptObservation.speaker as null.",
+    "replayFixture": "fixtures/asr/nova3-observations.jsonl",
+    "round1LatencyReference": "artifacts/smithering/probes/assumption-stt-realtime-latency/"
+  }
+}

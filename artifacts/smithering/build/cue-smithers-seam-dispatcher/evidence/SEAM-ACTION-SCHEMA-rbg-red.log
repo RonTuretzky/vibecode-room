@@ -1,0 +1,24 @@
+bun test v1.3.14 (0d9b296a)
+
+src/seam/seam.test.ts:
+35 |       { type: "status", targetUPID: null, payload: {}, correlationId: "corr-status" },
+36 |     ];
+37 | 
+38 |     for (const action of actions) {
+39 |       const result = await dispatcher.dispatch(action);
+40 |       expect(result.accepted).toBe(true);
+                                   ^
+error: expect(received).toBe(expected)
+
+Expected: true
+Received: false
+
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/cue-smithers-seam-dispatcher/src/seam/seam.test.ts:40:31)
+(fail) Cue Smithers seam dispatcher > action-schema-match covers the V0 action set and rejects approval/read-back actions [2.72ms]
+
+ 0 pass
+ 5 filtered out
+ 1 fail
+ 1 expect() calls
+Ran 1 test across 1 file. [39.00ms]
+exit=1

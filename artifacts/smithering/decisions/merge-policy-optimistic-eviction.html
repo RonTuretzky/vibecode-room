@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Decision ORCH-A-02 — Optimistic merge + postsubmit eviction (REVERSED)</title>
+<style>
+  :root { --ink:#1a1a1a; --mut:#666; --line:#e2e2e2; --good:#0a7d33; --bad:#b00020; --accent:#0b5cad; --bg:#fafafa; }
+  * { box-sizing:border-box; }
+  body { font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; color:var(--ink); max-width:920px; margin:2.2rem auto; padding:0 1.2rem; background:var(--bg); }
+  h1 { font-size:1.55rem; margin:0 0 .2rem; }
+  h2 { font-size:1.12rem; margin:1.8rem 0 .5rem; border-bottom:2px solid var(--line); padding-bottom:.25rem; }
+  .meta { color:var(--mut); font-size:.86rem; margin-bottom:1.2rem; }
+  .pill { display:inline-block; padding:.08rem .5rem; border-radius:999px; font-size:.75rem; font-weight:600; background:#e7f1fb; color:var(--accent); }
+  table { border-collapse:collapse; width:100%; margin:.6rem 0; font-size:.92rem; }
+  th,td { border:1px solid var(--line); padding:.45rem .6rem; text-align:left; vertical-align:top; }
+  th { background:#f0f0f0; }
+  code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  pre { background:#0f1115; color:#e6e6e6; padding:.9rem 1.1rem; border-radius:8px; overflow:auto; font-size:.82rem; line-height:1.45; }
+  .good { color:var(--good); font-weight:600; } .bad { color:var(--bad); font-weight:600; }
+  .box { background:#fff; border:1px solid var(--line); border-radius:8px; padding:.9rem 1.1rem; margin:.7rem 0; }
+  .alt { border-left:4px solid var(--line); padding-left:.9rem; margin:.6rem 0; }
+  .alt.win { border-left-color:var(--good); } .alt.lose { border-left-color:var(--bad); }
+  .warn { background:#fff7e6; border:1px solid #ffd591; border-radius:8px; padding:.7rem 1rem; }
+</style>
+</head>
+<body>
+<h1>Merge policy: <span style="color:#0b5cad">optimistic merge + postsubmit eviction</span></h1>
+<div class="meta"><span class="pill">ORCH-A-02</span> &nbsp; Vibersyn V0 implementation orchestration &nbsp;·&nbsp; <code>docs/planning/06-orchestration.md §2</code></div>
+
+<div class="warn" style="margin-bottom:1rem">
+<strong>Reversed.</strong> The prior decision built a <em>serialized merge lane</em> (depth-1, one writer
+to <code>main</code> at a time) and explicitly <em>forbade</em> optimistic merging and postsubmit
+eviction. That is overturned. We now <strong>prefer optimistic merging — land-then-learn with postsubmit
+eviction — because it is faster.</strong> We <em>do</em> build the optimistic land + postsubmit eviction
+machinery that was previously declared out of scope.
+</div>
+
+<h2>The decision</h2>
+<div class="box">
+For V0 we build <strong>optimistic merging with postsubmit eviction</strong>. Speed is the priority: a
+ticket lands the moment its own gates are green — it does <strong>not</strong> wait behind a serialized
+lane — and the full suite runs on <code>main</code> afterward. If a postsubmit run goes red, the culprit
+is automatically <strong>evicted</strong> (backed out) and downstream is re-rebased.
+<table>
+<tr><th>Mechanism</th><th>V0 verdict</th><th>Why</th></tr>
+<tr><td>Optimistic land (land on own green gates, no lane wait)</td><td class="good">BUILD</td><td>Fastest path; tickets land in parallel as their gates pass instead of queueing.</td></tr>
+<tr><td>Postsubmit full suite on <code>main</code></td><td class="good">RUN — after every land</td><td>Catches what optimistic lands let through; the trigger for eviction.</td></tr>
+<tr><td>Automatic postsubmit eviction (CheckSuite attribute → <code>jj revert</code> → cascade re-rebase)</td><td class="good">BUILD</td><td>A red postsubmit auto-backs-out the offending land and re-rebases dependents — land-then-learn.</td></tr>
+<tr><td>Serialized depth-1 merge lane (one writer at a time)</td><td class="bad">DO NOT BUILD</td><td>Too slow — it queues lands behind one another. Replaced by optimistic land.</td></tr>
+</table>
+</div>
+
+<h2>Why optimistic is the right trade now</h2>
+<ul>
+<li><strong>Speed is the priority.</strong> Build this as fast as possible. Serializing every land
+behind a single writer throttles a wide, mostly-independent ready-set; optimistic land lets the whole
+antichain land in parallel.</li>
+<li><strong>Conflicts are kept rare by ordering.</strong> Tickets are ordered to minimize merge
+conflicts (ORCH-A-01), so most optimistic lands are independent and clean; the rare bad land is the
+exception eviction exists to handle.</li>
+<li><strong>jj makes eviction tractable.</strong> Co-located jj+git gives first-class conflict handling
+and <code>jj revert</code> as a clean back-out primitive, so attribute-and-evict is a recoverable
+operation rather than a corrupt-history hazard.</li>
+</ul>
+
+<h2>The flow</h2>
+<pre>ticket gates green  →  LAND optimistically on main  (no lane wait)
+   └─ postsubmit full suite runs on the new main tip
+         ├─ green  →  done
+         └─ red    →  CheckSuite attributes the failure → jj revert the culprit (EVICT)
+                       → re-rebase downstream → re-run their gates</pre>
+
+<h2>Alternatives</h2>
+<div class="alt lose"><strong>Serialized depth-1 merge lane, no eviction (prior plan).</strong>
+<span class="bad">Reversed.</span> Slower — queues lands behind one writer; throttles a wide independent
+ready-set. The whole point of this reversal is speed.</div>
+<div class="alt lose"><strong>Trunk-based, everyone commits to <code>main</code>, no gate.</strong>
+<span class="bad">Rejected.</span> Violates the validation bar — a ticket could land without recorded RBG.</div>
+<div class="alt win"><strong>Optimistic land on own green gates + postsubmit full suite + automatic eviction (chosen).</strong>
+<span class="good">Chosen.</span> Fastest; every land still gated with recorded RBG; bad lands are
+auto-evicted and downstream re-rebased.</div>
+
+<h2>Verification (the orchestration logic is itself tested)</h2>
+<ul>
+<li><strong>Optimistic-land test:</strong> a ticket whose own gates are green lands immediately without
+waiting on another in-flight land. <span class="bad">RBG:</span> force a serialized single-writer lock →
+assert the parallel land is <em>not</em> blocked (else the optimistic-land assertion fails).</li>
+<li><strong>Gate-before-land test:</strong> a ticket with a missing/failing gate or no recorded RBG
+<em>cannot</em> land. <span class="bad">RBG:</span> stub a ticket with <code>rbgRecorded:false</code> →
+assert land is refused; flip to <code>true</code> with both red+green logs present → land allowed.</li>
+<li><strong>Postsubmit-eviction test:</strong> inject a postsubmit failure on <code>main</code> → assert
+the offending land is attributed and <code>jj revert</code>-evicted automatically, and downstream is
+re-rebased. <span class="bad">RBG:</span> disable attribution → eviction targets the wrong commit →
+fails.</li>
+<li><strong>Cascade-rebase test:</strong> after an eviction, dependents that branched off the bad commit
+are re-rebased and re-gated. <span class="bad">RBG:</span> skip the cascade → a dependent keeps the
+reverted change → fails.</li>
+</ul>
+
+<div class="warn"><strong>Carried risk:</strong> optimistic land + eviction is custom logic
+(attribution, <code>jj revert</code>, cascade re-rebase) with its own failure modes. Mitigation:
+conflict-minimizing ticket order keeps bad lands rare; every eviction is recorded
+(<code>artifacts/smithering/decisions/build/</code>); jj's first-class conflict handling makes the
+back-out recoverable. The speed win outweighs the machinery's cost at this build's scale.</div>
+</body>
+</html>

@@ -1,0 +1,23 @@
+bun test v1.3.14 (0d9b296a)
+
+src/routing/dispatch.test.ts:
+28 |     });
+29 |     const suggestBeatsPass = dispatch("we should build a compact telemetry panel", {
+30 |       suggestionEligible: true,
+31 |     });
+32 | 
+33 |     expect(coOccurring.commandId).toBe("mute");
+                                       ^
+error: expect(received).toBe(expected)
+
+Expected: "mute"
+Received: "panic"
+
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/routing-dispatch-invariants/src/routing/dispatch.test.ts:33:35)
+(fail) routing dispatch invariants > priority-ladder resolves mute > panic > stop > steer > suggest > pass deterministically [4.49ms]
+
+ 0 pass
+ 10 filtered out
+ 1 fail
+ 1 expect() calls
+Ran 1 test across 1 file. [28.00ms]

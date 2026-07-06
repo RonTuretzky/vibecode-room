@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Decision - Noncanonical env and trace identifier redaction</title>
+  <style>
+    :root { --bg:#0a0a0a; --fg:#e0e0e0; --ok:#00ff88; --bad:#ff3b30; --sel:#00bcd4; --mut:#888; }
+    body { background:var(--bg); color:var(--fg); font:15px/1.6 -apple-system,Segoe UI,Roboto,sans-serif; max-width:920px; margin:0 auto; padding:32px; }
+    h1 { font-size:24px; color:var(--sel); margin-bottom:4px; }
+    h2 { font-size:18px; color:var(--ok); margin-top:32px; border-bottom:1px solid #222; padding-bottom:6px; }
+    .tag { display:inline-block; background:#1a1a1a; border:1px solid #333; border-radius:4px; padding:2px 8px; font-size:12px; color:var(--mut); margin-right:6px; }
+    code,pre { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+    pre { background:#111; border:1px solid #222; border-radius:6px; padding:14px; overflow:auto; font-size:13px; }
+    table { border-collapse:collapse; width:100%; margin:12px 0; font-size:14px; }
+    th,td { border:1px solid #222; padding:8px 10px; text-align:left; vertical-align:top; }
+    th { background:#141414; color:var(--sel); }
+    .acc { color:var(--ok); }
+    .rej { color:var(--bad); }
+  </style>
+</head>
+<body>
+  <h1>Credential-shaped env values and trace identifiers fail closed</h1>
+  <p><span class="tag">subscription-credentials-redaction</span><span class="tag">SEC-1</span></p>
+
+  <h2>Problem</h2>
+  <p>
+    Follow-up review found that model credential construction rejected canonical provider key
+    variables but accepted provider-shaped values under alternate env names. The same review found
+    that neutral trace identifier fields could persist token-shaped values even though metadata was
+    already redacted.
+  </p>
+
+  <h2>Decision</h2>
+  <p>
+    Scan every supplied model env value with the same fail-closed secret detector used for emitted
+    trace data. If any env value is credential-shaped, reject construction and keep model access on
+    host Codex/Claude subscriptions. Trace emission now sanitizes <code>event</code>,
+    <code>sessionId</code>, <code>correlationId</code>, and <code>upid</code> as well as metadata.
+    When an event name itself is unsafe, it is replaced with the valid event name
+    <code>redacted.secret</code>.
+  </p>
+
+  <pre>input trace:  { event: "observe.provider-token", correlationId: "provider-token" }
+output trace: { event: "redacted.secret", correlationId: "redacted marker" }</pre>
+
+  <h2>Alternatives</h2>
+  <table>
+    <tr><th>Alternative</th><th>Verdict</th><th>Reason</th></tr>
+    <tr><td>Only reject canonical env variable names</td><td class="rej">Rejected</td><td>Callers can hand raw keys to construction through alternate names.</td></tr>
+    <tr><td>Only redact <code>LogEvent.meta</code></td><td class="rej">Rejected</td><td>SEC-1 scans the full JSONL artifact, including identifiers.</td></tr>
+    <tr><td>Reject all secret-shaped env values and sanitize trace identifiers</td><td class="acc">Chosen</td><td>Closes the demonstrated gaps without storing keys or adding a provider abstraction.</td></tr>
+  </table>
+
+  <h2>Verification</h2>
+  <p>
+    <code>src/providers/credentials.test.ts</code> covers non-canonical env rejection,
+    homogeneous multi-segment provider token redaction, and trace identifier sanitization.
+    <code>test/e2e/secret-scan.e2e.ts</code> plants identifier-shaped values in a whole-session
+    run. The SEC-1 red log records failable red branches for each gap; the green log and bundle
+    secret scan pass.
+  </p>
+</body>
+</html>

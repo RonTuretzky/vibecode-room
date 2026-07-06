@@ -3,15 +3,51 @@ node_modules/
 *.log
 .DS_Store
 .env
-panopticon.db
+vibersyn.db
 dist/
+
+# Scaffolded accept->build->preview artifacts (idea-builder). Each accepted idea
+# writes a self-contained prototype under builds/<upid>/ and serves it live; the
+# directory is runtime output, not source.
+builds/
+
+# The committed Cue build fixture (ISSUE-0025 / GAP-006) is an already-"built"
+# stand-in: its dist/ entrypoints ARE the artifact under test, so they must
+# travel with the repo even though dist/ is ignored above.
+!fixtures/cue-build/**/dist/
+!fixtures/cue-build/**/dist/**
 
 # Smithers runtime state
 smithers.db
 smithers.db-shm
 smithers.db-wal
 src/core/workflows/.smithers/
+# Per-ticket build worktrees + the dedicated integration land worktree are runtime state.
+.smithers/wt/
+.smithers/integration/
+# Nested smithers runtime state inside workflow directories
+.smithers/workflows/.smithers/
+
+# The smithering build/probe evidence bundles ARE the durable record (06-orchestration §6),
+# so keep their RBG run logs even though *.log is ignored above — they must travel with the merge.
+!artifacts/smithering/build/**/*.log
+!artifacts/smithering/probes/**/*.log
+!artifacts/smithering/reports/**/*.log
 
 # Playwright artifacts
 test-results/
 playwright-report/
+.playwright-mcp/
+
+# Transient UI-capture frame scratch (large; regenerated each capture run)
+artifacts/smithering/.capture-tmp/
+
+# Local capture/debug artifacts (machine-specific; not shared)
+/inspector-live.png
+/progress-slideshow.png
+/vibersyn-projector-desktop.png
+artifacts/smithering/server-logs/
+
+# smither harness runtime state
+.smither/
+.smither-worktrees/

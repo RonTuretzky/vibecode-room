@@ -1,0 +1,12 @@
+⚠ Found 2 run(s) still marked as 'running':
+  smithering-vibersyn-4 (started 2026-06-14T02:22:42.308Z)
+  smoke-1781383048724 (started 2026-06-13T20:37:28.774Z)
+  Use 'smithers cancel' to mark them as cancelled, or 'smithers up --resume' to continue.
+runId: probe-voice-steer-b-1781412619451
+status: waiting-event
+cta:
+  description: "Next steps:"
+  commands[3]{command,description}:
+    smithers inspect probe-voice-steer-b-1781412619451,Inspect run state
+    smithers logs probe-voice-steer-b-1781412619451,View run logs
+    smithers chat probe-voice-steer-b-1781412619451,View agent chat

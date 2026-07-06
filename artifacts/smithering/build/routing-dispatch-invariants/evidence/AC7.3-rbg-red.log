@@ -1,0 +1,39 @@
+bun test v1.3.14 (0d9b296a)
+
+src/routing/dispatch.test.ts:
+113 |     const decisions = Array.from({ length: 50 }, () =>
+114 |       stripTrace(dispatch("Atlas, pause", { nowMs: 50_000, confidence: 0.99 })),
+115 |     );
+116 | 
+117 |     for (const decision of decisions) {
+118 |       expect(decision).toEqual(decisions[0]);
+                             ^
+error: expect(received).toEqual(expected)
+
+@@ -3,3 +3,3 @@
+    "action": {
+-     "correlationId": "corr-4d77e931-0.9390853923726545",
++     "correlationId": "corr-4d77e931-0.610747424975499",
+      "payload": {
+@@ -14,3 +14,3 @@
+    "commandId": "pause",
+-   "correlationId": "corr-4d77e931-0.9390853923726545",
++   "correlationId": "corr-4d77e931-0.610747424975499",
+    "decisionId": "decision-10147187",
+@@ -18,3 +18,3 @@
+      "action": {
+-       "correlationId": "corr-4d77e931-0.9390853923726545",
++       "correlationId": "corr-4d77e931-0.610747424975499",
+        "payload": {
+
+- Expected  - 3
++ Received  + 3
+
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/routing-dispatch-invariants/src/routing/dispatch.test.ts:118:24)
+(fail) routing dispatch invariants > determinism replays the same transcript N times to byte-identical decisions [8.14ms]
+
+ 0 pass
+ 10 filtered out
+ 1 fail
+ 2 expect() calls
+Ran 1 test across 1 file. [35.00ms]

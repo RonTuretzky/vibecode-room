@@ -1,0 +1,6 @@
+{
+  "name": "gesture-wall-web",
+  "private": true,
+  "type": "module",
+  "description": "Marks the web/ .js files as ES modules so `node --check` and node-based unit checks (e.g. _wall_check.mjs / _core_check.mjs) can parse and import them. Browsers ignore this file; they load the modules via <script type=\"module\">."
+}

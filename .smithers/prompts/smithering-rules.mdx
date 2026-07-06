@@ -9,3 +9,50 @@
 - Decisions you make must be RECORDED (in the artifact you write), not just considered.
 - Never raise a human request yourself (no ask-human / HumanTask) — surface blockers in
   your structured output and let the orchestrator's gates talk to the human.
+
+## Validation & observability bar (non-negotiable)
+
+We hold an EXTREMELY high validation bar. Assume **no functionality works until a test
+proves it works** — anything unverified is treated as broken, and "the agent said it's
+done" is never evidence (only a test that was capable of failing is). Expect to write
+roughly **10×–100× more tests than a human normally would**: it is cheap for agents to
+write verification and expensive for the orchestrator to verify by hand, so err massively
+toward more.
+
+- **Unit AND e2e — it is an AND, not either/or.** Every behavior gets both unit/integration
+  tests and end-to-end tests. The bar: if we kept only one layer and deleted the other, the
+  surviving layer alone should still leave us fairly confident the feature works.
+- **Validate third-party APIs before building on them.** Before depending on an external
+  API or library, exercise the ACTUAL API and prove it behaves the way we expect — never
+  trust docs or memory. Popular frameworks / standard libraries (e.g. React) may be assumed
+  to work; but for any non-framework third-party library, validate the specific methods,
+  arguments, and return shapes we plan to use with a real call before code is built on them.
+- **Build for observability.** Whatever we ship must be observable enough that a later agent
+  arriving with NO context can debug it: structured, leveled logging with meaningful
+  messages, traceable IDs/state, and clear failure output.
+
+## Product interaction model (standing constraint)
+
+This product is **audio-only**: voice is the sole interaction modality. Design, build, and
+verify accordingly — assume the user cannot see a screen or type. There is no GUI/CLI as the
+primary surface: speech in, and (sparingly) audio/voice out.
+
+All agent interaction and command triggering ("magic words") MUST be built on **Cue**
+(https://github.com/jameslbarnes/cue) — a realtime "silent harness" for agents you
+communicate with through the world. It turns continuous real-world streams into observations,
+applies policies to decide whether something meaningful happened, and wakes the right
+model/agent/tool with the right context (or emits a structured action, or explicitly chooses
+`observe.pass`). Use Cue as the canonical layer instead of rolling our own:
+
+- **Talking to the agent** goes through Cue's transcription providers (audio → transcript
+  observations) and its decision loop, not a custom STT/turn-taking stack. The agent listens
+  and acts on world changes rather than pure request/response.
+- **"Magic words for doing things" are Cue cue policies:** a cue decides when an agent/tool
+  should wake and which structured action to emit. `observe.pass` is first-class — most
+  events are not commands, so avoid dumb wakeups.
+- (Etherea — the live AI video agent — is Cue's flagship demo; the technology/repo we build
+  on is Cue itself.)
+
+Cue is a third-party library, so per the validation bar, validate the specific Cue APIs and
+provider interfaces (transcription/LLM/output/frame providers, cue policies, the
+observation + action schema) against the REAL library first before building on them.

@@ -1,0 +1,43 @@
+bun test v1.3.14 (0d9b296a)
+
+poc/p-seam.test.ts:
+timestamp=2026-06-14T22:26:53.675Z level=INFO fiber=#5 message="Gateway run started" gateway:run=0ms runId=p-seam-upid-seam-001 transport=ws triggeredBy=probe:seam role=operator workflow=seam service=smithers source=user userId=probe:seam resume=false connectionId=probe:seam:connection
+145 |       expect(firstStream.ok).toBe(true);
+146 |       const firstFrames = await waitForRunFrames(connection, spawn.runId, 1);
+147 |       const bridge = new SmithersCueObservationBridge(cue, harness, storePath);
+148 |       const bridged = await bridge.ingestFrames(firstFrames);
+149 |       expect(bridged.observations.length).toBeGreaterThan(0);
+150 |       expect(bridged.observations[0]).toEqual(
+                                            ^
+error: expect(received).toEqual(expected)
+
+- ObjectContaining
+  {
+-   "payload": ObjectContaining {
++   "id": "f1c075c5-00b2-4d81-b2bd-61f8832fbe1d",
++   "payload": {
++     "event": "node.pending",
+      "runId": "p-seam-upid-seam-001",
++     "seq": 1,
++     "sourceWindowHash": "source-window:viber-spawn-smithers-seam-probe",
+      "steeringWindowId": "window-seam-voice-001",
++     "streamId": "dd84eedd-e2ca-49d1-8531-36045af503e0",
+      "upid": "upid-seam-001",
+    },
+-   "type": "smithers.run_event",
++   "source": "smithers.gateway.streamRunEvents",
++   "timestamp": 1781476014.01,
++   "type": "smithers.dropped_event",
+  }
+
+- Expected  - 3
++ Received  + 9
+
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/probe-cue-smithers-seam/poc/p-seam.test.ts:150:39)
+(fail) P-SEAM Cue to Smithers gateway integration > MappedActionTool dispatch is bidirectional, async, reconnectable, and restart-correlated [591.64ms]
+
+ 0 pass
+ 1 fail
+ 20 expect() calls
+Ran 1 test across 1 file. [1210.00ms]
+RBG_RED_EXIT_STATUS=1

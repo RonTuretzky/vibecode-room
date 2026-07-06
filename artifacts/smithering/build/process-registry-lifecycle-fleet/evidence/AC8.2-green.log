@@ -1,0 +1,7 @@
+$ bun test src/process/registry.test.ts
+bun test v1.3.14 (0d9b296a)
+
+ 6 pass
+ 0 fail
+ 16 expect() calls
+Ran 6 tests across 1 file. [19.00ms]

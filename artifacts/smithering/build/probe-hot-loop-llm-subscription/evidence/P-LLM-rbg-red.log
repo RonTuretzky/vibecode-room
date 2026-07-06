@@ -1,0 +1,22 @@
+bun test v1.3.14 (0d9b296a)
+
+poc/p-llm.test.ts:
+26 |           decision("repeat-1", "ACT", "vibersyn.steer", { callsign: "Daybreak", instruction: "status" }),
+27 |         ]),
+28 |         invocation("same-input-2", [
+29 |           decision("repeat-1", "PASS", "observe.pass", {}),
+30 |         ]),
+31 |       ])).not.toThrow();
+                   ^
+error: expect(received).not.toThrow()
+
+Error name: "Error"
+Error message: "temperature-0 replay decisions diverged across repeated CLI invocations"
+
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/probe-hot-loop-llm-subscription/poc/p-llm.test.ts:31:15)
+(fail) P-LLM hot-loop subscription model probe > decision-model assertions are independently failable [0.39ms]
+
+ 1 pass
+ 1 fail
+ 17 expect() calls
+Ran 2 tests across 1 file. [18.86s]

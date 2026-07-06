@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Decision D-DD-21 — Mute/unmute words "mute" / "unmute"</title>
+<style>
+  :root { --ink:#1a1a1a; --mut:#666; --line:#e2e2e2; --good:#0a7d33; --bad:#b00020; --accent:#0b5cad; --bg:#fafafa; }
+  * { box-sizing:border-box; }
+  body { font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; color:var(--ink); max-width:920px; margin:2.2rem auto; padding:0 1.2rem; background:var(--bg); }
+  h1 { font-size:1.55rem; margin:0 0 .2rem; }
+  h2 { font-size:1.12rem; margin:1.8rem 0 .5rem; border-bottom:2px solid var(--line); padding-bottom:.25rem; }
+  .meta { color:var(--mut); font-size:.86rem; margin-bottom:1.2rem; }
+  .pill { display:inline-block; padding:.08rem .5rem; border-radius:999px; font-size:.75rem; font-weight:600; background:#e7f1fb; color:var(--accent); }
+  table { border-collapse:collapse; width:100%; margin:.6rem 0; font-size:.92rem; }
+  th,td { border:1px solid var(--line); padding:.45rem .6rem; text-align:left; vertical-align:top; }
+  th { background:#f0f0f0; }
+  code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  .good { color:var(--good); font-weight:600; } .bad { color:var(--bad); font-weight:600; }
+  .box { background:#fff; border:1px solid var(--line); border-radius:8px; padding:.9rem 1.1rem; margin:.7rem 0; }
+  .alt { border-left:4px solid var(--line); padding-left:.9rem; margin:.6rem 0; }
+  .alt.win { border-left-color:var(--good); } .alt.lose { border-left-color:var(--bad); }
+  .warn { background:#fff7e6; border:1px solid #ffd591; border-radius:8px; padding:.7rem 1rem; }
+</style>
+</head>
+<body>
+<h1>Mute / unmute words: <span style="color:#0b5cad">"mute"</span> / <span style="color:#0b5cad">"unmute"</span></h1>
+<div class="meta"><span class="pill">D-DD-21</span> &nbsp; Vibersyn V0 design — final pass &nbsp;·&nbsp; closes the <code>[mute word]</code> placeholder &nbsp;·&nbsp; <code>docs/planning/02-design.md §2.2</code></div>
+
+<h2>The gap</h2>
+<p>The PRD and the design draft carried a <code>[mute word]</code> placeholder. We need a concrete pair
+of words for the pause/resume control. Earlier passes worried about always-hot words misfiring on
+ordinary speech ("listen, I think…", "can you mute that") and reached for exotic coinages. That worry
+no longer applies: <strong>Cue (the voice library by Etheria) owns wake/keyword robustness</strong>, so
+we can use the plainest possible English words.</p>
+
+<h2>Decision</h2>
+<div class="box">
+Mute = <strong>"mute"</strong>, Unmute = <strong>"unmute"</strong>. Plain English words — say
+<strong>"mute"</strong> to pause feeding audio into the suggestion/routing pipeline, say
+<strong>"unmute"</strong> to resume. The screen also always offers an <strong>"unmute" button</strong>
+(see D-DD-22 / ENG-A-13). Keyword robustness against the team's real vocabulary is handled by Cue, not
+by a bespoke collision-distance scheme.
+</div>
+
+<h2>Why plain words are fine now</h2>
+<p>The earlier rationale for exotic, phoneme-distant coinages existed only because we assumed
+Vibersyn had to do its own always-on keyword spotting and collision-guarding. With Cue handling
+wake/keyword activation, "mute"/"unmute" are the most discoverable, zero-onboarding choice. The voice
+library is responsible for not firing on incidental conversational uses; we trust it for that.</p>
+
+<table>
+<tr><th>Criterion</th><th>"mute"</th><th>"unmute"</th></tr>
+<tr><td>Discoverable / zero onboarding</td><td class="good">yes</td><td class="good">yes</td></tr>
+<tr><td>Short</td><td class="good">1 syllable</td><td class="good">2 syllables</td></tr>
+<tr><td>Maps to the action directly</td><td class="good">pause pipeline</td><td class="good">resume pipeline</td></tr>
+<tr><td>Keyword robustness</td><td colspan="2" class="good">handled by Cue (Etheria) — not our concern</td></tr>
+</table>
+
+<h2>Alternatives</h2>
+<div class="alt lose"><strong>Exotic coined words ("Curtain" / "Daybreak").</strong> <span class="bad">Rejected:</span>
+these were chosen for phoneme-distance / collision-resistance reasons that no longer apply now that Cue
+owns keyword robustness; they add onboarding friction for zero benefit.</div>
+<div class="alt win"><strong>"mute" / "unmute" (chosen).</strong> Plain English, instantly discoverable,
+robustness delegated to the voice library. <span class="good">Chosen.</span></div>
+
+<div class="warn"><strong>Note:</strong> we do <em>not</em> run our own acoustic/collision validation
+against the team vocabulary. Cue handles keyword activation and false-trigger suppression; if a word
+ever proves problematic in the field, swap it via the env-tunable word list (ENG-A-01).</div>
+
+<h2>Verification</h2>
+<ul>
+<li><strong>Integration:</strong> assert "mute"/"unmute" are wired as the mute/unmute keywords through
+the Cue integration; <span class="bad">RBG:</span> wire a different word → the control no longer
+toggles → fails. We verify only the wiring into Cue, not Cue's own recognition quality.</li>
+<li><strong>E2e:</strong> say "mute" → pipeline pauses; say "unmute" (or press the on-screen unmute
+button) → resumes.</li>
+<li><strong>Onboarding:</strong> the consent line now says "Say 'mute' to pause" (was <code>[mute word]</code>).</li>
+</ul>
+</body>
+</html>

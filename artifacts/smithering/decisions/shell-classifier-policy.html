@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ENG-A-12 — CUT: no shell-command classifier / gating (run dangerously)</title>
+<style>
+  :root { --bg:#0a0a0a; --fg:#e0e0e0; --ok:#00ff88; --bad:#ff3b30; --warn:#f5a623; --sel:#00bcd4; --mut:#888; }
+  body { background:var(--bg); color:var(--fg); font:15px/1.6 -apple-system,Segoe UI,Roboto,sans-serif; max-width:920px; margin:0 auto; padding:32px; }
+  h1 { font-size:24px; color:var(--sel); margin-bottom:4px; }
+  h2 { font-size:18px; color:var(--ok); margin-top:32px; border-bottom:1px solid #222; padding-bottom:6px; }
+  .tag { display:inline-block; background:#1a1a1a; border:1px solid #333; border-radius:4px; padding:2px 8px; font-size:12px; color:var(--mut); margin-right:6px; }
+  .crit { color:var(--bad); font-weight:600; }
+  code,pre { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  pre { background:#111; border:1px solid #222; border-radius:6px; padding:14px; overflow:auto; font-size:13px; }
+  table { border-collapse:collapse; width:100%; margin:12px 0; font-size:14px; }
+  th,td { border:1px solid #222; padding:8px 10px; text-align:left; vertical-align:top; }
+  th { background:#141414; color:var(--sel); }
+  .rej { color:var(--bad); } .acc { color:var(--ok); } .mono { color:var(--warn); }
+  blockquote { border-left:3px solid var(--warn); margin:12px 0; padding:6px 14px; color:#ccc; background:#120f08; }
+</style>
+</head>
+<body>
+<h1>CUT: no shell-command classifier, no shell gating — run dangerously</h1>
+<p><span class="tag">ENG-A-12</span><span class="tag">REQ-11</span><span class="tag warn">Scope cut</span></p>
+
+<blockquote><strong>Superseded / CUT.</strong> The prior decision built a deterministic, parse-based,
+code-only shell classifier (<code>safety/shell-classifier.ts</code>) that sub-classified every shell
+call into <em>read-safe</em> (ungated) vs. <em>mutating</em>/<em>unknown</em> (gated), deny-by-default,
+backed by a probe that the parser split compound/redirect/substitution as assumed. The classifier, its
+allow/deny policy, the <code>ShellVerdict</code> type, and that probe are all <strong>removed</strong>.</blockquote>
+
+<h2>The decision</h2>
+<p>There is <strong>no shell classifier and no shell gating</strong>. The system <strong>runs
+dangerously by default</strong> — shell commands run to completion without per-command classification or
+read-back. The <code>safety/shell-classifier.ts</code> requirement is dropped; there is no read-safe vs.
+mutating sub-classification, no compound/redirect/injection gating policy. This is an explicit
+scope-cut.</p>
+
+<h2>Why cut</h2>
+<p>The classifier only existed to keep a gated <em>Safe</em> mode autonomous for harmless shell while
+still holding destructive shell for a read-back. With the per-action safety gate cut (ENG-A-08) and
+execution modes collapsed to a single run-to-completion "dangerous" mode (ENG-A-11), there is nothing
+for the classifier to gate <em>for</em> — every shell command already runs. Building a deterministic
+shell parser/allowlist to feed a gate that no longer exists is pure dead weight.</p>
+
+<h2>Where safety comes from instead</h2>
+<p>Safety, if and when it is ever needed, comes from <strong>sandboxing the whole process</strong> —
+isolating it — not from permission classification of individual shell commands. That is deferred
+(revisited later), not built for V0.</p>
+
+<h2>Alternatives considered</h2>
+<table>
+<tr><th>Approach</th><th>Verdict</th><th>Why</th></tr>
+<tr><td>Parse-based read-safe/mutating/unknown classifier, deny-by-default (prior plan)</td><td class="rej">Cut</td><td>Gates nothing once the per-action safety gate and Safe mode are removed; dead weight.</td></tr>
+<tr><td>Gate all shell / gate by NL verb upstream</td><td class="rej">Cut</td><td>No shell gating at all in V0.</td></tr>
+<tr><td><strong>No classifier, run dangerously; sandbox the process later if needed</strong></td><td class="acc">Chosen</td><td>Matches the run-to-completion posture; isolation, not permission classification, is the future safety lever.</td></tr>
+</table>
+
+<h2>Verification</h2>
+<ul>
+<li><strong>No-shell-gate test:</strong> harmless and destructive shell alike run to completion without
+classification or read-back (RBG: re-introduce a shell gate that holds <code>rm -rf</code> → the
+run-to-completion e2e fails).</li>
+<li><strong>No classifier present:</strong> assert there is no <code>safety/shell-classifier.ts</code>
+and no <code>ShellVerdict</code> in the build.</li>
+</ul>
+
+<blockquote><strong>Note:</strong> the deferred safety lever is process sandboxing, not shell-command
+permission classification.</blockquote>
+</body>
+</html>

@@ -1,0 +1,4 @@
+{"text":"Viber","isFinal":false,"speaker":"speaker_0","sessionId":"probe-asr-deepgram-fixture","latencyMs":100,"utteranceId":"asr-fixture-a-0-0"}
+{"text":"Viber status.","isFinal":true,"speaker":"speaker_0","sessionId":"probe-asr-deepgram-fixture","latencyMs":100,"utteranceId":"asr-fixture-a-1-0"}
+{"text":"I can take notes.","isFinal":true,"speaker":"speaker_0","sessionId":"probe-asr-deepgram-fixture","latencyMs":140,"utteranceId":"asr-fixture-overlap-3-0"}
+{"text":"Let's ship it.","isFinal":true,"speaker":"speaker_1","sessionId":"probe-asr-deepgram-fixture","latencyMs":110,"utteranceId":"asr-fixture-overlap-3-1"}

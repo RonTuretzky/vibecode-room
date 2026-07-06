@@ -1,0 +1,57 @@
+bun test v1.3.14 (0d9b296a)
+
+src/routing/steering-window.test.ts:
+212 |     expect(decision.targetUPID).not.toBe(upid);
+213 |   }
+214 | }
+215 | 
+216 | function expectClosed(decision: SteeringDecision, reason: "done" | "back" | "abort" | "idle", upid: string): void {
+217 |   expect(decision).toEqual(
+                         ^
+error: expect(received).toEqual(expected)
+
+- ObjectContaining 
+  {
+-   "closedWindow": ObjectContaining {
++   "ackId": null,
++   "addressed": false,
++   "kind": "pass",
++   "reason": "ambient",
++   "traceEvents": [
++     {
++       "correlationId": "corr-idle-close",
++       "event": "steering.window.idle_wait",
++       "level": "debug",
++       "meta": {
++         "elapsedMs": 20000,
++         "idleMs": 20000,
++         "windowId": "steer-upid-atlas-1",
++       },
++       "sessionId": "session-steering",
++       "upid": "upid-atlas",
++     },
++   ],
++   "window": {
++     "callsign": "Atlas",
++     "lastMicActivityAtMs": 10000,
++     "lastUtteranceId": "utt-open",
++     "openedAtMs": 10000,
+      "targetUPID": "upid-atlas",
++     "windowId": "steer-upid-atlas-1",
+    },
+-   "kind": "closed",
+-   "reason": "idle",
+  }
+
+- Expected  - 4
++ Received  + 24
+
+      at expectClosed (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/steering-window-lifecycle/src/routing/steering-window.test.ts:217:20)
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/steering-window-lifecycle/src/routing/steering-window.test.ts:116:5)
+(fail) REQ-6 steering-window lifecycle > AC6.3 closes after the configured 20 seconds of mic-level idle [1.43ms]
+
+ 0 pass
+ 11 filtered out
+ 1 fail
+ 3 expect() calls
+Ran 1 test across 1 file. [13.00ms]

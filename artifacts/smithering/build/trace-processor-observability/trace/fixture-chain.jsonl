@@ -1,0 +1,4 @@
+{"level":"info","event":"observe.final","sessionId":"session-fixture-001","correlationId":"corr-fixture-001","latencyMs":4,"meta":{"seq":1,"utteranceId":"utt-fixture-001","speaker":"speaker-0","text":"Viber build settings"}}
+{"level":"info","event":"route.suggestion","sessionId":"session-fixture-001","correlationId":"corr-fixture-001","latencyMs":4,"meta":{"seq":2,"utteranceId":"utt-fixture-001","decisionId":"decision-fixture-001","policy":"fixture"}}
+{"level":"info","event":"process.spawn","sessionId":"session-fixture-001","correlationId":"corr-fixture-001","upid":"upid-fixture-001","latencyMs":12,"meta":{"seq":3,"utteranceId":"utt-fixture-001","runId":"run-fixture-001","seedHash":"seed-fixture-001"}}
+{"level":"info","event":"process.completed","sessionId":"session-fixture-001","correlationId":"corr-fixture-001","upid":"upid-fixture-001","latencyMs":8,"meta":{"seq":4,"utteranceId":"utt-fixture-001","runId":"run-fixture-001","summary":"fixture completed"}}

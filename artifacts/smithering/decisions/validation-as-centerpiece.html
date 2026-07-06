@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Decision D-DD-25 — Validation as the document's centerpiece</title>
+<style>
+  :root { --ink:#1a1a1a; --mut:#666; --line:#e2e2e2; --good:#0a7d33; --bad:#b00020; --accent:#0b5cad; --bg:#fafafa; }
+  * { box-sizing:border-box; }
+  body { font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; color:var(--ink); max-width:920px; margin:2.2rem auto; padding:0 1.2rem; background:var(--bg); }
+  h1 { font-size:1.55rem; margin:0 0 .2rem; }
+  h2 { font-size:1.12rem; margin:1.8rem 0 .5rem; border-bottom:2px solid var(--line); padding-bottom:.25rem; }
+  .meta { color:var(--mut); font-size:.86rem; margin-bottom:1.2rem; }
+  .pill { display:inline-block; padding:.08rem .5rem; border-radius:999px; font-size:.75rem; font-weight:600; }
+  .pill.dec { background:#e7f1fb; color:var(--accent); }
+  table { border-collapse:collapse; width:100%; margin:.6rem 0; font-size:.92rem; }
+  th,td { border:1px solid var(--line); padding:.45rem .6rem; text-align:left; vertical-align:top; }
+  th { background:#f0f0f0; }
+  code,pre { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  pre { background:#f4f4f4; border:1px solid var(--line); border-radius:6px; padding:.8rem; overflow:auto; font-size:.85rem; }
+  .good { color:var(--good); font-weight:600; } .bad { color:var(--bad); font-weight:600; }
+  .box { background:#fff; border:1px solid var(--line); border-radius:8px; padding:.9rem 1.1rem; margin:.7rem 0; }
+  .alt { border-left:4px solid var(--line); padding-left:.9rem; margin:.6rem 0; }
+  .alt.win { border-left-color:var(--good); }
+</style>
+</head>
+<body>
+<h1>Validation &amp; observability as the document's centerpiece</h1>
+<div class="meta"><span class="pill dec">D-DD-25</span> &nbsp; Vibersyn V0 design — final orchestrator pass &nbsp;·&nbsp; doc: <code>docs/planning/02-design.md</code></div>
+
+<h2>Decision</h2>
+<div class="box">
+Restructure the design doc so the <strong>verification plan is the centerpiece, not an appendix</strong>.
+Every design section (§2–§12) carries an inline <strong>Verify</strong> block naming the specific
+unit/integration tests <em>and</em> end-to-end tests that prove it, each with a named
+red-before-green failure injection. §13 consolidates these into a single component→test→observability
+matrix, the structured-log contract, the red-before-green protocol, and a boundary/fuzz catalog.
+No behavior is described anywhere without the test that proves it.
+<p style="margin:.6rem 0 0"><strong>Scope of what we verify:</strong> we <strong>trust Cue (Etheria's
+voice library)</strong> and do <strong>not</strong> re-test its internal recognition quality. Our tests
+verify only <strong>our integration WITH the library</strong> — that words/events are wired correctly,
+that actions round-trip, and that our own deterministic code behaves. Tunable parameters (timeouts,
+suggestion cadence, thresholds, latency budgets, word lists) are <strong>env-tunable knobs with
+documented defaults</strong> (ENG-A-01), not hard guarantees we assert against — so a Verify block
+checks the wiring and shape, not a fixed numeric promise about the library.</p>
+</div>
+
+<h2>Why this was a judgment call</h2>
+<p>The approved draft already had a strong test section (§11). The call was <em>where verification
+lives</em>: a single end-of-doc section (cheaper to write, easy to skim past) versus threading it
+through every section plus a consolidated matrix (more effort, but it makes "assume nothing works
+until a test proves it" structurally enforceable — you cannot describe a behavior and forget to say
+how it is proven, because the Verify block sits right under it).</p>
+
+<h2>Alternatives considered</h2>
+<div class="alt"><strong>A. Keep one end-of-doc test section (the draft's shape).</strong> Lower
+effort. <span class="bad">Rejected:</span> verification reads as bolted-on; easy for a later author
+to add a behavior without a matching test; the operating bar explicitly says weight effort toward
+verification.</div>
+<div class="alt win"><strong>B. Inline Verify per section + consolidated §13 matrix (chosen).</strong>
+Every behavior is co-located with its proof; the matrix gives a single auditable surface; the
+red-before-green injection is named per test so "the agent said it works" can never substitute for a
+red run. <span class="good">Chosen.</span></div>
+<div class="alt"><strong>C. Separate standalone test-plan document.</strong> <span class="bad">Rejected:</span>
+splits the design from its proof across two files; drift risk; a verifier would have to cross-reference
+constantly.</div>
+
+<h2>Example: what a Verify block forces</h2>
+<table>
+<tr><th>Behavior (claimed)</th><th>Unit (RBG)</th><th>E2e</th><th>Observability</th></tr>
+<tr><td>Earcon E1 ≤300 ms after wake</td><td>mocked clock; <span class="bad">set 100 ms budget → fail</span>; relax to 300 ms → pass</td><td>≥100 live round-trips, earcon&lt;300 ms baseline</td><td><code>earcon.emit{latencyMs}</code></td></tr>
+<tr><td>No observations while muted</td><td>feed speech in MUTED → assert zero obs; <span class="bad">leave the pipeline open → fail</span></td><td>say "mute"; disk scan = 0 audio</td><td><code>mute.heartbeat{streamingToCloud:false}</code></td></tr>
+</table>
+
+<h2>Consequences</h2>
+<ul>
+<li>The doc is longer and the matrix (§13.2) is the densest part — intended.</li>
+<li>Red-before-green is named per test, so a build is never "green" without a demonstrated red run first.</li>
+<li>The log contract (§13.3) is part of the design, not a downstream concern — a no-context agent can rebuild any loop from one <code>correlationId</code>.</li>
+</ul>
+</body>
+</html>

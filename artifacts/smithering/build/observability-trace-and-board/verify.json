@@ -1,0 +1,9 @@
+{
+  "ranTests": true,
+  "rbgConfirmed": true,
+  "gatesGreen": true,
+  "rebasedOntoIntegration": true,
+  "mergedTipGatesGreen": true,
+  "integrationBranch": "smithering/integration",
+  "pass": true
+}

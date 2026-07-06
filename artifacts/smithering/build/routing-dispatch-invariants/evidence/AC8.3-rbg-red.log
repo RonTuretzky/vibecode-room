@@ -1,0 +1,23 @@
+bun test v1.3.14 (0d9b296a)
+
+src/routing/dispatch.test.ts:
+171 |   });
+172 | 
+173 |   test("low-confidence steering is dropped with an addressed ack and never executed", () => {
+174 |     const decision = dispatch("Atlas make it blue", { confidence: 0.1 });
+175 | 
+176 |     expect(decision.kind).toBe("pass");
+                                ^
+error: expect(received).toBe(expected)
+
+Expected: "pass"
+Received: "action"
+
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/routing-dispatch-invariants/src/routing/dispatch.test.ts:176:27)
+(fail) routing dispatch invariants > low-confidence steering is dropped with an addressed ack and never executed [3.35ms]
+
+ 0 pass
+ 10 filtered out
+ 1 fail
+ 1 expect() calls
+Ran 1 test across 1 file. [26.00ms]

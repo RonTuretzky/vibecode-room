@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ENG-A-13 — Unmute = "unmute" word (Cue) or on-screen button</title>
+<style>
+  :root { --bg:#0a0a0a; --fg:#e0e0e0; --ok:#00ff88; --bad:#ff3b30; --warn:#f5a623; --sel:#00bcd4; --mut:#888; }
+  body { background:var(--bg); color:var(--fg); font:15px/1.6 -apple-system,Segoe UI,Roboto,sans-serif; max-width:920px; margin:0 auto; padding:32px; }
+  h1 { font-size:24px; color:var(--sel); margin-bottom:4px; }
+  h2 { font-size:18px; color:var(--ok); margin-top:32px; border-bottom:1px solid #222; padding-bottom:6px; }
+  .tag { display:inline-block; background:#1a1a1a; border:1px solid #333; border-radius:4px; padding:2px 8px; font-size:12px; color:var(--mut); margin-right:6px; }
+  code,pre { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  pre { background:#111; border:1px solid #222; border-radius:6px; padding:14px; overflow:auto; font-size:13px; }
+  table { border-collapse:collapse; width:100%; margin:12px 0; font-size:14px; }
+  th,td { border:1px solid #222; padding:8px 10px; text-align:left; vertical-align:top; }
+  th { background:#141414; color:var(--sel); }
+  .rej { color:var(--bad); } .acc { color:var(--ok); } .mono { color:var(--warn); }
+  blockquote { border-left:3px solid var(--warn); margin:12px 0; padding:6px 14px; color:#ccc; background:#120f08; }
+</style>
+</head>
+<body>
+<h1>Unmute = say "unmute" (via Cue) or press the on-screen unmute button</h1>
+<p><span class="tag">ENG-A-13</span><span class="tag">REQ-2 / D1</span><span class="tag">Resolves R10</span></p>
+
+<blockquote><strong>Superseded:</strong> the prior decision built a bespoke on-device "spotter" as the
+<em>sole</em> operational unmute, promoted P-SPOTTER to a blocking P0 probe, and made spotter-down
+recovery an emergency kill-all + clean restart. All of that is <strong>removed</strong>. Cue (Etheria's
+voice library) already listens for keywords while the pipeline is paused, so there is no custom spotter,
+no P-SPOTTER probe, and no teardown-restart recovery path.</blockquote>
+
+<h2>The decision</h2>
+<p>There are <strong>two ordinary unmute paths</strong>, either of which works at any time while muted:</p>
+<ul>
+<li><strong>Say "unmute"</strong> — Cue's always-on keyword listening catches it even while the
+suggestion/routing pipeline is paused, and emits <code>mute.released</code>.</li>
+<li><strong>Press the on-screen "unmute" button</strong> — always rendered, emits the same
+<code>mute.released</code>.</li>
+</ul>
+<p>Because there are two independent paths and one of them (the button) never depends on audio or any
+third-party model, <strong>the room can never get trapped muted</strong>. We do <em>not</em> repurpose
+the REQ-14 emergency control as an unmute, and there is no kill-all-and-restart recovery for "unmute is
+broken" — the button is always there.</p>
+
+<h2>Why — the R10 finding, re-resolved</h2>
+<blockquote>R10 originally asked how a disabled/failing custom spotter degrades. With the spotter cut,
+the question dissolves: unmute is (a) a keyword Cue already listens for, and (b) a screen button that
+is always present. Neither requires a bespoke component or an emergency teardown.</blockquote>
+
+<h2>The flow</h2>
+<pre>
+MUTED:   "mute" → pause the suggestion/routing pipeline + earcon + one-word "Muted"
+              while muted: Cue still listens for "unmute" (library capability — no custom spotter)
+                          the on-screen "unmute" button is always shown
+         say "unmute"  → Cue → mute.released → pipeline resumes        ← operational unmute (hands-free)
+         click button  → mute.released → pipeline resumes              ← always-available unmute
+</pre>
+<p>REQ-14's non-voice emergency control stays exactly what the PRD says — a kill-all that halts every
+process and ends the session — and is <strong>never</strong> reused as an in-session unmute. It is no
+longer part of any unmute-recovery story, because there is nothing to recover from.</p>
+
+<h2>Alternatives considered</h2>
+<table>
+<tr><th>Approach</th><th>Verdict</th><th>Why</th></tr>
+<tr><td>Bespoke on-device spotter as sole operational unmute (prior draft)</td><td class="rej">Cut</td><td>Duplicates a capability Cue already provides; adds a blocking probe and native dependency for nothing.</td></tr>
+<tr><td>Emergency control doubles as unmute</td><td class="rej">Rejected</td><td>Violates REQ-14 (kill-all only) and adds a non-voice operational verb → breaks D1.</td></tr>
+<tr><td>Spotter-down → kill-all + restart-unmuted</td><td class="rej">Cut</td><td>No spotter, so no spotter-down state; the on-screen button is the always-available path instead.</td></tr>
+<tr><td><strong>"unmute" word (Cue) + on-screen button</strong></td><td class="acc">Chosen</td><td>Two independent unmute paths; the button can never fail to render; no custom component to prove.</td></tr>
+</table>
+
+<h2>Verification</h2>
+<ul>
+<li><strong>two-unmute-paths test</strong> — both "unmute" (wired into Cue) and the on-screen button emit <code>mute.released</code> and resume the pipeline (RBG: disable one path → assert the other still unmutes; disable both → room trapped muted → fails).</li>
+<li><strong>no-unmute-verb-on-emergency test</strong> — the REQ-14 emergency control exposes no resume/unmute path (RBG: wire it to resume streaming → AC14.2 scope test fails).</li>
+<li><strong>mute-announce test</strong> — "mute" emits earcon + one-word "Muted" (AC2.4).</li>
+</ul>
+
+<blockquote><strong>Note:</strong> no P-SPOTTER probe exists anymore. We trust Cue for keyword listening
+and verify only that "unmute" is wired into it and that the button always renders and unmutes.</blockquote>
+</body>
+</html>

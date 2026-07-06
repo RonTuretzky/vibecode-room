@@ -1,0 +1,36 @@
+bun test v1.3.14 (0d9b296a)
+
+src/routing/callsigns.test.ts:
+91 |     const duringCooldown = allocator.assign("upid-b");
+92 |     expect(duringCooldown.callsign).toBe("quoravex");
+93 | 
+94 |     allocator.release("upid-b");
+95 |     now += CALLSIGN_REUSE_COOLDOWN_MS - 1;
+96 |     expect(() => allocator.assign("upid-c")).toThrow(/No non-colliding/u);
+                                                  ^
+error: expect(received).toThrow(expected)
+
+Expected pattern: /No non-colliding/u
+
+Received function did not throw
+Received value: {
+  upid: "upid-c",
+  callsign: "virellium",
+  profile: {
+    normalized: "virellium",
+    metaphone: [ "FRLM", "" ],
+    phonemes: "fArAlAm",
+  },
+  reusedAfterCooldown: true,
+  poolIndex: 0,
+}
+
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/callsigns-and-collision-guard/src/routing/callsigns.test.ts:96:46)
+(fail) callsign collision guard > D-DD-18 keeps halted callsigns unavailable for 60 seconds before reuse [0.38ms]
+
+ 6 pass
+ 1 fail
+ 51 expect() calls
+Ran 7 tests across 1 file. [37.00ms]
+
+exit_code=1

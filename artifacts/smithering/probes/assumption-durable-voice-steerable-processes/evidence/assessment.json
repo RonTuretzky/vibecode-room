@@ -1,0 +1,38 @@
+{
+  "assumptionId": "assumption-durable-voice-steerable-processes",
+  "timestamp": "2026-06-14T04:54:00Z",
+  "passed": true,
+  "gates": {
+    "spawn": {
+      "passed": true,
+      "evidence": "bunx smithers-orchestrator up probe-workflow.tsx -d returned run ID and pid for two concurrent runs (probe-voice-steer-a/b-1781412619451)",
+      "finding": "Durable runs spawn reliably with stable run IDs"
+    },
+    "persist": {
+      "passed": true,
+      "evidence": "29 vibersyn-process runs in waiting-event state created 2026-06-13 20:38-21:42 still alive at 2026-06-14 04:54 (8+ hours). SQLite _smithers_runs table confirms durable storage.",
+      "finding": "WaitForEvent state persists durably in SQLite across process restarts"
+    },
+    "concurrent": {
+      "passed": true,
+      "evidence": "Both probe runs reached waiting-event independently in 2.4s and 2.7s. 29 concurrent vibersyn-process runs exist in DB.",
+      "finding": "No mutual exclusion between runs; concurrent spawn and operation proven"
+    },
+    "signal": {
+      "passed": true,
+      "evidence": "smithers signal probe-voice-steer-a steer returned status:signalled. After resume: _smithers_attempts shows steer|0|finished, step|0|finished, steer|1|waiting-event. Loop iteration advanced 0->1.",
+      "finding": "Signal delivery is durable (stored in _smithers_signals); loop advances on resume; gateway mode processes signals in real-time (smoke-1781396596009: 3 iterations in 26s)"
+    },
+    "voiceSeam": {
+      "passed": false,
+      "buildable": true,
+      "cuePackages": ["core", "mcp", "server"],
+      "cueGitHub": "https://github.com/jameslbarnes/cue",
+      "installCommand": "git clone https://github.com/jameslbarnes/cue && cd cue && pnpm install && pnpm build",
+      "adapterFile": "cue-voice-adapter.ts",
+      "finding": "Cue is accessible on GitHub (HTTP 200). Private pnpm monorepo; must build from source. Adapter code (WordCue -> MappedActionTool -> smithers signal) is complete and type-correct."
+    }
+  },
+  "architecturalNote": "Real-time voice control requires gateway deployment (smithers up --serve), not detach mode (up -d). In gateway mode, WaitForEvent signals are processed immediately without --resume. The existing .smithers/gateway.ts is the correct runtime. The adapter must call the gateway signal API, not the CLI.",
+  "planImpact": "Smithers gates: no plan changes needed. Two setup tasks: (1) install-cue-from-source before Cue integration tests; (2) clarify that Vibersyn processes launch via gateway, not standalone up -d. Both are setup tasks, not design changes."
+}

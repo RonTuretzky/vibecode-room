@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Decision D-DD-23 — Earcon vs routing-ack layering</title>
+<style>
+  :root { --ink:#1a1a1a; --mut:#666; --line:#e2e2e2; --good:#0a7d33; --bad:#b00020; --accent:#0b5cad; --bg:#fafafa; }
+  * { box-sizing:border-box; }
+  body { font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; color:var(--ink); max-width:920px; margin:2.2rem auto; padding:0 1.2rem; background:var(--bg); }
+  h1 { font-size:1.5rem; margin:0 0 .2rem; }
+  h2 { font-size:1.12rem; margin:1.8rem 0 .5rem; border-bottom:2px solid var(--line); padding-bottom:.25rem; }
+  .meta { color:var(--mut); font-size:.86rem; margin-bottom:1.2rem; }
+  .pill { display:inline-block; padding:.08rem .5rem; border-radius:999px; font-size:.75rem; font-weight:600; background:#e7f1fb; color:var(--accent); }
+  table { border-collapse:collapse; width:100%; margin:.6rem 0; font-size:.9rem; }
+  th,td { border:1px solid var(--line); padding:.45rem .6rem; text-align:left; vertical-align:top; }
+  th { background:#f0f0f0; }
+  code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+  .good { color:var(--good); font-weight:600; } .bad { color:var(--bad); font-weight:600; }
+  .box { background:#fff; border:1px solid var(--line); border-radius:8px; padding:.9rem 1.1rem; margin:.7rem 0; }
+  .layer { display:flex; gap:1rem; flex-wrap:wrap; }
+  .layer > div { flex:1 1 380px; border:1px solid var(--line); border-radius:8px; padding:.8rem 1rem; background:#fff; }
+  .tag { font-size:.74rem; font-weight:700; letter-spacing:.04em; text-transform:uppercase; color:var(--mut); }
+  .alt { border-left:4px solid var(--line); padding-left:.9rem; margin:.6rem 0; }
+  .alt.win { border-left-color:var(--good); }
+</style>
+</head>
+<body>
+<h1>Two intentionally disjoint non-verbal layers</h1>
+<div class="meta"><span class="pill">D-DD-23</span> &nbsp; Vibersyn V0 — final pass &nbsp;·&nbsp; <code>docs/planning/02-design.md §3</code></div>
+
+<h2>The inconsistency in the draft</h2>
+<p>The draft said <strong>"exactly 5 earcons, no more"</strong> and then introduced routing acks
+("tick-tick", "whoosh") as "functional equivalents." Read literally, that is either a 6th/7th earcon
+(contradiction) or an undefined category. A verifier could not tell whether an acoustic-distinctness
+test should treat them as earcons.</p>
+
+<h2>Decision</h2>
+<div class="box">
+The system speaks through <strong>two categorically different non-verbal layers</strong>, and the
+routing acks are <strong>deliberately non-tonal</strong> so they can never collide with the tonal
+state earcons. "Exactly 5" governs Layer A only.
+</div>
+
+<div class="layer">
+  <div>
+    <div class="tag">Layer A — tonal state earcons (fixed at 5)</div>
+    <p>Pitched, melodic, ≤500 ms. Signal <em>what state the system is in</em>.</p>
+    <ul>
+      <li>E1 Wake (C5→E5) · E2 Transcribing hum (A2) · E3 Spawn (G5) · E4 Resolve (C4→E4→G4) · E5 Halt (E5→C4)</li>
+    </ul>
+  </div>
+  <div>
+    <div class="tag">Layer B — routing acks (non-tonal)</div>
+    <p>Clicks / whoosh, <strong>no pitched content</strong>. Signal <em>where an addressed utterance was
+    routed</em>. Ignored ambient speech is <strong>silent</strong> — of course un-addressed chatter
+    should make no noise.</p>
+    <ul>
+      <li><code>route.steer:X</code> → double-click "tick-tick"</li>
+      <li><code>route.suggestion</code> → soft "whoosh"</li>
+      <li><code>observe.pass</code> / <code>route.pass</code> (ignored ambient) → <strong>silence</strong> (default, not a knob)</li>
+    </ul>
+  </div>
+</div>
+
+<h2>Why non-tonal is the key constraint</h2>
+<p>Making Layer B non-tonal guarantees <strong>disjointness by construction</strong>: a click can
+never be mistaken for a melodic earcon, and vice-versa, even under conversational noise and cognitive
+load (the failure mode <code>design-art.md §2</code> warns about). This also preserves the ATC
+"Roger vs. Wilco" distinction — E1 (wake) = "received", E3 (spawn) = "acting on it" — without
+crowding the tonal space.</p>
+
+<h2>Alternatives</h2>
+<div class="alt"><strong>A. Expand to 7 tonal earcons.</strong> <span class="bad">Rejected:</span>
+more pitched signatures to keep mutually distinct; erodes the "5 is the minimum distinguishable set"
+discipline.</div>
+<div class="alt"><strong>B. Drop routing acks; rely on TTS for routing.</strong> <span class="bad">Rejected:</span>
+spoken routing receipts are slow and chatty — violates the restraint/latency bar.</div>
+<div class="alt win"><strong>C. Two disjoint layers; Layer B non-tonal (chosen).</strong>
+<span class="good">Chosen.</span></div>
+
+<h2>Verification</h2>
+<ul>
+<li><strong>Acoustic-distinctness fixture (unit):</strong> assert E1–E5 differ in pitch register and
+rhythm, <em>and</em> every Layer-B ack is non-tonal. <span class="bad">RBG:</span> give a routing ack
+a pitched tone → an overlap detector flags Layer A/B collision → fails.</li>
+<li><strong>E2e:</strong> ignored ambient <code>observe.pass</code> / <code>route.pass</code> emits
+<em>silence</em> by default — a positive assertion that no ack was played, not merely "nothing logged."
+This is the requirement, not a configurable knob (see ENG-A-10).</li>
+<li><strong>Observability:</strong> <code>earcon.emit{id}</code> (Layer A) vs.
+<code>route.*{ackKind}</code> (Layer B) are distinct event families in the trace.</li>
+</ul>
+</body>
+</html>

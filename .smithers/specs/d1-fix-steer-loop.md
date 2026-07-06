@@ -7,7 +7,7 @@ D1 added a durable, steerable process run: `src/core/workflows/process.tsx`
 (SmithersControlPlane wrapping gateway-client), and an opt-in end-to-end test
 `src/core/durable-run-smoke.test.ts`.
 
-The end-to-end smoke (run with `PANOPTICON_SMOKE_AGENT=1 bun test --timeout 180000 src/core/durable-run-smoke.test.ts`)
+The end-to-end smoke (run with `VIBERSYN_SMOKE_AGENT=1 bun test --timeout 180000 src/core/durable-run-smoke.test.ts`)
 revealed TWO real bugs. The core round-trip works (launch → waiting-event → steer →
 step runs via ioAgents → events stream), but:
 
@@ -46,6 +46,6 @@ waiting on (e.g. read current iteration from `getRun`, submit with the matching 
 ## Constraints
 - Edit ONLY: `src/core/workflows/process.tsx`, `src/core/control-plane.ts`,
   `src/core/gateway.ts` (if needed), `src/core/durable-run-smoke.test.ts`.
-- Do NOT touch `panopticon-world/`, `node_modules/`, or unrelated files.
+- Do NOT touch `vibersyn-world/`, `node_modules/`, or unrelated files.
 - Subscriptions only (ioAgents). No mocks — the smoke test uses the real gateway + a real agent step.
-- Gate: `bun run typecheck` passes AND `PANOPTICON_SMOKE_AGENT=1 bun test --timeout 180000 src/core/durable-run-smoke.test.ts` passes. Run both before finishing.
+- Gate: `bun run typecheck` passes AND `VIBERSYN_SMOKE_AGENT=1 bun test --timeout 180000 src/core/durable-run-smoke.test.ts` passes. Run both before finishing.

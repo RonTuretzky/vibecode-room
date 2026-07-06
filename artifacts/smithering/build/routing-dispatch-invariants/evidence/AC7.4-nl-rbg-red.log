@@ -1,0 +1,23 @@
+bun test v1.3.14 (0d9b296a)
+
+src/routing/dispatch.test.ts:
+146 |     const bravoResume = dispatch("resume", { openWindow: openBravo() });
+147 |     const nlPause = dispatch("pause the second one");
+148 | 
+149 |     expect(action(atlasPause)).toEqual(expect.objectContaining({ type: "pause", targetUPID: "upid-atlas" }));
+150 |     expect(action(bravoResume)).toEqual(expect.objectContaining({ type: "resume", targetUPID: "upid-bravo" }));
+151 |     expect(nlPause.kind).toBe("pass");
+                               ^
+error: expect(received).toBe(expected)
+
+Expected: "pass"
+Received: "action"
+
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/routing-dispatch-invariants/src/routing/dispatch.test.ts:151:26)
+(fail) routing dispatch invariants > per-process pause and resume route only from callsign or open window, never free-form NL [3.90ms]
+
+ 0 pass
+ 10 filtered out
+ 1 fail
+ 3 expect() calls
+Ran 1 test across 1 file. [27.00ms]

@@ -1,0 +1,5 @@
+{
+  "green": true,
+  "ticketId": "probe-smithers-durable-runs",
+  "summary": "P-SMITHERS passed against the real Smithers Gateway harness: gateway spawn, streamRunEvents, pause/resume, submitSignal steering, restart recovery equality, concurrent durable fleet runs, and gateway fork-lineage verdict are covered with RBG evidence."
+}

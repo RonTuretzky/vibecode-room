@@ -1,0 +1,24 @@
+bun test v1.3.14 (0d9b296a)
+
+test/e2e/spine.e2e.ts.test.ts:
+59 |     const earconLatencyMs = emitted[0].emittedAtMs - finalizedAtMs;
+60 | 
+61 |     expect(cueDecision?.name).toBe("text");
+62 |     expect(emitted).toHaveLength(1);
+63 |     expect(emitted[0].source).toBe("cue-textcue");
+64 |     expect(earconLatencyMs).toBeLessThanOrEqual(300);
+                                 ^
+error: expect(received).toBeLessThanOrEqual(expected)
+
+Expected: <= 300
+Received: 326.374
+
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/cue-adapter-and-policies/test/e2e/spine.e2e.ts:64:29)
+(fail) seam slice spine e2e > recognition-latency slice emits the earcon within 300 ms after finalization while the LLM is delayed [357.41ms]
+timestamp=2026-06-15T23:27:26.494Z level=INFO fiber=#5 message="Gateway run started" gateway:run=0ms runId=run-spine-001 transport=ws triggeredBy=spine role=operator workflow=vibersyn-spine service=smithers source=user userId=spine resume=false connectionId=spine:connection
+
+ 1 pass
+ 1 fail
+ 7 expect() calls
+Ran 2 tests across 1 file. [1222.00ms]
+exit=1

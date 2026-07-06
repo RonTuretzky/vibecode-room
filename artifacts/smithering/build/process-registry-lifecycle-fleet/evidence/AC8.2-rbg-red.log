@@ -1,0 +1,32 @@
+$ VIBERSYN_RBG_LEAK_STEER_TO_SIBLINGS=1 bun test src/process/registry.test.ts
+bun test v1.3.14 (0d9b296a)
+
+src/process/registry.test.ts:
+28 |     const beforeB = registry.records().find((record) => record.upid === "upid-b");
+29 | 
+30 |     await registry.steer("upid-a", { command: "make it faster" }, "corr-steer-a");
+31 | 
+32 |     const afterB = registry.records().find((record) => record.upid === "upid-b");
+33 |     expect(afterB).toEqual(beforeB);
+                        ^
+error: expect(received).toEqual(expected)
+
+@@ -2,4 +2,4 @@
+    "callsign": "quoravex",
+-   "lastAction": "spawn",
+-   "progressSeq": 0,
++   "lastAction": "leaked-steer",
++   "progressSeq": 1,
+    "runId": "run-upid-b",
+
+- Expected  - 2
++ Received  + 2
+
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/process-registry-lifecycle-fleet/src/process/registry.test.ts:33:20)
+(fail) process registry > AC8.2 isolation: mutating A leaves B byte-for-byte unchanged [1.32ms]
+
+ 5 pass
+ 1 fail
+ 15 expect() calls
+Ran 6 tests across 1 file. [17.00ms]
+exit=1

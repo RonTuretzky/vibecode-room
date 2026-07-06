@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Decision - Common opaque token redaction</title>
+  <style>
+    :root { --bg:#0a0a0a; --fg:#e0e0e0; --ok:#00ff88; --bad:#ff3b30; --sel:#00bcd4; --mut:#888; }
+    body { background:var(--bg); color:var(--fg); font:15px/1.6 -apple-system,Segoe UI,Roboto,sans-serif; max-width:920px; margin:0 auto; padding:32px; }
+    h1 { font-size:24px; color:var(--sel); margin-bottom:4px; }
+    h2 { font-size:18px; color:var(--ok); margin-top:32px; border-bottom:1px solid #222; padding-bottom:6px; }
+    .tag { display:inline-block; background:#1a1a1a; border:1px solid #333; border-radius:4px; padding:2px 8px; font-size:12px; color:var(--mut); margin-right:6px; }
+    code,pre { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+    pre { background:#111; border:1px solid #222; border-radius:6px; padding:14px; overflow:auto; font-size:13px; }
+    table { border-collapse:collapse; width:100%; margin:12px 0; font-size:14px; }
+    th,td { border:1px solid #222; padding:8px 10px; text-align:left; vertical-align:top; }
+    th { background:#141414; color:var(--sel); }
+    .acc { color:var(--ok); }
+    .rej { color:var(--bad); }
+  </style>
+</head>
+<body>
+  <h1>Common opaque token alphabets redact fail closed</h1>
+  <p><span class="tag">subscription-credentials-redaction</span><span class="tag">SEC-1</span></p>
+
+  <h2>Problem</h2>
+  <p>
+    The unknown-token detector handled provider prefixes, bearer values, JWTs, plus-sign tokens,
+    long mixed alphanumeric values, and long alphabetic-only values. Follow-up review found three
+    neutral-key gaps: opaque values using slash-only token alphabets, padded alphabetic values, and
+    provider-prefixed alphabetic values.
+  </p>
+
+  <h2>Decision</h2>
+  <p>
+    Treat these as unknown secret candidates when they have token shape and enough length:
+    padded opaque values, slash-only opaque values that do not look like paths, and short
+    provider-prefix plus separator plus long opaque tail. The path guard avoids flagging ordinary
+    filesystem paths in test logs while still redacting standalone token values.
+  </p>
+
+  <pre>input meta: { opaque: "provider-prefix + long opaque tail" }
+output meta: { opaque: "redacted marker" }</pre>
+
+  <h2>Alternatives</h2>
+  <table>
+    <tr><th>Alternative</th><th>Verdict</th><th>Reason</th></tr>
+    <tr><td>Require a digit in every unknown token</td><td class="rej">Rejected</td><td>Opaque provider tokens can be alphabetic.</td></tr>
+    <tr><td>Redact every long separator-bearing word</td><td class="rej">Rejected</td><td>Too many build paths and ticket ids contain separators.</td></tr>
+    <tr><td>Redact padded, slash-only non-path, and provider-prefixed opaque values</td><td class="acc">Chosen</td><td>Closes the demonstrated gaps while keeping source and evidence scans usable.</td></tr>
+  </table>
+
+  <h2>Verification</h2>
+  <p>
+    <code>src/providers/credentials.test.ts</code> and <code>test/e2e/secret-scan.e2e.ts</code>
+    plant these opaque token shapes in trace metadata and probe reports. The captured red runs fail
+    before the detector fix; the green run passes with zero bundle scan findings.
+  </p>
+</body>
+</html>

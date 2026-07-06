@@ -1,0 +1,11 @@
+[
+  {
+    "criterionId": "ENG-T-05",
+    "method": "command",
+    "tier": "pre-merge",
+    "status": "passed",
+    "rbgRecorded": true,
+    "redRunPath": "artifacts/smithering/build/probe-suite-harness/evidence/ENG-T-05-rbg-red.log",
+    "greenRunPath": "artifacts/smithering/build/probe-suite-harness/evidence/ENG-T-05-green.log"
+  }
+]

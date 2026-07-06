@@ -1,0 +1,73 @@
+bun test v1.3.14 (0d9b296a)
+
+src/routing/steering-window.test.ts:
+194 |     nowMs,
+195 |   };
+196 | }
+197 | 
+198 | function expectRoutedTo(decision: SteeringDecision, upid: string, instruction: string): void {
+199 |   expect(decision).toEqual(
+                         ^
+error: expect(received).toEqual(expected)
+
+- ObjectContaining 
+  {
+    "ackId": "route-steer",
++   "callsign": "Atlas",
+    "instruction": "make it faster",
+    "kind": "routed",
+-   "targetUPID": "upid-atlas",
++   "opened": false,
++   "targetUPID": "upid-bravo",
++   "traceEvents": [
++     {
++       "correlationId": "corr-utt-steer",
++       "event": "route.steer",
++       "level": "info",
++       "meta": {
++         "ackKind": "route-steer",
++         "instruction": "make it faster",
++         "selectedUPID": "upid-atlas",
++         "targetUPID": "upid-bravo",
++         "utteranceId": "utt-steer",
++         "windowId": "steer-upid-atlas-1",
++       },
++       "sessionId": "session-steering",
++       "upid": "upid-bravo",
++     },
++     {
++       "correlationId": "corr-utt-steer",
++       "event": "ack.emit",
++       "level": "info",
++       "meta": {
++         "ackId": "route-steer",
++         "route": "steer",
++         "utteranceId": "utt-steer",
++         "windowId": "steer-upid-atlas-1",
++       },
++       "sessionId": "session-steering",
++       "upid": "upid-bravo",
++     },
++   ],
++   "window": {
++     "callsign": "Atlas",
++     "lastMicActivityAtMs": 1100,
++     "lastUtteranceId": "utt-steer",
++     "openedAtMs": 1000,
++     "targetUPID": "upid-bravo",
++     "windowId": "steer-upid-atlas-1",
++   },
+  }
+
+- Expected  - 2
++ Received  + 41
+
+      at expectRoutedTo (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/steering-window-lifecycle/src/routing/steering-window.test.ts:199:20)
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/steering-window-lifecycle/src/routing/steering-window.test.ts:26:5)
+(fail) REQ-6 steering-window lifecycle > AC6.2 opens on select-only callsign and routes subsequent speech to the selected UPID only [1.42ms]
+
+ 0 pass
+ 11 filtered out
+ 1 fail
+ 4 expect() calls
+Ran 1 test across 1 file. [13.00ms]

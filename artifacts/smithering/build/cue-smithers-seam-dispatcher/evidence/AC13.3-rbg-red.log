@@ -1,0 +1,21 @@
+bun test v1.3.14 (0d9b296a)
+
+test/e2e/fleet.e2e.ts.test.ts:
+timestamp=2026-06-15T01:11:37.359Z level=INFO fiber=#5 message="Gateway run started" gateway:run=1ms runId=run-atlas transport=ws triggeredBy=fleet-control role=operator workflow=vibersyn-fleet-control service=smithers source=user userId=fleet-control resume=false connectionId=fleet-control:connection
+300 |     if (response.ok && response.payload.status === status) {
+301 |       return;
+302 |     }
+303 |     await sleep(20);
+304 |   }
+305 |   throw new Error(`Timed out waiting for ${runId} to reach ${status}`);
+                  ^
+error: Timed out waiting for run-bravo to reach waiting-event
+      at waitForStatus (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/cue-smithers-seam-dispatcher/test/e2e/fleet.e2e.ts:305:13)
+      at async <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/cue-smithers-seam-dispatcher/test/e2e/fleet.e2e.ts:49:13)
+(fail) seam durability recovery e2e > seam steering and per-process pause stay isolated across two durable runs [5287.36ms]
+
+ 0 pass
+ 1 filtered out
+ 1 fail
+Ran 1 test across 1 file. [5.76s]
+exit=1

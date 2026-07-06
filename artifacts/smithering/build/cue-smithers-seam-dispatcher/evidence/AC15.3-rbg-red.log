@@ -1,0 +1,26 @@
+bun test v1.3.14 (0d9b296a)
+
+test/e2e/fleet.e2e.ts.test.ts:
+timestamp=2026-06-15T01:11:44.342Z level=INFO fiber=#5 message="Gateway run started" gateway:run=1ms runId=run-fleet-001 transport=ws triggeredBy=fleet-initial role=operator workflow=vibersyn-fleet service=smithers source=user userId=fleet-initial resume=false connectionId=fleet-initial:connection
+timestamp=2026-06-15T01:11:44.553Z level=INFO fiber=#257 message="getNodeOutput completed" runId=run-fleet-001 durationMs=1.4078329999999823 nodeId=checkpoint status=produced iteration=0 rowBytes=58 service=smithers
+128 |     recoveredGateway.connections.add(recoveredConnection as any);
+129 |     recoveredGateway.register("vibersyn-fleet", recovered.workflow as any);
+130 | 
+131 |     try {
+132 |       const run = await rpc(recoveredGateway, recoveredConnection, "getRun", { runId: "run-fleet-001" });
+133 |       expect(run.ok).toBe(true);
+                           ^
+error: expect(received).toBe(expected)
+
+Expected: true
+Received: false
+
+      at <anonymous> (/Users/williamcory/vibecode-room/.smithers/workflows/.smithers/wt/cue-smithers-seam-dispatcher/test/e2e/fleet.e2e.ts:133:22)
+(fail) seam durability recovery e2e > backend restart recovers an in-flight durable run from its last checkpoint [326.96ms]
+
+ 0 pass
+ 1 filtered out
+ 1 fail
+ 3 expect() calls
+Ran 1 test across 1 file. [797.00ms]
+exit=1

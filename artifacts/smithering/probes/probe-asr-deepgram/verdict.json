@@ -1,0 +1,35 @@
+{
+  "ticketId": "probe-asr-deepgram",
+  "status": "blocked",
+  "liveDeepgram": {
+    "status": "skipped",
+    "reason": "live Deepgram gate did not run because DEEPGRAM_API_KEY is absent",
+    "provider": "deepgram",
+    "model": "nova-3"
+  },
+  "fallback": "If Deepgram diarization is unavailable, the observation layer remains redesignable without speaker labels by deriving turn boundaries from energy/VAD and emitting TranscriptObservation.speaker as null.",
+  "replay": {
+    "fixture": "fixtures/asr/nova3-observations.jsonl",
+    "observations": 4,
+    "finals": 3,
+    "speakers": [
+      "speaker_0",
+      "speaker_1"
+    ],
+    "silenceObservations": 0,
+    "maxWordFinalLatencyMs": 140,
+    "deterministicDecisionIds": [
+      "decision-asr-fixture-a-0-0",
+      "decision-asr-fixture-a-1-0",
+      "decision-asr-fixture-overlap-3-0",
+      "decision-asr-fixture-overlap-3-1"
+    ]
+  },
+  "evidence": {
+    "trace": "artifacts/smithering/build/probe-asr-deepgram/trace/asr-deepgram.jsonl",
+    "report": "artifacts/smithering/reports/probe-asr-deepgram/report.json",
+    "normalizedObservations": "artifacts/smithering/probes/probe-asr-deepgram/normalized-observations.jsonl",
+    "round1LatencyReference": "artifacts/smithering/probes/assumption-stt-realtime-latency/",
+    "round1Present": false
+  }
+}
