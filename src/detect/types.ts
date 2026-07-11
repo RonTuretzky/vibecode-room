@@ -118,9 +118,11 @@ export interface VerifiableIdea {
 // (real `claude` CLI inference), HeuristicIdeaDetector (deterministic, no
 // model), and test fakes.
 //
-// `verify` is the optional adversarial pass: the engine calls it exactly once
-// when a candidate first crosses the surface threshold; a rejection vetoes the
-// bubble. Detectors without it (heuristic, test fakes) surface unverified.
+// `verify` is the optional adversarial pass: the engine calls it once when a
+// candidate first crosses the surface threshold — fire-and-forget, off the
+// detection round's critical path — and a rejection vetoes the bubble when the
+// verdict settles. Detectors without it (heuristic, test fakes) surface
+// unverified.
 export interface IdeaDetector {
   detect(input: DetectionInput): Promise<DetectionResult>;
   verify?(idea: VerifiableIdea, input: DetectionInput): Promise<CandidateVerdict>;

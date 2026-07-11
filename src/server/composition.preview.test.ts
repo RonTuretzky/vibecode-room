@@ -106,14 +106,32 @@ describe("composition accept path — real build + preview on the snapshot", () 
     expect(runtime.snapshot().processes).toHaveLength(0);
   });
 
-  test("IDEA CAPTURE mode builds a detected idea with no spoken 'yes' (the creation loop)", async () => {
+  test("IDEA CAPTURE mode no longer auto-builds: the idea surfaces but nothing spawns", async () => {
     runtime = await createProjectorRuntime(liveEnv(replayPath), { buildsRoot, builderAgent: noopBuilder });
     runtime.setCaptureMode(true);
     const before = new Set(runtime.snapshot().processes.map((process) => process.upid));
 
-    // A single buildable utterance — no affirmation. Capture mode IS the creation
-    // loop, so the surfaced idea builds itself. The spawn is fire-and-forget from
-    // the detection callback, so poll for it to appear.
+    // A single buildable utterance — no affirmation. Capture is DETECTION-only
+    // now: the idea surfaces (bubble + tray) awaiting an explicit accept; only
+    // the separate AUTO-BUILD toggle spawns without one. Give any (buggy)
+    // fire-and-forget spawn a beat to appear before asserting the absence.
+    await drive([final("let's build a dashboard tool to ship the replay prototype today", "utt-build")]);
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    expect(runtime.detection.primary()).not.toBeNull();
+    expect(runtime.snapshot().ideas?.length ?? 0).toBeGreaterThanOrEqual(1);
+    expect(runtime.snapshot().processes.some((process) => !before.has(process.upid))).toBe(false);
+    expect(runtime.snapshot().captureMode).toBe(true);
+  });
+
+  test("AUTO-BUILD builds a detected idea with no spoken 'yes' (capture mode not required)", async () => {
+    runtime = await createProjectorRuntime(liveEnv(replayPath), { buildsRoot, builderAgent: noopBuilder });
+    runtime.setAutoAccept(true);
+    const before = new Set(runtime.snapshot().processes.map((process) => process.upid));
+
+    // A single buildable utterance — no affirmation. AUTO-BUILD accepts the
+    // surfaced idea the instant it pops. The spawn is fire-and-forget from the
+    // detection callback, so poll for it to appear.
     await drive([final("let's build a dashboard tool to ship the replay prototype today", "utt-build")]);
     const spawned = await waitFor(() => runtime!.snapshot().processes.find((process) => !before.has(process.upid)));
 
@@ -122,7 +140,7 @@ describe("composition accept path — real build + preview on the snapshot", () 
     await runtime.ideaBuilds.settle(spawned.upid);
     const built = runtime.snapshot().processes.find((process) => process.upid === spawned.upid);
     expect(built?.buildStatus).toBe("ready");
-    expect(runtime.snapshot().captureMode).toBe(true);
+    expect(runtime.snapshot().autoAccept).toBe(true);
   });
 
   test("emergency stop tears the live preview server down so its URL stops responding", async () => {

@@ -3,8 +3,8 @@
   "status": "passed",
   "summary": "probe assertions were failable and passed",
   "correlationId": "p-asr-deepgram-nova3",
-  "startedAt": "2026-06-29T22:44:29.443Z",
-  "finishedAt": "2026-06-29T22:44:29.446Z",
+  "startedAt": "2026-07-11T22:44:47.525Z",
+  "finishedAt": "2026-07-11T22:44:47.528Z",
   "assertions": [
     {
       "id": "nova3-websocket-shape",

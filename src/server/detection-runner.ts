@@ -15,17 +15,26 @@ export interface DetectionSnapshot {
   scheduling: SchedulingState;
 }
 
+// Minimum gap between FORCED detection rounds (capture mode force-detects on
+// EVERY final, so without a floor a chatty room runs an inference per utterance).
+// Overridden by VIBERSYN_DETECT_FORCE_MIN_INTERVAL_MS where the runner is
+// selected (selectDetectionRunner); a rate-limited force degrades to the passive
+// scheduling policy instead of being dropped outright.
+export const DEFAULT_FORCE_MIN_INTERVAL_MS = 1_500;
+
 export interface DetectionRunnerOptions {
   engine: IdeaDetectionEngine;
   clock?: () => number;
-  // Fired after each detection round (and on accept/clear) so the server can
-  // republish the snapshot, deliver the bubble, and run auto-build. May be async;
-  // a detection round awaits it so flush() also awaits delivery.
+  // Fired after each detection round (and on accept/dismiss/clear) so the server
+  // can republish the snapshot, deliver the bubble, and run auto-build. May be
+  // async; a detection round awaits it so flush() also awaits delivery.
   onUpdate?: (snapshot: DetectionSnapshot) => void | Promise<void>;
   onError?: (error: unknown) => void;
   // Background tick so a detection scheduled by a SPEECH PAUSE still fires when no
   // new turns are arriving. 0 disables (tests drive maybeDetect manually).
   tickIntervalMs?: number;
+  // Forced-detect rate limit (VIBERSYN_DETECT_FORCE_MIN_INTERVAL_MS). 0 disables.
+  forceMinIntervalMs?: number;
 }
 
 export interface IngestTurnInput {
@@ -45,10 +54,13 @@ export class DetectionRunner {
   readonly #onUpdate?: (snapshot: DetectionSnapshot) => void | Promise<void>;
   readonly #onError?: (error: unknown) => void;
   readonly #tickIntervalMs: number;
+  readonly #forceMinIntervalMs: number;
   #latestCorrelationId = "corr-detect";
   #round = 0;
   #inFlight: Promise<void> | null = null;
   #timer: ReturnType<typeof setInterval> | null = null;
+  // When the last FORCED round was launched — the force rate limit's clock.
+  #lastForceAtMs: number | null = null;
 
   constructor(options: DetectionRunnerOptions) {
     this.#engine = options.engine;
@@ -56,6 +68,7 @@ export class DetectionRunner {
     this.#onUpdate = options.onUpdate;
     this.#onError = options.onError;
     this.#tickIntervalMs = options.tickIntervalMs ?? 1_000;
+    this.#forceMinIntervalMs = options.forceMinIntervalMs ?? DEFAULT_FORCE_MIN_INTERVAL_MS;
   }
 
   start(): void {
@@ -101,8 +114,19 @@ export class DetectionRunner {
     if (this.#inFlight !== null) {
       return this.#inFlight;
     }
-    if (!force && !this.#engine.shouldDetect(this.#clock())) {
+    const nowMs = this.#clock();
+    // Forced-detect rate limit: capture mode forces on EVERY final, which would
+    // otherwise mean one model inference per utterance in a chatty room. A force
+    // inside the window DEGRADES to the passive scheduling policy (it may still
+    // run if the schedule allows) rather than being dropped.
+    if (force && this.#lastForceAtMs !== null && nowMs - this.#lastForceAtMs < this.#forceMinIntervalMs) {
+      force = false;
+    }
+    if (!force && !this.#engine.shouldDetect(nowMs)) {
       return Promise.resolve();
+    }
+    if (force) {
+      this.#lastForceAtMs = nowMs;
     }
     this.#round += 1;
     const correlationId = `${this.#latestCorrelationId}-detect-${this.#round}`;
@@ -153,6 +177,23 @@ export class DetectionRunner {
     return accepted;
   }
 
+  // Explicitly reject a candidate (tray dismiss / voice "no") and republish. The
+  // engine suppresses the pitch for the accept-cooldown window; nothing is built.
+  dismiss(id: string): IdeaCandidate | null {
+    const dismissed = this.#engine.dismiss(id, this.#clock());
+    if (dismissed !== null) {
+      void this.#emit();
+    }
+    return dismissed;
+  }
+
+  // Republish after an OUT-OF-ROUND ledger change (an async verification verdict
+  // settling): the engine's onLedgerChange hook lands here so an upheld/vetoed
+  // candidate reaches SSE subscribers without waiting for the next round.
+  notifyLedgerChanged(): void {
+    void this.#emit();
+  }
+
   clear(): void {
     this.#engine.clear();
     void this.#emit();
@@ -201,6 +242,10 @@ export interface SelectDetectionRunnerOptions {
 export function selectDetectionRunner(options: SelectDetectionRunnerOptions): DetectionRunnerSelection {
   const env = options.env ?? process.env;
   const { mode, detector } = resolveDetector(options, env);
+  // The engine's async verification settles OUTSIDE detection rounds; without
+  // this hook an upheld/vetoed candidate would not republish until the next
+  // round. The engine is constructed before the runner, so bridge via a ref.
+  let runner: DetectionRunner | null = null;
   const engine = new IdeaDetectionEngine({
     sessionId: options.sessionId,
     detector,
@@ -208,15 +253,32 @@ export function selectDetectionRunner(options: SelectDetectionRunnerOptions): De
     idFactory: options.idFactory,
     env,
     onTrace: options.onTrace,
+    onLedgerChange: () => runner?.notifyLedgerChanged(),
   });
-  const runner = new DetectionRunner({
+  runner = new DetectionRunner({
     engine,
     clock: options.clock,
     onUpdate: options.onUpdate,
     onError: options.onError,
     tickIntervalMs: options.tickIntervalMs,
+    forceMinIntervalMs: readForceMinIntervalMs(env),
   });
   return { mode, runner };
+}
+
+// VIBERSYN_DETECT_FORCE_MIN_INTERVAL_MS — minimum gap between forced (capture-
+// mode) detection rounds, default 1500. Documented here because it is a RUNNER
+// cadence knob, not an engine one (the engine's env table stays in src/detect).
+function readForceMinIntervalMs(env: Record<string, string | undefined>): number {
+  const raw = env.VIBERSYN_DETECT_FORCE_MIN_INTERVAL_MS?.trim();
+  if (raw === undefined || raw === "") {
+    return DEFAULT_FORCE_MIN_INTERVAL_MS;
+  }
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < 0) {
+    throw new Error("VIBERSYN_DETECT_FORCE_MIN_INTERVAL_MS must be a non-negative number.");
+  }
+  return value;
 }
 
 function resolveDetector(

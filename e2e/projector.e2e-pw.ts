@@ -64,8 +64,13 @@ test.describe("projector UI — first paint & feature parity", () => {
     await expect(rail.locator('[data-testid="trace-event"][data-event="route.action"]')).toHaveCount(1);
   });
 
-  test("only operational controls present are emergency (always) and unmute (when muted)", async ({ page }) => {
+  test("status bar carries the desk-mode control row; unmute only appears when muted", async ({ page }) => {
     await gotoStatic(page);
+    // Fixed order: mic · capture · auto-build · QR import · emergency.
+    await expect(page.getByTestId("mic-button")).toBeVisible();
+    await expect(page.getByTestId("capture-button")).toBeVisible();
+    await expect(page.getByTestId("auto-build-button")).toBeVisible();
+    await expect(page.getByTestId("qr-import-button")).toBeVisible();
     await expect(page.getByTestId("emergency-button")).toBeVisible();
     // Not muted at first paint → no unmute button.
     await expect(page.getByTestId("unmute-button")).toHaveCount(0);

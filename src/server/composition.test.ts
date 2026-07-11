@@ -599,17 +599,45 @@ describe("LiveProjectorRuntime — IDEA CAPTURE mode", () => {
 
   test("capture mode forces a detection round on a single final the schedule would skip", async () => {
     const recorder = new RecordingDetector();
-    // minNewTurns=5 → the passive schedule would NOT detect after one final.
-    const { runtime, drive } = await makeRuntime({ ideaDetector: recorder, env: { VIBERSYN_DETECT_MIN_NEW_TURNS: "5" } });
+    // minNewTurns=5 → the passive schedule would NOT detect after one final. The
+    // force rate limit is disabled so the per-final force is observable (the
+    // capture toggle itself force-detects, which would otherwise start the window).
+    const { runtime, drive } = await makeRuntime({
+      ideaDetector: recorder,
+      env: { VIBERSYN_DETECT_MIN_NEW_TURNS: "5", VIBERSYN_DETECT_FORCE_MIN_INTERVAL_MS: "0" },
+    });
 
     // Baseline: without capture mode, one final does not trigger detection.
     await drive([final(AMBIENT, "utt-0")]);
     expect(recorder.inputs).toHaveLength(0);
 
-    // With capture mode on, the same single final forces a detection round.
+    // With capture mode on, the same single final forces a detection round that
+    // sees the just-spoken material.
     runtime.setCaptureMode(true);
     await drive([final(BUILDABLE, "utt-1")]);
     expect(recorder.inputs.length).toBeGreaterThanOrEqual(1);
+    expect(recorder.inputs.at(-1)!.turns.map((turn) => turn.text)).toContain(BUILDABLE);
+  });
+
+  test("the forced-detect rate limit throttles per-final capture rounds (default 1500ms)", async () => {
+    const recorder = new RecordingDetector();
+    // Default VIBERSYN_DETECT_FORCE_MIN_INTERVAL_MS (1500) + a schedule the
+    // passive policy never satisfies → only the FIRST forced round in the window
+    // runs. Capture mode boots on via env so the toggle's own kick-off force
+    // doesn't consume the budget before the first final arrives.
+    const { runtime, drive } = await makeRuntime({
+      ideaDetector: recorder,
+      env: { VIBERSYN_DETECT_MIN_NEW_TURNS: "99", VIBERSYN_CAPTURE_MODE: "1" },
+    });
+    expect(runtime.captureMode()).toBe(true);
+
+    await drive([final(BUILDABLE, "utt-1")]);
+    expect(recorder.inputs).toHaveLength(1);
+
+    // A second final inside the 1500ms window: the force degrades to the passive
+    // schedule (minNewTurns=99), so no new round runs.
+    await drive([final(AMBIENT, "utt-2")]);
+    expect(recorder.inputs).toHaveLength(1);
   });
 
   test("emergency stop clears capture mode", async () => {
@@ -624,6 +652,124 @@ describe("LiveProjectorRuntime — IDEA CAPTURE mode", () => {
     runtime.setCaptureMode(true);
     expect(runtime.captureMode()).toBe(false);
     expect(runtime.snapshot().captureMode).toBe(false);
+  });
+});
+
+// The server-side wake router (desk-mode voice control): a FINAL utterance that
+// fuzzy-matches the wake word is executed as a COMMAND — never ingested as an
+// idea-detection turn — and the snapshot's `voice` field flashes confirmation.
+describe("LiveProjectorRuntime — voice wake router on live finals", () => {
+  let priorCapacityGuard: string | undefined;
+  beforeEach(() => {
+    priorCapacityGuard = process.env.VIBERSYN_RBG_DISABLE_CAPACITY_CHECK;
+    process.env.VIBERSYN_RBG_DISABLE_CAPACITY_CHECK = "1";
+  });
+  afterEach(() => {
+    restoreEnv("VIBERSYN_RBG_DISABLE_CAPACITY_CHECK", priorCapacityGuard);
+  });
+
+  test("a wake utterance is never ingested into idea detection (spy)", async () => {
+    const recorder = new RecordingDetector();
+    const { runtime, drive } = await makeRuntime({ ideaDetector: recorder });
+    await drive([final(AMBIENT, "utt-1"), final("vibersyn build it", "utt-2")]);
+
+    expect(recorder.inputs.length).toBeGreaterThanOrEqual(1);
+    const allTurnTexts = recorder.inputs.flatMap((input) => input.turns.map((turn) => turn.text));
+    expect(allTurnTexts).not.toContain("vibersyn build it");
+    // The command still executed (a no-op build here — nothing was surfaced) and
+    // was traced + flashed on the snapshot.
+    expect(runtime.trace.events().some((event) => event.event === "voice.command" && event.meta.command === "build")).toBe(true);
+    expect(runtime.snapshot().voice?.lastCommand).toBe("build");
+  });
+
+  test("'vibersyn build it' accepts the surfaced idea and spawns (integration)", async () => {
+    const { runtime, drive } = await makeRuntime();
+    const before = runtime.registry.activeRecords().length;
+
+    await drive([final(BUILDABLE, "utt-build")]);
+    expect(runtime.detection.primary()).not.toBeNull();
+
+    await drive([final("vibersyn build it", "utt-voice")]);
+
+    expect(runtime.registry.activeRecords().length).toBe(before + 1);
+    expect(runtime.snapshot().voice?.lastCommand).toBe("build");
+    expect(runtime.snapshot().voice?.at.length ?? 0).toBeGreaterThan(0);
+    // The accepted candidate was consumed — the bubble cleared.
+    expect(runtime.detection.primary()).toBeNull();
+  });
+
+  test("fuzzy wake variants drive capture on/off ('viber sin' / 'stand down')", async () => {
+    const { runtime, drive } = await makeRuntime();
+    expect(runtime.captureMode()).toBe(false);
+
+    await drive([final("hey viber sin, start capturing", "utt-on")]);
+    expect(runtime.captureMode()).toBe(true);
+    expect(runtime.snapshot().voice?.lastCommand).toBe("capture on");
+
+    await drive([final("vibersyn stand down", "utt-off")]);
+    expect(runtime.captureMode()).toBe(false);
+    expect(runtime.snapshot().voice?.lastCommand).toBe("capture off");
+  });
+
+  test("'vibersyn dismiss' drops the surfaced idea and suppresses its pitch", async () => {
+    const { runtime, drive } = await makeRuntime();
+    await drive([final(BUILDABLE, "utt-build")]);
+    expect(runtime.detection.primary()).not.toBeNull();
+    expect(runtime.acceptanceController.awaitingAcceptance()).toBe(true);
+
+    await drive([final("vibersyn dismiss", "utt-dismiss")]);
+
+    expect(runtime.detection.primary()).toBeNull();
+    expect(runtime.snapshot().ideas).toEqual([]);
+    expect(runtime.snapshot().voice?.lastCommand).toBe("dismiss");
+    // The detection-fed pending cleared too: room speech is no longer routed to
+    // accept/decline for an idea that is gone.
+    expect(runtime.acceptanceController.awaitingAcceptance()).toBe(false);
+
+    // Suppression: re-describing the same idea inside the cooldown re-detects
+    // nothing (the room said no).
+    await drive([final(BUILDABLE, "utt-rebuild")]);
+    expect(runtime.detection.primary()).toBeNull();
+  });
+
+  test("'vibersyn stop everything' triggers the emergency stop", async () => {
+    const { runtime, drive } = await makeRuntime();
+    await drive([final("vibersyn stop everything", "utt-kill")]);
+    expect(runtime.snapshot().emergencyStopTriggered).toBe(true);
+    expect(runtime.snapshot().voice?.lastCommand).toBe("emergency stop");
+  });
+
+  test("an unrecognized command after the wake word is traced but changes nothing", async () => {
+    const { runtime, drive } = await makeRuntime();
+    await drive([final("vibersyn make me a sandwich", "utt-nope")]);
+
+    const voiceEvents = runtime.trace.events().filter((event) => event.event === "voice.command");
+    expect(voiceEvents).toHaveLength(1);
+    expect(voiceEvents[0]?.meta.command).toBe("unrecognized");
+    expect(runtime.snapshot().voice ?? null).toBeNull();
+    expect(runtime.captureMode()).toBe(false);
+    expect(runtime.snapshot().emergencyStopTriggered).toBe(false);
+  });
+});
+
+// snapshot.ideas — the idea TRAY mirrors the whole detection ledger (ready first),
+// each item carrying pitch/confidence/maturity/evidence for explicit confirm/dismiss.
+describe("LiveProjectorRuntime — snapshot.ideas reflects the detection ledger", () => {
+  test("an idle runtime publishes an empty tray", async () => {
+    const { runtime } = await makeRuntime();
+    expect(runtime.snapshot().ideas).toEqual([]);
+  });
+
+  test("a surfaced candidate appears in the tray with evidence and ready status", async () => {
+    const { runtime, drive } = await makeRuntime();
+    await drive([final(BUILDABLE, "utt-build")]);
+
+    const ideas = runtime.snapshot().ideas ?? [];
+    expect(ideas.length).toBeGreaterThanOrEqual(1);
+    expect(ideas[0]?.status).toBe("ready");
+    expect(ideas[0]?.id).toBe(runtime.detection.primary()!.id);
+    expect(ideas[0]?.pitch.length).toBeGreaterThan(0);
+    expect(ideas[0]?.evidence).toContain("dashboard");
   });
 });
 
@@ -649,12 +795,17 @@ interface MakeRuntimeArgs {
 // Build a live runtime over a writable replay file, plus a `drive()` that feeds a
 // batch of observations through one mic session and flushes detection so the round
 // (and its bubble delivery) has completed by the time it resolves.
+// The build seam defaults to a NOOP builder over a temp buildsRoot: an accepted
+// idea's fire-and-forget build must never spawn the real host `claude` CLI (or
+// scaffold under the repo's builds/) from a unit test.
 async function makeRuntime(args: MakeRuntimeArgs = {}): Promise<{ runtime: ProjectorRuntime; path: string; drive: (obs: TranscriptObservation[]) => Promise<void> }> {
   const dir = mkdtempSync(join(tmpdir(), "vibersyn-mic-"));
   tempDirs.push(dir);
   const path = join(dir, "mic.jsonl");
   writeFileSync(path, "", "utf8");
   const runtime = await createProjectorRuntime(baseEnv(path, args.env), {
+    buildsRoot: join(dir, "builds"),
+    builderAgent: async () => undefined,
     ...args.options,
     ideaDetector: args.ideaDetector ?? args.options?.ideaDetector,
   });

@@ -28,12 +28,14 @@ import {
   type SuggestionEngineDecision,
 } from "../suggest/engine";
 import { DetectionRunner, selectDetectionRunner, type DetectionSnapshot } from "./detection-runner";
-import { DETECTION_BUBBLE_TTL_MS, pendingSuggestionFromCandidate, projectorSuggestionFromCandidate } from "./idea-suggestion";
-import type { IdeaDetector } from "../detect";
+import { DETECTION_BUBBLE_TTL_MS, ideaTrayFromCandidates, pendingSuggestionFromCandidate, projectorSuggestionFromCandidate } from "./idea-suggestion";
+import { matchWakePhrase, parseVoiceCommand, voiceCommandLabel, wakeWordFromEnv, type WakePhraseMatch } from "./voice-commands";
+import { callsignFromRepo, parseGitHubImportUrl } from "./project-import";
+import type { IdeaCandidate, IdeaDetector } from "../detect";
 import { StageSequencer, type CanonicalStage } from "../spine/stage-sequencer";
 import type { LogEvent, OutputDecision, PendingSuggestion } from "../types";
 import { demoProjectorSnapshot, emptyProjectorSnapshot, withUnmuted } from "../ui/demo-data";
-import type { ProjectorProcess, ProjectorProcessState, ProjectorSnapshot, ProjectorSuggestion, TranscriptLine } from "../ui/types";
+import type { IdeaTrayItem, ProjectorProcess, ProjectorProcessState, ProjectorSnapshot, ProjectorSuggestion, TranscriptLine } from "../ui/types";
 import type { TranscriptObservation } from "../types";
 
 export type ProjectorRuntimeSubscriber = (snapshot: ProjectorSnapshot) => void;
@@ -127,11 +129,28 @@ export interface ProjectorRuntime {
   // accepted+built the instant it pops.
   setAutoAccept(on: boolean, correlationId?: string): ProjectorSnapshot;
   autoAccept(): boolean;
-  // IDEA CAPTURE mode toggle (alternative to passive auto-detect): when on,
-  // detection runs eagerly and every surfaced idea is built — the creation loop.
+  // IDEA CAPTURE mode toggle: when on, detection runs EAGERLY (a rate-limited
+  // force-detect per final) so ideas surface fast. Capture no longer implies
+  // building — auto-building happens ONLY when autoAccept is on; otherwise the
+  // room confirms via the tray/keyboard/voice.
   setCaptureMode(on: boolean, correlationId?: string): ProjectorSnapshot;
   captureMode(): boolean;
+  // IDEA TRAY: accept a SPECIFIC ledger candidate by id (not just the primary
+  // bubble), spawning/building through the same accept path as
+  // acceptPendingSuggestion. 404-free by contract: an unknown id is a no-op
+  // returning the current snapshot.
+  acceptIdea(id: string, correlationId?: string): Promise<ProjectorSnapshot>;
+  // IDEA TRAY: explicitly reject a candidate — drop it from the ledger and
+  // suppress its pitch for the accept-cooldown window (nothing is built).
+  // Unknown id is a no-op returning the current snapshot.
+  dismissIdea(id: string, correlationId?: string): ProjectorSnapshot;
+  // QR import (phone -> POST /api/projects/import): validate a GitHub URL and
+  // add it to the fleet as an imported project-in-progress
+  // (source: { kind: "github-import", url }).
+  importProject(url: string, correlationId?: string): Promise<ImportProjectResult>;
 }
+
+export type ImportProjectResult = { ok: true; snapshot: ProjectorSnapshot } | { ok: false; error: string };
 
 interface SeededProcessView {
   upid: string;
@@ -279,11 +298,23 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   // (#autoAcceptInFlight) keeps a slow build from stacking a second auto-accept.
   #autoAccept = false;
   #autoAcceptInFlight = false;
-  // IDEA CAPTURE mode: an explicit alternative to passive auto-detect. When on, the
-  // operator has deliberately started the creation loop — detection runs EAGERLY on
-  // every final (no word/turn schedule) and each surfaced ready idea is built
-  // immediately. A distinct indicator on the snapshot shows capture is active.
+  // IDEA CAPTURE mode: an explicit alternative to passive auto-detect. When on,
+  // detection runs EAGERLY on every final (a rate-limited force-detect, no
+  // word/turn schedule) so deliberately-described ideas surface fast. Capture is
+  // detection-only: building still requires an explicit accept (tray/keyboard/
+  // voice) or the separate AUTO-BUILD toggle. A distinct indicator on the
+  // snapshot shows capture is active.
   #captureMode = false;
+  // Voice control (desk mode): the canonical wake word this session listens for,
+  // and the last recognized command surfaced on the snapshot so walls can flash
+  // confirmation ("vibersyn → build"). Null until the first command.
+  readonly #wakeWord: string;
+  #voice: ProjectorSnapshot["voice"] = null;
+  // GitHub-imported fleet entries (QR -> /api/projects/import), keyed by UPID.
+  // The registry record stays the source of truth for lifecycle (halt/emergency
+  // stop); this map carries the import-only display facts — the display-cased
+  // callsign, the task line, and the source URL the projector links to.
+  readonly #imports = new Map<string, { url: string; callsign: string; task: string }>();
   // Idea detection wiring. `#detectionMode` records which backend was selected
   // (host-claude | heuristic | smithers | injected) for the degradation notice;
   // `#detectionPrimaryId` is the candidate currently surfaced as the bubble (so a
@@ -429,6 +460,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       : undefined;
     this.#autoAccept = env.VIBERSYN_AUTO_ACCEPT === "1" || env.VIBERSYN_AUTO_ACCEPT === "true";
     this.#captureMode = env.VIBERSYN_CAPTURE_MODE === "1" || env.VIBERSYN_CAPTURE_MODE === "true";
+    this.#wakeWord = wakeWordFromEnv(env);
     const pending = new PendingSuggestionOwner({ clock, noAnswerTimeoutMs });
     this.#pendingOwner = pending;
     const acceptanceSeam = createProcessRegistryAcceptanceSeam(this.registry);
@@ -680,6 +712,135 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     return this.#snapshot;
   }
 
+  // IDEA TRAY -> BUILD. Accept a SPECIFIC ledger candidate by id, spawning
+  // through the exact same accept path acceptPendingSuggestion takes for the
+  // primary (the seam's build:true spawn), so the idea-builder runs and the
+  // process gains previewUrl/buildStatus. 404-free: an unknown id (already
+  // accepted/dismissed/superseded) is a no-op returning the current snapshot.
+  async acceptIdea(id: string, correlationId = `corr-idea-accept-${crypto.randomUUID()}`): Promise<ProjectorSnapshot> {
+    if (this.#emergencyTriggered) {
+      return this.#snapshot;
+    }
+    const candidate = this.detection.candidates().find((entry) => entry.id === id);
+    if (candidate === undefined) {
+      return this.#snapshot;
+    }
+    this.recordExternalTrace({
+      event: "idea.accept",
+      level: "info",
+      sessionId: this.sessionId,
+      correlationId,
+      meta: { id, pitch: candidate.pitch, confidence: candidate.confidence },
+    });
+    const suggestion = pendingSuggestionFromCandidate(candidate, correlationId, this.#clock() + DETECTION_BUBBLE_TTL_MS);
+    try {
+      const spawn = await this.acceptanceController.spawnAccepted(suggestion, correlationId);
+      if (spawn.accepted) {
+        // Consume the accepted candidate (suppresses its pitch for the cooldown)
+        // and clear the bubble if this WAS the surfaced primary.
+        this.detection.accept(id);
+        if (this.#detectionPrimaryId === id) {
+          this.#detectionPrimaryId = null;
+        }
+        await this.spawnAck(spawn, correlationId);
+        this.subscribeRunEvents(spawn.process.upid, spawn.process.runId);
+      }
+    } catch (error) {
+      this.recordExternalTrace({
+        event: "idea.accept.error",
+        level: "error",
+        sessionId: this.sessionId,
+        correlationId,
+        meta: { id, message: error instanceof Error ? error.message : String(error) },
+      });
+    }
+    this.publish();
+    return this.#snapshot;
+  }
+
+  // IDEA TRAY -> DISMISS. Drop the candidate from the ledger AND suppress its
+  // pitch for the accept-cooldown window (the room said no — it must not
+  // immediately re-pop). Nothing is built. Unknown id → no-op, current snapshot.
+  dismissIdea(id: string, correlationId = `corr-idea-dismiss-${crypto.randomUUID()}`): ProjectorSnapshot {
+    const dismissed = this.detection.dismiss(id);
+    if (dismissed === null) {
+      return this.#snapshot;
+    }
+    this.recordExternalTrace({
+      event: "idea.dismiss",
+      level: "info",
+      sessionId: this.sessionId,
+      correlationId,
+      meta: { id, pitch: dismissed.pitch },
+    });
+    // If the dismissed candidate was feeding the acceptance pending, clear it so
+    // room speech stops routing into accept/decline for an idea that is gone.
+    const pending = this.acceptanceController.currentPending();
+    if (pending !== null && pending.suggestionId === `sug-${id}`) {
+      this.#pendingOwner.clear();
+    }
+    if (this.#detectionPrimaryId === id) {
+      this.#detectionPrimaryId = null;
+    }
+    this.publish();
+    return this.#snapshot;
+  }
+
+  // QR import: a validated GitHub URL joins the fleet as a project in progress.
+  // The process spawns through the registry (so halt/emergency-stop lifecycle
+  // applies) with a repo-derived callsign; the import-only display facts (source
+  // URL, task line, display casing) live in #imports and are merged into the
+  // snapshot. Invalid URLs never reach the registry.
+  async importProject(url: string, correlationId = `corr-import-${crypto.randomUUID()}`): Promise<ImportProjectResult> {
+    if (this.#emergencyTriggered) {
+      return { ok: false, error: "Emergency stop is active." };
+    }
+    const parsed = parseGitHubImportUrl(url);
+    if (!parsed.ok) {
+      return parsed;
+    }
+    const callsign = callsignFromRepo(parsed.repo);
+    const task = `Imported from GitHub: ${parsed.owner}/${parsed.repo}`;
+    // Imported projects are display fleet entries (like the seeded demo fleet),
+    // not voice-steered agents, so the spoken-collision guard must not reject a
+    // repo whose name happens to sound like a control word. Suspend it for this
+    // spawn only — live voice spawns keep it on (mirrors seedDemoFleet).
+    const priorGuard = process.env.VIBERSYN_RBG_DISABLE_CALLSIGN_COLLISION_GUARD;
+    process.env.VIBERSYN_RBG_DISABLE_CALLSIGN_COLLISION_GUARD = "1";
+    let spawn: Awaited<ReturnType<ProcessRegistry["spawn"]>>;
+    try {
+      spawn = await this.registry.spawn({
+        callsign,
+        workflow: "github-import",
+        prompt: task,
+        input: { source: "github-import", url: parsed.url, owner: parsed.owner, repo: parsed.repo },
+        correlationId,
+      });
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) };
+    } finally {
+      if (priorGuard === undefined) {
+        delete process.env.VIBERSYN_RBG_DISABLE_CALLSIGN_COLLISION_GUARD;
+      } else {
+        process.env.VIBERSYN_RBG_DISABLE_CALLSIGN_COLLISION_GUARD = priorGuard;
+      }
+    }
+    if (!spawn.accepted) {
+      return { ok: false, error: spawn.spokenAck };
+    }
+    this.#imports.set(spawn.process.upid, { url: parsed.url, callsign, task });
+    this.recordExternalTrace({
+      event: "project.import",
+      level: "info",
+      sessionId: this.sessionId,
+      correlationId,
+      upid: spawn.process.upid,
+      meta: { url: parsed.url, owner: parsed.owner, repo: parsed.repo, callsign },
+    });
+    this.publish();
+    return { ok: true, snapshot: this.#snapshot };
+  }
+
   // AUTO-BUILD toggle. Flip on => every fired idea is built without a click; flip
   // off => back to click-to-build. Returns the fresh snapshot so the UI reflects
   // the new state immediately.
@@ -700,11 +861,13 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     return this.#autoAccept;
   }
 
-  // IDEA CAPTURE mode. Flip on => the operator has explicitly started the creation
-  // loop: detection runs eagerly on every final and each surfaced idea is built
-  // immediately. Turning it on kicks a detection round NOW over whatever is already
-  // in the window, so an idea just described is captured without waiting for the
-  // next utterance. Flip off => back to passive detection. Returns the fresh snapshot.
+  // IDEA CAPTURE mode. Flip on => detection runs eagerly on every final (a
+  // rate-limited force-detect, no word/turn schedule). Capture is DETECTION-only:
+  // surfaced ideas land in the tray/bubble for an explicit accept — auto-building
+  // requires the separate AUTO-BUILD toggle. Turning it on kicks a detection
+  // round NOW over whatever is already in the window, so an idea just described
+  // is captured without waiting for the next utterance. Flip off => back to
+  // passive detection. Returns the fresh snapshot.
   setCaptureMode(on: boolean, correlationId = `corr-capture-toggle-${crypto.randomUUID()}`): ProjectorSnapshot {
     // Emergency stop is sticky and clears capture mode; don't let it be re-enabled
     // (mirrors setSteeringTarget/acceptPendingSuggestion). Otherwise POST /api/capture
@@ -899,6 +1062,17 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     this.publish();
 
     if (observation.isFinal) {
+      // Voice control (desk mode): a recognized wake phrase makes this utterance
+      // a COMMAND, not room material. Execute it and return — the utterance must
+      // NOT be ingested as an idea-detection turn (or routed to steering/
+      // acceptance), otherwise "vibersyn build it" would pollute the transcript
+      // window AND be classified as an accept/decline answer.
+      const wake = matchWakePhrase(text, this.#wakeWord);
+      if (wake !== null) {
+        await this.routeVoiceCommand(wake, observation, correlationId);
+        return;
+      }
+
       // Wake/earcon fast-path (GAP-006): every FINAL observation reaches the active
       // Cue path (harness or fallback) exactly once, so a 'viber' wake word emits an
       // earcon trace. This is orthogonal to the suggestion/acceptance routing below.
@@ -1015,6 +1189,71 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     this.publish();
   }
 
+  // Execute one recognized wake utterance (the server-side wake router — desk
+  // mode's primary voice control). The command text after the wake phrase maps
+  // to a runtime action via the fixed command table; an unrecognized remainder
+  // does nothing but is still traced so a mis-heard command is diagnosable. The
+  // snapshot's `voice` field records the last executed command so walls can
+  // flash confirmation.
+  private async routeVoiceCommand(wake: WakePhraseMatch, observation: TranscriptObservation, correlationId: string): Promise<void> {
+    const command = parseVoiceCommand(wake.afterWake);
+    const voiceCorrelationId = `${correlationId}-${observation.utteranceId}-voice`;
+    this.recordExternalTrace({
+      event: "voice.command",
+      level: "info",
+      sessionId: this.sessionId,
+      correlationId: voiceCorrelationId,
+      meta: { command: command?.kind ?? "unrecognized", matched: wake.matched, text: observation.text },
+    });
+    if (command === null) {
+      return;
+    }
+    // Stamp the confirmation BEFORE executing so every publish the action itself
+    // triggers already carries it.
+    this.#voice = { lastCommand: voiceCommandLabel(command), at: new Date().toISOString() };
+    switch (command.kind) {
+      case "capture-on":
+        this.setCaptureMode(true, voiceCorrelationId);
+        break;
+      case "capture-off":
+        this.setCaptureMode(false, voiceCorrelationId);
+        break;
+      case "build":
+        // Same path as POST /api/suggestion/accept: the pending suggestion when
+        // one is delivered, else the top ready (primary) detection candidate.
+        await this.acceptPendingSuggestion(voiceCorrelationId);
+        break;
+      case "dismiss":
+        this.dismissTopIdea(voiceCorrelationId);
+        break;
+      case "auto-on":
+        this.setAutoAccept(true, voiceCorrelationId);
+        break;
+      case "auto-off":
+        this.setAutoAccept(false, voiceCorrelationId);
+        break;
+      case "emergency":
+        await this.emergencyStop(voiceCorrelationId);
+        break;
+    }
+    this.publish();
+  }
+
+  // Voice "dismiss": drop the CURRENT primary bubble, or — when verification is
+  // withholding the primary — the strongest ready candidate, so "vibersyn
+  // dismiss" always acts on whatever the room is being shown/offered.
+  private dismissTopIdea(correlationId: string): void {
+    const target =
+      this.detection.primary() ??
+      this.detection
+        .candidates()
+        .filter((candidate) => candidate.status === "ready")
+        .reduce<IdeaCandidate | null>((best, candidate) => (best === null || candidate.confidence > best.confidence ? candidate : best), null);
+    if (target !== null) {
+      this.dismissIdea(target.id, correlationId);
+    }
+  }
+
   // Route one FINAL observation through the active Cue wake/earcon path. The
   // bridge emits an earcon trace on a wake-word match (via the harness-owned or
   // in-runtime adapter, both wired to this.trace). Failures are non-fatal: a
@@ -1095,11 +1334,12 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       // Make spoken/click/auto accept act on the surfaced idea consistently.
       this.#pendingOwner.acceptSuggestion(pending);
       await this.deliverSuggestionAudio(pending, correlationId).catch(() => undefined);
-      // Build the surfaced idea immediately when AUTO-BUILD or IDEA CAPTURE mode is
-      // on (capture mode IS the creation loop). The guard drops overlapping fires
-      // while a build spins up so a chatty room doesn't stack spawns; the next
-      // surfaced idea catches it.
-      if ((this.#autoAccept || this.#captureMode) && !this.#autoAcceptInFlight) {
+      // Build the surfaced idea immediately ONLY when AUTO-BUILD is on. IDEA
+      // CAPTURE mode deliberately does NOT imply building anymore: capture is
+      // eager detection, and the room confirms via the tray/keyboard/voice. The
+      // guard drops overlapping fires while a build spins up so a chatty room
+      // doesn't stack spawns; the next surfaced idea catches it.
+      if (this.#autoAccept && !this.#autoAcceptInFlight) {
         this.#autoAcceptInFlight = true;
         void this.acceptPendingSuggestion(`corr-auto-accept-${primary.id}`).finally(() => {
           this.#autoAcceptInFlight = false;
@@ -1210,6 +1450,8 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       activeCue: this.#emergencyTriggered ? "none" : muted ? "muted" : liveActiveCue,
       emergencyStopTriggered: this.#emergencyTriggered,
       suggestion: this.suggestionSnapshot(),
+      ideas: this.ideasSnapshot(),
+      voice: this.#voice,
       audio: this.audioSnapshot(previous),
       processes: this.processSnapshots(),
       transcript: this.transcriptSnapshot(),
@@ -1251,6 +1493,18 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     return primary === null ? emptyProjectorSnapshot.suggestion : projectorSuggestionFromCandidate(primary);
   }
 
+  // The idea TRAY mirrors the WHOLE detection ledger (ready first, strongest
+  // first) — not just the single primary bubble — so the room can explicitly
+  // build/dismiss each candidate. Muted/stopped rooms surface no ideas, the same
+  // invariant as the bubble: never show listening-derived content while the room
+  // believes it is not being listened to.
+  private ideasSnapshot(): IdeaTrayItem[] {
+    if (this.#emergencyTriggered || this.muteController.isMuted()) {
+      return [];
+    }
+    return ideaTrayFromCandidates(this.detection.candidates());
+  }
+
   private processSnapshots(): ProjectorProcess[] {
     const demoByUpid = new Map(this.#demoProcesses.map((process) => [process.upid, process]));
 
@@ -1266,26 +1520,33 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       // preview (the server is torn down on halt), so a dead record never carries
       // a stale URL. The seeded demo fleet has no build, so build state is null.
       const build = record.state === "dead" ? undefined : this.ideaBuilds.state(record.upid);
+      // GitHub-imported project (QR flow): a display fleet entry whose preview IS
+      // the repo URL, shown "active"/"imported" while live. Lifecycle (halt /
+      // emergency stop) still comes from the registry record, so a dead import
+      // shows halted like everything else.
+      const imported = this.#imports.get(record.upid);
       return {
         upid: record.upid,
         runId: record.runId,
-        previewUrl: build?.previewUrl ?? null,
+        previewUrl: record.state === "dead" ? null : imported?.url ?? build?.previewUrl ?? null,
         buildStatus: build?.status ?? null,
         // The registry normalizes callsigns to lowercase for voice matching; the
-        // projector shows the pre-authored display casing ("Atlas"/"Cobalt").
-        callsign: demo?.callsign ?? record.callsign,
-        state: record.state === "dead" ? "halted" : live?.state ?? projectorState(record.state),
+        // projector shows the pre-authored display casing ("Atlas"/"COBALT"-style
+        // repo callsigns for imports).
+        callsign: imported?.callsign ?? demo?.callsign ?? record.callsign,
+        state: record.state === "dead" ? "halted" : imported !== undefined ? "active" : live?.state ?? projectorState(record.state),
         selected: record.selected,
         // Click-to-steer marker: this process is the live steering target, so
         // subsequent FINAL transcript lines route to it. A dead record never steers.
         steering: record.state !== "dead" && this.#steeringUpid === record.upid,
-        task: demo?.task ?? "Vibersyn task",
+        task: imported?.task ?? demo?.task ?? "Vibersyn task",
         model: demo?.model ?? "runtime",
-        progressLabel: record.state === "dead" ? "halted" : demo?.progressLabel ?? record.lastAction,
+        progressLabel: record.state === "dead" ? "halted" : imported !== undefined ? "imported" : demo?.progressLabel ?? record.lastAction,
         progress: record.state === "dead" ? 100 : live?.progress ?? demo?.progress ?? Math.min(95, record.progressSeq * 12),
         lastOutput: record.state === "dead" ? "Halted by emergency stop." : live?.lastOutput ?? demo?.lastOutput ?? record.lastAction,
         lastAction: record.lastAction === "spawn" && demo !== undefined ? demo.events[0] ?? record.lastAction : record.lastAction,
         events: record.state === "dead" ? [...(demo?.events ?? []), "halted"] : demo?.events ?? [record.lastAction],
+        ...(imported === undefined ? {} : { source: { kind: "github-import" as const, url: imported.url } }),
       };
     });
   }

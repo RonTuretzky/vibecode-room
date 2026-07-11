@@ -31,7 +31,10 @@ export default defineConfig({
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   webServer: {
-    command: `bun run build && VIBERSYN_PORT=${PORT} bun run start`,
+    // VIBERSYN_SEED_DEMO_FLEET=1: the live-wiring specs assert the deterministic
+    // Atlas/Cobalt fleet over /api/state + SSE, and the production-controls spec
+    // needs live processes to halt — seeding became opt-in on the real server.
+    command: `bun run build && VIBERSYN_PORT=${PORT} VIBERSYN_SEED_DEMO_FLEET=1 bun run start`,
     url: `${BASE_URL}/api/health`,
     // Default to a fresh build+start every run so e2e never tests a stale dist.
     // Opt into reuse for fast local iteration with VIBERSYN_REUSE=1 (after a manual build).
