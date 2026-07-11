@@ -29,6 +29,27 @@ export interface ProjectorProcess {
   // transcript lines route to THIS process's agent loop (registry.steer) instead
   // of seeding a fresh ambient suggestion. Clicking the process sets/clears it.
   steering?: boolean;
+  // Where this process came from. Absent for idea-detected builds; set for
+  // projects imported from outside (e.g. a GitHub URL submitted via the QR page).
+  source?: {
+    kind: "github-import";
+    url: string;
+  };
+}
+
+// One candidate in the idea tray: the full ledger surfaced to the projector, not
+// just the single primary bubble. Ready candidates are buildable/dismissable via
+// /api/idea/:id/accept | /api/idea/:id/dismiss (or keyboard/voice).
+export interface IdeaTrayItem {
+  id: string;
+  pitch: string;
+  confidence: number;
+  status: "ready" | "forming";
+  maturity: "forming" | "proposed" | "elaborated" | "actionable";
+  verified: boolean;
+  rationale?: string;
+  // Verbatim evidence quote from the grounding span, when available.
+  evidence?: string;
 }
 
 export interface TranscriptLine {
@@ -102,4 +123,15 @@ export interface ProjectorSnapshot {
     // the projector prove audio is flowing even in "replay" mode (no ASR key).
     bytesReceived: number;
   };
+  // The idea tray: every live ledger candidate (ready first), so the room sees
+  // forming ideas and can explicitly build/dismiss instead of trusting a single
+  // auto-surfaced bubble. Absent in legacy/static fixtures.
+  ideas?: IdeaTrayItem[];
+  // Voice control feedback: the last wake-word command the server recognized
+  // ("capture on", "build", …), so walls can flash confirmation. Null when no
+  // command has been recognized this session.
+  voice?: {
+    lastCommand: string;
+    at: string;
+  } | null;
 }

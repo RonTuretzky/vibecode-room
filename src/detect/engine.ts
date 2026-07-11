@@ -1,12 +1,12 @@
-import { IdeaLedger, type LedgerDelta } from "./ledger";
+import { IdeaLedger, PITCH_MATCH_THRESHOLD, pitchSimilarity, type LedgerDelta } from "./ledger";
 import { TranscriptWindow } from "./transcript-window";
-import type { IdeaCandidate, IdeaDetector, KnownCandidate, TranscriptTurn } from "./types";
+import type { CandidateVerdict, DetectionInput, IdeaCandidate, IdeaDetector, KnownCandidate, TranscriptTurn } from "./types";
 
 export const DETECTION_ENGINE_ENV_DEFAULTS = Object.freeze({
   VIBERSYN_DETECT_MIN_NEW_TURNS: { default: "2", description: "New committed turns that schedule a detection round." },
   VIBERSYN_DETECT_MIN_INTERVAL_MS: { default: "4000", description: "Minimum gap between detection inference calls (throttle)." },
   VIBERSYN_DETECT_BOUNDARY_GAP_MS: { default: "2500", description: "Speech pause that schedules detection even with one new turn." },
-  VIBERSYN_DETECT_READY_THRESHOLD: { default: "0.6", description: "Confidence at/above which an idea surfaces as a bubble." },
+  VIBERSYN_DETECT_READY_THRESHOLD: { default: "0.55", description: "Confidence at/above which an idea surfaces as a bubble." },
   VIBERSYN_DETECT_READY_HYSTERESIS: { default: "0.12", description: "Once ready, stay ready until confidence drops this far below the threshold." },
   VIBERSYN_DETECT_MAX_MISSED_ROUNDS: { default: "3", description: "Detection rounds without re-detection before a candidate is dropped." },
   VIBERSYN_DETECT_MAX_TURNS: { default: "60", description: "Turns retained in the rolling detection window." },
@@ -69,6 +69,10 @@ export interface DetectionEngineOptions {
   idFactory?: () => string;
   env?: Record<string, string | undefined>;
   onTrace?: (event: DetectionTraceEvent) => void;
+  // Fired when the ledger changes OUTSIDE a detect() round — i.e. when an async
+  // verification settles — so the caller can republish its snapshot. Round-driven
+  // changes are already visible in detect()'s return value.
+  onLedgerChange?: () => void;
 }
 
 export interface DetectionRunResult extends LedgerDelta {
@@ -95,11 +99,17 @@ export class IdeaDetectionEngine {
   readonly #idFactory: () => string;
   readonly #config: DetectionEngineConfig;
   readonly #onTrace?: (event: DetectionTraceEvent) => void;
+  readonly #onLedgerChange?: () => void;
   readonly #window: TranscriptWindow;
   readonly #ledger: IdeaLedger;
   #turnsSinceDetect = 0;
   #lastDetectAtMs: number | null = null;
   #detecting = false;
+  #verifying = false;
+  // Context of the most recent detection round, kept so a settling verify can
+  // relaunch the next pending verification immediately instead of waiting for
+  // new speech to trigger another round (otherwise ready candidates starve).
+  #lastVerifyContext: { input: DetectionInput; correlationId: string } | null = null;
   #suppressed: Array<{ pitch: string; untilMs: number }> = [];
 
   constructor(options: DetectionEngineOptions) {
@@ -109,6 +119,7 @@ export class IdeaDetectionEngine {
     this.#idFactory = options.idFactory ?? (() => `idea-${crypto.randomUUID()}`);
     this.#config = readDetectionEngineConfig(options.env);
     this.#onTrace = options.onTrace;
+    this.#onLedgerChange = options.onLedgerChange;
     this.#window = new TranscriptWindow({ maxTurns: this.#config.maxTurns, maxAgeMs: this.#config.maxAgeMs });
     this.#ledger = new IdeaLedger(
       {
@@ -186,23 +197,10 @@ export class IdeaDetectionEngine {
       // bubble surfaces (primary() withholds ready-but-unverified candidates while
       // verification is active). A rejection vetoes it back to forming with the
       // reason; the veto lifts only if the idea later returns materially stronger.
-      // Bounded: at most ONE verification call per round — the strongest pending
-      // candidate (the would-be primary); others verify in subsequent rounds.
-      if (this.#verificationActive()) {
-        const pending = this.#ledger
-          .needingVerification()
-          .sort((a, b) => b.confidence - a.confidence)[0];
-        if (pending !== undefined) {
-          const verdict = await this.#detector.verify!(pending, input);
-          if (verdict.uphold) {
-            this.#ledger.markVerified(pending.id);
-            this.#trace({ event: "detect.candidate.verified", level: "info", correlationId, meta: { id: pending.id, reason: verdict.reason } });
-          } else {
-            this.#ledger.veto(pending.id, verdict.reason);
-            this.#trace({ event: "detect.candidate.vetoed", level: "info", correlationId, meta: { id: pending.id, reason: verdict.reason, pitch: pending.pitch } });
-          }
-        }
-      }
+      // Fire-and-forget: detect() must NOT block a round on the skeptic — the
+      // verdict settles asynchronously (see #launchVerification).
+      this.#lastVerifyContext = { input, correlationId };
+      this.#launchVerification(input, correlationId);
 
       return { ran: true, ...delta, candidates: this.candidates() };
     } finally {
@@ -218,7 +216,8 @@ export class IdeaDetectionEngine {
   // candidate (tie-break: most recently updated). Null when none are ready.
   // While adversarial verification is active, an unverified candidate is NOT
   // surfaceable — the skeptic pass must uphold it first, even if a publish
-  // happens mid-round while verify() is still awaited.
+  // happens while its verify is still in flight (verdicts settle asynchronously
+  // and republish via onLedgerChange).
   primary(): IdeaCandidate | null {
     const requireVerified = this.#verificationActive();
     let best: IdeaCandidate | null = null;
@@ -237,10 +236,87 @@ export class IdeaDetectionEngine {
     return this.#config.verifyOnSurface && typeof this.#detector.verify === "function";
   }
 
+  // Kick the skeptic pass without blocking the detection round. Bounded: at most
+  // ONE verify in flight at a time — the strongest pending candidate (the
+  // would-be primary); others verify after it settles (later rounds relaunch).
+  #launchVerification(input: DetectionInput, correlationId: string): void {
+    if (!this.#verificationActive() || this.#verifying) {
+      return;
+    }
+    const pending = this.#ledger
+      .needingVerification()
+      .sort((a, b) => b.confidence - a.confidence)[0];
+    if (pending === undefined) {
+      return;
+    }
+    this.#verifying = true;
+    void this.#settleVerification(pending, input, correlationId);
+  }
+
+  async #settleVerification(pending: IdeaCandidate, input: DetectionInput, correlationId: string): Promise<void> {
+    let verdict: CandidateVerdict;
+    try {
+      verdict = await this.#detector.verify!(pending, input);
+    } catch (error) {
+      // Fail OPEN: a broken skeptic must not hold ideas hostage.
+      verdict = { uphold: true, reason: `verification error (failed open): ${error instanceof Error ? error.message : String(error)}` };
+    } finally {
+      // Clear BEFORE applying so an onLedgerChange callback that triggers another
+      // round can launch the next verification immediately.
+      this.#verifying = false;
+    }
+    // Settle against the CURRENT ledger by id: the candidate may have been
+    // accepted/dismissed/superseded while the skeptic ran — the ledger methods
+    // no-op on unknown ids, so applying the verdict is safe either way. But a
+    // candidate whose PITCH materially changed while the skeptic ran is a
+    // different idea than the one that was judged: the ledger already reset its
+    // verified flag to force a fresh skeptic pass, and applying the stale
+    // verdict would either bless the never-reviewed new pitch (uphold) or bury
+    // it under the old pitch's rejection (veto). Discard the verdict instead —
+    // the relaunch below re-verifies the candidate as it stands now.
+    const current = this.#ledger.find(pending.id);
+    const stale = current !== null && pitchSimilarity(pending.pitch, current.pitch) < PITCH_MATCH_THRESHOLD;
+    if (stale) {
+      this.#trace({
+        event: "detect.candidate.verify-stale",
+        level: "info",
+        correlationId,
+        meta: { id: pending.id, judgedPitch: pending.pitch, currentPitch: current.pitch, uphold: verdict.uphold },
+      });
+    } else if (verdict.uphold) {
+      this.#ledger.markVerified(pending.id);
+      this.#trace({ event: "detect.candidate.verified", level: "info", correlationId, meta: { id: pending.id, reason: verdict.reason } });
+    } else {
+      this.#ledger.veto(pending.id, verdict.reason);
+      this.#trace({ event: "detect.candidate.vetoed", level: "info", correlationId, meta: { id: pending.id, reason: verdict.reason, pitch: pending.pitch } });
+    }
+    this.#onLedgerChange?.();
+    // Chain to the next pending verification (including a just-discarded stale
+    // candidate, which re-verifies under its current pitch). Without this,
+    // remaining ready candidates would stay withheld until new speech happened
+    // to trigger another detection round. No-ops if a round already relaunched.
+    const context = this.#lastVerifyContext;
+    if (context !== null) {
+      this.#launchVerification(context.input, context.correlationId);
+    }
+  }
+
   // Consume an accepted candidate: drop it and suppress re-detection of the same
   // pitch for a cooldown so the just-built idea doesn't immediately re-pop.
   accept(id: string, nowMs = this.#clock()): IdeaCandidate | null {
     const found = this.#ledger.accept(id);
+    if (found === null) {
+      return null;
+    }
+    this.#suppressed.push({ pitch: normalizePitch(found.pitch), untilMs: nowMs + this.#config.acceptCooldownMs });
+    return found;
+  }
+
+  // Explicitly reject a candidate (tray dismiss / voice "no"): drop it and
+  // suppress the same pitch for the cooldown exactly like accept() — the room
+  // said no, so the idea must not immediately re-pop — but nothing gets built.
+  dismiss(id: string, nowMs = this.#clock()): IdeaCandidate | null {
+    const found = this.#ledger.dismiss(id);
     if (found === null) {
       return null;
     }

@@ -136,6 +136,25 @@ export class IdeaLedger {
   }
 
   accept(id: string): IdeaCandidate | null {
+    return this.#remove(id);
+  }
+
+  // Explicit rejection from the tray. At the ledger level dismissal IS removal —
+  // identical to accept; the ENGINE differentiates what removal means (both
+  // suppress the pitch for the cooldown, only accept feeds the build loop).
+  dismiss(id: string): IdeaCandidate | null {
+    return this.#remove(id);
+  }
+
+  clear(): void {
+    this.#entries = [];
+  }
+
+  // ── internals ───────────────────────────────────────────────────────────────
+  // Remove an entry by id, returning its final snapshot. No-op (null) on unknown
+  // ids — callers settling async work (a verify that outlived its candidate) rely
+  // on this being safe.
+  #remove(id: string): IdeaCandidate | null {
     const entry = this.#entries.find((e) => e.id === id);
     if (entry === undefined) {
       return null;
@@ -144,11 +163,6 @@ export class IdeaLedger {
     return snapshot(entry);
   }
 
-  clear(): void {
-    this.#entries = [];
-  }
-
-  // ── internals ───────────────────────────────────────────────────────────────
   #assessmentFor(idea: DetectedIdea): IdeaAssessment {
     if (idea.judgment !== undefined) {
       // Re-derive against the LEDGER's threshold so engine config governs

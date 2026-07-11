@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import type { DetectionInput, DetectionResult, IdeaDetector } from "../detect";
+import type { CandidateVerdict, DetectionInput, DetectionResult, IdeaDetector } from "../detect";
 import { DetectionRunner, selectDetectionRunner, type DetectionSnapshot } from "./detection-runner";
 import { IdeaDetectionEngine } from "../detect";
 
@@ -96,6 +96,120 @@ describe("DetectionRunner", () => {
     await runner.flush();
     runner.clear();
     expect(runner.candidates()).toHaveLength(0);
+  });
+
+  test("dismiss() drops the candidate, emits, and suppresses the pitch for the cooldown", async () => {
+    const detector = new ScriptedDetector([ideaResult("Build a dashboard", 0.9), ideaResult("Build a dashboard", 0.9)]);
+    const updates: DetectionSnapshot[] = [];
+    const runner = makeRunner(detector, { VIBERSYN_DETECT_MIN_NEW_TURNS: "1", VIBERSYN_DETECT_MIN_INTERVAL_MS: "0" }, (s) => updates.push(s));
+    runner.ingestTurn({ speaker: null, text: "dashboard", atMs: 1000, correlationId: "c" });
+    await runner.flush();
+
+    const primary = runner.primary();
+    expect(primary).not.toBeNull();
+    const dismissed = runner.dismiss(primary!.id);
+    expect(dismissed?.pitch).toBe("Build a dashboard");
+    expect(runner.primary()).toBeNull();
+    expect(updates.length).toBeGreaterThanOrEqual(2); // detect + dismiss
+
+    // Unknown id → no-op, no extra emit.
+    const emitsBefore = updates.length;
+    expect(runner.dismiss("idea-unknown")).toBeNull();
+    expect(updates.length).toBe(emitsBefore);
+
+    // The dismissed pitch is suppressed: the next round re-detects it but the
+    // engine drops it, so nothing resurfaces inside the cooldown window.
+    runner.ingestTurn({ speaker: null, text: "dashboard again", atMs: 1000, correlationId: "c2" });
+    await runner.flush();
+    expect(detector.calls).toBe(2);
+    expect(runner.candidates()).toHaveLength(0);
+  });
+
+  test("forceDetect is rate-limited: a force inside the window degrades to the passive schedule", async () => {
+    let nowMs = 1_000;
+    const clock = (): number => nowMs;
+    const detector = new ScriptedDetector([ideaResult("A", 0.9), ideaResult("B", 0.9), ideaResult("C", 0.9)]);
+    // minNewTurns=9 → the passive schedule never fires here; only forces run.
+    const engine = new IdeaDetectionEngine({
+      sessionId: "s",
+      detector,
+      clock,
+      idFactory: sequenceIds("idea"),
+      env: { VIBERSYN_DETECT_MIN_NEW_TURNS: "9", VIBERSYN_DETECT_MIN_INTERVAL_MS: "0" },
+    });
+    const runner = new DetectionRunner({ engine, clock, tickIntervalMs: 0 }); // default forceMinIntervalMs = 1500
+
+    runner.ingestTurn({ speaker: null, text: "one", atMs: nowMs, correlationId: "c" });
+    await runner.flush();
+    expect(detector.calls).toBe(0);
+
+    await runner.forceDetect("f1");
+    expect(detector.calls).toBe(1);
+
+    // Inside the 1500ms window: the force degrades to the (never-satisfied) schedule.
+    runner.ingestTurn({ speaker: null, text: "two", atMs: nowMs, correlationId: "c" });
+    await runner.forceDetect("f2");
+    expect(detector.calls).toBe(1);
+
+    // Past the window: forcing works again.
+    nowMs += 1_600;
+    await runner.forceDetect("f3");
+    expect(detector.calls).toBe(2);
+  });
+
+  test("VIBERSYN_DETECT_FORCE_MIN_INTERVAL_MS=0 disables the force rate limit", async () => {
+    const detector = new ScriptedDetector([ideaResult("A", 0.9), ideaResult("A", 0.9)]);
+    const sel = selectDetectionRunner({
+      sessionId: "s",
+      detector,
+      clock: fixedClock(1000),
+      idFactory: sequenceIds("idea"),
+      env: { VIBERSYN_DETECT_MIN_NEW_TURNS: "9", VIBERSYN_DETECT_MIN_INTERVAL_MS: "0", VIBERSYN_DETECT_FORCE_MIN_INTERVAL_MS: "0" },
+      tickIntervalMs: 0,
+    });
+    sel.runner.ingestTurn({ speaker: null, text: "one", atMs: 1000, correlationId: "c" });
+    await sel.runner.flush();
+    await sel.runner.forceDetect("f1");
+    await sel.runner.forceDetect("f2"); // same instant — allowed with the limit off
+    expect(detector.calls).toBe(2);
+  });
+
+  test("an async verification verdict republishes via onUpdate (onLedgerChange wiring)", async () => {
+    let settleVerify: (verdict: CandidateVerdict) => void = () => {};
+    const detector: IdeaDetector = {
+      detect: async () => ideaResult("Verified idea", 0.9),
+      verify: () =>
+        new Promise<CandidateVerdict>((resolve) => {
+          settleVerify = resolve;
+        }),
+    };
+    const updates: DetectionSnapshot[] = [];
+    const sel = selectDetectionRunner({
+      sessionId: "s",
+      detector,
+      clock: fixedClock(1000),
+      idFactory: sequenceIds("idea"),
+      env: { VIBERSYN_DETECT_MIN_NEW_TURNS: "1" },
+      tickIntervalMs: 0,
+      onUpdate: (s) => {
+        updates.push(s);
+      },
+    });
+    sel.runner.ingestTurn({ speaker: null, text: "an idea", atMs: 1000, correlationId: "c" });
+    await sel.runner.flush();
+    // The round finished but the verdict is pending: the ready-but-unverified
+    // candidate is withheld from primary().
+    expect(sel.runner.primary()).toBeNull();
+    const updatesBeforeVerdict = updates.length;
+
+    settleVerify({ uphold: true, reason: "grounded" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // The settled verdict republished OUTSIDE any detection round, and the
+    // upheld candidate now surfaces.
+    expect(updates.length).toBeGreaterThan(updatesBeforeVerdict);
+    expect(updates.at(-1)?.primary?.pitch).toBe("Verified idea");
+    expect(sel.runner.primary()?.pitch).toBe("Verified idea");
   });
 });
 

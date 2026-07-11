@@ -7,6 +7,10 @@ import { Atmosphere } from "./Atmosphere";
 import { GestureLayer } from "./gesture/GestureLayer";
 import { ProcessBubble, IdeaBubble } from "./Bubble";
 import { BuildDetail } from "./BuildDetail";
+import { IdeaTray } from "./IdeaTray";
+import { QrImport } from "./QrImport";
+import { HelpOverlay } from "./HelpOverlay";
+import { parseProjectorUrl } from "./url-params";
 import { traceClass, traceTag, summarizeMeta } from "./trace-utils";
 import { startMicCapture, type MicCaptureHandle } from "./mic";
 
@@ -46,6 +50,10 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
   const [micLevel, setMicLevel] = useState(0);
   const [micError, setMicError] = useState<string | null>(null);
   const micHandleRef = useRef<MicCaptureHandle | null>(null);
+  const [qrOpen, setQrOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
+  // The transient voice-command confirmation ("🎤 vibersyn → build"), or null.
+  const [voiceFlash, setVoiceFlash] = useState<string | null>(null);
 
   // Whether this projector is bound to the LIVE runtime (vs. the static offline
   // demo). Mirrors the /api/state + SSE gate below: ?live=0 is always offline; in
@@ -66,22 +74,17 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
     return true;
   }, []);
 
-  // Gesture-wall binding (camera → cursors → dwell-to-click over this UI). Opening
-  // the projector with ?wall=A enables the gesture layer for that wall; ?fusion=
-  // overrides the fusion server WS URL (default ws://<host>:8770). The wall client
-  // is served on its own projector, so wall A/B each run this UI with its own id.
-  const gesture = useMemo(() => {
+  // Window configuration from the URL: view slice (?view=ideas|builds|full),
+  // wall identity badge (?wall=A|B), and the LEGACY gesture layer — which mounts
+  // ONLY on an explicit ?gesture=1 or ?fusion= (desk mode is the default; a bare
+  // ?wall= is just a badge so two-wall projections work without cameras).
+  const urlConfig = useMemo(() => {
     if (typeof window === "undefined") {
-      return null;
+      return parseProjectorUrl("", "localhost");
     }
-    const params = new URLSearchParams(window.location.search);
-    const wall = params.get("wall");
-    if (wall === null || wall.trim().length === 0) {
-      return null;
-    }
-    const fusion = params.get("fusion") ?? `ws://${window.location.hostname || "localhost"}:8770`;
-    return { wall, fusionUrl: fusion };
+    return parseProjectorUrl(window.location.search, window.location.hostname);
   }, []);
+  const view = urlConfig.view;
 
   // Latest snapshot exposed to the e2e window hook without re-binding it.
   const snapshotRef = useRef(snapshot);
@@ -160,6 +163,43 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
     }
   }, [liveMode, selectBubble]);
 
+  // IDEA TRAY actions: Build/Dismiss a SPECIFIC ledger candidate (not just the
+  // primary bubble). Live mode POSTs the per-idea endpoint and applies the
+  // returned snapshot; offline demo drops the card locally so the static tray
+  // stays interactive.
+  const actOnIdea = useCallback(
+    async (id: string, action: "accept" | "dismiss") => {
+      if (!liveMode) {
+        setSnapshot((current) => ({
+          ...current,
+          ideas: (current.ideas ?? []).filter((idea) => idea.id !== id),
+        }));
+        return;
+      }
+      try {
+        const response = await fetch(`/api/idea/${encodeURIComponent(id)}/${action}`, { method: "POST" });
+        if (response.ok && response.headers.get("content-type")?.includes("application/json")) {
+          setSnapshot((await response.json()) as ProjectorSnapshot);
+        }
+      } catch {
+        // Non-authoritative projector: a failed POST must never block the UI.
+      }
+    },
+    [liveMode],
+  );
+
+  // Keyboard/voice-parity target: b/Enter and x act on the TOP ready idea (the
+  // tray is ready-first, so this is the first ready card). No-op when none is.
+  const actOnTopIdea = useCallback(
+    async (action: "accept" | "dismiss") => {
+      const top = (snapshotRef.current.ideas ?? []).find((idea) => idea.status === "ready");
+      if (top !== undefined) {
+        await actOnIdea(top.id, action);
+      }
+    },
+    [actOnIdea],
+  );
+
   // AUTO-BUILD toggle. Flips the server-side auto-accept flag so every fired idea
   // builds itself with no click. The returned snapshot carries the new state.
   const autoAccept = snapshot.autoAccept ?? false;
@@ -182,8 +222,8 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
   }, [liveMode]);
 
   // IDEA CAPTURE toggle (alternative to passive auto-detect). Flips the server-side
-  // capture flag: when on, detection runs eagerly and every surfaced idea builds
-  // itself — the operator has deliberately started the creation loop.
+  // capture flag: when on, detection runs eagerly on every final utterance — but
+  // building stays explicit (tray/keyboard/voice) unless Auto-Build is also on.
   const captureMode = snapshot.captureMode ?? false;
   const toggleCaptureMode = useCallback(async () => {
     if (!liveMode) {
@@ -317,6 +357,30 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
     };
   }, []);
 
+  // VOICE FEEDBACK: when the server recognizes a wake-word command the snapshot's
+  // `voice` field changes; flash the command near the status bar so the room gets
+  // visible confirmation the utterance landed. The initial value (a stale command
+  // from before this window loaded) is recorded without flashing. The effect keys
+  // on the VALUE, not the object: every SSE frame rebuilds `snapshot.voice` via
+  // JSON.parse, and an identity-keyed effect would run its cleanup (clearing the
+  // 4s timer) on each frame and never re-arm it — the flash would stick forever.
+  const voiceFlashKey = snapshot.voice ? `${snapshot.voice.lastCommand}@${snapshot.voice.at}` : null;
+  const voiceCommand = snapshot.voice?.lastCommand ?? null;
+  const prevVoiceKeyRef = useRef<string | null | undefined>(undefined);
+  useEffect(() => {
+    if (prevVoiceKeyRef.current === undefined || voiceFlashKey === null) {
+      prevVoiceKeyRef.current = voiceFlashKey;
+      return;
+    }
+    if (voiceFlashKey === prevVoiceKeyRef.current) {
+      return;
+    }
+    prevVoiceKeyRef.current = voiceFlashKey;
+    setVoiceFlash(voiceCommand);
+    const timer = setTimeout(() => setVoiceFlash(null), 4_000);
+    return () => clearTimeout(timer);
+  }, [voiceFlashKey, voiceCommand]);
+
   // --- Live data: fetch /api/state + subscribe to /api/events (SSR-guarded) ---
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -430,15 +494,88 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
     };
   }, [resolveSelection, selected]);
 
-  // --- Keyboard: digits 1–9 select, Escape closes (SSR-guarded) ---
+  // Overlay open-state mirrored into refs so the keyboard handler (bound once)
+  // can close the topmost overlay on Escape without re-binding per keystroke.
+  const qrOpenRef = useRef(qrOpen);
+  qrOpenRef.current = qrOpen;
+  const helpOpenRef = useRef(helpOpen);
+  helpOpenRef.current = helpOpen;
+
+  // --- Keyboard: the primary desk-mode control surface (SSR-guarded) ---
+  // 1–9 select/steer · b/Enter build top idea · x dismiss · c capture · a auto-
+  // build · m mic · u unmute · q QR · ?/h help · Shift+E emergency · Esc close.
   useEffect(() => {
     if (typeof window === "undefined") {
       return;
     }
     function onKey(keyEvent: KeyboardEvent) {
+      // Never steal keys from text entry or browser-level shortcuts.
+      if (keyEvent.metaKey || keyEvent.ctrlKey) {
+        return;
+      }
+      const target = keyEvent.target;
+      if (target instanceof HTMLElement) {
+        const tag = target.tagName;
+        if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target.isContentEditable) {
+          return;
+        }
+        // Enter on a focused control is that control's activation, not "build".
+        if (keyEvent.key === "Enter" && target.closest("button, a, [role='button']") !== null) {
+          return;
+        }
+      }
       if (keyEvent.key === "Escape") {
+        // Close the topmost overlay first; fall back to closing the detail.
+        // Help renders after (above) the QR overlay in the tree, so it closes
+        // first — otherwise Escape appears to do nothing while both are open.
+        if (helpOpenRef.current) {
+          setHelpOpen(false);
+          return;
+        }
+        if (qrOpenRef.current) {
+          setQrOpen(false);
+          return;
+        }
         setSelected(null);
         return;
+      }
+      // Shift+E only — a deliberate chord for the kill-all, so brushing "e" while
+      // reaching for other keys can never stop the room.
+      if (keyEvent.key === "E" && keyEvent.shiftKey) {
+        triggerEmergency();
+        return;
+      }
+      switch (keyEvent.key) {
+        case "b":
+        case "Enter":
+          void actOnTopIdea("accept");
+          return;
+        case "x":
+          void actOnTopIdea("dismiss");
+          return;
+        case "c":
+          void toggleCaptureMode();
+          return;
+        case "a":
+          void toggleAutoAccept();
+          return;
+        case "m":
+          void toggleMic();
+          return;
+        case "u":
+          if (snapshotRef.current.muted) {
+            void releaseMute();
+          }
+          return;
+        case "q":
+          setQrOpen((open) => !open);
+          return;
+        case "?":
+        case "h":
+          setHelpOpen((open) => !open);
+          return;
+        default:
+          break;
       }
       const digit = Number.parseInt(keyEvent.key, 10);
       if (Number.isInteger(digit) && digit >= 1 && digit <= 9) {
@@ -450,7 +587,7 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selectBubble]);
+  }, [selectBubble, actOnTopIdea, toggleCaptureMode, toggleAutoAccept, toggleMic, releaseMute, triggerEmergency]);
 
   // Significance-driven sizing: selected/active largest, planning mid, others base.
   const bubbleSize = useCallback(
@@ -472,10 +609,31 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
   const detailOpen = selectedProcess !== null;
   const listeningState = snapshot.muted ? "muted" : "listening";
 
+  // Two-wall view split: the ideas wall hides the build fleet, the builds wall
+  // hides the idea surfaces; "full" (default) shows everything on one screen.
+  const showIdeaSurfaces = view !== "builds";
+  const showFleetSurfaces = view !== "ideas";
+  // The tray renders whenever there are candidates; the dedicated ideas wall
+  // always shows it (with an empty-state hint) so the surface reads as present.
+  const ideas = snapshot.ideas ?? [];
+  const showIdeaTray = showIdeaSurfaces && (view === "ideas" || ideas.length > 0);
+
   return (
-    <main className="deep" data-testid="app">
+    <main className="deep" data-testid="app" data-view={view}>
       <Atmosphere />
-      {gesture ? <GestureLayer wall={gesture.wall} fusionUrl={gesture.fusionUrl} /> : null}
+      {urlConfig.gesture ? (
+        <GestureLayer wall={urlConfig.gesture.wall} fusionUrl={urlConfig.gesture.fusionUrl} />
+      ) : null}
+      {urlConfig.badge ? (
+        <div className="wall-badge" data-testid="wall-badge">
+          {urlConfig.badge}
+        </div>
+      ) : null}
+      {voiceFlash !== null ? (
+        <div className="voice-flash" data-testid="voice-flash" role="status">
+          🎤 vibersyn → {voiceFlash}
+        </div>
+      ) : null}
 
       <header className="status-bar" data-region="status">
         <div className="status-left">
@@ -543,7 +701,7 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
             data-state={captureMode ? "on" : "off"}
             aria-pressed={captureMode}
             onClick={() => void toggleCaptureMode()}
-            title="Idea Capture: deliberately start the creation loop — detection runs eagerly and every idea builds itself."
+            title="Idea Capture: detection runs eagerly on every utterance — building stays explicit unless Auto-Build is on."
           >
             {captureMode ? "● Capturing" : "Idea Capture"}
           </button>
@@ -560,6 +718,15 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
           </button>
           <button
             type="button"
+            className="ctl-button qr-import"
+            data-testid="qr-import-button"
+            onClick={() => setQrOpen(true)}
+            title="Show a QR code — scan it on a phone to add a GitHub repo to the wall."
+          >
+            QR Import
+          </button>
+          <button
+            type="button"
             className="ctl-button emergency"
             data-testid="emergency-button"
             onClick={triggerEmergency}
@@ -570,43 +737,59 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
       </header>
 
       <div className={`stage${detailOpen ? " stage-dimmed" : ""}`}>
-        <section className="bubble-field" data-region="fleet" data-testid="bubble-field" onClick={closeDetail}>
-          <SuggestionRegion pitch={snapshot.suggestion.pitch} />
-          <div className="field-inner" onClick={(clickEvent) => clickEvent.stopPropagation()}>
-            <IdeaBubble
-              state={snapshot.suggestion.state}
-              pitch={snapshot.suggestion.pitch}
-              confidence={snapshot.suggestion.confidence}
-              gatePercent={gatePercent}
-              selected={ideaSelected}
-              size={ideaSelected ? 250 : 196}
-              evidence={snapshot.suggestion.contextSpan?.quote}
-              onSelect={() => void acceptIdea()}
+        <div className="stage-main">
+          <section className="bubble-field" data-region="fleet" data-testid="bubble-field" onClick={closeDetail}>
+            {showIdeaSurfaces ? <SuggestionRegion pitch={snapshot.suggestion.pitch} /> : null}
+            <div className="field-inner" onClick={(clickEvent) => clickEvent.stopPropagation()}>
+              {showIdeaSurfaces ? (
+                <IdeaBubble
+                  state={snapshot.suggestion.state}
+                  pitch={snapshot.suggestion.pitch}
+                  confidence={snapshot.suggestion.confidence}
+                  gatePercent={gatePercent}
+                  selected={ideaSelected}
+                  size={ideaSelected ? 250 : 196}
+                  evidence={snapshot.suggestion.contextSpan?.quote}
+                  onSelect={() => void acceptIdea()}
+                />
+              ) : null}
+              {showFleetSurfaces
+                ? snapshot.processes.map((process, index) => (
+                    <ProcessBubble
+                      key={process.upid}
+                      process={{
+                        ...process,
+                        selected: process.callsign === selected,
+                        steering: process.upid === steeringUpid,
+                      }}
+                      index={index}
+                      size={bubbleSize(process)}
+                      hotkey={index < 9 ? index + 1 : null}
+                      onSelect={() => void steerProcess(process.callsign)}
+                    />
+                  ))
+                : null}
+            </div>
+          </section>
+
+          {showIdeaTray ? (
+            <IdeaTray
+              ideas={ideas}
+              onBuild={(id) => void actOnIdea(id, "accept")}
+              onDismiss={(id) => void actOnIdea(id, "dismiss")}
             />
-            {snapshot.processes.map((process, index) => (
-              <ProcessBubble
-                key={process.upid}
-                process={{
-                  ...process,
-                  selected: process.callsign === selected,
-                  steering: process.upid === steeringUpid,
-                }}
-                index={index}
-                size={bubbleSize(process)}
-                hotkey={index < 9 ? index + 1 : null}
-                onSelect={() => void steerProcess(process.callsign)}
-              />
-            ))}
-          </div>
-        </section>
+          ) : null}
+        </div>
 
         <aside className="rail">
-          <FleetPanel
-            processes={snapshot.processes}
-            selected={selected}
-            steeringUpid={steeringUpid}
-            onSelect={(id) => void steerProcess(id)}
-          />
+          {showFleetSurfaces ? (
+            <FleetPanel
+              processes={snapshot.processes}
+              selected={selected}
+              steeringUpid={steeringUpid}
+              onSelect={(id) => void steerProcess(id)}
+            />
+          ) : null}
           <AudioReadout snapshot={snapshot} />
           <TranscriptStream lines={snapshot.transcript} />
           <TraceRail trace={snapshot.trace} />
@@ -618,6 +801,9 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
           <BuildDetail process={selectedProcess} trace={snapshot.trace} onClose={closeDetail} />
         </div>
       ) : null}
+
+      {qrOpen ? <QrImport processes={snapshot.processes} onClose={() => setQrOpen(false)} /> : null}
+      {helpOpen ? <HelpOverlay onClose={() => setHelpOpen(false)} /> : null}
     </main>
   );
 }

@@ -99,6 +99,38 @@ export const demoProjectorSnapshot: ProjectorSnapshot = {
     trace("observe.pass", "corr-room-224", { reason: "ambient", wordCount: 18 }),
     trace("suggestion.queued", "corr-suggest-009", { confidence: 0.82, idlePreferred: true }),
   ],
+  // The idea tray fixture: ready candidates first (buildable/dismissable), then a
+  // dimmed forming one — so the offline demo shows the full explicit-confirm flow.
+  ideas: [
+    {
+      id: "idea_blocker_announcer",
+      pitch: "Turn the meeting notes into a blocker announcer.",
+      confidence: 0.82,
+      status: "ready",
+      maturity: "actionable",
+      verified: true,
+      rationale: "Concrete, scoped, and the pain was mentioned twice.",
+      evidence: "The standup notes keep losing blockers.",
+    },
+    {
+      id: "idea_retro_wall",
+      pitch: "A retro wall that clusters this week's wins and gripes.",
+      confidence: 0.63,
+      status: "ready",
+      maturity: "proposed",
+      verified: false,
+      evidence: "We never see the wins next to the gripes.",
+    },
+    {
+      id: "idea_focus_chime",
+      pitch: "Ambient focus chime keyed to who is speaking.",
+      confidence: 0.31,
+      status: "forming",
+      maturity: "forming",
+      verified: false,
+    },
+  ],
+  voice: null,
   updatedAt: new Date("2026-06-16T18:00:00.000Z").toISOString(),
 };
 
@@ -129,6 +161,8 @@ export const emptyProjectorSnapshot: ProjectorSnapshot = {
   processes: [],
   transcript: [],
   trace: [],
+  ideas: [],
+  voice: null,
   updatedAt: new Date(0).toISOString(),
   steeringUpid: null,
   autoAccept: false,

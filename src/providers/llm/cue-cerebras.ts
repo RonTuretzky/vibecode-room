@@ -150,12 +150,14 @@ export function createCueCerebrasProposer(options: { apiKey?: string; model?: st
     }
     const core = (await import(pathToFileURL(cueCoreEntrypoint()).href)) as CueCoreExtras;
     const provider = new core.CerebrasLLMProvider({
-      // A solid native-tool-calling model. The default reasoning model
-      // (zai-glm-4.7) errors under tool_choice=required, so prefer llama-3.3-70b
-      // with "auto" choice; the provider falls back to a structured decision if no
-      // tool call is produced.
+      // Default: gemma-4-31b — Cerebras's Gemma 4 (31B, multimodal, ~1850 tok/s).
+      // NOTE it is PREVIEW-tier on Cerebras Inference (may change or be pulled on
+      // short notice); set CEREBRAS_MODEL to override, e.g. back to the
+      // production-tier gpt-oss-120b. "auto" tool choice because some Cerebras
+      // models error under tool_choice=required; the provider falls back to a
+      // structured decision if no tool call is produced.
       apiKey: options.apiKey ?? process.env.CEREBRAS_API_KEY,
-      model: options.model ?? process.env.CEREBRAS_MODEL ?? "gpt-oss-120b",
+      model: options.model ?? process.env.CEREBRAS_MODEL ?? "gemma-4-31b",
       system: SYSTEM_PROMPT,
       buildUserPrompt: buildIdeaUserPrompt,
       maxCompletionTokens: 200,

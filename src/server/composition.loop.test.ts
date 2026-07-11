@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { createProjectorRuntime, type ProjectorRuntime } from "./composition";
 import { NoopTTSProvider } from "../providers";
 import { demoProjectorSnapshot } from "../ui/demo-data";
@@ -37,7 +38,12 @@ describe("LiveProjectorRuntime — composition loop snapshot reflects detect -> 
 
   test("the published snapshot shows the detected idea, the spawned process, and lastSpoken", async () => {
     const path = writeLoopScriptFixture(buildBuildableOnlyScript(), tempDirs);
-    const runtime = await createProjectorRuntime(loopEnv(path));
+    // Noop builder over a temp buildsRoot: the accepted idea's fire-and-forget
+    // build must not spawn the real host `claude` CLI from a unit test.
+    const runtime = await createProjectorRuntime(loopEnv(path), {
+      buildsRoot: join(dirname(path), "builds"),
+      builderAgent: async () => undefined,
+    });
     const processCountBefore = runtime.snapshot().processes.length;
 
     let published = runtime.snapshot();

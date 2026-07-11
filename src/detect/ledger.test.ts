@@ -197,7 +197,7 @@ describe("verification + veto", () => {
   });
 });
 
-describe("accept / clear", () => {
+describe("accept / dismiss / clear", () => {
   test("accept removes and returns the entry; clear drops everything", () => {
     const l = ledger();
     const [c] = l.reconcile([judged()], turns, 100).created;
@@ -208,5 +208,17 @@ describe("accept / clear", () => {
     l.reconcile([judged()], turns, 200);
     l.clear();
     expect(l.candidates()).toHaveLength(0);
+  });
+
+  test("dismiss removes and returns the entry; unknown ids are a safe no-op", () => {
+    const l = ledger();
+    const [c] = l.reconcile([judged()], turns, 100).created;
+    const dismissed = l.dismiss(c.id);
+    expect(dismissed?.id).toBe(c.id);
+    expect(dismissed?.pitch).toBe(c.pitch);
+    expect(l.candidates()).toHaveLength(0);
+    // no-op on missing ids — async verify settling after a dismiss relies on this
+    expect(l.dismiss(c.id)).toBeNull();
+    expect(l.dismiss("nope")).toBeNull();
   });
 });

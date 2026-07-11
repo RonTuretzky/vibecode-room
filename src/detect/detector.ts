@@ -118,9 +118,11 @@ export class HeuristicIdeaDetector implements IdeaDetector {
     const start = cueTurns[0];
     const end = cueTurns.at(-1) ?? start;
     const hits = cueTurns.reduce((sum, turn) => sum + countCues(turn.text), 0);
-    // A single cue reads as a named concept (concreteness 1 → held as forming at
-    // the default threshold); repeated cues read as described behavior
-    // (concreteness 2 → surfaces). Mirrors the old 0.55 / 0.66+ split.
+    // A single cue reads as a named concept (concreteness 1 → conf 0.55: the
+    // advisory assessment below holds it at the detector's 0.6 default, but the
+    // ledger re-derives against the engine's loosened 0.55 ready threshold, where
+    // it lands exactly AT the line); repeated cues read as described behavior
+    // (concreteness 2 → surfaces everywhere). Mirrors the old 0.55 / 0.66+ split.
     const rubric: IdeaRubric = {
       category: "proposal",
       concreteness: hits >= 2 ? 2 : 1,
