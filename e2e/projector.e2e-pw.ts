@@ -51,9 +51,12 @@ test.describe("projector UI — first paint & feature parity", () => {
     );
   });
 
-  test("shows at least one idea bubble (a pending suggestion)", async ({ page }) => {
+  test("shows the 3D idea constellation with at least one orb (a pending suggestion)", async ({ page }) => {
     await gotoStatic(page);
-    await expect(page.locator('[data-testid="bubble"][data-kind="idea"]').first()).toBeVisible();
+    const field = page.getByTestId("idea-field-3d");
+    await expect(field).toBeVisible();
+    await expect(field).not.toHaveAttribute("data-orb-count", "0");
+    await expect(field.locator("canvas")).toBeVisible();
   });
 
   test("renders the color-coded trace stream including route.action", async ({ page }) => {

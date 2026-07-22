@@ -53,17 +53,17 @@ test.describe("desk mode — gesture decoupling & wall identity", () => {
 test.describe("desk mode — two-wall view split", () => {
   test("?view=ideas: idea surfaces + tray, fleet hidden", async ({ page }) => {
     await gotoStatic(page, "?live=0&view=ideas");
-    await expect(page.locator('[data-testid="bubble"][data-kind="idea"]').first()).toBeVisible();
+    await expect(page.getByTestId("idea-field-3d")).toBeVisible();
     await expect(page.getByTestId("idea-tray")).toBeVisible();
     await expect(page.locator('[data-testid="bubble"][data-kind="process"]')).toHaveCount(0);
     await expect(page.getByTestId("fleet-panel")).toHaveCount(0);
   });
 
-  test("?view=builds: fleet surfaces, idea bubble/tray hidden", async ({ page }) => {
+  test("?view=builds: fleet surfaces, idea constellation/tray hidden", async ({ page }) => {
     await gotoStatic(page, "?live=0&view=builds");
     await expect(page.locator('[data-testid="bubble"][data-callsign="Atlas"]')).toBeVisible();
     await expect(page.getByTestId("fleet-panel").first()).toBeVisible();
-    await expect(page.locator('[data-testid="bubble"][data-kind="idea"]')).toHaveCount(0);
+    await expect(page.getByTestId("idea-field-3d")).toHaveCount(0);
     await expect(page.getByTestId("idea-tray")).toHaveCount(0);
     await expect(page.locator('[data-region="suggestion"]')).toHaveCount(0);
   });

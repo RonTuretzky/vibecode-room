@@ -5,7 +5,8 @@ import type { LogEvent } from "../types";
 import type { ProjectorProcess, ProjectorSnapshot, TranscriptLine } from "./types";
 import { Atmosphere } from "./Atmosphere";
 import { GestureLayer } from "./gesture/GestureLayer";
-import { ProcessBubble, IdeaBubble } from "./Bubble";
+import { ProcessBubble } from "./Bubble";
+import { IdeaField3D, type IdeaOrbSpec } from "./IdeaField3D";
 import { BuildDetail } from "./BuildDetail";
 import { IdeaTray } from "./IdeaTray";
 import { QrImport } from "./QrImport";
@@ -655,6 +656,47 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
   const ideas = snapshot.ideas ?? [];
   const showIdeaTray = showIdeaSurfaces && (effectiveView === "ideas" || ideas.length > 0);
 
+  // 3D constellation input: every ledger candidate as an orb; with an empty
+  // ledger, the primary pending suggestion (id null) is the lone orb.
+  const ideaOrbs = useMemo<IdeaOrbSpec[]>(() => {
+    if (ideas.length > 0) {
+      return ideas.map((idea) => ({
+        id: idea.id,
+        pitch: idea.pitch,
+        confidence: idea.confidence,
+        status: idea.status,
+        maturity: idea.maturity,
+        verified: idea.verified,
+      }));
+    }
+    if (snapshot.suggestion.pitch.length > 0) {
+      return [
+        {
+          id: null,
+          pitch: snapshot.suggestion.pitch,
+          confidence: snapshot.suggestion.confidence,
+          status: "ready",
+          maturity: "proposed",
+          verified: false,
+        },
+      ];
+    }
+    return [];
+  }, [ideas, snapshot.suggestion.pitch, snapshot.suggestion.confidence]);
+
+  // Clicking a ready orb builds it: ledger candidates go through the per-idea
+  // accept endpoint, the primary suggestion through /api/suggestion/accept.
+  const acceptOrb = useCallback(
+    (id: string | null) => {
+      if (id === null) {
+        void acceptIdea();
+      } else {
+        void actOnIdea(id, "accept");
+      }
+    },
+    [acceptIdea, actOnIdea],
+  );
+
   return (
     <main className="deep" data-testid="app" data-view={view}>
       <Atmosphere />
@@ -780,19 +822,10 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
         <div className="stage-main">
           <section className="bubble-field" data-region="fleet" data-testid="bubble-field" onClick={closeDetail}>
             {showIdeaSurfaces ? <SuggestionRegion pitch={snapshot.suggestion.pitch} /> : null}
+            {showIdeaSurfaces ? (
+              <IdeaField3D orbs={ideaOrbs} onAccept={acceptOrb} layout={showFleetSurfaces ? "band" : "full"} />
+            ) : null}
             <div className="field-inner" onClick={(clickEvent) => clickEvent.stopPropagation()}>
-              {showIdeaSurfaces ? (
-                <IdeaBubble
-                  state={snapshot.suggestion.state}
-                  pitch={snapshot.suggestion.pitch}
-                  confidence={snapshot.suggestion.confidence}
-                  gatePercent={gatePercent}
-                  selected={ideaSelected}
-                  size={ideaSelected ? 250 : 196}
-                  evidence={snapshot.suggestion.contextSpan?.quote}
-                  onSelect={() => void acceptIdea()}
-                />
-              ) : null}
               {showFleetSurfaces
                 ? snapshot.processes.map((process, index) => (
                     <ProcessBubble
