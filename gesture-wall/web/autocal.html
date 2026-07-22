@@ -65,6 +65,25 @@ function fail(msg) {
   dot.style.display = "none";
 }
 
+// When the calibration COMPLETES, this window turns into the wall client —
+// same window, same fullscreen, no juggling. wall.html is served from this
+// same web dir (and from the gesture server), and it keeps working after the
+// autocal server exits: its websocket reconnects to the gesture server on its
+// own, and it flips back into a calibration surface for future runs (see
+// AutocalWatcher in wall.js). Extra query params (rows, cols, server...) are
+// carried over; the wall grid defaults to 2x3.
+let redirecting = false;
+function becomeWall() {
+  if (redirecting) return;
+  redirecting = true;
+  const q = new URLSearchParams(location.search);
+  q.delete("wall");
+  const extra = q.toString();
+  setTimeout(() => location.replace(
+    `wall.html?wall=${encodeURIComponent(wall)}${extra ? "&" + extra : ""}`),
+    1500);  // show the checkmark briefly, then transform
+}
+
 async function tick() {
   if (!wall) return fail("URL is missing ?wall= (use ?wall=A or ?wall=B)");
   try {
@@ -73,6 +92,7 @@ async function tick() {
     err.style.display = "none";
     idle.style.display = s.phase === "idle" ? "flex" : "none";
     done.style.display = s.phase === "done" ? "flex" : "none";
+    if (s.phase === "done") becomeWall();
     const m = s.marker;
     if (s.phase === "running" && m && m.wall === wall) showDot(m.u, m.v);
     else dot.style.display = "none";

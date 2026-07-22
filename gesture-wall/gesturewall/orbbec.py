@@ -118,6 +118,8 @@ class OrbbecSource:
         self._pipe = None
         self._align = None
         self._color_is_bgr = False  # set in start() from the chosen profile
+        self._delivered = False     # any frame decoded since the last start()
+        self._dry_reads = 0         # consecutive read()s that returned None
         self._intrinsics: CameraIntrinsics | None = None
         self._warned_color_tuning = False
 
@@ -357,6 +359,29 @@ class OrbbecSource:
             print("orbbec: pipeline stalled (no status available)",
                   file=sys.stderr)
 
+    def _note_dry(self) -> None:
+        """Track fruitless reads; reboot a wedged device as a last resort.
+
+        A pipeline that was hard-killed mid-stream can leave the camera in a
+        state where every fresh open succeeds but never delivers a frame —
+        process restarts don't help, only a device reset does. When a STARTED
+        pipeline has delivered nothing across several consecutive dry reads,
+        fire the SDK's software ``reboot()`` (the equivalent of replugging the
+        USB cable) and close; the device re-enumerates within ~10 s and the
+        next read()'s open finds it fresh.
+        """
+        self._dry_reads += 1
+        if self._delivered or self._pipe is None or self._dry_reads < 3:
+            return
+        print("orbbec: pipeline delivers nothing after fresh open - "
+              "rebooting the device (re-enumerates in ~10 s)", file=sys.stderr)
+        try:
+            self._device.reboot()
+        except Exception as exc:  # noqa: BLE001 - best effort
+            print(f"orbbec: device reboot failed ({exc})", file=sys.stderr)
+        self._dry_reads = 0
+        self.close()
+
     def close(self) -> None:
         """Stop the pipeline and drop all SDK refs (idempotent, pre-start ok).
 
@@ -409,6 +434,7 @@ class OrbbecSource:
             else:
                 remaining = deadline - _time.monotonic()
                 if remaining <= 0:
+                    self._note_dry()
                     return None
                 wait_ms = max(1, min(_WAIT_SLICE_MS, int(remaining * 1000)))
 
@@ -422,6 +448,7 @@ class OrbbecSource:
                     # the camera never recovers (the server's no-timeout path
                     # relies on exactly this contract).
                     self._log_pipeline_status()
+                    self._note_dry()
                     self.close()
                     return None
                 continue  # bounded wait: deadline check at loop top decides
@@ -435,7 +462,10 @@ class OrbbecSource:
             if color is None or depth is None:
                 continue  # partial set despite FULL_FRAME_REQUIRE; keep going
             try:
-                return self._decode(color, depth)
+                item = self._decode(color, depth)
+                self._delivered = True
+                self._dry_reads = 0
+                return item
             except ValueError:
                 # Transiently malformed frame (buffer size != WxH) — the
                 # SDK's own aligned example skips these; so do we.
