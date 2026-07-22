@@ -47,7 +47,7 @@ from pathlib import Path
 from . import geometry
 from .calibration import CORNER_NAMES, WALL_CORNERS, Homography
 from .geometry import CameraIntrinsics, Extrinsic, WallPlane
-from .room import RoomConfig, _calib_key
+from .room import DEPTH_KINDS, RoomConfig, _calib_key
 
 Matrix = list[list[float]]
 
@@ -209,6 +209,19 @@ def plane_from_corner3d(corners3d) -> WallPlane:
     return geometry.plane_from_corners(top_left, top_right, bottom_left)
 
 
+def _depth_kind(config_dict: dict, cam_id: str) -> str:
+    """The camera's configured depth kind, defaulting to ``"kinect_v2"``.
+
+    Read from the RAW config dict (not :class:`CameraCfg`, whose absent-kind
+    default is ``"rgb"``): depth configs written before the ``kind`` field
+    existed are all Kinect v2 rooms, so an absent kind at a depth-capture site
+    means the original Kinect v2. The kind is what
+    :func:`gesturewall.framesource.make_frame_source` dispatches on.
+    """
+    kind = config_dict.get("cameras", {}).get(cam_id, {}).get("kind")
+    return kind if kind is not None else "kinect_v2"
+
+
 def _ensure_dyld_path() -> None:
     """Prepend ``~/.local/lib`` to DYLD_LIBRARY_PATH so the spawned bridge finds
     libfreenect2 even if the user's shell didn't export it."""
@@ -240,8 +253,17 @@ def load_config_dict(path: str | Path) -> dict:
 
 
 def save_config_dict(path: str | Path, config_dict: dict) -> None:
-    """Write a room config dict back to JSON with stable, readable formatting."""
-    Path(path).write_text(json.dumps(config_dict, indent=2) + "\n")
+    """Write a room config dict back to JSON, atomically.
+
+    Writes a sibling temp file then ``os.replace`` (atomic on the same
+    filesystem), so a crash mid-write can never leave the live config — which
+    every other tool loads — truncated or half-written.
+    """
+    import os
+    path = Path(path)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(config_dict, indent=2) + "\n")
+    os.replace(tmp, path)
 
 
 # --------------------------------------------------------------------------- #
@@ -380,16 +402,20 @@ def _targets_for(pattern: str, cfg: RoomConfig, wall_id: str):
 
 
 def capture_points(source, intrinsics: CameraIntrinsics, extrinsic: Extrinsic,
-                   labels, title: str, *, scale: int = 2, window: int = 7):
-    """Interactive Kinect-depth capture of a list of labelled points (lazy cv2).
+                   labels, title: str, *, scale: int | None = None,
+                   window: int = 7):
+    """Interactive depth-camera capture of a list of labelled points (lazy cv2).
 
-    Shows the Kinect's live registered-color feed (upscaled by ``scale``). For
+    Shows the camera's live depth-aligned color feed, upscaled by ``scale``.
+    ``scale=None`` (the default) adapts to the frame: ``max(1, round(1024 /
+    frame_width))``, so the Kinect's 512-wide frame is doubled to 1024 px while
+    a 1280-wide Gemini 335 frame is shown 1:1 (not blown up to 2560 px). For
     each label in ``labels`` the operator CLICKS where that point on the wall
     appears; the aligned depth there is turned into a 3D room point by
     :func:`corner3d_from_pixel`. ESC cancels. cv2 is imported lazily.
 
     Returns the list of captured 3D ROOM points (one per label, in order), or
-    ``None`` if the operator cancelled or the Kinect stream ended.
+    ``None`` if the operator cancelled or the camera stream ended.
     """
     import cv2  # lazy: only needed when actually capturing
 
@@ -408,11 +434,14 @@ def capture_points(source, intrinsics: CameraIntrinsics, extrinsic: Extrinsic,
         while len(points) < len(labels):
             item = source.read()
             if item is None:
-                print("[gesturewall] Kinect stream ended before calibration finished.")
+                print("[gesturewall] camera stream ended before calibration "
+                      "finished.")
                 return None
             color, depth_m, intrinsics = item   # intr refreshed from the stream
             latest_depth = depth_m
 
+            if scale is None:  # adapt to the frame: target a ~1024-px display
+                scale = max(1, round(1024 / color.shape[1]))
             disp = cv2.resize(
                 color, (color.shape[1] * scale, color.shape[0] * scale),
                 interpolation=cv2.INTER_NEAREST)
@@ -451,7 +480,7 @@ def capture_points(source, intrinsics: CameraIntrinsics, extrinsic: Extrinsic,
 
 def capture_plane_points(source, intrinsics: CameraIntrinsics,
                          extrinsic: Extrinsic, targets, title: str, *,
-                         scale: int = 2, window: int = 7):
+                         scale: int | None = None, window: int = 7):
     """Capture ``(label, u, v)`` targets and zip the clicks with their ``(u, v)``.
 
     Returns a list of ``(u, v, point3)`` samples for
@@ -515,9 +544,10 @@ def calibrate_seam_pair(args) -> int:
     ]
 
     _ensure_dyld_path()
-    from .kinect import KinectV2Source
+    from .framesource import make_frame_source
 
-    source = KinectV2Source(device_index=cfg.cameras[cam_id].device)
+    kind = _depth_kind(config_dict, cam_id)
+    source = make_frame_source(kind, cfg.cameras[cam_id].device)
     try:
         extrinsic = cfg.extrinsic(cam_id)
     except (KeyError, ValueError):
@@ -528,12 +558,14 @@ def calibrate_seam_pair(args) -> int:
         first = source.read()
         if first is None:
             raise SystemExit(
-                "Could not read from the Kinect bridge. Check: the Kinect is "
-                "connected + powered, bin/kinect-v2-bridge is built, and "
-                "DYLD_LIBRARY_PATH includes ~/.local/lib (see KINECT.md).")
+                f"Could not read from camera {cam_id!r} (kind {kind!r}). "
+                f"Check it is connected + powered and free (stop the live "
+                f"server); for kinect_v2 also check bin/kinect-v2-bridge is "
+                f"built and DYLD_LIBRARY_PATH includes ~/.local/lib "
+                f"(see KINECT.md).")
         _, _, intr = first
         pts = capture_points(source, intr, extrinsic, labels,
-                             f"Kinect calibrate - seam {left}|{right}")
+                             f"Depth calibrate - seam {left}|{right}")
     finally:
         _close_quietly(source)
 
@@ -544,7 +576,7 @@ def calibrate_seam_pair(args) -> int:
     updated = merge_wall_plane(config_dict, left, left_plane)
     updated = merge_wall_plane(updated, right, right_plane)
     if intr is not None:
-        updated = merge_camera_pose(updated, cam_id, intr, extrinsic, kind="kinect_v2")
+        updated = merge_camera_pose(updated, cam_id, intr, extrinsic, kind=kind)
     RoomConfig.from_dict(updated)  # re-validate before persisting
     save_config_dict(args.config, updated)
     print(f"[gesturewall] wrote walls[{left!r}].plane + walls[{right!r}].plane "
@@ -566,9 +598,10 @@ def calibrate_wall_plane_depth(args) -> int:
     targets = _targets_for(args.pattern, cfg, wall_id)
 
     _ensure_dyld_path()
-    from .kinect import KinectV2Source
+    from .framesource import make_frame_source
 
-    source = KinectV2Source(device_index=cfg.cameras[cam_id].device)
+    kind = _depth_kind(config_dict, cam_id)
+    source = make_frame_source(kind, cfg.cameras[cam_id].device)
     try:
         extrinsic = cfg.extrinsic(cam_id)
     except (KeyError, ValueError):
@@ -579,12 +612,14 @@ def calibrate_wall_plane_depth(args) -> int:
         first = source.read()
         if first is None:
             raise SystemExit(
-                "Could not read from the Kinect bridge. Check: the Kinect is "
-                "connected + powered, bin/kinect-v2-bridge is built, and "
-                "DYLD_LIBRARY_PATH includes ~/.local/lib (see KINECT.md).")
+                f"Could not read from camera {cam_id!r} (kind {kind!r}). "
+                f"Check it is connected + powered and free (stop the live "
+                f"server); for kinect_v2 also check bin/kinect-v2-bridge is "
+                f"built and DYLD_LIBRARY_PATH includes ~/.local/lib "
+                f"(see KINECT.md).")
         _, _, intr = first
         samples = capture_plane_points(source, intr, extrinsic, targets,
-                                       f"Kinect calibrate - wall {wall_id}")
+                                       f"Depth calibrate - wall {wall_id}")
     finally:
         _close_quietly(source)
 
@@ -594,7 +629,7 @@ def calibrate_wall_plane_depth(args) -> int:
     plane = geometry.fit_wall_plane(samples)
     updated = merge_wall_plane(config_dict, wall_id, plane)
     if intr is not None:  # also store the sensor's REAL intrinsics + the pose used
-        updated = merge_camera_pose(updated, cam_id, intr, extrinsic, kind="kinect_v2")
+        updated = merge_camera_pose(updated, cam_id, intr, extrinsic, kind=kind)
     RoomConfig.from_dict(updated)  # re-validate before persisting
     save_config_dict(args.config, updated)
     print(f"[gesturewall] wrote walls[{wall_id!r}].plane (+ cam pose) from "
@@ -650,9 +685,9 @@ def calibrate_wall(args) -> int:
     if args.wall not in cfg.walls:
         raise SystemExit(f"wall {args.wall!r} is not declared in {args.config}")
 
-    # A Kinect (depth) camera calibrates a 3D wall PLANE from its depth stream
-    # via the libfreenect2 bridge — not a 2D homography off a regular webcam.
-    if cfg.cameras[args.camera].kind == "kinect_v2":
+    # A depth camera (Kinect v2, Gemini 335) calibrates a 3D wall PLANE from
+    # its depth stream — not a 2D homography off a regular webcam.
+    if cfg.cameras[args.camera].kind in DEPTH_KINDS:
         return calibrate_wall_plane_depth(args)
 
     source = _open_source(cfg, args.camera, args)
@@ -761,22 +796,24 @@ def calibrate_register_camera(args) -> int:
     cam_id = args.register
     if cam_id not in cfg.cameras:
         raise SystemExit(f"camera {cam_id!r} is not declared in {args.config}; "
-                         f"add it (device index + kind kinect_v2) first.")
+                         f"add it (device index/serial + a depth kind, e.g. "
+                         f"kinect_v2 or gemini_335) first.")
 
     refs = _room_reference_points(cfg)
     labels = [lbl for (lbl, _p) in refs]
     room_pts = [p for (_lbl, p) in refs]
 
     _ensure_dyld_path()
-    from .kinect import KinectV2Source
+    from .framesource import make_frame_source
 
-    source = KinectV2Source(device_index=cfg.cameras[cam_id].device)
+    kind = _depth_kind(config_dict, cam_id)
+    source = make_frame_source(kind, cfg.cameras[cam_id].device)
     intr = None
     try:
         first = source.read()
         if first is None:
             raise SystemExit(
-                f"Could not read from the Kinect bridge for {cam_id} (device "
+                f"Could not read from camera {cam_id!r} (kind {kind!r}, device "
                 f"{cfg.cameras[cam_id].device}). Check it's connected/powered on "
                 f"its own USB-3 controller, and stop the live server first so the "
                 f"device is free.")
@@ -791,7 +828,7 @@ def calibrate_register_camera(args) -> int:
 
     extrinsic = extrinsic_from_correspondences(room_pts, cam_pts)  # cam -> room
     updated = merge_camera_pose(config_dict, cam_id, intr, extrinsic,
-                                kind="kinect_v2")
+                                kind=kind)
     # Registered -> let it serve every wall of the seam (depth rays hit any plane).
     served = sorted({adj.left for adj in cfg.adjacency}
                     | {adj.right for adj in cfg.adjacency})

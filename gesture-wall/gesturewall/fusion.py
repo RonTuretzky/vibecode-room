@@ -72,6 +72,7 @@ except Exception:  # noqa: BLE001 - module may not exist yet during dev
         camera_id: str
         person: Person
         room_xy: tuple[float, float]
+        frame_id: str = "room"
 
     @dataclass
     class Track:  # type: ignore[no-redef]
@@ -85,6 +86,7 @@ except Exception:  # noqa: BLE001 - module may not exist yet during dev
         engaged: bool
         last_seen: float
         members: list[RoomObs]
+        frame_id: str = "room"
 
 
 @dataclass

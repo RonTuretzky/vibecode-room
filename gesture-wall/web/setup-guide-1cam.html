@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Gesture Wall — One Camera, Two Walls</title>
+<title>Gesture Wall — Two Kinects, Two Walls</title>
 <style>
   :root{
     --bg:#15151b; --panel:#1d1d25; --panel2:#23232d; --line:#33333f; --ink:#ececf2;
@@ -86,7 +86,7 @@
 <body>
 
 <div id="top">
-  <span class="name">🧱 Gesture Wall · 1 Camera, 2 Walls</span>
+  <span class="name">🧱 Gesture Wall · 2 Kinects, 2 Walls</span>
   <div id="bar"><div id="fill"></div></div>
   <span id="pct">0 / 0 done</span>
   <button id="reset" title="Clear all checkmarks">Reset</button>
@@ -98,11 +98,11 @@
 
   <!-- 1 -->
   <section class="slide" data-title="Overview">
-    <p class="kicker">One camera · two walls</p>
-    <h1>Two walls in a corner, one Kinect</h1>
-    <p class="lede">Two projected walls meeting at a corner, both watched by a <b>single Kinect v2</b> placed to see
-      people pointing at either wall. Because the Kinect senses depth, <b>one camera gives a full 3D pointing ray</b> —
-      so it can drive both walls and people can roam and point.</p>
+    <p class="kicker">Two cameras &#183; two walls</p>
+    <h1>Two walls in a corner, two Kinects</h1>
+    <p class="lede">Two projected walls meeting at a corner, watched by <b>two Kinect v2</b> cameras. Because the Kinects sense depth,
+      <b>one camera in the corner gives a full 3D pointing ray</b> for both walls; the second adds occlusion cover so a person hidden
+      behind someone else is still tracked.</p>
     <div class="grid2">
       <div>
         <h3>How to use this guide</h3>
@@ -112,15 +112,12 @@
           <li>Grey boxes are <b>commands</b> — click <b>Copy</b>, paste into <b>Terminal</b>, Return.</li>
           <li>Green boxes say <b>what you should see</b>.</li>
         </ul>
-        <div class="tip"><span class="callhead">Set up the software already with the assistant?</span> Slides 6–8
-          (Homebrew, libfreenect2, code, bridge) are <b>done</b> — tick them and jump to <b>room.json</b>.</div>
+        <div class="tip"><span class="callhead">Set up the software already with the assistant?</span> The software slides (Homebrew, libfreenect2, code, bridge) are <b>done</b> — tick them and jump to <b>room.json</b>.</div>
       </div>
       <div>
         <label class="check"><input type="checkbox" id="c-term"><span class="body">Terminal app is open <small>⌘+Space → "Terminal" → Return.</small></span></label>
         <label class="check"><input type="checkbox" id="c-read"><span class="body">I read "How to use this guide"</span></label>
-        <div class="warn"><span class="callhead">The one trade-off:</span> a single camera has one viewpoint, so if someone
-          stands behind someone else they can be briefly blocked. For a small group it's fine; add a 2nd Kinect later for
-          wide corners / crowds.</div>
+        <div class="ok"><span class="callhead">Why two cameras:</span> two viewpoints cover <b>occlusion</b> &#8212; if someone stands behind someone else, the other Kinect still sees them &#8212; and each wall gets a face-on camera. <span class="pill">(One Kinect alone also works if you're short on USB or power.)</span></div>
       </div>
     </div>
     <div class="nav"><span></span><button class="btn next">Start →</button></div>
@@ -132,22 +129,21 @@
     <h2>What you need</h2>
     <div class="grid2">
       <div>
-        <h3>Camera (just one)</h3>
-        <label class="check"><input type="checkbox" id="c-hw-kinect"><span class="body">1 × <b>Kinect v2</b> sensor</span></label>
-        <label class="check"><input type="checkbox" id="c-hw-adapter"><span class="body">1 × <b>Kinect Adapter</b> (hub 1637) + <b>power supply</b> (1649, 12V)
+        <h3>Cameras (both Kinects)</h3>
+        <label class="check"><input type="checkbox" id="c-hw-kinect"><span class="body">2 &#215; <b>Kinect v2</b> sensors</span></label>
+        <label class="check"><input type="checkbox" id="c-hw-adapter"><span class="body">2 &#215; <b>Kinect Adapter</b> (hub 1637) + <b>power supply</b> (1649, 12V) &#8212; one per Kinect
           <small>Power is required — USB alone won't run a Kinect v2.</small></span></label>
-        <label class="check"><input type="checkbox" id="c-hw-usb"><span class="body">1 × real <b>USB-C ↔ USB-A 3.x</b> adapter (not a USB-2 hub)</span></label>
+        <label class="check"><input type="checkbox" id="c-hw-usb"><span class="body">2 &#215; real <b>USB-C &#8596; USB-A 3.x</b> adapters &#8212; each on its <b>own USB-3 controller</b> (not a shared hub)</span></label>
       </div>
       <div>
         <h3>Display (two walls = two projectors)</h3>
         <label class="check"><input type="checkbox" id="c-hw-proj"><span class="body">2 × <b>projectors</b> + video cables / USB-C→HDMI adapters</span></label>
         <label class="check"><input type="checkbox" id="c-hw-corner"><span class="body">An <b>inside corner</b> (two flat walls at ~90°)</span></label>
-        <label class="check"><input type="checkbox" id="c-hw-mount"><span class="body"><b>Mounts/tripods</b> for 2 projectors + 1 Kinect</span></label>
-        <label class="check"><input type="checkbox" id="c-hw-mac"><span class="body"><b>Mac</b> with a USB-3 port + <b>2 display outputs</b> (or a dock)</span></label>
+        <label class="check"><input type="checkbox" id="c-hw-mount"><span class="body"><b>Mounts/tripods</b> for 2 projectors + 2 Kinects</span></label>
+        <label class="check"><input type="checkbox" id="c-hw-mac"><span class="body"><b>Mac</b> with <b>2 USB-3 controllers</b> + <b>2 display outputs</b> (or a dock)</span></label>
       </div>
     </div>
-    <div class="ok"><span class="callhead">Why one camera works for two walls:</span> the Kinect builds a 3D ray in the room;
-      the software intersects that ray with <i>whichever</i> wall you point at — it doesn't matter which camera saw you.</div>
+    <div class="ok"><span class="callhead">Why depth + two cameras:</span> each Kinect builds a 3D ray in the room and the software intersects it with <i>whichever</i> wall you point at; a body blocking one camera is still seen by the other.</div>
     <div class="nav"><button class="btn ghost prev">← Back</button><button class="btn next">Next →</button></div>
   </section>
 
@@ -213,73 +209,130 @@
   </section>
 
   <!-- 5 -->
-  <section class="slide" data-title="Place the Kinect">
-    <p class="kicker">Phase 2 · Layout</p>
-    <h2>Place the single Kinect</h2>
+  <section class="slide" data-title="Place the cameras">
+    <p class="kicker">Phase 2 &#183; Layout</p>
+    <h2>Place the cameras &#8212; without blocking the projection</h2>
     <div class="grid2">
       <div>
-        <p>With one camera covering two walls, put the Kinect <b>centered in the pocket, facing the corner / the people</b> —
-          so it sees anyone pointing at <b>either</b> wall.</p>
-        <label class="check"><input type="checkbox" id="c-cam-center"><span class="body">Kinect <b>centered</b> in front of the corner, looking back at the users</span></label>
-        <label class="check"><input type="checkbox" id="c-cam-cover"><span class="body">Far enough back that its view <b>covers both walls' standing zones</b>
-          <small>Its field of view is ~70° wide — step it back until both walls' fronts fit in frame.</small></span></label>
-        <label class="check"><input type="checkbox" id="c-cam-height"><span class="body">At ~chest/eye height, users between <b>0.5–4.5 m</b></span></label>
-        <div class="tip"><span class="callhead">Single-camera reality:</span> one viewpoint can't see a person hidden behind
-          another. Fine for a few people spread out; if you need crowds or a very wide corner, that's when a 2nd Kinect helps.</div>
+        <p>The rule that decides everything here: <b>never stand a tripod in front of a projected image</b> &#8212; its pole
+          throws a shadow on the wall. People face the corner to point, so their <b>faces are only visible from the corner side</b>.
+          The one spot that sees faces <i>without</i> a pole in front of an image is <b>the corner itself, above the images</b>.</p>
+        <label class="check"><input type="checkbox" id="c-cam-corner"><span class="body"><b>cam0 in the corner</b> (at the seam), raised <b>above the image top</b>, looking out &#8212; it drives the pointing for <b>both</b> walls</span></label>
+        <label class="check"><input type="checkbox" id="c-cam-noblock"><span class="body"><b>No tripod in front of a projected image</b> &#8212; the pole casts a shadow. Clear spots: the <b>corner</b> and <b>bare wall just past an image's outer edge</b>.</span></label>
+        <label class="check"><input type="checkbox" id="c-cam-occl"><span class="body"><b>cam1 for occlusion:</b> high, just <b>past a wall's outer edge</b> (or toward the opposite side), aimed back at the people &#8212; covers anyone hidden behind someone else</span></label>
+        <label class="check"><input type="checkbox" id="c-cam-usb"><span class="body">Each Kinect on its <b>own USB-3 controller</b> &#8212; two Kinect v2 saturate one bus</span></label>
+        <div class="ok"><span class="callhead">Why the corner does the work:</span> a depth camera gives a full 3D ray, so one well-placed camera drives both walls. In this room the corner is the only face-on spot that blocks nothing &#8212; cam1 just adds occlusion cover.</div>
       </div>
       <figure>
-        <svg viewBox="0 0 360 220" aria-label="single kinect for corner">
-          <line x1="180" y1="40" x2="80" y2="135" stroke="#3cc8dc" stroke-width="5"/>
-          <line x1="180" y1="40" x2="280" y2="135" stroke="#3cc8dc" stroke-width="5"/>
-          <text x="115" y="120" fill="#3cc8dc" font-size="12" text-anchor="middle">Wall A</text>
-          <text x="250" y="120" fill="#3cc8dc" font-size="12" text-anchor="middle">Wall B</text>
-          <g fill="rgba(200,120,220,.12)" stroke="rgba(200,120,220,.4)"><path d="M180 170 L70 90 L290 90 Z"/></g>
-          <circle cx="180" cy="178" r="9" fill="#c878dc"/>
-          <text x="180" y="200" fill="#dca9ec" font-size="11" text-anchor="middle">one Kinect, centered, sees both walls</text>
+        <svg viewBox="0 0 360 220" aria-label="cameras placed without blocking projection">
+          <line x1="180" y1="46" x2="82" y2="140" stroke="#3cc8dc" stroke-width="5"/>
+          <line x1="180" y1="46" x2="278" y2="140" stroke="#3cc8dc" stroke-width="5"/>
+          <text x="120" y="150" fill="#3cc8dc" font-size="11" text-anchor="middle">Wall A image</text>
+          <text x="240" y="150" fill="#3cc8dc" font-size="11" text-anchor="middle">Wall B image</text>
+          <line x1="180" y1="46" x2="180" y2="150" stroke="#e7b24c" stroke-width="1.3" stroke-dasharray="4 3"/>
+          <line x1="70" y1="150" x2="180" y2="150" stroke="#e7b24c" stroke-width="1.3" stroke-dasharray="4 3"/>
+          <circle cx="180" cy="46" r="8" fill="#c878dc" stroke="#fff" stroke-width="1"/>
+          <text x="180" y="34" fill="#dca9ec" font-size="10.5" text-anchor="middle">cam0 in the corner</text>
+          <circle cx="70" cy="150" r="7" fill="#c878dc" fill-opacity="0.55" stroke="#c878dc" stroke-dasharray="3 2"/>
+          <text x="70" y="170" fill="#c9a0e0" font-size="10" text-anchor="middle">cam1 (occlusion)</text>
+          <circle cx="180" cy="150" r="6" fill="#57d38a"/>
+          <text x="230" y="154" fill="#8ff0b7" font-size="10.5">stand here</text>
         </svg>
-        <figcaption>Top-down: the single Kinect centered in the pocket, wide view covering both walls.</figcaption>
+        <figcaption>cam0 tucked in the corner above the images (blocks nothing); cam1 off past a wall's edge for occlusion.</figcaption>
       </figure>
     </div>
-    <div class="nav"><button class="btn ghost prev">← Back</button><button class="btn next">Next →</button></div>
+    <div class="nav"><button class="btn ghost prev">&#8592; Back</button><button class="btn next">Next &#8594;</button></div>
   </section>
 
-  <!-- 5b -->
-  <section class="slide" data-title="Second camera — top-down">
-    <p class="kicker">Phase 2 · Layout · Two cameras</p>
-    <h2>Two-camera placement (top-down view)</h2>
-    <figure>
-<svg viewBox="0 0 640 470" aria-label="two-camera placement, to scale from calibration" style="max-height:60vh">
-<text x="320" y="20" fill="#cfd6dc" font-size="13" text-anchor="middle" font-weight="700">TOP-DOWN, TO SCALE (from your calibration) &#183; 1 grid = 1 m</text>
-<g stroke="#2a2a34" stroke-width="1"><line x1="89.8" y1="40.0" x2="89.8" y2="424.0"/><line x1="165.1" y1="40.0" x2="165.1" y2="424.0"/><line x1="240.4" y1="40.0" x2="240.4" y2="424.0"/><line x1="315.7" y1="40.0" x2="315.7" y2="424.0"/><line x1="391.0" y1="40.0" x2="391.0" y2="424.0"/><line x1="46.0" y1="408.9" x2="437.8" y2="408.9"/><line x1="46.0" y1="333.6" x2="437.8" y2="333.6"/><line x1="46.0" y1="258.3" x2="437.8" y2="258.3"/><line x1="46.0" y1="183.0" x2="437.8" y2="183.0"/><line x1="46.0" y1="107.7" x2="437.8" y2="107.7"/></g>
-<text x="50.0" y="418.0" fill="#6a6a76" font-size="10">+X &#8594;</text>
-<polygon points="240.4,408.9 434.8,131.3 46.0,131.3" fill="rgba(200,120,220,.16)" stroke="rgba(200,120,220,.5)"/>
-<polygon points="391.0,378.8 383.0,40.0 69.9,270.5" fill="rgba(231,178,76,.14)" stroke="rgba(231,178,76,.45)" stroke-dasharray="5 4"/>
-<line x1="205.3" y1="81.3" x2="96.4" y2="318.6" stroke="#3cc8dc" stroke-width="6"/>
-<line x1="437.8" y1="184.4" x2="205.4" y2="81.7" stroke="#3cc8dc" stroke-width="6"/>
-<circle cx="205.3" cy="81.3" r="5" fill="#e7b24c"/>
-<text x="213.3" y="75.3" fill="#e7b24c" font-size="12">seam (89&#176;)</text>
-<text x="140.8" y="199.9" fill="#3cc8dc" font-size="13" text-anchor="end">Wall A (3.5 m)</text>
-<text x="331.6" y="133.1" fill="#3cc8dc" font-size="13">Wall B (3.4 m)</text>
-<circle cx="240.4" cy="408.9" r="9" fill="#c878dc"/>
-<text x="240.4" y="430.9" fill="#dca9ec" font-size="12" text-anchor="middle" font-weight="700">cam0 (0.0, 0.0) &#10003;</text>
-<circle cx="391.0" cy="378.8" r="9" fill="#e7b24c" fill-opacity="0.5" stroke="#e7b24c" stroke-dasharray="4 3"/>
-<text x="391.0" y="400.8" fill="#f0c66a" font-size="12" text-anchor="middle">cam1 suggested (~2.0, 0.4)</text>
-<line x1="362.5" y1="456" x2="437.8" y2="456" stroke="#cfd6dc" stroke-width="3"/>
-<text x="400.1" y="450" fill="#cfd6dc" font-size="10" text-anchor="middle">1 m</text>
+  <!-- 6 · exact camera placement -->
+  <section class="slide" data-title="Camera XY &amp; aim">
+    <p class="kicker">Phase 2 &#183; Layout &#183; Exact placement</p>
+    <h2>Exactly where the cameras go (measured from the seam)</h2>
+    <div class="warn"><span class="callhead">The rule:</span> a tripod blocks projection only when its pole is <b>in front of an image</b> (or in a projector's beam). Clear spots &#8212; the <b>corner</b> (above the images) and <b>bare wall just past an image's outer edge</b>. Anywhere in front of an image = a shadow stripe.</div>
+    <div class="grid2">
+      <figure>
+<svg viewBox="0 0 470 445" aria-label="camera placement top-down, to scale" style="max-height:60vh">
+<text x="235" y="16" fill="#cfd6dc" font-size="13" text-anchor="middle" font-weight="700">TOP-DOWN &#183; seam = (0,&#8201;0) &#183; 1 grid = 1 m</text>
+<g stroke="#23232b" stroke-width="1"><line x1="20" y1="40" x2="20" y2="410"/><line x1="110" y1="40" x2="110" y2="410"/><line x1="200" y1="40" x2="200" y2="410"/><line x1="290" y1="40" x2="290" y2="410"/><line x1="380" y1="40" x2="380" y2="410"/><line x1="20" y1="40" x2="440" y2="40"/><line x1="20" y1="130" x2="440" y2="130"/><line x1="20" y1="220" x2="440" y2="220"/><line x1="20" y1="310" x2="440" y2="310"/><line x1="20" y1="400" x2="440" y2="400"/></g>
+<line x1="200" y1="40" x2="200" y2="360" stroke="#8a8a96" stroke-width="1.5" stroke-dasharray="6 5"/>
+<line x1="200" y1="40" x2="200" y2="220" stroke="#e7b24c" stroke-width="1.4" stroke-dasharray="5 3"/>
+<line x1="34.6" y1="205.4" x2="200" y2="220" stroke="#e7b24c" stroke-width="1.4" stroke-dasharray="5 3"/>
+<line x1="200" y1="40" x2="53.6" y2="186.4" stroke="#3cc8dc" stroke-width="6"/>
+<line x1="200" y1="40" x2="365.5" y2="205.5" stroke="#3cc8dc" stroke-width="6"/>
+<text x="112" y="112" fill="#3cc8dc" font-size="12" text-anchor="end">Wall A image &#183; 2.3 m</text>
+<text x="292" y="120" fill="#3cc8dc" font-size="12">Wall B image &#183; 2.6 m</text>
+<circle cx="200" cy="40" r="8" fill="#c878dc" stroke="#fff" stroke-width="1"/>
+<text x="200" y="30" fill="#dca9ec" font-size="12" text-anchor="middle" font-weight="700">cam0 &#8212; in the corner (0,&#8201;0), 2.30 m high</text>
+<text x="212" y="62" fill="#e7b24c" font-size="11">90&#176;</text>
+<circle cx="34.6" cy="205.4" r="7" fill="#c878dc" fill-opacity="0.55" stroke="#c878dc" stroke-dasharray="3 2"/>
+<text x="40" y="198" fill="#c9a0e0" font-size="10.5" font-weight="700">cam1</text>
+<text x="40" y="211" fill="#c9a0e0" font-size="9.5">occlusion &#183; past A's edge</text>
+<circle cx="200" cy="220" r="8" fill="#57d38a"/>
+<text x="200" y="242" fill="#8ff0b7" font-size="12" text-anchor="middle" font-weight="700">STAND HERE (0,&#8201;2.0)</text>
+<text x="200" y="256" fill="#8ff0b7" font-size="10.5" text-anchor="middle">1.41 m from each wall &#183; chest mark 1.40 m</text>
+<line x1="120" y1="360" x2="280" y2="360" stroke="#e0607a" stroke-width="1.5" stroke-dasharray="6 4"/>
+<text x="200" y="378" fill="#f08ca0" font-size="11" text-anchor="middle">opposite corner &#183; 3.6 m &#8212; don't stand past here</text>
+<line x1="30" y1="428" x2="120" y2="428" stroke="#cfd6dc" stroke-width="3"/>
+<text x="75" y="422" fill="#cfd6dc" font-size="10" text-anchor="middle">1 m</text>
 </svg>
-      <figcaption>Drawn <b>to scale from your <code class="inl">room.json</code></b>: real wall positions &amp; the true <b>89°</b> corner, <b>cam0</b> at its measured origin. <b>cam1</b> is a suggested spot (register it to set the real position).</figcaption>
-    </figure>
+        <figcaption>Top-down, to scale. cam0 sits in the corner (above the images); cam1 is past wall A's outer edge.</figcaption>
+      </figure>
+      <figure>
+<svg viewBox="0 0 470 300" aria-label="cam0 height and down-tilt, side view" style="max-height:44vh">
+<text x="235" y="16" fill="#cfd6dc" font-size="13" text-anchor="middle" font-weight="700">SIDE VIEW &#183; cam0 in the corner</text>
+<line x1="30" y1="250" x2="445" y2="250" stroke="#5a5a66" stroke-width="2"/>
+<text x="36" y="266" fill="#6a6a76" font-size="10">floor</text>
+<rect x="70" y="96" width="8" height="154" fill="rgba(60,200,220,.16)"/>
+<text x="74" y="90" fill="#3cc8dc" font-size="9.5" text-anchor="middle">image ~1.9 m</text>
+<line x1="70" y1="250" x2="70" y2="66" stroke="#8a8a96" stroke-width="1" stroke-dasharray="4 3"/>
+<text x="44" y="160" fill="#cfd6dc" font-size="11" transform="rotate(-90 44 160)" text-anchor="middle">2.30 m high</text>
+<line x1="70" y1="66" x2="230" y2="66" stroke="#55555f" stroke-width="1" stroke-dasharray="3 3"/>
+<line x1="70" y1="66" x2="230" y2="138" stroke="#e7b24c" stroke-width="2.5"/>
+<text x="128" y="92" fill="#f0c66a" font-size="11" transform="rotate(24 128 92)">laser 2.19 m</text>
+<path d="M112 66 A42 42 0 0 1 108.3 83.2" fill="none" stroke="#e7b24c" stroke-width="1.5"/>
+<text x="118" y="88" fill="#e7b24c" font-size="12" font-weight="700">24&#176;</text>
+<line x1="230" y1="66" x2="230" y2="138" stroke="#8a8a96" stroke-width="1" stroke-dasharray="4 3"/>
+<text x="238" y="106" fill="#cfd6dc" font-size="10.5">0.90 m</text>
+<line x1="70" y1="250" x2="230" y2="250" stroke="#8a8a96" stroke-width="1" stroke-dasharray="4 3"/>
+<text x="150" y="266" fill="#cfd6dc" font-size="11" text-anchor="middle">2.00 m</text>
+<line x1="230" y1="250" x2="230" y2="120" stroke="#57d38a" stroke-width="2"/>
+<circle cx="230" cy="112" r="9" fill="none" stroke="#57d38a" stroke-width="2"/>
+<circle cx="230" cy="138" r="5" fill="#e7b24c"/>
+<text x="298" y="135" fill="#f0c66a" font-size="11">chest marker 1.40 m</text>
+<circle cx="70" cy="66" r="8" fill="#c878dc" stroke="#fff" stroke-width="1"/>
+<text x="70" y="52" fill="#dca9ec" font-size="11.5" text-anchor="middle" font-weight="700">cam0</text>
+</svg>
+        <figcaption>Side view: cam0 raised to 2.30 m (above the ~1.9 m image top), tilted 24&#176; down; laser hits the 1.40 m chest marker at 2.19 m.</figcaption>
+      </figure>
+    </div>
+
+    <table>
+      <tr><th>Camera / point</th><th>X (m)</th><th>Depth (m)</th><th>Place it / check it</th></tr>
+      <tr><td><b>Seam (origin)</b></td><td>0.00</td><td>0.00</td><td>the 90&#176; corner</td></tr>
+      <tr><td><b>cam0</b> (does the pointing)</td><td>0.00</td><td>0.00</td><td>in the corner, lens <b>2.30 m</b> (above the ~1.9 m image), tilt <b>24&#176;</b> &#8212; drives <b>both</b> walls</td></tr>
+      <tr><td><b>Stand-here spot</b></td><td>0.00</td><td>2.00</td><td><b>1.41 m</b> from each wall &#183; chest marker <b>1.40 m</b></td></tr>
+      <tr><td><b>cam1</b> (occlusion)</td><td>~&#8722;1.84</td><td>~1.84</td><td>high, just <b>past wall A's outer edge</b>, <b>2.30 m</b>, aimed at the marker &#8212; exact spot depends on your projectors</td></tr>
+      <tr><td>Opposite corner</td><td>0.00</td><td>3.60</td><td>never stand past it</td></tr>
+    </table>
+
     <div class="grid2">
       <div>
-        <label class="check"><input type="checkbox" id="c-cam2-sides"><span class="body"><b>One Kinect toward each wall's side</b>, both aimed across at the users — cam0 by A looking toward B/seam, cam1 by B looking toward A/seam</span></label>
-        <label class="check"><input type="checkbox" id="c-cam2-angle"><span class="body">Clearly <b>different angles</b> (≥ ~40° apart) — a body blocking one is seen by the other. Don't stack them.</span></label>
+        <h3>Do this, in order</h3>
+        <label class="check"><input type="checkbox" id="c-xy-spot"><span class="body"><b>1 &#183; Mark the stand-here spot.</b> <b>2.00 m</b> out on the centerline = <b>1.41 m</b> from each wall. Marker at <b>1.40 m</b> (chest).
+          <small>Laser: each wall &#8594; spot = <b>1.41 m</b>; corner &#8594; spot = <b>2.00 m</b>.</small></span></label>
+        <label class="check"><input type="checkbox" id="c-xy-cam0"><span class="body"><b>2 &#183; cam0 in the corner.</b> Tripod tight in the corner; raise the lens to <b>2.30 m</b> (above the image top). Tilt <b>24&#176; down</b>, aim at the chest marker.
+          <small>Laser: straight down = <b>2.30 m</b>; dot on marker = <b>2.19 m</b>.</small></span></label>
+        <label class="check"><input type="checkbox" id="c-xy-cam1"><span class="body"><b>3 &#183; cam1 for occlusion.</b> High, just <b>past a wall's outer edge</b> (bare wall, <i>not</i> in front of the image), aimed at the same marker (&#8776; <b>2.05 m</b>).</span></label>
+        <label class="check"><input type="checkbox" id="c-xy-noblock"><span class="body"><b>4 &#183; Shadow check.</b> Turn the projectors on &#8212; no stand should cast a stripe on either image.</span></label>
+        <label class="check"><input type="checkbox" id="c-xy-range"><span class="body"><b>5 &#183; Coverage.</b> People roam <b>1.5&#8211;3.0 m</b> out; never past <b>3.6 m</b>.</span></label>
       </div>
       <div>
-        <label class="check"><input type="checkbox" id="c-cam2-overlap"><span class="body">Fields <b>overlap across the seam/center</b>; both at chest height, facing the users (not the walls)</span></label>
-        <label class="check"><input type="checkbox" id="c-cam2-usb"><span class="body">⚠️ Each Kinect on its <b>OWN USB-3 controller</b> — two Kinect v2 saturate one controller (yours already are ✓)</span></label>
+        <div class="ok"><span class="callhead">Why the corner:</span> people face the corner to point, so from there the Kinect sees their <b>faces &amp; raised arms</b> for <b>both</b> walls &#8212; and its pole sits where the two images already meet, so it blocks nothing.</div>
+        <div class="tip"><span class="callhead">The one laser trick:</span> chest marker at 1.40 m on the 2.0 m spot; aim cam0 until the dot sits on it and reads <b>2.19 m</b> &#8212; sets tilt <i>and</i> pan at once.</div>
+        <div class="note"><span class="callhead">cam1 depends on your room:</span> it needs bare wall past an image's edge (or a high spot off to one side). Tell me your projector spots and I'll pin its exact XY. Then recalibrate both and <code class="inl">--register cam1</code>.</div>
       </div>
     </div>
-    <div class="nav"><button class="btn ghost prev">← Back</button><button class="btn next">Next →</button></div>
+    <div class="nav"><button class="btn ghost prev">&#8592; Back</button><button class="btn next">Next &#8594;</button></div>
   </section>
 
   <!-- 5c -->
@@ -500,9 +553,9 @@ echo "wrote room.json"</code><button class="copy">Copy</button></div>
       <tr><th>Symptom</th><th>Most likely fix</th></tr>
       <tr><td>Mac doesn't see the Kinect (nothing on USB)</td><td>The hub needs the <b>1649 power</b> to even appear. Check the brick is in the wall + hub; re-seat the USB‑3 cable.</td></tr>
       <tr><td>Sees the hub but not the sensor</td><td>Kinect's cable not fully seated into the hub, or power dropped — re-seat both.</td></tr>
-      <tr><td>Cursors only work near one wall</td><td>The single camera can't see the other wall's standing zone — move it back / center it so both walls fit in its ~70° view.</td></tr>
+      <tr><td>Cursors only work near one wall</td><td>That wall's camera isn't covering it — check it's placed (cam0 → A, cam1 → B), registered in calibration, and aimed across at the standing zone.</td></tr>
       <tr><td>Cursor jumps / flickers at the corner</td><td>Re-do the seam-side corners in calibration; raise <code class="inl">seam_margin</code>.</td></tr>
-      <tr><td>Person blocked behind another drops out</td><td>Expected with one viewpoint. Spread people out, or add a 2nd Kinect for occlusion coverage.</td></tr>
+      <tr><td>Person blocked behind another drops out</td><td>With two cameras this should be rare — check both are running and ≥ ~40° apart. If it persists, they're briefly outside both views.</td></tr>
       <tr><td>Server runs but no cursors</td><td>People in 0.5–4.5 m? Both walls calibrated? Hand raised above the shoulder?</td></tr>
       <tr><td>"freenect2 not found" building bridge</td><td>Reopen Terminal so paths load, then rebuild.</td></tr>
     </table>

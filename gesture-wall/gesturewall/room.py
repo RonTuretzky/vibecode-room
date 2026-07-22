@@ -33,6 +33,11 @@ a depth-ray that is invariant to where a person stands. Walls may carry a 3D
 these fields are **optional** and default to ``None`` so existing
 homography-mode configs (and ``room.example.json``) stay valid unchanged.
 
+Depth cameras declare a ``kind`` from :data:`DEPTH_KINDS` — ``"kinect_v2"``
+(Kinect v2 via the libfreenect2 bridge) or ``"gemini_335"``/``"orbbec"``
+(an Orbbec Gemini 335); plain webcams are ``"rgb"`` (the default). The kind
+picks the frame source via :func:`gesturewall.framesource.make_frame_source`.
+
 The :attr:`RoomConfig.mode` property is ``"depth"`` iff *every* camera that
 serves a wall has both intrinsics and an extrinsic **and** every served wall has
 a plane; otherwise it is ``"homography"``. In depth mode :meth:`serves` no
@@ -51,6 +56,12 @@ from .calibration import Homography
 from .geometry import CameraIntrinsics, Extrinsic, WallPlane
 
 Matrix = list[list[float]]
+
+# Camera kinds that produce pixel-aligned color+depth frames (the 3D-ray
+# path); anything else is the plain 2D webcam path ("rgb"). Frame sources for
+# these kinds are built by gesturewall.framesource.make_frame_source, so a new
+# depth camera means: add its kind here and teach that one factory about it.
+DEPTH_KINDS = {"kinect_v2", "gemini_335", "orbbec"}
 
 
 # --------------------------------------------------------------------------- #
@@ -74,12 +85,14 @@ class WallCfg:
 class CameraCfg:
     """One camera: capture device, the walls it serves, optional room map.
 
-    Depth-mode cameras additionally carry ``kind`` (``"rgb"`` | ``"kinect_v2"``),
-    pinhole ``intrinsics`` and a CAMERA->ROOM ``extrinsic``. All default so
-    homography-mode cameras are unchanged.
+    Depth-mode cameras additionally carry ``kind`` (one of :data:`DEPTH_KINDS`;
+    plain webcams are ``"rgb"``), pinhole ``intrinsics`` and a CAMERA->ROOM
+    ``extrinsic``. All default so homography-mode cameras are unchanged.
     """
 
-    device: int
+    # int = enumeration index; str = a stable serial (Kinect v2: 12 digits,
+    # e.g. "072843433747"; Orbbec: alphanumeric, e.g. "CP0E8530002Y").
+    device: int | str
     serves: list[str]
     room_homography: Matrix | None = None
     kind: str = "rgb"
@@ -98,11 +111,18 @@ class Adjacency:
 
 @dataclass
 class FusionCfg:
-    """Cross-camera fusion tuning."""
+    """Cross-camera fusion tuning.
+
+    ``cross_camera=False`` declares the cameras' room frames UNREGISTERED
+    (each camera's extrinsic is identity in its own frame — the decoupled
+    per-camera-per-wall architecture). Tracking then never merges or matches
+    observations across cameras, since inter-frame distances are meaningless.
+    """
 
     mode: str = "highest_confidence"
     merge_radius: float = 0.35
     track_max_age: float = 0.5
+    cross_camera: bool = True
 
 
 @dataclass
@@ -230,6 +250,18 @@ class RoomConfig:
             raise ValueError("fusion.merge_radius must be > 0")
         if self.fusion.track_max_age <= 0:
             raise ValueError("fusion.track_max_age must be > 0")
+        if not self.fusion.cross_camera:
+            # Unregistered per-camera frames: a wall's plane lives in exactly
+            # one camera's frame, so a second server for the same wall would
+            # intersect rays with a plane from an alien frame — garbage.
+            for wall_id in wall_ids:
+                servers = [cid for cid, cam in self.cameras.items()
+                           if wall_id in cam.serves]
+                if len(servers) > 1:
+                    raise ValueError(
+                        f"fusion.cross_camera is false (unregistered frames) "
+                        f"but wall {wall_id!r} is served by {servers}; each "
+                        f"wall must have exactly one serving camera")
         if self.server.ws_port <= 0 or self.server.http_port <= 0:
             raise ValueError("server ports must be positive")
         if self.server.fps <= 0:
@@ -493,7 +525,13 @@ def _parse_cameras(raw: object) -> dict[str, CameraCfg]:
     for cam_id, craw in raw.items():
         _require(isinstance(craw, dict),
                  f"camera {cam_id!r} must be an object")
-        device = _as_int(craw.get("device"), f"camera {cam_id!r} device")
+        raw_device = craw.get("device")
+        if isinstance(raw_device, str):
+            _require(len(raw_device) > 0,
+                     f"camera {cam_id!r} device serial must be a non-empty string")
+            device = raw_device  # stable device serial (index-independent)
+        else:
+            device = _as_int(raw_device, f"camera {cam_id!r} device")
         serves = craw.get("serves", [])
         _require(isinstance(serves, list)
                  and all(isinstance(s, str) for s in serves),
@@ -504,6 +542,10 @@ def _parse_cameras(raw: object) -> dict[str, CameraCfg]:
         kind = craw.get("kind", "rgb")
         _require(isinstance(kind, str),
                  f"camera {cam_id!r} \"kind\" must be a string")
+        _require(kind in {"rgb"} | DEPTH_KINDS,
+                 f"camera {cam_id!r} kind {kind!r} is not supported: use "
+                 f"\"rgb\" (2D webcam) or one of {sorted(DEPTH_KINDS)} "
+                 f"(depth cameras)")
         intrinsics = _parse_intrinsics(
             craw.get("intrinsics"), f"camera {cam_id!r} intrinsics")
         extrinsic = _parse_extrinsic(
@@ -548,6 +590,9 @@ def _parse_fusion(raw: object) -> FusionCfg:
     defaults = FusionCfg()
     mode = raw.get("mode", defaults.mode)
     _require(isinstance(mode, str), "fusion.mode must be a string")
+    cross_camera = raw.get("cross_camera", defaults.cross_camera)
+    _require(isinstance(cross_camera, bool),
+             "fusion.cross_camera must be a boolean")
     return FusionCfg(
         mode=mode,
         merge_radius=_as_number(
@@ -556,6 +601,7 @@ def _parse_fusion(raw: object) -> FusionCfg:
         track_max_age=_as_number(
             raw.get("track_max_age", defaults.track_max_age),
             "fusion.track_max_age"),
+        cross_camera=cross_camera,
     )
 
 

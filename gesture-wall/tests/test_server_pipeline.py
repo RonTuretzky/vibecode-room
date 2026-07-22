@@ -645,5 +645,82 @@ def test_ray_smoother_passthrough_converge_evict():
     assert rl.origin == pytest.approx((0.0, 0.0, 0.0), abs=1e-3)
     assert rl.origin[2] + rl.direction[2] == pytest.approx(3.0, abs=1e-3)  # endpoint held
 
-    sm.apply([], t=1.0)
-    assert not sm._origin and not sm._end                      # stale id evicted
+    # A short hole (< HOLD_S) must NOT evict: a single-frame wrist depth
+    # dropout would otherwise reset the 1-Euro state and make the returning
+    # cursor jump. Only sustained absence evicts.
+    sm.apply([], t=1.0)                    # 0.2 s since last seen: held
+    assert sm._origin and sm._end
+    sm.apply([], t=1.1)                    # 0.3 s > HOLD_S: evicted
+    assert not sm._origin and not sm._end and not sm._last_seen
+
+
+# --------------------------------------------------------------------------- #
+# decoupled per-camera frames (fusion.cross_camera = false)                    #
+# --------------------------------------------------------------------------- #
+def load_decoupled_config() -> RoomConfig:
+    d = json.loads(ROOM_EXAMPLE.read_text())
+    # Unregistered frames: exactly one serving camera per wall.
+    d["cameras"]["cam0"]["serves"] = ["A"]
+    d["cameras"]["cam1"]["serves"] = []
+    d["cameras"]["cam2"]["serves"] = ["B"]
+    d["fusion"]["cross_camera"] = False
+    return RoomConfig.from_dict(d)
+
+
+def test_persons_to_room_obs_frame_ids():
+    persons = {"cam0": [make_person((0.4, 0.3), (0.5, 0.5))]}
+    # Registered room (default): every observation shares the "room" frame.
+    assert [o.frame_id for o in persons_to_room_obs(persons, load_config())] \
+        == ["room"]
+    # Decoupled room: each camera's coordinates stay in its own frame.
+    assert [o.frame_id
+            for o in persons_to_room_obs(persons, load_decoupled_config())] \
+        == ["cam0"]
+
+
+def test_decoupled_two_people_same_coords_stay_distinct():
+    # Two DIFFERENT people whose room_xy are numerically identical — but each
+    # in its own camera's unregistered frame. Registered logic would merge
+    # them into one track and choose_wall would starve one wall; decoupled
+    # tracking must keep two tracks and drive BOTH walls.
+    cfg = load_decoupled_config()
+    pipe = Pipeline(cfg)
+    persons = {
+        "cam0": [make_person((0.30, 0.30), (0.50, 0.50))],   # serves A
+        "cam2": [make_person((0.70, 0.40), (0.50, 0.50))],   # serves B
+    }
+    out = step_pipeline(cfg, persons, t=0.0, pipeline=pipe)
+    assert len(out["A"]) == 1 and len(out["B"]) == 1
+    assert out["A"][0].person_id != out["B"][0].person_id
+
+
+# --------------------------------------------------------------------------- #
+# broadcast snapshot freshness uses the workers' raw clock                     #
+# --------------------------------------------------------------------------- #
+def test_broadcast_snapshot_uses_raw_clock():
+    # CameraWorker stamps entries with the RAW clock; broadcast_tick must
+    # snapshot with the same epoch. (Mixing in the server-relative clock made
+    # `now - t` hugely negative, so staleness never fired and a dead camera
+    # ghosted its last Persons forever.)
+    import asyncio
+
+    from gesturewall.server import GestureServer
+
+    cfg = load_config()
+    store = LatestPersons()
+    now = {"t": 1100.0}                       # raw monotonic, far from zero
+    server = GestureServer(cfg, store, clock=lambda: now["t"])
+
+    seen = {}
+
+    def spy_step(persons, t):
+        seen["persons"] = persons
+        return {w: [] for w in cfg.walls}
+
+    server.pipeline.step = spy_step
+    store.set("cam0", [make_person((0.4, 0.3), (0.5, 0.5))], now["t"] - 0.05)
+    store.set("cam2", [make_person((0.7, 0.4), (0.8, 0.5))], now["t"] - 10.0)
+    asyncio.run(server.broadcast_tick())
+
+    assert "cam0" in seen["persons"], "fresh camera stays in the snapshot"
+    assert "cam2" not in seen["persons"], "stale camera must drop out"

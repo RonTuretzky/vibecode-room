@@ -47,7 +47,7 @@ from .filters import OneEuroFilter, Point2DFilter
 from .fusion import Cursor, FusionEngine
 from .geometry import Ray
 from .multipose import Person
-from .room import RoomConfig
+from .room import DEPTH_KINDS, RoomConfig
 from .tracking import RoomObs, Track, Tracker
 
 
@@ -117,11 +117,19 @@ class RaySmoother:
     dropped. Pure: no cv2/asyncio.
     """
 
+    # Filter state survives a key going missing for this long. A single-frame
+    # wrist depth hole drops the Person for one tick; deleting the 1-Euro
+    # state instantly would make the returning cursor JUMP and re-converge —
+    # exactly the jitter this smoother exists to remove. Held state longer
+    # than a couple of ticks would instead bridge a genuine departure.
+    HOLD_S = 0.25
+
     def __init__(self, freq: float = 30.0, min_cutoff: float = 1.0,
                  beta: float = 0.4):
         self._params = (freq, min_cutoff, beta)
         self._origin: dict[tuple[int, str], _Vec3Smoother] = {}
         self._end: dict[tuple[int, str], _Vec3Smoother] = {}
+        self._last_seen: dict[tuple[int, str], float] = {}
 
     def apply(self, tracks: list[Track], t: float) -> list[Track]:
         live: set[tuple[int, str]] = set()
@@ -151,9 +159,14 @@ class RaySmoother:
                 new_person = replace(m.person, ray=new_ray)
                 new_members.append(replace(m, person=new_person))
             out.append(replace(tr, members=new_members))
-        for key in [k for k in self._origin if k not in live]:
+        for key in live:
+            self._last_seen[key] = t
+        # Evict only after HOLD_S of absence, not on the first missed tick.
+        for key in [k for k, seen in self._last_seen.items()
+                    if k not in live and t - seen > self.HOLD_S]:
             del self._origin[key]
             del self._end[key]
+            del self._last_seen[key]
         return out
 
 
@@ -178,10 +191,15 @@ def persons_to_room_obs(persons_by_camera: dict[str, list[Person]],
     stray worker should not crash the fuser).
     """
     obs: list[RoomObs] = []
+    cross = config.fusion.cross_camera
     for camera_id, persons in persons_by_camera.items():
         if camera_id not in config.cameras:
             continue
         room_hom = config.room_homography(camera_id)
+        # Decoupled rooms (cross_camera=False): each camera's coordinates live
+        # in its OWN unregistered frame, so name the frame after the camera and
+        # the tracker will never compare positions across cameras.
+        frame_id = "room" if cross else camera_id
         for person in persons:
             depth_room_xy = getattr(person, "room_xy", None)
             if depth_room_xy is not None:
@@ -192,7 +210,7 @@ def persons_to_room_obs(persons_by_camera: dict[str, list[Person]],
                 room_xy = (room_hom.apply(ax, ay)
                            if room_hom is not None else (ax, ay))
             obs.append(RoomObs(camera_id=camera_id, person=person,
-                               room_xy=room_xy))
+                               room_xy=room_xy, frame_id=frame_id))
     return obs
 
 
@@ -310,8 +328,10 @@ class FakeSource:
 def make_pose_source(config: RoomConfig, camera_id: str):
     """Construct the real pose source for a configured camera (mode-aware).
 
-    In depth mode each camera is a Kinect v2 lifted into the room frame, so we
-    build a :class:`~gesturewall.depth.KinectPoseSource` (color+depth -> 3D-ray
+    In depth mode each camera is a depth sensor (Kinect v2, Orbbec Gemini 335)
+    lifted into the room frame: its ``kind`` picks the frame source via
+    :func:`~gesturewall.framesource.make_frame_source`, wrapped in a
+    :class:`~gesturewall.depth.KinectPoseSource` (color+depth -> 3D-ray
     Persons) using the camera's extrinsic from the config. In homography mode we
     build the 2D :class:`~gesturewall.multipose.MultiPoseSource`. Either way the
     heavy cv2/mediapipe import happens lazily inside the source's ``__init__``,
@@ -320,10 +340,15 @@ def make_pose_source(config: RoomConfig, camera_id: str):
     """
     srv = config.server
     if config.mode == "depth":
-        from .depth import KinectPoseSource  # lazy: pulls in cv2/mediapipe
-        from .kinect import KinectV2Source    # lazy: spawns the bridge
+        from .depth import KinectPoseSource       # lazy: pulls in cv2/mediapipe
+        from .framesource import make_frame_source  # lazy: picks the sensor
 
-        frame_source = KinectV2Source(device_index=config.cameras[camera_id].device)
+        cam = config.cameras[camera_id]
+        # Pre-kind Kinect configs parse kind as the "rgb" default; the depth
+        # path historically always built a Kinect source, so keep that fallback
+        # (autocal/calibrate do the same).
+        kind = "kinect_v2" if cam.kind == "rgb" else cam.kind
+        frame_source = make_frame_source(kind, cam.device)
         return KinectPoseSource(
             frame_source=frame_source,
             extrinsic=config.extrinsic(camera_id),
@@ -337,6 +362,13 @@ def make_pose_source(config: RoomConfig, camera_id: str):
     from .multipose import MultiPoseSource  # lazy: pulls in cv2/mediapipe
 
     cam = config.cameras[camera_id]
+    if cam.kind in DEPTH_KINDS:
+        # A depth camera on the 2D webcam path means the config is not depth-
+        # complete (usually serves=[] before calibration) — cv2.VideoCapture
+        # would treat the serial as a filename and fail with no cursors ever.
+        print(f"[gesturewall] WARNING: camera {camera_id!r} is a depth camera "
+              f"({cam.kind}) but the room resolved to homography mode — run "
+              f"the calibration (or fix 'serves') so depth mode engages")
     return MultiPoseSource(
         camera=cam.device,
         num_poses=srv.num_poses,
@@ -550,7 +582,21 @@ class GestureServer:
         Returns the per-wall cursors produced (handy for tests/inspection).
         """
         now = self.store_time()
-        persons = self.store.snapshot(now, self.config.fusion.track_max_age)
+        # Snapshot freshness is deliberately TIGHTER than track_max_age: a
+        # camera that stops producing (stall, occlusion) leaves cursor fusion
+        # within ~2.5 frame periods instead of freezing the cursor at its last
+        # ray for the full track lifetime — while track identity still
+        # survives track_max_age so the id doesn't churn.
+        # Floor at 200 ms: pose inference can run slower than the broadcast
+        # fps (heavy model), and a window tighter than the camera's own
+        # cadence would flicker healthy detections in and out.
+        fresh = min(self.config.fusion.track_max_age,
+                    max(2.5 / max(1, self.config.server.fps), 0.2))
+        # Snapshot with the RAW clock: workers stamp entries with time.monotonic()
+        # directly, while ``now`` above is server-relative (monotonic - start).
+        # Mixing epochs made ``now - t`` hugely negative, so staleness never
+        # fired and a dead camera's last Persons ghosted forever.
+        persons = self.store.snapshot(self._clock(), fresh)
         cursors_by_wall = self.pipeline.step(persons, now)
 
         for wall, cursors in cursors_by_wall.items():
@@ -628,7 +674,7 @@ async def serve(config: RoomConfig, web_dir: str,
     print(f"[gesturewall] ws    listening on "
           f"ws://localhost:{config.server.ws_port}")
     print(f"[gesturewall] walls: {', '.join(config.walls)}  "
-          f"cameras: {', '.join(config.cameras)}")
+          f"cameras: {', '.join(config.cameras)}  mode: {config.mode}")
 
     try:
         async with ws_serve(server.handle_client, "", config.server.ws_port):

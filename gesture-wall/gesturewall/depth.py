@@ -1,4 +1,4 @@
-"""Depth-ray pose: turn a Kinect v2 color+depth frame into 3D-ray Persons.
+"""Depth-ray pose: turn a depth camera's color+depth frame into 3D-ray Persons.
 
 This is the depth-mode sibling of :mod:`gesturewall.multipose`. Where
 ``MultiPoseSource`` reports a wrist's *image position* (for the 2D homography
@@ -6,8 +6,9 @@ path), this module lifts the body into the **room frame** and builds an
 **eye->hand ray** that the fusion engine casts at a wall plane — so pointing is
 invariant to where the person stands (they can roam the room).
 
-On macOS the Kinect v2 has **no skeleton SDK** (see ``KINECT.md``), so the
-"3D skeleton" is built from MediaPipe-on-color + the pixel-aligned depth map:
+On macOS neither the Kinect v2 (see ``KINECT.md``) nor the Orbbec Gemini 335
+ships a skeleton SDK, so the "3D skeleton" is built from MediaPipe-on-color +
+the pixel-aligned depth map:
 
   1. :func:`keypoints_from_landmarks` — MediaPipe normalized landmarks ->
      pixel ``(px, py, visibility)`` for the keypoints we need.
@@ -16,9 +17,16 @@ On macOS the Kinect v2 has **no skeleton SDK** (see ``KINECT.md``), so the
      to the **room** frame via the camera extrinsic. From those points it builds
      the eye->hand :class:`~gesturewall.geometry.Ray` and the floor ``room_xy``,
      returning a :class:`~gesturewall.multipose.Person` carrying both.
-  3. :class:`KinectPoseSource` (**LAZY** mediapipe) — wraps a frame source +
-     fixed extrinsic, runs ``PoseLandmarker`` on the color image, and applies
-     ``build_person3d`` per detected pose.
+  3. :class:`KinectPoseSource` (**LAZY** mediapipe) — wraps ANY frame source
+     whose ``read()`` yields ``(color_bgr, depth_m, intr)`` (Kinect v2 via
+     :class:`gesturewall.kinect.KinectV2Source`, Gemini 335 via
+     :class:`gesturewall.orbbec.OrbbecSource`) + a fixed extrinsic, runs
+     ``PoseLandmarker`` on the color image, and applies ``build_person3d`` per
+     detected pose.
+
+Depth-sampling pixel windows are resolution-relative: they were tuned on the
+Kinect's 512-px-wide frame and scale by ``intr.width / 512`` (see :func:`_px`),
+so a 1280-wide Gemini 335 frame covers the same *metric* body footprint.
 
 Math conventions (LOCKED, see :mod:`gesturewall.geometry`): CAMERA frame is
 OpenCV (+Z forward, +X right, +Y down); ROOM frame is right-handed +Y up with
@@ -39,6 +47,7 @@ from .geometry import (
     Ray,
     floor_xy,
     sample_depth,
+    v_norm,
     v_sub,
 )
 from .multipose import Person
@@ -93,17 +102,37 @@ def keypoints_from_landmarks(landmarks, width: int, height: int) -> dict:
     return out
 
 
+def _px(base: int, intr: CameraIntrinsics) -> int:
+    """Scale a Kinect-baseline pixel window to this camera's resolution.
+
+    Convention: every fixed pixel window in this module is expressed at the
+    Kinect v2's 512-px-wide registered frame (where they were tuned — e.g.
+    ``window=5`` ≈ one wrist at 3-4.5 m). A wider frame over a similar FOV
+    (the Gemini 335's 1280x720 color) puts ``width / 512`` times more pixels
+    on the same body part, so the window scales by ``intr.width / 512``,
+    rounded to odd (windows are centred boxes) and never below ``base``. At
+    ``width == 512`` the factor is 1 and the tuned value is returned exactly,
+    so Kinect behavior is unchanged.
+    """
+    scaled = max(int(base), int(round(base * intr.width / 512.0)))
+    return scaled if scaled % 2 else scaled + 1
+
+
 def _room_point(kp, depth_map, intr: CameraIntrinsics, extr: Extrinsic,
-                window: int = 7, prefer_near: bool = True):
+                window: int = 7, prefer_near: bool = True,
+                near_band: float = 0.20):
     """Sample depth at a keypoint pixel and lift it into the ROOM frame.
 
-    Uses ``prefer_near`` (the body is the nearest surface at a body-joint pixel)
+    ``window`` is a Kinect-512-baseline size, scaled to this camera's width
+    via :func:`_px` (``near_band`` is METRIC and never scales). Uses
+    ``prefer_near`` (the body is the nearest surface at a body-joint pixel)
     so background flying-pixels behind a thin/fast joint don't pull the depth
     toward the far wall. Returns the room-frame 3D point ``(X, Y, Z)`` or
     ``None`` if the depth map has no valid sample at that pixel.
     """
     px, py, _vis = kp
-    depth_m = sample_depth(depth_map, px, py, window=window, prefer_near=prefer_near)
+    depth_m = sample_depth(depth_map, px, py, window=_px(window, intr),
+                           prefer_near=prefer_near, near_band=near_band)
     if depth_m is None:
         return None
     cam_pt = intr.deproject(px, py, depth_m)
@@ -173,9 +202,13 @@ def build_person3d(kps, depth_map, intr: CameraIntrinsics, extr: Extrinsic,
     eye_origin_kp = (eye_px[0], eye_px[1], 1.0)
 
     # --- room-frame 3D points -------------------------------------------- #
-    # The wrist is the thin/fast joint whose depth matters most and is noisiest,
-    # so sample it with a larger near-preferring window.
-    wrist_room = _room_point(wrist_kp, depth_map, intr, extr, window=11)
+    # The wrist is the thin/fast joint whose depth matters most and is noisiest.
+    # Keep its footprint SMALL (5px at 512-wide ≈ one wrist at 3-4.5 m; _px
+    # scales it with resolution) with a tight near cluster: a big window with a
+    # loose band snaps to the TORSO whenever the arm points away from the
+    # camera (the torso is nearer than the hand).
+    wrist_room = _room_point(wrist_kp, depth_map, intr, extr, window=5,
+                             near_band=0.10)
 
     shoulder_room = _room_point(shoulder_kp, depth_map, intr, extr)
 
@@ -227,9 +260,26 @@ def build_person3d(kps, depth_map, intr: CameraIntrinsics, extr: Extrinsic,
     shoulder_2d = _norm(shoulder_kp)
     anchor_2d = _norm(hip_kp)
 
-    # Engaged: pointing wrist above its shoulder in the IMAGE (py grows down) and
-    # a ray was built (always true here, since we returned None above otherwise).
+    # Engaged: the wrist is raised to (or near) shoulder height. The old
+    # image-only rule (wrist pixel above shoulder pixel) fails from a HIGH
+    # camera looking down — a horizontally-pointing arm projects BELOW the
+    # shoulder — so also accept the 3D test: wrist no more than 25 cm below
+    # the shoulder in the room frame (+y is down). A hanging arm sits ~45 cm
+    # below and stays disengaged.
     engaged = bool(wrist_kp[1] < shoulder_kp[1])
+    if not engaged and shoulder_room is not None:
+        engaged = (wrist_room[1] - shoulder_room[1]) < 0.25
+    # An occluded/hallucinated wrist (back view, arm behind torso) must never
+    # drive a cursor — MediaPipe still emits a landmark, but visibility is low.
+    if wrist_kp[2] < 0.5:
+        engaged = False
+
+    # A near-zero origin->wrist baseline means a foreshortened arm or a bad
+    # depth sample; its direction is numerically meaningless and produces wild
+    # grazing rays (u values of 20+ at the wall). Keep the Person for identity
+    # tracking, but never let a degenerate ray drive a cursor.
+    if v_norm(direction) < 0.25:
+        engaged = False
 
     # Confidence: mean visibility of wrist + both shoulders, reduced if any
     # required depth sample was missing (a missing shoulder/hip depth means a
@@ -275,10 +325,13 @@ class FakeFrameSource:
 
 
 class KinectPoseSource:
-    """MediaPipe pose on Kinect v2 color + aligned depth -> 3D-ray Persons.
+    """MediaPipe pose on depth-camera color + aligned depth -> 3D-ray Persons.
 
-    Wraps a frame source that yields ``(color_bgr ndarray 512x424x3,
-    depth_m ndarray 512x424 float metres, intr CameraIntrinsics)`` plus a fixed
+    Despite the name (kept for compatibility), this takes ANY frame source
+    whose ``read()`` yields ``(color_bgr ndarray HxWx3, depth_m ndarray HxW
+    float metres, intr CameraIntrinsics)`` — the Kinect v2's 512x424 via
+    :class:`gesturewall.kinect.KinectV2Source` or the Orbbec Gemini 335's
+    1280x720 via :class:`gesturewall.orbbec.OrbbecSource` — plus a fixed
     CAMERA->ROOM ``extr``. Mirrors :class:`gesturewall.multipose.MultiPoseSource`:
     a ``RunningMode.VIDEO`` ``PoseLandmarker`` with ``num_poses`` bodies, lazy
     cv2/mediapipe imports, strictly-increasing integer-ms timestamps, and the

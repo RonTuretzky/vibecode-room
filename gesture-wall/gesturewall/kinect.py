@@ -245,23 +245,37 @@ class KinectV2Source:
             else:  # "frame"
                 self._pending.append(rec)
 
-    def read(self):
+    def read(self, timeout: float | None = None):
         """Return the next ``(color, depth_m, intr)`` tuple, or ``None``.
 
         Blocks reading bridge stdout until a full color+depth frame (and the
         intrinsics it needs) is available, or until the bridge closes its
-        stdout / exits — in which case ``None`` is returned.
+        stdout / exits — in which case ``None`` is returned. With ``timeout``
+        (seconds), also returns ``None`` if no complete frame arrives in time —
+        a live-but-stalled bridge (USB hiccup) then can't hang the caller.
         """
+        import select
+        import time as _time
+
         if self._proc is None:
             self.start()
         assert self._proc is not None and self._proc.stdout is not None
 
+        deadline = None if timeout is None else _time.monotonic() + timeout
         while True:
             # Serve a buffered frame as soon as we also know the intrinsics.
             if self._pending and self._intrinsics is not None:
                 rec = self._pending.pop(0)
                 return rec["color"], rec["depth_m"], self._intrinsics
 
+            if deadline is not None:
+                remaining = deadline - _time.monotonic()
+                if remaining <= 0:
+                    return None
+                ready, _, _ = select.select([self._proc.stdout], [], [],
+                                            remaining)
+                if not ready:
+                    return None
             chunk = self._proc.stdout.read(self._read_chunk)
             if not chunk:  # bridge closed stdout / exited
                 return None

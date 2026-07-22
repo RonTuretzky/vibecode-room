@@ -7,7 +7,8 @@ import pytest
 from gesturewall.calibration import Homography
 from gesturewall.geometry import CameraIntrinsics, Extrinsic, WallPlane
 from gesturewall.room import (
-    Adjacency, CameraCfg, FusionCfg, RoomConfig, ServerCfg, WallCfg)
+    DEPTH_KINDS, Adjacency, CameraCfg, FusionCfg, RoomConfig, ServerCfg,
+    WallCfg)
 
 EXAMPLE_PATH = Path(__file__).resolve().parent.parent / "room.example.json"
 DEPTH_EXAMPLE_PATH = (
@@ -466,3 +467,111 @@ def test_server_pointing_validation():
     base["server"]["pointing"] = "nope"
     with pytest.raises(ValueError):
         RoomConfig.from_dict(base)                                   # invalid
+
+
+# --------------------------------------------------------------------------- #
+# fusion.cross_camera (decoupled per-camera frames)                            #
+# --------------------------------------------------------------------------- #
+def test_fusion_cross_camera_defaults_true(example_dict):
+    cfg = RoomConfig.from_dict(example_dict)
+    assert cfg.fusion.cross_camera is True
+
+
+def test_fusion_cross_camera_false_parses(example_dict):
+    # Unregistered frames demand one serving camera per wall.
+    example_dict["cameras"]["cam0"]["serves"] = ["A"]
+    example_dict["cameras"]["cam1"]["serves"] = []
+    example_dict["cameras"]["cam2"]["serves"] = ["B"]
+    example_dict["fusion"]["cross_camera"] = False
+    cfg = RoomConfig.from_dict(example_dict)
+    assert cfg.fusion.cross_camera is False
+
+
+def test_fusion_cross_camera_rejects_non_bool(example_dict):
+    example_dict["fusion"]["cross_camera"] = "no"
+    with pytest.raises(ValueError, match="cross_camera"):
+        RoomConfig.from_dict(example_dict)
+
+
+def test_cross_camera_false_rejects_multi_served_wall(example_dict):
+    # room.example.json has wall A served by cam0 AND cam1 — fine with one
+    # registered frame, meaningless with unregistered per-camera frames.
+    example_dict["fusion"]["cross_camera"] = False
+    with pytest.raises(ValueError, match="exactly one serving camera"):
+        RoomConfig.from_dict(example_dict)
+
+
+# --------------------------------------------------------------------------- #
+# camera kinds (DEPTH_KINDS validation)                                        #
+# --------------------------------------------------------------------------- #
+def test_depth_kinds_constant():
+    assert DEPTH_KINDS == {"kinect_v2", "gemini_335", "orbbec"}
+
+
+def test_gemini_335_kind_parses(depth_dict):
+    depth_dict["cameras"]["cam0"]["kind"] = "gemini_335"
+    cfg = RoomConfig.from_dict(depth_dict)
+    assert cfg.cameras["cam0"].kind == "gemini_335"
+
+
+def test_orbbec_kind_parses(depth_dict):
+    depth_dict["cameras"]["cam0"]["kind"] = "orbbec"
+    cfg = RoomConfig.from_dict(depth_dict)
+    assert cfg.cameras["cam0"].kind == "orbbec"
+
+
+def test_bogus_kind_raises_naming_the_kind(example_dict):
+    example_dict["cameras"]["cam0"]["kind"] = "webcam9000"
+    with pytest.raises(ValueError, match="webcam9000"):
+        RoomConfig.from_dict(example_dict)
+
+
+# --------------------------------------------------------------------------- #
+# single Gemini 335 serving BOTH walls (replaces the two Kinects)              #
+# --------------------------------------------------------------------------- #
+def _make_single_gemini(depth_dict: dict) -> dict:
+    """One Gemini 335 in the room's far corner sees BOTH walls A and B.
+
+    Built from the depth example (planes on both walls, cam0 with an identity
+    extrinsic): drop cam1 and turn cam0 into the Gemini — alphanumeric serial
+    device, 1280x720 color intrinsics, serves ['A', 'B'].
+    """
+    del depth_dict["cameras"]["cam1"]
+    cam0 = depth_dict["cameras"]["cam0"]
+    cam0["kind"] = "gemini_335"
+    cam0["device"] = "CP0E8530002Y"
+    cam0["serves"] = ["A", "B"]
+    cam0["intrinsics"] = {
+        "fx": 910.0, "fy": 910.0, "cx": 640.0, "cy": 360.0,
+        "width": 1280, "height": 720,
+    }
+    return depth_dict
+
+
+def test_single_gemini_two_wall_room_is_depth_mode(depth_dict):
+    cfg = RoomConfig.from_dict(_make_single_gemini(depth_dict))
+    assert cfg.mode == "depth"
+    assert cfg.cameras["cam0"].device == "CP0E8530002Y"
+    assert cfg.cameras["cam0"].kind == "gemini_335"
+    assert (cfg.intrinsics("cam0").width,
+            cfg.intrinsics("cam0").height) == (1280, 720)
+    assert cfg.serves("cam0", "A") is True
+    assert cfg.serves("cam0", "B") is True
+
+
+def test_single_gemini_validates_with_cross_camera_true(depth_dict):
+    d = _make_single_gemini(depth_dict)
+    d["fusion"]["cross_camera"] = True
+    cfg = RoomConfig.from_dict(d)
+    assert cfg.fusion.cross_camera is True
+    assert cfg.mode == "depth"
+
+
+def test_single_gemini_validates_with_cross_camera_false(depth_dict):
+    # One camera serving BOTH walls satisfies the decoupled-frames rule too:
+    # each wall still has exactly ONE serving camera.
+    d = _make_single_gemini(depth_dict)
+    d["fusion"]["cross_camera"] = False
+    cfg = RoomConfig.from_dict(d)
+    assert cfg.fusion.cross_camera is False
+    assert cfg.mode == "depth"

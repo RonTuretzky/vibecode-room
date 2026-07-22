@@ -16,9 +16,10 @@ agents building them.
   - `src/ui/` — the projector UI (React).
 - **`.smithers/`** — Smithers workflows + evals for the idea loop
   (`workflows/idea-detection.tsx`, `evals/`).
-- **`gesture-wall/`** — vendored gesture-to-wall control software (a Python camera
-  fusion server + a vanilla-JS wall client), now an **optional legacy mode**
-  (`./run-room.sh --gesture`) — desk mode below is the primary control. See
+- **`gesture-wall/`** — vendored gesture-to-wall control software (a Python
+  depth-camera fusion server + a vanilla-JS wall client), an **optional camera
+  mode** (`./run-room.sh --gesture`, one Orbbec Gemini 335 serving both walls) —
+  desk mode below is the zero-hardware default. See
   [`gesture-wall/VIBERSYN.md`](gesture-wall/VIBERSYN.md).
 
 ## Run
@@ -50,14 +51,21 @@ agents building them.
   to the wall as a project in progress. (The phone needs to reach the server over
   the LAN; `./run-room.sh` binds `HOST=0.0.0.0` for exactly this.)
 
-### Gesture wall (optional legacy mode)
+### Gesture wall (optional camera mode)
 
-`./run-room.sh --gesture` restores the camera-driven room: the gesture wall's
-Python server turns camera pose into per-wall cursor streams over a WebSocket,
-and each wall window opens with `&gesture=1&fusion=ws://…` so the UI mounts its
-gesture layer (`src/ui/gesture/`) — a completed ~0.8s dwell clicks the REAL
-bubble/button beneath the cursor. No cameras handy? `./run-room.sh --fake` uses
+`./run-room.sh --gesture` runs the camera-driven room: a single Orbbec
+**Gemini 335** depth camera in the room's far corner watches BOTH walls, and
+the gesture wall's Python server turns its pose stream into per-wall cursor
+streams over a WebSocket; each wall window opens with `&gesture=1&fusion=ws://…`
+so the UI mounts its gesture layer (`src/ui/gesture/`) — a completed ~0.8s
+dwell clicks the REAL bubble/button beneath the cursor. On macOS the camera
+server must run under `sudo -E` (opening the camera needs elevated
+permissions). Calibrate with `./run-room.sh --calibrate` (projector
+auto-calibration; re-run after moving anything), and keep some ambient light on
+people — pose reads the color image, and a dark projected room starves it
+(depth is IR and doesn't care). No camera handy? `./run-room.sh --fake` uses
 synthetic cursors so you can see it work. See
+[`gesture-wall/GEMINI.md`](gesture-wall/GEMINI.md) for the hardware setup and
 [`gesture-wall/VIBERSYN.md`](gesture-wall/VIBERSYN.md).
 
 ## Model

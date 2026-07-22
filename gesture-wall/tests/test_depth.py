@@ -200,6 +200,51 @@ def test_build_person3d_engaged_only_when_wrist_above_shoulder():
     assert lowered.engaged is False
 
 
+def test_build_person3d_engaged_horizontal_arm_from_high_camera():
+    # A HIGH camera looking down projects a horizontally-pointing arm's wrist
+    # slightly BELOW the shoulder in the image — the old image-only rule said
+    # "not engaged". In 3D the wrist is well within 25 cm of shoulder height,
+    # so the new rule engages. (constant depth: y_room diff = px_diff/fy*z)
+    depth_map = np.full((HEIGHT, WIDTH), 2.0, dtype=float)
+    body = make_body(
+        l_eye=(0.45, 0.10, 1.0),
+        r_eye=(0.55, 0.10, 1.0),
+        l_shoulder=(0.40, 0.40, 1.0),
+        r_shoulder=(0.60, 0.40, 1.0),
+        l_wrist=(0.35, 0.70, 1.0),
+        r_wrist=(0.80, 0.45, 1.0),   # just BELOW shoulder in image (0.45>0.40)
+        l_hip=(0.45, 0.80, 1.0),
+        r_hip=(0.55, 0.80, 1.0),
+    )
+    person = build_person3d(
+        keypoints_from_landmarks(body, WIDTH, HEIGHT),
+        depth_map, INTR, Extrinsic.identity())
+    # image rule alone would fail; 3D margin (~0.12 m here) engages.
+    assert person.engaged is True
+
+
+def test_build_person3d_degenerate_ray_disengages():
+    # Wrist pixel ~coincides with the eye origin -> near-zero baseline. The
+    # image rule says engaged (wrist above shoulder), but a <25 cm ray is
+    # numerically meaningless and must not drive a cursor.
+    depth_map = np.full((HEIGHT, WIDTH), 2.0, dtype=float)
+    body = make_body(
+        l_eye=(0.45, 0.10, 1.0),
+        r_eye=(0.55, 0.10, 1.0),
+        l_shoulder=(0.40, 0.40, 1.0),
+        r_shoulder=(0.60, 0.40, 1.0),
+        l_wrist=(0.35, 0.70, 1.0),
+        r_wrist=(0.50, 0.11, 1.0),   # raised AND right at the eye midpoint
+        l_hip=(0.45, 0.80, 1.0),
+        r_hip=(0.55, 0.80, 1.0),
+    )
+    person = build_person3d(
+        keypoints_from_landmarks(body, WIDTH, HEIGHT),
+        depth_map, INTR, Extrinsic.identity())
+    assert person is not None          # still tracked (identity/fusion)
+    assert person.engaged is False     # but never a cursor from this ray
+
+
 def test_build_person3d_missing_depth_returns_none():
     # An all-zeros depth map has no valid samples (sample_depth ignores <= 0),
     # so neither the wrist nor the eye origin gets depth -> None.
@@ -280,6 +325,86 @@ def test_fake_frame_source_yields_scripted_frames_then_none():
     # Exhausted -> None, and close() is a no-op.
     assert src.read() is None
     src.close()
+
+
+# --------------------------------------------------------------------------- #
+# resolution parity (Kinect 512x424 vs Gemini 335 1280x720)                    #
+# --------------------------------------------------------------------------- #
+def test_build_person3d_resolution_parity_512_vs_1280():
+    """The same metric scene at 512x424 and 1280x720 yields the same ray.
+
+    Keypoint pixels and ALL intrinsic scalars (fx, fy, cx, cy) scale by 2.5,
+    so deprojection maps both frames to identical camera-frame points (720 is
+    a crop of 424 * 2.5 = 1060 rows; the principal point scales with the
+    coordinates, not the crop, and every keypoint lands inside 720 rows). A
+    depth hole scaled with resolution is punched at the wrist: the
+    resolution-relative window (5 -> 13 px) still reaches valid ring pixels,
+    while an unscaled 5 px window at 1280 would sit entirely inside the hole
+    and drop the Person — guarding the _px scaling and any hidden 512-width
+    assumptions.
+    """
+    scale = 2.5
+    kps512 = {
+        "nose": (256.0, 60.0, 1.0),
+        "left_eye": (246.0, 60.0, 1.0), "right_eye": (266.0, 60.0, 1.0),
+        "left_shoulder": (220.0, 110.0, 1.0),
+        "right_shoulder": (292.0, 110.0, 1.0),
+        "left_elbow": (210.0, 150.0, 1.0), "right_elbow": (320.0, 140.0, 1.0),
+        "left_wrist": (200.0, 200.0, 1.0),
+        "right_wrist": (330.0, 80.0, 1.0),   # raised -> pointing hand
+        "left_hip": (236.0, 250.0, 1.0), "right_hip": (276.0, 250.0, 1.0),
+    }
+    kps1280 = {name: (px * scale, py * scale, vis)
+               for name, (px, py, vis) in kps512.items()}
+
+    intr512 = CameraIntrinsics(fx=365.0, fy=365.0, cx=256.0, cy=212.0,
+                               width=512, height=424)
+    intr1280 = CameraIntrinsics(fx=365.0 * scale, fy=365.0 * scale,
+                                cx=256.0 * scale, cy=212.0 * scale,
+                                width=1280, height=720)
+
+    depth = 2.5  # metres, constant person/background plane
+    d512 = np.full((424, 512), depth, dtype=float)
+    d1280 = np.full((720, 1280), depth, dtype=float)
+
+    # Same metric hole at the wrist, expressed in each frame's pixels:
+    # 3x3 at 512 (5 px window sees the valid ring) and 9x9 at 1280 (the
+    # scaled 13 px window sees the ring; an unscaled 5 px one would not).
+    wx, wy = int(kps512["right_wrist"][0]), int(kps512["right_wrist"][1])
+    d512[wy - 1:wy + 2, wx - 1:wx + 2] = 0.0
+    wx2, wy2 = int(wx * scale), int(wy * scale)
+    d1280[wy2 - 4:wy2 + 5, wx2 - 4:wx2 + 5] = 0.0
+
+    p512 = build_person3d(kps512, d512, intr512, Extrinsic.identity())
+    p1280 = build_person3d(kps1280, d1280, intr1280, Extrinsic.identity())
+    assert p512 is not None
+    assert p1280 is not None
+
+    # Room-frame ray origin, direction and floor position all match.
+    assert p1280.ray.origin == pytest.approx(p512.ray.origin)
+    assert p1280.ray.direction == pytest.approx(p512.ray.direction)
+    assert p1280.room_xy == pytest.approx(p512.room_xy)
+    assert p512.engaged is True and p1280.engaged is True
+    assert p1280.confidence == pytest.approx(p512.confidence)
+
+
+def test_px_window_scaling_convention():
+    """_px is identity at the 512 Kinect baseline, odd and >= base elsewhere."""
+    from gesturewall.depth import _px
+
+    intr512 = CameraIntrinsics(fx=365.0, fy=365.0, cx=256.0, cy=212.0,
+                               width=512, height=424)
+    intr1280 = CameraIntrinsics(fx=912.5, fy=912.5, cx=640.0, cy=530.0,
+                                width=1280, height=720)
+    # Exact identity at 512 so tuned Kinect windows are untouched.
+    assert _px(5, intr512) == 5
+    assert _px(7, intr512) == 7
+    # 2.5x width: 5 -> 13, 7 -> 19 (rounded to odd, never below base).
+    assert _px(5, intr1280) == 13
+    assert _px(7, intr1280) == 19
+    for base in (3, 5, 7, 9):
+        w = _px(base, intr1280)
+        assert w % 2 == 1 and w >= base
 
 
 def test_pointing_model_selects_ray_origin():

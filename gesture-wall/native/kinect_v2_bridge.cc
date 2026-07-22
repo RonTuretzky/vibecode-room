@@ -180,12 +180,13 @@ int main(int argc, char** argv) {
   libfreenect2::PacketPipeline* pipeline =
       new libfreenect2::CpuPacketPipeline();
 
-  // Optional device argument. A purely-numeric value is a device INDEX (what
-  // KinectV2Source passes, e.g. "0"); a non-numeric value is a serial number;
-  // no argument uses the default device. (Opening by index "0" as a serial was
-  // the original bug — "0" is not a real serial.)
+  // Optional device argument. A SHORT all-digit value is a device INDEX (e.g.
+  // "0", "1"); a LONG all-digit value is a 12-digit Kinect SERIAL number; any
+  // non-digit is also a serial; no argument uses the default device. The length
+  // guard keeps std::stoi from overflowing on a 12-digit serial, and lets us
+  // pin each camera to a stable serial (device indices swap between runs).
   std::string arg = (argc >= 2) ? argv[1] : "";
-  bool numeric = !arg.empty();
+  bool numeric = !arg.empty() && arg.size() <= 4;
   for (char c : arg) {
     if (c < '0' || c > '9') { numeric = false; break; }
   }

@@ -65,6 +65,12 @@ class DepthFusionEngine(FusionEngine):
             band = self._seam_margin.get(wall, 0.0)
             best: WallCandidate | None = None
             for obs in track.members:
+                # Same contract as the homography engine: a camera only drives
+                # walls it serves. A camera beside its own wall views the other
+                # wall near-tangentially (or as a reflection) — its rays must
+                # never win that wall's cursor.
+                if not self.config.serves(obs.camera_id, wall):
+                    continue
                 person = obs.person
                 ray = getattr(person, "ray", None)
                 if ray is None:

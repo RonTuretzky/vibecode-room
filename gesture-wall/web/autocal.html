@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Gesture Wall — Auto-calibrate</title>
+<style>
+  html,body{margin:0;height:100%;background:#000;overflow:hidden;font-family:system-ui,sans-serif;
+    cursor:none}
+  #stage{position:fixed;inset:0;background:#000}
+  #dot{position:fixed;border-radius:50%;background:#ff00ff;display:none;
+    box-shadow:0 0 40px 12px rgba(255,0,255,.55)}
+  /* idle / done overlays (hidden while running so nothing pollutes the diff) */
+  #idle,#done{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;
+    justify-content:center;gap:18px;color:#eee;text-align:center}
+  #idle .letter{font-size:38vh;font-weight:900;line-height:1;color:#3cc8dc}
+  #idle p{font-size:2.6vh;max-width:60ch;color:#9a9aa8;margin:0;cursor:default}
+  #fsbtn{font-size:2.4vh;padding:.6em 1.4em;border-radius:10px;border:1px solid #444;
+    background:#23232d;color:#eee;cursor:pointer}
+  #done{display:none}
+  #done .mark{font-size:22vh;color:#46c66e}
+  #err{position:fixed;left:0;right:0;bottom:0;padding:6px;text-align:center;color:#e2685f;
+    font-size:12px;display:none}
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<div id="dot"></div>
+<div id="idle">
+  <div class="letter" id="wletter">?</div>
+  <p>Put this window on the projector for <b>this wall</b>, then click Fullscreen.<br>
+     Keep out of the cameras' view once calibration starts.</p>
+  <button id="fsbtn">⛶ Fullscreen</button>
+</div>
+<div id="done"><div class="mark">✓</div><p style="color:#8ff0b7;font-size:3vh">Calibrated</p></div>
+<div id="err"></div>
+<script>
+const wall = new URLSearchParams(location.search).get("wall");
+document.getElementById("wletter").textContent = wall || "!";
+document.getElementById("fsbtn").onclick = () =>
+  document.documentElement.requestFullscreen && document.documentElement.requestFullscreen();
+
+const dot = document.getElementById("dot");
+const idle = document.getElementById("idle");
+const done = document.getElementById("done");
+const err  = document.getElementById("err");
+
+// The dot's size scales with the screen: big enough to survive 512x424 + oblique
+// angles, small enough to localize (the detector uses its centroid).
+function showDot(u, v) {
+  const W = innerWidth, H = innerHeight;
+  // Bigger disc = detectable from a far/oblique diagonal camera (still small
+  // enough that its centroid localizes the wall point well).
+  const r = Math.max(46, Math.min(W, H) * 0.11);
+  dot.style.width = dot.style.height = (2 * r) + "px";
+  dot.style.left = (u * W - r) + "px";
+  dot.style.top  = (v * H - r) + "px";
+  dot.style.display = "block";
+}
+
+function fail(msg) {
+  err.textContent = msg;
+  err.style.display = "block";
+  idle.style.display = done.style.display = "none";
+  dot.style.display = "none";
+}
+
+async function tick() {
+  if (!wall) return fail("URL is missing ?wall= (use ?wall=A or ?wall=B)");
+  try {
+    const s = await (await fetch("/calib/state", {cache: "no-store"})).json();
+    if (s.phase === "error") return fail("CALIBRATION FAILED: " + (s.msg || "unknown"));
+    err.style.display = "none";
+    idle.style.display = s.phase === "idle" ? "flex" : "none";
+    done.style.display = s.phase === "done" ? "flex" : "none";
+    const m = s.marker;
+    if (s.phase === "running" && m && m.wall === wall) showDot(m.u, m.v);
+    else dot.style.display = "none";
+  } catch (e) {
+    fail("calibration server not reachable: " + e);
+  }
+}
+setInterval(tick, 120);
+tick();
+</script>
+</body>
+</html>

@@ -62,11 +62,18 @@ class RoomObs:
     camera's room-homography (or the raw anchor when the camera has no floor
     calibration). ``camera_id`` identifies which camera produced it, so a
     cluster can enforce "at most one observation per camera".
+
+    ``frame_id`` names the rigid coordinate frame ``room_xy`` lives in. In a
+    registered room every camera shares one frame (the default ``"room"``); in
+    a DECOUPLED room each camera keeps its own unregistered frame, so distances
+    between observations from different frames are meaningless and must never
+    be compared — clustering and track matching only happen within one frame.
     """
 
     camera_id: str
     person: Person
     room_xy: tuple[float, float]
+    frame_id: str = "room"
 
 
 @dataclass
@@ -78,6 +85,7 @@ class Track:
     engaged: bool
     last_seen: float
     members: list[RoomObs] = field(default_factory=list)
+    frame_id: str = "room"
 
 
 # --------------------------------------------------------------------------- #
@@ -105,7 +113,9 @@ def cluster_observations(obs: list[RoomObs],
     Two observations may share a cluster only when their ``room_xy`` are within
     ``merge_radius`` AND they come from different cameras — a single camera
     sees a given person at most once, so two observations from the same camera
-    are necessarily two different people.
+    are necessarily two different people. They must also share a ``frame_id``:
+    coordinates from unregistered frames are incommensurable, so two nearby
+    numbers from different frames say nothing about being the same person.
 
     Deterministic: seeds are tried in input order; for each seed the nearest
     eligible observation (closest first) from each not-yet-used camera is
@@ -125,6 +135,7 @@ def cluster_observations(obs: list[RoomObs],
         candidates = sorted(
             (o for o in remaining
              if o.camera_id not in used_cameras
+             and o.frame_id == seed.frame_id
              and distance(o.room_xy, seed.room_xy) <= merge_radius),
             key=lambda o: distance(o.room_xy, seed.room_xy),
         )
@@ -180,7 +191,10 @@ class Tracker:
 
         pairs: list[tuple[float, int, int]] = []  # (dist, cluster_idx, track_id)
         for ci, centroid in enumerate(centroids):
+            frame = clusters[ci][0].frame_id
             for track in existing:
+                if track.frame_id != frame:
+                    continue  # distances across unregistered frames mean nothing
                 d = distance(centroid, track.room_xy)
                 if d <= self.merge_radius:
                     pairs.append((d, ci, track.id))
@@ -205,6 +219,7 @@ class Tracker:
                 engaged=any(o.person.engaged for o in cluster),
                 last_seen=t,
                 members=list(cluster),
+                frame_id=cluster[0].frame_id,
             )
             self._tracks[track.id] = track
             self._next_id += 1
