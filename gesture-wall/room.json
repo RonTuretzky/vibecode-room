@@ -22,7 +22,8 @@
           1.186755824223159,
           -0.16428561437697664
         ]
-      }
+      },
+      "width_m": 2.1
     },
     "B": {
       "display": 2,
@@ -46,7 +47,8 @@
           1.2369616663128067,
           -0.17123573625096059
         ]
-      }
+      },
+      "width_m": 2.276
     }
   },
   "adjacency": [
@@ -118,6 +120,6 @@
     "min_confidence": 0.3,
     "model": "models/pose_landmarker_full.task",
     "pointing": "shoulder_hand",
-    "smoothing": 1.8
+    "smoothing": 2.5
   }
 }

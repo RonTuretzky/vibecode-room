@@ -516,7 +516,17 @@ def start_http_server(directory: str, port: int) -> "object":
     import functools
     from http.server import HTTPServer, SimpleHTTPRequestHandler
 
-    handler = functools.partial(SimpleHTTPRequestHandler, directory=directory)
+    class _NoCacheHandler(SimpleHTTPRequestHandler):
+        """Always revalidate: a stale cached wall.js on a projector silently
+        skips new behavior (e.g. the calibration overlay) — an entire failed
+        calibration session was traced to exactly that. no-cache still allows
+        conditional requests, so unchanged files stay cheap."""
+
+        def end_headers(self):
+            self.send_header("Cache-Control", "no-cache")
+            super().end_headers()
+
+    handler = functools.partial(_NoCacheHandler, directory=directory)
     httpd = HTTPServer(("", port), handler)
     threading.Thread(target=httpd.serve_forever, name="http", daemon=True).start()
     return httpd

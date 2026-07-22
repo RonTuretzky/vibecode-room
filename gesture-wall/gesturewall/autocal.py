@@ -1082,6 +1082,15 @@ def main(argv=None) -> int:
         vals = widths.values() if isinstance(widths, dict) else [widths]
         if any(v <= 0 for v in vals):
             ap.error("--width: widths must be positive metres")
+    else:
+        # No --width on the command line: pin to the operator-measured widths
+        # stored in the room config (walls.<id>.width_m), where present.
+        cfg_w = {w: cfg.walls[w].width_m for w in walls
+                 if cfg.walls[w].width_m is not None}
+        if cfg_w:
+            widths = cfg_w
+            print("[autocal] width pins from config: "
+                  + ", ".join(f"{w}={m}m" for w, m in sorted(cfg_w.items())))
 
     # Pre-kind Kinect configs parse as the "rgb" default; autocal historically
     # always built a Kinect source, so keep that as the fallback.
@@ -1095,6 +1104,17 @@ def main(argv=None) -> int:
 
     httpd = ThreadingHTTPServer(("", args.port),
                                 make_handler(args.web_dir, calib))
+    # Also serve the web dir on the gesture server's HTTP port while it is
+    # down for calibration: the projector wall pages load from that origin,
+    # and a mid-calibration refresh must not dead-end on "site can't be
+    # reached". Skipped silently if something already holds the port.
+    try:
+        from .server import start_http_server
+        start_http_server(args.web_dir, cfg.server.http_port)
+        print(f"[autocal] also serving wall pages on "
+              f"http://localhost:{cfg.server.http_port}")
+    except OSError:
+        pass
     print(f"[autocal] serving on http://localhost:{args.port}")
     for w in walls:
         print(f"[autocal]   open http://localhost:{args.port}/autocal.html?wall={w}")
