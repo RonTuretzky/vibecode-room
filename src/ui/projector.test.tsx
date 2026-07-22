@@ -21,7 +21,6 @@ describe("projector UI contract", () => {
     expect(html).toContain("Atlas");
     expect(html).toContain("Cobalt");
     expect(html).toContain("Turn the meeting notes into a blocker announcer.");
-    expect(html).toContain("route.action");
   });
 
   test("shows the bounded unmute control only while muted", () => {

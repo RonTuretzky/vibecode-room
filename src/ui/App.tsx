@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
-import { demoProjectorSnapshot, withUnmuted } from "./demo-data";
+import { demoProjectorSnapshot, busyRoomSnapshot, withUnmuted } from "./demo-data";
 import type { LogEvent } from "../types";
 import type { ProjectorProcess, ProjectorSnapshot, TranscriptLine } from "./types";
 import { Atmosphere } from "./Atmosphere";
@@ -18,9 +18,7 @@ export const REQUIRED_PROJECTOR_REGIONS = [
   "status",
   "suggestion",
   "fleet",
-  "audio",
   "transcript",
-  "trace",
 ] as const;
 
 interface ProjectorAppProps {
@@ -52,6 +50,12 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
   const micHandleRef = useRef<MicCaptureHandle | null>(null);
   const [qrOpen, setQrOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  // MOCK ROOM: a client-only demo showing several projects building at once.
+  // While on, the live SSE stream is held back (see the guard below) so the
+  // fixture is not overwritten; toggling off re-syncs the real state.
+  const [mockMode, setMockMode] = useState(false);
+  const mockModeRef = useRef(false);
+  mockModeRef.current = mockMode;
   // The transient voice-command confirmation ("🎤 vibersyn → build"), or null.
   const [voiceFlash, setVoiceFlash] = useState<string | null>(null);
 
@@ -149,7 +153,7 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
   // suggestion and starts the real build; the returned snapshot is applied. In
   // offline demo there is no runtime, so it falls back to opening the idea detail.
   const acceptIdea = useCallback(async () => {
-    if (!liveMode) {
+    if (!liveMode || mockModeRef.current) {
       selectBubble(IDEA_ID);
       return;
     }
@@ -169,7 +173,7 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
   // stays interactive.
   const actOnIdea = useCallback(
     async (id: string, action: "accept" | "dismiss") => {
-      if (!liveMode) {
+      if (!liveMode || mockModeRef.current) {
         setSnapshot((current) => ({
           ...current,
           ideas: (current.ideas ?? []).filter((idea) => idea.id !== id),
@@ -204,7 +208,7 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
   // builds itself with no click. The returned snapshot carries the new state.
   const autoAccept = snapshot.autoAccept ?? false;
   const toggleAutoAccept = useCallback(async () => {
-    if (!liveMode) {
+    if (!liveMode || mockModeRef.current) {
       return;
     }
     try {
@@ -226,7 +230,7 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
   // building stays explicit (tray/keyboard/voice) unless Auto-Build is also on.
   const captureMode = snapshot.captureMode ?? false;
   const toggleCaptureMode = useCallback(async () => {
-    if (!liveMode) {
+    if (!liveMode || mockModeRef.current) {
       return;
     }
     try {
@@ -252,7 +256,7 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
       const match = snapshotRef.current.processes.find(
         (process) => process.callsign === id || process.upid === id,
       );
-      if (!liveMode || match === undefined) {
+      if (!liveMode || mockModeRef.current || match === undefined) {
         selectBubble(id);
         return;
       }
@@ -409,7 +413,7 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
           return;
         }
         const liveSnapshot = (await response.json()) as ProjectorSnapshot;
-        if (!closed) {
+        if (!closed && !mockModeRef.current) {
           setSnapshot(liveSnapshot);
         }
       } catch {
@@ -428,7 +432,7 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
         void syncState(); // resync current state immediately on (re)connect
       });
       source.addEventListener("snapshot", (messageEvent) => {
-        if (closed) {
+        if (closed || mockModeRef.current) {
           return;
         }
         try {
@@ -609,14 +613,47 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
   const detailOpen = selectedProcess !== null;
   const listeningState = snapshot.muted ? "muted" : "listening";
 
+  // MOCK ROOM toggle: swap in the busy fixture (several projects at once) and
+  // hold back the live stream; toggling off re-syncs the authoritative state
+  // (offline demo just restores its own fixture).
+  const toggleMockMode = useCallback(() => {
+    const turningOn = !mockModeRef.current;
+    setMockMode(turningOn);
+    if (turningOn) {
+      setSnapshot(busyRoomSnapshot());
+      setSelected(null);
+      return;
+    }
+    if (!liveMode) {
+      setSnapshot(demoProjectorSnapshot);
+      return;
+    }
+    void fetch("/api/state", { headers: { accept: "application/json" } })
+      .then((response) =>
+        response.ok && response.headers.get("content-type")?.includes("application/json")
+          ? (response.json() as Promise<ProjectorSnapshot>)
+          : null,
+      )
+      .then((restored) => {
+        if (restored) {
+          setSnapshot(restored);
+        }
+      })
+      .catch(() => {
+        // A failed resync must never wedge the UI; the live stream will catch up.
+      });
+  }, [liveMode]);
+
   // Two-wall view split: the ideas wall hides the build fleet, the builds wall
   // hides the idea surfaces; "full" (default) shows everything on one screen.
-  const showIdeaSurfaces = view !== "builds";
-  const showFleetSurfaces = view !== "ideas";
+  // Mock room forces the full layout so every project is visible at once.
+  const effectiveView = mockMode ? "full" : view;
+  const showIdeaSurfaces = effectiveView !== "builds";
+  const showFleetSurfaces = effectiveView !== "ideas";
   // The tray renders whenever there are candidates; the dedicated ideas wall
   // always shows it (with an empty-state hint) so the surface reads as present.
   const ideas = snapshot.ideas ?? [];
-  const showIdeaTray = showIdeaSurfaces && (view === "ideas" || ideas.length > 0);
+  const showIdeaTray = showIdeaSurfaces && (effectiveView === "ideas" || ideas.length > 0);
 
   return (
     <main className="deep" data-testid="app" data-view={view}>
@@ -727,11 +764,14 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
           </button>
           <button
             type="button"
-            className="ctl-button emergency"
-            data-testid="emergency-button"
-            onClick={triggerEmergency}
+            className={`ctl-button mock-room${mockMode ? " on" : ""}`}
+            data-testid="mock-room-button"
+            data-state={mockMode ? "on" : "off"}
+            aria-pressed={mockMode}
+            onClick={toggleMockMode}
+            title="Demo: fill the room with several projects building at once. Toggle off to return to the live state."
           >
-            Emergency
+            {mockMode ? "● Mock Room" : "Mock Room"}
           </button>
         </div>
       </header>
@@ -790,9 +830,7 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
               onSelect={(id) => void steerProcess(id)}
             />
           ) : null}
-          <AudioReadout snapshot={snapshot} />
           <TranscriptStream lines={snapshot.transcript} />
-          <TraceRail trace={snapshot.trace} />
         </aside>
       </div>
 

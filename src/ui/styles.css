@@ -525,6 +525,26 @@ button {
   color: var(--c-selected);
 }
 
+/* Mock room — a demo control that fills the wall with several projects at once.
+   Calm neutral when off; a warm amber "on" so it never reads as live state. */
+.ctl-button.mock-room {
+  color: #f6dca6;
+  border-color: rgba(245, 176, 66, 0.45);
+  background: rgba(245, 176, 66, 0.1);
+  white-space: nowrap;
+}
+
+.ctl-button.mock-room:hover {
+  background: rgba(245, 176, 66, 0.2);
+}
+
+.ctl-button.mock-room.on {
+  color: #1c1204;
+  background: #f5b042;
+  border-color: rgba(245, 176, 66, 0.9);
+  box-shadow: 0 0 20px rgba(245, 176, 66, 0.45);
+}
+
 /* Wall identity badge — a subtle corner label ("WALL A · IDEAS") so a two-wall
    room reads which projection it is facing at a glance. Never interactive. */
 .wall-badge {
