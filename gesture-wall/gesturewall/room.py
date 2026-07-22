@@ -139,6 +139,11 @@ class ServerCfg:
     # Depth-mode pointing model: how the ray origin is chosen (direction is always
     # toward the wrist). 'eye_hand' | 'forearm' | 'shoulder_hand'.
     pointing: str = "eye_hand"
+    # Cursor smoothing strength (both modes; > 0). 1.0 = the historical 1-Euro
+    # tuning; higher = steadier cursor at the cost of a little more lag (the
+    # filter cutoffs are divided by this). Tune live: 1.5-2.5 feels noticeably
+    # calmer for wall pointing; beyond ~4 the cursor visibly trails the hand.
+    smoothing: float = 1.0
 
 
 @dataclass
@@ -270,6 +275,8 @@ class RoomConfig:
             raise ValueError("server.num_poses must be >= 1")
         if not (0.0 <= self.server.min_confidence <= 1.0):
             raise ValueError("server.min_confidence must be in [0, 1]")
+        if self.server.smoothing <= 0:
+            raise ValueError("server.smoothing must be > 0")
 
     # --- mode ------------------------------------------------------------- #
     @property
@@ -621,6 +628,8 @@ def _parse_server(raw: object) -> ServerCfg:
             "server.min_confidence"),
         model=_check_model(raw.get("model", d.model)),
         pointing=_check_pointing(raw.get("pointing", d.pointing)),
+        smoothing=_as_number(raw.get("smoothing", d.smoothing),
+                             "server.smoothing"),
     )
 
 
