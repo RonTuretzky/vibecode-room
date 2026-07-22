@@ -21,7 +21,9 @@
 #
 # Usage:
 #   ./run-room.sh                 # desk mode: two walls, mouse/keyboard/voice
-#   ./run-room.sh --single        # desk mode, one full-view window
+#   ./run-room.sh --single        # desk mode, ONE window (full view) — a laptop or
+#                                 # single projector, no cameras, no Python
+#   ./run-room.sh --single=ideas  # one window scoped to the idea wall (or =builds, =full)
 #   ./run-room.sh --gesture       # legacy: real cameras (needs gesture-wall deps + room.json)
 #   ./run-room.sh --fake          # legacy: gesture mode with synthetic cursors
 #   ./run-room.sh --gesture --config=my.json
@@ -39,6 +41,7 @@ cd "$ROOT"
 GESTURE=0
 FAKE=0
 SINGLE=0
+SINGLE_VIEW="${SINGLE_VIEW:-full}"   # full | ideas | builds (--single=<view>)
 CALIBRATE=0
 CONFIG="${ROOM_CONFIG:-gesture-wall/room.json}"
 VIBERSYN_PORT="${VIBERSYN_PORT:-8788}"
@@ -66,14 +69,20 @@ for arg in "$@"; do
     --gesture) GESTURE=1 ;;
     --fake) GESTURE=1; FAKE=1 ;;   # --fake implies gesture mode, minus the cameras
     --single) SINGLE=1 ;;
+    --single=*) SINGLE=1; SINGLE_VIEW="${arg#*=}" ;;
     --calibrate) CALIBRATE=1 ;;
     --config=*) CONFIG="${arg#*=}" ;;
     -h|--help)
-      sed -n '2,33p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,35p' "$0" | sed 's/^# \{0,1\}//'
       exit 0 ;;
     *) echo "[room] unknown arg: $arg" >&2; exit 2 ;;
   esac
 done
+
+case "$SINGLE_VIEW" in
+  full|ideas|builds) : ;;
+  *) echo "[room] ERROR: --single=<view> must be full, ideas or builds (got '$SINGLE_VIEW')" >&2; exit 2 ;;
+esac
 
 PIDS=()
 SUDO=""        # set to "sudo -E" when the camera needs root (macOS + Orbbec)
@@ -196,7 +205,7 @@ if [ "$GESTURE" = "1" ]; then
 fi
 URL_A="http://localhost:$VIBERSYN_PORT/?live=1&wall=A&view=ideas$GESTURE_QS"
 URL_B="http://localhost:$VIBERSYN_PORT/?live=1&wall=B&view=builds$GESTURE_QS"
-URL_SINGLE="http://localhost:$VIBERSYN_PORT/?live=1&view=full$GESTURE_QS"
+URL_SINGLE="http://localhost:$VIBERSYN_PORT/?live=1&view=$SINGLE_VIEW$GESTURE_QS"
 
 open_wall() { # $1=window-position  $2=url
   if command -v open >/dev/null 2>&1; then

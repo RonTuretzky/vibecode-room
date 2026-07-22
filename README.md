@@ -29,7 +29,9 @@ agents building them.
   UI fullscreen on two walls: wall A is the **idea wall** (`?view=ideas`), wall B
   the **build wall** (`?view=builds`). No cameras, no Python — you drive it with
   mouse, keyboard, and voice. `./run-room.sh --single` opens one full-view window
-  instead.
+  instead — a laptop or single projector, no cameras or Python needed; use
+  `--single=ideas` or `--single=builds` to scope that one window to a single
+  wall's surface.
 - **Vibersyn projector only:** `bun run start` (server on :8787), or `bun run dev`
   for the UI dev server. Open `/?live=1` for the live runtime.
 
