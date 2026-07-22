@@ -51,11 +51,11 @@ test.describe("projector UI — first paint & feature parity", () => {
     );
   });
 
-  test("shows the 3D idea constellation with at least one orb (a pending suggestion)", async ({ page }) => {
+  test("shows the 3D garden with at least one idea flower (a pending suggestion)", async ({ page }) => {
     await gotoStatic(page);
-    const field = page.getByTestId("idea-field-3d");
+    const field = page.getByTestId("garden-3d");
     await expect(field).toBeVisible();
-    await expect(field).not.toHaveAttribute("data-orb-count", "0");
+    await expect(field).not.toHaveAttribute("data-idea-count", "0");
     await expect(field.locator("canvas")).toBeVisible();
   });
 
@@ -204,12 +204,11 @@ test.describe("projector UI — keyboard, a11y & detail completeness", () => {
 });
 
 test.describe("projector UI — boundary fleet states", () => {
-  test("zero processes: field + idea bubble remain, no process bubbles, empty slot shows", async ({ page }) => {
+  test("zero processes: field + garden remain, empty fleet slot shows", async ({ page }) => {
     await gotoStatic(page);
     await apply(page, { processes: [] });
     await expect(page.getByTestId("bubble-field")).toBeVisible();
-    await expect(page.locator('[data-testid="bubble"][data-kind="process"]')).toHaveCount(0);
-    await expect(page.locator('[data-testid="bubble"][data-kind="idea"]').first()).toBeVisible();
+    await expect(page.getByTestId("garden-3d")).toBeVisible();
     await expect(page.getByTestId("fleet-empty")).toBeVisible();
   });
 

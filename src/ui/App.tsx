@@ -5,8 +5,7 @@ import type { LogEvent } from "../types";
 import type { ProjectorProcess, ProjectorSnapshot, TranscriptLine } from "./types";
 import { Atmosphere } from "./Atmosphere";
 import { GestureLayer } from "./gesture/GestureLayer";
-import { ProcessBubble } from "./Bubble";
-import { IdeaField3D, type IdeaOrbSpec } from "./IdeaField3D";
+import { Garden3D, type IdeaOrbSpec, type TreeSpec } from "./Garden3D";
 import { BuildDetail } from "./BuildDetail";
 import { IdeaTray } from "./IdeaTray";
 import { QrImport } from "./QrImport";
@@ -594,23 +593,6 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
     return () => window.removeEventListener("keydown", onKey);
   }, [selectBubble, actOnTopIdea, toggleCaptureMode, toggleAutoAccept, toggleMic, releaseMute, triggerEmergency]);
 
-  // Significance-driven sizing: selected/active largest, planning mid, others base.
-  const bubbleSize = useCallback(
-    (process: ProjectorProcess): number => {
-      if (process.callsign === selected) {
-        return 300;
-      }
-      if (process.state === "active") {
-        return 264;
-      }
-      if (process.state === "planning") {
-        return 232;
-      }
-      return 212;
-    },
-    [selected],
-  );
-
   const detailOpen = selectedProcess !== null;
   const listeningState = snapshot.muted ? "muted" : "listening";
 
@@ -683,6 +665,20 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
     }
     return [];
   }, [ideas, snapshot.suggestion.pitch, snapshot.suggestion.confidence]);
+
+  // Garden trees: one per process. The garden itself hides trees on the
+  // dedicated ideas wall (view gating lives in Garden3D's reconcile).
+  const treeSpecs = useMemo<TreeSpec[]>(
+    () =>
+      snapshot.processes.map((process) => ({
+        upid: process.upid,
+        callsign: process.callsign,
+        state: process.state,
+        progress: process.progress,
+        task: process.task,
+      })),
+    [snapshot.processes],
+  );
 
   // Clicking a ready orb builds it: ledger candidates go through the per-idea
   // accept endpoint, the primary suggestion through /api/suggestion/accept.
@@ -818,34 +814,20 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
         </div>
       </header>
 
-      <div className={`stage${detailOpen ? " stage-dimmed" : ""}`}>
+      <div className={`stage${detailOpen ? " stage-dimmed" : ""}${mockMode ? " stage-garden-only" : ""}`}>
         <div className="stage-main">
           <section className="bubble-field" data-region="fleet" data-testid="bubble-field" onClick={closeDetail}>
-            {showIdeaSurfaces ? <SuggestionRegion pitch={snapshot.suggestion.pitch} /> : null}
-            {showIdeaSurfaces ? (
-              <IdeaField3D orbs={ideaOrbs} onAccept={acceptOrb} layout={showFleetSurfaces ? "band" : "full"} />
-            ) : null}
-            <div className="field-inner" onClick={(clickEvent) => clickEvent.stopPropagation()}>
-              {showFleetSurfaces
-                ? snapshot.processes.map((process, index) => (
-                    <ProcessBubble
-                      key={process.upid}
-                      process={{
-                        ...process,
-                        selected: process.callsign === selected,
-                        steering: process.upid === steeringUpid,
-                      }}
-                      index={index}
-                      size={bubbleSize(process)}
-                      hotkey={index < 9 ? index + 1 : null}
-                      onSelect={() => void steerProcess(process.callsign)}
-                    />
-                  ))
-                : null}
-            </div>
+            {showIdeaSurfaces && !mockMode ? <SuggestionRegion pitch={snapshot.suggestion.pitch} /> : null}
+            <Garden3D
+              ideas={ideaOrbs}
+              trees={treeSpecs}
+              onAcceptIdea={acceptOrb}
+              onSelectProcess={(callsign) => void steerProcess(callsign)}
+              view={effectiveView}
+            />
           </section>
 
-          {showIdeaTray ? (
+          {showIdeaTray && !mockMode ? (
             <IdeaTray
               ideas={ideas}
               onBuild={(id) => void actOnIdea(id, "accept")}
@@ -854,17 +836,20 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
           ) : null}
         </div>
 
-        <aside className="rail">
-          {showFleetSurfaces ? (
-            <FleetPanel
-              processes={snapshot.processes}
-              selected={selected}
-              steeringUpid={steeringUpid}
-              onSelect={(id) => void steerProcess(id)}
-            />
-          ) : null}
-          <TranscriptStream lines={snapshot.transcript} />
-        </aside>
+        {/* Mock room is a pure 3D showcase — the 2D rail/tray stay hidden. */}
+        {!mockMode ? (
+          <aside className="rail">
+            {showFleetSurfaces ? (
+              <FleetPanel
+                processes={snapshot.processes}
+                selected={selected}
+                steeringUpid={steeringUpid}
+                onSelect={(id) => void steerProcess(id)}
+              />
+            ) : null}
+            <TranscriptStream lines={snapshot.transcript} />
+          </aside>
+        ) : null}
       </div>
 
       {detailOpen && selectedProcess ? (
