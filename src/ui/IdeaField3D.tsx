@@ -81,6 +81,13 @@ function orbPosition(index: number, count: number): THREE.Vector3 {
   );
 }
 
+// Band placement (full view, fleet on stage): a flat line of orbs hugging the
+// bottom of the field — the tray right beneath carries the pitches.
+function bandPosition(index: number, count: number): THREE.Vector3 {
+  const spacing = Math.min(3.2, 19 / Math.max(count, 1));
+  return new THREE.Vector3((index - (count - 1) / 2) * spacing, index % 2 === 0 ? 0.25 : -0.25, 0);
+}
+
 // Soft radial halo texture, tinted per-orb via the sprite material color.
 function makeHaloTexture(): THREE.CanvasTexture {
   const size = 128;
@@ -194,7 +201,7 @@ export function IdeaField3D({ orbs, onAccept, layout = "full" }: IdeaField3DProp
 
   useEffect(() => {
     reconcileTick.current += 1;
-  }, [orbs]);
+  }, [orbs, layout]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -322,6 +329,8 @@ export function IdeaField3D({ orbs, onAccept, layout = "full" }: IdeaField3DProp
         orbsRef.current.length > 0
           ? orbsRef.current
           : [{ id: "__idle__", pitch: "", confidence: 0.2, status: "forming", maturity: "forming", verified: false }];
+      const band = layoutRef.current === "band";
+      const placeOrb = band ? bandPosition : orbPosition;
       const seen = new Set<string>();
       specs.forEach((spec, index) => {
         const specId = orbKey(spec);
@@ -359,7 +368,7 @@ export function IdeaField3D({ orbs, onAccept, layout = "full" }: IdeaField3DProp
             labelKey: "",
             radius: orbRadius(spec),
             baseEmissive: 0,
-            targetPos: orbPosition(index, specs.length),
+            targetPos: placeOrb(index, specs.length),
             targetScale: 1,
             phase: index * 1.7,
             flashStart: spec.status === "ready" ? performance.now() : null,
@@ -380,7 +389,7 @@ export function IdeaField3D({ orbs, onAccept, layout = "full" }: IdeaField3DProp
           }
           entry.removing = false;
           entry.targetScale = 1;
-          entry.targetPos = orbPosition(index, specs.length);
+          entry.targetPos = placeOrb(index, specs.length);
           applySpec(entry, spec);
           placeLabel(entry, index);
         }
@@ -456,6 +465,7 @@ export function IdeaField3D({ orbs, onAccept, layout = "full" }: IdeaField3DProp
 
     const clock = new THREE.Clock();
     let rafId = 0;
+    let rotAngle = 0;
     const frame = () => {
       rafId = requestAnimationFrame(frame);
       const dt = Math.min(clock.getDelta(), 0.1);
@@ -467,16 +477,20 @@ export function IdeaField3D({ orbs, onAccept, layout = "full" }: IdeaField3DProp
         reconcile();
       }
 
-      if (!reducedMotion) {
-        root.rotation.y = t * 0.05; // slow constellation orbit
-      }
       const smoothing = 1 - Math.exp(-dt * 7);
+      const band = layoutRef.current === "band";
+
+      // Ring mode orbits slowly; band mode is a still line (accumulator, so
+      // toggling never snaps the angle).
+      if (!reducedMotion && !band) {
+        rotAngle += dt * 0.05;
+      }
+      root.rotation.y = rotAngle;
 
       // Band layout: slide the whole constellation down + shrink it so the 2D
       // process fleet keeps centre stage. Lerped so view switches glide.
-      const band = layoutRef.current === "band";
-      const rootScaleTarget = band ? 0.58 : 1;
-      const rootYTarget = band ? -3.1 : 0;
+      const rootScaleTarget = band ? 0.44 : 1;
+      const rootYTarget = band ? -3.8 : 0;
       root.scale.setScalar(THREE.MathUtils.lerp(root.scale.x, rootScaleTarget, smoothing));
       root.position.y = THREE.MathUtils.lerp(root.position.y, rootYTarget, smoothing);
 
@@ -499,6 +513,12 @@ export function IdeaField3D({ orbs, onAccept, layout = "full" }: IdeaField3DProp
         // Counter-rotate labels so the pitch stays put while the ring turns
         // (sprites billboard themselves, but their anchor swings with the root).
         entry.group.rotation.y = -root.rotation.y;
+
+        // Band mode drops the labels entirely — the idea tray right beneath
+        // the band carries the pitches; tiny floating cards would be noise.
+        if (entry.label !== null) {
+          entry.label.visible = !band;
+        }
 
         // Finish-flash: three decaying white pulses over 1.5s, then done.
         let emissive = entry.baseEmissive + (hovered ? 0.35 : 0);
