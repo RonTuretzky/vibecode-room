@@ -2,6 +2,7 @@
 // Run: node web/_wall_check.mjs
 import assert from "node:assert/strict";
 import {
+  autocalOverlay,
   idToHue,
   parseParams,
   isZoneLocked,
@@ -47,6 +48,9 @@ const ok = (name) => { n++; console.log(`  ok ${name}`); };
   assert.equal(d.rows, 2);
   assert.equal(d.cols, 3);
   assert.ok(d.server.startsWith("ws://"), "default server is ws://");
+  assert.ok(d.autocal.includes(":8801"), "default autocal server on :8801");
+  assert.equal(parseParams("?autocal=off").autocal, "off", "autocal opt-out");
+  assert.equal(parseParams("?autocal=http://x:9").autocal, "http://x:9");
 
   // Bad ints fall back; out-of-range clamps.
   const c = parseParams("?rows=abc&cols=999");
@@ -145,6 +149,26 @@ const ok = (name) => { n++; console.log(`  ok ${name}`); };
   assert.equal(toggles.length, 1, `shared lock prevents double-toggle (got ${toggles.length})`);
   assert.equal(zones[0].selected, true, "tile ends selected (toggled exactly once)");
   ok("shared zone-lock prevents double-toggle");
+}
+
+// --- autocalOverlay: the wall page doubling as the calibration surface ------
+{
+  // No state / unreachable server / not running -> tiles stay visible.
+  assert.deepEqual(autocalOverlay(null, "A"), { active: false, dot: null });
+  assert.deepEqual(autocalOverlay({ phase: "idle" }, "A"), { active: false, dot: null });
+  assert.deepEqual(autocalOverlay({ phase: "done" }, "A"), { active: false, dot: null });
+  assert.deepEqual(autocalOverlay({ phase: "error", msg: "x" }, "A"), { active: false, dot: null });
+
+  // Running with a marker for THIS wall -> black overlay + dot at (u, v).
+  const run = { phase: "running", marker: { wall: "A", u: 0.12, v: 0.85 } };
+  assert.deepEqual(autocalOverlay(run, "A"), { active: true, dot: { u: 0.12, v: 0.85 } });
+  // Running but the marker targets the OTHER wall -> black, no dot (a lit
+  // tile grid would pollute the other wall's OFF/ON diff via spill).
+  assert.deepEqual(autocalOverlay(run, "B"), { active: true, dot: null });
+  // Running between markers (marker null) -> black, no dot.
+  assert.deepEqual(autocalOverlay({ phase: "running", marker: null }, "A"),
+    { active: true, dot: null });
+  ok("autocalOverlay drives the unified wall/calibration page");
 }
 
 console.log(`\nwall.js node check: ${n} groups passed`);
