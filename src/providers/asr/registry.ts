@@ -41,6 +41,8 @@ export interface AsrSelectionOptions {
   sessionId: string;
   /** Apply the lifted Deepgram close-timer for a continuous live-mic session. */
   micProfile?: boolean;
+  /** End-of-utterance endpointing (ms or thunk) forwarded to the Deepgram backend. */
+  endpointingMs?: number | (() => number);
   /** Replay source (observations array or jsonl path) for the replay backend. */
   replaySource?: ReplayASRSource;
   /** Injectable VoxTerm segment transport for the voxterm backend. */
@@ -91,6 +93,7 @@ function createDeepgramProvider(env: AsrSelectionEnv, options: AsrSelectionOptio
     // Only the live-mic path lifts the close-timer cap; a non-mic selection
     // leaves it at the provider default.
     closeTimeoutMs: options.micProfile === true ? resolveMicCloseTimeoutMs(env) : undefined,
+    endpointingMs: options.endpointingMs,
   });
 }
 

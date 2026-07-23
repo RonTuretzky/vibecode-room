@@ -8,9 +8,10 @@
 export type ProjectorView = "ideas" | "builds" | "full";
 
 export interface ProjectorUrlConfig {
-  // Which slice of the board this window shows. "ideas" = idea bubble + tray +
-  // transcript (fleet hidden); "builds" = process bubbles + fleet rail (idea
-  // surfaces hidden); "full" (default) = everything.
+  // LEGACY view param. Still parsed so old two-wall URLs (?view=ideas|builds)
+  // keep working and the wall badge still reads "WALL A · IDEAS", but it is
+  // INERT for content: every window renders the FULL room (all ideas AND all
+  // builds) regardless of this value.
   view: ProjectorView;
   // Wall identity (e.g. "A"), or null when this is not a wall-bound window.
   wall: string | null;
@@ -18,6 +19,17 @@ export interface ProjectorUrlConfig {
   badge: string | null;
   // Gesture layer config, non-null ONLY when explicitly requested via the URL.
   gesture: { wall: string; fusionUrl: string } | null;
+  // ?dwell=mouse — testing/accessibility fallback: the mouse drives the SAME
+  // point→highlight→dwell-select mechanic (no cameras needed). The OS cursor
+  // stays visible; only pure gesture mode hides it.
+  dwell: "mouse" | null;
+  // ?demo=guided — auto-enter the coached guided-demo flow on load (the HUD
+  // "Guided Demo" button enters the same flow interactively).
+  demo: "guided" | null;
+  // ?mock=1 — expose the Mock Room fixture toggle. OFF by default so the live
+  // wall never offers canned content; run-room.sh appends it only when
+  // VIBERSYN_MOCK_ROOM=1 is set in the environment.
+  mock: boolean;
 }
 
 export function parseProjectorUrl(search: string, hostname: string): ProjectorUrlConfig {
@@ -45,6 +57,14 @@ export function parseProjectorUrl(search: string, hostname: string): ProjectorUr
       }
     : null;
 
+  // Mouse-dwell fallback (?dwell=mouse): desk testing / accessibility path for
+  // the gesture interaction — independent of gesture mode.
+  const dwell = params.get("dwell") === "mouse" ? ("mouse" as const) : null;
+
+  // Guided demo auto-entry + the env-gated Mock Room toggle.
+  const demo = params.get("demo") === "guided" ? ("guided" as const) : null;
+  const mock = params.get("mock") === "1";
+
   // Corner identity badge: shown whenever the window is wall- or view-scoped so
   // an operator glancing across the room knows which projection they're facing.
   const badge =
@@ -54,5 +74,5 @@ export function parseProjectorUrl(search: string, hostname: string): ProjectorUr
         ? view.toUpperCase()
         : null;
 
-  return { view, wall, badge, gesture };
+  return { view, wall, badge, gesture, dwell, demo, mock };
 }

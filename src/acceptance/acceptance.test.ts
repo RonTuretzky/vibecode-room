@@ -36,12 +36,12 @@ describe("acceptance spawn flow", () => {
       },
     ]);
     expect(runtime.registry.records()).toEqual([
-      expect.objectContaining({ callsign: "virellium", selected: true, state: "planning" }),
+      expect.objectContaining({ callsign: "coverage", selected: true, state: "planning" }),
     ]);
-    expect(runtime.opened).toEqual([expect.objectContaining({ callsign: "virellium", state: "planning" })]);
+    expect(runtime.opened).toEqual([expect.objectContaining({ callsign: "coverage", state: "planning" })]);
     expect(runtime.output).toContainEqual({ channel: "earcon", id: "E3" });
     expect(runtime.output).toContainEqual(
-      expect.objectContaining({ channel: "tts", text: "virellium spawned.", wordCount: 2 }),
+      expect.objectContaining({ channel: "tts", text: "coverage spawned.", wordCount: 2 }),
     );
     expect(accepted.kind === "spawned" ? accepted.spawn.accepted : false).toBe(true);
     expect(accepted.kind === "spawned" && accepted.spawn.accepted ? accepted.spawn.withinBudget : false).toBe(true);
@@ -116,7 +116,7 @@ describe("acceptance spawn flow", () => {
     expect(first.records.every((record) => record.input.temperature === 0)).toBe(true);
     expect(first.records.map((record) => record.output)).toEqual([
       { route: "mcq-answer", answers: ["Replay fixture"], spawned: false },
-      { route: "spawned", answers: ["Replay fixture"], spawned: true, callsign: "virellium", state: "planning" },
+      { route: "spawned", answers: ["Replay fixture"], spawned: true, callsign: "coverage", state: "planning" },
     ]);
   });
 });

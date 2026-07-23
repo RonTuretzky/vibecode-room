@@ -32,7 +32,28 @@ describe("parseProjectorUrl", () => {
     expect(empty.gesture).toEqual({ wall: "A", fusionUrl: "ws://localhost:8770" });
   });
 
-  test("view parsing: ideas/builds are honored, anything else falls back to full", () => {
+  test("?dwell=mouse enables the mouse-dwell fallback WITHOUT gesture mode", () => {
+    const config = parseProjectorUrl("?dwell=mouse", "h");
+    expect(config.dwell).toBe("mouse");
+    expect(config.gesture).toBeNull(); // OS cursor stays; only the dwell layer mounts
+  });
+
+  test("dwell defaults to null and rejects unknown values", () => {
+    expect(parseProjectorUrl("", "h").dwell).toBeNull();
+    expect(parseProjectorUrl("?dwell=eyeball", "h").dwell).toBeNull();
+    // Gesture mode does not imply the mouse-test cursor.
+    expect(parseProjectorUrl("?gesture=1", "h").dwell).toBeNull();
+  });
+
+  test("?gesture=1&dwell=mouse combines: fusion cursors + the mouse test cursor", () => {
+    const config = parseProjectorUrl("?gesture=1&dwell=mouse", "h");
+    expect(config.gesture).not.toBeNull();
+    expect(config.dwell).toBe("mouse");
+  });
+
+  // The view param is LEGACY: it still parses (old URLs + badge text) but it is
+  // inert for content — every window renders the full room (see projector tests).
+  test("view parsing: ideas/builds are recognized, anything else falls back to full", () => {
     expect(parseProjectorUrl("?view=ideas", "h").view).toBe("ideas");
     expect(parseProjectorUrl("?view=builds", "h").view).toBe("builds");
     expect(parseProjectorUrl("?view=bogus", "h").view).toBe("full");
@@ -49,5 +70,17 @@ describe("parseProjectorUrl", () => {
   test("wall badge always carries the view so two-wall setups read at a glance", () => {
     expect(parseProjectorUrl("?wall=b&view=builds", "h").badge).toBe("WALL B · BUILDS");
     expect(parseProjectorUrl("?wall=A", "h").badge).toBe("WALL A · FULL");
+  });
+
+  test("?demo=guided auto-enters the guided demo; anything else stays off", () => {
+    expect(parseProjectorUrl("?demo=guided", "h").demo).toBe("guided");
+    expect(parseProjectorUrl("?demo=other", "h").demo).toBeNull();
+    expect(parseProjectorUrl("", "h").demo).toBeNull();
+  });
+
+  test("?mock=1 exposes the Mock Room toggle; default hides it (no-mocks audit)", () => {
+    expect(parseProjectorUrl("?mock=1", "h").mock).toBe(true);
+    expect(parseProjectorUrl("?mock=0", "h").mock).toBe(false);
+    expect(parseProjectorUrl("", "h").mock).toBe(false);
   });
 });

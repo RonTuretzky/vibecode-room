@@ -1,12 +1,5 @@
 # Kinect v2 depth-ray pointing on macOS
 
-> **LEGACY RIG.** The two-Kinect setup this document describes has been
-> superseded by the **Orbbec Gemini 335 single-camera rig** — one depth camera
-> in the room's far corner serving both walls from one shared frame; see
-> [GEMINI.md](GEMINI.md). Everything below still works for cameras with
-> `kind: "kinect_v2"`, and the depth-mode concepts (config schema, geometry,
-> ray pointing, testing) apply to both rigs.
-
 This is the **depth-mode** path for Gesture Wall. Where the default 2D path maps a
 wrist's *image position* onto a wall through a per-(camera, wall) homography, the
 depth path casts a **ray from the eye through the hand** and intersects it with

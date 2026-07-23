@@ -1,6 +1,6 @@
 import { IdeaLedger, PITCH_MATCH_THRESHOLD, pitchSimilarity, type LedgerDelta } from "./ledger";
 import { TranscriptWindow } from "./transcript-window";
-import type { CandidateVerdict, DetectionInput, IdeaCandidate, IdeaDetector, KnownCandidate, TranscriptTurn } from "./types";
+import type { CandidateVerdict, ContextSpan, DetectionInput, IdeaCandidate, IdeaDetector, KnownCandidate, TranscriptTurn } from "./types";
 
 export const DETECTION_ENGINE_ENV_DEFAULTS = Object.freeze({
   VIBERSYN_DETECT_MIN_NEW_TURNS: { default: "2", description: "New committed turns that schedule a detection round." },
@@ -111,6 +111,14 @@ export class IdeaDetectionEngine {
   // new speech to trigger another round (otherwise ready candidates starve).
   #lastVerifyContext: { input: DetectionInput; correlationId: string } | null = null;
   #suppressed: Array<{ pitch: string; untilMs: number }> = [];
+  // Turn ids whose talk was CONSUMED by an accept/dismiss. The pitch cooldown
+  // above stops an immediate same-pitch re-pop, but it expires while the turns
+  // that produced the idea are still in the rolling window (~6 min) — so the
+  // same cluster of talk would re-detect as a "new" candidate and re-surface a
+  // just-built (or just-rejected) idea. Consumed turns suppress any detected
+  // idea grounded mostly in them for as long as they live in the window; ideas
+  // grounded in NEW talk (a fresh cluster minutes later) are untouched.
+  #consumedTurnIds = new Set<string>();
 
   constructor(options: DetectionEngineOptions) {
     this.#sessionId = options.sessionId;
@@ -172,13 +180,13 @@ export class IdeaDetectionEngine {
     }
     this.#detecting = true;
     try {
-      this.#pruneSuppressed(nowMs);
       const turns = this.#window.turns();
+      this.#pruneSuppressed(nowMs, turns);
       const known: KnownCandidate[] = this.#ledger.candidates().map((c) => ({ id: c.id, pitch: c.pitch, contextSpan: c.contextSpan }));
       this.#trace({ event: "detect.run", level: "info", correlationId, meta: { turns: turns.length, known: known.length, turnsSinceDetect: this.#turnsSinceDetect } });
       const input = { sessionId: this.#sessionId, correlationId, turns, known };
       const result = await this.#detector.detect(input);
-      const detected = result.candidates.filter((idea) => !this.#isSuppressed(idea.pitch, nowMs));
+      const detected = result.candidates.filter((idea) => !this.#isSuppressed(idea.pitch, nowMs) && !this.#spanConsumed(idea.contextSpan, turns));
       const delta = this.#ledger.reconcile(detected, turns, nowMs);
       this.#turnsSinceDetect = 0;
       this.#lastDetectAtMs = nowMs;
@@ -301,26 +309,31 @@ export class IdeaDetectionEngine {
     }
   }
 
-  // Consume an accepted candidate: drop it and suppress re-detection of the same
-  // pitch for a cooldown so the just-built idea doesn't immediately re-pop.
+  // Consume an accepted candidate: drop it, suppress re-detection of the same
+  // pitch for a cooldown, and consume its grounding turns so the same stretch of
+  // talk can't re-produce the just-built idea while it lives in the window. A
+  // re-raise in NEW turns (a fresh cluster) still surfaces once the pitch
+  // cooldown has passed.
   accept(id: string, nowMs = this.#clock()): IdeaCandidate | null {
     const found = this.#ledger.accept(id);
     if (found === null) {
       return null;
     }
     this.#suppressed.push({ pitch: normalizePitch(found.pitch), untilMs: nowMs + this.#config.acceptCooldownMs });
+    this.#consumeSpans(found);
     return found;
   }
 
   // Explicitly reject a candidate (tray dismiss / voice "no"): drop it and
-  // suppress the same pitch for the cooldown exactly like accept() — the room
-  // said no, so the idea must not immediately re-pop — but nothing gets built.
+  // suppress exactly like accept() — the room said no, so neither the pitch nor
+  // the same stretch of talk may immediately re-pop — but nothing gets built.
   dismiss(id: string, nowMs = this.#clock()): IdeaCandidate | null {
     const found = this.#ledger.dismiss(id);
     if (found === null) {
       return null;
     }
     this.#suppressed.push({ pitch: normalizePitch(found.pitch), untilMs: nowMs + this.#config.acceptCooldownMs });
+    this.#consumeSpans(found);
     return found;
   }
 
@@ -343,8 +356,42 @@ export class IdeaDetectionEngine {
     return this.#suppressed.some((s) => s.untilMs > nowMs && s.pitch === normalized);
   }
 
-  #pruneSuppressed(nowMs: number): void {
+  // Mark every turn grounding the removed candidate (current span + accumulated
+  // evidence spans) as consumed. Resolved against the CURRENT window turns.
+  #consumeSpans(candidate: IdeaCandidate): void {
+    const turns = this.#window.turns();
+    for (const span of [candidate.contextSpan, ...candidate.spans]) {
+      for (const turnId of spanTurnIds(span, turns)) {
+        this.#consumedTurnIds.add(turnId);
+      }
+    }
+  }
+
+  // A detected idea grounded mostly (> half its turns) in consumed talk is a
+  // re-pop of an accepted/dismissed idea, not a new one. STRICT majority so an
+  // idea grounded half in new talk survives — the heuristic detector's clusters
+  // are disjoint (a consumed cluster is 100% consumed, a fresh one 0%), and a
+  // sloppy LLM span that merely brushes old turns must not bury a fresh idea.
+  #spanConsumed(span: ContextSpan, turns: readonly TranscriptTurn[]): boolean {
+    if (this.#consumedTurnIds.size === 0) {
+      return false;
+    }
+    const turnIds = spanTurnIds(span, turns);
+    if (turnIds.length === 0) {
+      return false;
+    }
+    const consumed = turnIds.filter((id) => this.#consumedTurnIds.has(id)).length;
+    return consumed * 2 > turnIds.length;
+  }
+
+  #pruneSuppressed(nowMs: number, turns: readonly TranscriptTurn[]): void {
     this.#suppressed = this.#suppressed.filter((s) => s.untilMs > nowMs);
+    // Consumed turns that aged out of the rolling window can never ground a
+    // candidate again — drop them so the set stays bounded by the window size.
+    if (this.#consumedTurnIds.size > 0) {
+      const live = new Set(turns.map((t) => t.id));
+      this.#consumedTurnIds = new Set([...this.#consumedTurnIds].filter((id) => live.has(id)));
+    }
   }
 
   #trace(event: Omit<DetectionTraceEvent, "sessionId">): void {
@@ -367,4 +414,17 @@ function traceMeta(c: IdeaCandidate): Record<string, unknown> {
 
 function normalizePitch(pitch: string): string {
   return pitch.toLowerCase().replace(/[^a-z0-9]+/gu, " ").trim();
+}
+
+// Every turn id an inclusive span covers, resolved against the given turns.
+// If an endpoint has aged out of the window the range can't be resolved, so fall
+// back to whichever endpoint ids still exist (never invent ids).
+function spanTurnIds(span: ContextSpan, turns: readonly TranscriptTurn[]): string[] {
+  const startIndex = turns.findIndex((t) => t.id === span.startTurnId);
+  const endIndex = turns.findIndex((t) => t.id === span.endTurnId);
+  if (startIndex === -1 || endIndex === -1) {
+    return [...new Set([span.startTurnId, span.endTurnId])].filter((id) => turns.some((t) => t.id === id));
+  }
+  const [lo, hi] = startIndex <= endIndex ? [startIndex, endIndex] : [endIndex, startIndex];
+  return turns.slice(lo, hi + 1).map((t) => t.id);
 }

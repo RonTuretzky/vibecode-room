@@ -1,5 +1,5 @@
 // ISSUE-0018 e2e: the wired path from a real-speech-shaped FINAL transcript,
-// through SuggestionEngine.observe, to a populated snapshot.suggestion idea
+// through idea DETECTION (DetectionRunner windowed inference), to a populated snapshot.suggestion idea
 // bubble — independent of the ASR backend. The runtime is driven entirely by an
 // injected ASR source (an in-memory observation array), so there is no mic,
 // child process, or socket, and the deterministic heuristic decider + Noop TTS

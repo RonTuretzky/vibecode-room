@@ -92,8 +92,12 @@ function refused(
       meta: {
         reason,
         spokenAck,
-        runSlotsAvailable: headroom.runSlotsAvailable,
-        memoryAvailableMB: headroom.memoryAvailableMB,
+        // Default headroom is Infinity (no probe wired). Infinity is not JSON —
+        // the trace recorder rejects it, which turned this graceful refusal into
+        // a hard suggestion.accept.error that lost the idea AND the spoken ack.
+        // null in the trace means "unbounded/unprobed".
+        runSlotsAvailable: jsonSafeNumber(headroom.runSlotsAvailable),
+        memoryAvailableMB: jsonSafeNumber(headroom.memoryAvailableMB),
         maxConcurrentProcesses,
         ...meta,
       },
@@ -108,6 +112,10 @@ async function resolveHeadroom(
     return source();
   }
   return source ?? { runSlotsAvailable: Number.POSITIVE_INFINITY, memoryAvailableMB: Number.POSITIVE_INFINITY };
+}
+
+function jsonSafeNumber(value: number): number | null {
+  return Number.isFinite(value) ? value : null;
 }
 
 function envNumber(name: string, fallback: number): number {

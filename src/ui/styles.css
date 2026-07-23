@@ -86,6 +86,308 @@ button {
   transition: filter 480ms ease, opacity 480ms ease;
 }
 
+/* The stage is now a transparent HUD overlay: panels catch the pointer, the
+   gaps between them fall through to the 3D scene (drag/orbit/zoom). */
+.stage {
+  pointer-events: none;
+  align-items: end;
+}
+
+.stage .rail-card,
+.stage .idea-tray {
+  pointer-events: auto;
+}
+
+.stage-main {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  min-height: 0;
+}
+
+/* Floating HUD header over the scene. */
+.status-bar {
+  position: relative;
+  z-index: 10;
+  background: linear-gradient(180deg, rgba(4, 12, 18, 0.78), rgba(4, 12, 18, 0.42));
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+/* Scene controls: a floating glass cluster, bottom-left (visualizer HUD). */
+.scene-controls {
+  position: fixed;
+  left: 18px;
+  bottom: 16px;
+  z-index: 20;
+  display: flex;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 14px;
+  background: rgba(8, 18, 26, 0.66);
+  border: 1px solid var(--glass-line);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  transition: opacity 0.4s ease;
+}
+
+.ctl-button.scene-toggle {
+  color: #c9f7d8;
+  border-color: rgba(0, 255, 136, 0.35);
+  background: rgba(0, 255, 136, 0.08);
+  white-space: nowrap;
+}
+
+.ctl-button.scene-toggle[data-mode="orbit"] {
+  color: #cfe0ff;
+  border-color: rgba(80, 130, 255, 0.4);
+  background: rgba(80, 130, 255, 0.1);
+}
+
+.ctl-button.scene-fit,
+.ctl-button.scene-hide,
+.ctl-button.scene-zen {
+  color: var(--ink-soft);
+  border-color: var(--glass-line);
+  background: rgba(20, 34, 44, 0.6);
+  white-space: nowrap;
+}
+
+.ctl-button.scene-hide.on {
+  color: #04141a;
+  background: var(--c-selected, #00bcd4);
+  border-color: rgba(0, 188, 212, 0.9);
+}
+
+/* Hide/unhide menu — floating above the scene controls. */
+.hide-menu {
+  position: fixed;
+  left: 18px;
+  bottom: 72px;
+  z-index: 30;
+  width: 320px;
+  max-height: min(60vh, 480px);
+  overflow-y: auto;
+  padding: 14px;
+  border-radius: 16px;
+  background: rgba(7, 16, 24, 0.9);
+  border: 1px solid var(--glass-line);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  animation: pill-in 220ms ease;
+}
+
+.hide-section {
+  margin-top: 6px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.hide-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  background: rgba(20, 34, 44, 0.5);
+  color: var(--ink);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.hide-item:hover {
+  border-color: rgba(0, 188, 212, 0.4);
+}
+
+.hide-item.is-hidden {
+  opacity: 0.45;
+}
+
+.hide-item.is-hidden .hide-name {
+  text-decoration: line-through;
+}
+
+.hide-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hide-state {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.hide-item:not(.is-hidden) .hide-state {
+  color: var(--c-active);
+}
+
+.ctl-button.hide-clear {
+  color: var(--ink-soft);
+  border-color: var(--glass-line);
+  background: rgba(20, 34, 44, 0.6);
+  font-size: 10px;
+  padding: 4px 10px;
+}
+
+/* Zen mode: fade every panel/button away; the scene remains (visualizer's
+   zen). The tiny hint is the only thing left, and Z / Esc brings it back. */
+.deep .status-bar,
+.deep .stage,
+.deep .scene-controls,
+.deep .suggestion-banner,
+.deep .wall-badge {
+  transition: opacity 0.4s ease;
+}
+
+.deep.zen .status-bar,
+.deep.zen .stage,
+.deep.zen .scene-controls,
+.deep.zen .hide-menu,
+.deep.zen .suggestion-banner,
+.deep.zen .wall-badge,
+.deep.zen .voice-flash {
+  opacity: 0;
+  pointer-events: none !important;
+}
+
+.zen-hint {
+  position: fixed;
+  right: 18px;
+  bottom: 14px;
+  z-index: 40;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--ink-faint);
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+/* Project explainer slideshow — a glass deck over the scene. */
+.slideshow-card {
+  width: min(680px, 92vw);
+  max-height: 82vh;
+  overflow-y: auto;
+  padding: 26px 30px 22px;
+  border-radius: 20px;
+  background: rgba(7, 16, 24, 0.93);
+  border: 1px solid var(--glass-line);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  animation: detail-rise 320ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.slideshow-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.slideshow-title {
+  margin: 4px 0 0;
+  font-size: 20px;
+  font-weight: 650;
+  color: var(--ink);
+}
+
+.slide {
+  min-height: 150px;
+}
+
+.slide-title {
+  margin: 0 0 10px;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: #bfeefc;
+  text-transform: uppercase;
+}
+
+.slide-body {
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--ink-soft);
+}
+
+.slide-body p {
+  margin: 0 0 10px;
+}
+
+.slide-body ul {
+  margin: 0 0 10px;
+  padding-left: 20px;
+}
+
+.slide-body li {
+  margin-bottom: 4px;
+}
+
+.slide-body strong {
+  color: var(--ink);
+}
+
+.slide-body em {
+  color: #bfeefc;
+}
+
+.slide-body code {
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: rgba(0, 188, 212, 0.12);
+  color: #9be4f5;
+  font-size: 12.5px;
+}
+
+.slideshow-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.slide-dots {
+  display: flex;
+  gap: 8px;
+}
+
+.slide-dot {
+  width: 9px;
+  height: 9px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(158, 226, 255, 0.25);
+  cursor: pointer;
+}
+
+.slide-dot.active {
+  background: var(--c-selected);
+  box-shadow: 0 0 8px rgba(0, 188, 212, 0.6);
+}
+
+.ctl-button.slide-prev:disabled,
+.ctl-button.slide-next:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
 .stage-dimmed {
   filter: blur(7px) brightness(0.55) saturate(0.85);
   opacity: 0.7;
@@ -496,8 +798,9 @@ button {
   background: rgba(255, 59, 48, 0.12);
 }
 
-/* Gesture cursor overlay — full-viewport canvas drawn above everything, never
-   intercepts pointer events (dwell fires synthetic clicks on the UI beneath). */
+/* Gesture dwell overlay — full-viewport canvas drawn above everything, never
+   intercepts pointer events (dwell fires synthetic clicks on the UI beneath).
+   It renders NO cursor glyph: only per-target dwell rings + fire flashes. */
 .gesture-overlay {
   position: fixed;
   inset: 0;
@@ -505,6 +808,25 @@ button {
   height: 100vh;
   pointer-events: none;
   z-index: 2000;
+}
+
+/* Gesture mode: the OS cursor is hidden EVERYWHERE and no pointer glyph is
+   drawn — the pointed-at target's highlight + dwell ring ARE the feedback. */
+main.gesture-mode,
+main.gesture-mode * {
+  cursor: none !important;
+}
+
+/* Dwell targeting: the control a gesture (or ?dwell=mouse) cursor is pointing
+   at grows + glows while its radial ring fills. Applied per-frame by the
+   gesture layer; scene nodes get the equivalent emissive boost in-scene. */
+[data-dwell-hot] {
+  box-shadow:
+    0 0 0 2px rgba(158, 226, 255, 0.85),
+    0 0 26px rgba(94, 210, 255, 0.45) !important;
+  transform: scale(1.06);
+  transition: transform 120ms ease, box-shadow 120ms ease;
+  z-index: 5;
 }
 
 .ctl-button.emergency:hover {
@@ -523,6 +845,26 @@ button {
 .ctl-button.qr-import:hover {
   background: rgba(0, 188, 212, 0.14);
   color: var(--c-selected);
+}
+
+/* Mock room — a demo control that fills the wall with several projects at once.
+   Calm neutral when off; a warm amber "on" so it never reads as live state. */
+.ctl-button.mock-room {
+  color: #f6dca6;
+  border-color: rgba(245, 176, 66, 0.45);
+  background: rgba(245, 176, 66, 0.1);
+  white-space: nowrap;
+}
+
+.ctl-button.mock-room:hover {
+  background: rgba(245, 176, 66, 0.2);
+}
+
+.ctl-button.mock-room.on {
+  color: #1c1204;
+  background: #f5b042;
+  border-color: rgba(245, 176, 66, 0.9);
+  box-shadow: 0 0 20px rgba(245, 176, 66, 0.45);
 }
 
 /* Wall identity badge — a subtle corner label ("WALL A · IDEAS") so a two-wall
@@ -571,6 +913,30 @@ button {
 @keyframes voice-flash-in {
   from { opacity: 0; transform: translate(-50%, -8px); }
   to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+/* Guided-demo epilogue toast — the completion note after the decide finale
+   ("Build it for real" fired the commission; the demo never waits on it). */
+.guided-epilogue {
+  position: fixed;
+  top: 132px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 40;
+  max-width: min(720px, 86vw);
+  text-align: center;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: #ffd166;
+  border: 1px solid rgba(255, 209, 102, 0.45);
+  border-radius: 999px;
+  padding: 11px 24px;
+  background: rgba(40, 30, 8, 0.72);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 0 28px rgba(255, 209, 102, 0.35);
+  pointer-events: none;
+  animation: voice-flash-in 240ms ease;
 }
 
 /* ============================================================================
@@ -664,11 +1030,12 @@ button {
 }
 
 .suggestion-banner {
-  position: absolute;
-  top: 14px;
+  position: fixed;
+  top: 86px;
   left: 50%;
   transform: translateX(-50%);
-  z-index: 3;
+  z-index: 6;
+  pointer-events: none; /* non-interactive text; don't shadow the 3D canvas */
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -695,9 +1062,23 @@ button {
   -webkit-box-orient: vertical;
 }
 
+/* The 3D scene IS the app background — every panel floats over it. */
+.room-scene {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+}
+
+.room-scene canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
 .field-inner {
   position: absolute;
   inset: 0;
+  z-index: 2;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -711,6 +1092,7 @@ button {
    ---------------------------------------------------------------------------- */
 .bubble {
   position: relative;
+  pointer-events: auto; /* re-enable inside the pointer-transparent field-inner */
   width: var(--size, 220px);
   height: var(--size, 220px);
   border: none;
@@ -1546,6 +1928,10 @@ button {
   -webkit-backdrop-filter: blur(14px);
   padding: 14px 18px;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  /* The scene-controls cluster floats fixed at the bottom-left; lift the tray
+     above it so the first card's Build/Dismiss buttons are never shadowed by
+     (and unclickable under) the floating cluster. */
+  margin-bottom: 56px;
 }
 
 .idea-tray-empty {
@@ -1674,29 +2060,9 @@ button {
   background: rgba(255, 59, 48, 0.1);
 }
 
-/* ============================================================================
-   View split (?view=ideas|builds) — two-wall emphasis
-   ============================================================================ */
-/* Ideas wall: no fleet card in the rail, so re-shape the rows and let the
-   transcript breathe — it is the primary reading surface next to the tray. */
-.deep[data-view="ideas"] .rail {
-  grid-template-rows: auto minmax(0, 1.4fr) minmax(0, 1fr);
-}
-
-.deep[data-view="ideas"] .transcript-card {
-  max-height: none;
-}
-
-.deep[data-view="ideas"] .idea-tray-items {
-  flex-wrap: wrap;
-  max-height: 30vh;
-  overflow-y: auto;
-}
-
-/* Builds wall: the fleet rail is the star — give its panels more headroom. */
-.deep[data-view="builds"] .fleet-panels {
-  max-height: 44vh;
-}
+/* NOTE: the old per-wall view split (?view=ideas|builds) is gone — both walls
+   render the complete room, so no [data-view] layout emphasis remains. The
+   attribute itself is kept on .deep purely as a legacy identity marker. */
 
 /* ============================================================================
    QR import + help overlays — glass cards over the dimmed field
@@ -1956,6 +2322,468 @@ button {
 }
 
 /* ============================================================================
+   Guided demo — big glass coach steps over the live room. Projector-friendly:
+   large type, high contrast, everything readable across a room. The container
+   is pointer-events:none so the live wall stays dwellable through it; only the
+   card, orbs and buttons take input (all <button>s → dwell targets for free).
+   ============================================================================ */
+.guided-demo {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  pointer-events: none;
+}
+
+.guided-card {
+  position: absolute;
+  left: 50%;
+  bottom: 4vh;
+  transform: translateX(-50%);
+  width: min(920px, 94vw);
+  pointer-events: auto;
+  padding: 26px 34px 20px;
+  border-radius: 24px;
+  border: 1px solid rgba(158, 226, 255, 0.28);
+  background: rgba(6, 16, 24, 0.86);
+  backdrop-filter: blur(14px);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.55), 0 0 40px rgba(0, 188, 212, 0.08);
+  animation: fade-in 280ms ease;
+}
+
+/* Decide step: shrink to a slim top banner so the REAL generated pitch deck
+   below (and its decision bar) stays fully visible and dwellable. */
+.guided-card.slim {
+  bottom: auto;
+  top: 2vh;
+  width: min(880px, 94vw);
+  padding: 14px 26px 12px;
+  z-index: 60;
+}
+
+.guided-eyebrow {
+  display: block;
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--c-selected);
+}
+
+.guided-title {
+  margin: 6px 0 10px;
+  font-size: clamp(26px, 3.4vw, 40px);
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+
+.guided-card.slim .guided-title {
+  margin: 2px 0 6px;
+  font-size: clamp(18px, 2vw, 24px);
+}
+
+.guided-lede {
+  margin: 0 0 10px;
+  font-size: clamp(17px, 1.9vw, 22px);
+  line-height: 1.5;
+  color: var(--ink-soft);
+}
+
+.guided-lede strong {
+  color: var(--ink);
+}
+
+.guided-sub {
+  margin: 0 0 8px;
+  font-size: 16px;
+  color: var(--ink-faint);
+}
+
+.guided-progress {
+  margin: 4px 0 8px;
+  font-family: var(--mono);
+  font-size: clamp(20px, 2.2vw, 26px);
+  font-weight: 700;
+  color: var(--c-active);
+}
+
+.guided-notice {
+  margin: 0 0 12px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(245, 166, 35, 0.5);
+  background: rgba(245, 166, 35, 0.12);
+  font-size: 16px;
+  color: #f6dca6;
+}
+
+.guided-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
+.guided-actions .ctl-button {
+  font-size: 15px;
+  padding: 9px 18px;
+}
+
+.ctl-button.guided-finish {
+  color: #06130c;
+  background: var(--c-active);
+  border-color: rgba(0, 255, 136, 0.8);
+  font-weight: 800;
+}
+
+/* HUD launch button — calm cyan so it reads as an invitation, not state. */
+.ctl-button.guided-launch {
+  color: var(--c-selected);
+  border-color: rgba(0, 188, 212, 0.45);
+  background: rgba(0, 188, 212, 0.08);
+  white-space: nowrap;
+}
+
+.ctl-button.guided-launch:hover,
+.ctl-button.guided-launch.on {
+  background: rgba(0, 188, 212, 0.2);
+}
+
+/* Live status chips (step 2): pending → dim; ok → green. */
+.guided-status-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 6px 0 4px;
+}
+
+.guided-chip {
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--glass-line);
+  color: var(--ink-faint);
+  background: rgba(16, 30, 40, 0.55);
+}
+
+.guided-chip.ok {
+  color: var(--c-active);
+  border-color: rgba(0, 255, 136, 0.45);
+  background: rgba(0, 255, 136, 0.08);
+}
+
+.guided-mic-error {
+  color: #ffb3ad;
+}
+
+/* Practice orbs (step 1) — three floating dwell targets. Round, luminous,
+   big enough to point at from across the room. */
+.guided-orbs {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.practice-orb {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  width: clamp(96px, 11vw, 150px);
+  height: clamp(96px, 11vw, 150px);
+  border-radius: 50%;
+  border: 2px solid rgba(158, 226, 255, 0.55);
+  background: radial-gradient(circle at 34% 30%, rgba(158, 226, 255, 0.5), rgba(0, 188, 212, 0.18) 55%, rgba(0, 90, 120, 0.12));
+  box-shadow: 0 0 34px rgba(94, 210, 255, 0.4), inset 0 0 26px rgba(158, 226, 255, 0.25);
+  pointer-events: auto;
+  cursor: pointer;
+  padding: 0;
+  animation: practice-float 4.5s ease-in-out infinite;
+}
+
+.practice-orb:hover,
+.practice-orb[data-dwell-hot] {
+  border-color: rgba(158, 226, 255, 0.95);
+  box-shadow: 0 0 54px rgba(94, 210, 255, 0.75), inset 0 0 30px rgba(158, 226, 255, 0.4);
+}
+
+/* The dwell layer's generic grow uses transform — compose with the centering
+   translate so the orb grows in place instead of jumping. */
+.practice-orb[data-dwell-hot] {
+  transform: translate(-50%, -50%) scale(1.08);
+}
+
+.practice-orb-core {
+  display: block;
+  width: 26%;
+  height: 26%;
+  margin: 37% auto;
+  border-radius: 50%;
+  background: rgba(232, 242, 245, 0.92);
+  box-shadow: 0 0 18px rgba(232, 242, 245, 0.8);
+}
+
+.practice-orb.popped {
+  border-color: rgba(0, 255, 136, 0.8);
+  background: radial-gradient(circle, rgba(0, 255, 136, 0.5), rgba(0, 255, 136, 0) 70%);
+  box-shadow: none;
+  animation: practice-pop 600ms ease-out forwards;
+  pointer-events: none;
+}
+
+@keyframes practice-float {
+  0%, 100% { margin-top: 0; }
+  50% { margin-top: -18px; }
+}
+
+@keyframes practice-pop {
+  0% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, -50%) scale(1.7); }
+}
+
+/* Step 2 — the big Record button, centered where a hand naturally points. */
+.guided-record-stage {
+  position: absolute;
+  left: 50%;
+  top: 34%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.guided-record {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 26px 44px;
+  border-radius: 999px;
+  border: 3px solid rgba(255, 59, 48, 0.75);
+  background: rgba(30, 8, 8, 0.82);
+  color: #ffd7d4;
+  font-size: clamp(24px, 3vw, 36px);
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  box-shadow: 0 0 50px rgba(255, 59, 48, 0.35);
+  backdrop-filter: blur(10px);
+}
+
+.guided-record:hover,
+.guided-record[data-dwell-hot] {
+  background: rgba(255, 59, 48, 0.22);
+  box-shadow: 0 0 70px rgba(255, 59, 48, 0.6);
+}
+
+.guided-record-dot {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: #ff3b30;
+  box-shadow: 0 0 22px rgba(255, 59, 48, 0.9);
+  animation: record-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes record-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+/* Step 3 — the live transcript feed. */
+.guided-transcript {
+  max-height: 24vh;
+  overflow-y: auto;
+  padding: 12px 16px;
+  border-radius: 14px;
+  border: 1px solid var(--glass-line);
+  background: rgba(10, 20, 28, 0.6);
+}
+
+.guided-transcript-empty {
+  margin: 4px 0;
+  font-family: var(--mono);
+  font-size: 16px;
+  color: var(--ink-faint);
+  animation: record-pulse 2.2s ease-in-out infinite;
+}
+
+.guided-tx {
+  margin: 6px 0;
+  font-size: clamp(16px, 1.8vw, 20px);
+  color: var(--ink);
+}
+
+.guided-tx strong {
+  color: var(--c-selected);
+  margin-right: 8px;
+}
+
+.guided-tx-vibersyn strong {
+  color: var(--c-active);
+}
+
+/* Step 4 — the three framework race lanes. */
+.guided-lanes {
+  display: grid;
+  gap: 12px;
+  margin: 8px 0 4px;
+}
+
+.guided-lane {
+  display: grid;
+  grid-template-columns: minmax(170px, auto) 1fr;
+  grid-template-rows: auto auto;
+  column-gap: 16px;
+  row-gap: 6px;
+  align-items: baseline;
+  padding: 12px 16px;
+  border-radius: 14px;
+  border: 1px solid var(--glass-line);
+  background: rgba(10, 20, 28, 0.6);
+}
+
+.guided-lane-label {
+  font-size: clamp(17px, 1.9vw, 22px);
+  font-weight: 800;
+  color: var(--ink);
+}
+
+.guided-lane-status {
+  font-family: var(--mono);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--ink-faint);
+  justify-self: end;
+}
+
+.guided-lane.status-ready {
+  border-color: rgba(0, 255, 136, 0.5);
+}
+
+.guided-lane.status-ready .guided-lane-status {
+  color: var(--c-active);
+}
+
+.guided-lane.status-failed {
+  border-color: rgba(255, 59, 48, 0.5);
+}
+
+.guided-lane.status-failed .guided-lane-status {
+  color: var(--c-halted);
+}
+
+.guided-lane-track {
+  grid-column: 1 / -1;
+  display: block;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(150, 200, 220, 0.12);
+  overflow: hidden;
+}
+
+.guided-lane-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--c-planning);
+  transition: width 400ms ease;
+}
+
+.guided-lane.status-ready .guided-lane-fill {
+  background: var(--c-active);
+}
+
+.guided-lane.status-failed .guided-lane-fill {
+  background: rgba(255, 59, 48, 0.55);
+}
+
+.guided-all-failed {
+  color: #ffb3ad;
+}
+
+/* Celebration flash — the spoken idea REALLY became a build. */
+.guided-celebrate {
+  position: absolute;
+  left: 50%;
+  top: 18%;
+  transform: translateX(-50%);
+  padding: 18px 34px;
+  border-radius: 999px;
+  border: 1px solid rgba(0, 255, 136, 0.6);
+  background: rgba(4, 26, 16, 0.88);
+  color: var(--c-active);
+  font-size: clamp(22px, 2.6vw, 32px);
+  font-weight: 800;
+  white-space: nowrap;
+  box-shadow: 0 0 60px rgba(0, 255, 136, 0.35);
+  animation: celebrate-in 500ms cubic-bezier(0.2, 1.4, 0.4, 1);
+  pointer-events: none;
+}
+
+@keyframes celebrate-in {
+  from { opacity: 0; transform: translateX(-50%) scale(0.7); }
+  to { opacity: 1; transform: translateX(-50%) scale(1); }
+}
+
+/* Deck per-framework tabs — dwell/click to switch results; building/failed
+   lanes are labeled, disabled (not dwell targets), and honest. */
+.deck-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0 4px;
+}
+
+.deck-tab {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--glass-line);
+  background: rgba(16, 30, 40, 0.55);
+  color: var(--ink-soft);
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.deck-tab .deck-tab-status {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ink-faint);
+}
+
+.deck-tab.active {
+  border-color: rgba(0, 188, 212, 0.7);
+  background: rgba(0, 188, 212, 0.16);
+  color: var(--ink);
+}
+
+.deck-tab:disabled {
+  cursor: default;
+  opacity: 0.75;
+}
+
+.deck-tab.status-building .deck-tab-status {
+  color: var(--c-planning);
+}
+
+.deck-tab.status-failed {
+  border-color: rgba(255, 59, 48, 0.45);
+}
+
+.deck-tab.status-failed .deck-tab-status {
+  color: var(--c-halted);
+}
+
+.deck-tab.status-ready:not(:disabled) .deck-tab-status {
+  color: var(--c-active);
+}
+
+/* ============================================================================
    Reduced motion — freeze all float/drift, keep the static beauty
    ============================================================================ */
 @media (prefers-reduced-motion: reduce) {
@@ -1972,8 +2800,17 @@ button {
   .qr-card,
   .help-card,
   .qr-success,
-  .voice-flash {
+  .voice-flash,
+  .practice-orb,
+  .guided-record-dot,
+  .guided-transcript-empty,
+  .guided-celebrate,
+  .guided-card {
     animation: none !important;
+  }
+  /* Without the pop animation's forwards-fill, a popped orb must still vanish. */
+  .practice-orb.popped {
+    opacity: 0;
   }
   .bubble {
     transition: width 0ms, height 0ms;
@@ -1982,4 +2819,51 @@ button {
   .ring-fill {
     transition: none;
   }
+}
+
+/* --- Take-home QR (published pitch deck on GitHub Pages) ------------------ */
+/* The QR is a SERVER-generated SVG; a white quiet-zone card behind it is what
+   makes it scannable off the dark wall wash at projector distance. */
+.take-home-qr-block {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.take-home-qr-svg {
+  display: block;
+  background: #ffffff;
+  padding: 10px;
+  border-radius: 12px;
+  box-shadow: 0 0 0 1px var(--glass-line), 0 6px 24px rgba(0, 0, 0, 0.45);
+}
+
+.take-home-qr-svg svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* Wall fleet card: big enough to scan from a phone across the room. */
+.take-home-qr-block.card .take-home-qr-svg {
+  width: 172px;
+  height: 172px;
+}
+
+/* Deck HUD: sits in the slideshow head next to the title. */
+.take-home-qr-block.deck .take-home-qr-svg {
+  width: 148px;
+  height: 148px;
+}
+
+.take-home-qr-caption {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
 }

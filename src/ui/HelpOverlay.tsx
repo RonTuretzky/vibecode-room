@@ -13,9 +13,16 @@ const KEYBOARD_SHORTCUTS: ReadonlyArray<readonly [keys: string, action: string]>
   ["x", "dismiss the top ready idea"],
   ["c", "toggle Idea Capture"],
   ["a", "toggle Auto-Build"],
+  ["k", "halt the selected build"],
   ["m", "mic on / off"],
   ["u", "unmute the room"],
   ["q", "QR import overlay"],
+  ["g", "garden ↔ orbit scene"],
+  ["l", "layout: radial / ball / disk"],
+  ["z", "zen mode (hide all chrome)"],
+  ["f", "fit everything in view"],
+  ["`", "hide/unhide menu (0 clears)"],
+  ["drag", "orbit · Shift+drag pan · scroll zoom"],
   ["? / h", "this help"],
   ["Shift+E", "EMERGENCY STOP"],
   ["Esc", "close overlays"],
@@ -30,11 +37,26 @@ const VOICE_COMMANDS: ReadonlyArray<readonly [phrase: string, effect: string]> =
   ["“Vibersyn, emergency”", "EMERGENCY STOP"],
 ];
 
+// Gesture wall: there is no cursor at all — pointing highlights, holding
+// selects. Camera orbit is deliberately LOCKED in gesture mode (pointing must
+// never fight drag-orbit); the view changes only via the keyboard shortcuts.
+const GESTURE_MOVES: ReadonlyArray<readonly [move: string, effect: string]> = [
+  ["point at a project or button", "it grows + glows (no cursor is shown)"],
+  ["hold ≈0.8 s", "the ring fills, then selects (idea → build, build → steer/deck)"],
+  ["move away", "cancels the dwell; re-point to try again"],
+  ["two hands / people", "first on a target owns it — first-to-dwell wins"],
+  ["camera", "orbit/pan/zoom are LOCKED in gesture mode — use G / L / F / Z"],
+  ["?dwell=mouse", "desk testing: the mouse drives the same dwell-select"],
+];
+
 export interface HelpOverlayProps {
   onClose: () => void;
+  // True when this window runs the gesture wall (fusion cursors, no OS cursor);
+  // the gesture section leads with a "you are here" note.
+  gestureMode?: boolean;
 }
 
-export function HelpOverlay({ onClose }: HelpOverlayProps) {
+export function HelpOverlay({ onClose, gestureMode = false }: HelpOverlayProps) {
   return (
     <div className="detail-overlay help-overlay" data-testid="help-overlay" onClick={onClose}>
       <div
@@ -78,6 +100,23 @@ export function HelpOverlay({ onClose }: HelpOverlayProps) {
               {VOICE_COMMANDS.map(([phrase, effect]) => (
                 <div className="help-row" key={phrase}>
                   <dt className="help-phrase">{phrase}</dt>
+                  <dd>{effect}</dd>
+                </div>
+              ))}
+            </dl>
+          </section>
+
+          <section className="help-section" data-testid="help-gesture">
+            <h3 className="rail-title">Gesture wall</h3>
+            <p className="help-voice-intro">
+              {gestureMode
+                ? "This window is in gesture mode: no cursor — point, hold, select."
+                : "On the camera wall there is no cursor — point, hold, select."}
+            </p>
+            <dl className="help-list">
+              {GESTURE_MOVES.map(([move, effect]) => (
+                <div className="help-row" key={move}>
+                  <dt className="help-phrase">{move}</dt>
                   <dd>{effect}</dd>
                 </div>
               ))}

@@ -206,3 +206,26 @@ describe("selectAsrProvider — default by key presence (integration)", () => {
     expect(selection.provider).toBeInstanceOf(VoxTermASRProvider);
   });
 });
+
+describe("Deepgram endpointing — onboarding first-run VAD grace seam", () => {
+  test("a thunk endpointingMs is re-resolved per connection URL (time-varying policy)", () => {
+    let endpointing = 450;
+    const provider = new DeepgramNova3ASRProvider({
+      apiKey: DEEPGRAM_KEY,
+      sessionId: "vad-session",
+      endpointingMs: () => endpointing,
+    });
+    expect(provider.connectionUrl()).toContain("endpointing=450");
+    endpointing = 300;
+    expect(provider.connectionUrl()).toContain("endpointing=300");
+  });
+
+  test("selectAsrProvider forwards endpointingMs to the deepgram backend", () => {
+    const selection = selectAsrProvider(
+      { DEEPGRAM_API_KEY: DEEPGRAM_KEY },
+      { ...baseOptions, endpointingMs: () => 450 },
+    );
+    expect(selection.mode).toBe("deepgram");
+    expect((selection.provider as DeepgramNova3ASRProvider).connectionUrl()).toContain("endpointing=450");
+  });
+});

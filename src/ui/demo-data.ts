@@ -134,6 +134,247 @@ export const demoProjectorSnapshot: ProjectorSnapshot = {
   updatedAt: new Date("2026-06-16T18:00:00.000Z").toISOString(),
 };
 
+// A deliberately BUSY room: several projects building at once, each in a
+// different state (planning / active / blocked / completed) with a lively
+// transcript, idea tray, and trace. Powered by the "Mock room" toggle so a
+// viewer can see what a full room in flight looks like without needing real
+// builds. Pure fixture — safe to show over any live/offline snapshot.
+export function busyRoomSnapshot(): ProjectorSnapshot {
+  return {
+    sessionId: "projector-mock-busy",
+    listening: true,
+    muted: false,
+    globalState: "5 projects in flight",
+    activeCue: "Ember steering window",
+    emergencyStopTriggered: false,
+    suggestion: {
+      state: "queued",
+      pitch: "A live leaderboard for the hack-day demos.",
+      confidence: 0.77,
+      gate: { words: 88, minWords: 60, seconds: 140, minSeconds: 90 },
+      questions: ["Which projects count?", "Public or room-only?"],
+      rationale: "Mentioned twice and everyone wants a scoreboard.",
+    },
+    audio: {
+      lastSpoken: "Ember, ship the Slack digest to the standup channel.",
+      earcon: "route-steer double click",
+      silenceRatio: 0.34,
+    },
+    processes: [
+      {
+        upid: "upid_atlas_7f3",
+        runId: "smithers_run_9c12",
+        callsign: "Atlas",
+        state: "active",
+        selected: false,
+        task: "Blocker announcer",
+        model: "Claude Opus 4.8",
+        progressLabel: "wiring Slack post",
+        progress: 72,
+        lastOutput: "Announcement copy done — posting to #standup next.",
+        lastAction: "steer: include run name",
+        events: ["spawn confirmed", "plan accepted", "steered by room", "summary emitted"],
+        buildStatus: "ready",
+        previewUrl: "http://127.0.0.1:4801/",
+        slides: [
+          {
+            title: "What Atlas does",
+            html: "<p><strong>Blocker announcer</strong> — reads the standup notes, finds anything phrased as a blocker, and posts a spoken + written announcement so nothing gets lost.</p><ul><li>Watches the meeting-notes doc</li><li>Extracts blockers with a small LLM pass</li><li>Announces to <code>#standup</code> with owner + age</li></ul>",
+          },
+          {
+            title: "How it's going",
+            html: "<p>Scan pipeline is done and the announcement copy is written. Currently wiring the Slack post.</p><p><strong>72%</strong> complete · preview is live — click the fleet panel to open it.</p>",
+          },
+          {
+            title: "Try it",
+            html: "<p>Say a blocker out loud in standup and watch it surface within a minute. The room steered it once already: <em>“include the run name in the summary.”</em></p>",
+          },
+        ],
+      },
+      {
+        upid: "upid_ember_2a9",
+        runId: "smithers_run_9d41",
+        callsign: "Ember",
+        state: "active",
+        selected: true,
+        steering: true,
+        task: "Slack standup digest bot",
+        model: "Claude Sonnet 5",
+        progressLabel: "rendering digest",
+        progress: 55,
+        lastOutput: "Grouped 14 updates into 3 themes. Formatting the digest.",
+        lastAction: "steered: ship to standup channel",
+        events: ["spawn confirmed", "plan accepted", "fetching messages", "clustering"],
+        buildStatus: "building",
+        slides: [
+          {
+            title: "What Ember does",
+            html: "<p><strong>Slack standup digest bot</strong> — pulls the day's updates, clusters them into themes, and ships one readable digest instead of forty pings.</p><ul><li>14 updates → 3 themes so far</li><li>Digest formatted as a single threaded post</li></ul>",
+          },
+          {
+            title: "Status",
+            html: "<p>Mid-build at <strong>55%</strong> — the room just steered it to ship into the standup channel. Rendering the digest now.</p>",
+          },
+        ],
+      },
+      {
+        upid: "upid_cobalt_5e0",
+        runId: "smithers_run_9c55",
+        callsign: "Cobalt",
+        state: "planning",
+        selected: false,
+        task: "Repo migration dry-run",
+        model: "Claude Sonnet 5",
+        progressLabel: "checking resources",
+        progress: 18,
+        lastOutput: "Planning the dry-run path before touching files.",
+        lastAction: "spawned from accepted suggestion",
+        events: ["spawn confirmed", "resource check", "planning"],
+        slides: [
+          {
+            title: "What Cobalt does",
+            html: "<p><strong>Repo migration dry-run</strong> — rehearses the monorepo move on a throwaway clone and reports what would break, before anything is touched.</p>",
+          },
+          {
+            title: "Status",
+            html: "<p>Early planning (<strong>18%</strong>): mapping the import graph and checking runner capacity. No files modified yet — dry-run by design.</p>",
+          },
+        ],
+      },
+      {
+        upid: "upid_iris_913",
+        runId: "smithers_run_9e08",
+        callsign: "Iris",
+        state: "blocked",
+        selected: false,
+        task: "PR triage dashboard",
+        model: "Claude Opus 4.8",
+        progressLabel: "needs a token",
+        progress: 40,
+        lastOutput: "Blocked: GitHub token missing the repo scope.",
+        lastAction: "waiting on room input",
+        events: ["spawn confirmed", "plan accepted", "auth check failed"],
+        buildStatus: "failed",
+        source: { kind: "github-import", url: "https://github.com/acme/pr-triage" },
+        slides: [
+          {
+            title: "What Iris does",
+            html: "<p><strong>PR triage dashboard</strong> — imported from <code>acme/pr-triage</code> via the QR wall. Ranks open PRs by review urgency.</p>",
+          },
+          {
+            title: "Why it's blocked",
+            html: "<p>The GitHub token is missing the <code>repo</code> scope, so the API calls 403. <strong>Fix:</strong> re-issue the token with repo scope and say <em>“Vibersyn, resume Iris.”</em></p>",
+          },
+        ],
+      },
+      {
+        upid: "upid_nova_44c",
+        runId: "smithers_run_9b77",
+        callsign: "Nova",
+        state: "completed",
+        selected: false,
+        task: "Retro wall",
+        model: "Claude Sonnet 5",
+        progressLabel: "shipped",
+        progress: 100,
+        lastOutput: "Retro wall is live — clustered 22 cards into wins/gripes.",
+        lastAction: "build finished",
+        events: ["spawn confirmed", "plan accepted", "built", "preview ready"],
+        buildStatus: "ready",
+        previewUrl: "http://127.0.0.1:4802/",
+        slides: [
+          {
+            title: "What Nova shipped",
+            html: "<p><strong>Retro wall</strong> — clusters the week's wins and gripes side by side so the retro starts from evidence, not memory.</p><ul><li>22 cards clustered</li><li>Wins vs gripes, auto-grouped by theme</li></ul>",
+          },
+          {
+            title: "Done — see it live",
+            html: "<p>Build finished at <strong>100%</strong>; the preview is being served locally. This is what talk→build looks like when it lands.</p>",
+          },
+        ],
+      },
+    ],
+    transcript: [
+      { time: "14:21:03", speaker: "Room", kind: "room", text: "Ember, ship the Slack digest to the standup channel." },
+      { time: "14:21:04", speaker: "Vibersyn", kind: "vibersyn", text: "Routed to Ember." },
+      { time: "14:21:22", speaker: "Nova", kind: "process", text: "Retro wall is live — preview is up." },
+      { time: "14:21:37", speaker: "Room", kind: "room", text: "Iris looks stuck — what does it need?" },
+      { time: "14:21:39", speaker: "Iris", kind: "process", text: "Blocked: the GitHub token is missing the repo scope." },
+      { time: "14:22:05", speaker: "Room", kind: "room", text: "Someone build us a leaderboard for the demos." },
+      { time: "14:22:08", speaker: "Vibersyn", kind: "vibersyn", text: "Idea queued — leaderboard for the hack-day demos." },
+    ],
+    trace: [
+      trace("observe.final", "corr-ember-014", { utteranceId: "utt-771", speaker: "speaker-2" }),
+      trace("route.action", "corr-ember-014", { action: "steer", targetUPID: "upid_ember_2a9" }, "upid_ember_2a9"),
+      trace("process.steer", "corr-ember-014", { runId: "smithers_run_9d41" }, "upid_ember_2a9"),
+      trace("build.ready", "corr-nova-006", { previewUrl: "http://127.0.0.1:4802/" }, "upid_nova_44c"),
+      trace("process.blocked", "corr-iris-003", { reason: "missing-scope" }, "upid_iris_913"),
+      trace("suggestion.queued", "corr-suggest-021", { confidence: 0.77, idlePreferred: true }),
+    ],
+    ideas: [
+      {
+        id: "idea_demo_leaderboard",
+        pitch: "A live leaderboard for the hack-day demos.",
+        confidence: 0.85,
+        status: "ready",
+        maturity: "actionable",
+        verified: true,
+        rationale: "Mentioned twice and everyone wants a scoreboard.",
+        evidence: "Someone build us a leaderboard for the demos.",
+      },
+      {
+        id: "idea_blocker_radar",
+        pitch: "A radar page that pings when a build has been blocked for 10 minutes.",
+        confidence: 0.71,
+        status: "ready",
+        maturity: "elaborated",
+        verified: true,
+        rationale: "Iris sat blocked for a while before anyone noticed.",
+        evidence: "Nobody saw Iris was stuck until we looked up.",
+      },
+      {
+        id: "idea_standup_heatmap",
+        pitch: "A heatmap of which repos get the most standup blockers.",
+        confidence: 0.58,
+        status: "ready",
+        maturity: "proposed",
+        verified: false,
+        evidence: "The same repos keep coming up as blockers.",
+      },
+      {
+        id: "idea_voice_recap",
+        pitch: "A one-tap voice recap of everything the room shipped today.",
+        confidence: 0.44,
+        status: "forming",
+        maturity: "proposed",
+        verified: false,
+        evidence: "What did we actually finish today?",
+      },
+      {
+        id: "idea_demo_timer",
+        pitch: "A shared demo timer that rings between presenters.",
+        confidence: 0.29,
+        status: "forming",
+        maturity: "forming",
+        verified: false,
+      },
+      {
+        id: "idea_room_dj",
+        pitch: "Ambient music that shifts with how many builds are running.",
+        confidence: 0.18,
+        status: "forming",
+        maturity: "forming",
+        verified: false,
+      },
+    ],
+    voice: { lastCommand: "steer ember", at: new Date("2026-06-16T18:00:00.000Z").toISOString() },
+    steeringUpid: "upid_ember_2a9",
+    autoAccept: false,
+    captureMode: true,
+    updatedAt: new Date("2026-06-16T18:00:00.000Z").toISOString(),
+  };
+}
+
 // The neutral, fixture-free baseline the LIVE runtime publishes before any real
 // activity: zero processes, an empty transcript, an idle suggestion with an empty
 // pitch, and an empty trace/audio. The demo fixture above is reserved for the

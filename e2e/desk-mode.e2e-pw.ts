@@ -5,7 +5,8 @@ import { expect, test, type Page } from "@playwright/test";
  * primary control surface (gesture wall demoted to explicit opt-in):
  *
  *  - gesture decoupling: ?wall= alone is an identity badge, no gesture layer
- *  - ?view=ideas|builds two-wall split
+ *  - two-wall full scene: the legacy ?view=ideas|builds param is inert — every
+ *    wall renders the complete room (all ideas AND all builds)
  *  - the idea tray (explicit Build/Dismiss over the whole detection ledger)
  *  - the QR import overlay (phone → GitHub URL → fleet)
  *  - the extended keyboard map + help overlay + voice feedback flash
@@ -50,22 +51,36 @@ test.describe("desk mode — gesture decoupling & wall identity", () => {
   });
 });
 
-test.describe("desk mode — two-wall view split", () => {
-  test("?view=ideas: idea surfaces + tray, fleet hidden", async ({ page }) => {
-    await gotoStatic(page, "?live=0&view=ideas");
-    await expect(page.locator('[data-testid="bubble"][data-kind="idea"]').first()).toBeVisible();
+test.describe("desk mode — two-wall full scene (legacy ?view is inert)", () => {
+  test("?view=ideas still renders the complete room: tray AND fleet", async ({ page }) => {
+    await gotoStatic(page, "?live=0&wall=A&view=ideas");
+    await expect(page.getByTestId("room-scene")).toBeVisible();
     await expect(page.getByTestId("idea-tray")).toBeVisible();
-    await expect(page.locator('[data-testid="bubble"][data-kind="process"]')).toHaveCount(0);
-    await expect(page.getByTestId("fleet-panel")).toHaveCount(0);
+    await expect(page.getByTestId("fleet-panel")).toHaveCount(2);
   });
 
-  test("?view=builds: fleet surfaces, idea bubble/tray hidden", async ({ page }) => {
-    await gotoStatic(page, "?live=0&view=builds");
-    await expect(page.locator('[data-testid="bubble"][data-callsign="Atlas"]')).toBeVisible();
+  test("?view=builds still renders the complete room: fleet AND idea surfaces", async ({ page }) => {
+    await gotoStatic(page, "?live=0&wall=B&view=builds");
+    await expect(page.getByTestId("room-scene")).toBeVisible();
     await expect(page.getByTestId("fleet-panel").first()).toBeVisible();
-    await expect(page.locator('[data-testid="bubble"][data-kind="idea"]')).toHaveCount(0);
-    await expect(page.getByTestId("idea-tray")).toHaveCount(0);
-    await expect(page.locator('[data-region="suggestion"]')).toHaveCount(0);
+    await expect(page.getByTestId("idea-tray")).toBeVisible();
+    await expect(page.locator('[data-region="suggestion"]')).toBeVisible();
+  });
+
+  test("both walls carry identical scene node counts (the view never filters)", async ({ page }) => {
+    await gotoStatic(page, "?live=0&wall=A&view=ideas");
+    const wallA = await page.getByTestId("room-scene").evaluate((el) => ({
+      ideas: el.getAttribute("data-idea-count"),
+      trees: el.getAttribute("data-tree-count"),
+    }));
+    await gotoStatic(page, "?live=0&wall=B&view=builds");
+    const wallB = await page.getByTestId("room-scene").evaluate((el) => ({
+      ideas: el.getAttribute("data-idea-count"),
+      trees: el.getAttribute("data-tree-count"),
+    }));
+    expect(wallA).toEqual(wallB);
+    expect(Number(wallA.ideas)).toBeGreaterThan(0);
+    expect(Number(wallA.trees)).toBeGreaterThan(0);
   });
 });
 

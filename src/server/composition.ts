@@ -18,10 +18,27 @@ import { selectAsrProvider, selectDecisionLLM, selectTtsProvider, type ASRProvid
 import type { ClaudeMessagesTransport, ReplayASRSource, TTSProvider, TTSTransport, VoxTermSegmentSource } from "../providers";
 import { drainTtsStream, type TtsAudioSink } from "./tts-sink";
 import { selectAudioSink, type AudioSink, type AudioSinkMode } from "./audio-device-sink";
-import { IdleCueDriver } from "./idle-cue-driver";
 import { IdeaBuildRegistry, type BuilderAgent } from "./idea-builder";
+import { BackendSelector } from "../buildloop/selector";
+import { BuildOrchestrator, mergeLegacyBuildState, type ProcessBuildSnapshot } from "../buildloop/orchestrator";
+import { ExecutionRegistry, type ExecutionSnapshot } from "../buildloop/execution";
+import type { RunEventOverlay } from "./run-event-driver";
+import type { BuildBackend } from "../buildloop/types";
+import { SmithersBuildBackend } from "../buildloop/backends/smithers";
+import { NativeBuildBackend } from "../buildloop/backends/native";
+import { ElizaBuildBackend } from "../buildloop/backends/eliza";
+import { generateSlideshow } from "../slideshow/generator";
+import { appendTakeHomeSlide } from "../slideshow/template";
+import { publishDeck, resolveGitHubPat, type PublishDeckFn } from "../publish/gh-pages";
+import { qrCodeSvg } from "../publish/qr";
+import { readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { selectSummarizer } from "../audio/summarizer";
+import type { HotLoopSummaryLLM } from "../audio/output-policy";
+import { OnboardingGlue } from "./onboarding-glue";
+import type { AcceptanceSpawnSeam } from "../acceptance/spawn";
+import type { BuildloopProcess, BuildloopSnapshot } from "../ui/buildloop";
 import {
-  readSuggestionEngineConfig,
   SuggestionEngine,
   type PendingQueuedSuggestion,
   type SuggestionEngineConfig,
@@ -30,10 +47,17 @@ import {
 import { DetectionRunner, selectDetectionRunner, type DetectionSnapshot } from "./detection-runner";
 import { DETECTION_BUBBLE_TTL_MS, ideaTrayFromCandidates, pendingSuggestionFromCandidate, projectorSuggestionFromCandidate } from "./idea-suggestion";
 import { matchWakePhrase, parseVoiceCommand, voiceCommandLabel, wakeWordFromEnv, type WakePhraseMatch } from "./voice-commands";
+import { dispatchUtterance, type DispatchDecision, type SteeringWindow as RoutingSteeringWindow } from "../routing/dispatch";
+import { includesPhrase, loadRoutingVocabulary, normalizeSpeech, type DocumentedCommand, type RoutingVocabulary } from "../routing/vocabulary";
+import { panicHaltOutputs } from "../routing/panic-feedback";
+import { NearMissSoftLanding } from "../onboarding/soft-landing";
+import { FirstRunVadTuner } from "../onboarding/vad";
+import { SeamDispatcher } from "../seam/dispatcher";
+import { createCorrelationRecord, type CorrelationRecord, type CorrelationStore } from "../seam/correlation-store";
 import { callsignFromRepo, parseGitHubImportUrl } from "./project-import";
 import type { IdeaCandidate, IdeaDetector } from "../detect";
 import { StageSequencer, type CanonicalStage } from "../spine/stage-sequencer";
-import type { LogEvent, OutputDecision, PendingSuggestion } from "../types";
+import type { DispatchedAction, LogEvent, OutputDecision, PendingSuggestion } from "../types";
 import { demoProjectorSnapshot, emptyProjectorSnapshot, withUnmuted } from "../ui/demo-data";
 import type { IdeaTrayItem, ProjectorProcess, ProjectorProcessState, ProjectorSnapshot, ProjectorSuggestion, TranscriptLine } from "../ui/types";
 import type { TranscriptObservation } from "../types";
@@ -89,24 +113,44 @@ export interface ProjectorRuntime {
   readonly stageSequencer: StageSequencer;
   readonly trace: TraceProcessor;
   readonly emergencyController: EmergencyStopController;
-  // Polls the room-idle gap to deliver a deferred (high interrupt cost) suggestion
-  // once the room falls quiet (ISSUE-0024). The server boundary calls start();
-  // tests drive tick() deterministically off the injected clock.
-  readonly idleCueDriver: IdleCueDriver;
   // Subscribes each spawned run to the gateway's live event stream and folds the
   // frames into a per-UPID overlay that the process panel reads (ISSUE-0021), so
   // a live run shows real progress/lastOutput/state instead of demo fixtures.
   readonly runEventDriver: RunEventDriver;
+  // Seam action API executor (/api/seam/*): validates DispatchedActions and
+  // executes them against the live registry — the SAME fleet the voice and
+  // click paths drive — so an HTTP/WS action and a spoken command are one system.
+  readonly seamDispatcher: SeamDispatcher;
   // Real accept->build->preview registry: each voice-accepted idea scaffolds a
   // runnable artifact + a live preview server, tracked here per UPID so the
   // snapshot can surface previewUrl/buildStatus and lifecycle can tear it down.
   readonly ideaBuilds: IdeaBuildRegistry;
-  // The most recent decision the SuggestionEngine returned for a live final
-  // observation (null before the first one). ISSUE-0009/0010 read this — plus
-  // `pendingSuggestion()` — to drive delivery/acceptance off the live runtime.
-  readonly lastSuggestionDecision: SuggestionEngineDecision | null;
+  // Multi-backend BUILD LOOP (src/buildloop). The selector owns the registered
+  // backend roster + enable/availability state (the snapshot's top-level
+  // `backends[]` and POST /api/backends); the orchestrator fans each accepted
+  // idea out to every enabled+available backend concurrently and tracks the
+  // per-process builds[] fragment the wall consumes. Since the two-stage pivot
+  // these lanes are fast CONCEPT MOCKS (kickoff), not full apps.
+  readonly buildSelector: BackendSelector;
+  readonly buildOrchestrator: BuildOrchestrator;
+  // COMMISSION stage (two-stage pivot): the per-UPID execution lane for the
+  // durable subscription run — artifacts preview + lane snapshot. Launched
+  // only by an explicit executeProcess (never at accept), torn down on halt /
+  // emergency stop.
+  readonly executionRegistry: ExecutionRegistry;
+  // COMMISSION a kicked-off process: launch the durable `vibersyn-process`
+  // gateway run (claude subscription via the existing shim + steer-window
+  // workflow), flip the process's execution lane to `executing`, and subscribe
+  // its live run-event telemetry. Idempotent per UPID; errors are typed so the
+  // HTTP route can 400/404 honestly.
+  executeProcess(upid: string, correlationId?: string): Promise<ExecuteProcessResult>;
   pendingSuggestion(): PendingQueuedSuggestion | null;
   snapshot(): ProjectorSnapshot;
+  // Rebuild + broadcast the snapshot NOW and return it. The HTTP control routes
+  // call this after registry mutations that do not republish on their own
+  // (pause/resume/steer — only halt fires onHalt), so the returned body and the
+  // SSE stream both reflect the mutation immediately.
+  publishNow(): ProjectorSnapshot;
   subscribe(subscriber: ProjectorRuntimeSubscriber): () => void;
   unmute(correlationId?: string): Promise<ProjectorSnapshot>;
   emergencyStop(correlationId?: string): Promise<ProjectorSnapshot>;
@@ -151,6 +195,13 @@ export interface ProjectorRuntime {
 }
 
 export type ImportProjectResult = { ok: true; snapshot: ProjectorSnapshot } | { ok: false; error: string };
+
+// COMMISSION result for the HTTP/voice surfaces. `status` maps directly onto
+// the /api/process/:upid/execute response code: 404 unknown/dead UPID, 400
+// already executing/built or emergency-stopped.
+export type ExecuteProcessResult =
+  | { ok: true; execution: ExecutionSnapshot | null; snapshot: ProjectorSnapshot }
+  | { ok: false; status: 400 | 404; error: string; execution?: ExecutionSnapshot | null };
 
 interface SeededProcessView {
   upid: string;
@@ -200,12 +251,32 @@ export interface ProjectorRuntimeOptions {
   // app (idea-builder). Defaults to the host `claude` CLI builder. Tests inject a
   // synthetic builder so no real `claude` spawn occurs.
   builderAgent?: BuilderAgent;
+  // Multi-backend build roster for the BUILD LOOP fan-out (src/buildloop).
+  // Production defaults to the real smithers/native/eliza backends. Tests inject
+  // fakes so no real model call or CLI spawn occurs. Seam contract: when this is
+  // ABSENT and a legacy `builderAgent` IS injected, the accept path keeps the
+  // LEGACY single-build ideaBuilds route (the existing e2e contract — root
+  // previewUrl, ideaBuilds.settle) and the orchestrator is constructed but not
+  // wired into the registry; injecting buildBackends always routes accepts
+  // through the orchestrator instead.
+  buildBackends?: BuildBackend[];
   // Injectable idea detector (the inference that decides whether a buildable idea
   // was proposed and which span of conversation it came from). Production selects
   // host-`claude` inference, or the durable Smithers `idea-detection` run when a
   // gateway is configured. Tests inject a scripted/heuristic detector so detection
   // is deterministic with no model spawn.
   ideaDetector?: IdeaDetector;
+  // Root directory the COMMISSIONED durable runs write their full-app artifacts
+  // under (the vibersyn-process workflow's contract-fixed output root). Defaults
+  // to <cwd>/artifacts/vibersyn-runs. Tests point it at a temp dir.
+  executionArtifactsRoot?: string;
+  // GitHub Pages deck publisher seam (src/publish/gh-pages). Fired once per
+  // kicked-off idea, fire-and-forget, after its FIRST pitch deck lands; the
+  // resolved public URL becomes the process's publishedUrl + take-home QR.
+  // Default: the real REST publisher (PAT from env — publishing is cleanly
+  // disabled with a trace when no PAT resolves). Tests inject a fake; null
+  // disables publishing entirely.
+  publishDeck?: PublishDeckFn | null;
 }
 
 export async function createProjectorRuntime(
@@ -264,9 +335,20 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   readonly stageSequencer: StageSequencer;
   readonly trace: TraceProcessor;
   readonly emergencyController: EmergencyStopController;
-  readonly idleCueDriver: IdleCueDriver;
   readonly runEventDriver: RunEventDriver;
+  readonly seamDispatcher: SeamDispatcher;
   readonly ideaBuilds: IdeaBuildRegistry;
+  readonly buildSelector: BackendSelector;
+  readonly buildOrchestrator: BuildOrchestrator;
+  readonly executionRegistry: ExecutionRegistry;
+  // Session-start onboarding glue: REQ-1 consent disclosure (spoken+traced once,
+  // folded into the wall transcript), the authoritative mic-stream listening
+  // indicator (E2 on stopped→streaming), and the whole-session transcripts-only
+  // persistence guard asserted on every ingested observation.
+  readonly #onboarding: OnboardingGlue;
+  // Hot-loop summarizer (">15 words → summarize" guard). Selected by env:
+  // Cerebras when CEREBRAS_API_KEY resolves, else the deterministic clamp.
+  readonly #summarizer: HotLoopSummaryLLM;
   readonly #clock: () => number;
   readonly #session: EmergencySessionState;
   readonly #env: ProjectorRuntimeEnv;
@@ -283,9 +365,8 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   #micBytes = 0;
   #micLastPublishMs = 0;
   #acceptanceWatchdog: ReturnType<typeof setInterval> | null = null;
-  // Ambient-suggestion state, fed by FINAL observations only. `#lastSuggestionDecision`
-  // is the latest engine verdict; `#lastFinalAtMs` lets us report room-idle gap.
-  #lastSuggestionDecision: SuggestionEngineDecision | null = null;
+  // Time of the most recent FINAL observation (null before any speech); lets the
+  // runtime report the room-idle gap.
   #lastFinalAtMs: number | null = null;
   // Click-to-steer target (CLICK A PROJECT -> STEER IT). When non-null, live FINAL
   // transcript lines are routed to this process's agent loop via registry.steer
@@ -310,11 +391,33 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   // confirmation ("vibersyn → build"). Null until the first command.
   readonly #wakeWord: string;
   #voice: ProjectorSnapshot["voice"] = null;
+  // FULL voice grammar (src/routing): the documented command set — mute/unmute/
+  // panic/stop/pause/resume/pause-all/status — plus callsign-addressed steering.
+  // Runs on every NON-wake FINAL; the wake-word table above keeps first claim.
+  readonly #routingVocabulary: RoutingVocabulary;
+  // Dispatch-level steering window: "[callsign]" alone opens it, "[callsign],
+  // [instruction]" opens-and-steers, "done"/"back" or steerIdleSeconds of
+  // silence closes it. Read by dispatchUtterance as DispatchContext.openWindow.
+  #routingWindow: RoutingSteeringWindow | null = null;
+  // Onboarding near-miss soft landing: "Did you mean …?" for an ADDRESSED
+  // utterance that matched no command, active for the first 20 minutes of the
+  // session (NEAR_MISS_DISABLE_AFTER_MS), then silent.
+  readonly #softLanding: NearMissSoftLanding;
   // GitHub-imported fleet entries (QR -> /api/projects/import), keyed by UPID.
   // The registry record stays the source of truth for lifecycle (halt/emergency
   // stop); this map carries the import-only display facts — the display-cased
   // callsign, the task line, and the source URL the projector links to.
   readonly #imports = new Map<string, { url: string; callsign: string; task: string }>();
+  // TAKE-HOME PUBLISHING (GitHub Pages). `#publishDeckFn` is the injected/real
+  // publisher (null = disabled); `#publishKicked` guards ONE publish attempt
+  // per kicked-off UPID; `#deckDirs` remembers every generated local deck dir
+  // (upid -> backend -> …/slideshow) so the confirmed publish can append the
+  // take-home QR slide to each; `#published` holds the confirmed-200 Pages URL
+  // + server-generated QR SVG the snapshot exposes per process.
+  readonly #publishDeckFn: PublishDeckFn | null;
+  readonly #publishKicked = new Set<string>();
+  readonly #deckDirs = new Map<string, Map<string, string>>();
+  readonly #published = new Map<string, { url: string; qrSvg: string; repo: string }>();
   // Idea detection wiring. `#detectionMode` records which backend was selected
   // (host-claude | heuristic | smithers | injected) for the degradation notice;
   // `#detectionPrimaryId` is the candidate currently surfaced as the bubble (so a
@@ -371,11 +474,19 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     // mid-stream. It is mute-protected too, so a muted room never streams audio to
     // the cloud. The replay source falls back to VIBERSYN_MIC_REPLAY_PATH so the live
     // mic path stays deterministically drivable offline.
+    // First-run VAD grace (onboarding): for the first 5 minutes after boot the
+    // live-mic end-of-utterance endpointing gets a +50% silence grace
+    // (FIRST_RUN_VAD_SILENCE_MULTIPLIER), so a brand-new room's slower, halting
+    // speech is not cut off mid-thought. Resolved per mic session via a thunk;
+    // after the window it settles to the 300 ms Deepgram default. ("First run"
+    // is per-process — no persisted marker exists yet.)
+    const vadTuner = new FirstRunVadTuner({ startedAtMs: clock(), clock });
     const selectedMicAsr = selectAsrProvider(env, {
       sessionId,
       micProfile: true,
       voxtermSource: options.voxtermSource,
       replaySource: options.replaySource ?? env.VIBERSYN_MIC_REPLAY_PATH,
+      endpointingMs: () => vadTuner.threshold(300).silenceThresholdMs,
     });
     this.micMode = selectedMicAsr.mode;
     this.#micAsr = this.muteController.protectCloudAsr(selectedMicAsr.provider);
@@ -402,6 +513,11 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     // spawn/halt to a real Smithers gateway over its RPC transport.
     const smithersClient = selectSmithersClient(env, { transport: options.smithersTransport });
     const smithersMode: SmithersClientMode = smithersClient instanceof GatewayRegistryClient ? "gateway" : "memory";
+    // Hot-loop summarizer selection (the ">15 words → summarize" guard's real
+    // leg): Cerebras when the credential resolves, else the deterministic clamp.
+    // The selected instance backs every ttsDecision the runtime makes.
+    const summarizerSelection = selectSummarizer(env);
+    this.#summarizer = summarizerSelection.summarizer;
     // Structured degradation notice computed from the resolved per-leg selections
     // (GAP-002). The live mic ASR is the leg that gates real transcription.
     this.degradation = buildDegradationNotice({
@@ -410,6 +526,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       sink: sinkMode,
       decider: decisionSelection.mode,
       smithers: smithersMode,
+      summarizer: summarizerSelection.mode,
     });
     // Real accept->build->preview registry. A voice-accepted idea spawns a
     // process AND scaffolds a runnable artifact served live from builds/<upid>/.
@@ -421,11 +538,62 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       buildsRoot: options.buildsRoot,
       builderAgent: options.builderAgent,
     });
+    // Multi-backend BUILD LOOP (src/buildloop): the selector owns the registered
+    // roster (VIBERSYN_BUILD_BACKENDS csv, default "smithers,native" — eliza is
+    // opt-in; runtime toggles via POST /api/backends), the orchestrator fans each
+    // accepted idea out to every enabled+available backend concurrently into
+    // builds/<upid>/<backendId>/ with per-build progress, steer re-runs, and the
+    // ~2s emergency abort. Registration order = wall display order. The slideshow
+    // hook regenerates the per-backend deck after every successful build/steer;
+    // it is garnish — the orchestrator swallows its failures.
+    this.buildSelector = new BackendSelector({
+      backends: options.buildBackends ?? [new SmithersBuildBackend(), new NativeBuildBackend(), new ElizaBuildBackend()],
+      env,
+    });
+    this.#publishDeckFn = options.publishDeck !== undefined ? options.publishDeck : publishDeck;
+    this.buildOrchestrator = new BuildOrchestrator({
+      selector: this.buildSelector,
+      buildsRoot: options.buildsRoot,
+      slideshow: async (input) => {
+        await generateSlideshow(input, { signal: input.signal });
+        // Take-home publishing rides the deck: the FIRST deck of a kickoff
+        // fires the fire-and-forget GitHub Pages publish; every deck (incl.
+        // steer regenerations) gets the QR slide once the publish confirmed.
+        this.onDeckGenerated(input.upid, input.backend, input.outDir);
+      },
+      onUpdate: () => this.publish(),
+    });
+    // COMMISSION-stage execution lanes (two-stage pivot): the durable
+    // subscription run's artifacts land under artifacts/vibersyn-runs/<upid>/
+    // and are served as the execution lane's previewUrl once built. No Cerebras
+    // anywhere on this path.
+    this.executionRegistry = new ExecutionRegistry({
+      artifactsRoot: options.executionArtifactsRoot,
+      onUpdate: () => this.publish(),
+    });
+    // Boot probe (fire-and-forget) so the first snapshot shows availability.
+    void this.buildSelector.probeAll();
+    // Seam contract (see ProjectorRuntimeOptions.buildBackends): an injected
+    // legacy builderAgent WITHOUT an injected backend roster keeps the legacy
+    // single-build path — existing tests/e2e drive that contract; production
+    // (nothing injected) and injected-roster tests fan out via the orchestrator.
+    const useOrchestrator = options.buildBackends !== undefined || options.builderAgent === undefined;
+    // Concurrency cap: VIBERSYN_MAX_CONCURRENT_PROCESSES (0/unset-invalid → 16).
+    // The old hardcoded 2 meant the third spoken idea in a session was refused.
+    const maxConcurrent = resolveMaxConcurrentProcesses(env);
     this.registry = new ProcessRegistry({
       client: smithersClient,
       sessionId,
       now: clock,
+      maxConcurrentProcesses: maxConcurrent,
+      // Per-boot nonce so commissioned runIds never collide with a PREVIOUS
+      // session's durable gateway runs (upids restart at upid-1 every boot;
+      // the gateway's finished "vibersyn-upid-1" would otherwise be replayed
+      // instantly, stale artifacts and all).
+      runIdNonce: Date.now().toString(36),
       ideaBuilds: this.ideaBuilds,
+      orchestrator: useOrchestrator ? this.buildOrchestrator : null,
+      execution: this.executionRegistry,
       // A halted/emergency-stopped process drops its preview; republish so the
       // "Preview ->" link disappears from the snapshot immediately. If the halted
       // process was the steering target, drop the target so transcript stops
@@ -443,9 +611,39 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     // off the same selected Smithers client the registry spawns through; on each
     // overlay change it republishes so the snapshot reflects live progress. In the
     // in-memory default the stream is empty, so the seeded fleet keeps its fixtures.
+    // Since the two-stage pivot the overlay also FEEDS the commission execution
+    // lane: percent/label track the live run events, and a completed run flips
+    // the lane to `built` once its artifacts are served.
     this.runEventDriver = new RunEventDriver({
       client: runEventStreamClient(smithersClient),
-      onUpdate: () => this.publish(),
+      onUpdate: (upid, overlay) => this.onRunOverlay(upid, overlay),
+    });
+    // Seam action API (/api/seam/*): the dispatcher's client/correlation seams
+    // are registry adapters, so seam-dispatched spawn/steer/pause/resume/halt/
+    // status act on and report the REAL fleet. The shared CallsignAllocator
+    // makes the dispatcher's pre-assigned spawn callsign idempotent when
+    // registry.spawn re-assigns it (same upid -> same callsign).
+    this.seamDispatcher = new SeamDispatcher({
+      client: registrySeamClient(this.registry),
+      correlations: new RegistryCorrelationView(this.registry),
+      sessionId,
+      trace: this.trace,
+      now: clock,
+      callsigns: this.registry.callsigns,
+    });
+    // Session-start onboarding glue: constructs the tested onboarding modules
+    // (consent scheduler, authoritative listening indicator, persistence guard)
+    // over the runtime's real callbacks. The disclosure is announced on the
+    // first mic open (announceConsentOnce); the indicator's E2 plays through the
+    // same shared audio output as every other earcon; the guard is asserted on
+    // every ingested observation (transcripts only, never raw audio).
+    this.#onboarding = new OnboardingGlue({
+      sessionId,
+      provider: this.micMode,
+      output: this.#audio,
+      clock,
+      onOutput: (decision) => this.recordOutput(decision),
+      onTrace: (event) => this.recordExternalTrace(event),
     });
 
     // Click-to-build: a delivered suggestion bubble must persist long enough to
@@ -461,13 +659,36 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     this.#autoAccept = env.VIBERSYN_AUTO_ACCEPT === "1" || env.VIBERSYN_AUTO_ACCEPT === "true";
     this.#captureMode = env.VIBERSYN_CAPTURE_MODE === "1" || env.VIBERSYN_CAPTURE_MODE === "true";
     this.#wakeWord = wakeWordFromEnv(env);
+    this.#routingVocabulary = loadRoutingVocabulary(env);
+    this.#softLanding = new NearMissSoftLanding({
+      sessionStartedAtMs: clock(),
+      clock,
+      commands: SOFT_LANDING_COMMANDS,
+    });
     const pending = new PendingSuggestionOwner({ clock, noAnswerTimeoutMs });
     this.#pendingOwner = pending;
-    const acceptanceSeam = createProcessRegistryAcceptanceSeam(this.registry);
+    // DUPLICATE-SPAWN GUARD: every accept route (spoken "yes", bubble click,
+    // tray accept, auto-build) funnels through this one seam, so guarding here
+    // fixes the double-spawn bug (one utterance spawning upid-1 AND upid-2) for
+    // all of them at once: an idea whose normalized pitch matches an accept in
+    // the last 120s — or one whose spawn is still in flight — is refused at the
+    // seam (surfaces as a traced accepted:false, never a second process).
+    const acceptanceSeam = createDuplicateSpawnGuard(createProcessRegistryAcceptanceSeam(this.registry), {
+      clock,
+      onSuppressed: (info) =>
+        this.recordExternalTrace({
+          event: "spawn.duplicate.suppressed",
+          level: "warn",
+          sessionId,
+          correlationId: info.correlationId,
+          meta: { pitch: info.pitch, reason: info.reason },
+        }),
+    });
     const spawner = new AcceptanceSpawner({
       seam: acceptanceSeam,
       sessionId,
       clock,
+      maxConcurrentProcesses: maxConcurrent,
       activeProcessCount: () => this.registry.activeRecords().length,
       onTrace: (event) => this.recordExternalTrace(event),
       onOutput: (decision) => this.recordOutput(decision),
@@ -511,19 +732,6 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       onTrace: (event) => this.recordExternalTrace(event),
       onOutput: (decision) => this.recordOutput(decision),
     });
-    // Room-idle delivery of deferred suggestions (ISSUE-0024). The driver reads
-    // the same clock and #lastFinalAtMs the suggestion path stamps, so the
-    // measured silence is exact. On a 'fired' idle decision it speaks the
-    // suggestion through the same SUGGESTION_DELIVERY path a live fire takes.
-    this.idleCueDriver = new IdleCueDriver({
-      engine: this.suggestionEngine,
-      sessionId,
-      clock,
-      env,
-      lastFinalAtMs: () => this.#lastFinalAtMs,
-      onDecision: (decision) => this.deliverIdleDecision(decision),
-    });
-
     // Idea detection replaces the word/time gate as the source of idea bubbles. It
     // runs windowed model inference over the rolling transcript and surfaces
     // grounded candidates. With a Smithers gateway configured it runs as the
@@ -568,10 +776,6 @@ class LiveProjectorRuntime implements ProjectorRuntime {
 
   snapshot(): ProjectorSnapshot {
     return this.#snapshot;
-  }
-
-  get lastSuggestionDecision(): SuggestionEngineDecision | null {
-    return this.#lastSuggestionDecision;
   }
 
   get cueBridgeMode(): CueBridgeMode | null {
@@ -644,6 +848,14 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       // (per-process halt already stops its own; this also reaps any in-flight or
       // not-yet-halted build so no loopback preview outlives the session).
       await this.ideaBuilds.stopAll().catch(() => undefined);
+      // Abort every multi-backend build across every UPID: backends SIGKILL
+      // their subprocesses and the per-UPID preview servers stop, all inside the
+      // orchestrator's ~2s abort budget — no build outlives the emergency stop.
+      await this.buildOrchestrator.abortEverything().catch(() => undefined);
+      // Tear down every commission execution lane too (registry.halt per
+      // process already cancelled the durable runs via the gateway client);
+      // no full-app artifacts preview outlives the session either.
+      await this.executionRegistry.stopAll().catch(() => undefined);
       // Drop any in-flight idea candidates so the bubble clears with the kill-all,
       // and stop the capture creation loop.
       this.detection.clear();
@@ -697,7 +909,8 @@ class LiveProjectorRuntime implements ProjectorRuntime {
         }
         this.#detectionPrimaryId = null;
         await this.spawnAck(spawn, correlationId);
-        this.subscribeRunEvents(spawn.process.upid, spawn.process.runId);
+        // No run-event subscription here: an accept is KICKOFF only (mocks +
+        // deck). Telemetry starts when the room commissions (executeProcess).
       }
     } catch (error) {
       this.recordExternalTrace({
@@ -743,7 +956,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
           this.#detectionPrimaryId = null;
         }
         await this.spawnAck(spawn, correlationId);
-        this.subscribeRunEvents(spawn.process.upid, spawn.process.runId);
+        // Kickoff only — run-event telemetry starts at executeProcess.
       }
     } catch (error) {
       this.recordExternalTrace({
@@ -969,6 +1182,11 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       correlationId,
       meta: { mode: this.micMode },
     });
+    // Onboarding glue (fire-and-forget — the mic must never block on audio):
+    // REQ-1 consent disclosure once per session, then the authoritative
+    // listening indicator flips streaming (E2 on the stopped→streaming edge).
+    void this.announceConsentOnce(correlationId);
+    void this.#onboarding.micOpened(correlationId).catch(() => undefined);
     this.publish();
 
     // Drain the ASR provider in the background; each observation updates the
@@ -1033,6 +1251,8 @@ class LiveProjectorRuntime implements ProjectorRuntime {
           correlationId,
           meta: { bytesReceived: this.#micBytes },
         });
+        // Authoritative listening indicator: mic-stream truth flips back off.
+        void this.#onboarding.micClosed(correlationId).catch(() => undefined);
         this.publish();
         await drained.catch(() => undefined);
       },
@@ -1043,6 +1263,10 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   // only — drive the ambient SuggestionEngine. Interim (partial) results replace
   // the single in-flight line and must NOT move the engine's gates.
   private async ingestTranscript(observation: TranscriptObservation, correlationId: string): Promise<void> {
+    // Whole-session persistence guard (onboarding glue): transcripts ONLY may be
+    // folded into published/persisted state — a payload smuggling raw audio
+    // throws here, before any fold, and surfaces as a mic.session.error trace.
+    this.#onboarding.guardTranscript(observation);
     const text = observation.text.trim();
     if (text.length === 0) {
       return;
@@ -1077,6 +1301,30 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       // Cue path (harness or fallback) exactly once, so a 'viber' wake word emits an
       // earcon trace. This is orthogonal to the suggestion/acceptance routing below.
       await this.driveCueBridge(observation, correlationId);
+
+      // VOICE CALLSIGN STEERING: an utterance ADDRESSED to a live process by its
+      // callsign ("atlas, make the header blue") sets that process as the
+      // steering target and routes the remainder as steer text — before any
+      // ambient routing. Reuses the wake router's fuzzy matcher with the
+      // callsign as the wake word, so the same guardrails apply (start-of-
+      // utterance anchor, first-letter match, edit budget, phonetic key).
+      const addressed = this.matchCallsignAddress(text);
+      if (addressed !== null) {
+        await this.routeCallsignSteering(addressed, observation, correlationId);
+        return;
+      }
+
+      // FULL voice grammar (routing/dispatch): mute/unmute/panic/stop/pause/
+      // resume/pause-all/status plus callsign-addressed steering. Precedence:
+      // the wake table above claims wake-addressed utterances and the fuzzy
+      // callsign matcher above claims start-of-utterance callsign addresses;
+      // every other FINAL flows here. A command or steering instruction is
+      // executed against the live registry/controllers and CONSUMED; a "pass"
+      // falls through unchanged so ambient talk still reaches acceptance/
+      // detection.
+      if (await this.routeGrammar(observation, correlationId)) {
+        return;
+      }
 
       // CLICK A PROJECT -> STEER IT. While a steering target is set, route this
       // FINAL line to that process's agent loop (registry.steer) instead of seeding
@@ -1131,11 +1379,8 @@ class LiveProjectorRuntime implements ProjectorRuntime {
           this.#detectionPrimaryId = null;
         }
         await this.spawnAck(result.spawn, acceptanceCorrelationId);
-        // Subscribe the freshly spawned run to its live event stream so the
-        // process panel reflects real progress (ISSUE-0021). Fire-and-forget: the
-        // overlay updates republish on their own, and a stream failure must not
-        // abort acceptance routing.
-        this.subscribeRunEvents(result.spawn.process.upid, result.spawn.process.runId);
+        // Kickoff only (mocks + deck) — no durable run exists yet, so there is
+        // nothing to stream. Run-event telemetry starts at executeProcess.
       }
     } catch (error) {
       this.recordExternalTrace({
@@ -1189,6 +1434,83 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     this.publish();
   }
 
+  // VOICE CALLSIGN STEERING match: does this utterance ADDRESS a live process by
+  // callsign in its first tokens? Reuses matchWakePhrase (the wake router's
+  // fuzzy matcher) with the callsign as the canonical word: the window must
+  // start within the first two tokens, anchor on the callsign's first letter,
+  // and stay within the edit/phonetic budget — so ordinary room talk that
+  // merely mentions a callsign mid-sentence never hijacks steering.
+  private matchCallsignAddress(text: string): { upid: string; callsign: string; remainder: string } | null {
+    for (const record of this.registry.activeRecords()) {
+      const match = matchWakePhrase(text, record.callsign);
+      if (match !== null) {
+        return { upid: record.upid, callsign: record.callsign, remainder: match.afterWake };
+      }
+    }
+    return null;
+  }
+
+  // Route one callsign-addressed FINAL: select the process as the steering
+  // target, then steer the remainder of the utterance into its agent loop (the
+  // registry forwards it to the smithers client AND fires the orchestrator's
+  // correction re-run on ready builds). A bare address ("atlas.") only selects —
+  // subsequent lines route via the steering target.
+  private async routeCallsignSteering(
+    addressed: { upid: string; callsign: string; remainder: string },
+    observation: TranscriptObservation,
+    correlationId: string,
+  ): Promise<void> {
+    const steerCorrelationId = `${correlationId}-${observation.utteranceId}-callsign`;
+    this.recordExternalTrace({
+      event: "steering.callsign",
+      level: "info",
+      sessionId: this.sessionId,
+      correlationId: steerCorrelationId,
+      upid: addressed.upid,
+      meta: { callsign: addressed.callsign, remainder: addressed.remainder, text: observation.text },
+    });
+    this.setSteeringTarget(addressed.upid, steerCorrelationId);
+    const remainder = addressed.remainder.trim();
+    if (remainder.length === 0) {
+      return;
+    }
+    try {
+      await this.registry.steer(addressed.upid, { text: remainder, source: "live-transcript" }, steerCorrelationId);
+    } catch (error) {
+      this.recordExternalTrace({
+        event: "steering.route.error",
+        level: "error",
+        sessionId: this.sessionId,
+        correlationId: steerCorrelationId,
+        upid: addressed.upid,
+        meta: { message: error instanceof Error ? error.message : String(error) },
+      });
+    }
+    this.publish();
+  }
+
+  // REQ-1 consent disclosure, once per session (idempotent via the scheduler):
+  // spoken+traced through the onboarding glue and folded into the live
+  // transcript as a "vibersyn" line so the wall shows the disclosure too.
+  private async announceConsentOnce(correlationId: string): Promise<void> {
+    if (this.#onboarding.consentSpoken()) {
+      return;
+    }
+    try {
+      const { line } = await this.#onboarding.announceConsent();
+      this.#liveFinals = [...this.#liveFinals, line].slice(-MAX_LIVE_TRANSCRIPT_LINES);
+      this.publish();
+    } catch (error) {
+      this.recordExternalTrace({
+        event: "consent.error",
+        level: "error",
+        sessionId: this.sessionId,
+        correlationId,
+        meta: { message: error instanceof Error ? error.message : String(error) },
+      });
+    }
+  }
+
   // Execute one recognized wake utterance (the server-side wake router — desk
   // mode's primary voice control). The command text after the wake phrase maps
   // to a runtime action via the fixed command table; an unrecognized remainder
@@ -1206,6 +1528,42 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       meta: { command: command?.kind ?? "unrecognized", matched: wake.matched, text: observation.text },
     });
     if (command === null) {
+      // COMMISSION by voice (two-stage pivot): "vibersyn execute" /
+      // "vibersyn commission [it]" / "vibersyn make it real" launches the
+      // durable subscription run for the steered/selected process. Handled
+      // here (not in the fixed COMMAND_TABLE) so the voice grammar table's
+      // contract stays untouched.
+      if (isExecutePhrase(wake.afterWake)) {
+        const target = this.#steeringUpid ?? this.registry.selectedUPID() ?? soleActiveUpid(this.registry);
+        this.#voice = { lastCommand: "execute", at: new Date().toISOString() };
+        if (target === null) {
+          this.recordExternalTrace({
+            event: "voice.execute.no-target",
+            level: "warn",
+            sessionId: this.sessionId,
+            correlationId: voiceCorrelationId,
+            meta: { text: observation.text },
+          });
+        } else {
+          const result = await this.executeProcess(target, voiceCorrelationId);
+          if (!result.ok) {
+            this.recordExternalTrace({
+              event: "voice.execute.refused",
+              level: "warn",
+              sessionId: this.sessionId,
+              correlationId: voiceCorrelationId,
+              upid: target,
+              meta: { error: result.error },
+            });
+          }
+        }
+        this.publish();
+        return;
+      }
+      // Near-miss soft landing (onboarding): the room ADDRESSED us (wake phrase
+      // matched) but the remainder matched nothing. Instead of dropping it
+      // silently, offer "Did you mean …?" for the first 20 minutes of the session.
+      await this.offerNearMissSoftLanding(wake.afterWake, voiceCorrelationId);
       return;
     }
     // Stamp the confirmation BEFORE executing so every publish the action itself
@@ -1252,6 +1610,273 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     if (target !== null) {
       this.dismissIdea(target.id, correlationId);
     }
+  }
+
+  // Evaluate the onboarding near-miss soft landing over an addressed-but-
+  // unrecognized utterance and, on a near miss, speak + trace the recovery
+  // prompt. Best-effort: never throws into the ingest path.
+  private async offerNearMissSoftLanding(text: string, correlationId: string): Promise<void> {
+    const result = this.#softLanding.evaluate(text);
+    if (result.kind !== "near-miss") {
+      return;
+    }
+    this.recordExternalTrace({
+      event: "voice.nearmiss",
+      level: "info",
+      sessionId: this.sessionId,
+      correlationId,
+      meta: {
+        suggestion: result.text,
+        commandId: result.commandId,
+        phrase: result.phrase,
+        distance: result.distance,
+        heard: text,
+      },
+    });
+    await this.emitOutput(
+      { channel: "tts", text: result.text, wordCount: countSpokenWords(result.text), summarized: false },
+      correlationId,
+    );
+    this.publish();
+  }
+
+  // Run one non-wake FINAL through the routing grammar (src/routing/dispatch)
+  // and execute the decision against the live registry/controllers. Returns
+  // true when the utterance was consumed (command or steering), false to fall
+  // through to click-steer/acceptance/detection. Acceptance answers are
+  // deliberately NOT claimed here (pendingSuggestion: null): the semantic
+  // AcceptanceClassifier owns yes/no while a suggestion is pending.
+  private async routeGrammar(observation: TranscriptObservation, correlationId: string): Promise<boolean> {
+    const nowMs = this.#clock();
+    const grammarCorrelationId = `${correlationId}-${observation.utteranceId}-grammar`;
+    const decision = dispatchUtterance(observation, {
+      sessionId: this.sessionId,
+      activeProcesses: this.registry.activeRecords().map((record) => ({
+        upid: record.upid,
+        callsign: record.callsign,
+        // activeRecords never returns a dead process; the fold is type-level
+        // (the dispatch ActiveProcess state union has no "dead").
+        state: record.state === "dead" ? ("halted" as const) : record.state,
+        selected: record.selected,
+      })),
+      openWindow: this.#routingWindow,
+      pendingSuggestion: null,
+      suggestionEligible: false,
+      nowMs,
+      trace: this.trace,
+      vocabulary: this.#routingVocabulary,
+    });
+
+    if (decision.kind === "local") {
+      await this.applyLocalEffect(decision, grammarCorrelationId, nowMs);
+      this.publish();
+      return true;
+    }
+    if (decision.kind === "action") {
+      // Targetless informational commands (status / pause-all) match ANYWHERE
+      // in an utterance at the dispatch layer, so an ambient mention ("a status
+      // board for the migration") would hijack room material away from idea
+      // detection. Execute them only when the utterance is command-shaped —
+      // addressed by a routing wake word or short enough to be a bare command —
+      // otherwise fall through to ambient handling.
+      if (
+        (decision.commandId === "status" || decision.commandId === "pauseAll") &&
+        !this.isCommandShaped(observation.text)
+      ) {
+        return false;
+      }
+      await this.executeRoutedAction(decision, grammarCorrelationId, nowMs);
+      this.publish();
+      return true;
+    }
+    // decision.kind === "route" cannot occur (suggestionEligible is false).
+    // Addressed near-miss ("abort" with no unambiguous target, "stop" with no
+    // window, "pause that one", …): offer the onboarding soft landing and
+    // consume the utterance so command-shaped speech is not fed to idea
+    // detection. EXCEPTION: accept/decline near-misses ("yes"/"no" — dispatch
+    // marks them near-miss because we pass pendingSuggestion: null) MUST fall
+    // through so the AcceptanceController keeps owning acceptance answers.
+    // All other passes (ambient / low-confidence / rejected-no-target) fall
+    // through too.
+    if (
+      decision.kind === "pass" &&
+      decision.reason === "near-miss" &&
+      decision.addressed &&
+      decision.commandId !== "accept" &&
+      decision.commandId !== "decline"
+    ) {
+      await this.offerNearMissSoftLanding(observation.text, grammarCorrelationId);
+      return true;
+    }
+    return false;
+  }
+
+  // Map one routed DispatchedAction onto the real registry/orchestrator method.
+  // Handler → runtime mapping (COMMAND_HANDLERS in src/routing/handlers.ts):
+  //   steer/selectAndSteer -> ProcessRegistry.steer (+ open/refresh #routingWindow)
+  //   pause                -> ProcessRegistry.pause
+  //   resume               -> ProcessRegistry.resume
+  //   pauseAll             -> ProcessRegistry.pauseAll
+  //   stop                 -> ProcessRegistry.halt (trigger "stop")
+  //   panic                -> ProcessRegistry.halt (trigger "panic") + panic earcon/ack
+  //   status               -> ProcessRegistry.statusSummary() spoken via TTS
+  //   accept (spawn)       -> acceptPendingSuggestion (the real accept->build path)
+  // Failures are traced, never thrown — a bad command must not abort ingestion.
+  private async executeRoutedAction(
+    decision: Extract<DispatchDecision, { kind: "action" }>,
+    correlationId: string,
+    nowMs: number,
+  ): Promise<void> {
+    const action = decision.action;
+    try {
+      switch (action.type) {
+        case "steer": {
+          if (action.targetUPID === null) {
+            return;
+          }
+          await this.registry.steer(action.targetUPID, action.payload, correlationId);
+          this.openOrTouchRoutingWindow(decision, nowMs);
+          return;
+        }
+        case "pause":
+          if (action.targetUPID === null) {
+            return;
+          }
+          await this.registry.pause(action.targetUPID, correlationId);
+          return;
+        case "resume":
+          if (action.targetUPID === null) {
+            return;
+          }
+          await this.registry.resume(action.targetUPID, correlationId);
+          return;
+        case "halt": {
+          if (action.targetUPID === null) {
+            return;
+          }
+          const trigger = decision.commandId === "panic" ? "panic" : "stop";
+          await this.registry.halt(action.targetUPID, correlationId, trigger);
+          if (this.#routingWindow?.upid === action.targetUPID) {
+            this.#routingWindow = null;
+          }
+          if (decision.commandId === "panic") {
+            for (const output of panicHaltOutputs()) {
+              await this.emitOutput(output, correlationId);
+            }
+          }
+          return;
+        }
+        case "pauseAll":
+          await this.registry.pauseAll(correlationId);
+          return;
+        case "status": {
+          const summary = this.registry.statusSummary();
+          await this.emitOutput(
+            { channel: "tts", text: summary, wordCount: countSpokenWords(summary), summarized: false },
+            correlationId,
+          );
+          return;
+        }
+        case "spawn":
+          // Voice "accept" — same real accept->build->preview path as click/wake-table build.
+          await this.acceptPendingSuggestion(correlationId);
+          return;
+      }
+    } catch (error) {
+      this.recordExternalTrace({
+        event: "voice.grammar.error",
+        level: "error",
+        sessionId: this.sessionId,
+        correlationId,
+        upid: action.targetUPID ?? undefined,
+        meta: {
+          commandId: decision.commandId,
+          actionType: action.type,
+          message: error instanceof Error ? error.message : String(error),
+        },
+      });
+    }
+  }
+
+  // Map one local routing effect onto the runtime.
+  //   wake  -> StageSequencer ACTIVE_LISTEN (E1)   mute   -> MuteController.engage
+  //   unmute -> MuteController.release + fresh session
+  //   declineSuggestion -> dismissTopIdea
+  //   openSteeringWindow -> #routingWindow + setSteeringTarget (visible marker)
+  //   closeSteeringWindow -> clear both
+  private async applyLocalEffect(
+    decision: Extract<DispatchDecision, { kind: "local" }>,
+    correlationId: string,
+    nowMs: number,
+  ): Promise<void> {
+    switch (decision.localEffect) {
+      case "mute":
+        await this.muteController.engage({ correlationId });
+        return;
+      case "unmute":
+        await this.muteController.release({ correlationId, trigger: "unmute-word" });
+        this.#session.startFreshSession();
+        return;
+      case "wake":
+        await this.driveTransition("ACTIVE_LISTEN", {
+          correlationId,
+          reason: "wake-detected",
+          audible: { channel: "earcon", id: "E1" },
+        });
+        return;
+      case "declineSuggestion":
+        this.dismissTopIdea(correlationId);
+        return;
+      case "openSteeringWindow": {
+        if (decision.targetUPID === null || decision.callsign === null) {
+          return;
+        }
+        this.#routingWindow = {
+          upid: decision.targetUPID,
+          callsign: decision.callsign,
+          openedAtMs: nowMs,
+          lastActivityMs: nowMs,
+        };
+        // Mirror onto the click-steer target so the wall shows the steering
+        // marker; "done" (closeSteeringWindow) clears both.
+        this.setSteeringTarget(decision.targetUPID, correlationId);
+        await this.emitOutput({ channel: "ack", id: "route-steer" }, correlationId);
+        return;
+      }
+      case "closeSteeringWindow":
+        this.#routingWindow = null;
+        this.clearSteeringTarget(correlationId);
+        return;
+    }
+  }
+
+  // "Command-shaped" heuristic for targetless informational commands: the room
+  // either addressed us with a routing wake word ("viber status please") or the
+  // utterance is short enough (<= 4 tokens) to be a bare spoken command.
+  private isCommandShaped(text: string): boolean {
+    if (includesPhrase(text, this.#routingVocabulary.wake)) {
+      return true;
+    }
+    return normalizeSpeech(text).split(/\s+/u).filter(Boolean).length <= 4;
+  }
+
+  // Open (selectAndSteer) or refresh (steer inside the window) the dispatch
+  // steering window so follow-up instructions keep routing to the same process
+  // until "done" or steerIdleSeconds of silence.
+  private openOrTouchRoutingWindow(decision: Extract<DispatchDecision, { kind: "action" }>, nowMs: number): void {
+    if (decision.targetUPID === null || decision.callsign === null) {
+      return;
+    }
+    if (this.#routingWindow?.upid === decision.targetUPID) {
+      this.#routingWindow.lastActivityMs = nowMs;
+      return;
+    }
+    this.#routingWindow = {
+      upid: decision.targetUPID,
+      callsign: decision.callsign,
+      openedAtMs: nowMs,
+      lastActivityMs: nowMs,
+    };
   }
 
   // Route one FINAL observation through the active Cue wake/earcon path. The
@@ -1436,7 +2061,12 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     }
   }
 
-  private buildSnapshot(previous: ProjectorSnapshot = this.#snapshot): ProjectorSnapshot {
+  publishNow(): ProjectorSnapshot {
+    this.publish();
+    return this.#snapshot;
+  }
+
+  private buildSnapshot(previous: ProjectorSnapshot = this.#snapshot): BuildloopSnapshot {
     const muted = this.#emergencyTriggered || this.muteController.isMuted();
     const listening = !this.#emergencyTriggered && this.#session.isListening() && !muted;
     const liveActiveCue = this.#micActive ? "ambient listening" : previous.activeCue;
@@ -1463,6 +2093,9 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       steeringUpid: this.#steeringUpid,
       autoAccept: this.#autoAccept,
       captureMode: this.#captureMode,
+      // Multi-backend build loop: the registered backend roster with enabled +
+      // last-probed availability — the wall's toggle chips (POST /api/backends).
+      backends: this.buildSelector.snapshot(),
     };
   }
 
@@ -1505,7 +2138,117 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     return ideaTrayFromCandidates(this.detection.candidates());
   }
 
-  private processSnapshots(): ProjectorProcess[] {
+  // --- Take-home publishing (GitHub Pages + QR) -----------------------------
+
+  // Called by the orchestrator's slideshow hook after every successful deck
+  // generation. Remembers the deck dir, re-appends the QR slide when this UPID
+  // already published (steer re-runs regenerate the deck without it), and
+  // kicks the one-shot fire-and-forget publish on the FIRST deck. Never blocks
+  // the kickoff: everything network-shaped is void-ed with its own traces.
+  private onDeckGenerated(upid: string, backend: string, outDir: string): void {
+    const deckDir = join(outDir, "slideshow");
+    let decks = this.#deckDirs.get(upid);
+    if (decks === undefined) {
+      decks = new Map();
+      this.#deckDirs.set(upid, decks);
+    }
+    decks.set(backend, deckDir);
+    const published = this.#published.get(upid);
+    if (published !== undefined) {
+      void this.appendQrSlideToLocalDeck(deckDir, published);
+      return;
+    }
+    this.kickDeckPublish(upid, backend, outDir, deckDir);
+  }
+
+  // ONE publish attempt per kicked-off idea. No PAT in the environment →
+  // publishing is cleanly disabled with an explicit trace (never an error).
+  private kickDeckPublish(upid: string, backend: string, mockDir: string, deckDir: string): void {
+    if (this.#publishKicked.has(upid) || this.#publishDeckFn === null) {
+      return;
+    }
+    this.#publishKicked.add(upid);
+    const correlationId = `corr-publish-${upid}`;
+    if (resolveGitHubPat(this.#env) === null) {
+      this.recordExternalTrace({
+        level: "info",
+        event: "process.publish.disabled",
+        sessionId: this.sessionId,
+        correlationId,
+        upid,
+        latencyMs: 0,
+        meta: {
+          reason: "no-github-pat",
+          hint: "set VIBERSYN_GITHUB_PAT (or GITHUB_PAT / GH_TOKEN) to publish pitch decks to GitHub Pages",
+        },
+      });
+      return;
+    }
+    // The repo is named after the INFERRED PROJECT NAME: the LLM-upgraded
+    // title when the fire-and-forget namer has resolved by now, else the
+    // deterministic title; the spoken handle is only the slug fallback.
+    const record = this.registry.records().find((process) => process.upid === upid);
+    const startedAtMs = this.#clock();
+    const publisher = this.#publishDeckFn;
+    void publisher(
+      {
+        upid,
+        handle: record?.callsign ?? null,
+        title: record?.title ?? null,
+        deckDir,
+        mockDirs: { [backend]: mockDir },
+      },
+      { env: this.#env },
+    )
+      .then(async (result) => {
+        const qrSvg = await qrCodeSvg(result.url);
+        const published = { url: result.url, qrSvg, repo: result.repo };
+        this.#published.set(upid, published);
+        this.recordExternalTrace({
+          level: "info",
+          event: "process.published",
+          sessionId: this.sessionId,
+          correlationId,
+          upid,
+          latencyMs: this.#clock() - startedAtMs,
+          meta: { url: result.url, repo: result.repo, login: result.login, filesUploaded: result.filesUploaded },
+        });
+        // Every local deck generated so far gains the final take-home slide.
+        for (const dir of this.#deckDirs.get(upid)?.values() ?? []) {
+          await this.appendQrSlideToLocalDeck(dir, published);
+        }
+        this.publish();
+      })
+      .catch((error: unknown) => {
+        this.recordExternalTrace({
+          level: "warn",
+          event: "process.publish.failed",
+          sessionId: this.sessionId,
+          correlationId,
+          upid,
+          latencyMs: this.#clock() - startedAtMs,
+          meta: { error: error instanceof Error ? error.message : String(error) },
+        });
+      });
+  }
+
+  // Append the take-home QR slide to one local deck on disk. Idempotent (the
+  // slide carries a marker) and best-effort: a halted build may have dropped
+  // the directory, and the deck is garnish — never a reason to fail anything.
+  private async appendQrSlideToLocalDeck(deckDir: string, published: { url: string; qrSvg: string }): Promise<void> {
+    try {
+      const indexPath = join(deckDir, "index.html");
+      const html = await readFile(indexPath, "utf8");
+      const patched = appendTakeHomeSlide(html, { url: published.url, qrSvg: published.qrSvg });
+      if (patched !== html) {
+        await writeFile(indexPath, patched, "utf8");
+      }
+    } catch {
+      // Deck gone (halt/emergency) — nothing to take home.
+    }
+  }
+
+  private processSnapshots(): Array<BuildloopProcess & { execution: ExecutionSnapshot | null }> {
     const demoByUpid = new Map(this.#demoProcesses.map((process) => [process.upid, process]));
 
     return this.registry.records().map((record) => {
@@ -1525,11 +2268,36 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       // emergency stop) still comes from the registry record, so a dead import
       // shows halted like everything else.
       const imported = this.#imports.get(record.upid);
+      // Multi-backend KICKOFF fragment: one CONCEPT-MOCK entry per fanned-out
+      // backend (status/progress/previewUrl/summary/slideshowUrl). A dead
+      // process shows no builds — the orchestrator tore its servers down on
+      // halt. The legacy per-process previewUrl/buildStatus derive from
+      // builds[] when the legacy single-build path did not run
+      // (mergeLegacyBuildState), so the old "Preview ->" link stays lit.
+      const builds: ProcessBuildSnapshot[] = record.state === "dead" ? [] : this.registry.builds(record.upid);
+      const orchestrated = mergeLegacyBuildState(builds);
+      // COMMISSION execution lane (two-stage pivot): null until the room
+      // explicitly executes; then executing (percent/label from live run
+      // events) -> built with the full-app artifacts preview. A dead process
+      // shows no lane — halt tore the preview down.
+      const execution: ExecutionSnapshot | null = record.state === "dead" ? null : this.registry.execution(record.upid);
+      // TAKE-HOME publish surface: the confirmed-200 GitHub Pages URL + the
+      // server-generated QR SVG the wall renders ("scan to take it home").
+      // Deliberately survives a halt — the published page is a public
+      // artifact, not a room-local server that tore down.
+      const published = this.#published.get(record.upid) ?? null;
       return {
         upid: record.upid,
         runId: record.runId,
-        previewUrl: record.state === "dead" ? null : imported?.url ?? build?.previewUrl ?? null,
-        buildStatus: build?.status ?? null,
+        // A BUILT commission preview (the real full app) outranks every mock
+        // preview on the legacy per-process field.
+        previewUrl:
+          record.state === "dead"
+            ? null
+            : imported?.url ?? execution?.previewUrl ?? build?.previewUrl ?? orchestrated?.previewUrl ?? null,
+        buildStatus: build?.status ?? orchestrated?.status ?? null,
+        builds,
+        execution,
         // The registry normalizes callsigns to lowercase for voice matching; the
         // projector shows the pre-authored display casing ("Atlas"/"COBALT"-style
         // repo callsigns for imports).
@@ -1539,13 +2307,21 @@ class LiveProjectorRuntime implements ProjectorRuntime {
         // Click-to-steer marker: this process is the live steering target, so
         // subsequent FINAL transcript lines route to it. A dead record never steers.
         steering: record.state !== "dead" && this.#steeringUpid === record.upid,
-        task: imported?.task ?? demo?.task ?? "Vibersyn task",
+        // A GitHub import's display contract is its "Imported from GitHub: …"
+        // line — the registry's inferred title (project naming) must not shadow
+        // it. Everything else prefers the inferred title.
+        // Last-resort task label derives from REAL record data (the assigned
+        // callsign), never a canned placeholder ("Vibersyn task" leftover):
+        // title is only null when the pitch had no content words to infer from.
+        task: imported?.task ?? record.title ?? demo?.task ?? record.callsign,
         model: demo?.model ?? "runtime",
         progressLabel: record.state === "dead" ? "halted" : imported !== undefined ? "imported" : demo?.progressLabel ?? record.lastAction,
         progress: record.state === "dead" ? 100 : live?.progress ?? demo?.progress ?? Math.min(95, record.progressSeq * 12),
         lastOutput: record.state === "dead" ? "Halted by emergency stop." : live?.lastOutput ?? demo?.lastOutput ?? record.lastAction,
         lastAction: record.lastAction === "spawn" && demo !== undefined ? demo.events[0] ?? record.lastAction : record.lastAction,
         events: record.state === "dead" ? [...(demo?.events ?? []), "halted"] : demo?.events ?? [record.lastAction],
+        publishedUrl: published?.url ?? null,
+        publishedQrSvg: published?.qrSvg ?? null,
         ...(imported === undefined ? {} : { source: { kind: "github-import" as const, url: imported.url } }),
       };
     });
@@ -1612,7 +2388,9 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     }
   }
 
-  // Subscribe one spawned run to its live gateway event stream (ISSUE-0021). The
+  // Subscribe one COMMISSIONED run to its live gateway event stream
+  // (ISSUE-0021). Since the two-stage pivot this fires at execute time, not at
+  // accept — a kickoff-only process has no durable run to stream. The
   // RunEventDriver folds frames into a per-UPID overlay and republishes via its
   // onUpdate hook, so the process panel tracks real progress. Fire-and-forget: a
   // stream/transport failure is swallowed so it can never wedge live ingestion.
@@ -1628,23 +2406,84 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     });
   }
 
-  // Handle one idle-cue decision from the IdleCueDriver. A suggestion that was
-  // deferred at fire time (high interrupt cost) reaches here as a 'fired'
-  // decision once the room has been quiet for the idle gap: reflect it on the
-  // snapshot and speak it through the same SUGGESTION_DELIVERY path a live fire
-  // takes. Non-fired decisions (e.g. 'expired') only update the bubble.
-  private async deliverIdleDecision(decision: SuggestionEngineDecision): Promise<void> {
-    this.#lastSuggestionDecision = decision;
-    if (decision.kind === "fired") {
-      await this.deliverSuggestionAudio(decision.suggestion, `corr-idle-${decision.suggestion.suggestionId}`);
+  // Fold one live run-event overlay change into the commission execution lane
+  // (percent/label from real telemetry) and, on run completion, flip the lane
+  // to `built` by serving the artifacts directory (fire-and-forget — the
+  // ExecutionRegistry republishes when the preview server is up).
+  private onRunOverlay(upid: string, overlay: RunEventOverlay): void {
+    if (this.executionRegistry.isExecuting(upid)) {
+      this.executionRegistry.progress(upid, { percent: overlay.progress, label: overlay.lastOutput });
+      if (overlay.state === "completed") {
+        void this.executionRegistry
+          .complete(upid)
+          .then((lane) => {
+            this.recordExternalTrace({
+              event: "process.execute.artifacts",
+              level: lane?.status === "built" ? "info" : "warn",
+              sessionId: this.sessionId,
+              upid,
+              meta: { status: lane?.status ?? "gone", previewUrl: lane?.previewUrl ?? null, error: lane?.error ?? null },
+            });
+          })
+          .catch(() => undefined);
+      }
     }
     this.publish();
+  }
+
+  // COMMISSION: the explicit, user-triggered EXECUTION stage. Launches the
+  // durable subscription run for a kicked-off process (registry.execute),
+  // subscribes its live telemetry, and republishes. Never reachable at accept
+  // time — kickoff stays mocks + deck only. No Cerebras on this path.
+  async executeProcess(
+    upid: string,
+    correlationId = `corr-execute-${upid}`,
+  ): Promise<ExecuteProcessResult> {
+    if (this.#emergencyTriggered) {
+      return { ok: false, status: 400, error: "Emergency stop is active." };
+    }
+    const live = this.registry.activeRecords().some((record) => record.upid === upid);
+    if (!live) {
+      return { ok: false, status: 404, error: `No live process for UPID ${upid}.` };
+    }
+    let result: Awaited<ReturnType<ProcessRegistry["execute"]>>;
+    try {
+      // Clear any PREVIOUS session's stale artifacts for this UPID before the
+      // durable run launches (no-op when this session already has a lane).
+      await this.executionRegistry.prepare(upid);
+      result = await this.registry.execute(upid, { correlationId });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.recordExternalTrace({
+        event: "process.execute.error",
+        level: "error",
+        sessionId: this.sessionId,
+        correlationId,
+        upid,
+        meta: { message },
+      });
+      return { ok: false, status: 400, error: message };
+    }
+    if (!result.started) {
+      return {
+        ok: false,
+        status: 400,
+        error:
+          result.reason === "already-built"
+            ? `Process ${upid} has already been executed and built.`
+            : `Process ${upid} is already executing.`,
+        execution: result.execution,
+      };
+    }
+    this.subscribeRunEvents(upid, result.runId);
+    this.publish();
+    return { ok: true, execution: result.execution, snapshot: this.#snapshot };
   }
 
   // Speak a fired suggestion and record the SUGGESTION_DELIVERY transition.
   private async deliverSuggestionAudio(suggestion: PendingSuggestion, correlationId: string): Promise<void> {
     await this.ensureActiveListen(correlationId);
-    const spoken = await ttsDecision(suggestionSpeech(suggestion), { fallback: "I have a suggestion." });
+    const spoken = await ttsDecision(suggestionSpeech(suggestion), { fallback: "I have a suggestion.", summarizer: this.#summarizer });
     await this.driveTransition("SUGGESTION_DELIVERY", {
       correlationId,
       reason: "route-suggestion",
@@ -1668,7 +2507,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     await this.driveTransition("ACK", {
       correlationId,
       reason: "spoken-confirmation",
-      audible: await ttsDecision(ackText, { fallback: "Spawned." }),
+      audible: await ttsDecision(ackText, { fallback: "Spawned.", summarizer: this.#summarizer }),
       meta: { upid: spawn.process.upid, callsign: spawn.process.callsign },
     });
     await this.driveTransition("IDLE", { correlationId, reason: "ack-complete", audible: null });
@@ -1783,6 +2622,59 @@ class BufferedAudioOutput implements AudioOutput {
   }
 }
 
+// Near-miss vocabulary: the routing grammar's documented commands PLUS the wake
+// table's phrases (voice-commands.ts COMMAND_TABLE), so "vibersyn build ot"
+// lands on "Did you mean 'build it'?". Ids reuse the closest DocumentedCommandId
+// (they only surface in trace meta). Bare "yes"/"no" are deliberately excluded —
+// at <=3 letters a distance-2 match fires on ordinary speech.
+const SOFT_LANDING_COMMANDS: readonly DocumentedCommand[] = [
+  { id: "wake", spokenForm: "capture / start capturing / listen", effect: "enable idea capture" },
+  { id: "mute", spokenForm: "stop capturing / capture off / stand down", effect: "disable idea capture" },
+  { id: "accept", spokenForm: "build it / build that / build this / accept / ship it", effect: "build the surfaced idea" },
+  { id: "decline", spokenForm: "dismiss / skip / next", effect: "dismiss the surfaced idea" },
+  { id: "panic", spokenForm: "emergency / stop everything / kill everything / shut down", effect: "emergency stop" },
+  { id: "pauseAll", spokenForm: "pause all", effect: "pause all running processes" },
+  { id: "status", spokenForm: "status", effect: "speak active-process summary" },
+  { id: "stop", spokenForm: "stop / halt", effect: "halt selected process" },
+  { id: "pause", spokenForm: "pause", effect: "pause target process" },
+  { id: "resume", spokenForm: "resume", effect: "resume target process" },
+  { id: "endSteering", spokenForm: "done / back", effect: "close steering window" },
+];
+
+// Spoken word count for grammar-generated TTS output decisions.
+function countSpokenWords(text: string): number {
+  return text.trim().split(/\s+/u).filter(Boolean).length;
+}
+
+// COMMISSION voice phrases (after the wake word): normalized-token match, same
+// idiom as the wake-router COMMAND_TABLE. Exported for the colocated tests.
+const EXECUTE_PHRASES: ReadonlySet<string> = new Set([
+  "execute",
+  "execute it",
+  "execute that",
+  "commission",
+  "commission it",
+  "commission that",
+  "make it real",
+  "full build",
+]);
+
+export function isExecutePhrase(afterWake: string): boolean {
+  const normalized = afterWake
+    .toLowerCase()
+    .split(/[^a-z0-9]+/u)
+    .filter((token) => token.length > 0)
+    .join(" ");
+  return EXECUTE_PHRASES.has(normalized);
+}
+
+// The commission target of last resort: when nothing is steered/selected but
+// exactly ONE process is live, "vibersyn execute" unambiguously means it.
+function soleActiveUpid(registry: ProcessRegistry): string | null {
+  const active = registry.activeRecords();
+  return active.length === 1 ? active[0]!.upid : null;
+}
+
 // Spoken form of a fired suggestion: the pitch plus its lead question, mirroring
 // the canonical spine's suggestionSpeech so the live ack reads the same way.
 function suggestionSpeech(suggestion: PendingSuggestion): string {
@@ -1805,6 +2697,84 @@ function runEventStreamClient(client: RegistrySmithersClient): RunEventStreamCli
       // No live event source (no gateway configured) — seeded fixtures stand.
     },
   };
+}
+
+// SmithersClient facade over the live ProcessRegistry so the SeamDispatcher's
+// HTTP/WS actions drive the same fleet as voice. `signal` maps to steer (the
+// registry exposes no separate signal channel); run-event streaming is owned by
+// RunEventDriver, so the facade's stream is empty.
+function registrySeamClient(registry: ProcessRegistry): SmithersClient {
+  const corr = (): string => `corr-seam-${crypto.randomUUID()}`;
+  return {
+    async spawn(seed) {
+      const result = await registry.spawn(seed);
+      if (!result.accepted) {
+        throw new Error(result.spokenAck);
+      }
+      return result.spawn;
+    },
+    steer: (upid, payload) => registry.steer(upid, payload, corr()),
+    signal: (upid, payload) => registry.steer(upid, payload, corr()),
+    pause: (upid) => registry.pause(upid, corr()),
+    resume: (upid) => registry.resume(upid, corr()),
+    halt: (upid) => registry.halt(upid, corr(), "seam"),
+    async *streamRunEvents() {
+      // Live streaming is RunEventDriver's job; the seam facade has no source.
+    },
+  };
+}
+
+// Read-only CorrelationStore view over the registry. The registry is the source
+// of truth: upsert/update are accepted no-ops (the registry methods invoked by
+// registrySeamClient already applied the state change); reads project registry
+// records into CorrelationRecords so statusSummary reports the real fleet.
+class RegistryCorrelationView implements CorrelationStore {
+  readonly #registry: ProcessRegistry;
+
+  constructor(registry: ProcessRegistry) {
+    this.#registry = registry;
+  }
+
+  async load(): Promise<CorrelationRecord[]> {
+    return this.#project(this.#registry.records());
+  }
+
+  async allActive(): Promise<CorrelationRecord[]> {
+    return this.#project(this.#registry.activeRecords());
+  }
+
+  async findByUPID(upid: string): Promise<CorrelationRecord | undefined> {
+    return this.#project(this.#registry.records()).find((record) => record.upid === upid);
+  }
+
+  async findByRunId(runId: string): Promise<CorrelationRecord | undefined> {
+    return this.#project(this.#registry.records()).find((record) => record.runId === runId);
+  }
+
+  async upsert(): Promise<void> {
+    // Registry already recorded the spawn (registrySeamClient.spawn).
+  }
+
+  async update(upid: string, _patch: Partial<Omit<CorrelationRecord, "upid">>): Promise<CorrelationRecord> {
+    const record = await this.findByUPID(upid);
+    if (record === undefined) {
+      throw new Error(`No UPID correlation exists for ${upid}.`);
+    }
+    return record;
+  }
+
+  #project(records: readonly RegistryProcess[]): CorrelationRecord[] {
+    return records.map((record) =>
+      createCorrelationRecord({
+        upid: record.upid,
+        runId: record.runId,
+        callsign: record.callsign,
+        correlationId: `corr-${record.upid}`,
+        state: record.state === "dead" ? "halted" : record.state,
+        nowMs: record.updatedAtMs,
+      }),
+    );
+  }
 }
 
 function projectorState(state: RegistryProcess["state"]): ProjectorProcessState {
@@ -1904,6 +2874,17 @@ function suggestionMetaFromEvents(events: readonly LogEvent[]): SuggestionGateMe
   return { wordCount: 0, elapsedS: 0, quality: 0 };
 }
 
+// 0 or a non-number means "no explicit cap" — use a high finite ceiling rather
+// than Infinity so refusal traces stay JSON-safe.
+function resolveMaxConcurrentProcesses(env: Record<string, string | undefined>): number {
+  const raw = env.VIBERSYN_MAX_CONCURRENT_PROCESSES?.trim();
+  const parsed = raw === undefined || raw === "" ? Number.NaN : Number(raw);
+  if (Number.isFinite(parsed) && parsed >= 1) {
+    return Math.floor(parsed);
+  }
+  return 16;
+}
+
 function numberOr(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
@@ -1912,4 +2893,87 @@ function numberOr(value: unknown, fallback: number): number {
 // pendingSuggestionFromCandidate (`sug-<candidateId>`).
 function candidateIdFromSuggestionId(suggestionId: string): string | null {
   return suggestionId.startsWith("sug-") ? suggestionId.slice("sug-".length) : null;
+}
+
+// --- Duplicate-spawn guard ---------------------------------------------------
+//
+// Known bug this closes: one utterance could spawn upid-1 AND upid-2 — e.g. the
+// auto-build fire and a click/spoken accept racing on the same surfaced idea, or
+// the same pitch re-accepted seconds later. Every accept route funnels through
+// the ONE acceptance seam composition builds, so the guard wraps it: a spawn
+// whose normalized pitch matches an accept from the last DUPLICATE_ACCEPT_WINDOW_MS,
+// or one whose spawn is still in flight, is refused at the seam (the spawner
+// surfaces it as accepted:false / reason "seam" — no second process, no ack).
+
+export const DUPLICATE_ACCEPT_WINDOW_MS = 120_000;
+
+// Normalize a pitch for duplicate matching: lowercase, punctuation → spaces,
+// collapsed whitespace — so "Build a status board!" and "build a status board"
+// count as the same accepted idea.
+export function normalizeAcceptPitch(pitch: string): string {
+  return pitch
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+}
+
+export interface DuplicateSpawnGuardOptions {
+  clock?: () => number;
+  windowMs?: number;
+  onSuppressed?: (info: { pitch: string; reason: "in-flight" | "recently-accepted"; correlationId: string }) => void;
+}
+
+export function createDuplicateSpawnGuard(seam: AcceptanceSpawnSeam, options: DuplicateSpawnGuardOptions = {}): AcceptanceSpawnSeam {
+  const clock = options.clock ?? (() => Date.now());
+  const windowMs = options.windowMs ?? DUPLICATE_ACCEPT_WINDOW_MS;
+  const inFlight = new Set<string>();
+  const recentAccepts = new Map<string, number>();
+  return {
+    async dispatch(action: DispatchedAction) {
+      if (action.type !== "spawn") {
+        return seam.dispatch(action);
+      }
+      const payload = action.payload as { pitch?: unknown } | null | undefined;
+      const key = typeof payload?.pitch === "string" ? normalizeAcceptPitch(payload.pitch) : "";
+      if (key.length === 0) {
+        // No comparable pitch (should not happen on the accept path) — pass
+        // through rather than wedging every pitchless spawn behind one guard key.
+        return seam.dispatch(action);
+      }
+      const now = clock();
+      for (const [pitch, acceptedAtMs] of recentAccepts) {
+        if (now - acceptedAtMs >= windowMs) {
+          recentAccepts.delete(pitch);
+        }
+      }
+      const reason: "in-flight" | "recently-accepted" | null = inFlight.has(key)
+        ? "in-flight"
+        : (() => {
+            const acceptedAtMs = recentAccepts.get(key);
+            return acceptedAtMs !== undefined && now - acceptedAtMs < windowMs ? ("recently-accepted" as const) : null;
+          })();
+      if (reason !== null) {
+        options.onSuppressed?.({ pitch: key, reason, correlationId: action.correlationId });
+        return {
+          accepted: false as const,
+          correlationId: action.correlationId,
+          error:
+            reason === "in-flight"
+              ? "Duplicate accept suppressed: an identical idea is already spawning."
+              : "Duplicate accept suppressed: the same idea was accepted moments ago.",
+        };
+      }
+      inFlight.add(key);
+      try {
+        const result = await seam.dispatch(action);
+        if (result.accepted) {
+          recentAccepts.set(key, clock());
+        }
+        return result;
+      } finally {
+        inFlight.delete(key);
+      }
+    },
+  };
 }

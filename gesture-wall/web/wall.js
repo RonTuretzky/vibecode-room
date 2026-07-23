@@ -357,11 +357,6 @@ class WallClient {
         // The dweller toggled `event.selected` on a Zone object inside visibleZones,
         // which is the SAME Zone instance as in this.zones (filter keeps refs).
         lockZone(this.zoneLocks, event.zoneId, t);
-        // Opt-in: bridge the completed dwell to the Vibersyn projector (wall B).
-        // No-op unless the wall was opened with ?vibersyn=<url>. See
-        // web/vibersyn-bridge.js.
-        if (typeof window !== "undefined" && window.__vibersynBridge)
-          window.__vibersynBridge.onDwell(event, this.wall);
       }
     }
 

@@ -383,7 +383,9 @@ describe("process registry fleet e2e", () => {
         progressSeq: 0,
         selected: true,
         state: "planning",
-        lastAction: "spawn",
+        // Two-stage pivot: the harness commissions each spawn immediately, so
+        // the last action on an untouched process is "execute", not "spawn".
+        lastAction: "execute",
       }),
     );
     expect(afterPauseAtlas).toEqual(expect.objectContaining({ upid: "upid-atlas", progressSeq: 1, lastAction: "steer" }));
@@ -579,6 +581,11 @@ async function applyRegistryAction(registry: ProcessRegistry, action: Dispatched
       const payload = action.payload as { upid: string; runId: string; callsign: string; workflow: string };
       const result = await registry.spawn({ ...payload, correlationId: action.correlationId });
       expect(result.accepted).toBe(true);
+      // TWO-STAGE PIVOT: spawn is kickoff-only. This fleet slice exercises
+      // durable steering/pause isolation, which requires commissioned runs —
+      // so each replayed spawn is executed immediately.
+      const executed = await registry.execute(payload.upid, { correlationId: action.correlationId });
+      expect(executed.started).toBe(true);
       return;
     }
     case "steer":

@@ -6,6 +6,12 @@ export type SuggestionState = "idle" | "queued" | "speaking" | "accepted" | "dec
 // for processes that never triggered a build (e.g. the seeded demo fleet).
 export type ProcessBuildStatus = "building" | "ready" | "failed";
 
+// One slide of a project's explainer deck (HTML body; fixture/demo content).
+export interface ProjectSlide {
+  title: string;
+  html: string;
+}
+
 export interface ProjectorProcess {
   upid: string;
   runId: string;
@@ -19,6 +25,9 @@ export interface ProjectorProcess {
   lastOutput: string;
   lastAction: string;
   events: string[];
+  // Optional explainer slideshow: when present, clicking the project in the
+  // 3D scene opens this deck instead of steering (mock/demo affordance).
+  slides?: ProjectSlide[];
   // Real live-preview surface (accept->build->preview). `previewUrl` is the
   // reachable http://127.0.0.1:<port>/ once the scaffolded page is served;
   // `buildStatus` tracks building -> ready | failed. Both null/absent until an
@@ -35,6 +44,12 @@ export interface ProjectorProcess {
     kind: "github-import";
     url: string;
   };
+  // TAKE-HOME publish surface: once this idea's pitch deck is published to
+  // GitHub Pages (confirmed 200), the public URL and the server-generated QR
+  // SVG that encodes it. The wall renders the SVG directly ("scan to take it
+  // home") — no client-side QR dependency. Null/absent until published.
+  publishedUrl?: string | null;
+  publishedQrSvg?: string | null;
 }
 
 // One candidate in the idea tray: the full ledger surfaced to the projector, not

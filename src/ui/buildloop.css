@@ -1,0 +1,539 @@
+/* ============================================================================
+   Build loop — backend selector chips, per-backend build chips, lifecycle
+   controls. Owned by the build-loop wall surface; every element here renders
+   only when a build-loop server publishes builds[]/backends, so an old server
+   simply shows none of it. Motion is opacity/box-shadow only and freezes under
+   reduced-motion, matching styles.css.
+   ============================================================================ */
+
+/* --- Backend selector (rail card) --- */
+.backend-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.backend-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 999px;
+  border: 1px solid var(--glass-line);
+  background: rgba(10, 18, 26, 0.5);
+  color: var(--ink-soft);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 5px 12px;
+  cursor: pointer;
+  transition: border-color 160ms ease, background 160ms ease, color 160ms ease;
+}
+
+.backend-chip:hover {
+  background: rgba(14, 26, 36, 0.66);
+  color: var(--ink);
+}
+
+.backend-chip .backend-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ink-faint);
+  flex: none;
+}
+
+.backend-chip.on {
+  border-color: var(--c-active);
+  color: var(--ink);
+}
+
+.backend-chip.on .backend-dot {
+  background: var(--c-active);
+  box-shadow: 0 0 8px var(--c-active);
+}
+
+/* Unavailable = dimmed but still clickable (enabled is config, availability is
+   backend health); the reason surfaces as the tooltip. */
+.backend-chip.unavailable {
+  opacity: 0.45;
+}
+
+.backend-chip.unavailable .backend-dot {
+  background: var(--c-halted);
+  box-shadow: none;
+}
+
+/* --- Per-backend build chips on the fleet cards --- */
+.build-chips {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 8px 0 4px;
+}
+
+.build-chip {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  border: 1px solid var(--glass-line);
+  border-radius: 8px;
+  background: rgba(10, 18, 26, 0.45);
+  padding: 4px 8px;
+  font-size: 11.5px;
+  color: var(--ink-soft);
+}
+
+.build-chip-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--ink-faint);
+}
+
+.build-chip-label {
+  font-weight: 700;
+  color: var(--ink);
+}
+
+/* BUILDING: the pulse. A 1–2 minute build must read as alive from across the
+   room, so the whole chip breathes while its dot glows. */
+.build-chip.status-building {
+  border-color: rgba(56, 189, 248, 0.45);
+  animation: build-chip-pulse 1.6s ease-in-out infinite;
+}
+
+.build-chip.status-building .build-chip-dot {
+  background: var(--c-planning);
+  box-shadow: 0 0 8px var(--c-planning);
+}
+
+.build-chip.status-ready {
+  border-color: rgba(0, 255, 136, 0.35);
+}
+
+.build-chip.status-ready .build-chip-dot {
+  background: var(--c-active);
+  box-shadow: 0 0 8px var(--c-active);
+}
+
+.build-chip.status-failed {
+  border-color: rgba(255, 59, 48, 0.4);
+}
+
+.build-chip.status-failed .build-chip-dot {
+  background: var(--c-halted);
+}
+
+.build-chip-progress {
+  color: var(--c-planning);
+  font-variant-numeric: tabular-nums;
+}
+
+.build-chip-failed {
+  color: var(--c-halted);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 10.5px;
+}
+
+.build-chip-track {
+  flex: 1 1 48px;
+  min-width: 32px;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(150, 200, 220, 0.14);
+  overflow: hidden;
+}
+
+.build-chip-fill {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--c-planning), var(--c-selected));
+  transition: width 400ms ease;
+}
+
+.build-chip-links {
+  display: inline-flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.build-chip-link {
+  color: var(--c-active);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.build-chip-link:hover {
+  text-decoration: underline;
+  color: var(--c-completed);
+}
+
+@keyframes build-chip-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 rgba(56, 189, 248, 0);
+  }
+  50% {
+    box-shadow: 0 0 14px rgba(56, 189, 248, 0.4);
+  }
+}
+
+/* The legacy single-build "building…" marker on the stage bubbles gets the same
+   living pulse — that static text was the original "is it doing anything?"
+   complaint. */
+.bubble-preview-pending {
+  animation: build-chip-pulse 1.6s ease-in-out infinite;
+  border-radius: 6px;
+  padding: 0 6px;
+}
+
+/* --- Per-card lifecycle controls (pause / resume / halt) --- */
+.fleet-controls {
+  display: flex;
+  gap: 6px;
+  margin: 6px 0;
+}
+
+.fleet-ctl {
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  border-radius: 6px;
+  border: 1px solid var(--glass-line);
+  background: rgba(10, 18, 26, 0.5);
+  color: var(--ink-soft);
+  padding: 3px 10px;
+  cursor: pointer;
+  transition: border-color 160ms ease, color 160ms ease, background 160ms ease;
+}
+
+.fleet-ctl:hover {
+  color: var(--ink);
+  background: rgba(14, 26, 36, 0.7);
+}
+
+.fleet-ctl-pause:hover {
+  border-color: var(--c-paused);
+  color: var(--c-paused);
+}
+
+.fleet-ctl-resume:hover {
+  border-color: var(--c-active);
+  color: var(--c-active);
+}
+
+.fleet-ctl-halt:hover {
+  border-color: var(--c-halted);
+  color: var(--c-halted);
+}
+
+/* Inferred project title on the fleet card — the LLM-named build headline. */
+.fleet-task {
+  margin: 2px 0 4px;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--ink);
+  line-height: 1.35;
+}
+
+/* Lifecycle controls + the Deck opener share one row on the fleet card. */
+.fleet-actions-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.fleet-actions-row .fleet-controls {
+  margin: 6px 0;
+}
+
+.fleet-ctl-deck {
+  margin: 6px 0;
+}
+
+.fleet-ctl-deck:hover {
+  border-color: var(--c-selected);
+  color: var(--c-selected);
+}
+
+/* --- Deck HUD: per-backend build chips + live slideshow slides in the deck --- */
+.slideshow-builds .build-chips {
+  margin: 0;
+}
+
+.slideshow-card .fleet-controls {
+  margin: 0;
+}
+
+/* A REAL generated slideshow embedded as a deck slide. */
+.slide-live {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.slide-live-frame {
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  min-height: 280px;
+  border: 1px solid var(--glass-line);
+  border-radius: 12px;
+  background: rgba(4, 10, 16, 0.85);
+}
+
+.slide-live-open {
+  align-self: flex-end;
+  font-size: 12.5px;
+}
+
+/* ============================================================================
+   TWO-STAGE kickoff/commission surfaces: stage badges, the "mock ready" tag
+   on concept lanes, the execution chip (commissioned lane), the commission
+   button, and the deck's "How should we continue?" decision bar.
+   ============================================================================ */
+
+/* Stage badge: CONCEPT (cool sprout green-blue) vs COMMISSIONED (gold). */
+.stage-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 999px;
+  border: 1px solid var(--glass-line);
+  padding: 1px 9px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  vertical-align: middle;
+}
+
+.stage-badge.stage-concept {
+  border-color: rgba(56, 189, 248, 0.45);
+  color: var(--c-planning);
+  background: rgba(56, 189, 248, 0.08);
+}
+
+.stage-badge.stage-commissioned {
+  border-color: rgba(255, 209, 102, 0.55);
+  color: #ffd166;
+  background: rgba(255, 209, 102, 0.1);
+}
+
+.slideshow-title .stage-badge {
+  margin-left: 10px;
+  font-size: 11px;
+}
+
+/* Concept lanes: a ready MOCK is honestly labeled, never sold as built. */
+.build-chip-mock {
+  color: var(--c-active);
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 10px;
+}
+
+/* Execution chip — the commissioned subscription run's live telemetry. */
+.execution-chip {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  border: 1px solid rgba(255, 209, 102, 0.4);
+  border-radius: 8px;
+  background: rgba(40, 30, 8, 0.4);
+  padding: 4px 8px;
+  font-size: 11.5px;
+  color: var(--ink-soft);
+  margin: 4px 0;
+}
+
+.execution-chip-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+  background: #ffd166;
+}
+
+.execution-chip-label {
+  font-weight: 800;
+  color: #ffd166;
+  letter-spacing: 0.04em;
+}
+
+.execution-chip.status-executing {
+  animation: execution-chip-pulse 1.4s ease-in-out infinite;
+}
+
+.execution-chip.status-executing .execution-chip-dot {
+  box-shadow: 0 0 10px #ffd166;
+}
+
+.execution-chip.status-built {
+  border-color: rgba(0, 255, 136, 0.5);
+  background: rgba(4, 34, 20, 0.5);
+}
+
+.execution-chip.status-built .execution-chip-dot {
+  background: var(--c-active);
+  box-shadow: 0 0 8px var(--c-active);
+}
+
+.execution-chip.status-built .execution-chip-label {
+  color: var(--c-active);
+}
+
+.execution-chip.status-failed {
+  border-color: rgba(255, 59, 48, 0.45);
+}
+
+.execution-chip.status-failed .execution-chip-dot {
+  background: var(--c-halted);
+}
+
+.execution-chip.status-failed .execution-chip-label {
+  color: var(--c-halted);
+}
+
+.execution-chip-progress {
+  color: #ffd166;
+  font-variant-numeric: tabular-nums;
+}
+
+.execution-chip-track {
+  flex: 1 1 48px;
+  min-width: 32px;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(255, 209, 102, 0.16);
+  overflow: hidden;
+}
+
+.execution-chip-fill {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #ffd166, var(--c-active));
+  transition: width 400ms ease;
+}
+
+.execution-chip-link {
+  margin-left: auto;
+}
+
+@keyframes execution-chip-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 rgba(255, 209, 102, 0);
+  }
+  50% {
+    box-shadow: 0 0 14px rgba(255, 209, 102, 0.45);
+  }
+}
+
+/* The commission button — the one control that makes a concept real. */
+.fleet-ctl-commission {
+  border-color: rgba(255, 209, 102, 0.5);
+  color: #ffd166;
+  margin: 6px 0;
+}
+
+.fleet-ctl-commission:hover,
+.fleet-ctl-commission[data-dwell-hot] {
+  border-color: #ffd166;
+  color: #ffe6a8;
+  background: rgba(255, 209, 102, 0.14);
+  box-shadow: 0 0 14px rgba(255, 209, 102, 0.35);
+}
+
+/* --- Deck decision bar ("How should we continue?") ---
+   Room-native buttons pinned under the deck, so the choice is dwell-operable
+   even though the generated deck's own decision slide lives in an iframe.
+   Sticky within the scrollable deck card: the finale choice can never be
+   below the fold at projector distance. */
+.deck-decision {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  border: 1px solid rgba(255, 209, 102, 0.35);
+  border-radius: 12px;
+  background: rgba(30, 24, 8, 0.92);
+  padding: 10px 14px;
+  margin-top: 10px;
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+}
+
+.deck-decision-title {
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--ink);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.deck-decision-choices {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.deck-decision-btn {
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 750;
+  border-radius: 999px;
+  border: 1px solid var(--glass-line);
+  background: rgba(10, 18, 26, 0.6);
+  color: var(--ink);
+  padding: 8px 18px;
+  cursor: pointer;
+  transition: border-color 160ms ease, color 160ms ease, background 160ms ease, box-shadow 160ms ease;
+}
+
+.deck-decision-btn.decision-commission {
+  border-color: rgba(255, 209, 102, 0.55);
+  color: #ffd166;
+}
+
+.deck-decision-btn.decision-commission:hover,
+.deck-decision-btn.decision-commission[data-dwell-hot] {
+  background: rgba(255, 209, 102, 0.16);
+  box-shadow: 0 0 18px rgba(255, 209, 102, 0.4);
+  color: #ffe6a8;
+}
+
+.deck-decision-btn.decision-iterate:hover,
+.deck-decision-btn.decision-iterate[data-dwell-hot] {
+  border-color: var(--c-planning);
+  color: var(--c-planning);
+  box-shadow: 0 0 14px rgba(56, 189, 248, 0.35);
+}
+
+.deck-decision-btn.decision-done:hover,
+.deck-decision-btn.decision-done[data-dwell-hot] {
+  border-color: var(--c-active);
+  color: var(--c-active);
+  box-shadow: 0 0 14px rgba(0, 255, 136, 0.3);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .build-chip.status-building,
+  .bubble-preview-pending,
+  .execution-chip.status-executing {
+    animation: none !important;
+  }
+  .build-chip-fill,
+  .execution-chip-fill {
+    transition: none;
+  }
+}

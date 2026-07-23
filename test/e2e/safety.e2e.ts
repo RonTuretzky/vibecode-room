@@ -12,6 +12,11 @@ describe("REQ-14 emergency stop e2e slice", () => {
     const registry = new ProcessRegistry({ client, sessionId: "emergency-e2e", onTrace: (event) => traces.push(event) });
     await registry.spawn({ correlationId: "corr-spawn-a", upid: "upid-atlas", callsign: "Atlas", workflow: "wf" });
     await registry.spawn({ correlationId: "corr-spawn-b", upid: "upid-bravo", callsign: "Bravo", workflow: "wf" });
+    // TWO-STAGE PIVOT: commission both so the 2s kill-all provably cancels the
+    // DURABLE runs too (client.halt only fires for commissioned processes; the
+    // kickoff mocks are aborted via the orchestrator seam).
+    await registry.execute("upid-atlas");
+    await registry.execute("upid-bravo");
     registry.advanceAutonomousTick("corr-running");
 
     const session = new EmergencySessionState({ sessionId: "emergency-e2e", listening: true, muted: true });

@@ -2,22 +2,14 @@
 numpy>=1.24
 opencv-python>=4.8
 
-# Pose tracking (MediaPipe runs on the color stream).
+# Pose tracking — required only for `--source pose`.
 # Verified working on Python 3.13 / Apple Silicon with mediapipe 0.10.35.
+# If your Python version has no mediapipe wheel, the mouse mode + tests still run.
 mediapipe>=0.10.9
 
 # Multi-wall / multi-user server (gesturewall.server) — websocket fan-out to
-# the per-wall browser clients and the Vibersyn gesture layer.
+# the per-wall browser clients (web/wall.html). Single-wall app does not need it.
 websockets>=12.0
-
-# Orbbec Gemini 335 depth camera (the current single-camera 2-wall setup).
-# PyPI package name is pyorbbecsdk2; the import name stays `pyorbbecsdk`.
-# macOS: opening the camera needs elevated permissions — run camera commands
-# with `sudo -E` (see VIBERSYN.md / run-room.sh).
-pyorbbecsdk2>=2.1.1
-
-# Kinect v2 (legacy 2-camera setup): no pip dependency — needs libfreenect2
-# + the native bridge in native/ (see KINECT.md).
 
 # Dev/test only:
 #   pip install pytest

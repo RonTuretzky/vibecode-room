@@ -89,15 +89,6 @@ cameras → MultiPoseSource → Persons → room-homography → RoomObs
        → FusionEngine (per-wall cursors, seam hysteresis) → websocket → wall.html
 ```
 
-> **The current production rig runs depth mode**, not this webcam/homography
-> flow: a single Orbbec **Gemini 335** depth camera (`kind: "gemini_335"`)
-> serves both walls, calibrated automatically via the projectors — see
-> [GEMINI.md](GEMINI.md) (macOS `sudo -E` requirement, placement, autocal /
-> `./run-room.sh --calibrate`, and why to keep some ambient light on people:
-> pose reads the *color* image, so a dark projected room starves it). The
-> Kinect v2 depth docs are [KINECT.md](KINECT.md) (legacy rig, same concepts).
-> The steps below are the plain-webcam homography path.
-
 **1. Describe the room** — copy `room.example.json` to `room.json` and edit the
 walls / displays / grid / cameras / fusion / server blocks. Each camera lists the
 walls it `serves`; calibration matrices live under `calibration["<cam>-><wall>"]`.
@@ -142,13 +133,6 @@ wall client to inject a local `id=-1` test cursor; press `f` for fullscreen.
 > The camera-free heart of the server is `gesturewall.server.step_pipeline`
 > (room-map → `Tracker` → `FusionEngine`, no cv2/asyncio), exercised headless by
 > `tests/test_server_pipeline.py` with a `FakeSource`.
-
-### Vibersyn on wall B
-
-The 2-wall setup can put the **Vibersyn** idea projector on wall B, driven by
-gestures on wall A. Wall A stays `web/wall.html` (add `&vibersyn=<url>` so dwell
-tiles POST to Vibersyn); wall B becomes `web/vibersyn.html?src=<vibersyn-url>`. See
-[VIBERSYN.md](VIBERSYN.md) and `./run-2wall-vibersyn.sh`.
 
 ## Controls
 
@@ -199,9 +183,6 @@ python3 -m pytest -q
 - **macOS camera permission:** the first `--source pose` run may need Terminal
   (or your IDE) granted Camera access in *System Settings → Privacy & Security →
   Camera*. Restart the terminal after granting.
-- **Orbbec Gemini 335 fails with `uvc_open` error -3:** opening the depth
-  camera needs elevated permissions on macOS — run every camera-touching
-  command under `sudo -E` (see [GEMINI.md](GEMINI.md)).
 - **No window appears / headless:** `cv2.imshow` needs a desktop session. On a
   remote/headless box, run the logic tests (`python3 -m pytest`) instead —
   `--video FILE` still opens a GUI window, so it does **not** bypass this.
@@ -217,9 +198,8 @@ This prototype maps the **wrist position in the image** onto the wall (absolute
 pointing via a 2D homography) — simple and robust for coarse tiles. It is *not*
 metric 3D ray-casting. To go further (per the research report):
 
-- **True 3D "eye→hand" ray:** already built — the depth mode intersects the
-  eye→hand ray with the physical wall plane, using an Orbbec Gemini 335
-  ([GEMINI.md](GEMINI.md), the current rig) or Kinect v2 ([KINECT.md](KINECT.md)).
+- **True 3D "eye→hand" ray:** add a depth camera (OAK-D / RealSense) via a new
+  `PointerSource`, intersect the ray with the wall plane.
 - **Projector ↔ camera alignment:** for a real projector, calibrate with
   `procam-calibration` (structured light) or `ofxKinectProjectorToolkit`.
 - **Multi-user / wide area:** track multiple poses (raise `num_poses`) or move

@@ -37,6 +37,8 @@ describe("accept-spawn e2e — say yes spawns a process on the snapshot", () => 
 
   test("a fired suggestion followed by 'yes' adds one active process via the registry", async () => {
     const runtime = await createProjectorRuntime(liveEnv(), {
+      // No real coding-agent spawn in e2e: the accept path's build runs a noop.
+      builderAgent: async () => undefined,
       replaySource: [
         final("let's build a dashboard tool to ship the replay prototype today", "utt-build"),
         final("yes", "utt-yes"),
@@ -66,6 +68,8 @@ describe("accept-spawn e2e — say yes spawns a process on the snapshot", () => 
 
   test("a fired suggestion followed by a non-affirmative does NOT add a process", async () => {
     const runtime = await createProjectorRuntime(liveEnv(), {
+      // No real coding-agent spawn in e2e: the accept path's build runs a noop.
+      builderAgent: async () => undefined,
       replaySource: [
         final("let's build a dashboard tool to ship the replay prototype today", "utt-build"),
         final("no, skip it", "utt-no"),

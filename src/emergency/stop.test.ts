@@ -20,6 +20,10 @@ describe("emergency stop controller", () => {
     const registry = new ProcessRegistry({ client, sessionId: "emergency-unit", onTrace: (event) => traces.push(event) });
     await registry.spawn({ correlationId: "corr-spawn-a", upid: "upid-a", callsign: "Atlas", workflow: "wf" });
     await registry.spawn({ correlationId: "corr-spawn-b", upid: "upid-b", callsign: "Bravo", workflow: "wf" });
+    // TWO-STAGE PIVOT: commission both so the kill-all provably cancels the
+    // DURABLE runs (client.halt only fires for commissioned processes).
+    await registry.execute("upid-a");
+    await registry.execute("upid-b");
     await registry.pause("upid-b", "corr-pause-b");
 
     const session = new EmergencySessionState({ sessionId: "emergency-unit" });

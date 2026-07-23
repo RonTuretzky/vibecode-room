@@ -9,10 +9,11 @@
 
 import type { AsrProviderMode, DecisionLLMMode, TtsProviderMode } from "../providers";
 import type { AudioSinkMode } from "./audio-device-sink";
+import type { SummarizerMode } from "../audio/summarizer";
 
 export type SmithersClientMode = "memory" | "gateway";
 
-export type DegradedLegName = "asr" | "tts" | "sink" | "decider" | "smithers";
+export type DegradedLegName = "asr" | "tts" | "sink" | "decider" | "smithers" | "summarizer";
 
 // The resolved backend mode of each runtime leg the notice reasons about.
 export interface RuntimeLegSelections {
@@ -21,6 +22,14 @@ export interface RuntimeLegSelections {
   sink: AudioSinkMode;
   decider: DecisionLLMMode;
   smithers: SmithersClientMode;
+  // The hot-loop ">15 words -> summarize" guard's summarizer leg (output-policy.ts:67
+  // via src/audio/summarizer.ts's selectSummarizer). "deterministic" is a real,
+  // never-wedges fallback but is NOT a model-quality summary — it's a word-clamp
+  // truncation, so it counts as degraded the same way the heuristic decider does.
+  // ABSENT (undefined) means the caller never wired a summarizer selection at
+  // all (the audit's original state) — that is ALSO degraded, so /api/health can
+  // never claim allReal while the leg is stubbed OR unwired.
+  summarizer?: SummarizerMode;
 }
 
 export interface DegradedLeg {
@@ -76,8 +85,23 @@ export function buildDegradationNotice(selections: RuntimeLegSelections): Degrad
     degraded.push({
       leg: "smithers",
       mode: selections.smithers,
-      detail: "in-memory Smithers client — spawns are fixtures, not durable runs",
+      detail: "in-memory Smithers client — spawns are fixtures and run telemetry is fake, not durable runs",
       upgrade: "set VIBERSYN_SMITHERS_GATEWAY_URL",
+    });
+  }
+  if (selections.summarizer === undefined) {
+    degraded.push({
+      leg: "summarizer",
+      mode: "unwired",
+      detail: "no summarizer selection wired — overlong hot-loop updates fall through to the mid-sentence clamp",
+      upgrade: "wire selectSummarizer(env) from src/audio/summarizer.ts into composition",
+    });
+  } else if (selections.summarizer === "deterministic") {
+    degraded.push({
+      leg: "summarizer",
+      mode: selections.summarizer,
+      detail: "deterministic word-clamp summarizer — overlong hot-loop updates are truncated, not model-summarized",
+      upgrade: "set CEREBRAS_API_KEY (or VIBERSYN_SUMMARIZER=cerebras)",
     });
   }
 

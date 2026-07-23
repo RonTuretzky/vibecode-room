@@ -64,7 +64,12 @@ export function createCuePrograms(cue: CueCoreModule): {
         triggers: [cue.Triggers.onCue("text")],
         allowedTools: ["vibersyn.suggest"],
         llmProvider: {
+          // CONTRACT-PROBE inference, not a real model: canned tool calls that
+          // let the two-Program isolation probe observe routing. Inert unless
+          // VIBERSYN_CUE_STUB_PROGRAMS=1 — a live room must never fabricate a
+          // suggestion from a hardcoded table.
           infer({ cue: cueEvent, tools: eligibleTools }: { cue?: { metadata?: Record<string, unknown> }; tools: Array<{ name: string }> }) {
+            if (process.env.VIBERSYN_CUE_STUB_PROGRAMS !== "1") return [];
             if (cueEvent?.metadata?.pattern !== "build") return [];
             if (!eligibleTools.some((tool) => tool.name === "vibersyn.suggest")) return [];
             return [{ tool: "vibersyn.suggest", arguments: { concept: "add replay tests" } }];
@@ -76,7 +81,10 @@ export function createCuePrograms(cue: CueCoreModule): {
         triggers: [cue.Triggers.onCue("text")],
         allowedTools: ["vibersyn.steer"],
         llmProvider: {
+          // CONTRACT-PROBE inference — see ambient-C2 above. Inert unless
+          // VIBERSYN_CUE_STUB_PROGRAMS=1.
           infer({ cue: cueEvent, tools: eligibleTools }: { cue?: { metadata?: Record<string, unknown> }; tools: Array<{ name: string }> }) {
+            if (process.env.VIBERSYN_CUE_STUB_PROGRAMS !== "1") return [];
             if (cueEvent?.metadata?.pattern !== "cometa") return [];
             if (!eligibleTools.some((tool) => tool.name === "vibersyn.steer")) return [];
             return [
@@ -91,6 +99,7 @@ export function createCuePrograms(cue: CueCoreModule): {
     ],
     risks: [
       "D2: steering Program isolation depends on Cue allowedTools and adapter-side dispatch verification.",
+      "Program llmProviders are contract-probe stubs (canned tool calls), inert unless VIBERSYN_CUE_STUB_PROGRAMS=1.",
     ],
   };
 }

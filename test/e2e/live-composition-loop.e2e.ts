@@ -57,7 +57,10 @@ describe("live composition loop e2e — suggest -> accept -> spawn -> speak thro
 
   test("a buildable utterance fires + leaves a pending suggestion, delivered via SUGGESTION_DELIVERY", async () => {
     const path = writeLoopScriptFixture(buildBuildableOnlyScript(), tempDirs);
-    const runtime = await createProjectorRuntime(liveEnv(path));
+    const runtime = await createProjectorRuntime(liveEnv(path), {
+      // No real coding-agent spawn in e2e: the accept path's build runs a noop.
+      builderAgent: async () => undefined,
+    });
 
     await drive(runtime);
     await runtime.detection.flush();
@@ -83,7 +86,10 @@ describe("live composition loop e2e — suggest -> accept -> spawn -> speak thro
 
   test("buildable + affirmation drives route.acceptance -> spawn -> ACK with a spoken confirmation", async () => {
     const path = writeLoopScriptFixture(buildLoopScript(), tempDirs);
-    const runtime = await createProjectorRuntime(liveEnv(path));
+    const runtime = await createProjectorRuntime(liveEnv(path), {
+      // No real coding-agent spawn in e2e: the accept path's build runs a noop.
+      builderAgent: async () => undefined,
+    });
     const upidsBefore = new Set(runtime.snapshot().processes.map((process) => process.upid));
 
     const session = runtime.startMicSession("corr-comp-loop");

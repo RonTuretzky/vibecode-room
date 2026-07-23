@@ -49,8 +49,12 @@ describe("cue-harness e2e — wake word emits an earcon through the harness path
     // The wake word emitted an earcon OutputDecision on the snapshot.
     expect(runtime.snapshot().audio.earcon).toBe("E1");
 
-    // ...and a harness-tagged earcon trace, distinguishable from the fallback path.
-    const earcons = runtime.trace.events().filter((event) => event.event === "earcon.emit");
+    // ...and a harness-tagged earcon trace, distinguishable from the fallback
+    // path. Select by source: the onboarding listening indicator's authoritative
+    // E2 earcon fires first on mic open.
+    const earcons = runtime.trace
+      .events()
+      .filter((event) => event.event === "earcon.emit" && event.meta?.source === "cue-textcue");
     expect(earcons.length).toBeGreaterThanOrEqual(1);
     expect(earcons[0]?.meta).toEqual(
       expect.objectContaining({ source: "cue-textcue", matchedWord: "viber", path: "harness" }),
@@ -72,7 +76,10 @@ describe("cue-harness e2e — wake word emits an earcon through the harness path
     await driveMic(runtime);
 
     expect(runtime.snapshot().audio.earcon).toBe("E1");
-    const earcons = runtime.trace.events().filter((event) => event.event === "earcon.emit");
+    // Select by source (the onboarding listening indicator's E2 fires first).
+    const earcons = runtime.trace
+      .events()
+      .filter((event) => event.event === "earcon.emit" && event.meta?.source === "cue-textcue");
     expect(earcons.length).toBeGreaterThanOrEqual(1);
     // The fallback path is distinguishable from the harness path via the `path` tag.
     expect(earcons[0]?.meta).toEqual(

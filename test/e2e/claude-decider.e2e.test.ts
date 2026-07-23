@@ -63,7 +63,7 @@ describe("claude decider e2e — credential-present runtime routes suggest + acc
       final("okay let us do it now please", "utt-accept"),
     ]);
 
-    const runtime = await createProjectorRuntime(liveEnv(path), { decisionTransport: transport });
+    const runtime = await createProjectorRuntime(liveEnv(path), { decisionTransport: transport, builderAgent: async () => undefined });
     expect(runtime.asrMode).toBeDefined();
     const upidsBefore = new Set(runtime.snapshot().processes.map((process) => process.upid));
     const spawnsBefore = spawnTraceCount(runtime);
