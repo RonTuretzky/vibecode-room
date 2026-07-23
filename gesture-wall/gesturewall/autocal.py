@@ -109,6 +109,16 @@ def detect_marker(off_bgr, on_bgr):
                     - d_g.astype(np.float32), 0, None)
     score = cv2.GaussianBlur(score, (k, k), 0)
 
+    # Zero the border fringe: registered color carries a few unstable pixels
+    # at the frame edges (registration shadow flicker) whose OFF->ON deltas
+    # can rival a dim disc's peak and trip the ambiguity gate below. Physical
+    # markers never live in the outer sliver of the frame, so drop it.
+    b = max(4, int(round(8 * frame_w / 512)))
+    score[:b, :] = 0.0
+    score[-b:, :] = 0.0
+    score[:, :b] = 0.0
+    score[:, -b:] = 0.0
+
     peak = float(score.max())
     if peak < MIN_PEAK:
         return None
@@ -129,9 +139,11 @@ def detect_marker(off_bgr, on_bgr):
         return None
     # Ambiguity gate: a SECOND blob nearly as bright as the peak means two
     # markers/objects changed at once (spill, two dots) — refuse rather than
-    # guess which is the real one.
+    # guess which is the real one. Only blobs of comparable AREA compete: a
+    # bright few-pixel speck (sensor sparkle, residual registration fringe)
+    # next to a thousands-of-pixels disc is noise, not a rival marker.
     for c in contours:
-        if c is disc or cv2.contourArea(c) < min_area:
+        if c is disc or cv2.contourArea(c) < max(min_area, 0.10 * area):
             continue
         m2 = np.zeros(mask.shape, np.uint8)
         cv2.drawContours(m2, [c], -1, 1, thickness=cv2.FILLED)
