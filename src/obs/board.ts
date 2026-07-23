@@ -69,6 +69,10 @@ export class BoardEventBus {
     return () => this.#subscribers.delete(callback);
   }
 
+  subscriberCount(): number {
+    return this.#subscribers.size;
+  }
+
   private publish(): void {
     const snapshot = this.snapshot();
     for (const subscriber of this.#subscribers) {
@@ -108,14 +112,24 @@ export async function runBoardIndependentVoiceFlow(options: { boardUrl?: string;
 }
 
 function boardSseResponse(bus: BoardEventBus): Response {
+  // Hoisted so cancel() can reach it: a value returned from start() is only
+  // awaited as the startup promise, never invoked as a cleanup callback.
+  let unsubscribe = () => {};
   const stream = new ReadableStream({
     start(controller) {
       const encoder = new TextEncoder();
       const send = (snapshot: BoardSnapshot) => {
-        controller.enqueue(encoder.encode(`event: snapshot\ndata: ${JSON.stringify(snapshot)}\n\n`));
+        try {
+          controller.enqueue(encoder.encode(`event: snapshot\ndata: ${JSON.stringify(snapshot)}\n\n`));
+        } catch {
+          // Client is gone but cancel() never fired; drop the subscription.
+          unsubscribe();
+        }
       };
-      const unsubscribe = bus.subscribe(send);
-      return () => unsubscribe();
+      unsubscribe = bus.subscribe(send);
+    },
+    cancel() {
+      unsubscribe();
     },
   });
 

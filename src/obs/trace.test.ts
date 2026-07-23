@@ -175,6 +175,46 @@ describe("ENG-T-03 TraceProcessor", () => {
     expect(roundTripped).toBe(jsonl);
   });
 
+  test("bounded ring evicts the oldest events past maxEvents while totalRecorded keeps counting", () => {
+    const processor = new TraceProcessor({ maxEvents: 3 });
+    for (let index = 0; index < 5; index += 1) {
+      processor.record(ringInput(index));
+    }
+
+    expect(processor.totalRecorded).toBe(5);
+    expect(processor.events().map((event) => event.meta.seq)).toEqual([2, 3, 4]);
+    expect(processor.lastEvents(2).map((event) => event.meta.seq)).toEqual([3, 4]);
+    expect(processor.lastEvents(10)).toHaveLength(3);
+    expect(processor.lastEvents(0)).toEqual([]);
+  });
+
+  test("eventsSince returns only events after the cursor and clamps cursors older than the ring", () => {
+    const processor = new TraceProcessor({ maxEvents: 3 });
+    processor.record(ringInput(0));
+    processor.record(ringInput(1));
+
+    const first = processor.eventsSince(0);
+    expect(first.events.map((event) => event.meta.seq)).toEqual([0, 1]);
+    expect(first.nextSeq).toBe(2);
+
+    for (let index = 2; index < 5; index += 1) {
+      processor.record(ringInput(index));
+    }
+
+    const resumed = processor.eventsSince(first.nextSeq);
+    expect(resumed.events.map((event) => event.meta.seq)).toEqual([2, 3, 4]);
+    expect(resumed.nextSeq).toBe(5);
+
+    // A cursor older than the ring is clamped to the oldest retained event.
+    const clamped = processor.eventsSince(0);
+    expect(clamped.events.map((event) => event.meta.seq)).toEqual([2, 3, 4]);
+    expect(clamped.nextSeq).toBe(5);
+
+    // A cursor at or past the head returns nothing new.
+    expect(processor.eventsSince(5).events).toEqual([]);
+    expect(processor.eventsSince(99).events).toEqual([]);
+  });
+
   test("redaction-filter seam transforms meta before persistence without changing stable ids", () => {
     const processor = new TraceProcessor({
       redactionFilters: [
@@ -232,6 +272,20 @@ describe("REQ-16 read-only board", () => {
     expect(events.status).toBe(200);
     expect(events.headers.get("content-type")).toContain("text/event-stream");
   });
+
+  test("cancelling the /events SSE stream unsubscribes the client from the bus", async () => {
+    const bus = new BoardEventBus();
+    const app = createBoardApp(bus);
+
+    const response = await app.request("/events");
+    const reader = response.body!.getReader();
+    await reader.read();
+    expect(bus.subscriberCount()).toBe(1);
+
+    await reader.cancel();
+    expect(bus.subscriberCount()).toBe(0);
+    expect(() => bus.update({ globalState: "streaming" })).not.toThrow();
+  });
 });
 
 function sampleFullChainInputs(): TraceInput[] {
@@ -275,6 +329,18 @@ function sampleFullChainInputs(): TraceInput[] {
       meta: { seq: 4, utteranceId: "utt-001", runId: "run-001", summary: "settings page ready" },
     },
   ];
+}
+
+function ringInput(seq: number): TraceInput {
+  return {
+    level: "info",
+    event: "observe.final",
+    sessionId,
+    correlationId,
+    startedAtMs: seq,
+    endedAtMs: seq,
+    meta: { seq },
+  };
 }
 
 function sampleFullChainEvents(): LogEvent[] {

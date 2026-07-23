@@ -162,8 +162,18 @@ export class DeepgramNova3ASRProvider implements ASRProvider {
       }
     });
 
-    await waitForOpen(ws, this.#openTimeoutMs);
-    void sendAudioAndClose(ws, audio).catch((error) => queue.fail(error));
+    const audioReader = audio.getReader();
+    try {
+      await waitForOpen(ws, this.#openTimeoutMs);
+    } catch (error) {
+      // A CONNECTING socket abandoned on timeout would finish its handshake
+      // later and stay open forever; abort it and release the mic stream
+      // before rethrowing.
+      ws.close();
+      await audioReader.cancel().catch(() => {});
+      throw error;
+    }
+    void sendAudioAndClose(ws, audioReader).catch((error) => queue.fail(error));
 
     const closeTimer = setTimeout(() => {
       if (ws.readyState !== WebSocket.CLOSED) {
@@ -178,6 +188,9 @@ export class DeepgramNova3ASRProvider implements ASRProvider {
       }
     } finally {
       clearTimeout(closeTimer);
+      // Stop the audio pump so a still-live mic stream cannot keep queueing
+      // PCM after the upstream socket ends first.
+      await audioReader.cancel().catch(() => {});
       if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
         ws.close();
       }
@@ -364,20 +377,17 @@ async function waitForOpen(ws: WebSocket, timeoutMs: number): Promise<void> {
   });
 }
 
-async function sendAudioAndClose(ws: WebSocket, audio: AudioReadableStream): Promise<void> {
-  const reader = audio.getReader();
-  try {
-    while (true) {
-      const read = await reader.read();
-      if (read.done) {
-        break;
-      }
-      if (read.value.byteLength > 0 && ws.readyState === WebSocket.OPEN) {
-        ws.send(read.value);
-      }
+// The caller owns the reader and cancels it from the generator's cleanup
+// paths, which both unblocks a pending read here and releases queued PCM.
+async function sendAudioAndClose(ws: WebSocket, reader: ReadableStreamDefaultReader<Uint8Array>): Promise<void> {
+  while (true) {
+    const read = await reader.read();
+    if (read.done) {
+      break;
     }
-  } finally {
-    reader.releaseLock();
+    if (read.value.byteLength > 0 && ws.readyState === WebSocket.OPEN) {
+      ws.send(read.value);
+    }
   }
 
   if (ws.readyState === WebSocket.OPEN) {

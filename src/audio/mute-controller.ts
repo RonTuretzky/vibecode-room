@@ -270,13 +270,28 @@ class MuteProtectedASRProvider implements ASRProvider {
 
   async *stream(audio: AudioReadableStream): AsyncIterable<TranscriptObservation> {
     if (this.controller.isMuted()) {
+      // No upstream will ever consume this stream; cancel it so PCM queued by
+      // a mic session started while muted is released instead of accumulating
+      // for the session lifetime.
+      await audio.cancel().catch(() => {});
       return;
     }
 
-    for await (const observation of this.upstream.stream(audio)) {
-      const accepted = this.controller.acceptPipelineObservation(observation);
-      if (accepted !== null) {
-        yield accepted;
+    let upstreamCompleted = false;
+    try {
+      for await (const observation of this.upstream.stream(audio)) {
+        const accepted = this.controller.acceptPipelineObservation(observation);
+        if (accepted !== null) {
+          yield accepted;
+        }
+      }
+      upstreamCompleted = true;
+    } finally {
+      if (!upstreamCompleted) {
+        // The upstream terminated early (error, or this iterator was dropped
+        // mid-stream) and may have left the audio unconsumed; release any
+        // still-queued PCM. Cancelling a closed or locked stream is a no-op.
+        await audio.cancel().catch(() => {});
       }
     }
   }

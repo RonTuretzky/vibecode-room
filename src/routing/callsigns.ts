@@ -146,7 +146,13 @@ export class CallsignAllocator {
     }
 
     this.#active.delete(upid);
-    this.#cooldowns.set(callsign, this.#now());
+    const now = this.#now();
+    // Callsigns are mostly unique per process, so without pruning the map
+    // grows by one entry per halted process forever. Pruning only here (not
+    // in isCooldownExpired) keeps wasCooledDown() truthful within the
+    // release -> cooldown -> reassign cycle.
+    this.pruneExpiredCooldowns(now);
+    this.#cooldowns.set(callsign, now);
     return callsign;
   }
 
@@ -199,6 +205,14 @@ export class CallsignAllocator {
 
   private wasCooledDown(candidate: string): boolean {
     return this.#cooldowns.has(candidate);
+  }
+
+  private pruneExpiredCooldowns(now: number): void {
+    for (const [callsign, releasedAt] of this.#cooldowns) {
+      if (now - releasedAt >= this.#cooldownMs) {
+        this.#cooldowns.delete(callsign);
+      }
+    }
   }
 }
 

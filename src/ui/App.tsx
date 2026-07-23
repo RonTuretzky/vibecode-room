@@ -119,6 +119,14 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
   const [micLevel, setMicLevel] = useState(0);
   const [micError, setMicError] = useState<string | null>(null);
   const micHandleRef = useRef<MicCaptureHandle | null>(null);
+  // In-flight mic start, set SYNCHRONOUSLY before the first await in toggleMic.
+  // getUserMedia can take seconds (permission prompt), and micHandleRef is only
+  // assigned after it resolves — without this guard a held key / double-click
+  // launches a SECOND pipeline and the loser keeps capturing + streaming with
+  // nothing left pointing at it. This ref is also the start's OWNERSHIP token:
+  // stopMic clears it to disown a pending start, and a disowned start tears
+  // down its own pipeline instead of committing it (see toggleMic).
+  const micStartRef = useRef<Promise<void> | null>(null);
   const [qrOpen, setQrOpen] = useState(initialOverlay?.qrOpen ?? false);
   const [helpOpen, setHelpOpen] = useState(false);
   // MOCK ROOM: a client-only demo showing several projects building at once.
@@ -633,6 +641,18 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
     setSnapshot((current) => withUnmuted(current));
   }, []);
 
+  const stopMic = useCallback(() => {
+    // Disowning any in-flight start (clearing the ownership token) is enough
+    // to cover a stop that races getUserMedia: the start body re-checks the
+    // token once the pipeline lands and stops it itself when disowned, so the
+    // pipeline the (still null) handle ref cannot see is never orphaned.
+    micStartRef.current = null;
+    micHandleRef.current?.stop();
+    micHandleRef.current = null;
+    setMicState("off");
+    setMicLevel(0);
+  }, []);
+
   const triggerEmergency = useCallback(() => {
     // Optimistically reflect the FULL kill-all (mirrors the server's emergency
     // transition: stop listening + halt) so demo/offline mode stays coherent; the
@@ -650,49 +670,65 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
         // Best-effort: the projector is non-authoritative; never block on the API.
       });
     }
-    // Stop any live mic capture as part of the kill-all.
-    micHandleRef.current?.stop();
-    micHandleRef.current = null;
-    setMicState("off");
-    setMicLevel(0);
-  }, []);
-
-  const stopMic = useCallback(() => {
-    micHandleRef.current?.stop();
-    micHandleRef.current = null;
-    setMicState("off");
-    setMicLevel(0);
-  }, []);
+    // Stop any live (or still-starting) mic capture as part of the kill-all.
+    stopMic();
+  }, [stopMic]);
 
   const toggleMic = useCallback(async () => {
-    if (micHandleRef.current !== null) {
+    // Toggle semantics under concurrency: a second toggle while a start is in
+    // flight (or already live) is a STOP — stopMic disowns any pending start,
+    // whose pipeline is then torn down (below), never orphaned.
+    if (micStartRef.current !== null || micHandleRef.current !== null) {
       stopMic();
       return;
     }
     setMicError(null);
     setMicState("connecting");
-    try {
-      // Safety mirror of the server: a muted room must unmute before the mic can
-      // stream cloud ASR. Release the mute first so the socket is accepted.
-      if (snapshotRef.current.muted) {
-        await releaseMute();
+    // Definite-assignment assertion: the async body compares itself against
+    // the ref, and it only reads `start` after its first await — by which time
+    // the assignment below has run.
+    let start!: Promise<void>;
+    start = (async () => {
+      try {
+        // Safety mirror of the server: a muted room must unmute before the mic can
+        // stream cloud ASR. Release the mute first so the socket is accepted.
+        if (snapshotRef.current.muted) {
+          await releaseMute();
+        }
+        const handle = await startMicCapture({
+          onLevel: (rms) => setMicLevel(rms),
+          onStatus: (status) => {
+            if (status === "live") {
+              setMicState("live");
+            } else if (status === "stopped") {
+              setMicState("off");
+              setMicLevel(0);
+            }
+          },
+          onError: (message) => setMicError(message),
+        });
+        // While getUserMedia was pending a stop (or emergency/unmount) may
+        // have disowned this start; committing now would resurrect — or, if a
+        // newer start already committed, clobber — the handle ref. Tear down
+        // this pipeline instead.
+        if (micStartRef.current !== start) {
+          handle.stop();
+          return;
+        }
+        micHandleRef.current = handle;
+      } catch (error) {
+        setMicError(error instanceof Error ? error.message : "Could not start microphone");
+        setMicState("off");
       }
-      const handle = await startMicCapture({
-        onLevel: (rms) => setMicLevel(rms),
-        onStatus: (status) => {
-          if (status === "live") {
-            setMicState("live");
-          } else if (status === "stopped") {
-            setMicState("off");
-            setMicLevel(0);
-          }
-        },
-        onError: (message) => setMicError(message),
-      });
-      micHandleRef.current = handle;
-    } catch (error) {
-      setMicError(error instanceof Error ? error.message : "Could not start microphone");
-      setMicState("off");
+    })();
+    // Published before the await below (and before the async body's first await
+    // can yield), so every concurrent caller sees the in-flight start.
+    micStartRef.current = start;
+    await start;
+    // Clear only if still ours — a concurrent stopMic (or a newer start after
+    // it) may have replaced the token already.
+    if (micStartRef.current === start) {
+      micStartRef.current = null;
     }
   }, [releaseMute, stopMic]);
 
@@ -702,7 +738,10 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
   // stops the mic AND turns capture off. Composes the existing mic and
   // /api/capture handlers — no new endpoints. Both 'm' and 'c' map here.
   const toggleMicCapture = useCallback(async () => {
-    const active = micHandleRef.current !== null || (snapshotRef.current.captureMode ?? false);
+    // A start still in flight counts as active, so a rapid second press stops
+    // (toggle semantics) instead of racing a second getUserMedia pipeline.
+    const active =
+      micStartRef.current !== null || micHandleRef.current !== null || (snapshotRef.current.captureMode ?? false);
     if (active) {
       stopMic();
       if (snapshotRef.current.captureMode) {
@@ -718,9 +757,13 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
     await toggleMic();
   }, [stopMic, toggleCaptureMode, toggleMic]);
 
-  // Stop capture if the component unmounts.
+  // Stop capture if the component unmounts. Disowning a start still in flight
+  // makes it stop its own pipeline when getUserMedia lands (see toggleMic), so
+  // an unmount mid-start can't orphan it. (No stopMic here: this must not set
+  // state on an unmounted component.)
   useEffect(() => {
     return () => {
+      micStartRef.current = null;
       micHandleRef.current?.stop();
       micHandleRef.current = null;
     };
@@ -773,7 +816,9 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
     } catch {
       // Non-authoritative projector: a failed POST must never wedge the demo.
     }
-    if (micHandleRef.current === null) {
+    // Ensure-on, not toggle: skip when the mic is live OR already starting, so
+    // a double-click on the record button can't stop (or double-start) the mic.
+    if (micStartRef.current === null && micHandleRef.current === null) {
       void toggleMic();
     }
   }, [liveMode, releaseMute, toggleMic]);
@@ -952,6 +997,12 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
       return;
     }
     function onKey(keyEvent: KeyboardEvent) {
+      // A held key auto-repeats; every binding here is a discrete action or a
+      // toggle (the mic toggle would race a fresh getUserMedia per repeat), so
+      // only the initial press counts.
+      if (keyEvent.repeat) {
+        return;
+      }
       // Never steal keys from text entry or browser-level shortcuts.
       if (keyEvent.metaKey || keyEvent.ctrlKey) {
         return;

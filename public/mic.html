@@ -242,7 +242,6 @@ globalThis.MicEncoder = { TARGET_SAMPLE_RATE, FRAME_SIZE, floatTo16BitPCM, downs
     ws.addEventListener("open", () => {
       if (ws !== socket) return;
       socketLive = true;
-      reconnectDelayMs = 1000;
       statusForConnected();
     });
 
@@ -256,6 +255,11 @@ globalThis.MicEncoder = { TARGET_SAMPLE_RATE, FRAME_SIZE, floatTo16BitPCM, downs
       }
       if (parsed.type === "ready") {
         serverMode = parsed.mode || null;
+        // Reset the backoff only on an ACCEPTED session, not at socket-open: a
+        // muted room reaches OPEN and then closes 1008, so resetting at open
+        // pins the retry loop (connect + POST /api/unmute) at the 1s floor for
+        // as long as the phone sits on this page.
+        reconnectDelayMs = 1000;
         statusForConnected();
       } else if (parsed.type === "error" && parsed.reason !== "muted") {
         // "muted" is handled by the 1008 close that follows it.

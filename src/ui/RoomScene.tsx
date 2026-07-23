@@ -1481,6 +1481,7 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         GEO.flowerCenter,
         new THREE.MeshPhongMaterial({ color: 0xffe08a, emissive: 0xffe08a, emissiveIntensity: 0.4 }),
       );
+      bloom.userData.ownMaterial = true;
       bloom.position.y = 0.95;
       // A grown build's crowning bloom is visibly larger + brighter.
       bloom.scale.setScalar(ind.grown ? 2.1 : 1.5);

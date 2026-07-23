@@ -137,9 +137,11 @@ function startOtelTraceExport(exportingRuntime: Awaited<ReturnType<typeof create
   const exporter = new GenAiOtlpExporter({ endpoint, headers, serviceName: "vibersyn-projector" });
   let cursor = 0;
   const timer = setInterval(() => {
-    const events = exportingRuntime.trace.events();
-    const fresh = events.slice(cursor);
-    cursor = events.length;
+    // Incremental read against the trace's monotonic cursor: the buffer is a
+    // bounded ring now, so index-based slicing (and copying the whole array
+    // every tick) would drift once eviction starts.
+    const { events: fresh, nextSeq } = exportingRuntime.trace.eventsSince(cursor);
+    cursor = nextSeq;
     for (const event of fresh) {
       void exporter
         .exportCall({

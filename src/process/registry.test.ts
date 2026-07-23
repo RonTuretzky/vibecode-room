@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { ProcessBuildSnapshot } from "../buildloop/orchestrator";
+import { CallsignAllocator } from "../routing/callsigns";
 import { MemorySmithersClient } from "./test-helpers";
 import { ProcessRegistry, steerText, type BuildLoopOrchestrator } from "./registry";
 
@@ -121,6 +122,33 @@ describe("process registry", () => {
     await registry.spawn({ correlationId: "corr-a", upid: "upid-a", workflow: "wf" });
 
     await expect(registry.pause("pause the second one" as never, "corr-nl")).rejects.toThrow(/No process/u);
+  });
+
+  test("halt caps dead-record retention at the 12 most recent halted cards, evicting the oldest", async () => {
+    // Injected clock so each halt gets a strictly increasing updatedAtMs — the
+    // sweep orders evictions by it. Cooldown-free allocator so 15 spawn/halt
+    // cycles exercise the retention cap, not the 12-codename reuse cooldown.
+    let tick = 0;
+    const registry = new ProcessRegistry({
+      client: new MemorySmithersClient(),
+      sessionId: "registry-dead-cap",
+      now: () => ++tick,
+      callsigns: new CallsignAllocator({ cooldownMs: 0 }),
+    });
+
+    // 14 spawn/halt cycles: halted cards stay on the wall by design, but
+    // retention is CAPPED — only the 12 most recently halted survive.
+    for (let index = 1; index <= 14; index += 1) {
+      await registry.spawn({ correlationId: `corr-${index}`, upid: `upid-${index}`, workflow: "wf" });
+      await registry.halt(`upid-${index}`, `corr-halt-${index}`);
+    }
+    await registry.spawn({ correlationId: "corr-live", upid: "upid-live", workflow: "wf" });
+
+    const dead = registry.records().filter((record) => record.state === "dead");
+    expect(dead).toHaveLength(12);
+    // The two OLDEST halted cards were evicted entirely; the live spawn is untouched.
+    expect(dead.map((record) => record.upid)).toEqual(Array.from({ length: 12 }, (_, index) => `upid-${index + 3}`));
+    expect(registry.activeRecords()).toEqual([expect.objectContaining({ upid: "upid-live", state: "planning" })]);
   });
 });
 

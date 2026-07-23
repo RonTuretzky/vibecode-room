@@ -104,6 +104,42 @@ describe("RunEventDriver — streamed frames overlay the process panel for a spa
   });
 });
 
+// A halted run must not leave its overlay behind: forget() is the deletion path
+// the composition wires from the halt flow, so the per-UPID overlay map cannot
+// grow by one entry per run forever.
+describe("RunEventDriver — forget drops a halted run's overlay and its live stream", () => {
+  test("forget deletes the overlay; other UPIDs are untouched", async () => {
+    const client = new ScriptedStreamClient([
+      [frame("node.started", { summary: "first" }, 1)],
+      [frame("node.started", { summary: "other" }, 1)],
+    ]);
+    const driver = new RunEventDriver({ client });
+    await driver.subscribe("upid-halted", "vibersyn-upid-halted");
+    await driver.subscribe("upid-kept", "vibersyn-upid-kept");
+    expect(driver.overlay("upid-halted")).toBeDefined();
+
+    driver.forget("upid-halted");
+
+    expect(driver.overlay("upid-halted")).toBeUndefined();
+    expect(driver.overlay("upid-kept")?.lastOutput).toBe("other");
+    // Forgetting an unknown UPID is a no-op, not a throw.
+    driver.forget("upid-never-subscribed");
+  });
+
+  test("forget aborts a still-streaming subscription so the dead run's stream winds down", async () => {
+    const client = new HangingStreamClient();
+    const driver = new RunEventDriver({ client });
+    const subscription = driver.subscribe("upid-halted", "vibersyn-upid-halted");
+    await Bun.sleep(0); // the first frame lands; the stream then hangs on its signal
+
+    driver.forget("upid-halted");
+
+    await subscription; // resolves only because forget aborted the hung stream
+    expect(driver.overlay("upid-halted")).toBeUndefined();
+    await driver.idle();
+  });
+});
+
 function runEvent(partial: Partial<RunEvent> & Pick<RunEvent, "kind" | "text" | "seq">): RunEvent {
   return {
     upid: partial.upid ?? "upid-live",
@@ -121,6 +157,22 @@ function frame(event: string, payload: Record<string, unknown>, seq: number): Ga
 interface ScriptedConnection {
   frames: GatewayEventFrame[];
   thenThrow?: boolean;
+}
+
+// A streamRunEvents stub that yields one frame then hangs until the driver's
+// signal aborts — the shape of a live run whose gateway stream stays open. Lets
+// the forget() test prove the tracked subscription is actually torn down.
+class HangingStreamClient implements RunEventStreamClient {
+  async *streamRunEvents(_upid: string, options?: StreamRunEventsOptions): AsyncIterable<GatewayEventFrame> {
+    yield frame("node.started", { summary: "first" }, 1);
+    await new Promise<void>((resolve) => {
+      if (options?.signal?.aborted === true) {
+        resolve();
+        return;
+      }
+      options?.signal?.addEventListener("abort", () => resolve(), { once: true });
+    });
+  }
 }
 
 // A streamRunEvents stub that replays a script of connections: each subscribe()

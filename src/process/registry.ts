@@ -106,6 +106,13 @@ export interface ProcessRegistryOptions {
   runIdNonce?: string;
 }
 
+// Retention cap for dead (halted) records. Halted cards stay visible on the
+// wall by design, but every retained record rides every published snapshot
+// (cloned + serialized to every WS client on every publish), so retention is
+// bounded: once more than this many dead records exist, halt() evicts the
+// oldest (by updatedAtMs) from the registry entirely.
+const MAX_DEAD_RECORDS = 12;
+
 export type RegistrySpawnResult =
   | { accepted: true; process: RegistryProcess; spawn: SpawnResult; spokenAck: string }
   | {
@@ -574,6 +581,7 @@ export class ProcessRegistry {
     this.patch(upid, { state: "dead", selected: false, lastAction: "halt", updatedAtMs: this.now() });
     this.callsigns.release(upid);
     this.#seeds.delete(upid);
+    this.sweepDeadRecords();
     if (this.#selectedUPID === upid) {
       this.#selectedUPID = null;
     }
@@ -621,6 +629,20 @@ export class ProcessRegistry {
 
   statusSummary(): string {
     return summarizeFleetStatus(this.activeRecords());
+  }
+
+  // Evict the oldest dead records beyond MAX_DEAD_RECORDS. Without this every
+  // spawn/halt cycle grows #processes by one forever, and every dead record
+  // rides every published snapshot. Live records are never touched.
+  private sweepDeadRecords(): void {
+    const dead = [...this.#processes.values()].filter((record) => record.state === "dead");
+    if (dead.length <= MAX_DEAD_RECORDS) {
+      return;
+    }
+    dead.sort((a, b) => a.updatedAtMs - b.updatedAtMs);
+    for (const record of dead.slice(0, dead.length - MAX_DEAD_RECORDS)) {
+      this.#processes.delete(record.upid);
+    }
   }
 
   private patch(upid: string, patch: Partial<RegistryProcess>): RegistryProcess {

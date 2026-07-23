@@ -92,6 +92,12 @@ export interface MicSession {
 // long-running room session does not grow the published payload without bound.
 const MAX_LIVE_TRANSCRIPT_LINES = 40;
 
+// Cap the un-consumed mic PCM backlog inside the ASR audio stream. A consumer
+// that stops (or never starts) draining — the replay provider and the muted
+// path historically never read — would otherwise buffer a whole session's audio
+// in memory; past this backlog (~15s of frames) new frames are dropped instead.
+const MIC_MAX_QUEUED_CHUNKS = 64;
+
 export interface ProjectorRuntimeEnv {
   DEEPGRAM_API_KEY?: string;
   VIBERSYN_SESSION_ID?: string;
@@ -401,7 +407,10 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   readonly #session: EmergencySessionState;
   readonly #env: ProjectorRuntimeEnv;
   readonly #subscribers = new Set<ProjectorRuntimeSubscriber>();
-  readonly #outputs: OutputDecision[] = [];
+  // Most recent audible output per channel — the only projection audioSnapshot
+  // needs. A full OutputDecision history would grow for the session's life.
+  #lastSpoken: string | undefined;
+  #lastEarcon: string | undefined;
   readonly #demoProcesses: SeededProcessView[];
   #snapshot: ProjectorSnapshot = emptyProjectorSnapshot;
   #emergencyTriggered = false;
@@ -759,6 +768,9 @@ class LiveProjectorRuntime implements ProjectorRuntime {
         // A process halted mid-clone kills its git subprocess too; the clone
         // routine's post-clone build kick then sees the abort and stands down.
         this.#importClones.get(upid)?.abort();
+        // A halted process needs no further live-run telemetry; drop its overlay
+        // so the driver's map does not keep one entry per run forever.
+        this.runEventDriver.forget(upid);
         this.publish();
       },
       onTrace: (event) => this.recordExternalTrace(event),
@@ -916,7 +928,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       trace: this.trace,
       clock,
       // Mirrors the canonical.ts emitOutput pattern: every audible stage
-      // transition is recorded in #outputs AND routed through the audio/tts path
+      // transition is recorded AND routed through the audio/tts path
       // so earcons play, the spoken ack reaches this.tts.speak, and audioSnapshot
       // reflects lastSpoken/earcon (GAP-005/GAP-008).
       onOutput: (decision, transition) => this.emitOutput(decision, transition.correlationId),
@@ -1581,13 +1593,19 @@ class LiveProjectorRuntime implements ProjectorRuntime {
 
   startMicSession(correlationId = `corr-mic-${crypto.randomUUID()}`): MicSession {
     let controller: ReadableStreamDefaultController<Uint8Array> | null = null;
-    let closed = false;
+    // Two distinct ends of the session, kept separate on purpose: `cancelled`
+    // means the ASR consumer cancelled the audio stream (muted wrapper, Deepgram
+    // teardown) — frames stop flowing but the mic socket is still open, and
+    // stop() must still run its full teardown. `stopped` means the socket
+    // closed and teardown ran.
+    let cancelled = false;
+    let stopped = false;
     const audio = new ReadableStream<Uint8Array>({
       start: (c) => {
         controller = c;
       },
       cancel: () => {
-        closed = true;
+        cancelled = true;
       },
     });
 
@@ -1636,14 +1654,17 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     return {
       id: correlationId,
       pushAudio: (chunk: Uint8Array) => {
-        if (closed || controller === null || chunk.byteLength === 0) {
+        if (stopped || cancelled || controller === null || chunk.byteLength === 0) {
           return;
         }
         this.#micBytes += chunk.byteLength;
-        try {
-          controller.enqueue(chunk);
-        } catch {
-          // The stream was already closed/cancelled; drop the late frame.
+        const desiredSize = controller.desiredSize;
+        if (desiredSize === null || desiredSize > -MIC_MAX_QUEUED_CHUNKS) {
+          try {
+            controller.enqueue(chunk);
+          } catch {
+            // The stream was already closed/cancelled; drop the late frame.
+          }
         }
         // Throttle byte-counter publishes so a steady mic stream (many frames/s)
         // doesn't flood SSE subscribers.
@@ -1654,15 +1675,15 @@ class LiveProjectorRuntime implements ProjectorRuntime {
         }
       },
       stop: async () => {
-        if (closed) {
+        if (stopped) {
           return;
         }
-        closed = true;
+        stopped = true;
         this.#micActive = false;
         try {
           controller?.close();
         } catch {
-          // Already closed.
+          // Already closed/cancelled.
         }
         this.recordExternalTrace({
           event: "mic.session.close",
@@ -2603,7 +2624,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       transcript: this.transcriptSnapshot(),
       // Real trace only — no demo fixtures. An idle runtime that has emitted no
       // events shows an empty trace, not the canned demo causal chain.
-      trace: [...this.trace.events()].slice(-80),
+      trace: this.trace.lastEvents(80),
       updatedAt: new Date().toISOString(),
       mic: { mode: this.micMode, active: this.#micActive, bytesReceived: this.#micBytes },
       steeringUpid: this.#steeringUpid,
@@ -2895,19 +2916,10 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   // speech), so the snapshot must surface both, not just whichever was emitted
   // last. Falls back to the previous audio fields before any live output exists.
   private audioSnapshot(previous: ProjectorSnapshot): ProjectorSnapshot["audio"] {
-    let lastSpoken: string | undefined;
-    let earcon: string | undefined;
-    for (const decision of this.#outputs) {
-      if (decision.channel === "tts") {
-        lastSpoken = decision.text;
-      } else if (decision.channel === "earcon") {
-        earcon = decision.id;
-      }
-    }
     return {
       ...previous.audio,
-      lastSpoken: lastSpoken ?? previous.audio.lastSpoken,
-      earcon: earcon ?? previous.audio.earcon,
+      lastSpoken: this.#lastSpoken ?? previous.audio.lastSpoken,
+      earcon: this.#lastEarcon ?? previous.audio.earcon,
     };
   }
 
@@ -2939,7 +2951,11 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   }
 
   private recordOutput(decision: OutputDecision): void {
-    this.#outputs.push(decision);
+    if (decision.channel === "tts") {
+      this.#lastSpoken = decision.text;
+    } else if (decision.channel === "earcon") {
+      this.#lastEarcon = decision.id;
+    }
   }
 
   // Open the ACTIVE_LISTEN stage when the spine is still IDLE so a suggestion
@@ -3259,12 +3275,12 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     }
   }
 
-  // Record an audible OutputDecision in #outputs and play/speak it. Mirrors the
+  // Record an audible OutputDecision and play/speak it. Mirrors the
   // canonical.ts emitOutput pattern: earcon/ack clips play to the audio sink and
   // TTS reaches this.tts.speak, with a trace event per channel. Failures here must
   // not abort a stage transition, so the emit is best-effort.
   private async emitOutput(decision: OutputDecision, correlationId: string): Promise<void> {
-    this.#outputs.push(decision);
+    this.recordOutput(decision);
     const startedAtMs = Date.now();
     try {
       switch (decision.channel) {

@@ -14,6 +14,7 @@ export interface RedactionContext {
 export interface TraceProcessorOptions {
   clock?: TraceClock;
   redactionFilters?: readonly RedactionFilter[];
+  maxEvents?: number;
 }
 
 export interface TraceInput {
@@ -72,14 +73,24 @@ type ChainStage = "observation" | "decision" | "action" | "outcome" | null;
 
 const defaultClock: TraceClock = () => performance.now();
 
+export const DEFAULT_TRACE_MAX_EVENTS = 5000;
+
 export class TraceProcessor {
   readonly #events: LogEvent[] = [];
   readonly #clock: TraceClock;
   readonly #redactionFilters: readonly RedactionFilter[];
+  readonly #maxEvents: number;
+  #totalRecorded = 0;
 
   constructor(options: TraceProcessorOptions = {}) {
     this.#clock = options.clock ?? defaultClock;
     this.#redactionFilters = options.redactionFilters ?? [];
+    this.#maxEvents = options.maxEvents ?? DEFAULT_TRACE_MAX_EVENTS;
+  }
+
+  /** Total events ever recorded, including ones evicted from the bounded ring. */
+  get totalRecorded(): number {
+    return this.#totalRecorded;
   }
 
   record(input: TraceInput): LogEvent {
@@ -97,7 +108,7 @@ export class TraceProcessor {
 
     const redactionCount = redacted.count + identifiers.count;
     if (redactionCount > 0) {
-      this.#events.push(
+      this.retain(
         logEventSchema.parse({
           level: "warn",
           event: "secret.redacted",
@@ -121,7 +132,7 @@ export class TraceProcessor {
     });
 
     assertRequiredTraceIds(event);
-    this.#events.push(event);
+    this.retain(event);
     return event;
   }
 
@@ -205,6 +216,25 @@ export class TraceProcessor {
     return [...this.#events];
   }
 
+  /** Copy of at most the `n` most recent retained events. */
+  lastEvents(n: number): LogEvent[] {
+    return n <= 0 ? [] : this.#events.slice(-n);
+  }
+
+  /**
+   * Retained events recorded after cursor `seq` (a prior `totalRecorded`
+   * reading), clamped to the ring when older events were evicted. Poll with
+   * the returned `nextSeq` to stream without re-reading history.
+   */
+  eventsSince(seq: number): { events: LogEvent[]; nextSeq: number } {
+    const oldest = this.#totalRecorded - this.#events.length;
+    const start = Math.min(Math.max(seq, oldest), this.#totalRecorded);
+    return {
+      events: this.#events.slice(start - oldest),
+      nextSeq: this.#totalRecorded,
+    };
+  }
+
   query(correlationId: string): CausalChain {
     return reconstructCausalChain(this.#events, correlationId);
   }
@@ -215,8 +245,20 @@ export class TraceProcessor {
 
   static fromJsonl(jsonl: string, options: TraceProcessorOptions = {}): TraceProcessor {
     const processor = new TraceProcessor(options);
-    processor.#events.push(...parseTraceJsonl(jsonl));
+    for (const event of parseTraceJsonl(jsonl)) {
+      processor.retain(event);
+    }
     return processor;
+  }
+
+  // Bounded ring: count every event ever recorded, retain only the newest
+  // #maxEvents so a long-lived session cannot grow the trace without bound.
+  private retain(event: LogEvent): void {
+    this.#events.push(event);
+    this.#totalRecorded += 1;
+    if (this.#events.length > this.#maxEvents) {
+      this.#events.splice(0, this.#events.length - this.#maxEvents);
+    }
   }
 }
 

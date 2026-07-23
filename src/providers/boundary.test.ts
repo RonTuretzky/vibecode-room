@@ -91,6 +91,34 @@ describe("ENG-T-04 provider boundary", () => {
     expect(chunks).toEqual([]);
   });
 
+  test("replay ASR drains and discards mic audio without cancelling the producer's stream (leak regression)", async () => {
+    const asr = ReplayASRProvider.fromFile(fixturePath);
+    let cancelled = false;
+    const audio = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(1_024));
+        controller.enqueue(new Uint8Array(2_048));
+        controller.close();
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+
+    const observations: TranscriptObservation[] = [];
+    for await (const observation of asr.stream(audio)) {
+      observations.push(observation);
+    }
+
+    // The background drain releases queued PCM instead of retaining the stream.
+    await eventually(() => (asr.streamCalls[0]?.bytesDiscarded ?? 0) === 3_072);
+    expect(observations).toHaveLength(2);
+    expect(asr.streamCalls).toHaveLength(1);
+    expect(asr.streamCalls[0].bytesDiscarded).toBe(3_072);
+    // The mic session owns the stream lifecycle; replay must not cancel it.
+    expect(cancelled).toBe(false);
+  });
+
   test("replay DecisionLLM is temperature-0 and cached", async () => {
     const input = decisionInput("Viber status please", "utt-002");
     const output = decisionOutput("Viber status please", "utt-002", matchWakeWord(observation("Viber status please", "utt-002")));
@@ -193,6 +221,12 @@ function emptyAudioStream(): ReadableStream<Uint8Array> {
       controller.close();
     },
   });
+}
+
+async function eventually(check: () => boolean, attempts = 50): Promise<void> {
+  for (let attempt = 0; attempt < attempts && !check(); attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
 }
 
 async function collectStream(stream: ReadableStream<Uint8Array>): Promise<Uint8Array[]> {
