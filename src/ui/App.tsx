@@ -1169,17 +1169,34 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
     () =>
       snapshot.processes
         .filter((process) => !hiddenTrees.has(process.upid))
-        .map((process) => ({
-          upid: process.upid,
-          callsign: process.callsign,
-          state: process.state,
-          progress: process.progress,
-          task: process.task,
-          steering: process.upid === steeringUpid,
-          // The scene knows sapling/tree only; the SELF project folds onto
-          // that axis by whether a self-run is live (sceneStageOf).
-          stage: sceneStageOf(process),
-        })),
+        .map((process) => {
+          // Per-backend concept-mock lane tally → status satellites on the node.
+          const builds = buildsOf(process);
+          const summary = builds.reduce(
+            (acc, b) => {
+              if (b.status === "ready") acc.ready += 1;
+              else if (b.status === "failed") acc.failed += 1;
+              else acc.building += 1;
+              return acc;
+            },
+            { building: 0, ready: 0, failed: 0 },
+          );
+          const execution = executionOf(process);
+          return {
+            upid: process.upid,
+            callsign: process.callsign,
+            state: process.state,
+            progress: process.progress,
+            task: process.task,
+            steering: process.upid === steeringUpid,
+            // The scene knows sapling/tree only; the SELF project folds onto
+            // that axis by whether a self-run is live (sceneStageOf).
+            stage: sceneStageOf(process),
+            builds: builds.length > 0 ? summary : undefined,
+            published: typeof process.publishedUrl === "string" && process.publishedUrl.length > 0,
+            failedCount: summary.failed + (execution?.status === "failed" ? 1 : 0),
+          };
+        }),
     [snapshot.processes, hiddenTrees, steeringUpid],
   );
 

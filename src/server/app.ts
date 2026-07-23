@@ -296,6 +296,34 @@ export function createProjectorApp(runtime: ProjectorRuntime, options: Projector
     }
     return context.json(runtime.publishNow());
   });
+  // Swipe-deck answers: a chosen answer to a build-forking question is forwarded
+  // as a framed steer so the fleet incorporates the decision. Offline/published
+  // deck copies short-circuit (no room to reach).
+  app.post("/api/process/:upid/answer", async (context) => {
+    if (isOfflineDemoRequest(context.req.header("referer"))) {
+      return context.json(runtime.snapshot());
+    }
+    const upid = context.req.param("upid");
+    const body = (await context.req.json().catch(() => null)) as { questionId?: unknown; answer?: unknown; prompt?: unknown } | null;
+    if (
+      body === null ||
+      typeof body.answer !== "string" || body.answer.trim().length === 0 ||
+      typeof body.questionId !== "string" || body.questionId.trim().length === 0
+    ) {
+      return context.json({ ok: false, error: "body must be {questionId: string, answer: string}" }, 400);
+    }
+    const question = typeof body.prompt === "string" && body.prompt.trim().length > 0 ? body.prompt.trim() : body.questionId;
+    try {
+      await runtime.registry.steer(
+        upid,
+        { text: `Decision — for "${question}", the choice is "${body.answer.trim()}". Build accordingly.`, source: "api" },
+        `corr-api-answer-${crypto.randomUUID()}`,
+      );
+    } catch {
+      // Unknown or dead UPID.
+    }
+    return context.json(runtime.publishNow());
+  });
   app.get("*", async (context) => serveStatic(context.req.url));
 
   return app;

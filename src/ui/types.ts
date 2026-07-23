@@ -92,6 +92,11 @@ export interface ProjectorSuggestion {
     minSeconds: number;
   };
   questions: string[];
+  // Deck-ready decision questions the swipe deck consumes: {id, prompt, answers}.
+  // Derived server-side from the candidate's parallel questions/answers arrays
+  // (see src/detect/plan-questions.ts). Absent on idle/legacy gate-driven
+  // suggestions that never carried structured answers.
+  planQuestions?: import("../detect").PlanQuestion[];
   // Provenance (idea detection): the span of conversation this idea was grounded
   // in — the inclusive turn-id range plus the verbatim evidence the model quoted.
   // Absent on the neutral idle bubble and on legacy gate-driven suggestions.

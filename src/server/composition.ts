@@ -69,6 +69,7 @@ import { SeamDispatcher } from "../seam/dispatcher";
 import { createCorrelationRecord, type CorrelationRecord, type CorrelationStore } from "../seam/correlation-store";
 import { callsignFromRepo, parseImportRequest } from "./project-import";
 import { cloneRepo, repoDigest } from "./repo-clone";
+import { buildImportPlanPrompt } from "./import-plan";
 import type { IdeaCandidate, IdeaDetector } from "../detect";
 import { StageSequencer, type CanonicalStage } from "../spine/stage-sequencer";
 import type { DispatchedAction, LogEvent, OutputDecision, PendingSuggestion } from "../types";
@@ -1328,7 +1329,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       },
     });
     if (parsed.kind === "github") {
-      this.runGitHubImportRoutine(upid, parsed, pitch, correlationId);
+      this.runGitHubImportRoutine(upid, parsed, pitch, context, correlationId);
     }
     this.publish();
     return {
@@ -1358,6 +1359,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     upid: string,
     parsed: { url: string; owner: string; repo: string },
     basePitch: string,
+    context: string | null,
     correlationId: string,
   ): void {
     const controller = new AbortController();
@@ -1378,10 +1380,18 @@ class LiveProjectorRuntime implements ProjectorRuntime {
           entry.status = "ready";
         }
         const digest = await this.#repoDigestFn(result.dir).catch(() => null);
-        pitch =
+        // INFER ADDITIONS, don't plan from scratch: frame the fleet prompt as
+        // "add the smallest coherent slice that fits this existing repo" (or
+        // scaffold when the repo is near-empty) — buildImportPlanPrompt decides
+        // the mode from the digest+context and never throws / never needs net.
+        pitch = await buildImportPlanPrompt(
+          { context, digest, repoPath: result.dir },
+          { signal: controller.signal },
+        ).catch(() =>
           digest !== null
             ? `${basePitch}\n\nThe repository is cloned at ${result.dir}. Digest:\n${digest}`
-            : `${basePitch}\n\nThe repository is cloned at ${result.dir}.`;
+            : `${basePitch}\n\nThe repository is cloned at ${result.dir}.`,
+        );
       } else if (entry !== undefined) {
         entry.status = "clone-failed";
       }

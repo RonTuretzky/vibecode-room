@@ -1,4 +1,4 @@
-import type { IdeaCandidate } from "../detect";
+import { questionsFromAssessment, type IdeaCandidate } from "../detect";
 import type { PendingSuggestion } from "../types";
 import type { IdeaTrayItem, ProjectorSuggestion } from "../ui/types";
 
@@ -18,6 +18,9 @@ export function projectorSuggestionFromCandidate(candidate: IdeaCandidate): Proj
     confidence: clamp01(candidate.confidence),
     gate: { words: confidencePct, minWords: 100, seconds: 0, minSeconds: 0 },
     questions: [...candidate.questions],
+    // Deck-ready decision questions {id, prompt, answers} normalized from the
+    // candidate's parallel questions/answers arrays (plan-questions.ts).
+    planQuestions: questionsFromAssessment(candidate),
     contextSpan: { ...candidate.contextSpan },
     rationale: candidate.rationale,
   };

@@ -84,6 +84,14 @@ export interface GenerateSlideshowInput {
   // imported codebase. Absent for spoken-idea kickoffs — the fallback still reads
   // well without it.
   repoDigest?: string | null;
+  // Build-forking decision questions ({id, prompt, answers}) from the planning
+  // routine (src/detect/plan-questions.ts). When present they render as
+  // swipe-to-answer cards in the deck; each choice POSTs to `answerEndpoint`.
+  // Absent = no question cards (the fixed decision slide still renders).
+  questions?: readonly { id: string; prompt: string; answers: string[] }[];
+  // Room endpoint a chosen answer POSTs to, e.g. /api/process/<upid>/answer.
+  // Absent = the deck records the choice locally only (published/offline copy).
+  answerEndpoint?: string;
 }
 
 // The copy the model (or the deterministic fallback) supplies. Slide 1 (the
@@ -172,6 +180,8 @@ export async function generateSlideshow(
     title: `${ideaTitle(input.prompt)} — pitch`,
     footer: footerLine(input),
     slides,
+    questions: input.questions,
+    answerEndpoint: input.answerEndpoint,
   });
   const dir = join(input.outDir, SLIDESHOW_DIRNAME);
   await mkdir(dir, { recursive: true });
