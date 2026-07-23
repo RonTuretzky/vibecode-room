@@ -1,0 +1,15 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "vibecode-room-landing",
+  "compatibility_date": "2025-07-01",
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "single-page-application"
+  },
+  "routes": [
+    { "pattern": "vibecoderoom.ai", "custom_domain": true },
+    { "pattern": "www.vibecoderoom.ai", "custom_domain": true },
+    { "pattern": "vybersyn.com", "custom_domain": true },
+    { "pattern": "www.vybersyn.com", "custom_domain": true }
+  ]
+}

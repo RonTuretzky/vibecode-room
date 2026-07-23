@@ -1,0 +1,7 @@
+node_modules
+/dist
+.wrangler
+# the vendored, pre-built UI kit must travel with the repo even though dist/
+# is ignored globally (same trick as fixtures/cue-build in the root ignore)
+!vendor/decentralpark-ui/dist/
+!vendor/decentralpark-ui/dist/**

@@ -1,0 +1,218 @@
+@import "tailwindcss";
+
+/* Decentral Park Fonts - self-hosted by decentralpark-ui-kit */
+@font-face {
+  font-family: "Park Display";
+  src: url("./fonts/spacegrotesk-700.woff2") format("woff2");
+  font-weight: 700;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Park Display";
+  src: url("./fonts/spacegrotesk-500.woff2") format("woff2");
+  font-weight: 500;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Park Display";
+  src: url("./fonts/spacegrotesk-400.woff2") format("woff2");
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Park Body";
+  src: url("./fonts/inter-400.woff2") format("woff2");
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Park Body";
+  src: url("./fonts/inter-700.woff2") format("woff2");
+  font-weight: 700;
+  font-display: swap;
+}
+
+:root {
+  --background: #ffffff;
+  --foreground: #0a0a0a;
+  --font-parkDisplay: "Park Display", ui-sans-serif, system-ui, sans-serif;
+  --font-parkBody: "Park Body", ui-sans-serif, system-ui, sans-serif;
+}
+
+@theme {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-parkDisplay: var(--font-parkDisplay), ui-sans-serif, system-ui,
+    sans-serif;
+  --font-parkBody: var(--font-parkBody), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-roboto);
+
+  /* Custom Colors — Decentral Park */
+  --color-core-green: #16a34a;
+  --color-primary-green: #16a34a;
+  --color-green-0: #86efac;
+  --color-green-1: #15803d;
+  --color-green-2: #166534;
+  --color-primary-pine: #0d9488;
+  --color-pine-0: #5eead4;
+  --color-pine-1: #0f766e;
+  --color-pine-2: #134e4a;
+  --color-primary-sky: #0284c7;
+  --color-sky-0: #7dd3fc;
+  --color-sky-1: #0369a1;
+  --color-sky-2: #075985;
+  --color-paper-main: #f0fdf4;
+  --color-paper-0: #ffffff;
+  --color-paper-1: #dcfce7;
+  --color-paper-2: #bbf7d0;
+  --color-surface-ink: #14211a;
+  --color-surface-grey: #808080;
+  --color-surface-grey-2: #595959;
+  --color-surface-brown: #513c35;
+  --color-surface-brown-1: #301f18;
+  --color-system-green: #16a34a;
+  --color-system-red: #df0b00;
+  --color-system-warning: #ce7f00;
+  --color-red-0: #f7cac2;
+  --color-red-1: #f4b8ad;
+  --color-red-main: #df0b00;
+  --color-text-standard: #0a0a0a;
+  --color-white: #ffffff;
+  --color-black: #000000;
+
+  /* Custom Fonts */
+  --font-roboto: var(--font-roboto);
+  --font-parkDisplay: var(--font-parkDisplay);
+  --font-parkBody: var(--font-parkBody);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0a0a0a;
+    --foreground: #ededed;
+  }
+}
+
+@layer components {
+  .text-h1 {
+    @apply font-parkDisplay font-[900] text-[3rem] leading-[36px] md:text-[96px] md:leading-[76px] xl:text-[7rem] xl:leading-[83px] tracking-tight uppercase;
+  }
+  .text-h2 {
+    @apply font-parkDisplay font-[900] text-[3rem] xl:text-[80px] leading-[36px] xl:leading-[63px] tracking-tighter;
+  }
+  .text-h3 {
+    @apply font-parkDisplay font-[900] text-[1.5rem] leading-[20px] md:text-[2.5rem] md:leading-[36px] xl:text-[3rem] xl:leading-[48px] tracking-tight;
+  }
+  .text-h4 {
+    @apply font-parkBody font-[700] text-[24px] xl:text-[2rem] leading-[24px] xl:leading-[2rem];
+  }
+  .text-h5 {
+    @apply font-parkBody font-[400] text-[1rem] xl:text-[1.5rem] xl:leading-[24px];
+  }
+  .text-body {
+    @apply font-parkBody text-base;
+  }
+
+  .text-parkDisplay-bold {
+    @apply font-parkDisplay font-[700];
+  }
+  .text-parkDisplay {
+    @apply font-parkDisplay font-[500];
+  }
+  .text-body-bold {
+    @apply font-parkBody text-base font-[700];
+  }
+  .text-caption {
+    @apply font-parkBody text-[0.7rem];
+  }
+
+  /* Button Components */
+  .park-button {
+    @apply font-medium rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2;
+  }
+
+  .park-button-primary {
+    @apply bg-primary-green text-white hover:bg-green-1 focus:ring-primary-green;
+  }
+
+  .park-button-secondary {
+    @apply bg-primary-pine text-white hover:bg-pine-2 focus:ring-primary-pine;
+  }
+
+  .park-button-outline {
+    @apply border-2 border-primary-green text-primary-green hover:bg-green-0 focus:ring-primary-green;
+  }
+
+  .park-button-small {
+    @apply px-3 py-1.5 text-sm;
+  }
+
+  .park-button-medium {
+    @apply px-4 py-2 text-base;
+  }
+
+  .park-button-large {
+    @apply px-6 py-3 text-lg;
+  }
+
+  .park-button-disabled {
+    @apply opacity-50 cursor-not-allowed;
+  }
+
+  .park-button-enabled {
+    @apply cursor-pointer;
+  }
+
+  /* LiftedButton Components */
+  .lifted-button-base {
+    @apply mb-1 relative z-10 inline-flex items-center justify-center gap-[8px] font-parkBody text-base px-[37px] h-14 cursor-pointer;
+  }
+
+  .lifted-button {
+    background-color: var(--btn-bg);
+    color: var(--btn-text);
+  }
+
+  .lifted-button:hover {
+    background-color: var(--btn-hover-bg);
+    color: var(--btn-hover-text);
+  }
+
+  .lifted-button-disabled {
+    @apply bg-surface-grey opacity-50 cursor-not-allowed;
+  }
+
+  .lifted-button-shadow {
+    @apply absolute mb-1 inset-0 bg-surface-grey-2;
+  }
+
+  .lifted-button-motion {
+    @apply transition-all ease-out;
+  }
+
+  .lifted-button-lifted {
+    @apply -translate-x-0.5 -translate-y-0.5;
+  }
+
+  .lifted-button-active {
+    @apply group-active:translate-x-0.5 group-active:translate-y-0.5;
+  }
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-parkBody), Arial, Helvetica, sans-serif;
+}
+
+.nav-account-menu {
+  @apply z-20!;
+}
+
+.nav-account-menu > div {
+  @apply w-auto md:w-max;
+}

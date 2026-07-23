@@ -1,0 +1,15 @@
+@import "@decentralpark/ui/dist/theme.css";
+
+/* Tailwind v4 skips node_modules by default — scan the vendored kit so its
+   component classes (Button, Footer, …) make it into the build. */
+@source "../vendor/decentralpark-ui/dist";
+
+/* The kit's --font-mono points at an undefined --font-roboto; give the
+   terminal block a real mono stack. */
+@theme {
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+html {
+  scroll-behavior: smooth;
+}
