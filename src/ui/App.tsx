@@ -3,6 +3,9 @@ import type { CSSProperties } from "react";
 import { demoProjectorSnapshot, busyRoomSnapshot, emptyProjectorSnapshot, withUnmuted } from "./demo-data";
 import type { ProjectorProcess, ProjectorSnapshot, ResearchTrayItem, TranscriptLine } from "./types";
 import { GestureLayer } from "./gesture/GestureLayer";
+import { PinchCameraLayer } from "./gesture/PinchCameraLayer";
+import { HandSkeletonHud } from "./gesture/HandSkeletonHud";
+import type { HandsStatus } from "./gesture/hands-client";
 import { RoomScene, type DialogueNodeSpec, type IdeaOrbSpec, type ResearchNodeSpec, type SceneLayout, type SceneMode, type TreeSpec } from "./RoomScene";
 import { Slideshow } from "./Slideshow";
 import { BuildDetail } from "./BuildDetail";
@@ -15,8 +18,9 @@ import { BuildChips, CommissionButton, ExecutionChip, ProcessControls } from "./
 import { TakeHomeQr } from "./TakeHomeQr";
 import { buildsOf, lifecycleActionsFor, looksLikeSnapshot } from "./buildloop";
 import type { LifecycleAction } from "./buildloop";
-import { executionOf, parseDeckDecisionMessage, stageOf } from "./stage";
+import { executionOf, parseDeckDecisionMessage, sceneStageOf, stageOf } from "./stage";
 import type { DecisionChoice, StagedProcess } from "./stage";
+import { selfOf, trackBootId } from "./self-reload";
 import { parseProjectorUrl } from "./url-params";
 import { GuidedDemo } from "./guided/GuidedDemo";
 import { advanceOnSnapshot, popPracticeOrb, skipStep, startGuided, type GuidedState } from "./guided/machine";
@@ -38,8 +42,14 @@ interface ProjectorAppProps {
   // Test seam: boot with an on-demand overlay already open so the (static,
   // effect-free) test renderer can assert the de-themed overlay contract —
   // detail/deck/QR overlays open on WHICHEVER wall summons them, never only
-  // on view=builds. `selected` takes a callsign/upid, `slideshowUpid` a upid.
-  initialOverlay?: { selected?: string; slideshowUpid?: string; qrOpen?: boolean };
+  // on view=builds. `selected` takes a callsign/upid, `slideshowUpid` a upid,
+  // `ideaCard` an idea-action-card target (id null = the primary suggestion).
+  initialOverlay?: {
+    selected?: string;
+    slideshowUpid?: string;
+    qrOpen?: boolean;
+    ideaCard?: { id: string | null };
+  };
 }
 
 // The synthetic id used for the (single) idea/suggestion bubble.
@@ -75,6 +85,29 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
     return parseProjectorUrl(window.location.search, window.location.hostname);
   }, [urlSearch]);
   const view = urlConfig.view;
+  // PINCH CAMERA (TouchDesigner/MediaPipe hands): runtime-toggleable from the
+  // HUD, seeded from the ?hands= URL default so launcher flags still opt in.
+  // handsStatus surfaces the live socket state on the toggle (OFF / connecting
+  // / LIVE); it resets to "closed" whenever the layer unmounts.
+  const [handsOn, setHandsOn] = useState<boolean>(urlConfig.hands !== null);
+  const [handsStatus, setHandsStatus] = useState<HandsStatus>("closed");
+  // ?hands= carries the resolved URL; a manual toggle (no URL opt-in) falls
+  // back to the TD/MediaPipe default port on this page's host.
+  const handsUrl = useMemo(() => {
+    if (urlConfig.hands !== null) {
+      return urlConfig.hands.url;
+    }
+    const host = typeof window !== "undefined" && window.location.hostname ? window.location.hostname : "localhost";
+    return `ws://${host}:9980`;
+  }, [urlConfig.hands]);
+  const toggleHands = useCallback(() => {
+    setHandsOn((on) => {
+      if (on) {
+        setHandsStatus("closed");
+      }
+      return !on;
+    });
+  }, []);
 
   // AUDIT (no-mocks): with no explicit snapshot prop the wall boots from the
   // EMPTY live baseline — never the Atlas/Cobalt fixture — so a live window
@@ -110,6 +143,13 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
   const [researchDeckId, setResearchDeckId] = useState<string | null>(null);
   const researchDeckRef = useRef<string | null>(null);
   researchDeckRef.current = researchDeckId;
+  // IDEA ACTION CARD: clicking an idea orb in the scene opens this contextual
+  // card (bottom-center, above the scene controls) instead of building on the
+  // spot — id null = the primary suggestion bubble, otherwise a ledger idea.
+  // The card's "✓ Done — build it" runs the old instant-accept behavior.
+  const [ideaCard, setIdeaCard] = useState<{ id: string | null } | null>(initialOverlay?.ideaCard ?? null);
+  const ideaCardRef = useRef<{ id: string | null } | null>(null);
+  ideaCardRef.current = ideaCard;
   const [zenMode, setZenMode] = useState(false);
   const zenModeRef = useRef(false);
   zenModeRef.current = zenMode;
@@ -195,8 +235,23 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
   // the only thing that advances a step. advanceOnSnapshot is identity-stable
   // when nothing changes, so setState bails without render churn.
   useEffect(() => {
-    setGuided((current) => (current === null ? current : advanceOnSnapshot(current, snapshot)));
+    setGuided((current) => (current === null ? current : advanceOnSnapshot(current, snapshot, Date.now())));
   }, [snapshot]);
+
+  // The race step's minimum dwell can elapse with no snapshot arriving (the
+  // mocks already finished), so tick the machine while the race is on screen.
+  const guidedStep = guided?.step ?? null;
+  useEffect(() => {
+    if (guidedStep !== "race") {
+      return;
+    }
+    const timer = setInterval(() => {
+      setGuided((current) =>
+        current === null ? current : advanceOnSnapshot(current, snapshotRef.current, Date.now()),
+      );
+    }, 1_000);
+    return () => clearInterval(timer);
+  }, [guidedStep]);
 
   // Entering the decide step auto-opens the REAL generated pitch deck of the
   // project born during the demo, starting on whichever mock finished first —
@@ -302,19 +357,22 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
   // click POSTs /api/suggestion/accept, which accepts the current pending
   // suggestion and starts the real build; the returned snapshot is applied. In
   // offline demo there is no runtime, so it falls back to opening the idea detail.
-  const acceptIdea = useCallback(async () => {
+  const acceptIdea = useCallback(async (): Promise<ProjectorSnapshot | null> => {
     if (!liveMode || mockModeRef.current) {
       selectBubble(IDEA_ID);
-      return;
+      return null;
     }
     try {
       const response = await fetch("/api/suggestion/accept", { method: "POST" });
       if (response.ok && response.headers.get("content-type")?.includes("application/json")) {
-        setSnapshot((await response.json()) as ProjectorSnapshot);
+        const fresh = (await response.json()) as ProjectorSnapshot;
+        setSnapshot(fresh);
+        return fresh;
       }
     } catch {
       // Non-authoritative projector: a failed accept must never block the UI.
     }
+    return null;
   }, [liveMode, selectBubble]);
 
   // IDEA TRAY actions: Build/Dismiss a SPECIFIC ledger candidate (not just the
@@ -759,7 +817,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
     setGuided((current) => (current === null ? current : popPracticeOrb(current)));
   }, []);
   const guidedSkip = useCallback(() => {
-    setGuided((current) => (current === null ? current : skipStep(current, snapshotRef.current)));
+    setGuided((current) => (current === null ? current : skipStep(current, snapshotRef.current, Date.now())));
   }, []);
 
   // GUIDED RECORD (step 2's big button): REALLY unmute (/api/unmute), turn on
@@ -822,6 +880,23 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
     const timer = setTimeout(() => setVoiceFlash(null), 4_000);
     return () => clearTimeout(timer);
   }, [voiceFlashKey, voiceCommand]);
+
+  // SELF-HOSTING (VIBERSYN_SELF_MODE=1): bind this page to the server's
+  // per-boot id; when a reconnected SSE stream / state resync delivers a
+  // DIFFERENT bootId, the server was rebuilt and relaunched underneath us
+  // (exit 87 → supervisor → new build) — reload so this wall runs the new
+  // build too. The decision is the pure trackBootId fold (unit-tested); the
+  // "room is reloading itself…" overlay keeps the wall alive-looking from
+  // reloadPending until the reload lands.
+  const selfState = selfOf(snapshot);
+  const bootBindingRef = useRef<string | null>(null);
+  useEffect(() => {
+    const next = trackBootId(bootBindingRef.current, snapshot);
+    bootBindingRef.current = next.bound;
+    if (next.reload && typeof window !== "undefined") {
+      window.location.reload();
+    }
+  }, [snapshot]);
 
   // --- Live data: fetch /api/state + subscribe to /api/events (SSR-guarded) ---
   useEffect(() => {
@@ -997,6 +1072,11 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
         }
         if (qrOpenRef.current) {
           setQrOpen(false);
+          return;
+        }
+        // The contextual idea card closes without building anything.
+        if (ideaCardRef.current !== null) {
+          setIdeaCard(null);
           return;
         }
         // Esc exits the guided demo at any step (documented; skip stays a
@@ -1194,15 +1274,34 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
     () =>
       snapshot.processes
         .filter((process) => !hiddenTrees.has(process.upid))
-        .map((process) => ({
-          upid: process.upid,
-          callsign: process.callsign,
-          state: process.state,
-          progress: process.progress,
-          task: process.task,
-          steering: process.upid === steeringUpid,
-          stage: stageOf(process),
-        })),
+        .map((process) => {
+          // Per-backend concept-mock lane tally → status satellites on the node.
+          const builds = buildsOf(process);
+          const summary = builds.reduce(
+            (acc, b) => {
+              if (b.status === "ready") acc.ready += 1;
+              else if (b.status === "failed") acc.failed += 1;
+              else acc.building += 1;
+              return acc;
+            },
+            { building: 0, ready: 0, failed: 0 },
+          );
+          const execution = executionOf(process);
+          return {
+            upid: process.upid,
+            callsign: process.callsign,
+            state: process.state,
+            progress: process.progress,
+            task: process.task,
+            steering: process.upid === steeringUpid,
+            // The scene knows sapling/tree only; the SELF project folds onto
+            // that axis by whether a self-run is live (sceneStageOf).
+            stage: sceneStageOf(process),
+            builds: builds.length > 0 ? summary : undefined,
+            published: typeof process.publishedUrl === "string" && process.publishedUrl.length > 0,
+            failedCount: summary.failed + (execution?.status === "failed" ? 1 : 0),
+          };
+        }),
     [snapshot.processes, hiddenTrees, steeringUpid],
   );
 
@@ -1211,12 +1310,12 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
     [ideaOrbs, hiddenIdeas],
   );
 
-  // RESEARCH surfaces: the 3D dialogue tree + research crystals mount when the
-  // mode is on OR quests already exist (a finished dossier stays visitable
-  // after the mode is toggled off); otherwise the props are empty and the
-  // classic scene is untouched.
+  // RESEARCH is a MODE SWITCH, not an overlay: while the toggle is on the
+  // scene shows the dialogue tree + research crystals INSTEAD of the idea
+  // garden (and the idea tray/banner/action card yield to the research tray).
+  // Quests live on the server, so toggling back restores them intact.
   const researchQuests = snapshot.research ?? [];
-  const showResearch = researchActive || researchQuests.length > 0;
+  const showResearch = researchActive;
   const dialogueSpecs = useMemo<DialogueNodeSpec[]>(
     () => (showResearch ? (snapshot.dialogue ?? []) : []),
     [showResearch, snapshot.dialogue],
@@ -1241,6 +1340,23 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
     [researchDeckId, researchQuests],
   );
 
+  // The orb the open idea card points at, resolved against the live orb list so
+  // the card always mirrors the scene: null = closed OR the idea is gone.
+  const ideaCardOrb = useMemo<IdeaOrbSpec | null>(() => {
+    if (ideaCard === null) {
+      return null;
+    }
+    return ideaOrbs.find((orb) => orb.id === ideaCard.id) ?? null;
+  }, [ideaCard, ideaOrbs]);
+
+  // Auto-close: when the card's idea disappears from the snapshot (built,
+  // dismissed, superseded), the stale card must not linger over the scene.
+  useEffect(() => {
+    if (ideaCard !== null && ideaCardOrb === null) {
+      setIdeaCard(null);
+    }
+  }, [ideaCard, ideaCardOrb]);
+
   // Clicking a project in the scene: mock/demo processes with a FIXTURE deck
   // open their slideshow (mock room has no rail, so the scene click is the only
   // deck path there); every live process steers — click-to-steer stays the
@@ -1260,18 +1376,13 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
     [steerProcess],
   );
 
-  // Clicking a ready orb builds it: ledger candidates go through the per-idea
-  // accept endpoint, the primary suggestion through /api/suggestion/accept.
-  const acceptOrb = useCallback(
-    (id: string | null) => {
-      if (id === null) {
-        void acceptIdea();
-      } else {
-        void actOnIdea(id, "accept");
-      }
-    },
-    [acceptIdea, actOnIdea],
-  );
+  // Clicking an idea orb OPENS its contextual action card — building is the
+  // card's explicit "✓ Done — build it" press, never the orb click itself.
+  // (The guided demo's practice orbs are GuidedDemo's own DOM targets routed
+  // through onPopOrb, so they never land here and keep their pop-on-click.)
+  const acceptOrb = useCallback((id: string | null) => {
+    setIdeaCard({ id });
+  }, []);
 
   // GESTURE MODE (fusion cursors drive the UI): there is NO OS cursor — the
   // `gesture-mode` class hides the pointer everywhere. The pointed-at target's
@@ -1287,7 +1398,12 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
   // rendering ONE continuous world around the physical 90° corner — shared eye
   // point, yaws exactly 90° apart, 90° horizontal FOV per window, no camera
   // animation (see corner-lock.ts). Scene CONTENT stays full on both windows.
-  const cornerLock = gestureMode && urlConfig.wall !== null;
+  // The two-wall rigid corner rig. The pinch camera (?hands=) is a FREE-orbit
+  // control, which corner-lock reasserts away every frame — the two intents are
+  // mutually exclusive, so an explicit pinch-camera opt-in wins (single-wall
+  // Kinect + hands must be able to orbit). Without hands, corner-lock stays as
+  // the two-wall gesture pair intends.
+  const cornerLock = gestureMode && urlConfig.wall !== null && urlConfig.hands === null;
   const dwellLayerOn = gestureMode || urlConfig.dwell === "mouse";
   // AUDIT (no-mocks): the Mock Room toggle renders ONLY behind ?mock=1.
   const mockRoomEnabled = urlConfig.mock;
@@ -1301,8 +1417,8 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
       data-gesture={gestureMode ? "true" : "false"}
     >
       <RoomScene
-        ideas={visibleIdeaOrbs}
-        trees={treeSpecs}
+        ideas={researchActive ? [] : visibleIdeaOrbs}
+        trees={researchActive ? [] : treeSpecs}
         mode={sceneMode}
         layout={sceneLayout}
         wall={urlConfig.wall}
@@ -1327,6 +1443,17 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
           mouseTest={urlConfig.dwell === "mouse"}
         />
       ) : null}
+      {/* PINCH CAMERA (hands): runtime-toggleable (HUD button) and seeded from
+          the ?hands= URL default. Composes with gesture mode — pointerNav only
+          unbinds DOM listeners, the rig stays drivable through the registered
+          camera control — and with desk mode via the rig's latest-writer-wins
+          d* contract. onStatus feeds the toggle's OFF/connecting/LIVE label. */}
+      {handsOn ? (
+        <PinchCameraLayer url={handsUrl} wall={urlConfig.wall} onStatus={setHandsStatus} />
+      ) : null}
+      {/* In-room hand-tracking HUD (top-left): live skeleton + id + pinch text,
+          no camera image. Same 9980 stream; shows whenever the hand camera is on. */}
+      {handsOn ? <HandSkeletonHud url={handsUrl} wall={urlConfig.wall} /> : null}
       {urlConfig.badge ? (
         <div className="wall-badge" data-testid="wall-badge">
           {urlConfig.badge}
@@ -1336,6 +1463,12 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
       {voiceFlash !== null ? (
         <div className="voice-flash" data-testid="voice-flash" role="status">
           🎤 vibersyn → {voiceFlash}
+        </div>
+      ) : null}
+      {selfState?.reloadPending === true ? (
+        <div className="self-reload-overlay" data-testid="self-reload-overlay" role="status">
+          <span className="self-reload-mark">🪞</span>
+          <span>room is reloading itself…</span>
         </div>
       ) : null}
       {guidedEpilogue !== null ? (
@@ -1449,14 +1582,14 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
               {researchActive ? "🔍 Research: ON" : "🔍 Research: OFF"}
             </button>
           ) : null}
-          {/* Build-side control (imports a repo to BUILD): wall B + full view. */}
+          {/* Build-side control (phone-imports a project to BUILD): wall B + full view. */}
           {showBuildSurfaces ? (
             <button
               type="button"
               className="ctl-button qr-import"
               data-testid="qr-import-button"
               onClick={() => setQrOpen(true)}
-              title="Show a QR code — scan it on a phone to add a GitHub repo to the wall."
+              title="Show a QR code — scan it on a phone to add a project (context + optional link) to the wall."
             >
               QR Import
             </button>
@@ -1490,14 +1623,33 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
               {mockMode ? "● Mock Room" : "Mock Room"}
             </button>
           ) : null}
+          {/* PINCH CAMERA toggle (hands): global camera control, always
+              available so the rig can be armed on any wall/desk window. Seeded
+              from ?hands=; the label mirrors PinchCameraLayer's live socket
+              state (OFF / connecting / LIVE). */}
+          <button
+            type="button"
+            className={`ctl-button hands-toggle${handsOn ? " on" : ""}`}
+            data-testid="hands-toggle-button"
+            data-state={handsOn ? (handsStatus === "open" ? "live" : "connecting") : "off"}
+            aria-pressed={handsOn}
+            onClick={toggleHands}
+            title="Pinch-camera control: point with your hands (TouchDesigner/MediaPipe) to orbit, zoom and pan the room. Toggle to arm the hand tracker."
+          >
+            {!handsOn
+              ? "✋ Hands: OFF"
+              : handsStatus === "open"
+                ? "✋ Hands: LIVE"
+                : "✋ Hands: connecting"}
+          </button>
         </div>
       </header>
 
-      {!mockMode && showIdeaSurfaces ? <SuggestionRegion pitch={snapshot.suggestion.pitch} /> : null}
+      {!mockMode && showIdeaSurfaces && !researchActive ? <SuggestionRegion pitch={snapshot.suggestion.pitch} /> : null}
 
       <div className={`stage${detailOpen ? " stage-dimmed" : ""}`}>
         <div className="stage-main">
-          {showIdeaTray && !mockMode ? (
+          {showIdeaTray && !mockMode && !researchActive ? (
             <IdeaTray
               ideas={ideas}
               onBuild={(id) => void actOnIdea(id, "accept")}
@@ -1595,6 +1747,55 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
         </button>
       </div>
       )}
+
+      {/* IDEA ACTION CARD: the contextual "✓ Done — build it" surface, opened
+          by clicking an idea orb in the scene (see acceptOrb). Floats
+          bottom-center above the scene-controls cluster; the Done button runs
+          the old instant-accept behavior (primary → /api/suggestion/accept,
+          ledger idea → per-idea accept), close (✕ / Esc) just dismisses. */}
+      {ideaCard !== null && ideaCardOrb !== null && !researchActive ? (
+        <div className="idea-action-card" data-testid="idea-action-card" role="dialog" aria-label="Build this idea?">
+          <div className="idea-card-copy">
+            <span className="idea-card-pitch">{ideaCardOrb.pitch}</span>
+            {ideaCardOrb.confidence > 0 ? (
+              <span className="idea-card-confidence">{Math.round(ideaCardOrb.confidence * 100)}% confident</span>
+            ) : null}
+          </div>
+          <button
+            type="button"
+            className="ctl-button idea-done"
+            data-testid="idea-done-button"
+            title={
+              ideaCard.id === null && snapshot.ideaSettle?.armed === true
+                ? "Stop refining and build the heard idea now"
+                : "Build this idea now"
+            }
+            onClick={() => {
+              if (ideaCard.id === null) {
+                void acceptIdea();
+              } else {
+                void actOnIdea(ideaCard.id, "accept");
+              }
+              setIdeaCard(null);
+            }}
+          >
+            ✓ Done — build it
+            {/* Primary + armed settle gate: surface the auto-build countdown. */}
+            {ideaCard.id === null && snapshot.ideaSettle?.armed === true && snapshot.ideaSettle.firesInMs !== null
+              ? ` (${Math.max(1, Math.ceil(snapshot.ideaSettle.firesInMs / 1000))}s)`
+              : ""}
+          </button>
+          <button
+            type="button"
+            className="ctl-button idea-card-close"
+            data-testid="idea-card-close"
+            onClick={() => setIdeaCard(null)}
+            title="Close without building (Esc)"
+          >
+            ✕
+          </button>
+        </div>
+      ) : null}
 
       {/* Hide/unhide menu: a desk affordance like the scene controls above —
           never rendered in gesture mode (it would duplicate on both walls). */}
@@ -1698,6 +1899,15 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
           onSkip={guidedSkip}
           onExit={exitGuidedDemo}
           onFinish={exitGuidedDemo}
+          onDone={() => {
+            // Done is the ONLY way forward from the idea step: accept builds
+            // from the surfaced idea (or the raw transcript, server-side),
+            // then the demo advances — the race adopts the newborn process,
+            // and a silent Done still moves the visitor along.
+            void acceptIdea().then(() => {
+              guidedSkip();
+            });
+          }}
         />
       ) : null}
     </main>
@@ -1716,11 +1926,33 @@ function FullscreenButton() {
   const [visible, setVisible] = useState<boolean>(() => needsFullscreenHint());
   useEffect(() => {
     const update = () => setVisible(needsFullscreenHint());
+    // Keyboard path: plain "f" toggles fullscreen (keydown counts as a real
+    // user gesture, so requestFullscreen is honored). Stays bound while the
+    // button is hidden so "f" also EXITS fullscreen. Ignored with modifiers
+    // held or while typing into a field.
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "f" && event.key !== "F") return;
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      const target = event.target as HTMLElement | null;
+      if (
+        target !== null &&
+        (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)
+      ) {
+        return;
+      }
+      if (document.fullscreenElement !== null) {
+        void document.exitFullscreen?.();
+      } else {
+        void document.documentElement.requestFullscreen?.();
+      }
+    };
     document.addEventListener("fullscreenchange", update);
     window.addEventListener("resize", update);
+    window.addEventListener("keydown", onKey);
     return () => {
       document.removeEventListener("fullscreenchange", update);
       window.removeEventListener("resize", update);
+      window.removeEventListener("keydown", onKey);
     };
   }, []);
   if (!visible) {
@@ -1731,12 +1963,12 @@ function FullscreenButton() {
       type="button"
       className="ctl-button fullscreen-button"
       data-testid="fullscreen-button"
-      title="Fullscreen this wall on its projector"
+      title="Fullscreen this wall on its projector (or press F)"
       onClick={() => {
         void document.documentElement.requestFullscreen?.();
       }}
     >
-      ⛶ Fullscreen
+      ⛶ Fullscreen <span className="fullscreen-key-hint">(F)</span>
     </button>
   );
 }
@@ -1874,8 +2106,10 @@ function FleetPanel({
           // Legacy processes with no build surfaces at all get no badge.
           const stage = stageOf(process);
           const execution = executionOf(process);
+          // The SELF (mirror) project always shows its stage badge — its whole
+          // identity is the stage — even before any self-run opens a lane.
           const hasBuildSurface =
-            builds.length > 0 || execution !== null || typeof process.buildStatus === "string";
+            builds.length > 0 || execution !== null || typeof process.buildStatus === "string" || stage === "self";
           // Commission is offered once ANY mock lane is ready (there is a
           // concept worth executing) and only while still a concept.
           const commissionable =
@@ -1905,7 +2139,7 @@ function FleetPanel({
                   data-testid="process-stage"
                   data-stage={stage}
                 >
-                  {stage === "concept" ? "🌱 concept" : "🌳 commissioned"}
+                  {stage === "self" ? "🪞 SELF" : stage === "concept" ? "🌱 concept" : "🌳 commissioned"}
                 </span>
               ) : null}
               {steering ? <span className="fleet-steering" data-testid="fleet-steering">steering →</span> : null}

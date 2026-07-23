@@ -37,6 +37,9 @@ export interface GuidedDemoProps {
   onExit: () => void;
   // Story step complete.
   onFinish: () => void;
+  // "Done — build it": accept the armed idea NOW instead of waiting out the
+  // settle countdown (idea step).
+  onDone: () => void;
 }
 
 const STEP_TITLES: Record<GuidedState["step"], string> = {
@@ -64,6 +67,7 @@ export function GuidedDemo({
   onSkip,
   onExit,
   onFinish,
+  onDone,
 }: GuidedDemoProps) {
   // Which practice orbs this run has popped (local render state; the machine
   // holds only the count). GuidedDemo unmounts on exit, so re-entry is fresh.
@@ -161,7 +165,7 @@ export function GuidedDemo({
         {step === "record" ? (
           <RecordBody snapshot={snapshot} micState={micState} micError={micError} />
         ) : null}
-        {step === "idea" ? <IdeaBody snapshot={snapshot} micState={micState} /> : null}
+        {step === "idea" ? <IdeaBody snapshot={snapshot} micState={micState} onDone={onDone} /> : null}
         {step === "race" ? <RaceBody state={state} snapshot={snapshot} /> : null}
         {step === "decide" ? <DecideBody state={state} snapshot={snapshot} /> : null}
 
@@ -259,11 +263,15 @@ function RecordBody({
 function IdeaBody({
   snapshot,
   micState,
+  onDone,
 }: {
   snapshot: ProjectorSnapshot;
   micState: "off" | "connecting" | "live";
+  onDone: () => void;
 }) {
   const lines = snapshot.transcript.slice(-4);
+  const settle = snapshot.ideaSettle;
+  const armed = settle?.armed === true;
   return (
     <div className="guided-body">
       <p className="guided-lede">
@@ -272,6 +280,33 @@ function IdeaBody({
         waits for a natural pause before kicking anything off, so keep talking
         until you&rsquo;ve said the whole thing.
       </p>
+      {armed ? (
+        <div className="guided-settle" data-testid="guided-settle">
+          {settle?.title ? (
+            <p className="guided-settle-heard">
+              Heard: <strong>{settle.title}</strong>
+            </p>
+          ) : null}
+          <p className="guided-settle-countdown">
+            {settle?.firesInMs !== null && settle?.firesInMs !== undefined
+              ? `Building in ${Math.max(1, Math.ceil(settle.firesInMs / 1000))}s — keep talking to refine, or hit Done.`
+              : "Ready to build — keep talking to refine, or hit Done."}
+          </p>
+        </div>
+      ) : (
+        <p className="guided-settle-waiting" data-testid="guided-settle-waiting">
+          The room is listening — hit Done whenever you&rsquo;ve said your idea
+          and it will build from what it heard (or move you along).
+        </p>
+      )}
+      <button
+        type="button"
+        className="ctl-button guided-done"
+        data-testid="guided-done-button"
+        onClick={onDone}
+      >
+        ✓ Done — build it
+      </button>
       <div className="guided-transcript" data-testid="guided-transcript">
         {lines.length === 0 ? (
           <p className="guided-transcript-empty" data-testid="guided-transcript-empty">

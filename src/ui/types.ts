@@ -39,11 +39,18 @@ export interface ProjectorProcess {
   // of seeding a fresh ambient suggestion. Clicking the process sets/clears it.
   steering?: boolean;
   // Where this process came from. Absent for idea-detected builds; set for
-  // projects imported from outside (e.g. a GitHub URL submitted via the QR page).
-  source?: {
-    kind: "github-import";
-    url: string;
-  };
+  // projects imported from outside via the phone QR page: "github-import" when
+  // the link was a real github.com repo (the server clones it), "phone-import"
+  // for context-only or any-other-link submissions (url null when no link).
+  source?:
+    | {
+        kind: "github-import";
+        url: string;
+      }
+    | {
+        kind: "phone-import";
+        url: string | null;
+      };
   // TAKE-HOME publish surface: once this idea's pitch deck is published to
   // GitHub Pages (confirmed 200), the public URL and the server-generated QR
   // SVG that encodes it. The wall renders the SVG directly ("scan to take it
@@ -125,6 +132,11 @@ export interface ProjectorSuggestion {
     minSeconds: number;
   };
   questions: string[];
+  // Deck-ready decision questions the swipe deck consumes: {id, prompt, answers}.
+  // Derived server-side from the candidate's parallel questions/answers arrays
+  // (see src/detect/plan-questions.ts). Absent on idle/legacy gate-driven
+  // suggestions that never carried structured answers.
+  planQuestions?: import("../detect").PlanQuestion[];
   // Provenance (idea detection): the span of conversation this idea was grounded
   // in — the inclusive turn-id range plus the verbatim evidence the model quoted.
   // Absent on the neutral idle bubble and on legacy gate-driven suggestions.
@@ -166,6 +178,11 @@ export interface ProjectorSnapshot {
   // loop — detection runs eagerly and every surfaced idea builds itself. The
   // projector shows a distinct "capturing" indicator.
   captureMode?: boolean;
+  // AUTO-BUILD SETTLE GATE surface: while an idea is armed and waiting for the
+  // room to go quiet, the walls show the heard pitch, a live countdown
+  // (firesInMs is SERVER-computed and republished every second), and a Done
+  // button that accepts immediately.
+  ideaSettle?: { armed: boolean; title: string | null; firesInMs: number | null };
   // Optional live-microphone status. Absent in the static demo fixtures; the
   // server runtime sets it when a browser mic session is wired through
   // /api/mic. `mode` is the ASR backend ("deepgram" = real transcription,

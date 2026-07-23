@@ -215,10 +215,13 @@ class FusionEngine:
         self.config = config
         # Walls in declaration order; every update returns a list for each.
         self._walls: list[str] = list(config.walls.keys())
-        # Per-wall seam margin: the largest seam_margin of any adjacency the
-        # wall participates in (its sticky outer band). Walls with no seam get
-        # 0.0, so they never "stick" beyond their plain bounds.
-        self._seam_margin: dict[str, float] = {w: 0.0 for w in self._walls}
+        # Per-wall sticky outer band: the wall's own optional ``edge_margin``
+        # (edge stickiness for adjacency-less walls, e.g. a single-wall room)
+        # maxed with the largest seam_margin of any adjacency the wall
+        # participates in. Both default to 0.0, so a wall with neither never
+        # "sticks" beyond its plain bounds (the historical behaviour).
+        self._seam_margin: dict[str, float] = {
+            w: float(config.walls[w].edge_margin) for w in self._walls}
         for adj in config.adjacency:
             for side in (adj.left, adj.right):
                 if side in self._seam_margin:

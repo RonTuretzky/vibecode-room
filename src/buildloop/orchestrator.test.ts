@@ -108,11 +108,16 @@ describe("BuildOrchestrator — fan-out", () => {
       backends: [writingBackend("smithers"), writingBackend("native")],
       env: {},
     });
+    // The accept's deck-ready planning questions must reach EVERY hook call
+    // untouched — the integrator wires them into the deck's interactive cards.
+    const planQuestions = [{ id: "q-sync-engine", prompt: "Sync engine?", answers: ["CRDT", "Server-authoritative"] }];
+    const hookQuestions: unknown[] = [];
     const orchestrator = track(
       new BuildOrchestrator({
         selector,
         buildsRoot: await tempRoot(),
         slideshow: async (input) => {
+          hookQuestions.push(input.planQuestions);
           if (input.backend === "native") {
             throw new Error("slideshow generator blew up");
           }
@@ -121,13 +126,14 @@ describe("BuildOrchestrator — fan-out", () => {
       }),
     );
 
-    await orchestrator.start(startInput("upid-slides"));
+    await orchestrator.start({ ...startInput("upid-slides"), planQuestions });
 
     const [smithers, native] = orchestrator.builds("upid-slides");
     expect(smithers!.slideshowUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/smithers\/slideshow\/\?v=1$/u);
     expect((await fetch(smithers!.slideshowUrl!)).status).toBe(200);
     expect(native!.status).toBe("ready"); // hook failure is garnish, not a build failure
     expect(native!.slideshowUrl).toBeNull();
+    expect(hookQuestions).toEqual([planQuestions, planQuestions]);
   });
 });
 

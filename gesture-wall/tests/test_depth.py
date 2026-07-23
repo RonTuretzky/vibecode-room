@@ -440,3 +440,60 @@ def test_pointing_model_selects_ray_origin():
     # All three point at the (right) wrist.
     for p in (pe, pf, ps):
         assert p.ray.origin[0] + p.ray.direction[0] == pytest.approx(deproj_x(360.0))
+
+
+# --------------------------------------------------------------------------- #
+# KinectPoseSource.read: bounded frame-source reads (no mediapipe needed)     #
+#                                                                             #
+# We must not run __init__ (it imports mediapipe and downloads the model), so #
+# these build a bare instance via __new__ and set only the attributes the     #
+# no-frame path of read() touches. The dispatch under test: with a            #
+# ``read_timeout`` the underlying source is read via read(timeout=...); with  #
+# None the historical bare read() is kept (so sources managing their own      #
+# stall budget — OrbbecSource — and bare fakes keep their contract).          #
+# --------------------------------------------------------------------------- #
+from gesturewall.depth import KinectPoseSource  # noqa: E402
+
+
+class _RecordingSource:
+    """Records the timeout of every read call; always 'stalls' (None)."""
+
+    def __init__(self):
+        self.timeouts: list[float | None] = []
+
+    def read(self, timeout=None):
+        self.timeouts.append(timeout)
+        return None
+
+
+class _BareSource:
+    """A source WITHOUT the timeout kwarg (the minimal historical contract)."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def read(self):
+        self.calls += 1
+        return None
+
+
+def _bare_pose_source(source, read_timeout):
+    kps = KinectPoseSource.__new__(KinectPoseSource)  # skip mediapipe __init__
+    kps._cv2 = None  # touched (assigned to a local) before the source read
+    kps._source = source
+    kps._read_timeout = read_timeout
+    return kps
+
+
+def test_pose_source_read_passes_timeout_to_frame_source():
+    src = _RecordingSource()
+    kps = _bare_pose_source(src, read_timeout=0.25)
+    assert KinectPoseSource.read(kps) == (None, [], {"status": "no_frame"})
+    assert src.timeouts == [0.25]
+
+
+def test_pose_source_read_without_timeout_keeps_bare_call():
+    src = _BareSource()
+    kps = _bare_pose_source(src, read_timeout=None)
+    assert KinectPoseSource.read(kps) == (None, [], {"status": "no_frame"})
+    assert src.calls == 1

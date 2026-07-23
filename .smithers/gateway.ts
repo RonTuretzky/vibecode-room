@@ -70,6 +70,20 @@ try {
   console.warn("[gateway] skipped vibersyn-process: " + message);
 }
 
+// SELF-HOSTING (VIBERSYN_SELF_MODE=1): steering the pinned SELF project
+// ("mirror") launches workflow "vibersyn-self" (SELF_WORKFLOW in
+// src/self/commission.ts); without this registration every self-steer spawn
+// fails at launch. No UI — the SELF card renders the run's telemetry.
+try {
+  const mod = await import("./workflows/vibersyn-self.tsx");
+  // Same literal-specifier typing dance as vibersyn-process above.
+  gateway.register("vibersyn-self", mod.default as Parameters<typeof gateway.register>[1]);
+  console.log("  vibersyn-self (room self-hosting spawns) registered");
+} catch (err) {
+  const message = err instanceof Error ? err.message : String(err);
+  console.warn("[gateway] skipped vibersyn-self: " + message);
+}
+
 // ---------------------------------------------------------------------------
 // Vibersyn steer-window plumbing.
 //

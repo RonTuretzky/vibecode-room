@@ -93,6 +93,10 @@ export type HostClaudeIdeaDetectorOptions = HostClaudeIdeaJudgeOptions;
 // real "chrome extension" pitch was undetectable without them).
 const BUILDABLE_CUES = [
   "build",
+  // ASR-heard forms of spoken "build" — Deepgram routinely transcribes a live
+  // "build X" as "built X"; whole-word matching means the base form misses it.
+  "built",
+  "building",
   "make",
   "create",
   "app",

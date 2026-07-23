@@ -1,5 +1,74 @@
 import { describe, expect, test } from "bun:test";
-import { callsignFromRepo, parseGitHubImportUrl, resolveImportInfo, type InterfaceAddresses } from "./project-import";
+import {
+  callsignFromRepo,
+  parseGitHubImportUrl,
+  parseImportRequest,
+  preferredLanIPv4,
+  resolveImportInfo,
+  type InterfaceAddresses,
+} from "./project-import";
+
+describe("parseImportRequest — the context+link phone contract", () => {
+  test("context alone starts a project", () => {
+    const parsed = parseImportRequest({ context: "  A synthwave ticket dashboard  " });
+    expect(parsed).toEqual({ ok: true, kind: "context", context: "A synthwave ticket dashboard" });
+  });
+
+  test("a real github.com repo link gets the clone routine, with and without context", () => {
+    const bare = parseImportRequest({ url: "https://github.com/RonTuretzky/vibersyn" });
+    expect(bare).toEqual({
+      ok: true,
+      kind: "github",
+      url: "https://github.com/RonTuretzky/vibersyn",
+      owner: "RonTuretzky",
+      repo: "vibersyn",
+      context: null,
+    });
+    const steered = parseImportRequest({ url: "https://github.com/o/r", context: "port it to the wall" });
+    expect(steered.ok).toBe(true);
+    if (steered.ok && steered.kind === "github") {
+      expect(steered.context).toBe("port it to the wall");
+    }
+  });
+
+  test("any other http(s) link is a plain reference link — never a clone", () => {
+    const parsed = parseImportRequest({ url: "https://example.com/spec", context: "make a viewer" });
+    expect(parsed).toEqual({ ok: true, kind: "link", url: "https://example.com/spec", context: "make a viewer" });
+  });
+
+  test("github lookalike hosts degrade to reference links, not clones (anti-spoof)", () => {
+    for (const url of [
+      "https://github.com.evil.com/o/r",
+      "https://github.com@evil.com/o/r",
+      "https://sub.github.com/o/r",
+      "https://evilgithub.com/o/r",
+      "https://github.com/owner-only",
+    ]) {
+      const parsed = parseImportRequest({ url });
+      expect(parsed.ok).toBe(true);
+      if (parsed.ok) {
+        expect(parsed.kind).toBe("link");
+      }
+    }
+  });
+
+  test("rejects empty submissions, non-URLs, and non-http schemes", () => {
+    expect(parseImportRequest({}).ok).toBe(false);
+    expect(parseImportRequest({ context: "   " }).ok).toBe(false);
+    expect(parseImportRequest({ url: "not a url" }).ok).toBe(false);
+    expect(parseImportRequest({ url: "ftp://github.com/o/r" }).ok).toBe(false);
+    expect(parseImportRequest({ url: "javascript:alert(1)" }).ok).toBe(false);
+    expect(parseImportRequest({ url: 42, context: 42 }).ok).toBe(false);
+  });
+
+  test("clamps runaway context so a phone cannot stuff the prompt pipeline", () => {
+    const parsed = parseImportRequest({ context: "x".repeat(50_000) });
+    expect(parsed.ok).toBe(true);
+    if (parsed.ok && parsed.kind === "context") {
+      expect(parsed.context.length).toBe(2_000);
+    }
+  });
+});
 
 describe("parseGitHubImportUrl — valid URLs", () => {
   test("accepts the canonical https://github.com/<owner>/<repo>", () => {
@@ -96,5 +165,45 @@ describe("resolveImportInfo", () => {
   test("a concrete non-loopback bind address is used verbatim", () => {
     const info = resolveImportInfo({ host: "10.0.0.7", port: 8787, interfaces: () => lan });
     expect(info).toEqual({ submitUrl: "http://10.0.0.7:8787/submit", host: "10.0.0.7", lanReachable: true });
+  });
+
+  test("phone listener bound → the QR advertises it via the LAN IPv4 even on a loopback main bind", () => {
+    const info = resolveImportInfo({ host: "127.0.0.1", port: 8787, phonePort: 8788, interfaces: () => lan });
+    expect(info).toEqual({ submitUrl: "http://192.168.1.42:8788/submit", host: "192.168.1.42", lanReachable: true });
+  });
+
+  test("phone listener bound but no LAN interface → loopback submit URL, honestly unreachable", () => {
+    const info = resolveImportInfo({ host: "127.0.0.1", port: 8787, phonePort: 8788, interfaces: () => ({ lo0: lan.lo0 }) });
+    expect(info).toEqual({ submitUrl: "http://127.0.0.1:8788/submit", host: "127.0.0.1", lanReachable: false });
+  });
+});
+
+describe("preferredLanIPv4 — multi-homed machines pick the phone-reachable address", () => {
+  test("prefers home/office private ranges over Docker-bridge 172.x and public addresses", () => {
+    const table: InterfaceAddresses = {
+      docker0: [{ family: "IPv4", internal: false, address: "172.17.0.1" }],
+      utun3: [{ family: "IPv4", internal: false, address: "100.90.1.4" }],
+      en0: [{ family: "IPv4", internal: false, address: "192.168.1.42" }],
+    };
+    expect(preferredLanIPv4(() => table)).toBe("192.168.1.42");
+  });
+
+  test("VPN utun with a 10.x address loses to a real en* interface", () => {
+    const table: InterfaceAddresses = {
+      utun3: [{ family: "IPv4", internal: false, address: "10.8.0.2" }],
+      en0: [{ family: "IPv4", internal: false, address: "10.1.2.3" }],
+    };
+    expect(preferredLanIPv4(() => table)).toBe("10.1.2.3");
+  });
+
+  test("skips link-local 169.254 and internal/IPv6 entries; null when nothing is usable", () => {
+    const table: InterfaceAddresses = {
+      en1: [
+        { family: "IPv4", internal: false, address: "169.254.10.10" },
+        { family: "IPv6", internal: false, address: "fe80::1" },
+      ],
+      lo0: [{ family: "IPv4", internal: true, address: "127.0.0.1" }],
+    };
+    expect(preferredLanIPv4(() => table)).toBe(null);
   });
 });

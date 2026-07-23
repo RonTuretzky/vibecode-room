@@ -4,7 +4,7 @@ import { ProjectorApp, REQUIRED_PROJECTOR_REGIONS } from "./App";
 import { GestureLayer, cursorDotsFromStored } from "./gesture/GestureLayer";
 import { IdeaTray } from "./IdeaTray";
 import { HelpOverlay } from "./HelpOverlay";
-import { QrImport } from "./QrImport";
+import { QrImport, qrPanelState } from "./QrImport";
 import { Slideshow } from "./Slideshow";
 import { demoProjectorSnapshot, busyRoomSnapshot } from "./demo-data";
 import type { BuildloopProcess, BuildloopSnapshot } from "./buildloop";
@@ -605,6 +605,17 @@ describe("qr import overlay", () => {
     expect(html).not.toContain('data-testid="qr-code-image"');
     expect(html).not.toContain('data-testid="qr-import-success"');
   });
+
+  test("qr panel decision: an unreachable address REPLACES the QR — a dead code must never render", () => {
+    const unreachable = { submitUrl: "http://127.0.0.1:8788/submit", host: "127.0.0.1", lanReachable: false };
+    const reachable = { submitUrl: "http://192.168.1.5:8788/submit", host: "192.168.1.5", lanReachable: true };
+    // Unreachable wins even when the QR data URL already rendered.
+    expect(qrPanelState(unreachable, "data:image/png;base64,xyz")).toBe("unreachable");
+    expect(qrPanelState(unreachable, null)).toBe("unreachable");
+    expect(qrPanelState(reachable, "data:image/png;base64,xyz")).toBe("image");
+    expect(qrPanelState(reachable, null)).toBe("pending");
+    expect(qrPanelState(null, null)).toBe("pending");
+  });
 });
 
 // GESTURE-DWELL CURSOR POLICY: in gesture mode the UI hides the OS cursor
@@ -639,6 +650,30 @@ describe("gesture dwell-select interaction", () => {
     expect(html).toContain('data-testid="help-gesture"');
     expect(html).toContain("point, hold, select");
     expect(html).toContain("LOCKED in gesture mode");
+  });
+});
+
+// PINCH CAMERA (?hands=): camera CONTROL only — an opt-in hidden layer,
+// independent of the dwell/gesture layers and composable with them.
+describe("pinch camera layer", () => {
+  test("?hands=1 mounts the pinch camera layer", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch="?live=0&wall=A&hands=1" />,
+    );
+    expect(html).toContain('data-testid="pinch-camera-layer"');
+  });
+
+  test("default URL: no pinch camera layer (opt-in only, desk mode untouched)", () => {
+    const html = renderToStaticMarkup(<ProjectorApp initialSnapshot={demoProjectorSnapshot} />);
+    expect(html).not.toContain('data-testid="pinch-camera-layer"');
+  });
+
+  test("?gesture=1&hands=1 composes: dwell overlay AND pinch camera both mount", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch="?live=0&gesture=1&hands=1" />,
+    );
+    expect(html).toContain('data-testid="gesture-overlay"');
+    expect(html).toContain('data-testid="pinch-camera-layer"');
   });
 });
 
@@ -805,5 +840,84 @@ describe("gesture cursor-dot toggle", () => {
     expect(cursorDotsFromStored(null)).toBe(true); // first visit → ON
     expect(cursorDotsFromStored("1")).toBe(true);
     expect(cursorDotsFromStored("0")).toBe(false);
+  });
+});
+
+// IDEA ACTION CARD: "✓ Done — build it" moved OUT of the top status bar into a
+// contextual card that opens when an idea orb is clicked in the scene. The
+// static renderer can't click the WebGL orb, so the `initialOverlay.ideaCard`
+// seam (same pattern as selected/slideshowUpid/qrOpen) boots the card open.
+describe("idea action card: contextual Done UX replaces the top-bar button", () => {
+  const armedSnapshot = {
+    ...demoProjectorSnapshot,
+    // Empty ledger → the primary suggestion is the lone (id null) orb.
+    ideas: [],
+    ideaSettle: { armed: true, title: "a dashboard tool", firesInMs: 5_000 },
+  };
+
+  test("no card open → no Done button anywhere (top bar included), even while armed", () => {
+    const html = renderToStaticMarkup(<ProjectorApp initialSnapshot={armedSnapshot} />);
+    expect(html).not.toContain('data-testid="idea-done-button"');
+    expect(html).not.toContain('data-testid="idea-action-card"');
+  });
+
+  test("card open on the primary suggestion: pitch + confidence + armed countdown + Done + close", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={armedSnapshot} initialOverlay={{ ideaCard: { id: null } }} />,
+    );
+    expect(html).toContain('data-testid="idea-action-card"');
+    expect(html).toContain("Turn the meeting notes into a blocker announcer.");
+    expect(html).toContain("82% confident");
+    expect(html).toContain('data-testid="idea-done-button"');
+    expect(html).toContain("Done — build it");
+    expect(html).toContain("(5s)");
+    expect(html).toContain('data-testid="idea-card-close"');
+  });
+
+  test("card open on a ledger idea shows THAT idea's pitch — no settle countdown", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={demoProjectorSnapshot} initialOverlay={{ ideaCard: { id: "idea_retro_wall" } }} />,
+    );
+    expect(html).toContain('data-testid="idea-action-card"');
+    expect(html).toContain("A retro wall that clusters this week");
+    expect(html).toContain('data-testid="idea-done-button"');
+    expect(html).not.toContain("(5s)");
+  });
+
+  test("a card whose idea is gone from the snapshot never renders (auto-close contract)", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={demoProjectorSnapshot} initialOverlay={{ ideaCard: { id: "idea_vanished" } }} />,
+    );
+    expect(html).not.toContain('data-testid="idea-action-card"');
+    expect(html).not.toContain('data-testid="idea-done-button"');
+  });
+
+  test("guided idea step shows heard title + countdown + Done when armed, listening hint otherwise", async () => {
+    const { GuidedDemo } = await import("./guided/GuidedDemo");
+    const { startGuided } = await import("./guided/machine");
+    const ideaState = { ...startGuided(demoProjectorSnapshot), step: "idea" as const };
+    const noop = () => undefined;
+    const props = {
+      state: ideaState,
+      micState: "live" as const,
+      micError: null,
+      onPopOrb: noop,
+      onRecord: noop,
+      onSkip: noop,
+      onExit: noop,
+      onFinish: noop,
+      onDone: noop,
+    };
+
+    const armedHtml = renderToStaticMarkup(<GuidedDemo {...props} snapshot={armedSnapshot} />);
+    expect(armedHtml).toContain('data-testid="guided-done-button"');
+    expect(armedHtml).toContain("a dashboard tool");
+    expect(armedHtml).toContain("Building in 5s");
+
+    // Done is ALWAYS pressable during the idea step — it builds from the
+    // transcript (or advances the step) even before anything is armed.
+    const idleHtml = renderToStaticMarkup(<GuidedDemo {...props} snapshot={demoProjectorSnapshot} />);
+    expect(idleHtml).toContain('data-testid="guided-done-button"');
+    expect(idleHtml).toContain('data-testid="guided-settle-waiting"');
   });
 });

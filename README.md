@@ -55,9 +55,17 @@ agents building them.
   - **"Vibersyn, stop everything"** is the emergency stop;
   - also understood: "dismiss"/"skip"/"no", "auto build on/off", "stop capturing".
 - **QR Import:** the **QR Import** status-bar button shows a QR code — scan it on
-  your phone to open a page where you paste a GitHub repo URL; submitting adds it
-  to the wall as a project in progress. (The phone needs to reach the server over
-  the LAN; `./run-room.sh` binds `HOST=0.0.0.0` for exactly this.)
+  your phone to open a page where you describe what the fleet should build
+  (context is the primary field) plus an optional link. A `github.com/<owner>/<repo>`
+  link is shallow-cloned into `builds/<upid>/repo/` and a digest of it grounds the
+  build; any other http(s) link rides along as reference. Every submission spawns a
+  REAL fleet project — the same accept→build→preview fan-out accepted ideas get.
+  The server always binds a dedicated phone listener on `0.0.0.0:<port+1>` serving
+  only the import surface, so the QR works even when the main server is loopback-
+  bound (override the port with `VIBERSYN_PHONE_PORT`, disable the listener with
+  `VIBERSYN_PHONE_LISTENER=0`). Note: like the rest of the room API, the import
+  surface is unauthenticated — anyone on the room LAN can add projects; that's the
+  point, but run it on a network you trust.
 
 ## Research mode
 
@@ -102,6 +110,46 @@ people — pose reads the color image, and a dark projected room starves it
 synthetic cursors so you can see it work. See
 [`gesture-wall/GEMINI.md`](gesture-wall/GEMINI.md) for the hardware setup and
 [`gesture-wall/VIBERSYN.md`](gesture-wall/VIBERSYN.md).
+
+### Single-wall Kinect rig
+
+The one-projector variant: a single wall driven by an old **Kinect v2
+(Xbox One)** instead of the Orbbec — same gesture layer, no sudo, runs with
+`ROOM_CONFIG=gesture-wall/room.kinect.json ./run-room.sh --single --gesture`.
+Full bring-up (which Kinect you have, camera placement, libfreenect2 +
+bridge build, calibration, troubleshooting):
+[`docs/KINECT-SINGLE-WALL.md`](docs/KINECT-SINGLE-WALL.md).
+
+### Hand-pinch camera (optional, TouchDesigner)
+
+An independent, opt-in gesture input for the CAMERA (composes with desk mode
+and with `--gesture` dwell): a TouchDesigner rig (the laptop's built-in camera
++ MediaPipe hand tracking — no depth camera needed) streams per-hand pinch
+frames over a WebSocket on **:9980**, and the
+opted-in wall window steers its 3D camera with your hands — **pinch-hold one
+hand and drag** to orbit (release with a flick to coast, exactly like a mouse
+flick); **pinch BOTH hands and spread/squeeze** to zoom in/out (drifting both
+hands pans). URL param: `?hands=1` connects to `ws://<page-host>:9980`,
+`?hands=ws://td-mac:9980` names an explicit source, absent = off.
+
+- **No hardware:** `./run-room.sh --fake-hands` — a scripted 12 s synthetic
+  pinch choreography drives wall A (orbit → flick coast → zoom → pan), for
+  tuning the feel with no TouchDesigner and no cameras.
+- **Real hands, no TouchDesigner (recommended):** `./run-room.sh --real-hands`
+  — launches the **standalone MediaPipe bridge**
+  ([`gesture-wall/touchdesigner/hands_mediapipe.py`](gesture-wall/touchdesigner/hands_mediapipe.py))
+  alongside the room: it opens the laptop camera, runs MediaPipe hand tracking,
+  and streams the *exact same* `vibersyn-pinch` protocol on **:9980** that the
+  TouchDesigner DAT did — no `.toe` file, no GPU plugin. The wall opens with
+  `&hands=1`. First run downloads the ~7.8 MB `hand_landmarker.task` model
+  (cached). Needs macOS **Camera permission** granted to the launching
+  Terminal/IDE (a sandboxed shell fails auth). Run the bridge by hand with
+  `gesture-wall/.venv/bin/python gesture-wall/touchdesigner/hands_mediapipe.py --port 9980 --wall A`
+  and connect any room with `--hands=ws://localhost:9980` (or `?hands=1`).
+- **Real rig (TouchDesigner):** `./run-room.sh --hands=ws://<td-host>:9980` — the
+  TouchDesigner network described in
+  [`gesture-wall/touchdesigner/README.md`](gesture-wall/touchdesigner/README.md)
+  (MediaPipe plugin install, drop-in DAT scripts, channel verification, tuning).
 
 ## Model
 

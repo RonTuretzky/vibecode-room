@@ -65,6 +65,13 @@ export {
 } from "./detector";
 export { IdeaLedger, type LedgerConfig, type LedgerDelta } from "./ledger";
 export {
+  MAX_PLAN_ANSWERS,
+  MAX_PLAN_QUESTIONS,
+  questionsFromAssessment,
+  type AssessmentQuestions,
+  type PlanQuestion,
+} from "./plan-questions";
+export {
   scoreDetection,
   scoreGrounding,
   scorePitchQuality,

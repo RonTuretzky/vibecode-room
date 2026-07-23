@@ -73,7 +73,7 @@ export function HelpOverlay({ onClose, gestureMode = false }: HelpOverlayProps) 
         <header className="qr-head">
           <div>
             <span className="detail-eyebrow">controls</span>
-            <h2 className="qr-title">Keyboard &amp; voice</h2>
+            <h2 className="qr-title">VIBERSYN ROOM — SELF-HOSTED</h2>
           </div>
           <button type="button" className="detail-back" onClick={onClose} aria-label="Close help">
             <span aria-hidden="true">←</span> back

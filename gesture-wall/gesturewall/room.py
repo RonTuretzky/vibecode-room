@@ -84,6 +84,13 @@ class WallCfg:
     # on its command line — measure with a tape/laser after any projector
     # change and store it here so every recalibration picks it up.
     width_m: float | None = None
+    # Optional sticky band (fraction of wall size, [0, 0.5)) applied at THIS
+    # wall's edges even when the wall has no adjacency. Two-wall rooms get edge
+    # stickiness for free from the seam margin; a single adjacency-less wall
+    # otherwise has a hard 0-width edge, so a pointing ray drifting a hair past
+    # the border drops the cursor instead of clamping. The fusion engine takes
+    # max(edge_margin, largest adjacency seam_margin) per wall.
+    edge_margin: float = 0.0
 
 
 @dataclass
@@ -528,10 +535,15 @@ def _parse_walls(raw: object) -> dict[str, WallCfg]:
         if width_m is not None:
             width_m = _as_number(width_m, f"wall {wall_id!r} width_m")
             _require(width_m > 0, f"wall {wall_id!r} width_m must be > 0")
+        edge_margin = _as_number(
+            wraw.get("edge_margin", 0.0), f"wall {wall_id!r} edge_margin")
+        _require(0.0 <= edge_margin < 0.5,
+                 f"wall {wall_id!r} edge_margin must be in [0, 0.5), "
+                 f"got {edge_margin}")
         plane = _parse_plane(wraw.get("plane"), f"wall {wall_id!r} plane")
         walls[wall_id] = WallCfg(
             display=display, rows=rows, cols=cols, plane=plane,
-            width_m=width_m)
+            width_m=width_m, edge_margin=edge_margin)
     return walls
 
 

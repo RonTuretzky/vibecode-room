@@ -32,7 +32,7 @@ import { appendTakeHomeSlide } from "../slideshow/template";
 import { publishDeck, resolveGitHubPat, type PublishDeckFn } from "../publish/gh-pages";
 import { qrCodeSvg } from "../publish/qr";
 import { readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { selectSummarizer } from "../audio/summarizer";
 import type { HotLoopSummaryLLM } from "../audio/output-policy";
 import { OnboardingGlue } from "./onboarding-glue";
@@ -61,11 +61,26 @@ import { dispatchUtterance, type DispatchDecision, type SteeringWindow as Routin
 import { includesPhrase, loadRoutingVocabulary, normalizeSpeech, type DocumentedCommand, type RoutingVocabulary } from "../routing/vocabulary";
 import { panicHaltOutputs } from "../routing/panic-feedback";
 import { NearMissSoftLanding } from "../onboarding/soft-landing";
+import { CallsignAllocator, reservedControlWords } from "../routing/callsigns";
+import {
+  SELF_CALLSIGN,
+  SELF_PIN_PROMPT,
+  SELF_TITLE,
+  SELF_UPID,
+  SELF_WORKFLOW,
+  SelfCommissioner,
+  selfModeEnabled,
+  selfRoutingOrchestrator,
+  type GitHeadFact,
+  type SelfSurface,
+} from "../self/commission";
 import { FirstRunVadTuner } from "../onboarding/vad";
 import { SeamDispatcher } from "../seam/dispatcher";
 import { createCorrelationRecord, type CorrelationRecord, type CorrelationStore } from "../seam/correlation-store";
-import { callsignFromRepo, parseGitHubImportUrl } from "./project-import";
-import type { IdeaCandidate, IdeaDetector } from "../detect";
+import { callsignFromRepo, parseImportRequest } from "./project-import";
+import { cloneRepo, repoDigest } from "./repo-clone";
+import { buildImportPlanPrompt, buildImportPlanQuestions } from "./import-plan";
+import type { IdeaCandidate, IdeaDetector, PlanQuestion } from "../detect";
 import { StageSequencer, type CanonicalStage } from "../spine/stage-sequencer";
 import type { DispatchedAction, LogEvent, OutputDecision, PendingSuggestion } from "../types";
 import { demoProjectorSnapshot, emptyProjectorSnapshot, withUnmuted } from "../ui/demo-data";
@@ -154,6 +169,17 @@ export interface ProjectorRuntime {
   // its live run-event telemetry. Idempotent per UPID; errors are typed so the
   // HTTP route can 400/404 honestly.
   executeProcess(upid: string, correlationId?: string): Promise<ExecuteProcessResult>;
+  // SELF-HOSTING MODE (VIBERSYN_SELF_MODE=1). `bootId` is this process's
+  // stable per-boot id — surfaced on /api/health and the snapshot so a wall
+  // can detect that the server it reconnected to is a NEW build and reload
+  // itself. `requestSelfReload` is the guarded reload trigger: honored only in
+  // self mode, serialized, and gated on the last self-run having verified
+  // green — on success the server publishes reloadPending, briefly lets
+  // in-flight responses finish, then exits 87 (the run-room --self supervisor
+  // rebuilds and relaunches it).
+  readonly bootId: string;
+  readonly selfMode: boolean;
+  requestSelfReload(correlationId?: string): { ok: true } | { ok: false; reason: string };
   pendingSuggestion(): PendingQueuedSuggestion | null;
   snapshot(): ProjectorSnapshot;
   // Rebuild + broadcast the snapshot NOW and return it. The HTTP control routes
@@ -199,9 +225,12 @@ export interface ProjectorRuntime {
   // Unknown id is a no-op returning the current snapshot.
   dismissIdea(id: string, correlationId?: string): ProjectorSnapshot;
   // QR import (phone -> POST /api/projects/import): validate a GitHub URL and
-  // add it to the fleet as an imported project-in-progress
-  // (source: { kind: "github-import", url }).
-  importProject(url: string, correlationId?: string): Promise<ImportProjectResult>;
+  // add it to the fleet as a REAL project-in-progress: context (+ optional
+  // link) fans out to the build backends immediately; a github.com/<owner>/
+  // <repo> link runs the clone routine first and grounds the build in the
+  // repo. Source kinds: github → { kind: "github-import", url }, everything
+  // else → { kind: "phone-import", url: string | null }.
+  importProject(request: string | { url?: unknown; context?: unknown }, correlationId?: string): Promise<ImportProjectResult>;
   // RESEARCH MODE: the suggester/agent loop that watches the conversation for
   // researchable material (fact-checks, deep-dives, bias scans), spawns
   // research agents on accept, and produces sourced dossier decks.
@@ -222,7 +251,9 @@ export interface ProjectorRuntime {
   researchDeckHtml(id: string): Promise<string | null>;
 }
 
-export type ImportProjectResult = { ok: true; snapshot: ProjectorSnapshot } | { ok: false; error: string };
+export type ImportProjectResult =
+  | { ok: true; snapshot: ProjectorSnapshot; upid: string; callsign: string; title: string | null }
+  | { ok: false; error: string };
 
 // COMMISSION result for the HTTP/voice surfaces. `status` maps directly onto
 // the /api/process/:upid/execute response code: 404 unknown/dead UPID, 400
@@ -275,6 +306,11 @@ export interface ProjectorRuntimeOptions {
   // (idea-builder). Defaults to <cwd>/builds. Tests point it at a temp dir so the
   // repo tree stays clean and each run is isolated.
   buildsRoot?: string;
+  // Phone-import GitHub clone seam. Production defaults to the real shallow
+  // `git clone` (repo-clone.ts); tests inject a fake so no git subprocess or
+  // network fetch ever runs from the suite.
+  cloneRepoFn?: typeof cloneRepo;
+  repoDigestFn?: typeof repoDigest;
   // The real coding agent that turns an accepted idea's scaffold into a working
   // app (idea-builder). Defaults to the host `claude` CLI builder. Tests inject a
   // synthetic builder so no real `claude` spawn occurs.
@@ -298,6 +334,12 @@ export interface ProjectorRuntimeOptions {
   // under (the vibersyn-process workflow's contract-fixed output root). Defaults
   // to <cwd>/artifacts/vibersyn-runs. Tests point it at a temp dir.
   executionArtifactsRoot?: string;
+  // SELF-HOSTING seams (VIBERSYN_SELF_MODE=1). `selfGitHead` injects the green-
+  // gate git probe (tests fake the HEAD sequence; production shells out to
+  // `git log -1`). `exitProcess` injects the reload trigger's exit so tests can
+  // observe the 87 without killing the test process.
+  selfGitHead?: () => Promise<GitHeadFact | null>;
+  exitProcess?: (code: number) => void;
   // GitHub Pages deck publisher seam (src/publish/gh-pages). Fired once per
   // kicked-off idea, fire-and-forget, after its FIRST pitch deck lands; the
   // resolved public URL becomes the process's publishedUrl + take-home QR.
@@ -320,6 +362,12 @@ export async function createProjectorRuntime(
   const sessionId = env.VIBERSYN_SESSION_ID ?? emptyProjectorSnapshot.sessionId;
   const runtime = new LiveProjectorRuntime(sessionId, env, options);
   await runtime.initCueBridge();
+  // SELF-HOSTING MODE: pin the standing "Vibersyn Room" project (upid "self",
+  // callsign "mirror") onto the wall before anything else spawns. It has no
+  // kickoff mock lanes — steering it commissions a vibersyn-self run instead.
+  if (selfModeEnabled(env)) {
+    await runtime.pinSelfProject();
+  }
   // The seeded demo fleet (FIXTURE Atlas/Cobalt processes) is OFF by default in
   // the live server: an idle runtime must have ZERO processes until a real idea
   // is accepted and spawns one. It stays available for tests/demo via the opt-in
@@ -422,6 +470,9 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   readonly #autoBuildSettleMs: number;
   #autoBuildTimer: ReturnType<typeof setTimeout> | null = null;
   #autoBuildArmedId: string | null = null;
+  // While armed, republish once per second so every wall's settle countdown
+  // (snapshot.ideaSettle.firesInMs) ticks live. Cleared on disarm/fire.
+  #settleTickTimer: ReturnType<typeof setInterval> | null = null;
   // IDEA CAPTURE mode: an explicit alternative to passive auto-detect. When on,
   // detection runs EAGERLY on every final (a rate-limited force-detect, no
   // word/turn schedule) so deliberately-described ideas surface fast. Capture is
@@ -446,11 +497,31 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   // utterance that matched no command, active for the first 20 minutes of the
   // session (NEAR_MISS_DISABLE_AFTER_MS), then silent.
   readonly #softLanding: NearMissSoftLanding;
-  // GitHub-imported fleet entries (QR -> /api/projects/import), keyed by UPID.
+  // Phone-imported fleet entries (QR -> /api/projects/import), keyed by UPID.
   // The registry record stays the source of truth for lifecycle (halt/emergency
-  // stop); this map carries the import-only display facts — the display-cased
-  // callsign, the task line, and the source URL the projector links to.
-  readonly #imports = new Map<string, { url: string; callsign: string; task: string }>();
+  // stop); this map carries the import-only display facts — kind (github repos
+  // get the clone routine; any other link is reference context), the source
+  // URL, the display-cased callsign (github only), the task line, and the
+  // clone-routine status the wall surfaces while the repo comes down.
+  readonly #imports = new Map<
+    string,
+    {
+      kind: "github" | "link" | "context";
+      url: string | null;
+      callsign: string | null;
+      task: string;
+      status: "cloning" | "ready" | "clone-failed";
+    }
+  >();
+  // In-flight GitHub clone routines, keyed by UPID. Emergency stop and per-
+  // process halt abort these so a git subprocess never outlives the kill-all.
+  readonly #importClones = new Map<string, AbortController>();
+  // Where builds/<upid>/ live — the clone routine puts the checkout at
+  // builds/<upid>/repo/ (sibling of the per-backend mock dirs, which are the
+  // only subdirectories the orchestrator wipes on a fresh fan-out).
+  readonly #buildsRoot: string;
+  readonly #cloneRepoFn: typeof cloneRepo;
+  readonly #repoDigestFn: typeof repoDigest;
   // TAKE-HOME PUBLISHING (GitHub Pages). `#publishDeckFn` is the injected/real
   // publisher (null = disabled); `#publishKicked` guards ONE publish attempt
   // per kicked-off UPID; `#deckDirs` remembers every generated local deck dir
@@ -478,6 +549,18 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   // run's status and fold a synthetic completion when the run is terminal.
   readonly #getRun: ((runId: string) => Promise<Record<string, unknown> | undefined>) | null;
   readonly #runCompletionPollMs: number;
+  // SELF-HOSTING MODE (VIBERSYN_SELF_MODE=1). `bootId` is the stable per-boot
+  // id (/api/health + snapshot) the walls compare across SSE reconnects to
+  // decide "the server is a new build — reload". `#selfCommission` owns the
+  // pinned SELF project's steer→durable-run→green-gate loop; `#selfReloadPending`
+  // serializes reloads (a second green during the drain window is refused);
+  // `#exit` is the injectable exit-87 seam the supervisor loop watches for.
+  readonly bootId: string = crypto.randomUUID();
+  readonly #selfMode: boolean;
+  #selfCommission: SelfCommissioner | null = null;
+  #selfReloadPending = false;
+  readonly #exit: (code: number) => void;
+  readonly #selfReloadDelayMs: number;
 
   constructor(
     readonly sessionId: string,
@@ -487,6 +570,12 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     this.#env = env;
     const clock = options.clock ?? (() => Date.now());
     this.#clock = clock;
+    // SELF-HOSTING MODE resolves first: it shapes the callsign allocator (the
+    // reserved "mirror" word), the registry's orchestrator seam (self steers
+    // route to the commission), and the reload trigger below.
+    this.#selfMode = selfModeEnabled(env);
+    this.#exit = options.exitProcess ?? ((code: number) => process.exit(code));
+    this.#selfReloadDelayMs = resolveSelfReloadDelayMs(env);
     // Single audible-output sink seam (ISSUE-0026): an injected sink wins, else
     // selectAudioSink(env) (no-op unless VIBERSYN_AUDIO_SINK=device). The one sink
     // backs both the earcon playPcm path and the TTS drain so a fired suggestion's
@@ -605,6 +694,9 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     // shares it with the registry, which triggers the build on an accept-path
     // spawn (build:true — the demo seed spawns bare and never builds) and tears
     // the preview server down on halt.
+    this.#buildsRoot = options.buildsRoot ?? resolve(process.cwd(), "builds");
+    this.#cloneRepoFn = options.cloneRepoFn ?? cloneRepo;
+    this.#repoDigestFn = options.repoDigestFn ?? repoDigest;
     this.ideaBuilds = new IdeaBuildRegistry({
       buildsRoot: options.buildsRoot,
       builderAgent: options.builderAgent,
@@ -626,7 +718,17 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       selector: this.buildSelector,
       buildsRoot: options.buildsRoot,
       slideshow: async (input) => {
-        await generateSlideshow(input, { signal: input.signal });
+        // The accept's planning questions ride into the deck as INTERACTIVE
+        // swipe-to-answer cards; each chosen answer POSTs to this process's
+        // answer route (app.ts /api/process/:upid/answer -> registry.steer).
+        await generateSlideshow(
+          {
+            ...input,
+            questions: input.planQuestions,
+            answerEndpoint: `/api/process/${encodeURIComponent(input.upid)}/answer`,
+          },
+          { signal: input.signal },
+        );
         // Take-home publishing rides the deck: the FIRST deck of a kickoff
         // fires the fire-and-forget GitHub Pages publish; every deck (incl.
         // steer regenerations) gets the QR slide once the publish confirmed.
@@ -652,19 +754,34 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     // Concurrency cap: VIBERSYN_MAX_CONCURRENT_PROCESSES (0/unset-invalid → 16).
     // The old hardcoded 2 meant the third spoken idea in a session was refused.
     const maxConcurrent = resolveMaxConcurrentProcesses(env);
+    // Per-boot nonce so commissioned runIds never collide with a PREVIOUS
+    // session's durable gateway runs (upids restart at upid-1 every boot;
+    // the gateway's finished "vibersyn-upid-1" would otherwise be replayed
+    // instantly, stale artifacts and all). Shared with the self commission so
+    // its "vibersyn-self-<nonce>-<n>" runIds get the same freshness contract.
+    const runIdNonce = Date.now().toString(36);
+    // The registry's built-artifact steer seam. In SELF mode it is wrapped so
+    // the SELF upid's steers — click-steer, "mirror, <instruction>", the HTTP
+    // steer endpoint, the seam API — all route into the self commission; every
+    // other UPID keeps the real orchestrator fan-out.
+    const baseOrchestrator = useOrchestrator ? this.buildOrchestrator : null;
     this.registry = new ProcessRegistry({
       client: smithersClient,
       sessionId,
       now: clock,
       maxConcurrentProcesses: maxConcurrent,
-      // Per-boot nonce so commissioned runIds never collide with a PREVIOUS
-      // session's durable gateway runs (upids restart at upid-1 every boot;
-      // the gateway's finished "vibersyn-upid-1" would otherwise be replayed
-      // instantly, stale artifacts and all).
-      runIdNonce: Date.now().toString(36),
+      runIdNonce,
       ideaBuilds: this.ideaBuilds,
-      orchestrator: useOrchestrator ? this.buildOrchestrator : null,
+      orchestrator: this.#selfMode
+        ? selfRoutingOrchestrator(baseOrchestrator, () => this.#selfCommission)
+        : baseOrchestrator,
       execution: this.executionRegistry,
+      // SELF mode reserves the spoken callsign "mirror" (phonetic guard
+      // included) so the namer/allocator can never hand it — or a sound-alike —
+      // to another process; the pinned self spawn itself bypasses the guard.
+      callsigns: this.#selfMode
+        ? new CallsignAllocator({ reservedWords: [...reservedControlWords(env), SELF_CALLSIGN] })
+        : undefined,
       // A halted/emergency-stopped process drops its preview; republish so the
       // "Preview ->" link disappears from the snapshot immediately. If the halted
       // process was the steering target, drop the target so transcript stops
@@ -673,6 +790,9 @@ class LiveProjectorRuntime implements ProjectorRuntime {
         if (this.#steeringUpid === upid) {
           this.#steeringUpid = null;
         }
+        // A process halted mid-clone kills its git subprocess too; the clone
+        // routine's post-clone build kick then sees the abort and stands down.
+        this.#importClones.get(upid)?.abort();
         this.publish();
       },
       onTrace: (event) => this.recordExternalTrace(event),
@@ -689,6 +809,45 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       client: runEventStreamClient(smithersClient),
       onUpdate: (upid, overlay) => this.onRunOverlay(upid, overlay),
     });
+    // SELF-HOSTING commission loop: steers addressed to the pinned SELF
+    // project launch durable `vibersyn-self` runs through the SAME selected
+    // smithers client, stream telemetry through the SAME RunEventDriver, and
+    // are green-gated room-side (git HEAD must gain a "self:" commit) before
+    // the serialized exit-87 reload trigger fires.
+    this.#selfCommission = this.#selfMode
+      ? new SelfCommissioner({
+          client: smithersClient,
+          runIdNonce,
+          sessionId,
+          now: clock,
+          onUpdate: () => this.publish(),
+          onTrace: (event) => this.recordExternalTrace(event),
+          onOutput: (decision) => this.recordOutput(decision),
+          onLaunched: (runId) => {
+            void this.runEventDriver.subscribe(SELF_UPID, runId).catch((error) => {
+              this.recordExternalTrace({
+                event: "run.events.error",
+                level: "error",
+                sessionId: this.sessionId,
+                upid: SELF_UPID,
+                meta: { message: error instanceof Error ? error.message : String(error) },
+              });
+            });
+          },
+          onGreen: () => {
+            this.requestSelfReload(`corr-self-green-${crypto.randomUUID()}`);
+          },
+          gitHead: options.selfGitHead,
+          getRunStatus:
+            this.#getRun === null
+              ? null
+              : async (runId: string) => {
+                  const run = await this.#getRun?.(runId);
+                  return typeof run?.status === "string" ? run.status : null;
+                },
+          pollMs: this.#runCompletionPollMs,
+        })
+      : null;
     // Seam action API (/api/seam/*): the dispatcher's client/correlation seams
     // are registry adapters, so seam-dispatched spawn/steer/pause/resume/halt/
     // status act on and report the REAL fleet. The shared CallsignAllocator
@@ -939,6 +1098,13 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     } catch (error) {
       console.error("Emergency stop encountered an error while halting processes:", error);
     } finally {
+      // Abort every in-flight phone-import clone: the git subprocess SIGKILLs
+      // on abort, and the post-clone build kick checks the abort flag so no
+      // fan-out starts after the kill-all.
+      for (const controller of this.#importClones.values()) {
+        controller.abort();
+      }
+      this.#importClones.clear();
       // Tear down every live accept->build->preview server as part of the kill-all
       // (per-process halt already stops its own; this also reaps any in-flight or
       // not-yet-halted build so no loopback preview outlives the session).
@@ -951,6 +1117,10 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       // process already cancelled the durable runs via the gateway client);
       // no full-app artifacts preview outlives the session either.
       await this.executionRegistry.stopAll().catch(() => undefined);
+      // Abort an in-flight self-run like any commission (belt-and-braces: the
+      // registry halt already routed abortAll("self") through the wrapper, but
+      // the kill-all must never depend on that path having run).
+      await this.#selfCommission?.abort().catch(() => undefined);
       // Drop any in-flight idea candidates so the bubble clears with the kill-all,
       // and stop the capture creation loop.
       this.detection.clear();
@@ -965,6 +1135,29 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       this.publish();
     }
     return this.#snapshot;
+  }
+
+  // DONE pressed with NOTHING surfaced: build a suggestion from what the room
+  // actually said — the last few spoken (kind "room") transcript lines become
+  // the pitch. Null when the visitor has not spoken yet, which is the only
+  // case where an explicit Done has nothing to act on.
+  private forcedSuggestionFromTranscript(correlationId: string): PendingSuggestion | null {
+    const spoken = this.#snapshot.transcript
+      .filter((line) => line.kind === "room")
+      .slice(-6)
+      .map((line) => line.text.trim())
+      .filter((text) => text.length > 0);
+    if (spoken.length === 0) {
+      return null;
+    }
+    return {
+      suggestionId: `sug-forced-${crypto.randomUUID()}`,
+      pitch: spoken.join(". "),
+      mcqs: ["Proceed?"],
+      answers: ["Yes, build it"],
+      correlationId,
+      expiresAt: this.#clock() + DETECTION_BUBBLE_TTL_MS,
+    };
   }
 
   // CLICK THE IDEA BUBBLE -> BUILD. Accept the CURRENT pending suggestion directly,
@@ -988,9 +1181,20 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       suggestion = pendingSuggestionFromCandidate(primary, correlationId, this.#clock() + DETECTION_BUBBLE_TTL_MS);
     }
     if (suggestion === null) {
-      // Nothing on screen to accept — the click is a no-op; return the live snapshot.
+      // Nothing surfaced at all — but Done must still honor whatever the room
+      // actually SAID. The detector missing an utterance must never leave the
+      // Done button a no-op, so synthesize a suggestion from the recent spoken
+      // transcript and build from that.
+      suggestion = this.forcedSuggestionFromTranscript(correlationId);
+    }
+    if (suggestion === null) {
+      // Nothing on screen AND nothing spoken — the click is a true no-op.
       return this.#snapshot;
     }
+    // An explicit accept (Done button, bubble click, voice) supersedes the
+    // armed settle timer — without this the timer could fire later and
+    // double-build the same idea.
+    this.disarmAutoBuild();
     this.recordExternalTrace({
       event: "suggestion.accept.click",
       level: "info",
@@ -1177,54 +1381,226 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   // applies) with a repo-derived callsign; the import-only display facts (source
   // URL, task line, display casing) live in #imports and are merged into the
   // snapshot. Invalid URLs never reach the registry.
-  async importProject(url: string, correlationId = `corr-import-${crypto.randomUUID()}`): Promise<ImportProjectResult> {
+  async importProject(
+    request: string | { url?: unknown; context?: unknown },
+    correlationId = `corr-import-${crypto.randomUUID()}`,
+  ): Promise<ImportProjectResult> {
     if (this.#emergencyTriggered) {
       return { ok: false, error: "Emergency stop is active." };
     }
-    const parsed = parseGitHubImportUrl(url);
+    // Back-compat: a bare string is the legacy url-only body shape.
+    const parsed = parseImportRequest(typeof request === "string" ? { url: request } : request ?? {});
     if (!parsed.ok) {
       return parsed;
     }
-    const callsign = callsignFromRepo(parsed.repo);
-    const task = `Imported from GitHub: ${parsed.owner}/${parsed.repo}`;
-    // Imported projects are display fleet entries (like the seeded demo fleet),
-    // not voice-steered agents, so the spoken-collision guard must not reject a
-    // repo whose name happens to sound like a control word. Suspend it for this
-    // spawn only — live voice spawns keep it on (mirrors seedDemoFleet).
-    const priorGuard = process.env.VIBERSYN_RBG_DISABLE_CALLSIGN_COLLISION_GUARD;
-    process.env.VIBERSYN_RBG_DISABLE_CALLSIGN_COLLISION_GUARD = "1";
+
+    // Compose the fleet entry from the request kind. `task` is the wall's
+    // display line (the submitter's own words when given); `pitch` is the build
+    // prompt the fan-out scaffolds from. GitHub imports defer the fan-out until
+    // the clone routine settles so the pitch can carry a real repo digest.
+    const context = parsed.kind === "context" ? parsed.context : parsed.context ?? null;
+    let callsign: string | undefined;
+    let task: string;
+    let pitch: string;
+    let input: Record<string, unknown>;
+    if (parsed.kind === "github") {
+      callsign = callsignFromRepo(parsed.repo);
+      task = context ?? `Imported from GitHub: ${parsed.owner}/${parsed.repo}`;
+      pitch =
+        context !== null
+          ? `${context}\n\nGround the concept in the GitHub repository ${parsed.owner}/${parsed.repo} (${parsed.url}).`
+          : `Build a live concept preview grounded in the GitHub repository ${parsed.owner}/${parsed.repo} (${parsed.url}).`;
+      input = { source: "github-import", url: parsed.url, owner: parsed.owner, repo: parsed.repo, context, pitch };
+    } else if (parsed.kind === "link") {
+      task = context ?? `Build a concept inspired by ${parsed.url}`;
+      pitch =
+        context !== null
+          ? `${context}\n\nReference link from the room: ${parsed.url}`
+          : `Build a fast interactive concept inspired by this link: ${parsed.url}`;
+      input = { source: "phone-import", url: parsed.url, context, pitch };
+    } else {
+      task = parsed.context;
+      pitch = parsed.context;
+      input = { source: "phone-import", context: parsed.context, pitch };
+    }
+
+    // Imported projects are REAL fleet members (built, previewed, steerable by
+    // voice), so the phonetic collision guard stays ON: a repo/context handle
+    // that sounds like a control word falls back to the codename pool inside
+    // registry.spawn rather than shipping an ambiguous spoken callsign.
     let spawn: Awaited<ReturnType<ProcessRegistry["spawn"]>>;
     try {
       spawn = await this.registry.spawn({
         callsign,
-        workflow: "github-import",
-        prompt: task,
-        input: { source: "github-import", url: parsed.url, owner: parsed.owner, repo: parsed.repo },
+        prompt: pitch,
+        input,
         correlationId,
+        // Non-github imports fan out immediately; github waits for the clone.
+        build: parsed.kind !== "github",
       });
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
-    } finally {
-      if (priorGuard === undefined) {
-        delete process.env.VIBERSYN_RBG_DISABLE_CALLSIGN_COLLISION_GUARD;
-      } else {
-        process.env.VIBERSYN_RBG_DISABLE_CALLSIGN_COLLISION_GUARD = priorGuard;
-      }
     }
     if (!spawn.accepted) {
       return { ok: false, error: spawn.spokenAck };
     }
-    this.#imports.set(spawn.process.upid, { url: parsed.url, callsign, task });
+    const upid = spawn.process.upid;
+    // Display casing only when the allocator actually assigned the repo-derived
+    // handle. On a collision (or reserved control word) the registry silently
+    // fell back to a codename — the wall and the phone must show THAT callsign,
+    // or voice steering ("steer atlas") and the display would name different
+    // processes.
+    const displayCallsign =
+      callsign !== undefined && callsign.toLowerCase() === spawn.process.callsign.toLowerCase() ? callsign : null;
+    this.#imports.set(upid, {
+      kind: parsed.kind,
+      url: parsed.kind === "context" ? null : parsed.url,
+      callsign: displayCallsign,
+      task,
+      status: parsed.kind === "github" ? "cloning" : "ready",
+    });
     this.recordExternalTrace({
       event: "project.import",
       level: "info",
       sessionId: this.sessionId,
       correlationId,
-      upid: spawn.process.upid,
-      meta: { url: parsed.url, owner: parsed.owner, repo: parsed.repo, callsign },
+      upid,
+      meta: {
+        kind: parsed.kind,
+        url: parsed.kind === "context" ? null : parsed.url,
+        context,
+        callsign: spawn.process.callsign,
+      },
     });
+    if (parsed.kind === "github") {
+      this.runGitHubImportRoutine(upid, parsed, pitch, context, correlationId);
+    }
     this.publish();
-    return { ok: true, snapshot: this.#snapshot };
+    return {
+      ok: true,
+      snapshot: this.#snapshot,
+      upid,
+      callsign: this.#imports.get(upid)?.callsign ?? spawn.process.callsign,
+      title: spawn.process.title ?? null,
+    };
+  }
+
+  // GitHub clone routine (fire-and-forget): shallow-clone the validated repo to
+  // builds/<upid>/repo/, digest it (README/package.json/toplevel), then kick the
+  // SAME accept->build->preview fan-out every accepted idea gets — with the
+  // digest riding the pitch so the mock is grounded in the actual code. A
+  // failed/timed-out clone still starts the build (link-only pitch) — the phone
+  // submitter must always end up with a living project, never a dead card. The
+  // clone subprocess aborts with halt/emergency stop, and a process halted
+  // mid-clone never starts a build (registry.startBuild refuses dead records).
+  // SECURITY: the checkout is UNTRUSTED LAN-submitted content. Only the bounded
+  // digest (README excerpt + metadata, ~2.5k chars) rides into build prompts —
+  // kickoff backends never read the checkout themselves. Agents with shell
+  // access (commission stage) that follow the pitch's repo path are exposed to
+  // repo-content prompt injection; that is inherent to "work on the repo" and
+  // acceptable only because the room LAN is a trusted space.
+  private runGitHubImportRoutine(
+    upid: string,
+    parsed: { url: string; owner: string; repo: string },
+    basePitch: string,
+    context: string | null,
+    correlationId: string,
+  ): void {
+    const controller = new AbortController();
+    this.#importClones.set(upid, controller);
+    const repoDir = join(this.#buildsRoot, upid, "repo");
+    // Clone URL rebuilt from the PARSED owner/repo — never raw phone input.
+    const cloneUrl = `https://github.com/${encodeURIComponent(parsed.owner)}/${encodeURIComponent(parsed.repo)}.git`;
+    const startedAtMs = this.#clock();
+    void (async () => {
+      const result = await this.#cloneRepoFn({ url: cloneUrl, dir: repoDir, signal: controller.signal });
+      const entry = this.#imports.get(upid);
+      if (this.#emergencyTriggered || controller.signal.aborted) {
+        return; // Kill-all/halt won the race — no build starts after teardown.
+      }
+      let pitch = basePitch;
+      // Imports carry no judge assessment (the spoken-idea path's mcqs/answers
+      // ride the accept seed), so the deck's interactive swipe-to-answer cards
+      // must be drafted HERE or the imported project's deck has none.
+      let planQuestions: PlanQuestion[] = [];
+      if (result.ok) {
+        if (entry !== undefined) {
+          entry.status = "ready";
+        }
+        const digest = await this.#repoDigestFn(result.dir).catch(() => null);
+        // INFER ADDITIONS, don't plan from scratch: frame the fleet prompt as
+        // "add the smallest coherent slice that fits this existing repo" (or
+        // scaffold when the repo is near-empty) — buildImportPlanPrompt decides
+        // the mode from the digest+context and never throws / never needs net.
+        pitch = await buildImportPlanPrompt(
+          { context, digest, repoPath: result.dir },
+          { signal: controller.signal },
+        ).catch(() =>
+          digest !== null
+            ? `${basePitch}\n\nThe repository is cloned at ${result.dir}. Digest:\n${digest}`
+            : `${basePitch}\n\nThe repository is cloned at ${result.dir}.`,
+        );
+        // Same contract as the pitch: model-drafted, deterministic mode-aware
+        // fallback, never throws. The extra .catch is belt and braces — an
+        // empty set just means startBuild falls back to input derivation
+        // (which yields no cards for imports, exactly today's behavior).
+        planQuestions = await buildImportPlanQuestions(
+          { context, digest, repoPath: result.dir },
+          { signal: controller.signal },
+        ).catch(() => []);
+      } else if (entry !== undefined) {
+        // A failed clone keeps the link-only build AND no drafted questions —
+        // with no checkout there is no repo to ask decisions about, and the
+        // deck stays honest about knowing nothing beyond the link.
+        entry.status = "clone-failed";
+      }
+      this.recordExternalTrace({
+        event: "project.import.clone",
+        level: result.ok ? "info" : "warn",
+        sessionId: this.sessionId,
+        correlationId,
+        upid,
+        latencyMs: this.#clock() - startedAtMs,
+        meta: result.ok ? { url: parsed.url, dir: repoDir } : { url: parsed.url, error: result.error },
+      });
+      // Re-check right before the kick: the digest/pitch/question awaits above
+      // are further windows in which a halt/emergency stop can land (startBuild
+      // also refuses dead records — this is belt and braces).
+      if (this.#emergencyTriggered || controller.signal.aborted) {
+        return;
+      }
+      this.registry.startBuild(upid, {
+        correlationId,
+        prompt: pitch,
+        ...(planQuestions.length === 0 ? {} : { planQuestions }),
+      });
+      this.publish();
+    })()
+      .catch((error: unknown) => {
+        // cloneRepo is contract-bound to return { ok: false } instead of
+        // throwing, but an injected seam (or a future regression) must never
+        // strand the card on "cloning repository" with no build: treat any
+        // rejection as a failed clone and still start the fallback build.
+        const entry = this.#imports.get(upid);
+        if (entry !== undefined) {
+          entry.status = "clone-failed";
+        }
+        this.recordExternalTrace({
+          event: "project.import.clone",
+          level: "error",
+          sessionId: this.sessionId,
+          correlationId,
+          upid,
+          meta: { url: parsed.url, error: error instanceof Error ? error.message : String(error) },
+        });
+        if (!this.#emergencyTriggered && !controller.signal.aborted) {
+          this.registry.startBuild(upid, { correlationId, prompt: basePitch });
+          this.publish();
+        }
+      })
+      .finally(() => {
+        this.#importClones.delete(upid);
+      });
   }
 
   // AUTO-BUILD toggle. Flip on => every fired idea is built without a click; flip
@@ -2181,6 +2557,11 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       return;
     }
     this.scheduleAutoBuildCheck();
+    if (this.#settleTickTimer === null) {
+      const tick = setInterval(() => this.publish(), 1_000);
+      (tick as { unref?: () => void }).unref?.();
+      this.#settleTickTimer = tick;
+    }
   }
 
   private scheduleAutoBuildCheck(): void {
@@ -2209,6 +2590,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   private fireArmedAutoBuild(): void {
     const candidateId = this.#autoBuildArmedId;
     this.#autoBuildArmedId = null;
+    this.clearSettleTick();
     if (candidateId === null || !this.#autoAccept || this.#emergencyTriggered) {
       return;
     }
@@ -2229,6 +2611,30 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       clearTimeout(this.#autoBuildTimer);
       this.#autoBuildTimer = null;
     }
+    this.clearSettleTick();
+  }
+
+  private clearSettleTick(): void {
+    if (this.#settleTickTimer !== null) {
+      clearInterval(this.#settleTickTimer);
+      this.#settleTickTimer = null;
+    }
+  }
+
+  // Settle-gate surface for the walls: while a candidate is armed the UI shows
+  // "heard <pitch>, building in Ns" plus a Done button; firesInMs is computed
+  // server-side (the client must not guess from its own clock).
+  private ideaSettleSnapshot(): { armed: boolean; title: string | null; firesInMs: number | null } {
+    if (this.#autoBuildArmedId === null) {
+      return { armed: false, title: null, firesInMs: null };
+    }
+    const primary = this.detection.primary();
+    const title = primary !== null && primary.id === this.#autoBuildArmedId ? primary.pitch : null;
+    const nowMs = this.#clock();
+    const firesInMs = this.#autoBuildSettleMs > 0
+      ? Math.max(0, (this.#lastFinalAtMs ?? nowMs) + this.#autoBuildSettleMs - nowMs)
+      : 0;
+    return { armed: true, title, firesInMs };
   }
 
   // Wall-clock watchdog: a delivered suggestion that is never voice-accepted must
@@ -2323,7 +2729,9 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     return this.#snapshot;
   }
 
-  private buildSnapshot(previous: ProjectorSnapshot = this.#snapshot): BuildloopSnapshot {
+  private buildSnapshot(
+    previous: ProjectorSnapshot = this.#snapshot,
+  ): BuildloopSnapshot & { bootId: string; self: SelfSurface | null } {
     const muted = this.#emergencyTriggered || this.muteController.isMuted();
     const listening = !this.#emergencyTriggered && this.#session.isListening() && !muted;
     const liveActiveCue = this.#micActive ? "ambient listening" : previous.activeCue;
@@ -2353,9 +2761,15 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       researchMode: this.research.active(),
       research: this.researchSnapshot(),
       dialogue: this.dialogueSnapshot(),
+      ideaSettle: this.ideaSettleSnapshot(),
       // Multi-backend build loop: the registered backend roster with enabled +
       // last-probed availability — the wall's toggle chips (POST /api/backends).
       backends: this.buildSelector.snapshot(),
+      // SELF-HOSTING surfaces: the per-boot id every wall compares across SSE
+      // reconnects (bootId changed → the server is a new build → reload), and
+      // the self surface driving the mirror label + reload overlay.
+      bootId: this.bootId,
+      self: this.selfSurface(),
     };
   }
 
@@ -2531,7 +2945,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     }
   }
 
-  private processSnapshots(): Array<BuildloopProcess & { execution: ExecutionSnapshot | null }> {
+  private processSnapshots(): Array<BuildloopProcess & { execution: ExecutionSnapshot | null; stage?: "self" }> {
     const demoByUpid = new Map(this.#demoProcesses.map((process) => [process.upid, process]));
 
     return this.registry.records().map((record) => {
@@ -2546,10 +2960,11 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       // preview (the server is torn down on halt), so a dead record never carries
       // a stale URL. The seeded demo fleet has no build, so build state is null.
       const build = record.state === "dead" ? undefined : this.ideaBuilds.state(record.upid);
-      // GitHub-imported project (QR flow): a display fleet entry whose preview IS
-      // the repo URL, shown "active"/"imported" while live. Lifecycle (halt /
-      // emergency stop) still comes from the registry record, so a dead import
-      // shows halted like everything else.
+      // Phone-imported project (QR flow): a REAL fleet entry — its build lanes
+      // fan out like any accepted idea (github imports after the clone routine
+      // settles). The map only carries display facts (kind/url/task/clone
+      // status); lifecycle (halt / emergency stop) still comes from the
+      // registry record, so a dead import shows halted like everything else.
       const imported = this.#imports.get(record.upid);
       // Multi-backend KICKOFF fragment: one CONCEPT-MOCK entry per fanned-out
       // backend (status/progress/previewUrl/summary/slideshowUrl). A dead
@@ -2562,8 +2977,17 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       // COMMISSION execution lane (two-stage pivot): null until the room
       // explicitly executes; then executing (percent/label from live run
       // events) -> built with the full-app artifacts preview. A dead process
-      // shows no lane — halt tore the preview down.
-      const execution: ExecutionSnapshot | null = record.state === "dead" ? null : this.registry.execution(record.upid);
+      // shows no lane — halt tore the preview down. The pinned SELF project's
+      // lane comes from the self commission instead: its "execution" IS the
+      // vibersyn-self run (executing → green/built or failed), shape-compatible
+      // so the wall's ExecutionChip renders it unchanged.
+      const isSelf = this.#selfCommission !== null && record.upid === SELF_UPID;
+      const execution: ExecutionSnapshot | null =
+        record.state === "dead"
+          ? null
+          : isSelf
+            ? this.#selfCommission?.lane() ?? null
+            : this.registry.execution(record.upid);
       // TAKE-HOME publish surface: the confirmed-200 GitHub Pages URL + the
       // server-generated QR SVG the wall renders ("scan to take it home").
       // Deliberately survives a halt — the published page is a public
@@ -2573,11 +2997,13 @@ class LiveProjectorRuntime implements ProjectorRuntime {
         upid: record.upid,
         runId: record.runId,
         // A BUILT commission preview (the real full app) outranks every mock
-        // preview on the legacy per-process field.
+        // preview on the legacy per-process field. An import's source URL is
+        // the LAST resort — a real build/mock preview must never be shadowed
+        // by the link the phone submitted.
         previewUrl:
           record.state === "dead"
             ? null
-            : imported?.url ?? execution?.previewUrl ?? build?.previewUrl ?? orchestrated?.previewUrl ?? null,
+            : execution?.previewUrl ?? build?.previewUrl ?? orchestrated?.previewUrl ?? imported?.url ?? null,
         buildStatus: build?.status ?? orchestrated?.status ?? null,
         builds,
         execution,
@@ -2585,7 +3011,15 @@ class LiveProjectorRuntime implements ProjectorRuntime {
         // projector shows the pre-authored display casing ("Atlas"/"COBALT"-style
         // repo callsigns for imports).
         callsign: imported?.callsign ?? demo?.callsign ?? record.callsign,
-        state: record.state === "dead" ? "halted" : imported !== undefined ? "active" : live?.state ?? projectorState(record.state),
+        // An import with live build lanes reads like any building project; the
+        // flat "active" badge only covers the pre-build window (cloning, or a
+        // clone that failed before the fallback fan-out kicked).
+        state:
+          record.state === "dead"
+            ? "halted"
+            : imported !== undefined && builds.length === 0 && build === undefined
+              ? "active"
+              : live?.state ?? projectorState(record.state),
         selected: record.selected,
         // Click-to-steer marker: this process is the live steering target, so
         // subsequent FINAL transcript lines route to it. A dead record never steers.
@@ -2598,14 +3032,35 @@ class LiveProjectorRuntime implements ProjectorRuntime {
         // title is only null when the pitch had no content words to infer from.
         task: imported?.task ?? record.title ?? demo?.task ?? record.callsign,
         model: demo?.model ?? "runtime",
-        progressLabel: record.state === "dead" ? "halted" : imported !== undefined ? "imported" : demo?.progressLabel ?? record.lastAction,
+        // Clone-routine labels only cover the pre-build window: once the
+        // (fallback) fan-out is live, the build lanes are the honest surface
+        // and a stale "clone failed" line must not shadow them for the card's
+        // whole life.
+        progressLabel:
+          record.state === "dead"
+            ? "halted"
+            : imported?.status === "cloning"
+              ? "cloning repository"
+              : imported?.status === "clone-failed" && builds.length === 0 && build === undefined
+                ? "clone failed — building from the link"
+                : imported !== undefined && builds.length === 0 && build === undefined
+                  ? "imported"
+                  : demo?.progressLabel ?? record.lastAction,
         progress: record.state === "dead" ? 100 : live?.progress ?? demo?.progress ?? Math.min(95, record.progressSeq * 12),
         lastOutput: record.state === "dead" ? "Halted by emergency stop." : live?.lastOutput ?? demo?.lastOutput ?? record.lastAction,
         lastAction: record.lastAction === "spawn" && demo !== undefined ? demo.events[0] ?? record.lastAction : record.lastAction,
         events: record.state === "dead" ? [...(demo?.events ?? []), "halted"] : demo?.events ?? [record.lastAction],
         publishedUrl: published?.url ?? null,
         publishedQrSvg: published?.qrSvg ?? null,
-        ...(imported === undefined ? {} : { source: { kind: "github-import" as const, url: imported.url } }),
+        ...(imported === undefined
+          ? {}
+          : imported.kind === "github"
+            ? { source: { kind: "github-import" as const, url: imported.url ?? "" } }
+            : { source: { kind: "phone-import" as const, url: imported.url } }),
+        // SELF stage label: the wall renders this card/scene node like any
+        // project but badges it SELF (stage.ts folds unknown stages safely for
+        // pre-self clients).
+        ...(isSelf ? { stage: "self" as const } : {}),
       };
     });
   }
@@ -2731,6 +3186,17 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   // to `built` by serving the artifacts directory (fire-and-forget — the
   // ExecutionRegistry republishes when the preview server is up).
   private onRunOverlay(upid: string, overlay: RunEventOverlay): void {
+    // SELF lane: live vibersyn-self telemetry folds into the commission's lane;
+    // a completed stream frame hands off to the room-side green gate (which
+    // decides built-vs-failed from git, never from the frame alone).
+    if (this.#selfCommission !== null && upid === SELF_UPID) {
+      this.#selfCommission.progress({ percent: overlay.progress, label: overlay.lastOutput });
+      if (overlay.state === "completed") {
+        void this.#selfCommission.completeFromRun("finished").catch(() => undefined);
+      }
+      this.publish();
+      return;
+    }
     if (this.executionRegistry.isExecuting(upid)) {
       this.executionRegistry.progress(upid, { percent: overlay.progress, label: overlay.lastOutput });
       if (overlay.state === "completed") {
@@ -2761,6 +3227,17 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   ): Promise<ExecuteProcessResult> {
     if (this.#emergencyTriggered) {
       return { ok: false, status: 400, error: "Emergency stop is active." };
+    }
+    // The pinned SELF project is never commissioned through the execute path —
+    // steering it IS its commission (each correction launches a vibersyn-self
+    // run). Refuse honestly so "vibersyn execute" / the deck button can't
+    // launch a stray vibersyn-process run against the room's own source.
+    if (this.#selfCommission !== null && upid === SELF_UPID) {
+      return {
+        ok: false,
+        status: 400,
+        error: `The room itself is not commissioned — steer it instead: say "${SELF_CALLSIGN}, <instruction>".`,
+      };
     }
     const live = this.registry.activeRecords().some((record) => record.upid === upid);
     if (!live) {
@@ -2798,6 +3275,111 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     this.subscribeRunEvents(upid, result.runId);
     this.publish();
     return { ok: true, execution: result.execution, snapshot: this.#snapshot };
+  }
+
+  get selfMode(): boolean {
+    return this.#selfMode;
+  }
+
+  // SELF-HOSTING: pin the standing "Vibersyn Room" project at boot. A normal
+  // registry spawn (so lifecycle — halt, emergency stop, selection, snapshot —
+  // treats it like any project) with the reserved upid/callsign/title and NO
+  // build flag: kickoff mock lanes never fan out for the room itself. The
+  // callsign collision guard is suspended for THIS spawn only, because "mirror"
+  // is deliberately in the allocator's reserved-word list (display fleet idiom,
+  // mirrors seedDemoFleet).
+  async pinSelfProject(): Promise<void> {
+    if (!this.#selfMode) {
+      return;
+    }
+    const priorGuard = process.env.VIBERSYN_RBG_DISABLE_CALLSIGN_COLLISION_GUARD;
+    process.env.VIBERSYN_RBG_DISABLE_CALLSIGN_COLLISION_GUARD = "1";
+    try {
+      const spawn = await this.registry.spawn({
+        upid: SELF_UPID,
+        callsign: SELF_CALLSIGN,
+        title: SELF_TITLE,
+        workflow: SELF_WORKFLOW,
+        prompt: SELF_PIN_PROMPT,
+        input: { source: "self" },
+        correlationId: "corr-self-pin",
+      });
+      this.recordExternalTrace({
+        event: "self.pinned",
+        level: spawn.accepted ? "info" : "warn",
+        sessionId: this.sessionId,
+        correlationId: "corr-self-pin",
+        upid: SELF_UPID,
+        meta: spawn.accepted
+          ? { callsign: spawn.process.callsign, title: SELF_TITLE, bootId: this.bootId }
+          : { refused: spawn.reason },
+      });
+    } finally {
+      if (priorGuard === undefined) {
+        delete process.env.VIBERSYN_RBG_DISABLE_CALLSIGN_COLLISION_GUARD;
+      } else {
+        process.env.VIBERSYN_RBG_DISABLE_CALLSIGN_COLLISION_GUARD = priorGuard;
+      }
+    }
+    this.publish();
+  }
+
+  // SELF-HOSTING reload trigger (3b): honored only in self mode, serialized,
+  // and GATED — it re-verifies that the last self-run actually reported green
+  // (a fresh "self:" commit passed the room-side git gate) before arming the
+  // exit. On success the snapshot flips reloadPending (walls show the "room is
+  // reloading itself…" overlay), in-flight responses get a short drain window,
+  // then the server exits 87 and the run-room --self supervisor rebuilds and
+  // relaunches it.
+  requestSelfReload(correlationId = `corr-self-reload-${crypto.randomUUID()}`): { ok: true } | { ok: false; reason: string } {
+    const refuse = (reason: string): { ok: false; reason: string } => {
+      this.recordExternalTrace({
+        event: "self.reload.refused",
+        level: "warn",
+        sessionId: this.sessionId,
+        correlationId,
+        upid: SELF_UPID,
+        meta: { reason },
+      });
+      return { ok: false, reason };
+    };
+    if (!this.#selfMode || this.#selfCommission === null) {
+      return refuse("self mode is off");
+    }
+    if (this.#emergencyTriggered) {
+      return refuse("emergency stop is active");
+    }
+    if (this.#selfReloadPending) {
+      return refuse("a reload is already in flight");
+    }
+    if (!this.#selfCommission.lastRunGreen()) {
+      return refuse("the last self-run did not verify green");
+    }
+    this.#selfReloadPending = true;
+    this.recordExternalTrace({
+      event: "self.reload",
+      level: "info",
+      sessionId: this.sessionId,
+      correlationId,
+      upid: SELF_UPID,
+      meta: { bootId: this.bootId, exitCode: 87, drainMs: this.#selfReloadDelayMs },
+    });
+    this.publish();
+    // Short drain so the triggering HTTP response and the reloadPending SSE
+    // frame reach the walls before the process replaces itself. Deliberately
+    // NOT unref'd — the exit must fire even on an otherwise idle server.
+    setTimeout(() => {
+      this.#exit(87);
+    }, this.#selfReloadDelayMs);
+    return { ok: true };
+  }
+
+  // The snapshot's top-level self surface (null when self mode is off).
+  private selfSurface(): SelfSurface | null {
+    if (!this.#selfMode) {
+      return null;
+    }
+    return { upid: SELF_UPID, callsign: SELF_CALLSIGN, reloadPending: this.#selfReloadPending };
   }
 
   // Speak a fired suggestion and record the SUGGESTION_DELIVERY transition.
@@ -3222,6 +3804,18 @@ function resolveRunCompletionPollMs(env: Record<string, string | undefined>): nu
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Drain window before the self-reload exit(87): long enough for the trigger's
+// HTTP response + the reloadPending SSE frame to flush, short enough that the
+// wall barely notices. Overridable for tests (VIBERSYN_SELF_RELOAD_DELAY_MS).
+function resolveSelfReloadDelayMs(env: Record<string, string | undefined>): number {
+  const raw = env.VIBERSYN_SELF_RELOAD_DELAY_MS?.trim();
+  const parsed = raw === undefined || raw === "" ? Number.NaN : Number(raw);
+  if (Number.isFinite(parsed) && parsed >= 0) {
+    return Math.floor(parsed);
+  }
+  return 750;
 }
 
 // --- Auto-build settle gate --------------------------------------------------

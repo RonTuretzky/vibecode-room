@@ -51,6 +51,36 @@ describe("parseProjectorUrl", () => {
     expect(config.dwell).toBe("mouse");
   });
 
+  // The pinch camera (?hands=) is camera CONTROL only — opt-in and fully
+  // independent of the dwell/gesture layers.
+  test("hands defaults to null: bare URL, ?hands=0 and empty ?hands= stay off", () => {
+    expect(parseProjectorUrl("", "h").hands).toBeNull();
+    expect(parseProjectorUrl("?hands=0", "h").hands).toBeNull();
+    expect(parseProjectorUrl("?hands=", "h").hands).toBeNull();
+  });
+
+  test("?hands=1 opts in with the default TD URL on the page's hostname", () => {
+    expect(parseProjectorUrl("?hands=1", "myhost").hands).toEqual({ url: "ws://myhost:9980" });
+    expect(parseProjectorUrl("?hands=1", "").hands).toEqual({ url: "ws://localhost:9980" });
+  });
+
+  test("?hands=ws://... names an explicit stream source", () => {
+    expect(parseProjectorUrl("?hands=ws://td:9980", "h").hands).toEqual({ url: "ws://td:9980" });
+  });
+
+  test("?hands= values are trimmed before comparison: padded off-values stay off, padded on-values opt in", () => {
+    expect(parseProjectorUrl("?hands=0%20", "h").hands).toBeNull();
+    expect(parseProjectorUrl("?hands=%20%20", "h").hands).toBeNull();
+    expect(parseProjectorUrl("?hands=1%20", "h").hands).toEqual({ url: "ws://h:9980" });
+    expect(parseProjectorUrl("?hands=%20ws://td:9980%20", "h").hands).toEqual({ url: "ws://td:9980" });
+  });
+
+  test("?gesture=1&hands=1 combines: dwell layer AND pinch camera both on", () => {
+    const config = parseProjectorUrl("?gesture=1&hands=1", "h");
+    expect(config.gesture).not.toBeNull();
+    expect(config.hands).not.toBeNull();
+  });
+
   // The view param scopes each wall's 2D surfaces + controls (ideas vs builds;
   // the 3D scene always stays full — see projector tests for the render table).
   test("view parsing: ideas/builds are recognized, anything else falls back to full", () => {

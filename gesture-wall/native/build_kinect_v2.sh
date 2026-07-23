@@ -48,10 +48,17 @@ fi
 
 mkdir -p "${OUT_DIR}"
 
+# Bake libfreenect2's libdir into the binary as an rpath: the dylib's install
+# name is @rpath/libfreenect2.*.dylib, so without LC_RPATH the bare binary only
+# runs when DYLD_LIBRARY_PATH happens to be exported (KinectV2Source injects
+# ~/.local/lib when spawning, but the KINECT.md smoke test runs it bare).
+FREENECT2_LIBDIR="$(pkg-config --variable=libdir freenect2)"
+
 # shellcheck disable=SC2046  # we want word-splitting on the pkg-config output
 clang++ -std=c++17 -O2 -Wall \
   "${SRC}" \
   -o "${OUT}" \
-  $(pkg-config --cflags --libs freenect2)
+  $(pkg-config --cflags --libs freenect2) \
+  -Wl,-rpath,"${FREENECT2_LIBDIR}"
 
 echo "Built ${OUT}"

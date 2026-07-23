@@ -590,3 +590,35 @@ def test_server_smoothing_must_be_positive(example_dict):
     example_dict["server"]["smoothing"] = 0
     with pytest.raises(ValueError, match="smoothing"):
         RoomConfig.from_dict(example_dict)
+
+
+# --------------------------------------------------------------------------- #
+# wall edge_margin (optional sticky band for adjacency-less walls)            #
+# --------------------------------------------------------------------------- #
+def test_wall_edge_margin_defaults_to_zero(example_dict):
+    cfg = RoomConfig.from_dict(example_dict)
+    assert cfg.walls["A"].edge_margin == 0.0
+    assert cfg.walls["B"].edge_margin == 0.0
+
+
+def test_wall_edge_margin_parses(example_dict):
+    data = copy.deepcopy(example_dict)
+    data["walls"]["A"]["edge_margin"] = 0.08
+    cfg = RoomConfig.from_dict(data)
+    assert cfg.walls["A"].edge_margin == pytest.approx(0.08)
+    assert cfg.walls["B"].edge_margin == 0.0
+
+
+@pytest.mark.parametrize("bad", [-0.01, 0.5, 0.75])
+def test_wall_edge_margin_out_of_range_rejected(example_dict, bad):
+    data = copy.deepcopy(example_dict)
+    data["walls"]["A"]["edge_margin"] = bad
+    with pytest.raises(ValueError, match="edge_margin"):
+        RoomConfig.from_dict(data)
+
+
+def test_wall_edge_margin_must_be_a_number(example_dict):
+    data = copy.deepcopy(example_dict)
+    data["walls"]["A"]["edge_margin"] = "wide"
+    with pytest.raises(ValueError, match="edge_margin"):
+        RoomConfig.from_dict(data)

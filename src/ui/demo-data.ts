@@ -136,7 +136,9 @@ export const demoProjectorSnapshot: ProjectorSnapshot = {
   // researching deep-dive with live progress, and a completed dossier. The
   // completed quest's deckUrl is null in the offline fixture (no server to
   // render the deck), which the overlay handles with an explicit notice.
-  researchMode: true,
+  // Research is a MODE SWITCH now, so the demo boots in the NORMAL room
+  // (garden + idea surfaces); flipping 🔍 Research reveals these fixtures.
+  researchMode: false,
   dialogue: [
     { id: "rturn-0001", speaker: "speaker-1", text: "The standup notes keep losing blockers.", atMs: 1750096800000 },
     { id: "rturn-0002", speaker: "speaker-2", text: "I read that most remote teams miss half their blockers in async standups.", atMs: 1750096815000 },

@@ -275,7 +275,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="gesturewall",
         description="Coarse mid-air select/deselect on a projected wall.")
-    p.add_argument("--source", choices=["mouse", "pose"], default="mouse",
+    p.add_argument("--source", choices=["mouse", "pose", "arcade"], default="mouse",
                    help="input source (default: mouse, camera-free test mode)")
     p.add_argument("--camera", type=int, default=0, help="webcam index (pose)")
     p.add_argument("--video", default=None, help="video file instead of webcam")
@@ -313,11 +313,31 @@ def build_parser() -> argparse.ArgumentParser:
                    help="run corner calibration on startup (pose)")
     p.add_argument("--fullscreen", action="store_true",
                    help="fullscreen window (pose)")
+
+    # Arcade-stick source (--source arcade).
+    p.add_argument("--stick-index", dest="stick_index", type=int, default=None,
+                   help="joystick index (arcade); default auto-selects an "
+                        "8BitDo/arcade device")
+    p.add_argument("--stick-speed", dest="stick_speed", type=float, default=0.9,
+                   help="cursor speed, fraction of the wall per second (arcade)")
+    p.add_argument("--stick-deadzone", dest="stick_deadzone", type=float,
+                   default=0.4, help="analog dead zone, 0..1 (arcade)")
+    p.add_argument("--stick-button", dest="stick_button", type=int, default=-1,
+                   help="button index that engages the pointer; -1 = any (arcade)")
+    p.add_argument("--stick-dpad", dest="stick_dpad", default=None,
+                   help="lever button indices 'up,down,left,right' if your stick "
+                        "maps the lever differently (arcade; default 11,12,13,14)")
     return p
 
 
 def main(argv=None) -> None:
     args = build_parser().parse_args(argv)
+    if args.source == "arcade":
+        # Arcade mode runs its own pygame window (cv2 and pygame can't share a
+        # process on macOS, and the stick needs a focused SDL window).
+        from .arcade import run_arcade
+        run_arcade(args)
+        return
     run(args)
 
 

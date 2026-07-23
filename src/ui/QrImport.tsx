@@ -3,21 +3,23 @@ import { toDataURL } from "qrcode";
 import type { ProjectorProcess } from "./types";
 
 /**
- * QR import overlay — scan on a phone, paste a GitHub URL, watch it join the
- * fleet as an in-progress project.
+ * QR import overlay — scan on a phone, describe what the fleet should build
+ * (plus an optional link; GitHub repos get cloned), watch it join the fleet as
+ * a REAL in-progress project.
  *
  * The overlay asks the server for its LAN-reachable /submit URL
- * (GET /api/import/info) and renders the QR entirely client-side with the
- * `qrcode` package (toDataURL onto an <img> — no extra network dependency).
- * When the server is bound to loopback (default HOST) phones cannot reach it,
- * so a clear "start with HOST=0.0.0.0" warning shows instead of a dead QR.
+ * (GET /api/import/info — normally the dedicated 0.0.0.0 phone listener) and
+ * renders the QR entirely client-side with the `qrcode` package (toDataURL
+ * onto an <img> — no extra network dependency). When no LAN address exists
+ * (or the legacy loopback-bind fallback is in play) the QR is NOT rendered —
+ * a dead QR that scans but never loads is worse than an explicit warning.
  *
  * Success feedback: the overlay watches the live snapshot's processes — a NEW
- * `source.kind === "github-import"` process appearing means a phone submission
- * landed, and a success flash confirms it to the room.
+ * phone-sourced process ("github-import" or "phone-import") appearing means a
+ * submission landed, and a success flash confirms it to the room.
  */
 
-interface ImportInfo {
+export interface ImportInfo {
   submitUrl: string;
   host: string;
   lanReachable: boolean;
@@ -26,6 +28,22 @@ interface ImportInfo {
 export interface QrImportProps {
   processes: ProjectorProcess[];
   onClose: () => void;
+}
+
+// The overlay's QR-panel decision, pure so it is unit-testable without a DOM:
+// a scannable-looking QR pointing at an unreachable address is a trap, so the
+// unreachable state REPLACES the image, it never renders alongside it.
+export function qrPanelState(
+  info: ImportInfo | null,
+  qrDataUrl: string | null,
+): "image" | "unreachable" | "pending" {
+  if (info !== null && !info.lanReachable) {
+    return "unreachable";
+  }
+  if (info !== null && qrDataUrl !== null) {
+    return "image";
+  }
+  return "pending";
 }
 
 export function QrImport({ processes, onClose }: QrImportProps) {
@@ -82,10 +100,13 @@ export function QrImport({ processes, onClose }: QrImportProps) {
     };
   }, [info]);
 
-  // Success flash: baseline the github-import count at open; any INCREASE while
+  // Success flash: baseline the phone-sourced count at open; any INCREASE while
   // the overlay is up means a submission just landed on the wall.
   const importCount = useMemo(
-    () => processes.filter((process) => process.source?.kind === "github-import").length,
+    () =>
+      processes.filter(
+        (process) => process.source?.kind === "github-import" || process.source?.kind === "phone-import",
+      ).length,
     [processes],
   );
   const baselineRef = useRef(importCount);
@@ -111,7 +132,7 @@ export function QrImport({ processes, onClose }: QrImportProps) {
         <header className="qr-head">
           <div>
             <span className="detail-eyebrow">project import</span>
-            <h2 className="qr-title">Scan to add a GitHub repo</h2>
+            <h2 className="qr-title">Scan to add a project</h2>
           </div>
           <button type="button" className="detail-back" onClick={onClose} aria-label="Close QR import">
             <span aria-hidden="true">←</span> back
@@ -124,13 +145,17 @@ export function QrImport({ processes, onClose }: QrImportProps) {
           </div>
         ) : null}
 
-        {qrDataUrl !== null && info !== null ? (
+        {qrPanelState(info, qrDataUrl) === "image" ? (
           <img
             className="qr-image"
             data-testid="qr-code-image"
-            src={qrDataUrl}
-            alt={`QR code for ${info.submitUrl}`}
+            src={qrDataUrl ?? undefined}
+            alt={`QR code for ${info?.submitUrl ?? ""}`}
           />
+        ) : qrPanelState(info, qrDataUrl) === "unreachable" ? (
+          <div className="qr-image qr-image-pending" data-testid="qr-code-unreachable">
+            No phone-reachable address
+          </div>
         ) : (
           <div className="qr-image qr-image-pending" data-testid="qr-code-pending">
             {infoError ? "Import info unavailable — is the server running?" : "Generating code…"}
@@ -145,14 +170,15 @@ export function QrImport({ processes, onClose }: QrImportProps) {
 
         {info !== null && !info.lanReachable ? (
           <p className="qr-warning" data-testid="qr-lan-warning">
-            Phones can't reach this address — the server is bound to loopback. Start it with
-            HOST=0.0.0.0 so the QR works on the room LAN.
+            Phones can't reach this address — no LAN address was found. Join a Wi-Fi network (or
+            check the phone listener / HOST binding) and reopen this overlay.
           </p>
         ) : null}
 
         <p className="qr-hint">
-          Open the page on your phone, paste a GitHub URL, and it joins the fleet as a project in
-          progress.
+          Open the page on your phone, describe what the fleet should build, and optionally add a
+          link — a GitHub repo gets cloned; any link becomes reference context. It joins the fleet
+          as a real project in progress.
         </p>
       </div>
     </div>

@@ -26,6 +26,12 @@ export interface ProjectorUrlConfig {
   // point→highlight→dwell-select mechanic (no cameras needed). The OS cursor
   // stays visible; only pure gesture mode hides it.
   dwell: "mouse" | null;
+  // TouchDesigner hand-pinch camera control, non-null ONLY on explicit opt-in.
+  // ?hands=1 → default TD URL on the page's hostname (port 9980);
+  // ?hands=ws://td-mac:9980 → explicit remote source; absent/"0"/"" → off.
+  // Independent of the dwell gesture layer — composes with desk, ?dwell=mouse
+  // and ?gesture=1.
+  hands: { url: string } | null;
   // ?demo=guided — auto-enter the coached guided-demo flow on load (the HUD
   // "Guided Demo" button enters the same flow interactively).
   demo: "guided" | null;
@@ -64,6 +70,15 @@ export function parseProjectorUrl(search: string, hostname: string): ProjectorUr
   // the gesture interaction — independent of gesture mode.
   const dwell = params.get("dwell") === "mouse" ? ("mouse" as const) : null;
 
+  // TouchDesigner pinch camera (?hands=): camera CONTROL only, independent of
+  // the dwell/gesture layers; ?hands=1 defaults to the TD port on this host.
+  // Trimmed ONCE up front so "0 "/" " stay off and "1 " still opts in.
+  const handsParam = params.get("hands")?.trim() ?? null;
+  const hands =
+    handsParam !== null && handsParam !== "" && handsParam !== "0"
+      ? { url: handsParam !== "1" ? handsParam : `ws://${hostname || "localhost"}:9980` }
+      : null;
+
   // Guided demo auto-entry + the env-gated Mock Room toggle.
   const demo = params.get("demo") === "guided" ? ("guided" as const) : null;
   const mock = params.get("mock") === "1";
@@ -79,5 +94,5 @@ export function parseProjectorUrl(search: string, hostname: string): ProjectorUr
         ? view.toUpperCase()
         : null;
 
-  return { view, wall, badge, gesture, dwell, demo, mock };
+  return { view, wall, badge, gesture, dwell, hands, demo, mock };
 }

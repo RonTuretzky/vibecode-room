@@ -15,6 +15,12 @@ export interface ProjectorAppOptions {
   // phone-reachable submit URL (and the lanReachable flag) from them.
   host?: string;
   port?: number;
+  // The dedicated phone-import listener's port (a second 0.0.0.0 socket bound
+  // in index.ts serving ONLY the import surface). When set, /api/import/info
+  // advertises it via the best LAN IPv4 regardless of the main bind — the QR
+  // works without HOST=0.0.0.0. Null/absent = listener disabled or bind
+  // failed: fall back to deriving reachability from the main host/port.
+  phonePort?: number | null;
   // Test seam for os.networkInterfaces (LAN IPv4 discovery).
   interfaces?: () => InterfaceAddresses;
 }
@@ -99,32 +105,15 @@ export function createProjectorApp(runtime: ProjectorRuntime, options: Projector
     }
     return context.json(runtime.dismissIdea(context.req.param("id")));
   });
-  // QR import: body { url } — a validated GitHub repo URL joins the fleet as a
-  // project in progress (source: github-import). Invalid input → 400 { ok:false }.
-  // Success is { ok: true }; the snapshot reaches walls via the SSE push.
-  app.post("/api/projects/import", async (context) => {
-    if (isOfflineDemoRequest(context.req.header("referer"))) {
-      return context.json({ ok: true });
-    }
-    let url: unknown;
-    try {
-      url = ((await context.req.json()) as { url?: unknown })?.url;
-    } catch {
-      url = undefined;
-    }
-    const result = await runtime.importProject(typeof url === "string" ? url : "");
-    if (!result.ok) {
-      return context.json({ ok: false, error: result.error }, 400);
-    }
-    return context.json({ ok: true });
+  // Phone import surface (shared with the dedicated 0.0.0.0 phone listener —
+  // see createPhoneImportApp): POST /api/projects/import, GET /api/import/info,
+  // GET /submit.
+  registerImportSurface(app, runtime, {
+    host,
+    port,
+    phonePort: options.phonePort ?? null,
+    interfaces: options.interfaces,
   });
-  // The QR overlay's payload: where a phone must go to reach GET /submit. Bound
-  // to loopback (the default HOST) the server is unreachable from a phone, so
-  // lanReachable is false and the UI warns to restart with HOST=0.0.0.0.
-  app.get("/api/import/info", (context) => context.json(resolveImportInfo({ host, port, interfaces: options.interfaces })));
-  // The phone-side submit page — self-contained HTML served straight from the
-  // API process (works with no Vite build).
-  app.get("/submit", (context) => context.html(importPageHtml()));
   // AUTO-BUILD toggle (no click required). Body `{ on: boolean }` sets it
   // explicitly; absent body flips the current state. Returns the fresh snapshot.
   app.post("/api/auto-accept", async (context) => {
@@ -317,6 +306,22 @@ export function createProjectorApp(runtime: ProjectorRuntime, options: Projector
     }
     return context.json(runtime.publishNow());
   });
+  // SELF-HOSTING (VIBERSYN_SELF_MODE=1): the guarded internal reload trigger.
+  // Only honored in self mode (404 otherwise — the endpoint effectively does
+  // not exist). The runtime re-verifies the last self-run reported green and
+  // serializes reloads; a refused trigger is a 409 with the reason. On success
+  // the server publishes reloadPending, drains briefly, and exits 87 — the
+  // run-room --self supervisor rebuilds and relaunches it.
+  app.post("/api/self/reload", (context) => {
+    if (env.VIBERSYN_SELF_MODE !== "1" && env.VIBERSYN_SELF_MODE !== "true") {
+      return context.json({ ok: false, error: "self mode is off" }, 404);
+    }
+    const result = runtime.requestSelfReload(`corr-self-reload-api-${crypto.randomUUID()}`);
+    if (!result.ok) {
+      return context.json({ ok: false, error: result.reason }, 409);
+    }
+    return context.json({ ok: true, bootId: runtime.bootId, exitCode: 87 });
+  });
   // Text steering — the SAME path spoken steering takes (registry.steer forwards
   // to the smithers client AND fires the build orchestrator's correction re-run
   // on every ready build). Body {"text": string}; empty/malformed is a 400.
@@ -336,8 +341,105 @@ export function createProjectorApp(runtime: ProjectorRuntime, options: Projector
     }
     return context.json(runtime.publishNow());
   });
+  // Swipe-deck answers: a chosen answer to a build-forking question is forwarded
+  // as a framed steer so the fleet incorporates the decision. Offline/published
+  // deck copies short-circuit (no room to reach).
+  app.post("/api/process/:upid/answer", async (context) => {
+    if (isOfflineDemoRequest(context.req.header("referer"))) {
+      return context.json(runtime.snapshot());
+    }
+    const upid = context.req.param("upid");
+    const body = (await context.req.json().catch(() => null)) as { questionId?: unknown; answer?: unknown; prompt?: unknown } | null;
+    if (
+      body === null ||
+      typeof body.answer !== "string" || body.answer.trim().length === 0 ||
+      typeof body.questionId !== "string" || body.questionId.trim().length === 0
+    ) {
+      return context.json({ ok: false, error: "body must be {questionId: string, answer: string}" }, 400);
+    }
+    const question = typeof body.prompt === "string" && body.prompt.trim().length > 0 ? body.prompt.trim() : body.questionId;
+    try {
+      await runtime.registry.steer(
+        upid,
+        { text: `Decision — for "${question}", the choice is "${body.answer.trim()}". Build accordingly.`, source: "api" },
+        `corr-api-answer-${crypto.randomUUID()}`,
+      );
+    } catch {
+      // Unknown or dead UPID.
+    }
+    return context.json(runtime.publishNow());
+  });
   app.get("*", async (context) => serveStatic(context.req.url));
 
+  return app;
+}
+
+interface ImportSurfaceConfig {
+  host: string;
+  port: number;
+  phonePort: number | null;
+  interfaces?: () => InterfaceAddresses;
+}
+
+// The phone import surface, registered on BOTH the main projector app and the
+// dedicated phone listener so the QR flow works whichever socket the phone
+// reaches. POST /api/projects/import takes { context?, url? } — context is the
+// primary field (what should the fleet build), the link is optional and may be
+// any http(s) URL; a github.com/<owner>/<repo> link additionally runs the
+// clone routine. Success returns the spawned project's identity so the phone
+// can show "CALLSIGN is on the wall".
+function registerImportSurface(app: Hono, runtime: ProjectorRuntime, config: ImportSurfaceConfig): void {
+  app.post("/api/projects/import", async (context) => {
+    if (isOfflineDemoRequest(context.req.header("referer"))) {
+      return context.json({ ok: true });
+    }
+    let body: { url?: unknown; context?: unknown };
+    try {
+      body = (await context.req.json()) as { url?: unknown; context?: unknown };
+    } catch {
+      body = {};
+    }
+    const result = await runtime.importProject({ url: body?.url, context: body?.context });
+    if (!result.ok) {
+      return context.json({ ok: false, error: result.error }, 400);
+    }
+    return context.json({ ok: true, upid: result.upid, callsign: result.callsign, title: result.title });
+  });
+  // The QR overlay's payload: where a phone must go to reach GET /submit. With
+  // the dedicated phone listener bound this is always the best LAN IPv4 +
+  // phone port; lanReachable only goes false when no LAN interface exists (or,
+  // in the legacy no-listener fallback, when the main bind is loopback).
+  app.get("/api/import/info", (context) =>
+    context.json(
+      resolveImportInfo({
+        host: config.host,
+        port: config.port,
+        phonePort: config.phonePort,
+        interfaces: config.interfaces,
+      }),
+    ),
+  );
+  // The phone-side submit page — self-contained HTML served straight from the
+  // API process (works with no Vite build).
+  app.get("/submit", (context) => context.html(importPageHtml()));
+}
+
+// The dedicated phone-facing app: ONLY the import surface. index.ts binds it
+// on 0.0.0.0:<phonePort> so phones can always reach /submit, while the main
+// app (emergency stop, seam API, mic WS — all unauthenticated) can stay on
+// loopback. Convenience redirect: / → /submit, so typing just host:port works.
+export function createPhoneImportApp(
+  runtime: ProjectorRuntime,
+  options: { host?: string; port?: number; phonePort: number; interfaces?: () => InterfaceAddresses },
+): Hono {
+  const app = new Hono();
+  registerImportSurface(app, runtime, {
+    host: options.host ?? "127.0.0.1",
+    port: options.port ?? 8787,
+    phonePort: options.phonePort,
+    interfaces: options.interfaces,
+  });
+  app.get("/", (context) => context.redirect("/submit"));
   return app;
 }
 

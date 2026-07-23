@@ -1,0 +1,94 @@
+{
+  "walls": {
+    "A": {
+      "display": 1,
+      "grid": {
+        "rows": 2,
+        "cols": 3
+      },
+      "plane": {
+        "origin": [
+          1.6286845901675537,
+          -0.697456439502588,
+          2.395245062728702
+        ],
+        "u_vec": [
+          -2.5819686100122374,
+          -0.14367405788199336,
+          0.776399292891999
+        ],
+        "v_vec": [
+          -0.07678383256231577,
+          1.4407032965642428,
+          0.23012463576128814
+        ]
+      },
+      "width_m": 2.7,
+      "edge_margin": 0.05
+    }
+  },
+  "adjacency": [],
+  "cameras": {
+    "cam0": {
+      "device": "010289152747",
+      "kind": "kinect_v2",
+      "serves": [
+        "A"
+      ],
+      "intrinsics": {
+        "fx": 365.0255126953125,
+        "fy": 365.0255126953125,
+        "cx": 260.11468505859375,
+        "cy": 202.7039031982422,
+        "width": 512,
+        "height": 424
+      },
+      "extrinsic": {
+        "matrix": [
+          [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0,
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ]
+        ]
+      }
+    }
+  },
+  "calibration": {},
+  "fusion": {
+    "mode": "highest_confidence",
+    "merge_radius": 0.5,
+    "track_max_age": 0.5,
+    "cross_camera": true
+  },
+  "server": {
+    "ws_port": 8770,
+    "http_port": 8000,
+    "fps": 30,
+    "num_poses": 2,
+    "mirror": true,
+    "min_confidence": 0.3,
+    "model": "models/pose_landmarker_full.task",
+    "pointing": "shoulder_hand",
+    "smoothing": 2.0
+  }
+}

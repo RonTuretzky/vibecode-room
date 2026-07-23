@@ -347,7 +347,8 @@ class KinectPoseSource:
                  num_poses: int = 4, mirror: bool = False,
                  min_confidence: float = 0.5,
                  model_path: str = DEFAULT_MODEL_PATH,
-                 pointing: str = "eye_hand"):
+                 pointing: str = "eye_hand",
+                 read_timeout: float | None = None):
         import cv2  # lazy
         try:
             import mediapipe as mp
@@ -367,6 +368,14 @@ class KinectPoseSource:
         self._extr = extrinsic
         self._mirror = mirror
         self._pointing = pointing if pointing in POINTING_MODELS else "eye_hand"
+        # Optional bounded read (seconds). The live sources honour
+        # ``read(timeout=...)`` (see gesturewall.framesource's contract) and
+        # return None on a stall, so a live-but-wedged bridge (USB hiccup)
+        # can't block the camera worker forever. ``None`` keeps the historical
+        # unbounded call — required for sources that manage their own stall
+        # budget internally (OrbbecSource closes+respawns a dead pipeline only
+        # on its NO-timeout path) and for bare test fakes without the kwarg.
+        self._read_timeout = read_timeout
 
         model = ensure_pose_model(model_path)
         options = PoseLandmarkerOptions(
@@ -389,9 +398,17 @@ class KinectPoseSource:
         return ts
 
     def read(self):
-        """Return (color_bgr|None, list[Person], info: dict)."""
+        """Return (color_bgr|None, list[Person], info: dict).
+
+        With ``read_timeout`` set, the underlying frame-source read is bounded:
+        a stalled source yields ``(None, [], {"status": "no_frame"})`` for that
+        tick instead of blocking the caller (the camera worker) indefinitely.
+        """
         cv2 = self._cv2
-        item = self._source.read()
+        if self._read_timeout is None:
+            item = self._source.read()
+        else:
+            item = self._source.read(timeout=self._read_timeout)
         if item is None:
             return None, [], {"status": "no_frame"}
         color, depth_m, intr = item
