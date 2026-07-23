@@ -19,5 +19,10 @@ pyorbbecsdk2>=2.1.1
 # Kinect v2 (legacy 2-camera setup): no pip dependency — needs libfreenect2
 # + the native bridge in native/ (see KINECT.md).
 
+# Arcade-stick input — required only for `--source arcade` (8BitDo Arcade Stick,
+# model 80fe). Reads the lever + buttons as an HID gamepad. Mouse mode + tests
+# run without it.
+pygame>=2.5
+
 # Dev/test only:
 #   pip install pytest

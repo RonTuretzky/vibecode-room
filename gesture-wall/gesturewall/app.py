@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import time
 
+from .arcade import ArcadeStickSource
 from .calibration import CORNER_NAMES, WALL_CORNERS, Homography
 from .dwell import DwellSelector
 from .filters import Point2DFilter
@@ -172,6 +173,10 @@ def calibrate_pose(source: PoseSource, width: int, height: int,
 def _build_source(args) -> PointerSource:
     if args.source == "mouse":
         return MouseSource()
+    if args.source == "arcade":
+        return ArcadeStickSource(index=args.stick_index, speed=args.stick_speed,
+                                 deadzone=args.stick_deadzone,
+                                 engage_button=args.stick_button)
     return PoseSource(camera=args.camera, video=args.video,
                       model_path=args.model, mirror=not args.no_mirror,
                       min_confidence=args.min_confidence)
@@ -191,10 +196,11 @@ def run(args) -> None:
 
     source = _build_source(args)
     is_mouse = isinstance(source, MouseSource)
+    is_pose = isinstance(source, PoseSource)  # only pose needs camera calibration
 
     # Load calibration for the pose path if present.
     homography = Homography.identity()
-    if not is_mouse:
+    if is_pose:
         try:
             homography = Homography.load(args.calibration)
             print(f"[gesturewall] loaded calibration from {args.calibration}")
@@ -216,14 +222,14 @@ def run(args) -> None:
         cv2.setMouseCallback(WINDOW, _on_mouse)
 
     # Run a calibration pass first if requested.
-    if args.calibrate and not is_mouse:
+    if args.calibrate and is_pose:
         result = calibrate_pose(source, args.width, args.height, args.calibration)
         if result is not None:
             homography = result
 
     canvas = np.zeros((args.height, args.width, 3), dtype=np.uint8)
     fps, prev = 0.0, time.perf_counter()
-    mode = "MOUSE TEST" if is_mouse else "POSE"
+    mode = "MOUSE TEST" if is_mouse else ("POSE" if is_pose else "ARCADE STICK")
 
     try:
         while True:
@@ -253,7 +259,7 @@ def run(args) -> None:
                 for z in zones:
                     z.selected = False
                 selector.reset()
-            if key == ord("c") and not is_mouse:
+            if key == ord("c") and is_pose:
                 result = calibrate_pose(source, args.width, args.height,
                                         args.calibration)
                 if result is not None:
@@ -275,8 +281,9 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="gesturewall",
         description="Coarse mid-air select/deselect on a projected wall.")
-    p.add_argument("--source", choices=["mouse", "pose"], default="mouse",
-                   help="input source (default: mouse, camera-free test mode)")
+    p.add_argument("--source", choices=["mouse", "pose", "arcade"], default="mouse",
+                   help="input source: mouse (camera-free test mode, default), "
+                        "pose (webcam + MediaPipe), or arcade (8BitDo Arcade Stick)")
     p.add_argument("--camera", type=int, default=0, help="webcam index (pose)")
     p.add_argument("--video", default=None, help="video file instead of webcam")
     p.add_argument("--model", default="models/pose_landmarker_lite.task",
@@ -313,6 +320,16 @@ def build_parser() -> argparse.ArgumentParser:
                    help="run corner calibration on startup (pose)")
     p.add_argument("--fullscreen", action="store_true",
                    help="fullscreen window (pose)")
+    # Arcade-stick source (--source arcade).
+    p.add_argument("--stick-index", dest="stick_index", type=int, default=None,
+                   help="joystick index (arcade); default auto-selects an "
+                        "8BitDo/arcade device")
+    p.add_argument("--stick-speed", dest="stick_speed", type=float, default=0.9,
+                   help="cursor speed, fraction of the wall per second (arcade)")
+    p.add_argument("--stick-deadzone", dest="stick_deadzone", type=float,
+                   default=0.4, help="analog dead zone, 0..1 (arcade)")
+    p.add_argument("--stick-button", dest="stick_button", type=int, default=-1,
+                   help="button index that engages the pointer; -1 = any (arcade)")
     return p
 
 
