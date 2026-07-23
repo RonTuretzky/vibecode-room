@@ -66,9 +66,9 @@ test.describe("projector UI — first paint & feature parity", () => {
 
   test("status bar carries the desk-mode control row; unmute only appears when muted", async ({ page }) => {
     await gotoStatic(page);
-    // Fixed order: mic · capture · auto-build · QR import · guided demo.
-    await expect(page.getByTestId("mic-button")).toBeVisible();
-    await expect(page.getByTestId("capture-button")).toBeVisible();
+    // Fixed order: mic+capture (ONE merged button) · auto-build · QR import ·
+    // guided demo.
+    await expect(page.getByTestId("mic-capture-button")).toBeVisible();
     await expect(page.getByTestId("auto-build-button")).toBeVisible();
     await expect(page.getByTestId("qr-import-button")).toBeVisible();
     await expect(page.getByTestId("guided-demo-button")).toBeVisible();

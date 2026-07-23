@@ -109,12 +109,15 @@ test.describe("guided demo — coached flow with mouse-dwell", () => {
     await expect(demo).toHaveAttribute("data-step", "race", { timeout: 4_000 });
     await expect(page.getByTestId("guided-celebrate")).toBeVisible();
 
-    // STEP 4: one labeled MOCK lane per framework, all racing; a failed lane
-    // shows FAILED without wedging; the FIRST mock-ready lane advances.
+    // STEP 4: one MOCK lane per concept sketch, all racing — DE-THEMED: lanes
+    // carry real telemetry but are labeled generically ("Concept N"), never by
+    // framework/backend name; a failed lane shows FAILED without wedging.
     await expect(page.getByTestId("guided-lane")).toHaveCount(3);
-    await expect(page.locator('[data-testid="guided-lane"][data-backend="smithers"]')).toContainText("Smithers");
-    await expect(page.locator('[data-testid="guided-lane"][data-backend="eliza"]')).toContainText("ElizaOS");
-    await expect(page.locator('[data-testid="guided-lane"][data-backend="native"]')).toContainText("Native");
+    await expect(page.getByTestId("guided-lane").nth(0)).toContainText("Concept 1");
+    await expect(page.getByTestId("guided-lane").nth(1)).toContainText("Concept 2");
+    await expect(page.getByTestId("guided-lane").nth(2)).toContainText("Concept 3");
+    await expect(page.getByTestId("guided-lanes")).not.toContainText("Smithers");
+    await expect(page.getByTestId("guided-lanes")).not.toContainText("ElizaOS");
 
     const withStatus = (smithers: string, eliza: string, native: string, deck: boolean) => ({
       upid: "upid_guided_e2e",
@@ -144,7 +147,7 @@ test.describe("guided demo — coached flow with mouse-dwell", () => {
       });
     }, withStatus("building", "building", "failed", false));
     await expect(demo).toHaveAttribute("data-step", "race");
-    await expect(page.locator('[data-testid="guided-lane"][data-backend="native"]')).toContainText("FAILED");
+    await expect(page.locator('[data-testid="guided-lane"][data-status="failed"]')).toContainText("FAILED");
 
     // ElizaOS's MOCK finishes FIRST (with a real deck URL) → decide +
     // auto-opened pitch deck on eliza's slide; per-backend tabs label the

@@ -11,10 +11,10 @@ const KEYBOARD_SHORTCUTS: ReadonlyArray<readonly [keys: string, action: string]>
   ["1–9", "select / steer a build"],
   ["Enter / b", "build the top ready idea"],
   ["x", "dismiss the top ready idea"],
-  ["c", "toggle Idea Capture"],
+  ["c", "mic + Idea Capture on / off (one control)"],
   ["a", "toggle Auto-Build"],
   ["k", "halt the selected build"],
-  ["m", "mic on / off"],
+  ["m", "same as c — mic + Idea Capture"],
   ["u", "unmute the room"],
   ["q", "QR import overlay"],
   ["g", "garden ↔ orbit scene"],
@@ -37,11 +37,12 @@ const VOICE_COMMANDS: ReadonlyArray<readonly [phrase: string, effect: string]> =
   ["“Vibersyn, emergency”", "EMERGENCY STOP"],
 ];
 
-// Gesture wall: there is no cursor at all — pointing highlights, holding
-// selects. Camera orbit is deliberately LOCKED in gesture mode (pointing must
-// never fight drag-orbit); the view changes only via the keyboard shortcuts.
+// Gesture wall: pointing highlights, holding selects. A colored cursor dot per
+// person is drawn by default (toggleable via the wall's Cursor button). Camera
+// orbit is deliberately LOCKED in gesture mode (pointing must never fight
+// drag-orbit); the view changes only via the keyboard shortcuts.
 const GESTURE_MOVES: ReadonlyArray<readonly [move: string, effect: string]> = [
-  ["point at a project or button", "it grows + glows (no cursor is shown)"],
+  ["point at a project or button", "it grows + glows (your colored dot follows; toggle it with the Cursor button)"],
   ["hold ≈0.8 s", "the ring fills, then selects (idea → build, build → steer/deck)"],
   ["move away", "cancels the dwell; re-point to try again"],
   ["two hands / people", "first on a target owns it — first-to-dwell wins"],
@@ -110,8 +111,8 @@ export function HelpOverlay({ onClose, gestureMode = false }: HelpOverlayProps) 
             <h3 className="rail-title">Gesture wall</h3>
             <p className="help-voice-intro">
               {gestureMode
-                ? "This window is in gesture mode: no cursor — point, hold, select."
-                : "On the camera wall there is no cursor — point, hold, select."}
+                ? "This window is in gesture mode: point, hold, select — your colored dot shows where you point."
+                : "On the camera wall: point, hold, select — a colored dot per person shows where you point."}
             </p>
             <dl className="help-list">
               {GESTURE_MOVES.map(([move, effect]) => (

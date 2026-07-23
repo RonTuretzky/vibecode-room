@@ -4,20 +4,20 @@ import { demoProjectorSnapshot, busyRoomSnapshot, emptyProjectorSnapshot, withUn
 import type { ProjectorProcess, ProjectorSnapshot, TranscriptLine } from "./types";
 import { GestureLayer } from "./gesture/GestureLayer";
 import { PinchCameraLayer } from "./gesture/PinchCameraLayer";
+import type { HandsStatus } from "./gesture/hands-client";
 import { RoomScene, type IdeaOrbSpec, type SceneLayout, type SceneMode, type TreeSpec } from "./RoomScene";
 import { Slideshow } from "./Slideshow";
 import { BuildDetail } from "./BuildDetail";
 import { IdeaTray } from "./IdeaTray";
 import { QrImport } from "./QrImport";
 import { HelpOverlay } from "./HelpOverlay";
-import { BackendSelector } from "./BackendSelector";
 import { BuildChips, CommissionButton, ExecutionChip, ProcessControls } from "./BuildChips";
 import { TakeHomeQr } from "./TakeHomeQr";
-import { backendsOf, buildsOf, lifecycleActionsFor, looksLikeSnapshot } from "./buildloop";
-import type { BuildloopSnapshot, LifecycleAction } from "./buildloop";
+import { buildsOf, lifecycleActionsFor, looksLikeSnapshot } from "./buildloop";
+import type { LifecycleAction } from "./buildloop";
 import { executionOf, parseDeckDecisionMessage, sceneStageOf, stageOf } from "./stage";
-import { selfOf, trackBootId } from "./self-reload";
 import type { DecisionChoice, StagedProcess } from "./stage";
+import { selfOf, trackBootId } from "./self-reload";
 import { parseProjectorUrl } from "./url-params";
 import { GuidedDemo } from "./guided/GuidedDemo";
 import { advanceOnSnapshot, popPracticeOrb, skipStep, startGuided, type GuidedState } from "./guided/machine";
@@ -36,6 +36,11 @@ interface ProjectorAppProps {
   // Test seam: overrides window.location.search for URL-config parsing so the
   // (windowless) test renderer can exercise wall/view URLs.
   urlSearch?: string;
+  // Test seam: boot with an on-demand overlay already open so the (static,
+  // effect-free) test renderer can assert the de-themed overlay contract —
+  // detail/deck/QR overlays open on WHICHEVER wall summons them, never only
+  // on view=builds. `selected` takes a callsign/upid, `slideshowUpid` a upid.
+  initialOverlay?: { selected?: string; slideshowUpid?: string; qrOpen?: boolean };
 }
 
 // The synthetic id used for the (single) idea/suggestion bubble.
@@ -53,14 +58,14 @@ declare global {
   }
 }
 
-export function ProjectorApp({ initialSnapshot, urlSearch }: ProjectorAppProps) {
+export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: ProjectorAppProps) {
   // Window configuration from the URL, parsed FIRST — the guided-demo entry
   // and Mock-Room gates below depend on it: wall identity badge (?wall=A|B),
-  // the LEGACY view param (?view=ideas|builds — accepted so old two-wall URLs
-  // keep working, but INERT for content: every window renders the full room),
-  // and the LEGACY gesture layer — which mounts ONLY on an explicit ?gesture=1
-  // or ?fusion= (desk mode is the default; a bare ?wall= is just a badge so
-  // two-wall projections work without cameras).
+  // the view param (?view=ideas|builds — scopes the 2D surfaces + controls to
+  // that wall; the default full view renders everything), and the gesture
+  // layer — which mounts ONLY on an explicit ?gesture=1 or ?fusion= (desk mode
+  // is the default; a bare ?wall= is just a badge so two-wall projections work
+  // without cameras).
   const urlConfig = useMemo(() => {
     if (urlSearch !== undefined) {
       return parseProjectorUrl(urlSearch, "localhost");
@@ -71,6 +76,29 @@ export function ProjectorApp({ initialSnapshot, urlSearch }: ProjectorAppProps) 
     return parseProjectorUrl(window.location.search, window.location.hostname);
   }, [urlSearch]);
   const view = urlConfig.view;
+  // PINCH CAMERA (TouchDesigner/MediaPipe hands): runtime-toggleable from the
+  // HUD, seeded from the ?hands= URL default so launcher flags still opt in.
+  // handsStatus surfaces the live socket state on the toggle (OFF / connecting
+  // / LIVE); it resets to "closed" whenever the layer unmounts.
+  const [handsOn, setHandsOn] = useState<boolean>(urlConfig.hands !== null);
+  const [handsStatus, setHandsStatus] = useState<HandsStatus>("closed");
+  // ?hands= carries the resolved URL; a manual toggle (no URL opt-in) falls
+  // back to the TD/MediaPipe default port on this page's host.
+  const handsUrl = useMemo(() => {
+    if (urlConfig.hands !== null) {
+      return urlConfig.hands.url;
+    }
+    const host = typeof window !== "undefined" && window.location.hostname ? window.location.hostname : "localhost";
+    return `ws://${host}:9980`;
+  }, [urlConfig.hands]);
+  const toggleHands = useCallback(() => {
+    setHandsOn((on) => {
+      if (on) {
+        setHandsStatus("closed");
+      }
+      return !on;
+    });
+  }, []);
 
   // AUDIT (no-mocks): with no explicit snapshot prop the wall boots from the
   // EMPTY live baseline — never the Atlas/Cobalt fixture — so a live window
@@ -78,13 +106,13 @@ export function ProjectorApp({ initialSnapshot, urlSearch }: ProjectorAppProps) 
   // down). The offline demo (?live=0, or DEV without ?live=1) seeds the
   // interactive demo fixture in an effect below.
   const [snapshot, setSnapshot] = useState(initialSnapshot ?? emptyProjectorSnapshot);
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string | null>(initialOverlay?.selected ?? null);
   const [isUnmuting, setIsUnmuting] = useState(false);
   const [micState, setMicState] = useState<"off" | "connecting" | "live">("off");
   const [micLevel, setMicLevel] = useState(0);
   const [micError, setMicError] = useState<string | null>(null);
   const micHandleRef = useRef<MicCaptureHandle | null>(null);
-  const [qrOpen, setQrOpen] = useState(false);
+  const [qrOpen, setQrOpen] = useState(initialOverlay?.qrOpen ?? false);
   const [helpOpen, setHelpOpen] = useState(false);
   // MOCK ROOM: a client-only demo showing several projects building at once.
   // While on, the live SSE stream is held back (see the guard below) so the
@@ -99,34 +127,12 @@ export function ProjectorApp({ initialSnapshot, urlSearch }: ProjectorAppProps) 
   // ball, or the Poincaré disk. Crossed with the garden/orbit style axis.
   const [sceneLayout, setSceneLayout] = useState<SceneLayout>("radial");
   // Project explainer deck: the upid whose slideshow is open, or null.
-  const [slideshowUpid, setSlideshowUpid] = useState<string | null>(null);
+  const [slideshowUpid, setSlideshowUpid] = useState<string | null>(initialOverlay?.slideshowUpid ?? null);
   const slideshowRef = useRef<string | null>(null);
   slideshowRef.current = slideshowUpid;
   const [zenMode, setZenMode] = useState(false);
   const zenModeRef = useRef(false);
   zenModeRef.current = zenMode;
-  // Fullscreen toggle: mirrors the browser's fullscreen state so the projector
-  // wall can fill the display without OS chrome (also dwell-selectable).
-  const [isFullscreen, setIsFullscreen] = useState(false);
-  const toggleFullscreen = useCallback(() => {
-    if (typeof document === "undefined") return;
-    if (document.fullscreenElement) {
-      void document.exitFullscreen?.();
-    } else {
-      void document.documentElement.requestFullscreen?.();
-    }
-  }, []);
-  useEffect(() => {
-    if (typeof document === "undefined") return undefined;
-    const onChange = () => setIsFullscreen(document.fullscreenElement !== null);
-    document.addEventListener("fullscreenchange", onChange);
-    onChange();
-    return () => document.removeEventListener("fullscreenchange", onChange);
-  }, []);
-  // Motion-tracking cursor glyph: off by default (the room highlights targets,
-  // not a pointer), toggled on from the HUD to see/aim where the camera is
-  // tracking. Defaults ON in gesture mode's first moments would distract, so off.
-  const [showCursor, setShowCursor] = useState(false);
   const [hideMenuOpen, setHideMenuOpen] = useState(false);
   const hideMenuOpenRef = useRef(false);
   hideMenuOpenRef.current = hideMenuOpen;
@@ -438,47 +444,9 @@ export function ProjectorApp({ initialSnapshot, urlSearch }: ProjectorAppProps) 
     [liveMode, selectBubble],
   );
 
-  // BUILD BACKENDS (build-loop contract): the toggleable roster from
-  // snapshot.backends. Empty on old servers/malformed frames, which simply hides
-  // the selector — the wall never white-screens on a pre-build-loop snapshot.
-  const backends = useMemo(() => backendsOf(snapshot), [snapshot]);
-
-  // BACKEND TOGGLE: flip one build backend on/off for FUTURE builds. Live mode
-  // POSTs /api/backends {id, enabled} and applies the returned snapshot —
-  // guarded, so a thin {"ok":true} acknowledgment can never wipe the wall.
-  // Offline demo flips the chip locally so static fixtures stay interactive.
-  const toggleBackend = useCallback(
-    async (id: string, enabled: boolean) => {
-      if (!liveMode) {
-        setSnapshot((current) => {
-          const next: BuildloopSnapshot = {
-            ...current,
-            backends: backendsOf(current).map((backend) =>
-              backend.id === id ? { ...backend, enabled } : backend,
-            ),
-          };
-          return next;
-        });
-        return;
-      }
-      try {
-        const response = await fetch("/api/backends", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ id, enabled }),
-        });
-        if (response.ok && response.headers.get("content-type")?.includes("application/json")) {
-          const body: unknown = await response.json();
-          if (looksLikeSnapshot(body)) {
-            setSnapshot(body);
-          }
-        }
-      } catch {
-        // Non-authoritative projector: a failed toggle must never block the UI.
-      }
-    },
-    [liveMode],
-  );
+  // NOTE: the BackendSelector UI is gone (the rooms run env-configured
+  // backends; /api/backends and the server-side roster logic remain for
+  // operators). The wall presents build RESULTS per backend, never a chooser.
 
   // PER-CARD LIFECYCLE: pause/resume/halt ONE process (fleet-card buttons, plus
   // 'k' = halt the selected process). Live mode POSTs /api/process/:upid/{action}
@@ -695,6 +663,28 @@ export function ProjectorApp({ initialSnapshot, urlSearch }: ProjectorAppProps) 
       setMicState("off");
     }
   }, [releaseMute, stopMic]);
+
+  // ONE BUTTON for mic + capture (live-room request): "mic on" and "capturing"
+  // are the same act for a visitor, so a single control drives both. Activating
+  // unmutes + starts the browser mic AND flips Idea Capture on; deactivating
+  // stops the mic AND turns capture off. Composes the existing mic and
+  // /api/capture handlers — no new endpoints. Both 'm' and 'c' map here.
+  const toggleMicCapture = useCallback(async () => {
+    const active = micHandleRef.current !== null || (snapshotRef.current.captureMode ?? false);
+    if (active) {
+      stopMic();
+      if (snapshotRef.current.captureMode) {
+        await toggleCaptureMode();
+      }
+      return;
+    }
+    // Capture flag first (so the room is eager by the time audio flows), then
+    // the mic — toggleMic releases the mute before streaming.
+    if (!snapshotRef.current.captureMode) {
+      await toggleCaptureMode();
+    }
+    await toggleMic();
+  }, [stopMic, toggleCaptureMode, toggleMic]);
 
   // Stop capture if the component unmounts.
   useEffect(() => {
@@ -922,9 +912,9 @@ export function ProjectorApp({ initialSnapshot, urlSearch }: ProjectorAppProps) 
   selectedRef.current = selected;
 
   // --- Keyboard: the primary desk-mode control surface (SSR-guarded) ---
-  // 1–9 select/steer · b/Enter build top idea · x dismiss · c capture · a auto-
-  // build · m mic · u unmute · q QR · ?/h help · k halt selected · Shift+E
-  // emergency · Esc close.
+  // 1–9 select/steer · b/Enter build top idea · x dismiss · c/m mic+capture
+  // (one control) · a auto-build · u unmute · q QR · ?/h help · k halt
+  // selected · Shift+E emergency · Esc close.
   useEffect(() => {
     if (typeof window === "undefined") {
       return;
@@ -1019,13 +1009,12 @@ export function ProjectorApp({ initialSnapshot, urlSearch }: ProjectorAppProps) 
           void actOnTopIdea("dismiss");
           return;
         case "c":
-          void toggleCaptureMode();
+        case "m":
+          // Both legacy keys drive the MERGED mic+capture control.
+          void toggleMicCapture();
           return;
         case "a":
           void toggleAutoAccept();
-          return;
-        case "m":
-          void toggleMic();
           return;
         case "u":
           if (snapshotRef.current.muted) {
@@ -1066,9 +1055,8 @@ export function ProjectorApp({ initialSnapshot, urlSearch }: ProjectorAppProps) 
   }, [
     selectBubble,
     actOnTopIdea,
-    toggleCaptureMode,
+    toggleMicCapture,
     toggleAutoAccept,
-    toggleMic,
     releaseMute,
     triggerEmergency,
     processLifecycle,
@@ -1109,13 +1097,21 @@ export function ProjectorApp({ initialSnapshot, urlSearch }: ProjectorAppProps) 
       });
   }, [liveMode]);
 
-  // TWO-WALL CONTRACT: every window renders the FULL room. The legacy
-  // ?view=ideas|builds param still parses (old URLs keep working and it labels
-  // the wall badge) but it NEVER filters content any more — both walls show
-  // every idea surface AND the whole build fleet. Only Mock Room hides the 2D
-  // rail/tray (a pure 3D showcase).
+  // PER-WALL CONTRACT (DE-THEMED): the two walls are ONE continuous room —
+  // neither is "the idea wall" or "the build wall". The 3D room scene renders
+  // in FULL on every window, and ON-DEMAND overlays (build detail, deck, QR
+  // import, guided demo) open on WHICHEVER wall summons them. ?view only
+  // places the single-instance PERSISTENT panels pragmatically so the two
+  // projections don't duplicate them: view=ideas (wall A) carries the idea
+  // tray + suggestion + capture/auto-build/mic/guided-demo cluster,
+  // view=builds (wall B) the fleet rail + transcript + QR-import button, and
+  // the default full view (single-window desk mode) carries everything.
+  // Genuinely global chrome (status bar, scene controls, help) stays on both
+  // walls. Only Mock Room hides the 2D rail/tray entirely (a pure 3D showcase).
+  const showIdeaSurfaces = view !== "builds";
+  const showBuildSurfaces = view !== "ideas";
   const ideas = snapshot.ideas ?? [];
-  const showIdeaTray = ideas.length > 0;
+  const showIdeaTray = ideas.length > 0 && showIdeaSurfaces;
 
   // 3D constellation input: every ledger candidate as an orb; with an empty
   // ledger, the primary pending suggestion (id null) is the lone orb.
@@ -1205,13 +1201,21 @@ export function ProjectorApp({ initialSnapshot, urlSearch }: ProjectorAppProps) 
     [acceptIdea, actOnIdea],
   );
 
-  // GESTURE MODE (fusion cursors drive the UI): there is NO cursor glyph and NO
-  // OS cursor — the `gesture-mode` class hides the pointer everywhere, and the
-  // pointed-at target's highlight + dwell ring are the only feedback. Pointer
-  // navigation on the scene is disabled so pointing never fights drag-orbit.
+  // GESTURE MODE (fusion cursors drive the UI): there is NO OS cursor — the
+  // `gesture-mode` class hides the pointer everywhere. The pointed-at target's
+  // highlight + dwell ring are the selection feedback, and the gesture layer
+  // additionally draws a per-person cursor dot (toggleable, on by default).
+  // Pointer navigation on the scene is disabled so pointing never fights
+  // drag-orbit.
   // ?dwell=mouse mounts the same dwell layer driven by the mouse (testing/
   // accessibility) with the OS cursor and drag-orbit left intact.
   const gestureMode = urlConfig.gesture !== null;
+  // CORNER LOCK: in gesture mode with an explicit wall, the two wall windows
+  // stop being independent vantage points and become a RIGID camera pair
+  // rendering ONE continuous world around the physical 90° corner — shared eye
+  // point, yaws exactly 90° apart, 90° horizontal FOV per window, no camera
+  // animation (see corner-lock.ts). Scene CONTENT stays full on both windows.
+  const cornerLock = gestureMode && urlConfig.wall !== null;
   const dwellLayerOn = gestureMode || urlConfig.dwell === "mouse";
   // AUDIT (no-mocks): the Mock Room toggle renders ONLY behind ?mock=1.
   const mockRoomEnabled = urlConfig.mock;
@@ -1230,6 +1234,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch }: ProjectorAppProps) 
         mode={sceneMode}
         layout={sceneLayout}
         wall={urlConfig.wall}
+        cornerLock={cornerLock}
         fitSignal={fitSignal}
         focusUpid={
           guided !== null && (guided.step === "race" || guided.step === "decide")
@@ -1245,19 +1250,22 @@ export function ProjectorApp({ initialSnapshot, urlSearch }: ProjectorAppProps) 
           wall={urlConfig.gesture?.wall ?? "A"}
           fusionUrl={urlConfig.gesture?.fusionUrl ?? ""}
           mouseTest={urlConfig.dwell === "mouse"}
-          showCursor={showCursor}
         />
       ) : null}
-      {/* PINCH CAMERA (?hands=): composes with gesture mode — pointerNav only
+      {/* PINCH CAMERA (hands): runtime-toggleable (HUD button) and seeded from
+          the ?hands= URL default. Composes with gesture mode — pointerNav only
           unbinds DOM listeners, the rig stays drivable through the registered
           camera control — and with desk mode via the rig's latest-writer-wins
-          d* contract. */}
-      {urlConfig.hands !== null ? <PinchCameraLayer url={urlConfig.hands.url} wall={urlConfig.wall} /> : null}
+          d* contract. onStatus feeds the toggle's OFF/connecting/LIVE label. */}
+      {handsOn ? (
+        <PinchCameraLayer url={handsUrl} wall={urlConfig.wall} onStatus={setHandsStatus} />
+      ) : null}
       {urlConfig.badge ? (
         <div className="wall-badge" data-testid="wall-badge">
           {urlConfig.badge}
         </div>
       ) : null}
+      <FullscreenButton />
       {voiceFlash !== null ? (
         <div className="voice-flash" data-testid="voice-flash" role="status">
           🎤 vibersyn → {voiceFlash}
@@ -1276,6 +1284,11 @@ export function ProjectorApp({ initialSnapshot, urlSearch }: ProjectorAppProps) 
       ) : null}
 
       <header className="status-bar" data-region="status">
+        {/* STATUS READOUTS (listening orb, session id/global state, active cue,
+            read-only tag, gate %): DESK-ONLY debugging chips. In gesture mode
+            they are noise at projector distance — the bar keeps only genuinely
+            actionable controls (and the emergency banner when one is live). */}
+        {gestureMode ? null : (
         <div className="status-left">
           <div
             className={`listening-orb ${listeningState}`}
@@ -1290,7 +1303,9 @@ export function ProjectorApp({ initialSnapshot, urlSearch }: ProjectorAppProps) 
             <span className="provider">{snapshot.globalState}</span>
           </div>
         </div>
+        )}
 
+        {gestureMode ? null : (
         <div className="status-center">
           <span className="cue-eyebrow">active cue</span>
           <span className="active-cue" data-testid="active-cue">
@@ -1306,16 +1321,23 @@ export function ProjectorApp({ initialSnapshot, urlSearch }: ProjectorAppProps) 
             </div>
           </div>
         </div>
+        )}
 
         <div className="status-right">
-          <div
-            className={`emergency-status ${snapshot.emergencyStopTriggered ? "triggered" : "clear"}`}
-            data-testid="emergency-status"
-            data-triggered={snapshot.emergencyStopTriggered ? "true" : "false"}
-          >
-            {snapshot.emergencyStopTriggered ? "EMERGENCY STOP" : "ALL CLEAR"}
-          </div>
-          {snapshot.muted ? (
+          {/* Emergency status: desk mode always shows it (ALL CLEAR is a
+              debugging readout); gesture mode shows it ONLY while an emergency
+              is actually active — that's the actionable case. */}
+          {!gestureMode || snapshot.emergencyStopTriggered ? (
+            <div
+              className={`emergency-status ${snapshot.emergencyStopTriggered ? "triggered" : "clear"}`}
+              data-testid="emergency-status"
+              data-triggered={snapshot.emergencyStopTriggered ? "true" : "false"}
+            >
+              {snapshot.emergencyStopTriggered ? "EMERGENCY STOP" : "ALL CLEAR"}
+            </div>
+          ) : null}
+          {/* Idea-side controls (voice → idea pipeline): wall A + full view. */}
+          {showIdeaSurfaces && snapshot.muted ? (
             <button
               type="button"
               className="ctl-button unmute"
@@ -1326,78 +1348,58 @@ export function ProjectorApp({ initialSnapshot, urlSearch }: ProjectorAppProps) 
               {isUnmuting ? "Unmuting" : "Unmute"}
             </button>
           ) : null}
-          <MicControl
-            state={micState}
-            level={micLevel}
-            error={micError}
-            mode={snapshot.mic?.mode}
-            bytesReceived={snapshot.mic?.bytesReceived ?? 0}
-            onToggle={() => void toggleMic()}
-          />
-          <button
-            type="button"
-            className={`ctl-button capture${captureMode ? " on" : ""}`}
-            data-testid="capture-button"
-            data-state={captureMode ? "on" : "off"}
-            aria-pressed={captureMode}
-            onClick={() => void toggleCaptureMode()}
-            title="Idea Capture: detection runs eagerly on every utterance — building stays explicit unless Auto-Build is on."
-          >
-            {captureMode ? "● Capturing" : "Idea Capture"}
-          </button>
-          <button
-            type="button"
-            className={`ctl-button auto-build${autoAccept ? " on" : ""}`}
-            data-testid="auto-build-button"
-            data-state={autoAccept ? "on" : "off"}
-            aria-pressed={autoAccept}
-            onClick={() => void toggleAutoAccept()}
-            title="When on, every detected idea builds itself — no click required."
-          >
-            {autoAccept ? "Auto-Build: ON" : "Auto-Build: OFF"}
-          </button>
-          <button
-            type="button"
-            className={`ctl-button fullscreen${isFullscreen ? " on" : ""}`}
-            data-testid="fullscreen-button"
-            data-state={isFullscreen ? "on" : "off"}
-            aria-pressed={isFullscreen}
-            onClick={toggleFullscreen}
-            title="Fill the display (projector wall). Point and dwell, or click."
-          >
-            {isFullscreen ? "⛶ Exit Fullscreen" : "⛶ Fullscreen"}
-          </button>
-          <button
-            type="button"
-            className={`ctl-button cursor-toggle${showCursor ? " on" : ""}`}
-            data-testid="cursor-toggle-button"
-            data-state={showCursor ? "on" : "off"}
-            aria-pressed={showCursor}
-            onClick={() => setShowCursor((v) => !v)}
-            title="Show/hide the motion-tracking cursor — a dot marking where the camera sees your hand. Handy for aiming; off by default."
-          >
-            {showCursor ? "◉ Cursor: ON" : "◎ Cursor: OFF"}
-          </button>
-          <button
-            type="button"
-            className="ctl-button qr-import"
-            data-testid="qr-import-button"
-            onClick={() => setQrOpen(true)}
-            title="Show a QR code — scan it on a phone to add a GitHub repo to the wall."
-          >
-            QR Import
-          </button>
-          <button
-            type="button"
-            className={`ctl-button guided-launch${guided !== null ? " on" : ""}`}
-            data-testid="guided-demo-button"
-            data-state={guided !== null ? "on" : "off"}
-            aria-pressed={guided !== null}
-            onClick={enterGuidedDemo}
-            title="Guided demo (kickoff phase): point, record, say an idea, watch three mock concepts race, then decide on the pitch deck. Restarts from step 1."
-          >
-            Guided Demo
-          </button>
+          {/* ONE control for mic + capture (live-room request): activating
+              unmutes + starts the mic AND turns Idea Capture on; deactivating
+              stops both. Replaces the separate Mic and Idea Capture buttons. */}
+          {showIdeaSurfaces ? (
+            <MicCaptureControl
+              active={captureMode || micState !== "off"}
+              micState={micState}
+              level={micLevel}
+              error={micError}
+              mode={snapshot.mic?.mode}
+              bytesReceived={snapshot.mic?.bytesReceived ?? 0}
+              onToggle={() => void toggleMicCapture()}
+            />
+          ) : null}
+          {showIdeaSurfaces ? (
+            <button
+              type="button"
+              className={`ctl-button auto-build${autoAccept ? " on" : ""}`}
+              data-testid="auto-build-button"
+              data-state={autoAccept ? "on" : "off"}
+              aria-pressed={autoAccept}
+              onClick={() => void toggleAutoAccept()}
+              title="When on, every detected idea builds itself — no click required."
+            >
+              {autoAccept ? "Auto-Build: ON" : "Auto-Build: OFF"}
+            </button>
+          ) : null}
+          {/* Build-side control (imports a repo to BUILD): wall B + full view. */}
+          {showBuildSurfaces ? (
+            <button
+              type="button"
+              className="ctl-button qr-import"
+              data-testid="qr-import-button"
+              onClick={() => setQrOpen(true)}
+              title="Show a QR code — scan it on a phone to add a GitHub repo to the wall."
+            >
+              QR Import
+            </button>
+          ) : null}
+          {showIdeaSurfaces ? (
+            <button
+              type="button"
+              className={`ctl-button guided-launch${guided !== null ? " on" : ""}`}
+              data-testid="guided-demo-button"
+              data-state={guided !== null ? "on" : "off"}
+              aria-pressed={guided !== null}
+              onClick={enterGuidedDemo}
+              title="Guided demo (kickoff phase): point, record, say an idea, watch the concept mocks race, then decide on the pitch deck. Restarts from step 1."
+            >
+              Guided Demo
+            </button>
+          ) : null}
           {/* AUDIT (no-mocks): the Mock Room fixture toggle is HIDDEN unless the
               launcher opts in with ?mock=1 (run-room.sh appends it only when
               VIBERSYN_MOCK_ROOM=1). A default room never offers canned decks. */}
@@ -1414,10 +1416,29 @@ export function ProjectorApp({ initialSnapshot, urlSearch }: ProjectorAppProps) 
               {mockMode ? "● Mock Room" : "Mock Room"}
             </button>
           ) : null}
+          {/* PINCH CAMERA toggle (hands): global camera control, always
+              available so the rig can be armed on any wall/desk window. Seeded
+              from ?hands=; the label mirrors PinchCameraLayer's live socket
+              state (OFF / connecting / LIVE). */}
+          <button
+            type="button"
+            className={`ctl-button hands-toggle${handsOn ? " on" : ""}`}
+            data-testid="hands-toggle-button"
+            data-state={handsOn ? (handsStatus === "open" ? "live" : "connecting") : "off"}
+            aria-pressed={handsOn}
+            onClick={toggleHands}
+            title="Pinch-camera control: point with your hands (TouchDesigner/MediaPipe) to orbit, zoom and pan the room. Toggle to arm the hand tracker."
+          >
+            {!handsOn
+              ? "✋ Hands: OFF"
+              : handsStatus === "open"
+                ? "✋ Hands: LIVE"
+                : "✋ Hands: connecting"}
+          </button>
         </div>
       </header>
 
-      {!mockMode ? <SuggestionRegion pitch={snapshot.suggestion.pitch} /> : null}
+      {!mockMode && showIdeaSurfaces ? <SuggestionRegion pitch={snapshot.suggestion.pitch} /> : null}
 
       <div className={`stage${detailOpen ? " stage-dimmed" : ""}`}>
         <div className="stage-main">
@@ -1430,13 +1451,14 @@ export function ProjectorApp({ initialSnapshot, urlSearch }: ProjectorAppProps) 
           ) : null}
         </div>
 
-        {/* Mock room is a pure 3D showcase — the 2D rail/tray stay hidden. */}
-        {!mockMode ? (
+        {/* Mock room is a pure 3D showcase — the 2D rail/tray stay hidden.
+            The rail (fleet / transcript) is the persistent panel cluster that
+            wall B carries (single-instance placement, not a wall theme). In
+            gesture mode the transcript card is lifted into wall B's right
+            third by CSS (display-only content may use the pointing-forbidden
+            zone); desk mode keeps it in-rail. */}
+        {!mockMode && showBuildSurfaces ? (
           <aside className="rail">
-            <BackendSelector
-              backends={backends}
-              onToggle={(id, enabled) => void toggleBackend(id, enabled)}
-            />
             <FleetPanel
               processes={snapshot.processes}
               selected={selected}
@@ -1451,7 +1473,12 @@ export function ProjectorApp({ initialSnapshot, urlSearch }: ProjectorAppProps) 
         ) : null}
       </div>
 
-      {/* Scene controls (visualizer parity): mode / fit / hide / zen. */}
+      {/* Scene controls (visualizer parity): mode / fit / hide / zen. DESK
+          affordances only — in gesture mode they would duplicate on both walls
+          of the corner pair (and dwell-selecting them per-window could desync
+          the locked cameras' render styles), so they do not render at all
+          there; the keyboard shortcuts (G / L / F / Z / `) still work. */}
+      {gestureMode ? null : (
       <div className="scene-controls" data-testid="scene-controls">
         <button
           type="button"
@@ -1504,8 +1531,11 @@ export function ProjectorApp({ initialSnapshot, urlSearch }: ProjectorAppProps) 
           ◉ Zen
         </button>
       </div>
+      )}
 
-      {hideMenuOpen ? (
+      {/* Hide/unhide menu: a desk affordance like the scene controls above —
+          never rendered in gesture mode (it would duplicate on both walls). */}
+      {hideMenuOpen && !gestureMode ? (
         <div className="hide-menu" data-testid="hide-menu">
           <div className="rail-title-row">
             <h3 className="rail-title">Hide / Unhide</h3>
@@ -1565,6 +1595,10 @@ export function ProjectorApp({ initialSnapshot, urlSearch }: ProjectorAppProps) 
         </div>
       ) : null}
 
+      {/* ON-DEMAND overlays (detail / deck / QR) open on WHICHEVER wall
+          summons them — the walls are one continuous room, so a person
+          dwelling a build tree on wall A gets the detail overlay right there
+          (per-wall safe-zone CSS repositions each card). */}
       {detailOpen && selectedProcess ? (
         <div className="detail-overlay" onClick={closeDetail}>
           <BuildDetail process={selectedProcess} trace={snapshot.trace} onClose={closeDetail} />
@@ -1608,15 +1642,68 @@ export function ProjectorApp({ initialSnapshot, urlSearch }: ProjectorAppProps) 
 // meter so the room can confirm the mic is actually feeding the server. When the
 // server reports ASR mode "replay" (no DEEPGRAM_API_KEY), audio still streams and
 // the meter moves, but words are not transcribed — surfaced via the title hint.
-function MicControl({
-  state,
+// Placement-time fullscreen affordance: browsers only honor requestFullscreen
+// from a real user gesture, so this is a mouse/trackpad button for when the
+// operator drags a wall window onto its projector. It hides once the window
+// is fullscreen (or effectively fullscreen, e.g. Chrome --kiosk).
+function FullscreenButton() {
+  const [visible, setVisible] = useState<boolean>(() => needsFullscreenHint());
+  useEffect(() => {
+    const update = () => setVisible(needsFullscreenHint());
+    document.addEventListener("fullscreenchange", update);
+    window.addEventListener("resize", update);
+    return () => {
+      document.removeEventListener("fullscreenchange", update);
+      window.removeEventListener("resize", update);
+    };
+  }, []);
+  if (!visible) {
+    return null;
+  }
+  return (
+    <button
+      type="button"
+      className="ctl-button fullscreen-button"
+      data-testid="fullscreen-button"
+      title="Fullscreen this wall on its projector"
+      onClick={() => {
+        void document.documentElement.requestFullscreen?.();
+      }}
+    >
+      ⛶ Fullscreen
+    </button>
+  );
+}
+
+function needsFullscreenHint(): boolean {
+  if (typeof document === "undefined" || typeof window === "undefined") {
+    return false;
+  }
+  if (document.fullscreenElement !== null) {
+    return false;
+  }
+  // Kiosk/native-fullscreen windows report no fullscreenElement but already
+  // cover the screen — no hint needed there.
+  const screenH = window.screen?.height ?? 0;
+  return screenH === 0 || window.innerHeight < screenH - 2;
+}
+
+// ONE button for mic + Idea Capture (live-room request): "mic on" and
+// "capturing" were two adjacent controls; a visitor should hit a single
+// target. Inactive it invites ("🎤 Capture idea"); active it shows a live
+// capturing indicator — the pulsing dot plus the mic level meter (the RMS the
+// mic capture already reports) — and deactivating stops BOTH mic and capture.
+function MicCaptureControl({
+  active,
+  micState,
   level,
   error,
   mode,
   bytesReceived,
   onToggle,
 }: {
-  state: "off" | "connecting" | "live";
+  active: boolean;
+  micState: "off" | "connecting" | "live";
   level: number;
   error: string | null;
   mode?: "deepgram" | "voxterm" | "replay";
@@ -1625,26 +1712,29 @@ function MicControl({
 }) {
   // Map RMS (~0–0.3 for speech) onto a 0–100% bar with mild gain.
   const levelPercent = Math.min(100, Math.round(level * 320));
-  const label = state === "live" ? "Mic On" : state === "connecting" ? "Starting" : "Mic";
-  const hint =
-    mode === "replay"
-      ? "Audio streams to the server, but transcription needs DEEPGRAM_API_KEY."
-      : "Live mic → server ASR → transcript.";
+  const label = micState === "connecting" ? "Starting" : active ? "● Capturing" : "🎤 Capture idea";
+  const hint = active
+    ? mode === "replay"
+      ? "Capturing. Audio streams to the server, but transcription needs DEEPGRAM_API_KEY."
+      : "Capturing: live mic → server ASR → ideas. Click to stop the mic and Idea Capture together."
+    : "One button: unmute + mic on + Idea Capture on. Click again to stop both.";
 
   return (
-    <div className="mic-control" data-testid="mic-control" data-state={state}>
+    <div className="mic-control" data-testid="mic-capture-control" data-state={micState}>
       <button
         type="button"
-        className={`ctl-button mic mic-${state}`}
-        data-testid="mic-button"
+        className={`ctl-button mic-capture mic-${micState}${active ? " on" : ""}`}
+        data-testid="mic-capture-button"
+        data-state={active ? "on" : "off"}
+        aria-pressed={active}
         onClick={onToggle}
-        disabled={state === "connecting"}
+        disabled={micState === "connecting"}
         title={error ?? hint}
       >
         <span className="mic-dot" aria-hidden="true" />
         {label}
       </button>
-      {state === "live" ? (
+      {micState === "live" ? (
         <>
           <span className="mic-meter" aria-label="Microphone input level">
             <span className="mic-meter-fill" data-testid="mic-meter-fill" style={{ width: `${levelPercent}%` }} />

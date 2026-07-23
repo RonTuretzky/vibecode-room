@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { GestureTargets, type TargetDescriptor } from "./targets";
+import { GestureTargets, HITBOX_INFLATE_PX, inflateRect, type TargetDescriptor } from "./targets";
 
 function desc(id: string, left: number, top: number, width: number, height: number, activate = () => {}): TargetDescriptor {
   return { id, left, top, width, height, activate };
@@ -57,5 +57,42 @@ describe("GestureTargets", () => {
     t.sync([desc("x", 0, 0, 10, 10, () => (which = "second"))], 100, 100);
     t.activate("x");
     expect(which).toBe("second"); // re-sync rebinds activation to the live element
+  });
+});
+
+// HITBOX INFLATION (pure math): the gesture layer grows every DOM control's
+// dwell hitbox by HITBOX_INFLATE_PX per side, clamped to the viewport, so the
+// dwellable area exceeds the visual button without ever extending offscreen.
+describe("inflateRect", () => {
+  test("grows an interior rect by pad on every side", () => {
+    const r = inflateRect({ left: 100, top: 200, width: 50, height: 40 }, 24, 1920, 1080);
+    expect(r).toEqual({ left: 76, top: 176, width: 98, height: 88 });
+  });
+
+  test("clamps to the viewport on every edge (corner-hugging control)", () => {
+    const r = inflateRect({ left: 10, top: 5, width: 100, height: 30 }, 24, 1920, 1080);
+    expect(r.left).toBe(0); // 10 - 24 clamps to the left edge
+    expect(r.top).toBe(0); // 5 - 24 clamps to the top edge
+    expect(r.width).toBe(10 + 100 + 24); // left clamp eats the overhang
+    expect(r.height).toBe(5 + 30 + 24);
+
+    const br = inflateRect({ left: 1900, top: 1070, width: 30, height: 30 }, 24, 1920, 1080);
+    expect(br.left + br.width).toBe(1920); // never past the right edge
+    expect(br.top + br.height).toBe(1080); // never past the bottom edge
+  });
+
+  test("a degenerate viewport yields a zero-area rect, never negative", () => {
+    const r = inflateRect({ left: 50, top: 50, width: 10, height: 10 }, 24, 0, 0);
+    expect(r.width).toBe(0);
+    expect(r.height).toBe(0);
+  });
+
+  test("pad 0 is the identity (scene rects stay exact when uninflated)", () => {
+    const rect = { left: 5, top: 6, width: 7, height: 8 };
+    expect(inflateRect(rect, 0, 1920, 1080)).toEqual(rect);
+  });
+
+  test("the shipped constant gives ~24px of slack per side", () => {
+    expect(HITBOX_INFLATE_PX).toBe(24);
   });
 });

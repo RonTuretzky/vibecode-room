@@ -14,7 +14,7 @@ describe("parseProjectorUrl", () => {
     const config = parseProjectorUrl("?wall=A&view=ideas", "192.168.1.20");
     expect(config.gesture).toBeNull();
     expect(config.wall).toBe("A");
-    expect(config.badge).toBe("WALL A · IDEAS");
+    expect(config.badge).toBe("WALL A");
   });
 
   test("?gesture=1 explicitly mounts the gesture layer with the default fusion URL", () => {
@@ -81,8 +81,8 @@ describe("parseProjectorUrl", () => {
     expect(config.hands).not.toBeNull();
   });
 
-  // The view param is LEGACY: it still parses (old URLs + badge text) but it is
-  // inert for content — every window renders the full room (see projector tests).
+  // The view param scopes each wall's 2D surfaces + controls (ideas vs builds;
+  // the 3D scene always stays full — see projector tests for the render table).
   test("view parsing: ideas/builds are recognized, anything else falls back to full", () => {
     expect(parseProjectorUrl("?view=ideas", "h").view).toBe("ideas");
     expect(parseProjectorUrl("?view=builds", "h").view).toBe("builds");
@@ -97,9 +97,12 @@ describe("parseProjectorUrl", () => {
     expect(parseProjectorUrl("?live=1", "h").badge).toBeNull();
   });
 
-  test("wall badge always carries the view so two-wall setups read at a glance", () => {
-    expect(parseProjectorUrl("?wall=b&view=builds", "h").badge).toBe("WALL B · BUILDS");
-    expect(parseProjectorUrl("?wall=A", "h").badge).toBe("WALL A · FULL");
+  // DE-THEME: the walls are one continuous room, so a wall badge is just the
+  // wall identity — never "IDEAS"/"BUILDS" branding (the view only places
+  // panels, it does not theme a wall).
+  test("wall badge is the bare wall identity, regardless of view", () => {
+    expect(parseProjectorUrl("?wall=b&view=builds", "h").badge).toBe("WALL B");
+    expect(parseProjectorUrl("?wall=A", "h").badge).toBe("WALL A");
   });
 
   test("?demo=guided auto-enters the guided demo; anything else stays off", () => {

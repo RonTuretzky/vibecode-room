@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ProjectorApp, REQUIRED_PROJECTOR_REGIONS } from "./App";
+import { GestureLayer, cursorDotsFromStored } from "./gesture/GestureLayer";
 import { IdeaTray } from "./IdeaTray";
 import { HelpOverlay } from "./HelpOverlay";
 import { QrImport } from "./QrImport";
@@ -121,11 +122,13 @@ describe("guided demo overlay", () => {
   });
 });
 
-// TWO-WALL CONTRACT: wall A and wall B both render the COMPLETE room. The
-// legacy ?view=ideas|builds param is accepted (old run-room.sh URLs keep
-// working, and it still labels the wall badge) but it must NEVER filter the
-// scene's node sets or the 2D surfaces.
-describe("both walls render the full scene (legacy ?view is inert)", () => {
+// PER-WALL CONTRACT: the 3D room scene renders in FULL on every window (walls
+// differ by camera vantage, never by scene content), but the 2D surfaces +
+// controls are scoped by ?view so the two projections stop duplicating each
+// other: view=ideas (wall A) carries the idea surface + idea-side controls,
+// view=builds (wall B) the build surface + build-side controls, and the
+// default full view (single-window desk mode) carries everything.
+describe("per-wall scoping: each wall renders ITS surface + ITS controls", () => {
   function sceneCounts(html: string): { ideas: number; trees: number } {
     const ideas = html.match(/data-idea-count="(\d+)"/);
     const trees = html.match(/data-tree-count="(\d+)"/);
@@ -142,7 +145,7 @@ describe("both walls render the full scene (legacy ?view is inert)", () => {
     <ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch="?live=1&wall=B&view=builds" />,
   );
 
-  test("the 3D scene gets identical node sets on wall A, wall B, and the full view", () => {
+  test("the 3D scene stays FULL on wall A, wall B, and the full view (shared room)", () => {
     const full = sceneCounts(fullHtml);
     expect(full.ideas).toBe(demoProjectorSnapshot.ideas?.length ?? -1);
     expect(full.trees).toBe(demoProjectorSnapshot.processes.length);
@@ -150,26 +153,129 @@ describe("both walls render the full scene (legacy ?view is inert)", () => {
     expect(sceneCounts(wallBHtml)).toEqual(full);
   });
 
-  test("?view=ideas (wall A) still renders the whole build fleet", () => {
-    expect(countOccurrences(wallAHtml, 'data-testid="fleet-panel"')).toBe(
-      demoProjectorSnapshot.processes.length,
-    );
-    expect(wallAHtml).toContain("Atlas");
-    expect(wallAHtml).toContain("Cobalt");
-  });
-
-  test("?view=builds (wall B) still renders every idea surface", () => {
-    expect(wallBHtml).toContain('data-testid="idea-tray"');
-    expect(countOccurrences(wallBHtml, 'data-testid="idea-item"')).toBe(
+  test("?view=ideas (wall A): idea surface + idea-side controls, NO build surfaces", () => {
+    // Idea surface: tray with every candidate + the suggestion banner.
+    expect(wallAHtml).toContain('data-testid="idea-tray"');
+    expect(countOccurrences(wallAHtml, 'data-testid="idea-item"')).toBe(
       demoProjectorSnapshot.ideas?.length ?? -1,
     );
-    expect(wallBHtml).toContain('data-region="suggestion"');
+    expect(wallAHtml).toContain('data-region="suggestion"');
+    // Idea-side controls (voice → idea pipeline).
+    expect(wallAHtml).toContain('data-testid="mic-capture-button"');
+    expect(wallAHtml).toContain('data-testid="auto-build-button"');
+    expect(wallAHtml).toContain('data-testid="guided-demo-button"');
+    // Build surfaces + build-side controls live on wall B only.
+    expect(wallAHtml).not.toContain('data-testid="fleet-panel"');
+    expect(wallAHtml).not.toContain('data-region="transcript"');
+    expect(wallAHtml).not.toContain('data-testid="qr-import-button"');
   });
 
-  test("the wall identity badge still labels each window", () => {
-    expect(wallAHtml).toContain("WALL A · IDEAS");
-    expect(wallBHtml).toContain("WALL B · BUILDS");
+  test("?view=builds (wall B): build surface + build-side controls, NO idea surfaces", () => {
+    // Build surface: the whole fleet + transcript rail.
+    expect(countOccurrences(wallBHtml, 'data-testid="fleet-panel"')).toBe(
+      demoProjectorSnapshot.processes.length,
+    );
+    expect(wallBHtml).toContain("Atlas");
+    expect(wallBHtml).toContain("Cobalt");
+    expect(wallBHtml).toContain('data-region="transcript"');
+    // Build-side control.
+    expect(wallBHtml).toContain('data-testid="qr-import-button"');
+    // Idea surfaces + idea-side controls live on wall A only.
+    expect(wallBHtml).not.toContain('data-testid="idea-tray"');
+    expect(wallBHtml).not.toContain('data-region="suggestion"');
+    expect(wallBHtml).not.toContain('data-testid="mic-capture-button"');
+    expect(wallBHtml).not.toContain('data-testid="auto-build-button"');
+    expect(wallBHtml).not.toContain('data-testid="guided-demo-button"');
+  });
+
+  test("global chrome renders on BOTH walls (status readouts + scene controls)", () => {
+    for (const html of [wallAHtml, wallBHtml]) {
+      expect(html).toContain('data-region="status"');
+      expect(html).toContain('data-testid="emergency-status"');
+      expect(html).toContain('data-testid="scene-controls"');
+    }
+  });
+
+  test("the default full view (desk mode) still renders everything", () => {
+    expect(fullHtml).toContain('data-testid="idea-tray"');
+    expect(countOccurrences(fullHtml, 'data-testid="fleet-panel"')).toBe(
+      demoProjectorSnapshot.processes.length,
+    );
+    expect(fullHtml).toContain('data-testid="qr-import-button"');
+    expect(fullHtml).toContain('data-testid="mic-capture-button"');
+    for (const region of REQUIRED_PROJECTOR_REGIONS) {
+      expect(fullHtml).toContain(`data-region="${region}"`);
+    }
+  });
+
+  test("the wall identity badge is DE-THEMED: bare wall identity, no IDEAS/BUILDS branding", () => {
+    expect(wallAHtml).toContain("WALL A");
+    expect(wallBHtml).toContain("WALL B");
+    expect(wallAHtml).not.toContain("WALL A · IDEAS");
+    expect(wallBHtml).not.toContain("WALL B · BUILDS");
     expect(fullHtml).not.toContain('data-testid="wall-badge"');
+  });
+});
+
+// DE-THEMED WALLS: the two walls are ONE continuous room. On-demand overlays
+// (build detail, project deck, QR import, guided demo) open on WHICHEVER wall
+// summons them — a person dwelling a build tree on wall A gets the detail
+// overlay right there. Only the PERSISTENT single-instance panels stay placed
+// per wall (tray/capture cluster on A, fleet rail + QR button on B).
+describe("de-themed walls: on-demand overlays are available on BOTH walls", () => {
+  test("the build-detail overlay opens on wall A (view=ideas)", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp
+        initialSnapshot={demoProjectorSnapshot}
+        urlSearch="?live=1&wall=A&view=ideas"
+        initialOverlay={{ selected: "Atlas" }}
+      />,
+    );
+    expect(html).toContain('data-testid="build-detail"');
+  });
+
+  test("the project deck overlay opens on wall A (view=ideas)", () => {
+    const busy = busyRoomSnapshot();
+    const html = renderToStaticMarkup(
+      <ProjectorApp
+        initialSnapshot={busy}
+        urlSearch="?live=1&wall=A&view=ideas"
+        initialOverlay={{ slideshowUpid: busy.processes[0]!.upid }}
+      />,
+    );
+    expect(html).toContain('data-testid="slideshow-overlay"');
+  });
+
+  test("the QR-import overlay opens on wall A (view=ideas) — only its launch button stays wall-B", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp
+        initialSnapshot={demoProjectorSnapshot}
+        urlSearch="?live=1&wall=A&view=ideas"
+        initialOverlay={{ qrOpen: true }}
+      />,
+    );
+    expect(html).toContain('data-testid="qr-overlay"');
+    expect(html).not.toContain('data-testid="qr-import-button"');
+  });
+
+  test("the guided demo runs on wall B (view=builds) — only its launch button stays wall-A", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch="?live=1&wall=B&view=builds&demo=guided" />,
+    );
+    expect(html).toContain('data-testid="guided-demo"');
+    expect(html).not.toContain('data-testid="guided-demo-button"');
+  });
+
+  test("overlays still open on wall B (view=builds) as before", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp
+        initialSnapshot={demoProjectorSnapshot}
+        urlSearch="?live=1&wall=B&view=builds"
+        initialOverlay={{ selected: "Atlas", qrOpen: true }}
+      />,
+    );
+    expect(html).toContain('data-testid="build-detail"');
+    expect(html).toContain('data-testid="qr-overlay"');
   });
 });
 
@@ -225,7 +331,7 @@ describe("build loop surfaces (backward compatible)", () => {
     expect(html).not.toContain('data-testid="build-chips"');
   });
 
-  test("snapshot.backends[] renders a chip per backend, dimmed + labeled when unavailable", () => {
+  test("the backend SELECTOR is gone: snapshot.backends[] never renders a chooser (env-driven, server-side)", () => {
     const snapshot: BuildloopSnapshot = {
       ...demoProjectorSnapshot,
       backends: [
@@ -234,11 +340,9 @@ describe("build loop surfaces (backward compatible)", () => {
       ],
     };
     const html = renderToStaticMarkup(<ProjectorApp initialSnapshot={snapshot} />);
-    expect(html).toContain('data-testid="backend-selector"');
-    expect(countOccurrences(html, 'data-testid="backend-chip"')).toBe(2);
-    expect(html).toContain('data-backend="native"');
-    expect(html).toContain('data-available="false"');
-    expect(html).toContain("still booting");
+    expect(html).not.toContain('data-testid="backend-selector"');
+    expect(html).not.toContain('data-testid="backend-chip"');
+    expect(html).not.toContain("still booting");
   });
 
   test("process.builds[] renders a chip per backend build with status-driven affordances", () => {
@@ -559,5 +663,171 @@ describe("pinch camera layer", () => {
     );
     expect(html).toContain('data-testid="gesture-overlay"');
     expect(html).toContain('data-testid="pinch-camera-layer"');
+  });
+});
+
+// GESTURE STATUS BAR: at projector distance the status readouts (listening
+// orb, session id / global state, active cue, read-only tag, gate %) are
+// noise — gesture mode strips them so the bar carries only genuinely
+// actionable controls. Desk mode keeps every chip for debugging. The
+// emergency banner shows in gesture mode ONLY while an emergency is actually
+// active (ALL CLEAR is a desk readout).
+describe("gesture-mode status bar keeps only actionable controls", () => {
+  const gestureA = renderToStaticMarkup(
+    <ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch="?live=0&wall=A&view=ideas&gesture=1" />,
+  );
+
+  test("status readouts are stripped in gesture mode", () => {
+    expect(gestureA).not.toContain('data-testid="listening-indicator"');
+    expect(gestureA).not.toContain('class="session-meta"');
+    expect(gestureA).not.toContain('data-testid="active-cue"');
+    expect(gestureA).not.toContain("READ-ONLY");
+    expect(gestureA).not.toContain('class="gate-chip"');
+    expect(gestureA).not.toContain('data-testid="emergency-status"');
+  });
+
+  test("actionable controls stay (mic+capture / auto-build / guided demo)", () => {
+    expect(gestureA).toContain('data-testid="mic-capture-button"');
+    expect(gestureA).toContain('data-testid="auto-build-button"');
+    expect(gestureA).toContain('data-testid="guided-demo-button"');
+  });
+
+  test("a LIVE emergency still shows its banner in gesture mode", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp
+        initialSnapshot={{ ...demoProjectorSnapshot, emergencyStopTriggered: true }}
+        urlSearch="?live=0&wall=A&view=ideas&gesture=1"
+      />,
+    );
+    expect(html).toContain('data-testid="emergency-status"');
+    expect(html).toContain("EMERGENCY STOP");
+  });
+
+  test("desk mode keeps every status readout for debugging", () => {
+    const desk = renderToStaticMarkup(<ProjectorApp initialSnapshot={demoProjectorSnapshot} />);
+    expect(desk).toContain('data-testid="listening-indicator"');
+    expect(desk).toContain('data-testid="active-cue"');
+    expect(desk).toContain("READ-ONLY · NON-AUTHORITATIVE");
+    expect(desk).toContain('data-testid="emergency-status"');
+  });
+});
+
+// CORNER-LOCKED CONTINUOUS SCENE: with ?gesture=1&wall=A|B the two projector
+// windows stop being independent vantage points and render ONE continuous 3D
+// world wrapping the physical 90° corner — a rigid camera pair (shared eye,
+// yaws exactly 90° apart, 90° horizontal FOV; math unit-tested in
+// corner-lock.test.ts), surfaced on the scene container as data-corner-lock.
+// The desk-only scene chrome (scene-controls cluster + hide menu) would
+// duplicate on both walls, so it does not render in gesture mode at all; the
+// keyboard shortcuts (G / L / F / Z / `) keep working.
+describe("corner-locked two-wall gesture mode", () => {
+  test("?gesture=1&wall=A|B: the scene is corner-locked and content stays FULL on both walls", () => {
+    for (const wall of ["A", "B"]) {
+      const html = renderToStaticMarkup(
+        <ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch={`?live=0&wall=${wall}&gesture=1`} />,
+      );
+      expect(html).toContain('data-corner-lock="true"');
+      // No scene-content filtering: every idea and every build, both windows.
+      expect(html).toContain(`data-idea-count="${demoProjectorSnapshot.ideas?.length ?? -1}"`);
+      expect(html).toContain(`data-tree-count="${demoProjectorSnapshot.processes.length}"`);
+    }
+  });
+
+  test("gesture mode hides the duplicated desk chrome (scene controls) on BOTH walls", () => {
+    for (const wall of ["A", "B"]) {
+      const html = renderToStaticMarkup(
+        <ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch={`?live=0&wall=${wall}&gesture=1`} />,
+      );
+      expect(html).not.toContain('data-testid="scene-controls"');
+      expect(html).not.toContain('data-testid="scene-mode-button"');
+      expect(html).not.toContain('data-testid="scene-zen-button"');
+      expect(html).not.toContain('data-testid="hide-menu"');
+    }
+  });
+
+  test("desk mode + camera-less wall windows keep the scene controls and stay unlocked", () => {
+    const desk = renderToStaticMarkup(<ProjectorApp initialSnapshot={demoProjectorSnapshot} />);
+    expect(desk).toContain('data-testid="scene-controls"');
+    expect(desk).toContain('data-corner-lock="false"');
+    // A bare two-wall projection without cameras (?wall= but no gesture) keeps
+    // its independent per-window vantage + desk controls.
+    const wallOnly = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch="?live=1&wall=A&view=ideas" />,
+    );
+    expect(wallOnly).toContain('data-testid="scene-controls"');
+    expect(wallOnly).toContain('data-corner-lock="false"');
+    // ?gesture=1 with NO wall (single-window gesture demo): the dwell layer
+    // mounts and desk chrome hides, but there is no pair to corner-lock into.
+    const gestureNoWall = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch="?live=0&gesture=1" />,
+    );
+    expect(gestureNoWall).toContain('data-corner-lock="false"');
+    expect(gestureNoWall).not.toContain('data-testid="scene-controls"');
+  });
+});
+
+// MERGED MIC+CAPTURE (live-room request): "mic on" and "capturing" are ONE
+// button — activating unmutes + starts the browser mic AND turns Idea Capture
+// on; deactivating stops both. The two separate controls are gone; 'm' and 'c'
+// both drive the merged behavior (see App.tsx keyboard map).
+describe("merged mic + capture control", () => {
+  test("a single mic-capture button replaces the separate mic and capture controls", () => {
+    const html = renderToStaticMarkup(<ProjectorApp initialSnapshot={demoProjectorSnapshot} />);
+    expect(countOccurrences(html, 'data-testid="mic-capture-button"')).toBe(1);
+    expect(html).not.toContain('data-testid="mic-button"');
+    expect(html).not.toContain('data-testid="capture-button"');
+    expect(html).not.toContain('data-testid="mic-control"');
+  });
+
+  test("inactive by default: the button invites '🎤 Capture idea'", () => {
+    const html = renderToStaticMarkup(<ProjectorApp initialSnapshot={demoProjectorSnapshot} />);
+    expect(html).toContain('data-testid="mic-capture-button" data-state="off"');
+    expect(html).toContain("Capture idea");
+    expect(html).not.toContain("● Capturing");
+  });
+
+  test("a capturing snapshot lights the merged button up as the live indicator", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={{ ...demoProjectorSnapshot, captureMode: true }} />,
+    );
+    expect(html).toContain('data-testid="mic-capture-button" data-state="on"');
+    expect(html).toContain("● Capturing");
+  });
+});
+
+// CURSOR VISIBILITY (live-room request): the gesture layer draws a persistent
+// colored dot per tracked person (wall.js parity, hued via idToHue) — ON by
+// default, toggleable from the wall via a dwellable ctl-button, remembered in
+// localStorage. Dwell rings render regardless of the dot preference.
+describe("gesture cursor-dot toggle", () => {
+  test("the toggle mounts with the dwell layer, ON by default", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch="?live=0&wall=A&gesture=1" />,
+    );
+    expect(html).toContain('data-testid="cursor-toggle-button" data-state="on"');
+    expect(html).toContain("Hide cursor");
+  });
+
+  test("?dwell=mouse (desk dwell testing) gets the same toggle; plain desk mode does not", () => {
+    const mouseDwell = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch="?live=0&dwell=mouse" />,
+    );
+    expect(mouseDwell).toContain('data-testid="cursor-toggle-button"');
+
+    const desk = renderToStaticMarkup(<ProjectorApp initialSnapshot={demoProjectorSnapshot} />);
+    expect(desk).not.toContain('data-testid="cursor-toggle-button"');
+  });
+
+  test("the toggle renders the OFF state (persisted pref seam) with the 'Cursor' invite", () => {
+    const html = renderToStaticMarkup(<GestureLayer wall="A" fusionUrl="" initialCursorDots={false} />);
+    expect(html).toContain('data-testid="cursor-toggle-button" data-state="off"');
+    expect(html).toContain(">Cursor</button>");
+    expect(html).not.toContain("Hide cursor");
+  });
+
+  test("the stored preference parses: only an explicit '0' hides the dots", () => {
+    expect(cursorDotsFromStored(null)).toBe(true); // first visit → ON
+    expect(cursorDotsFromStored("1")).toBe(true);
+    expect(cursorDotsFromStored("0")).toBe(false);
   });
 });

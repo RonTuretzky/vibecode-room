@@ -9,14 +9,22 @@ export interface PinchCameraLayerProps {
   // Window wall identity (urlConfig.wall): sent in the hello and used to drop
   // wall-tagged frames meant for another window. Null when not wall-bound.
   wall: string | null;
+  // Optional: surface the live socket state so the HUD hands-toggle can show
+  // OFF / connecting / LIVE. The layer stays silent without it.
+  onStatus?: (status: HandsStatus) => void;
 }
 
 // Glue only: TouchDesigner pinch stream → pure PinchCam interpreter → the
 // scene's registered camera control. Renders nothing visible — the camera
 // motion IS the feedback (and the mount is assertable in windowless tests).
-export function PinchCameraLayer({ url, wall }: PinchCameraLayerProps) {
-  // Write-only, matching GestureLayer's silent-status precedent — no HUD chip.
+export function PinchCameraLayer({ url, wall, onStatus }: PinchCameraLayerProps) {
+  // Mirrors the last socket state; also forwarded to onStatus when provided so
+  // the HUD toggle can label the connection (OFF / connecting / LIVE).
   const statusRef = useRef<HandsStatus>("closed");
+  // Live-readable inside the effect so a changing callback identity never
+  // re-runs the socket setup (the effect intentionally depends only on url/wall).
+  const onStatusRef = useRef(onStatus);
+  onStatusRef.current = onStatus;
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -64,6 +72,7 @@ export function PinchCameraLayer({ url, wall }: PinchCameraLayerProps) {
       wall,
       onStatus: (s) => {
         statusRef.current = s;
+        onStatusRef.current?.(s);
         if (s !== "open") {
           // A dropped/closed socket must never leave a grab held.
           apply(pinchCam.idleTick(nowSec()));

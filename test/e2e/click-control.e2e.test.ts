@@ -238,6 +238,10 @@ function fireEnv(replayPath: string): Record<string, string> {
     VIBERSYN_DETECT_MIN_INTERVAL_MS: "0",
     VIBERSYN_DETECT_TICK_MS: "0",
     VIBERSYN_DETECT_READY_THRESHOLD: "0.5",
+    // Legacy immediate auto-build fire: these tests assert the no-click accept
+    // path itself; the quiet-period settle gate has its own timing test in
+    // composition.preview.test.ts.
+    VIBERSYN_AUTOBUILD_SETTLE_MS: "0",
   };
 }
 

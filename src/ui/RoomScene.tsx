@@ -3,6 +3,7 @@ import * as THREE from "three";
 import type { IdeaTrayItem, ProjectorProcess } from "./types";
 import { registerSceneDwellSource, type SceneDwellRect } from "./gesture/scene-source";
 import { registerSceneCameraControl } from "./gesture/camera-source";
+import { cornerEye, cornerVerticalFovDeg, cornerYaw } from "./corner-lock";
 
 // The full-viewport 3D stage (after conductor-github-visualizer): the scene IS
 // the app background and every panel floats over it. Two render modes share
@@ -19,6 +20,11 @@ import { registerSceneCameraControl } from "./gesture/camera-source";
 // (via the shared SSE stream upstream) is common. A `wall` identity may seed a
 // different DEFAULT camera yaw per window so two projections of the same room
 // don't boot pixel-identical, but it never filters content.
+//
+// In gesture mode (`cornerLock`) the two windows instead form a RIGID camera
+// pair rendering ONE continuous world around the physical 90° corner: one
+// shared eye point, yaws exactly 90° apart, 90° horizontal FOV per window —
+// wall A's right edge continues onto wall B's left edge (see corner-lock.ts).
 
 export interface IdeaOrbSpec {
   id: string | null; // null = the primary pending suggestion
@@ -56,9 +62,16 @@ interface RoomSceneProps {
   trees: TreeSpec[];
   mode: SceneMode;
   layout: SceneLayout;
-  // Wall identity ("A" | "B" | …) or null. ONLY seeds the default camera yaw
-  // so each wall boots on its own vantage point — it NEVER filters content.
+  // Wall identity ("A" | "B" | …) or null. Seeds the default camera yaw (desk
+  // mode) or selects this window's side of the corner-locked pair (gesture
+  // mode) — it NEVER filters content.
   wall?: string | null;
+  // CORNER LOCK (gesture mode with an explicit wall): this window is one half
+  // of a rigid two-window pair rendering a single continuous world around the
+  // physical 90° corner — fixed shared eye point, per-wall yaws exactly 90°
+  // apart, exactly 90° horizontal FOV, and NO drift/orbit/fit/focus so the
+  // seam edge stays coherent. Fixed per window (URL-derived).
+  cornerLock?: boolean;
   // Increment to request a one-shot fit-to-content camera move.
   fitSignal: number;
   // GUIDED-DEMO FOCUS: when set, the camera glides to frame this process's
@@ -336,7 +349,7 @@ interface Entry {
   removing: boolean;
 }
 
-export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, focusUpid = null, pointerNav = true, onAcceptIdea, onSelectProcess }: RoomSceneProps) {
+export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, focusUpid = null, pointerNav = true, cornerLock = false, onAcceptIdea, onSelectProcess }: RoomSceneProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const ideasRef = useRef(ideas);
   ideasRef.current = ideas;
@@ -353,6 +366,9 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
   // Same deal: gesture windows never rebind pointer navigation mid-session.
   const pointerNavRef = useRef(pointerNav);
   pointerNavRef.current = pointerNav;
+  // Same deal: the corner lock is URL-derived and fixed for the window's life.
+  const cornerLockRef = useRef(cornerLock);
+  cornerLockRef.current = cornerLock;
   const fitRef = useRef(fitSignal);
   fitRef.current = fitSignal;
   const focusRef = useRef<string | null>(focusUpid);
@@ -438,14 +454,34 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       );
       camera.lookAt(rig.targetX, rig.lookY, rig.targetZ);
     };
+    // ── corner lock (gesture mode with an explicit wall) ────────────────────
+    // The rigid two-window pair: ONE shared eye point, a horizontal view
+    // direction whose yaw is exactly 90° apart per wall, and (in resize) a
+    // fov pinned to exactly 90° HORIZONTAL — so the two windows tile one
+    // continuous world around the physical corner: wall A's right edge
+    // continues onto wall B's left edge. NOTHING may move this camera: drag/
+    // wheel are unbound in gesture mode, and fit/focus/inertia/lerp are all
+    // gated off below. The orbit rig is bypassed entirely.
+    const cornerLocked = cornerLockRef.current;
+    const cornerLockedYaw = cornerYaw(wallRef.current);
+    const applyCornerRig = () => {
+      const eye = cornerEye();
+      camera.position.set(eye.x, eye.y, eye.z);
+      camera.lookAt(eye.x - Math.sin(cornerLockedYaw), eye.y, eye.z - Math.cos(cornerLockedYaw));
+    };
+
     resetRig();
-    // Per-window boot framing: the wall identity only seeds the default yaw
-    // (resetRig never touches the angle, so mode/layout switches keep it).
-    rig.dAngle = wallYawSeed(wallRef.current);
-    rig.angle = rig.dAngle;
-    rig.radius = rig.dRadius;
-    rig.height = rig.dHeight;
-    applyRig();
+    if (cornerLocked) {
+      applyCornerRig();
+    } else {
+      // Per-window boot framing: the wall identity only seeds the default yaw
+      // (resetRig never touches the angle, so mode/layout switches keep it).
+      rig.dAngle = wallYawSeed(wallRef.current);
+      rig.angle = rig.dAngle;
+      rig.radius = rig.dRadius;
+      rig.height = rig.dHeight;
+      applyRig();
+    }
 
     // ── environments ────────────────────────────────────────────────────────
     const buildGardenEnv = (): SceneEnv => {
@@ -1150,8 +1186,10 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         resetRig();
       }
 
-      // TWO-WALL CONTRACT: every window reconciles the FULL data set — all
-      // ideas AND all builds — regardless of any legacy ?view= URL param.
+      // PER-WALL CONTRACT: the 3D scene reconciles the FULL data set — all
+      // ideas AND all builds — on every window regardless of ?view=. Walls
+      // differ by camera vantage (wallYawSeed), never by scene content; only
+      // the 2D HUD surfaces are view-scoped (see App.tsx).
       const ideaSpecs: IdeaOrbSpec[] =
         ideasRef.current.length > 0
           ? ideasRef.current
@@ -1588,6 +1626,12 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       }
       renderer.setSize(width, height);
       camera.aspect = width / height;
+      if (cornerLocked) {
+        // camera.fov is VERTICAL in three.js: recompute it from the aspect so
+        // the HORIZONTAL fov stays pinned at exactly 90° and the wall pair
+        // keeps tiling the corner seamlessly at any window size.
+        camera.fov = cornerVerticalFovDeg(camera.aspect);
+      }
       camera.updateProjectionMatrix();
     };
     const observer = new ResizeObserver(resize);
@@ -1619,10 +1663,13 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       }
       if (fitRef.current !== lastFit) {
         lastFit = fitRef.current;
-        fitToContent();
+        if (!cornerLocked) {
+          fitToContent(); // corner lock: F is a camera no-op — the pair may not move
+        }
       }
-      // Guided-demo focus: glide the rig to the requested process node.
-      const wantFocus = focusRef.current;
+      // Guided-demo focus: glide the rig to the requested process node
+      // (disabled under corner lock — the rigid pair never reframes).
+      const wantFocus = cornerLocked ? null : focusRef.current;
       if (wantFocus !== appliedFocus) {
         if (wantFocus === null) {
           appliedFocus = null;
@@ -1637,28 +1684,38 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         }
       }
       const smoothing = 1 - Math.exp(-dt * 7);
-      // Track the hand tightly while dragging; glide softly once released.
-      const camSmoothing = 1 - Math.exp(-dt * (dragging || externalGrab ? 16 : 6));
+      if (cornerLocked) {
+        // Rigid corner pair: reassert the locked framing every frame so no
+        // stray camera write can ever drift the seam between the walls. The
+        // pinch-camera external grab is a no-op here (like F/focus) — the pair
+        // never moves.
+        applyCornerRig();
+      } else {
+        // Track the hand tightly while dragging OR while the pinch camera holds
+        // an external grab; glide softly once released.
+        const camSmoothing = 1 - Math.exp(-dt * (dragging || externalGrab ? 16 : 6));
 
-      // Flick inertia: after release the last drag velocity keeps the orbit
-      // drifting, decaying exponentially (~0.4s half-life).
-      if (!dragging && !externalGrab && !reducedMotion) {
-        if (Math.abs(angVel) > 1e-4) {
-          rig.dAngle += angVel * dt;
-          angVel *= Math.exp(-dt * 2.2);
+        // Flick inertia: after release the last drag velocity keeps the orbit
+        // drifting, decaying exponentially (~0.4s half-life). A live external
+        // grab (pinch camera) suppresses inertia exactly like a mouse drag.
+        if (!dragging && !externalGrab && !reducedMotion) {
+          if (Math.abs(angVel) > 1e-4) {
+            rig.dAngle += angVel * dt;
+            angVel *= Math.exp(-dt * 2.2);
+          }
+          if (Math.abs(heightVel) > 1e-3) {
+            rig.dHeight = Math.max(1.4, Math.min(30, rig.dHeight + heightVel * dt));
+            heightVel *= Math.exp(-dt * 2.6);
+          }
         }
-        if (Math.abs(heightVel) > 1e-3) {
-          rig.dHeight = Math.max(1.4, Math.min(30, rig.dHeight + heightVel * dt));
-          heightVel *= Math.exp(-dt * 2.6);
-        }
+
+        rig.angle = THREE.MathUtils.lerp(rig.angle, rig.dAngle, camSmoothing);
+        rig.radius = THREE.MathUtils.lerp(rig.radius, rig.dRadius, camSmoothing);
+        rig.height = THREE.MathUtils.lerp(rig.height, rig.dHeight, camSmoothing);
+        rig.targetX = THREE.MathUtils.lerp(rig.targetX, rig.dTargetX, camSmoothing);
+        rig.targetZ = THREE.MathUtils.lerp(rig.targetZ, rig.dTargetZ, camSmoothing);
+        applyRig();
       }
-
-      rig.angle = THREE.MathUtils.lerp(rig.angle, rig.dAngle, camSmoothing);
-      rig.radius = THREE.MathUtils.lerp(rig.radius, rig.dRadius, camSmoothing);
-      rig.height = THREE.MathUtils.lerp(rig.height, rig.dHeight, camSmoothing);
-      rig.targetX = THREE.MathUtils.lerp(rig.targetX, rig.dTargetX, camSmoothing);
-      rig.targetZ = THREE.MathUtils.lerp(rig.targetZ, rig.dTargetZ, camSmoothing);
-      applyRig();
 
       env?.update(t);
 
@@ -1805,6 +1862,7 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       data-region="fleet"
       data-mode={mode}
       data-layout={layout}
+      data-corner-lock={cornerLock ? "true" : "false"}
       data-idea-count={ideas.length}
       data-tree-count={trees.length}
       aria-label={`Room ${mode}: ${ideas.length} idea${ideas.length === 1 ? "" : "s"}, ${trees.length} build${trees.length === 1 ? "" : "s"}`}
