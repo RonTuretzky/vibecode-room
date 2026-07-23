@@ -1420,14 +1420,14 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
               {autoAccept ? "Auto-Build: ON" : "Auto-Build: OFF"}
             </button>
           ) : null}
-          {/* Build-side control (imports a repo to BUILD): wall B + full view. */}
+          {/* Build-side control (phone-imports a project to BUILD): wall B + full view. */}
           {showBuildSurfaces ? (
             <button
               type="button"
               className="ctl-button qr-import"
               data-testid="qr-import-button"
               onClick={() => setQrOpen(true)}
-              title="Show a QR code — scan it on a phone to add a GitHub repo to the wall."
+              title="Show a QR code — scan it on a phone to add a project (context + optional link) to the wall."
             >
               QR Import
             </button>

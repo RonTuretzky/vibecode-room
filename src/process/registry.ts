@@ -328,37 +328,10 @@ export class ProcessRegistry {
     // builds a runnable artifact. Fire-and-forget — the build(s) flip 'building'
     // -> 'ready'/'failed'; the trailing `process.build` trace lets the runtime
     // republish so the snapshot reflects the live preview. The demo seed skips
-    // this. With the multi-backend orchestrator wired, the idea fans out to
-    // every enabled backend (builds/<upid>/<backendId>/) and the legacy
-    // single-build ideaBuilds path is skipped — running both would double-spawn
-    // the claude CLI and race each other's builds/<upid>/ directory.
+    // this. Deferred callers (the phone import's clone-then-build routine) call
+    // startBuild directly once their pre-build step settles.
     if (seed.build === true) {
-      const pitch =
-        typeof seed.prompt === "string" && seed.prompt.length > 0 ? seed.prompt : pitchFromInput(seed.input);
-      if (this.#orchestrator !== null) {
-        const orchestrator = this.#orchestrator;
-        void orchestrator
-          .start({ upid, ideaId: ideaIdFromInput(seed.input) ?? upid, prompt: pitch, callsign: assignment.callsign })
-          .then(
-            () => {
-              this.trace("process.build", seed.correlationId, upid, {
-                builds: orchestrator.builds(upid).map((build) => ({ backend: build.backend, status: build.status })),
-              });
-            },
-            () => undefined,
-          );
-      } else if (this.#ideaBuilds !== null) {
-        void this.#ideaBuilds.start(pitch, upid).then(
-          () => {
-            const state = this.#ideaBuilds?.state(upid);
-            this.trace("process.build", seed.correlationId, upid, {
-              status: state?.status ?? "failed",
-              previewUrl: state?.previewUrl ?? null,
-            });
-          },
-          () => undefined,
-        );
-      }
+      this.startBuild(upid, { correlationId: seed.correlationId });
     }
 
     return {
@@ -367,6 +340,62 @@ export class ProcessRegistry {
       spawn,
       spokenAck: `${process.callsign} spawned.`,
     };
+  }
+
+  // Kick the accept->build->preview fan-out for an already-spawned process:
+  // spawn(build:true) routes here immediately; the phone import's GitHub clone
+  // routine calls it after the clone settles, with the digest-enriched prompt.
+  // The prompt override REPLACES the stored seed prompt so a later commission
+  // (execute) inherits the same enriched task. Routing is unchanged: with the
+  // multi-backend orchestrator wired, the pitch fans out to every enabled
+  // backend (builds/<upid>/<backendId>/) and the legacy single-build ideaBuilds
+  // path is skipped — running both would double-spawn the claude CLI and race
+  // each other's builds/<upid>/ directory. Returns false (no build started)
+  // for unknown or dead processes — a halt/emergency stop between spawn and a
+  // deferred build must win.
+  startBuild(upid: string, options: { correlationId: string; prompt?: string }): boolean {
+    const record = this.#processes.get(upid);
+    const stored = this.#seeds.get(upid);
+    if (record === undefined || record.state === "dead" || stored === undefined) {
+      return false;
+    }
+    if (options.prompt !== undefined && options.prompt.length > 0) {
+      stored.prompt = options.prompt;
+    }
+    const pitch = stored.prompt.length > 0 ? stored.prompt : pitchFromInput(stored.input);
+    if (this.#orchestrator !== null) {
+      const orchestrator = this.#orchestrator;
+      void orchestrator
+        .start({ upid, ideaId: ideaIdFromInput(stored.input) ?? upid, prompt: pitch, callsign: record.callsign })
+        .then(
+          () => {
+            this.trace("process.build", options.correlationId, upid, {
+              builds: orchestrator.builds(upid).map((build) => ({ backend: build.backend, status: build.status })),
+            });
+          },
+          () => undefined,
+        );
+      return true;
+    }
+    // LEGACY caveat: buildIdeaPreview wipes builds/<upid>/ wholesale, which
+    // would take a phone import's builds/<upid>/repo/ checkout with it. In
+    // production the orchestrator (which only wipes per-backend subdirs) is
+    // always wired; the legacy branch is reachable only from injected-
+    // builderAgent test runtimes, whose clone seams never write to disk.
+    if (this.#ideaBuilds !== null) {
+      void this.#ideaBuilds.start(pitch, upid).then(
+        () => {
+          const state = this.#ideaBuilds?.state(upid);
+          this.trace("process.build", options.correlationId, upid, {
+            status: state?.status ?? "failed",
+            previewUrl: state?.previewUrl ?? null,
+          });
+        },
+        () => undefined,
+      );
+      return true;
+    }
+    return false;
   }
 
   // COMMISSION: launch the durable subscription run for a kicked-off process.

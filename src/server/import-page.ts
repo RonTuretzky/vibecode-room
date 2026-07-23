@@ -1,8 +1,12 @@
 // GET /submit — the page a phone lands on after scanning the wall's QR overlay.
 // Deliberately self-contained (inline CSS/JS, no build step, no framework): it is
-// served by the API process directly, so it must work without the Vite bundle and
-// on any mobile browser. It POSTs { url } to /api/projects/import and shows a
-// clear success ("added to the wall") or error state.
+// served by the API process directly (main app AND the dedicated phone listener),
+// so it must work without the Vite bundle and on any mobile browser.
+//
+// The refactored contract: CONTEXT is the primary field — describe what the
+// fleet should build — and the LINK is optional (any http(s) URL; a GitHub
+// repo link gets cloned and grounds the build). It POSTs { context, url } to
+// /api/projects/import and shows the spawned project's callsign on success.
 export function importPageHtml(): string {
   return `<!doctype html>
 <html lang="en">
@@ -21,11 +25,14 @@ export function importPageHtml(): string {
   h1 { font-size: 1.3rem; margin: 0 0 0.25rem; }
   p.hint { color: #8b93a7; font-size: 0.9rem; margin: 0 0 1.25rem; }
   form { display: flex; flex-direction: column; gap: 0.75rem; }
-  input[type="url"] {
+  textarea, input[type="url"] {
     padding: 0.85rem 1rem; font-size: 1rem; border-radius: 0.75rem;
     border: 1px solid #2a3040; background: #131826; color: inherit; outline: none;
+    font-family: inherit;
   }
-  input[type="url"]:focus { border-color: #5b8cff; }
+  textarea { resize: vertical; min-height: 5.5rem; }
+  textarea:focus, input[type="url"]:focus { border-color: #5b8cff; }
+  label { color: #8b93a7; font-size: 0.8rem; margin-bottom: -0.35rem; }
   button {
     padding: 0.85rem 1rem; font-size: 1rem; font-weight: 600; border-radius: 0.75rem;
     border: none; background: #5b8cff; color: #0b0e14; cursor: pointer;
@@ -39,21 +46,33 @@ export function importPageHtml(): string {
 <body>
 <main>
   <h1>Add a project to the wall</h1>
-  <p class="hint">Paste a GitHub repository URL — it joins the Vibersyn fleet as a project in progress.</p>
+  <p class="hint">Describe what the fleet should build. Optionally add a link — a GitHub repo gets cloned and grounds the build; any other link rides along as reference.</p>
   <form id="import-form">
+    <label for="project-context">What should the fleet build?</label>
+    <textarea id="project-context" autocomplete="off" autocapitalize="sentences"
+              placeholder="A synthwave dashboard for our ticket queue…" autofocus></textarea>
+    <label for="repo-url">Link (optional) — GitHub repo or any reference URL</label>
     <input id="repo-url" type="url" inputmode="url" autocomplete="off" autocapitalize="off"
-           placeholder="https://github.com/owner/repo" required autofocus />
+           placeholder="https://github.com/owner/repo" />
     <button id="submit-button" type="submit">Add to the wall</button>
   </form>
   <div id="status" role="status"></div>
 </main>
 <script>
   const form = document.getElementById("import-form");
-  const input = document.getElementById("repo-url");
+  const contextInput = document.getElementById("project-context");
+  const urlInput = document.getElementById("repo-url");
   const button = document.getElementById("submit-button");
   const status = document.getElementById("status");
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
+    const context = contextInput.value.trim();
+    const url = urlInput.value.trim();
+    if (context === "" && url === "") {
+      status.className = "error";
+      status.textContent = "Add some context or a link.";
+      return;
+    }
     button.disabled = true;
     status.className = "";
     status.textContent = "Adding…";
@@ -61,16 +80,17 @@ export function importPageHtml(): string {
       const response = await fetch("/api/projects/import", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ url: input.value.trim() }),
+        body: JSON.stringify({ context, url }),
       });
       const body = await response.json().catch(() => ({}));
       if (response.ok && body.ok) {
         status.className = "ok";
-        status.textContent = "Added to the wall ✓";
-        input.value = "";
+        status.textContent = body.callsign ? "\\u2713 " + body.callsign + " is on the wall" : "Added to the wall \\u2713";
+        contextInput.value = "";
+        urlInput.value = "";
       } else {
         status.className = "error";
-        status.textContent = body.error || "That URL was rejected. Use https://github.com/owner/repo.";
+        status.textContent = body.error || "That submission was rejected. Add some context or a valid link.";
       }
     } catch {
       status.className = "error";

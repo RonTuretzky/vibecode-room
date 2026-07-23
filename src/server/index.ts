@@ -1,6 +1,6 @@
 import { websocket as honoWebsocket } from "hono/bun";
 import { createProjectorRuntime } from "./composition";
-import { createProjectorApp } from "./app";
+import { createPhoneImportApp, createProjectorApp } from "./app";
 import { formatDegradationNotice } from "./degradation-notice";
 import { GenAiOtlpExporter } from "../obs/otel";
 
@@ -19,10 +19,35 @@ startOtelTraceExport(runtime);
 const host = process.env.HOST ?? "127.0.0.1";
 const port = parsePort(process.env.VIBERSYN_PORT ?? process.env.PORT ?? "8787");
 
+// Dedicated PHONE IMPORT listener: a second socket on 0.0.0.0 serving ONLY the
+// import surface (/submit + import APIs), so the QR flow works from phones on
+// the room LAN no matter how the main server is bound — the unauthenticated
+// control APIs (emergency stop, seam, mic WS) can stay on loopback. Default
+// port: main port + 1; override with VIBERSYN_PHONE_PORT; disable with
+// VIBERSYN_PHONE_LISTENER=0. A failed bind (port in use) degrades to the
+// legacy main-bind-derived QR URL instead of crashing the room.
+const phonePortWanted = process.env.VIBERSYN_PHONE_LISTENER === "0" ? null : resolvePhonePort(process.env.VIBERSYN_PHONE_PORT, port);
+let phonePort: number | null = null;
+if (phonePortWanted !== null) {
+  try {
+    const phoneApp = createPhoneImportApp(runtime, { host, port, phonePort: phonePortWanted });
+    Bun.serve({
+      hostname: "0.0.0.0",
+      port: phonePortWanted,
+      fetch: (request) => phoneApp.fetch(request),
+    });
+    phonePort = phonePortWanted;
+  } catch (error) {
+    console.warn(
+      `[import] phone listener failed to bind 0.0.0.0:${phonePortWanted} (${error instanceof Error ? error.message : String(error)}) — QR falls back to the main bind.`,
+    );
+  }
+}
+
 // The HTTP routes live in createProjectorApp (app.ts) so endpoint behavior is
 // testable without a bound port; this entry only owns process-level wiring —
 // the runtime boot, the listening socket, and the /api/mic WebSocket upgrade.
-const app = createProjectorApp(runtime, { env: process.env, host, port });
+const app = createProjectorApp(runtime, { env: process.env, host, port, phonePort });
 
 // Per-connection state for the live-mic WebSocket.
 interface MicSocketData {
@@ -91,6 +116,9 @@ Bun.serve<MicSocketData>({
 });
 
 console.log(`Vibersyn projector server listening on http://${host}:${port}`);
+if (phonePort !== null) {
+  console.log(`[import] phone submit listener on http://0.0.0.0:${phonePort}/submit (QR points here)`);
+}
 // Structured startup degradation notice (ISSUE-0003): one line per stubbed leg
 // with the env var that upgrades it, computed from the resolved runtime.
 console.warn(formatDegradationNotice(runtime.degradation));
@@ -135,4 +163,19 @@ function startOtelTraceExport(exportingRuntime: Awaited<ReturnType<typeof create
 function parsePort(value: string): number {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : 8787;
+}
+
+// The phone listener's port. Falls back to main+1 — NEVER to parsePort's 8787
+// default and never to the main port itself: a garbage VIBERSYN_PHONE_PORT must
+// not make the phone listener grab the main port first and crash the room's own
+// bind (the phone listener is best-effort by contract).
+function resolvePhonePort(raw: string | undefined, mainPort: number): number {
+  const parsed = Number(raw);
+  if (raw !== undefined && Number.isInteger(parsed) && parsed > 0 && parsed !== mainPort) {
+    return parsed;
+  }
+  if (raw !== undefined) {
+    console.warn(`[import] VIBERSYN_PHONE_PORT=${raw} is unusable — falling back to ${mainPort + 1}.`);
+  }
+  return mainPort + 1;
 }
