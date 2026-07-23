@@ -33,6 +33,8 @@ export interface ProcessBuildSnapshot {
   slideshowUrl: string | null;
   progressLabel?: string;
   percent?: number;
+  /** Last backend failure message (honesty surface — present only when set). */
+  error?: string;
 }
 
 export interface OrchestratorStartInput {
@@ -179,7 +181,28 @@ export class BuildOrchestrator {
       });
     }
     this.#onUpdate();
-    await Promise.allSettled(targets.map((backend) => this.#track(state, this.#runBuild(state, backend, null))));
+    await Promise.allSettled(targets.map((backend) => this.#track(state, this.#runFreshWithRetry(state, backend))));
+  }
+
+  // Fresh fan-out with ONE automatic retry: a mock lane that fails its first
+  // pass (quota blip, transient timeout) gets exactly one clean re-run before
+  // it is surfaced as failed. Corrections (steer) never retry.
+  async #runFreshWithRetry(state: TrackedProcess, backend: BuildBackend): Promise<void> {
+    await this.#runBuild(state, backend, null);
+    const build = state.builds.get(backend.id)!;
+    if (state.aborted || build.status !== "failed") {
+      return;
+    }
+    console.warn(`[buildloop] ${state.input.upid}/${backend.id} mock failed (${build.error ?? "unknown"}) — retrying once`);
+    build.status = "building";
+    build.progressLabel = "retrying mock";
+    build.percent = 0;
+    this.#onUpdate();
+    await this.#runBuild(state, backend, null);
+    const settled = state.builds.get(backend.id)!;
+    if (!state.aborted && settled.status === "failed") {
+      console.warn(`[buildloop] ${state.input.upid}/${backend.id} mock failed after retry: ${settled.error ?? "unknown"}`);
+    }
   }
 
   // The snapshot builds[] fragment for one process (display order = fan-out
@@ -201,6 +224,7 @@ export class BuildOrchestrator {
         slideshowUrl: base !== null && build.hasSlideshow ? `${base}slideshow/?v=${build.version}` : null,
         ...(build.progressLabel === undefined ? {} : { progressLabel: build.progressLabel }),
         ...(build.percent === undefined ? {} : { percent: build.percent }),
+        ...(build.error === undefined ? {} : { error: build.error }),
       };
     });
   }
