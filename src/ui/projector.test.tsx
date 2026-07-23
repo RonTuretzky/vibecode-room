@@ -537,3 +537,27 @@ describe("gesture dwell-select interaction", () => {
     expect(html).toContain("LOCKED in gesture mode");
   });
 });
+
+// PINCH CAMERA (?hands=): camera CONTROL only — an opt-in hidden layer,
+// independent of the dwell/gesture layers and composable with them.
+describe("pinch camera layer", () => {
+  test("?hands=1 mounts the pinch camera layer", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch="?live=0&wall=A&hands=1" />,
+    );
+    expect(html).toContain('data-testid="pinch-camera-layer"');
+  });
+
+  test("default URL: no pinch camera layer (opt-in only, desk mode untouched)", () => {
+    const html = renderToStaticMarkup(<ProjectorApp initialSnapshot={demoProjectorSnapshot} />);
+    expect(html).not.toContain('data-testid="pinch-camera-layer"');
+  });
+
+  test("?gesture=1&hands=1 composes: dwell overlay AND pinch camera both mount", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch="?live=0&gesture=1&hands=1" />,
+    );
+    expect(html).toContain('data-testid="gesture-overlay"');
+    expect(html).toContain('data-testid="pinch-camera-layer"');
+  });
+});

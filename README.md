@@ -82,6 +82,26 @@ Full bring-up (which Kinect you have, camera placement, libfreenect2 +
 bridge build, calibration, troubleshooting):
 [`docs/KINECT-SINGLE-WALL.md`](docs/KINECT-SINGLE-WALL.md).
 
+### Hand-pinch camera (optional, TouchDesigner)
+
+An independent, opt-in gesture input for the CAMERA (composes with desk mode
+and with `--gesture` dwell): a TouchDesigner rig (the laptop's built-in camera
++ MediaPipe hand tracking — no depth camera needed) streams per-hand pinch
+frames over a WebSocket on **:9980**, and the
+opted-in wall window steers its 3D camera with your hands — **pinch-hold one
+hand and drag** to orbit (release with a flick to coast, exactly like a mouse
+flick); **pinch BOTH hands and spread/squeeze** to zoom in/out (drifting both
+hands pans). URL param: `?hands=1` connects to `ws://<page-host>:9980`,
+`?hands=ws://td-mac:9980` names an explicit source, absent = off.
+
+- **No hardware:** `./run-room.sh --fake-hands` — a scripted 12 s synthetic
+  pinch choreography drives wall A (orbit → flick coast → zoom → pan), for
+  tuning the feel with no TouchDesigner and no cameras.
+- **Real rig:** `./run-room.sh --hands=ws://<td-host>:9980` — the TouchDesigner
+  network described in
+  [`gesture-wall/touchdesigner/README.md`](gesture-wall/touchdesigner/README.md)
+  (MediaPipe plugin install, drop-in DAT scripts, channel verification, tuning).
+
 ## Model
 
 The Cerebras decision path (`VIBERSYN_DECISION_LLM=cue-cerebras`, needs

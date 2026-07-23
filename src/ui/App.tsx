@@ -3,6 +3,7 @@ import type { CSSProperties } from "react";
 import { demoProjectorSnapshot, busyRoomSnapshot, emptyProjectorSnapshot, withUnmuted } from "./demo-data";
 import type { ProjectorProcess, ProjectorSnapshot, TranscriptLine } from "./types";
 import { GestureLayer } from "./gesture/GestureLayer";
+import { PinchCameraLayer } from "./gesture/PinchCameraLayer";
 import { RoomScene, type IdeaOrbSpec, type SceneLayout, type SceneMode, type TreeSpec } from "./RoomScene";
 import { Slideshow } from "./Slideshow";
 import { BuildDetail } from "./BuildDetail";
@@ -122,6 +123,10 @@ export function ProjectorApp({ initialSnapshot, urlSearch }: ProjectorAppProps) 
     onChange();
     return () => document.removeEventListener("fullscreenchange", onChange);
   }, []);
+  // Motion-tracking cursor glyph: off by default (the room highlights targets,
+  // not a pointer), toggled on from the HUD to see/aim where the camera is
+  // tracking. Defaults ON in gesture mode's first moments would distract, so off.
+  const [showCursor, setShowCursor] = useState(false);
   const [hideMenuOpen, setHideMenuOpen] = useState(false);
   const hideMenuOpenRef = useRef(false);
   hideMenuOpenRef.current = hideMenuOpen;
@@ -1240,8 +1245,14 @@ export function ProjectorApp({ initialSnapshot, urlSearch }: ProjectorAppProps) 
           wall={urlConfig.gesture?.wall ?? "A"}
           fusionUrl={urlConfig.gesture?.fusionUrl ?? ""}
           mouseTest={urlConfig.dwell === "mouse"}
+          showCursor={showCursor}
         />
       ) : null}
+      {/* PINCH CAMERA (?hands=): composes with gesture mode — pointerNav only
+          unbinds DOM listeners, the rig stays drivable through the registered
+          camera control — and with desk mode via the rig's latest-writer-wins
+          d* contract. */}
+      {urlConfig.hands !== null ? <PinchCameraLayer url={urlConfig.hands.url} wall={urlConfig.wall} /> : null}
       {urlConfig.badge ? (
         <div className="wall-badge" data-testid="wall-badge">
           {urlConfig.badge}
@@ -1355,6 +1366,17 @@ export function ProjectorApp({ initialSnapshot, urlSearch }: ProjectorAppProps) 
             title="Fill the display (projector wall). Point and dwell, or click."
           >
             {isFullscreen ? "⛶ Exit Fullscreen" : "⛶ Fullscreen"}
+          </button>
+          <button
+            type="button"
+            className={`ctl-button cursor-toggle${showCursor ? " on" : ""}`}
+            data-testid="cursor-toggle-button"
+            data-state={showCursor ? "on" : "off"}
+            aria-pressed={showCursor}
+            onClick={() => setShowCursor((v) => !v)}
+            title="Show/hide the motion-tracking cursor — a dot marking where the camera sees your hand. Handy for aiming; off by default."
+          >
+            {showCursor ? "◉ Cursor: ON" : "◎ Cursor: OFF"}
           </button>
           <button
             type="button"

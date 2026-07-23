@@ -46,6 +46,10 @@ export interface GestureLayerProps {
   // point→highlight→dwell mechanic can be driven without cameras
   // (?dwell=mouse — testing / accessibility fallback). Default false.
   mouseTest?: boolean;
+  // When true, draw a visible glyph at each live cursor position — an opt-in
+  // aid for verifying/aiming motion tracking (the room's default is glyph-free,
+  // target-highlight-only). Toggled from the HUD "Cursor" button. Default false.
+  showCursor?: boolean;
 }
 
 // A full-viewport, pointer-events:none overlay that turns the gesture-wall
@@ -54,9 +58,13 @@ export interface GestureLayerProps {
 // the pointed-at target's highlight (grow/glow via [data-dwell-hot] / scene
 // emissive boost) plus the radial dwell-progress ring rendered ON the target
 // are the only feedback. Completing the ring synthesizes the activation.
-export function GestureLayer({ wall, fusionUrl, mouseTest = false }: GestureLayerProps) {
+export function GestureLayer({ wall, fusionUrl, mouseTest = false, showCursor = false }: GestureLayerProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const statusRef = useRef<GestureWallStatus>("closed");
+  // Live-readable inside the rAF closure so the HUD toggle takes effect without
+  // remounting the layer (which would drop in-flight dwell state).
+  const showCursorRef = useRef(showCursor);
+  showCursorRef.current = showCursor;
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -251,7 +259,10 @@ export function GestureLayer({ wall, fusionUrl, mouseTest = false }: GestureLaye
       }
       sceneHighlights = nextScene;
 
-      draw(ctx, canvas, result.active, rectsById, fireFlashes, t, vpW, vpH);
+      const cursorGlyphs = showCursorRef.current
+        ? [...cursors.values()].map((c) => ({ x: c.x * vpW, y: c.y * vpH, engaged: c.engaged }))
+        : [];
+      draw(ctx, canvas, result.active, rectsById, fireFlashes, t, vpW, vpH, cursorGlyphs);
       raf = requestAnimationFrame(frame);
     };
     raf = requestAnimationFrame(frame);
@@ -295,6 +306,7 @@ function draw(
   t: number,
   vpW: number,
   vpH: number,
+  cursorGlyphs: readonly { x: number; y: number; engaged: boolean }[] = [],
 ): void {
   if (ctx === null || canvas === null) {
     return;
@@ -351,6 +363,26 @@ function draw(
     ctx.strokeStyle = `hsla(${flash.hue}, 95%, 70%, ${0.8 * (1 - age)})`;
     ctx.beginPath();
     ctx.arc(flash.x, flash.y, flash.r + age * 26, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // Opt-in motion-tracking cursor glyph (HUD "Cursor" toggle): a bright dot with
+  // a soft halo at each live pointer, larger/whiter while engaged (pinched/held).
+  for (const g of cursorGlyphs) {
+    const rad = g.engaged ? 15 : 10;
+    const grad = ctx.createRadialGradient(g.x, g.y, 0, g.x, g.y, rad * 2.4);
+    grad.addColorStop(0, `hsla(190, 100%, 70%, ${g.engaged ? 0.5 : 0.32})`);
+    grad.addColorStop(1, "hsla(190, 100%, 70%, 0)");
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(g.x, g.y, rad * 2.4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = g.engaged ? "hsla(190, 100%, 92%, 0.98)" : "hsla(190, 95%, 78%, 0.9)";
+    ctx.beginPath();
+    ctx.arc(g.x, g.y, rad, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "hsla(190, 100%, 40%, 0.9)";
     ctx.stroke();
   }
 }
