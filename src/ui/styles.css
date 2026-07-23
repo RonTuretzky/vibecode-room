@@ -3011,3 +3011,21 @@ main.gesture-mode[data-view="builds"] .guided-card.slim {
   text-transform: uppercase;
   color: var(--ink-soft);
 }
+
+
+/* Placement-time fullscreen button: bottom-center, impossible to miss, gone
+   once the window is actually fullscreen (see FullscreenButton). */
+.fullscreen-button {
+  position: fixed;
+  left: 50%;
+  bottom: 28px;
+  transform: translateX(-50%);
+  z-index: 60;
+  min-height: 72px;
+  padding: 18px 40px;
+  font-size: 24px;
+  border-radius: 18px;
+  background: rgba(28, 30, 44, 0.92);
+  border: 1px solid rgba(140, 160, 255, 0.5);
+  box-shadow: 0 6px 30px rgba(0, 0, 0, 0.45);
+}

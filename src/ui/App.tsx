@@ -1223,6 +1223,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch }: ProjectorAppProps) 
           {urlConfig.badge}
         </div>
       ) : null}
+      <FullscreenButton />
       {voiceFlash !== null ? (
         <div className="voice-flash" data-testid="voice-flash" role="status">
           🎤 vibersyn → {voiceFlash}
@@ -1569,6 +1570,52 @@ export function ProjectorApp({ initialSnapshot, urlSearch }: ProjectorAppProps) 
 // meter so the room can confirm the mic is actually feeding the server. When the
 // server reports ASR mode "replay" (no DEEPGRAM_API_KEY), audio still streams and
 // the meter moves, but words are not transcribed — surfaced via the title hint.
+// Placement-time fullscreen affordance: browsers only honor requestFullscreen
+// from a real user gesture, so this is a mouse/trackpad button for when the
+// operator drags a wall window onto its projector. It hides once the window
+// is fullscreen (or effectively fullscreen, e.g. Chrome --kiosk).
+function FullscreenButton() {
+  const [visible, setVisible] = useState<boolean>(() => needsFullscreenHint());
+  useEffect(() => {
+    const update = () => setVisible(needsFullscreenHint());
+    document.addEventListener("fullscreenchange", update);
+    window.addEventListener("resize", update);
+    return () => {
+      document.removeEventListener("fullscreenchange", update);
+      window.removeEventListener("resize", update);
+    };
+  }, []);
+  if (!visible) {
+    return null;
+  }
+  return (
+    <button
+      type="button"
+      className="ctl-button fullscreen-button"
+      data-testid="fullscreen-button"
+      title="Fullscreen this wall on its projector"
+      onClick={() => {
+        void document.documentElement.requestFullscreen?.();
+      }}
+    >
+      ⛶ Fullscreen
+    </button>
+  );
+}
+
+function needsFullscreenHint(): boolean {
+  if (typeof document === "undefined" || typeof window === "undefined") {
+    return false;
+  }
+  if (document.fullscreenElement !== null) {
+    return false;
+  }
+  // Kiosk/native-fullscreen windows report no fullscreenElement but already
+  // cover the screen — no hint needed there.
+  const screenH = window.screen?.height ?? 0;
+  return screenH === 0 || window.innerHeight < screenH - 2;
+}
+
 function MicControl({
   state,
   level,
