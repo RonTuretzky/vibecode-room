@@ -36,6 +36,15 @@ export interface IdeaOrbSpec {
   verified: boolean;
 }
 
+// A tree's per-backend build-lane tally: how many concept mock lanes are still
+// mocking, went mock-ready, or failed. Rendered as small status satellites
+// around the node. All counts default to 0 when the summary is absent.
+export interface TreeBuildSummary {
+  building: number;
+  ready: number;
+  failed: number;
+}
+
 export interface TreeSpec {
   upid: string;
   callsign: string;
@@ -46,11 +55,69 @@ export interface TreeSpec {
   // True when this process is the live steering target — the node gets a
   // steering ring so the room can see where spoken transcript is routing.
   steering: boolean;
-  // TWO-STAGE language, legible at projector distance: a "concept" (kickoff:
-  // mock lanes + pitch deck) renders as a SAPLING; a "commissioned" project
-  // (real subscription execution) grows into the FULL tree with a gold
-  // commission ring. Absent = concept (legacy callers).
-  stage?: "concept" | "commissioned";
+  // TWO-STAGE (now THREE-STAGE) language, legible at projector distance: a
+  // "concept" (kickoff: mock lanes + pitch deck) renders as a SAPLING; a
+  // "commissioned" project (real subscription execution running) grows into the
+  // FULL tree with a gold commission ring + live progress arc; a "built" one
+  // (execution finished) keeps the full tree with a brighter completion ring.
+  // Absent = concept (legacy callers).
+  stage?: "concept" | "commissioned" | "built";
+  // ── richer per-process indicators (all OPTIONAL / back-compat) ────────────
+  // Per-backend build-lane tally → small status satellites around the node.
+  // Absent = no build lanes drawn (legacy callers).
+  builds?: TreeBuildSummary;
+  // True once a public GitHub Pages pitch deck exists for this project → a small
+  // take-home beacon crowns the node. Absent/false = no beacon.
+  published?: boolean;
+  // Count of failed build lanes / a failed run → a red failure pip. Also implied
+  // by a halted/blocked state. Absent = 0.
+  failedCount?: number;
+}
+
+// The ring style that marks a tree's stage on the ground/orb.
+export type TreeRingStyle = "none" | "commission" | "built";
+
+// The RESOLVED, render-ready indicator plan for a tree — pure derivation from a
+// TreeSpec, shared by every render style (garden trees, orbit orbs, hyperbolic
+// flora) and unit-tested independently of three.js.
+export interface TreeIndicators {
+  // Full-grown tree (commissioned/built) vs a young sapling (concept).
+  grown: boolean;
+  // Stage ring style around the node.
+  ring: TreeRingStyle;
+  // Per-status build-lane counts (clamped, integer, defaulted to 0).
+  lanes: TreeBuildSummary;
+  // A public pitch deck exists → take-home beacon.
+  published: boolean;
+  // 0..1 sweep of a LIVE progress arc while the run is executing (progress in
+  // (0,100) and the state is active/planning), or null for no arc.
+  progressArc: number | null;
+  // A red failure pip (failed lane(s) or a halted/blocked state).
+  failed: boolean;
+}
+
+function clampCount(value: number | undefined): number {
+  return value !== undefined && Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0;
+}
+
+// Pure: resolve a TreeSpec into its render-ready indicator plan. Kept free of
+// three.js so it is unit-tested directly and reused across all render styles.
+export function treeIndicators(spec: TreeSpec): TreeIndicators {
+  const stage = spec.stage ?? "concept";
+  const grown = stage === "commissioned" || stage === "built";
+  const ring: TreeRingStyle = stage === "built" ? "built" : stage === "commissioned" ? "commission" : "none";
+  const lanes: TreeBuildSummary = {
+    building: clampCount(spec.builds?.building),
+    ready: clampCount(spec.builds?.ready),
+    failed: clampCount(spec.builds?.failed),
+  };
+  const failed = clampCount(spec.failedCount) > 0 || spec.state === "halted" || spec.state === "blocked";
+  // Live progress arc only while actually executing (active/planning) and mid-
+  // flight — never on a static concept, a paused run, or a finished build.
+  const pct = Math.min(100, Math.max(0, spec.progress));
+  const executing = (spec.state === "active" || spec.state === "planning") && stage !== "built";
+  const progressArc = executing && pct > 0 && pct < 100 ? pct / 100 : null;
+  return { grown, ring, lanes, published: spec.published === true, progressArc, failed };
 }
 
 export type SceneMode = "garden" | "orbit";
@@ -108,21 +175,34 @@ const VERIFIED_COLOR = 0x9affc9;
 const STEERING_COLOR = 0x9ee2ff;
 // Gold ground ring marking a COMMISSIONED project (real execution running).
 const COMMISSION_COLOR = 0xffd166;
+// Brighter completion ring for a BUILT project (execution finished).
+const BUILT_RING_COLOR = 0xffe6a3;
+// Build-lane satellite palette (mocking / mock-ready / failed).
+const LANE_BUILDING_COLOR = 0xf5a623;
+const LANE_READY_COLOR = 0x00ff88;
+const LANE_FAILED_COLOR = 0xff3b30;
+// Take-home publish beacon + the live progress arc + failure pip.
+const PUBLISHED_COLOR = 0x9ee2ff;
+const PROGRESS_ARC_COLOR = 0x9affc9;
+const FAILED_PIP_COLOR = 0xff3b30;
 const TRUNK_COLOR = 0x4a3527;
 const FLASH_MS = 1500;
 
 // Node label title: the inferred project title when the server has named the
 // build, else the callsign so a freshly spawned process is never label-less.
-function treeTitle(spec: TreeSpec): string {
+export function treeTitle(spec: TreeSpec): string {
   return spec.task.length > 0 ? spec.task : spec.callsign;
 }
 
+// The stage word carried onto every node label in every render style.
+export function stageWord(stage: TreeSpec["stage"]): string {
+  return stage === "built" ? "built" : stage === "commissioned" ? "commissioned" : "concept";
+}
+
 // Node label status: stage · state · progress, with the live steering marker
-// appended so the steering target reads from across the room. The stage word
-// carries the two-stage language onto every node in every render style.
-function treeStatus(spec: TreeSpec): string {
-  const stage = spec.stage === "commissioned" ? "commissioned" : "concept";
-  return `${stage} · ${spec.state} · ${Math.round(spec.progress)}%${spec.steering ? " · ⟵ steering" : ""}`;
+// appended so the steering target reads from across the room.
+export function treeStatus(spec: TreeSpec): string {
+  return `${stageWord(spec.stage)} · ${spec.state} · ${Math.round(spec.progress)}%${spec.steering ? " · ⟵ steering" : ""}`;
 }
 
 // ── hyperbolic layout constants (after the visualizer's H3/disk modes) ───────
@@ -841,6 +921,8 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       stem: new THREE.CylinderGeometry(0.03, 0.05, 1, 5),
       ring: new THREE.TorusGeometry(0.34, 0.015, 8, 48),
       orb: new THREE.SphereGeometry(1, 48, 48),
+      // Small unit sphere reused for build-lane satellites and failure pips.
+      pip: new THREE.SphereGeometry(0.12, 10, 10),
     };
     const trunkMat = new THREE.MeshPhongMaterial({ color: TRUNK_COLOR, emissive: TRUNK_COLOR, emissiveIntensity: 0.08 });
     const stemMat = new THREE.MeshPhongMaterial({ color: 0x1c6b4a, emissive: 0x1c6b4a, emissiveIntensity: 0.08 });
@@ -848,6 +930,11 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
     const ideaEntries = new Map<string, Entry>();
     const treeEntries = new Map<string, Entry>();
 
+    // Dispose an entry's per-entry GPU resources. Registered materials live in
+    // entry.mats; per-node geometries (rings, hit volumes, indicator arcs) are
+    // flagged ownGeometry and inline per-entry materials ownMaterial. Everything
+    // else on a node is SHARED (GEO.*, trunk/stem, the photoscan flora cache)
+    // and is freed once at unmount — never here.
     const disposeEntry = (entry: Entry) => {
       scene.remove(entry.group);
       entry.mats.forEach((mat) => mat.dispose());
@@ -856,15 +943,110 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         entry.label.material.dispose();
       }
       entry.group.traverse((node) => {
-        // Per-node geometries (rings, hit volumes) are flagged ownGeometry;
-        // everything else on a node is shared (GEO.* or the flora cache).
+        if (node instanceof THREE.Sprite) {
+          if (node !== entry.label) {
+            node.material.dispose();
+          }
+          return;
+        }
         if (node instanceof THREE.Mesh && node.userData.ownGeometry === true) {
           node.geometry.dispose();
         }
-        if (node instanceof THREE.Sprite && node !== entry.label) {
-          node.material.dispose();
+        if (node instanceof THREE.Mesh && node.userData.ownMaterial === true) {
+          (Array.isArray(node.material) ? node.material : [node.material]).forEach((mat) => mat.dispose());
         }
       });
+    };
+
+    // ── richer per-process indicators (shared by every render style) ─────────
+    // Every indicator is built ONCE per entry (only on a spec change, never per
+    // frame) and freed by disposeEntry's generic sweep. Sizes/heights are passed
+    // in so garden trees, orbit orbs, and hyperbolic flora reuse the same code.
+
+    // A small ring of build-lane status satellites (mocking=amber, ready=green,
+    // failed=red) around the node — one sphere per lane, one material per status.
+    const addLaneSatellites = (group: THREE.Group, lanes: TreeBuildSummary, y: number, radius: number, dot: number) => {
+      const total = lanes.building + lanes.ready + lanes.failed;
+      if (total === 0) {
+        return;
+      }
+      const bands: [number, number][] = [
+        [LANE_BUILDING_COLOR, lanes.building],
+        [LANE_READY_COLOR, lanes.ready],
+        [LANE_FAILED_COLOR, lanes.failed],
+      ];
+      let placed = 0;
+      for (const [color, count] of bands) {
+        if (count === 0) {
+          continue;
+        }
+        const mat = new THREE.MeshPhongMaterial({ color, emissive: color, emissiveIntensity: 0.75 });
+        for (let i = 0; i < count; i += 1) {
+          const angle = (placed / total) * Math.PI * 2 - Math.PI / 2;
+          const sat = new THREE.Mesh(GEO.pip, mat);
+          sat.userData.ownMaterial = true;
+          sat.position.set(Math.cos(angle) * radius, y, Math.sin(angle) * radius);
+          sat.scale.setScalar(dot);
+          group.add(sat);
+          placed += 1;
+        }
+      }
+    };
+
+    // Partial gauge arc sweeping 0→`arc` (0..1) of a ring, starting at the top.
+    // `tilt` lets orbit/flora lay it in the tilted plane their other rings use;
+    // omitted, it lies flat on the ground like the garden's commission ring.
+    const addProgressArc = (group: THREE.Group, arc: number, y: number, radius: number, thickness: number, tilt?: number) => {
+      const geo = new THREE.TorusGeometry(radius, thickness, 8, 48, Math.PI * 2 * Math.min(Math.max(arc, 0.02), 1));
+      const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: PROGRESS_ARC_COLOR, transparent: true, opacity: 0.85 }));
+      mesh.userData.ownGeometry = true;
+      mesh.userData.ownMaterial = true;
+      mesh.rotation.x = tilt ?? Math.PI / 2;
+      mesh.rotation.z = Math.PI / 2; // start the sweep near the top
+      mesh.position.y = y;
+      group.add(mesh);
+    };
+
+    // A take-home publish beacon: a bright core + additive halo crowning the node.
+    const addPublishedBeacon = (group: THREE.Group, y: number, scale: number) => {
+      const halo = new THREE.Sprite(
+        new THREE.SpriteMaterial({ map: glowTexture, color: PUBLISHED_COLOR, transparent: true, opacity: 0.7, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }),
+      );
+      halo.position.y = y;
+      halo.scale.setScalar(scale);
+      group.add(halo);
+      const core = new THREE.Mesh(GEO.pip, new THREE.MeshBasicMaterial({ color: 0xffffff }));
+      core.userData.ownMaterial = true;
+      core.position.y = y;
+      core.scale.setScalar(scale * 0.4);
+      group.add(core);
+    };
+
+    // A single red failure pip clipped to the node's crown/shell.
+    const addFailedPip = (group: THREE.Group, x: number, y: number, scale: number) => {
+      const pip = new THREE.Mesh(GEO.pip, new THREE.MeshBasicMaterial({ color: FAILED_PIP_COLOR }));
+      pip.userData.ownMaterial = true;
+      pip.position.set(x, y, 0);
+      pip.scale.setScalar(scale);
+      group.add(pip);
+    };
+
+    // The gold/completion stage ring around a grown node. `commission` (executing)
+    // is the classic gold halo; `built` (finished) is a brighter, thicker ring.
+    const addStageRing = (group: THREE.Group, style: TreeRingStyle, radius: number, y: number, tilt: number) => {
+      if (style === "none") {
+        return;
+      }
+      const built = style === "built";
+      const ring = new THREE.Mesh(
+        new THREE.TorusGeometry(radius, built ? 0.09 : 0.06, 8, 64),
+        new THREE.MeshBasicMaterial({ color: built ? BUILT_RING_COLOR : COMMISSION_COLOR, transparent: true, opacity: built ? 0.8 : 0.55 }),
+      );
+      ring.userData.ownGeometry = true;
+      ring.userData.ownMaterial = true;
+      ring.rotation.x = tilt;
+      ring.position.y = y;
+      group.add(ring);
     };
 
     // ── garden builders ─────────────────────────────────────────────────────
@@ -886,7 +1068,9 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         return null;
       }
       const color = STATE_COLOR[spec.state];
-      const commissioned = spec.stage === "commissioned";
+      // "built" trees stay full-grown too — grown covers commissioned + built.
+      const ind = treeIndicators(spec);
+      const commissioned = ind.grown;
       const group = new THREE.Group();
       const mats: THREE.MeshStandardMaterial[] = [];
       // The scan is ~19 units tall at scale 1; sapling vs full tree.
@@ -924,25 +1108,30 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       stateRing.rotation.x = Math.PI / 2;
       stateRing.position.y = 0.1;
       group.add(stateRing);
-      if (commissioned) {
-        const commissionRing = new THREE.Mesh(
-          new THREE.TorusGeometry(2.4, 0.06, 8, 64),
-          new THREE.MeshBasicMaterial({ color: COMMISSION_COLOR, transparent: true, opacity: 0.55 }),
-        );
-        commissionRing.userData.ownGeometry = true;
-        commissionRing.rotation.x = Math.PI / 2;
-        commissionRing.position.y = 0.06;
-        group.add(commissionRing);
-      }
+      // Stage ring: the gold commission halo, or the brighter ring once built.
+      addStageRing(group, ind.ring, 2.4, 0.06, Math.PI / 2);
       if (spec.steering) {
         const steerRing = new THREE.Mesh(
           new THREE.TorusGeometry(2.1, 0.05, 8, 64),
           new THREE.MeshBasicMaterial({ color: STEERING_COLOR, transparent: true, opacity: 0.65 }),
         );
         steerRing.userData.ownGeometry = true;
+        steerRing.userData.ownMaterial = true;
         steerRing.rotation.x = Math.PI / 2;
         steerRing.position.y = 0.14;
         group.add(steerRing);
+      }
+      // Live indicator overlays — progress arc, build-lane satellites, publish
+      // beacon, failure pip — ride the real tree just like the primitive glyphs.
+      if (ind.progressArc !== null) {
+        addProgressArc(group, ind.progressArc, 0.18, commissioned ? 2.6 : 1.6, 0.055);
+      }
+      addLaneSatellites(group, ind.lanes, commissioned ? 5.4 : 2.6, commissioned ? 2.3 : 1.2, commissioned ? 0.95 : 0.65);
+      if (ind.published) {
+        addPublishedBeacon(group, commissioned ? 9.4 : 4.6, commissioned ? 1.5 : 0.95);
+      }
+      if (ind.failed) {
+        addFailedPip(group, commissioned ? 1.4 : 0.8, commissioned ? 6.5 : 3.2, commissioned ? 0.9 : 0.65);
       }
       const label = makeLabelSprite(treeTitle(spec), treeStatus(spec), cssHex(color));
       label.position.y = commissioned ? 10.2 : 5.1;
@@ -990,6 +1179,7 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
           GEO.ring,
           new THREE.MeshBasicMaterial({ color: VERIFIED_COLOR, transparent: true, opacity: 0.55 }),
         );
+        ring.userData.ownMaterial = true;
         ring.scale.setScalar(size * 1.6);
         ring.rotation.x = Math.PI / 2;
         ring.position.y = 0.08;
@@ -1055,6 +1245,7 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
             GEO.ring,
             new THREE.MeshBasicMaterial({ color: VERIFIED_COLOR, transparent: true, opacity: 0.55 }),
           );
+          ring.userData.ownMaterial = true;
           ring.scale.setScalar(size);
           ring.rotation.x = Math.PI * 0.45;
           head.add(ring);
@@ -1071,6 +1262,8 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         new THREE.SphereGeometry(Math.max(0.5, 0.45 * size), 8, 8),
         new THREE.MeshBasicMaterial({ visible: false }),
       );
+      hit.userData.ownGeometry = true;
+      hit.userData.ownMaterial = true;
       hit.userData.pick = { kind: "idea", key: ideaKey(spec) };
       head.add(hit);
 
@@ -1090,7 +1283,8 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         return real;
       }
       const color = STATE_COLOR[spec.state];
-      const commissioned = spec.stage === "commissioned";
+      const ind = treeIndicators(spec);
+      const commissioned = ind.grown;
       const group = new THREE.Group();
       const foliageMat = new THREE.MeshPhongMaterial({
         color,
@@ -1144,15 +1338,10 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
           side.userData.pick = { kind: "process", callsign: spec.callsign };
           group.add(side);
         }
-        // Gold commission ring: the ground halo that says "this one is real".
-        const commissionRing = new THREE.Mesh(
-          new THREE.TorusGeometry(2.4, 0.06, 8, 64),
-          new THREE.MeshBasicMaterial({ color: COMMISSION_COLOR, transparent: true, opacity: 0.55 }),
-        );
-        commissionRing.rotation.x = Math.PI / 2;
-        commissionRing.position.y = 0.06;
-        group.add(commissionRing);
       }
+      // Stage ring: the gold ground halo that says "this one is real" (commission)
+      // or the brighter completion ring (built). Concepts get none.
+      addStageRing(group, ind.ring, 2.4, 0.06, Math.PI / 2);
       if (spec.steering) {
         // Steering target ring: a glowing ground halo around the tree so the
         // room sees where live transcript is routing.
@@ -1160,9 +1349,25 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
           new THREE.TorusGeometry(2.1, 0.05, 8, 64),
           new THREE.MeshBasicMaterial({ color: STEERING_COLOR, transparent: true, opacity: 0.65 }),
         );
+        ring.userData.ownGeometry = true;
+        ring.userData.ownMaterial = true;
         ring.rotation.x = Math.PI / 2;
         ring.position.y = 0.08;
         group.add(ring);
+      }
+      // Live progress arc (executing runs), build-lane satellites, take-home
+      // beacon and failure pip — all sized to whichever body was grown above.
+      const crownY = commissioned ? 4.4 : 1.9;
+      const laneR = commissioned ? 1.7 : 0.9;
+      if (ind.progressArc !== null) {
+        addProgressArc(group, ind.progressArc, 0.1, commissioned ? 1.9 : 1.05, 0.055);
+      }
+      addLaneSatellites(group, ind.lanes, crownY, laneR, commissioned ? 0.95 : 0.65);
+      if (ind.published) {
+        addPublishedBeacon(group, commissioned ? 6.1 : 3.0, commissioned ? 1.5 : 0.95);
+      }
+      if (ind.failed) {
+        addFailedPip(group, commissioned ? 1.2 : 0.7, commissioned ? 4.9 : 2.5, commissioned ? 0.9 : 0.65);
       }
       const label = makeLabelSprite(treeTitle(spec), treeStatus(spec), cssHex(color));
       label.position.y = commissioned ? 6.6 : 3.4;
@@ -1195,6 +1400,8 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
           new THREE.TorusGeometry(radius * 1.35, 0.02, 8, 64),
           new THREE.MeshBasicMaterial({ color: VERIFIED_COLOR, transparent: true, opacity: 0.5 }),
         );
+        ring.userData.ownGeometry = true;
+        ring.userData.ownMaterial = true;
         ring.rotation.x = Math.PI * 0.42;
         group.add(ring);
       }
@@ -1210,7 +1417,9 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
 
     const buildOrbProcess = (spec: TreeSpec): Entry => {
       const color = STATE_COLOR[spec.state];
+      const ind = treeIndicators(spec);
       const radius = 1.15 + Math.min(Math.max(spec.progress, 0), 100) / 100 * 0.65;
+      const tilt = Math.PI * 0.42;
       const group = new THREE.Group();
       const orbMat = new THREE.MeshStandardMaterial({ roughness: 0.3, metalness: 0.15, transparent: true, opacity: 0.94 });
       orbMat.color.set(color).multiplyScalar(0.5);
@@ -1225,21 +1434,28 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       );
       halo.scale.setScalar(radius * 3.2);
       group.add(halo);
-      if (spec.stage === "commissioned") {
-        const ring = new THREE.Mesh(
-          new THREE.TorusGeometry(radius * 1.7, 0.04, 8, 64),
-          new THREE.MeshBasicMaterial({ color: COMMISSION_COLOR, transparent: true, opacity: 0.55 }),
-        );
-        ring.rotation.x = Math.PI * 0.42;
-        group.add(ring);
-      }
+      // Stage ring (commission gold / built completion) in the orbs' tilted plane.
+      addStageRing(group, ind.ring, radius * 1.7, 0, tilt);
       if (spec.steering) {
         const ring = new THREE.Mesh(
           new THREE.TorusGeometry(radius * 1.5, 0.03, 8, 64),
           new THREE.MeshBasicMaterial({ color: STEERING_COLOR, transparent: true, opacity: 0.6 }),
         );
-        ring.rotation.x = Math.PI * 0.42;
+        ring.userData.ownGeometry = true;
+        ring.userData.ownMaterial = true;
+        ring.rotation.x = tilt;
         group.add(ring);
+      }
+      // Live progress arc, build-lane satellites, take-home beacon, failure pip.
+      if (ind.progressArc !== null) {
+        addProgressArc(group, ind.progressArc, 0, radius * 1.9, 0.035, tilt);
+      }
+      addLaneSatellites(group, ind.lanes, 0, radius * 1.35, 1.0);
+      if (ind.published) {
+        addPublishedBeacon(group, radius + 1.0, radius * 1.3);
+      }
+      if (ind.failed) {
+        addFailedPip(group, radius * 1.05, radius * 0.85, 1.0);
       }
       const label = makeLabelSprite(treeTitle(spec), treeStatus(spec), cssHex(color));
       label.position.y = radius + 0.25;
@@ -1253,6 +1469,8 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
     // bloom for builds, a stemless 5-petal flower (or bud) for ideas.
     const buildFloraProcess = (spec: TreeSpec): Entry => {
       const color = STATE_COLOR[spec.state];
+      const ind = treeIndicators(spec);
+      const tilt = Math.PI * 0.42;
       const group = new THREE.Group();
       const folMat = new THREE.MeshPhongMaterial({ color, emissive: color, emissiveIntensity: 0.22 });
       const fol = new THREE.Mesh(GEO.foliageSide, folMat);
@@ -1264,25 +1482,31 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         new THREE.MeshPhongMaterial({ color: 0xffe08a, emissive: 0xffe08a, emissiveIntensity: 0.4 }),
       );
       bloom.position.y = 0.95;
-      // A commissioned build's crowning bloom is visibly larger + brighter.
-      bloom.scale.setScalar(spec.stage === "commissioned" ? 2.1 : 1.5);
+      // A grown build's crowning bloom is visibly larger + brighter.
+      bloom.scale.setScalar(ind.grown ? 2.1 : 1.5);
       bloom.userData.pick = { kind: "process", callsign: spec.callsign };
       group.add(bloom);
-      if (spec.stage === "commissioned") {
-        const ring = new THREE.Mesh(
-          new THREE.TorusGeometry(1.7, 0.04, 8, 64),
-          new THREE.MeshBasicMaterial({ color: COMMISSION_COLOR, transparent: true, opacity: 0.55 }),
-        );
-        ring.rotation.x = Math.PI * 0.42;
-        group.add(ring);
-      }
+      // Hyperbolic flora reuses the garden indicator vocabulary (tilted plane).
+      addStageRing(group, ind.ring, 1.7, 0, tilt);
       if (spec.steering) {
         const ring = new THREE.Mesh(
           new THREE.TorusGeometry(1.5, 0.03, 8, 64),
           new THREE.MeshBasicMaterial({ color: STEERING_COLOR, transparent: true, opacity: 0.6 }),
         );
-        ring.rotation.x = Math.PI * 0.42;
+        ring.userData.ownGeometry = true;
+        ring.userData.ownMaterial = true;
+        ring.rotation.x = tilt;
         group.add(ring);
+      }
+      if (ind.progressArc !== null) {
+        addProgressArc(group, ind.progressArc, 0, 1.4, 0.03, tilt);
+      }
+      addLaneSatellites(group, ind.lanes, 0.95, 0.9, 0.5);
+      if (ind.published) {
+        addPublishedBeacon(group, 1.75, 0.8);
+      }
+      if (ind.failed) {
+        addFailedPip(group, 0.8, 0.95, 0.5);
       }
       const label = makeLabelSprite(treeTitle(spec), treeStatus(spec), cssHex(color));
       label.position.y = 1.35;
@@ -1320,6 +1544,7 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
             GEO.ring,
             new THREE.MeshBasicMaterial({ color: VERIFIED_COLOR, transparent: true, opacity: 0.55 }),
           );
+          ring.userData.ownMaterial = true;
           ring.scale.setScalar(size);
           ring.rotation.x = Math.PI * 0.45;
           head.add(ring);
@@ -1335,6 +1560,8 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         new THREE.SphereGeometry(Math.max(0.55, 0.5 * size), 8, 8),
         new THREE.MeshBasicMaterial({ visible: false }),
       );
+      hit.userData.ownGeometry = true;
+      hit.userData.ownMaterial = true;
       hit.userData.pick = { kind: "idea", key: ideaKey(spec) };
       head.add(hit);
       let label: THREE.Sprite | null = null;
@@ -1447,9 +1674,16 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
     const ideaSpecChanged = (a: IdeaOrbSpec, b: IdeaOrbSpec) =>
       a.status !== b.status || a.maturity !== b.maturity || a.verified !== b.verified ||
       a.pitch !== b.pitch || Math.abs(a.confidence - b.confidence) > 0.005;
+    const buildsSummaryChanged = (a: TreeBuildSummary | undefined, b: TreeBuildSummary | undefined) =>
+      (a?.building ?? 0) !== (b?.building ?? 0) ||
+      (a?.ready ?? 0) !== (b?.ready ?? 0) ||
+      (a?.failed ?? 0) !== (b?.failed ?? 0);
     const treeSpecChanged = (a: TreeSpec, b: TreeSpec) =>
       a.state !== b.state || a.callsign !== b.callsign || a.task !== b.task ||
       a.steering !== b.steering || a.stage !== b.stage ||
+      (a.published ?? false) !== (b.published ?? false) ||
+      (a.failedCount ?? 0) !== (b.failedCount ?? 0) ||
+      buildsSummaryChanged(a.builds, b.builds) ||
       Math.round(a.progress) !== Math.round(b.progress);
 
     let env: SceneEnv | null = null;
@@ -1573,9 +1807,11 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         if (existing === undefined) {
           create();
         } else if (existing.treeSpec !== undefined && treeSpecChanged(existing.treeSpec, spec)) {
-          // Concept → commissioned is THE transformation moment: flash the
-          // regrown (now full-size) tree so the room sees it happen.
-          const promoted = existing.treeSpec.stage !== "commissioned" && spec.stage === "commissioned";
+          // Concept → grown (commissioned/built) is THE transformation moment:
+          // flash the regrown (now full-size) tree so the room sees it happen.
+          const wasGrown = existing.treeSpec.stage === "commissioned" || existing.treeSpec.stage === "built";
+          const nowGrown = spec.stage === "commissioned" || spec.stage === "built";
+          const promoted = !wasGrown && nowGrown;
           const keepPos = existing.group.position.clone();
           const keepScale = existing.group.scale.x;
           const keepPhase = existing.phase;

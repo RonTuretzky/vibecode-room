@@ -129,7 +129,13 @@ class FakeOrchestrator implements BuildLoopOrchestrator {
   readonly calls: Array<{ name: string; upid?: string; input?: unknown; text?: string }> = [];
   buildsByUpid = new Map<string, ProcessBuildSnapshot[]>();
 
-  async start(input: { upid: string; ideaId: string; prompt: string; callsign: string | null }): Promise<void> {
+  async start(input: {
+    upid: string;
+    ideaId: string;
+    prompt: string;
+    callsign: string | null;
+    planQuestions?: readonly { id: string; prompt: string; answers: string[] }[];
+  }): Promise<void> {
     this.calls.push({ name: "start", upid: input.upid, input });
   }
 
@@ -168,6 +174,89 @@ describe("process registry × build orchestrator", () => {
       // codename — "build" is a stopword, "metronome" is the project.
       input: { upid: "upid-a", ideaId: "upid-a", prompt: "build a metronome", callsign: "metronome" },
     });
+  });
+
+  test("a build:true spawn derives deck planQuestions from the accept seed's mcqs/answers", async () => {
+    const orchestrator = new FakeOrchestrator();
+    const registry = new ProcessRegistry({ client: new MemorySmithersClient(), sessionId: "reg-orch-q", orchestrator });
+
+    // The acceptance seam spreads the accepted seed onto the spawn input, so
+    // the judge's parallel questions/answers arrays ride as mcqs/answers.
+    await registry.spawn({
+      correlationId: "corr-accept-q",
+      upid: "upid-q",
+      workflow: "wf",
+      prompt: "build a metronome",
+      input: { pitch: "build a metronome", mcqs: ["Which sound set?"], answers: ["Wood / Electronic"] },
+      build: true,
+    });
+    await Bun.sleep(0);
+
+    const start = orchestrator.calls.find((call) => call.name === "start" && call.upid === "upid-q");
+    const input = start?.input as { planQuestions?: Array<{ id: string; prompt: string; answers: string[] }> };
+    expect(input.planQuestions).toHaveLength(1);
+    expect(input.planQuestions?.[0]?.id).toMatch(/^q-/u);
+    expect(input.planQuestions?.[0]?.prompt).toBe("Which sound set?");
+    expect(input.planQuestions?.[0]?.answers).toEqual(["Wood", "Electronic"]);
+
+    // A repo-import style input without the arrays omits the field entirely.
+    await registry.spawn({
+      correlationId: "corr-import",
+      upid: "upid-plain",
+      workflow: "wf",
+      prompt: "ground a concept in the imported repo",
+      input: { source: "github-import", pitch: "ground a concept in the imported repo" },
+      build: true,
+    });
+    await Bun.sleep(0);
+
+    const plain = orchestrator.calls.find((call) => call.name === "start" && call.upid === "upid-plain");
+    expect(Object.keys(plain?.input as Record<string, unknown>)).not.toContain("planQuestions");
+  });
+
+  test("an explicit startBuild planQuestions override beats the input-derived mcqs/answers", async () => {
+    const orchestrator = new FakeOrchestrator();
+    const registry = new ProcessRegistry({ client: new MemorySmithersClient(), sessionId: "reg-orch-q-override", orchestrator });
+
+    // The deferred-build shape (the phone import's clone routine): spawn
+    // WITHOUT build, then kick startBuild directly with drafted questions.
+    // The input still carries mcqs/answers that would derive a different
+    // card — the explicit override must win.
+    await registry.spawn({
+      correlationId: "corr-import-q",
+      upid: "upid-import",
+      workflow: "wf",
+      prompt: "seed pitch",
+      input: { pitch: "seed pitch", mcqs: ["From the input?"], answers: ["A / B"] },
+    });
+    const drafted = [{ id: "q-drafted-1", prompt: "How bold should the first addition be?", answers: ["Small", "Ambitious"] }];
+    const kicked = registry.startBuild("upid-import", {
+      correlationId: "corr-kick",
+      prompt: "enriched pitch",
+      planQuestions: drafted,
+    });
+    expect(kicked).toBe(true);
+    await Bun.sleep(0);
+
+    const start = orchestrator.calls.find((call) => call.name === "start" && call.upid === "upid-import");
+    const input = start?.input as { prompt?: string; planQuestions?: unknown };
+    expect(input.prompt).toBe("enriched pitch");
+    expect(input.planQuestions).toEqual(drafted);
+
+    // An EMPTY override is not an override — input derivation still applies.
+    await registry.spawn({
+      correlationId: "corr-import-q2",
+      upid: "upid-import-2",
+      workflow: "wf",
+      prompt: "seed pitch",
+      input: { pitch: "seed pitch", mcqs: ["From the input?"], answers: ["A / B"] },
+    });
+    registry.startBuild("upid-import-2", { correlationId: "corr-kick-2", planQuestions: [] });
+    await Bun.sleep(0);
+
+    const second = orchestrator.calls.find((call) => call.name === "start" && call.upid === "upid-import-2");
+    const derived = second?.input as { planQuestions?: Array<{ prompt: string }> };
+    expect(derived.planQuestions?.map((question) => question.prompt)).toEqual(["From the input?"]);
   });
 
   test("a bare spawn (demo seed, no build flag) never reaches the orchestrator", async () => {

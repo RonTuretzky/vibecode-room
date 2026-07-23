@@ -42,17 +42,26 @@ export interface OrchestratorStartInput {
   ideaId: string;
   prompt: string;
   callsign: string | null;
+  // Deck-ready decision questions from the planning routine, riding the accept.
+  // Mirrors PlanQuestion in src/detect/plan-questions.ts BY CONVENTION — that
+  // module is owned by the detection track and this track must stand alone (no
+  // cross-track imports); the shapes are structurally identical. Absent for
+  // kickoffs without questions (repo imports, demo seeds).
+  planQuestions?: readonly { id: string; prompt: string; answers: string[] }[];
 }
 
 // Optional per-build slideshow hook (the slideshow track's generateSlideshow,
 // wired by the integrator). Called after a successful build/correction; a
 // resolved hook flips the build's slideshowUrl on (previewUrl + "slideshow/").
-// Failures are swallowed — the slideshow is garnish, never a build failure.
+// The accept's planQuestions pass through untouched so the integrator can wire
+// them into the deck's interactive swipe-to-answer cards. Failures are
+// swallowed — the slideshow is garnish, never a build failure.
 export type SlideshowHook = (input: {
   upid: string;
   ideaId: string;
   prompt: string;
   callsign: string | null;
+  planQuestions?: readonly { id: string; prompt: string; answers: string[] }[];
   backend: BuildBackendId;
   outDir: string;
   summary: string;
@@ -382,6 +391,7 @@ export class BuildOrchestrator {
         ideaId: state.input.ideaId,
         prompt: state.input.prompt,
         callsign: state.input.callsign,
+        ...(state.input.planQuestions === undefined ? {} : { planQuestions: state.input.planQuestions }),
         backend: id,
         outDir,
         summary: build.summary ?? "",

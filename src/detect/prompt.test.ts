@@ -49,6 +49,21 @@ describe("buildJudgePrompt", () => {
     expect(p).toContain("[turn-0002] bo: where all consumers get revenue share");
     expect(p).toContain('{"assessments":[]}');
   });
+
+  test("teaches decision-shaping questions with parallel '/'-joined answer options", () => {
+    const p = buildJudgePrompt(input());
+    // Questions must FORK the build (scope / data source / style), not be filler.
+    expect(p).toContain("FORK THE BUILD");
+    expect(p).toContain("SCOPE");
+    expect(p).toContain("DATA SOURCE");
+    expect(p).toContain("STYLE");
+    // answers[i] is one "/"-joined string of 2-4 options, parallel to questions[i].
+    expect(p).toContain("PARALLEL to questions");
+    expect(p).toContain('"Slack / Notes doc / Jira"');
+    // Dedicated few-shot showing three good forks with concrete options.
+    expect(p).toContain("Example 8");
+    expect(p).toContain("Stripe / Product analytics / CSV upload");
+  });
 });
 
 describe("parseJudgeReply", () => {

@@ -843,30 +843,52 @@ describe("gesture cursor-dot toggle", () => {
   });
 });
 
-describe("settle-gate Done UX: countdown + Done button while an idea is armed", () => {
+// IDEA ACTION CARD: "✓ Done — build it" moved OUT of the top status bar into a
+// contextual card that opens when an idea orb is clicked in the scene. The
+// static renderer can't click the WebGL orb, so the `initialOverlay.ideaCard`
+// seam (same pattern as selected/slideshowUpid/qrOpen) boots the card open.
+describe("idea action card: contextual Done UX replaces the top-bar button", () => {
   const armedSnapshot = {
     ...demoProjectorSnapshot,
+    // Empty ledger → the primary suggestion is the lone (id null) orb.
+    ideas: [],
     ideaSettle: { armed: true, title: "a dashboard tool", firesInMs: 5_000 },
   };
 
-  test("HUD renders the Done button with the heard title's countdown when armed", () => {
+  test("no card open → no Done button anywhere (top bar included), even while armed", () => {
     const html = renderToStaticMarkup(<ProjectorApp initialSnapshot={armedSnapshot} />);
+    expect(html).not.toContain('data-testid="idea-done-button"');
+    expect(html).not.toContain('data-testid="idea-action-card"');
+  });
+
+  test("card open on the primary suggestion: pitch + confidence + armed countdown + Done + close", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={armedSnapshot} initialOverlay={{ ideaCard: { id: null } }} />,
+    );
+    expect(html).toContain('data-testid="idea-action-card"');
+    expect(html).toContain("Turn the meeting notes into a blocker announcer.");
+    expect(html).toContain("82% confident");
     expect(html).toContain('data-testid="idea-done-button"');
     expect(html).toContain("Done — build it");
     expect(html).toContain("(5s)");
+    expect(html).toContain('data-testid="idea-card-close"');
   });
 
-  test("HUD keeps Done available once anything was spoken — no countdown until armed", () => {
-    // demo data has kind:"room" transcript lines, so Done is pressable (it
-    // force-builds from the transcript server-side) — just without a countdown.
-    const html = renderToStaticMarkup(<ProjectorApp initialSnapshot={demoProjectorSnapshot} />);
+  test("card open on a ledger idea shows THAT idea's pitch — no settle countdown", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={demoProjectorSnapshot} initialOverlay={{ ideaCard: { id: "idea_retro_wall" } }} />,
+    );
+    expect(html).toContain('data-testid="idea-action-card"');
+    expect(html).toContain("A retro wall that clusters this week");
     expect(html).toContain('data-testid="idea-done-button"');
     expect(html).not.toContain("(5s)");
   });
 
-  test("HUD hides Done only when nothing has been spoken at all", () => {
-    const silent = { ...demoProjectorSnapshot, transcript: demoProjectorSnapshot.transcript.filter((line) => line.kind !== "room") };
-    const html = renderToStaticMarkup(<ProjectorApp initialSnapshot={silent} />);
+  test("a card whose idea is gone from the snapshot never renders (auto-close contract)", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={demoProjectorSnapshot} initialOverlay={{ ideaCard: { id: "idea_vanished" } }} />,
+    );
+    expect(html).not.toContain('data-testid="idea-action-card"');
     expect(html).not.toContain('data-testid="idea-done-button"');
   });
 

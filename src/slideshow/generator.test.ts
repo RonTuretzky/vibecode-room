@@ -4,8 +4,11 @@ import { join } from "node:path";
 import { afterEach, describe, expect, test } from "bun:test";
 import {
   buildSlides,
+  cerebrasCopyModel,
+  clampCopy,
   decisionButtons,
   fallbackCopy,
+  fetchWithRetry,
   generateSlideshow,
   ideaTitle,
   mergeCopy,
@@ -101,6 +104,92 @@ describe("fallbackCopy", () => {
     const copy = fallbackCopy({ ...base, callsign: "   " });
     expect(copy.concept.some((line) => line.toLowerCase().includes('say "steer it'))).toBe(true);
   });
+
+  test("names this lane's own framework when no mock lanes are supplied", () => {
+    const copy = fallbackCopy({ ...base, backend: "native" });
+    expect(copy.concept.some((line) => line.includes("the Native framework"))).toBe(true);
+  });
+
+  test("names every framework from the mock lanes, in reading order", () => {
+    const copy = fallbackCopy({
+      ...base,
+      mocks: [
+        { backend: "smithers", previewUrl: "/preview/upid-3/smithers/" },
+        { backend: "eliza", previewUrl: "/preview/upid-3/eliza/" },
+        { backend: "native", previewUrl: null },
+      ],
+    });
+    expect(copy.concept.some((line) => line.includes("Smithers, ElizaOS and Native each"))).toBe(true);
+  });
+
+  test("grounds the deck in the imported repo digest when one is present", () => {
+    const copy = fallbackCopy({
+      ...base,
+      repoDigest: "Top-level files: src/, package.json\n\npackage.json: snowsip — turns snowfall into sips",
+    });
+    expect(copy.concept.some((line) => line.toLowerCase().includes("imported repo"))).toBe(true);
+    expect(copy.concept.some((line) => line.includes("snowsip — turns snowfall into sips"))).toBe(true);
+    // Enrichment never crowds out the load-bearing narrative lines.
+    expect(copy.concept.some((line) => line.toLowerCase().includes("mock"))).toBe(true);
+    expect(copy.concept.some((line) => line.toLowerCase().includes("commission"))).toBe(true);
+    expect(copy.concept.length).toBeLessThanOrEqual(6);
+  });
+
+  test("ignores a blank/absent repo digest without adding an empty bullet", () => {
+    expect(fallbackCopy({ ...base, repoDigest: "   " }).concept).toEqual(fallbackCopy(base).concept);
+    expect(fallbackCopy({ ...base, repoDigest: null }).concept).toEqual(fallbackCopy(base).concept);
+  });
+
+  test("clamps a huge repo-digest bullet at the source (fallbackCopy alone, no clampCopy)", () => {
+    // A README-heavy import: the digest headline is far longer than a slide line.
+    const giant = `package.json: ${"lorem ipsum ".repeat(80)}dolor`;
+    const copy = fallbackCopy({ ...base, repoDigest: giant });
+    const digestBullet = copy.concept.find((line) => line.toLowerCase().includes("imported repo"));
+    expect(digestBullet).toBeDefined();
+    expect(digestBullet!.length).toBeLessThanOrEqual(220);
+    expect(digestBullet!.endsWith("…")).toBe(true);
+    // Every fallback bullet stays slide-sized even without the final clamp pass.
+    for (const line of copy.concept) {
+      expect(line.length).toBeLessThanOrEqual(220);
+    }
+  });
+});
+
+// --- clampCopy (length/clamp guard) ---------------------------------------------
+
+describe("clampCopy", () => {
+  const fallback: SlideshowCopy = { tagline: "fallback tagline", concept: ["fallback concept"] };
+
+  test("passes short, clean copy through untouched", () => {
+    const copy: SlideshowCopy = { tagline: "Tip calculator", concept: ["splits fairly", "yells politely"] };
+    expect(clampCopy(copy, fallback)).toEqual(copy);
+  });
+
+  test("truncates an over-long tagline on a word boundary with an ellipsis", () => {
+    const long = `${"word ".repeat(60)}end`;
+    const { tagline } = clampCopy({ tagline: long, concept: ["x"] }, fallback);
+    expect(tagline.length).toBeLessThanOrEqual(100);
+    expect(tagline.endsWith("…")).toBe(true);
+    expect(tagline).not.toMatch(/\s…$/u); // no dangling space before the ellipsis
+  });
+
+  test("clamps each concept line and caps the line count at six", () => {
+    const many = Array.from({ length: 12 }, (_, i) => `line ${i}`);
+    const { concept } = clampCopy({ tagline: "t", concept: many }, fallback);
+    expect(concept.length).toBe(6);
+  });
+
+  test("falls back per-field when a field collapses to empty", () => {
+    const { tagline, concept } = clampCopy({ tagline: "   ", concept: ["  ", ""] }, fallback);
+    expect(tagline).toBe("fallback tagline");
+    expect(concept).toEqual(["fallback concept"]);
+  });
+
+  test("never emits an empty tagline or empty concept, even with an empty fallback", () => {
+    const { tagline, concept } = clampCopy({ tagline: "", concept: [] }, { tagline: "", concept: [] });
+    expect(tagline.length).toBeGreaterThan(0);
+    expect(concept.length).toBeGreaterThan(0);
+  });
 });
 
 // --- mergeCopy -----------------------------------------------------------------
@@ -165,6 +254,22 @@ describe("parseModelCopy", () => {
 
   test("extracts JSON wrapped in a markdown fence", () => {
     expect(parseModelCopy('```json\n{"tagline":"x"}\n```')).toEqual({ tagline: "x" });
+  });
+
+  test("extracts JSON from a fence followed by trailing prose", () => {
+    expect(parseModelCopy('Here you go:\n```json\n{"tagline":"x","concept":["a"]}\n```\nLet me know!')).toEqual({
+      tagline: "x",
+      concept: ["a"],
+    });
+  });
+
+  test("balanced scan survives trailing prose that itself contains a brace", () => {
+    // lastIndexOf('}') lands on the prose brace; the balanced scan recovers the object.
+    expect(parseModelCopy('{"tagline":"x"} — use it like { placeholder }')).toEqual({ tagline: "x" });
+  });
+
+  test("keeps braces that live inside string values intact", () => {
+    expect(parseModelCopy('prose {"tagline":"a {curly} headline"} more')).toEqual({ tagline: "a {curly} headline" });
   });
 
   test("returns null for unparseable content", () => {
@@ -449,5 +554,232 @@ describe("generateSlideshow", () => {
     const start = Date.now();
     await generateSlideshow(baseInput(dir), { model: async () => ({ tagline: "fast" }) });
     expect(Date.now() - start).toBeLessThan(2_000);
+  });
+
+  test("clamps an overflowing model tagline before it reaches the slide", async () => {
+    dir = await mkdtemp(join(tmpdir(), "slideshow-test-"));
+    const runaway = `${"overflowing ".repeat(40)}tagline`;
+    const artifact = await generateSlideshow(baseInput(dir), { model: async () => ({ tagline: runaway }) });
+    const html = await readFile(artifact.indexPath, "utf8");
+    expect(html).not.toContain(runaway);
+    expect(html).toContain("…");
+  });
+
+  test("prose-wrapped model JSON still merges into the deck (tolerant extraction)", async () => {
+    dir = await mkdtemp(join(tmpdir(), "slideshow-test-"));
+    // A model that answers in prose around fenced JSON; parseModelCopy recovers it.
+    const proseModel: SlideshowCopyModel = async () =>
+      parseModelCopy('Sure!\n```json\n{"tagline":"Recovered headline","concept":["Recovered bullet"]}\n```\nEnjoy.');
+    const artifact = await generateSlideshow(baseInput(dir), { model: proseModel });
+    expect(artifact.usedModel).toBe(true);
+    const html = await readFile(artifact.indexPath, "utf8");
+    expect(html).toContain("Recovered headline");
+    expect(html).toContain("Recovered bullet");
+  });
+
+  test("a partial model (tagline only) keeps the deterministic concept bullets in the deck", async () => {
+    dir = await mkdtemp(join(tmpdir(), "slideshow-test-"));
+    // Model supplies just the headline; the concept bullets must fall back per-field
+    // so the concept slide is never left without body copy.
+    const partialModel: SlideshowCopyModel = async () => ({ tagline: "Just the headline" });
+    const input = baseInput(dir);
+    const artifact = await generateSlideshow(input, { model: partialModel });
+    expect(artifact.usedModel).toBe(true);
+    const html = await readFile(artifact.indexPath, "utf8");
+    expect(html).toContain("Just the headline");
+    // The deterministic fallback's load-bearing bullets survive for the missing field.
+    const fallbackBullet = fallbackCopy(input).concept.find((line) => line.toLowerCase().includes("commission"));
+    expect(fallbackBullet).toBeDefined();
+    expect(html).toContain(fallbackBullet!);
+  });
+});
+
+// --- fetchWithRetry (bounded exponential backoff on 429/5xx/network) -------------
+
+describe("fetchWithRetry", () => {
+  // A fake fetch that yields a scripted sequence of responses/errors and counts calls.
+  function scriptedFetch(steps: ReadonlyArray<Response | Error>): { impl: typeof fetch; calls: () => number } {
+    let i = 0;
+    const impl = (async () => {
+      const step = steps[Math.min(i, steps.length - 1)];
+      i += 1;
+      if (step instanceof Error) {
+        throw step;
+      }
+      return step;
+    }) as unknown as typeof fetch;
+    return { impl, calls: () => i };
+  }
+
+  const ok = (): Response => new Response('{"ok":true}', { status: 200 });
+  const status = (code: number, headers?: Record<string, string>): Response =>
+    new Response(null, { status: code, headers });
+  const liveSignal = (): AbortSignal => new AbortController().signal;
+
+  test("returns the first ok response with no sleep on a clean call", async () => {
+    const delays: number[] = [];
+    const { impl, calls } = scriptedFetch([ok()]);
+    const res = await fetchWithRetry(impl, "u", {}, liveSignal(), { sleep: async (ms) => void delays.push(ms) });
+    expect(res?.status).toBe(200);
+    expect(calls()).toBe(1);
+    expect(delays).toEqual([]);
+  });
+
+  test("retries a 429 then returns the subsequent 200", async () => {
+    const delays: number[] = [];
+    const { impl, calls } = scriptedFetch([status(429), ok()]);
+    const res = await fetchWithRetry(impl, "u", {}, liveSignal(), { sleep: async (ms) => void delays.push(ms) });
+    expect(res?.status).toBe(200);
+    expect(calls()).toBe(2);
+    expect(delays).toHaveLength(1);
+  });
+
+  test("retries 5xx up to maxAttempts then returns null", async () => {
+    const delays: number[] = [];
+    const { impl, calls } = scriptedFetch([status(503)]);
+    const res = await fetchWithRetry(impl, "u", {}, liveSignal(), {
+      maxAttempts: 3,
+      sleep: async (ms) => void delays.push(ms),
+    });
+    expect(res).toBeNull();
+    expect(calls()).toBe(3);
+    expect(delays).toHaveLength(2); // one sleep between each of the three attempts
+  });
+
+  test("does NOT retry a non-retryable 4xx (bad key / bad request)", async () => {
+    const delays: number[] = [];
+    const { impl, calls } = scriptedFetch([status(400)]);
+    const res = await fetchWithRetry(impl, "u", {}, liveSignal(), { sleep: async (ms) => void delays.push(ms) });
+    expect(res).toBeNull();
+    expect(calls()).toBe(1);
+    expect(delays).toEqual([]);
+  });
+
+  test("retries a transient network error then succeeds", async () => {
+    const { impl, calls } = scriptedFetch([new Error("ECONNRESET"), ok()]);
+    const res = await fetchWithRetry(impl, "u", {}, liveSignal(), { sleep: async () => {} });
+    expect(res?.status).toBe(200);
+    expect(calls()).toBe(2);
+  });
+
+  test("gives up on a persistent network error at the attempt budget", async () => {
+    const { impl, calls } = scriptedFetch([new Error("down")]);
+    const res = await fetchWithRetry(impl, "u", {}, liveSignal(), { maxAttempts: 2, sleep: async () => {} });
+    expect(res).toBeNull();
+    expect(calls()).toBe(2);
+  });
+
+  test("honors a numeric Retry-After header (seconds -> ms), capped at maxDelayMs", async () => {
+    const delays: number[] = [];
+    const { impl } = scriptedFetch([status(429, { "retry-after": "1" }), ok()]);
+    await fetchWithRetry(impl, "u", {}, liveSignal(), { maxDelayMs: 2_000, sleep: async (ms) => void delays.push(ms) });
+    expect(delays[0]).toBe(1_000);
+  });
+
+  test("an abort during backoff stops the retries (throws, no further fetch)", async () => {
+    const controller = new AbortController();
+    const { impl, calls } = scriptedFetch([status(500)]);
+    await expect(
+      fetchWithRetry(impl, "u", {}, controller.signal, {
+        maxAttempts: 5,
+        // Simulate the budget elapsing mid-sleep: abort, then wake.
+        sleep: async () => {
+          controller.abort();
+        },
+      }),
+    ).rejects.toThrow();
+    expect(calls()).toBe(1); // aborted before a second fetch
+  });
+
+  test("an already-aborted signal throws before any fetch", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const { impl, calls } = scriptedFetch([ok()]);
+    await expect(fetchWithRetry(impl, "u", {}, controller.signal, { sleep: async () => {} })).rejects.toThrow();
+    expect(calls()).toBe(0);
+  });
+});
+
+// --- cerebrasCopyModel (default production model, global fetch overridden) -------
+
+describe("cerebrasCopyModel", () => {
+  const savedFetch = globalThis.fetch;
+  const savedKey = process.env.CEREBRAS_API_KEY;
+
+  afterEach(() => {
+    globalThis.fetch = savedFetch;
+    if (savedKey === undefined) {
+      delete process.env.CEREBRAS_API_KEY;
+    } else {
+      process.env.CEREBRAS_API_KEY = savedKey;
+    }
+  });
+
+  const request = {
+    prompt: "a pomodoro timer",
+    summary: "a timer",
+    backend: "native" as const,
+    callsign: null,
+    mocks: ["native"],
+  };
+
+  test("returns null with no API key configured (no network touched)", async () => {
+    delete process.env.CEREBRAS_API_KEY;
+    let fetched = false;
+    globalThis.fetch = (async () => {
+      fetched = true;
+      return new Response(null, { status: 200 });
+    }) as unknown as typeof fetch;
+    expect(await cerebrasCopyModel(request, new AbortController().signal)).toBeNull();
+    expect(fetched).toBe(false);
+  });
+
+  test("parses a well-formed chat completion into partial copy", async () => {
+    process.env.CEREBRAS_API_KEY = "test-key";
+    globalThis.fetch = (async () =>
+      new Response(
+        JSON.stringify({ choices: [{ message: { content: '{"tagline":"Yell timer","concept":["shouts"]}' } }] }),
+        { status: 200 },
+      )) as unknown as typeof fetch;
+    expect(await cerebrasCopyModel(request, new AbortController().signal)).toEqual({
+      tagline: "Yell timer",
+      concept: ["shouts"],
+    });
+  });
+
+  test("returns null on a non-retryable HTTP error", async () => {
+    process.env.CEREBRAS_API_KEY = "test-key";
+    globalThis.fetch = (async () => new Response(null, { status: 401 })) as unknown as typeof fetch;
+    expect(await cerebrasCopyModel(request, new AbortController().signal)).toBeNull();
+  });
+
+  test("retries a transient 429 through the real retry path, then parses the 200", async () => {
+    process.env.CEREBRAS_API_KEY = "test-key";
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls += 1;
+      if (calls === 1) {
+        // First hit rate-limits; a tiny Retry-After keeps the real backoff bounded.
+        return new Response(null, { status: 429, headers: { "retry-after": "0" } });
+      }
+      return new Response(
+        JSON.stringify({ choices: [{ message: { content: '{"tagline":"After the retry","concept":["ok"]}' } }] }),
+        { status: 200 },
+      );
+    }) as unknown as typeof fetch;
+    const copy = await cerebrasCopyModel(request, new AbortController().signal);
+    expect(copy).toEqual({ tagline: "After the retry", concept: ["ok"] });
+    expect(calls).toBe(2); // one retry, then success — the production path is wired to fetchWithRetry
+  });
+
+  test("gives up (null) after retrying persistent 5xx, without throwing", async () => {
+    process.env.CEREBRAS_API_KEY = "test-key";
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls += 1;
+      return new Response(null, { status: 503, headers: { "retry-after": "0" } });
+    }) as unknown as typeof fetch;
+    expect(await cerebrasCopyModel(request, new AbortController().signal)).toBeNull();
+    expect(calls).toBeGreaterThan(1); // it retried before giving up
   });
 });

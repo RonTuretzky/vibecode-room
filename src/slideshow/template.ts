@@ -5,16 +5,24 @@
 // so callers never handle HTML. Palette + font stack match the house prototype
 // pages (see src/server/idea-builder.ts) so wall projections feel like one app.
 //
-// Interactivity contract (the room's dwell system + plain clicks):
+// Interactivity contract (the room's dwell system + plain clicks + swipe):
 // - Every actionable control is a plain <button> with a data-dwell attribute,
 //   so the gesture wall's dwell selector ("button:not(:disabled), [data-dwell]")
 //   picks it up and its synthesized .click() drives the same code path a mouse
-//   click does. Nothing here requires hover, drag, or keyboard.
+//   click does. Nothing here requires hover or keyboard.
 // - Mock gallery: button.mock-tab[data-mock-tab=<id>] switches [data-mock-panel=<id>].
 // - Decisions: button.decision[data-decision=<id>] POSTs its data-endpoint
 //   (JSON body {}), or — when data-prompt="1" — reveals the typed-fallback
 //   form[data-decision-form=<id>] whose submit POSTs {<data-field>: text}.
 //   Results land in [data-decision-status].
+// - Question cards (swipe-to-answer): a section[data-question-slide] wraps a
+//   div.answers[data-answers][data-question-id=<id>] of button.answer[data-answer=<text>]
+//   options. Tapping — or swiping — an option selects it: the choice POSTs
+//   {questionId, answer} to the group's data-answer-endpoint and echoes into the
+//   card's [data-answer-status]. The POST is best-effort (guarded), so the
+//   published take-home copy still selects locally when the room API 404s.
+// - Swipe navigation: a horizontal touch/pointer drag over empty deck space moves
+//   between slides (momentum-free); dots + arrows + click-nav are preserved.
 
 // One switchable concept-mock panel on the mocks slide.
 export interface SlideMock {
@@ -58,10 +66,30 @@ export interface Slide {
   decisions?: readonly SlideDecision[];
 }
 
+// One swipe-to-answer question card (from the planning/detection track). Matches
+// its contract shape: { id, prompt, answers: string[] }. Rendered as its own
+// slide with each answer as a tap/swipe-selectable option. Absent/empty answers
+// (or a blank prompt/id) are dropped, so junk never produces a broken card.
+export interface SlideQuestion {
+  id: string; // stable question id, echoed in the answer POST as questionId
+  prompt: string; // the question, shown as the card headline
+  answers: readonly string[]; // option labels; selecting one POSTs {questionId, answer}
+}
+
 export interface SlideshowTemplateOptions {
   title: string; // document <title> and deck heading
   footer: string; // persistent footer line, e.g. "upid-3 · smithers · falcon"
   slides: readonly Slide[];
+  // Optional swipe-to-answer question cards. Inserted as extra slides right
+  // before the first decision slide (or appended when there is none). Absent or
+  // empty => no question slides (the deck is unchanged).
+  questions?: readonly SlideQuestion[];
+  // Same-origin POST target answers are sent to, fully formed by the caller,
+  // e.g. "/api/process/upid-3/answer". Each selection POSTs {questionId, answer}.
+  // Optional: when omitted (or in the published standalone copy where it 404s),
+  // selecting an answer still highlights + echoes locally — the POST is a
+  // best-effort no-op, never an error.
+  answerEndpoint?: string;
 }
 
 export function escapeHtml(value: string): string {
@@ -197,13 +225,94 @@ function renderSlide(slide: Slide, index: number, total: number): string {
   ].join("\n");
 }
 
+interface NormalQuestion {
+  id: string;
+  prompt: string;
+  answers: string[];
+}
+
+// Drop junk questions: a card needs a non-empty id + prompt and at least one
+// non-empty answer. Answers are trimmed here; blanks are removed. Tolerant of a
+// missing/garbage `questions` input (absent === no cards).
+function normalizeQuestions(questions: readonly SlideQuestion[] | undefined): NormalQuestion[] {
+  if (questions === undefined) {
+    return [];
+  }
+  const out: NormalQuestion[] = [];
+  for (const question of questions) {
+    if (
+      question === null ||
+      typeof question !== "object" ||
+      typeof question.id !== "string" ||
+      question.id.length === 0 ||
+      typeof question.prompt !== "string" ||
+      question.prompt.trim().length === 0 ||
+      !Array.isArray(question.answers)
+    ) {
+      continue;
+    }
+    const answers = question.answers
+      .filter((answer): answer is string => typeof answer === "string" && answer.trim().length > 0)
+      .map((answer) => answer.trim());
+    if (answers.length > 0) {
+      out.push({ id: question.id, prompt: question.prompt, answers });
+    }
+  }
+  return out;
+}
+
+// Render one swipe-to-answer question card as a slide. The answer group carries
+// the questionId (echoed in the POST) and the answer endpoint (when known); each
+// option is a plain <button> so tap, dwell, and swipe all reach the same select
+// path. A per-card status line receives the local echo / confirmation.
+function renderQuestionSlide(
+  question: NormalQuestion,
+  qIndex: number,
+  qTotal: number,
+  index: number,
+  total: number,
+  answerEndpoint: string | undefined,
+): string {
+  const groupAttrs = ['class="answers"', "data-answers", `data-question-id="${escapeHtml(question.id)}"`];
+  if (answerEndpoint !== undefined && answerEndpoint.length > 0) {
+    groupAttrs.push(`data-answer-endpoint="${escapeHtml(answerEndpoint)}"`);
+  }
+  const options = question.answers
+    .map(
+      (answer, i) =>
+        `        <button class="answer" type="button" data-answer="${escapeHtml(answer)}" ` +
+        `data-dwell="answer-${escapeHtml(question.id)}-${i}" ` +
+        `aria-label="Answer: ${escapeHtml(answer)}">${escapeHtml(answer)}</button>`,
+    )
+    .join("\n");
+  const kicker = qTotal > 1 ? `Question ${qIndex + 1} of ${qTotal}` : "Quick question";
+  const classes = ["slide", "question"];
+  if (index === 0) {
+    classes.push("active");
+  }
+  return [
+    `    <section class="${classes.join(" ")}" data-slide data-question-slide aria-label="Slide ${index + 1} of ${total}">`,
+    `      <p class="kicker">${escapeHtml(kicker)}</p>`,
+    `      <h1 class="headline">${escapeHtml(question.prompt)}</h1>`,
+    `      <div ${groupAttrs.join(" ")}>`,
+    options,
+    "      </div>",
+    '      <p class="answer-status" data-answer-status role="status" aria-live="polite"></p>',
+    "    </section>",
+  ].join("\n");
+}
+
 // The deck controller. Fully static (no interpolation, so no injection surface).
-// Navigation: arrow keys / space / PageUp+Down / Home+End, click-right = next +
-// click-left = prev, clickable dots, a live counter, and #N hash sync so refresh
-// keeps place. Clicks on interactive elements (buttons, links, the steer form)
-// NEVER advance slides, and typing in an input never triggers key nav.
-// Interactivity: mock-tab switching, and decision buttons that POST their
-// data-endpoint (with the steer button's typed-fallback form).
+// Navigation: arrow keys / space / PageUp+Down / Home+End, horizontal SWIPE
+// (touch + pointer + mouse-drag), click-right = next + click-left = prev,
+// clickable dots, a live counter, and #N hash sync so refresh keeps place.
+// Clicks on interactive elements (buttons, links, the steer form) NEVER advance
+// slides, and typing in an input never triggers key nav.
+// Interactivity: mock-tab switching; decision buttons that POST their
+// data-endpoint (with the steer button's typed-fallback form); and swipe-to-
+// answer question cards whose options POST {questionId, answer}. A swipe that
+// begins on an option selects it; every selection also works via tap/dwell
+// because tap, dwell, and swipe all funnel through the same select helpers.
 const DECK_SCRIPT = `(function () {
   "use strict";
   var slides = Array.prototype.slice.call(document.querySelectorAll("[data-slide]"));
@@ -241,6 +350,11 @@ const DECK_SCRIPT = `(function () {
       node = node.parentElement;
     }
     return null;
+  }
+  function hasAttr(name) {
+    return function (node) {
+      return node.hasAttribute && node.hasAttribute(name);
+    };
   }
   var INTERACTIVE = { A: 1, BUTTON: 1, INPUT: 1, TEXTAREA: 1, SELECT: 1, LABEL: 1, FORM: 1, IFRAME: 1 };
   document.addEventListener("keydown", function (event) {
@@ -289,50 +403,97 @@ const DECK_SCRIPT = `(function () {
       setStatus("Could not reach the room — is the server running?", false);
     });
   }
-  document.addEventListener("click", function (event) {
-    var tab = closest(event.target, function (node) {
-      return node.hasAttribute && node.hasAttribute("data-mock-tab");
-    });
-    if (tab) {
-      var mockId = tab.getAttribute("data-mock-tab");
-      var root = closest(tab, function (node) {
-        return node.hasAttribute && node.hasAttribute("data-mocks");
-      });
-      if (root) {
-        var tabs = root.querySelectorAll("[data-mock-tab]");
-        for (var t = 0; t < tabs.length; t++) {
-          tabs[t].classList.toggle("active", tabs[t] === tab);
-        }
-        var panels = root.querySelectorAll("[data-mock-panel]");
-        for (var p = 0; p < panels.length; p++) {
-          panels[p].classList.toggle("active", panels[p].getAttribute("data-mock-panel") === mockId);
-        }
-      }
+  function switchMockTab(tab) {
+    var mockId = tab.getAttribute("data-mock-tab");
+    var root = closest(tab, hasAttr("data-mocks"));
+    if (!root) {
       return;
     }
-    var decision = closest(event.target, function (node) {
-      return node.hasAttribute && node.hasAttribute("data-decision");
-    });
-    if (decision && !decision.disabled) {
-      if (decision.getAttribute("data-prompt") === "1") {
-        var form = document.querySelector('[data-decision-form="' + decision.getAttribute("data-decision") + '"]');
-        if (form) {
-          form.hidden = !form.hidden;
-          if (!form.hidden) {
-            var promptInput = form.querySelector("[data-decision-input]");
-            if (promptInput) {
-              promptInput.focus();
-            }
+    var tabs = root.querySelectorAll("[data-mock-tab]");
+    for (var t = 0; t < tabs.length; t++) {
+      tabs[t].classList.toggle("active", tabs[t] === tab);
+    }
+    var panels = root.querySelectorAll("[data-mock-panel]");
+    for (var p = 0; p < panels.length; p++) {
+      panels[p].classList.toggle("active", panels[p].getAttribute("data-mock-panel") === mockId);
+    }
+  }
+  function activateDecision(decision) {
+    if (decision.getAttribute("data-prompt") === "1") {
+      var form = document.querySelector('[data-decision-form="' + decision.getAttribute("data-decision") + '"]');
+      if (form) {
+        form.hidden = !form.hidden;
+        if (!form.hidden) {
+          var promptInput = form.querySelector("[data-decision-input]");
+          if (promptInput) {
+            promptInput.focus();
           }
         }
-      } else {
-        send(
-          decision.getAttribute("data-endpoint"),
-          {},
-          decision.getAttribute("data-confirmation"),
-          decision.getAttribute("data-terminal") === "1" ? decision : null
-        );
       }
+    } else {
+      send(
+        decision.getAttribute("data-endpoint"),
+        {},
+        decision.getAttribute("data-confirmation"),
+        decision.getAttribute("data-terminal") === "1" ? decision : null
+      );
+    }
+  }
+  // Swipe-to-answer. Highlight the chosen option, echo it into the card's own
+  // status line, and POST {questionId, answer} to the group's endpoint. The POST
+  // is best-effort: no endpoint (or a 404 in the published standalone copy) just
+  // means the local selection stands — never an error.
+  function selectAnswer(button) {
+    var group = closest(button, hasAttr("data-answers"));
+    if (!group) {
+      return;
+    }
+    var options = group.querySelectorAll("[data-answer]");
+    for (var i = 0; i < options.length; i++) {
+      options[i].classList.toggle("chosen", options[i] === button);
+    }
+    var answer = button.getAttribute("data-answer");
+    var card = closest(group, hasAttr("data-question-slide"));
+    var answerStatus = card ? card.querySelector("[data-answer-status]") : null;
+    if (answerStatus) {
+      answerStatus.textContent = "You picked: " + answer;
+      answerStatus.classList.add("ok");
+    }
+    postAnswer(group.getAttribute("data-answer-endpoint"), group.getAttribute("data-question-id"), answer);
+  }
+  function postAnswer(endpoint, questionId, answer) {
+    if (!endpoint) {
+      return;
+    }
+    try {
+      fetch(endpoint, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ questionId: questionId, answer: answer })
+      }).then(function () {}, function () {});
+    } catch (err) {
+      // Standalone/published copy with no room API — the local highlight stands.
+    }
+  }
+  var suppressClicksUntil = 0;
+  document.addEventListener("click", function (event) {
+    if (Date.now() < suppressClicksUntil) {
+      suppressClicksUntil = 0;
+      return;
+    }
+    var answer = closest(event.target, hasAttr("data-answer"));
+    if (answer && !answer.disabled) {
+      selectAnswer(answer);
+      return;
+    }
+    var tab = closest(event.target, hasAttr("data-mock-tab"));
+    if (tab) {
+      switchMockTab(tab);
+      return;
+    }
+    var decision = closest(event.target, hasAttr("data-decision"));
+    if (decision && !decision.disabled) {
+      activateDecision(decision);
       return;
     }
     if (closest(event.target, function (node) { return INTERACTIVE[node.tagName] === 1; })) {
@@ -364,6 +525,85 @@ const DECK_SCRIPT = `(function () {
       input.value = "";
     }
   });
+  // Horizontal swipe: one clear drag = one slide (momentum-free). A swipe that
+  // begins on an answer/decision/mock option selects it (so you can flick a card
+  // to answer it); a swipe on any other interactive element is left alone; a
+  // swipe over empty deck space navigates. Ghost clicks trailing a drag are
+  // suppressed briefly so nothing fires twice. Uses Pointer Events when present
+  // (mouse + touch + pen, incl. touch walls) with a touch/mouse fallback for
+  // older iOS Safari.
+  var SWIPE_MIN = 45;
+  var swipeActive = false;
+  var swipeX = 0;
+  var swipeY = 0;
+  var swipeEl = null;
+  function swipePoint(event) {
+    if (event.changedTouches && event.changedTouches.length) {
+      return event.changedTouches[0];
+    }
+    if (event.touches && event.touches.length) {
+      return event.touches[0];
+    }
+    return event;
+  }
+  function swipeStart(event) {
+    if ((event.button || 0) !== 0) {
+      return;
+    }
+    var p = swipePoint(event);
+    swipeActive = true;
+    swipeX = p.clientX;
+    swipeY = p.clientY;
+    swipeEl = event.target;
+  }
+  function swipeEnd(event) {
+    if (!swipeActive) {
+      return;
+    }
+    swipeActive = false;
+    var p = swipePoint(event);
+    var dx = p.clientX - swipeX;
+    var dy = p.clientY - swipeY;
+    if (Math.abs(dx) < SWIPE_MIN || Math.abs(dx) <= Math.abs(dy)) {
+      return;
+    }
+    var option = closest(swipeEl, function (node) {
+      return node.hasAttribute && (node.hasAttribute("data-answer") || node.hasAttribute("data-decision") || node.hasAttribute("data-mock-tab"));
+    });
+    if (option) {
+      if (option.disabled) {
+        return;
+      }
+      suppressClicksUntil = Date.now() + 400;
+      if (option.hasAttribute("data-answer")) {
+        selectAnswer(option);
+      } else if (option.hasAttribute("data-mock-tab")) {
+        switchMockTab(option);
+      } else {
+        activateDecision(option);
+      }
+      return;
+    }
+    if (closest(swipeEl, function (node) { return INTERACTIVE[node.tagName] === 1; })) {
+      return;
+    }
+    suppressClicksUntil = Date.now() + 400;
+    show(dx < 0 ? index + 1 : index - 1);
+  }
+  function swipeCancel() {
+    swipeActive = false;
+  }
+  if (window.PointerEvent) {
+    document.addEventListener("pointerdown", swipeStart);
+    document.addEventListener("pointerup", swipeEnd);
+    document.addEventListener("pointercancel", swipeCancel);
+  } else {
+    document.addEventListener("touchstart", swipeStart, { passive: true });
+    document.addEventListener("touchend", swipeEnd);
+    document.addEventListener("touchcancel", swipeCancel);
+    document.addEventListener("mousedown", swipeStart);
+    document.addEventListener("mouseup", swipeEnd);
+  }
   for (var d = 0; d < dots.length; d++) {
     (function (i) {
       dots[i].addEventListener("click", function () {
@@ -394,6 +634,10 @@ body {
   font: 18px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
   cursor: pointer;
   user-select: none;
+  /* We own horizontal gestures (swipe nav); keep vertical panning native and
+     stop iOS Safari's edge back-swipe from stealing the drag. */
+  touch-action: pan-y;
+  overscroll-behavior: none;
 }
 .slide {
   position: fixed;
@@ -580,6 +824,41 @@ body {
   font-size: clamp(1rem, 1.8vw, 1.3rem);
 }
 .decision-status.ok { color: var(--ok); }
+.answers {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 1.1rem;
+  margin-top: 0.8rem;
+  max-width: 62ch;
+}
+.answer {
+  font: inherit;
+  font-size: clamp(1.2rem, 2.4vw, 1.9rem);
+  min-height: 13vh;
+  padding: 1.3rem 1.7rem;
+  display: flex;
+  align-items: center;
+  text-align: left;
+  color: var(--fg);
+  background: var(--wash);
+  border: 2px solid var(--line);
+  border-radius: 16px;
+  cursor: pointer;
+  transition: border-color 140ms ease, background 140ms ease, transform 140ms ease;
+}
+.answer:hover, .answer[data-dwell-hot] {
+  border-color: var(--accent);
+  background: rgba(90, 209, 255, 0.12);
+  transform: translateY(-2px);
+}
+.answer.chosen { border-color: var(--ok); background: rgba(157, 255, 176, 0.12); }
+.answer-status {
+  min-height: 1.6em;
+  margin: 1rem 0 0;
+  color: var(--muted);
+  font-size: clamp(1rem, 1.8vw, 1.3rem);
+}
+.answer-status.ok { color: var(--ok); }
 .take-home-row { display: flex; align-items: center; gap: 3rem; flex-wrap: wrap; }
 .take-home-qr {
   flex: 0 0 auto;
@@ -676,14 +955,38 @@ export function appendTakeHomeSlide(html: string, input: TakeHomeSlideInput): st
 
 // Render the complete, self-contained pitch-deck document.
 export function renderSlideshowHtml(options: SlideshowTemplateOptions): string {
-  const total = options.slides.length;
-  const sections = options.slides.map((slide, index) => renderSlide(slide, index, total)).join("\n");
-  const dots = options.slides
-    .map(
-      (_slide, index) =>
-        `        <button class="dot${index === 0 ? " active" : ""}" data-dot type="button" aria-label="Go to slide ${index + 1}"></button>`,
-    )
-    .join("\n");
+  const questions = normalizeQuestions(options.questions);
+  const total = options.slides.length + questions.length;
+  // Question cards land just before the first decision slide (answer, then
+  // decide); with no decision slide they trail the content slides.
+  const decisionAt = options.slides.findIndex((slide) => (slide.decisions?.length ?? 0) > 0);
+  const insertAt = decisionAt === -1 ? options.slides.length : decisionAt;
+
+  const sectionList: string[] = [];
+  let gIndex = 0;
+  const emitQuestions = (): void => {
+    questions.forEach((question, qi) => {
+      sectionList.push(renderQuestionSlide(question, qi, questions.length, gIndex, total, options.answerEndpoint));
+      gIndex += 1;
+    });
+  };
+  options.slides.forEach((slide, i) => {
+    if (i === insertAt) {
+      emitQuestions();
+    }
+    sectionList.push(renderSlide(slide, gIndex, total));
+    gIndex += 1;
+  });
+  if (insertAt === options.slides.length) {
+    emitQuestions();
+  }
+  const sections = sectionList.join("\n");
+
+  const dots = Array.from(
+    { length: total },
+    (_unused, index) =>
+      `        <button class="dot${index === 0 ? " active" : ""}" data-dot type="button" aria-label="Go to slide ${index + 1}"></button>`,
+  ).join("\n");
   return `<!doctype html>
 <html lang="en">
   <head>

@@ -1,4 +1,5 @@
 import type { LogEvent, OutputDecision } from "../types";
+import { questionsFromAssessment, type PlanQuestion } from "../detect";
 import type { ProcessBuildSnapshot } from "../buildloop/orchestrator";
 import type { ExecutionRegistry, ExecutionSnapshot } from "../buildloop/execution";
 import { CallsignAllocator, type CallsignAssignment } from "../routing/callsigns";
@@ -36,9 +37,17 @@ export interface RegistryProcess {
 // backend, steer forwards the spoken correction, halt aborts the UPID's builds,
 // and builds() is the snapshot fragment the runtime merges per process. Since
 // the two-stage pivot the fan-out produces CONCEPT MOCKS (kickoff), not full
-// apps — the full app is the separate commission stage (execute()).
+// apps — the full app is the separate commission stage (execute()). The accept's
+// deck-ready planQuestions ride start() into the per-build slideshow hook so
+// generated pitch decks carry the interactive swipe-to-answer cards.
 export interface BuildLoopOrchestrator {
-  start(input: { upid: string; ideaId: string; prompt: string; callsign: string | null }): Promise<void>;
+  start(input: {
+    upid: string;
+    ideaId: string;
+    prompt: string;
+    callsign: string | null;
+    planQuestions?: readonly PlanQuestion[];
+  }): Promise<void>;
   steer(upid: string, text: string): Promise<void>;
   abortAll(upid: string): Promise<void>;
   builds(upid: string): ProcessBuildSnapshot[];
@@ -346,14 +355,17 @@ export class ProcessRegistry {
   // spawn(build:true) routes here immediately; the phone import's GitHub clone
   // routine calls it after the clone settles, with the digest-enriched prompt.
   // The prompt override REPLACES the stored seed prompt so a later commission
-  // (execute) inherits the same enriched task. Routing is unchanged: with the
+  // (execute) inherits the same enriched task; a non-empty planQuestions
+  // override likewise replaces the input-derived deck cards (imports draft
+  // their own — there is no judge assessment on the input to derive from).
+  // Routing is unchanged: with the
   // multi-backend orchestrator wired, the pitch fans out to every enabled
   // backend (builds/<upid>/<backendId>/) and the legacy single-build ideaBuilds
   // path is skipped — running both would double-spawn the claude CLI and race
   // each other's builds/<upid>/ directory. Returns false (no build started)
   // for unknown or dead processes — a halt/emergency stop between spawn and a
   // deferred build must win.
-  startBuild(upid: string, options: { correlationId: string; prompt?: string }): boolean {
+  startBuild(upid: string, options: { correlationId: string; prompt?: string; planQuestions?: readonly PlanQuestion[] }): boolean {
     const record = this.#processes.get(upid);
     const stored = this.#seeds.get(upid);
     if (record === undefined || record.state === "dead" || stored === undefined) {
@@ -365,8 +377,24 @@ export class ProcessRegistry {
     const pitch = stored.prompt.length > 0 ? stored.prompt : pitchFromInput(stored.input);
     if (this.#orchestrator !== null) {
       const orchestrator = this.#orchestrator;
+      // Deck questions: an explicit non-empty override WINS (the phone
+      // import's clone routine drafts its own — import inputs carry no judge
+      // assessment); otherwise the accept path's spawn input carries the
+      // judge's parallel mcqs/answers arrays (the acceptance seed), normalized
+      // here into the deck's swipe-to-answer cards. Inputs with neither (demo
+      // seeds) yield [] and the field is simply omitted.
+      const planQuestions =
+        options.planQuestions !== undefined && options.planQuestions.length > 0
+          ? options.planQuestions
+          : planQuestionsFromInput(stored.input);
       void orchestrator
-        .start({ upid, ideaId: ideaIdFromInput(stored.input) ?? upid, prompt: pitch, callsign: record.callsign })
+        .start({
+          upid,
+          ideaId: ideaIdFromInput(stored.input) ?? upid,
+          prompt: pitch,
+          callsign: record.callsign,
+          ...(planQuestions.length === 0 ? {} : { planQuestions }),
+        })
         .then(
           () => {
             this.trace("process.build", options.correlationId, upid, {
@@ -682,6 +710,23 @@ export function steerText(payload: unknown): string | null {
     }
   }
   return null;
+}
+
+// Deck-ready planning questions recovered from the spawn input: the acceptance
+// seam spreads the accepted seed onto `input`, so the judge's parallel
+// `mcqs`/`answers` arrays ride along (see acceptance/spawn.ts), and
+// questionsFromAssessment normalizes that convention into {id, prompt, answers}
+// cards. Inputs without the arrays (repo imports, demo seeds) yield [].
+function planQuestionsFromInput(input: unknown): PlanQuestion[] {
+  if (input === null || typeof input !== "object" || Array.isArray(input)) {
+    return [];
+  }
+  const record = input as Record<string, unknown>;
+  return questionsFromAssessment({ questions: onlyStrings(record.mcqs), answers: onlyStrings(record.answers) });
+}
+
+function onlyStrings(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
 }
 
 // The originating idea id when the accept path carried one on the spawn input;

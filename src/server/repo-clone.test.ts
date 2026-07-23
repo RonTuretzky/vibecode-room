@@ -91,4 +91,62 @@ describe("repoDigest", () => {
   test("returns null for a directory that does not exist", async () => {
     expect(await repoDigest(join(tmpdir(), "vibersyn-nope-xyz"))).toBe(null);
   });
+
+  test("infers stack, language mix, entrypoint, and 'appears to be' for a framework repo", async () => {
+    const dir = tempDir("vibersyn-digest-stack-");
+    writeFileSync(
+      join(dir, "package.json"),
+      JSON.stringify({
+        name: "cool-app",
+        description: "a cool app",
+        dependencies: { react: "^18", "react-dom": "^18" },
+        devDependencies: { vite: "^5", typescript: "^5" },
+      }),
+    );
+    writeFileSync(join(dir, "tsconfig.json"), "{}");
+    writeFileSync(join(dir, "vite.config.ts"), "export default {};\n");
+    writeFileSync(join(dir, "index.html"), "<!doctype html>\n");
+    mkdirSync(join(dir, "src"));
+    writeFileSync(join(dir, "src", "index.tsx"), "export const App = () => null;\n");
+    writeFileSync(join(dir, "src", "styles.css"), "body{}\n");
+
+    const digest = await repoDigest(dir);
+    expect(digest).not.toBe(null);
+    const text = digest!;
+    expect(text).toContain("This project appears to be: a React web front-end (Vite).");
+    expect(text).toContain("Stack: ");
+    expect(text).toContain("React");
+    expect(text).toContain("Vite");
+    expect(text).toContain("TypeScript");
+    expect(text).toContain("Languages: ");
+    expect(text).toContain("TypeScript (2)");
+    expect(text).toContain("Entrypoint: src/index.tsx");
+    expect(text).toContain("Dependencies: ");
+    expect(text).toContain("cool-app — a cool app");
+  });
+
+  test("detects a non-npm stack (Rust/Cargo) from marker files", async () => {
+    const dir = tempDir("vibersyn-digest-rust-");
+    writeFileSync(join(dir, "Cargo.toml"), "[package]\nname = \"widget\"\n");
+    mkdirSync(join(dir, "src"));
+    writeFileSync(join(dir, "src", "main.rs"), "fn main() {}\n");
+
+    const digest = await repoDigest(dir);
+    expect(digest).not.toBe(null);
+    const text = digest!;
+    expect(text).toContain("This project appears to be: a Rust project (Cargo).");
+    expect(text).toContain("Stack: Rust (Cargo)");
+    expect(text).toContain("Rust (1)");
+    expect(text).toContain("Entrypoint: src/main.rs");
+  });
+
+  test("a near-empty repo still yields a minimal, non-null digest", async () => {
+    const dir = tempDir("vibersyn-digest-empty-");
+    writeFileSync(join(dir, "README.md"), "# Just an idea\n");
+    const digest = await repoDigest(dir);
+    expect(digest).not.toBe(null);
+    expect(digest!).toContain("This project appears to be: a software project.");
+    expect(digest!).not.toContain("Stack:");
+    expect(digest!).not.toContain("Dependencies:");
+  });
 });
