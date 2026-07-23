@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { demoProjectorSnapshot, busyRoomSnapshot, emptyProjectorSnapshot, withUnmuted } from "./demo-data";
-import type { ProjectorProcess, ProjectorSnapshot, TranscriptLine } from "./types";
+import type { ProjectorProcess, ProjectorSnapshot, ResearchTrayItem, TranscriptLine } from "./types";
 import { GestureLayer } from "./gesture/GestureLayer";
-import { RoomScene, type IdeaOrbSpec, type SceneLayout, type SceneMode, type TreeSpec } from "./RoomScene";
+import { RoomScene, type DialogueNodeSpec, type IdeaOrbSpec, type ResearchNodeSpec, type SceneLayout, type SceneMode, type TreeSpec } from "./RoomScene";
 import { Slideshow } from "./Slideshow";
 import { BuildDetail } from "./BuildDetail";
 import { IdeaTray } from "./IdeaTray";
+import { ResearchTray } from "./ResearchTray";
+import { ResearchDeckOverlay } from "./ResearchDeckOverlay";
 import { QrImport } from "./QrImport";
 import { HelpOverlay } from "./HelpOverlay";
 import { BuildChips, CommissionButton, ExecutionChip, ProcessControls } from "./BuildChips";
@@ -104,6 +106,10 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
   const [slideshowUpid, setSlideshowUpid] = useState<string | null>(initialOverlay?.slideshowUpid ?? null);
   const slideshowRef = useRef<string | null>(null);
   slideshowRef.current = slideshowUpid;
+  // Research dossier overlay: the quest id whose deck is open, or null.
+  const [researchDeckId, setResearchDeckId] = useState<string | null>(null);
+  const researchDeckRef = useRef<string | null>(null);
+  researchDeckRef.current = researchDeckId;
   const [zenMode, setZenMode] = useState(false);
   const zenModeRef = useRef(false);
   zenModeRef.current = zenMode;
@@ -390,6 +396,79 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
       // Non-authoritative projector: a failed toggle must never block the UI.
     }
   }, [liveMode]);
+
+  // RESEARCH MODE toggle. Flips the server-side suggester loop so the room's
+  // conversation is watched for researchable material (fact-checks, deep-dives,
+  // bias scans). Offline demo flips the flag locally so the static fixtures
+  // stay interactive.
+  const researchActive = snapshot.researchMode ?? false;
+  const toggleResearchMode = useCallback(async () => {
+    if (!liveMode || mockModeRef.current) {
+      setSnapshot((current) => ({ ...current, researchMode: !(current.researchMode ?? false) }));
+      return;
+    }
+    try {
+      const response = await fetch("/api/research-mode", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ on: !(snapshotRef.current.researchMode ?? false) }),
+      });
+      if (response.ok && response.headers.get("content-type")?.includes("application/json")) {
+        setSnapshot((await response.json()) as ProjectorSnapshot);
+      }
+    } catch {
+      // Non-authoritative projector: a failed toggle must never block the UI.
+    }
+  }, [liveMode]);
+
+  // RESEARCH TRAY actions: accept (spawn the research agent) or dismiss a
+  // SPECIFIC quest. Live mode POSTs the per-quest endpoint and applies the
+  // returned snapshot; offline demo mutates the card locally so the static
+  // tray stays interactive.
+  const actOnResearch = useCallback(
+    async (id: string, action: "accept" | "dismiss") => {
+      if (!liveMode || mockModeRef.current) {
+        setSnapshot((current) => ({
+          ...current,
+          research:
+            action === "dismiss"
+              ? (current.research ?? []).filter((quest) => quest.id !== id)
+              : (current.research ?? []).map((quest) =>
+                  quest.id === id && quest.status === "proposed"
+                    ? { ...quest, status: "researching" as const, progress: 12, progressLabel: "researching sources" }
+                    : quest,
+                ),
+        }));
+        return;
+      }
+      try {
+        const response = await fetch(`/api/research/${encodeURIComponent(id)}/${action}`, { method: "POST" });
+        if (response.ok && response.headers.get("content-type")?.includes("application/json")) {
+          setSnapshot((await response.json()) as ProjectorSnapshot);
+        }
+      } catch {
+        // Non-authoritative projector: a failed POST must never block the UI.
+      }
+    },
+    [liveMode],
+  );
+
+  // Clicking a research crystal in the 3D scene: a proposed quest spawns its
+  // research; a complete quest opens the dossier deck.
+  const onResearchNode = useCallback(
+    (id: string) => {
+      const quest = (snapshotRef.current.research ?? []).find((candidate) => candidate.id === id);
+      if (quest === undefined) {
+        return;
+      }
+      if (quest.status === "proposed") {
+        void actOnResearch(id, "accept");
+      } else if (quest.status === "complete") {
+        setResearchDeckId(id);
+      }
+    },
+    [actOnResearch],
+  );
 
   // CLICK A PROJECT -> STEER IT. In live mode, clicking a process bubble/panel sets
   // it as the steering target (so subsequent transcript routes to it); clicking the
@@ -896,6 +975,10 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
         // Close the topmost overlay first; fall back to closing the detail.
         // Help renders after (above) the QR overlay in the tree, so it closes
         // first — otherwise Escape appears to do nothing while both are open.
+        if (researchDeckRef.current !== null) {
+          setResearchDeckId(null);
+          return;
+        }
         if (slideshowRef.current !== null) {
           setSlideshowUpid(null);
           return;
@@ -973,6 +1056,9 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
         case "a":
           void toggleAutoAccept();
           return;
+        case "r":
+          void toggleResearchMode();
+          return;
         case "u":
           if (snapshotRef.current.muted) {
             void releaseMute();
@@ -1014,6 +1100,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
     actOnTopIdea,
     toggleMicCapture,
     toggleAutoAccept,
+    toggleResearchMode,
     releaseMute,
     triggerEmergency,
     processLifecycle,
@@ -1124,6 +1211,36 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
     [ideaOrbs, hiddenIdeas],
   );
 
+  // RESEARCH surfaces: the 3D dialogue tree + research crystals mount when the
+  // mode is on OR quests already exist (a finished dossier stays visitable
+  // after the mode is toggled off); otherwise the props are empty and the
+  // classic scene is untouched.
+  const researchQuests = snapshot.research ?? [];
+  const showResearch = researchActive || researchQuests.length > 0;
+  const dialogueSpecs = useMemo<DialogueNodeSpec[]>(
+    () => (showResearch ? (snapshot.dialogue ?? []) : []),
+    [showResearch, snapshot.dialogue],
+  );
+  const researchSpecs = useMemo<ResearchNodeSpec[]>(
+    () =>
+      showResearch
+        ? researchQuests.map((quest) => ({
+            id: quest.id,
+            topic: quest.topic,
+            kind: quest.kind,
+            status: quest.status,
+            confidence: quest.confidence,
+            progress: quest.progress,
+            turnId: quest.turnId ?? null,
+          }))
+        : [],
+    [showResearch, researchQuests],
+  );
+  const researchDeckQuest = useMemo<ResearchTrayItem | null>(
+    () => (researchDeckId === null ? null : researchQuests.find((quest) => quest.id === researchDeckId) ?? null),
+    [researchDeckId, researchQuests],
+  );
+
   // Clicking a project in the scene: mock/demo processes with a FIXTURE deck
   // open their slideshow (mock room has no rail, so the scene click is the only
   // deck path there); every live process steers — click-to-steer stays the
@@ -1199,6 +1316,9 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
         pointerNav={!gestureMode}
         onAcceptIdea={acceptOrb}
         onSelectProcess={selectSceneProcess}
+        dialogue={dialogueSpecs}
+        research={researchSpecs}
+        onResearchNode={onResearchNode}
       />
       {dwellLayerOn ? (
         <GestureLayer
@@ -1316,6 +1436,19 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
               {autoAccept ? "Auto-Build: ON" : "Auto-Build: OFF"}
             </button>
           ) : null}
+          {showIdeaSurfaces ? (
+            <button
+              type="button"
+              className={`ctl-button research-toggle${researchActive ? " on" : ""}`}
+              data-testid="research-mode-button"
+              data-state={researchActive ? "on" : "off"}
+              aria-pressed={researchActive}
+              onClick={() => void toggleResearchMode()}
+              title="Research mode (R): the room's talk grows a 3D dialogue tree, and agents suggest what to fact-check, deep-dive, or bias-scan. Click a suggestion to spawn the research."
+            >
+              {researchActive ? "🔍 Research: ON" : "🔍 Research: OFF"}
+            </button>
+          ) : null}
           {/* Build-side control (imports a repo to BUILD): wall B + full view. */}
           {showBuildSurfaces ? (
             <button
@@ -1369,6 +1502,14 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
               ideas={ideas}
               onBuild={(id) => void actOnIdea(id, "accept")}
               onDismiss={(id) => void actOnIdea(id, "dismiss")}
+            />
+          ) : null}
+          {researchActive && showIdeaSurfaces && !mockMode ? (
+            <ResearchTray
+              quests={researchQuests}
+              onAccept={(id) => void actOnResearch(id, "accept")}
+              onDismiss={(id) => void actOnResearch(id, "dismiss")}
+              onOpenDeck={(id) => setResearchDeckId(id)}
             />
           ) : null}
         </div>
@@ -1541,6 +1682,9 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
             ) : null;
           })()
         : null}
+      {researchDeckQuest !== null ? (
+        <ResearchDeckOverlay quest={researchDeckQuest} onClose={() => setResearchDeckId(null)} />
+      ) : null}
       {qrOpen ? <QrImport processes={snapshot.processes} onClose={() => setQrOpen(false)} /> : null}
       {helpOpen ? <HelpOverlay onClose={() => setHelpOpen(false)} gestureMode={gestureMode} /> : null}
       {guided !== null ? (

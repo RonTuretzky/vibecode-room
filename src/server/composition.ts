@@ -46,6 +46,16 @@ import {
 } from "../suggest/engine";
 import { DetectionRunner, selectDetectionRunner, type DetectionSnapshot } from "./detection-runner";
 import { DETECTION_BUBBLE_TTL_MS, ideaTrayFromCandidates, pendingSuggestionFromCandidate, projectorSuggestionFromCandidate } from "./idea-suggestion";
+import {
+  ResearchLoop,
+  renderResearchDeckHtml,
+  selectResearchAgent,
+  selectResearchSuggester,
+  type DeckSource,
+  type ResearchAgent,
+  type ResearchSuggester,
+} from "../research";
+import { researchTrayFromQuests } from "./research-snapshot";
 import { matchWakePhrase, parseVoiceCommand, voiceCommandLabel, wakeWordFromEnv, type WakePhraseMatch } from "./voice-commands";
 import { dispatchUtterance, type DispatchDecision, type SteeringWindow as RoutingSteeringWindow } from "../routing/dispatch";
 import { includesPhrase, loadRoutingVocabulary, normalizeSpeech, type DocumentedCommand, type RoutingVocabulary } from "../routing/vocabulary";
@@ -59,7 +69,7 @@ import type { IdeaCandidate, IdeaDetector } from "../detect";
 import { StageSequencer, type CanonicalStage } from "../spine/stage-sequencer";
 import type { DispatchedAction, LogEvent, OutputDecision, PendingSuggestion } from "../types";
 import { demoProjectorSnapshot, emptyProjectorSnapshot, withUnmuted } from "../ui/demo-data";
-import type { IdeaTrayItem, ProjectorProcess, ProjectorProcessState, ProjectorSnapshot, ProjectorSuggestion, TranscriptLine } from "../ui/types";
+import type { DialogueTurn, IdeaTrayItem, ProjectorProcess, ProjectorProcessState, ProjectorSnapshot, ProjectorSuggestion, ResearchTrayItem, TranscriptLine } from "../ui/types";
 import type { TranscriptObservation } from "../types";
 
 export type ProjectorRuntimeSubscriber = (snapshot: ProjectorSnapshot) => void;
@@ -192,6 +202,24 @@ export interface ProjectorRuntime {
   // add it to the fleet as an imported project-in-progress
   // (source: { kind: "github-import", url }).
   importProject(url: string, correlationId?: string): Promise<ImportProjectResult>;
+  // RESEARCH MODE: the suggester/agent loop that watches the conversation for
+  // researchable material (fact-checks, deep-dives, bias scans), spawns
+  // research agents on accept, and produces sourced dossier decks.
+  readonly research: ResearchLoop;
+  // Toggle the research suggester loop (POST /api/research-mode, voice
+  // "research on/off"). Turning it on runs an immediate suggestion round.
+  setResearchMode(on: boolean, correlationId?: string): ProjectorSnapshot;
+  researchMode(): boolean;
+  // Accept a PROPOSED research quest: spawns the research agent (fact-check +
+  // bias scan + sources) in the background. 404-free: unknown/non-proposed ids
+  // are a no-op returning the current snapshot.
+  acceptResearch(id: string, correlationId?: string): ProjectorSnapshot;
+  // Dismiss a quest: proposed → dropped + topic suppressed; researching →
+  // cancelled; complete/failed → cleared from the wall.
+  dismissResearch(id: string, correlationId?: string): ProjectorSnapshot;
+  // The completed quest's dossier deck (self-contained HTML slideshow with a
+  // QR code per source), or null when the quest is unknown/not complete.
+  researchDeckHtml(id: string): Promise<string | null>;
 }
 
 export type ImportProjectResult = { ok: true; snapshot: ProjectorSnapshot } | { ok: false; error: string };
@@ -277,6 +305,12 @@ export interface ProjectorRuntimeOptions {
   // disabled with a trace when no PAT resolves). Tests inject a fake; null
   // disables publishing entirely.
   publishDeck?: PublishDeckFn | null;
+  // RESEARCH MODE seams: the suggester that proposes quests from the rolling
+  // transcript and the agent that researches an accepted quest. Production
+  // selects host-`claude` inference for both (the agent does real web
+  // search); tests inject deterministic fakes so no model spawns.
+  researchSuggester?: ResearchSuggester;
+  researchAgent?: ResearchAgent;
 }
 
 export async function createProjectorRuntime(
@@ -810,7 +844,30 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     });
     this.detection = detectionSelection.runner;
     this.#detectionMode = detectionSelection.mode;
+    // RESEARCH MODE: the parallel loop that watches the same rolling transcript
+    // for researchable material. Turns are always ingested (the dialogue tree
+    // is live data); suggestion inference runs only while the mode is active.
+    this.research = new ResearchLoop({
+      sessionId,
+      suggester: options.researchSuggester ?? selectResearchSuggester(env).suggester,
+      agent: options.researchAgent ?? selectResearchAgent(env).agent,
+      clock,
+      onUpdate: () => this.publish(),
+      onTrace: (event) =>
+        this.recordExternalTrace({
+          event: event.event,
+          level: event.level,
+          sessionId,
+          correlationId: event.correlationId,
+          meta: event.meta,
+        }),
+    });
   }
+
+  readonly research: ResearchLoop;
+  // Rendered dossier decks by quest id — a report is immutable once complete,
+  // so the (async, QR-generating) render runs once per quest.
+  readonly #researchDecks = new Map<string, string>();
 
   snapshot(): ProjectorSnapshot {
     return this.#snapshot;
@@ -900,6 +957,10 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       this.#detectionPrimaryId = null;
       this.disarmAutoBuild();
       this.#captureMode = false;
+      // Abort every in-flight research agent and stop the suggester loop — no
+      // research spawn outlives the kill-all either.
+      this.research.stopAll("emergency stop");
+      this.research.setActive(false);
       this.#snapshot = this.buildSnapshot();
       this.publish();
     }
@@ -1036,6 +1097,79 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     }
     this.publish();
     return this.#snapshot;
+  }
+
+  // ── RESEARCH MODE ──────────────────────────────────────────────────────────
+
+  setResearchMode(on: boolean, correlationId = `corr-research-mode-${crypto.randomUUID()}`): ProjectorSnapshot {
+    if (this.#emergencyTriggered && on) {
+      return this.#snapshot;
+    }
+    this.recordExternalTrace({
+      event: "research.mode",
+      level: "info",
+      sessionId: this.sessionId,
+      correlationId,
+      meta: { on },
+    });
+    this.research.setActive(on);
+    return this.publishNow();
+  }
+
+  researchMode(): boolean {
+    return this.research.active();
+  }
+
+  acceptResearch(id: string, correlationId = `corr-research-accept-${crypto.randomUUID()}`): ProjectorSnapshot {
+    if (this.#emergencyTriggered) {
+      return this.#snapshot;
+    }
+    this.research.accept(id, correlationId);
+    return this.publishNow();
+  }
+
+  dismissResearch(id: string, correlationId = `corr-research-dismiss-${crypto.randomUUID()}`): ProjectorSnapshot {
+    this.research.dismiss(id, correlationId);
+    return this.publishNow();
+  }
+
+  // Voice "vibersyn research it": accept the strongest proposed quest; with
+  // nothing proposed yet, make sure the mode is on and force a suggestion
+  // round so the room's ask surfaces something to click.
+  private acceptTopResearch(correlationId: string): void {
+    const top = this.research.quests().find((quest) => quest.status === "proposed");
+    if (top !== undefined) {
+      this.acceptResearch(top.id, correlationId);
+      return;
+    }
+    if (!this.research.active()) {
+      this.setResearchMode(true, correlationId);
+      return;
+    }
+    void this.research.maybeSuggest(true);
+  }
+
+  // Render (once) and return the completed quest's dossier deck. The QR SVGs
+  // are generated HERE — server-side, same qrcode dependency as the take-home
+  // deck path — so the deck stays a self-contained document.
+  async researchDeckHtml(id: string): Promise<string | null> {
+    const cached = this.#researchDecks.get(id);
+    if (cached !== undefined) {
+      return cached;
+    }
+    const quest = this.research.quest(id);
+    if (quest === null || quest.status !== "complete" || quest.report === null) {
+      return null;
+    }
+    const sources: DeckSource[] = await Promise.all(
+      quest.report.sources.map(async (source) => ({
+        ...source,
+        qrSvg: await qrCodeSvg(source.url).catch(() => ""),
+      })),
+    );
+    const html = renderResearchDeckHtml({ quest, report: quest.report, sources });
+    this.#researchDecks.set(id, html);
+    return html;
   }
 
   // QR import: a validated GitHub URL joins the fleet as a project in progress.
@@ -1346,6 +1480,12 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       // earcon trace. This is orthogonal to the suggestion/acceptance routing below.
       await this.driveCueBridge(observation, correlationId);
 
+      // RESEARCH dialogue: every non-command FINAL becomes an id-stable turn in
+      // the rolling window feeding the 3D dialogue tree; while research mode is
+      // active the suggester rounds kick in the BACKGROUND (never blocking the
+      // idea/steering path below).
+      this.research.ingestTurn({ speaker: observation.speaker, text, atMs: this.#clock() });
+
       // VOICE CALLSIGN STEERING: an utterance ADDRESSED to a live process by its
       // callsign ("atlas, make the header blue") sets that process as the
       // steering target and routes the remainder as steer text — before any
@@ -1633,6 +1773,15 @@ class LiveProjectorRuntime implements ProjectorRuntime {
         break;
       case "auto-off":
         this.setAutoAccept(false, voiceCorrelationId);
+        break;
+      case "research-on":
+        this.setResearchMode(true, voiceCorrelationId);
+        break;
+      case "research-off":
+        this.setResearchMode(false, voiceCorrelationId);
+        break;
+      case "research":
+        this.acceptTopResearch(voiceCorrelationId);
         break;
       case "emergency":
         await this.emergencyStop(voiceCorrelationId);
@@ -2201,10 +2350,36 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       steeringUpid: this.#steeringUpid,
       autoAccept: this.#autoAccept,
       captureMode: this.#captureMode,
+      researchMode: this.research.active(),
+      research: this.researchSnapshot(),
+      dialogue: this.dialogueSnapshot(),
       // Multi-backend build loop: the registered backend roster with enabled +
       // last-probed availability — the wall's toggle chips (POST /api/backends).
       backends: this.buildSelector.snapshot(),
     };
+  }
+
+  // Research tray: PROPOSED quests are listening-derived content, so they obey
+  // the same invariant as the idea tray (never shown while the room believes
+  // it is not being listened to). Committed work — researching, complete,
+  // failed — persists like processes do: it is an artifact, not a suggestion.
+  private researchSnapshot(): ResearchTrayItem[] {
+    const quests = this.research.quests();
+    if (this.#emergencyTriggered || this.muteController.isMuted()) {
+      return researchTrayFromQuests(quests.filter((quest) => quest.status !== "proposed"));
+    }
+    return researchTrayFromQuests(quests);
+  }
+
+  // The dialogue window mirrors the transcript region (persists across mute)
+  // but is id-addressable so research quests anchor to their grounding turn.
+  private dialogueSnapshot(): DialogueTurn[] {
+    return this.research.turns().map((turn) => ({
+      id: turn.id,
+      speaker: turn.speaker,
+      text: turn.text,
+      atMs: turn.atMs,
+    }));
   }
 
   // The live transcript region reflects the real room audio. With no live mic

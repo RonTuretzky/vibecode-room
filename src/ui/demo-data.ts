@@ -131,6 +131,70 @@ export const demoProjectorSnapshot: ProjectorSnapshot = {
     },
   ],
   voice: null,
+  // RESEARCH MODE fixture: the 3D dialogue tree grows from these turns, and
+  // the quests show the full lifecycle — a proposed fact-check (clickable), a
+  // researching deep-dive with live progress, and a completed dossier. The
+  // completed quest's deckUrl is null in the offline fixture (no server to
+  // render the deck), which the overlay handles with an explicit notice.
+  researchMode: true,
+  dialogue: [
+    { id: "rturn-0001", speaker: "speaker-1", text: "The standup notes keep losing blockers.", atMs: 1750096800000 },
+    { id: "rturn-0002", speaker: "speaker-2", text: "I read that most remote teams miss half their blockers in async standups.", atMs: 1750096815000 },
+    { id: "rturn-0003", speaker: "speaker-1", text: "We could turn the meeting notes into a blocker announcer.", atMs: 1750096832000 },
+    { id: "rturn-0004", speaker: "speaker-3", text: "How do other tools handle surfacing blockers automatically?", atMs: 1750096851000 },
+    { id: "rturn-0005", speaker: "speaker-2", text: "Apparently the biggest standup tools all pivoted away from daily meetings entirely.", atMs: 1750096870000 },
+  ],
+  // Tray order mirrors the live loop contract: researching → proposed →
+  // complete, so the offline demo reads the same as a live room.
+  research: [
+    {
+      id: "rq_blocker_tools",
+      kind: "deep-dive",
+      topic: "How tools surface blockers automatically",
+      claim: "How do existing standup tools detect and surface blockers automatically?",
+      confidence: 0.6,
+      status: "researching",
+      progress: 45,
+      progressLabel: "fact-checking findings",
+      evidence: "How do other tools handle surfacing blockers automatically?",
+      turnId: "rturn-0004",
+      sourceCount: 0,
+      biasCount: 0,
+      deckUrl: null,
+    },
+    {
+      id: "rq_async_blockers",
+      kind: "fact-check",
+      topic: "Remote teams miss half their blockers",
+      claim: "Most remote teams miss half their blockers in async standups.",
+      confidence: 0.74,
+      status: "proposed",
+      progress: 0,
+      progressLabel: "",
+      rationale: "A specific reported statistic — worth verifying before building around it.",
+      evidence: "I read that most remote teams miss half their blockers in async standups.",
+      turnId: "rturn-0002",
+      sourceCount: 0,
+      biasCount: 0,
+      deckUrl: null,
+    },
+    {
+      id: "rq_standup_pivot",
+      kind: "bias-scan",
+      topic: "Standup tools pivoting away from meetings",
+      claim: "The biggest standup tools all pivoted away from daily meetings entirely.",
+      confidence: 0.68,
+      status: "complete",
+      progress: 100,
+      progressLabel: "report ready",
+      evidence: "Apparently the biggest standup tools all pivoted away from daily meetings entirely.",
+      turnId: "rturn-0005",
+      sourceCount: 4,
+      biasCount: 2,
+      verdicts: { supported: 1, refuted: 1, mixed: 1, unverified: 0 },
+      deckUrl: null,
+    },
+  ],
   updatedAt: new Date("2026-06-16T18:00:00.000Z").toISOString(),
 };
 

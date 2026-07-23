@@ -161,6 +161,51 @@ export function createProjectorApp(runtime: ProjectorRuntime, options: Projector
     }
     return context.json(runtime.setCaptureMode(on));
   });
+  // RESEARCH MODE toggle. Body `{ on: boolean }` sets it explicitly; absent
+  // body flips the current state. When on, the research suggester watches the
+  // conversation and proposes quests (fact-checks / deep-dives / bias scans);
+  // researching still requires an explicit accept. Returns the snapshot.
+  app.post("/api/research-mode", async (context) => {
+    if (isOfflineDemoRequest(context.req.header("referer"))) {
+      return context.json(runtime.snapshot());
+    }
+    let on = !runtime.researchMode();
+    try {
+      const body = (await context.req.json()) as { on?: unknown };
+      if (typeof body?.on === "boolean") {
+        on = body.on;
+      }
+    } catch {
+      // no/invalid body -> toggle current state
+    }
+    return context.json(runtime.setResearchMode(on));
+  });
+  // RESEARCH TRAY: accept a PROPOSED quest — spawns the research agent (web
+  // research + adversarial fact-check + bias scan) in the background. 404-free
+  // by contract: an unknown id returns the current snapshot unchanged.
+  app.post("/api/research/:id/accept", (context) => {
+    if (isOfflineDemoRequest(context.req.header("referer"))) {
+      return context.json(runtime.snapshot());
+    }
+    return context.json(runtime.acceptResearch(context.req.param("id")));
+  });
+  // RESEARCH TRAY: dismiss a quest (proposed → suppressed for the cooldown;
+  // researching → cancelled; complete/failed → cleared from the wall).
+  app.post("/api/research/:id/dismiss", (context) => {
+    if (isOfflineDemoRequest(context.req.header("referer"))) {
+      return context.json(runtime.snapshot());
+    }
+    return context.json(runtime.dismissResearch(context.req.param("id")));
+  });
+  // The completed quest's dossier deck: a self-contained HTML slideshow —
+  // findings with verdicts, bias notes, and a scannable QR code per source.
+  app.get("/api/research/:id/deck", async (context) => {
+    const html = await runtime.researchDeckHtml(context.req.param("id"));
+    if (html === null) {
+      return context.text("Research deck not ready.", 404);
+    }
+    return context.html(html);
+  });
   // CLICK A PROJECT -> STEER IT. Set the steering target so subsequent FINAL
   // transcript lines route to that process's agent loop. Returns the snapshot.
   app.post("/api/process/:upid/select", (context) => {

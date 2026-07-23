@@ -56,6 +56,30 @@ export type SceneMode = "garden" | "orbit";
 // ball after Munzner 1997, and the Lamping/Rao/Pirolli Poincaré disk).
 export type SceneLayout = "radial" | "ball" | "disk";
 
+// ── RESEARCH MODE specs ─────────────────────────────────────────────────────
+// The 3D dialogue tree (VoxTerm's flat transcript list, grown into space): the
+// conversation is a rising helix of speaker-colored turn nodes joined by a
+// luminous spine, and research quests BUD off the exact turn they were
+// grounded in — proposed crystals are clickable to spawn the research, a
+// finished crystal opens the dossier deck.
+export interface DialogueNodeSpec {
+  id: string;
+  speaker: string | null;
+  text: string;
+  atMs: number;
+}
+
+export interface ResearchNodeSpec {
+  id: string;
+  topic: string;
+  kind: "fact-check" | "deep-dive" | "bias-scan";
+  status: "proposed" | "researching" | "complete" | "failed";
+  confidence: number;
+  progress: number;
+  // The grounding turn id (dialogue anchor), when it is still in the window.
+  turnId: string | null;
+}
+
 interface RoomSceneProps {
   ideas: IdeaOrbSpec[];
   trees: TreeSpec[];
@@ -85,6 +109,13 @@ interface RoomSceneProps {
   pointerNav?: boolean;
   onAcceptIdea: (id: string | null) => void;
   onSelectProcess: (callsign: string) => void;
+  // RESEARCH MODE (all optional so legacy callers/tests are untouched): the
+  // dialogue window + research quests to grow the 3D dialogue tree from, and
+  // the click handler for research crystals (proposed → accept and spawn the
+  // research; complete → open the dossier deck — App decides by status).
+  dialogue?: DialogueNodeSpec[];
+  research?: ResearchNodeSpec[];
+  onResearchNode?: (id: string) => void;
 }
 
 const MATURITY_COLOR: Record<IdeaTrayItem["maturity"], number> = {
@@ -108,6 +139,55 @@ const STEERING_COLOR = 0x9ee2ff;
 const COMMISSION_COLOR = 0xffd166;
 const TRUNK_COLOR = 0x4a3527;
 const FLASH_MS = 1500;
+
+// Research crystal colors reuse the FIXED status semantics: proposed=planning
+// blue, researching=active green, complete=completed mint, failed=halted red.
+const RESEARCH_STATUS_COLOR: Record<ResearchNodeSpec["status"], number> = {
+  proposed: 0x38bdf8,
+  researching: 0x00ff88,
+  complete: 0x9affc9,
+  failed: 0xff3b30,
+};
+const RESEARCH_KIND_GLYPH: Record<ResearchNodeSpec["kind"], string> = {
+  "fact-check": "✓ fact-check",
+  "deep-dive": "◎ deep-dive",
+  "bias-scan": "⚖ bias-scan",
+};
+// Speaker identity palette (NOT status colors — cool identity tints, no
+// violet): deterministic per speaker name so a voice keeps its color.
+const SPEAKER_COLORS = [0x9ee2ff, 0x7fe0c3, 0xffd9a0, 0xa8c7ff, 0xffb3c7, 0xd6f0a0];
+// The dialogue helix: a rising vine of turns anchored left of the main field.
+const DIALOGUE_CENTER_X = -11;
+const DIALOGUE_CENTER_Z = 0;
+const DIALOGUE_RADIUS = 2.4;
+const DIALOGUE_BASE_Y = 0.7;
+const DIALOGUE_Y_STEP = 0.45;
+const DIALOGUE_ANGLE_STEP = 0.55;
+// Rendered turn cap + how many of the newest turns carry text labels.
+const DIALOGUE_MAX_NODES = 20;
+const DIALOGUE_LABELED = 6;
+
+function speakerColor(speaker: string | null): number {
+  if (speaker === null || speaker.length === 0) {
+    return SPEAKER_COLORS[0];
+  }
+  let hash = 0;
+  for (let index = 0; index < speaker.length; index += 1) {
+    hash = (hash * 31 + speaker.charCodeAt(index)) >>> 0;
+  }
+  return SPEAKER_COLORS[hash % SPEAKER_COLORS.length];
+}
+
+// Turn i of m on the helix (chronological: 0 = oldest displayed; the newest
+// turn sits at the top of the vine — the conversation visibly grows upward).
+function dialoguePosition(index: number): THREE.Vector3 {
+  const angle = index * DIALOGUE_ANGLE_STEP;
+  return new THREE.Vector3(
+    DIALOGUE_CENTER_X + Math.cos(angle) * DIALOGUE_RADIUS,
+    DIALOGUE_BASE_Y + index * DIALOGUE_Y_STEP,
+    DIALOGUE_CENTER_Z + Math.sin(angle) * DIALOGUE_RADIUS,
+  );
+}
 
 // Node label title: the inferred project title when the server has named the
 // build, else the callsign so a freshly spawned process is never label-less.
@@ -327,12 +407,14 @@ interface SceneEnv {
   dispose: () => void;
 }
 
-type EntryKind = "tree" | "flower" | "orb-proc" | "orb-idea";
+type EntryKind = "tree" | "flower" | "orb-proc" | "orb-idea" | "dialogue" | "research";
 
 interface Entry {
   kind: EntryKind;
   ideaSpec?: IdeaOrbSpec;
   treeSpec?: TreeSpec;
+  dialogueSpec?: DialogueNodeSpec;
+  researchSpec?: ResearchNodeSpec;
   group: THREE.Group;
   mats: (THREE.MeshPhongMaterial | THREE.MeshStandardMaterial)[];
   baseEmissive: number;
@@ -348,12 +430,18 @@ interface Entry {
   removing: boolean;
 }
 
-export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, focusUpid = null, pointerNav = true, cornerLock = false, onAcceptIdea, onSelectProcess }: RoomSceneProps) {
+export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, focusUpid = null, pointerNav = true, cornerLock = false, onAcceptIdea, onSelectProcess, dialogue = [], research = [], onResearchNode }: RoomSceneProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const ideasRef = useRef(ideas);
   ideasRef.current = ideas;
   const treesRef = useRef(trees);
   treesRef.current = trees;
+  const dialogueRef = useRef(dialogue);
+  dialogueRef.current = dialogue;
+  const researchRef = useRef(research);
+  researchRef.current = research;
+  const onResearchRef = useRef(onResearchNode);
+  onResearchRef.current = onResearchNode;
   const modeRef = useRef(mode);
   modeRef.current = mode;
   const layoutRef = useRef(layout);
@@ -380,7 +468,7 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
 
   useEffect(() => {
     tick.current += 1;
-  }, [ideas, trees, mode, layout]);
+  }, [ideas, trees, mode, layout, dialogue, research]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -706,12 +794,28 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       stem: new THREE.CylinderGeometry(0.03, 0.05, 1, 5),
       ring: new THREE.TorusGeometry(0.34, 0.015, 8, 48),
       orb: new THREE.SphereGeometry(1, 48, 48),
+      turn: new THREE.SphereGeometry(0.22, 16, 16),
+      crystal: new THREE.OctahedronGeometry(0.55, 0),
     };
     const trunkMat = new THREE.MeshPhongMaterial({ color: TRUNK_COLOR, emissive: TRUNK_COLOR, emissiveIntensity: 0.08 });
     const stemMat = new THREE.MeshPhongMaterial({ color: 0x1c6b4a, emissive: 0x1c6b4a, emissiveIntensity: 0.08 });
 
     const ideaEntries = new Map<string, Entry>();
     const treeEntries = new Map<string, Entry>();
+    // RESEARCH MODE: dialogue turn nodes (helix) + research crystals, plus the
+    // luminous conversation spine and the turn→crystal branch filaments. The
+    // lines are rebuilt whole on reconcile (endpoints are target positions).
+    const dialogueEntries = new Map<string, Entry>();
+    const researchEntries = new Map<string, Entry>();
+    let dialogueLines: THREE.Line[] = [];
+    const clearDialogueLines = () => {
+      for (const line of dialogueLines) {
+        scene.remove(line);
+        line.geometry.dispose();
+        (Array.isArray(line.material) ? line.material : [line.material]).forEach((m) => m.dispose());
+      }
+      dialogueLines = [];
+    };
 
     const disposeEntry = (entry: Entry) => {
       scene.remove(entry.group);
@@ -1054,6 +1158,87 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       return { kind: "flower", ideaSpec: spec, group, mats, baseEmissive, head, headY: 0, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false };
     };
 
+    // ── research-mode builders ──────────────────────────────────────────────
+    // One dialogue turn: a small speaker-tinted glass sphere on the helix.
+    // Only the newest few turns carry a text label so the vine stays calm.
+    const buildDialogueNode = (spec: DialogueNodeSpec, labeled: boolean): Entry => {
+      const color = speakerColor(spec.speaker);
+      const group = new THREE.Group();
+      const mat = new THREE.MeshStandardMaterial({ roughness: 0.35, metalness: 0.1, transparent: true, opacity: 0.85 });
+      mat.color.set(color).multiplyScalar(0.55);
+      mat.emissive.set(color);
+      mat.emissiveIntensity = labeled ? 0.45 : 0.2;
+      const node = new THREE.Mesh(GEO.turn, mat);
+      group.add(node);
+      const halo = new THREE.Sprite(
+        new THREE.SpriteMaterial({ map: glowTexture, color, transparent: true, opacity: labeled ? 0.35 : 0.15, blending: THREE.AdditiveBlending, depthWrite: false }),
+      );
+      halo.scale.setScalar(0.9);
+      group.add(halo);
+      let label: THREE.Sprite | null = null;
+      if (labeled && spec.text.length > 0) {
+        label = makeLabelSprite(spec.text, spec.speaker ?? "room", cssHex(color));
+        label.position.y = 0.34;
+        group.add(label);
+      }
+      return { kind: "dialogue", dialogueSpec: spec, group, mats: [mat], baseEmissive: mat.emissiveIntensity, head: null, headY: 0, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false };
+    };
+
+    // One research quest: a slowly-spinning crystal budding off its grounding
+    // turn. proposed=blue (click to spawn the research) · researching=green
+    // with a progress ring · complete=mint (click opens the dossier deck) ·
+    // failed=red, dimmed.
+    const buildResearchNode = (spec: ResearchNodeSpec): Entry => {
+      const color = RESEARCH_STATUS_COLOR[spec.status];
+      const size = 0.75 + spec.confidence * 0.55;
+      const baseEmissive =
+        spec.status === "failed" ? 0.12 : spec.status === "proposed" ? 0.35 + spec.confidence * 0.3 : 0.55;
+      const group = new THREE.Group();
+      const mat = new THREE.MeshStandardMaterial({
+        roughness: 0.25,
+        metalness: 0.2,
+        transparent: true,
+        opacity: spec.status === "failed" ? 0.55 : 0.95,
+      });
+      mat.color.set(color).multiplyScalar(0.55);
+      mat.emissive.set(color);
+      mat.emissiveIntensity = baseEmissive;
+      const crystal = new THREE.Mesh(GEO.crystal, mat);
+      crystal.scale.setScalar(size);
+      crystal.userData.pick = { kind: "research", key: spec.id };
+      group.add(crystal);
+      const halo = new THREE.Sprite(
+        new THREE.SpriteMaterial({ map: glowTexture, color, transparent: true, opacity: spec.status === "failed" ? 0.12 : 0.4, blending: THREE.AdditiveBlending, depthWrite: false }),
+      );
+      halo.scale.setScalar(size * 3);
+      group.add(halo);
+      if (spec.status === "researching" || spec.status === "complete") {
+        const ring = new THREE.Mesh(
+          new THREE.TorusGeometry(size * 1.3, 0.03, 8, 64),
+          new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.5 }),
+        );
+        ring.rotation.x = Math.PI * 0.42;
+        group.add(ring);
+      }
+      // Generous invisible hit sphere: crystals are small and float mid-air.
+      const hit = new THREE.Mesh(
+        new THREE.SphereGeometry(Math.max(0.9, size), 8, 8),
+        new THREE.MeshBasicMaterial({ visible: false }),
+      );
+      hit.userData.pick = { kind: "research", key: spec.id };
+      group.add(hit);
+      const statusLine =
+        spec.status === "researching"
+          ? `${RESEARCH_KIND_GLYPH[spec.kind]} · ${Math.round(spec.progress)}%`
+          : spec.status === "complete"
+            ? `${RESEARCH_KIND_GLYPH[spec.kind]} · open dossier`
+            : `${RESEARCH_KIND_GLYPH[spec.kind]} · ${spec.status}`;
+      const label = makeLabelSprite(spec.topic, statusLine, cssHex(color));
+      label.position.y = size + 0.3;
+      group.add(label);
+      return { kind: "research", researchSpec: spec, group, mats: [mat], baseEmissive, head: null, headY: 0, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false };
+    };
+
     // Boundary/context cues per layout: the Poincaré ball's wireframe horizon,
     // or the disk's rim + inner context circles.
     let layoutDecor: THREE.Object3D[] = [];
@@ -1158,6 +1343,10 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       a.state !== b.state || a.callsign !== b.callsign || a.task !== b.task ||
       a.steering !== b.steering || a.stage !== b.stage ||
       Math.round(a.progress) !== Math.round(b.progress);
+    const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
+      a.status !== b.status || a.topic !== b.topic || a.kind !== b.kind ||
+      Math.round(a.progress) !== Math.round(b.progress) ||
+      Math.abs(a.confidence - b.confidence) > 0.005;
 
     let env: SceneEnv | null = null;
     let builtMode: SceneMode | null = null;
@@ -1179,6 +1368,15 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
           disposeEntry(entry);
         }
         treeEntries.clear();
+        for (const entry of dialogueEntries.values()) {
+          disposeEntry(entry);
+        }
+        dialogueEntries.clear();
+        for (const entry of researchEntries.values()) {
+          disposeEntry(entry);
+        }
+        researchEntries.clear();
+        clearDialogueLines();
         buildLayoutDecor();
         builtMode = modeRef.current;
         builtKey = key;
@@ -1307,6 +1505,149 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
           entry.targetScale = 0;
         }
       }
+
+      // ── the 3D dialogue tree ────────────────────────────────────────────
+      // The newest DIALOGUE_MAX_NODES turns climb the helix (oldest lowest);
+      // research crystals bud off their grounding turn. Zero cost when the
+      // props are empty — nothing mounts, the classic scene is untouched.
+      const dialogueSpecs = dialogueRef.current.slice(-DIALOGUE_MAX_NODES);
+      const turnPositions = new Map<string, THREE.Vector3>();
+      const seenTurns = new Set<string>();
+      dialogueSpecs.forEach((spec, index) => {
+        seenTurns.add(spec.id);
+        const labeled = index >= dialogueSpecs.length - DIALOGUE_LABELED;
+        const placed = dialoguePosition(index);
+        turnPositions.set(spec.id, placed);
+        const existing = dialogueEntries.get(spec.id);
+        const wasLabeled = existing !== undefined && existing.label !== null;
+        if (existing === undefined || wasLabeled !== labeled) {
+          if (existing !== undefined) {
+            disposeEntry(existing);
+          }
+          const entry = buildDialogueNode(spec, labeled);
+          entry.targetPos = placed;
+          entry.phase = index * 0.7;
+          entry.group.position.copy(existing?.group.position ?? placed);
+          entry.group.scale.setScalar(existing !== undefined ? Math.max(existing.group.scale.x, 0.01) : 0.01);
+          dialogueEntries.set(spec.id, entry);
+          scene.add(entry.group);
+        } else {
+          existing.targetPos = placed;
+          existing.removing = false;
+          existing.targetScale = 1;
+        }
+      });
+      for (const [specId, entry] of dialogueEntries) {
+        if (!seenTurns.has(specId)) {
+          entry.removing = true;
+          entry.targetScale = 0;
+        }
+      }
+
+      const researchSpecs = researchRef.current;
+      const seenResearch = new Set<string>();
+      const crystalPositions = new Map<string, THREE.Vector3>();
+      let orphanIndex = 0;
+      researchSpecs.forEach((spec, index) => {
+        seenResearch.add(spec.id);
+        const anchor = spec.turnId !== null ? turnPositions.get(spec.turnId) : undefined;
+        let placed: THREE.Vector3;
+        if (anchor !== undefined) {
+          // Bud outward from the helix axis through the grounding turn.
+          const out = new THREE.Vector3(anchor.x - DIALOGUE_CENTER_X, 0, anchor.z - DIALOGUE_CENTER_Z);
+          if (out.lengthSq() < 1e-6) {
+            out.set(1, 0, 0);
+          }
+          out.normalize();
+          placed = anchor.clone().addScaledVector(out, 2.6).add(new THREE.Vector3(0, 0.5, 0));
+        } else {
+          // No grounding turn in the window: crown the vine's tip.
+          const angle = orphanIndex * 1.6;
+          orphanIndex += 1;
+          const topY = DIALOGUE_BASE_Y + Math.max(dialogueSpecs.length, 2) * DIALOGUE_Y_STEP;
+          placed = new THREE.Vector3(
+            DIALOGUE_CENTER_X + Math.cos(angle) * (DIALOGUE_RADIUS + 1.2),
+            topY + 1.1,
+            DIALOGUE_CENTER_Z + Math.sin(angle) * (DIALOGUE_RADIUS + 1.2),
+          );
+        }
+        crystalPositions.set(spec.id, placed);
+        const existing = researchEntries.get(spec.id);
+        const create = () => {
+          const entry = buildResearchNode(spec);
+          entry.targetPos = placed;
+          entry.phase = index * 1.7;
+          entry.group.position.copy(placed);
+          entry.group.scale.setScalar(0.01);
+          researchEntries.set(spec.id, entry);
+          scene.add(entry.group);
+          return entry;
+        };
+        if (existing === undefined) {
+          const entry = create();
+          if (spec.status === "proposed") {
+            entry.flashStart = performance.now();
+          }
+        } else if (existing.researchSpec !== undefined && researchSpecChanged(existing.researchSpec, spec)) {
+          // Completing is THE payoff moment: flash the finished crystal.
+          const finished = existing.researchSpec.status !== "complete" && spec.status === "complete";
+          const keepPos = existing.group.position.clone();
+          const keepScale = existing.group.scale.x;
+          const keepPhase = existing.phase;
+          disposeEntry(existing);
+          const entry = create();
+          entry.phase = keepPhase;
+          entry.group.position.copy(keepPos);
+          entry.group.scale.setScalar(Math.max(keepScale, 0.01));
+          if (finished) {
+            entry.flashStart = performance.now();
+          }
+        } else {
+          existing.targetPos = placed;
+          existing.removing = false;
+          existing.targetScale = 1;
+        }
+      });
+      for (const [specId, entry] of researchEntries) {
+        if (!seenResearch.has(specId)) {
+          entry.removing = true;
+          entry.targetScale = 0;
+        }
+      }
+
+      // Spine + branches: one polyline down the vine, one filament per
+      // anchored crystal. Endpoints are TARGET positions (nodes glide to them
+      // fast); rebuilt whole each reconcile — a handful of cheap lines.
+      clearDialogueLines();
+      if (dialogueSpecs.length >= 2) {
+        const spineGeom = new THREE.BufferGeometry().setFromPoints(
+          dialogueSpecs.map((spec) => turnPositions.get(spec.id)!),
+        );
+        const spine = new THREE.Line(
+          spineGeom,
+          new THREE.LineBasicMaterial({ color: 0x9ee2ff, transparent: true, opacity: 0.3 }),
+        );
+        scene.add(spine);
+        dialogueLines.push(spine);
+      }
+      for (const spec of researchSpecs) {
+        const anchor = spec.turnId !== null ? turnPositions.get(spec.turnId) : undefined;
+        const crystalPos = crystalPositions.get(spec.id);
+        if (anchor === undefined || crystalPos === undefined) {
+          continue;
+        }
+        const branchGeom = new THREE.BufferGeometry().setFromPoints([anchor, crystalPos]);
+        const branch = new THREE.Line(
+          branchGeom,
+          new THREE.LineBasicMaterial({
+            color: RESEARCH_STATUS_COLOR[spec.status],
+            transparent: true,
+            opacity: 0.45,
+          }),
+        );
+        scene.add(branch);
+        dialogueLines.push(branch);
+      }
     };
 
     // ── fit to content (visualizer's fitToScreen, adapted to the orbit rig) ─
@@ -1323,6 +1664,8 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       };
       include(ideaEntries);
       include(treeEntries);
+      include(dialogueEntries);
+      include(researchEntries);
       if (!hasContent) {
         resetRig();
         return;
@@ -1341,6 +1684,7 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
     const pointer = new THREE.Vector2();
     let hoveredIdea: string | null = null;
     let hoveredProc: string | null = null;
+    let hoveredResearch: string | null = null;
     let dragging = false;
     let panning = false;
     let dragMoved = 0;
@@ -1366,6 +1710,11 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         }
       }
       for (const entry of treeEntries.values()) {
+        if (!entry.removing) {
+          targets.push(entry.group);
+        }
+      }
+      for (const entry of researchEntries.values()) {
         if (!entry.removing) {
           targets.push(entry.group);
         }
@@ -1428,6 +1777,7 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       const picked = pick(event.clientX, event.clientY);
       hoveredIdea = null;
       hoveredProc = null;
+      hoveredResearch = null;
       if (picked?.kind === "idea" && picked.key !== undefined && picked.key !== "__idle__") {
         const entry = ideaEntries.get(picked.key);
         if (entry?.ideaSpec?.status === "ready") {
@@ -1435,9 +1785,19 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         }
       } else if (picked?.kind === "process" && picked.callsign !== undefined) {
         hoveredProc = picked.callsign;
+      } else if (picked?.kind === "research" && picked.key !== undefined) {
+        const entry = researchEntries.get(picked.key);
+        const status = entry?.researchSpec?.status;
+        if (status === "proposed" || status === "complete") {
+          hoveredResearch = picked.key;
+        }
       }
       renderer.domElement.style.cursor =
-        hoveredIdea !== null || hoveredProc !== null ? "pointer" : dragging ? "grabbing" : "grab";
+        hoveredIdea !== null || hoveredProc !== null || hoveredResearch !== null
+          ? "pointer"
+          : dragging
+            ? "grabbing"
+            : "grab";
     };
     const onPointerUp = (event: PointerEvent) => {
       const wasDrag = dragMoved > 6;
@@ -1454,6 +1814,8 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         }
       } else if (picked?.kind === "process" && picked.callsign !== undefined) {
         onSelectRef.current(picked.callsign);
+      } else if (picked?.kind === "research" && picked.key !== undefined) {
+        onResearchRef.current?.(picked.key);
       }
     };
     const onPointerLeave = () => {
@@ -1461,6 +1823,7 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       panning = false;
       hoveredIdea = null;
       hoveredProc = null;
+      hoveredResearch = null;
       renderer.domElement.style.cursor = "grab";
     };
     const onWheel = (event: WheelEvent) => {
@@ -1473,6 +1836,7 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
     // (ready idea → build, process → steer/deck) — without any pointer events.
     const SCENE_IDEA_PREFIX = "scene:idea:";
     const SCENE_PROC_PREFIX = "scene:proc:";
+    const SCENE_RESEARCH_PREFIX = "scene:research:";
     let dwellHighlights: ReadonlySet<string> = new Set();
     const sceneTargetIdOf = (picked: { kind: string; key?: string; callsign?: string } | null): string | null => {
       if (picked?.kind === "idea" && picked.key !== undefined && picked.key !== "__idle__") {
@@ -1482,12 +1846,21 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         }
       } else if (picked?.kind === "process" && picked.callsign !== undefined) {
         return `${SCENE_PROC_PREFIX}${picked.callsign}`;
+      } else if (picked?.kind === "research" && picked.key !== undefined) {
+        const entry = researchEntries.get(picked.key);
+        const status = entry?.researchSpec?.status;
+        if ((status === "proposed" || status === "complete") && entry !== undefined && !entry.removing) {
+          return `${SCENE_RESEARCH_PREFIX}${picked.key}`;
+        }
       }
       return null;
     };
     const entryForTargetId = (id: string): Entry | null => {
       if (id.startsWith(SCENE_IDEA_PREFIX)) {
         return ideaEntries.get(id.slice(SCENE_IDEA_PREFIX.length)) ?? null;
+      }
+      if (id.startsWith(SCENE_RESEARCH_PREFIX)) {
+        return researchEntries.get(id.slice(SCENE_RESEARCH_PREFIX.length)) ?? null;
       }
       if (id.startsWith(SCENE_PROC_PREFIX)) {
         const callsign = id.slice(SCENE_PROC_PREFIX.length);
@@ -1550,6 +1923,8 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         }
         if (id.startsWith(SCENE_IDEA_PREFIX) && entry.ideaSpec !== undefined && entry.ideaSpec.status === "ready") {
           onAcceptRef.current(entry.ideaSpec.id);
+        } else if (id.startsWith(SCENE_RESEARCH_PREFIX) && entry.researchSpec !== undefined) {
+          onResearchRef.current?.(entry.researchSpec.id);
         } else if (id.startsWith(SCENE_PROC_PREFIX) && entry.treeSpec !== undefined) {
           onSelectRef.current(entry.treeSpec.callsign);
         }
@@ -1734,6 +2109,59 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         }
       }
 
+      // Dialogue turns: glide to their helix slot, gentle removal fade.
+      for (const [specId, entry] of dialogueEntries) {
+        entry.group.position.lerp(entry.targetPos, smoothing);
+        const next = THREE.MathUtils.lerp(entry.group.scale.x, entry.targetScale * (entry.removing ? 0 : 1), smoothing);
+        entry.group.scale.setScalar(Math.max(next, 0.0001));
+        if (entry.removing && entry.group.scale.x < 0.02) {
+          disposeEntry(entry);
+          dialogueEntries.delete(specId);
+        }
+      }
+
+      // Research crystals: slow spin; researching pulses (calm breathe, never
+      // a blink — blink stays reserved for the emergency state); completion
+      // flash via the shared flashStart path.
+      for (const [specId, entry] of researchEntries) {
+        entry.group.position.lerp(entry.targetPos, smoothing);
+        const hovered =
+          hoveredResearch === specId || dwellHighlights.has(`${SCENE_RESEARCH_PREFIX}${specId}`);
+        const target = entry.targetScale * (hovered ? 1.15 : 1);
+        const next = THREE.MathUtils.lerp(entry.group.scale.x, target, smoothing);
+        entry.group.scale.setScalar(Math.max(next, 0.0001));
+        if (entry.removing && entry.group.scale.x < 0.02) {
+          disposeEntry(entry);
+          researchEntries.delete(specId);
+          continue;
+        }
+        if (!reducedMotion) {
+          entry.group.rotation.y += dt * 0.4;
+          if (entry.researchSpec?.status === "researching") {
+            entry.mats[0].emissiveIntensity = entry.baseEmissive + Math.sin(t * 1.8 + entry.phase) * 0.12;
+          }
+        }
+        let boost = hovered ? 0.3 : 0;
+        if (entry.flashStart !== null && !reducedMotion) {
+          const progress = (now - entry.flashStart) / FLASH_MS;
+          if (progress >= 1) {
+            entry.flashStart = null;
+            entry.mats.forEach((mat) => mat.emissive.copy(mat.color));
+          } else {
+            const pulse = Math.abs(Math.sin(progress * Math.PI * 3)) * (1 - progress);
+            boost += pulse * 1.6;
+            entry.mats.forEach((mat) => mat.emissive.copy(mat.color).lerp(new THREE.Color(0xffffff), pulse * 0.8));
+          }
+          entry.mats.forEach((mat) => {
+            mat.emissiveIntensity = entry.baseEmissive + boost;
+          });
+        } else if (hovered) {
+          entry.mats.forEach((mat) => {
+            mat.emissiveIntensity = entry.baseEmissive + boost;
+          });
+        }
+      }
+
       renderer.render(scene, camera);
     };
     // TWO-WALL PERF: the default room runs two simultaneous fullscreen WebGL
@@ -1784,6 +2212,15 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         disposeEntry(entry);
       }
       treeEntries.clear();
+      for (const entry of dialogueEntries.values()) {
+        disposeEntry(entry);
+      }
+      dialogueEntries.clear();
+      for (const entry of researchEntries.values()) {
+        disposeEntry(entry);
+      }
+      researchEntries.clear();
+      clearDialogueLines();
       clearLayoutDecor();
       env?.dispose();
       Object.values(GEO).forEach((geometry) => geometry.dispose());
@@ -1813,7 +2250,9 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       data-corner-lock={cornerLock ? "true" : "false"}
       data-idea-count={ideas.length}
       data-tree-count={trees.length}
-      aria-label={`Room ${mode}: ${ideas.length} idea${ideas.length === 1 ? "" : "s"}, ${trees.length} build${trees.length === 1 ? "" : "s"}`}
+      data-dialogue-count={dialogue.length}
+      data-research-count={research.length}
+      aria-label={`Room ${mode}: ${ideas.length} idea${ideas.length === 1 ? "" : "s"}, ${trees.length} build${trees.length === 1 ? "" : "s"}${research.length > 0 ? `, ${research.length} research quest${research.length === 1 ? "" : "s"}` : ""}`}
     />
   );
 }
