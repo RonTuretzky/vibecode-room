@@ -39,11 +39,18 @@ export interface ProjectorProcess {
   // of seeding a fresh ambient suggestion. Clicking the process sets/clears it.
   steering?: boolean;
   // Where this process came from. Absent for idea-detected builds; set for
-  // projects imported from outside (e.g. a GitHub URL submitted via the QR page).
-  source?: {
-    kind: "github-import";
-    url: string;
-  };
+  // projects imported from outside via the phone QR page: "github-import" when
+  // the link was a real github.com repo (the server clones it), "phone-import"
+  // for context-only or any-other-link submissions (url null when no link).
+  source?:
+    | {
+        kind: "github-import";
+        url: string;
+      }
+    | {
+        kind: "phone-import";
+        url: string | null;
+      };
   // TAKE-HOME publish surface: once this idea's pitch deck is published to
   // GitHub Pages (confirmed 200), the public URL and the server-generated QR
   // SVG that encodes it. The wall renders the SVG directly ("scan to take it

@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createProjectorApp } from "./app";
-import { createProjectorRuntime, type ProjectorRuntime } from "./composition";
+import { createPhoneImportApp, createProjectorApp } from "./app";
+import { createProjectorRuntime, type ProjectorRuntime, type ProjectorRuntimeOptions } from "./composition";
 import type { BuilderAgent } from "./idea-builder";
 import type { BuildBackend, BuildRequest, BuildResult } from "../buildloop/types";
 import type { DetectionInput, DetectionResult, IdeaDetector } from "../detect";
@@ -74,10 +74,14 @@ interface MakeAppArgs {
   detector?: IdeaDetector;
   host?: string;
   port?: number;
+  phonePort?: number | null;
   interfaces?: () => InterfaceAddresses;
   // Inject a fake build-backend roster: routes accepts through the multi-backend
   // orchestrator instead of the legacy single-build ideaBuilds path.
   buildBackends?: BuildBackend[];
+  // Phone-import clone seam. Default: instant fake success — NO test may ever
+  // run a real `git clone` (network, subprocess, teardown races).
+  cloneRepoFn?: ProjectorRuntimeOptions["cloneRepoFn"];
 }
 
 async function makeApp(args: MakeAppArgs = {}): Promise<{ app: ReturnType<typeof createProjectorApp>; runtime: ProjectorRuntime }> {
@@ -97,6 +101,8 @@ async function makeApp(args: MakeAppArgs = {}): Promise<{ app: ReturnType<typeof
       builderAgent: noopBuilder,
       buildBackends: args.buildBackends,
       executionArtifactsRoot: join(buildsRoot, "vibersyn-runs"),
+      cloneRepoFn: args.cloneRepoFn ?? (async ({ dir }) => ({ ok: true, dir })),
+      repoDigestFn: async () => "digest: fake repo",
     },
   );
   runtimes.push(runtime);
@@ -104,9 +110,20 @@ async function makeApp(args: MakeAppArgs = {}): Promise<{ app: ReturnType<typeof
     env: {},
     host: args.host ?? "127.0.0.1",
     port: args.port ?? 8787,
+    phonePort: args.phonePort ?? null,
     interfaces: args.interfaces,
   });
   return { app, runtime };
+}
+
+// Poll until the fire-and-forget import routine (clone → startBuild) has kicked
+// the build for `upid`, then await its settle. The clone gate and digest are
+// injected fakes, so this converges in a few microtask turns.
+async function settleImportBuild(runtime: ProjectorRuntime, upid: string): Promise<void> {
+  for (let attempt = 0; attempt < 200 && runtime.ideaBuilds.state(upid) === undefined; attempt += 1) {
+    await new Promise((resolveTick) => setTimeout(resolveTick, 5));
+  }
+  await runtime.ideaBuilds.settle(upid);
 }
 
 // Surface one detection candidate through the real runner (bubble delivery and
@@ -211,14 +228,24 @@ describe("GET /api/state — snapshot.ideas over HTTP", () => {
 });
 
 describe("POST /api/projects/import", () => {
-  test("a valid GitHub URL adds a fleet process with the imported shape and pushes it over the snapshot stream", async () => {
-    const { app, runtime } = await makeApp();
+  test("a GitHub link clones, joins the fleet, and becomes a REAL building project", async () => {
+    // Deferred clone gate: the pre-build "cloning repository" window is
+    // deterministic, then releasing the gate runs the same accept->build->
+    // preview pipeline every accepted idea gets.
+    let releaseClone!: (result: { ok: true; dir: string }) => void;
+    const cloneGate = new Promise<{ ok: true; dir: string }>((resolveGate) => {
+      releaseClone = resolveGate;
+    });
+    const { app, runtime } = await makeApp({ cloneRepoFn: async () => cloneGate });
     const published: ProjectorSnapshot[] = [];
     const unsubscribe = runtime.subscribe((snapshot) => published.push(snapshot));
 
     const response = await postJson(app, "/api/projects/import", { url: "https://github.com/RonTuretzky/gesture-wall" });
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ ok: true });
+    const body = (await response.json()) as { ok: boolean; upid?: string; callsign?: string; title?: string | null };
+    expect(body.ok).toBe(true);
+    expect(body.upid).toBe("upid-1");
+    expect(body.callsign).toBe("GESTUREW");
     unsubscribe();
 
     const stateResponse = await app.request("/api/state");
@@ -228,29 +255,184 @@ describe("POST /api/projects/import", () => {
     expect(imported.source).toEqual({ kind: "github-import", url: "https://github.com/RonTuretzky/gesture-wall" });
     expect(imported.task).toBe("Imported from GitHub: RonTuretzky/gesture-wall");
     expect(imported.state).toBe("active");
-    expect(imported.progressLabel).toBe("imported");
+    expect(imported.progressLabel).toBe("cloning repository");
     expect(imported.previewUrl).toBe("https://github.com/RonTuretzky/gesture-wall");
     expect(imported.callsign).toBe("GESTUREW");
     // SSE subscribers saw the import land without polling.
     expect(published.some((snapshot) => snapshot.processes.some((process) => process.source?.kind === "github-import"))).toBe(true);
+
+    // Clone settles → the build fan-out kicks and a REAL local preview outranks
+    // the repo URL on the legacy preview field.
+    releaseClone({ ok: true, dir: join(tmpdir(), "fake-clone") });
+    await settleImportBuild(runtime, "upid-1");
+    const builtState = (await (await app.request("/api/state")).json()) as ProjectorSnapshot;
+    const built = builtState.processes[0]!;
+    expect(built.buildStatus).toBe("ready");
+    expect(built.previewUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+\//u);
   });
 
-  test("invalid URLs are 400 { ok:false } and never reach the fleet", async () => {
+  test("context alone starts a building project (no link required)", async () => {
     const { app, runtime } = await makeApp();
-    const invalid = [
-      "not a url",
-      "ftp://github.com/o/r",
-      "https://github.com/owner-only",
+    const response = await postJson(app, "/api/projects/import", { context: "A synthwave dashboard for our ticket queue" });
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { ok: boolean; upid?: string; callsign?: string };
+    expect(body.ok).toBe(true);
+    expect(typeof body.callsign).toBe("string");
+
+    const state = (await (await app.request("/api/state")).json()) as ProjectorSnapshot;
+    expect(state.processes).toHaveLength(1);
+    const process = state.processes[0]!;
+    expect(process.source).toEqual({ kind: "phone-import", url: null });
+    expect(process.task).toBe("A synthwave dashboard for our ticket queue");
+
+    // The fan-out starts immediately for non-github imports.
+    await settleImportBuild(runtime, body.upid!);
+    const builtState = (await (await app.request("/api/state")).json()) as ProjectorSnapshot;
+    expect(builtState.processes[0]!.buildStatus).toBe("ready");
+    expect(builtState.processes[0]!.previewUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+\//u);
+  });
+
+  test("any non-github link rides along as reference context, never a clone", async () => {
+    let cloneCalls = 0;
+    const { app } = await makeApp({
+      cloneRepoFn: async ({ dir }) => {
+        cloneCalls += 1;
+        return { ok: true, dir };
+      },
+    });
+    const response = await postJson(app, "/api/projects/import", {
+      context: "make a viewer for this spec",
+      url: "https://example.com/spec",
+    });
+    expect(response.status).toBe(200);
+    const state = (await (await app.request("/api/state")).json()) as ProjectorSnapshot;
+    const process = state.processes[0]!;
+    expect(process.source).toEqual({ kind: "phone-import", url: "https://example.com/spec" });
+    expect(process.task).toBe("make a viewer for this spec");
+    expect(cloneCalls).toBe(0);
+  });
+
+  test("github lookalike hosts are reference links — the clone routine never fires (anti-spoof)", async () => {
+    let cloneCalls = 0;
+    const { app, runtime } = await makeApp({
+      cloneRepoFn: async ({ dir }) => {
+        cloneCalls += 1;
+        return { ok: true, dir };
+      },
+    });
+    const spoofs = [
       "https://evilgithub.com/o/r",
       "https://github.com.evil.com/o/r",
       "https://github.com@evil.com/o/r",
+      "https://github.com/owner-only",
     ];
-    for (const url of invalid) {
+    for (const url of spoofs) {
       const response = await postJson(app, "/api/projects/import", { url });
+      expect(response.status).toBe(200);
+    }
+    expect(cloneCalls).toBe(0);
+    for (const record of runtime.registry.records()) {
+      expect(runtime.snapshot().processes.find((process) => process.upid === record.upid)?.source?.kind).toBe("phone-import");
+    }
+  });
+
+  test("a failed clone still builds from the link — never a dead card", async () => {
+    const { app, runtime } = await makeApp({ cloneRepoFn: async () => ({ ok: false, error: "repository not found" }) });
+    const response = await postJson(app, "/api/projects/import", { url: "https://github.com/o/gone" });
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { upid?: string };
+    await settleImportBuild(runtime, body.upid!);
+    const state = (await (await app.request("/api/state")).json()) as ProjectorSnapshot;
+    const process = state.processes[0]!;
+    // The fallback fan-out is the honest surface once live — the card must not
+    // stay stuck on a clone label.
+    expect(process.progressLabel).not.toBe("cloning repository");
+    expect(process.buildStatus).toBe("ready");
+    expect(process.previewUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+\//u);
+  });
+
+  test("a THROWING clone seam still ends in a fallback build — never a stuck 'cloning repository' card", async () => {
+    const { app, runtime } = await makeApp({
+      cloneRepoFn: async () => {
+        throw new Error("git vanished");
+      },
+    });
+    const response = await postJson(app, "/api/projects/import", { url: "https://github.com/o/r" });
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { upid?: string };
+    await settleImportBuild(runtime, body.upid!);
+    const state = (await (await app.request("/api/state")).json()) as ProjectorSnapshot;
+    expect(state.processes[0]!.buildStatus).toBe("ready");
+    expect(state.processes[0]!.progressLabel).not.toBe("cloning repository");
+  });
+
+  test("emergency stop mid-clone aborts the routine — no build ever starts (sticky kill-all invariant)", async () => {
+    let cloneSignal: AbortSignal | undefined;
+    let releaseClone!: (result: { ok: true; dir: string }) => void;
+    const cloneGate = new Promise<{ ok: true; dir: string }>((resolveGate) => {
+      releaseClone = resolveGate;
+    });
+    const { app, runtime } = await makeApp({
+      cloneRepoFn: async ({ signal }) => {
+        cloneSignal = signal;
+        return cloneGate;
+      },
+    });
+    const response = await postJson(app, "/api/projects/import", { url: "https://github.com/o/r" });
+    const body = (await response.json()) as { upid?: string };
+    expect(body.upid).toBe("upid-1");
+
+    await runtime.emergencyStop("corr-test-emergency");
+    // The in-flight clone's signal was aborted by the kill-all.
+    expect(cloneSignal?.aborted).toBe(true);
+
+    // A late clone settle must NOT start a build on the halted process.
+    releaseClone({ ok: true, dir: join(tmpdir(), "late-clone") });
+    await new Promise((resolveTick) => setTimeout(resolveTick, 25));
+    expect(runtime.ideaBuilds.state("upid-1")).toBeUndefined();
+    const state = (await (await app.request("/api/state")).json()) as ProjectorSnapshot;
+    expect(state.processes[0]!.state).toBe("halted");
+    expect(state.processes[0]!.previewUrl).toBe(null);
+  });
+
+  test("halting the process mid-clone aborts its git subprocess and blocks the deferred build", async () => {
+    let cloneSignal: AbortSignal | undefined;
+    let releaseClone!: (result: { ok: true; dir: string }) => void;
+    const cloneGate = new Promise<{ ok: true; dir: string }>((resolveGate) => {
+      releaseClone = resolveGate;
+    });
+    const { app, runtime } = await makeApp({
+      cloneRepoFn: async ({ signal }) => {
+        cloneSignal = signal;
+        return cloneGate;
+      },
+    });
+    const response = await postJson(app, "/api/projects/import", { url: "https://github.com/o/r" });
+    const body = (await response.json()) as { upid?: string };
+
+    await runtime.registry.halt(body.upid!, "corr-test-halt");
+    expect(cloneSignal?.aborted).toBe(true);
+
+    releaseClone({ ok: true, dir: join(tmpdir(), "late-clone") });
+    await new Promise((resolveTick) => setTimeout(resolveTick, 25));
+    expect(runtime.ideaBuilds.state(body.upid!)).toBeUndefined();
+  });
+
+  test("unusable submissions are 400 { ok:false } and never reach the fleet", async () => {
+    const { app, runtime } = await makeApp();
+    const invalid = [
+      { url: "not a url" },
+      { url: "ftp://github.com/o/r" },
+      { url: "javascript:alert(1)", context: "" },
+      { context: "   " },
+      {},
+    ];
+    for (const body of invalid) {
+      const response = await postJson(app, "/api/projects/import", body);
       expect(response.status).toBe(400);
-      const body = (await response.json()) as { ok: boolean; error?: string };
-      expect(body.ok).toBe(false);
-      expect(body.error?.length ?? 0).toBeGreaterThan(0);
+      const parsed = (await response.json()) as { ok: boolean; error?: string };
+      expect(parsed.ok).toBe(false);
+      expect(parsed.error?.length ?? 0).toBeGreaterThan(0);
     }
     expect(runtime.registry.records()).toHaveLength(0);
   });
@@ -293,6 +475,51 @@ describe("GET /api/import/info", () => {
     const response = await app.request("/api/import/info");
     expect(await response.json()).toEqual({ submitUrl: "http://192.168.7.20:9100/submit", host: "192.168.7.20", lanReachable: true });
   });
+
+  test("phone listener bound → QR advertises it via the LAN IPv4 even on a loopback main bind", async () => {
+    const { app } = await makeApp({ host: "127.0.0.1", port: 8787, phonePort: 8788, interfaces: () => lan });
+    const response = await app.request("/api/import/info");
+    expect(await response.json()).toEqual({ submitUrl: "http://192.168.7.20:8788/submit", host: "192.168.7.20", lanReachable: true });
+  });
+});
+
+describe("createPhoneImportApp — the dedicated 0.0.0.0 phone surface", () => {
+  test("serves /submit, /api/import/info, the import POST, and redirects / to /submit", async () => {
+    const buildsRoot = mkdtempSync(join(tmpdir(), "vibersyn-phone-"));
+    tempDirs.push(buildsRoot);
+    const runtime = await createProjectorRuntime(
+      { VIBERSYN_INITIAL_MUTED: "0", VIBERSYN_IDEA_DETECTOR: "heuristic" },
+      {
+        buildsRoot,
+        builderAgent: noopBuilder,
+        executionArtifactsRoot: join(buildsRoot, "vibersyn-runs"),
+        cloneRepoFn: async ({ dir }) => ({ ok: true, dir }),
+        repoDigestFn: async () => "digest: fake repo",
+      },
+    );
+    runtimes.push(runtime);
+    const lan: InterfaceAddresses = { en0: [{ family: "IPv4", internal: false, address: "192.168.7.20" }] };
+    const phoneApp = createPhoneImportApp(runtime, { host: "127.0.0.1", port: 8787, phonePort: 8788, interfaces: () => lan });
+
+    const rootResponse = await phoneApp.request("/");
+    expect(rootResponse.status).toBe(302);
+    expect(rootResponse.headers.get("location")).toBe("/submit");
+
+    const page = await phoneApp.request("/submit");
+    expect(page.status).toBe(200);
+    expect(await page.text()).toContain("/api/projects/import");
+
+    const info = await phoneApp.request("/api/import/info");
+    expect(await info.json()).toEqual({ submitUrl: "http://192.168.7.20:8788/submit", host: "192.168.7.20", lanReachable: true });
+
+    const imported = await phoneApp.request("/api/projects/import", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ context: "phone-listener submission" }),
+    });
+    expect(imported.status).toBe(200);
+    expect(runtime.registry.records()).toHaveLength(1);
+  });
 });
 
 describe("GET /submit", () => {
@@ -305,6 +532,9 @@ describe("GET /submit", () => {
     expect(html).toContain("/api/projects/import");
     expect(html).toContain("github.com");
     expect(html).toContain("<form");
+    // The refactored contract: context is the primary field, the link optional.
+    expect(html).toContain("project-context");
+    expect(html).toContain("Link (optional)");
   });
 });
 

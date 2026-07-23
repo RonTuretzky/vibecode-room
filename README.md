@@ -52,9 +52,17 @@ agents building them.
   - **"Vibersyn, stop everything"** is the emergency stop;
   - also understood: "dismiss"/"skip"/"no", "auto build on/off", "stop capturing".
 - **QR Import:** the **QR Import** status-bar button shows a QR code — scan it on
-  your phone to open a page where you paste a GitHub repo URL; submitting adds it
-  to the wall as a project in progress. (The phone needs to reach the server over
-  the LAN; `./run-room.sh` binds `HOST=0.0.0.0` for exactly this.)
+  your phone to open a page where you describe what the fleet should build
+  (context is the primary field) plus an optional link. A `github.com/<owner>/<repo>`
+  link is shallow-cloned into `builds/<upid>/repo/` and a digest of it grounds the
+  build; any other http(s) link rides along as reference. Every submission spawns a
+  REAL fleet project — the same accept→build→preview fan-out accepted ideas get.
+  The server always binds a dedicated phone listener on `0.0.0.0:<port+1>` serving
+  only the import surface, so the QR works even when the main server is loopback-
+  bound (override the port with `VIBERSYN_PHONE_PORT`, disable the listener with
+  `VIBERSYN_PHONE_LISTENER=0`). Note: like the rest of the room API, the import
+  surface is unauthenticated — anyone on the room LAN can add projects; that's the
+  point, but run it on a network you trust.
 
 ### Gesture wall (optional camera mode)
 

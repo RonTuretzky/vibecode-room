@@ -4,7 +4,7 @@ import { ProjectorApp, REQUIRED_PROJECTOR_REGIONS } from "./App";
 import { GestureLayer, cursorDotsFromStored } from "./gesture/GestureLayer";
 import { IdeaTray } from "./IdeaTray";
 import { HelpOverlay } from "./HelpOverlay";
-import { QrImport } from "./QrImport";
+import { QrImport, qrPanelState } from "./QrImport";
 import { Slideshow } from "./Slideshow";
 import { demoProjectorSnapshot, busyRoomSnapshot } from "./demo-data";
 import type { BuildloopProcess, BuildloopSnapshot } from "./buildloop";
@@ -604,6 +604,17 @@ describe("qr import overlay", () => {
     expect(html).toContain('data-testid="qr-code-pending"');
     expect(html).not.toContain('data-testid="qr-code-image"');
     expect(html).not.toContain('data-testid="qr-import-success"');
+  });
+
+  test("qr panel decision: an unreachable address REPLACES the QR — a dead code must never render", () => {
+    const unreachable = { submitUrl: "http://127.0.0.1:8788/submit", host: "127.0.0.1", lanReachable: false };
+    const reachable = { submitUrl: "http://192.168.1.5:8788/submit", host: "192.168.1.5", lanReachable: true };
+    // Unreachable wins even when the QR data URL already rendered.
+    expect(qrPanelState(unreachable, "data:image/png;base64,xyz")).toBe("unreachable");
+    expect(qrPanelState(unreachable, null)).toBe("unreachable");
+    expect(qrPanelState(reachable, "data:image/png;base64,xyz")).toBe("image");
+    expect(qrPanelState(reachable, null)).toBe("pending");
+    expect(qrPanelState(null, null)).toBe("pending");
   });
 });
 
