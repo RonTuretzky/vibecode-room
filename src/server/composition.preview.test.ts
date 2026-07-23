@@ -154,6 +154,52 @@ describe("composition accept path — real build + preview on the snapshot", () 
     expect(runtime.snapshot().autoAccept).toBe(true);
   });
 
+  test("while the settle gate is armed the snapshot exposes ideaSettle (title + countdown), cleared after firing", async () => {
+    runtime = await createProjectorRuntime(
+      { ...liveEnv(replayPath), VIBERSYN_AUTOBUILD_SETTLE_MS: "300" },
+      { buildsRoot, builderAgent: noopBuilder },
+    );
+    runtime.setAutoAccept(true);
+    const before = new Set(runtime.snapshot().processes.map((process) => process.upid));
+
+    await drive([final("let's build a dashboard tool to ship the replay prototype today", "utt-build")]);
+
+    // Armed: the UI's Done button + countdown are driven entirely by this field.
+    const armed = runtime.snapshot().ideaSettle;
+    expect(armed?.armed).toBe(true);
+    expect(armed?.title).toBeTruthy();
+    expect(armed?.firesInMs).toBeGreaterThanOrEqual(0);
+    expect(armed?.firesInMs).toBeLessThanOrEqual(300);
+
+    // After the quiet period fires the build, the gate reports disarmed again.
+    const spawned = await waitFor(() => runtime!.snapshot().processes.find((process) => !before.has(process.upid)));
+    expect(spawned).toBeDefined();
+    expect(runtime.snapshot().ideaSettle?.armed).toBe(false);
+    if (spawned !== undefined) await runtime.ideaBuilds.settle(spawned.upid);
+  });
+
+  test("Done (explicit accept) while armed disarms the settle gate — one build, not two", async () => {
+    runtime = await createProjectorRuntime(
+      { ...liveEnv(replayPath), VIBERSYN_AUTOBUILD_SETTLE_MS: "300" },
+      { buildsRoot, builderAgent: noopBuilder },
+    );
+    runtime.setAutoAccept(true);
+    const before = new Set(runtime.snapshot().processes.map((process) => process.upid));
+
+    await drive([final("let's build a dashboard tool to ship the replay prototype today", "utt-build")]);
+    expect(runtime.snapshot().ideaSettle?.armed).toBe(true);
+
+    // The Done button's path: explicit accept beats the countdown...
+    await runtime.acceptPendingSuggestion("corr-guided-done");
+    expect(runtime.snapshot().ideaSettle?.armed).toBe(false);
+
+    // ...and the still-pending settle timer must NOT fire a second build.
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    const fresh = runtime.snapshot().processes.filter((process) => !before.has(process.upid));
+    expect(fresh).toHaveLength(1);
+    await runtime.ideaBuilds.settle(fresh[0]!.upid);
+  });
+
   test("emergency stop tears the live preview server down so its URL stops responding", async () => {
     runtime = await createProjectorRuntime(liveEnv(replayPath), { buildsRoot, builderAgent: noopBuilder });
 

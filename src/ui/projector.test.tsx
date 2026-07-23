@@ -831,3 +831,49 @@ describe("gesture cursor-dot toggle", () => {
     expect(cursorDotsFromStored("0")).toBe(false);
   });
 });
+
+describe("settle-gate Done UX: countdown + Done button while an idea is armed", () => {
+  const armedSnapshot = {
+    ...demoProjectorSnapshot,
+    ideaSettle: { armed: true, title: "a dashboard tool", firesInMs: 5_000 },
+  };
+
+  test("HUD renders the Done button with the heard title's countdown when armed", () => {
+    const html = renderToStaticMarkup(<ProjectorApp initialSnapshot={armedSnapshot} />);
+    expect(html).toContain('data-testid="idea-done-button"');
+    expect(html).toContain("Done — build it");
+    expect(html).toContain("(5s)");
+  });
+
+  test("HUD hides the Done button when no idea is armed", () => {
+    const html = renderToStaticMarkup(<ProjectorApp initialSnapshot={demoProjectorSnapshot} />);
+    expect(html).not.toContain('data-testid="idea-done-button"');
+  });
+
+  test("guided idea step shows heard title + countdown + Done when armed, listening hint otherwise", async () => {
+    const { GuidedDemo } = await import("./guided/GuidedDemo");
+    const { startGuided } = await import("./guided/machine");
+    const ideaState = { ...startGuided(demoProjectorSnapshot), step: "idea" as const };
+    const noop = () => undefined;
+    const props = {
+      state: ideaState,
+      micState: "live" as const,
+      micError: null,
+      onPopOrb: noop,
+      onRecord: noop,
+      onSkip: noop,
+      onExit: noop,
+      onFinish: noop,
+      onDone: noop,
+    };
+
+    const armedHtml = renderToStaticMarkup(<GuidedDemo {...props} snapshot={armedSnapshot} />);
+    expect(armedHtml).toContain('data-testid="guided-done-button"');
+    expect(armedHtml).toContain("a dashboard tool");
+    expect(armedHtml).toContain("Building in 5s");
+
+    const idleHtml = renderToStaticMarkup(<GuidedDemo {...props} snapshot={demoProjectorSnapshot} />);
+    expect(idleHtml).not.toContain('data-testid="guided-done-button"');
+    expect(idleHtml).toContain('data-testid="guided-settle-waiting"');
+  });
+});

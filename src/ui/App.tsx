@@ -1362,6 +1362,20 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
               onToggle={() => void toggleMicCapture()}
             />
           ) : null}
+          {snapshot.ideaSettle?.armed ? (
+            <button
+              type="button"
+              className="ctl-button idea-done"
+              data-testid="idea-done-button"
+              title="Stop refining and build the heard idea now"
+              onClick={() => void acceptIdea()}
+            >
+              ✓ Done — build it
+              {snapshot.ideaSettle.firesInMs !== null
+                ? ` (${Math.max(1, Math.ceil(snapshot.ideaSettle.firesInMs / 1000))}s)`
+                : ""}
+            </button>
+          ) : null}
           {showIdeaSurfaces ? (
             <button
               type="button"
@@ -1632,6 +1646,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
           onSkip={guidedSkip}
           onExit={exitGuidedDemo}
           onFinish={exitGuidedDemo}
+          onDone={() => void acceptIdea()}
         />
       ) : null}
     </main>
