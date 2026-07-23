@@ -235,12 +235,16 @@ const RESEARCH_KIND_GLYPH: Record<ResearchNodeSpec["kind"], string> = {
 // Speaker identity palette (NOT status colors — cool identity tints, no
 // violet): deterministic per speaker name so a voice keeps its color.
 const SPEAKER_COLORS = [0x9ee2ff, 0x7fe0c3, 0xffd9a0, 0xa8c7ff, 0xffb3c7, 0xd6f0a0];
-// The dialogue helix: a rising vine of turns anchored left of the main field.
-const DIALOGUE_CENTER_X = -11;
+// The dialogue helix. Research is a MODE SWITCH (the idea garden hides while
+// it is on), so the vine takes CENTER STAGE rather than hiding off-left — the
+// camera's default orbit target frames it, and crystals stay big enough to
+// point at from across the room. A wider, taller pitch spreads the turns so
+// budded crystals get real separation.
+const DIALOGUE_CENTER_X = 0;
 const DIALOGUE_CENTER_Z = 0;
-const DIALOGUE_RADIUS = 2.4;
+const DIALOGUE_RADIUS = 3.2;
 const DIALOGUE_BASE_Y = 0.7;
-const DIALOGUE_Y_STEP = 0.45;
+const DIALOGUE_Y_STEP = 0.55;
 const DIALOGUE_ANGLE_STEP = 0.55;
 // Rendered turn cap + how many of the newest turns carry text labels.
 const DIALOGUE_MAX_NODES = 20;
@@ -1742,9 +1746,11 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         ring.rotation.x = Math.PI * 0.42;
         group.add(ring);
       }
-      // Generous invisible hit sphere: crystals are small and float mid-air.
+      // Generous invisible hit sphere: crystals are small, float mid-air, and
+      // get pointed at from projector distance — the pick target is ~2x the
+      // visual so dwell cursors and rough mouse aim both land.
       const hit = new THREE.Mesh(
-        new THREE.SphereGeometry(Math.max(0.9, size), 8, 8),
+        new THREE.SphereGeometry(Math.max(2.0, size * 1.8), 8, 8),
         new THREE.MeshBasicMaterial({ visible: false }),
       );
       hit.userData.ownGeometry = true;
@@ -2080,29 +2086,40 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       const researchSpecs = researchRef.current;
       const seenResearch = new Set<string>();
       const crystalPositions = new Map<string, THREE.Vector3>();
+      // Same-turn quests would otherwise land on the IDENTICAL point (same
+      // anchor, same outward vector) — fan the k-th sibling around the helix
+      // axis and stagger it out/up so every crystal is separately pointable.
+      const anchorSiblings = new Map<string, number>();
+      const yAxis = new THREE.Vector3(0, 1, 0);
       let orphanIndex = 0;
       researchSpecs.forEach((spec, index) => {
         seenResearch.add(spec.id);
         const anchor = spec.turnId !== null ? turnPositions.get(spec.turnId) : undefined;
         let placed: THREE.Vector3;
         if (anchor !== undefined) {
+          const sibling = anchorSiblings.get(spec.turnId!) ?? 0;
+          anchorSiblings.set(spec.turnId!, sibling + 1);
           // Bud outward from the helix axis through the grounding turn.
           const out = new THREE.Vector3(anchor.x - DIALOGUE_CENTER_X, 0, anchor.z - DIALOGUE_CENTER_Z);
           if (out.lengthSq() < 1e-6) {
             out.set(1, 0, 0);
           }
           out.normalize();
-          placed = anchor.clone().addScaledVector(out, 2.6).add(new THREE.Vector3(0, 0.5, 0));
+          out.applyAxisAngle(yAxis, sibling * 0.85);
+          placed = anchor
+            .clone()
+            .addScaledVector(out, 3.4 + sibling * 0.6)
+            .add(new THREE.Vector3(0, 0.6 + sibling * 0.8, 0));
         } else {
           // No grounding turn in the window: crown the vine's tip.
           const angle = orphanIndex * 1.6;
-          orphanIndex += 1;
           const topY = DIALOGUE_BASE_Y + Math.max(dialogueSpecs.length, 2) * DIALOGUE_Y_STEP;
           placed = new THREE.Vector3(
-            DIALOGUE_CENTER_X + Math.cos(angle) * (DIALOGUE_RADIUS + 1.2),
-            topY + 1.1,
-            DIALOGUE_CENTER_Z + Math.sin(angle) * (DIALOGUE_RADIUS + 1.2),
+            DIALOGUE_CENTER_X + Math.cos(angle) * (DIALOGUE_RADIUS + 2.2),
+            topY + 1.1 + orphanIndex * 0.5,
+            DIALOGUE_CENTER_Z + Math.sin(angle) * (DIALOGUE_RADIUS + 2.2),
           );
+          orphanIndex += 1;
         }
         crystalPositions.set(spec.id, placed);
         const existing = researchEntries.get(spec.id);
