@@ -4,7 +4,7 @@ import { ProjectorApp, REQUIRED_PROJECTOR_REGIONS } from "./App";
 import { GestureLayer, cursorDotsFromStored } from "./gesture/GestureLayer";
 import { IdeaTray } from "./IdeaTray";
 import { HelpOverlay } from "./HelpOverlay";
-import { QrImport } from "./QrImport";
+import { QrImport, qrPanelState } from "./QrImport";
 import { Slideshow } from "./Slideshow";
 import { demoProjectorSnapshot, busyRoomSnapshot } from "./demo-data";
 import type { BuildloopProcess, BuildloopSnapshot } from "./buildloop";
@@ -605,6 +605,17 @@ describe("qr import overlay", () => {
     expect(html).not.toContain('data-testid="qr-code-image"');
     expect(html).not.toContain('data-testid="qr-import-success"');
   });
+
+  test("qr panel decision: an unreachable address REPLACES the QR — a dead code must never render", () => {
+    const unreachable = { submitUrl: "http://127.0.0.1:8788/submit", host: "127.0.0.1", lanReachable: false };
+    const reachable = { submitUrl: "http://192.168.1.5:8788/submit", host: "192.168.1.5", lanReachable: true };
+    // Unreachable wins even when the QR data URL already rendered.
+    expect(qrPanelState(unreachable, "data:image/png;base64,xyz")).toBe("unreachable");
+    expect(qrPanelState(unreachable, null)).toBe("unreachable");
+    expect(qrPanelState(reachable, "data:image/png;base64,xyz")).toBe("image");
+    expect(qrPanelState(reachable, null)).toBe("pending");
+    expect(qrPanelState(null, null)).toBe("pending");
+  });
 });
 
 // GESTURE-DWELL CURSOR POLICY: in gesture mode the UI hides the OS cursor
@@ -829,5 +840,62 @@ describe("gesture cursor-dot toggle", () => {
     expect(cursorDotsFromStored(null)).toBe(true); // first visit → ON
     expect(cursorDotsFromStored("1")).toBe(true);
     expect(cursorDotsFromStored("0")).toBe(false);
+  });
+});
+
+describe("settle-gate Done UX: countdown + Done button while an idea is armed", () => {
+  const armedSnapshot = {
+    ...demoProjectorSnapshot,
+    ideaSettle: { armed: true, title: "a dashboard tool", firesInMs: 5_000 },
+  };
+
+  test("HUD renders the Done button with the heard title's countdown when armed", () => {
+    const html = renderToStaticMarkup(<ProjectorApp initialSnapshot={armedSnapshot} />);
+    expect(html).toContain('data-testid="idea-done-button"');
+    expect(html).toContain("Done — build it");
+    expect(html).toContain("(5s)");
+  });
+
+  test("HUD keeps Done available once anything was spoken — no countdown until armed", () => {
+    // demo data has kind:"room" transcript lines, so Done is pressable (it
+    // force-builds from the transcript server-side) — just without a countdown.
+    const html = renderToStaticMarkup(<ProjectorApp initialSnapshot={demoProjectorSnapshot} />);
+    expect(html).toContain('data-testid="idea-done-button"');
+    expect(html).not.toContain("(5s)");
+  });
+
+  test("HUD hides Done only when nothing has been spoken at all", () => {
+    const silent = { ...demoProjectorSnapshot, transcript: demoProjectorSnapshot.transcript.filter((line) => line.kind !== "room") };
+    const html = renderToStaticMarkup(<ProjectorApp initialSnapshot={silent} />);
+    expect(html).not.toContain('data-testid="idea-done-button"');
+  });
+
+  test("guided idea step shows heard title + countdown + Done when armed, listening hint otherwise", async () => {
+    const { GuidedDemo } = await import("./guided/GuidedDemo");
+    const { startGuided } = await import("./guided/machine");
+    const ideaState = { ...startGuided(demoProjectorSnapshot), step: "idea" as const };
+    const noop = () => undefined;
+    const props = {
+      state: ideaState,
+      micState: "live" as const,
+      micError: null,
+      onPopOrb: noop,
+      onRecord: noop,
+      onSkip: noop,
+      onExit: noop,
+      onFinish: noop,
+      onDone: noop,
+    };
+
+    const armedHtml = renderToStaticMarkup(<GuidedDemo {...props} snapshot={armedSnapshot} />);
+    expect(armedHtml).toContain('data-testid="guided-done-button"');
+    expect(armedHtml).toContain("a dashboard tool");
+    expect(armedHtml).toContain("Building in 5s");
+
+    // Done is ALWAYS pressable during the idea step — it builds from the
+    // transcript (or advances the step) even before anything is armed.
+    const idleHtml = renderToStaticMarkup(<GuidedDemo {...props} snapshot={demoProjectorSnapshot} />);
+    expect(idleHtml).toContain('data-testid="guided-done-button"');
+    expect(idleHtml).toContain('data-testid="guided-settle-waiting"');
   });
 });

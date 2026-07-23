@@ -3175,3 +3175,31 @@ main.gesture-mode[data-view="builds"] .transcript-card {
   border-color: rgba(93, 180, 255, 0.9);
   box-shadow: 0 0 18px rgba(93, 180, 255, 0.5);
 }
+
+/* Settle-gate feedback (guided idea step + HUD): heard idea, live countdown,
+   and the Done escape hatch so a speaker is never held hostage by the quiet
+   timer. The Done buttons are .ctl-button so gesture-XL sizing applies. */
+.guided-settle {
+  margin: 14px 0 6px;
+  padding: 14px 18px;
+  border-radius: 14px;
+  background: rgba(64, 200, 120, 0.12);
+  border: 1px solid rgba(64, 200, 120, 0.45);
+}
+.guided-settle-heard { margin: 0 0 6px; font-size: 1.1em; }
+.guided-settle-countdown { margin: 0 0 12px; opacity: 0.85; }
+.guided-settle-waiting { margin: 14px 0 6px; opacity: 0.75; }
+.ctl-button.guided-done,
+.ctl-button.idea-done {
+  background: rgba(64, 200, 120, 0.2);
+  border-color: rgba(64, 200, 120, 0.6);
+}
+.fullscreen-key-hint { opacity: 0.6; font-size: 0.8em; }
+
+/* Idea step: dock the coach card to the TOP edge — bottom-center covered the
+   HUD (mic/capture, Done) and the idea bubbles the visitor must watch while
+   they talk. */
+.guided-step-idea .guided-card {
+  bottom: auto;
+  top: 2vh;
+}

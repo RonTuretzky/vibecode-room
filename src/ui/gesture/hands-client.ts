@@ -17,6 +17,10 @@ export interface PinchHand {
   pinch: number | null;
   pinching: boolean | null;
   conf: number;
+  // Optional compact 21-point skeleton ([x,y] in the same mirrored [0,1] space),
+  // when the bridge emits it — for the in-room debug HUD. Absent for the
+  // TouchDesigner stream / older bridges; consumers must tolerate its absence.
+  lm?: ReadonlyArray<readonly [number, number]>;
 }
 
 export interface HandsFrame {
@@ -62,6 +66,7 @@ function coerceHand(entry: unknown): PinchHand | null {
   if (!isRecord(entry) || typeof entry.id !== "number" || typeof entry.x !== "number" || typeof entry.y !== "number") {
     return null;
   }
+  const lm = coerceLandmarks(entry.lm);
   return {
     id: entry.id,
     hand: entry.hand === "Left" || entry.hand === "Right" ? entry.hand : null,
@@ -70,7 +75,26 @@ function coerceHand(entry: unknown): PinchHand | null {
     pinch: typeof entry.pinch === "number" ? Math.max(0, Math.min(4, entry.pinch)) : null,
     pinching: typeof entry.pinching === "boolean" ? entry.pinching : null,
     conf: typeof entry.conf === "number" ? entry.conf : 1,
+    // Only present when the bridge sent a valid skeleton — keeps frames without
+    // it byte-identical to the old shape (existing consumers/tests unaffected).
+    ...(lm !== null ? { lm } : {}),
   };
+}
+
+// Accept a 21-point [[x,y],...] skeleton, else null. Tolerant: any malformed
+// point voids the whole skeleton (the HUD just shows dots-less until valid).
+function coerceLandmarks(value: unknown): ReadonlyArray<readonly [number, number]> | null {
+  if (!Array.isArray(value) || value.length !== 21) {
+    return null;
+  }
+  const pts: Array<readonly [number, number]> = [];
+  for (const p of value) {
+    if (!Array.isArray(p) || p.length < 2 || typeof p[0] !== "number" || typeof p[1] !== "number") {
+      return null;
+    }
+    pts.push([clamp01(p[0]), clamp01(p[1])]);
+  }
+  return pts;
 }
 
 export type HandsStatus = "connecting" | "open" | "closed";

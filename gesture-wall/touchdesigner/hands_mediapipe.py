@@ -245,6 +245,15 @@ def encode_hand(landmarks: Sequence, hand_id: int, handedness: Optional[str],
         cx = 1.0 - cx
     ratio = pinch_ratio(landmarks, aspect)
     hand = handedness if handedness in ("Left", "Right") else None
+    # Compact 21-point skeleton for the in-room debug HUD: [[x,y],...] in the
+    # SAME mirrored, normalized [0,1] space as the cursor. Backward-compatible
+    # extra field — cursor/pinch consumers ignore it.
+    lm = []
+    for i in range(21):
+        lx, ly = _xy(landmarks, i)
+        if mirror:
+            lx = 1.0 - lx
+        lm.append([round(_clamp01(lx), 3), round(_clamp01(ly), 3)])
     return {
         "id": int(hand_id),
         "hand": hand,
@@ -253,6 +262,7 @@ def encode_hand(landmarks: Sequence, hand_id: int, handedness: Optional[str],
         "pinch": round(min(max(ratio, 0.0), PINCH_CAP), 4),
         "pinching": bool(pinching),
         "conf": round(_clamp01(float(score)), 4),
+        "lm": lm,
     }
 
 
@@ -471,7 +481,8 @@ class HandTracker(threading.Thread):
 
     def __init__(self, cap, first_frame, model_path: str, *,
                  max_hands: int, min_detection_confidence: float,
-                 min_tracking_confidence: float, mirror: bool) -> None:
+                 min_tracking_confidence: float, mirror: bool,
+                 preview: bool = False) -> None:
         super().__init__(name="mediapipe-hands", daemon=True)
         self._cap = cap
         self._first = first_frame
@@ -480,6 +491,12 @@ class HandTracker(threading.Thread):
         self._min_det = min_detection_confidence
         self._min_trk = min_tracking_confidence
         self._mirror = mirror
+        # Debug preview: when on, every frame is annotated (skeleton, pinch
+        # ratio, PINCH badge) and JPEG-encoded into _preview_jpeg for the MJPEG
+        # HTTP server. cv2.imshow is NOT used — macOS forbids Cocoa windows off
+        # the main thread; a browser tab renders the stream instead.
+        self._preview = preview
+        self._preview_jpeg: Optional[bytes] = None
 
         self._lock = threading.Lock()
         self._hands: list[dict] = []
@@ -496,6 +513,10 @@ class HandTracker(threading.Thread):
     def snapshot(self) -> tuple[list[dict], float, float]:
         with self._lock:
             return list(self._hands), self._aspect, self._stamp
+
+    def preview_jpeg(self) -> Optional[bytes]:
+        with self._lock:
+            return self._preview_jpeg
 
     def wait_ready(self, timeout: float) -> bool:
         self._ready.wait(timeout)
@@ -557,10 +578,22 @@ class HandTracker(threading.Thread):
                 detections = _detections_from_result(result)
                 encoded = encode_hands(detections, aspect, self._pinch,
                                        mirror=self._mirror)
+                jpeg = None
+                if self._preview:
+                    # The debug overlay must NEVER kill tracking — a bug here
+                    # once crashed the whole thread (and stopped the wall).
+                    try:
+                        jpeg = _annotate_preview(cv2, frame, detections, encoded,
+                                                 mirror=self._mirror)
+                    except Exception as e:  # noqa: BLE001
+                        print(f"[hands] preview annotate error (tracking "
+                              f"unaffected): {e}", flush=True)
                 with self._lock:
                     self._hands = encoded
                     self._aspect = aspect
                     self._stamp = time.monotonic()
+                    if jpeg is not None:
+                        self._preview_jpeg = jpeg
                 frame = None
         finally:
             try:
@@ -568,6 +601,123 @@ class HandTracker(threading.Thread):
             except Exception:  # noqa: BLE001
                 pass
             self._cap.release()
+
+
+# --------------------------------------------------------------------------- #
+# Debug preview (--preview): annotated MJPEG served over HTTP                  #
+# --------------------------------------------------------------------------- #
+# 21-point hand skeleton edges (MediaPipe hand connections).
+_HAND_EDGES = (
+    (0, 1), (1, 2), (2, 3), (3, 4),          # thumb
+    (0, 5), (5, 6), (6, 7), (7, 8),          # index
+    (5, 9), (9, 10), (10, 11), (11, 12),     # middle
+    (9, 13), (13, 14), (14, 15), (15, 16),   # ring
+    (13, 17), (17, 18), (18, 19), (19, 20),  # pinky
+    (0, 17),                                  # palm base
+)
+
+
+def _annotate_preview(cv2, frame, detections, encoded, *, mirror: bool):
+    """Draw the debug overlay and return a JPEG, or None on encode failure.
+
+    Drawn on a MIRRORED copy when mirror=True so the preview behaves like a
+    mirror (matches the wall's cursor mapping — move right, see right).
+    """
+    img = cv2.flip(frame, 1) if mirror else frame.copy()
+    h, w = img.shape[0], img.shape[1]
+
+    def px(lm) -> tuple[int, int]:
+        x = 1.0 - lm[0] if mirror else lm[0]
+        return int(x * w), int(lm[1] * h)
+
+    for det, enc in zip(detections, encoded):
+        landmarks = det[0]  # detection is (landmarks, label, score)
+        pts = [px(_xy(landmarks, i)) for i in range(21)]
+        for a, b in _HAND_EDGES:
+            cv2.line(img, pts[a], pts[b], (90, 220, 90), 2, cv2.LINE_AA)
+        for p in pts:
+            cv2.circle(img, p, 3, (60, 180, 255), -1, cv2.LINE_AA)
+        # Thumb-tip <-> index-tip: the pinch pair, highlighted.
+        cv2.line(img, pts[THUMB_TIP], pts[INDEX_TIP], (0, 90, 255), 3, cv2.LINE_AA)
+        # Cursor = palm center (what the wall tracks).
+        cx = int(enc["x"] * w)
+        cy = int(enc["y"] * h)
+        cv2.circle(img, (cx, cy), 11, (255, 200, 0), 2, cv2.LINE_AA)
+        pinching = bool(enc.get("pinching"))
+        ratio = enc.get("pinch")
+        label = f'{enc.get("hand") or "?"} #{enc["id"]}  pinch={ratio:.2f}' if isinstance(ratio, float) else f'{enc.get("hand") or "?"} #{enc["id"]}'
+        anchor = (max(8, pts[0][0] - 40), max(24, pts[0][1] - 14))
+        cv2.putText(img, label, anchor, cv2.FONT_HERSHEY_SIMPLEX, 0.55,
+                    (255, 255, 255), 2, cv2.LINE_AA)
+        if pinching:
+            cv2.putText(img, "PINCH", (cx - 34, cy - 18),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 90, 255), 3, cv2.LINE_AA)
+
+    if not detections:
+        cv2.putText(img, "no hand detected - raise a hand, palm to camera",
+                    (16, h - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.7,
+                    (40, 40, 230), 2, cv2.LINE_AA)
+    ok, buf = cv2.imencode(".jpg", img, [int(cv2.IMWRITE_JPEG_QUALITY), 72])
+    return buf.tobytes() if ok else None
+
+
+_PREVIEW_PAGE = b"""<!doctype html><meta charset="utf-8"><title>hands preview</title>
+<style>body{margin:0;background:#0b0f1a;display:grid;place-items:center;min-height:100vh;font:14px system-ui;color:#9fb3d1}
+img{max-width:100vw;max-height:92vh}p{margin:6px}</style>
+<p>vibersyn hands debug &mdash; mirror view, skeleton + pinch. Close this tab anytime; it never affects the wall.</p>
+<img src="/stream" alt="camera preview">"""
+
+
+def start_preview_server(worker, port: int) -> None:
+    """Serve the annotated feed: '/' = viewer page, '/stream' = MJPEG.
+
+    Plain http.server in a daemon thread — no Cocoa windows (macOS forbids
+    cv2.imshow off the main thread), no extra deps, multiple viewers fine.
+    """
+    import http.server
+    import socketserver
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *_args) -> None:  # keep the terminal quiet
+            pass
+
+        def do_GET(self) -> None:  # noqa: N802 (http.server API)
+            if self.path.rstrip("/") in ("", "/preview"):
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Cache-Control", "no-cache")
+                self.end_headers()
+                self.wfile.write(_PREVIEW_PAGE)
+                return
+            if self.path != "/stream":
+                self.send_error(404)
+                return
+            self.send_response(200)
+            self.send_header("Content-Type",
+                             "multipart/x-mixed-replace; boundary=frame")
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            try:
+                while True:
+                    jpeg = worker.preview_jpeg()
+                    if jpeg is not None:
+                        self.wfile.write(b"--frame\r\nContent-Type: image/jpeg\r\n")
+                        self.wfile.write(f"Content-Length: {len(jpeg)}\r\n\r\n".encode())
+                        self.wfile.write(jpeg)
+                        self.wfile.write(b"\r\n")
+                    time.sleep(1 / 15)  # ~15fps preview is plenty
+            except (BrokenPipeError, ConnectionResetError):
+                return  # viewer tab closed
+
+    class Server(socketserver.ThreadingTCPServer):
+        allow_reuse_address = True
+        daemon_threads = True
+
+    srv = Server(("", port), Handler)
+    threading.Thread(target=srv.serve_forever, name="hands-preview",
+                     daemon=True).start()
+    print(f"[hands] debug preview -> http://localhost:{port}/  (mirror view, "
+          f"skeleton + pinch overlay)", flush=True)
 
 
 # --------------------------------------------------------------------------- #
@@ -583,6 +733,7 @@ async def run_server(args: argparse.Namespace, cap, first_frame,
         min_detection_confidence=args.min_detection_confidence,
         min_tracking_confidence=args.min_tracking_confidence,
         mirror=args.flip,
+        preview=args.preview,
     )
     tracker.start()
 
@@ -593,6 +744,9 @@ async def run_server(args: argparse.Namespace, cap, first_frame,
               file=sys.stderr, flush=True)
         tracker.stop()
         return 2
+
+    if args.preview:
+        start_preview_server(tracker, args.preview_port)
 
     clients: set = set()
 
@@ -760,6 +914,13 @@ def build_parser() -> argparse.ArgumentParser:
                    help="tag every frame with this wall id (optional)")
     p.add_argument("--flip", action=argparse.BooleanOptionalAction, default=True,
                    help="mirror x (selfie view: hand-right -> cursor-right)")
+    p.add_argument("--preview", action="store_true",
+                   help="serve an annotated debug camera feed (see yourself, the "
+                        "hand skeleton, pinch ratio + PINCH badge) at "
+                        "http://localhost:<preview-port>/ — open it in a browser "
+                        "tab; never affects the wall")
+    p.add_argument("--preview-port", type=int, dest="preview_port", default=9990,
+                   help="http port for the --preview debug feed")
     p.add_argument("--model", default=DEFAULT_MODEL_PATH,
                    help="HandLandmarker .task path (auto-downloaded if missing)")
     p.add_argument("--selftest", action="store_true",

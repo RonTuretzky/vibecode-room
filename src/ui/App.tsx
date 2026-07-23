@@ -4,6 +4,7 @@ import { demoProjectorSnapshot, busyRoomSnapshot, emptyProjectorSnapshot, withUn
 import type { ProjectorProcess, ProjectorSnapshot, TranscriptLine } from "./types";
 import { GestureLayer } from "./gesture/GestureLayer";
 import { PinchCameraLayer } from "./gesture/PinchCameraLayer";
+import { HandSkeletonHud } from "./gesture/HandSkeletonHud";
 import type { HandsStatus } from "./gesture/hands-client";
 import { RoomScene, type IdeaOrbSpec, type SceneLayout, type SceneMode, type TreeSpec } from "./RoomScene";
 import { Slideshow } from "./Slideshow";
@@ -215,8 +216,23 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
   // the only thing that advances a step. advanceOnSnapshot is identity-stable
   // when nothing changes, so setState bails without render churn.
   useEffect(() => {
-    setGuided((current) => (current === null ? current : advanceOnSnapshot(current, snapshot)));
+    setGuided((current) => (current === null ? current : advanceOnSnapshot(current, snapshot, Date.now())));
   }, [snapshot]);
+
+  // The race step's minimum dwell can elapse with no snapshot arriving (the
+  // mocks already finished), so tick the machine while the race is on screen.
+  const guidedStep = guided?.step ?? null;
+  useEffect(() => {
+    if (guidedStep !== "race") {
+      return;
+    }
+    const timer = setInterval(() => {
+      setGuided((current) =>
+        current === null ? current : advanceOnSnapshot(current, snapshotRef.current, Date.now()),
+      );
+    }, 1_000);
+    return () => clearInterval(timer);
+  }, [guidedStep]);
 
   // Entering the decide step auto-opens the REAL generated pitch deck of the
   // project born during the demo, starting on whichever mock finished first —
@@ -322,19 +338,22 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
   // click POSTs /api/suggestion/accept, which accepts the current pending
   // suggestion and starts the real build; the returned snapshot is applied. In
   // offline demo there is no runtime, so it falls back to opening the idea detail.
-  const acceptIdea = useCallback(async () => {
+  const acceptIdea = useCallback(async (): Promise<ProjectorSnapshot | null> => {
     if (!liveMode || mockModeRef.current) {
       selectBubble(IDEA_ID);
-      return;
+      return null;
     }
     try {
       const response = await fetch("/api/suggestion/accept", { method: "POST" });
       if (response.ok && response.headers.get("content-type")?.includes("application/json")) {
-        setSnapshot((await response.json()) as ProjectorSnapshot);
+        const fresh = (await response.json()) as ProjectorSnapshot;
+        setSnapshot(fresh);
+        return fresh;
       }
     } catch {
       // Non-authoritative projector: a failed accept must never block the UI.
     }
+    return null;
   }, [liveMode, selectBubble]);
 
   // IDEA TRAY actions: Build/Dismiss a SPECIFIC ledger candidate (not just the
@@ -706,7 +725,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
     setGuided((current) => (current === null ? current : popPracticeOrb(current)));
   }, []);
   const guidedSkip = useCallback(() => {
-    setGuided((current) => (current === null ? current : skipStep(current, snapshotRef.current)));
+    setGuided((current) => (current === null ? current : skipStep(current, snapshotRef.current, Date.now())));
   }, []);
 
   // GUIDED RECORD (step 2's big button): REALLY unmute (/api/unmute), turn on
@@ -1215,7 +1234,12 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
   // rendering ONE continuous world around the physical 90° corner — shared eye
   // point, yaws exactly 90° apart, 90° horizontal FOV per window, no camera
   // animation (see corner-lock.ts). Scene CONTENT stays full on both windows.
-  const cornerLock = gestureMode && urlConfig.wall !== null;
+  // The two-wall rigid corner rig. The pinch camera (?hands=) is a FREE-orbit
+  // control, which corner-lock reasserts away every frame — the two intents are
+  // mutually exclusive, so an explicit pinch-camera opt-in wins (single-wall
+  // Kinect + hands must be able to orbit). Without hands, corner-lock stays as
+  // the two-wall gesture pair intends.
+  const cornerLock = gestureMode && urlConfig.wall !== null && urlConfig.hands === null;
   const dwellLayerOn = gestureMode || urlConfig.dwell === "mouse";
   // AUDIT (no-mocks): the Mock Room toggle renders ONLY behind ?mock=1.
   const mockRoomEnabled = urlConfig.mock;
@@ -1260,6 +1284,9 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
       {handsOn ? (
         <PinchCameraLayer url={handsUrl} wall={urlConfig.wall} onStatus={setHandsStatus} />
       ) : null}
+      {/* In-room hand-tracking HUD (top-left): live skeleton + id + pinch text,
+          no camera image. Same 9980 stream; shows whenever the hand camera is on. */}
+      {handsOn ? <HandSkeletonHud url={handsUrl} wall={urlConfig.wall} /> : null}
       {urlConfig.badge ? (
         <div className="wall-badge" data-testid="wall-badge">
           {urlConfig.badge}
@@ -1362,6 +1389,24 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
               onToggle={() => void toggleMicCapture()}
             />
           ) : null}
+          {snapshot.ideaSettle?.armed === true || snapshot.transcript.some((line) => line.kind === "room") ? (
+            <button
+              type="button"
+              className="ctl-button idea-done"
+              data-testid="idea-done-button"
+              title={
+                snapshot.ideaSettle?.armed === true
+                  ? "Stop refining and build the heard idea now"
+                  : "Build from what you've said so far"
+              }
+              onClick={() => void acceptIdea()}
+            >
+              ✓ Done — build it
+              {snapshot.ideaSettle?.armed === true && snapshot.ideaSettle.firesInMs !== null
+                ? ` (${Math.max(1, Math.ceil(snapshot.ideaSettle.firesInMs / 1000))}s)`
+                : ""}
+            </button>
+          ) : null}
           {showIdeaSurfaces ? (
             <button
               type="button"
@@ -1375,14 +1420,14 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
               {autoAccept ? "Auto-Build: ON" : "Auto-Build: OFF"}
             </button>
           ) : null}
-          {/* Build-side control (imports a repo to BUILD): wall B + full view. */}
+          {/* Build-side control (phone-imports a project to BUILD): wall B + full view. */}
           {showBuildSurfaces ? (
             <button
               type="button"
               className="ctl-button qr-import"
               data-testid="qr-import-button"
               onClick={() => setQrOpen(true)}
-              title="Show a QR code — scan it on a phone to add a GitHub repo to the wall."
+              title="Show a QR code — scan it on a phone to add a project (context + optional link) to the wall."
             >
               QR Import
             </button>
@@ -1632,6 +1677,15 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
           onSkip={guidedSkip}
           onExit={exitGuidedDemo}
           onFinish={exitGuidedDemo}
+          onDone={() => {
+            // Done is the ONLY way forward from the idea step: accept builds
+            // from the surfaced idea (or the raw transcript, server-side),
+            // then the demo advances — the race adopts the newborn process,
+            // and a silent Done still moves the visitor along.
+            void acceptIdea().then(() => {
+              guidedSkip();
+            });
+          }}
         />
       ) : null}
     </main>
@@ -1650,11 +1704,33 @@ function FullscreenButton() {
   const [visible, setVisible] = useState<boolean>(() => needsFullscreenHint());
   useEffect(() => {
     const update = () => setVisible(needsFullscreenHint());
+    // Keyboard path: plain "f" toggles fullscreen (keydown counts as a real
+    // user gesture, so requestFullscreen is honored). Stays bound while the
+    // button is hidden so "f" also EXITS fullscreen. Ignored with modifiers
+    // held or while typing into a field.
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "f" && event.key !== "F") return;
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      const target = event.target as HTMLElement | null;
+      if (
+        target !== null &&
+        (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)
+      ) {
+        return;
+      }
+      if (document.fullscreenElement !== null) {
+        void document.exitFullscreen?.();
+      } else {
+        void document.documentElement.requestFullscreen?.();
+      }
+    };
     document.addEventListener("fullscreenchange", update);
     window.addEventListener("resize", update);
+    window.addEventListener("keydown", onKey);
     return () => {
       document.removeEventListener("fullscreenchange", update);
       window.removeEventListener("resize", update);
+      window.removeEventListener("keydown", onKey);
     };
   }, []);
   if (!visible) {
@@ -1665,12 +1741,12 @@ function FullscreenButton() {
       type="button"
       className="ctl-button fullscreen-button"
       data-testid="fullscreen-button"
-      title="Fullscreen this wall on its projector"
+      title="Fullscreen this wall on its projector (or press F)"
       onClick={() => {
         void document.documentElement.requestFullscreen?.();
       }}
     >
-      ⛶ Fullscreen
+      ⛶ Fullscreen <span className="fullscreen-key-hint">(F)</span>
     </button>
   );
 }
