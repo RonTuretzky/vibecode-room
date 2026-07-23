@@ -2080,7 +2080,10 @@ class LiveProjectorRuntime implements ProjectorRuntime {
         // A GitHub import's display contract is its "Imported from GitHub: …"
         // line — the registry's inferred title (project naming) must not shadow
         // it. Everything else prefers the inferred title.
-        task: imported?.task ?? record.title ?? demo?.task ?? "Vibersyn task",
+        // Last-resort task label derives from REAL record data (the assigned
+        // callsign), never a canned placeholder ("Vibersyn task" leftover):
+        // title is only null when the pitch had no content words to infer from.
+        task: imported?.task ?? record.title ?? demo?.task ?? record.callsign,
         model: demo?.model ?? "runtime",
         progressLabel: record.state === "dead" ? "halted" : imported !== undefined ? "imported" : demo?.progressLabel ?? record.lastAction,
         progress: record.state === "dead" ? 100 : live?.progress ?? demo?.progress ?? Math.min(95, record.progressSeq * 12),
