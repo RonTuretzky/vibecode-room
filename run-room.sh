@@ -33,6 +33,9 @@
 #   ./run-room.sh --gesture       # legacy: real cameras (needs gesture-wall deps + room.json)
 #   ./run-room.sh --fake          # legacy: gesture mode with synthetic cursors
 #   ./run-room.sh --fake-hands    # pinch camera with synthetic hands (no TD, no cameras)
+#   ./run-room.sh --real-hands    # pinch camera from the REAL laptop camera via the
+#                                 # standalone MediaPipe bridge — the NO-TOUCHDESIGNER
+#                                 # path (needs macOS Camera permission on the Terminal/IDE)
 #   ./run-room.sh --hands=ws://td-mac:9980   # pinch camera fed by a TouchDesigner rig
 #   ./run-room.sh --gesture --config=my.json
 #   ./run-room.sh --single --gesture --config=gesture-wall/room.kinect.json
@@ -58,8 +61,9 @@ cd "$ROOT"
 GESTURE=0
 FAKE=0
 SELF_MODE=0
-HANDS=0                               # TouchDesigner hand-pinch camera (--hands / --hands=URL / --fake-hands)
+HANDS=0                               # TouchDesigner hand-pinch camera (--hands / --hands=URL / --fake-hands / --real-hands)
 FAKE_HANDS=0
+REAL_HANDS=0                          # --real-hands: launch the standalone MediaPipe bridge (real laptop camera, no TD)
 SINGLE=0
 SINGLE_VIEW="${SINGLE_VIEW:-full}"   # full | ideas | builds (--single=<view>; legacy badge, never filters)
 CALIBRATE=0
@@ -96,13 +100,14 @@ for arg in "$@"; do
     --hands) HANDS=1 ;;
     --hands=*) HANDS=1; HANDS_URL="${arg#*=}" ;;   # explicit TD source, e.g. ws://td-mac:9980
     --fake-hands) HANDS=1; FAKE_HANDS=1 ;;   # pinch camera minus TouchDesigner (synthetic hands)
+    --real-hands) HANDS=1; REAL_HANDS=1 ;;   # pinch camera from the REAL laptop camera via the standalone MediaPipe bridge (no TD)
     --single) SINGLE=1 ;;
     --single=*) SINGLE=1; SINGLE_VIEW="${arg#*=}" ;;
     --self) SELF_MODE=1 ;;   # self-hosting: VIBERSYN_SELF_MODE=1 + supervisor loop
     --calibrate) CALIBRATE=1 ;;
     --config=*) CONFIG="${arg#*=}" ;;
     -h|--help)
-      sed -n '2,52p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,55p' "$0" | sed 's/^# \{0,1\}//'
       exit 0 ;;
     *) echo "[room] unknown arg: $arg" >&2; exit 2 ;;
   esac
@@ -292,6 +297,17 @@ if [ "$FAKE_HANDS" = "1" ]; then
   PIDS+=($!)
 fi
 
+# --real-hands: the NO-TOUCHDESIGNER path. Launch the standalone MediaPipe bridge
+# (real laptop camera → MediaPipe hand tracking → the exact vibersyn-pinch wire
+# protocol on :9980, same as the old TD Web Server DAT). First run downloads the
+# ~7.8 MB hand_landmarker model (cached). Needs macOS Camera permission granted
+# to the launching Terminal/IDE — a sandboxed shell will fail auth (exit 2).
+if [ "$REAL_HANDS" = "1" ]; then
+  echo "[room] hands: standalone MediaPipe bridge (REAL camera) on ws://localhost:$HANDS_PORT"
+  "$PYTHON" gesture-wall/touchdesigner/hands_mediapipe.py --port "$HANDS_PORT" --wall A &
+  PIDS+=($!)
+fi
+
 # ── 2) build + serve Vibersyn ────────────────────────────────────────────────
 echo "[room] building Vibersyn UI…"
 bun run build >/dev/null 2>&1 || { echo "[room] ERROR: UI build failed (run 'bun run build' to see why)." >&2; exit 1; }
@@ -329,6 +345,10 @@ if [ "$HANDS" = "1" ]; then
     # --fake-hands must drive the server it just launched — a leftover
     # HANDS_URL (real-rig session) would point the walls at an absent TD host.
     HANDS_QS="&hands=ws://localhost:$HANDS_PORT"
+  elif [ "$REAL_HANDS" = "1" ]; then
+    # --real-hands launched the local MediaPipe bridge on :9980; hands=1 resolves
+    # to ws://<host>:9980 in the browser (parity with the running wall URL).
+    HANDS_QS="&hands=1"
   else
     HANDS_QS="&hands=${HANDS_URL:-ws://localhost:$HANDS_PORT}"
   fi

@@ -97,8 +97,19 @@ hands pans). URL param: `?hands=1` connects to `ws://<page-host>:9980`,
 - **No hardware:** `./run-room.sh --fake-hands` — a scripted 12 s synthetic
   pinch choreography drives wall A (orbit → flick coast → zoom → pan), for
   tuning the feel with no TouchDesigner and no cameras.
-- **Real rig:** `./run-room.sh --hands=ws://<td-host>:9980` — the TouchDesigner
-  network described in
+- **Real hands, no TouchDesigner (recommended):** `./run-room.sh --real-hands`
+  — launches the **standalone MediaPipe bridge**
+  ([`gesture-wall/touchdesigner/hands_mediapipe.py`](gesture-wall/touchdesigner/hands_mediapipe.py))
+  alongside the room: it opens the laptop camera, runs MediaPipe hand tracking,
+  and streams the *exact same* `vibersyn-pinch` protocol on **:9980** that the
+  TouchDesigner DAT did — no `.toe` file, no GPU plugin. The wall opens with
+  `&hands=1`. First run downloads the ~7.8 MB `hand_landmarker.task` model
+  (cached). Needs macOS **Camera permission** granted to the launching
+  Terminal/IDE (a sandboxed shell fails auth). Run the bridge by hand with
+  `gesture-wall/.venv/bin/python gesture-wall/touchdesigner/hands_mediapipe.py --port 9980 --wall A`
+  and connect any room with `--hands=ws://localhost:9980` (or `?hands=1`).
+- **Real rig (TouchDesigner):** `./run-room.sh --hands=ws://<td-host>:9980` — the
+  TouchDesigner network described in
   [`gesture-wall/touchdesigner/README.md`](gesture-wall/touchdesigner/README.md)
   (MediaPipe plugin install, drop-in DAT scripts, channel verification, tuning).
 

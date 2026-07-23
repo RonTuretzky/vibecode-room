@@ -150,3 +150,101 @@ browser uses to detect a stalled stream, not a bug.
 
 No TouchDesigner handy? `./run-room.sh --fake-hands` drives the same browser
 path with synthetic hands speaking this exact protocol.
+
+---
+
+## 8. Standalone (no TouchDesigner) — real laptop-camera hands
+
+[`hands_mediapipe.py`](hands_mediapipe.py) is a **drop-in replacement for the
+Web Server DAT**: it opens the laptop camera, runs MediaPipe hand tracking
+(Python, CPU — no GPU plugin, no `.toe`), and streams the **exact same
+`vibersyn-pinch` protocol on the same port 9980** that the browser already
+speaks. This tracks **REAL hands from the camera** — it is *not* the
+`--fake-hands` synthetic path and not TouchDesigner.
+
+Everything runs from the pre-provisioned venv at `gesture-wall/.venv`
+(python3.13; mediapipe, opencv, websockets, numpy already installed).
+
+### Launch
+
+```bash
+# from the repo root (cwd doesn't matter — the script uses absolute paths)
+gesture-wall/.venv/bin/python \
+  gesture-wall/touchdesigner/hands_mediapipe.py \
+  --port 9980 --camera 0 --fps 30
+```
+
+First run downloads the HandLandmarker model (~7.8 MB) to
+`gesture-wall/models/hand_landmarker.task` (auto, cached, gitignored). Then
+open the room exactly as with TouchDesigner:
+
+```bash
+./run-room.sh --hands=ws://localhost:9980
+# or append ?hands=ws://localhost:9980 to the room URL
+```
+
+The bridge prints its ws URL on start and streams `{"type":"hands",...}` at
+`--fps` (empty `hands` array every tick when no hand is in view — the same
+liveness contract). Pinch-hold + drag to orbit; pinch both hands to zoom.
+
+### Flags
+
+| flag | default | notes |
+|------|---------|-------|
+| `--port` | `9980` | matches the TD DAT / browser default |
+| `--camera` | `0` | cv2 index; try `--camera 1` for an external cam |
+| `--fps` | `30` | ws send rate (browser tolerates 10–60) |
+| `--max-hands` | `2` | matches the two-hand zoom gesture |
+| `--min-detection-confidence` | `0.6` | MediaPipe detection/presence gate |
+| `--min-tracking-confidence` | `0.5` | MediaPipe tracking gate |
+| `--wall A` | *(off)* | tag every frame with a wall id |
+| `--flip` / `--no-flip` | on | mirror x (selfie view); see §4 sign test |
+| `--model PATH` | `models/hand_landmarker.task` | auto-downloaded if missing |
+| `--selftest` | — | headless protocol check, no camera; exits 0/1 |
+
+### What it computes (and why)
+
+- **Cursor `x,y` = palm center** — the centroid of the wrist + four finger
+  base knuckles (landmarks 0, 5, 9, 13, 17). These are rigid palm points that
+  do **not** move when you pinch, so the cursor holds still while you
+  pinch-and-drag; averaging five points also cancels per-landmark jitter.
+  (This deliberately differs from the TD plugin's thumb/index midpoint, which
+  drifts as the pinch opens and closes.)
+- **`pinch`** = aspect-corrected `dist(thumb_tip, index_tip)` divided by the
+  hand-scale reference `dist(wrist, middle_finger_mcp)` — scale-invariant,
+  smaller = more pinched. The browser runs its own hysteresis on this
+  continuous value; `pinching` is the latched fallback bool.
+- **`x` is mirrored** (`1 - x`) by default so moving your hand right moves the
+  cursor right (the browser does not mirror). `y` is never flipped (protocol
+  is y-down).
+- **`id`** is assigned by handedness (Left→1, Right→2, collisions fall back to
+  the lowest free slot) so a hand keeps a stable id across frames — the
+  browser keys its tracks on `id`. `hand` (Left/Right) is cosmetic; because we
+  feed cv2's non-mirrored frame, MediaPipe's handedness is swapped to report
+  the true physical hand (flip `SWAP_HANDEDNESS` in the script if it reads
+  inverted on your rig).
+
+### macOS camera permission (READ THIS if it won't open)
+
+The camera is opened on the **main thread** (AVFoundation authorization must
+run on the main run loop). If the camera can't open, the script prints a clear
+error and exits non-zero. The usual cause on macOS is that the **app you
+launched from** (Terminal / iTerm / VS Code) lacks Camera access:
+
+> System Settings → Privacy & Security → **Camera** → enable your terminal/IDE
+> app, then **fully quit and reopen it** (macOS only applies the grant on
+> relaunch). Also make sure no other app (Zoom, Photo Booth, another run of
+> this script) is holding the camera; try a different `--camera` index.
+
+### Verify without a camera
+
+```bash
+# unit tests for the pure pinch/frame-encoding math (no cv2/mediapipe/camera):
+gesture-wall/.venv/bin/python -m pytest gesture-wall/tests/test_hands_mediapipe.py
+
+# headless protocol self-check — pushes a synthetic-but-realistic landmark set
+# through the SAME encoding path and asserts the emitted JSON matches the
+# protocol. This is a CI/verification check only, NOT a runtime fake-hands mode
+# (the real runtime always uses the camera):
+gesture-wall/.venv/bin/python gesture-wall/touchdesigner/hands_mediapipe.py --selftest
+```
