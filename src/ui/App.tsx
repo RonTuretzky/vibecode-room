@@ -215,8 +215,23 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
   // the only thing that advances a step. advanceOnSnapshot is identity-stable
   // when nothing changes, so setState bails without render churn.
   useEffect(() => {
-    setGuided((current) => (current === null ? current : advanceOnSnapshot(current, snapshot)));
+    setGuided((current) => (current === null ? current : advanceOnSnapshot(current, snapshot, Date.now())));
   }, [snapshot]);
+
+  // The race step's minimum dwell can elapse with no snapshot arriving (the
+  // mocks already finished), so tick the machine while the race is on screen.
+  const guidedStep = guided?.step ?? null;
+  useEffect(() => {
+    if (guidedStep !== "race") {
+      return;
+    }
+    const timer = setInterval(() => {
+      setGuided((current) =>
+        current === null ? current : advanceOnSnapshot(current, snapshotRef.current, Date.now()),
+      );
+    }, 1_000);
+    return () => clearInterval(timer);
+  }, [guidedStep]);
 
   // Entering the decide step auto-opens the REAL generated pitch deck of the
   // project born during the demo, starting on whichever mock finished first —
@@ -709,7 +724,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
     setGuided((current) => (current === null ? current : popPracticeOrb(current)));
   }, []);
   const guidedSkip = useCallback(() => {
-    setGuided((current) => (current === null ? current : skipStep(current, snapshotRef.current)));
+    setGuided((current) => (current === null ? current : skipStep(current, snapshotRef.current, Date.now())));
   }, []);
 
   // GUIDED RECORD (step 2's big button): REALLY unmute (/api/unmute), turn on

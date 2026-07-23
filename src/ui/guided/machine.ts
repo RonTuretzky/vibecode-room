@@ -48,6 +48,12 @@ import { backendsOf, buildsOf } from "../buildloop";
 
 export const PRACTICE_ORB_COUNT = 3;
 
+// Minimum time the RACE step stays on screen even when a mock lane is already
+// ready. Fast builders finish in the same frame the process appears, which
+// cascaded idea -> race -> decide instantly — the visitor never saw the race.
+// The demo is a guided tour; each auto-advanced step must be watchable.
+export const RACE_MIN_DWELL_MS = 10_000;
+
 export type GuidedStep = "orientation" | "record" | "idea" | "race" | "decide";
 
 export const GUIDED_STEP_ORDER: readonly GuidedStep[] = [
@@ -70,6 +76,10 @@ export interface GuidedState {
   // Which backend's MOCK was FIRST ready (race → decide transition) so the
   // deck can open on that framework's real slideshow, whichever one won.
   readyBackend: string | null;
+  // When the CURRENT step appeared (wall clock, stamped by the caller's nowMs).
+  // Optional: callers that never pass nowMs (older tests) get the legacy
+  // no-dwell behavior.
+  enteredAtMs?: number;
 }
 
 function upidsOf(snapshot: ProjectorSnapshot): string[] {
@@ -129,11 +139,11 @@ function firstReadyBackend(process: ProjectorProcess | null): string | null {
 
 // Feed every fresh snapshot through this. Returns the SAME state object when
 // nothing advances, so React setState bails without re-rendering.
-export function advanceOnSnapshot(state: GuidedState, snapshot: ProjectorSnapshot): GuidedState {
+export function advanceOnSnapshot(state: GuidedState, snapshot: ProjectorSnapshot, nowMs?: number): GuidedState {
   switch (state.step) {
     case "record": {
       if (!snapshot.muted && snapshot.captureMode === true) {
-        return { ...state, step: "idea", baselineUpids: upidsOf(snapshot) };
+        return { ...state, step: "idea", baselineUpids: upidsOf(snapshot), enteredAtMs: nowMs };
       }
       return state;
     }
@@ -142,11 +152,12 @@ export function advanceOnSnapshot(state: GuidedState, snapshot: ProjectorSnapsho
         (process) => !state.baselineUpids.includes(process.upid),
       );
       if (newcomer !== undefined) {
-        // A very fast mock lane may already be ready in this same frame; run
-        // the race check immediately so the demo never shows a stale step.
+        // Enter the race with a fresh dwell stamp; the recursive check below
+        // lets a very fast mock advance further ONLY once the dwell allows.
         return advanceOnSnapshot(
-          { ...state, step: "race", focusUpid: newcomer.upid },
+          { ...state, step: "race", focusUpid: newcomer.upid, enteredAtMs: nowMs },
           snapshot,
+          nowMs,
         );
       }
       return state;
@@ -164,7 +175,13 @@ export function advanceOnSnapshot(state: GuidedState, snapshot: ProjectorSnapsho
       }
       const readyBackend = firstReadyBackend(focusProcess(next, snapshot));
       if (readyBackend !== null) {
-        return { ...next, step: "decide", readyBackend };
+        // Hold the race on screen for its minimum dwell — instant mock lanes
+        // must not blow the demo through to the deck in a single frame.
+        const dwellMs = nowMs !== undefined && next.enteredAtMs !== undefined ? nowMs - next.enteredAtMs : null;
+        if (dwellMs !== null && dwellMs < RACE_MIN_DWELL_MS) {
+          return next;
+        }
+        return { ...next, step: "decide", readyBackend, enteredAtMs: nowMs };
       }
       return next;
     }
@@ -175,21 +192,25 @@ export function advanceOnSnapshot(state: GuidedState, snapshot: ProjectorSnapsho
 
 // Force-advance past the current step (the per-step "Skip ▸" button, always
 // available). Returns null when skipping past the final step = demo complete.
-export function skipStep(state: GuidedState, snapshot: ProjectorSnapshot): GuidedState | null {
+export function skipStep(state: GuidedState, snapshot: ProjectorSnapshot, nowMs?: number): GuidedState | null {
   switch (state.step) {
     case "orientation":
-      return { ...state, step: "record" };
+      return { ...state, step: "record", enteredAtMs: nowMs };
     case "record":
       // Same baseline reset the natural advance performs, so a process that
       // appears later still registers as the demo's newcomer.
-      return { ...state, step: "idea", baselineUpids: upidsOf(snapshot) };
+      return { ...state, step: "idea", baselineUpids: upidsOf(snapshot), enteredAtMs: nowMs };
     case "idea":
-      return advanceOnSnapshot({ ...state, step: "race" }, snapshot);
+      // The race still gets its dwell stamp — skipping INTO the race must not
+      // let an already-ready mock cascade straight to the deck.
+      return advanceOnSnapshot({ ...state, step: "race", enteredAtMs: nowMs }, snapshot, nowMs);
     case "race":
+      // Skipping FROM the race is explicit — it bypasses the dwell.
       return {
         ...state,
         step: "decide",
         readyBackend: firstReadyBackend(focusProcess(state, snapshot)),
+        enteredAtMs: nowMs,
       };
     case "decide":
       return null;

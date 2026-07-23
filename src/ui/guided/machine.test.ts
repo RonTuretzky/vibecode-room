@@ -12,6 +12,7 @@ import {
   skipStep,
   startGuided,
   stepNumber,
+  RACE_MIN_DWELL_MS,
 } from "./machine";
 
 // ── fake snapshot feed helpers (no network, no fixtures from demo-data) ──────
@@ -366,5 +367,60 @@ describe("guided demo — resilience notices (say it, never wedge)", () => {
     expect(guidedNotice(state, replay)).toContain("replay");
     const deepgram = recordingRoom({ mic: { mode: "deepgram", active: true, bytesReceived: 100 } });
     expect(guidedNotice(state, deepgram)).toBeNull();
+  });
+});
+
+describe("guided demo — race minimum dwell (steps must not fly by)", () => {
+  const atIdeaNow = (nowMs: number) => {
+    const start = makeSnapshot({ processes: [] });
+    let state = startGuided(start);
+    for (let i = 0; i < PRACTICE_ORB_COUNT; i += 1) {
+      state = popPracticeOrb(state);
+    }
+    return advanceOnSnapshot(state, recordingRoom({ processes: start.processes }), nowMs);
+  };
+
+  test("an instantly-ready mock HOLDS the race for RACE_MIN_DWELL_MS, then advances", () => {
+    const t0 = 1_000_000;
+    const state = atIdeaNow(t0);
+    const readySnap = recordingRoom({
+      processes: [makeProcess("upid_fast", { builds: [build("native", "ready")] })],
+    });
+
+    // Same frame: the newcomer enters the race but must NOT cascade to decide.
+    const entered = advanceOnSnapshot(state, readySnap, t0);
+    expect(entered.step).toBe("race");
+    expect(entered.focusUpid).toBe("upid_fast");
+
+    // Mid-dwell ticks keep holding.
+    const held = advanceOnSnapshot(entered, readySnap, t0 + RACE_MIN_DWELL_MS - 1);
+    expect(held.step).toBe("race");
+
+    // Dwell elapsed: the race releases to decide with the winning backend.
+    const decided = advanceOnSnapshot(held, readySnap, t0 + RACE_MIN_DWELL_MS);
+    expect(decided.step).toBe("decide");
+    expect(decided.readyBackend).toBe("native");
+  });
+
+  test("skipping FROM the race is explicit and bypasses the dwell", () => {
+    const t0 = 2_000_000;
+    const readySnap = recordingRoom({
+      processes: [makeProcess("upid_fast", { builds: [build("native", "ready")] })],
+    });
+    const entered = advanceOnSnapshot(atIdeaNow(t0), readySnap, t0);
+    expect(entered.step).toBe("race");
+    const skipped = skipStep(entered, readySnap, t0 + 1);
+    expect(skipped?.step).toBe("decide");
+    expect(skipped?.readyBackend).toBe("native");
+  });
+
+  test("legacy no-clock callers keep the immediate cascade (no dwell enforced)", () => {
+    const state = atIdeaNow(3_000_000);
+    const readySnap = recordingRoom({
+      processes: [makeProcess("upid_fast", { builds: [build("native", "ready")] })],
+    });
+    // state carries enteredAtMs but the call passes no nowMs — dwell must not apply
+    const advanced = advanceOnSnapshot(state, readySnap);
+    expect(advanced.step).toBe("decide");
   });
 });
