@@ -26,6 +26,9 @@ export const REQUIRED_PROJECTOR_REGIONS = [
 
 interface ProjectorAppProps {
   initialSnapshot?: ProjectorSnapshot;
+  // Test seam: overrides window.location.search for URL-config parsing so the
+  // (windowless) test renderer can exercise wall/view URLs.
+  urlSearch?: string;
 }
 
 // The synthetic id used for the (single) idea/suggestion bubble.
@@ -43,7 +46,7 @@ declare global {
   }
 }
 
-export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: ProjectorAppProps) {
+export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot, urlSearch }: ProjectorAppProps) {
   const [snapshot, setSnapshot] = useState(initialSnapshot);
   const [selected, setSelected] = useState<string | null>(null);
   const [isUnmuting, setIsUnmuting] = useState(false);
@@ -126,16 +129,21 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
     return true;
   }, []);
 
-  // Window configuration from the URL: view slice (?view=ideas|builds|full),
-  // wall identity badge (?wall=A|B), and the LEGACY gesture layer — which mounts
-  // ONLY on an explicit ?gesture=1 or ?fusion= (desk mode is the default; a bare
-  // ?wall= is just a badge so two-wall projections work without cameras).
+  // Window configuration from the URL: wall identity badge (?wall=A|B), the
+  // LEGACY view param (?view=ideas|builds — accepted so old two-wall URLs keep
+  // working, but INERT for content: every window renders the full room), and
+  // the LEGACY gesture layer — which mounts ONLY on an explicit ?gesture=1 or
+  // ?fusion= (desk mode is the default; a bare ?wall= is just a badge so
+  // two-wall projections work without cameras).
   const urlConfig = useMemo(() => {
+    if (urlSearch !== undefined) {
+      return parseProjectorUrl(urlSearch, "localhost");
+    }
     if (typeof window === "undefined") {
       return parseProjectorUrl("", "localhost");
     }
     return parseProjectorUrl(window.location.search, window.location.hostname);
-  }, []);
+  }, [urlSearch]);
   const view = urlConfig.view;
 
   // Latest snapshot exposed to the e2e window hook without re-binding it.
@@ -814,16 +822,13 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
       });
   }, [liveMode]);
 
-  // Two-wall view split: the ideas wall hides the build fleet, the builds wall
-  // hides the idea surfaces; "full" (default) shows everything on one screen.
-  // Mock room forces the full layout so every project is visible at once.
-  const effectiveView = mockMode ? "full" : view;
-  const showIdeaSurfaces = effectiveView !== "builds";
-  const showFleetSurfaces = effectiveView !== "ideas";
-  // The tray renders whenever there are candidates; the dedicated ideas wall
-  // always shows it (with an empty-state hint) so the surface reads as present.
+  // TWO-WALL CONTRACT: every window renders the FULL room. The legacy
+  // ?view=ideas|builds param still parses (old URLs keep working and it labels
+  // the wall badge) but it NEVER filters content any more — both walls show
+  // every idea surface AND the whole build fleet. Only Mock Room hides the 2D
+  // rail/tray (a pure 3D showcase).
   const ideas = snapshot.ideas ?? [];
-  const showIdeaTray = showIdeaSurfaces && (effectiveView === "ideas" || ideas.length > 0);
+  const showIdeaTray = ideas.length > 0;
 
   // 3D constellation input: every ledger candidate as an orb; with an empty
   // ledger, the primary pending suggestion (id null) is the lone orb.
@@ -854,10 +859,9 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
   }, [ideas, snapshot.suggestion.pitch, snapshot.suggestion.confidence]);
 
   // Scene trees: one per process (minus anything hidden via the hide menu).
-  // The scene itself drops trees on the dedicated ideas wall (view gating
-  // lives in RoomScene's reconcile). Each spec carries the INFERRED project
-  // title (process.task) for the node label plus the live steering flag so the
-  // scene can ring the current steering target.
+  // Each spec carries the INFERRED project title (process.task) for the node
+  // label plus the live steering flag so the scene can ring the current
+  // steering target.
   const treeSpecs = useMemo<TreeSpec[]>(
     () =>
       snapshot.processes
@@ -917,7 +921,7 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
         trees={treeSpecs}
         mode={sceneMode}
         layout={sceneLayout}
-        view={effectiveView}
+        wall={urlConfig.wall}
         fitSignal={fitSignal}
         onAcceptIdea={acceptOrb}
         onSelectProcess={selectSceneProcess}
@@ -1040,7 +1044,7 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
         </div>
       </header>
 
-      {showIdeaSurfaces && !mockMode ? <SuggestionRegion pitch={snapshot.suggestion.pitch} /> : null}
+      {!mockMode ? <SuggestionRegion pitch={snapshot.suggestion.pitch} /> : null}
 
       <div className={`stage${detailOpen ? " stage-dimmed" : ""}`}>
         <div className="stage-main">
@@ -1056,22 +1060,18 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
         {/* Mock room is a pure 3D showcase — the 2D rail/tray stay hidden. */}
         {!mockMode ? (
           <aside className="rail">
-            {showFleetSurfaces ? (
-              <BackendSelector
-                backends={backends}
-                onToggle={(id, enabled) => void toggleBackend(id, enabled)}
-              />
-            ) : null}
-            {showFleetSurfaces ? (
-              <FleetPanel
-                processes={snapshot.processes}
-                selected={selected}
-                steeringUpid={steeringUpid}
-                onSelect={(id) => void steerProcess(id)}
-                onLifecycle={(upid, action) => void processLifecycle(upid, action)}
-                onOpenDeck={(upid) => setSlideshowUpid(upid)}
-              />
-            ) : null}
+            <BackendSelector
+              backends={backends}
+              onToggle={(id, enabled) => void toggleBackend(id, enabled)}
+            />
+            <FleetPanel
+              processes={snapshot.processes}
+              selected={selected}
+              steeringUpid={steeringUpid}
+              onSelect={(id) => void steerProcess(id)}
+              onLifecycle={(upid, action) => void processLifecycle(upid, action)}
+              onOpenDeck={(upid) => setSlideshowUpid(upid)}
+            />
             <TranscriptStream lines={snapshot.transcript} />
           </aside>
         ) : null}

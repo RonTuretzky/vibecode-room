@@ -32,7 +32,9 @@ describe("parseProjectorUrl", () => {
     expect(empty.gesture).toEqual({ wall: "A", fusionUrl: "ws://localhost:8770" });
   });
 
-  test("view parsing: ideas/builds are honored, anything else falls back to full", () => {
+  // The view param is LEGACY: it still parses (old URLs + badge text) but it is
+  // inert for content — every window renders the full room (see projector tests).
+  test("view parsing: ideas/builds are recognized, anything else falls back to full", () => {
     expect(parseProjectorUrl("?view=ideas", "h").view).toBe("ideas");
     expect(parseProjectorUrl("?view=builds", "h").view).toBe("builds");
     expect(parseProjectorUrl("?view=bogus", "h").view).toBe("full");

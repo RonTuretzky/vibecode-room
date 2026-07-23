@@ -8,9 +8,10 @@
 export type ProjectorView = "ideas" | "builds" | "full";
 
 export interface ProjectorUrlConfig {
-  // Which slice of the board this window shows. "ideas" = idea bubble + tray +
-  // transcript (fleet hidden); "builds" = process bubbles + fleet rail (idea
-  // surfaces hidden); "full" (default) = everything.
+  // LEGACY view param. Still parsed so old two-wall URLs (?view=ideas|builds)
+  // keep working and the wall badge still reads "WALL A · IDEAS", but it is
+  // INERT for content: every window renders the FULL room (all ideas AND all
+  // builds) regardless of this value.
   view: ProjectorView;
   // Wall identity (e.g. "A"), or null when this is not a wall-bound window.
   wall: string | null;

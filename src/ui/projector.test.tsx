@@ -52,6 +52,58 @@ describe("projector UI contract", () => {
   });
 });
 
+// TWO-WALL CONTRACT: wall A and wall B both render the COMPLETE room. The
+// legacy ?view=ideas|builds param is accepted (old run-room.sh URLs keep
+// working, and it still labels the wall badge) but it must NEVER filter the
+// scene's node sets or the 2D surfaces.
+describe("both walls render the full scene (legacy ?view is inert)", () => {
+  function sceneCounts(html: string): { ideas: number; trees: number } {
+    const ideas = html.match(/data-idea-count="(\d+)"/);
+    const trees = html.match(/data-tree-count="(\d+)"/);
+    expect(ideas).not.toBeNull();
+    expect(trees).not.toBeNull();
+    return { ideas: Number(ideas![1]), trees: Number(trees![1]) };
+  }
+
+  const fullHtml = renderToStaticMarkup(<ProjectorApp initialSnapshot={demoProjectorSnapshot} />);
+  const wallAHtml = renderToStaticMarkup(
+    <ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch="?live=1&wall=A&view=ideas" />,
+  );
+  const wallBHtml = renderToStaticMarkup(
+    <ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch="?live=1&wall=B&view=builds" />,
+  );
+
+  test("the 3D scene gets identical node sets on wall A, wall B, and the full view", () => {
+    const full = sceneCounts(fullHtml);
+    expect(full.ideas).toBe(demoProjectorSnapshot.ideas?.length ?? -1);
+    expect(full.trees).toBe(demoProjectorSnapshot.processes.length);
+    expect(sceneCounts(wallAHtml)).toEqual(full);
+    expect(sceneCounts(wallBHtml)).toEqual(full);
+  });
+
+  test("?view=ideas (wall A) still renders the whole build fleet", () => {
+    expect(countOccurrences(wallAHtml, 'data-testid="fleet-panel"')).toBe(
+      demoProjectorSnapshot.processes.length,
+    );
+    expect(wallAHtml).toContain("Atlas");
+    expect(wallAHtml).toContain("Cobalt");
+  });
+
+  test("?view=builds (wall B) still renders every idea surface", () => {
+    expect(wallBHtml).toContain('data-testid="idea-tray"');
+    expect(countOccurrences(wallBHtml, 'data-testid="idea-item"')).toBe(
+      demoProjectorSnapshot.ideas?.length ?? -1,
+    );
+    expect(wallBHtml).toContain('data-region="suggestion"');
+  });
+
+  test("the wall identity badge still labels each window", () => {
+    expect(wallAHtml).toContain("WALL A · IDEAS");
+    expect(wallBHtml).toContain("WALL B · BUILDS");
+    expect(fullHtml).not.toContain('data-testid="wall-badge"');
+  });
+});
+
 describe("idea tray", () => {
   test("demo snapshot renders the tray with every ledger candidate", () => {
     const html = renderToStaticMarkup(<ProjectorApp initialSnapshot={demoProjectorSnapshot} />);

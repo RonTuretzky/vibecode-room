@@ -10,6 +10,13 @@ import type { IdeaTrayItem, ProjectorProcess } from "./types";
 // Navigation matches the visualizer: drag = orbit, shift+drag = pan,
 // wheel = zoom, fit-to-content on demand. Clicks still build/steer (a drag
 // longer than a few px suppresses the click, like the original).
+//
+// TWO-WALL CONTRACT: every window renders the COMPLETE scene (all ideas AND
+// all builds). The scene never assumes it is a singleton per machine — each
+// window owns its renderer, camera rig, and animation loop, and only the data
+// (via the shared SSE stream upstream) is common. A `wall` identity may seed a
+// different DEFAULT camera yaw per window so two projections of the same room
+// don't boot pixel-identical, but it never filters content.
 
 export interface IdeaOrbSpec {
   id: string | null; // null = the primary pending suggestion
@@ -42,7 +49,9 @@ interface RoomSceneProps {
   trees: TreeSpec[];
   mode: SceneMode;
   layout: SceneLayout;
-  view: "ideas" | "builds" | "full";
+  // Wall identity ("A" | "B" | …) or null. ONLY seeds the default camera yaw
+  // so each wall boots on its own vantage point — it NEVER filters content.
+  wall?: string | null;
   // Increment to request a one-shot fit-to-content camera move.
   fitSignal: number;
   onAcceptIdea: (id: string | null) => void;
@@ -120,6 +129,22 @@ function mulberry32(seed: number): () => number {
 
 function ideaKey(spec: IdeaOrbSpec): string {
   return spec.id ?? "__primary__";
+}
+
+// Per-wall DEFAULT camera yaw: wall A (or no wall) faces the scene head-on and
+// each subsequent wall letter starts ~32° further around the orbit, so two
+// projections of the same full room don't boot pixel-identical. This is purely
+// the boot framing — every window's drag/zoom/fit owns its camera afterwards,
+// and the seed NEVER filters what the scene contains.
+function wallYawSeed(wall: string | null | undefined): number {
+  if (wall === null || wall === undefined || wall.length === 0) {
+    return 0;
+  }
+  const step = wall.trim().toUpperCase().charCodeAt(0) - 65; // "A" → 0, "B" → 1, …
+  if (!Number.isFinite(step) || step <= 0) {
+    return 0;
+  }
+  return (step % 8) * 0.55;
 }
 
 function cssHex(color: number): string {
@@ -290,7 +315,7 @@ interface Entry {
   removing: boolean;
 }
 
-export function RoomScene({ ideas, trees, mode, layout, view, fitSignal, onAcceptIdea, onSelectProcess }: RoomSceneProps) {
+export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, onAcceptIdea, onSelectProcess }: RoomSceneProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const ideasRef = useRef(ideas);
   ideasRef.current = ideas;
@@ -300,8 +325,10 @@ export function RoomScene({ ideas, trees, mode, layout, view, fitSignal, onAccep
   modeRef.current = mode;
   const layoutRef = useRef(layout);
   layoutRef.current = layout;
-  const viewRef = useRef(view);
-  viewRef.current = view;
+  // Wall identity is fixed per window (parsed from the URL once); a ref keeps
+  // the mount-once scene effect honest about never re-running for it.
+  const wallRef = useRef(wall);
+  wallRef.current = wall;
   const fitRef = useRef(fitSignal);
   fitRef.current = fitSignal;
   const onAcceptRef = useRef(onAcceptIdea);
@@ -312,7 +339,7 @@ export function RoomScene({ ideas, trees, mode, layout, view, fitSignal, onAccep
 
   useEffect(() => {
     tick.current += 1;
-  }, [ideas, trees, mode, layout, view]);
+  }, [ideas, trees, mode, layout]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -323,7 +350,10 @@ export function RoomScene({ ideas, trees, mode, layout, view, fitSignal, onAccep
 
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(46, 1, 0.1, 400);
-    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    // Two-wall default mode runs TWO simultaneous fullscreen WebGL contexts on
+    // one machine, so keep the renderer settings sane: prefer the discrete GPU,
+    // cap the pixel ratio, and (below) pause the frame loop while hidden.
+    const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     container.appendChild(renderer.domElement);
 
@@ -353,7 +383,6 @@ export function RoomScene({ ideas, trees, mode, layout, view, fitSignal, onAccep
       dTargetZ: 0,
     };
     const rigDefaults = () => {
-      const ideasOnly = viewRef.current === "ideas";
       if (layoutRef.current === "ball") {
         return { radius: 12.5, height: 5.4, lookY: BALL_CENTER_Y };
       }
@@ -363,9 +392,9 @@ export function RoomScene({ ideas, trees, mode, layout, view, fitSignal, onAccep
         return { radius: 10.5, height: diskY + 9.5, lookY: diskY };
       }
       if (modeRef.current === "garden") {
-        return ideasOnly ? { radius: 10.5, height: 3.2, lookY: 1.55 } : { radius: 15.5, height: 4.6, lookY: 1.7 };
+        return { radius: 15.5, height: 4.6, lookY: 1.7 };
       }
-      return ideasOnly ? { radius: 10, height: 3.6, lookY: 1.7 } : { radius: 14.5, height: 5.2, lookY: 1.7 };
+      return { radius: 14.5, height: 5.2, lookY: 1.7 };
     };
     const resetRig = () => {
       const d = rigDefaults();
@@ -384,6 +413,9 @@ export function RoomScene({ ideas, trees, mode, layout, view, fitSignal, onAccep
       camera.lookAt(rig.targetX, rig.lookY, rig.targetZ);
     };
     resetRig();
+    // Per-window boot framing: the wall identity only seeds the default yaw
+    // (resetRig never touches the angle, so mode/layout switches keep it).
+    rig.dAngle = wallYawSeed(wallRef.current);
     rig.angle = rig.dAngle;
     rig.radius = rig.dRadius;
     rig.height = rig.dHeight;
@@ -990,7 +1022,6 @@ export function RoomScene({ ideas, trees, mode, layout, view, fitSignal, onAccep
       count: number,
       ready: boolean,
       garden: boolean,
-      ideasOnly: boolean,
     ): { pos: THREE.Vector3; k: number } => {
       if (layoutRef.current === "ball") {
         const shell = ready ? BALL_SHELL_READY : BALL_SHELL_FORMING;
@@ -1007,11 +1038,10 @@ export function RoomScene({ ideas, trees, mode, layout, view, fitSignal, onAccep
         const r = rNorm * DISK_RADIUS;
         return { pos: new THREE.Vector3(Math.cos(angle) * r, diskY(), Math.sin(angle) * r), k: poincareScale(rNorm) };
       }
-      const spacing = ideasOnly ? 3.6 : 2.9;
       const slot = centeredSlot(index);
-      const z = ideasOnly ? 2.2 + (Math.abs(slot) % 2) * 1.6 : 3.6 + (Math.abs(slot) % 2) * 1.2;
+      const z = 3.6 + (Math.abs(slot) % 2) * 1.2;
       const y = garden ? 0 : 1.3 + (Math.abs(slot) % 2) * 0.8;
-      return { pos: new THREE.Vector3(slot * spacing, y, z), k: 1 };
+      return { pos: new THREE.Vector3(slot * 2.9, y, z), k: 1 };
     };
 
     const ideaSpecChanged = (a: IdeaOrbSpec, b: IdeaOrbSpec) =>
@@ -1046,22 +1076,21 @@ export function RoomScene({ ideas, trees, mode, layout, view, fitSignal, onAccep
         builtKey = key;
         resetRig();
       }
-      const ideasOnly = viewRef.current === "ideas";
 
+      // TWO-WALL CONTRACT: every window reconciles the FULL data set — all
+      // ideas AND all builds — regardless of any legacy ?view= URL param.
       const ideaSpecs: IdeaOrbSpec[] =
-        viewRef.current === "builds"
-          ? []
-          : ideasRef.current.length > 0
-            ? ideasRef.current
-            : [{ id: "__idle__", pitch: "", confidence: 0.25, status: "forming", maturity: "forming", verified: false }];
-      const treeSpecs = ideasOnly ? [] : treesRef.current;
+        ideasRef.current.length > 0
+          ? ideasRef.current
+          : [{ id: "__idle__", pitch: "", confidence: 0.25, status: "forming", maturity: "forming", verified: false }];
+      const treeSpecs = treesRef.current;
 
       const seenIdeas = new Set<string>();
       ideaSpecs.forEach((spec, index) => {
         const specId = ideaKey(spec);
         seenIdeas.add(specId);
         const existing = ideaEntries.get(specId);
-        const placed = flowerPosition(index, ideaSpecs.length, spec.status === "ready", garden, ideasOnly);
+        const placed = flowerPosition(index, ideaSpecs.length, spec.status === "ready", garden);
         const labelLift = hyper ? 0 : (Math.abs(centeredSlot(index)) % 2) * 0.55;
         const create = () => {
           const entry = hyper
@@ -1346,21 +1375,20 @@ export function RoomScene({ ideas, trees, mode, layout, view, fitSignal, onAccep
     reconcile();
     let lastTick = tick.current;
     let lastFit = fitRef.current;
-    let lastView = viewRef.current;
 
     const clock = new THREE.Clock();
     let rafId = 0;
+    let running = false;
     const frame = () => {
+      if (!running) {
+        return;
+      }
       rafId = requestAnimationFrame(frame);
       const dt = Math.min(clock.getDelta(), 0.1);
       const t = clock.elapsedTime;
       const now = performance.now();
       if (tick.current !== lastTick) {
         lastTick = tick.current;
-        if (lastView !== viewRef.current) {
-          lastView = viewRef.current;
-          resetRig();
-        }
         reconcile();
       }
       if (fitRef.current !== lastFit) {
@@ -1458,10 +1486,37 @@ export function RoomScene({ ideas, trees, mode, layout, view, fitSignal, onAccep
 
       renderer.render(scene, camera);
     };
-    frame();
+    // TWO-WALL PERF: the default room runs two simultaneous fullscreen WebGL
+    // windows on one GPU. Park this window's frame loop entirely while the
+    // document is hidden (a backgrounded/occluded wall costs ~0 GPU) and
+    // resume on visibility; the tick counter catches up any missed reconciles
+    // on the first resumed frame, and the swallowed clock delta keeps the
+    // animations from jumping.
+    const startLoop = () => {
+      if (running) {
+        return;
+      }
+      running = true;
+      clock.getDelta();
+      frame();
+    };
+    const stopLoop = () => {
+      running = false;
+      cancelAnimationFrame(rafId);
+    };
+    const onSceneVisibility = () => {
+      if (document.hidden) {
+        stopLoop();
+      } else {
+        startLoop();
+      }
+    };
+    document.addEventListener("visibilitychange", onSceneVisibility);
+    onSceneVisibility();
 
     return () => {
-      cancelAnimationFrame(rafId);
+      stopLoop();
+      document.removeEventListener("visibilitychange", onSceneVisibility);
       observer.disconnect();
       renderer.domElement.removeEventListener("pointerdown", onPointerDown);
       renderer.domElement.removeEventListener("pointermove", onPointerMove);

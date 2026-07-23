@@ -4,9 +4,13 @@
 #
 # Default = DESK MODE (no cameras, no Python): builds the UI, serves Vibersyn on
 # all interfaces (HOST=0.0.0.0 so your phone can reach the QR-import page), and
-# opens two fullscreen windows — wall A is the idea wall (?view=ideas), wall B
-# the build wall (?view=builds). You drive it with mouse + keyboard (press "?"
-# for the cheat sheet) + voice (say "Vibersyn").
+# opens two fullscreen windows — wall A AND wall B each render the COMPLETE 3D
+# room (all ideas + all builds). The ?view=/?wall= URL params are legacy labels
+# that no longer split content: ?wall= only badges the window and seeds a
+# different default camera angle, and every window owns its camera (drag/zoom/
+# fit/zen are per-window; live state is shared over the same SSE stream). You
+# drive it with mouse + keyboard (press "?" for the cheat sheet) + voice (say
+# "Vibersyn").
 #
 # Camera (gesture) mode (--gesture) additionally starts the gesture fusion source —
 # the real Python camera server, or a camera-free preview emitter with --fake —
@@ -20,10 +24,11 @@
 # POST /calib/start. Results are written back into the room config.
 #
 # Usage:
-#   ./run-room.sh                 # desk mode: two walls, mouse/keyboard/voice
-#   ./run-room.sh --single        # desk mode, ONE window (full view) — a laptop or
+#   ./run-room.sh                 # desk mode: two walls, EACH the full room
+#   ./run-room.sh --single        # desk mode, ONE window — a laptop or
 #                                 # single projector, no cameras, no Python
-#   ./run-room.sh --single=ideas  # one window scoped to the idea wall (or =builds, =full)
+#   ./run-room.sh --single=ideas  # same window with a legacy view badge (=builds,
+#                                 # =full); the view no longer filters content
 #   ./run-room.sh --gesture       # legacy: real cameras (needs gesture-wall deps + room.json)
 #   ./run-room.sh --fake          # legacy: gesture mode with synthetic cursors
 #   ./run-room.sh --gesture --config=my.json
@@ -41,7 +46,7 @@ cd "$ROOT"
 GESTURE=0
 FAKE=0
 SINGLE=0
-SINGLE_VIEW="${SINGLE_VIEW:-full}"   # full | ideas | builds (--single=<view>)
+SINGLE_VIEW="${SINGLE_VIEW:-full}"   # full | ideas | builds (--single=<view>; legacy badge, never filters)
 CALIBRATE=0
 CONFIG="${ROOM_CONFIG:-gesture-wall/room.json}"
 VIBERSYN_PORT="${VIBERSYN_PORT:-8788}"
@@ -73,7 +78,7 @@ for arg in "$@"; do
     --calibrate) CALIBRATE=1 ;;
     --config=*) CONFIG="${arg#*=}" ;;
     -h|--help)
-      sed -n '2,35p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'
       exit 0 ;;
     *) echo "[room] unknown arg: $arg" >&2; exit 2 ;;
   esac

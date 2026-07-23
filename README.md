@@ -26,12 +26,15 @@ agents building them.
 
 - **The whole room, one command:** `./run-room.sh` — builds + serves Vibersyn
   (bound to `0.0.0.0` so your phone can reach the QR-import page) and opens the
-  UI fullscreen on two walls: wall A is the **idea wall** (`?view=ideas`), wall B
-  the **build wall** (`?view=builds`). No cameras, no Python — you drive it with
-  mouse, keyboard, and voice. `./run-room.sh --single` opens one full-view window
-  instead — a laptop or single projector, no cameras or Python needed; use
-  `--single=ideas` or `--single=builds` to scope that one window to a single
-  wall's surface.
+  UI fullscreen on two walls. **Both walls render the complete 3D room** — all
+  ideas AND all builds — each window with its own independent camera (drag to
+  orbit, scroll to zoom, `f` fit, `z` zen; `?wall=A|B` only labels the window
+  and seeds a different default camera angle so the walls don't boot
+  pixel-identical). The `?view=ideas|builds` params in the URLs are legacy and
+  no longer filter content. No cameras, no Python — you drive it with mouse,
+  keyboard, and voice. `./run-room.sh --single` opens one window instead — a
+  laptop or single projector; `--single=ideas`/`--single=builds` only add the
+  legacy view badge.
 - **Vibersyn projector only:** `bun run start` (server on :8787), or `bun run dev`
   for the UI dev server. Open `/?live=1` for the live runtime.
 
