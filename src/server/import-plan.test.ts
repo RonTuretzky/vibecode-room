@@ -1,10 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import {
   buildImportPlanPrompt,
+  buildImportPlanQuestions,
   cerebrasAdditionPlanner,
+  cerebrasQuestionPlanner,
+  deterministicImportQuestions,
   inferAdditionMode,
   renderImportPlanPrompt,
   type AdditionPlanner,
+  type ImportQuestionPlanner,
 } from "./import-plan";
 
 // A digest that looks like a real, substantial repo (the enriched repoDigest
@@ -162,6 +166,145 @@ describe("buildImportPlanPrompt", () => {
     const prompt = await buildImportPlanPrompt({ context: "a todo app", digest: null, repoPath: "/r" }, { planner });
     expect(prompt).toContain("near-empty");
     expect(prompt).toContain("a todo app");
+  });
+});
+
+describe("deterministicImportQuestions", () => {
+  test("both modes yield 3 deck-shaped questions with 2-4 options and stable ids", () => {
+    for (const mode of ["additions", "scaffold"] as const) {
+      const questions = deterministicImportQuestions(mode, null);
+      expect(questions).toHaveLength(3);
+      for (const question of questions) {
+        expect(question.id).toMatch(/^q-/u);
+        expect(question.prompt.length).toBeGreaterThan(0);
+        expect(question.answers.length).toBeGreaterThanOrEqual(2);
+        expect(question.answers.length).toBeLessThanOrEqual(4);
+      }
+    }
+    // The sets actually vary with mode — an import deck should not read the
+    // same for "extend this real repo" and "start from nothing".
+    const additions = deterministicImportQuestions("additions", null).map((question) => question.prompt);
+    const scaffold = deterministicImportQuestions("scaffold", null).map((question) => question.prompt);
+    expect(additions).not.toEqual(scaffold);
+    expect(additions[0]).toBe("How bold should the first addition be?");
+    expect(scaffold[0]).toBe("What should the first slice prove?");
+  });
+
+  test("a room steer swaps in the follow-the-request question", () => {
+    const steered = deterministicImportQuestions("additions", "add a dark mode toggle");
+    expect(steered.map((question) => question.prompt)).toContain("How closely should we follow the request?");
+    const unsteered = deterministicImportQuestions("additions", "   ");
+    expect(unsteered.map((question) => question.prompt)).not.toContain("How closely should we follow the request?");
+  });
+});
+
+describe("buildImportPlanQuestions", () => {
+  test("a null-returning planner falls back to the deterministic set for the inferred mode (never empty)", async () => {
+    const seenModes: string[] = [];
+    const planner: ImportQuestionPlanner = async (request) => {
+      seenModes.push(request.mode);
+      return null;
+    };
+    const additions = await buildImportPlanQuestions(
+      { context: "add search", digest: SUBSTANTIAL_DIGEST, repoPath: "/r" },
+      { planner },
+    );
+    expect(additions).toEqual(deterministicImportQuestions("additions", "add search"));
+    const scaffold = await buildImportPlanQuestions({ context: null, digest: null, repoPath: "/r" }, { planner });
+    expect(scaffold).toEqual(deterministicImportQuestions("scaffold", null));
+    expect(seenModes).toEqual(["additions", "scaffold"]);
+  });
+
+  test("strict-JSON planner output becomes deck questions with the judge path's id/clamp conventions", async () => {
+    const planner: ImportQuestionPlanner = async () =>
+      JSON.stringify([
+        { prompt: "Which chart library?", answers: ["Recharts", "D3"] },
+        { prompt: "Ship dark mode first?", answers: ["Yes", "Later"] },
+      ]);
+    const questions = await buildImportPlanQuestions({ context: null, digest: SUBSTANTIAL_DIGEST, repoPath: "/r" }, { planner });
+    expect(questions.map((question) => question.prompt)).toEqual(["Which chart library?", "Ship dark mode first?"]);
+    expect(questions[0]?.answers).toEqual(["Recharts", "D3"]);
+    expect(questions[0]?.id).toMatch(/^q-which-chart-library/u);
+  });
+
+  test("tolerant parse: fenced JSON with prose, a questions wrapper, and drifting key names still land", async () => {
+    const planner: ImportQuestionPlanner = async () =>
+      'Here you go!\n```json\n{"questions": [{"question": "Which store?", "options": ["SQLite", "A JSON file"]}]}\n```\nEnjoy.';
+    const questions = await buildImportPlanQuestions({ context: null, digest: SUBSTANTIAL_DIGEST, repoPath: "/r" }, { planner });
+    expect(questions).toHaveLength(1);
+    expect(questions[0]?.prompt).toBe("Which store?");
+    expect(questions[0]?.answers).toEqual(["SQLite", "A JSON file"]);
+  });
+
+  test("model drift is clamped: extra questions/options trimmed, one-option questions dropped, long text cut", async () => {
+    const longPrompt = `Should we ${"really ".repeat(40)}do it?`;
+    const planner: ImportQuestionPlanner = async () => [
+      { prompt: "Only one option", answers: ["Take it or leave it"] }, // not a decision — dropped
+      { prompt: longPrompt, answers: ["Yes", "No", "Maybe", "Later", "Never"] },
+      { prompt: "Second?", answers: ["A", "B"] },
+      { prompt: "Third?", answers: ["C", "D"] },
+      { prompt: "Fourth never fits", answers: ["E", "F"] },
+    ];
+    const questions = await buildImportPlanQuestions({ context: null, digest: SUBSTANTIAL_DIGEST, repoPath: "/r" }, { planner });
+    expect(questions).toHaveLength(3); // MAX_PLAN_QUESTIONS
+    expect(questions[0]?.prompt.length).toBeLessThanOrEqual(120);
+    expect(questions[0]?.answers).toEqual(["Yes", "No", "Maybe", "Later"]); // MAX_PLAN_ANSWERS
+    expect(questions.map((question) => question.prompt)).not.toContain("Only one option");
+    expect(questions.map((question) => question.prompt)).not.toContain("Fourth never fits");
+  });
+
+  test("garbage output and a throwing planner both fall back deterministically (never throws, never empty)", async () => {
+    const garbage: ImportQuestionPlanner = async () => "no json in here at all";
+    const throwing: ImportQuestionPlanner = async () => {
+      throw new Error("cerebras exploded");
+    };
+    for (const planner of [garbage, throwing]) {
+      const questions = await buildImportPlanQuestions({ context: null, digest: SUBSTANTIAL_DIGEST, repoPath: "/r" }, { planner });
+      expect(questions).toEqual(deterministicImportQuestions("additions", null));
+    }
+  });
+
+  test("a hanging planner loses to the timeout budget and yields the deterministic set", async () => {
+    const planner: ImportQuestionPlanner = () => new Promise<never>(() => {}); // never resolves
+    const questions = await buildImportPlanQuestions(
+      { context: null, digest: SUBSTANTIAL_DIGEST, repoPath: "/r" },
+      { planner, timeoutMs: 10 },
+    );
+    expect(questions).toEqual(deterministicImportQuestions("additions", null));
+  });
+
+  test("an already-aborted signal skips the planner entirely", async () => {
+    let called = false;
+    const planner: ImportQuestionPlanner = async () => {
+      called = true;
+      return [{ prompt: "Should not appear", answers: ["A", "B"] }];
+    };
+    const controller = new AbortController();
+    controller.abort();
+    const questions = await buildImportPlanQuestions(
+      { context: null, digest: SUBSTANTIAL_DIGEST, repoPath: "/r" },
+      { planner, signal: controller.signal },
+    );
+    expect(called).toBe(false);
+    expect(questions).toEqual(deterministicImportQuestions("additions", null));
+  });
+});
+
+describe("cerebrasQuestionPlanner", () => {
+  test("returns null with no CEREBRAS_API_KEY (deterministic, no network)", async () => {
+    const previous = process.env.CEREBRAS_API_KEY;
+    delete process.env.CEREBRAS_API_KEY;
+    try {
+      const result = await cerebrasQuestionPlanner(
+        { context: null, digest: SUBSTANTIAL_DIGEST, mode: "additions" },
+        new AbortController().signal,
+      );
+      expect(result).toBe(null);
+    } finally {
+      if (previous !== undefined) {
+        process.env.CEREBRAS_API_KEY = previous;
+      }
+    }
   });
 });
 

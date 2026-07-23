@@ -69,8 +69,8 @@ import { SeamDispatcher } from "../seam/dispatcher";
 import { createCorrelationRecord, type CorrelationRecord, type CorrelationStore } from "../seam/correlation-store";
 import { callsignFromRepo, parseImportRequest } from "./project-import";
 import { cloneRepo, repoDigest } from "./repo-clone";
-import { buildImportPlanPrompt } from "./import-plan";
-import type { IdeaCandidate, IdeaDetector } from "../detect";
+import { buildImportPlanPrompt, buildImportPlanQuestions } from "./import-plan";
+import type { IdeaCandidate, IdeaDetector, PlanQuestion } from "../detect";
 import { StageSequencer, type CanonicalStage } from "../spine/stage-sequencer";
 import type { DispatchedAction, LogEvent, OutputDecision, PendingSuggestion } from "../types";
 import { demoProjectorSnapshot, emptyProjectorSnapshot, withUnmuted } from "../ui/demo-data";
@@ -1385,6 +1385,10 @@ class LiveProjectorRuntime implements ProjectorRuntime {
         return; // Kill-all/halt won the race — no build starts after teardown.
       }
       let pitch = basePitch;
+      // Imports carry no judge assessment (the spoken-idea path's mcqs/answers
+      // ride the accept seed), so the deck's interactive swipe-to-answer cards
+      // must be drafted HERE or the imported project's deck has none.
+      let planQuestions: PlanQuestion[] = [];
       if (result.ok) {
         if (entry !== undefined) {
           entry.status = "ready";
@@ -1402,7 +1406,18 @@ class LiveProjectorRuntime implements ProjectorRuntime {
             ? `${basePitch}\n\nThe repository is cloned at ${result.dir}. Digest:\n${digest}`
             : `${basePitch}\n\nThe repository is cloned at ${result.dir}.`,
         );
+        // Same contract as the pitch: model-drafted, deterministic mode-aware
+        // fallback, never throws. The extra .catch is belt and braces — an
+        // empty set just means startBuild falls back to input derivation
+        // (which yields no cards for imports, exactly today's behavior).
+        planQuestions = await buildImportPlanQuestions(
+          { context, digest, repoPath: result.dir },
+          { signal: controller.signal },
+        ).catch(() => []);
       } else if (entry !== undefined) {
+        // A failed clone keeps the link-only build AND no drafted questions —
+        // with no checkout there is no repo to ask decisions about, and the
+        // deck stays honest about knowing nothing beyond the link.
         entry.status = "clone-failed";
       }
       this.recordExternalTrace({
@@ -1414,13 +1429,17 @@ class LiveProjectorRuntime implements ProjectorRuntime {
         latencyMs: this.#clock() - startedAtMs,
         meta: result.ok ? { url: parsed.url, dir: repoDir } : { url: parsed.url, error: result.error },
       });
-      // Re-check right before the kick: the digest await above is a second
-      // window in which a halt/emergency stop can land (startBuild also
-      // refuses dead records — this is belt and braces).
+      // Re-check right before the kick: the digest/pitch/question awaits above
+      // are further windows in which a halt/emergency stop can land (startBuild
+      // also refuses dead records — this is belt and braces).
       if (this.#emergencyTriggered || controller.signal.aborted) {
         return;
       }
-      this.registry.startBuild(upid, { correlationId, prompt: pitch });
+      this.registry.startBuild(upid, {
+        correlationId,
+        prompt: pitch,
+        ...(planQuestions.length === 0 ? {} : { planQuestions }),
+      });
       this.publish();
     })()
       .catch((error: unknown) => {

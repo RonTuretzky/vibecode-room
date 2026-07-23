@@ -214,6 +214,51 @@ describe("process registry × build orchestrator", () => {
     expect(Object.keys(plain?.input as Record<string, unknown>)).not.toContain("planQuestions");
   });
 
+  test("an explicit startBuild planQuestions override beats the input-derived mcqs/answers", async () => {
+    const orchestrator = new FakeOrchestrator();
+    const registry = new ProcessRegistry({ client: new MemorySmithersClient(), sessionId: "reg-orch-q-override", orchestrator });
+
+    // The deferred-build shape (the phone import's clone routine): spawn
+    // WITHOUT build, then kick startBuild directly with drafted questions.
+    // The input still carries mcqs/answers that would derive a different
+    // card — the explicit override must win.
+    await registry.spawn({
+      correlationId: "corr-import-q",
+      upid: "upid-import",
+      workflow: "wf",
+      prompt: "seed pitch",
+      input: { pitch: "seed pitch", mcqs: ["From the input?"], answers: ["A / B"] },
+    });
+    const drafted = [{ id: "q-drafted-1", prompt: "How bold should the first addition be?", answers: ["Small", "Ambitious"] }];
+    const kicked = registry.startBuild("upid-import", {
+      correlationId: "corr-kick",
+      prompt: "enriched pitch",
+      planQuestions: drafted,
+    });
+    expect(kicked).toBe(true);
+    await Bun.sleep(0);
+
+    const start = orchestrator.calls.find((call) => call.name === "start" && call.upid === "upid-import");
+    const input = start?.input as { prompt?: string; planQuestions?: unknown };
+    expect(input.prompt).toBe("enriched pitch");
+    expect(input.planQuestions).toEqual(drafted);
+
+    // An EMPTY override is not an override — input derivation still applies.
+    await registry.spawn({
+      correlationId: "corr-import-q2",
+      upid: "upid-import-2",
+      workflow: "wf",
+      prompt: "seed pitch",
+      input: { pitch: "seed pitch", mcqs: ["From the input?"], answers: ["A / B"] },
+    });
+    registry.startBuild("upid-import-2", { correlationId: "corr-kick-2", planQuestions: [] });
+    await Bun.sleep(0);
+
+    const second = orchestrator.calls.find((call) => call.name === "start" && call.upid === "upid-import-2");
+    const derived = second?.input as { planQuestions?: Array<{ prompt: string }> };
+    expect(derived.planQuestions?.map((question) => question.prompt)).toEqual(["From the input?"]);
+  });
+
   test("a bare spawn (demo seed, no build flag) never reaches the orchestrator", async () => {
     const orchestrator = new FakeOrchestrator();
     const registry = new ProcessRegistry({ client: new MemorySmithersClient(), sessionId: "reg-orch-bare", orchestrator });
