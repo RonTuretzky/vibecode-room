@@ -379,6 +379,15 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   // (#autoAcceptInFlight) keeps a slow build from stacking a second auto-accept.
   #autoAccept = false;
   #autoAcceptInFlight = false;
+  // AUTO-BUILD SETTLE GATE (VIBERSYN_AUTOBUILD_SETTLE_MS): the room must stay
+  // QUIET (no new FINAL utterances) this long before an armed auto-build fires.
+  // Firing on the FIRST ready candidate cut speakers off mid-description in both
+  // the guided and non-guided flows; the detector keeps refining the SAME
+  // candidate across rounds, so waiting for a natural pause loses nothing.
+  // 0 restores the legacy fire-on-surface behavior (used by fast tests).
+  readonly #autoBuildSettleMs: number;
+  #autoBuildTimer: ReturnType<typeof setTimeout> | null = null;
+  #autoBuildArmedId: string | null = null;
   // IDEA CAPTURE mode: an explicit alternative to passive auto-detect. When on,
   // detection runs EAGERLY on every final (a rate-limited force-detect, no
   // word/turn schedule) so deliberately-described ideas surface fast. Capture is
@@ -486,15 +495,19 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     // live-mic end-of-utterance endpointing gets a +50% silence grace
     // (FIRST_RUN_VAD_SILENCE_MULTIPLIER), so a brand-new room's slower, halting
     // speech is not cut off mid-thought. Resolved per mic session via a thunk;
-    // after the window it settles to the 300 ms Deepgram default. ("First run"
-    // is per-process — no persisted marker exists yet.)
+    // after the window it settles to the 900 ms base. The base is deliberately
+    // WIDER than Deepgram's 300 ms default: a person describing an idea pauses
+    // mid-sentence, and each too-eager FINAL both splits the thought and gives
+    // capture mode another force-detect trigger — the root of "the room cut me
+    // off while I was still describing". ("First run" is per-process — no
+    // persisted marker exists yet.)
     const vadTuner = new FirstRunVadTuner({ startedAtMs: clock(), clock });
     const selectedMicAsr = selectAsrProvider(env, {
       sessionId,
       micProfile: true,
       voxtermSource: options.voxtermSource,
       replaySource: options.replaySource ?? env.VIBERSYN_MIC_REPLAY_PATH,
-      endpointingMs: () => vadTuner.threshold(300).silenceThresholdMs,
+      endpointingMs: () => vadTuner.threshold(MIC_ENDPOINTING_BASE_MS).silenceThresholdMs,
     });
     this.micMode = selectedMicAsr.mode;
     this.#micAsr = this.muteController.protectCloudAsr(selectedMicAsr.provider);
@@ -681,6 +694,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       ? Math.round(acceptWindowSeconds * 1000)
       : undefined;
     this.#autoAccept = env.VIBERSYN_AUTO_ACCEPT === "1" || env.VIBERSYN_AUTO_ACCEPT === "true";
+    this.#autoBuildSettleMs = readAutoBuildSettleMs(env);
     this.#captureMode = env.VIBERSYN_CAPTURE_MODE === "1" || env.VIBERSYN_CAPTURE_MODE === "true";
     this.#wakeWord = wakeWordFromEnv(env);
     this.#routingVocabulary = loadRoutingVocabulary(env);
@@ -884,6 +898,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       // and stop the capture creation loop.
       this.detection.clear();
       this.#detectionPrimaryId = null;
+      this.disarmAutoBuild();
       this.#captureMode = false;
       this.#snapshot = this.buildSnapshot();
       this.publish();
@@ -1083,6 +1098,11 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   // the new state immediately.
   setAutoAccept(on: boolean, correlationId = `corr-auto-accept-toggle-${crypto.randomUUID()}`): ProjectorSnapshot {
     this.#autoAccept = on;
+    if (!on) {
+      // Flipping auto-build off must also drop any armed-but-not-yet-settled
+      // idea; the room went back to explicit click-to-build.
+      this.disarmAutoBuild();
+    }
     this.recordExternalTrace({
       event: "suggestion.autoaccept.set",
       level: "info",
@@ -1973,6 +1993,9 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     }
     if (primary === null) {
       this.#detectionPrimaryId = null;
+      // The armed idea disappeared (retraction, veto, supersede): a settled
+      // quiet period must not build a candidate that no longer exists.
+      this.disarmAutoBuild();
       this.publish();
       return;
     }
@@ -1983,19 +2006,80 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       // Make spoken/click/auto accept act on the surfaced idea consistently.
       this.#pendingOwner.acceptSuggestion(pending);
       await this.deliverSuggestionAudio(pending, correlationId).catch(() => undefined);
-      // Build the surfaced idea immediately ONLY when AUTO-BUILD is on. IDEA
+      // ARM the surfaced idea for building ONLY when AUTO-BUILD is on. IDEA
       // CAPTURE mode deliberately does NOT imply building anymore: capture is
-      // eager detection, and the room confirms via the tray/keyboard/voice. The
-      // guard drops overlapping fires while a build spins up so a chatty room
-      // doesn't stack spawns; the next surfaced idea catches it.
-      if (this.#autoAccept && !this.#autoAcceptInFlight) {
-        this.#autoAcceptInFlight = true;
-        void this.acceptPendingSuggestion(`corr-auto-accept-${primary.id}`).finally(() => {
-          this.#autoAcceptInFlight = false;
-        });
+      // eager detection, and the room confirms via the tray/keyboard/voice.
+      // The armed build fires only after the SETTLE GATE — the room has been
+      // quiet for #autoBuildSettleMs — so a speaker still describing their idea
+      // is never cut off by the first viable candidate (the engine refines the
+      // same candidate across rounds while they talk).
+      if (this.#autoAccept) {
+        this.armAutoBuild(primary.id);
       }
     }
     this.publish();
+  }
+
+  // ── auto-build settle gate ─────────────────────────────────────────────────
+  // Arm a surfaced candidate for auto-build. With a zero settle window this is
+  // the legacy immediate fire; otherwise a timer fires once the room has been
+  // quiet (no new FINALs — #lastFinalAtMs) for #autoBuildSettleMs, re-waiting
+  // as long as the speaker keeps talking.
+  private armAutoBuild(candidateId: string): void {
+    this.#autoBuildArmedId = candidateId;
+    if (this.#autoBuildSettleMs <= 0) {
+      this.fireArmedAutoBuild();
+      return;
+    }
+    this.scheduleAutoBuildCheck();
+  }
+
+  private scheduleAutoBuildCheck(): void {
+    if (this.#autoBuildTimer !== null) {
+      clearTimeout(this.#autoBuildTimer);
+    }
+    const nowMs = this.#clock();
+    const quietDeadlineMs = (this.#lastFinalAtMs ?? nowMs) + this.#autoBuildSettleMs;
+    const timer = setTimeout(() => {
+      this.#autoBuildTimer = null;
+      if (this.#autoBuildArmedId === null) {
+        return;
+      }
+      const checkNowMs = this.#clock();
+      if (this.#lastFinalAtMs !== null && checkNowMs - this.#lastFinalAtMs < this.#autoBuildSettleMs) {
+        // Still talking — re-wait from the newest final.
+        this.scheduleAutoBuildCheck();
+        return;
+      }
+      this.fireArmedAutoBuild();
+    }, Math.max(0, quietDeadlineMs - nowMs));
+    (timer as { unref?: () => void }).unref?.();
+    this.#autoBuildTimer = timer;
+  }
+
+  private fireArmedAutoBuild(): void {
+    const candidateId = this.#autoBuildArmedId;
+    this.#autoBuildArmedId = null;
+    if (candidateId === null || !this.#autoAccept || this.#emergencyTriggered) {
+      return;
+    }
+    // The in-flight guard drops overlapping fires while a build spins up so a
+    // chatty room doesn't stack spawns; the next surfaced idea catches it.
+    if (this.#autoAcceptInFlight) {
+      return;
+    }
+    this.#autoAcceptInFlight = true;
+    void this.acceptPendingSuggestion(`corr-auto-accept-${candidateId}`).finally(() => {
+      this.#autoAcceptInFlight = false;
+    });
+  }
+
+  private disarmAutoBuild(): void {
+    this.#autoBuildArmedId = null;
+    if (this.#autoBuildTimer !== null) {
+      clearTimeout(this.#autoBuildTimer);
+      this.#autoBuildTimer = null;
+    }
   }
 
   // Wall-clock watchdog: a delivered suggestion that is never voice-accepted must
@@ -2963,6 +3047,36 @@ function resolveRunCompletionPollMs(env: Record<string, string | undefined>): nu
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// --- Auto-build settle gate --------------------------------------------------
+//
+// LIVE-ROOM FINDING: firing auto-build the instant the first candidate crossed
+// the ready threshold cut speakers off mid-description (guided demo and plain
+// capture alike). The detector refines the same candidate on every round, so
+// auto-build now waits until the room has been QUIET — no new FINAL utterances —
+// for this long before building. ~8s comfortably covers a thinking pause
+// without feeling unresponsive once the speaker actually stops.
+
+// The live-mic Deepgram endpointing base (ms). Wider than Deepgram's 300 ms
+// default so mid-sentence pauses stop splitting an idea into many finals; the
+// first-run VAD tuner still applies its +50% grace on top for the first 5 min.
+export const MIC_ENDPOINTING_BASE_MS = 900;
+
+export const DEFAULT_AUTOBUILD_SETTLE_MS = 8_000;
+
+// VIBERSYN_AUTOBUILD_SETTLE_MS — quiet period (ms) required before an armed
+// auto-build fires. 0 restores the legacy immediate fire (fast tests).
+function readAutoBuildSettleMs(env: Record<string, string | undefined>): number {
+  const raw = env.VIBERSYN_AUTOBUILD_SETTLE_MS?.trim();
+  if (raw === undefined || raw === "") {
+    return DEFAULT_AUTOBUILD_SETTLE_MS;
+  }
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < 0) {
+    throw new Error("VIBERSYN_AUTOBUILD_SETTLE_MS must be a non-negative number.");
+  }
+  return value;
 }
 
 // Recover the detection candidate id from a PendingSuggestion id minted by

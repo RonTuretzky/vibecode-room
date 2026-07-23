@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Zone } from "./core";
 import { idToHue } from "./core";
 import { GestureTargets, HITBOX_INFLATE_PX, inflateRect, type TargetDescriptor } from "./targets";
@@ -36,6 +36,29 @@ interface CursorState {
   isMouse: boolean;
 }
 
+// CURSOR DOTS (live-room request): a persistent colored dot per tracked person
+// — like the standalone wall client (gesture-wall/web/wall.js) — so people SEE
+// where they are pointing between targets. ON by default, toggleable from the
+// wall, remembered in localStorage. Dwell rings render regardless.
+export const CURSOR_DOTS_STORAGE_KEY = "vibersyn.cursor-dots";
+
+// Pure: parse the persisted preference. Only an explicit "0" hides the dots —
+// unset (first visit) and anything else defaults ON.
+export function cursorDotsFromStored(stored: string | null): boolean {
+  return stored !== "0";
+}
+
+function readCursorDotsPref(): boolean {
+  if (typeof window === "undefined") {
+    return true;
+  }
+  try {
+    return cursorDotsFromStored(window.localStorage.getItem(CURSOR_DOTS_STORAGE_KEY));
+  } catch {
+    return true; // storage unavailable (kiosk/private mode) — default ON
+  }
+}
+
 export interface GestureLayerProps {
   // The wall id to subscribe to on the fusion server (e.g. "A").
   wall: string;
@@ -46,17 +69,36 @@ export interface GestureLayerProps {
   // point→highlight→dwell mechanic can be driven without cameras
   // (?dwell=mouse — testing / accessibility fallback). Default false.
   mouseTest?: boolean;
+  // Test seam: overrides the persisted cursor-dot preference (the SSR test
+  // renderer has no localStorage). Default: read localStorage, ON when unset.
+  initialCursorDots?: boolean;
 }
 
 // A full-viewport, pointer-events:none overlay that turns the gesture-wall
 // camera cursor stream (or the mouse in ?dwell=mouse) into dwell-to-select over
-// the real UI. NO cursor glyph is ever drawn — per the room's gesture design,
-// the pointed-at target's highlight (grow/glow via [data-dwell-hot] / scene
-// emissive boost) plus the radial dwell-progress ring rendered ON the target
-// are the only feedback. Completing the ring synthesizes the activation.
-export function GestureLayer({ wall, fusionUrl, mouseTest = false }: GestureLayerProps) {
+// the real UI. The pointed-at target's highlight (grow/glow via
+// [data-dwell-hot] / scene emissive boost) plus the radial dwell-progress ring
+// rendered ON the target are the selection feedback; completing the ring
+// synthesizes the activation. Additionally (live-room request) a persistent
+// per-person cursor dot — hued per cursor id like the standalone wall client —
+// is drawn ON by default, toggleable via the fixed "Hide cursor" button.
+export function GestureLayer({ wall, fusionUrl, mouseTest = false, initialCursorDots }: GestureLayerProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const statusRef = useRef<GestureWallStatus>("closed");
+  const [cursorDots, setCursorDots] = useState<boolean>(() => initialCursorDots ?? readCursorDotsPref());
+  const cursorDotsRef = useRef(cursorDots);
+  cursorDotsRef.current = cursorDots;
+  const toggleCursorDots = () => {
+    setCursorDots((current) => {
+      const next = !current;
+      try {
+        window.localStorage.setItem(CURSOR_DOTS_STORAGE_KEY, next ? "1" : "0");
+      } catch {
+        // Persistence is best-effort; the in-session toggle still applies.
+      }
+      return next;
+    });
+  };
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -257,7 +299,7 @@ export function GestureLayer({ wall, fusionUrl, mouseTest = false }: GestureLaye
       }
       sceneHighlights = nextScene;
 
-      draw(ctx, canvas, result.active, rectsById, fireFlashes, t, vpW, vpH);
+      draw(ctx, canvas, result.active, rectsById, fireFlashes, t, vpW, vpH, cursors, cursorDotsRef.current);
       raf = requestAnimationFrame(frame);
     };
     raf = requestAnimationFrame(frame);
@@ -276,12 +318,28 @@ export function GestureLayer({ wall, fusionUrl, mouseTest = false }: GestureLaye
   }, [wall, fusionUrl, mouseTest]);
 
   return (
-    <canvas
-      ref={canvasRef}
-      className="gesture-overlay"
-      data-testid="gesture-overlay"
-      aria-hidden="true"
-    />
+    <>
+      <canvas
+        ref={canvasRef}
+        className="gesture-overlay"
+        data-testid="gesture-overlay"
+        aria-hidden="true"
+      />
+      {/* Cursor visibility toggle — a plain ctl-button (so it is a dwell
+          target for free and inherits the gesture-XL sizing), fixed at the
+          bottom-left where no persistent panel lives on either wall. */}
+      <button
+        type="button"
+        className={`ctl-button cursor-toggle${cursorDots ? " on" : ""}`}
+        data-testid="cursor-toggle-button"
+        data-state={cursorDots ? "on" : "off"}
+        aria-pressed={cursorDots}
+        onClick={toggleCursorDots}
+        title="Show a colored cursor dot for each tracked person (dwell rings stay on either way)."
+      >
+        {cursorDots ? "Hide cursor" : "Cursor"}
+      </button>
+    </>
   );
 }
 
@@ -291,7 +349,9 @@ function ringRadius(rect: { width: number; height: number }): number {
 
 // Draw the dwell-progress ring ON each dwelled target (arc = dwell progress,
 // hued per cursor) plus short expanding flashes where a dwell just completed.
-// NO cursor dot — the highlighted target is the pointer feedback.
+// With showCursorDots on (the default), every tracked cursor also gets a
+// persistent glowing dot hued by its id (idToHue) — wall.js parity — drawn
+// LAST so the dot stays visible over rings and targets.
 function draw(
   ctx: CanvasRenderingContext2D | null,
   canvas: HTMLCanvasElement | null,
@@ -301,6 +361,8 @@ function draw(
   t: number,
   vpW: number,
   vpH: number,
+  cursors: ReadonlyMap<number, CursorState>,
+  showCursorDots: boolean,
 ): void {
   if (ctx === null || canvas === null) {
     return;
@@ -358,5 +420,32 @@ function draw(
     ctx.beginPath();
     ctx.arc(flash.x, flash.y, flash.r + age * 26, 0, Math.PI * 2);
     ctx.stroke();
+  }
+
+  if (!showCursorDots) {
+    return;
+  }
+  for (const [id, cursor] of cursors) {
+    const x = cursor.x * vpW;
+    const y = cursor.y * vpH;
+    const hue = idToHue(id);
+    // A disengaged (open-hand) cursor stays visible but dims, so roaming
+    // people can find themselves on the wall before committing to point.
+    const alpha = cursor.engaged ? 0.95 : 0.55;
+    const glow = ctx.createRadialGradient(x, y, 2, x, y, 26);
+    glow.addColorStop(0, `hsla(${hue}, 95%, 65%, ${0.55 * alpha})`);
+    glow.addColorStop(1, `hsla(${hue}, 95%, 65%, 0)`);
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(x, y, 26, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = `hsla(${hue}, 95%, 62%, ${alpha})`;
+    ctx.beginPath();
+    ctx.arc(x, y, 9, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = `hsla(${hue}, 40%, 97%, ${alpha})`;
+    ctx.beginPath();
+    ctx.arc(x, y, 3.5, 0, Math.PI * 2);
+    ctx.fill();
   }
 }

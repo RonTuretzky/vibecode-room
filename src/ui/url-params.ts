@@ -8,15 +8,17 @@
 export type ProjectorView = "ideas" | "builds" | "full";
 
 export interface ProjectorUrlConfig {
-  // Per-wall view scoping. ?view=ideas renders the idea surface + idea-side
-  // controls (wall A), ?view=builds the build surface + build-side controls
-  // (wall B), and the default full view renders everything (single-window desk
-  // mode). The 3D room scene always stays full on every window — the view
-  // scopes only the 2D HUD surfaces (and the badge reads "WALL A · IDEAS").
+  // Per-wall PANEL PLACEMENT. The two walls are ONE continuous room — neither
+  // is "the idea wall" or "the build wall". ?view only decides which
+  // single-instance persistent panels a window carries (?view=ideas: idea tray
+  // + capture cluster; ?view=builds: fleet rail + QR button + transcript); the
+  // default full view renders everything (single-window desk mode). The 3D
+  // room scene always stays full on every window, and on-demand overlays
+  // (detail/deck/QR/guided) open on whichever wall summons them.
   view: ProjectorView;
   // Wall identity (e.g. "A"), or null when this is not a wall-bound window.
   wall: string | null;
-  // The subtle corner badge text ("WALL A · IDEAS"), or null to hide the badge.
+  // The subtle corner badge text ("WALL A"), or null to hide the badge.
   badge: string | null;
   // Gesture layer config, non-null ONLY when explicitly requested via the URL.
   gesture: { wall: string; fusionUrl: string } | null;
@@ -68,9 +70,11 @@ export function parseProjectorUrl(search: string, hostname: string): ProjectorUr
 
   // Corner identity badge: shown whenever the window is wall- or view-scoped so
   // an operator glancing across the room knows which projection they're facing.
+  // DE-THEMED: a wall badge is just "WALL A" — the walls are one continuous
+  // room, not an idea wall and a build wall, so the view never brands a wall.
   const badge =
     wall !== null
-      ? `WALL ${wall.toUpperCase()} · ${view.toUpperCase()}`
+      ? `WALL ${wall.toUpperCase()}`
       : viewExplicit
         ? view.toUpperCase()
         : null;

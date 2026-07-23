@@ -124,15 +124,26 @@ describe("composition accept path — real build + preview on the snapshot", () 
     expect(runtime.snapshot().captureMode).toBe(true);
   });
 
-  test("AUTO-BUILD builds a detected idea with no spoken 'yes' (capture mode not required)", async () => {
-    runtime = await createProjectorRuntime(liveEnv(replayPath), { buildsRoot, builderAgent: noopBuilder });
+  test("AUTO-BUILD builds a detected idea with no spoken 'yes' — but only after the room settles", async () => {
+    // A short REAL settle window so the gate itself is exercised: the surfaced
+    // idea must NOT spawn while the room could still be talking, then must
+    // spawn once the quiet period elapses.
+    runtime = await createProjectorRuntime(
+      { ...liveEnv(replayPath), VIBERSYN_AUTOBUILD_SETTLE_MS: "300" },
+      { buildsRoot, builderAgent: noopBuilder },
+    );
     runtime.setAutoAccept(true);
     const before = new Set(runtime.snapshot().processes.map((process) => process.upid));
 
-    // A single buildable utterance — no affirmation. AUTO-BUILD accepts the
-    // surfaced idea the instant it pops. The spawn is fire-and-forget from the
-    // detection callback, so poll for it to appear.
+    // A single buildable utterance — no affirmation. AUTO-BUILD arms the
+    // surfaced idea; the settle gate defers the spawn until no new finals have
+    // arrived for the settle window (so a speaker mid-description is never cut
+    // off by the first viable candidate).
     await drive([final("let's build a dashboard tool to ship the replay prototype today", "utt-build")]);
+    expect(runtime.detection.primary()).not.toBeNull();
+    expect(runtime.snapshot().processes.some((process) => !before.has(process.upid))).toBe(false);
+
+    // The spawn is fire-and-forget from the settle timer, so poll for it.
     const spawned = await waitFor(() => runtime!.snapshot().processes.find((process) => !before.has(process.upid)));
 
     expect(spawned).toBeDefined();

@@ -36,14 +36,14 @@ async function apply(page: Page, partial: Record<string, unknown>): Promise<void
 test.describe("desk mode — gesture decoupling & wall identity", () => {
   test("?wall=A alone shows the identity badge and does NOT mount the gesture layer", async ({ page }) => {
     await gotoStatic(page, "?live=0&wall=A&view=ideas");
-    await expect(page.getByTestId("wall-badge")).toHaveText("WALL A · IDEAS");
+    await expect(page.getByTestId("wall-badge")).toHaveText("WALL A");
     await expect(page.getByTestId("gesture-overlay")).toHaveCount(0);
   });
 
   test("?gesture=1 explicitly re-enables the legacy gesture layer", async ({ page }) => {
     await gotoStatic(page, "?live=0&wall=B&gesture=1");
     await expect(page.getByTestId("gesture-overlay")).toBeAttached();
-    await expect(page.getByTestId("wall-badge")).toHaveText("WALL B · FULL");
+    await expect(page.getByTestId("wall-badge")).toHaveText("WALL B");
   });
 
   test("no wall/view params: no badge, no gesture layer (plain single window)", async ({ page }) => {
@@ -59,7 +59,7 @@ test.describe("desk mode — per-wall scoping (each wall renders ITS surface + c
     await expect(page.getByTestId("room-scene")).toBeVisible();
     await expect(page.getByTestId("idea-tray")).toBeVisible();
     await expect(page.locator('[data-region="suggestion"]')).toBeVisible();
-    await expect(page.getByTestId("capture-button")).toBeVisible();
+    await expect(page.getByTestId("mic-capture-button")).toBeVisible();
     await expect(page.getByTestId("guided-demo-button")).toBeVisible();
     await expect(page.getByTestId("fleet-panel")).toHaveCount(0);
     await expect(page.locator('[data-region="transcript"]')).toHaveCount(0);
@@ -74,7 +74,7 @@ test.describe("desk mode — per-wall scoping (each wall renders ITS surface + c
     await expect(page.getByTestId("qr-import-button")).toBeVisible();
     await expect(page.getByTestId("idea-tray")).toHaveCount(0);
     await expect(page.locator('[data-region="suggestion"]')).toHaveCount(0);
-    await expect(page.getByTestId("capture-button")).toHaveCount(0);
+    await expect(page.getByTestId("mic-capture-button")).toHaveCount(0);
     await expect(page.getByTestId("guided-demo-button")).toHaveCount(0);
   });
 

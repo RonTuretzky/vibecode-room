@@ -832,75 +832,77 @@ main.gesture-mode * {
 /* ============================================================================
    GESTURE-XL — every rule below is scoped to main.gesture-mode (the ?gesture=1
    wall), so desk mode (no gesture param) stays pixel-identical. Mid-air
-   pointing at projector distance needs BIG targets: controls grow to a 104px+
-   primary / 88px+ secondary hit height, type scales up, and inter-target gaps
-   widen so a dwell (hitboxes are further inflated 24px/side by the gesture
-   layer — HITBOX_INFLATE_PX) can never straddle two neighbors.
+   pointing at projector distance needs BIG targets: controls grow to a 128px+
+   primary / 104px+ secondary hit height, type scales up, and inter-target gaps
+   widen (24–36px) so a dwell (hitboxes are further inflated 24px/side by the
+   gesture layer — HITBOX_INFLATE_PX) can never straddle two neighbors.
+   (Second live-room bump: the 104/88 sizes still read small mid-air.)
    ============================================================================ */
 main.gesture-mode .ctl-button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 104px;
-  padding: 24px 44px;
-  font-size: 28px;
-  border-radius: 20px;
+  min-height: 128px;
+  padding: 30px 52px;
+  font-size: 32px;
+  border-radius: 22px;
 }
 
 main.gesture-mode .idea-item-actions .ctl-button {
-  min-height: 92px;
-  padding: 20px 38px;
-  font-size: 25px;
+  min-height: 104px;
+  padding: 24px 42px;
+  font-size: 26px;
 }
 
 main.gesture-mode .ctl-button.hide-clear {
-  min-height: 72px;
-  padding: 14px 26px;
-  font-size: 19px;
+  min-height: 88px;
+  padding: 18px 30px;
+  font-size: 22px;
 }
 
 main.gesture-mode .fleet-ctl {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 88px;
-  padding: 18px 34px;
-  font-size: 24px;
-  border-radius: 16px;
-}
-
-main.gesture-mode .backend-chip {
-  min-height: 88px;
-  padding: 18px 34px;
-  font-size: 24px;
+  min-height: 104px;
+  padding: 22px 40px;
+  font-size: 26px;
+  border-radius: 18px;
 }
 
 main.gesture-mode .deck-decision-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-height: 104px;
-  padding: 24px 46px;
-  font-size: 27px;
+  min-height: 128px;
+  padding: 30px 54px;
+  font-size: 32px;
 }
 
 main.gesture-mode .hide-item {
-  min-height: 80px;
-  padding: 18px 24px;
-  font-size: 21px;
+  min-height: 88px;
+  padding: 20px 28px;
+  font-size: 23px;
 }
 
-/* Generous breathing room between adjacent dwell targets. */
-main.gesture-mode .status-right { gap: 26px; }
-main.gesture-mode .scene-controls { gap: 16px; padding: 14px; }
-main.gesture-mode .backend-chips { gap: 18px; }
-main.gesture-mode .idea-item-actions { gap: 18px; }
-main.gesture-mode .idea-item { flex-basis: 340px; }
-main.gesture-mode .idea-tray-items { gap: 20px; }
+/* Generous breathing room between adjacent dwell targets (24–36px). */
+main.gesture-mode .status-right { gap: 34px; }
+main.gesture-mode .scene-controls { gap: 24px; padding: 18px; }
+main.gesture-mode .idea-item-actions { gap: 26px; }
+main.gesture-mode .idea-item { flex-basis: 380px; }
+main.gesture-mode .idea-tray-items { gap: 28px; }
 main.gesture-mode .fleet-controls,
-main.gesture-mode .fleet-actions-row { gap: 16px; }
-main.gesture-mode .deck-decision-choices { gap: 20px; }
-main.gesture-mode .hide-menu { gap: 12px; width: 380px; }
+main.gesture-mode .fleet-actions-row { gap: 24px; }
+main.gesture-mode .deck-decision-choices { gap: 28px; }
+main.gesture-mode .hide-menu { gap: 24px; width: 420px; }
+
+/* Gesture status bar: the desk-only readout columns (left orb/session,
+   centered cue) do not render in gesture mode, so the bar collapses to the
+   single actionable control cluster. */
+main.gesture-mode .status-bar {
+  display: flex;
+  justify-content: flex-end;
+}
 
 /* ============================================================================
    PER-WALL SAFE ZONES (gesture mode only) — pointing accuracy is worst on the
@@ -938,8 +940,8 @@ main.gesture-mode[data-view="ideas"] .guided-card.slim {
   width: min(880px, 62vw);
 }
 
-/* Wall B (builds): the rail (backends / fleet / transcript) swaps to the LEFT
-   column, and the top-row + overlay controls exit the right third. */
+/* Wall B (builds): the rail (fleet; transcript lifts out below) swaps to the
+   LEFT column, and the top-row + overlay controls exit the right third. */
 main.gesture-mode[data-view="builds"] .stage {
   grid-template-columns: clamp(380px, 34vw, 640px) minmax(0, 1fr);
 }
@@ -969,6 +971,20 @@ main.gesture-mode[data-view="builds"] .guided-card {
 
 main.gesture-mode[data-view="builds"] .guided-card.slim {
   width: min(880px, 62vw);
+}
+
+/* Wall B transcript: the live transcript is DISPLAY-ONLY, so it may occupy the
+   pointing-forbidden right third the interactive clusters vacate. Fixed
+   positioning lifts the card out of the rail grid (which keeps the fleet in
+   the left two-thirds); desk mode keeps the in-rail card untouched. */
+main.gesture-mode[data-view="builds"] .transcript-card {
+  position: fixed;
+  top: 216px;
+  right: 24px;
+  bottom: 24px;
+  width: calc(33vw - 48px);
+  max-height: none;
+  z-index: 3;
 }
 
 .ctl-button.emergency:hover {
@@ -1009,8 +1025,8 @@ main.gesture-mode[data-view="builds"] .guided-card.slim {
   box-shadow: 0 0 20px rgba(245, 176, 66, 0.45);
 }
 
-/* Wall identity badge — a subtle corner label ("WALL A · IDEAS") so a two-wall
-   room reads which projection it is facing at a glance. Never interactive. */
+/* Wall identity badge — a subtle corner label ("WALL A") so a two-wall room
+   reads which projection it is facing at a glance. Never interactive. */
 .wall-badge {
   position: fixed;
   bottom: 16px;
@@ -1495,7 +1511,8 @@ main.gesture-mode[data-view="builds"] .guided-card.slim {
    ============================================================================ */
 .rail {
   display: grid;
-  grid-template-rows: auto auto auto minmax(0, 1fr);
+  /* Two cards since the backend-selector card was removed: fleet + transcript. */
+  grid-template-rows: auto auto minmax(0, 1fr);
   gap: 16px;
   min-height: 0;
 }
@@ -3028,4 +3045,82 @@ main.gesture-mode[data-view="builds"] .guided-card.slim {
   background: rgba(28, 30, 44, 0.92);
   border: 1px solid rgba(140, 160, 255, 0.5);
   box-shadow: 0 6px 30px rgba(0, 0, 0, 0.45);
+}
+
+/* ============================================================================
+   ONE mic+capture button (live-room request) — replaces the separate Mic and
+   Idea Capture controls. Cyan "recording" affordance like the old capture
+   toggle, carrying the mic dot; while active it pulses (capture-pulse) and the
+   live input meter renders beneath (see MicCaptureControl in App.tsx).
+   ============================================================================ */
+.ctl-button.mic-capture {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: #bfeefc;
+  border-color: rgba(0, 188, 212, 0.45);
+  background: rgba(0, 188, 212, 0.1);
+}
+
+.ctl-button.mic-capture:hover {
+  background: rgba(0, 188, 212, 0.22);
+}
+
+.ctl-button.mic-capture .mic-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: rgba(150, 200, 230, 0.6);
+}
+
+.ctl-button.mic-capture.on {
+  color: #04141a;
+  background: var(--c-selected, #00bcd4);
+  border-color: rgba(0, 188, 212, 0.9);
+  box-shadow: 0 0 20px rgba(0, 188, 212, 0.5);
+  animation: capture-pulse 1.8s ease-in-out infinite;
+}
+
+.ctl-button.mic-capture.on .mic-dot {
+  background: #04141a;
+  box-shadow: 0 0 10px rgba(4, 20, 26, 0.6);
+  animation: mic-pulse 1.2s ease-in-out infinite;
+}
+
+.ctl-button.mic-capture:disabled {
+  opacity: 0.7;
+  cursor: wait;
+}
+
+/* ============================================================================
+   Cursor-dot toggle (live-room request) — rendered by the gesture layer, so it
+   exists exactly when camera/mouse dwell cursors do. Bottom-left above the
+   wall badge (clear of wall B's right-third transcript card and the status
+   bar); a plain ctl-button, so gesture mode auto-XLs it into a dwell target.
+   ============================================================================ */
+.ctl-button.cursor-toggle {
+  position: fixed;
+  left: 22px;
+  bottom: 72px;
+  z-index: 25;
+  color: #ded4ff;
+  border-color: rgba(155, 130, 255, 0.45);
+  background: rgba(120, 95, 240, 0.14);
+}
+
+.ctl-button.cursor-toggle:hover {
+  background: rgba(120, 95, 240, 0.26);
+}
+
+.ctl-button.cursor-toggle.on {
+  color: #140b2e;
+  background: #a78bfa;
+  border-color: rgba(167, 139, 250, 0.9);
+  box-shadow: 0 0 20px rgba(167, 139, 250, 0.5);
+}
+
+/* Zen mode hides all chrome — the cursor toggle included. */
+.deep.zen .ctl-button.cursor-toggle {
+  display: none;
 }

@@ -1,68 +1,11 @@
 /* ============================================================================
-   Build loop — backend selector chips, per-backend build chips, lifecycle
-   controls. Owned by the build-loop wall surface; every element here renders
-   only when a build-loop server publishes builds[]/backends, so an old server
-   simply shows none of it. Motion is opacity/box-shadow only and freezes under
-   reduced-motion, matching styles.css.
+   Build loop — per-backend build chips + lifecycle controls. Owned by the
+   build-loop wall surface; every element here renders only when a build-loop
+   server publishes builds[], so an old server simply shows none of it. (The
+   backend SELECTOR chips are gone: backends are env-configured server-side and
+   the wall never presents a chooser.) Motion is opacity/box-shadow only and
+   freezes under reduced-motion, matching styles.css.
    ============================================================================ */
-
-/* --- Backend selector (rail card) --- */
-.backend-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.backend-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  border-radius: 999px;
-  border: 1px solid var(--glass-line);
-  background: rgba(10, 18, 26, 0.5);
-  color: var(--ink-soft);
-  font: inherit;
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  padding: 5px 12px;
-  cursor: pointer;
-  transition: border-color 160ms ease, background 160ms ease, color 160ms ease;
-}
-
-.backend-chip:hover {
-  background: rgba(14, 26, 36, 0.66);
-  color: var(--ink);
-}
-
-.backend-chip .backend-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--ink-faint);
-  flex: none;
-}
-
-.backend-chip.on {
-  border-color: var(--c-active);
-  color: var(--ink);
-}
-
-.backend-chip.on .backend-dot {
-  background: var(--c-active);
-  box-shadow: 0 0 8px var(--c-active);
-}
-
-/* Unavailable = dimmed but still clickable (enabled is config, availability is
-   backend health); the reason surfaces as the tooltip. */
-.backend-chip.unavailable {
-  opacity: 0.45;
-}
-
-.backend-chip.unavailable .backend-dot {
-  background: var(--c-halted);
-  box-shadow: none;
-}
 
 /* --- Per-backend build chips on the fleet cards --- */
 .build-chips {
