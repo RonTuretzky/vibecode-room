@@ -1215,7 +1215,12 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
   // rendering ONE continuous world around the physical 90° corner — shared eye
   // point, yaws exactly 90° apart, 90° horizontal FOV per window, no camera
   // animation (see corner-lock.ts). Scene CONTENT stays full on both windows.
-  const cornerLock = gestureMode && urlConfig.wall !== null;
+  // The two-wall rigid corner rig. The pinch camera (?hands=) is a FREE-orbit
+  // control, which corner-lock reasserts away every frame — the two intents are
+  // mutually exclusive, so an explicit pinch-camera opt-in wins (single-wall
+  // Kinect + hands must be able to orbit). Without hands, corner-lock stays as
+  // the two-wall gesture pair intends.
+  const cornerLock = gestureMode && urlConfig.wall !== null && urlConfig.hands === null;
   const dwellLayerOn = gestureMode || urlConfig.dwell === "mouse";
   // AUDIT (no-mocks): the Mock Room toggle renders ONLY behind ?mock=1.
   const mockRoomEnabled = urlConfig.mock;
