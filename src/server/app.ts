@@ -272,6 +272,22 @@ export function createProjectorApp(runtime: ProjectorRuntime, options: Projector
     }
     return context.json(runtime.publishNow());
   });
+  // SELF-HOSTING (VIBERSYN_SELF_MODE=1): the guarded internal reload trigger.
+  // Only honored in self mode (404 otherwise — the endpoint effectively does
+  // not exist). The runtime re-verifies the last self-run reported green and
+  // serializes reloads; a refused trigger is a 409 with the reason. On success
+  // the server publishes reloadPending, drains briefly, and exits 87 — the
+  // run-room --self supervisor rebuilds and relaunches it.
+  app.post("/api/self/reload", (context) => {
+    if (env.VIBERSYN_SELF_MODE !== "1" && env.VIBERSYN_SELF_MODE !== "true") {
+      return context.json({ ok: false, error: "self mode is off" }, 404);
+    }
+    const result = runtime.requestSelfReload(`corr-self-reload-api-${crypto.randomUUID()}`);
+    if (!result.ok) {
+      return context.json({ ok: false, error: result.reason }, 409);
+    }
+    return context.json({ ok: true, bootId: runtime.bootId, exitCode: 87 });
+  });
   // Text steering — the SAME path spoken steering takes (registry.steer forwards
   // to the smithers client AND fires the build orchestrator's correction re-run
   // on every ready build). Body {"text": string}; empty/malformed is a 400.

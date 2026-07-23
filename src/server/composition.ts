@@ -51,6 +51,19 @@ import { dispatchUtterance, type DispatchDecision, type SteeringWindow as Routin
 import { includesPhrase, loadRoutingVocabulary, normalizeSpeech, type DocumentedCommand, type RoutingVocabulary } from "../routing/vocabulary";
 import { panicHaltOutputs } from "../routing/panic-feedback";
 import { NearMissSoftLanding } from "../onboarding/soft-landing";
+import { CallsignAllocator, reservedControlWords } from "../routing/callsigns";
+import {
+  SELF_CALLSIGN,
+  SELF_PIN_PROMPT,
+  SELF_TITLE,
+  SELF_UPID,
+  SELF_WORKFLOW,
+  SelfCommissioner,
+  selfModeEnabled,
+  selfRoutingOrchestrator,
+  type GitHeadFact,
+  type SelfSurface,
+} from "../self/commission";
 import { FirstRunVadTuner } from "../onboarding/vad";
 import { SeamDispatcher } from "../seam/dispatcher";
 import { createCorrelationRecord, type CorrelationRecord, type CorrelationStore } from "../seam/correlation-store";
@@ -144,6 +157,17 @@ export interface ProjectorRuntime {
   // its live run-event telemetry. Idempotent per UPID; errors are typed so the
   // HTTP route can 400/404 honestly.
   executeProcess(upid: string, correlationId?: string): Promise<ExecuteProcessResult>;
+  // SELF-HOSTING MODE (VIBERSYN_SELF_MODE=1). `bootId` is this process's
+  // stable per-boot id — surfaced on /api/health and the snapshot so a wall
+  // can detect that the server it reconnected to is a NEW build and reload
+  // itself. `requestSelfReload` is the guarded reload trigger: honored only in
+  // self mode, serialized, and gated on the last self-run having verified
+  // green — on success the server publishes reloadPending, briefly lets
+  // in-flight responses finish, then exits 87 (the run-room --self supervisor
+  // rebuilds and relaunches it).
+  readonly bootId: string;
+  readonly selfMode: boolean;
+  requestSelfReload(correlationId?: string): { ok: true } | { ok: false; reason: string };
   pendingSuggestion(): PendingQueuedSuggestion | null;
   snapshot(): ProjectorSnapshot;
   // Rebuild + broadcast the snapshot NOW and return it. The HTTP control routes
@@ -270,6 +294,12 @@ export interface ProjectorRuntimeOptions {
   // under (the vibersyn-process workflow's contract-fixed output root). Defaults
   // to <cwd>/artifacts/vibersyn-runs. Tests point it at a temp dir.
   executionArtifactsRoot?: string;
+  // SELF-HOSTING seams (VIBERSYN_SELF_MODE=1). `selfGitHead` injects the green-
+  // gate git probe (tests fake the HEAD sequence; production shells out to
+  // `git log -1`). `exitProcess` injects the reload trigger's exit so tests can
+  // observe the 87 without killing the test process.
+  selfGitHead?: () => Promise<GitHeadFact | null>;
+  exitProcess?: (code: number) => void;
   // GitHub Pages deck publisher seam (src/publish/gh-pages). Fired once per
   // kicked-off idea, fire-and-forget, after its FIRST pitch deck lands; the
   // resolved public URL becomes the process's publishedUrl + take-home QR.
@@ -286,6 +316,12 @@ export async function createProjectorRuntime(
   const sessionId = env.VIBERSYN_SESSION_ID ?? emptyProjectorSnapshot.sessionId;
   const runtime = new LiveProjectorRuntime(sessionId, env, options);
   await runtime.initCueBridge();
+  // SELF-HOSTING MODE: pin the standing "Vibersyn Room" project (upid "self",
+  // callsign "mirror") onto the wall before anything else spawns. It has no
+  // kickoff mock lanes — steering it commissions a vibersyn-self run instead.
+  if (selfModeEnabled(env)) {
+    await runtime.pinSelfProject();
+  }
   // The seeded demo fleet (FIXTURE Atlas/Cobalt processes) is OFF by default in
   // the live server: an idle runtime must have ZERO processes until a real idea
   // is accepted and spawns one. It stays available for tests/demo via the opt-in
@@ -435,6 +471,18 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   // run's status and fold a synthetic completion when the run is terminal.
   readonly #getRun: ((runId: string) => Promise<Record<string, unknown> | undefined>) | null;
   readonly #runCompletionPollMs: number;
+  // SELF-HOSTING MODE (VIBERSYN_SELF_MODE=1). `bootId` is the stable per-boot
+  // id (/api/health + snapshot) the walls compare across SSE reconnects to
+  // decide "the server is a new build — reload". `#selfCommission` owns the
+  // pinned SELF project's steer→durable-run→green-gate loop; `#selfReloadPending`
+  // serializes reloads (a second green during the drain window is refused);
+  // `#exit` is the injectable exit-87 seam the supervisor loop watches for.
+  readonly bootId: string = crypto.randomUUID();
+  readonly #selfMode: boolean;
+  #selfCommission: SelfCommissioner | null = null;
+  #selfReloadPending = false;
+  readonly #exit: (code: number) => void;
+  readonly #selfReloadDelayMs: number;
 
   constructor(
     readonly sessionId: string,
@@ -444,6 +492,12 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     this.#env = env;
     const clock = options.clock ?? (() => Date.now());
     this.#clock = clock;
+    // SELF-HOSTING MODE resolves first: it shapes the callsign allocator (the
+    // reserved "mirror" word), the registry's orchestrator seam (self steers
+    // route to the commission), and the reload trigger below.
+    this.#selfMode = selfModeEnabled(env);
+    this.#exit = options.exitProcess ?? ((code: number) => process.exit(code));
+    this.#selfReloadDelayMs = resolveSelfReloadDelayMs(env);
     // Single audible-output sink seam (ISSUE-0026): an injected sink wins, else
     // selectAudioSink(env) (no-op unless VIBERSYN_AUDIO_SINK=device). The one sink
     // backs both the earcon playPcm path and the TTS drain so a fired suggestion's
@@ -605,19 +659,34 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     // Concurrency cap: VIBERSYN_MAX_CONCURRENT_PROCESSES (0/unset-invalid → 16).
     // The old hardcoded 2 meant the third spoken idea in a session was refused.
     const maxConcurrent = resolveMaxConcurrentProcesses(env);
+    // Per-boot nonce so commissioned runIds never collide with a PREVIOUS
+    // session's durable gateway runs (upids restart at upid-1 every boot;
+    // the gateway's finished "vibersyn-upid-1" would otherwise be replayed
+    // instantly, stale artifacts and all). Shared with the self commission so
+    // its "vibersyn-self-<nonce>-<n>" runIds get the same freshness contract.
+    const runIdNonce = Date.now().toString(36);
+    // The registry's built-artifact steer seam. In SELF mode it is wrapped so
+    // the SELF upid's steers — click-steer, "mirror, <instruction>", the HTTP
+    // steer endpoint, the seam API — all route into the self commission; every
+    // other UPID keeps the real orchestrator fan-out.
+    const baseOrchestrator = useOrchestrator ? this.buildOrchestrator : null;
     this.registry = new ProcessRegistry({
       client: smithersClient,
       sessionId,
       now: clock,
       maxConcurrentProcesses: maxConcurrent,
-      // Per-boot nonce so commissioned runIds never collide with a PREVIOUS
-      // session's durable gateway runs (upids restart at upid-1 every boot;
-      // the gateway's finished "vibersyn-upid-1" would otherwise be replayed
-      // instantly, stale artifacts and all).
-      runIdNonce: Date.now().toString(36),
+      runIdNonce,
       ideaBuilds: this.ideaBuilds,
-      orchestrator: useOrchestrator ? this.buildOrchestrator : null,
+      orchestrator: this.#selfMode
+        ? selfRoutingOrchestrator(baseOrchestrator, () => this.#selfCommission)
+        : baseOrchestrator,
       execution: this.executionRegistry,
+      // SELF mode reserves the spoken callsign "mirror" (phonetic guard
+      // included) so the namer/allocator can never hand it — or a sound-alike —
+      // to another process; the pinned self spawn itself bypasses the guard.
+      callsigns: this.#selfMode
+        ? new CallsignAllocator({ reservedWords: [...reservedControlWords(env), SELF_CALLSIGN] })
+        : undefined,
       // A halted/emergency-stopped process drops its preview; republish so the
       // "Preview ->" link disappears from the snapshot immediately. If the halted
       // process was the steering target, drop the target so transcript stops
@@ -642,6 +711,45 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       client: runEventStreamClient(smithersClient),
       onUpdate: (upid, overlay) => this.onRunOverlay(upid, overlay),
     });
+    // SELF-HOSTING commission loop: steers addressed to the pinned SELF
+    // project launch durable `vibersyn-self` runs through the SAME selected
+    // smithers client, stream telemetry through the SAME RunEventDriver, and
+    // are green-gated room-side (git HEAD must gain a "self:" commit) before
+    // the serialized exit-87 reload trigger fires.
+    this.#selfCommission = this.#selfMode
+      ? new SelfCommissioner({
+          client: smithersClient,
+          runIdNonce,
+          sessionId,
+          now: clock,
+          onUpdate: () => this.publish(),
+          onTrace: (event) => this.recordExternalTrace(event),
+          onOutput: (decision) => this.recordOutput(decision),
+          onLaunched: (runId) => {
+            void this.runEventDriver.subscribe(SELF_UPID, runId).catch((error) => {
+              this.recordExternalTrace({
+                event: "run.events.error",
+                level: "error",
+                sessionId: this.sessionId,
+                upid: SELF_UPID,
+                meta: { message: error instanceof Error ? error.message : String(error) },
+              });
+            });
+          },
+          onGreen: () => {
+            this.requestSelfReload(`corr-self-green-${crypto.randomUUID()}`);
+          },
+          gitHead: options.selfGitHead,
+          getRunStatus:
+            this.#getRun === null
+              ? null
+              : async (runId: string) => {
+                  const run = await this.#getRun?.(runId);
+                  return typeof run?.status === "string" ? run.status : null;
+                },
+          pollMs: this.#runCompletionPollMs,
+        })
+      : null;
     // Seam action API (/api/seam/*): the dispatcher's client/correlation seams
     // are registry adapters, so seam-dispatched spawn/steer/pause/resume/halt/
     // status act on and report the REAL fleet. The shared CallsignAllocator
@@ -880,6 +988,10 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       // process already cancelled the durable runs via the gateway client);
       // no full-app artifacts preview outlives the session either.
       await this.executionRegistry.stopAll().catch(() => undefined);
+      // Abort an in-flight self-run like any commission (belt-and-braces: the
+      // registry halt already routed abortAll("self") through the wrapper, but
+      // the kill-all must never depend on that path having run).
+      await this.#selfCommission?.abort().catch(() => undefined);
       // Drop any in-flight idea candidates so the bubble clears with the kill-all,
       // and stop the capture creation loop.
       this.detection.clear();
@@ -2090,7 +2202,9 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     return this.#snapshot;
   }
 
-  private buildSnapshot(previous: ProjectorSnapshot = this.#snapshot): BuildloopSnapshot {
+  private buildSnapshot(
+    previous: ProjectorSnapshot = this.#snapshot,
+  ): BuildloopSnapshot & { bootId: string; self: SelfSurface | null } {
     const muted = this.#emergencyTriggered || this.muteController.isMuted();
     const listening = !this.#emergencyTriggered && this.#session.isListening() && !muted;
     const liveActiveCue = this.#micActive ? "ambient listening" : previous.activeCue;
@@ -2120,6 +2234,11 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       // Multi-backend build loop: the registered backend roster with enabled +
       // last-probed availability — the wall's toggle chips (POST /api/backends).
       backends: this.buildSelector.snapshot(),
+      // SELF-HOSTING surfaces: the per-boot id every wall compares across SSE
+      // reconnects (bootId changed → the server is a new build → reload), and
+      // the self surface driving the mirror label + reload overlay.
+      bootId: this.bootId,
+      self: this.selfSurface(),
     };
   }
 
@@ -2272,7 +2391,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     }
   }
 
-  private processSnapshots(): Array<BuildloopProcess & { execution: ExecutionSnapshot | null }> {
+  private processSnapshots(): Array<BuildloopProcess & { execution: ExecutionSnapshot | null; stage?: "self" }> {
     const demoByUpid = new Map(this.#demoProcesses.map((process) => [process.upid, process]));
 
     return this.registry.records().map((record) => {
@@ -2303,8 +2422,17 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       // COMMISSION execution lane (two-stage pivot): null until the room
       // explicitly executes; then executing (percent/label from live run
       // events) -> built with the full-app artifacts preview. A dead process
-      // shows no lane — halt tore the preview down.
-      const execution: ExecutionSnapshot | null = record.state === "dead" ? null : this.registry.execution(record.upid);
+      // shows no lane — halt tore the preview down. The pinned SELF project's
+      // lane comes from the self commission instead: its "execution" IS the
+      // vibersyn-self run (executing → green/built or failed), shape-compatible
+      // so the wall's ExecutionChip renders it unchanged.
+      const isSelf = this.#selfCommission !== null && record.upid === SELF_UPID;
+      const execution: ExecutionSnapshot | null =
+        record.state === "dead"
+          ? null
+          : isSelf
+            ? this.#selfCommission?.lane() ?? null
+            : this.registry.execution(record.upid);
       // TAKE-HOME publish surface: the confirmed-200 GitHub Pages URL + the
       // server-generated QR SVG the wall renders ("scan to take it home").
       // Deliberately survives a halt — the published page is a public
@@ -2347,6 +2475,10 @@ class LiveProjectorRuntime implements ProjectorRuntime {
         publishedUrl: published?.url ?? null,
         publishedQrSvg: published?.qrSvg ?? null,
         ...(imported === undefined ? {} : { source: { kind: "github-import" as const, url: imported.url } }),
+        // SELF stage label: the wall renders this card/scene node like any
+        // project but badges it SELF (stage.ts folds unknown stages safely for
+        // pre-self clients).
+        ...(isSelf ? { stage: "self" as const } : {}),
       };
     });
   }
@@ -2472,6 +2604,17 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   // to `built` by serving the artifacts directory (fire-and-forget — the
   // ExecutionRegistry republishes when the preview server is up).
   private onRunOverlay(upid: string, overlay: RunEventOverlay): void {
+    // SELF lane: live vibersyn-self telemetry folds into the commission's lane;
+    // a completed stream frame hands off to the room-side green gate (which
+    // decides built-vs-failed from git, never from the frame alone).
+    if (this.#selfCommission !== null && upid === SELF_UPID) {
+      this.#selfCommission.progress({ percent: overlay.progress, label: overlay.lastOutput });
+      if (overlay.state === "completed") {
+        void this.#selfCommission.completeFromRun("finished").catch(() => undefined);
+      }
+      this.publish();
+      return;
+    }
     if (this.executionRegistry.isExecuting(upid)) {
       this.executionRegistry.progress(upid, { percent: overlay.progress, label: overlay.lastOutput });
       if (overlay.state === "completed") {
@@ -2502,6 +2645,17 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   ): Promise<ExecuteProcessResult> {
     if (this.#emergencyTriggered) {
       return { ok: false, status: 400, error: "Emergency stop is active." };
+    }
+    // The pinned SELF project is never commissioned through the execute path —
+    // steering it IS its commission (each correction launches a vibersyn-self
+    // run). Refuse honestly so "vibersyn execute" / the deck button can't
+    // launch a stray vibersyn-process run against the room's own source.
+    if (this.#selfCommission !== null && upid === SELF_UPID) {
+      return {
+        ok: false,
+        status: 400,
+        error: `The room itself is not commissioned — steer it instead: say "${SELF_CALLSIGN}, <instruction>".`,
+      };
     }
     const live = this.registry.activeRecords().some((record) => record.upid === upid);
     if (!live) {
@@ -2539,6 +2693,111 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     this.subscribeRunEvents(upid, result.runId);
     this.publish();
     return { ok: true, execution: result.execution, snapshot: this.#snapshot };
+  }
+
+  get selfMode(): boolean {
+    return this.#selfMode;
+  }
+
+  // SELF-HOSTING: pin the standing "Vibersyn Room" project at boot. A normal
+  // registry spawn (so lifecycle — halt, emergency stop, selection, snapshot —
+  // treats it like any project) with the reserved upid/callsign/title and NO
+  // build flag: kickoff mock lanes never fan out for the room itself. The
+  // callsign collision guard is suspended for THIS spawn only, because "mirror"
+  // is deliberately in the allocator's reserved-word list (display fleet idiom,
+  // mirrors seedDemoFleet/importProject).
+  async pinSelfProject(): Promise<void> {
+    if (!this.#selfMode) {
+      return;
+    }
+    const priorGuard = process.env.VIBERSYN_RBG_DISABLE_CALLSIGN_COLLISION_GUARD;
+    process.env.VIBERSYN_RBG_DISABLE_CALLSIGN_COLLISION_GUARD = "1";
+    try {
+      const spawn = await this.registry.spawn({
+        upid: SELF_UPID,
+        callsign: SELF_CALLSIGN,
+        title: SELF_TITLE,
+        workflow: SELF_WORKFLOW,
+        prompt: SELF_PIN_PROMPT,
+        input: { source: "self" },
+        correlationId: "corr-self-pin",
+      });
+      this.recordExternalTrace({
+        event: "self.pinned",
+        level: spawn.accepted ? "info" : "warn",
+        sessionId: this.sessionId,
+        correlationId: "corr-self-pin",
+        upid: SELF_UPID,
+        meta: spawn.accepted
+          ? { callsign: spawn.process.callsign, title: SELF_TITLE, bootId: this.bootId }
+          : { refused: spawn.reason },
+      });
+    } finally {
+      if (priorGuard === undefined) {
+        delete process.env.VIBERSYN_RBG_DISABLE_CALLSIGN_COLLISION_GUARD;
+      } else {
+        process.env.VIBERSYN_RBG_DISABLE_CALLSIGN_COLLISION_GUARD = priorGuard;
+      }
+    }
+    this.publish();
+  }
+
+  // SELF-HOSTING reload trigger (3b): honored only in self mode, serialized,
+  // and GATED — it re-verifies that the last self-run actually reported green
+  // (a fresh "self:" commit passed the room-side git gate) before arming the
+  // exit. On success the snapshot flips reloadPending (walls show the "room is
+  // reloading itself…" overlay), in-flight responses get a short drain window,
+  // then the server exits 87 and the run-room --self supervisor rebuilds and
+  // relaunches it.
+  requestSelfReload(correlationId = `corr-self-reload-${crypto.randomUUID()}`): { ok: true } | { ok: false; reason: string } {
+    const refuse = (reason: string): { ok: false; reason: string } => {
+      this.recordExternalTrace({
+        event: "self.reload.refused",
+        level: "warn",
+        sessionId: this.sessionId,
+        correlationId,
+        upid: SELF_UPID,
+        meta: { reason },
+      });
+      return { ok: false, reason };
+    };
+    if (!this.#selfMode || this.#selfCommission === null) {
+      return refuse("self mode is off");
+    }
+    if (this.#emergencyTriggered) {
+      return refuse("emergency stop is active");
+    }
+    if (this.#selfReloadPending) {
+      return refuse("a reload is already in flight");
+    }
+    if (!this.#selfCommission.lastRunGreen()) {
+      return refuse("the last self-run did not verify green");
+    }
+    this.#selfReloadPending = true;
+    this.recordExternalTrace({
+      event: "self.reload",
+      level: "info",
+      sessionId: this.sessionId,
+      correlationId,
+      upid: SELF_UPID,
+      meta: { bootId: this.bootId, exitCode: 87, drainMs: this.#selfReloadDelayMs },
+    });
+    this.publish();
+    // Short drain so the triggering HTTP response and the reloadPending SSE
+    // frame reach the walls before the process replaces itself. Deliberately
+    // NOT unref'd — the exit must fire even on an otherwise idle server.
+    setTimeout(() => {
+      this.#exit(87);
+    }, this.#selfReloadDelayMs);
+    return { ok: true };
+  }
+
+  // The snapshot's top-level self surface (null when self mode is off).
+  private selfSurface(): SelfSurface | null {
+    if (!this.#selfMode) {
+      return null;
+    }
+    return { upid: SELF_UPID, callsign: SELF_CALLSIGN, reloadPending: this.#selfReloadPending };
   }
 
   // Speak a fired suggestion and record the SUGGESTION_DELIVERY transition.
@@ -2963,6 +3222,18 @@ function resolveRunCompletionPollMs(env: Record<string, string | undefined>): nu
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Drain window before the self-reload exit(87): long enough for the trigger's
+// HTTP response + the reloadPending SSE frame to flush, short enough that the
+// wall barely notices. Overridable for tests (VIBERSYN_SELF_RELOAD_DELAY_MS).
+function resolveSelfReloadDelayMs(env: Record<string, string | undefined>): number {
+  const raw = env.VIBERSYN_SELF_RELOAD_DELAY_MS?.trim();
+  const parsed = raw === undefined || raw === "" ? Number.NaN : Number(raw);
+  if (Number.isFinite(parsed) && parsed >= 0) {
+    return Math.floor(parsed);
+  }
+  return 750;
 }
 
 // Recover the detection candidate id from a PendingSuggestion id minted by

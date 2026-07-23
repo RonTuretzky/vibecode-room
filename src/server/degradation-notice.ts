@@ -123,10 +123,22 @@ export function formatDegradationNotice(notice: DegradationNotice): string {
 // Pure /api/health payload — exposes the same degradation flags the boot notice
 // logs, so a degraded deployment is inspectable over HTTP. Typed structurally so
 // this module stays free of any runtime/server import (and side effects).
-export function healthPayload(rt: { degradation: DegradationNotice }): {
+// SELF-HOSTING MODE additions: `bootId` is the runtime's stable per-boot id (a
+// wall that reconnects and sees a DIFFERENT bootId is talking to a new build of
+// the server and reloads itself); `selfMode` says whether VIBERSYN_SELF_MODE
+// pinned the mirror project. Both are tolerant of legacy callers (null/false).
+export function healthPayload(rt: { degradation: DegradationNotice; bootId?: string; selfMode?: boolean }): {
   ok: true;
   app: "vibersyn-projector";
   degradation: DegradationNotice;
+  bootId: string | null;
+  selfMode: boolean;
 } {
-  return { ok: true, app: "vibersyn-projector", degradation: rt.degradation };
+  return {
+    ok: true,
+    app: "vibersyn-projector",
+    degradation: rt.degradation,
+    bootId: rt.bootId ?? null,
+    selfMode: rt.selfMode === true,
+  };
 }

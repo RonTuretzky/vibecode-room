@@ -20,7 +20,10 @@ import type { ProjectorProcess } from "./types";
 
 // Which stage of its life a project is in. Everything starts as a CONCEPT
 // (mock lanes racing / mock ready); an explicit commission transforms it.
-export type ProcessStage = "concept" | "commissioned";
+// SELF is the one standing exception: the pinned mirror project in self-
+// hosting mode (VIBERSYN_SELF_MODE=1) — the room's own source, steered rather
+// than commissioned.
+export type ProcessStage = "concept" | "commissioned" | "self";
 
 // The subscription execution lane's lifecycle.
 export type ExecutionStatus = "executing" | "built" | "failed";
@@ -140,6 +143,9 @@ export function executionOf(process: ProjectorProcess): ProcessExecution | null 
 export function stageOf(process: ProjectorProcess): ProcessStage {
   const declared = (process as StagedProcess).stage;
   if (typeof declared === "string") {
+    if (declared === "self" || declared === "mirror") {
+      return "self";
+    }
     if (declared === "commissioned" || declared === "executing" || declared === "built" || declared === "execution") {
       return "commissioned";
     }
@@ -148,6 +154,17 @@ export function stageOf(process: ProjectorProcess): ProcessStage {
     }
   }
   return executionOf(process) !== null ? "commissioned" : "concept";
+}
+
+// The 3D scene only knows saplings (concept) and full trees (commissioned).
+// The SELF project folds onto that axis by whether a self-run is live: an
+// idle mirror is a sapling; one mid-change (or freshly green) shows the tree.
+export function sceneStageOf(process: ProjectorProcess): "concept" | "commissioned" {
+  const stage = stageOf(process);
+  if (stage === "self") {
+    return executionOf(process) !== null ? "commissioned" : "concept";
+  }
+  return stage;
 }
 
 // ── deck decision bridge ─────────────────────────────────────────────────────

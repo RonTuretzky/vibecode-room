@@ -224,7 +224,12 @@ export class ProcessRegistry {
     return this.#selectedUPID;
   }
 
-  async spawn(seed: Partial<SpawnSeed> & { correlationId: string; build?: boolean }): Promise<RegistrySpawnResult> {
+  // `title` pins the display title (the SELF-mode "Vibersyn Room" card and any
+  // other caller that already knows its name): inference AND the fire-and-forget
+  // LLM namer are both skipped so a pinned title never renames mid-session.
+  async spawn(
+    seed: Partial<SpawnSeed> & { correlationId: string; build?: boolean; title?: string | null },
+  ): Promise<RegistrySpawnResult> {
     const resourceCheck = await checkPreSpawnResources({
       activeProcessCount: this.activeRecords().length,
       correlationId: seed.correlationId,
@@ -285,7 +290,7 @@ export class ProcessRegistry {
       upid,
       runId: spawn.runId,
       callsign: assignment.callsign,
-      title: inferred.title || null,
+      title: seed.title !== undefined && seed.title !== null ? seed.title : inferred.title || null,
       state: "planning" as const,
       selected: true,
       progressSeq: 0,
@@ -305,7 +310,7 @@ export class ProcessRegistry {
     // snapshot publish (the trace tick nudges one). Callsign is left alone —
     // renaming the spoken handle mid-session would break voice addressing.
     const namePitch = typeof seed.prompt === "string" && seed.prompt.length > 0 ? seed.prompt : pitchFromInput(seed.input);
-    if (this.#namer !== null && namePitch.length > 0) {
+    if (this.#namer !== null && namePitch.length > 0 && (seed.title === undefined || seed.title === null)) {
       void this.#namer(namePitch)
         .then((named) => {
           const record = this.#processes.get(upid);

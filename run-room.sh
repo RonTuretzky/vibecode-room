@@ -36,6 +36,10 @@
 #   ./run-room.sh --single --gesture --config=gesture-wall/room.kinect.json
 #                                 # ONE wall + ONE Kinect v2 (docs/KINECT-SINGLE-WALL.md)
 #   ./run-room.sh --calibrate     # projector auto-calibration (no Vibersyn)
+#   ./run-room.sh --self          # SELF-HOSTING: pins the "Vibersyn Room" mirror
+#                                 # project (VIBERSYN_SELF_MODE=1) and wraps the
+#                                 # server in scripts/self-supervisor.sh — exit 87
+#                                 # (green self-commit) → bun run build → relaunch
 #
 # Env: VIBERSYN_PORT(8788) HOST(0.0.0.0) WS_PORT(8770) BROWSER("Google Chrome")
 #      WALL_A_POS(0,0) WALL_B_POS(1920,0) ROOM_CONFIG(gesture-wall/room.json)
@@ -49,6 +53,7 @@ cd "$ROOT"
 
 GESTURE=0
 FAKE=0
+SELF_MODE=0
 SINGLE=0
 SINGLE_VIEW="${SINGLE_VIEW:-full}"   # full | ideas | builds (--single=<view>; legacy badge, never filters)
 CALIBRATE=0
@@ -81,10 +86,11 @@ for arg in "$@"; do
     --fake) GESTURE=1; FAKE=1 ;;   # --fake implies gesture mode, minus the cameras
     --single) SINGLE=1 ;;
     --single=*) SINGLE=1; SINGLE_VIEW="${arg#*=}" ;;
+    --self) SELF_MODE=1 ;;   # self-hosting: VIBERSYN_SELF_MODE=1 + supervisor loop
     --calibrate) CALIBRATE=1 ;;
     --config=*) CONFIG="${arg#*=}" ;;
     -h|--help)
-      sed -n '2,44p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,48p' "$0" | sed 's/^# \{0,1\}//'
       exit 0 ;;
     *) echo "[room] unknown arg: $arg" >&2; exit 2 ;;
   esac
@@ -269,8 +275,16 @@ fi
 # ── 2) build + serve Vibersyn ────────────────────────────────────────────────
 echo "[room] building Vibersyn UI…"
 bun run build >/dev/null 2>&1 || { echo "[room] ERROR: UI build failed (run 'bun run build' to see why)." >&2; exit 1; }
-echo "[room] Vibersyn server on http://localhost:$VIBERSYN_PORT (bound to $HOST)"
-HOST="$HOST" VIBERSYN_PORT="$VIBERSYN_PORT" bun src/server/index.ts &
+if [ "$SELF_MODE" = "1" ]; then
+  # SELF-HOSTING: the supervisor loop owns the server — exit 87 (a green
+  # "self:" commit landed) → bun run build → relaunch, same env; any other
+  # exit ends the loop normally. The walls reload themselves on the new bootId.
+  echo "[room] Vibersyn server (SELF-HOSTING supervisor) on http://localhost:$VIBERSYN_PORT (bound to $HOST)"
+  HOST="$HOST" VIBERSYN_PORT="$VIBERSYN_PORT" VIBERSYN_SELF_MODE=1 bash scripts/self-supervisor.sh &
+else
+  echo "[room] Vibersyn server on http://localhost:$VIBERSYN_PORT (bound to $HOST)"
+  HOST="$HOST" VIBERSYN_PORT="$VIBERSYN_PORT" bun src/server/index.ts &
+fi
 PIDS+=($!)
 
 # ── 3) wait for Vibersyn to be healthy ───────────────────────────────────────

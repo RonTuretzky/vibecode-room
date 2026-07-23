@@ -939,6 +939,37 @@ main.gesture-mode * {
   animation: voice-flash-in 240ms ease;
 }
 
+/* SELF-HOSTING reload overlay — shown from the moment the server publishes
+   reloadPending (it is about to exit 87) until the wall reloads onto the new
+   build, so the room never looks dead while it rebuilds itself. */
+.self-reload-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: #9be7ff;
+  background: rgba(4, 10, 18, 0.62);
+  backdrop-filter: blur(6px);
+  pointer-events: none;
+  animation: voice-flash-in 240ms ease;
+}
+
+.self-reload-overlay .self-reload-mark {
+  font-size: 34px;
+  animation: self-reload-spin 1.6s linear infinite;
+}
+
+@keyframes self-reload-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
 /* ============================================================================
    Live mic control
    ============================================================================ */

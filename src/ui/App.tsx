@@ -14,7 +14,8 @@ import { BuildChips, CommissionButton, ExecutionChip, ProcessControls } from "./
 import { TakeHomeQr } from "./TakeHomeQr";
 import { backendsOf, buildsOf, lifecycleActionsFor, looksLikeSnapshot } from "./buildloop";
 import type { BuildloopSnapshot, LifecycleAction } from "./buildloop";
-import { executionOf, parseDeckDecisionMessage, stageOf } from "./stage";
+import { executionOf, parseDeckDecisionMessage, sceneStageOf, stageOf } from "./stage";
+import { selfOf, trackBootId } from "./self-reload";
 import type { DecisionChoice, StagedProcess } from "./stage";
 import { parseProjectorUrl } from "./url-params";
 import { GuidedDemo } from "./guided/GuidedDemo";
@@ -756,6 +757,23 @@ export function ProjectorApp({ initialSnapshot, urlSearch }: ProjectorAppProps) 
     return () => clearTimeout(timer);
   }, [voiceFlashKey, voiceCommand]);
 
+  // SELF-HOSTING (VIBERSYN_SELF_MODE=1): bind this page to the server's
+  // per-boot id; when a reconnected SSE stream / state resync delivers a
+  // DIFFERENT bootId, the server was rebuilt and relaunched underneath us
+  // (exit 87 → supervisor → new build) — reload so this wall runs the new
+  // build too. The decision is the pure trackBootId fold (unit-tested); the
+  // "room is reloading itself…" overlay keeps the wall alive-looking from
+  // reloadPending until the reload lands.
+  const selfState = selfOf(snapshot);
+  const bootBindingRef = useRef<string | null>(null);
+  useEffect(() => {
+    const next = trackBootId(bootBindingRef.current, snapshot);
+    bootBindingRef.current = next.bound;
+    if (next.reload && typeof window !== "undefined") {
+      window.location.reload();
+    }
+  }, [snapshot]);
+
   // --- Live data: fetch /api/state + subscribe to /api/events (SSR-guarded) ---
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -1120,7 +1138,9 @@ export function ProjectorApp({ initialSnapshot, urlSearch }: ProjectorAppProps) 
           progress: process.progress,
           task: process.task,
           steering: process.upid === steeringUpid,
-          stage: stageOf(process),
+          // The scene knows sapling/tree only; the SELF project folds onto
+          // that axis by whether a self-run is live (sceneStageOf).
+          stage: sceneStageOf(process),
         })),
     [snapshot.processes, hiddenTrees, steeringUpid],
   );
@@ -1212,6 +1232,12 @@ export function ProjectorApp({ initialSnapshot, urlSearch }: ProjectorAppProps) 
       {voiceFlash !== null ? (
         <div className="voice-flash" data-testid="voice-flash" role="status">
           🎤 vibersyn → {voiceFlash}
+        </div>
+      ) : null}
+      {selfState?.reloadPending === true ? (
+        <div className="self-reload-overlay" data-testid="self-reload-overlay" role="status">
+          <span className="self-reload-mark">🪞</span>
+          <span>room is reloading itself…</span>
         </div>
       ) : null}
       {guidedEpilogue !== null ? (
@@ -1641,8 +1667,10 @@ function FleetPanel({
           // Legacy processes with no build surfaces at all get no badge.
           const stage = stageOf(process);
           const execution = executionOf(process);
+          // The SELF (mirror) project always shows its stage badge — its whole
+          // identity is the stage — even before any self-run opens a lane.
           const hasBuildSurface =
-            builds.length > 0 || execution !== null || typeof process.buildStatus === "string";
+            builds.length > 0 || execution !== null || typeof process.buildStatus === "string" || stage === "self";
           // Commission is offered once ANY mock lane is ready (there is a
           // concept worth executing) and only while still a concept.
           const commissionable =
@@ -1672,7 +1700,7 @@ function FleetPanel({
                   data-testid="process-stage"
                   data-stage={stage}
                 >
-                  {stage === "concept" ? "🌱 concept" : "🌳 commissioned"}
+                  {stage === "self" ? "🪞 SELF" : stage === "concept" ? "🌱 concept" : "🌳 commissioned"}
                 </span>
               ) : null}
               {steering ? <span className="fleet-steering" data-testid="fleet-steering">steering →</span> : null}
