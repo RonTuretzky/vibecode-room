@@ -1,5 +1,7 @@
 import type { LogEvent, OutputDecision } from "../types";
-import { CallsignAllocator } from "../routing/callsigns";
+import type { ProcessBuildSnapshot } from "../buildloop/orchestrator";
+import { CallsignAllocator, type CallsignAssignment } from "../routing/callsigns";
+import { inferProjectName, llmProjectName, type InferredProjectName } from "./project-name";
 import type { SmithersClient, SpawnSeed, SpawnResult } from "../seam/smithers-client";
 import type { IdeaBuildRegistry } from "../server/idea-builder";
 import {
@@ -17,11 +19,26 @@ export interface RegistryProcess {
   upid: string;
   runId: string;
   callsign: string;
+  // Inferred project name for display ("Annual Snowfall App"); the callsign
+  // stays the one-word spoken handle. Absent/null when inference found nothing.
+  title?: string | null;
   state: RegistryProcessState;
   selected: boolean;
   progressSeq: number;
   lastAction: string;
   updatedAtMs: number;
+}
+
+// The multi-backend build orchestrator seam (src/buildloop/orchestrator.ts —
+// structural Pick so tests can inject a fake). When present it OWNS the accept
+// path's app artifacts: spawn(build:true) fans the idea out to every enabled
+// backend, steer forwards the spoken correction, halt aborts the UPID's builds,
+// and builds() is the snapshot fragment the runtime merges per process.
+export interface BuildLoopOrchestrator {
+  start(input: { upid: string; ideaId: string; prompt: string; callsign: string | null }): Promise<void>;
+  steer(upid: string, text: string): Promise<void>;
+  abortAll(upid: string): Promise<void>;
+  builds(upid: string): ProcessBuildSnapshot[];
 }
 
 export interface ProcessRegistryOptions {
@@ -45,6 +62,18 @@ export interface ProcessRegistryOptions {
   // registry triggers it, emits a `process.build` trace on completion, and tears
   // the server down on halt. The demo seed spawns bare, so it never builds.
   ideaBuilds?: IdeaBuildRegistry | null;
+  // The multi-backend build orchestrator. When present it REPLACES the legacy
+  // single-build ideaBuilds path on spawn (both write under builds/<upid>/ and
+  // would double-spawn the claude CLI): an accept fans out to every enabled
+  // backend, spoken steers re-run ready builds with the correction, and halt
+  // aborts the UPID's in-flight builds within the emergency budget.
+  orchestrator?: BuildLoopOrchestrator | null;
+  // LLM project namer: called fire-and-forget after a spawn to upgrade the
+  // deterministic placeholder title ("Annual Snowfall App") to a model-named
+  // one ("Snow Sip Calculator"). The spoken callsign is NOT renamed — voice
+  // addressing must stay stable for the session. undefined = default (Cerebras
+  // via CEREBRAS_API_KEY when present); null = disabled.
+  namer?: ((pitch: string) => Promise<InferredProjectName | null>) | null;
 }
 
 export type RegistrySpawnResult =
@@ -70,6 +99,8 @@ export class ProcessRegistry {
   readonly onOutput?: (decision: OutputDecision) => void;
   readonly onHalt?: (upid: string) => void;
   readonly #ideaBuilds: IdeaBuildRegistry | null;
+  readonly #orchestrator: BuildLoopOrchestrator | null;
+  readonly #namer: ((pitch: string) => Promise<InferredProjectName | null>) | null;
   readonly #processes = new Map<string, RegistryProcess>();
   #selectedUPID: string | null = null;
   #upidSeq = 0;
@@ -87,6 +118,15 @@ export class ProcessRegistry {
     this.onOutput = options.onOutput;
     this.onHalt = options.onHalt;
     this.#ideaBuilds = options.ideaBuilds ?? null;
+    this.#orchestrator = options.orchestrator ?? null;
+    this.#namer = options.namer !== undefined ? options.namer : defaultNamerFromEnv();
+  }
+
+  // The multi-backend builds[] snapshot fragment for one process — the runtime
+  // merges this into the per-process snapshot entry. Empty when no orchestrator
+  // is wired or the UPID never fanned out.
+  builds(upid: string): ProcessBuildSnapshot[] {
+    return this.#orchestrator?.builds(upid) ?? [];
   }
 
   records(): RegistryProcess[] {
@@ -124,7 +164,17 @@ export class ProcessRegistry {
     }
 
     const upid = seed.upid ?? `upid-${++this.#upidSeq}`;
-    const assignment = this.callsigns.assign(upid, seed.callsign ?? null);
+    // Name the process after the idea, not a codename: infer a display title +
+    // a one-word spoken handle from the pitch. The handle goes through the
+    // allocator's phonetic collision guard — on a collision (or an empty
+    // inference) fall back to the codename pool rather than failing the spawn.
+    const inferred = inferProjectName(seed.prompt);
+    let assignment: CallsignAssignment;
+    try {
+      assignment = this.callsigns.assign(upid, seed.callsign ?? (inferred.handle || null));
+    } catch {
+      assignment = this.callsigns.assign(upid, null);
+    }
     const spawn = await this.client.spawn({
       upid,
       runId: seed.runId,
@@ -143,6 +193,7 @@ export class ProcessRegistry {
       upid,
       runId: spawn.runId,
       callsign: assignment.callsign,
+      title: inferred.title || null,
       state: "planning" as const,
       selected: true,
       progressSeq: 0,
@@ -157,24 +208,60 @@ export class ProcessRegistry {
       state: process.state,
     });
 
+    // LLM naming upgrade, fire-and-forget: the deterministic title above is the
+    // instant placeholder; when the namer resolves, the card renames on the next
+    // snapshot publish (the trace tick nudges one). Callsign is left alone —
+    // renaming the spoken handle mid-session would break voice addressing.
+    const namePitch = typeof seed.prompt === "string" && seed.prompt.length > 0 ? seed.prompt : pitchFromInput(seed.input);
+    if (this.#namer !== null && namePitch.length > 0) {
+      void this.#namer(namePitch)
+        .then((named) => {
+          const record = this.#processes.get(upid);
+          if (named === null || record === undefined || record.state === "dead") {
+            return;
+          }
+          record.title = named.title;
+          record.updatedAtMs = this.now();
+          this.trace("process.renamed", seed.correlationId, upid, { title: named.title });
+        })
+        .catch(() => undefined);
+    }
+
     // Real accept->build->preview: a voice-accepted spawn (build === true)
-    // scaffolds a runnable artifact and starts a live preview server. Fire-and-
-    // forget — the build flips 'building' -> 'ready'/'failed'; the trailing
-    // `process.build` trace lets the runtime republish so the snapshot's
-    // previewUrl/buildStatus reflect the live preview. The demo seed skips this.
-    if (seed.build === true && this.#ideaBuilds !== null) {
+    // builds a runnable artifact. Fire-and-forget — the build(s) flip 'building'
+    // -> 'ready'/'failed'; the trailing `process.build` trace lets the runtime
+    // republish so the snapshot reflects the live preview. The demo seed skips
+    // this. With the multi-backend orchestrator wired, the idea fans out to
+    // every enabled backend (builds/<upid>/<backendId>/) and the legacy
+    // single-build ideaBuilds path is skipped — running both would double-spawn
+    // the claude CLI and race each other's builds/<upid>/ directory.
+    if (seed.build === true) {
       const pitch =
         typeof seed.prompt === "string" && seed.prompt.length > 0 ? seed.prompt : pitchFromInput(seed.input);
-      void this.#ideaBuilds.start(pitch, upid).then(
-        () => {
-          const state = this.#ideaBuilds?.state(upid);
-          this.trace("process.build", seed.correlationId, upid, {
-            status: state?.status ?? "failed",
-            previewUrl: state?.previewUrl ?? null,
-          });
-        },
-        () => undefined,
-      );
+      if (this.#orchestrator !== null) {
+        const orchestrator = this.#orchestrator;
+        void orchestrator
+          .start({ upid, ideaId: ideaIdFromInput(seed.input) ?? upid, prompt: pitch, callsign: assignment.callsign })
+          .then(
+            () => {
+              this.trace("process.build", seed.correlationId, upid, {
+                builds: orchestrator.builds(upid).map((build) => ({ backend: build.backend, status: build.status })),
+              });
+            },
+            () => undefined,
+          );
+      } else if (this.#ideaBuilds !== null) {
+        void this.#ideaBuilds.start(pitch, upid).then(
+          () => {
+            const state = this.#ideaBuilds?.state(upid);
+            this.trace("process.build", seed.correlationId, upid, {
+              status: state?.status ?? "failed",
+              previewUrl: state?.previewUrl ?? null,
+            });
+          },
+          () => undefined,
+        );
+      }
     }
 
     return {
@@ -188,6 +275,22 @@ export class ProcessRegistry {
   async steer(upid: string, payload: unknown, correlationId: string): Promise<void> {
     const before = this.requireLive(upid);
     await this.client.steer(upid, payload);
+    // REAL steering of the built artifacts: forward the spoken correction to the
+    // multi-backend orchestrator, which re-runs every ready build with it (in
+    // place, version-bumped). Fire-and-forget — a correction re-run takes
+    // minutes and must never stall the live transcript path awaiting steer().
+    const correction = steerText(payload);
+    if (this.#orchestrator !== null && correction !== null) {
+      const orchestrator = this.#orchestrator;
+      void orchestrator.steer(upid, correction).then(
+        () => {
+          this.trace("process.steer.build", correlationId, upid, {
+            builds: orchestrator.builds(upid).map((build) => ({ backend: build.backend, status: build.status })),
+          });
+        },
+        () => undefined,
+      );
+    }
     this.patch(upid, {
       progressSeq: before.progressSeq + 1,
       lastAction: "steer",
@@ -237,8 +340,11 @@ export class ProcessRegistry {
     this.requireLive(upid);
     await this.client.halt(upid);
     // Tear down this process's live preview server (accept->build->preview): a
-    // halted build must not leave a reachable loopback preview up.
+    // halted build must not leave a reachable loopback preview up. The
+    // orchestrator abort SIGKILLs every in-flight backend build within the
+    // emergency budget and stops the per-UPID preview server.
     await this.#ideaBuilds?.stop(upid).catch(() => undefined);
+    await this.#orchestrator?.abortAll(upid).catch(() => undefined);
     this.onHalt?.(upid);
     this.patch(upid, { state: "dead", selected: false, lastAction: "halt", updatedAtMs: this.now() });
     this.callsigns.release(upid);
@@ -344,6 +450,16 @@ function cloneProcess(process: RegistryProcess): RegistryProcess {
 // acceptance seam carries the accepted idea's pitch on both `prompt` and
 // `input.pitch`; fall back to the latter so the scaffolded page still reflects
 // the idea even if the prompt was dropped.
+// Default LLM namer: Cerebras when a key is in the environment, else disabled
+// (deterministic titles stand). Kept here so composition needs no extra wiring.
+function defaultNamerFromEnv(): ((pitch: string) => Promise<InferredProjectName | null>) | null {
+  const apiKey = process.env.CEREBRAS_API_KEY;
+  if (apiKey === undefined || apiKey.length === 0) {
+    return null;
+  }
+  return (pitch) => llmProjectName(pitch, { apiKey });
+}
+
 function pitchFromInput(input: unknown): string {
   if (input !== null && typeof input === "object" && !Array.isArray(input)) {
     const pitch = (input as Record<string, unknown>).pitch;
@@ -352,6 +468,37 @@ function pitchFromInput(input: unknown): string {
     }
   }
   return "An accepted idea, scaffolded live.";
+}
+
+// The spoken correction text inside a steer payload: the live transcript path
+// sends { text, source }, the HTTP steer endpoint sends { text }, and a bare
+// string is accepted for direct callers. Anything else carries no correction.
+export function steerText(payload: unknown): string | null {
+  if (typeof payload === "string" && payload.trim().length > 0) {
+    return payload.trim();
+  }
+  if (payload !== null && typeof payload === "object" && !Array.isArray(payload)) {
+    const text = (payload as Record<string, unknown>).text;
+    if (typeof text === "string" && text.trim().length > 0) {
+      return text.trim();
+    }
+  }
+  return null;
+}
+
+// The originating idea id when the accept path carried one on the spawn input;
+// callers fall back to the UPID (the acceptance seed has no idea id today).
+function ideaIdFromInput(input: unknown): string | null {
+  if (input !== null && typeof input === "object" && !Array.isArray(input)) {
+    const record = input as Record<string, unknown>;
+    for (const key of ["ideaId", "id"]) {
+      const value = record[key];
+      if (typeof value === "string" && value.length > 0) {
+        return value;
+      }
+    }
+  }
+  return null;
 }
 
 function clampWords(text: string, maxWords: number): string {

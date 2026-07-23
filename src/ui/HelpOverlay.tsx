@@ -13,6 +13,7 @@ const KEYBOARD_SHORTCUTS: ReadonlyArray<readonly [keys: string, action: string]>
   ["x", "dismiss the top ready idea"],
   ["c", "toggle Idea Capture"],
   ["a", "toggle Auto-Build"],
+  ["k", "halt the selected build"],
   ["m", "mic on / off"],
   ["u", "unmute the room"],
   ["q", "QR import overlay"],

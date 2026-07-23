@@ -74,6 +74,8 @@ describe("gateway-accept-spawn e2e — say yes spawns a gateway-backed process",
     const transport = new StubGatewayTransport();
     const runtime = await createProjectorRuntime(gatewayEnv(), {
       smithersTransport: transport,
+      // No real coding-agent spawn in e2e: the accept path's build runs a noop.
+      builderAgent: async () => undefined,
       replaySource: [
         final("let's build a dashboard tool to ship the replay prototype today", "utt-build"),
         final("yes", "utt-yes"),

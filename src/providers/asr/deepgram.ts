@@ -10,7 +10,10 @@ export interface DeepgramNova3ASROptions {
   language?: string;
   sampleRate?: number;
   channels?: number;
-  endpointingMs?: number;
+  // End-of-utterance silence threshold forwarded as Deepgram's `endpointing`
+  // param. A thunk is resolved at stream-connect time, so a caller can apply a
+  // time-varying policy (e.g. the onboarding first-run +50% grace) per session.
+  endpointingMs?: number | (() => number);
   diarizeModel?: "latest" | "v1";
   openTimeoutMs?: number;
   closeTimeoutMs?: number;
@@ -78,7 +81,7 @@ export class DeepgramNova3ASRProvider implements ASRProvider {
   readonly #language: string;
   readonly #sampleRate: number;
   readonly #channels: number;
-  readonly #endpointingMs: number;
+  readonly #endpointingMs: number | (() => number);
   readonly #diarizeModel: "latest" | "v1";
   readonly #openTimeoutMs: number;
   // Public so the ASR registry/factory can assert the lifted live-mic cap
@@ -119,7 +122,10 @@ export class DeepgramNova3ASRProvider implements ASRProvider {
     url.searchParams.set("sample_rate", String(this.#sampleRate));
     url.searchParams.set("channels", String(this.#channels));
     url.searchParams.set("interim_results", "true");
-    url.searchParams.set("endpointing", String(this.#endpointingMs));
+    url.searchParams.set(
+      "endpointing",
+      String(typeof this.#endpointingMs === "function" ? this.#endpointingMs() : this.#endpointingMs),
+    );
     url.searchParams.set("diarize_model", this.#diarizeModel);
     return url.toString();
   }

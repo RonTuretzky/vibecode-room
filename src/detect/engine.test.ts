@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { HeuristicIdeaDetector } from "./detector";
 import { IdeaDetectionEngine, readDetectionEngineConfig, type DetectionTraceEvent } from "./engine";
 import type { CandidateVerdict, DetectionInput, DetectionResult, IdeaDetector, VerifiableIdea } from "./types";
 
@@ -177,13 +178,15 @@ describe("IdeaDetectionEngine detection + candidates", () => {
     expect(engine.candidates()).toHaveLength(0);
   });
 
-  test("dismiss suppression expires after acceptCooldownMs", async () => {
-    const detector = new ScriptedDetector([oneIdea("Build a dashboard", 0.9), oneIdea("Build a dashboard", 0.9)]);
+  test("dismiss suppression expires after acceptCooldownMs when the idea returns from NEW talk", async () => {
+    // The re-detection is grounded in turn-0002 (fresh talk): past the cooldown
+    // the same pitch may surface again. The dismissed idea's OWN turns stay
+    // consumed — see the consumed-talk suite below.
+    const detector = new ScriptedDetector([oneIdea("Build a dashboard", 0.9), oneIdea("Build a dashboard", 0.9, "turn-0002", "turn-0002")]);
     const engine = new IdeaDetectionEngine({ sessionId: "s", detector, idFactory: sequenceIds("idea"), env: { VIBERSYN_DETECT_MIN_INTERVAL_MS: "0", VIBERSYN_DETECT_ACCEPT_COOLDOWN_MS: "1000" } });
     engine.ingestTurn({ speaker: null, text: "dashboard", atMs: 0 });
     await engine.detect("corr-1", 100);
     engine.dismiss(engine.candidates()[0].id, 100);
-    // past the cooldown the same pitch may surface again
     engine.ingestTurn({ speaker: null, text: "dashboard again", atMs: 2000 });
     await engine.detect("corr-2", 2000);
     expect(engine.candidates()).toHaveLength(1);
@@ -193,6 +196,72 @@ describe("IdeaDetectionEngine detection + candidates", () => {
     const engine = new IdeaDetectionEngine({ sessionId: "s", detector: new ScriptedDetector([]), env: {} });
     const result = await engine.detect("corr-1", 0);
     expect(result.ran).toBe(false);
+  });
+});
+
+// After accept/dismiss the pitch cooldown expires (default 30s) while the turns
+// that produced the idea are still in the rolling window (~6 min) — so without
+// span consumption the SAME cluster of talk would re-detect the just-consumed
+// idea as a "new" candidate. These tests pin the fix: consumed turns never
+// re-pop their idea, and a genuinely fresh idea surfaces immediately.
+describe("IdeaDetectionEngine consumed talk (accept/dismiss span suppression)", () => {
+  test("an accepted idea's own turns never re-pop it, even after the pitch cooldown expires", async () => {
+    // Both scripted detections are grounded in turn-0001 — the same talk.
+    const detector = new ScriptedDetector([oneIdea("Build a dashboard", 0.9), oneIdea("Build a dashboard", 0.9)]);
+    const engine = new IdeaDetectionEngine({ sessionId: "s", detector, idFactory: sequenceIds("idea"), env: { VIBERSYN_DETECT_MIN_INTERVAL_MS: "0", VIBERSYN_DETECT_ACCEPT_COOLDOWN_MS: "1000" } });
+    engine.ingestTurn({ speaker: null, text: "dashboard", atMs: 0 });
+    await engine.detect("corr-1", 100);
+    engine.accept(engine.candidates()[0].id, 100);
+    // Well past the 1s pitch cooldown; the old grounding turn is still in-window.
+    engine.ingestTurn({ speaker: null, text: "unrelated chatter", atMs: 5000 });
+    await engine.detect("corr-2", 5000);
+    expect(engine.candidates()).toHaveLength(0);
+    expect(engine.primary()).toBeNull();
+  });
+
+  test("accepted first idea + a fresh idea a minute later: the new idea surfaces immediately (heuristic, e2e)", async () => {
+    const engine = new IdeaDetectionEngine({
+      sessionId: "s",
+      detector: new HeuristicIdeaDetector(),
+      idFactory: sequenceIds("idea"),
+      env: { VIBERSYN_DETECT_MIN_INTERVAL_MS: "0" },
+    });
+    engine.ingestTurn({ speaker: "speaker_0", text: "let's build a chrome extension that tracks tabs", atMs: 0 });
+    engine.ingestTurn({ speaker: "speaker_0", text: "it could integrate with the dashboard", atMs: 2_000 });
+    await engine.detect("corr-1", 3_000);
+    const first = engine.primary();
+    expect(first).not.toBeNull();
+    expect(first!.pitch).toContain("chrome extension");
+    engine.accept(first!.id, 3_000);
+    expect(engine.primary()).toBeNull();
+
+    // ~1 minute later — deep inside the 6-minute rolling window, past the 30s
+    // pitch cooldown — the room pitches a DIFFERENT idea.
+    engine.ingestTurn({ speaker: "speaker_1", text: "ooh we should make a split calculator for rent", atMs: 63_000 });
+    await engine.detect("corr-2", 63_500);
+    const second = engine.primary();
+    expect(second).not.toBeNull();
+    expect(second!.pitch).toContain("split calculator");
+    // The accepted cluster did not re-pop into the tray alongside it.
+    expect(engine.candidates()).toHaveLength(1);
+  });
+
+  test("dismissed talk stays consumed too: same cluster cannot re-pop after the cooldown", async () => {
+    const engine = new IdeaDetectionEngine({
+      sessionId: "s",
+      detector: new HeuristicIdeaDetector(),
+      idFactory: sequenceIds("idea"),
+      env: { VIBERSYN_DETECT_MIN_INTERVAL_MS: "0", VIBERSYN_DETECT_ACCEPT_COOLDOWN_MS: "1000" },
+    });
+    engine.ingestTurn({ speaker: "speaker_0", text: "let's build a habit tracker app", atMs: 0 });
+    await engine.detect("corr-1", 500);
+    const primary = engine.primary();
+    expect(primary).not.toBeNull();
+    engine.dismiss(primary!.id, 500);
+    // Past the pitch cooldown, chatter triggers another round over the SAME talk.
+    engine.ingestTurn({ speaker: "speaker_0", text: "anyway how was the game", atMs: 10_000 });
+    await engine.detect("corr-2", 10_000);
+    expect(engine.candidates()).toHaveLength(0);
   });
 });
 

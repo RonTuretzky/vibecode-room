@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createProjectorRuntime } from "../../src/server/composition";
 import { RecordingAudioSink } from "../../src/server/audio-device-sink";
+import { PRERENDERED_EARCONS } from "../../src/audio/earcons";
 import type { TTSTransport } from "../../src/providers";
 import type { TranscriptObservation } from "../../src/types";
 
@@ -105,15 +106,21 @@ describe("fired suggestion is audible on a real sink (e2e)", () => {
     const session = runtime.startMicSession("corr-audible-output");
     await session.stop();
     await runtime.detection.flush();
+    // Let the fire-and-forget listening-indicator earcon (E2 at mic open) settle
+    // so the sink accounting below is deterministic.
+    await new Promise((resolve) => setTimeout(resolve, 25));
 
     // End to end: an idea was detected and spoken through the elevenlabs stub.
     expect(runtime.detection.primary()).not.toBeNull();
     expect(speakCalls).toBe(1);
 
     // The whole synthesized stream was retained by the injected recording sink —
-    // not read-and-dropped. Every chunk of non-empty PCM is observable on the sink.
-    expect(sink.chunkCount).toBe(synthetic.length);
-    expect(sink.bytes).toBe(expectedBytes);
+    // not read-and-dropped. Every chunk of non-empty PCM is observable on the
+    // sink, alongside the single E2 earcon the authoritative listening indicator
+    // (onboarding glue) plays on the stopped→streaming mic transition.
+    const e2Bytes = PRERENDERED_EARCONS.E2.pcm.byteLength;
+    expect(sink.chunkCount).toBe(synthetic.length + 1);
+    expect(sink.bytes).toBe(expectedBytes + e2Bytes);
     expect(sink.bytes).toBeGreaterThan(0);
 
     // The trace records the same drained totals on the output.tts outcome.

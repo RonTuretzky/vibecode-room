@@ -1,0 +1,244 @@
+/* ============================================================================
+   Build loop — backend selector chips, per-backend build chips, lifecycle
+   controls. Owned by the build-loop wall surface; every element here renders
+   only when a build-loop server publishes builds[]/backends, so an old server
+   simply shows none of it. Motion is opacity/box-shadow only and freezes under
+   reduced-motion, matching styles.css.
+   ============================================================================ */
+
+/* --- Backend selector (rail card) --- */
+.backend-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.backend-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 999px;
+  border: 1px solid var(--glass-line);
+  background: rgba(10, 18, 26, 0.5);
+  color: var(--ink-soft);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  padding: 5px 12px;
+  cursor: pointer;
+  transition: border-color 160ms ease, background 160ms ease, color 160ms ease;
+}
+
+.backend-chip:hover {
+  background: rgba(14, 26, 36, 0.66);
+  color: var(--ink);
+}
+
+.backend-chip .backend-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ink-faint);
+  flex: none;
+}
+
+.backend-chip.on {
+  border-color: var(--c-active);
+  color: var(--ink);
+}
+
+.backend-chip.on .backend-dot {
+  background: var(--c-active);
+  box-shadow: 0 0 8px var(--c-active);
+}
+
+/* Unavailable = dimmed but still clickable (enabled is config, availability is
+   backend health); the reason surfaces as the tooltip. */
+.backend-chip.unavailable {
+  opacity: 0.45;
+}
+
+.backend-chip.unavailable .backend-dot {
+  background: var(--c-halted);
+  box-shadow: none;
+}
+
+/* --- Per-backend build chips on the fleet cards --- */
+.build-chips {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 8px 0 4px;
+}
+
+.build-chip {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  border: 1px solid var(--glass-line);
+  border-radius: 8px;
+  background: rgba(10, 18, 26, 0.45);
+  padding: 4px 8px;
+  font-size: 11.5px;
+  color: var(--ink-soft);
+}
+
+.build-chip-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--ink-faint);
+}
+
+.build-chip-label {
+  font-weight: 700;
+  color: var(--ink);
+}
+
+/* BUILDING: the pulse. A 1–2 minute build must read as alive from across the
+   room, so the whole chip breathes while its dot glows. */
+.build-chip.status-building {
+  border-color: rgba(56, 189, 248, 0.45);
+  animation: build-chip-pulse 1.6s ease-in-out infinite;
+}
+
+.build-chip.status-building .build-chip-dot {
+  background: var(--c-planning);
+  box-shadow: 0 0 8px var(--c-planning);
+}
+
+.build-chip.status-ready {
+  border-color: rgba(0, 255, 136, 0.35);
+}
+
+.build-chip.status-ready .build-chip-dot {
+  background: var(--c-active);
+  box-shadow: 0 0 8px var(--c-active);
+}
+
+.build-chip.status-failed {
+  border-color: rgba(255, 59, 48, 0.4);
+}
+
+.build-chip.status-failed .build-chip-dot {
+  background: var(--c-halted);
+}
+
+.build-chip-progress {
+  color: var(--c-planning);
+  font-variant-numeric: tabular-nums;
+}
+
+.build-chip-failed {
+  color: var(--c-halted);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 10.5px;
+}
+
+.build-chip-track {
+  flex: 1 1 48px;
+  min-width: 32px;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(150, 200, 220, 0.14);
+  overflow: hidden;
+}
+
+.build-chip-fill {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, var(--c-planning), var(--c-selected));
+  transition: width 400ms ease;
+}
+
+.build-chip-links {
+  display: inline-flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.build-chip-link {
+  color: var(--c-active);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.build-chip-link:hover {
+  text-decoration: underline;
+  color: var(--c-completed);
+}
+
+@keyframes build-chip-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 rgba(56, 189, 248, 0);
+  }
+  50% {
+    box-shadow: 0 0 14px rgba(56, 189, 248, 0.4);
+  }
+}
+
+/* The legacy single-build "building…" marker on the stage bubbles gets the same
+   living pulse — that static text was the original "is it doing anything?"
+   complaint. */
+.bubble-preview-pending {
+  animation: build-chip-pulse 1.6s ease-in-out infinite;
+  border-radius: 6px;
+  padding: 0 6px;
+}
+
+/* --- Per-card lifecycle controls (pause / resume / halt) --- */
+.fleet-controls {
+  display: flex;
+  gap: 6px;
+  margin: 6px 0;
+}
+
+.fleet-ctl {
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  border-radius: 6px;
+  border: 1px solid var(--glass-line);
+  background: rgba(10, 18, 26, 0.5);
+  color: var(--ink-soft);
+  padding: 3px 10px;
+  cursor: pointer;
+  transition: border-color 160ms ease, color 160ms ease, background 160ms ease;
+}
+
+.fleet-ctl:hover {
+  color: var(--ink);
+  background: rgba(14, 26, 36, 0.7);
+}
+
+.fleet-ctl-pause:hover {
+  border-color: var(--c-paused);
+  color: var(--c-paused);
+}
+
+.fleet-ctl-resume:hover {
+  border-color: var(--c-active);
+  color: var(--c-active);
+}
+
+.fleet-ctl-halt:hover {
+  border-color: var(--c-halted);
+  color: var(--c-halted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .build-chip.status-building,
+  .bubble-preview-pending {
+    animation: none !important;
+  }
+  .build-chip-fill {
+    transition: none;
+  }
+}

@@ -5,6 +5,7 @@ import { IdeaTray } from "./IdeaTray";
 import { HelpOverlay } from "./HelpOverlay";
 import { QrImport } from "./QrImport";
 import { demoProjectorSnapshot } from "./demo-data";
+import type { BuildloopProcess, BuildloopSnapshot } from "./buildloop";
 
 function countOccurrences(haystack: string, needle: string): number {
   return haystack.split(needle).length - 1;
@@ -88,11 +89,71 @@ describe("help overlay", () => {
   test("lists the full keyboard map and the voice command set", () => {
     const html = renderToStaticMarkup(<HelpOverlay onClose={() => {}} />);
     expect(html).toContain('data-testid="help-overlay"');
-    for (const key of ["1–9", "Enter / b", "x", "c", "a", "m", "u", "q", "? / h", "Shift+E", "Esc"]) {
+    for (const key of ["1–9", "Enter / b", "x", "c", "a", "k", "m", "u", "q", "? / h", "Shift+E", "Esc"]) {
       expect(html).toContain(`<kbd>${key}</kbd>`);
     }
     expect(html).toContain("Vibersyn, build it");
     expect(html).toContain("Vibersyn, emergency");
+  });
+});
+
+describe("build loop surfaces (backward compatible)", () => {
+  test("a plain snapshot (no backends[], no builds[]) renders neither surface", () => {
+    const html = renderToStaticMarkup(<ProjectorApp initialSnapshot={demoProjectorSnapshot} />);
+    expect(html).not.toContain('data-testid="backend-selector"');
+    expect(html).not.toContain('data-testid="build-chips"');
+  });
+
+  test("snapshot.backends[] renders a chip per backend, dimmed + labeled when unavailable", () => {
+    const snapshot: BuildloopSnapshot = {
+      ...demoProjectorSnapshot,
+      backends: [
+        { id: "smithers", label: "Smithers", enabled: true, available: true },
+        { id: "native", label: "Native", enabled: false, available: false, reason: "still booting" },
+      ],
+    };
+    const html = renderToStaticMarkup(<ProjectorApp initialSnapshot={snapshot} />);
+    expect(html).toContain('data-testid="backend-selector"');
+    expect(countOccurrences(html, 'data-testid="backend-chip"')).toBe(2);
+    expect(html).toContain('data-backend="native"');
+    expect(html).toContain('data-available="false"');
+    expect(html).toContain("still booting");
+  });
+
+  test("process.builds[] renders a chip per backend build with status-driven affordances", () => {
+    const processes: BuildloopProcess[] = demoProjectorSnapshot.processes.map((process, index) =>
+      index === 0
+        ? {
+            ...process,
+            builds: [
+              { backend: "smithers", label: "Smithers", status: "building", previewUrl: null, summary: null, slideshowUrl: null, progressLabel: "scaffolding", percent: 40 },
+              { backend: "native", label: "Native", status: "ready", previewUrl: "http://127.0.0.1:4100/", summary: "Built a page.", slideshowUrl: "http://127.0.0.1:4100/slides.html" },
+            ],
+          }
+        : process,
+    );
+    const html = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={{ ...demoProjectorSnapshot, processes }} />,
+    );
+    expect(countOccurrences(html, 'data-testid="build-chip"')).toBe(2);
+    expect(html).toContain('data-status="building"');
+    expect(html).toContain("scaffolding");
+    expect(html).toContain('data-status="ready"');
+    expect(html).toContain('data-testid="build-preview-link"');
+    expect(html).toContain('data-testid="build-slides-link"');
+  });
+
+  test("per-card lifecycle buttons match the process state (halted offers none)", () => {
+    const processes = demoProjectorSnapshot.processes.map((process) =>
+      process.callsign === "Atlas" ? { ...process, state: "halted" as const } : process,
+    );
+    const html = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={{ ...demoProjectorSnapshot, processes }} />,
+    );
+    // Atlas (halted): no lifecycle buttons. Cobalt (planning): pause + halt.
+    expect(countOccurrences(html, 'data-testid="process-pause-button"')).toBe(1);
+    expect(countOccurrences(html, 'data-testid="process-halt-button"')).toBe(1);
+    expect(html).not.toContain('data-testid="process-resume-button"');
   });
 });
 

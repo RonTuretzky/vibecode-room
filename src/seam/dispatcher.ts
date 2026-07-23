@@ -126,9 +126,7 @@ export class SeamDispatcher {
   }
 
   private async statusAck(action: DispatchedAction, startedAtMs: number): Promise<DispatchAck> {
-    const statusSummary = process.env.VIBERSYN_RBG_STATUS_PLACEHOLDER === "1"
-      ? "Status requested."
-      : await this.statusSummary();
+    const statusSummary = await this.statusSummary();
     this.recordTrace(action, "seam.status", startedAtMs, {
       statusSummary,
       wordCount: wordCount(statusSummary),

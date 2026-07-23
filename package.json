@@ -28,6 +28,7 @@
     "vite": "^8.0.16"
   },
   "dependencies": {
+    "@elizaos/core": "1.7.2",
     "hono": "^4.12.25",
     "qrcode": "^1.5.4",
     "react": "^19.2.7",

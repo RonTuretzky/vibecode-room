@@ -9,11 +9,15 @@ describe("health surface exposes degradation flags", () => {
     const runtime = await createProjectorRuntime({});
 
     expect(runtime.degradation.allReal).toBe(false);
+    // The summarizer leg reports degraded here whether composition has wired
+    // selectSummarizer yet ("unwired") or wired it with no CEREBRAS_API_KEY
+    // ("deterministic") — a no-key runtime can never claim a real summarizer.
     expect(runtime.degradation.degraded.map((d) => d.leg).sort()).toEqual([
       "asr",
       "decider",
       "sink",
       "smithers",
+      "summarizer",
       "tts",
     ]);
 
@@ -28,6 +32,12 @@ describe("health surface exposes degradation flags", () => {
     // DEEPGRAM_API_KEY upgrades the ASR leg to deepgram; the rest stay stubbed.
     const runtime = await createProjectorRuntime({ DEEPGRAM_API_KEY: "dg-test-key" });
     expect(runtime.degradation.degraded.map((d) => d.leg)).not.toContain("asr");
-    expect(runtime.degradation.degraded.map((d) => d.leg).sort()).toEqual(["decider", "sink", "smithers", "tts"]);
+    expect(runtime.degradation.degraded.map((d) => d.leg).sort()).toEqual([
+      "decider",
+      "sink",
+      "smithers",
+      "summarizer",
+      "tts",
+    ]);
   });
 });

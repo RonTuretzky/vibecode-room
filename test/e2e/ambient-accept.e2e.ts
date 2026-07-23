@@ -49,7 +49,10 @@ describe("ambient accept e2e — a spoken yes accepts the idea and spawns throug
       final("let's build a dashboard tool to ship the replay prototype today", "utt-build"),
       final("yes", "utt-yes"),
     ]);
-    const runtime = await createProjectorRuntime(liveEnv(path));
+    const runtime = await createProjectorRuntime(liveEnv(path), {
+      // No real coding-agent spawn in e2e: the accept path's build runs a noop.
+      builderAgent: async () => undefined,
+    });
     const upidsBefore = new Set(runtime.snapshot().processes.map((process) => process.upid));
     const spawnsBefore = spawnTraceCount(runtime);
 

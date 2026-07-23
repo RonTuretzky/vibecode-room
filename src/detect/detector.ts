@@ -84,6 +84,13 @@ export type HostClaudeIdeaDetectorOptions = HostClaudeIdeaJudgeOptions;
 // No-model detector for CI/replay/offline: keyword cues, but emitting the SAME
 // rubric-shaped judgments as the real judge so every downstream path is uniform.
 // NOT the primary path — it exists so detection degrades to *something* grounded.
+// countCues() matches WHOLE WORDS ONLY (turn text is tokenized and looked up in
+// a set), so morphological variants and substrings never match: "extension" is
+// NOT hit by "extend", "tracker" is NOT hit by "track" or "tracking". Every
+// concrete artifact noun a room is likely to say verbatim must therefore be
+// listed in its spoken form — which is why "extension", "chrome", "plugin",
+// "timer", "tracker" and "calculator" are spelled out individually below (a
+// real "chrome extension" pitch was undetectable without them).
 const BUILDABLE_CUES = [
   "build",
   "make",
@@ -103,18 +110,92 @@ const BUILDABLE_CUES = [
   "cooperative",
   "network",
   "marketplace",
+  "extension",
+  "chrome",
+  "plugin",
+  "timer",
+  "tracker",
+  "calculator",
 ] as const;
 
+// ── cue clustering ───────────────────────────────────────────────────────────
+// One candidate PER CLUSTER of cue turns, not one spanning the whole window.
+// Without clustering the heuristic emitted a single candidate stretching from
+// the FIRST to the LAST cue turn in the rolling window (~6 min), so a second
+// idea spoken within the window merged into the first one's span (same
+// candidate, same known-match) and never surfaced on its own — the room needed
+// the whole window to age out between ideas. A gap of >= clusterGapTurns
+// non-cue turns OR >= clusterGapMs between consecutive cue turns starts a new
+// cluster; each cluster gets its own span/pitch/known-match, so known-candidate
+// suppression only ever hits the SAME cluster and a fresh idea minutes (or
+// seconds) later surfaces immediately as its own candidate.
+export const DEFAULT_HEURISTIC_CLUSTER_GAP_TURNS = 2;
+export const DEFAULT_HEURISTIC_CLUSTER_GAP_MS = 45_000;
+
+export const HEURISTIC_DETECTOR_ENV_DEFAULTS = Object.freeze({
+  VIBERSYN_HEURISTIC_CLUSTER_GAP_TURNS: {
+    default: String(DEFAULT_HEURISTIC_CLUSTER_GAP_TURNS),
+    description: "Consecutive non-cue turns between cue turns that split idea clusters.",
+  },
+  VIBERSYN_HEURISTIC_CLUSTER_GAP_MS: {
+    default: String(DEFAULT_HEURISTIC_CLUSTER_GAP_MS),
+    description: "Silence (ms) between cue turns that splits idea clusters.",
+  },
+} satisfies Record<string, { default: string; description: string }>);
+
+export interface HeuristicIdeaDetectorOptions {
+  clusterGapTurns?: number;
+  clusterGapMs?: number;
+  env?: Record<string, string | undefined>;
+}
+
 export class HeuristicIdeaDetector implements IdeaDetector {
+  readonly #clusterGapTurns: number;
+  readonly #clusterGapMs: number;
+
+  constructor(options: HeuristicIdeaDetectorOptions = {}) {
+    const env = options.env ?? {};
+    this.#clusterGapTurns = options.clusterGapTurns ?? envNumber(env, "VIBERSYN_HEURISTIC_CLUSTER_GAP_TURNS", DEFAULT_HEURISTIC_CLUSTER_GAP_TURNS);
+    this.#clusterGapMs = options.clusterGapMs ?? envNumber(env, "VIBERSYN_HEURISTIC_CLUSTER_GAP_MS", DEFAULT_HEURISTIC_CLUSTER_GAP_MS);
+  }
+
   async detect(input: DetectionInput): Promise<DetectionResult> {
     return this.detectSync(input);
   }
 
   detectSync(input: DetectionInput): DetectionResult {
-    const cueTurns = input.turns.filter((turn) => hasBuildableCue(turn.text));
-    if (cueTurns.length === 0) {
+    const cueIndices: number[] = [];
+    input.turns.forEach((turn, index) => {
+      if (hasBuildableCue(turn.text)) {
+        cueIndices.push(index);
+      }
+    });
+    if (cueIndices.length === 0) {
       return { candidates: [] };
     }
+    const clusters = this.#clusterCueIndices(cueIndices, input.turns);
+    return { candidates: clusters.map((cluster) => this.#candidateForCluster(cluster, input)) };
+  }
+
+  // Split the ordered cue-turn indices wherever the conversation moved on:
+  // enough intervening non-cue turns (chatter) or enough silence between cues.
+  #clusterCueIndices(cueIndices: readonly number[], turns: readonly TranscriptTurn[]): number[][] {
+    const clusters: number[][] = [[cueIndices[0]]];
+    for (let i = 1; i < cueIndices.length; i += 1) {
+      const prev = cueIndices[i - 1];
+      const next = cueIndices[i];
+      const nonCueTurnsBetween = next - prev - 1;
+      const msBetween = turns[next].atMs - turns[prev].atMs;
+      if (nonCueTurnsBetween >= this.#clusterGapTurns || msBetween >= this.#clusterGapMs) {
+        clusters.push([]);
+      }
+      clusters.at(-1)?.push(next);
+    }
+    return clusters;
+  }
+
+  #candidateForCluster(cluster: readonly number[], input: DetectionInput): DetectedIdea {
+    const cueTurns = cluster.map((index) => input.turns[index]);
     const start = cueTurns[0];
     const end = cueTurns.at(-1) ?? start;
     const hits = cueTurns.reduce((sum, turn) => sum + countCues(turn.text), 0);
@@ -136,8 +217,10 @@ export class HeuristicIdeaDetector implements IdeaDetector {
       endTurnId: end.id,
       quote: groundQuote(input.turns, start.id, end.id) ?? cueTurns.map((t) => t.text).join(" "),
     };
+    // Known-candidate matching is per-cluster: only a known idea grounded in
+    // THIS cluster's stretch of talk is an update; other clusters stay fresh.
     const matchId = input.known.find((k) => spansOverlap(k.contextSpan, start.id, end.id, input.turns))?.id ?? null;
-    const candidate: DetectedIdea = {
+    return {
       matchId,
       pitch: clampWords(start.text, MAX_PITCH_WORDS),
       confidence: assessment.confidence,
@@ -147,7 +230,6 @@ export class HeuristicIdeaDetector implements IdeaDetector {
       rationale: "heuristic: buildable cue detected",
       judgment: { rubric, assessment },
     };
-    return { candidates: [candidate] };
   }
 }
 
@@ -177,7 +259,7 @@ export function selectIdeaDetector(
 ): IdeaDetectorSelection {
   const requested = env.VIBERSYN_IDEA_DETECTOR?.trim().toLowerCase();
   if (requested === "heuristic") {
-    return { mode: "heuristic", detector: new HeuristicIdeaDetector() };
+    return { mode: "heuristic", detector: new HeuristicIdeaDetector({ env }) };
   }
   if (requested !== undefined && requested !== "" && requested !== "host-claude") {
     throw new Error(`Unknown VIBERSYN_IDEA_DETECTOR mode: ${requested}`);
@@ -203,6 +285,18 @@ function spansOverlap(span: ContextSpan, startId: string, endId: string, turns: 
 
 function hasBuildableCue(text: string): boolean {
   return countCues(text) > 0;
+}
+
+function envNumber(env: Record<string, string | undefined>, name: string, fallback: number): number {
+  const raw = env[name]?.trim();
+  if (raw === undefined || raw === "") {
+    return fallback;
+  }
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < 0) {
+    throw new Error(`${name} must be a non-negative number.`);
+  }
+  return value;
 }
 
 function countCues(text: string): number {

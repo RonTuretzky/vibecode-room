@@ -7,6 +7,7 @@ import { healthPayload } from "./degradation-notice";
 import { corsEnabledWarning, vibersynCors } from "./cors";
 import { importPageHtml } from "./import-page";
 import { resolveImportInfo, type InterfaceAddresses } from "./project-import";
+import { createSeamApp } from "../seam/dispatcher";
 
 export interface ProjectorAppOptions {
   env?: Record<string, string | undefined>;
@@ -39,6 +40,11 @@ export function createProjectorApp(runtime: ProjectorRuntime, options: Projector
     }
   }
 
+  // Seam action API (Cue<->Smithers seam over the LIVE runtime): POST
+  // /api/seam/actions and WS /api/seam/ws accept DispatchedActions, GET
+  // /api/seam/status returns the real fleet summary, GET /api/seam/health pings.
+  // Wired to the same registry as the voice/click paths via runtime.seamDispatcher.
+  app.route("/api/seam", createSeamApp(runtime.seamDispatcher));
   app.get("/api/health", (context) => context.json(healthPayload(runtime)));
   app.get("/api/state", (context) => context.json(runtime.snapshot()));
   app.get("/api/events", () => eventsResponse(runtime));
@@ -178,6 +184,93 @@ export function createProjectorApp(runtime: ProjectorRuntime, options: Projector
       return context.json(runtime.snapshot());
     }
     return context.json(runtime.clearSteeringTarget());
+  });
+  // BUILD LOOP: toggle a registered build backend at runtime. Body
+  // {"id": "smithers"|"eliza"|"native", "enabled": bool}; an unregistered id or
+  // malformed body is a 400. Enabling re-probes availability in the background
+  // and republishes when the probe lands, so the chip flips available/reason
+  // without waiting out the probe here.
+  app.post("/api/backends", async (context) => {
+    if (isOfflineDemoRequest(context.req.header("referer"))) {
+      return context.json(runtime.snapshot());
+    }
+    const body = (await context.req.json().catch(() => null)) as { id?: unknown; enabled?: unknown } | null;
+    if (
+      body === null ||
+      typeof body.id !== "string" ||
+      typeof body.enabled !== "boolean" ||
+      !runtime.buildSelector.setEnabled(body.id, body.enabled)
+    ) {
+      return context.json({ ok: false, error: "body must be {id: <registered backend id>, enabled: boolean}" }, 400);
+    }
+    if (body.enabled && runtime.buildSelector.isKnown(body.id)) {
+      void runtime.buildSelector
+        .probe(body.id)
+        .then(() => {
+          runtime.publishNow();
+        })
+        .catch(() => undefined);
+    }
+    return context.json(runtime.publishNow());
+  });
+  // Per-process lifecycle + steering (the wall's card buttons). 404-free idiom
+  // (matches /api/idea/:id/accept): an unknown/dead UPID is a no-op returning
+  // the current snapshot. publishNow() republishes over SSE too — the registry
+  // does not republish on its own for pause/resume/steer (only halt does).
+  app.post("/api/process/:upid/halt", async (context) => {
+    if (isOfflineDemoRequest(context.req.header("referer"))) {
+      return context.json(runtime.snapshot());
+    }
+    const upid = context.req.param("upid");
+    try {
+      await runtime.registry.halt(upid, `corr-api-halt-${crypto.randomUUID()}`);
+    } catch {
+      // Unknown or already-dead UPID — return the current snapshot unchanged.
+    }
+    return context.json(runtime.publishNow());
+  });
+  app.post("/api/process/:upid/pause", async (context) => {
+    if (isOfflineDemoRequest(context.req.header("referer"))) {
+      return context.json(runtime.snapshot());
+    }
+    const upid = context.req.param("upid");
+    try {
+      await runtime.registry.pause(upid, `corr-api-pause-${crypto.randomUUID()}`);
+    } catch {
+      // Unknown or dead UPID.
+    }
+    return context.json(runtime.publishNow());
+  });
+  app.post("/api/process/:upid/resume", async (context) => {
+    if (isOfflineDemoRequest(context.req.header("referer"))) {
+      return context.json(runtime.snapshot());
+    }
+    const upid = context.req.param("upid");
+    try {
+      await runtime.registry.resume(upid, `corr-api-resume-${crypto.randomUUID()}`);
+    } catch {
+      // Not paused / unknown UPID.
+    }
+    return context.json(runtime.publishNow());
+  });
+  // Text steering — the SAME path spoken steering takes (registry.steer forwards
+  // to the smithers client AND fires the build orchestrator's correction re-run
+  // on every ready build). Body {"text": string}; empty/malformed is a 400.
+  app.post("/api/process/:upid/steer", async (context) => {
+    if (isOfflineDemoRequest(context.req.header("referer"))) {
+      return context.json(runtime.snapshot());
+    }
+    const upid = context.req.param("upid");
+    const body = (await context.req.json().catch(() => null)) as { text?: unknown } | null;
+    if (body === null || typeof body.text !== "string" || body.text.trim().length === 0) {
+      return context.json({ ok: false, error: "body must be {text: string}" }, 400);
+    }
+    try {
+      await runtime.registry.steer(upid, { text: body.text, source: "api" }, `corr-api-steer-${crypto.randomUUID()}`);
+    } catch {
+      // Unknown or dead UPID.
+    }
+    return context.json(runtime.publishNow());
   });
   app.get("*", async (context) => serveStatic(context.req.url));
 

@@ -2,7 +2,13 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildIdeaPreview, IdeaBuildRegistry, type BuilderAgent, type IdeaPreview } from "./idea-builder";
+import {
+  buildIdeaPreview,
+  IdeaBuildRegistry,
+  servePreviewDirectory,
+  type BuilderAgent,
+  type IdeaPreview,
+} from "./idea-builder";
 
 // All tests inject a synthetic builderAgent so NO real `claude` CLI is spawned —
 // the suite stays hermetic and fast. A no-op builder leaves the deterministic
@@ -73,6 +79,33 @@ describe("idea-builder — real scaffold + live preview server", () => {
     await expect(fetch(url)).rejects.toBeDefined();
   });
 
+  test("servePreviewDirectory serves per-backend subdirs with no-cache headers", async () => {
+    const dir = await tempRoot();
+    await writeFile(join(dir, "index.html"), "<!doctype html><h1>root</h1>", "utf8");
+    const sub = join(dir, "smithers");
+    await Bun.write(join(sub, "index.html"), "<!doctype html><h1>smithers subapp</h1>");
+
+    const server = await servePreviewDirectory(dir);
+    try {
+      const base = `http://127.0.0.1:${server.port}`;
+      // Root still serves, and every response is uncacheable (steer rewrites in place).
+      const root = await fetch(`${base}/`);
+      expect(root.status).toBe(200);
+      expect(root.headers.get("cache-control") ?? "").toContain("no-store");
+
+      // The per-backend subdir resolves to its own index.html — with or without
+      // the trailing slash, and with a cache-bust query.
+      for (const path of ["/smithers/", "/smithers", "/smithers/?v=2"]) {
+        const response = await fetch(`${base}${path}`);
+        expect(response.status).toBe(200);
+        expect(await response.text()).toContain("smithers subapp");
+        expect(response.headers.get("cache-control") ?? "").toContain("no-store");
+      }
+    } finally {
+      await server.stop();
+    }
+  });
+
   test("IdeaBuildRegistry tracks building -> ready with the live preview URL", async () => {
     const buildsRoot = await tempRoot();
     const registry = new IdeaBuildRegistry({ buildsRoot, builderAgent: noopBuilder });
@@ -127,6 +160,38 @@ describe("idea-builder — real scaffold + live preview server", () => {
     expect(body).not.toContain("Vibersyn prototype");
 
     await registry.stopAll();
+  });
+
+  test("stop() ABORTS an in-flight builder immediately instead of waiting out its timeout", async () => {
+    const buildsRoot = await tempRoot();
+    // A builder that never finishes on its own — it only settles when the
+    // forwarded emergency-stop signal aborts it (the SIGKILL path). Without the
+    // abort fix, stop() would await this build's 180s ceiling.
+    let sawSignal = false;
+    const hangingBuilder: BuilderAgent = (_pitch, _dir, _upid, signal) =>
+      new Promise<void>((_resolve, reject) => {
+        if (signal === undefined) {
+          reject(new Error("builder was not given the abort signal"));
+          return;
+        }
+        sawSignal = true;
+        signal.addEventListener("abort", () => reject(new Error("builder SIGKILLed")), { once: true });
+      });
+
+    const registry = new IdeaBuildRegistry({ buildsRoot, builderAgent: hangingBuilder });
+    const task = registry.start("An app whose build hangs forever", "upid-abort-1");
+    expect(registry.state("upid-abort-1")?.status).toBe("building");
+    // Give the async build a beat to reach the hanging builder call.
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    const startedAt = Date.now();
+    await registry.stop("upid-abort-1");
+    const elapsedMs = Date.now() - startedAt;
+
+    expect(sawSignal).toBe(true);
+    expect(elapsedMs).toBeLessThan(1_500); // emergency-stop budget, never the 180s ceiling
+    expect(registry.state("upid-abort-1")).toBeUndefined();
+    await task; // the abandoned build settles without throwing
   });
 
   test("a builder that THROWS degrades to a reachable 'ready' preview serving the scaffold", async () => {

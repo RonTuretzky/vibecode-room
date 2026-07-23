@@ -30,8 +30,10 @@ export interface IdeaPreview {
 // UPID, build the actual app by writing files directly into `dir` (index.html as
 // the entry). Resolves on success; rejects/throws on failure so the caller can
 // degrade. Injectable so tests pass a synthetic builder with no real `claude`
-// spawn; the production default spawns the host `claude` CLI.
-export type BuilderAgent = (pitch: string, dir: string, upid: string) => Promise<void>;
+// spawn; the production default spawns the host `claude` CLI. The optional
+// `signal` is the emergency-stop path: when it aborts, the builder MUST kill its
+// subprocess immediately (SIGKILL) instead of running out its timeout.
+export type BuilderAgent = (pitch: string, dir: string, upid: string, signal?: AbortSignal) => Promise<void>;
 
 export interface BuildIdeaPreviewOptions {
   // Root the per-UPID build directories live under. Defaults to <cwd>/builds.
@@ -42,6 +44,9 @@ export interface BuildIdeaPreviewOptions {
   // The real coding agent that turns the scaffold into a working app. Defaults
   // to the host `claude` CLI builder. Tests inject a synthetic builder.
   builderAgent?: BuilderAgent;
+  // Emergency-stop seam: aborting kills the in-flight builder subprocess
+  // immediately (never waits out the builder timeout).
+  signal?: AbortSignal;
 }
 
 const DEFAULT_HOST = "127.0.0.1";
@@ -53,13 +58,31 @@ function defaultBuildsRoot(): string {
 // A minimal static file server bound to an ephemeral loopback port. Returns the
 // listening port plus a stop() that closes the socket. Uses Bun.serve when
 // available (the project runtime), else a node:http fallback so the module is
-// usable from any test harness.
-interface StaticServer {
+// usable from any test harness. Every response carries no-cache headers so a
+// rebuilt (or steer-corrected) artifact is what the wall's iframe fetches — a
+// cached stale index.html would silently hide a live rewrite.
+export interface PreviewServer {
   port: number;
   stop(): Promise<void>;
 }
 
-async function serveDirectory(dir: string, host: string): Promise<StaticServer> {
+// Headers for every preview response: the artifact is rewritten in place on
+// steer corrections, so intermediaries and the wall's iframe must never cache.
+const NO_CACHE_HEADERS: Record<string, string> = {
+  "cache-control": "no-store, no-cache, must-revalidate",
+  pragma: "no-cache",
+  expires: "0",
+};
+
+// Serve a build directory tree (per-backend subdirs included: "/smithers/"
+// resolves to smithers/index.html) with no-cache headers. This is the seam the
+// multi-backend orchestrator uses to give each builds/<upid>/<backendId>/ its
+// own previewUrl off one per-UPID server.
+export function servePreviewDirectory(dir: string, host: string = DEFAULT_HOST): Promise<PreviewServer> {
+  return serveDirectory(dir, host);
+}
+
+async function serveDirectory(dir: string, host: string): Promise<PreviewServer> {
   const bun = (globalThis as { Bun?: typeof import("bun") }).Bun;
   if (bun !== undefined && typeof bun.serve === "function") {
     const server = bun.serve({
@@ -67,11 +90,18 @@ async function serveDirectory(dir: string, host: string): Promise<StaticServer> 
       port: 0, // ephemeral
       async fetch(request) {
         const file = resolveRequestedFile(dir, new URL(request.url).pathname);
-        const handle = bun.file(file);
+        let handle = bun.file(file);
         if (!(await handle.exists())) {
-          return new Response("Not found", { status: 404 });
+          // Subdirectory index: "/smithers" or "/smithers/" -> smithers/index.html.
+          const indexFallback = bun.file(join(file, "index.html"));
+          if (!(await indexFallback.exists())) {
+            return new Response("Not found", { status: 404, headers: NO_CACHE_HEADERS });
+          }
+          handle = indexFallback;
         }
-        return new Response(handle);
+        return new Response(handle, {
+          headers: { ...NO_CACHE_HEADERS, "content-type": contentTypeFor(handle.name ?? file) },
+        });
       },
     });
     return {
@@ -84,22 +114,33 @@ async function serveDirectory(dir: string, host: string): Promise<StaticServer> 
   return serveDirectoryNode(dir, host);
 }
 
-async function serveDirectoryNode(dir: string, host: string): Promise<StaticServer> {
+async function serveDirectoryNode(dir: string, host: string): Promise<PreviewServer> {
   const http = await import("node:http");
   const { readFile, stat } = await import("node:fs/promises");
   const server = http.createServer((request, response) => {
     void (async () => {
       try {
-        const file = resolveRequestedFile(dir, request.url ?? "/");
-        const info = await stat(file).catch(() => null);
+        let file = resolveRequestedFile(dir, request.url ?? "/");
+        let info = await stat(file).catch(() => null);
+        if (info !== null && info.isDirectory()) {
+          // Subdirectory index: "/smithers" or "/smithers/" -> smithers/index.html.
+          file = join(file, "index.html");
+          info = await stat(file).catch(() => null);
+        }
         if (info === null || !info.isFile()) {
           response.statusCode = 404;
+          for (const [name, value] of Object.entries(NO_CACHE_HEADERS)) {
+            response.setHeader(name, value);
+          }
           response.end("Not found");
           return;
         }
         const body = await readFile(file);
         response.statusCode = 200;
         response.setHeader("content-type", contentTypeFor(file));
+        for (const [name, value] of Object.entries(NO_CACHE_HEADERS)) {
+          response.setHeader(name, value);
+        }
         response.end(body);
       } catch {
         response.statusCode = 500;
@@ -118,11 +159,15 @@ async function serveDirectoryNode(dir: string, host: string): Promise<StaticServ
   };
 }
 
-// Map a request path to a file inside the build directory, defaulting "/" to
-// index.html and refusing to escape the directory (no "..").
+// Map a request path to a file inside the build directory, defaulting "/" (and
+// any trailing-slash directory path) to its index.html and refusing to escape
+// the directory (no "..").
 function resolveRequestedFile(dir: string, pathname: string): string {
   const clean = pathname.split("?")[0]?.split("#")[0] ?? "/";
-  const relative = clean === "/" || clean === "" ? "index.html" : clean.replace(/^\/+/u, "");
+  let relative = clean === "/" || clean === "" ? "index.html" : clean.replace(/^\/+/u, "");
+  if (relative.endsWith("/")) {
+    relative = `${relative}index.html`;
+  }
   const target = resolve(dir, relative);
   const root = resolve(dir);
   if (target !== root && !target.startsWith(root + "/")) {
@@ -173,10 +218,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 // Default production builder: spawn the host `claude` CLI in the build directory
 // so it edits files in place, turning the deterministic scaffold into a real app.
 // The JSON envelope is parsed only for logging; the agent's effect is on disk.
-export const defaultClaudeBuilderAgent: BuilderAgent = async (pitch, dir, _upid) => {
+// The abort signal (emergency stop) SIGKILLs the subprocess immediately — the
+// 180s timeout is a ceiling for unattended builds, never a stop() stall.
+export const defaultClaudeBuilderAgent: BuilderAgent = async (pitch, dir, _upid, signal) => {
   const bun = (globalThis as { Bun?: typeof import("bun") }).Bun;
   if (bun === undefined || typeof bun.spawn !== "function") {
     throw new Error("claude builder requires the Bun runtime");
+  }
+  if (signal?.aborted === true) {
+    throw new Error("claude builder aborted before spawn");
   }
   const proc = bun.spawn(
     [
@@ -192,9 +242,20 @@ export const defaultClaudeBuilderAgent: BuilderAgent = async (pitch, dir, _upid)
     { cwd: dir, stdout: "pipe", stderr: "ignore", stdin: "ignore" },
   );
   const timer = setTimeout(() => proc.kill(), DEFAULT_BUILDER_TIMEOUT_MS);
+  const killHard = () => {
+    try {
+      proc.kill(9); // SIGKILL: the emergency-stop budget is ~2s, no graceful drain.
+    } catch {
+      // Already exited.
+    }
+  };
+  signal?.addEventListener("abort", killHard, { once: true });
   try {
     const out = await new Response(proc.stdout).text();
     const exit = await proc.exited;
+    // Aborted mid-build (killHard already SIGKILLed the subprocess): surface the
+    // abort instead of reporting the kill as a plain non-zero exit.
+    signal?.throwIfAborted();
     if (exit !== 0) {
       throw new Error(`claude builder exited ${exit}`);
     }
@@ -209,6 +270,7 @@ export const defaultClaudeBuilderAgent: BuilderAgent = async (pitch, dir, _upid)
     }
   } finally {
     clearTimeout(timer);
+    signal?.removeEventListener("abort", killHard);
   }
 };
 
@@ -247,8 +309,10 @@ export async function buildIdeaPreview(
 
   // Real build: run the coding agent to overwrite the scaffold with a working
   // app. Degrade to the scaffold on any failure/timeout — never throw here.
+  // The emergency-stop signal is FORWARDED to the builder: aborting SIGKILLs the
+  // in-flight subprocess immediately instead of waiting out its 180s ceiling.
   try {
-    await builder(pitch, dir, upid);
+    await builder(pitch, dir, upid, options.signal);
   } catch {
     // Degraded path: keep the deterministic scaffold already on disk + served.
   }
@@ -279,6 +343,9 @@ export class IdeaBuildRegistry {
   readonly #states = new Map<string, IdeaBuildState>();
   readonly #previews = new Map<string, IdeaPreview>();
   readonly #inflight = new Map<string, Promise<void>>();
+  // Per-UPID emergency-stop seam: stop() aborts the in-flight builder (SIGKILL
+  // via the forwarded signal) instead of waiting out the 180s builder ceiling.
+  readonly #aborts = new Map<string, AbortController>();
 
   constructor(options: BuildIdeaPreviewOptions = {}) {
     this.#options = options;
@@ -294,23 +361,43 @@ export class IdeaBuildRegistry {
   // status to 'ready' (with previewUrl) or 'failed'. Returns the build promise so
   // a caller/test can await completion; the runtime fires-and-forgets it.
   start(pitch: string, upid: string): Promise<void> {
-    void this.stop(upid);
+    // Tear down any prior build for this UPID without racing the fresh state:
+    // abort + forget it synchronously, drain its server in the background.
+    this.#teardown(upid);
+    const controller = new AbortController();
+    this.#aborts.set(upid, controller);
+    const signal =
+      this.#options.signal === undefined ? controller.signal : AbortSignal.any([this.#options.signal, controller.signal]);
     this.#states.set(upid, { upid, status: "building", previewUrl: null, pitch });
     const task = (async () => {
       try {
-        const preview = await buildIdeaPreview(pitch, upid, this.#options);
+        const preview = await buildIdeaPreview(pitch, upid, { ...this.#options, signal });
+        if (signal.aborted) {
+          // Torn down mid-build (halt / emergency stop / superseding start): the
+          // state is owned elsewhere now — just make sure no server leaks.
+          await preview.stop().catch(() => undefined);
+          return;
+        }
         this.#previews.set(upid, preview);
         this.#states.set(upid, { upid, status: "ready", previewUrl: preview.previewUrl, pitch });
       } catch (error) {
-        this.#states.set(upid, {
-          upid,
-          status: "failed",
-          previewUrl: null,
-          pitch,
-          error: error instanceof Error ? error.message : String(error),
-        });
+        if (!signal.aborted) {
+          this.#states.set(upid, {
+            upid,
+            status: "failed",
+            previewUrl: null,
+            pitch,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
       } finally {
-        this.#inflight.delete(upid);
+        // Only clean up if THIS build is still the registered one — controller
+        // and inflight entry are registered together, so the controller check
+        // covers both (a superseding start()/stop() already replaced them).
+        if (this.#aborts.get(upid) === controller) {
+          this.#aborts.delete(upid);
+          this.#inflight.delete(upid);
+        }
       }
     })();
     this.#inflight.set(upid, task);
@@ -322,9 +409,19 @@ export class IdeaBuildRegistry {
     await this.#inflight.get(upid);
   }
 
-  // Stop and forget one build's preview server (process halt).
+  // Stop and forget one build's preview server (process halt / emergency stop).
+  // Aborting FIRST is the emergency-stop fix: an in-flight builder subprocess is
+  // SIGKILLed immediately, so awaiting the build settle is quick — this never
+  // stalls behind the builder's 180s unattended-build ceiling.
   async stop(upid: string): Promise<void> {
-    await this.#inflight.get(upid)?.catch(() => undefined);
+    const controller = this.#aborts.get(upid);
+    this.#aborts.delete(upid);
+    controller?.abort();
+    const inflight = this.#inflight.get(upid);
+    await inflight?.catch(() => undefined);
+    if (inflight !== undefined && this.#inflight.get(upid) === inflight) {
+      this.#inflight.delete(upid);
+    }
     const preview = this.#previews.get(upid);
     if (preview !== undefined) {
       this.#previews.delete(upid);
@@ -335,8 +432,26 @@ export class IdeaBuildRegistry {
 
   // Stop every live preview server (emergency stop / shutdown).
   async stopAll(): Promise<void> {
-    const upids = [...this.#previews.keys(), ...this.#inflight.keys()];
+    const upids = [...this.#previews.keys(), ...this.#inflight.keys(), ...this.#aborts.keys()];
     await Promise.all([...new Set(upids)].map((upid) => this.stop(upid)));
+  }
+
+  // Synchronous teardown used by start(): abort + unregister the prior build so
+  // the caller can immediately register a fresh one, then drain the old preview
+  // server in the background (stop() would race the new state's registration).
+  #teardown(upid: string): void {
+    const controller = this.#aborts.get(upid);
+    this.#aborts.delete(upid);
+    controller?.abort();
+    const inflight = this.#inflight.get(upid);
+    this.#inflight.delete(upid);
+    const preview = this.#previews.get(upid);
+    this.#previews.delete(upid);
+    this.#states.delete(upid);
+    void (async () => {
+      await inflight?.catch(() => undefined);
+      await preview?.stop().catch(() => undefined);
+    })();
   }
 }
 

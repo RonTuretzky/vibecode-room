@@ -36,7 +36,11 @@ describe("cue-wake e2e — live wake word fast-path (build-gated)", () => {
 
     await driveMic(runtime);
 
-    const earcons = runtime.trace.events().filter((event) => event.event === "earcon.emit");
+    // The onboarding listening indicator emits its own authoritative E2 earcon
+    // on mic open, so select the Cue-path earcon by source rather than position.
+    const earcons = runtime.trace
+      .events()
+      .filter((event) => event.event === "earcon.emit" && event.meta?.source === "cue-textcue");
     expect(earcons.length).toBeGreaterThanOrEqual(1);
     expect(earcons[0]?.meta).toEqual(expect.objectContaining({ source: "cue-textcue", matchedWord: "viber" }));
   });
@@ -59,7 +63,11 @@ describe("cue-wake e2e — live wake word fast-path (build-gated)", () => {
 
       // The full mic drive completes without throwing despite the missing build.
       await driveMic(runtime);
-      const earcons = runtime.trace.events().filter((event) => event.event === "earcon.emit");
+      // Select the Cue-path earcon by source (the onboarding listening
+      // indicator's E2 earcon fires first on mic open).
+      const earcons = runtime.trace
+        .events()
+        .filter((event) => event.event === "earcon.emit" && event.meta?.source === "cue-textcue");
       expect(earcons.length).toBeGreaterThanOrEqual(1);
       expect(earcons[0]?.meta).toEqual(expect.objectContaining({ source: "cue-textcue", matchedWord: "viber" }));
     } finally {

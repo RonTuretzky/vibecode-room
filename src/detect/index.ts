@@ -47,9 +47,13 @@ export {
 export { TranscriptWindow, groundSpan, type AppendTurnInput, type TranscriptWindowOptions } from "./transcript-window";
 export { type ClaudeCliOptions, type ClaudeCliRunner, defaultClaudeCliRunner } from "./claude-cli";
 export {
+  DEFAULT_HEURISTIC_CLUSTER_GAP_MS,
+  DEFAULT_HEURISTIC_CLUSTER_GAP_TURNS,
   DEFAULT_IDEA_DETECTOR_MODEL,
   DEFAULT_IDEA_DETECTOR_TIMEOUT_MS,
+  HEURISTIC_DETECTOR_ENV_DEFAULTS,
   HeuristicIdeaDetector,
+  type HeuristicIdeaDetectorOptions,
   HostClaudeIdeaDetector,
   HostClaudeIdeaJudge,
   type HostClaudeIdeaDetectorOptions,

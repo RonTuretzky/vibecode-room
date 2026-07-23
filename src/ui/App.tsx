@@ -10,7 +10,12 @@ import { BuildDetail } from "./BuildDetail";
 import { IdeaTray } from "./IdeaTray";
 import { QrImport } from "./QrImport";
 import { HelpOverlay } from "./HelpOverlay";
+import { BackendSelector } from "./BackendSelector";
+import { BuildChips, ProcessControls } from "./BuildChips";
+import { backendsOf, buildsOf, lifecycleActionsFor, looksLikeSnapshot } from "./buildloop";
+import type { BuildloopSnapshot, LifecycleAction } from "./buildloop";
 import { parseProjectorUrl } from "./url-params";
+import "./buildloop.css";
 import { traceClass, traceTag, summarizeMeta } from "./trace-utils";
 import { startMicCapture, type MicCaptureHandle } from "./mic";
 
@@ -270,6 +275,81 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
     [liveMode, selectBubble],
   );
 
+  // BUILD BACKENDS (build-loop contract): the toggleable roster from
+  // snapshot.backends. Empty on old servers/malformed frames, which simply hides
+  // the selector — the wall never white-screens on a pre-build-loop snapshot.
+  const backends = useMemo(() => backendsOf(snapshot), [snapshot]);
+
+  // BACKEND TOGGLE: flip one build backend on/off for FUTURE builds. Live mode
+  // POSTs /api/backends {id, enabled} and applies the returned snapshot —
+  // guarded, so a thin {"ok":true} acknowledgment can never wipe the wall.
+  // Offline demo flips the chip locally so static fixtures stay interactive.
+  const toggleBackend = useCallback(
+    async (id: string, enabled: boolean) => {
+      if (!liveMode) {
+        setSnapshot((current) => {
+          const next: BuildloopSnapshot = {
+            ...current,
+            backends: backendsOf(current).map((backend) =>
+              backend.id === id ? { ...backend, enabled } : backend,
+            ),
+          };
+          return next;
+        });
+        return;
+      }
+      try {
+        const response = await fetch("/api/backends", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ id, enabled }),
+        });
+        if (response.ok && response.headers.get("content-type")?.includes("application/json")) {
+          const body: unknown = await response.json();
+          if (looksLikeSnapshot(body)) {
+            setSnapshot(body);
+          }
+        }
+      } catch {
+        // Non-authoritative projector: a failed toggle must never block the UI.
+      }
+    },
+    [liveMode],
+  );
+
+  // PER-CARD LIFECYCLE: pause/resume/halt ONE process (fleet-card buttons, plus
+  // 'k' = halt the selected process). Live mode POSTs /api/process/:upid/{action}
+  // and applies the returned snapshot when it is one; offline demo applies the
+  // state change locally so the static fleet stays interactive.
+  const processLifecycle = useCallback(
+    async (upid: string, action: LifecycleAction) => {
+      if (!liveMode) {
+        const nextState = action === "pause" ? "paused" : action === "resume" ? "active" : "halted";
+        setSnapshot((current) => ({
+          ...current,
+          processes: current.processes.map((process) =>
+            process.upid === upid ? { ...process, state: nextState } : process,
+          ),
+        }));
+        return;
+      }
+      try {
+        const response = await fetch(`/api/process/${encodeURIComponent(upid)}/${action}`, {
+          method: "POST",
+        });
+        if (response.ok && response.headers.get("content-type")?.includes("application/json")) {
+          const body: unknown = await response.json();
+          if (looksLikeSnapshot(body)) {
+            setSnapshot(body);
+          }
+        }
+      } catch {
+        // Non-authoritative projector: a failed lifecycle POST must never block the UI.
+      }
+    },
+    [liveMode],
+  );
+
   const releaseMute = useCallback(async () => {
     setIsUnmuting(true);
     try {
@@ -500,10 +580,15 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
   qrOpenRef.current = qrOpen;
   const helpOpenRef = useRef(helpOpen);
   helpOpenRef.current = helpOpen;
+  // Current selection mirrored the same way, so 'k' (halt selected) reads the
+  // latest selection without re-binding the listener on every click.
+  const selectedRef = useRef(selected);
+  selectedRef.current = selected;
 
   // --- Keyboard: the primary desk-mode control surface (SSR-guarded) ---
   // 1–9 select/steer · b/Enter build top idea · x dismiss · c capture · a auto-
-  // build · m mic · u unmute · q QR · ?/h help · Shift+E emergency · Esc close.
+  // build · m mic · u unmute · q QR · ?/h help · k halt selected · Shift+E
+  // emergency · Esc close.
   useEffect(() => {
     if (typeof window === "undefined") {
       return;
@@ -574,6 +659,17 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
         case "h":
           setHelpOpen((open) => !open);
           return;
+        case "k": {
+          // Halt the SELECTED process (not the idea bubble, and not a no-op on a
+          // terminal state) — the keyboard parity for the fleet card's Halt button.
+          const target = snapshotRef.current.processes.find(
+            (process) => process.callsign === selectedRef.current,
+          );
+          if (target && lifecycleActionsFor(target.state).includes("halt")) {
+            void processLifecycle(target.upid, "halt");
+          }
+          return;
+        }
         default:
           break;
       }
@@ -587,7 +683,16 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selectBubble, actOnTopIdea, toggleCaptureMode, toggleAutoAccept, toggleMic, releaseMute, triggerEmergency]);
+  }, [
+    selectBubble,
+    actOnTopIdea,
+    toggleCaptureMode,
+    toggleAutoAccept,
+    toggleMic,
+    releaseMute,
+    triggerEmergency,
+    processLifecycle,
+  ]);
 
   // Significance-driven sizing: selected/active largest, planning mid, others base.
   const bubbleSize = useCallback(
@@ -783,11 +888,18 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
 
         <aside className="rail">
           {showFleetSurfaces ? (
+            <BackendSelector
+              backends={backends}
+              onToggle={(id, enabled) => void toggleBackend(id, enabled)}
+            />
+          ) : null}
+          {showFleetSurfaces ? (
             <FleetPanel
               processes={snapshot.processes}
               selected={selected}
               steeringUpid={steeringUpid}
               onSelect={(id) => void steerProcess(id)}
+              onLifecycle={(upid, action) => void processLifecycle(upid, action)}
             />
           ) : null}
           <AudioReadout snapshot={snapshot} />
@@ -895,11 +1007,13 @@ function FleetPanel({
   selected,
   steeringUpid,
   onSelect,
+  onLifecycle,
 }: {
   processes: ProjectorProcess[];
   selected: string | null;
   steeringUpid: string | null;
   onSelect: (id: string) => void;
+  onLifecycle: (upid: string, action: LifecycleAction) => void;
 }) {
   return (
     <section className="rail-card fleet-card">
@@ -927,6 +1041,8 @@ function FleetPanel({
             </div>
             <p className="fleet-output">{process.lastOutput || "—"}</p>
             <p className="fleet-action">↳ {process.lastAction}</p>
+            <BuildChips builds={buildsOf(process)} />
+            <ProcessControls upid={process.upid} state={process.state} onLifecycle={onLifecycle} />
             {process.events.length > 0 ? (
               <ol className="fleet-log">
                 {process.events.slice(-5).map((entry, index) => (

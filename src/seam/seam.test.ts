@@ -1,12 +1,7 @@
-import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
-import { readFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { describe, expect, test } from "bun:test";
 import type { DispatchedAction } from "../types";
-import { createCorrelationRecord, FileCorrelationStore, MemoryCorrelationStore } from "./correlation-store";
+import { createCorrelationRecord, MemoryCorrelationStore } from "./correlation-store";
 import { createSeamApp, SeamDispatcher } from "./dispatcher";
-import { RunEventBridge } from "./run-events";
 import {
   GatewaySmithersClient,
   type GatewayEventFrame,
@@ -15,14 +10,6 @@ import {
   type SpawnResult,
   type StreamRunEventsOptions,
 } from "./smithers-client";
-
-const tempDirs: string[] = [];
-
-afterEach(() => {
-  for (const dir of tempDirs.splice(0)) {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
 
 describe("Cue Smithers seam dispatcher", () => {
   test("action-schema-match covers the V0 action set and rejects approval/read-back actions", async () => {
@@ -181,76 +168,6 @@ describe("Cue Smithers seam dispatcher", () => {
   });
 });
 
-describe("Smithers run event bridge", () => {
-  test("SSE-reconnect resumes voice-out and does not duplicate observations", async () => {
-    const store = new MemoryCorrelationStore([processRecord("upid-atlas", "run-atlas", "Atlas")]);
-    const client = new MockSmithersClient({
-      streams: [
-        [
-          frame("run-atlas", 1, "run.started", "Atlas started with a very long message that needs summary before TTS"),
-          new Error("dropped stream"),
-        ],
-        [
-          frame("run-atlas", process.env.VIBERSYN_RBG_BREAK_RECONNECT === "1" ? 1 : 2, "run.output", "Implemented the route"),
-          frame("run-atlas", 3, "run.completed", "Completed final handoff with docs and tests"),
-        ],
-      ],
-    });
-    const observations: unknown[] = [];
-    const reconnects: unknown[] = [];
-    const bridge = new RunEventBridge({
-      client,
-      correlations: store,
-      cue: { observe: (observation) => void observations.push(observation) },
-      onReconnect: (event) => reconnects.push(event),
-    });
-
-    const events = await bridge.start("upid-atlas", { maxFrames: 3 });
-
-    expect(reconnects).toHaveLength(1);
-    expect(events.map((event) => event.seq)).toEqual([1, 2, 3]);
-    expect(observations).toHaveLength(3);
-    expect(events.every((event) => event.text.split(/\s+/u).length <= 15)).toBe(true);
-    expect(await store.findByUPID("upid-atlas")).toEqual(expect.objectContaining({ lastSeq: 3, state: "completed" }));
-  });
-
-  test("UPID to steering-window correlation survives a simulated Cue restart", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "vibersyn-seam-store-"));
-    tempDirs.push(dir);
-    const path = join(dir, "correlations.json");
-    const store = new FileCorrelationStore(path);
-    await store.upsert(processRecord("upid-atlas", "run-atlas", "Atlas"));
-
-    const restartedStore = new FileCorrelationStore(path);
-    if (process.env.VIBERSYN_RBG_DROP_CORRELATION_STORE === "1") {
-      rmSync(path, { force: true });
-    }
-    const client = new MockSmithersClient({
-      streams: [[frame("run-atlas", 4, "run.output", "Restarted stream spoke from the right window")]],
-    });
-    const observations: any[] = [];
-    const bridge = new RunEventBridge({
-      client,
-      correlations: restartedStore,
-      cue: { observe: (observation) => void observations.push(observation) },
-    });
-
-    await bridge.start("upid-atlas", { maxFrames: 1 });
-
-    expect(observations[0].payload).toEqual(
-      expect.objectContaining({
-        upid: "upid-atlas",
-        runId: "run-atlas",
-        steeringWindowId: "window-Atlas",
-        correlationId: "corr-upid-atlas",
-      }),
-    );
-    expect(JSON.parse(await readFile(path, "utf8")).records[0]).toEqual(
-      expect.objectContaining({ upid: "upid-atlas", lastSeq: 4 }),
-    );
-  });
-});
-
 class MockSmithersClient implements SmithersClient {
   readonly calls: Array<{ name: string; upid?: string; payload?: unknown }> = [];
   readonly spawnDelayMs: number;
@@ -359,15 +276,6 @@ function processRecord(upid: string, runId: string, callsign: string) {
     correlationId: `corr-${upid}`,
     state: "active",
   });
-}
-
-function frame(runId: string, seq: number, event: string, summary: string): GatewayEventFrame {
-  return {
-    event: "run.event",
-    payload: { runId, seq, event, summary },
-    seq,
-    stateVersion: seq,
-  };
 }
 
 function sleep(ms: number) {

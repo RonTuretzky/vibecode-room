@@ -1,0 +1,499 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#0b0e14" />
+<title>Vibersyn — phone mic</title>
+<style>
+  /* Dark, projector-room-friendly: near-black surfaces, muted accents, no white
+     flashes. Palette matches the QR-import phone page (src/server/import-page.ts). */
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; display: flex; flex-direction: column;
+    background: #0b0e14; color: #e6e9f0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    padding: max(1rem, env(safe-area-inset-top)) 1rem max(1rem, env(safe-area-inset-bottom));
+    user-select: none; -webkit-user-select: none;
+  }
+  header { display: flex; align-items: baseline; justify-content: space-between; gap: 0.75rem; }
+  h1 { font-size: 1.05rem; margin: 0; font-weight: 600; letter-spacing: 0.02em; }
+  h1 .dim { color: #8b93a7; font-weight: 400; }
+
+  #status-row { display: flex; align-items: center; gap: 0.5rem; margin: 0.85rem 0 0.6rem; min-height: 1.4rem; }
+  #status-dot {
+    width: 0.65rem; height: 0.65rem; border-radius: 50%; flex: none;
+    background: #8b93a7; transition: background 150ms;
+  }
+  #status-dot.live { background: #6fe3a5; box-shadow: 0 0 8px #6fe3a566; }
+  #status-dot.connecting { background: #f0c96b; }
+  #status-dot.error { background: #ff7d90; }
+  #status-dot.muted { background: #ff7d90; }
+  #status-text { font-size: 0.95rem; color: #aeb6c8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  #meter {
+    height: 0.9rem; border-radius: 0.45rem; overflow: hidden;
+    background: #131826; border: 1px solid #2a3040;
+  }
+  #meter-fill {
+    height: 100%; width: 0%;
+    background: linear-gradient(90deg, #2f6f4f, #6fe3a5);
+    transition: width 130ms linear;
+  }
+  #meter.is-muted #meter-fill { background: #3a2530; }
+
+  #big-button {
+    flex: 1; margin: 1rem 0 0.75rem; width: 100%;
+    min-height: 42vh; border-radius: 1.25rem; border: none; cursor: pointer;
+    font: inherit; font-size: 1.45rem; font-weight: 700; letter-spacing: 0.04em;
+    background: #5b8cff; color: #0b0e14;
+    display: flex; align-items: center; justify-content: center; text-align: center;
+    transition: background 150ms, color 150ms;
+    touch-action: manipulation;
+  }
+  #big-button:active { filter: brightness(1.12); }
+  #big-button.live { background: #163524; color: #6fe3a5; border: 2px solid #2f6f4f; }
+  #big-button.muted { background: #3a1620; color: #ff7d90; border: 2px solid #6e2a38; }
+  #big-button:disabled { opacity: 0.55; cursor: default; }
+  #big-button small { display: block; font-size: 0.85rem; font-weight: 400; color: inherit; opacity: 0.75; margin-top: 0.4rem; letter-spacing: normal; }
+
+  #stop-button {
+    align-self: center; background: none; border: 1px solid #2a3040; color: #8b93a7;
+    font: inherit; font-size: 0.85rem; padding: 0.5rem 1.1rem; border-radius: 0.6rem;
+    cursor: pointer; display: none;
+  }
+  body.running #stop-button { display: block; }
+
+  #insecure-help {
+    display: none; margin-top: 0.9rem; padding: 0.9rem 1rem; border-radius: 0.75rem;
+    background: #1c1420; border: 1px solid #6e2a38; font-size: 0.88rem; line-height: 1.45;
+    color: #d8bcc4; user-select: text; -webkit-user-select: text;
+  }
+  #insecure-help.visible { display: block; }
+  #insecure-help h2 { font-size: 0.95rem; margin: 0 0 0.4rem; color: #ff7d90; }
+  #insecure-help code {
+    background: #131826; border: 1px solid #2a3040; border-radius: 0.3rem;
+    padding: 0.05rem 0.3rem; font-size: 0.82rem; word-break: break-all;
+  }
+  #insecure-help ol { margin: 0.4rem 0 0; padding-left: 1.2rem; }
+  #insecure-help li { margin: 0.25rem 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Vibersyn <span class="dim">· roaming mic</span></h1>
+</header>
+
+<div id="status-row">
+  <span id="status-dot"></span>
+  <span id="status-text">Idle — tap the button to go live.</span>
+</div>
+
+<div id="meter"><div id="meter-fill"></div></div>
+
+<button id="big-button" type="button">TAP TO GO LIVE</button>
+<button id="stop-button" type="button">stop session</button>
+
+<div id="insecure-help">
+  <h2>Microphone blocked on this connection</h2>
+  <p>This page is served over plain <code>http://</code>, and this browser only allows
+  microphone access on secure (HTTPS) origins.</p>
+  <ol>
+    <li><strong>Android Chrome:</strong> open
+      <code>chrome://flags/#unsafely-treat-insecure-origin-as-secure</code>, add
+      <code id="origin-echo"></code> to the list, set the flag to Enabled, and relaunch Chrome.</li>
+    <li><strong>iOS Safari:</strong> there is no override — getUserMedia requires HTTPS
+      (or localhost). Use an Android phone or a desktop browser for the demo, or put the
+      server behind a TLS proxy.</li>
+    <li><strong>Desktop Chrome/Firefox:</strong> open the page via
+      <code>http://localhost:&lt;port&gt;/mic.html</code> on the server machine, or apply the
+      same Chrome flag as Android.</li>
+  </ol>
+</div>
+
+<script>
+/* @encoder-test-begin */
+// ---------------------------------------------------------------------------
+// Frame encoder — a line-for-line mirror of the projector's browser-mic encoder
+// (src/ui/mic.ts): 16 kHz mono little-endian Int16 (linear16) PCM, resampled by
+// linear interpolation when the capture rate differs. Kept as pure functions
+// (no DOM, no audio APIs) so it can be extracted and tested headlessly.
+// ---------------------------------------------------------------------------
+const TARGET_SAMPLE_RATE = 16000;
+const FRAME_SIZE = 4096;
+
+// Linear16 PCM little-endian (Int16Array buffers are little-endian on every
+// platform this targets), resampling by simple linear interpolation when the
+// source rate differs from the target. Adequate for speech ASR.
+function floatTo16BitPCM(input, sourceRate, targetRate) {
+  const samples = sourceRate === targetRate ? input : downsample(input, sourceRate, targetRate);
+  const out = new Int16Array(samples.length);
+  for (let i = 0; i < samples.length; i += 1) {
+    const clamped = Math.max(-1, Math.min(1, samples[i]));
+    out[i] = clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff;
+  }
+  return out;
+}
+
+function downsample(input, sourceRate, targetRate) {
+  if (targetRate >= sourceRate) {
+    return input;
+  }
+  const ratio = sourceRate / targetRate;
+  const outLength = Math.floor(input.length / ratio);
+  const out = new Float32Array(outLength);
+  for (let i = 0; i < outLength; i += 1) {
+    const position = i * ratio;
+    const low = Math.floor(position);
+    const high = Math.min(low + 1, input.length - 1);
+    const frac = position - low;
+    out[i] = input[low] * (1 - frac) + input[high] * frac;
+  }
+  return out;
+}
+
+globalThis.MicEncoder = { TARGET_SAMPLE_RATE, FRAME_SIZE, floatTo16BitPCM, downsample };
+/* @encoder-test-end */
+</script>
+
+<script>
+// ---------------------------------------------------------------------------
+// Phone-as-roaming-mic. Captures getUserMedia audio, encodes with the functions
+// above, and streams binary frames to ws(s)://<host>/api/mic — the same socket
+// the projector's built-in mic uses (src/server/index.ts). Server contract:
+//   - text frame {type:"ready", mode, sessionId} once the session is accepted
+//   - text frame {type:"error", reason} then close(1008, "muted") if the room
+//     is muted -> we POST /api/unmute and reconnect
+//   - binary frames from us are raw 16 kHz mono LE Int16 PCM
+// ---------------------------------------------------------------------------
+(() => {
+  const bigButton = document.getElementById("big-button");
+  const stopButton = document.getElementById("stop-button");
+  const statusDot = document.getElementById("status-dot");
+  const statusText = document.getElementById("status-text");
+  const meter = document.getElementById("meter");
+  const meterFill = document.getElementById("meter-fill");
+  const insecureHelp = document.getElementById("insecure-help");
+  const originEcho = document.getElementById("origin-echo");
+  originEcho.textContent = window.location.origin;
+
+  let running = false;        // a capture session is active (mic held open)
+  let locallyMuted = false;   // big-button mute: tracks disabled, no frames sent
+  let mediaStream = null;
+  let context = null;
+  let source = null;
+  let processor = null;
+  let silentSink = null;
+  let socket = null;
+  let socketLive = false;     // reached OPEN at least once this attempt
+  let serverMode = null;      // ASR mode string from the server's "ready" frame
+  let reconnectTimer = null;
+  let reconnectDelayMs = 1000;
+  const RECONNECT_MAX_MS = 10000;
+  let wakeLock = null;
+
+  function setStatus(kind, text) {
+    statusDot.className = kind;
+    statusText.textContent = text;
+  }
+
+  function refreshUi() {
+    document.body.classList.toggle("running", running);
+    if (!running) {
+      bigButton.className = "";
+      bigButton.textContent = "TAP TO GO LIVE";
+      meter.classList.remove("is-muted");
+      meterFill.style.width = "0%";
+      return;
+    }
+    if (locallyMuted) {
+      bigButton.className = "muted";
+      bigButton.innerHTML = "MUTED<small>tap to unmute</small>";
+      meter.classList.add("is-muted");
+    } else {
+      bigButton.className = "live";
+      bigButton.innerHTML = "LIVE<small>tap to mute</small>";
+      meter.classList.remove("is-muted");
+    }
+  }
+
+  function statusForConnected() {
+    const mode = serverMode ? " · " + serverMode : "";
+    if (locallyMuted) {
+      setStatus("muted", "Connected" + mode + " — muted on this phone.");
+    } else {
+      setStatus("live", "Live" + mode + " — streaming to the room.");
+    }
+  }
+
+  // --- WebSocket -----------------------------------------------------------
+
+  function connectSocket() {
+    if (!running || socket !== null) return;
+    setStatus("connecting", "Connecting to the room…");
+    const protocol = window.location.protocol === "https:" ? "wss" : "ws";
+    const ws = new WebSocket(protocol + "://" + window.location.host + "/api/mic");
+    ws.binaryType = "arraybuffer";
+    socket = ws;
+    socketLive = false;
+
+    ws.addEventListener("open", () => {
+      if (ws !== socket) return;
+      socketLive = true;
+      reconnectDelayMs = 1000;
+      statusForConnected();
+    });
+
+    ws.addEventListener("message", (event) => {
+      if (ws !== socket || typeof event.data !== "string") return;
+      let parsed;
+      try {
+        parsed = JSON.parse(event.data);
+      } catch {
+        return; // Non-JSON control frame; ignore.
+      }
+      if (parsed.type === "ready") {
+        serverMode = parsed.mode || null;
+        statusForConnected();
+      } else if (parsed.type === "error" && parsed.reason !== "muted") {
+        // "muted" is handled by the 1008 close that follows it.
+        setStatus("error", "Server rejected mic stream: " + (parsed.reason || "unknown"));
+      }
+    });
+
+    ws.addEventListener("close", (event) => {
+      if (ws !== socket) return;
+      socket = null;
+      socketLive = false;
+      if (!running) return;
+      if (event.code === 1008) {
+        // Room is muted (server policy: never feed cloud ASR while muted).
+        // Unmute the room over HTTP, then reconnect.
+        setStatus("connecting", "Room is muted — unmuting…");
+        unmuteThenReconnect();
+      } else {
+        scheduleReconnect("Connection lost");
+      }
+    });
+
+    ws.addEventListener("error", () => {
+      // The close handler owns recovery; this only annotates the status.
+      if (ws === socket && running && !socketLive) {
+        setStatus("error", "Mic WebSocket error — retrying…");
+      }
+    });
+  }
+
+  async function unmuteThenReconnect() {
+    try {
+      await fetch("/api/unmute", { method: "POST" });
+    } catch {
+      // Unreachable server; the reconnect backoff below covers it.
+    }
+    scheduleReconnect("Reconnecting after unmute");
+  }
+
+  function scheduleReconnect(label) {
+    if (reconnectTimer !== null || !running) return;
+    const delay = reconnectDelayMs;
+    setStatus("connecting", label + " — retrying in " + Math.round(delay / 1000) + "s…");
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      if (running) connectSocket();
+    }, delay);
+    reconnectDelayMs = Math.min(reconnectDelayMs * 2, RECONNECT_MAX_MS);
+  }
+
+  // --- Capture -------------------------------------------------------------
+
+  async function start() {
+    if (running) return;
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      insecureHelp.classList.add("visible");
+      setStatus("error", "Microphone unavailable on this origin — see the note below.");
+      return;
+    }
+    bigButton.disabled = true;
+    setStatus("connecting", "Requesting microphone…");
+    try {
+      mediaStream = await navigator.mediaDevices.getUserMedia({
+        audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
+      });
+    } catch (err) {
+      bigButton.disabled = false;
+      const name = err && err.name ? err.name : "";
+      if (name === "NotAllowedError" || name === "SecurityError") {
+        setStatus("error", "Microphone permission denied. Allow mic access and tap again.");
+      } else if (name === "NotFoundError") {
+        setStatus("error", "No microphone found on this device.");
+      } else {
+        setStatus("error", "Could not open the microphone: " + (err && err.message ? err.message : err));
+      }
+      return;
+    }
+
+    const AudioCtor = window.AudioContext || window.webkitAudioContext;
+    // Ask for a 16 kHz context so capture is already at the target rate; if the
+    // platform refuses, we resample per frame in floatTo16BitPCM.
+    try {
+      context = new AudioCtor({ sampleRate: TARGET_SAMPLE_RATE });
+    } catch {
+      context = new AudioCtor();
+    }
+    if (context.state === "suspended") {
+      try { await context.resume(); } catch {}
+    }
+
+    source = context.createMediaStreamSource(mediaStream);
+    processor = context.createScriptProcessor(FRAME_SIZE, 1, 1);
+    // Route through a muted gain node so ScriptProcessor keeps firing without
+    // echoing the mic back out of the phone's speaker.
+    silentSink = context.createGain();
+    silentSink.gain.value = 0;
+
+    processor.onaudioprocess = (event) => {
+      const input = event.inputBuffer.getChannelData(0);
+      let sumSquares = 0;
+      for (let i = 0; i < input.length; i += 1) {
+        sumSquares += input[i] * input[i];
+      }
+      renderLevel(Math.sqrt(sumSquares / input.length));
+
+      if (locallyMuted || socket === null || socket.readyState !== WebSocket.OPEN) {
+        return;
+      }
+      const pcm = floatTo16BitPCM(input, context.sampleRate, TARGET_SAMPLE_RATE);
+      if (pcm.byteLength > 0) {
+        socket.send(pcm.buffer);
+      }
+    };
+
+    source.connect(processor);
+    processor.connect(silentSink);
+    silentSink.connect(context.destination);
+
+    running = true;
+    locallyMuted = false;
+    bigButton.disabled = false;
+    refreshUi();
+    connectSocket();
+    acquireWakeLock();
+  }
+
+  function stop() {
+    if (!running) return;
+    running = false;
+    if (reconnectTimer !== null) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+    reconnectDelayMs = 1000;
+    serverMode = null;
+    if (processor) processor.onaudioprocess = null;
+    try {
+      if (source) source.disconnect();
+      if (processor) processor.disconnect();
+      if (silentSink) silentSink.disconnect();
+    } catch {}
+    if (mediaStream) {
+      for (const track of mediaStream.getTracks()) track.stop();
+    }
+    if (context) {
+      const closing = context.close();
+      if (closing && closing.catch) closing.catch(() => undefined);
+    }
+    if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
+      socket.close();
+    }
+    socket = null;
+    mediaStream = null;
+    context = null;
+    source = null;
+    processor = null;
+    silentSink = null;
+    releaseWakeLock();
+    setStatus("", "Stopped. Tap the button to go live again.");
+    refreshUi();
+  }
+
+  function toggleLocalMute() {
+    locallyMuted = !locallyMuted;
+    if (mediaStream) {
+      // Disable the tracks too so the OS mic indicator reflects the mute and
+      // the meter falls to zero (disabled tracks produce silence).
+      for (const track of mediaStream.getTracks()) track.enabled = !locallyMuted;
+    }
+    if (socket !== null && socket.readyState === WebSocket.OPEN) {
+      statusForConnected();
+    }
+    refreshUi();
+  }
+
+  // --- Level meter ---------------------------------------------------------
+
+  let displayedLevel = 0;
+  function renderLevel(rms) {
+    // Speech RMS rarely exceeds ~0.25; scale up so the bar is readable, with a
+    // fast attack and slow decay so short frames still register.
+    const target = Math.min(1, rms * 4);
+    displayedLevel = target > displayedLevel ? target : displayedLevel * 0.6 + target * 0.4;
+    meterFill.style.width = (displayedLevel * 100).toFixed(1) + "%";
+  }
+
+  // --- Wake lock (keep the phone screen on so audio keeps flowing) ---------
+
+  async function acquireWakeLock() {
+    if (!("wakeLock" in navigator)) return;
+    try {
+      wakeLock = await navigator.wakeLock.request("screen");
+    } catch {
+      wakeLock = null; // Not fatal; the user can keep the screen on manually.
+    }
+  }
+
+  function releaseWakeLock() {
+    if (wakeLock) {
+      wakeLock.release().catch(() => undefined);
+      wakeLock = null;
+    }
+  }
+
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && running) {
+      acquireWakeLock();
+      if (context && context.state === "suspended") {
+        context.resume().catch(() => undefined);
+      }
+    }
+  });
+
+  // --- Wiring --------------------------------------------------------------
+
+  bigButton.addEventListener("click", () => {
+    if (!running) {
+      start();
+    } else {
+      toggleLocalMute();
+    }
+  });
+  stopButton.addEventListener("click", stop);
+  window.addEventListener("pagehide", () => {
+    if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
+      socket.close();
+    }
+  });
+
+  // Early heads-up on plainly insecure origins where the mic API is missing
+  // (e.g. Android Chrome without the flag, iOS Safari over http).
+  if (window.location.protocol === "http:" &&
+      !["localhost", "127.0.0.1"].includes(window.location.hostname) &&
+      (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia)) {
+    insecureHelp.classList.add("visible");
+    setStatus("error", "Insecure origin — this browser blocks the mic here. See below.");
+  }
+})();
+</script>
+</body>
+</html>

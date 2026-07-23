@@ -48,7 +48,10 @@ describe("ambient feedback e2e — the live loop speaks and earcons on accept", 
       final("let's build a dashboard tool to ship the replay prototype today", "utt-build"),
       final("yes", "utt-yes"),
     ]);
-    const runtime = await createProjectorRuntime(liveEnv(path));
+    const runtime = await createProjectorRuntime(liveEnv(path), {
+      // No real coding-agent spawn in e2e: the accept path's build runs a noop.
+      builderAgent: async () => undefined,
+    });
 
     await driveMic(runtime);
     await runtime.detection.flush();
