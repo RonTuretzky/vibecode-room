@@ -936,6 +936,11 @@ def make_handler(web_dir: str, calib: AutoCalibrator):
         def _json(self, obj, code=200):
             body = json.dumps(obj).encode()
             self.send_response(code)
+            # The unified wall pages are served from the GESTURE server's
+            # origin (:8000) and poll this server cross-origin — without CORS
+            # the browser silently drops every response and the pages never
+            # flip into calibration mode.
+            self.send_header("Access-Control-Allow-Origin", "*")
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
