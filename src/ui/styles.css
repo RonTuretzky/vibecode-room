@@ -829,6 +829,148 @@ main.gesture-mode * {
   z-index: 5;
 }
 
+/* ============================================================================
+   GESTURE-XL — every rule below is scoped to main.gesture-mode (the ?gesture=1
+   wall), so desk mode (no gesture param) stays pixel-identical. Mid-air
+   pointing at projector distance needs BIG targets: controls grow to a 72px+
+   primary / 60px+ secondary hit height, type scales up, and inter-target gaps
+   widen so a dwell (hitboxes are further inflated 24px/side by the gesture
+   layer — HITBOX_INFLATE_PX) can never straddle two neighbors.
+   ============================================================================ */
+main.gesture-mode .ctl-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 72px;
+  padding: 16px 30px;
+  font-size: 20px;
+  border-radius: 16px;
+}
+
+main.gesture-mode .idea-item-actions .ctl-button {
+  min-height: 64px;
+  padding: 14px 26px;
+  font-size: 18px;
+}
+
+main.gesture-mode .ctl-button.hide-clear {
+  min-height: 52px;
+  padding: 10px 18px;
+  font-size: 14px;
+}
+
+main.gesture-mode .fleet-ctl {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 60px;
+  padding: 12px 24px;
+  font-size: 17px;
+  border-radius: 12px;
+}
+
+main.gesture-mode .backend-chip {
+  min-height: 60px;
+  padding: 12px 24px;
+  font-size: 17px;
+}
+
+main.gesture-mode .deck-decision-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 72px;
+  padding: 16px 32px;
+  font-size: 19px;
+}
+
+main.gesture-mode .hide-item {
+  min-height: 56px;
+  padding: 12px 16px;
+  font-size: 15px;
+}
+
+/* Generous breathing room between adjacent dwell targets. */
+main.gesture-mode .status-right { gap: 26px; }
+main.gesture-mode .scene-controls { gap: 16px; padding: 14px; }
+main.gesture-mode .backend-chips { gap: 18px; }
+main.gesture-mode .idea-item-actions { gap: 18px; }
+main.gesture-mode .idea-item { flex-basis: 340px; }
+main.gesture-mode .idea-tray-items { gap: 20px; }
+main.gesture-mode .fleet-controls,
+main.gesture-mode .fleet-actions-row { gap: 16px; }
+main.gesture-mode .deck-decision-choices { gap: 20px; }
+main.gesture-mode .hide-menu { gap: 12px; width: 380px; }
+
+/* ============================================================================
+   PER-WALL SAFE ZONES (gesture mode only) — pointing accuracy is worst on the
+   room's outer far edges: wall A's LEFT third and wall B's RIGHT third. So in
+   gesture mode the interactive clusters keep to wall A's RIGHT two-thirds
+   (view=ideas) and wall B's LEFT two-thirds (view=builds). Non-interactive
+   content (scene, badge, status readouts) still uses the full wall. Desk mode
+   and the full view are untouched.
+   ============================================================================ */
+
+/* Wall A (ideas): pull the bottom-left clusters + the tray out of the left third. */
+main.gesture-mode[data-view="ideas"] .scene-controls,
+main.gesture-mode[data-view="ideas"] .hide-menu {
+  left: calc(33.5vw + 18px);
+}
+
+main.gesture-mode[data-view="ideas"] .stage-main {
+  margin-left: 34vw;
+}
+
+/* Centered overlay cards (help, …) re-center within the right two-thirds. */
+main.gesture-mode[data-view="ideas"] .detail-overlay {
+  padding-left: calc(33.5vw + 40px);
+}
+
+/* The guided-demo coach card: its own buttons are dwell targets, so the card
+   re-centers on the right two-thirds' midline (66.7vw) and narrows enough to
+   never cross the 33.3vw line. */
+main.gesture-mode[data-view="ideas"] .guided-card {
+  left: 66.7vw;
+  width: min(920px, 62vw);
+}
+
+main.gesture-mode[data-view="ideas"] .guided-card.slim {
+  width: min(880px, 62vw);
+}
+
+/* Wall B (builds): the rail (backends / fleet / transcript) swaps to the LEFT
+   column, and the top-row + overlay controls exit the right third. */
+main.gesture-mode[data-view="builds"] .stage {
+  grid-template-columns: clamp(380px, 34vw, 640px) minmax(0, 1fr);
+}
+
+main.gesture-mode[data-view="builds"] .rail {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+main.gesture-mode[data-view="builds"] .stage-main {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+main.gesture-mode[data-view="builds"] .status-right {
+  margin-right: 33.5vw;
+}
+
+main.gesture-mode[data-view="builds"] .detail-overlay {
+  padding-right: calc(33.5vw + 40px);
+}
+
+main.gesture-mode[data-view="builds"] .guided-card {
+  left: 33.3vw;
+  width: min(920px, 62vw);
+}
+
+main.gesture-mode[data-view="builds"] .guided-card.slim {
+  width: min(880px, 62vw);
+}
+
 .ctl-button.emergency:hover {
   background: rgba(255, 59, 48, 0.22);
   box-shadow: 0 0 22px rgba(255, 59, 48, 0.4);
@@ -2060,9 +2202,11 @@ main.gesture-mode * {
   background: rgba(255, 59, 48, 0.1);
 }
 
-/* NOTE: the old per-wall view split (?view=ideas|builds) is gone — both walls
-   render the complete room, so no [data-view] layout emphasis remains. The
-   attribute itself is kept on .deep purely as a legacy identity marker. */
+/* NOTE: ?view=ideas|builds scopes WHAT each wall renders in App.tsx (idea
+   surface + idea controls vs build surface + build controls; the 3D scene
+   stays full everywhere). The [data-view] attribute on .deep additionally
+   drives the gesture-mode-only safe-zone placement rules (see the PER-WALL
+   SAFE ZONES section above) — desk layouts carry no [data-view] emphasis. */
 
 /* ============================================================================
    QR import + help overlays — glass cards over the dimmed field

@@ -8,10 +8,11 @@
 export type ProjectorView = "ideas" | "builds" | "full";
 
 export interface ProjectorUrlConfig {
-  // LEGACY view param. Still parsed so old two-wall URLs (?view=ideas|builds)
-  // keep working and the wall badge still reads "WALL A · IDEAS", but it is
-  // INERT for content: every window renders the FULL room (all ideas AND all
-  // builds) regardless of this value.
+  // Per-wall view scoping. ?view=ideas renders the idea surface + idea-side
+  // controls (wall A), ?view=builds the build surface + build-side controls
+  // (wall B), and the default full view renders everything (single-window desk
+  // mode). The 3D room scene always stays full on every window — the view
+  // scopes only the 2D HUD surfaces (and the badge reads "WALL A · IDEAS").
   view: ProjectorView;
   // Wall identity (e.g. "A"), or null when this is not a wall-bound window.
   wall: string | null;

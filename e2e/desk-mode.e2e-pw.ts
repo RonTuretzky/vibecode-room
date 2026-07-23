@@ -5,8 +5,10 @@ import { expect, test, type Page } from "@playwright/test";
  * primary control surface (gesture wall demoted to explicit opt-in):
  *
  *  - gesture decoupling: ?wall= alone is an identity badge, no gesture layer
- *  - two-wall full scene: the legacy ?view=ideas|builds param is inert — every
- *    wall renders the complete room (all ideas AND all builds)
+ *  - per-wall scoping: the 3D scene stays FULL on every wall, but
+ *    ?view=ideas|builds scopes the 2D surfaces + controls (wall A = idea
+ *    surface + idea controls, wall B = build surface + build controls; the
+ *    default full view renders everything)
  *  - the idea tray (explicit Build/Dismiss over the whole detection ledger)
  *  - the QR import overlay (phone → GitHub URL → fleet)
  *  - the extended keyboard map + help overlay + voice feedback flash
@@ -51,23 +53,32 @@ test.describe("desk mode — gesture decoupling & wall identity", () => {
   });
 });
 
-test.describe("desk mode — two-wall full scene (legacy ?view is inert)", () => {
-  test("?view=ideas still renders the complete room: tray AND fleet", async ({ page }) => {
+test.describe("desk mode — per-wall scoping (each wall renders ITS surface + controls)", () => {
+  test("?view=ideas (wall A): idea tray + idea controls, NO build surfaces", async ({ page }) => {
     await gotoStatic(page, "?live=0&wall=A&view=ideas");
     await expect(page.getByTestId("room-scene")).toBeVisible();
     await expect(page.getByTestId("idea-tray")).toBeVisible();
-    await expect(page.getByTestId("fleet-panel")).toHaveCount(2);
+    await expect(page.locator('[data-region="suggestion"]')).toBeVisible();
+    await expect(page.getByTestId("capture-button")).toBeVisible();
+    await expect(page.getByTestId("guided-demo-button")).toBeVisible();
+    await expect(page.getByTestId("fleet-panel")).toHaveCount(0);
+    await expect(page.locator('[data-region="transcript"]')).toHaveCount(0);
+    await expect(page.getByTestId("qr-import-button")).toHaveCount(0);
   });
 
-  test("?view=builds still renders the complete room: fleet AND idea surfaces", async ({ page }) => {
+  test("?view=builds (wall B): fleet + build controls, NO idea surfaces", async ({ page }) => {
     await gotoStatic(page, "?live=0&wall=B&view=builds");
     await expect(page.getByTestId("room-scene")).toBeVisible();
-    await expect(page.getByTestId("fleet-panel").first()).toBeVisible();
-    await expect(page.getByTestId("idea-tray")).toBeVisible();
-    await expect(page.locator('[data-region="suggestion"]')).toBeVisible();
+    await expect(page.getByTestId("fleet-panel")).toHaveCount(2);
+    await expect(page.locator('[data-region="transcript"]')).toBeVisible();
+    await expect(page.getByTestId("qr-import-button")).toBeVisible();
+    await expect(page.getByTestId("idea-tray")).toHaveCount(0);
+    await expect(page.locator('[data-region="suggestion"]')).toHaveCount(0);
+    await expect(page.getByTestId("capture-button")).toHaveCount(0);
+    await expect(page.getByTestId("guided-demo-button")).toHaveCount(0);
   });
 
-  test("both walls carry identical scene node counts (the view never filters)", async ({ page }) => {
+  test("the 3D scene stays FULL on both walls (identical node counts; only 2D scopes)", async ({ page }) => {
     await gotoStatic(page, "?live=0&wall=A&view=ideas");
     const wallA = await page.getByTestId("room-scene").evaluate((el) => ({
       ideas: el.getAttribute("data-idea-count"),

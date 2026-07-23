@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import type { Zone } from "./core";
 import { idToHue } from "./core";
-import { GestureTargets, type TargetDescriptor } from "./targets";
+import { GestureTargets, HITBOX_INFLATE_PX, inflateRect, type TargetDescriptor } from "./targets";
 import { MultiDwell } from "./multi";
 import { getSceneDwellSource } from "./scene-source";
 import { GestureWallClient, type GestureCursor, type GestureWallStatus } from "./wall-client";
@@ -134,13 +134,14 @@ export function GestureLayer({ wall, fusionUrl, mouseTest = false }: GestureLaye
     // something else (a modal overlay, the slideshow, …) is NOT dwellable —
     // exactly like it is not clickable — via an elementFromPoint occlusion
     // check (this overlay canvas is pointer-events:none, so it never occludes).
-    const collectDomTargets = (): TargetDescriptor[] => {
+    const collectDomTargets = (vpW: number, vpH: number): TargetDescriptor[] => {
       const out: TargetDescriptor[] = [];
       document.querySelectorAll(DWELL_DOM_SELECTOR).forEach((el) => {
         const r = el.getBoundingClientRect();
         if (r.width <= 0 || r.height <= 0) {
           return;
         }
+        // Occlusion check on the UNinflated center: a covered control stays dead.
         const cx = r.left + r.width / 2;
         const cy = r.top + r.height / 2;
         const top = document.elementFromPoint(cx, cy);
@@ -149,9 +150,14 @@ export function GestureLayer({ wall, fusionUrl, mouseTest = false }: GestureLaye
         }
         const id = domIdFor(el);
         elementsById.set(id, el as HTMLElement);
-        out.push({ id, left: r.left, top: r.top, width: r.width, height: r.height, activate: () => (el as HTMLElement).click() });
+        // The dwell hitbox exceeds the visual button by HITBOX_INFLATE_PX per
+        // side (viewport-clamped) so pointing jitter around a control still
+        // lands; scene raycast rects (appended later) stay exact.
+        out.push({ ...inflateRect(r, HITBOX_INFLATE_PX, vpW, vpH), id, activate: () => (el as HTMLElement).click() });
       });
-      // Smallest first: a button inside a dwellable panel wins over the panel.
+      // Smallest first: a button inside a dwellable panel wins over the panel,
+      // and where two neighbors' inflated hitboxes overlap, the smaller control
+      // wins acquisition (zone order is resolution order in DwellSelector).
       out.sort((a, b) => a.width * a.height - b.width * b.height);
       return out;
     };
@@ -176,7 +182,7 @@ export function GestureLayer({ wall, fusionUrl, mouseTest = false }: GestureLaye
 
       elementsById.clear();
       rectsById.clear();
-      const descriptors = collectDomTargets();
+      const descriptors = collectDomTargets(vpW, vpH);
 
       // Scene nodes: raycast each engaged cursor into the 3D room; a hit node
       // becomes (or stays) a dwell target whose zone rect is the node's live

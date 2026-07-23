@@ -51,8 +51,8 @@ describe("parseProjectorUrl", () => {
     expect(config.dwell).toBe("mouse");
   });
 
-  // The view param is LEGACY: it still parses (old URLs + badge text) but it is
-  // inert for content — every window renders the full room (see projector tests).
+  // The view param scopes each wall's 2D surfaces + controls (ideas vs builds;
+  // the 3D scene always stays full — see projector tests for the render table).
   test("view parsing: ideas/builds are recognized, anything else falls back to full", () => {
     expect(parseProjectorUrl("?view=ideas", "h").view).toBe("ideas");
     expect(parseProjectorUrl("?view=builds", "h").view).toBe("builds");

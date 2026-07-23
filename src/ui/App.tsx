@@ -54,11 +54,11 @@ declare global {
 export function ProjectorApp({ initialSnapshot, urlSearch }: ProjectorAppProps) {
   // Window configuration from the URL, parsed FIRST — the guided-demo entry
   // and Mock-Room gates below depend on it: wall identity badge (?wall=A|B),
-  // the LEGACY view param (?view=ideas|builds — accepted so old two-wall URLs
-  // keep working, but INERT for content: every window renders the full room),
-  // and the LEGACY gesture layer — which mounts ONLY on an explicit ?gesture=1
-  // or ?fusion= (desk mode is the default; a bare ?wall= is just a badge so
-  // two-wall projections work without cameras).
+  // the view param (?view=ideas|builds — scopes the 2D surfaces + controls to
+  // that wall; the default full view renders everything), and the gesture
+  // layer — which mounts ONLY on an explicit ?gesture=1 or ?fusion= (desk mode
+  // is the default; a bare ?wall= is just a badge so two-wall projections work
+  // without cameras).
   const urlConfig = useMemo(() => {
     if (urlSearch !== undefined) {
       return parseProjectorUrl(urlSearch, "localhost");
@@ -1068,13 +1068,20 @@ export function ProjectorApp({ initialSnapshot, urlSearch }: ProjectorAppProps) 
       });
   }, [liveMode]);
 
-  // TWO-WALL CONTRACT: every window renders the FULL room. The legacy
-  // ?view=ideas|builds param still parses (old URLs keep working and it labels
-  // the wall badge) but it NEVER filters content any more — both walls show
-  // every idea surface AND the whole build fleet. Only Mock Room hides the 2D
-  // rail/tray (a pure 3D showcase).
+  // PER-WALL CONTRACT: the 3D room scene renders in FULL on every window (each
+  // wall is a different camera vantage of the same shared room), but the 2D
+  // surfaces + controls are scoped by ?view so the two projections stop
+  // duplicating each other: view=ideas (wall A) carries the idea surface +
+  // idea-side controls (tray, suggestion, capture/auto-build, mic, guided
+  // demo), view=builds (wall B) the build surface + build-side controls (rail,
+  // fleet, transcript, QR import, deck/detail overlays), and the default full
+  // view (single-window desk mode) carries everything. Genuinely global chrome
+  // (status readouts, scene controls, help) stays on both walls. Only Mock
+  // Room hides the 2D rail/tray entirely (a pure 3D showcase).
+  const showIdeaSurfaces = view !== "builds";
+  const showBuildSurfaces = view !== "ideas";
   const ideas = snapshot.ideas ?? [];
-  const showIdeaTray = ideas.length > 0;
+  const showIdeaTray = ideas.length > 0 && showIdeaSurfaces;
 
   // 3D constellation input: every ledger candidate as an orb; with an empty
   // ledger, the primary pending suggestion (id null) is the lone orb.
@@ -1260,7 +1267,8 @@ export function ProjectorApp({ initialSnapshot, urlSearch }: ProjectorAppProps) 
           >
             {snapshot.emergencyStopTriggered ? "EMERGENCY STOP" : "ALL CLEAR"}
           </div>
-          {snapshot.muted ? (
+          {/* Idea-side controls (voice → idea pipeline): wall A + full view. */}
+          {showIdeaSurfaces && snapshot.muted ? (
             <button
               type="button"
               className="ctl-button unmute"
@@ -1271,56 +1279,67 @@ export function ProjectorApp({ initialSnapshot, urlSearch }: ProjectorAppProps) 
               {isUnmuting ? "Unmuting" : "Unmute"}
             </button>
           ) : null}
-          <MicControl
-            state={micState}
-            level={micLevel}
-            error={micError}
-            mode={snapshot.mic?.mode}
-            bytesReceived={snapshot.mic?.bytesReceived ?? 0}
-            onToggle={() => void toggleMic()}
-          />
-          <button
-            type="button"
-            className={`ctl-button capture${captureMode ? " on" : ""}`}
-            data-testid="capture-button"
-            data-state={captureMode ? "on" : "off"}
-            aria-pressed={captureMode}
-            onClick={() => void toggleCaptureMode()}
-            title="Idea Capture: detection runs eagerly on every utterance — building stays explicit unless Auto-Build is on."
-          >
-            {captureMode ? "● Capturing" : "Idea Capture"}
-          </button>
-          <button
-            type="button"
-            className={`ctl-button auto-build${autoAccept ? " on" : ""}`}
-            data-testid="auto-build-button"
-            data-state={autoAccept ? "on" : "off"}
-            aria-pressed={autoAccept}
-            onClick={() => void toggleAutoAccept()}
-            title="When on, every detected idea builds itself — no click required."
-          >
-            {autoAccept ? "Auto-Build: ON" : "Auto-Build: OFF"}
-          </button>
-          <button
-            type="button"
-            className="ctl-button qr-import"
-            data-testid="qr-import-button"
-            onClick={() => setQrOpen(true)}
-            title="Show a QR code — scan it on a phone to add a GitHub repo to the wall."
-          >
-            QR Import
-          </button>
-          <button
-            type="button"
-            className={`ctl-button guided-launch${guided !== null ? " on" : ""}`}
-            data-testid="guided-demo-button"
-            data-state={guided !== null ? "on" : "off"}
-            aria-pressed={guided !== null}
-            onClick={enterGuidedDemo}
-            title="Guided demo (kickoff phase): point, record, say an idea, watch three mock concepts race, then decide on the pitch deck. Restarts from step 1."
-          >
-            Guided Demo
-          </button>
+          {showIdeaSurfaces ? (
+            <MicControl
+              state={micState}
+              level={micLevel}
+              error={micError}
+              mode={snapshot.mic?.mode}
+              bytesReceived={snapshot.mic?.bytesReceived ?? 0}
+              onToggle={() => void toggleMic()}
+            />
+          ) : null}
+          {showIdeaSurfaces ? (
+            <button
+              type="button"
+              className={`ctl-button capture${captureMode ? " on" : ""}`}
+              data-testid="capture-button"
+              data-state={captureMode ? "on" : "off"}
+              aria-pressed={captureMode}
+              onClick={() => void toggleCaptureMode()}
+              title="Idea Capture: detection runs eagerly on every utterance — building stays explicit unless Auto-Build is on."
+            >
+              {captureMode ? "● Capturing" : "Idea Capture"}
+            </button>
+          ) : null}
+          {showIdeaSurfaces ? (
+            <button
+              type="button"
+              className={`ctl-button auto-build${autoAccept ? " on" : ""}`}
+              data-testid="auto-build-button"
+              data-state={autoAccept ? "on" : "off"}
+              aria-pressed={autoAccept}
+              onClick={() => void toggleAutoAccept()}
+              title="When on, every detected idea builds itself — no click required."
+            >
+              {autoAccept ? "Auto-Build: ON" : "Auto-Build: OFF"}
+            </button>
+          ) : null}
+          {/* Build-side control (imports a repo to BUILD): wall B + full view. */}
+          {showBuildSurfaces ? (
+            <button
+              type="button"
+              className="ctl-button qr-import"
+              data-testid="qr-import-button"
+              onClick={() => setQrOpen(true)}
+              title="Show a QR code — scan it on a phone to add a GitHub repo to the wall."
+            >
+              QR Import
+            </button>
+          ) : null}
+          {showIdeaSurfaces ? (
+            <button
+              type="button"
+              className={`ctl-button guided-launch${guided !== null ? " on" : ""}`}
+              data-testid="guided-demo-button"
+              data-state={guided !== null ? "on" : "off"}
+              aria-pressed={guided !== null}
+              onClick={enterGuidedDemo}
+              title="Guided demo (kickoff phase): point, record, say an idea, watch three mock concepts race, then decide on the pitch deck. Restarts from step 1."
+            >
+              Guided Demo
+            </button>
+          ) : null}
           {/* AUDIT (no-mocks): the Mock Room fixture toggle is HIDDEN unless the
               launcher opts in with ?mock=1 (run-room.sh appends it only when
               VIBERSYN_MOCK_ROOM=1). A default room never offers canned decks. */}
@@ -1340,7 +1359,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch }: ProjectorAppProps) 
         </div>
       </header>
 
-      {!mockMode ? <SuggestionRegion pitch={snapshot.suggestion.pitch} /> : null}
+      {!mockMode && showIdeaSurfaces ? <SuggestionRegion pitch={snapshot.suggestion.pitch} /> : null}
 
       <div className={`stage${detailOpen ? " stage-dimmed" : ""}`}>
         <div className="stage-main">
@@ -1353,8 +1372,9 @@ export function ProjectorApp({ initialSnapshot, urlSearch }: ProjectorAppProps) 
           ) : null}
         </div>
 
-        {/* Mock room is a pure 3D showcase — the 2D rail/tray stay hidden. */}
-        {!mockMode ? (
+        {/* Mock room is a pure 3D showcase — the 2D rail/tray stay hidden.
+            The build rail (backends / fleet / transcript) is wall B's surface. */}
+        {!mockMode && showBuildSurfaces ? (
           <aside className="rail">
             <BackendSelector
               backends={backends}
@@ -1488,13 +1508,16 @@ export function ProjectorApp({ initialSnapshot, urlSearch }: ProjectorAppProps) 
         </div>
       ) : null}
 
-      {detailOpen && selectedProcess ? (
+      {detailOpen && selectedProcess && showBuildSurfaces ? (
         <div className="detail-overlay" onClick={closeDetail}>
           <BuildDetail process={selectedProcess} trace={snapshot.trace} onClose={closeDetail} />
         </div>
       ) : null}
 
-      {slideshowUpid !== null
+      {/* The project deck is a build surface (wall B + full view) — with one
+          exception: the guided demo's decide finale opens the pitch deck on
+          whichever wall the demo runs. */}
+      {slideshowUpid !== null && (showBuildSurfaces || guided !== null)
         ? (() => {
             const deckProcess = snapshot.processes.find((candidate) => candidate.upid === slideshowUpid);
             return deckProcess !== undefined ? (
@@ -1508,7 +1531,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch }: ProjectorAppProps) 
             ) : null;
           })()
         : null}
-      {qrOpen ? <QrImport processes={snapshot.processes} onClose={() => setQrOpen(false)} /> : null}
+      {qrOpen && showBuildSurfaces ? <QrImport processes={snapshot.processes} onClose={() => setQrOpen(false)} /> : null}
       {helpOpen ? <HelpOverlay onClose={() => setHelpOpen(false)} gestureMode={gestureMode} /> : null}
       {guided !== null ? (
         <GuidedDemo

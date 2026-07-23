@@ -121,11 +121,13 @@ describe("guided demo overlay", () => {
   });
 });
 
-// TWO-WALL CONTRACT: wall A and wall B both render the COMPLETE room. The
-// legacy ?view=ideas|builds param is accepted (old run-room.sh URLs keep
-// working, and it still labels the wall badge) but it must NEVER filter the
-// scene's node sets or the 2D surfaces.
-describe("both walls render the full scene (legacy ?view is inert)", () => {
+// PER-WALL CONTRACT: the 3D room scene renders in FULL on every window (walls
+// differ by camera vantage, never by scene content), but the 2D surfaces +
+// controls are scoped by ?view so the two projections stop duplicating each
+// other: view=ideas (wall A) carries the idea surface + idea-side controls,
+// view=builds (wall B) the build surface + build-side controls, and the
+// default full view (single-window desk mode) carries everything.
+describe("per-wall scoping: each wall renders ITS surface + ITS controls", () => {
   function sceneCounts(html: string): { ideas: number; trees: number } {
     const ideas = html.match(/data-idea-count="(\d+)"/);
     const trees = html.match(/data-tree-count="(\d+)"/);
@@ -142,7 +144,7 @@ describe("both walls render the full scene (legacy ?view is inert)", () => {
     <ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch="?live=1&wall=B&view=builds" />,
   );
 
-  test("the 3D scene gets identical node sets on wall A, wall B, and the full view", () => {
+  test("the 3D scene stays FULL on wall A, wall B, and the full view (shared room)", () => {
     const full = sceneCounts(fullHtml);
     expect(full.ideas).toBe(demoProjectorSnapshot.ideas?.length ?? -1);
     expect(full.trees).toBe(demoProjectorSnapshot.processes.length);
@@ -150,20 +152,61 @@ describe("both walls render the full scene (legacy ?view is inert)", () => {
     expect(sceneCounts(wallBHtml)).toEqual(full);
   });
 
-  test("?view=ideas (wall A) still renders the whole build fleet", () => {
-    expect(countOccurrences(wallAHtml, 'data-testid="fleet-panel"')).toBe(
-      demoProjectorSnapshot.processes.length,
-    );
-    expect(wallAHtml).toContain("Atlas");
-    expect(wallAHtml).toContain("Cobalt");
-  });
-
-  test("?view=builds (wall B) still renders every idea surface", () => {
-    expect(wallBHtml).toContain('data-testid="idea-tray"');
-    expect(countOccurrences(wallBHtml, 'data-testid="idea-item"')).toBe(
+  test("?view=ideas (wall A): idea surface + idea-side controls, NO build surfaces", () => {
+    // Idea surface: tray with every candidate + the suggestion banner.
+    expect(wallAHtml).toContain('data-testid="idea-tray"');
+    expect(countOccurrences(wallAHtml, 'data-testid="idea-item"')).toBe(
       demoProjectorSnapshot.ideas?.length ?? -1,
     );
-    expect(wallBHtml).toContain('data-region="suggestion"');
+    expect(wallAHtml).toContain('data-region="suggestion"');
+    // Idea-side controls (voice → idea pipeline).
+    expect(wallAHtml).toContain('data-testid="capture-button"');
+    expect(wallAHtml).toContain('data-testid="auto-build-button"');
+    expect(wallAHtml).toContain('data-testid="guided-demo-button"');
+    expect(wallAHtml).toContain('data-testid="mic-control"');
+    // Build surfaces + build-side controls live on wall B only.
+    expect(wallAHtml).not.toContain('data-testid="fleet-panel"');
+    expect(wallAHtml).not.toContain('data-region="transcript"');
+    expect(wallAHtml).not.toContain('data-testid="qr-import-button"');
+  });
+
+  test("?view=builds (wall B): build surface + build-side controls, NO idea surfaces", () => {
+    // Build surface: the whole fleet + transcript rail.
+    expect(countOccurrences(wallBHtml, 'data-testid="fleet-panel"')).toBe(
+      demoProjectorSnapshot.processes.length,
+    );
+    expect(wallBHtml).toContain("Atlas");
+    expect(wallBHtml).toContain("Cobalt");
+    expect(wallBHtml).toContain('data-region="transcript"');
+    // Build-side control.
+    expect(wallBHtml).toContain('data-testid="qr-import-button"');
+    // Idea surfaces + idea-side controls live on wall A only.
+    expect(wallBHtml).not.toContain('data-testid="idea-tray"');
+    expect(wallBHtml).not.toContain('data-region="suggestion"');
+    expect(wallBHtml).not.toContain('data-testid="capture-button"');
+    expect(wallBHtml).not.toContain('data-testid="auto-build-button"');
+    expect(wallBHtml).not.toContain('data-testid="guided-demo-button"');
+    expect(wallBHtml).not.toContain('data-testid="mic-control"');
+  });
+
+  test("global chrome renders on BOTH walls (status readouts + scene controls)", () => {
+    for (const html of [wallAHtml, wallBHtml]) {
+      expect(html).toContain('data-region="status"');
+      expect(html).toContain('data-testid="emergency-status"');
+      expect(html).toContain('data-testid="scene-controls"');
+    }
+  });
+
+  test("the default full view (desk mode) still renders everything", () => {
+    expect(fullHtml).toContain('data-testid="idea-tray"');
+    expect(countOccurrences(fullHtml, 'data-testid="fleet-panel"')).toBe(
+      demoProjectorSnapshot.processes.length,
+    );
+    expect(fullHtml).toContain('data-testid="qr-import-button"');
+    expect(fullHtml).toContain('data-testid="capture-button"');
+    for (const region of REQUIRED_PROJECTOR_REGIONS) {
+      expect(fullHtml).toContain(`data-region="${region}"`);
+    }
   });
 
   test("the wall identity badge still labels each window", () => {

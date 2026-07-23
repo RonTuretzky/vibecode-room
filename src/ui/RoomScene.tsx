@@ -1149,8 +1149,10 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         resetRig();
       }
 
-      // TWO-WALL CONTRACT: every window reconciles the FULL data set — all
-      // ideas AND all builds — regardless of any legacy ?view= URL param.
+      // PER-WALL CONTRACT: the 3D scene reconciles the FULL data set — all
+      // ideas AND all builds — on every window regardless of ?view=. Walls
+      // differ by camera vantage (wallYawSeed), never by scene content; only
+      // the 2D HUD surfaces are view-scoped (see App.tsx).
       const ideaSpecs: IdeaOrbSpec[] =
         ideasRef.current.length > 0
           ? ideasRef.current
