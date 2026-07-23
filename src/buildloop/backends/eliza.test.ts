@@ -150,16 +150,34 @@ describe("ElizaBuildBackend — build()", () => {
     expect(model.calls).toHaveLength(2);
   });
 
-  test("unparseable implement reply fails the mock without throwing", async () => {
+  test("unparseable implement reply gets ONE strict-JSON repair attempt, then fails cleanly", async () => {
     const model = queueModel([
       toJson({ pitch: "P.", spec: "spec" }),
       "sorry, I can only reply in prose today",
+      "still prose, even when asked for strict JSON",
     ]);
     const outDir = await tempOutDir();
     const result = await makeBackend(model).build(makeRequest({ outDir }));
 
     expect(result.ok).toBe(false);
     expect(result.error).toContain("implement stage");
+    // plan + implement + the single nudged repair attempt — never more.
+    expect(model.calls).toHaveLength(3);
+    expect(model.calls[2]!.prompt).toContain("strictly valid JSON");
+  });
+
+  test("unparseable implement reply recovers when the strict-JSON repair parses", async () => {
+    const model = queueModel([
+      toJson({ pitch: "P.", spec: "spec" }),
+      "prose that breaks JSON.parse",
+      toJson({ files: { "index.html": "<html>repaired mock</html>" } }),
+    ]);
+    const outDir = await tempOutDir();
+    const result = await makeBackend(model).build(makeRequest({ outDir }));
+
+    expect(result.ok).toBe(true);
+    expect(result.entrypoint).toBe(ELIZA_ENTRYPOINT);
+    await expect(Bun.file(join(outDir, "index.html")).text()).resolves.toBe("<html>repaired mock</html>");
   });
 
   test("abort mid-call resolves ok:false error:aborted well within the stop budget", async () => {

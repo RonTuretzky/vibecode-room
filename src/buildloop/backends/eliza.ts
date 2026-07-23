@@ -663,7 +663,7 @@ export class ElizaBuildBackend implements BuildBackend {
     signal.throwIfAborted();
 
     onProgress({ label: "mocking", percent: 40, detail: truncate(plan.summary, 120) });
-    const implemented = parseFilesContent(
+    let implemented = parseFilesContent(
       extractJsonContent(
         await generate("implement", {
           headline: plan.summary,
@@ -671,6 +671,25 @@ export class ElizaBuildBackend implements BuildBackend {
         }),
       ),
     );
+    if (implemented === null) {
+      // Temperature-0 means a same-prompt re-run reproduces the same broken
+      // output — so the ONE in-stage repair attempt nudges the prompt instead
+      // (strict-JSON reminder appended to the spec), which reliably lands a
+      // different, parseable completion.
+      signal.throwIfAborted();
+      onProgress({ label: "mocking (strict JSON retry)", percent: 55, detail: truncate(plan.summary, 120) });
+      implemented = parseFilesContent(
+        extractJsonContent(
+          await generate("implement", {
+            headline: plan.summary,
+            spec:
+              `${plan.spec}\n\nIMPORTANT: your ENTIRE reply must be one strictly valid JSON object — ` +
+              `every newline inside file content escaped as \\n, every quote as \\", no trailing commas, ` +
+              `no markdown fences, no text before or after the JSON.`,
+          }),
+        ),
+      );
+    }
     if (implemented === null) {
       throw new Error("implement stage returned no parseable {files} JSON");
     }
