@@ -580,3 +580,57 @@ describe("gesture dwell-select interaction", () => {
     expect(html).toContain("LOCKED in gesture mode");
   });
 });
+
+// CORNER-LOCKED CONTINUOUS SCENE: with ?gesture=1&wall=A|B the two projector
+// windows stop being independent vantage points and render ONE continuous 3D
+// world wrapping the physical 90° corner — a rigid camera pair (shared eye,
+// yaws exactly 90° apart, 90° horizontal FOV; math unit-tested in
+// corner-lock.test.ts), surfaced on the scene container as data-corner-lock.
+// The desk-only scene chrome (scene-controls cluster + hide menu) would
+// duplicate on both walls, so it does not render in gesture mode at all; the
+// keyboard shortcuts (G / L / F / Z / `) keep working.
+describe("corner-locked two-wall gesture mode", () => {
+  test("?gesture=1&wall=A|B: the scene is corner-locked and content stays FULL on both walls", () => {
+    for (const wall of ["A", "B"]) {
+      const html = renderToStaticMarkup(
+        <ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch={`?live=0&wall=${wall}&gesture=1`} />,
+      );
+      expect(html).toContain('data-corner-lock="true"');
+      // No scene-content filtering: every idea and every build, both windows.
+      expect(html).toContain(`data-idea-count="${demoProjectorSnapshot.ideas?.length ?? -1}"`);
+      expect(html).toContain(`data-tree-count="${demoProjectorSnapshot.processes.length}"`);
+    }
+  });
+
+  test("gesture mode hides the duplicated desk chrome (scene controls) on BOTH walls", () => {
+    for (const wall of ["A", "B"]) {
+      const html = renderToStaticMarkup(
+        <ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch={`?live=0&wall=${wall}&gesture=1`} />,
+      );
+      expect(html).not.toContain('data-testid="scene-controls"');
+      expect(html).not.toContain('data-testid="scene-mode-button"');
+      expect(html).not.toContain('data-testid="scene-zen-button"');
+      expect(html).not.toContain('data-testid="hide-menu"');
+    }
+  });
+
+  test("desk mode + camera-less wall windows keep the scene controls and stay unlocked", () => {
+    const desk = renderToStaticMarkup(<ProjectorApp initialSnapshot={demoProjectorSnapshot} />);
+    expect(desk).toContain('data-testid="scene-controls"');
+    expect(desk).toContain('data-corner-lock="false"');
+    // A bare two-wall projection without cameras (?wall= but no gesture) keeps
+    // its independent per-window vantage + desk controls.
+    const wallOnly = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch="?live=1&wall=A&view=ideas" />,
+    );
+    expect(wallOnly).toContain('data-testid="scene-controls"');
+    expect(wallOnly).toContain('data-corner-lock="false"');
+    // ?gesture=1 with NO wall (single-window gesture demo): the dwell layer
+    // mounts and desk chrome hides, but there is no pair to corner-lock into.
+    const gestureNoWall = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch="?live=0&gesture=1" />,
+    );
+    expect(gestureNoWall).toContain('data-corner-lock="false"');
+    expect(gestureNoWall).not.toContain('data-testid="scene-controls"');
+  });
+});

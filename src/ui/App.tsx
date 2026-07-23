@@ -1176,6 +1176,12 @@ export function ProjectorApp({ initialSnapshot, urlSearch }: ProjectorAppProps) 
   // ?dwell=mouse mounts the same dwell layer driven by the mouse (testing/
   // accessibility) with the OS cursor and drag-orbit left intact.
   const gestureMode = urlConfig.gesture !== null;
+  // CORNER LOCK: in gesture mode with an explicit wall, the two wall windows
+  // stop being independent vantage points and become a RIGID camera pair
+  // rendering ONE continuous world around the physical 90° corner — shared eye
+  // point, yaws exactly 90° apart, 90° horizontal FOV per window, no camera
+  // animation (see corner-lock.ts). Scene CONTENT stays full on both windows.
+  const cornerLock = gestureMode && urlConfig.wall !== null;
   const dwellLayerOn = gestureMode || urlConfig.dwell === "mouse";
   // AUDIT (no-mocks): the Mock Room toggle renders ONLY behind ?mock=1.
   const mockRoomEnabled = urlConfig.mock;
@@ -1194,6 +1200,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch }: ProjectorAppProps) 
         mode={sceneMode}
         layout={sceneLayout}
         wall={urlConfig.wall}
+        cornerLock={cornerLock}
         fitSignal={fitSignal}
         focusUpid={
           guided !== null && (guided.step === "race" || guided.step === "decide")
@@ -1394,7 +1401,12 @@ export function ProjectorApp({ initialSnapshot, urlSearch }: ProjectorAppProps) 
         ) : null}
       </div>
 
-      {/* Scene controls (visualizer parity): mode / fit / hide / zen. */}
+      {/* Scene controls (visualizer parity): mode / fit / hide / zen. DESK
+          affordances only — in gesture mode they would duplicate on both walls
+          of the corner pair (and dwell-selecting them per-window could desync
+          the locked cameras' render styles), so they do not render at all
+          there; the keyboard shortcuts (G / L / F / Z / `) still work. */}
+      {gestureMode ? null : (
       <div className="scene-controls" data-testid="scene-controls">
         <button
           type="button"
@@ -1447,8 +1459,11 @@ export function ProjectorApp({ initialSnapshot, urlSearch }: ProjectorAppProps) 
           ◉ Zen
         </button>
       </div>
+      )}
 
-      {hideMenuOpen ? (
+      {/* Hide/unhide menu: a desk affordance like the scene controls above —
+          never rendered in gesture mode (it would duplicate on both walls). */}
+      {hideMenuOpen && !gestureMode ? (
         <div className="hide-menu" data-testid="hide-menu">
           <div className="rail-title-row">
             <h3 className="rail-title">Hide / Unhide</h3>

@@ -17,7 +17,10 @@ export interface BackendSelectorProps {
   onToggle: (id: string, enabled: boolean) => void;
 }
 
-export function BackendSelector({ backends, onToggle }: BackendSelectorProps) {
+export function BackendSelector({ backends: allBackends, onToggle }: BackendSelectorProps) {
+  // The eliza backend is legacy — hidden from the wall entirely (the server
+  // may still report it; it just can't be toggled from the room UI).
+  const backends = allBackends.filter((backend) => backend.id !== "eliza");
   if (backends.length === 0) {
     return null;
   }
