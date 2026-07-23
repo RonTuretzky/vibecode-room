@@ -28,6 +28,11 @@ import { SmithersBuildBackend } from "../buildloop/backends/smithers";
 import { NativeBuildBackend } from "../buildloop/backends/native";
 import { ElizaBuildBackend } from "../buildloop/backends/eliza";
 import { generateSlideshow } from "../slideshow/generator";
+import { appendTakeHomeSlide } from "../slideshow/template";
+import { publishDeck, resolveGitHubPat, type PublishDeckFn } from "../publish/gh-pages";
+import { qrCodeSvg } from "../publish/qr";
+import { readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { selectSummarizer } from "../audio/summarizer";
 import type { HotLoopSummaryLLM } from "../audio/output-policy";
 import { OnboardingGlue } from "./onboarding-glue";
@@ -265,6 +270,13 @@ export interface ProjectorRuntimeOptions {
   // under (the vibersyn-process workflow's contract-fixed output root). Defaults
   // to <cwd>/artifacts/vibersyn-runs. Tests point it at a temp dir.
   executionArtifactsRoot?: string;
+  // GitHub Pages deck publisher seam (src/publish/gh-pages). Fired once per
+  // kicked-off idea, fire-and-forget, after its FIRST pitch deck lands; the
+  // resolved public URL becomes the process's publishedUrl + take-home QR.
+  // Default: the real REST publisher (PAT from env — publishing is cleanly
+  // disabled with a trace when no PAT resolves). Tests inject a fake; null
+  // disables publishing entirely.
+  publishDeck?: PublishDeckFn | null;
 }
 
 export async function createProjectorRuntime(
@@ -396,6 +408,16 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   // stop); this map carries the import-only display facts — the display-cased
   // callsign, the task line, and the source URL the projector links to.
   readonly #imports = new Map<string, { url: string; callsign: string; task: string }>();
+  // TAKE-HOME PUBLISHING (GitHub Pages). `#publishDeckFn` is the injected/real
+  // publisher (null = disabled); `#publishKicked` guards ONE publish attempt
+  // per kicked-off UPID; `#deckDirs` remembers every generated local deck dir
+  // (upid -> backend -> …/slideshow) so the confirmed publish can append the
+  // take-home QR slide to each; `#published` holds the confirmed-200 Pages URL
+  // + server-generated QR SVG the snapshot exposes per process.
+  readonly #publishDeckFn: PublishDeckFn | null;
+  readonly #publishKicked = new Set<string>();
+  readonly #deckDirs = new Map<string, Map<string, string>>();
+  readonly #published = new Map<string, { url: string; qrSvg: string; repo: string }>();
   // Idea detection wiring. `#detectionMode` records which backend was selected
   // (host-claude | heuristic | smithers | injected) for the degradation notice;
   // `#detectionPrimaryId` is the candidate currently surfaced as the bubble (so a
@@ -528,11 +550,16 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       backends: options.buildBackends ?? [new SmithersBuildBackend(), new NativeBuildBackend(), new ElizaBuildBackend()],
       env,
     });
+    this.#publishDeckFn = options.publishDeck !== undefined ? options.publishDeck : publishDeck;
     this.buildOrchestrator = new BuildOrchestrator({
       selector: this.buildSelector,
       buildsRoot: options.buildsRoot,
       slideshow: async (input) => {
         await generateSlideshow(input, { signal: input.signal });
+        // Take-home publishing rides the deck: the FIRST deck of a kickoff
+        // fires the fire-and-forget GitHub Pages publish; every deck (incl.
+        // steer regenerations) gets the QR slide once the publish confirmed.
+        this.onDeckGenerated(input.upid, input.backend, input.outDir);
       },
       onUpdate: () => this.publish(),
     });
@@ -2106,6 +2133,116 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     return ideaTrayFromCandidates(this.detection.candidates());
   }
 
+  // --- Take-home publishing (GitHub Pages + QR) -----------------------------
+
+  // Called by the orchestrator's slideshow hook after every successful deck
+  // generation. Remembers the deck dir, re-appends the QR slide when this UPID
+  // already published (steer re-runs regenerate the deck without it), and
+  // kicks the one-shot fire-and-forget publish on the FIRST deck. Never blocks
+  // the kickoff: everything network-shaped is void-ed with its own traces.
+  private onDeckGenerated(upid: string, backend: string, outDir: string): void {
+    const deckDir = join(outDir, "slideshow");
+    let decks = this.#deckDirs.get(upid);
+    if (decks === undefined) {
+      decks = new Map();
+      this.#deckDirs.set(upid, decks);
+    }
+    decks.set(backend, deckDir);
+    const published = this.#published.get(upid);
+    if (published !== undefined) {
+      void this.appendQrSlideToLocalDeck(deckDir, published);
+      return;
+    }
+    this.kickDeckPublish(upid, backend, outDir, deckDir);
+  }
+
+  // ONE publish attempt per kicked-off idea. No PAT in the environment →
+  // publishing is cleanly disabled with an explicit trace (never an error).
+  private kickDeckPublish(upid: string, backend: string, mockDir: string, deckDir: string): void {
+    if (this.#publishKicked.has(upid) || this.#publishDeckFn === null) {
+      return;
+    }
+    this.#publishKicked.add(upid);
+    const correlationId = `corr-publish-${upid}`;
+    if (resolveGitHubPat(this.#env) === null) {
+      this.recordExternalTrace({
+        level: "info",
+        event: "process.publish.disabled",
+        sessionId: this.sessionId,
+        correlationId,
+        upid,
+        latencyMs: 0,
+        meta: {
+          reason: "no-github-pat",
+          hint: "set VIBERSYN_GITHUB_PAT (or GITHUB_PAT / GH_TOKEN) to publish pitch decks to GitHub Pages",
+        },
+      });
+      return;
+    }
+    // The repo is named after the INFERRED PROJECT NAME: the LLM-upgraded
+    // title when the fire-and-forget namer has resolved by now, else the
+    // deterministic title; the spoken handle is only the slug fallback.
+    const record = this.registry.records().find((process) => process.upid === upid);
+    const startedAtMs = this.#clock();
+    const publisher = this.#publishDeckFn;
+    void publisher(
+      {
+        upid,
+        handle: record?.callsign ?? null,
+        title: record?.title ?? null,
+        deckDir,
+        mockDirs: { [backend]: mockDir },
+      },
+      { env: this.#env },
+    )
+      .then(async (result) => {
+        const qrSvg = await qrCodeSvg(result.url);
+        const published = { url: result.url, qrSvg, repo: result.repo };
+        this.#published.set(upid, published);
+        this.recordExternalTrace({
+          level: "info",
+          event: "process.published",
+          sessionId: this.sessionId,
+          correlationId,
+          upid,
+          latencyMs: this.#clock() - startedAtMs,
+          meta: { url: result.url, repo: result.repo, login: result.login, filesUploaded: result.filesUploaded },
+        });
+        // Every local deck generated so far gains the final take-home slide.
+        for (const dir of this.#deckDirs.get(upid)?.values() ?? []) {
+          await this.appendQrSlideToLocalDeck(dir, published);
+        }
+        this.publish();
+      })
+      .catch((error: unknown) => {
+        this.recordExternalTrace({
+          level: "warn",
+          event: "process.publish.failed",
+          sessionId: this.sessionId,
+          correlationId,
+          upid,
+          latencyMs: this.#clock() - startedAtMs,
+          meta: { error: error instanceof Error ? error.message : String(error) },
+        });
+      });
+  }
+
+  // Append the take-home QR slide to one local deck on disk. Idempotent (the
+  // slide carries a marker) and best-effort: a halted build may have dropped
+  // the directory, and the deck is garnish — never a reason to fail anything.
+  private async appendQrSlideToLocalDeck(deckDir: string, published: { url: string; qrSvg: string }): Promise<void> {
+    try {
+      const indexPath = join(deckDir, "index.html");
+      const html = await readFile(indexPath, "utf8");
+      const patched = appendTakeHomeSlide(html, { url: published.url, qrSvg: published.qrSvg });
+      if (patched !== html) {
+        await writeFile(indexPath, patched, "utf8");
+      }
+    } catch {
+      // Deck gone (halt/emergency) — nothing to take home.
+    }
+  }
+
   private processSnapshots(): Array<BuildloopProcess & { execution: ExecutionSnapshot | null }> {
     const demoByUpid = new Map(this.#demoProcesses.map((process) => [process.upid, process]));
 
@@ -2139,6 +2276,11 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       // events) -> built with the full-app artifacts preview. A dead process
       // shows no lane — halt tore the preview down.
       const execution: ExecutionSnapshot | null = record.state === "dead" ? null : this.registry.execution(record.upid);
+      // TAKE-HOME publish surface: the confirmed-200 GitHub Pages URL + the
+      // server-generated QR SVG the wall renders ("scan to take it home").
+      // Deliberately survives a halt — the published page is a public
+      // artifact, not a room-local server that tore down.
+      const published = this.#published.get(record.upid) ?? null;
       return {
         upid: record.upid,
         runId: record.runId,
@@ -2173,6 +2315,8 @@ class LiveProjectorRuntime implements ProjectorRuntime {
         lastOutput: record.state === "dead" ? "Halted by emergency stop." : live?.lastOutput ?? demo?.lastOutput ?? record.lastAction,
         lastAction: record.lastAction === "spawn" && demo !== undefined ? demo.events[0] ?? record.lastAction : record.lastAction,
         events: record.state === "dead" ? [...(demo?.events ?? []), "halted"] : demo?.events ?? [record.lastAction],
+        publishedUrl: published?.url ?? null,
+        publishedQrSvg: published?.qrSvg ?? null,
         ...(imported === undefined ? {} : { source: { kind: "github-import" as const, url: imported.url } }),
       };
     });

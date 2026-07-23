@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import {
+  appendTakeHomeSlide,
   escapeHtml,
   renderSlideshowHtml,
+  TAKE_HOME_SLIDE_MARKER,
   type Slide,
   type SlideDecision,
   type SlideMock,
@@ -241,5 +243,50 @@ describe("renderSlideshowHtml — decision slide", () => {
     expect(html).not.toContain("<img");
     expect(html).not.toContain('" onmouseover="');
     expect(html).not.toContain("<b>done</b>");
+  });
+});
+
+describe("appendTakeHomeSlide", () => {
+  const QR = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 37 37"><path d="M0 0"/></svg>';
+  const URL = "https://roomtester.github.io/snow-sip-calculator/";
+  const baseDeck = () =>
+    renderSlideshowHtml({
+      title: "Snow — pitch",
+      footer: "upid-1 · native",
+      slides: [
+        { kicker: "k1", title: "one" },
+        { kicker: "k2", title: "two" },
+      ],
+    });
+
+  test("appends a final QR slide + nav dot before the deck bar", () => {
+    const out = appendTakeHomeSlide(baseDeck(), { url: URL, qrSvg: QR });
+    expect(out).toContain(TAKE_HOME_SLIDE_MARKER);
+    expect(out).toContain(QR);
+    expect(out).toContain(`href="${URL}"`);
+    // The new section sits BEFORE the deck bar, so it is the last slide.
+    const sectionAt = out.indexOf(TAKE_HOME_SLIDE_MARKER);
+    const footerAt = out.indexOf('<footer class="deckbar">');
+    expect(sectionAt).toBeGreaterThan(-1);
+    expect(sectionAt).toBeLessThan(footerAt);
+    // One more slide section and one more dot than the base deck.
+    const count = (html: string, needle: string) => html.split(needle).length - 1;
+    expect(count(out, "data-slide")).toBe(count(baseDeck(), "data-slide") + 1);
+    expect(count(out, "data-dot")).toBe(count(baseDeck(), "data-dot") + 1);
+  });
+
+  test("is idempotent — a deck never accumulates duplicate take-home slides", () => {
+    const once = appendTakeHomeSlide(baseDeck(), { url: URL, qrSvg: QR });
+    const twice = appendTakeHomeSlide(once, { url: URL, qrSvg: QR });
+    expect(twice).toBe(once);
+  });
+
+  test("the Pages URL is HTML-escaped; a non-deck document passes through untouched", () => {
+    const out = appendTakeHomeSlide(baseDeck(), { url: 'https://x.test/"><script>', qrSvg: QR });
+    expect(out).not.toContain('href="https://x.test/"><script>');
+    expect(out).toContain("&quot;&gt;&lt;script&gt;");
+    expect(appendTakeHomeSlide("<html><body>not a deck</body></html>", { url: URL, qrSvg: QR })).toBe(
+      "<html><body>not a deck</body></html>",
+    );
   });
 });

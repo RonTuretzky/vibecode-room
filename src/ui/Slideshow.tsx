@@ -3,6 +3,7 @@ import type { ProjectorProcess } from "./types";
 import { buildsOf } from "./buildloop";
 import type { LifecycleAction } from "./buildloop";
 import { BuildChips, ExecutionChip, ProcessControls } from "./BuildChips";
+import { TakeHomeQr } from "./TakeHomeQr";
 import { executionOf, stageOf } from "./stage";
 import type { DecisionChoice } from "./stage";
 
@@ -136,6 +137,11 @@ export function Slideshow({ process, onLifecycle, onClose, initialBackend = null
               ) : null}
             </h2>
           </div>
+          {/* Deck-HUD take-home QR: the published Pages URL, scannable from a
+              phone at projector distance. */}
+          {typeof process.publishedUrl === "string" && typeof process.publishedQrSvg === "string" ? (
+            <TakeHomeQr url={process.publishedUrl} qrSvg={process.publishedQrSvg} size="deck" />
+          ) : null}
           <button type="button" className="ctl-button" onClick={onClose} title="Close (Esc)">
             ✕
           </button>

@@ -11,6 +11,7 @@ import { QrImport } from "./QrImport";
 import { HelpOverlay } from "./HelpOverlay";
 import { BackendSelector } from "./BackendSelector";
 import { BuildChips, CommissionButton, ExecutionChip, ProcessControls } from "./BuildChips";
+import { TakeHomeQr } from "./TakeHomeQr";
 import { backendsOf, buildsOf, lifecycleActionsFor, looksLikeSnapshot } from "./buildloop";
 import type { BuildloopSnapshot, LifecycleAction } from "./buildloop";
 import { executionOf, parseDeckDecisionMessage, stageOf } from "./stage";
@@ -1683,6 +1684,11 @@ function FleetPanel({
             <p className="fleet-action">↳ {process.lastAction}</p>
             <BuildChips builds={builds} stage={stage} />
             {execution !== null ? <ExecutionChip execution={execution} /> : null}
+            {/* Take-home QR: the published deck's Pages URL, scannable from a
+                phone at projector distance. */}
+            {typeof process.publishedUrl === "string" && typeof process.publishedQrSvg === "string" ? (
+              <TakeHomeQr url={process.publishedUrl} qrSvg={process.publishedQrSvg} size="card" />
+            ) : null}
             <div className="fleet-actions-row">
               <ProcessControls upid={process.upid} state={process.state} onLifecycle={onLifecycle} />
               {commissionable ? (

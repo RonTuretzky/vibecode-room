@@ -44,6 +44,12 @@ export interface ProjectorProcess {
     kind: "github-import";
     url: string;
   };
+  // TAKE-HOME publish surface: once this idea's pitch deck is published to
+  // GitHub Pages (confirmed 200), the public URL and the server-generated QR
+  // SVG that encodes it. The wall renders the SVG directly ("scan to take it
+  // home") — no client-side QR dependency. Null/absent until published.
+  publishedUrl?: string | null;
+  publishedQrSvg?: string | null;
 }
 
 // One candidate in the idea tray: the full ledger surfaced to the projector, not

@@ -580,6 +580,17 @@ body {
   font-size: clamp(1rem, 1.8vw, 1.3rem);
 }
 .decision-status.ok { color: var(--ok); }
+.take-home-row { display: flex; align-items: center; gap: 3rem; flex-wrap: wrap; }
+.take-home-qr {
+  flex: 0 0 auto;
+  width: clamp(220px, 34vh, 360px);
+  padding: 1.1rem;
+  background: #fff;
+  border-radius: 18px;
+}
+.take-home-qr svg { display: block; width: 100%; height: auto; }
+.take-home-copy { flex: 1 1 320px; }
+.take-home-url a { color: var(--accent); word-break: break-all; }
 .deckbar {
   position: fixed;
   left: 0;
@@ -608,6 +619,60 @@ body {
 }
 .dot.active { background: var(--accent); }
 .counter { color: var(--accent); min-width: 4ch; text-align: right; }`;
+
+// --- Take-home slide (appended AFTER publish confirms) -----------------------
+
+// Marker attribute on the appended section; its presence makes the append
+// idempotent (steer re-runs regenerate the deck, and the composition
+// re-patches — a deck must never accumulate duplicate take-home slides).
+export const TAKE_HOME_SLIDE_MARKER = "data-take-home-slide";
+
+export interface TakeHomeSlideInput {
+  // The confirmed-200 public GitHub Pages URL.
+  url: string;
+  // Server-generated QR SVG encoding that URL (src/publish/qr.ts). Injected
+  // RAW (not escaped) — it is our own trusted generator output, never user text.
+  qrSvg: string;
+}
+
+// Append the "take it home" QR slide to an ALREADY-RENDERED local deck: a new
+// final <section data-slide> before the deck bar plus one nav dot. The deck
+// controller counts slides/dots dynamically at load, so navigation, counter,
+// and hash sync all pick the new slide up with zero script changes. Returns
+// the input unchanged when the slide is already present or the document does
+// not look like a deck.
+export function appendTakeHomeSlide(html: string, input: TakeHomeSlideInput): string {
+  if (html.includes(TAKE_HOME_SLIDE_MARKER)) {
+    return html;
+  }
+  const footerMarker = '    <footer class="deckbar">';
+  const footerIndex = html.indexOf(footerMarker);
+  if (footerIndex === -1) {
+    return html;
+  }
+  const url = escapeHtml(input.url);
+  const section = [
+    `    <section class="slide take-home" data-slide ${TAKE_HOME_SLIDE_MARKER} aria-label="Take it home">`,
+    '      <p class="kicker">Take it home</p>',
+    '      <h1 class="headline">Scan to take this pitch with you</h1>',
+    '      <div class="take-home-row">',
+    `        <div class="take-home-qr" data-take-home-qr>${input.qrSvg}</div>`,
+    '        <div class="take-home-copy">',
+    '          <p class="para">This deck is published as a public page — the idea, the concept, and the mock gallery ride home in your pocket.</p>',
+    `          <p class="para take-home-url"><a href="${url}">${url}</a></p>`,
+    "        </div>",
+    "      </div>",
+    "    </section>",
+    "",
+  ].join("\n");
+  let out = html.slice(0, footerIndex) + section + html.slice(footerIndex);
+  const dotAnchor = '\n      </span>\n      <span class="counter"';
+  out = out.replace(
+    dotAnchor,
+    '\n        <button class="dot" data-dot type="button" aria-label="Go to the take-home slide"></button>' + dotAnchor,
+  );
+  return out;
+}
 
 // Render the complete, self-contained pitch-deck document.
 export function renderSlideshowHtml(options: SlideshowTemplateOptions): string {
