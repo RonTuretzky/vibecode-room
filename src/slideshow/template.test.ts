@@ -7,6 +7,7 @@ import {
   type Slide,
   type SlideDecision,
   type SlideMock,
+  type SlideQuestion,
 } from "./template";
 
 describe("escapeHtml", () => {
@@ -243,6 +244,134 @@ describe("renderSlideshowHtml — decision slide", () => {
     expect(html).not.toContain("<img");
     expect(html).not.toContain('" onmouseover="');
     expect(html).not.toContain("<b>done</b>");
+  });
+});
+
+const QUESTIONS: SlideQuestion[] = [
+  { id: "q-repo", prompt: "Which repo?", answers: ["Slack bot", "Notes doc"] },
+  { id: "q-scope", prompt: "Real money or points first?", answers: ["Real money", "Points"] },
+];
+
+function renderWithQuestions(): string {
+  return renderSlideshowHtml({
+    title: "My Pitch",
+    footer: "upid-3 · native",
+    slides: PITCH_SLIDES,
+    questions: QUESTIONS,
+    answerEndpoint: "/api/process/upid-3/answer",
+  });
+}
+
+describe("renderSlideshowHtml — swipe-to-answer question cards", () => {
+  test("renders one question card per question, inserted before the decision slide", () => {
+    const html = renderWithQuestions();
+    const cards = html.match(/<section class="slide question[^"]*" data-slide data-question-slide/gu) ?? [];
+    expect(cards).toHaveLength(2);
+    expect(html).toContain("Which repo?");
+    expect(html).toContain("Real money or points first?");
+    // Questions come BEFORE the how-to-continue decision group (answer, then decide).
+    const firstQuestionAt = html.indexOf("data-question-slide");
+    const decisionsAt = html.indexOf("data-decisions");
+    expect(firstQuestionAt).toBeGreaterThan(-1);
+    expect(firstQuestionAt).toBeLessThan(decisionsAt);
+  });
+
+  test("each answer is a plain <button> carrying its label, questionId group + dwell hook", () => {
+    const html = renderWithQuestions();
+    expect(html).toContain(
+      'data-answers data-question-id="q-repo" data-answer-endpoint="/api/process/upid-3/answer"',
+    );
+    expect(html).toContain('data-answer="Slack bot" data-dwell="answer-q-repo-0"');
+    expect(html).toContain('data-answer="Notes doc" data-dwell="answer-q-repo-1"');
+    const answers = html.match(/<button class="answer" type="button" data-answer=/gu) ?? [];
+    expect(answers).toHaveLength(4);
+    // Per-card status line for the local echo / confirmation.
+    expect(html).toContain('data-answer-status role="status" aria-live="polite"');
+  });
+
+  test("counter, nav dots, and sections all grow to include the question cards", () => {
+    const html = renderWithQuestions();
+    // 4 content slides + 2 questions = 6.
+    expect(html).toContain("data-counter>1 / 6");
+    const dots = html.match(/<button class="dot[^"]*" data-dot/gu) ?? [];
+    expect(dots).toHaveLength(6);
+    const sections = html.match(/<section class="slide[^"]*" data-slide/gu) ?? [];
+    expect(sections).toHaveLength(6);
+  });
+
+  test("selecting an answer POSTs {questionId, answer} as JSON to the group endpoint", () => {
+    const html = renderWithQuestions();
+    expect(html).toContain("questionId: questionId, answer: answer");
+    expect(html).toContain('"content-type": "application/json"');
+    // The endpoint the fetch targets is the per-group data-answer-endpoint.
+    expect(html).toContain('group.getAttribute("data-answer-endpoint")');
+    expect(html).toContain('group.getAttribute("data-question-id")');
+  });
+
+  test("question prompts and answer labels are HTML-escaped", () => {
+    const evil: SlideQuestion = { id: "x", prompt: "<b>pick?</b>", answers: ['" onx="', "<i>ok</i>"] };
+    const html = renderSlideshowHtml({ title: "t", footer: "f", slides: [], questions: [evil], answerEndpoint: "/a" });
+    expect(html).not.toContain("<b>pick?</b>");
+    expect(html).not.toContain("<i>ok</i>");
+    expect(html).not.toContain('" onx="');
+    expect(html).toContain("&lt;b&gt;pick?&lt;/b&gt;");
+  });
+
+  test("absent, empty, or all-blank questions add no question slides (tolerant)", () => {
+    // Match rendered DOM markup — the deck script itself references the attribute
+    // names, so we assert on the <section> that only a real card produces.
+    const none = renderSlideshowHtml({ title: "t", footer: "f", slides: PITCH_SLIDES });
+    expect(none).not.toContain('<section class="slide question');
+    const empty = renderSlideshowHtml({ title: "t", footer: "f", slides: PITCH_SLIDES, questions: [] });
+    expect(empty).not.toContain('<section class="slide question');
+    const junk = renderSlideshowHtml({
+      title: "t",
+      footer: "f",
+      slides: [],
+      questions: [{ id: "q", prompt: "hi", answers: ["  ", ""] }],
+    });
+    expect(junk).not.toContain('<section class="slide question');
+  });
+
+  test("with no answerEndpoint the card still renders and the POST is a guarded no-op", () => {
+    const html = renderSlideshowHtml({ title: "t", footer: "f", slides: [], questions: QUESTIONS });
+    expect(html).toContain('<section class="slide question');
+    // The group renders WITHOUT a data-answer-endpoint attribute.
+    expect(html).toContain('<div class="answers" data-answers data-question-id="q-repo">');
+    // Missing endpoint short-circuits before any fetch (graceful standalone copy).
+    expect(html).toContain("if (!endpoint)");
+  });
+});
+
+describe("renderSlideshowHtml — swipe navigation + standalone safety", () => {
+  test("wires horizontal swipe (touch + pointer + mouse-drag) slide navigation", () => {
+    const html = renderPitch();
+    expect(html).toContain("SWIPE_MIN");
+    expect(html).toContain("window.PointerEvent");
+    expect(html).toContain('"pointerdown"');
+    expect(html).toContain('"pointerup"');
+    // Touch + mouse fallback for older iOS Safari (no Pointer Events).
+    expect(html).toContain('"touchstart"');
+    expect(html).toContain('"mousedown"');
+    // Momentum-free: one clear horizontal drag maps to exactly one slide step.
+    expect(html).toContain("show(dx < 0 ? index + 1 : index - 1)");
+  });
+
+  test("the standalone/published deck has no hard localhost or absolute-origin deps", () => {
+    const html = renderSlideshowHtml({
+      title: "Standalone",
+      footer: "upid-3",
+      slides: PITCH_SLIDES,
+      questions: [{ id: "q", prompt: "Which repo?", answers: ["A", "B"] }],
+      answerEndpoint: "/api/process/upid-3/answer",
+    });
+    expect(html).not.toMatch(/localhost/u);
+    expect(html).not.toMatch(/127\.0\.0\.1/u);
+    expect(html).not.toMatch(/https?:\/\//u);
+    // The answer POST swallows both rejections and non-ok responses, so a 404 on
+    // the published GitHub Pages copy never throws.
+    expect(html).toContain("if (!endpoint)");
+    expect(html).toMatch(/\.then\(function \(\) \{\}, function \(\) \{\}\)/u);
   });
 });
 

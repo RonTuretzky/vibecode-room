@@ -78,6 +78,12 @@ export interface GenerateSlideshowInput {
   // shows this lane's own mock via the relative URL "../" (the deck lives at
   // previewUrl + "slideshow/", so "../" is always this lane's live mock).
   mocks?: readonly PitchMock[];
+  // Optional compact digest of a cloned source repo (repo-import kickoffs, see
+  // src/server/repo-clone.ts). Present only for imported projects; when set it
+  // enriches the DETERMINISTIC fallback so a no-model deck grounds itself in the
+  // imported codebase. Absent for spoken-idea kickoffs — the fallback still reads
+  // well without it.
+  repoDigest?: string | null;
 }
 
 // The copy the model (or the deterministic fallback) supplies. Slide 1 (the
@@ -119,6 +125,16 @@ export interface SlideshowArtifact {
 const DEFAULT_TIMEOUT_MS = 8_000;
 const COPY_LINE_MAX = 220;
 const COPY_LINES_MAX = 6;
+// Headline clamp: the slide-2 tagline renders at big type (max-width ~22ch, so
+// it wraps) — this bounds it so a runaway model tagline never overflows.
+const TAGLINE_MAX = 100;
+
+// Retry budget for the production model's HTTP call. Bounded by BOTH the attempt
+// count AND the overall time budget (the combined abort signal): whichever trips
+// first ends the retries and hands over to the deterministic fallback.
+const COPY_MAX_ATTEMPTS = 3;
+const COPY_RETRY_BASE_MS = 250;
+const COPY_RETRY_MAX_MS = 2_000;
 
 // --- Public entrypoint ------------------------------------------------------
 
@@ -144,7 +160,11 @@ export async function generateSlideshow(
   };
   const raw = await callModelWithBudget(model, request, options.timeoutMs ?? DEFAULT_TIMEOUT_MS, signal);
   signal?.throwIfAborted();
-  const { copy, usedModel } = mergeCopy(raw, fallback);
+  const merged = mergeCopy(raw, fallback);
+  // Final clamp guard: bounds every field regardless of source (model OR
+  // fallback), so no line can overflow the slide and no field is ever empty.
+  const copy = clampCopy(merged.copy, fallback);
+  const usedModel = merged.usedModel;
 
   // 2. Render + write. The template escapes everything; we hand it raw text.
   const slides = buildSlides(input, copy);
@@ -168,15 +188,74 @@ export function fallbackCopy(input: GenerateSlideshowInput): SlideshowCopy {
     callsign === null
       ? 'Say "steer it ..." out loud (or use the Steer it button) to reshape it before committing.'
       : `Say "steer ${callsign} ..." out loud (or use the Steer it button) to reshape it before committing.`;
+  // Enrichment lines pulled from whatever the inputs actually carry, capped so
+  // the four load-bearing narrative lines below are always present too.
+  const context: string[] = [];
+  const digestLine = repoDigestHeadline(input.repoDigest);
+  if (digestLine !== null) {
+    // Clamp the enrichment bullet at the source: fallbackCopy is a public export
+    // that callers may consume WITHOUT the final clampCopy pass, so an imported
+    // repo with a huge README block must not yield a slide-overflowing line here.
+    context.push(clampText(`Grounded in the imported repo — ${digestLine}.`, COPY_LINE_MAX));
+  }
+  const concept = [
+    ...context,
+    `Concept first: ${frameworkPhrase(input)} sketched the idea as a clickable mock, not a promise.`,
+    steerLine,
+    "Commission it and the full build spins up — the wall shows it happen live.",
+    "Parked ideas keep their seed in the tray; nothing said in the room is lost.",
+  ].slice(0, COPY_LINES_MAX);
   return {
     tagline: ideaTitle(input.prompt),
-    concept: [
-      "Concept first: each framework sketched the idea as a clickable mock, not a promise.",
-      steerLine,
-      "Commission it and the full build spins up — the wall shows it happen live.",
-      "Parked ideas keep their seed in the tray; nothing said in the room is lost.",
-    ],
+    concept,
   };
+}
+
+// The frameworks that sketched this idea, as a readable subject phrase, drawn
+// from the mock lanes (or this lane's own backend when none are supplied) so a
+// no-model deck names the concrete backends instead of a generic "each framework".
+function frameworkPhrase(input: GenerateSlideshowInput): string {
+  const labels = pitchMocks(input).map((mock) => mock.label);
+  const unique = [...new Set(labels)];
+  if (unique.length <= 1) {
+    const only = unique[0] ?? BACKEND_LABELS[input.backend] ?? input.backend;
+    return `the ${only} framework`;
+  }
+  return `${listPhrase(unique)} each`;
+}
+
+// "a", "a and b", "a, b and c" — an Oxford-free readable join for slide copy.
+function listPhrase(items: readonly string[]): string {
+  if (items.length <= 1) {
+    return items[0] ?? "";
+  }
+  if (items.length === 2) {
+    return `${items[0]} and ${items[1]}`;
+  }
+  return `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
+}
+
+// A single concise line distilled from a repo digest (see src/server/repo-clone.ts:
+// "Top-level files: …", "package.json: name — description", "README excerpt: …").
+// Prefers the package.json line; else the first block. Null when there is nothing.
+function repoDigestHeadline(digest: string | null | undefined): string | null {
+  if (digest === null || digest === undefined) {
+    return null;
+  }
+  const trimmed = digest.trim();
+  if (trimmed.length === 0) {
+    return null;
+  }
+  const blocks = trimmed.split(/\n{2,}/u).map((block) => block.trim());
+  const pkg = blocks.find((block) => /^package\.json:/iu.test(block));
+  const source = pkg ?? blocks[0] ?? trimmed;
+  const oneLine = source
+    .replace(/^package\.json:\s*/iu, "")
+    .replace(/^top-level files:\s*/iu, "top-level: ")
+    .replace(/^readme excerpt:\s*/iu, "")
+    .replace(/\s+/gu, " ")
+    .trim();
+  return oneLine.length === 0 ? null : oneLine;
 }
 
 // Merge raw model output over the fallback, field by field: a field is taken
@@ -188,7 +267,7 @@ export function mergeCopy(raw: unknown, fallback: SlideshowCopy): { copy: Slides
   }
   const copy: SlideshowCopy = { ...fallback };
   let usedModel = false;
-  const tagline = cleanLine(raw.tagline, 120);
+  const tagline = cleanLine(raw.tagline, TAGLINE_MAX);
   if (tagline !== null) {
     copy.tagline = tagline;
     usedModel = true;
@@ -203,20 +282,116 @@ export function mergeCopy(raw: unknown, fallback: SlideshowCopy): { copy: Slides
   return { copy, usedModel };
 }
 
-// Extract a JSON object from model text that may be wrapped in prose or code
-// fences: parse the outermost { ... } span. Null on anything unparseable.
+// Final length/clamp guard applied to the merged copy: bounds every field and
+// GUARANTEES non-empty output. If a field somehow collapses to empty (a garbled
+// fallback, a pathological clamp), the matching fallback field is used — so the
+// template never receives an empty tagline or an empty concept list.
+export function clampCopy(copy: SlideshowCopy, fallback: SlideshowCopy): SlideshowCopy {
+  const tagline = clampText(copy.tagline, TAGLINE_MAX);
+  const concept = (copy.concept ?? [])
+    .map((line) => clampText(line, COPY_LINE_MAX))
+    .filter((line) => line.length > 0)
+    .slice(0, COPY_LINES_MAX);
+  const fallbackConcept = fallback.concept
+    .map((line) => clampText(line, COPY_LINE_MAX))
+    .filter((line) => line.length > 0)
+    .slice(0, COPY_LINES_MAX);
+  return {
+    tagline: tagline.length > 0 ? tagline : clampText(fallback.tagline, TAGLINE_MAX) || "Untitled idea",
+    concept: concept.length > 0 ? concept : fallbackConcept.length > 0 ? fallbackConcept : ["The concept, sketched — commission it or steer it."],
+  };
+}
+
+// Trim, collapse whitespace, and hard-cap a single line. When truncated it breaks
+// on the last word boundary (when one is near the cut) and appends an ellipsis, so
+// a clamped line reads as a clean phrase rather than a mid-word chop.
+function clampText(value: string, maxLength: number): string {
+  const collapsed = value.trim().replace(/\s+/gu, " ");
+  if (collapsed.length <= maxLength) {
+    return collapsed;
+  }
+  const hardCut = collapsed.slice(0, Math.max(1, maxLength - 1));
+  const lastSpace = hardCut.lastIndexOf(" ");
+  const body = lastSpace > maxLength * 0.6 ? hardCut.slice(0, lastSpace) : hardCut;
+  return `${body.replace(/[\s.,;:!?—-]+$/u, "")}…`;
+}
+
+// Extract a JSON object from model text that may be wrapped in prose or markdown
+// code fences. Tolerant in layers: (1) strip fences and parse the whole thing;
+// (2) parse the outermost { ... } span; (3) scan a brace-balanced object from the
+// first "{" (survives trailing prose that contains stray braces). Null on anything
+// unparseable or when the JSON is not an object (e.g. a bare array).
 export function parseModelCopy(content: string): Record<string, unknown> | null {
-  const start = content.indexOf("{");
-  const end = content.lastIndexOf("}");
+  if (typeof content !== "string") {
+    return null;
+  }
+  const stripped = stripCodeFences(content).trim();
+  const direct = tryParseRecord(stripped);
+  if (direct !== null) {
+    return direct;
+  }
+  const start = stripped.indexOf("{");
+  const end = stripped.lastIndexOf("}");
   if (start === -1 || end <= start) {
     return null;
   }
+  const span = tryParseRecord(stripped.slice(start, end + 1));
+  if (span !== null) {
+    return span;
+  }
+  const balanced = extractBalancedObject(stripped, start);
+  return balanced === null ? null : tryParseRecord(balanced);
+}
+
+// Remove markdown code fences (```json … ```, ``` … ```) without touching the
+// JSON inside. Leaves fence-free text untouched.
+function stripCodeFences(content: string): string {
+  return content.replace(/```[a-zA-Z]*\n?/gu, "").replace(/```/gu, "");
+}
+
+function tryParseRecord(text: string): Record<string, unknown> | null {
+  if (text.length === 0) {
+    return null;
+  }
   try {
-    const parsed: unknown = JSON.parse(content.slice(start, end + 1));
+    const parsed: unknown = JSON.parse(text);
     return isRecord(parsed) ? parsed : null;
   } catch {
     return null;
   }
+}
+
+// From the "{" at startIndex, return the substring through its brace-balanced
+// close, respecting string literals and escapes so braces inside strings don't
+// throw off the depth count. Null when the object never closes.
+function extractBalancedObject(text: string, startIndex: number): string | null {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = startIndex; i < text.length; i++) {
+    const char = text[i];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (char === '"') {
+      inString = true;
+    } else if (char === "{") {
+      depth++;
+    } else if (char === "}") {
+      depth--;
+      if (depth === 0) {
+        return text.slice(startIndex, i + 1);
+      }
+    }
+  }
+  return null;
 }
 
 function cleanLine(value: unknown, maxLength: number): string | null {
@@ -413,15 +588,17 @@ const COPY_SYSTEM_PROMPT =
   '{"tagline": string (<=10 word headline for what we would build), ' +
   '"concept": string[] (2-4 bullets pitching the full build)}.';
 
-// Default production model: ONE Cerebras chat/completions call. Null on any
-// miss (no key, HTTP error, unparseable output); errors reject and are
-// converted to null by callModelWithBudget.
+// Default production model: ONE logical Cerebras chat/completions call, with a
+// BOUNDED retry (exponential backoff, honoring Retry-After) on transient
+// failures — 429, 5xx, and network errors. Null on any terminal miss (no key,
+// non-retryable HTTP error, exhausted retries, unparseable output). Aborts
+// (budget elapsed or emergency stop) reject and are converted to null upstream.
 export const cerebrasCopyModel: SlideshowCopyModel = async (request, signal) => {
   const apiKey = process.env.CEREBRAS_API_KEY;
   if (apiKey === undefined || apiKey.trim().length === 0) {
     return null;
   }
-  const response = await fetch(CEREBRAS_CHAT_URL, {
+  const init: RequestInit = {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
     body: JSON.stringify({
@@ -442,15 +619,112 @@ export const cerebrasCopyModel: SlideshowCopyModel = async (request, signal) => 
         },
       ],
     }),
-    signal,
-  });
-  if (!response.ok) {
+  };
+  const response = await fetchWithRetry(fetch, CEREBRAS_CHAT_URL, init, signal);
+  if (response === null || !response.ok) {
     return null;
   }
-  const payload: unknown = await response.json();
-  const content = chatContent(payload);
+  const payload = await response.json().catch(() => null);
+  const content = payload === null ? null : chatContent(payload);
   return content === null ? null : (parseModelCopy(content) as Partial<SlideshowCopy> | null);
 };
+
+export interface RetryFetchOptions {
+  maxAttempts?: number;
+  baseDelayMs?: number;
+  maxDelayMs?: number;
+  // Injectable so tests exercise the backoff sequence with zero real waiting.
+  sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
+}
+
+// Retryable HTTP statuses: rate limits (429) and transient server errors (5xx).
+// Other 4xx (bad key, malformed request) are terminal — retrying can't help.
+function isRetryableStatus(status: number): boolean {
+  return status === 429 || (status >= 500 && status < 600);
+}
+
+// Fetch with bounded exponential backoff. Retries on 429/5xx and transient
+// network errors up to maxAttempts, sleeping between tries (honoring Retry-After
+// when the server sends it). AbortSignal-aware: an abort stops the retries at
+// once — mid-sleep it wakes early, and the next iteration re-throws the abort so
+// the budget wrapper converts it to null (the deterministic fallback). Returns
+// the first ok Response, or null when a terminal status is hit or attempts run out.
+export async function fetchWithRetry(
+  fetchImpl: typeof fetch,
+  url: string,
+  init: RequestInit,
+  signal: AbortSignal,
+  options: RetryFetchOptions = {},
+): Promise<Response | null> {
+  const maxAttempts = Math.max(1, options.maxAttempts ?? COPY_MAX_ATTEMPTS);
+  const baseDelayMs = options.baseDelayMs ?? COPY_RETRY_BASE_MS;
+  const maxDelayMs = options.maxDelayMs ?? COPY_RETRY_MAX_MS;
+  const sleep = options.sleep ?? abortableDelay;
+  for (let attempt = 0; ; attempt++) {
+    signal.throwIfAborted();
+    let response: Response;
+    try {
+      response = await fetchImpl(url, { ...init, signal });
+    } catch (error) {
+      // A caller abort must propagate (emergency stop / budget). A transient
+      // network error retries until the attempt budget is spent.
+      if (signal.aborted) {
+        throw error;
+      }
+      if (attempt + 1 >= maxAttempts) {
+        return null;
+      }
+      await sleep(backoffMs(attempt, baseDelayMs, maxDelayMs), signal);
+      continue;
+    }
+    if (response.ok) {
+      return response;
+    }
+    if (isRetryableStatus(response.status) && attempt + 1 < maxAttempts) {
+      const retryAfter = parseRetryAfterMs(response.headers.get("retry-after"));
+      const delay = retryAfter === null ? backoffMs(attempt, baseDelayMs, maxDelayMs) : Math.min(retryAfter, maxDelayMs);
+      await sleep(delay, signal);
+      continue;
+    }
+    return null;
+  }
+}
+
+// Full-jitter exponential backoff: min(max, base * 2^attempt), then a random
+// point in [half, full] to keep concurrent decks off the endpoint in lockstep.
+function backoffMs(attempt: number, baseDelayMs: number, maxDelayMs: number): number {
+  const capped = Math.min(maxDelayMs, baseDelayMs * 2 ** attempt);
+  return Math.round(capped / 2 + Math.random() * (capped / 2));
+}
+
+// Retry-After as milliseconds. Supports the numeric "seconds" form (the common
+// Cerebras/OpenAI case); HTTP-date form and garbage yield null (fall to backoff).
+function parseRetryAfterMs(header: string | null): number | null {
+  if (header === null) {
+    return null;
+  }
+  const seconds = Number(header.trim());
+  return Number.isFinite(seconds) && seconds >= 0 ? seconds * 1_000 : null;
+}
+
+// A sleep that resolves early (does NOT reject) when the signal aborts, so the
+// retry loop's next throwIfAborted is the single, predictable abort exit point.
+async function abortableDelay(ms: number, signal: AbortSignal): Promise<void> {
+  if (ms <= 0 || signal.aborted) {
+    return;
+  }
+  await new Promise<void>((resolve) => {
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      resolve();
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
 
 function chatContent(payload: unknown): string | null {
   if (!isRecord(payload) || !Array.isArray(payload.choices)) {

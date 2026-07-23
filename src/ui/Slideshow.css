@@ -1,0 +1,208 @@
+/* ============================================================================
+   Project deck POP-UP WINDOW — the in-room slideshow surface. Owned by the
+   slideshow track (Slideshow.tsx). Layered on top of the base slideshow, slide
+   and deck rules in styles.css: this file turns that glass card into a
+   clearly-a-window modal (title bar + big close + dimmed/blurred backdrop) and
+   gives the embedded generated slideshow a large, readable iframe body plus the
+   graceful building/failed/empty states. Overrides use compound selectors so
+   they win regardless of stylesheet import order. Motion is opacity/transform
+   only and freezes under reduced-motion, matching styles.css.
+   ============================================================================ */
+
+/* Dim + gently blur the room behind the window so the pop-up reads as floating
+   over the scene rather than as a full-screen takeover. */
+.detail-overlay.slideshow-overlay {
+  background: rgba(3, 6, 11, 0.55);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+}
+
+/* The window itself: wider than the plain explainer card so the embedded deck
+   is readable at projector distance, but still bounded — a window, not a
+   takeover. */
+.slideshow-card.slideshow-window {
+  width: min(1040px, 94vw);
+  max-height: 88vh;
+  gap: 14px;
+  box-shadow:
+    0 48px 140px rgba(0, 0, 0, 0.62),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+/* --- Window title bar --------------------------------------------------- */
+.slideshow-titlebar {
+  align-items: center;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--glass-line);
+}
+
+.slideshow-titlebar-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.slideshow-titlebar .slideshow-callsign {
+  font-family: var(--mono);
+  letter-spacing: 0.06em;
+}
+
+.slideshow-titlebar .slideshow-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* Big, dwell-operable close X (>=44px hit target). Plain <button>, so the
+   gesture-dwell layer targets it automatically. */
+.ctl-button.slideshow-close {
+  flex: 0 0 auto;
+  align-self: flex-start;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  font-size: 20px;
+  line-height: 1;
+  border-radius: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ctl-button.slideshow-close:hover {
+  border-color: rgba(255, 99, 99, 0.6);
+  color: #ffd9d9;
+  background: rgba(255, 59, 48, 0.12);
+}
+
+/* --- Embedded live deck: the generated interactive slideshow as the body --- */
+.slideshow-window .slide {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.slide-body.slide-live {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.slide-live-frame {
+  width: 100%;
+  height: min(64vh, 680px);
+  min-height: 340px;
+  border: 1px solid var(--glass-line);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.02);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+/* Escape hatch chip: float it over the top-right of the frame so it never
+   steals vertical space from the deck. */
+.slide-live .slide-live-open {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 2;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  background: rgba(7, 16, 24, 0.78);
+}
+
+/* --- Graceful states: opened before a deck exists ----------------------- */
+.slide-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: min(48vh, 460px);
+  border: 1px dashed var(--glass-line);
+  border-radius: 14px;
+  background: rgba(10, 20, 28, 0.4);
+  text-align: center;
+}
+
+.deck-placeholder-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  max-width: 440px;
+  padding: 24px;
+}
+
+.deck-placeholder-inner .slide-title {
+  margin: 0;
+}
+
+.deck-placeholder-note {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--ink-soft);
+}
+
+.placeholder-failed .slide-title {
+  color: var(--c-halted);
+}
+
+.placeholder-failed {
+  border-color: rgba(255, 59, 48, 0.4);
+}
+
+/* Building spinner: a soft pulsing ring. Freezes under reduced-motion. */
+.deck-placeholder-spinner {
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  border: 3px solid rgba(0, 188, 212, 0.2);
+  border-top-color: var(--c-selected);
+  animation: deck-spin 900ms linear infinite;
+}
+
+@keyframes deck-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.deck-placeholder-lanes {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+
+.deck-placeholder-lanes li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 12px;
+  border-radius: 10px;
+  background: rgba(16, 30, 40, 0.55);
+  border: 1px solid var(--glass-line);
+}
+
+.deck-placeholder-lane-label {
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.deck-placeholder-lane-status {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--c-planning);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .deck-placeholder-spinner {
+    animation: none;
+  }
+}

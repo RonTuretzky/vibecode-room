@@ -15,6 +15,10 @@ import type { ContextSpan, DetectionInput, JudgedIdea, TranscriptTurn, Verifiabl
 
 const MAX_PITCH_WORDS = 14;
 const MAX_QUESTIONS = 3;
+// Answer options are packed one "/"-joined string per question (questions[i] ↔
+// answers[i]); the swipe deck fans them back out (see plan-questions.ts). 2-4 is
+// the range the deck renders well — enough to fork, few enough to swipe.
+const MAX_ANSWERS = 4;
 
 // ── few-shot exemplars (compact on purpose; each teaches one failure mode) ────
 const EXEMPLARS = `Example 1 — discussing an EXISTING product (not an idea):
@@ -32,16 +36,16 @@ Example 3 — LOGISTICS (no idea at all):
 [turn-0002] bo: i'll send the invite
 → {"assessments":[]}
 
-Example 4 — an IMPLICIT idea (never says "app"):
+Example 4 — an IMPLICIT idea (never says "app"); ONE sharp data-source fork:
 [turn-0001] amy: the standup notes keep losing people's blockers
 [turn-0002] bo: honestly we could wrap those into one thing that nags whoever's blocking
-→ {"assessments":[{"matchId":null,"category":"proposal","concreteness":2,"buildableAsSoftware":3,"intent":2,"novelty":2,"pitch":"Build a blocker tracker that nags owners from standup notes","startTurn":"turn-0001","endTurn":"turn-0002","quote":"the standup notes keep losing people's blockers honestly we could wrap those into one thing that nags whoever's blocking","questions":["Pull blockers from Slack or the notes doc?"],"answers":["Slack","Notes doc"],"rationale":"a genuine tool proposal phrased implicitly"}]}
+→ {"assessments":[{"matchId":null,"category":"proposal","concreteness":2,"buildableAsSoftware":3,"intent":2,"novelty":2,"pitch":"Build a blocker tracker that nags owners from standup notes","startTurn":"turn-0001","endTurn":"turn-0002","quote":"the standup notes keep losing people's blockers honestly we could wrap those into one thing that nags whoever's blocking","questions":["Where do the blockers come from?"],"answers":["Slack / Standup doc / Jira"],"rationale":"a genuine tool proposal phrased implicitly"}]}
 
-Example 5 — idea FORMS across turns and the room COMMITS:
+Example 5 — idea FORMS across turns and the room COMMITS; TWO forks (scope + style):
 [turn-0001] amy: what if members could stake collateral and work shifts
 [turn-0002] bo: yes and buy ownership shares as they work
 [turn-0003] amy: let's actually build that this week
-→ {"assessments":[{"matchId":null,"category":"proposal","concreteness":2,"buildableAsSoftware":2,"intent":3,"novelty":2,"pitch":"Build member staking with shifts earning ownership shares","startTurn":"turn-0001","endTurn":"turn-0003","quote":"what if members could stake collateral and work shifts yes and buy ownership shares as they work let's actually build that this week","questions":["Real money or points first?"],"answers":["Real money","Points"],"rationale":"proposal elaborated by both speakers, explicit commitment"}]}
+→ {"assessments":[{"matchId":null,"category":"proposal","concreteness":2,"buildableAsSoftware":2,"intent":3,"novelty":2,"pitch":"Build member staking with shifts earning ownership shares","startTurn":"turn-0001","endTurn":"turn-0003","quote":"what if members could stake collateral and work shifts yes and buy ownership shares as they work let's actually build that this week","questions":["Stake with real money or points first?","When does ownership vest?"],"answers":["Real money / Points","Immediately / Over worked shifts"],"rationale":"proposal elaborated by both speakers, explicit commitment"}]}
 
 Example 6 — idea floated then RETRACTED (score the final stance):
 [turn-0001] amy: an app that rates sandwiches by vibe
@@ -52,7 +56,13 @@ Example 6 — idea floated then RETRACTED (score the final stance):
 Example 7 — a KNOWN idea gets retracted later (known: id=idea-42 pitch="Inventory nag bot"):
 [turn-0007] amy: actually scrap the inventory bot thing, we don't have time
 [turn-0008] bo: yeah agreed, drop it
-→ {"assessments":[{"matchId":"idea-42","category":"proposal","concreteness":2,"buildableAsSoftware":3,"intent":1,"novelty":2,"pitch":"Inventory nag bot","startTurn":"turn-0007","endTurn":"turn-0008","quote":"actually scrap the inventory bot thing, we don't have time yeah agreed, drop it","questions":[],"answers":[],"rationale":"the room explicitly abandoned the tracked idea — intent drops"}]}`;
+→ {"assessments":[{"matchId":"idea-42","category":"proposal","concreteness":2,"buildableAsSoftware":3,"intent":1,"novelty":2,"pitch":"Inventory nag bot","startTurn":"turn-0007","endTurn":"turn-0008","quote":"actually scrap the inventory bot thing, we don't have time yeah agreed, drop it","questions":[],"answers":[],"rationale":"the room explicitly abandoned the tracked idea — intent drops"}]}
+
+Example 8 — a SURFACED proposal with the RIGHT questions: three forks (data source, scope, style), each 2-3 concrete options that MEANINGFULLY change the build:
+[turn-0001] amy: we should build a dashboard that shows which customers are about to churn
+[turn-0002] bo: yeah, pull their recent usage and flag the risky ones
+[turn-0003] amy: let's ship a first cut this week
+→ {"assessments":[{"matchId":null,"category":"proposal","concreteness":3,"buildableAsSoftware":3,"intent":3,"novelty":2,"pitch":"Build a churn-risk dashboard flagging at-risk customers","startTurn":"turn-0001","endTurn":"turn-0003","quote":"we should build a dashboard that shows which customers are about to churn yeah, pull their recent usage and flag the risky ones let's ship a first cut this week","questions":["Where does the usage data come from?","How is churn risk scored?","Who is the first version for?"],"answers":["Stripe / Product analytics / CSV upload","Simple rules / ML model","Exec overview / CS worklist"],"rationale":"explicit commitment to a concrete internal tool"}]}`;
 
 export function renderTurns(turns: readonly TranscriptTurn[]): string {
   if (turns.length === 0) {
@@ -83,7 +93,8 @@ export function buildJudgePrompt(input: DetectionInput): string {
     "• novelty 0-3 — 0 already exists and they know it; 1 minor variation; 2 new combination of known parts; 3 distinctly new",
     `• pitch — <=${MAX_PITCH_WORDS} word imperative pitch`,
     "• startTurn/endTurn — the turn-id span expressing it; quote — verbatim evidence from those turns",
-    `• questions — <=${MAX_QUESTIONS} short aloud-answerable questions covering what's missing to build it; answers — short option labels`,
+    `• questions — for a genuine PROPOSAL you would surface, give 1-${MAX_QUESTIONS} CRISP questions that FORK THE BUILD: each decides between real alternatives for SCOPE (what's in v1 / how big), DATA SOURCE (where inputs come from), or STYLE (look / tone / platform / audience). A good question changes what gets built; a bad one is filler ("what features?", "what should it be called?"). Ask fewer, sharper questions rather than padding to ${MAX_QUESTIONS}. Leave [] for jokes, existing products, logistics, retractions, and anything you would NOT surface.`,
+    `• answers — PARALLEL to questions (answers[i] belongs to questions[i]): 2-${MAX_ANSWERS} short, mutually-distinct option labels for that question, packed as ONE string separated by " / " (e.g. "Slack / Notes doc / Jira"). Real choices, not "yes / no" unless the fork is truly binary. answers must be [] exactly when questions is [].`,
     "• rationale — one line explaining your category+intent call",
     "",
     "Known ideas already being tracked. If the transcript contains ANY further talk about a known idea — elaboration, endorsement, questions about it, OR rejection/retraction/abandonment — you MUST emit an assessment for it with matchId set to its id, re-judging the rubric against the room's CURRENT stance (elaboration raises concreteness, commitment raises intent, retraction/dismissal LOWERS intent to 0-1). Only omit a known idea when the transcript does not touch it at all:",
