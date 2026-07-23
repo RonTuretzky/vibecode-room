@@ -47,11 +47,11 @@ const err  = document.getElementById("err");
 
 // The dot's size scales with the screen: big enough to survive 512x424 + oblique
 // angles, small enough to localize (the detector uses its centroid).
-function showDot(u, v) {
+function showDot(u, v, rf) {
   const W = innerWidth, H = innerHeight;
-  // Bigger disc = detectable from a far/oblique diagonal camera (still small
-  // enough that its centroid localizes the wall point well).
-  const r = Math.max(46, Math.min(W, H) * 0.11);
+  // Radius fraction comes from the server when given (bigger discs for
+  // far/oblique walls and retry passes).
+  const r = Math.max(46, Math.min(W, H) * (rf || 0.11));
   dot.style.width = dot.style.height = (2 * r) + "px";
   dot.style.left = (u * W - r) + "px";
   dot.style.top  = (v * H - r) + "px";
@@ -94,7 +94,7 @@ async function tick() {
     done.style.display = s.phase === "done" ? "flex" : "none";
     if (s.phase === "done") becomeWall();
     const m = s.marker;
-    if (s.phase === "running" && m && m.wall === wall) showDot(m.u, m.v);
+    if (s.phase === "running" && m && m.wall === wall) showDot(m.u, m.v, m.r);
     else dot.style.display = "none";
   } catch (e) {
     fail("calibration server not reachable: " + e);

@@ -554,3 +554,20 @@ def test_pin_widths_refuses_degenerate_fit(tmp_path, monkeypatch):
         calib._solve_decoupled(samples, {"cam0": INTR, "cam1": INTR})
     # The raw-sample dump still happened (failed runs need debugging most).
     assert (tmp_path / "autocal_samples.json").exists()
+
+
+def test_missed_markers_orders_and_filters():
+    from gesturewall.autocal import missed_markers
+
+    # cam0 sees both walls; A missed (0.12, 0.15) and (0.88, 0.85); B all hit.
+    hit_a = [(u, v, (0, 0, 2)) for (u, v) in MARKER_GRID
+             if (u, v) not in ((0.12, 0.15), (0.88, 0.85))]
+    hit_b = [(u, v, (0, 0, 3)) for (u, v) in MARKER_GRID]
+    samples = {"A": {"cam0": hit_a}, "B": {"cam0": hit_b}}
+    out = missed_markers(samples, ["A", "B"], {"cam0": {"A", "B"}})
+    assert out == [("A", 0.12, 0.15), ("A", 0.88, 0.85)]
+
+    # A camera not meant to see the wall does not count as coverage.
+    samples2 = {"A": {"cam0": [], "cam1": hit_a}}
+    out2 = missed_markers(samples2, ["A"], {"cam0": {"A"}, "cam1": set()})
+    assert len(out2) == len(MARKER_GRID)  # cam1's phantoms don't cover A

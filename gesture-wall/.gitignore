@@ -7,10 +7,8 @@ __pycache__/
 models/
 calibration.json
 # Active room calibration is machine/space-specific; commit room.example.*.json instead.
-# room.json is COMMITTED here on purpose: this repo ships the exact
-# calibrated single-Gemini-335 room (recalibrate with ../run-room.sh --calibrate).
+room.json
 room.2cam.json
 # Compiled Kinect bridge (build from native/ via build_kinect_v2.sh).
 bin/
 Log/
-autocal_samples.json

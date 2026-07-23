@@ -37,7 +37,8 @@
 # Env: VIBERSYN_PORT(8788) HOST(0.0.0.0) WS_PORT(8770) BROWSER("Google Chrome")
 #      WALL_A_POS(0,0) WALL_B_POS(1920,0) ROOM_CONFIG(gesture-wall/room.json)
 #      PYTHON(gesture-wall/.venv/bin/python if present, else python3)
-#      WALL_A_M(2.3) WALL_B_M(2.5) AUTOCAL_PORT(8801)
+#      WALL_A_M / WALL_B_M (unset = tape-measured widths stored in the room
+#      config as walls.<id>.width_m; set to override) AUTOCAL_PORT(8801)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -55,8 +56,10 @@ WS_PORT="${WS_PORT:-8770}"
 BROWSER="${BROWSER:-Google Chrome}"
 WALL_A_POS="${WALL_A_POS:-0,0}"
 WALL_B_POS="${WALL_B_POS:-1920,0}"
-WALL_A_M="${WALL_A_M:-2.3}"           # wall widths in metres (auto-calibration)
-WALL_B_M="${WALL_B_M:-2.5}"
+WALL_A_M="${WALL_A_M:-}"              # wall widths in metres (auto-calibration).
+WALL_B_M="${WALL_B_M:-}"              # Empty = pin to walls.<id>.width_m from the
+                                      # room config (autocal stores the measured
+                                      # widths there); set only to override.
 AUTOCAL_PORT="${AUTOCAL_PORT:-8801}"
 GW_HTTP_PORT="${GW_HTTP_PORT:-8781}"   # gesture-wall's own static http (unused here; kept off :8000)
 
@@ -78,7 +81,7 @@ for arg in "$@"; do
     --calibrate) CALIBRATE=1 ;;
     --config=*) CONFIG="${arg#*=}" ;;
     -h|--help)
-      sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,41p' "$0" | sed 's/^# \{0,1\}//'
       exit 0 ;;
     *) echo "[room] unknown arg: $arg" >&2; exit 2 ;;
   esac
@@ -122,7 +125,7 @@ check_camera_deps() {
   fi
   if config_uses_orbbec "$CONFIG" && ! "$PYTHON" -c "import pyorbbecsdk" >/dev/null 2>&1; then
     echo "[room] ERROR: $CONFIG declares an Orbbec camera but pyorbbecsdk is not importable by $PYTHON." >&2
-    echo "         $PYTHON -m pip install -r gesture-wall/requirements.txt" >&2
+    echo "         $PYTHON -m pip install 'pyorbbecsdk2>=2.1.1'   # PyPI name; imports as pyorbbecsdk" >&2
     exit 1
   fi
 }
@@ -145,15 +148,27 @@ if [ "$CALIBRATE" = "1" ]; then
   check_camera_deps
   setup_sudo
   CONFIG_ABS="$(cd "$(dirname "$CONFIG")" && pwd)/$(basename "$CONFIG")"
-  echo "[room] auto-calibration: wall widths A=${WALL_A_M}m B=${WALL_B_M}m (override with WALL_A_M/WALL_B_M)"
+  # Wall-width pins: an explicit WALL_A_M/WALL_B_M wins; otherwise autocal pins
+  # to the measured widths stored in the config (walls.<id>.width_m) — passing
+  # CLI --width unconditionally would stomp them with stale defaults.
+  WIDTH_ARGS=()
+  [ -n "$WALL_A_M" ] && WIDTH_ARGS+=(--width "A=$WALL_A_M")
+  [ -n "$WALL_B_M" ] && WIDTH_ARGS+=(--width "B=$WALL_B_M")
+  if [ "${#WIDTH_ARGS[@]}" -gt 0 ]; then
+    echo "[room] auto-calibration: wall widths A=${WALL_A_M:-config}m B=${WALL_B_M:-config}m (from WALL_A_M/WALL_B_M)"
+  else
+    echo "[room] auto-calibration: wall widths pinned from $CONFIG (walls.<id>.width_m; override with WALL_A_M/WALL_B_M)"
+  fi
   echo "[room] 1. Open FULLSCREEN on wall A's projector: http://localhost:$AUTOCAL_PORT/autocal.html?wall=A"
   echo "[room] 2. Open FULLSCREEN on wall B's projector: http://localhost:$AUTOCAL_PORT/autocal.html?wall=B"
+  echo "[room]    (unified pages: each transforms into its wall client when calibration completes)"
   echo "[room] 3. Step out of the camera's view, then start the sweep:"
   echo "[room]      curl -X POST http://localhost:$AUTOCAL_PORT/calib/start"
   echo "[room] Results are written back into $CONFIG. Ctrl-C when done."
   # Foreground: the script waits on autocal; Ctrl-C reaches it even under sudo.
+  # (bash 3.2 + set -u: expand the array with the ${arr[@]+...} guard.)
   ( cd gesture-wall && exec $SUDO "$PYTHON" -m gesturewall.autocal --config "$CONFIG_ABS" \
-      --width "A=$WALL_A_M" --width "B=$WALL_B_M" --port "$AUTOCAL_PORT" )
+      ${WIDTH_ARGS[@]+"${WIDTH_ARGS[@]}"} --port "$AUTOCAL_PORT" )
   exit $?
 fi
 
