@@ -32,6 +32,8 @@
 #                                 # =full); the view no longer filters content
 #   ./run-room.sh --gesture       # legacy: real cameras (needs gesture-wall deps + room.json)
 #   ./run-room.sh --fake          # legacy: gesture mode with synthetic cursors
+#   ./run-room.sh --arcade        # joystick drives the dwell cursors (gesture-mode
+#                                 # XL UI, no cameras); combine: --single --arcade --real-hands
 #   ./run-room.sh --fake-hands    # pinch camera with synthetic hands (no TD, no cameras)
 #   ./run-room.sh --real-hands    # pinch camera from the REAL laptop camera via the
 #                                 # standalone MediaPipe bridge — the NO-TOUCHDESIGNER
@@ -97,6 +99,7 @@ for arg in "$@"; do
   case "$arg" in
     --gesture) GESTURE=1 ;;
     --fake) GESTURE=1; FAKE=1 ;;   # --fake implies gesture mode, minus the cameras
+    --arcade) GESTURE=1; ARCADE=1 ;;   # joystick as THE fusion cursor source (gesture-mode XL UI, no cameras)
     --hands) HANDS=1 ;;
     --hands=*) HANDS=1; HANDS_URL="${arg#*=}" ;;   # explicit TD source, e.g. ws://td-mac:9980
     --fake-hands) HANDS=1; FAKE_HANDS=1 ;;   # pinch camera minus TouchDesigner (synthetic hands)
@@ -252,7 +255,20 @@ fi
 
 # ── 1) gesture fusion source (legacy; cursors over ws://…:WS_PORT) ───────────
 if [ "$GESTURE" = "1" ]; then
-  if [ "$FAKE" = "1" ]; then
+  if [ "${ARCADE:-0}" = "1" ]; then
+    # Physical joystick (8BitDo/any pygame stick) as the ONLY cursor source,
+    # serving the fusion protocol on WS_PORT so the standard &gesture=1 wall
+    # URL picks it up — this is what turns on the gesture-mode XL button UI
+    # without any cameras. Plain HID: no TCC/camera permission needed.
+    if ! "$PYTHON" -c "import pygame" >/dev/null 2>&1; then
+      echo "[room] ERROR: pygame not importable by $PYTHON (the joystick bridge needs it):" >&2
+      echo "         $PYTHON -m pip install -r gesture-wall/requirements.txt" >&2
+      exit 1
+    fi
+    echo "[room] fusion: arcade joystick bridge on ws://localhost:$WS_PORT"
+    "$PYTHON" gesture-wall/tools/arcade_fusion.py --port "$WS_PORT" --wall A &
+    PIDS+=($!)
+  elif [ "$FAKE" = "1" ]; then
     echo "[room] fusion: camera-free preview (fake) on ws://localhost:$WS_PORT"
     FAKE_WS_PORT="$WS_PORT" bun gesture-wall/tools/fake-fusion.mjs &
     PIDS+=($!)
