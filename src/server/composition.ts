@@ -427,6 +427,14 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   readonly #detectionMode: string;
   #detectionPrimaryId: string | null = null;
   readonly #pendingOwner: PendingSuggestionOwner;
+  // COMMISSION completion safety net: the gateway's run-event stream numbers
+  // live frames differently from its compacted replay, so a socket drop while a
+  // run parks (steer window) can resume with afterSeq beyond the replay and
+  // never see the terminal frame — wedging the execution lane at "executing"
+  // forever. `#getRun` (gateway mode only) lets watchRunCompletion poll the
+  // run's status and fold a synthetic completion when the run is terminal.
+  readonly #getRun: ((runId: string) => Promise<Record<string, unknown> | undefined>) | null;
+  readonly #runCompletionPollMs: number;
 
   constructor(
     readonly sessionId: string,
@@ -513,6 +521,22 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     // spawn/halt to a real Smithers gateway over its RPC transport.
     const smithersClient = selectSmithersClient(env, { transport: options.smithersTransport });
     const smithersMode: SmithersClientMode = smithersClient instanceof GatewayRegistryClient ? "gateway" : "memory";
+    // Terminal-status prober for the commission watchdog (gateway mode only —
+    // the in-memory client has no durable runs to poll).
+    this.#getRun =
+      smithersClient instanceof GatewayRegistryClient
+        ? async (runId: string) => {
+            try {
+              const run = await smithersClient.client.transport.request("getRun", { runId });
+              return typeof run === "object" && run !== null && !Array.isArray(run)
+                ? (run as Record<string, unknown>)
+                : undefined;
+            } catch {
+              return undefined;
+            }
+          }
+        : null;
+    this.#runCompletionPollMs = resolveRunCompletionPollMs(env);
     // Hot-loop summarizer selection (the ">15 words → summarize" guard's real
     // leg): Cerebras when the credential resolves, else the deterministic clamp.
     // The selected instance backs every ttsDecision the runtime makes.
@@ -2404,6 +2428,43 @@ class LiveProjectorRuntime implements ProjectorRuntime {
         meta: { message: error instanceof Error ? error.message : String(error) },
       });
     });
+    this.watchRunCompletion(upid, runId);
+  }
+
+  // COMMISSION completion safety net. The live stream is the primary feed, but
+  // its frame numbering is not stable across reconnects (a resumed afterSeq can
+  // overshoot the gateway's compacted replay), so a dropped socket during a
+  // long park (steer window) can miss the terminal frame forever. While the
+  // lane executes, poll the run's status; when the gateway reports it terminal,
+  // ingest a synthetic completed event through the SAME driver path the stream
+  // uses — dedup-safe (max seq) and idempotent (complete() no-ops once flipped).
+  private watchRunCompletion(upid: string, runId: string): void {
+    const probe = this.#getRun;
+    if (probe === null) {
+      return;
+    }
+    void (async () => {
+      while (this.executionRegistry.isExecuting(upid) && !this.#emergencyTriggered) {
+        await delay(this.#runCompletionPollMs);
+        if (!this.executionRegistry.isExecuting(upid) || this.#emergencyTriggered) {
+          return;
+        }
+        const run = await probe(runId);
+        const status = typeof run?.status === "string" ? run.status : null;
+        if (status === "finished" || status === "failed" || status === "cancelled") {
+          this.recordExternalTrace({
+            event: "process.execute.terminal.poll",
+            level: "info",
+            sessionId: this.sessionId,
+            upid,
+            meta: { runId, status },
+          });
+          const lastSeq = this.runEventDriver.overlay(upid)?.lastSeq ?? 0;
+          this.runEventDriver.ingest({ upid, runId, kind: "completed", text: `run ${status}`, seq: lastSeq + 1 });
+          return;
+        }
+      }
+    })();
   }
 
   // Fold one live run-event overlay change into the commission execution lane
@@ -2887,6 +2948,21 @@ function resolveMaxConcurrentProcesses(env: Record<string, string | undefined>):
 
 function numberOr(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+// Poll cadence for the commission completion watchdog (watchRunCompletion).
+// Overridable for tests; production default keeps it to ~4 cheap RPCs a minute.
+function resolveRunCompletionPollMs(env: Record<string, string | undefined>): number {
+  const raw = env.VIBERSYN_RUN_POLL_MS?.trim();
+  const parsed = raw === undefined || raw === "" ? Number.NaN : Number(raw);
+  if (Number.isFinite(parsed) && parsed >= 1) {
+    return Math.floor(parsed);
+  }
+  return 15_000;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 // Recover the detection candidate id from a PendingSuggestion id minted by
