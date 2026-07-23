@@ -568,11 +568,16 @@ class HandTracker(threading.Thread):
                 detections = _detections_from_result(result)
                 encoded = encode_hands(detections, aspect, self._pinch,
                                        mirror=self._mirror)
-                jpeg = (
-                    _annotate_preview(cv2, frame, detections, encoded,
-                                      mirror=self._mirror)
-                    if self._preview else None
-                )
+                jpeg = None
+                if self._preview:
+                    # The debug overlay must NEVER kill tracking — a bug here
+                    # once crashed the whole thread (and stopped the wall).
+                    try:
+                        jpeg = _annotate_preview(cv2, frame, detections, encoded,
+                                                 mirror=self._mirror)
+                    except Exception as e:  # noqa: BLE001
+                        print(f"[hands] preview annotate error (tracking "
+                              f"unaffected): {e}", flush=True)
                 with self._lock:
                     self._hands = encoded
                     self._aspect = aspect
@@ -616,7 +621,8 @@ def _annotate_preview(cv2, frame, detections, encoded, *, mirror: bool):
         return int(x * w), int(lm[1] * h)
 
     for det, enc in zip(detections, encoded):
-        pts = [px(_xy(det.landmarks, i)) for i in range(21)]
+        landmarks = det[0]  # detection is (landmarks, label, score)
+        pts = [px(_xy(landmarks, i)) for i in range(21)]
         for a, b in _HAND_EDGES:
             cv2.line(img, pts[a], pts[b], (90, 220, 90), 2, cv2.LINE_AA)
         for p in pts:
