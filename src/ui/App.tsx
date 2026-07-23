@@ -104,6 +104,24 @@ export function ProjectorApp({ initialSnapshot, urlSearch }: ProjectorAppProps) 
   const [zenMode, setZenMode] = useState(false);
   const zenModeRef = useRef(false);
   zenModeRef.current = zenMode;
+  // Fullscreen toggle: mirrors the browser's fullscreen state so the projector
+  // wall can fill the display without OS chrome (also dwell-selectable).
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const toggleFullscreen = useCallback(() => {
+    if (typeof document === "undefined") return;
+    if (document.fullscreenElement) {
+      void document.exitFullscreen?.();
+    } else {
+      void document.documentElement.requestFullscreen?.();
+    }
+  }, []);
+  useEffect(() => {
+    if (typeof document === "undefined") return undefined;
+    const onChange = () => setIsFullscreen(document.fullscreenElement !== null);
+    document.addEventListener("fullscreenchange", onChange);
+    onChange();
+    return () => document.removeEventListener("fullscreenchange", onChange);
+  }, []);
   const [hideMenuOpen, setHideMenuOpen] = useState(false);
   const hideMenuOpenRef = useRef(false);
   hideMenuOpenRef.current = hideMenuOpen;
@@ -1326,6 +1344,17 @@ export function ProjectorApp({ initialSnapshot, urlSearch }: ProjectorAppProps) 
             title="When on, every detected idea builds itself — no click required."
           >
             {autoAccept ? "Auto-Build: ON" : "Auto-Build: OFF"}
+          </button>
+          <button
+            type="button"
+            className={`ctl-button fullscreen${isFullscreen ? " on" : ""}`}
+            data-testid="fullscreen-button"
+            data-state={isFullscreen ? "on" : "off"}
+            aria-pressed={isFullscreen}
+            onClick={toggleFullscreen}
+            title="Fill the display (projector wall). Point and dwell, or click."
+          >
+            {isFullscreen ? "⛶ Exit Fullscreen" : "⛶ Fullscreen"}
           </button>
           <button
             type="button"
