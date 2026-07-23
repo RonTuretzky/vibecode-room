@@ -684,7 +684,17 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       selector: this.buildSelector,
       buildsRoot: options.buildsRoot,
       slideshow: async (input) => {
-        await generateSlideshow(input, { signal: input.signal });
+        // The accept's planning questions ride into the deck as INTERACTIVE
+        // swipe-to-answer cards; each chosen answer POSTs to this process's
+        // answer route (app.ts /api/process/:upid/answer -> registry.steer).
+        await generateSlideshow(
+          {
+            ...input,
+            questions: input.planQuestions,
+            answerEndpoint: `/api/process/${encodeURIComponent(input.upid)}/answer`,
+          },
+          { signal: input.signal },
+        );
         // Take-home publishing rides the deck: the FIRST deck of a kickoff
         // fires the fire-and-forget GitHub Pages publish; every deck (incl.
         // steer regenerations) gets the QR slide once the publish confirmed.

@@ -1,4 +1,5 @@
 import type { LogEvent, OutputDecision } from "../types";
+import { questionsFromAssessment, type PlanQuestion } from "../detect";
 import type { ProcessBuildSnapshot } from "../buildloop/orchestrator";
 import type { ExecutionRegistry, ExecutionSnapshot } from "../buildloop/execution";
 import { CallsignAllocator, type CallsignAssignment } from "../routing/callsigns";
@@ -36,9 +37,17 @@ export interface RegistryProcess {
 // backend, steer forwards the spoken correction, halt aborts the UPID's builds,
 // and builds() is the snapshot fragment the runtime merges per process. Since
 // the two-stage pivot the fan-out produces CONCEPT MOCKS (kickoff), not full
-// apps — the full app is the separate commission stage (execute()).
+// apps — the full app is the separate commission stage (execute()). The accept's
+// deck-ready planQuestions ride start() into the per-build slideshow hook so
+// generated pitch decks carry the interactive swipe-to-answer cards.
 export interface BuildLoopOrchestrator {
-  start(input: { upid: string; ideaId: string; prompt: string; callsign: string | null }): Promise<void>;
+  start(input: {
+    upid: string;
+    ideaId: string;
+    prompt: string;
+    callsign: string | null;
+    planQuestions?: readonly PlanQuestion[];
+  }): Promise<void>;
   steer(upid: string, text: string): Promise<void>;
   abortAll(upid: string): Promise<void>;
   builds(upid: string): ProcessBuildSnapshot[];
@@ -365,8 +374,19 @@ export class ProcessRegistry {
     const pitch = stored.prompt.length > 0 ? stored.prompt : pitchFromInput(stored.input);
     if (this.#orchestrator !== null) {
       const orchestrator = this.#orchestrator;
+      // Deck questions: the accept path's spawn input carries the judge's
+      // parallel mcqs/answers arrays (the acceptance seed) — normalized here
+      // into the deck's swipe-to-answer cards. Inputs without them (repo
+      // imports, demo seeds) yield [] and the field is simply omitted.
+      const planQuestions = planQuestionsFromInput(stored.input);
       void orchestrator
-        .start({ upid, ideaId: ideaIdFromInput(stored.input) ?? upid, prompt: pitch, callsign: record.callsign })
+        .start({
+          upid,
+          ideaId: ideaIdFromInput(stored.input) ?? upid,
+          prompt: pitch,
+          callsign: record.callsign,
+          ...(planQuestions.length === 0 ? {} : { planQuestions }),
+        })
         .then(
           () => {
             this.trace("process.build", options.correlationId, upid, {
@@ -682,6 +702,23 @@ export function steerText(payload: unknown): string | null {
     }
   }
   return null;
+}
+
+// Deck-ready planning questions recovered from the spawn input: the acceptance
+// seam spreads the accepted seed onto `input`, so the judge's parallel
+// `mcqs`/`answers` arrays ride along (see acceptance/spawn.ts), and
+// questionsFromAssessment normalizes that convention into {id, prompt, answers}
+// cards. Inputs without the arrays (repo imports, demo seeds) yield [].
+function planQuestionsFromInput(input: unknown): PlanQuestion[] {
+  if (input === null || typeof input !== "object" || Array.isArray(input)) {
+    return [];
+  }
+  const record = input as Record<string, unknown>;
+  return questionsFromAssessment({ questions: onlyStrings(record.mcqs), answers: onlyStrings(record.answers) });
+}
+
+function onlyStrings(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
 }
 
 // The originating idea id when the accept path carried one on the spawn input;

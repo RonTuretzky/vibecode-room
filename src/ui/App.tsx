@@ -40,8 +40,14 @@ interface ProjectorAppProps {
   // Test seam: boot with an on-demand overlay already open so the (static,
   // effect-free) test renderer can assert the de-themed overlay contract —
   // detail/deck/QR overlays open on WHICHEVER wall summons them, never only
-  // on view=builds. `selected` takes a callsign/upid, `slideshowUpid` a upid.
-  initialOverlay?: { selected?: string; slideshowUpid?: string; qrOpen?: boolean };
+  // on view=builds. `selected` takes a callsign/upid, `slideshowUpid` a upid,
+  // `ideaCard` an idea-action-card target (id null = the primary suggestion).
+  initialOverlay?: {
+    selected?: string;
+    slideshowUpid?: string;
+    qrOpen?: boolean;
+    ideaCard?: { id: string | null };
+  };
 }
 
 // The synthetic id used for the (single) idea/suggestion bubble.
@@ -131,6 +137,13 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
   const [slideshowUpid, setSlideshowUpid] = useState<string | null>(initialOverlay?.slideshowUpid ?? null);
   const slideshowRef = useRef<string | null>(null);
   slideshowRef.current = slideshowUpid;
+  // IDEA ACTION CARD: clicking an idea orb in the scene opens this contextual
+  // card (bottom-center, above the scene controls) instead of building on the
+  // spot — id null = the primary suggestion bubble, otherwise a ledger idea.
+  // The card's "✓ Done — build it" runs the old instant-accept behavior.
+  const [ideaCard, setIdeaCard] = useState<{ id: string | null } | null>(initialOverlay?.ideaCard ?? null);
+  const ideaCardRef = useRef<{ id: string | null } | null>(null);
+  ideaCardRef.current = ideaCard;
   const [zenMode, setZenMode] = useState(false);
   const zenModeRef = useRef(false);
   zenModeRef.current = zenMode;
@@ -978,6 +991,11 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
           setQrOpen(false);
           return;
         }
+        // The contextual idea card closes without building anything.
+        if (ideaCardRef.current !== null) {
+          setIdeaCard(null);
+          return;
+        }
         // Esc exits the guided demo at any step (documented; skip stays a
         // per-step button). The deck/help/QR overlays above close first.
         if (guidedRef.current !== null) {
@@ -1205,6 +1223,23 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
     [ideaOrbs, hiddenIdeas],
   );
 
+  // The orb the open idea card points at, resolved against the live orb list so
+  // the card always mirrors the scene: null = closed OR the idea is gone.
+  const ideaCardOrb = useMemo<IdeaOrbSpec | null>(() => {
+    if (ideaCard === null) {
+      return null;
+    }
+    return ideaOrbs.find((orb) => orb.id === ideaCard.id) ?? null;
+  }, [ideaCard, ideaOrbs]);
+
+  // Auto-close: when the card's idea disappears from the snapshot (built,
+  // dismissed, superseded), the stale card must not linger over the scene.
+  useEffect(() => {
+    if (ideaCard !== null && ideaCardOrb === null) {
+      setIdeaCard(null);
+    }
+  }, [ideaCard, ideaCardOrb]);
+
   // Clicking a project in the scene: mock/demo processes with a FIXTURE deck
   // open their slideshow (mock room has no rail, so the scene click is the only
   // deck path there); every live process steers — click-to-steer stays the
@@ -1224,18 +1259,13 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
     [steerProcess],
   );
 
-  // Clicking a ready orb builds it: ledger candidates go through the per-idea
-  // accept endpoint, the primary suggestion through /api/suggestion/accept.
-  const acceptOrb = useCallback(
-    (id: string | null) => {
-      if (id === null) {
-        void acceptIdea();
-      } else {
-        void actOnIdea(id, "accept");
-      }
-    },
-    [acceptIdea, actOnIdea],
-  );
+  // Clicking an idea orb OPENS its contextual action card — building is the
+  // card's explicit "✓ Done — build it" press, never the orb click itself.
+  // (The guided demo's practice orbs are GuidedDemo's own DOM targets routed
+  // through onPopOrb, so they never land here and keep their pop-on-click.)
+  const acceptOrb = useCallback((id: string | null) => {
+    setIdeaCard({ id });
+  }, []);
 
   // GESTURE MODE (fusion cursors drive the UI): there is NO OS cursor — the
   // `gesture-mode` class hides the pointer everywhere. The pointed-at target's
@@ -1405,24 +1435,6 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
               bytesReceived={snapshot.mic?.bytesReceived ?? 0}
               onToggle={() => void toggleMicCapture()}
             />
-          ) : null}
-          {snapshot.ideaSettle?.armed === true || snapshot.transcript.some((line) => line.kind === "room") ? (
-            <button
-              type="button"
-              className="ctl-button idea-done"
-              data-testid="idea-done-button"
-              title={
-                snapshot.ideaSettle?.armed === true
-                  ? "Stop refining and build the heard idea now"
-                  : "Build from what you've said so far"
-              }
-              onClick={() => void acceptIdea()}
-            >
-              ✓ Done — build it
-              {snapshot.ideaSettle?.armed === true && snapshot.ideaSettle.firesInMs !== null
-                ? ` (${Math.max(1, Math.ceil(snapshot.ideaSettle.firesInMs / 1000))}s)`
-                : ""}
-            </button>
           ) : null}
           {showIdeaSurfaces ? (
             <button
@@ -1594,6 +1606,55 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
         </button>
       </div>
       )}
+
+      {/* IDEA ACTION CARD: the contextual "✓ Done — build it" surface, opened
+          by clicking an idea orb in the scene (see acceptOrb). Floats
+          bottom-center above the scene-controls cluster; the Done button runs
+          the old instant-accept behavior (primary → /api/suggestion/accept,
+          ledger idea → per-idea accept), close (✕ / Esc) just dismisses. */}
+      {ideaCard !== null && ideaCardOrb !== null ? (
+        <div className="idea-action-card" data-testid="idea-action-card" role="dialog" aria-label="Build this idea?">
+          <div className="idea-card-copy">
+            <span className="idea-card-pitch">{ideaCardOrb.pitch}</span>
+            {ideaCardOrb.confidence > 0 ? (
+              <span className="idea-card-confidence">{Math.round(ideaCardOrb.confidence * 100)}% confident</span>
+            ) : null}
+          </div>
+          <button
+            type="button"
+            className="ctl-button idea-done"
+            data-testid="idea-done-button"
+            title={
+              ideaCard.id === null && snapshot.ideaSettle?.armed === true
+                ? "Stop refining and build the heard idea now"
+                : "Build this idea now"
+            }
+            onClick={() => {
+              if (ideaCard.id === null) {
+                void acceptIdea();
+              } else {
+                void actOnIdea(ideaCard.id, "accept");
+              }
+              setIdeaCard(null);
+            }}
+          >
+            ✓ Done — build it
+            {/* Primary + armed settle gate: surface the auto-build countdown. */}
+            {ideaCard.id === null && snapshot.ideaSettle?.armed === true && snapshot.ideaSettle.firesInMs !== null
+              ? ` (${Math.max(1, Math.ceil(snapshot.ideaSettle.firesInMs / 1000))}s)`
+              : ""}
+          </button>
+          <button
+            type="button"
+            className="ctl-button idea-card-close"
+            data-testid="idea-card-close"
+            onClick={() => setIdeaCard(null)}
+            title="Close without building (Esc)"
+          >
+            ✕
+          </button>
+        </div>
+      ) : null}
 
       {/* Hide/unhide menu: a desk affordance like the scene controls above —
           never rendered in gesture mode (it would duplicate on both walls). */}

@@ -105,13 +105,11 @@ button {
   min-height: 0;
 }
 
-/* Floating HUD header over the scene. */
+/* Floating HUD header over the scene (band styling removed: the bar itself is
+   invisible — see the canonical .status-bar block in the Z-pattern section). */
 .status-bar {
   position: relative;
   z-index: 10;
-  background: linear-gradient(180deg, rgba(4, 12, 18, 0.78), rgba(4, 12, 18, 0.42));
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
 }
 
 /* Scene controls: a floating glass cluster, bottom-left (visualizer HUD). */
@@ -261,6 +259,15 @@ button {
 .deep.zen .wall-badge,
 .deep.zen .voice-flash {
   opacity: 0;
+  pointer-events: none !important;
+}
+
+/* Zen must beat the floating-pill clusters' own pointer-events: auto — a
+   declared value on a child overrides parent inheritance, so without this the
+   faded (invisible) header buttons would still take clicks and dwell hits. */
+.deep.zen .status-bar *,
+.deep.zen .stage *,
+.deep.zen .scene-controls * {
   pointer-events: none !important;
 }
 
@@ -528,13 +535,34 @@ button {
      content so it can never overflow leftward across the centered active cue,
      and let the cue column absorb the slack instead. */
   grid-template-columns: minmax(200px, 1fr) minmax(0, 1.4fr) minmax(0, max-content);
-  align-items: center;
+  align-items: start;
   gap: 24px;
-  padding: 16px 26px;
-  background: linear-gradient(180deg, rgba(10, 18, 26, 0.72), rgba(8, 14, 20, 0.34));
-  border-bottom: 1px solid var(--glass-line);
-  backdrop-filter: blur(10px);
+  padding: 12px 16px;
+  /* NO full-width band: the bar is invisible and pointer-transparent, so the
+     scene shows (and orbits/clicks) through it. Each cluster below carries its
+     own darkened glass pill instead — same treatment as .scene-controls. */
+  background: none;
+  border-bottom: none;
+  pointer-events: none;
 }
+
+/* The three clusters are the only solid things in the header: compact darkened
+   pills floating over the scene, sized to their content. */
+.status-bar .status-left,
+.status-bar .status-center,
+.status-bar .status-right {
+  pointer-events: auto;
+  background: rgba(6, 13, 20, 0.7);
+  border: 1px solid var(--glass-line);
+  border-radius: 14px;
+  padding: 10px 16px;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.status-bar .status-left { justify-self: start; }
+.status-bar .status-center { justify-self: center; }
+.status-bar .status-right { justify-self: end; max-width: 100%; }
 
 .status-left {
   display: flex;
@@ -1050,7 +1078,8 @@ main.gesture-mode[data-view="builds"] .transcript-card {
    so the room sees the utterance landed ("🎤 vibersyn → build"). */
 .voice-flash {
   position: fixed;
-  top: 84px;
+  /* Clears the floating center pill (bottom ≈114px), not the old solid band. */
+  top: 124px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 40;
@@ -1220,7 +1249,8 @@ main.gesture-mode[data-view="builds"] .transcript-card {
 
 .suggestion-banner {
   position: fixed;
-  top: 86px;
+  /* Clears the floating center pill (bottom ≈114px), not the old solid band. */
+  top: 124px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 6;
@@ -2426,6 +2456,11 @@ main.gesture-mode[data-view="builds"] .transcript-card {
     text-align: center;
   }
   .status-left, .status-right { justify-content: center; }
+  /* Stacked single-column mode: the pills center as a column instead of the
+     wide layout's start/center/end stagger. */
+  .status-bar .status-left,
+  .status-bar .status-center,
+  .status-bar .status-right { justify-self: center; }
   /* The control row grew (mic/capture/auto-build/QR/emergency) — wrap instead of
      overflowing sideways on narrow screens. */
   .status-right { flex-wrap: wrap; }
@@ -3203,3 +3238,67 @@ main.gesture-mode[data-view="builds"] .transcript-card {
   bottom: auto;
   top: 2vh;
 }
+
+/* ============================================================================
+   Idea action card — contextual "✓ Done — build it"
+   ============================================================================
+   Clicking an idea orb in the scene no longer builds on the spot: it opens
+   this card, floating bottom-center ABOVE the scene-controls cluster, dressed
+   as the same darkened glass pill as the status-bar clusters. The buttons are
+   .ctl-button, so gesture-mode XL sizing applies automatically. */
+.idea-action-card {
+  position: fixed;
+  left: 50%;
+  bottom: 84px; /* clears the bottom-left scene-controls row */
+  transform: translateX(-50%);
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  max-width: min(720px, calc(100vw - 32px));
+  padding: 12px 16px;
+  background: rgba(6, 13, 20, 0.7);
+  border: 1px solid var(--glass-line);
+  border-radius: 14px;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.idea-card-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.idea-card-pitch {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.idea-card-confidence {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.idea-action-card .ctl-button.idea-done {
+  white-space: nowrap;
+}
+
+.idea-action-card .ctl-button.idea-card-close {
+  padding-left: 10px;
+  padding-right: 10px;
+  color: var(--ink-soft);
+}
+
+/* Projector distance: bigger copy and clearance over the (hidden) controls
+   row — the .ctl-button XL sizing itself comes from main.gesture-mode. */
+main.gesture-mode .idea-action-card {
+  bottom: 120px;
+  gap: 18px;
+}
+main.gesture-mode .idea-card-pitch { font-size: 24px; }
+main.gesture-mode .idea-card-confidence { font-size: 15px; }

@@ -143,6 +143,40 @@ describe("buildloop wiring — accept fans out through the orchestrator", () => 
     expect(slides.status).toBe(200);
   });
 
+  test("an accepted idea with planning questions renders swipe-to-answer cards wired to the answer route", async () => {
+    const backend = new FakeBackend();
+    const { runtime } = await makeRuntime({ buildBackends: [backend] });
+    // Accept directly with a suggestion carrying the judge's parallel
+    // questions/answers arrays — the exact shape pendingSuggestionFromCandidate
+    // emits for a detected candidate with planning questions.
+    const suggestion: PendingSuggestion = {
+      suggestionId: "sug-questions",
+      pitch: "build a study timer with a leaderboard",
+      mcqs: ["Which platform first?"],
+      answers: ["Web / iOS"],
+      correlationId: "corr-questions",
+      expiresAt: Date.now() + 60_000,
+    };
+    const accepted = await runtime.acceptanceController.spawnAccepted(suggestion, "corr-questions-accept");
+    expect(accepted.accepted).toBe(true);
+    const upid = runtime.publishNow().processes[0]?.upid;
+    expect(upid).toBeDefined();
+    if (upid === undefined) return;
+
+    await waitFor(() => runtime.registry.builds(upid).some((build) => build.status === "ready"));
+    await waitFor(() => runtime.registry.builds(upid)[0]?.slideshowUrl !== null);
+
+    // The REAL deck HTML carries the interactive question card, with each
+    // option wired to POST at this process's answer route.
+    const deck = await fetch(runtime.registry.builds(upid)[0]!.slideshowUrl!);
+    expect(deck.status).toBe(200);
+    const html = await deck.text();
+    expect(html).toContain("Which platform first?");
+    expect(html).toContain('data-answer="Web"');
+    expect(html).toContain('data-answer="iOS"');
+    expect(html).toContain(`data-answer-endpoint="/api/process/${upid}/answer"`);
+  });
+
   test("registry.steer re-runs ready builds with the correction and bumps the cache-bust version", async () => {
     const backend = new FakeBackend();
     const { runtime } = await makeRuntime({ buildBackends: [backend] });
