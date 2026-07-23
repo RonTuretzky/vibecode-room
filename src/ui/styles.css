@@ -86,15 +86,194 @@ button {
   transition: filter 480ms ease, opacity 480ms ease;
 }
 
-/* Mock room: pure 3D showcase — no rail, the garden takes the whole stage. */
-.stage-garden-only {
-  grid-template-columns: minmax(0, 1fr);
-  padding: 0;
-  gap: 0;
+/* The stage is now a transparent HUD overlay: panels catch the pointer, the
+   gaps between them fall through to the 3D scene (drag/orbit/zoom). */
+.stage {
+  pointer-events: none;
+  align-items: end;
 }
 
-.stage-garden-only .bubble-field {
-  border-radius: 0;
+.stage .rail-card,
+.stage .idea-tray {
+  pointer-events: auto;
+}
+
+.stage-main {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  min-height: 0;
+}
+
+/* Floating HUD header over the scene. */
+.status-bar {
+  position: relative;
+  z-index: 10;
+  background: linear-gradient(180deg, rgba(4, 12, 18, 0.78), rgba(4, 12, 18, 0.42));
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+/* Scene controls: a floating glass cluster, bottom-left (visualizer HUD). */
+.scene-controls {
+  position: fixed;
+  left: 18px;
+  bottom: 16px;
+  z-index: 20;
+  display: flex;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 14px;
+  background: rgba(8, 18, 26, 0.66);
+  border: 1px solid var(--glass-line);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  transition: opacity 0.4s ease;
+}
+
+.ctl-button.scene-toggle {
+  color: #c9f7d8;
+  border-color: rgba(0, 255, 136, 0.35);
+  background: rgba(0, 255, 136, 0.08);
+  white-space: nowrap;
+}
+
+.ctl-button.scene-toggle[data-mode="orbit"] {
+  color: #cfe0ff;
+  border-color: rgba(80, 130, 255, 0.4);
+  background: rgba(80, 130, 255, 0.1);
+}
+
+.ctl-button.scene-fit,
+.ctl-button.scene-hide,
+.ctl-button.scene-zen {
+  color: var(--ink-soft);
+  border-color: var(--glass-line);
+  background: rgba(20, 34, 44, 0.6);
+  white-space: nowrap;
+}
+
+.ctl-button.scene-hide.on {
+  color: #04141a;
+  background: var(--c-selected, #00bcd4);
+  border-color: rgba(0, 188, 212, 0.9);
+}
+
+/* Hide/unhide menu — floating above the scene controls. */
+.hide-menu {
+  position: fixed;
+  left: 18px;
+  bottom: 72px;
+  z-index: 30;
+  width: 320px;
+  max-height: min(60vh, 480px);
+  overflow-y: auto;
+  padding: 14px;
+  border-radius: 16px;
+  background: rgba(7, 16, 24, 0.9);
+  border: 1px solid var(--glass-line);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  animation: pill-in 220ms ease;
+}
+
+.hide-section {
+  margin-top: 6px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.hide-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  background: rgba(20, 34, 44, 0.5);
+  color: var(--ink);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.hide-item:hover {
+  border-color: rgba(0, 188, 212, 0.4);
+}
+
+.hide-item.is-hidden {
+  opacity: 0.45;
+}
+
+.hide-item.is-hidden .hide-name {
+  text-decoration: line-through;
+}
+
+.hide-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hide-state {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.hide-item:not(.is-hidden) .hide-state {
+  color: var(--c-active);
+}
+
+.ctl-button.hide-clear {
+  color: var(--ink-soft);
+  border-color: var(--glass-line);
+  background: rgba(20, 34, 44, 0.6);
+  font-size: 10px;
+  padding: 4px 10px;
+}
+
+/* Zen mode: fade every panel/button away; the scene remains (visualizer's
+   zen). The tiny hint is the only thing left, and Z / Esc brings it back. */
+.deep .status-bar,
+.deep .stage,
+.deep .scene-controls,
+.deep .suggestion-banner,
+.deep .wall-badge {
+  transition: opacity 0.4s ease;
+}
+
+.deep.zen .status-bar,
+.deep.zen .stage,
+.deep.zen .scene-controls,
+.deep.zen .hide-menu,
+.deep.zen .suggestion-banner,
+.deep.zen .wall-badge,
+.deep.zen .voice-flash {
+  opacity: 0;
+  pointer-events: none !important;
+}
+
+.zen-hint {
+  position: fixed;
+  right: 18px;
+  bottom: 14px;
+  z-index: 40;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--ink-faint);
+  opacity: 0.55;
+  pointer-events: none;
 }
 
 .stage-dimmed {
@@ -695,11 +874,11 @@ button {
 }
 
 .suggestion-banner {
-  position: absolute;
-  top: 14px;
+  position: fixed;
+  top: 86px;
   left: 50%;
   transform: translateX(-50%);
-  z-index: 3;
+  z-index: 6;
   pointer-events: none; /* non-interactive text; don't shadow the 3D canvas */
   display: flex;
   flex-direction: column;
@@ -727,14 +906,14 @@ button {
   -webkit-box-orient: vertical;
 }
 
-/* The 3D garden owns the whole field — sky, trees (builds), flowers (ideas). */
-.garden-3d {
-  position: absolute;
+/* The 3D scene IS the app background — every panel floats over it. */
+.room-scene {
+  position: fixed;
   inset: 0;
-  z-index: 1;
+  z-index: 0;
 }
 
-.garden-3d canvas {
+.room-scene canvas {
   display: block;
   width: 100%;
   height: 100%;

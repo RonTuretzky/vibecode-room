@@ -3,9 +3,8 @@ import type { CSSProperties } from "react";
 import { demoProjectorSnapshot, busyRoomSnapshot, withUnmuted } from "./demo-data";
 import type { LogEvent } from "../types";
 import type { ProjectorProcess, ProjectorSnapshot, TranscriptLine } from "./types";
-import { Atmosphere } from "./Atmosphere";
 import { GestureLayer } from "./gesture/GestureLayer";
-import { Garden3D, type IdeaOrbSpec, type TreeSpec } from "./Garden3D";
+import { RoomScene, type IdeaOrbSpec, type SceneMode, type TreeSpec } from "./RoomScene";
 import { BuildDetail } from "./BuildDetail";
 import { IdeaTray } from "./IdeaTray";
 import { QrImport } from "./QrImport";
@@ -56,6 +55,44 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
   const [mockMode, setMockMode] = useState(false);
   const mockModeRef = useRef(false);
   mockModeRef.current = mockMode;
+  // Scene controls (visualizer parity): garden/orbit render mode, zen mode
+  // (all chrome hidden), the hide/unhide menu, and a fit-to-content signal.
+  const [sceneMode, setSceneMode] = useState<SceneMode>("garden");
+  const [zenMode, setZenMode] = useState(false);
+  const zenModeRef = useRef(false);
+  zenModeRef.current = zenMode;
+  const [hideMenuOpen, setHideMenuOpen] = useState(false);
+  const hideMenuOpenRef = useRef(false);
+  hideMenuOpenRef.current = hideMenuOpen;
+  const [hiddenIdeas, setHiddenIdeas] = useState<ReadonlySet<string>>(new Set());
+  const [hiddenTrees, setHiddenTrees] = useState<ReadonlySet<string>>(new Set());
+  const [fitSignal, setFitSignal] = useState(0);
+  const toggleHiddenIdea = useCallback((id: string) => {
+    setHiddenIdeas((current) => {
+      const next = new Set(current);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }, []);
+  const toggleHiddenTree = useCallback((upid: string) => {
+    setHiddenTrees((current) => {
+      const next = new Set(current);
+      if (next.has(upid)) {
+        next.delete(upid);
+      } else {
+        next.add(upid);
+      }
+      return next;
+    });
+  }, []);
+  const clearHidden = useCallback(() => {
+    setHiddenIdeas(new Set());
+    setHiddenTrees(new Set());
+  }, []);
   // The transient voice-command confirmation ("🎤 vibersyn → build"), or null.
   const [voiceFlash, setVoiceFlash] = useState<string | null>(null);
 
@@ -532,6 +569,14 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
         // Close the topmost overlay first; fall back to closing the detail.
         // Help renders after (above) the QR overlay in the tree, so it closes
         // first — otherwise Escape appears to do nothing while both are open.
+        if (hideMenuOpenRef.current) {
+          setHideMenuOpen(false);
+          return;
+        }
+        if (zenModeRef.current) {
+          setZenMode(false);
+          return;
+        }
         if (helpOpenRef.current) {
           setHelpOpen(false);
           return;
@@ -542,6 +587,29 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
         }
         setSelected(null);
         return;
+      }
+      // Scene controls (visualizer parity): ` hide menu, g garden/orbit,
+      // z zen, f fit-to-content, 0 clears filters while the menu is open.
+      if (keyEvent.key === "`") {
+        setHideMenuOpen((open) => !open);
+        return;
+      }
+      if (keyEvent.key === "0" && hideMenuOpenRef.current) {
+        clearHidden();
+        return;
+      }
+      switch (keyEvent.key) {
+        case "g":
+          setSceneMode((current) => (current === "garden" ? "orbit" : "garden"));
+          return;
+        case "z":
+          setZenMode((zen) => !zen);
+          return;
+        case "f":
+          setFitSignal((n) => n + 1);
+          return;
+        default:
+          break;
       }
       // Shift+E only — a deliberate chord for the kill-all, so brushing "e" while
       // reaching for other keys can never stop the room.
@@ -591,7 +659,7 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [selectBubble, actOnTopIdea, toggleCaptureMode, toggleAutoAccept, toggleMic, releaseMute, triggerEmergency]);
+  }, [selectBubble, actOnTopIdea, toggleCaptureMode, toggleAutoAccept, toggleMic, releaseMute, triggerEmergency, clearHidden]);
 
   const detailOpen = selectedProcess !== null;
   const listeningState = snapshot.muted ? "muted" : "listening";
@@ -666,18 +734,26 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
     return [];
   }, [ideas, snapshot.suggestion.pitch, snapshot.suggestion.confidence]);
 
-  // Garden trees: one per process. The garden itself hides trees on the
-  // dedicated ideas wall (view gating lives in Garden3D's reconcile).
+  // Scene trees: one per process (minus anything hidden via the hide menu).
+  // The scene itself drops trees on the dedicated ideas wall (view gating
+  // lives in RoomScene's reconcile).
   const treeSpecs = useMemo<TreeSpec[]>(
     () =>
-      snapshot.processes.map((process) => ({
-        upid: process.upid,
-        callsign: process.callsign,
-        state: process.state,
-        progress: process.progress,
-        task: process.task,
-      })),
-    [snapshot.processes],
+      snapshot.processes
+        .filter((process) => !hiddenTrees.has(process.upid))
+        .map((process) => ({
+          upid: process.upid,
+          callsign: process.callsign,
+          state: process.state,
+          progress: process.progress,
+          task: process.task,
+        })),
+    [snapshot.processes, hiddenTrees],
+  );
+
+  const visibleIdeaOrbs = useMemo<IdeaOrbSpec[]>(
+    () => ideaOrbs.filter((orb) => !hiddenIdeas.has(orb.id ?? "__primary__")),
+    [ideaOrbs, hiddenIdeas],
   );
 
   // Clicking a ready orb builds it: ledger candidates go through the per-idea
@@ -694,8 +770,16 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
   );
 
   return (
-    <main className="deep" data-testid="app" data-view={view}>
-      <Atmosphere />
+    <main className={`deep${zenMode ? " zen" : ""}`} data-testid="app" data-view={view} data-zen={zenMode ? "true" : "false"}>
+      <RoomScene
+        ideas={visibleIdeaOrbs}
+        trees={treeSpecs}
+        mode={sceneMode}
+        view={effectiveView}
+        fitSignal={fitSignal}
+        onAcceptIdea={acceptOrb}
+        onSelectProcess={(callsign) => void steerProcess(callsign)}
+      />
       {urlConfig.gesture ? (
         <GestureLayer wall={urlConfig.gesture.wall} fusionUrl={urlConfig.gesture.fusionUrl} />
       ) : null}
@@ -814,19 +898,10 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
         </div>
       </header>
 
-      <div className={`stage${detailOpen ? " stage-dimmed" : ""}${mockMode ? " stage-garden-only" : ""}`}>
-        <div className="stage-main">
-          <section className="bubble-field" data-region="fleet" data-testid="bubble-field" onClick={closeDetail}>
-            {showIdeaSurfaces && !mockMode ? <SuggestionRegion pitch={snapshot.suggestion.pitch} /> : null}
-            <Garden3D
-              ideas={ideaOrbs}
-              trees={treeSpecs}
-              onAcceptIdea={acceptOrb}
-              onSelectProcess={(callsign) => void steerProcess(callsign)}
-              view={effectiveView}
-            />
-          </section>
+      {showIdeaSurfaces && !mockMode ? <SuggestionRegion pitch={snapshot.suggestion.pitch} /> : null}
 
+      <div className={`stage${detailOpen ? " stage-dimmed" : ""}`}>
+        <div className="stage-main">
           {showIdeaTray && !mockMode ? (
             <IdeaTray
               ideas={ideas}
@@ -851,6 +926,108 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
           </aside>
         ) : null}
       </div>
+
+      {/* Scene controls (visualizer parity): mode / fit / hide / zen. */}
+      <div className="scene-controls" data-testid="scene-controls">
+        <button
+          type="button"
+          className="ctl-button scene-toggle"
+          data-testid="scene-mode-button"
+          data-mode={sceneMode}
+          onClick={() => setSceneMode((current) => (current === "garden" ? "orbit" : "garden"))}
+          title="Switch between the garden and orbit renderings (G)."
+        >
+          {sceneMode === "garden" ? "🌳 Garden" : "🪐 Orbit"}
+        </button>
+        <button
+          type="button"
+          className="ctl-button scene-fit"
+          data-testid="scene-fit-button"
+          onClick={() => setFitSignal((n) => n + 1)}
+          title="Frame everything in view (F). Drag orbits · Shift+drag pans · scroll zooms."
+        >
+          ⤢ Fit
+        </button>
+        <button
+          type="button"
+          className={`ctl-button scene-hide${hideMenuOpen ? " on" : ""}`}
+          data-testid="scene-hide-button"
+          aria-pressed={hideMenuOpen}
+          onClick={() => setHideMenuOpen((open) => !open)}
+          title="Hide or unhide builds and ideas (`)."
+        >
+          ◐ Hide
+        </button>
+        <button
+          type="button"
+          className="ctl-button scene-zen"
+          data-testid="scene-zen-button"
+          onClick={() => setZenMode(true)}
+          title="Zen: hide every panel and button (Z or Esc to exit)."
+        >
+          ◉ Zen
+        </button>
+      </div>
+
+      {hideMenuOpen ? (
+        <div className="hide-menu" data-testid="hide-menu">
+          <div className="rail-title-row">
+            <h3 className="rail-title">Hide / Unhide</h3>
+            <button type="button" className="ctl-button hide-clear" onClick={clearHidden} title="Show everything (0)">
+              0 · Clear
+            </button>
+          </div>
+          {snapshot.processes.length > 0 ? (
+            <>
+              <span className="hide-section">Builds</span>
+              {snapshot.processes.map((process) => {
+                const hidden = hiddenTrees.has(process.upid);
+                return (
+                  <button
+                    key={process.upid}
+                    type="button"
+                    className={`hide-item${hidden ? " is-hidden" : ""}`}
+                    data-testid="hide-item"
+                    onClick={() => toggleHiddenTree(process.upid)}
+                  >
+                    <span className="hide-name">{process.callsign}</span>
+                    <span className="hide-state">{hidden ? "hidden" : "visible"}</span>
+                  </button>
+                );
+              })}
+            </>
+          ) : null}
+          {ideaOrbs.filter((orb) => orb.pitch.length > 0).length > 0 ? (
+            <>
+              <span className="hide-section">Ideas</span>
+              {ideaOrbs
+                .filter((orb) => orb.pitch.length > 0)
+                .map((orb) => {
+                  const key = orb.id ?? "__primary__";
+                  const hidden = hiddenIdeas.has(key);
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      className={`hide-item${hidden ? " is-hidden" : ""}`}
+                      data-testid="hide-item"
+                      onClick={() => toggleHiddenIdea(key)}
+                    >
+                      <span className="hide-name">{orb.pitch.length > 42 ? `${orb.pitch.slice(0, 42)}…` : orb.pitch}</span>
+                      <span className="hide-state">{hidden ? "hidden" : "visible"}</span>
+                    </button>
+                  );
+                })}
+            </>
+          ) : null}
+        </div>
+      ) : null}
+
+      {zenMode ? (
+        <div className="zen-hint" data-testid="zen-hint">
+          ◎ zen — z to exit
+        </div>
+      ) : null}
 
       {detailOpen && selectedProcess ? (
         <div className="detail-overlay" onClick={closeDetail}>

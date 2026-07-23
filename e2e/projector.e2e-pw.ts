@@ -40,7 +40,7 @@ test.describe("projector UI — first paint & feature parity", () => {
     await expect(page.getByTestId("active-cue")).toBeVisible();
 
     // The bubble field with process bubbles for the demo fleet.
-    await expect(page.getByTestId("bubble-field")).toBeVisible();
+    await expect(page.getByTestId("room-scene")).toBeVisible();
     await expect(page.locator('[data-testid="bubble"][data-callsign="Atlas"]')).toBeVisible();
     await expect(page.locator('[data-testid="bubble"][data-callsign="Cobalt"]')).toBeVisible();
 
@@ -53,7 +53,7 @@ test.describe("projector UI — first paint & feature parity", () => {
 
   test("shows the 3D garden with at least one idea flower (a pending suggestion)", async ({ page }) => {
     await gotoStatic(page);
-    const field = page.getByTestId("garden-3d");
+    const field = page.getByTestId("room-scene");
     await expect(field).toBeVisible();
     await expect(field).not.toHaveAttribute("data-idea-count", "0");
     await expect(field.locator("canvas")).toBeVisible();
@@ -207,8 +207,8 @@ test.describe("projector UI — boundary fleet states", () => {
   test("zero processes: field + garden remain, empty fleet slot shows", async ({ page }) => {
     await gotoStatic(page);
     await apply(page, { processes: [] });
-    await expect(page.getByTestId("bubble-field")).toBeVisible();
-    await expect(page.getByTestId("garden-3d")).toBeVisible();
+    await expect(page.getByTestId("room-scene")).toBeVisible();
+    await expect(page.getByTestId("room-scene")).toBeVisible();
     await expect(page.getByTestId("fleet-empty")).toBeVisible();
   });
 

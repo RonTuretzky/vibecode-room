@@ -53,14 +53,14 @@ test.describe("desk mode — gesture decoupling & wall identity", () => {
 test.describe("desk mode — two-wall view split", () => {
   test("?view=ideas: garden + tray, fleet hidden", async ({ page }) => {
     await gotoStatic(page, "?live=0&view=ideas");
-    await expect(page.getByTestId("garden-3d")).toBeVisible();
+    await expect(page.getByTestId("room-scene")).toBeVisible();
     await expect(page.getByTestId("idea-tray")).toBeVisible();
     await expect(page.getByTestId("fleet-panel")).toHaveCount(0);
   });
 
   test("?view=builds: garden + fleet rail, idea tray hidden", async ({ page }) => {
     await gotoStatic(page, "?live=0&view=builds");
-    await expect(page.getByTestId("garden-3d")).toBeVisible();
+    await expect(page.getByTestId("room-scene")).toBeVisible();
     await expect(page.getByTestId("fleet-panel").first()).toBeVisible();
     await expect(page.getByTestId("idea-tray")).toHaveCount(0);
     await expect(page.locator('[data-region="suggestion"]')).toHaveCount(0);
