@@ -163,6 +163,15 @@ export interface CerebrasBackoffOptions {
   maxTotalDelayMs?: number;
   /** Concurrency token bucket; null disables, default is the shared module-level one. */
   throttle?: CerebrasThrottle | null;
+  /**
+   * Per-ATTEMPT cap that starts when the request actually goes on the wire —
+   * it deliberately excludes throttle-queue waiting (during a 3-idea fan-out a
+   * call can sit queued behind long native-lane calls for longer than any sane
+   * single-request timeout). A timed-out attempt counts as transient and is
+   * retried with backoff; only the caller's own signal aborts outright.
+   * Default: none (the caller's signal is the only timeout).
+   */
+  perAttemptTimeoutMs?: number;
 }
 
 export function isRetryableCerebrasStatus(status: number): boolean {
@@ -207,6 +216,7 @@ export async function fetchWithCerebrasBackoff(
   const maxTotalDelayMs = options.maxTotalDelayMs ?? DEFAULT_MAX_TOTAL_DELAY_MS;
   const throttle = options.throttle === undefined ? getDefaultCerebrasThrottle() : options.throttle;
   const signal = init?.signal ?? undefined;
+  const perAttemptTimeoutMs = options.perAttemptTimeoutMs;
 
   let totalDelayMs = 0;
   // Equal jitter on the exponential curve; a server Retry-After overrides the
@@ -227,16 +237,31 @@ export async function fetchWithCerebrasBackoff(
     let response: Response | null = null;
     let failure: unknown = null;
     try {
-      response = await fetchImpl(input, init);
+      // The per-attempt timeout arms only once the slot is held — queue time
+      // never counts against the request.
+      const attemptInit =
+        perAttemptTimeoutMs === undefined
+          ? init
+          : {
+              ...init,
+              signal:
+                signal === undefined
+                  ? AbortSignal.timeout(perAttemptTimeoutMs)
+                  : AbortSignal.any([signal, AbortSignal.timeout(perAttemptTimeoutMs)]),
+            };
+      response = await fetchImpl(input, attemptInit);
     } catch (error) {
       failure = error;
     } finally {
       release?.(); // the token is held only while the request is in flight
     }
     if (response === null) {
-      // Network-level failure. Aborts/timeouts propagate; transient socket
-      // errors get the same backoff treatment as a 5xx.
-      if (attempt >= maxAttempts || signal?.aborted === true || isAbortError(failure)) {
+      // Network-level failure. The caller's own abort propagates; transient
+      // socket errors — and per-attempt timeouts when configured — get the
+      // same backoff treatment as a 5xx.
+      const callerAborted = signal?.aborted === true;
+      const hardAbort = isAbortError(failure) && (callerAborted || perAttemptTimeoutMs === undefined);
+      if (attempt >= maxAttempts || callerAborted || hardAbort) {
         throw failure;
       }
       const delay = nextDelayMs(attempt, null);

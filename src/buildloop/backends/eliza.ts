@@ -45,6 +45,10 @@ export const CEREBRAS_OPENAI_BASE_URL = "https://api.cerebras.ai/v1";
 
 // Tight per-call ceiling: a mock lane targets ~60s total (plan + implement).
 const DEFAULT_CALL_TIMEOUT_MS = 45_000;
+// Whole-call ceiling when the default retrying transport is in play: covers
+// throttle-queue waiting + 429/timeout backoff during a concurrent multi-idea
+// fan-out. The 45s per-attempt cap above still bounds each wire request.
+const DEFAULT_OVERALL_CALL_TIMEOUT_MS = 150_000;
 const DEFAULT_MAX_COMPLETION_TOKENS = 16_384;
 const MAX_PROMPT_FILE_CHARS = 20_000;
 const MAX_READ_FILE_BYTES = 512 * 1024;
@@ -204,8 +208,16 @@ export function createCerebrasChatModel(options: CerebrasChatModelOptions = {}):
   }
   const model = options.model ?? process.env.CEREBRAS_MODEL ?? "gemma-4-31b";
   const baseUrl = (options.baseUrl ?? CEREBRAS_OPENAI_BASE_URL).replace(/\/$/u, "");
-  const fetchImpl = options.fetchImpl ?? createCerebrasRetryFetch(options.retry);
-  const timeoutMs = options.timeoutMs ?? DEFAULT_CALL_TIMEOUT_MS;
+  const perCallTimeoutMs = options.timeoutMs ?? DEFAULT_CALL_TIMEOUT_MS;
+  // With the default retrying transport the per-call budget guards each ATTEMPT
+  // (armed once the request is on the wire — see perAttemptTimeoutMs), and the
+  // whole call gets a wider ceiling so throttle-queue waits + backoff retries
+  // during a concurrent fan-out do not kill the build. An injected fetchImpl
+  // keeps the legacy whole-call semantics (the tests' contract).
+  const usingDefaultTransport = options.fetchImpl === undefined;
+  const fetchImpl =
+    options.fetchImpl ?? createCerebrasRetryFetch({ perAttemptTimeoutMs: perCallTimeoutMs, ...options.retry });
+  const timeoutMs = usingDefaultTransport ? Math.max(perCallTimeoutMs, DEFAULT_OVERALL_CALL_TIMEOUT_MS) : perCallTimeoutMs;
   const maxCompletionTokens = options.maxCompletionTokens ?? DEFAULT_MAX_COMPLETION_TOKENS;
   return async ({ prompt, system, temperature, maxTokens, signal }) => {
     const attempt = async (withJsonFormat: boolean): Promise<Response> =>

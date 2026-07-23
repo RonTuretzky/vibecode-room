@@ -22,9 +22,11 @@ import type { BuildBackend, BuildBackendId, BuildRequest, BuildResult } from "..
 export const SMITHERS_BACKEND_LABEL = "Smithers";
 export const SMITHERS_ENTRYPOINT = "index.html";
 
-// A concept mock is one small page — tight ceiling so a kickoff lane settles in
-// about a minute, not the old full-app three.
-const DEFAULT_TIMEOUT_MS = 60_000;
+// A concept mock is one small page — tight ceiling so a kickoff lane settles
+// fast, not the old full-app three minutes. 120s (not 60s): during a 3-idea
+// fan-out concurrent one-shots contend for the same claude subscription and a
+// 60s ceiling SIGKILLed otherwise-healthy mocks (exit 137).
+const DEFAULT_TIMEOUT_MS = 120_000;
 const MAX_PROMPT_FILE_CHARS = 20_000;
 const MAX_READ_FILE_BYTES = 512 * 1024;
 const SUMMARY_MAX_CHARS = 600;
