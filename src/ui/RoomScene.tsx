@@ -4,11 +4,12 @@ import type { IdeaTrayItem, ProjectorProcess } from "./types";
 import { registerSceneDwellSource, type SceneDwellRect } from "./gesture/scene-source";
 import { registerSceneCameraControl } from "./gesture/camera-source";
 import { cornerEye, cornerVerticalFovDeg, cornerYaw } from "./corner-lock";
+import { loadGardenFlora, type FloraLibrary } from "./garden-flora";
 
 // The full-viewport 3D stage (after conductor-github-visualizer): the scene IS
 // the app background and every panel floats over it. Two render modes share
 // the same data:
-//   garden — processes are trees, ideas are flowers on a night meadow
+//   garden — processes are trees, ideas are flowers on a sunlit pasture
 //   orbit  — processes and ideas are glowing orbs adrift in a nebula
 // Navigation matches the visualizer: drag = orbit, shift+drag = pan,
 // wheel = zoom, fit-to-content on demand. Clicks still build/steer (a drag
@@ -352,9 +353,11 @@ function makeGlowTexture(): THREE.CanvasTexture {
 }
 
 // Gradient sky dome (visualizer technique) with a 3-stop ramp for extra depth.
+// NOTE: BackSide alone makes the sphere visible from inside — flipping the
+// geometry with scale(-1,1,1) on top of it double-inverts the winding and the
+// dome vanishes (the sky rendered as the black clear color for months).
 function makeSkyDome(bottom: number, mid: number, top: number): THREE.Mesh {
   const geom = new THREE.SphereGeometry(160, 32, 32);
-  geom.scale(-1, 1, 1);
   const mat = new THREE.ShaderMaterial({
     uniforms: {
       bottomColor: { value: new THREE.Color(bottom) },
@@ -477,15 +480,17 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
     // cap the pixel ratio, and (below) pause the frame loop while hidden.
     const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    // Software rasterizers (headless test Chromium, GPU-less kiosks) crawl
+    // under the photoscan flora — they keep the sky/ground and the primitive
+    // node glyphs, and skip the instanced vegetation + real-model nodes.
+    const debugInfo = renderer.getContext().getExtension("WEBGL_debug_renderer_info");
+    const gpuName = debugInfo === null ? "" : String(renderer.getContext().getParameter(debugInfo.UNMASKED_RENDERER_WEBGL));
+    const softwareGL = /swiftshader|llvmpipe|softpipe|software/i.test(gpuName);
     container.appendChild(renderer.domElement);
 
-    scene.add(new THREE.AmbientLight(0x9fb8cc, 0.55));
-    const key = new THREE.DirectionalLight(0xdfeaff, 0.9);
-    key.position.set(8, 14, 6);
-    scene.add(key);
-    const fill = new THREE.DirectionalLight(0x3377ff, 0.3);
-    fill.position.set(-8, 4, -6);
-    scene.add(fill);
+    // Lighting is per-environment (added to each env's group): the garden is a
+    // sunny pastoral day, orbit keeps the cool night rig — one global rig can't
+    // serve both.
 
     const glowTexture = makeGlowTexture();
 
@@ -564,135 +569,255 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
     }
 
     // ── environments ────────────────────────────────────────────────────────
+    // Pastoral daylight garden built from real CC0 Poly Haven photoscans: a
+    // partly-cloudy sky panorama, a tiled grass ground, and instanced
+    // grass/wildflower/shrub/rock/tree models (see garden-flora.ts +
+    // public/assets/garden/ASSETS.md), plus butterflies and drifting seed
+    // motes. Node/label data colors are unchanged — the dark glass label
+    // cards pop against the bright sky.
     const buildGardenEnv = (): SceneEnv => {
       const rng = mulberry32(0x47415244);
       const group = new THREE.Group();
       scene.add(group);
-      scene.fog = new THREE.Fog(0x0a2028, 30, 130);
+      // Aerial perspective: haze tinted to the sky horizon so meadow and hills
+      // melt into the sky instead of ending at a hard disc edge.
+      scene.fog = new THREE.Fog(0xdcedf8, 80, 210);
 
-      const sky = makeSkyDome(0x1b4a52, 0x0d2436, 0x030a12);
-      group.add(sky);
+      // Daylight rig (env-local): warm sun key matching the panorama's sun,
+      // blue-sky/grass hemisphere bounce, and a soft cool fill so shaded
+      // sides stay readable. (Photoscan albedos run darker than flat colors,
+      // hence hotter intensities than the old procedural pass.)
+      group.add(new THREE.HemisphereLight(0xbdd9f2, 0x86b46a, 1.15));
+      const sunLight = new THREE.DirectionalLight(0xfff2d9, 1.55);
+      sunLight.position.set(-24, 42, -30);
+      group.add(sunLight);
+      const fillLight = new THREE.DirectionalLight(0xcfe4ff, 0.35);
+      fillLight.position.set(18, 12, 16);
+      group.add(fillLight);
 
-      const stars = makeStars(rng, 300, 0.5, 0.7, false);
-      const brightStars = makeStars(rng, 55, 1.05, 0.9, false);
-      group.add(stars);
-      group.add(brightStars);
-
-      // Moon + halo
-      const moon = new THREE.Mesh(
-        new THREE.SphereGeometry(3.4, 24, 24),
-        new THREE.MeshBasicMaterial({ color: 0xe8f2ff, fog: false }),
+      // Sky: real tonemapped equirect panorama (Poly Haven puresky) on a
+      // vertically SQUASHED dome — the camera rig only frames ~12° above the
+      // horizon, and every panorama keeps its blue at the zenith, so the
+      // squash compresses that blue down into the visible band. World-
+      // anchored, so the two-wall/corner-lock pair stays continuous.
+      const skyTexture = new THREE.TextureLoader().load(
+        "/assets/garden/sky/sunflowers_puresky_4k.jpg",
       );
-      moon.position.set(34, 30, -52);
-      group.add(moon);
-      const moonHalo = new THREE.Sprite(
-        new THREE.SpriteMaterial({ map: glowTexture, color: 0xbcd8ff, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }),
+      skyTexture.colorSpace = THREE.SRGBColorSpace;
+      const skyDome = new THREE.Mesh(
+        new THREE.SphereGeometry(340, 48, 32),
+        new THREE.MeshBasicMaterial({ map: skyTexture, side: THREE.BackSide, fog: false, depthWrite: false }),
       );
-      moonHalo.position.copy(moon.position);
-      moonHalo.scale.setScalar(22);
-      group.add(moonHalo);
+      skyDome.scale.y = 0.32;
+      group.add(skyDome);
 
-      // Ground: radial-gradient meadow disc.
-      const gCanvas = document.createElement("canvas");
-      gCanvas.width = 256;
-      gCanvas.height = 256;
-      const gCtx = gCanvas.getContext("2d")!;
-      const gGrad = gCtx.createRadialGradient(128, 128, 10, 128, 128, 128);
-      gGrad.addColorStop(0, "#12483a");
-      gGrad.addColorStop(0.5, "#0a2f26");
-      gGrad.addColorStop(1, "#04140f");
-      gCtx.fillStyle = gGrad;
-      gCtx.fillRect(0, 0, 256, 256);
-      const groundTexture = new THREE.CanvasTexture(gCanvas);
+      // Ground: tiled photoscan grass (1k diff+normal over ~10-unit tiles;
+      // the tiling repeat hides under fog, flora cover and label chrome).
+      const texLoader = new THREE.TextureLoader();
+      const groundDiff = texLoader.load("/assets/garden/ground/aerial_grass_rock_diff_1k.jpg");
+      groundDiff.wrapS = THREE.RepeatWrapping;
+      groundDiff.wrapT = THREE.RepeatWrapping;
+      groundDiff.repeat.set(22, 22);
+      groundDiff.colorSpace = THREE.SRGBColorSpace;
+      groundDiff.anisotropy = 8;
+      const groundNor = texLoader.load("/assets/garden/ground/aerial_grass_rock_nor_1k.jpg");
+      groundNor.wrapS = THREE.RepeatWrapping;
+      groundNor.wrapT = THREE.RepeatWrapping;
+      groundNor.repeat.set(22, 22);
+      groundNor.anisotropy = 8;
       const ground = new THREE.Mesh(
-        new THREE.CircleGeometry(95, 64),
-        new THREE.MeshPhongMaterial({ map: groundTexture, side: THREE.DoubleSide }),
+        new THREE.CircleGeometry(110, 64),
+        // Tint pushes the olive scan toward lush pasture green.
+        new THREE.MeshStandardMaterial({ map: groundDiff, normalMap: groundNor, color: 0xaef29a, roughness: 1, metalness: 0 }),
       );
       ground.rotation.x = -Math.PI / 2;
       group.add(ground);
 
-      // Decorations: grass tufts, dim wildflowers, bushes.
-      const grassMat = new THREE.MeshPhongMaterial({ color: 0x14513c, side: THREE.DoubleSide });
-      const bushMat = new THREE.MeshPhongMaterial({ color: 0x0f3d2f, emissive: 0x0f3d2f, emissiveIntensity: 0.06 });
-      const wildColors = [0x38bdf8, 0x00bcd4, 0x9affc9, 0xf5a0c1, 0xf0e68c];
-      for (let i = 0; i < 240; i++) {
-        const angle = rng() * Math.PI * 2;
-        const radius = 5 + rng() * 55;
-        const x = Math.cos(angle) * radius;
-        const z = Math.sin(angle) * radius;
-        const kind = rng();
-        if (kind < 0.45) {
-          const tuft = new THREE.Group();
-          const blades = 3 + Math.floor(rng() * 3);
-          for (let b = 0; b < blades; b++) {
-            const blade = new THREE.Mesh(new THREE.PlaneGeometry(0.08, 0.35 + rng() * 0.3), grassMat);
-            blade.position.set((rng() - 0.5) * 0.2, 0.2 + rng() * 0.12, (rng() - 0.5) * 0.2);
-            blade.rotation.y = rng() * Math.PI;
-            blade.rotation.x = -0.15 + rng() * 0.3;
-            tuft.add(blade);
+      // Flora: instanced photoscan scatter. Loads async (cached for the page
+      // after the first garden build); each species lands as a handful of
+      // InstancedMesh draw calls, so density is nearly free. The rng here is
+      // dedicated so the async arrival can't perturb the env's other seeds.
+      const floraRng = mulberry32(0x464c4f52);
+      // Counts × per-model tri budgets (see fetch-garden-assets.py) keep the
+      // whole flora pass near ~2M triangles — dense to the eye, cheap to the
+      // two projector GPUs. Scales compensate REAL model sizes (the scans are
+      // multi-plant patches in meters: the grass patch is ~2.8m wide, the
+      // shrub ~3m tall, the jacaranda ~12m).
+      // Scales are calibrated to the scans' TRUE sizes (grass tufts ~0.34m,
+      // dandelions ~0.17m, the jacaranda ~19m tall): small plants scale UP
+      // ~2-3× for projector legibility, the tree scales down to ~8-12 units.
+      const FLORA_SCATTER: { name: string; count: number; rMin: number; rMax: number; sMin: number; sMax: number }[] = [
+        { name: "grass_medium_01", count: 380, rMin: 3, rMax: 74, sMin: 3.0, sMax: 4.5 },
+        { name: "flower_gazania", count: 90, rMin: 4, rMax: 62, sMin: 2.8, sMax: 4.0 },
+        { name: "flower_ursinia", count: 90, rMin: 4, rMax: 62, sMin: 2.5, sMax: 3.8 },
+        { name: "dandelion_01", count: 80, rMin: 4, rMax: 66, sMin: 3.0, sMax: 4.5 },
+        { name: "periwinkle_plant", count: 60, rMin: 5, rMax: 58, sMin: 2.5, sMax: 3.5 },
+        { name: "shrub_02", count: 20, rMin: 12, rMax: 80, sMin: 0.8, sMax: 1.2 },
+        { name: "shrub_03", count: 20, rMin: 10, rMax: 76, sMin: 2.0, sMax: 3.5 },
+        { name: "rock_moss_set_01", count: 12, rMin: 10, rMax: 82, sMin: 0.5, sMax: 0.9 },
+        { name: "tree_stump_01", count: 4, rMin: 15, rMax: 55, sMin: 0.9, sMax: 1.2 },
+        { name: "jacaranda_tree", count: 10, rMin: 34, rMax: 82, sMin: 0.45, sMax: 0.62 },
+      ];
+      let floraDisposed = false;
+      const scatterFlora = (flora: FloraLibrary) => {
+        const dummy = new THREE.Object3D();
+        for (const spec of FLORA_SCATTER) {
+          const variants = flora.get(spec.name);
+          if (variants === undefined || variants.length === 0) {
+            continue;
           }
-          tuft.position.set(x, 0, z);
-          group.add(tuft);
-        } else if (kind < 0.75) {
-          const color = wildColors[Math.floor(rng() * wildColors.length)];
-          const mat = new THREE.MeshPhongMaterial({ color, emissive: color, emissiveIntensity: 0.12 });
-          const flower = new THREE.Group();
-          const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.04, 0.4, 4), grassMat);
-          stem.position.y = 0.2;
-          flower.add(stem);
-          const head = new THREE.Mesh(new THREE.SphereGeometry(0.09, 8, 8), mat);
-          head.position.y = 0.44;
-          flower.add(head);
-          flower.position.set(x, 0, z);
-          group.add(flower);
-        } else {
-          const bush = new THREE.Group();
-          const puffs = 2 + Math.floor(rng() * 2);
-          for (let p = 0; p < puffs; p++) {
-            const size = 0.18 + rng() * 0.2;
-            const puff = new THREE.Mesh(new THREE.IcosahedronGeometry(size, 1), bushMat);
-            puff.position.set((rng() - 0.5) * 0.35, size * 0.8, (rng() - 0.5) * 0.35);
-            bush.add(puff);
+          // Instance i takes variant i % n; angles are an evenly-spaced ring
+          // with jitter so even low-count species (the trees) land in every
+          // camera wedge instead of gambling on uniform randomness.
+          const matrices: THREE.Matrix4[][] = variants.map(() => []);
+          for (let i = 0; i < spec.count; i++) {
+            const angle = ((i + floraRng() * 0.9) / spec.count) * Math.PI * 2;
+            const radius = spec.rMin + floraRng() * (spec.rMax - spec.rMin);
+            dummy.position.set(Math.cos(angle) * radius, 0, Math.sin(angle) * radius);
+            dummy.rotation.y = floraRng() * Math.PI * 2;
+            dummy.scale.setScalar(spec.sMin + floraRng() * (spec.sMax - spec.sMin));
+            dummy.updateMatrix();
+            matrices[i % variants.length].push(dummy.matrix.clone());
           }
-          bush.position.set(x, 0, z);
-          group.add(bush);
+          variants.forEach((variant, v) => {
+            if (matrices[v].length === 0) {
+              return;
+            }
+            for (const piece of variant.pieces) {
+              const instanced = new THREE.InstancedMesh(piece.geometry, piece.material, matrices[v].length);
+              matrices[v].forEach((matrix, i) => instanced.setMatrixAt(i, matrix));
+              // Geometry/material belong to the page-lifetime flora cache;
+              // the dispose traverse below only releases instance buffers.
+              instanced.userData.sharedAsset = true;
+              // Instances span the whole meadow — skip per-mesh culling
+              // rather than trusting instance-unaware bounding volumes.
+              instanced.frustumCulled = false;
+              group.add(instanced);
+            }
+          });
         }
+      };
+      if (!softwareGL) {
+        loadGardenFlora()
+          .then((flora) => {
+            floraLib = flora;
+            // Rebuild the data nodes as real models on the next frame.
+            floraNodesDirty = true;
+            if (!floraDisposed) {
+              scatterFlora(flora);
+            }
+          })
+          .catch((error: unknown) => {
+            console.warn("garden flora failed to load; primitive glyphs stay", error);
+          });
       }
 
-      // Fireflies: drifting additive motes.
-      const fireflies: { sprite: THREE.Sprite; base: THREE.Vector3; phase: number }[] = [];
-      for (let i = 0; i < 26; i++) {
-        const sprite = new THREE.Sprite(
-          new THREE.SpriteMaterial({ map: glowTexture, color: 0xc8ffdc, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false }),
+      // Rolling hills ring the horizon (haze-tinted by the fog) so the meadow
+      // ends in pasture, not at a disc edge; some carry distant tree clumps.
+      // Low rolling downs past the meadow edge (same tiled grass texture,
+      // tinted toward the horizon pale) — kept FLAT and far so the fog reads
+      // them as aerial perspective, with the real jacaranda band in front.
+      const hillTones = [0xc2d8b2, 0xcfe2c0, 0xb8cfae];
+      for (let i = 0; i < 5; i++) {
+        const angle = (i / 5) * Math.PI * 2 + rng() * 0.7;
+        const dist = 98 + rng() * 12;
+        const rx = 30 + rng() * 22;
+        const ry = 2.2 + rng() * 2.2;
+        const hill = new THREE.Mesh(
+          new THREE.SphereGeometry(1, 24, 16),
+          new THREE.MeshStandardMaterial({ map: groundDiff, color: hillTones[i % hillTones.length], roughness: 1 }),
         );
-        const base = new THREE.Vector3((rng() - 0.5) * 34, 0.8 + rng() * 2.4, (rng() - 0.5) * 26);
-        sprite.position.copy(base);
-        sprite.scale.setScalar(0.35 + rng() * 0.3);
-        group.add(sprite);
-        fireflies.push({ sprite, base, phase: rng() * Math.PI * 2 });
+        hill.scale.set(rx, ry, 16 + rng() * 8);
+        hill.position.set(Math.cos(angle) * dist, -ry * 0.35, Math.sin(angle) * dist);
+        group.add(hill);
       }
 
-      const starsMat = stars.material as THREE.PointsMaterial;
+      // Butterflies: two wings hinged on the body line, flapping while they
+      // wander a slow Lissajous over the meadow (the day shift's fireflies).
+      const wingLeftGeo = new THREE.PlaneGeometry(0.15, 0.21);
+      wingLeftGeo.translate(0.08, 0, 0);
+      wingLeftGeo.rotateX(-Math.PI / 2);
+      const wingRightGeo = new THREE.PlaneGeometry(0.15, 0.21);
+      wingRightGeo.translate(-0.08, 0, 0);
+      wingRightGeo.rotateX(-Math.PI / 2);
+      const butterflyBodyGeo = new THREE.CylinderGeometry(0.015, 0.022, 0.24, 5);
+      butterflyBodyGeo.rotateX(Math.PI / 2);
+      const butterflyBodyMat = new THREE.MeshPhongMaterial({ color: 0x4a3527 });
+      const butterflyColors = [0xfff6e8, 0xffd166, 0xf5a0c1, 0x9ad7f0, 0xffa94d];
+      const butterflies: { group: THREE.Group; left: THREE.Mesh; right: THREE.Mesh; base: THREE.Vector3; phase: number; speed: number }[] = [];
+      for (let i = 0; i < 8; i++) {
+        const color = butterflyColors[i % butterflyColors.length];
+        const mat = new THREE.MeshPhongMaterial({ color, emissive: color, emissiveIntensity: 0.18, side: THREE.DoubleSide });
+        const fly = new THREE.Group();
+        const left = new THREE.Mesh(wingLeftGeo, mat);
+        const right = new THREE.Mesh(wingRightGeo, mat);
+        fly.add(left);
+        fly.add(right);
+        fly.add(new THREE.Mesh(butterflyBodyGeo, butterflyBodyMat));
+        const base = new THREE.Vector3((rng() - 0.5) * 34, 1.5 + rng() * 1.8, (rng() - 0.5) * 26);
+        fly.position.copy(base);
+        group.add(fly);
+        butterflies.push({ group: fly, left, right, base, phase: rng() * Math.PI * 2, speed: 0.22 + rng() * 0.18 });
+      }
+
+      // Drifting seeds/pollen: tiny bright motes low over the grass.
+      const motes: { sprite: THREE.Sprite; base: THREE.Vector3; phase: number }[] = [];
+      for (let i = 0; i < 16; i++) {
+        const sprite = new THREE.Sprite(
+          new THREE.SpriteMaterial({ map: glowTexture, color: 0xffffff, transparent: true, opacity: 0.4, depthWrite: false }),
+        );
+        const base = new THREE.Vector3((rng() - 0.5) * 30, 0.7 + rng() * 1.8, (rng() - 0.5) * 24);
+        sprite.position.copy(base);
+        sprite.scale.setScalar(0.14 + rng() * 0.1);
+        group.add(sprite);
+        motes.push({ sprite, base, phase: rng() * Math.PI * 2 });
+      }
+
       return {
         update: (t) => {
           if (reducedMotion) {
             return;
           }
-          starsMat.opacity = 0.62 + Math.sin(t * 0.6) * 0.12;
-          for (const fly of fireflies) {
-            fly.sprite.position.set(
-              fly.base.x + Math.sin(t * 0.32 + fly.phase) * 1.6,
-              fly.base.y + Math.sin(t * 0.55 + fly.phase * 2) * 0.5,
-              fly.base.z + Math.cos(t * 0.27 + fly.phase) * 1.6,
+          for (const fly of butterflies) {
+            fly.group.position.set(
+              fly.base.x + Math.sin(t * fly.speed + fly.phase) * 2.6,
+              fly.base.y + Math.sin(t * 0.9 + fly.phase * 2) * 0.5,
+              fly.base.z + Math.cos(t * fly.speed * 0.85 + fly.phase) * 2.6,
             );
-            fly.sprite.material.opacity = 0.28 + Math.abs(Math.sin(t * 0.9 + fly.phase)) * 0.4;
+            // Face the direction of travel (velocity of the Lissajous above).
+            const vx = Math.cos(t * fly.speed + fly.phase) * fly.speed;
+            const vz = -Math.sin(t * fly.speed * 0.85 + fly.phase) * fly.speed * 0.85;
+            fly.group.rotation.y = Math.atan2(vx, vz);
+            // Bias toward raised wings so a frozen frame never reads as a
+            // flat paper card lying on the meadow.
+            const flap = 0.3 + Math.abs(Math.sin(t * 9 + fly.phase)) * 0.9;
+            fly.left.rotation.z = flap;
+            fly.right.rotation.z = -flap;
+          }
+          for (const mote of motes) {
+            mote.sprite.position.set(
+              mote.base.x + Math.sin(t * 0.22 + mote.phase) * 1.8,
+              mote.base.y + Math.sin(t * 0.35 + mote.phase * 2) * 0.6,
+              mote.base.z + Math.cos(t * 0.18 + mote.phase) * 1.8,
+            );
+            mote.sprite.material.opacity = 0.22 + Math.abs(Math.sin(t * 0.7 + mote.phase)) * 0.3;
           }
         },
         dispose: () => {
+          floraDisposed = true;
           scene.remove(group);
           scene.fog = null;
-          groundTexture.dispose();
+          scene.background = null;
+          skyTexture.dispose();
+          groundDiff.dispose();
+          groundNor.dispose();
           group.traverse((node) => {
+            if (node instanceof THREE.InstancedMesh) {
+              // Flora instances: release ONLY the instance buffers — the
+              // geometry/material belong to the page-lifetime flora cache.
+              node.dispose();
+              return;
+            }
             if (node instanceof THREE.Mesh || node instanceof THREE.Points) {
               node.geometry.dispose();
               (Array.isArray(node.material) ? node.material : [node.material]).forEach((m) => m.dispose());
@@ -710,6 +835,15 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       const group = new THREE.Group();
       scene.add(group);
       scene.fog = null;
+
+      // Cool night rig (env-local; the garden runs warm daylight instead).
+      group.add(new THREE.AmbientLight(0x9fb8cc, 0.55));
+      const key = new THREE.DirectionalLight(0xdfeaff, 0.9);
+      key.position.set(8, 14, 6);
+      group.add(key);
+      const fill = new THREE.DirectionalLight(0x3377ff, 0.3);
+      fill.position.set(-8, 4, -6);
+      group.add(fill);
 
       const sky = makeSkyDome(0x0a1a30, 0x0a2a38, 0x04060e);
       group.add(sky);
@@ -796,23 +930,18 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
     const ideaEntries = new Map<string, Entry>();
     const treeEntries = new Map<string, Entry>();
 
-    // Geometries/materials shared across ALL entries — never disposed per entry
-    // (they live for the scene's lifetime and are freed once at unmount).
-    const sharedGeo = new Set<THREE.BufferGeometry>(Object.values(GEO));
-    const sharedMat = new Set<THREE.Material>([trunkMat, stemMat]);
-
-    // Dispose an entry and every per-entry GPU resource it owns. Rings, satellite
-    // pips, progress arcs and beacons all allocate their own geometry/material,
-    // so sweep the whole group (deduped, skipping the shared pools) rather than
-    // relying on entry.mats alone.
+    // Dispose an entry's per-entry GPU resources. Registered materials live in
+    // entry.mats; per-node geometries (rings, hit volumes, indicator arcs) are
+    // flagged ownGeometry and inline per-entry materials ownMaterial. Everything
+    // else on a node is SHARED (GEO.*, trunk/stem, the photoscan flora cache)
+    // and is freed once at unmount — never here.
     const disposeEntry = (entry: Entry) => {
       scene.remove(entry.group);
+      entry.mats.forEach((mat) => mat.dispose());
       if (entry.label !== null) {
         entry.label.material.map?.dispose();
         entry.label.material.dispose();
       }
-      const geos = new Set<THREE.BufferGeometry>();
-      const mats = new Set<THREE.Material>();
       entry.group.traverse((node) => {
         if (node instanceof THREE.Sprite) {
           if (node !== entry.label) {
@@ -820,20 +949,13 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
           }
           return;
         }
-        if (node instanceof THREE.Mesh || node instanceof THREE.Points) {
-          if (!sharedGeo.has(node.geometry)) {
-            geos.add(node.geometry);
-          }
-          const list = Array.isArray(node.material) ? node.material : [node.material];
-          for (const mat of list) {
-            if (!sharedMat.has(mat)) {
-              mats.add(mat);
-            }
-          }
+        if (node instanceof THREE.Mesh && node.userData.ownGeometry === true) {
+          node.geometry.dispose();
+        }
+        if (node instanceof THREE.Mesh && node.userData.ownMaterial === true) {
+          (Array.isArray(node.material) ? node.material : [node.material]).forEach((mat) => mat.dispose());
         }
       });
-      geos.forEach((geo) => geo.dispose());
-      mats.forEach((mat) => mat.dispose());
     };
 
     // ── richer per-process indicators (shared by every render style) ─────────
@@ -862,6 +984,7 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         for (let i = 0; i < count; i += 1) {
           const angle = (placed / total) * Math.PI * 2 - Math.PI / 2;
           const sat = new THREE.Mesh(GEO.pip, mat);
+          sat.userData.ownMaterial = true;
           sat.position.set(Math.cos(angle) * radius, y, Math.sin(angle) * radius);
           sat.scale.setScalar(dot);
           group.add(sat);
@@ -876,6 +999,8 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
     const addProgressArc = (group: THREE.Group, arc: number, y: number, radius: number, thickness: number, tilt?: number) => {
       const geo = new THREE.TorusGeometry(radius, thickness, 8, 48, Math.PI * 2 * Math.min(Math.max(arc, 0.02), 1));
       const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: PROGRESS_ARC_COLOR, transparent: true, opacity: 0.85 }));
+      mesh.userData.ownGeometry = true;
+      mesh.userData.ownMaterial = true;
       mesh.rotation.x = tilt ?? Math.PI / 2;
       mesh.rotation.z = Math.PI / 2; // start the sweep near the top
       mesh.position.y = y;
@@ -891,6 +1016,7 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       halo.scale.setScalar(scale);
       group.add(halo);
       const core = new THREE.Mesh(GEO.pip, new THREE.MeshBasicMaterial({ color: 0xffffff }));
+      core.userData.ownMaterial = true;
       core.position.y = y;
       core.scale.setScalar(scale * 0.4);
       group.add(core);
@@ -899,6 +1025,7 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
     // A single red failure pip clipped to the node's crown/shell.
     const addFailedPip = (group: THREE.Group, x: number, y: number, scale: number) => {
       const pip = new THREE.Mesh(GEO.pip, new THREE.MeshBasicMaterial({ color: FAILED_PIP_COLOR }));
+      pip.userData.ownMaterial = true;
       pip.position.set(x, y, 0);
       pip.scale.setScalar(scale);
       group.add(pip);
@@ -915,13 +1042,172 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         new THREE.TorusGeometry(radius, built ? 0.09 : 0.06, 8, 64),
         new THREE.MeshBasicMaterial({ color: built ? BUILT_RING_COLOR : COMMISSION_COLOR, transparent: true, opacity: built ? 0.8 : 0.55 }),
       );
+      ring.userData.ownGeometry = true;
+      ring.userData.ownMaterial = true;
       ring.rotation.x = tilt;
       ring.position.y = y;
       group.add(ring);
     };
 
     // ── garden builders ─────────────────────────────────────────────────────
+    // Once the photoscan library lands, the radial-garden DATA NODES are real
+    // models too: a build is an actual jacaranda (sapling while a concept,
+    // full-grown once commissioned) and an idea is an actual flower (gazania
+    // when ready, dandelion puffball while forming). The DATA channels ride
+    // ON TOP as overlays: the glass label, a state-colored glowing ground
+    // ring (also the active-pulse/flash target), the gold commission ring,
+    // the steering ring, and a maturity-colored glow at the flower's heart.
+    // Until flora arrives (or on software GL) the primitive glyphs render.
+    let floraLib: FloraLibrary | null = null;
+    let floraNodesDirty = false;
+    const invisibleHitMat = new THREE.MeshBasicMaterial({ visible: false });
+
+    const buildRealTree = (spec: TreeSpec): Entry | null => {
+      const variants = floraLib?.get("jacaranda_tree");
+      if (variants === undefined || variants.length === 0) {
+        return null;
+      }
+      const color = STATE_COLOR[spec.state];
+      // "built" trees stay full-grown too — grown covers commissioned + built.
+      const ind = treeIndicators(spec);
+      const commissioned = ind.grown;
+      const group = new THREE.Group();
+      const mats: THREE.MeshStandardMaterial[] = [];
+      // The scan is ~19 units tall at scale 1; sapling vs full tree.
+      const treeScale = commissioned ? 0.5 : 0.24;
+      const tree = new THREE.Group();
+      for (const piece of variants[0].pieces) {
+        const mesh = new THREE.Mesh(piece.geometry, piece.material);
+        // Picking goes through the coarse invisible hit volume below — a
+        // 43k-tri raycast per pointer move would drag the frame loop.
+        mesh.raycast = () => {};
+        tree.add(mesh);
+      }
+      tree.scale.setScalar(treeScale);
+      group.add(tree);
+      const hit = new THREE.Mesh(
+        new THREE.SphereGeometry(commissioned ? 3.6 : 1.9, 10, 10),
+        invisibleHitMat,
+      );
+      hit.position.y = commissioned ? 6.2 : 3.0;
+      hit.userData.ownGeometry = true;
+      hit.userData.pick = { kind: "process", callsign: spec.callsign };
+      group.add(hit);
+      // State ring: the state-color channel (and the pulse/flash target).
+      const ringMat = new THREE.MeshStandardMaterial({
+        color,
+        emissive: color,
+        emissiveIntensity: 0.55,
+        transparent: true,
+        opacity: 0.85,
+        roughness: 0.5,
+      });
+      mats.push(ringMat);
+      const stateRing = new THREE.Mesh(new THREE.TorusGeometry(commissioned ? 2.9 : 1.9, 0.09, 10, 64), ringMat);
+      stateRing.userData.ownGeometry = true;
+      stateRing.rotation.x = Math.PI / 2;
+      stateRing.position.y = 0.1;
+      group.add(stateRing);
+      // Stage ring: the gold commission halo, or the brighter ring once built.
+      addStageRing(group, ind.ring, 2.4, 0.06, Math.PI / 2);
+      if (spec.steering) {
+        const steerRing = new THREE.Mesh(
+          new THREE.TorusGeometry(2.1, 0.05, 8, 64),
+          new THREE.MeshBasicMaterial({ color: STEERING_COLOR, transparent: true, opacity: 0.65 }),
+        );
+        steerRing.userData.ownGeometry = true;
+        steerRing.userData.ownMaterial = true;
+        steerRing.rotation.x = Math.PI / 2;
+        steerRing.position.y = 0.14;
+        group.add(steerRing);
+      }
+      // Live indicator overlays — progress arc, build-lane satellites, publish
+      // beacon, failure pip — ride the real tree just like the primitive glyphs.
+      if (ind.progressArc !== null) {
+        addProgressArc(group, ind.progressArc, 0.18, commissioned ? 2.6 : 1.6, 0.055);
+      }
+      addLaneSatellites(group, ind.lanes, commissioned ? 5.4 : 2.6, commissioned ? 2.3 : 1.2, commissioned ? 0.95 : 0.65);
+      if (ind.published) {
+        addPublishedBeacon(group, commissioned ? 9.4 : 4.6, commissioned ? 1.5 : 0.95);
+      }
+      if (ind.failed) {
+        addFailedPip(group, commissioned ? 1.4 : 0.8, commissioned ? 6.5 : 3.2, commissioned ? 0.9 : 0.65);
+      }
+      const label = makeLabelSprite(treeTitle(spec), treeStatus(spec), cssHex(color));
+      label.position.y = commissioned ? 10.2 : 5.1;
+      group.add(label);
+      return { kind: "tree", treeSpec: spec, group, mats, baseEmissive: 0.55, head: null, headY: 0, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false };
+    };
+
+    const buildRealFlower = (spec: IdeaOrbSpec): Entry | null => {
+      const ready = spec.status === "ready";
+      const variants = floraLib?.get(ready ? "flower_gazania" : "dandelion_01");
+      if (variants === undefined || variants.length === 0) {
+        return null;
+      }
+      const color = ready ? MATURITY_COLOR[spec.maturity] : BUD_COLOR;
+      const size = ready ? 0.9 + spec.confidence * 1.0 : 0.55 + spec.confidence * 0.45;
+      const baseEmissive = ready ? 0.5 + spec.confidence * 0.3 : 0.2;
+      const group = new THREE.Group();
+      const mats: THREE.MeshStandardMaterial[] = [];
+      // Deterministic variant per idea so cards don't reshuffle on updates.
+      const variant = variants[Math.abs(ideaKey(spec).split("").reduce((h, ch) => h * 31 + ch.charCodeAt(0), 7)) % variants.length];
+      const plant = new THREE.Group();
+      for (const piece of variant.pieces) {
+        const mesh = new THREE.Mesh(piece.geometry, piece.material);
+        mesh.raycast = () => {};
+        plant.add(mesh);
+      }
+      // The scans are ~0.2m plants; scale to data size (confidence).
+      plant.scale.setScalar(size * 4.5);
+      group.add(plant);
+      // The idea's data color glows at the plant's heart + as a soft halo.
+      const coreMat = new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: baseEmissive, roughness: 0.4 });
+      mats.push(coreMat);
+      const core = new THREE.Mesh(GEO.flowerCenter, coreMat);
+      core.scale.setScalar(size * 0.55);
+      core.position.y = 0.4 * size;
+      group.add(core);
+      const halo = new THREE.Sprite(
+        new THREE.SpriteMaterial({ map: glowTexture, color, transparent: true, opacity: ready ? 0.4 : 0.16, blending: THREE.AdditiveBlending, depthWrite: false }),
+      );
+      halo.position.y = 0.45 * size;
+      halo.scale.setScalar(1.9 * size);
+      group.add(halo);
+      if (ready && spec.verified) {
+        const ring = new THREE.Mesh(
+          GEO.ring,
+          new THREE.MeshBasicMaterial({ color: VERIFIED_COLOR, transparent: true, opacity: 0.55 }),
+        );
+        ring.userData.ownMaterial = true;
+        ring.scale.setScalar(size * 1.6);
+        ring.rotation.x = Math.PI / 2;
+        ring.position.y = 0.08;
+        group.add(ring);
+      }
+      const hit = new THREE.Mesh(
+        new THREE.SphereGeometry(Math.max(0.55, 0.5 * size), 8, 8),
+        invisibleHitMat,
+      );
+      hit.position.y = 0.4 * size;
+      hit.userData.ownGeometry = true;
+      hit.userData.pick = { kind: "idea", key: ideaKey(spec) };
+      group.add(hit);
+      let label: THREE.Sprite | null = null;
+      if (ready && spec.pitch.length > 0) {
+        const statusLine = `${Math.round(spec.confidence * 100)}% · ${spec.maturity}${spec.verified ? " ✓" : ""}`;
+        label = makeLabelSprite(spec.pitch, statusLine, cssHex(color));
+        label.position.y = 1.1 * size + 0.45;
+        group.add(label);
+      }
+      return { kind: "flower", ideaSpec: spec, group, mats, baseEmissive, head: null, headY: 0, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false };
+    };
+
     const buildFlower = (spec: IdeaOrbSpec): Entry => {
+      const real = buildRealFlower(spec);
+      if (real !== null) {
+        return real;
+      }
       const ready = spec.status === "ready";
       const color = ready ? MATURITY_COLOR[spec.maturity] : BUD_COLOR;
       const size = ready ? 0.9 + spec.confidence * 1.0 : 0.55 + spec.confidence * 0.45;
@@ -959,6 +1245,7 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
             GEO.ring,
             new THREE.MeshBasicMaterial({ color: VERIFIED_COLOR, transparent: true, opacity: 0.55 }),
           );
+          ring.userData.ownMaterial = true;
           ring.scale.setScalar(size);
           ring.rotation.x = Math.PI * 0.45;
           head.add(ring);
@@ -975,6 +1262,8 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         new THREE.SphereGeometry(Math.max(0.5, 0.45 * size), 8, 8),
         new THREE.MeshBasicMaterial({ visible: false }),
       );
+      hit.userData.ownGeometry = true;
+      hit.userData.ownMaterial = true;
       hit.userData.pick = { kind: "idea", key: ideaKey(spec) };
       head.add(hit);
 
@@ -989,6 +1278,10 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
     };
 
     const buildTree = (spec: TreeSpec): Entry => {
+      const real = buildRealTree(spec);
+      if (real !== null) {
+        return real;
+      }
       const color = STATE_COLOR[spec.state];
       const ind = treeIndicators(spec);
       const commissioned = ind.grown;
@@ -1056,6 +1349,8 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
           new THREE.TorusGeometry(2.1, 0.05, 8, 64),
           new THREE.MeshBasicMaterial({ color: STEERING_COLOR, transparent: true, opacity: 0.65 }),
         );
+        ring.userData.ownGeometry = true;
+        ring.userData.ownMaterial = true;
         ring.rotation.x = Math.PI / 2;
         ring.position.y = 0.08;
         group.add(ring);
@@ -1105,6 +1400,8 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
           new THREE.TorusGeometry(radius * 1.35, 0.02, 8, 64),
           new THREE.MeshBasicMaterial({ color: VERIFIED_COLOR, transparent: true, opacity: 0.5 }),
         );
+        ring.userData.ownGeometry = true;
+        ring.userData.ownMaterial = true;
         ring.rotation.x = Math.PI * 0.42;
         group.add(ring);
       }
@@ -1144,6 +1441,8 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
           new THREE.TorusGeometry(radius * 1.5, 0.03, 8, 64),
           new THREE.MeshBasicMaterial({ color: STEERING_COLOR, transparent: true, opacity: 0.6 }),
         );
+        ring.userData.ownGeometry = true;
+        ring.userData.ownMaterial = true;
         ring.rotation.x = tilt;
         group.add(ring);
       }
@@ -1194,6 +1493,8 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
           new THREE.TorusGeometry(1.5, 0.03, 8, 64),
           new THREE.MeshBasicMaterial({ color: STEERING_COLOR, transparent: true, opacity: 0.6 }),
         );
+        ring.userData.ownGeometry = true;
+        ring.userData.ownMaterial = true;
         ring.rotation.x = tilt;
         group.add(ring);
       }
@@ -1243,6 +1544,7 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
             GEO.ring,
             new THREE.MeshBasicMaterial({ color: VERIFIED_COLOR, transparent: true, opacity: 0.55 }),
           );
+          ring.userData.ownMaterial = true;
           ring.scale.setScalar(size);
           ring.rotation.x = Math.PI * 0.45;
           head.add(ring);
@@ -1258,6 +1560,8 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         new THREE.SphereGeometry(Math.max(0.55, 0.5 * size), 8, 8),
         new THREE.MeshBasicMaterial({ visible: false }),
       );
+      hit.userData.ownGeometry = true;
+      hit.userData.ownMaterial = true;
       hit.userData.pick = { kind: "idea", key: ideaKey(spec) };
       head.add(hit);
       let label: THREE.Sprite | null = null;
@@ -1885,6 +2189,20 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         lastTick = tick.current;
         reconcile();
       }
+      if (floraNodesDirty) {
+        // The photoscan library just landed: regrow the data nodes as real
+        // models (they re-enter through the normal grow-in animation).
+        floraNodesDirty = false;
+        for (const entry of ideaEntries.values()) {
+          disposeEntry(entry);
+        }
+        ideaEntries.clear();
+        for (const entry of treeEntries.values()) {
+          disposeEntry(entry);
+        }
+        treeEntries.clear();
+        reconcile();
+      }
       if (fitRef.current !== lastFit) {
         lastFit = fitRef.current;
         if (!cornerLocked) {
@@ -2065,6 +2383,7 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       Object.values(GEO).forEach((geometry) => geometry.dispose());
       trunkMat.dispose();
       stemMat.dispose();
+      invisibleHitMat.dispose();
       glowTexture.dispose();
       scene.traverse((node) => {
         if (node instanceof THREE.Mesh && node.geometry !== undefined) {
