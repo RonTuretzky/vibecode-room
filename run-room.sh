@@ -208,9 +208,15 @@ GESTURE_QS=""
 if [ "$GESTURE" = "1" ]; then
   GESTURE_QS="&gesture=1&fusion=ws://localhost:$WS_PORT"
 fi
-URL_A="http://localhost:$VIBERSYN_PORT/?live=1&wall=A&view=ideas$GESTURE_QS"
-URL_B="http://localhost:$VIBERSYN_PORT/?live=1&wall=B&view=builds$GESTURE_QS"
-URL_SINGLE="http://localhost:$VIBERSYN_PORT/?live=1&view=$SINGLE_VIEW$GESTURE_QS"
+# Mock Room (fixture decks) is HIDDEN from the default UI (no-mocks audit);
+# VIBERSYN_MOCK_ROOM=1 in the env opts the toggle back in via ?mock=1.
+MOCK_QS=""
+if [ "${VIBERSYN_MOCK_ROOM:-}" = "1" ]; then
+  MOCK_QS="&mock=1"
+fi
+URL_A="http://localhost:$VIBERSYN_PORT/?live=1&wall=A&view=ideas$GESTURE_QS$MOCK_QS"
+URL_B="http://localhost:$VIBERSYN_PORT/?live=1&wall=B&view=builds$GESTURE_QS$MOCK_QS"
+URL_SINGLE="http://localhost:$VIBERSYN_PORT/?live=1&view=$SINGLE_VIEW$GESTURE_QS$MOCK_QS"
 
 open_wall() { # $1=window-position  $2=url
   if command -v open >/dev/null 2>&1; then
@@ -246,4 +252,5 @@ else
   echo "[room] running. Say \"Vibersyn\" to start Idea Capture; \"Vibersyn, build it\" builds; press ? for the keyboard cheat sheet."
   echo "[room] (tip: the QR Import button adds a GitHub repo to the wall from your phone.)  Ctrl-C to stop."
 fi
+echo "[room] (tip: dwell/click \"Guided Demo\" — or add &demo=guided to a wall URL — for the coached visitor walkthrough.)"
 wait

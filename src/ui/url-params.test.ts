@@ -71,4 +71,16 @@ describe("parseProjectorUrl", () => {
     expect(parseProjectorUrl("?wall=b&view=builds", "h").badge).toBe("WALL B · BUILDS");
     expect(parseProjectorUrl("?wall=A", "h").badge).toBe("WALL A · FULL");
   });
+
+  test("?demo=guided auto-enters the guided demo; anything else stays off", () => {
+    expect(parseProjectorUrl("?demo=guided", "h").demo).toBe("guided");
+    expect(parseProjectorUrl("?demo=other", "h").demo).toBeNull();
+    expect(parseProjectorUrl("", "h").demo).toBeNull();
+  });
+
+  test("?mock=1 exposes the Mock Room toggle; default hides it (no-mocks audit)", () => {
+    expect(parseProjectorUrl("?mock=1", "h").mock).toBe(true);
+    expect(parseProjectorUrl("?mock=0", "h").mock).toBe(false);
+    expect(parseProjectorUrl("", "h").mock).toBe(false);
+  });
 });

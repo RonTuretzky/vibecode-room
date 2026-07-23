@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
-import { demoProjectorSnapshot, busyRoomSnapshot, withUnmuted } from "./demo-data";
+import { demoProjectorSnapshot, busyRoomSnapshot, emptyProjectorSnapshot, withUnmuted } from "./demo-data";
 import type { ProjectorProcess, ProjectorSnapshot, TranscriptLine } from "./types";
 import { GestureLayer } from "./gesture/GestureLayer";
 import { RoomScene, type IdeaOrbSpec, type SceneLayout, type SceneMode, type TreeSpec } from "./RoomScene";
@@ -14,6 +14,8 @@ import { BuildChips, ProcessControls } from "./BuildChips";
 import { backendsOf, buildsOf, lifecycleActionsFor, looksLikeSnapshot } from "./buildloop";
 import type { BuildloopSnapshot, LifecycleAction } from "./buildloop";
 import { parseProjectorUrl } from "./url-params";
+import { GuidedDemo } from "./guided/GuidedDemo";
+import { advanceOnSnapshot, popPracticeOrb, skipStep, startGuided, type GuidedState } from "./guided/machine";
 import "./buildloop.css";
 import { startMicCapture, type MicCaptureHandle } from "./mic";
 
@@ -46,8 +48,31 @@ declare global {
   }
 }
 
-export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot, urlSearch }: ProjectorAppProps) {
-  const [snapshot, setSnapshot] = useState(initialSnapshot);
+export function ProjectorApp({ initialSnapshot, urlSearch }: ProjectorAppProps) {
+  // Window configuration from the URL, parsed FIRST — the guided-demo entry
+  // and Mock-Room gates below depend on it: wall identity badge (?wall=A|B),
+  // the LEGACY view param (?view=ideas|builds — accepted so old two-wall URLs
+  // keep working, but INERT for content: every window renders the full room),
+  // and the LEGACY gesture layer — which mounts ONLY on an explicit ?gesture=1
+  // or ?fusion= (desk mode is the default; a bare ?wall= is just a badge so
+  // two-wall projections work without cameras).
+  const urlConfig = useMemo(() => {
+    if (urlSearch !== undefined) {
+      return parseProjectorUrl(urlSearch, "localhost");
+    }
+    if (typeof window === "undefined") {
+      return parseProjectorUrl("", "localhost");
+    }
+    return parseProjectorUrl(window.location.search, window.location.hostname);
+  }, [urlSearch]);
+  const view = urlConfig.view;
+
+  // AUDIT (no-mocks): with no explicit snapshot prop the wall boots from the
+  // EMPTY live baseline — never the Atlas/Cobalt fixture — so a live window
+  // shows nothing canned while /api/state resolves (or when the server is
+  // down). The offline demo (?live=0, or DEV without ?live=1) seeds the
+  // interactive demo fixture in an effect below.
+  const [snapshot, setSnapshot] = useState(initialSnapshot ?? emptyProjectorSnapshot);
   const [selected, setSelected] = useState<string | null>(null);
   const [isUnmuting, setIsUnmuting] = useState(false);
   const [micState, setMicState] = useState<"off" | "connecting" | "live">("off");
@@ -129,26 +154,48 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot, urlSearc
     return true;
   }, []);
 
-  // Window configuration from the URL: wall identity badge (?wall=A|B), the
-  // LEGACY view param (?view=ideas|builds — accepted so old two-wall URLs keep
-  // working, but INERT for content: every window renders the full room), and
-  // the LEGACY gesture layer — which mounts ONLY on an explicit ?gesture=1 or
-  // ?fusion= (desk mode is the default; a bare ?wall= is just a badge so
-  // two-wall projections work without cameras).
-  const urlConfig = useMemo(() => {
-    if (urlSearch !== undefined) {
-      return parseProjectorUrl(urlSearch, "localhost");
+  // Offline demo (?live=0, or DEV without ?live=1) with no explicit snapshot
+  // prop: seed the interactive demo fixture. The LIVE path stays on the empty
+  // baseline until the real /api/state arrives (see the audit note above).
+  const hasExplicitSnapshot = initialSnapshot !== undefined;
+  useEffect(() => {
+    if (!hasExplicitSnapshot && !liveMode) {
+      setSnapshot(demoProjectorSnapshot);
     }
-    if (typeof window === "undefined") {
-      return parseProjectorUrl("", "localhost");
-    }
-    return parseProjectorUrl(window.location.search, window.location.hostname);
-  }, [urlSearch]);
-  const view = urlConfig.view;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasExplicitSnapshot]);
+
+  // GUIDED DEMO: the coached walkthrough (see ./guided/machine.ts for the step
+  // contract). Null = not running. ?demo=guided auto-enters on load; the HUD
+  // button (re-)enters a FRESH run at any time.
+  const [guided, setGuided] = useState<GuidedState | null>(() =>
+    urlConfig.demo === "guided" ? startGuided(initialSnapshot ?? emptyProjectorSnapshot) : null,
+  );
+  const guidedRef = useRef(guided);
+  guidedRef.current = guided;
 
   // Latest snapshot exposed to the e2e window hook without re-binding it.
   const snapshotRef = useRef(snapshot);
   snapshotRef.current = snapshot;
+
+  // Feed EVERY snapshot through the guided-demo machine: real room state is
+  // the only thing that advances a step. advanceOnSnapshot is identity-stable
+  // when nothing changes, so setState bails without render churn.
+  useEffect(() => {
+    setGuided((current) => (current === null ? current : advanceOnSnapshot(current, snapshot)));
+  }, [snapshot]);
+
+  // Entering the story step auto-opens the REAL generated deck of the project
+  // born during the demo, starting on whichever framework finished first.
+  const guidedStepRef = useRef<GuidedState["step"] | null>(null);
+  useEffect(() => {
+    const step = guided?.step ?? null;
+    const previous = guidedStepRef.current;
+    guidedStepRef.current = step;
+    if (step === "story" && previous !== "story" && guided?.focusUpid != null) {
+      setSlideshowUpid(guided.focusUpid);
+    }
+  }, [guided]);
 
   const gatePercent = useMemo(() => {
     const { gate } = snapshot.suggestion;
@@ -492,6 +539,58 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot, urlSearc
     };
   }, []);
 
+  // ── guided demo actions ────────────────────────────────────────────────────
+  // (Re-)enter: always a FRESH run — step 1, zero orbs, baseline = the fleet
+  // as it stands right now. Any open deck closes so step 1 owns the wall.
+  const enterGuidedDemo = useCallback(() => {
+    setSlideshowUpid(null);
+    setGuided(startGuided(snapshotRef.current));
+  }, []);
+  const exitGuidedDemo = useCallback(() => setGuided(null), []);
+  const guidedPopOrb = useCallback(() => {
+    setGuided((current) => (current === null ? current : popPracticeOrb(current)));
+  }, []);
+  const guidedSkip = useCallback(() => {
+    setGuided((current) => (current === null ? current : skipStep(current, snapshotRef.current)));
+  }, []);
+
+  // GUIDED RECORD (step 2's big button): REALLY unmute (/api/unmute), turn on
+  // Idea Capture (/api/capture {on:true}) and Auto-Build (/api/auto-accept
+  // {on:true}) — the exact endpoints the keyboard u/c/a path uses — and start
+  // the browser mic so the room can actually hear the visitor. The step itself
+  // advances only when the SNAPSHOT confirms unmuted+capturing, so a failed
+  // POST leaves the coach on step 2 telling the truth. Offline demo applies
+  // the same states locally so the flow stays testable without a server.
+  const guidedRecord = useCallback(async () => {
+    try {
+      if (snapshotRef.current.muted) {
+        await releaseMute();
+      }
+      if (liveMode) {
+        for (const url of ["/api/capture", "/api/auto-accept"]) {
+          const response = await fetch(url, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ on: true }),
+          });
+          if (response.ok && response.headers.get("content-type")?.includes("application/json")) {
+            const body: unknown = await response.json();
+            if (looksLikeSnapshot(body)) {
+              setSnapshot(body);
+            }
+          }
+        }
+      } else {
+        setSnapshot((current) => ({ ...current, muted: false, listening: true, captureMode: true, autoAccept: true }));
+      }
+    } catch {
+      // Non-authoritative projector: a failed POST must never wedge the demo.
+    }
+    if (micHandleRef.current === null) {
+      void toggleMic();
+    }
+  }, [liveMode, releaseMute, toggleMic]);
+
   // VOICE FEEDBACK: when the server recognizes a wake-word command the snapshot's
   // `voice` field changes; flash the command near the status bar so the room gets
   // visible confirmation the utterance landed. The initial value (a stale command
@@ -686,6 +785,12 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot, urlSearc
         }
         if (qrOpenRef.current) {
           setQrOpen(false);
+          return;
+        }
+        // Esc exits the guided demo at any step (documented; skip stays a
+        // per-step button). The deck/help/QR overlays above close first.
+        if (guidedRef.current !== null) {
+          setGuided(null);
           return;
         }
         setSelected(null);
@@ -922,6 +1027,8 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot, urlSearc
   // accessibility) with the OS cursor and drag-orbit left intact.
   const gestureMode = urlConfig.gesture !== null;
   const dwellLayerOn = gestureMode || urlConfig.dwell === "mouse";
+  // AUDIT (no-mocks): the Mock Room toggle renders ONLY behind ?mock=1.
+  const mockRoomEnabled = urlConfig.mock;
 
   return (
     <main
@@ -938,6 +1045,11 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot, urlSearc
         layout={sceneLayout}
         wall={urlConfig.wall}
         fitSignal={fitSignal}
+        focusUpid={
+          guided !== null && (guided.step === "build" || guided.step === "story")
+            ? guided.focusUpid
+            : null
+        }
         pointerNav={!gestureMode}
         onAcceptIdea={acceptOrb}
         onSelectProcess={selectSceneProcess}
@@ -1052,15 +1164,31 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot, urlSearc
           </button>
           <button
             type="button"
-            className={`ctl-button mock-room${mockMode ? " on" : ""}`}
-            data-testid="mock-room-button"
-            data-state={mockMode ? "on" : "off"}
-            aria-pressed={mockMode}
-            onClick={toggleMockMode}
-            title="Demo: fill the room with several projects building at once. Toggle off to return to the live state."
+            className={`ctl-button guided-launch${guided !== null ? " on" : ""}`}
+            data-testid="guided-demo-button"
+            data-state={guided !== null ? "on" : "off"}
+            aria-pressed={guided !== null}
+            onClick={enterGuidedDemo}
+            title="Guided demo: a coached walkthrough — point, record, say an idea, watch three frameworks build it. Restarts from step 1."
           >
-            {mockMode ? "● Mock Room" : "Mock Room"}
+            Guided Demo
           </button>
+          {/* AUDIT (no-mocks): the Mock Room fixture toggle is HIDDEN unless the
+              launcher opts in with ?mock=1 (run-room.sh appends it only when
+              VIBERSYN_MOCK_ROOM=1). A default room never offers canned decks. */}
+          {mockRoomEnabled ? (
+            <button
+              type="button"
+              className={`ctl-button mock-room${mockMode ? " on" : ""}`}
+              data-testid="mock-room-button"
+              data-state={mockMode ? "on" : "off"}
+              aria-pressed={mockMode}
+              onClick={toggleMockMode}
+              title="Demo: fill the room with several projects building at once. Toggle off to return to the live state."
+            >
+              {mockMode ? "● Mock Room" : "Mock Room"}
+            </button>
+          ) : null}
         </div>
       </header>
 
@@ -1225,12 +1353,26 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot, urlSearc
                 process={deckProcess}
                 onLifecycle={(upid, action) => void processLifecycle(upid, action)}
                 onClose={() => setSlideshowUpid(null)}
+                initialBackend={guided?.step === "story" ? guided.readyBackend : null}
               />
             ) : null;
           })()
         : null}
       {qrOpen ? <QrImport processes={snapshot.processes} onClose={() => setQrOpen(false)} /> : null}
       {helpOpen ? <HelpOverlay onClose={() => setHelpOpen(false)} gestureMode={gestureMode} /> : null}
+      {guided !== null ? (
+        <GuidedDemo
+          state={guided}
+          snapshot={snapshot}
+          micState={micState}
+          micError={micError}
+          onPopOrb={guidedPopOrb}
+          onRecord={() => void guidedRecord()}
+          onSkip={guidedSkip}
+          onExit={exitGuidedDemo}
+          onFinish={exitGuidedDemo}
+        />
+      ) : null}
     </main>
   );
 }

@@ -23,6 +23,13 @@ export interface ProjectorUrlConfig {
   // point→highlight→dwell-select mechanic (no cameras needed). The OS cursor
   // stays visible; only pure gesture mode hides it.
   dwell: "mouse" | null;
+  // ?demo=guided — auto-enter the coached guided-demo flow on load (the HUD
+  // "Guided Demo" button enters the same flow interactively).
+  demo: "guided" | null;
+  // ?mock=1 — expose the Mock Room fixture toggle. OFF by default so the live
+  // wall never offers canned content; run-room.sh appends it only when
+  // VIBERSYN_MOCK_ROOM=1 is set in the environment.
+  mock: boolean;
 }
 
 export function parseProjectorUrl(search: string, hostname: string): ProjectorUrlConfig {
@@ -54,6 +61,10 @@ export function parseProjectorUrl(search: string, hostname: string): ProjectorUr
   // the gesture interaction — independent of gesture mode.
   const dwell = params.get("dwell") === "mouse" ? ("mouse" as const) : null;
 
+  // Guided demo auto-entry + the env-gated Mock Room toggle.
+  const demo = params.get("demo") === "guided" ? ("guided" as const) : null;
+  const mock = params.get("mock") === "1";
+
   // Corner identity badge: shown whenever the window is wall- or view-scoped so
   // an operator glancing across the room knows which projection they're facing.
   const badge =
@@ -63,5 +74,5 @@ export function parseProjectorUrl(search: string, hostname: string): ProjectorUr
         ? view.toUpperCase()
         : null;
 
-  return { view, wall, badge, gesture, dwell };
+  return { view, wall, badge, gesture, dwell, demo, mock };
 }

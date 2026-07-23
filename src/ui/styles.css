@@ -2298,6 +2298,468 @@ main.gesture-mode * {
 }
 
 /* ============================================================================
+   Guided demo — big glass coach steps over the live room. Projector-friendly:
+   large type, high contrast, everything readable across a room. The container
+   is pointer-events:none so the live wall stays dwellable through it; only the
+   card, orbs and buttons take input (all <button>s → dwell targets for free).
+   ============================================================================ */
+.guided-demo {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  pointer-events: none;
+}
+
+.guided-card {
+  position: absolute;
+  left: 50%;
+  bottom: 4vh;
+  transform: translateX(-50%);
+  width: min(920px, 94vw);
+  pointer-events: auto;
+  padding: 26px 34px 20px;
+  border-radius: 24px;
+  border: 1px solid rgba(158, 226, 255, 0.28);
+  background: rgba(6, 16, 24, 0.86);
+  backdrop-filter: blur(14px);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.55), 0 0 40px rgba(0, 188, 212, 0.08);
+  animation: fade-in 280ms ease;
+}
+
+/* Story step: shrink to a slim top banner so the REAL generated deck below
+   stays fully visible and dwellable. */
+.guided-card.slim {
+  bottom: auto;
+  top: 2vh;
+  width: min(880px, 94vw);
+  padding: 14px 26px 12px;
+  z-index: 60;
+}
+
+.guided-eyebrow {
+  display: block;
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--c-selected);
+}
+
+.guided-title {
+  margin: 6px 0 10px;
+  font-size: clamp(26px, 3.4vw, 40px);
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
+
+.guided-card.slim .guided-title {
+  margin: 2px 0 6px;
+  font-size: clamp(18px, 2vw, 24px);
+}
+
+.guided-lede {
+  margin: 0 0 10px;
+  font-size: clamp(17px, 1.9vw, 22px);
+  line-height: 1.5;
+  color: var(--ink-soft);
+}
+
+.guided-lede strong {
+  color: var(--ink);
+}
+
+.guided-sub {
+  margin: 0 0 8px;
+  font-size: 16px;
+  color: var(--ink-faint);
+}
+
+.guided-progress {
+  margin: 4px 0 8px;
+  font-family: var(--mono);
+  font-size: clamp(20px, 2.2vw, 26px);
+  font-weight: 700;
+  color: var(--c-active);
+}
+
+.guided-notice {
+  margin: 0 0 12px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(245, 166, 35, 0.5);
+  background: rgba(245, 166, 35, 0.12);
+  font-size: 16px;
+  color: #f6dca6;
+}
+
+.guided-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
+.guided-actions .ctl-button {
+  font-size: 15px;
+  padding: 9px 18px;
+}
+
+.ctl-button.guided-finish {
+  color: #06130c;
+  background: var(--c-active);
+  border-color: rgba(0, 255, 136, 0.8);
+  font-weight: 800;
+}
+
+/* HUD launch button — calm cyan so it reads as an invitation, not state. */
+.ctl-button.guided-launch {
+  color: var(--c-selected);
+  border-color: rgba(0, 188, 212, 0.45);
+  background: rgba(0, 188, 212, 0.08);
+  white-space: nowrap;
+}
+
+.ctl-button.guided-launch:hover,
+.ctl-button.guided-launch.on {
+  background: rgba(0, 188, 212, 0.2);
+}
+
+/* Live status chips (step 2): pending → dim; ok → green. */
+.guided-status-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 6px 0 4px;
+}
+
+.guided-chip {
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--glass-line);
+  color: var(--ink-faint);
+  background: rgba(16, 30, 40, 0.55);
+}
+
+.guided-chip.ok {
+  color: var(--c-active);
+  border-color: rgba(0, 255, 136, 0.45);
+  background: rgba(0, 255, 136, 0.08);
+}
+
+.guided-mic-error {
+  color: #ffb3ad;
+}
+
+/* Practice orbs (step 1) — three floating dwell targets. Round, luminous,
+   big enough to point at from across the room. */
+.guided-orbs {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.practice-orb {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  width: clamp(96px, 11vw, 150px);
+  height: clamp(96px, 11vw, 150px);
+  border-radius: 50%;
+  border: 2px solid rgba(158, 226, 255, 0.55);
+  background: radial-gradient(circle at 34% 30%, rgba(158, 226, 255, 0.5), rgba(0, 188, 212, 0.18) 55%, rgba(0, 90, 120, 0.12));
+  box-shadow: 0 0 34px rgba(94, 210, 255, 0.4), inset 0 0 26px rgba(158, 226, 255, 0.25);
+  pointer-events: auto;
+  cursor: pointer;
+  padding: 0;
+  animation: practice-float 4.5s ease-in-out infinite;
+}
+
+.practice-orb:hover,
+.practice-orb[data-dwell-hot] {
+  border-color: rgba(158, 226, 255, 0.95);
+  box-shadow: 0 0 54px rgba(94, 210, 255, 0.75), inset 0 0 30px rgba(158, 226, 255, 0.4);
+}
+
+/* The dwell layer's generic grow uses transform — compose with the centering
+   translate so the orb grows in place instead of jumping. */
+.practice-orb[data-dwell-hot] {
+  transform: translate(-50%, -50%) scale(1.08);
+}
+
+.practice-orb-core {
+  display: block;
+  width: 26%;
+  height: 26%;
+  margin: 37% auto;
+  border-radius: 50%;
+  background: rgba(232, 242, 245, 0.92);
+  box-shadow: 0 0 18px rgba(232, 242, 245, 0.8);
+}
+
+.practice-orb.popped {
+  border-color: rgba(0, 255, 136, 0.8);
+  background: radial-gradient(circle, rgba(0, 255, 136, 0.5), rgba(0, 255, 136, 0) 70%);
+  box-shadow: none;
+  animation: practice-pop 600ms ease-out forwards;
+  pointer-events: none;
+}
+
+@keyframes practice-float {
+  0%, 100% { margin-top: 0; }
+  50% { margin-top: -18px; }
+}
+
+@keyframes practice-pop {
+  0% { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  100% { opacity: 0; transform: translate(-50%, -50%) scale(1.7); }
+}
+
+/* Step 2 — the big Record button, centered where a hand naturally points. */
+.guided-record-stage {
+  position: absolute;
+  left: 50%;
+  top: 34%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.guided-record {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 26px 44px;
+  border-radius: 999px;
+  border: 3px solid rgba(255, 59, 48, 0.75);
+  background: rgba(30, 8, 8, 0.82);
+  color: #ffd7d4;
+  font-size: clamp(24px, 3vw, 36px);
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  box-shadow: 0 0 50px rgba(255, 59, 48, 0.35);
+  backdrop-filter: blur(10px);
+}
+
+.guided-record:hover,
+.guided-record[data-dwell-hot] {
+  background: rgba(255, 59, 48, 0.22);
+  box-shadow: 0 0 70px rgba(255, 59, 48, 0.6);
+}
+
+.guided-record-dot {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: #ff3b30;
+  box-shadow: 0 0 22px rgba(255, 59, 48, 0.9);
+  animation: record-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes record-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+/* Step 3 — the live transcript feed. */
+.guided-transcript {
+  max-height: 24vh;
+  overflow-y: auto;
+  padding: 12px 16px;
+  border-radius: 14px;
+  border: 1px solid var(--glass-line);
+  background: rgba(10, 20, 28, 0.6);
+}
+
+.guided-transcript-empty {
+  margin: 4px 0;
+  font-family: var(--mono);
+  font-size: 16px;
+  color: var(--ink-faint);
+  animation: record-pulse 2.2s ease-in-out infinite;
+}
+
+.guided-tx {
+  margin: 6px 0;
+  font-size: clamp(16px, 1.8vw, 20px);
+  color: var(--ink);
+}
+
+.guided-tx strong {
+  color: var(--c-selected);
+  margin-right: 8px;
+}
+
+.guided-tx-vibersyn strong {
+  color: var(--c-active);
+}
+
+/* Step 4 — the three framework race lanes. */
+.guided-lanes {
+  display: grid;
+  gap: 12px;
+  margin: 8px 0 4px;
+}
+
+.guided-lane {
+  display: grid;
+  grid-template-columns: minmax(170px, auto) 1fr;
+  grid-template-rows: auto auto;
+  column-gap: 16px;
+  row-gap: 6px;
+  align-items: baseline;
+  padding: 12px 16px;
+  border-radius: 14px;
+  border: 1px solid var(--glass-line);
+  background: rgba(10, 20, 28, 0.6);
+}
+
+.guided-lane-label {
+  font-size: clamp(17px, 1.9vw, 22px);
+  font-weight: 800;
+  color: var(--ink);
+}
+
+.guided-lane-status {
+  font-family: var(--mono);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--ink-faint);
+  justify-self: end;
+}
+
+.guided-lane.status-ready {
+  border-color: rgba(0, 255, 136, 0.5);
+}
+
+.guided-lane.status-ready .guided-lane-status {
+  color: var(--c-active);
+}
+
+.guided-lane.status-failed {
+  border-color: rgba(255, 59, 48, 0.5);
+}
+
+.guided-lane.status-failed .guided-lane-status {
+  color: var(--c-halted);
+}
+
+.guided-lane-track {
+  grid-column: 1 / -1;
+  display: block;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(150, 200, 220, 0.12);
+  overflow: hidden;
+}
+
+.guided-lane-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--c-planning);
+  transition: width 400ms ease;
+}
+
+.guided-lane.status-ready .guided-lane-fill {
+  background: var(--c-active);
+}
+
+.guided-lane.status-failed .guided-lane-fill {
+  background: rgba(255, 59, 48, 0.55);
+}
+
+.guided-all-failed {
+  color: #ffb3ad;
+}
+
+/* Celebration flash — the spoken idea REALLY became a build. */
+.guided-celebrate {
+  position: absolute;
+  left: 50%;
+  top: 18%;
+  transform: translateX(-50%);
+  padding: 18px 34px;
+  border-radius: 999px;
+  border: 1px solid rgba(0, 255, 136, 0.6);
+  background: rgba(4, 26, 16, 0.88);
+  color: var(--c-active);
+  font-size: clamp(22px, 2.6vw, 32px);
+  font-weight: 800;
+  white-space: nowrap;
+  box-shadow: 0 0 60px rgba(0, 255, 136, 0.35);
+  animation: celebrate-in 500ms cubic-bezier(0.2, 1.4, 0.4, 1);
+  pointer-events: none;
+}
+
+@keyframes celebrate-in {
+  from { opacity: 0; transform: translateX(-50%) scale(0.7); }
+  to { opacity: 1; transform: translateX(-50%) scale(1); }
+}
+
+/* Deck per-framework tabs — dwell/click to switch results; building/failed
+   lanes are labeled, disabled (not dwell targets), and honest. */
+.deck-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0 4px;
+}
+
+.deck-tab {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--glass-line);
+  background: rgba(16, 30, 40, 0.55);
+  color: var(--ink-soft);
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.deck-tab .deck-tab-status {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ink-faint);
+}
+
+.deck-tab.active {
+  border-color: rgba(0, 188, 212, 0.7);
+  background: rgba(0, 188, 212, 0.16);
+  color: var(--ink);
+}
+
+.deck-tab:disabled {
+  cursor: default;
+  opacity: 0.75;
+}
+
+.deck-tab.status-building .deck-tab-status {
+  color: var(--c-planning);
+}
+
+.deck-tab.status-failed {
+  border-color: rgba(255, 59, 48, 0.45);
+}
+
+.deck-tab.status-failed .deck-tab-status {
+  color: var(--c-halted);
+}
+
+.deck-tab.status-ready:not(:disabled) .deck-tab-status {
+  color: var(--c-active);
+}
+
+/* ============================================================================
    Reduced motion — freeze all float/drift, keep the static beauty
    ============================================================================ */
 @media (prefers-reduced-motion: reduce) {
@@ -2314,8 +2776,17 @@ main.gesture-mode * {
   .qr-card,
   .help-card,
   .qr-success,
-  .voice-flash {
+  .voice-flash,
+  .practice-orb,
+  .guided-record-dot,
+  .guided-transcript-empty,
+  .guided-celebrate,
+  .guided-card {
     animation: none !important;
+  }
+  /* Without the pop animation's forwards-fill, a popped orb must still vanish. */
+  .practice-orb.popped {
+    opacity: 0;
   }
   .bubble {
     transition: width 0ms, height 0ms;

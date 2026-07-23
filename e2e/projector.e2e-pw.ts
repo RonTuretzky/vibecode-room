@@ -66,12 +66,15 @@ test.describe("projector UI — first paint & feature parity", () => {
 
   test("status bar carries the desk-mode control row; unmute only appears when muted", async ({ page }) => {
     await gotoStatic(page);
-    // Fixed order: mic · capture · auto-build · QR import · mock room.
+    // Fixed order: mic · capture · auto-build · QR import · guided demo.
     await expect(page.getByTestId("mic-button")).toBeVisible();
     await expect(page.getByTestId("capture-button")).toBeVisible();
     await expect(page.getByTestId("auto-build-button")).toBeVisible();
     await expect(page.getByTestId("qr-import-button")).toBeVisible();
-    await expect(page.getByTestId("mock-room-button")).toBeVisible();
+    await expect(page.getByTestId("guided-demo-button")).toBeVisible();
+    // NO-MOCKS AUDIT: the Mock Room fixture toggle is hidden by default —
+    // only ?mock=1 (VIBERSYN_MOCK_ROOM=1 via run-room.sh) exposes it.
+    await expect(page.getByTestId("mock-room-button")).toHaveCount(0);
     // The emergency BUTTON is gone by design — Shift+E is the kill-all.
     await expect(page.getByTestId("emergency-button")).toHaveCount(0);
     // Not muted at first paint → no unmute button.
@@ -256,8 +259,11 @@ test.describe("projector UI — 3D scene navigation & decks", () => {
     await expect(page.getByTestId("app")).toHaveAttribute("data-zen", "false");
   });
 
-  test("mock room fills the scene with the busy fixture and back", async ({ page }) => {
-    await gotoStatic(page);
+  test("mock room (opted in via ?mock=1) fills the scene with the busy fixture and back", async ({ page }) => {
+    // The toggle only exists behind ?mock=1 (no-mocks audit).
+    await page.goto("/?live=0&mock=1");
+    await waitForHook(page);
+    await expect(page.getByTestId("app")).toBeVisible();
     await page.getByTestId("mock-room-button").click();
     const scene = page.getByTestId("room-scene");
     await expect(scene).toHaveAttribute("data-tree-count", "5");

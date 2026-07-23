@@ -7,6 +7,7 @@ import { QrImport } from "./QrImport";
 import { Slideshow } from "./Slideshow";
 import { demoProjectorSnapshot, busyRoomSnapshot } from "./demo-data";
 import type { BuildloopProcess, BuildloopSnapshot } from "./buildloop";
+import { PRACTICE_ORB_COUNT } from "./guided/machine";
 
 function countOccurrences(haystack: string, needle: string): number {
   return haystack.split(needle).length - 1;
@@ -49,6 +50,74 @@ describe("projector UI contract", () => {
   test("the capture control no longer promises auto-building (capture ≠ build)", () => {
     const html = renderToStaticMarkup(<ProjectorApp initialSnapshot={demoProjectorSnapshot} />);
     expect(html).not.toContain("every idea builds itself");
+  });
+});
+
+// NO-MOCKS AUDIT: the default (no initialSnapshot prop) render is the EMPTY
+// live baseline — never the Atlas/Cobalt fixture — and the Mock Room fixture
+// toggle is hidden unless the launcher opts in with ?mock=1.
+describe("no-mocks audit: default UI carries no fixture content", () => {
+  test("with no snapshot prop, first paint is the empty live baseline (no fixtures)", () => {
+    const html = renderToStaticMarkup(<ProjectorApp />);
+    expect(html).not.toContain("Atlas");
+    expect(html).not.toContain("Cobalt");
+    expect(html).not.toContain("Turn the meeting notes into a blocker announcer.");
+    // The wall shell still renders every region.
+    for (const region of REQUIRED_PROJECTOR_REGIONS) {
+      expect(html).toContain(`data-region="${region}"`);
+    }
+  });
+
+  test("the Mock Room toggle is HIDDEN by default and appears only with ?mock=1", () => {
+    const hidden = renderToStaticMarkup(<ProjectorApp initialSnapshot={demoProjectorSnapshot} />);
+    expect(hidden).not.toContain('data-testid="mock-room-button"');
+
+    const gated = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch="?live=0&mock=1" />,
+    );
+    expect(gated).toContain('data-testid="mock-room-button"');
+  });
+});
+
+// GUIDED DEMO: the coached walkthrough. Entry via the HUD button or
+// ?demo=guided; step 1 renders three practice orbs; every step carries
+// skip/exit affordances. (Advance conditions are unit-tested in
+// guided/machine.test.ts against fake snapshot feeds.)
+describe("guided demo overlay", () => {
+  test("the HUD always offers the dwellable Guided Demo launch button", () => {
+    const html = renderToStaticMarkup(<ProjectorApp initialSnapshot={demoProjectorSnapshot} />);
+    expect(html).toContain('data-testid="guided-demo-button"');
+    expect(html).toContain("Guided Demo");
+  });
+
+  test("without ?demo=guided the overlay does not render", () => {
+    const html = renderToStaticMarkup(<ProjectorApp initialSnapshot={demoProjectorSnapshot} />);
+    expect(html).not.toContain('data-testid="guided-demo"');
+  });
+
+  test("?demo=guided auto-enters step 1 with the practice orbs and skip/exit", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch="?live=0&demo=guided" />,
+    );
+    expect(html).toContain('data-testid="guided-demo"');
+    expect(html).toContain('data-step="orientation"');
+    expect(countOccurrences(html, 'data-testid="practice-orb"')).toBe(PRACTICE_ORB_COUNT);
+    expect(html).toContain(`0 / ${PRACTICE_ORB_COUNT} popped`);
+    expect(html).toContain('data-testid="guided-skip-button"');
+    expect(html).toContain('data-testid="guided-exit-button"');
+    // Step 1 explains the mechanic in plain words.
+    expect(html).toContain("point at the wall");
+  });
+
+  test("an emergency-stopped room is SAID, not wedged (resilience notice)", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp
+        initialSnapshot={{ ...demoProjectorSnapshot, emergencyStopTriggered: true }}
+        urlSearch="?live=0&demo=guided"
+      />,
+    );
+    expect(html).toContain('data-testid="guided-notice"');
+    expect(html).toContain("EMERGENCY STOP");
   });
 });
 
@@ -246,6 +315,42 @@ describe("project deck (slideshow)", () => {
     expect(html).toContain('data-testid="slideshow-builds"');
     expect(html).toContain('data-testid="build-chip"');
     expect(html).toContain('data-testid="fleet-controls"');
+  });
+
+  test("per-backend tabs label every framework result — ready decks switchable, building/failed said honestly", () => {
+    const process: BuildloopProcess = {
+      ...demoProjectorSnapshot.processes[0]!,
+      builds: [
+        { backend: "smithers", label: "Smithers", status: "building", previewUrl: null, summary: null, slideshowUrl: null, progressLabel: "scaffolding" },
+        { backend: "eliza", label: "ElizaOS", status: "ready", previewUrl: "http://127.0.0.1:4101/", summary: null, slideshowUrl: "http://127.0.0.1:4101/slides.html" },
+        { backend: "native", label: "Native", status: "failed", previewUrl: null, summary: null, slideshowUrl: null },
+      ],
+    };
+    const html = renderToStaticMarkup(
+      <Slideshow process={process} onLifecycle={() => {}} onClose={() => {}} />,
+    );
+    expect(countOccurrences(html, 'data-testid="deck-backend-tab"')).toBe(3);
+    // The ready deck's tab is enabled; building/failed tabs are disabled
+    // (disabled buttons are excluded from gesture-dwell targeting) + labeled.
+    expect(html).toContain('data-backend="eliza"');
+    expect(html).toContain("scaffolding");
+    expect(html).toContain("failed");
+  });
+
+  test("initialBackend opens the deck on that framework's live slide (whichever won)", () => {
+    const process: BuildloopProcess = {
+      ...demoProjectorSnapshot.processes[0]!,
+      builds: [
+        { backend: "smithers", label: "Smithers", status: "ready", previewUrl: null, summary: null, slideshowUrl: "http://127.0.0.1:4100/s.html" },
+        { backend: "eliza", label: "ElizaOS", status: "ready", previewUrl: null, summary: null, slideshowUrl: "http://127.0.0.1:4101/s.html" },
+      ],
+    };
+    const html = renderToStaticMarkup(
+      <Slideshow process={process} onLifecycle={() => {}} onClose={() => {}} initialBackend="eliza" />,
+    );
+    // Slide index 1 = eliza's live deck (index 0 is smithers').
+    expect(html).toContain('data-slide-index="1"');
+    expect(html).toContain("http://127.0.0.1:4101/s.html");
   });
 
   test("a process with neither fixture slides nor live decks renders no deck", () => {

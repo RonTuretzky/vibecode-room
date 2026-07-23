@@ -19,16 +19,19 @@ import { BuildChips, ProcessControls } from "./BuildChips";
 
 type DeckSlide =
   | { kind: "html"; title: string; html: string }
-  | { kind: "live"; title: string; url: string };
+  | { kind: "live"; title: string; url: string; backend: string };
 
 export interface SlideshowProps {
   process: ProjectorProcess;
   // App owns the POST + snapshot application (and the offline-demo fallback).
   onLifecycle: (upid: string, action: LifecycleAction) => void;
   onClose: () => void;
+  // Open on THIS backend's live deck slide when it exists (guided demo: the
+  // deck starts on whichever framework finished first). Null/absent = slide 0.
+  initialBackend?: string | null;
 }
 
-export function Slideshow({ process, onLifecycle, onClose }: SlideshowProps) {
+export function Slideshow({ process, onLifecycle, onClose, initialBackend = null }: SlideshowProps) {
   const builds = useMemo(() => buildsOf(process), [process]);
   const slides = useMemo<DeckSlide[]>(() => {
     const fixture: DeckSlide[] = (process.slides ?? []).map((slide) => ({
@@ -42,11 +45,20 @@ export function Slideshow({ process, onLifecycle, onClose }: SlideshowProps) {
         kind: "live" as const,
         title: `Live deck — ${build.label}`,
         url: build.slideshowUrl as string,
+        backend: build.backend as string,
       }));
     return [...fixture, ...live];
   }, [process.slides, builds]);
 
-  const [index, setIndex] = useState(0);
+  const [index, setIndex] = useState(() => {
+    if (initialBackend !== null) {
+      const start = slides.findIndex((slide) => slide.kind === "live" && slide.backend === initialBackend);
+      if (start !== -1) {
+        return start;
+      }
+    }
+    return 0;
+  });
   const clamped = Math.min(index, Math.max(slides.length - 1, 0));
 
   const prev = useCallback(() => setIndex((i) => Math.max(i - 1, 0)), []);
@@ -98,6 +110,58 @@ export function Slideshow({ process, onLifecycle, onClose }: SlideshowProps) {
         {builds.length > 0 ? (
           <div className="slideshow-builds" data-testid="slideshow-builds">
             <BuildChips builds={builds} />
+          </div>
+        ) : null}
+        {builds.length > 0 ? (
+          /* Per-framework result tabs: a READY build with a generated deck is
+             dwell/click-switchable to its live slide; lanes still building or
+             failed are labeled as such (disabled = not a dwell target). */
+          <div className="deck-tabs" role="tablist" aria-label="Framework results" data-testid="deck-backend-tabs">
+            {builds.map((build) => {
+              const slideIndex = slides.findIndex(
+                (slide) => slide.kind === "live" && slide.backend === (build.backend as string),
+              );
+              const openable = slideIndex !== -1;
+              const current = openable && slideIndex === clamped;
+              return (
+                <button
+                  key={build.backend}
+                  type="button"
+                  role="tab"
+                  aria-selected={current}
+                  className={`deck-tab status-${build.status}${current ? " active" : ""}`}
+                  data-testid="deck-backend-tab"
+                  data-backend={build.backend}
+                  data-status={build.status}
+                  disabled={!openable}
+                  onClick={() => {
+                    if (openable) {
+                      setIndex(slideIndex);
+                    }
+                  }}
+                  title={
+                    openable
+                      ? `Show the ${build.label} result.`
+                      : build.status === "building"
+                        ? `${build.label} is still building.`
+                        : build.status === "failed"
+                          ? `${build.label} failed.`
+                          : `${build.label} published no deck.`
+                  }
+                >
+                  <span className="deck-tab-label">{build.label}</span>
+                  <span className="deck-tab-status">
+                    {openable
+                      ? "deck"
+                      : build.status === "building"
+                        ? (build.progressLabel ?? "building…")
+                        : build.status === "failed"
+                          ? "failed"
+                          : "ready · no deck"}
+                  </span>
+                </button>
+              );
+            })}
           </div>
         ) : null}
         <ProcessControls upid={process.upid} state={process.state} onLifecycle={onLifecycle} />

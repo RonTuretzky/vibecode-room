@@ -28,7 +28,9 @@ async function gotoStatic(page: Page, query = "?live=0"): Promise<void> {
 
 test.describe("mouse-dwell fallback (?dwell=mouse)", () => {
   test("parking the mouse on a control highlights it, fills the ring, and clicks it ONCE", async ({ page }) => {
-    await gotoStatic(page, "?live=0&dwell=mouse");
+    // &mock=1 exposes the Mock Room toggle (hidden by default — no-mocks
+    // audit) purely as a deterministic on/off dwell target for this spec.
+    await gotoStatic(page, "?live=0&dwell=mouse&mock=1");
     await expect(page.getByTestId("gesture-overlay")).toBeAttached();
 
     const mock = page.getByTestId("mock-room-button");
@@ -47,9 +49,13 @@ test.describe("mouse-dwell fallback (?dwell=mouse)", () => {
     await expect(mock).toHaveAttribute("data-state", "on");
 
     // Leave, return, dwell again: toggles back off (one click per approach).
-    await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height + 160);
+    // Re-measure first — toggling ON changes the label ("● Mock Room"), which
+    // can reflow the (wrapping) control row and move the button.
+    const box2 = await mock.boundingBox();
+    expect(box2).not.toBeNull();
+    await page.mouse.move(box2!.x + box2!.width / 2, box2!.y + box2!.height + 160);
     await page.waitForTimeout(300);
-    await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+    await page.mouse.move(box2!.x + box2!.width / 2, box2!.y + box2!.height / 2);
     await expect(mock).toHaveAttribute("data-state", "off", { timeout: 4_000 });
   });
 
@@ -65,7 +71,7 @@ test.describe("mouse-dwell fallback (?dwell=mouse)", () => {
 
 test.describe("gesture mode cursor policy (?gesture=1)", () => {
   test("OS cursor hidden everywhere; dwell layer mounted; no pointer glyph element", async ({ page }) => {
-    await gotoStatic(page, "?live=0&wall=A&gesture=1&fusion=ws://127.0.0.1:9");
+    await gotoStatic(page, "?live=0&wall=A&gesture=1&fusion=ws://127.0.0.1:9&mock=1");
     await expect(page.getByTestId("app")).toHaveAttribute("data-gesture", "true");
     await expect(page.getByTestId("gesture-overlay")).toBeAttached();
     const cursors = await page.evaluate(() => {

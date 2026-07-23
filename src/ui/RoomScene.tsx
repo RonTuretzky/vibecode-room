@@ -55,6 +55,11 @@ interface RoomSceneProps {
   wall?: string | null;
   // Increment to request a one-shot fit-to-content camera move.
   fitSignal: number;
+  // GUIDED-DEMO FOCUS: when set, the camera glides to frame this process's
+  // node (retrying until the node exists, since a fresh spawn's tree appears a
+  // beat after the snapshot). Null = no focus request; the user's own
+  // drag/zoom/fit always takes over afterwards.
+  focusUpid?: string | null;
   // When false (pure gesture mode: hands point, nobody drags), the pointer
   // never binds to the scene — no drag-orbit/pan/zoom/click, so pointing at a
   // node can never fight the camera. Keyboard camera controls (G/L/F) and the
@@ -321,7 +326,7 @@ interface Entry {
   removing: boolean;
 }
 
-export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, pointerNav = true, onAcceptIdea, onSelectProcess }: RoomSceneProps) {
+export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, focusUpid = null, pointerNav = true, onAcceptIdea, onSelectProcess }: RoomSceneProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const ideasRef = useRef(ideas);
   ideasRef.current = ideas;
@@ -340,6 +345,8 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
   pointerNavRef.current = pointerNav;
   const fitRef = useRef(fitSignal);
   fitRef.current = fitSignal;
+  const focusRef = useRef<string | null>(focusUpid);
+  focusRef.current = focusUpid;
   const onAcceptRef = useRef(onAcceptIdea);
   onAcceptRef.current = onAcceptIdea;
   const onSelectRef = useRef(onSelectProcess);
@@ -1481,6 +1488,10 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
     reconcile();
     let lastTick = tick.current;
     let lastFit = fitRef.current;
+    // The focus upid whose camera move has already been applied. A pending
+    // focus retries each frame until the node exists (fresh spawns land a beat
+    // after the snapshot), then applies exactly once.
+    let appliedFocus: string | null = null;
 
     const clock = new THREE.Clock();
     let rafId = 0;
@@ -1500,6 +1511,21 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       if (fitRef.current !== lastFit) {
         lastFit = fitRef.current;
         fitToContent();
+      }
+      // Guided-demo focus: glide the rig to the requested process node.
+      const wantFocus = focusRef.current;
+      if (wantFocus !== appliedFocus) {
+        if (wantFocus === null) {
+          appliedFocus = null;
+        } else {
+          const focusEntry = treeEntries.get(wantFocus);
+          if (focusEntry !== undefined && !focusEntry.removing) {
+            rig.dTargetX = focusEntry.targetPos.x;
+            rig.dTargetZ = focusEntry.targetPos.z;
+            rig.dRadius = Math.max(7, Math.min(rig.dRadius, 11));
+            appliedFocus = wantFocus;
+          }
+        }
       }
       const smoothing = 1 - Math.exp(-dt * 7);
       // Track the hand tightly while dragging; glide softly once released.
