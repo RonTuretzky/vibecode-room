@@ -276,6 +276,118 @@ button {
   pointer-events: none;
 }
 
+/* Project explainer slideshow — a glass deck over the scene. */
+.slideshow-card {
+  width: min(680px, 92vw);
+  max-height: 82vh;
+  overflow-y: auto;
+  padding: 26px 30px 22px;
+  border-radius: 20px;
+  background: rgba(7, 16, 24, 0.93);
+  border: 1px solid var(--glass-line);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  animation: detail-rise 320ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.slideshow-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.slideshow-title {
+  margin: 4px 0 0;
+  font-size: 20px;
+  font-weight: 650;
+  color: var(--ink);
+}
+
+.slide {
+  min-height: 150px;
+}
+
+.slide-title {
+  margin: 0 0 10px;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: #bfeefc;
+  text-transform: uppercase;
+}
+
+.slide-body {
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--ink-soft);
+}
+
+.slide-body p {
+  margin: 0 0 10px;
+}
+
+.slide-body ul {
+  margin: 0 0 10px;
+  padding-left: 20px;
+}
+
+.slide-body li {
+  margin-bottom: 4px;
+}
+
+.slide-body strong {
+  color: var(--ink);
+}
+
+.slide-body em {
+  color: #bfeefc;
+}
+
+.slide-body code {
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: rgba(0, 188, 212, 0.12);
+  color: #9be4f5;
+  font-size: 12.5px;
+}
+
+.slideshow-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.slide-dots {
+  display: flex;
+  gap: 8px;
+}
+
+.slide-dot {
+  width: 9px;
+  height: 9px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(158, 226, 255, 0.25);
+  cursor: pointer;
+}
+
+.slide-dot.active {
+  background: var(--c-selected);
+  box-shadow: 0 0 8px rgba(0, 188, 212, 0.6);
+}
+
+.ctl-button.slide-prev:disabled,
+.ctl-button.slide-next:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
 .stage-dimmed {
   filter: blur(7px) brightness(0.55) saturate(0.85);
   opacity: 0.7;

@@ -4,7 +4,8 @@ import { demoProjectorSnapshot, busyRoomSnapshot, withUnmuted } from "./demo-dat
 import type { LogEvent } from "../types";
 import type { ProjectorProcess, ProjectorSnapshot, TranscriptLine } from "./types";
 import { GestureLayer } from "./gesture/GestureLayer";
-import { RoomScene, type IdeaOrbSpec, type SceneMode, type TreeSpec } from "./RoomScene";
+import { RoomScene, type IdeaOrbSpec, type SceneLayout, type SceneMode, type TreeSpec } from "./RoomScene";
+import { Slideshow } from "./Slideshow";
 import { BuildDetail } from "./BuildDetail";
 import { IdeaTray } from "./IdeaTray";
 import { QrImport } from "./QrImport";
@@ -58,6 +59,13 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
   // Scene controls (visualizer parity): garden/orbit render mode, zen mode
   // (all chrome hidden), the hide/unhide menu, and a fit-to-content signal.
   const [sceneMode, setSceneMode] = useState<SceneMode>("garden");
+  // Layout strategy axis (visualizer parity): standard radial, H3 Poincaré
+  // ball, or the Poincaré disk. Crossed with the garden/orbit style axis.
+  const [sceneLayout, setSceneLayout] = useState<SceneLayout>("radial");
+  // Project explainer deck: the upid whose slideshow is open, or null.
+  const [slideshowUpid, setSlideshowUpid] = useState<string | null>(null);
+  const slideshowRef = useRef<string | null>(null);
+  slideshowRef.current = slideshowUpid;
   const [zenMode, setZenMode] = useState(false);
   const zenModeRef = useRef(false);
   zenModeRef.current = zenMode;
@@ -569,6 +577,10 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
         // Close the topmost overlay first; fall back to closing the detail.
         // Help renders after (above) the QR overlay in the tree, so it closes
         // first — otherwise Escape appears to do nothing while both are open.
+        if (slideshowRef.current !== null) {
+          setSlideshowUpid(null);
+          return;
+        }
         if (hideMenuOpenRef.current) {
           setHideMenuOpen(false);
           return;
@@ -601,6 +613,9 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
       switch (keyEvent.key) {
         case "g":
           setSceneMode((current) => (current === "garden" ? "orbit" : "garden"));
+          return;
+        case "l":
+          setSceneLayout((current) => (current === "radial" ? "ball" : current === "ball" ? "disk" : "radial"));
           return;
         case "z":
           setZenMode((zen) => !zen);
@@ -756,6 +771,22 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
     [ideaOrbs, hiddenIdeas],
   );
 
+  // Clicking a project in the scene: processes with an explainer deck open
+  // their slideshow; everything else steers as before.
+  const selectSceneProcess = useCallback(
+    (callsign: string) => {
+      const process = snapshotRef.current.processes.find(
+        (candidate) => candidate.callsign === callsign || candidate.upid === callsign,
+      );
+      if (process !== undefined && (process.slides?.length ?? 0) > 0) {
+        setSlideshowUpid(process.upid);
+        return;
+      }
+      void steerProcess(callsign);
+    },
+    [steerProcess],
+  );
+
   // Clicking a ready orb builds it: ledger candidates go through the per-idea
   // accept endpoint, the primary suggestion through /api/suggestion/accept.
   const acceptOrb = useCallback(
@@ -775,10 +806,11 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
         ideas={visibleIdeaOrbs}
         trees={treeSpecs}
         mode={sceneMode}
+        layout={sceneLayout}
         view={effectiveView}
         fitSignal={fitSignal}
         onAcceptIdea={acceptOrb}
-        onSelectProcess={(callsign) => void steerProcess(callsign)}
+        onSelectProcess={selectSceneProcess}
       />
       {urlConfig.gesture ? (
         <GestureLayer wall={urlConfig.gesture.wall} fusionUrl={urlConfig.gesture.fusionUrl} />
@@ -941,6 +973,18 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
         </button>
         <button
           type="button"
+          className="ctl-button scene-layout"
+          data-testid="scene-layout-button"
+          data-layout={sceneLayout}
+          onClick={() =>
+            setSceneLayout((current) => (current === "radial" ? "ball" : current === "ball" ? "disk" : "radial"))
+          }
+          title="Cycle the spatial layout (L): radial → H3 Poincaré ball → Poincaré disk."
+        >
+          {sceneLayout === "radial" ? "⊹ Radial" : sceneLayout === "ball" ? "◉ Ball" : "⊙ Disk"}
+        </button>
+        <button
+          type="button"
           className="ctl-button scene-fit"
           data-testid="scene-fit-button"
           onClick={() => setFitSignal((n) => n + 1)}
@@ -1035,6 +1079,14 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
         </div>
       ) : null}
 
+      {slideshowUpid !== null
+        ? (() => {
+            const deckProcess = snapshot.processes.find((candidate) => candidate.upid === slideshowUpid);
+            return deckProcess !== undefined ? (
+              <Slideshow process={deckProcess} onClose={() => setSlideshowUpid(null)} />
+            ) : null;
+          })()
+        : null}
       {qrOpen ? <QrImport processes={snapshot.processes} onClose={() => setQrOpen(false)} /> : null}
       {helpOpen ? <HelpOverlay onClose={() => setHelpOpen(false)} /> : null}
     </main>

@@ -29,11 +29,15 @@ export interface TreeSpec {
 }
 
 export type SceneMode = "garden" | "orbit";
+// Spatial layout strategies (visualizer parity: standard radial, H3 Poincaré
+// ball after Munzner 1997, and the Lamping/Rao/Pirolli Poincaré disk).
+export type SceneLayout = "radial" | "ball" | "disk";
 
 interface RoomSceneProps {
   ideas: IdeaOrbSpec[];
   trees: TreeSpec[];
   mode: SceneMode;
+  layout: SceneLayout;
   view: "ideas" | "builds" | "full";
   // Increment to request a one-shot fit-to-content camera move.
   fitSignal: number;
@@ -59,6 +63,33 @@ const BUD_COLOR = 0x6b8296;
 const VERIFIED_COLOR = 0x9affc9;
 const TRUNK_COLOR = 0x4a3527;
 const FLASH_MS = 1500;
+
+// ── hyperbolic layout constants (after the visualizer's H3/disk modes) ───────
+// Poincaré radial coordinates r ∈ (0,1): shells picked via tanh(d/2) for a
+// hyperbolic edge length d; display scale is the conformal factor 1 - r².
+const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
+const BALL_RADIUS = 5.8;
+const BALL_CENTER_Y = 3.6;
+const BALL_SHELL_PROC = 0.5; // tanh(1.1/2)
+const BALL_SHELL_READY = 0.74; // tanh(1.9/2)
+const BALL_SHELL_FORMING = 0.87; // tanh(2.65/2)
+const DISK_RADIUS = 7.2;
+const DISK_R_PROC = 0.45;
+const DISK_R_READY = 0.7;
+const DISK_R_FORMING = 0.87;
+
+// Evenly spread point i of n over the unit sphere (Fibonacci sphere).
+function fibSphereDir(i: number, n: number): THREE.Vector3 {
+  const z = 1 - (2 * (i + 0.5)) / Math.max(n, 1);
+  const r = Math.sqrt(Math.max(0, 1 - z * z));
+  const phi = i * GOLDEN_ANGLE;
+  return new THREE.Vector3(r * Math.cos(phi), z, r * Math.sin(phi));
+}
+
+// Conformal Poincaré scale: nodes shrink toward the boundary (focus+context).
+function poincareScale(r: number): number {
+  return Math.max(1 - r * r, 0.22);
+}
 
 function mulberry32(seed: number): () => number {
   let a = seed >>> 0;
@@ -235,12 +266,14 @@ interface Entry {
   label: THREE.Sprite | null;
   targetPos: THREE.Vector3;
   targetScale: number;
+  // Conformal Poincaré factor (1 near the centre, small near the boundary).
+  scaleMult: number;
   phase: number;
   flashStart: number | null;
   removing: boolean;
 }
 
-export function RoomScene({ ideas, trees, mode, view, fitSignal, onAcceptIdea, onSelectProcess }: RoomSceneProps) {
+export function RoomScene({ ideas, trees, mode, layout, view, fitSignal, onAcceptIdea, onSelectProcess }: RoomSceneProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const ideasRef = useRef(ideas);
   ideasRef.current = ideas;
@@ -248,6 +281,8 @@ export function RoomScene({ ideas, trees, mode, view, fitSignal, onAcceptIdea, o
   treesRef.current = trees;
   const modeRef = useRef(mode);
   modeRef.current = mode;
+  const layoutRef = useRef(layout);
+  layoutRef.current = layout;
   const viewRef = useRef(view);
   viewRef.current = view;
   const fitRef = useRef(fitSignal);
@@ -260,7 +295,7 @@ export function RoomScene({ ideas, trees, mode, view, fitSignal, onAcceptIdea, o
 
   useEffect(() => {
     tick.current += 1;
-  }, [ideas, trees, mode, view]);
+  }, [ideas, trees, mode, layout, view]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -302,15 +337,24 @@ export function RoomScene({ ideas, trees, mode, view, fitSignal, onAcceptIdea, o
     };
     const rigDefaults = () => {
       const ideasOnly = viewRef.current === "ideas";
-      if (modeRef.current === "garden") {
-        return ideasOnly ? { radius: 10.5, height: 3.2 } : { radius: 15.5, height: 4.6 };
+      if (layoutRef.current === "ball") {
+        return { radius: 12.5, height: 5.4, lookY: BALL_CENTER_Y };
       }
-      return ideasOnly ? { radius: 10, height: 3.6 } : { radius: 14.5, height: 5.2 };
+      if (layoutRef.current === "disk") {
+        const diskY = modeRef.current === "garden" ? 0.05 : 2.6;
+        // Look down onto the disk so the hyperbolic compression reads.
+        return { radius: 10.5, height: diskY + 9.5, lookY: diskY };
+      }
+      if (modeRef.current === "garden") {
+        return ideasOnly ? { radius: 10.5, height: 3.2, lookY: 1.55 } : { radius: 15.5, height: 4.6, lookY: 1.7 };
+      }
+      return ideasOnly ? { radius: 10, height: 3.6, lookY: 1.7 } : { radius: 14.5, height: 5.2, lookY: 1.7 };
     };
     const resetRig = () => {
       const d = rigDefaults();
       rig.dRadius = d.radius;
       rig.dHeight = d.height;
+      rig.lookY = d.lookY;
       rig.dTargetX = 0;
       rig.dTargetZ = 0;
     };
@@ -638,7 +682,7 @@ export function RoomScene({ ideas, trees, mode, view, fitSignal, onAcceptIdea, o
         label.position.y = stemH + 0.32 * size + 0.1;
         group.add(label);
       }
-      return { kind: "flower", ideaSpec: spec, group, mats, baseEmissive, head, headY: stemH, label, targetPos: new THREE.Vector3(), targetScale: 1, phase: 0, flashStart: null, removing: false };
+      return { kind: "flower", ideaSpec: spec, group, mats, baseEmissive, head, headY: stemH, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false };
     };
 
     const buildTree = (spec: TreeSpec): Entry => {
@@ -680,7 +724,7 @@ export function RoomScene({ ideas, trees, mode, view, fitSignal, onAcceptIdea, o
       const label = makeLabelSprite(spec.callsign, `${spec.state} · ${Math.round(spec.progress)}%`, cssHex(color));
       label.position.y = 6.6;
       group.add(label);
-      return { kind: "tree", treeSpec: spec, group, mats: [foliageMat], baseEmissive: foliageMat.emissiveIntensity, head: null, headY: 0, label, targetPos: new THREE.Vector3(), targetScale: 1, phase: 0, flashStart: null, removing: false };
+      return { kind: "tree", treeSpec: spec, group, mats: [foliageMat], baseEmissive: foliageMat.emissiveIntensity, head: null, headY: 0, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false };
     };
 
     // ── orbit builders ──────────────────────────────────────────────────────
@@ -718,7 +762,7 @@ export function RoomScene({ ideas, trees, mode, view, fitSignal, onAcceptIdea, o
         label.position.y = radius + 0.25;
         group.add(label);
       }
-      return { kind: "orb-idea", ideaSpec: spec, group, mats: [orbMat], baseEmissive, head: null, headY: 0, label, targetPos: new THREE.Vector3(), targetScale: 1, phase: 0, flashStart: null, removing: false };
+      return { kind: "orb-idea", ideaSpec: spec, group, mats: [orbMat], baseEmissive, head: null, headY: 0, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false };
     };
 
     const buildOrbProcess = (spec: TreeSpec): Entry => {
@@ -741,25 +785,189 @@ export function RoomScene({ ideas, trees, mode, view, fitSignal, onAcceptIdea, o
       const label = makeLabelSprite(spec.callsign, `${spec.state} · ${Math.round(spec.progress)}%`, cssHex(color));
       label.position.y = radius + 0.25;
       group.add(label);
-      return { kind: "orb-proc", treeSpec: spec, group, mats: [orbMat], baseEmissive: 0.5, head: null, headY: 0, label, targetPos: new THREE.Vector3(), targetScale: 1, phase: 0, flashStart: null, removing: false };
+      return { kind: "orb-proc", treeSpec: spec, group, mats: [orbMat], baseEmissive: 0.5, head: null, headY: 0, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false };
     };
 
     // ── layout ──────────────────────────────────────────────────────────────
+    // Compact garden-styled nodes for the hyperbolic layouts (after the
+    // visualizer's createH3GardenNode): a foliage cluster with a crowning
+    // bloom for builds, a stemless 5-petal flower (or bud) for ideas.
+    const buildFloraProcess = (spec: TreeSpec): Entry => {
+      const color = STATE_COLOR[spec.state];
+      const group = new THREE.Group();
+      const folMat = new THREE.MeshPhongMaterial({ color, emissive: color, emissiveIntensity: 0.22 });
+      const fol = new THREE.Mesh(GEO.foliageSide, folMat);
+      fol.scale.setScalar(1.15);
+      fol.userData.pick = { kind: "process", callsign: spec.callsign };
+      group.add(fol);
+      const bloom = new THREE.Mesh(
+        GEO.flowerCenter,
+        new THREE.MeshPhongMaterial({ color: 0xffe08a, emissive: 0xffe08a, emissiveIntensity: 0.4 }),
+      );
+      bloom.position.y = 0.95;
+      bloom.scale.setScalar(1.5);
+      bloom.userData.pick = { kind: "process", callsign: spec.callsign };
+      group.add(bloom);
+      const label = makeLabelSprite(spec.callsign, `${spec.state} · ${Math.round(spec.progress)}%`, cssHex(color));
+      label.position.y = 1.35;
+      group.add(label);
+      return { kind: "tree", treeSpec: spec, group, mats: [folMat], baseEmissive: 0.22, head: null, headY: 0, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false };
+    };
+
+    const buildFloraIdea = (spec: IdeaOrbSpec): Entry => {
+      const ready = spec.status === "ready";
+      const color = ready ? MATURITY_COLOR[spec.maturity] : BUD_COLOR;
+      const size = ready ? 0.95 + spec.confidence * 0.8 : 0.55 + spec.confidence * 0.4;
+      const baseEmissive = ready ? 0.4 + spec.confidence * 0.3 : 0.12;
+      const group = new THREE.Group();
+      const head = new THREE.Group();
+      group.add(head);
+      const mats: THREE.MeshPhongMaterial[] = [];
+      if (ready) {
+        const centerMat = new THREE.MeshPhongMaterial({ color: 0xffe08a, emissive: 0xffe08a, emissiveIntensity: 0.45 });
+        mats.push(centerMat);
+        const center = new THREE.Mesh(GEO.flowerCenter, centerMat);
+        center.scale.setScalar(size);
+        head.add(center);
+        const petalMat = new THREE.MeshPhongMaterial({ color, emissive: color, emissiveIntensity: baseEmissive });
+        mats.push(petalMat);
+        for (let i = 0; i < 5; i++) {
+          const a = (i / 5) * Math.PI * 2;
+          const petal = new THREE.Mesh(GEO.petal, petalMat);
+          petal.position.set(Math.cos(a) * 0.2 * size, 0, Math.sin(a) * 0.2 * size);
+          petal.scale.set(size, 0.45 * size, 1.5 * size);
+          petal.rotation.y = -a;
+          head.add(petal);
+        }
+        if (spec.verified) {
+          const ring = new THREE.Mesh(
+            GEO.ring,
+            new THREE.MeshBasicMaterial({ color: VERIFIED_COLOR, transparent: true, opacity: 0.55 }),
+          );
+          ring.scale.setScalar(size);
+          ring.rotation.x = Math.PI * 0.45;
+          head.add(ring);
+        }
+      } else {
+        const budMat = new THREE.MeshPhongMaterial({ color, emissive: color, emissiveIntensity: baseEmissive, transparent: true, opacity: 0.6 });
+        mats.push(budMat);
+        const bud = new THREE.Mesh(GEO.bud, budMat);
+        bud.scale.set(size, size * 1.3, size);
+        head.add(bud);
+      }
+      const hit = new THREE.Mesh(
+        new THREE.SphereGeometry(Math.max(0.55, 0.5 * size), 8, 8),
+        new THREE.MeshBasicMaterial({ visible: false }),
+      );
+      hit.userData.pick = { kind: "idea", key: ideaKey(spec) };
+      head.add(hit);
+      let label: THREE.Sprite | null = null;
+      if (ready && spec.pitch.length > 0) {
+        const statusLine = `${Math.round(spec.confidence * 100)}% · ${spec.maturity}${spec.verified ? " ✓" : ""}`;
+        label = makeLabelSprite(spec.pitch, statusLine, cssHex(color));
+        label.position.y = 0.42 * size + 0.15;
+        group.add(label);
+      }
+      return { kind: "flower", ideaSpec: spec, group, mats, baseEmissive, head, headY: 0, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false };
+    };
+
+    // Boundary/context cues per layout: the Poincaré ball's wireframe horizon,
+    // or the disk's rim + inner context circles.
+    let layoutDecor: THREE.Object3D[] = [];
+    const clearLayoutDecor = () => {
+      for (const obj of layoutDecor) {
+        scene.remove(obj);
+        obj.traverse((node) => {
+          if (node instanceof THREE.Mesh) {
+            node.geometry.dispose();
+            (Array.isArray(node.material) ? node.material : [node.material]).forEach((m) => m.dispose());
+          }
+        });
+      }
+      layoutDecor = [];
+    };
+    const diskY = () => (modeRef.current === "garden" ? 0.05 : 2.6);
+    const buildLayoutDecor = () => {
+      clearLayoutDecor();
+      if (layoutRef.current === "ball") {
+        const boundary = new THREE.Mesh(
+          new THREE.SphereGeometry(BALL_RADIUS, 24, 16),
+          new THREE.MeshBasicMaterial({ color: 0x335577, wireframe: true, transparent: true, opacity: 0.08 }),
+        );
+        boundary.position.set(0, BALL_CENTER_Y, 0);
+        scene.add(boundary);
+        layoutDecor.push(boundary);
+      } else if (layoutRef.current === "disk") {
+        const y = diskY();
+        const rim = new THREE.Mesh(
+          new THREE.TorusGeometry(DISK_RADIUS, 0.025, 8, 96),
+          new THREE.MeshBasicMaterial({ color: 0x4d7ba6, transparent: true, opacity: 0.4 }),
+        );
+        rim.rotation.x = Math.PI / 2;
+        rim.position.y = y;
+        scene.add(rim);
+        layoutDecor.push(rim);
+        for (const rNorm of [DISK_R_PROC, DISK_R_READY]) {
+          const circle = new THREE.Mesh(
+            new THREE.TorusGeometry(DISK_RADIUS * rNorm, 0.012, 6, 72),
+            new THREE.MeshBasicMaterial({ color: 0x4d7ba6, transparent: true, opacity: 0.12 }),
+          );
+          circle.rotation.x = Math.PI / 2;
+          circle.position.y = y;
+          scene.add(circle);
+          layoutDecor.push(circle);
+        }
+      }
+    };
+
     const centeredSlot = (index: number): number => {
       const ring = (index + 1) >> 1;
       return index % 2 === 1 ? -ring : ring;
     };
-    const treePosition = (index: number, garden: boolean): THREE.Vector3 => {
+    const treePosition = (index: number, count: number, garden: boolean): { pos: THREE.Vector3; k: number } => {
+      if (layoutRef.current === "ball") {
+        const dir = fibSphereDir(index, count);
+        return {
+          pos: dir.clone().multiplyScalar(BALL_SHELL_PROC * BALL_RADIUS).add(new THREE.Vector3(0, BALL_CENTER_Y, 0)),
+          k: poincareScale(BALL_SHELL_PROC),
+        };
+      }
+      if (layoutRef.current === "disk") {
+        const angle = (index / Math.max(count, 1)) * Math.PI * 2 - Math.PI / 2;
+        const r = DISK_R_PROC * DISK_RADIUS;
+        return { pos: new THREE.Vector3(Math.cos(angle) * r, diskY(), Math.sin(angle) * r), k: poincareScale(DISK_R_PROC) };
+      }
       const slot = centeredSlot(index);
       const y = garden ? 0 : 3.1 + (Math.abs(slot) % 2) * 0.9;
-      return new THREE.Vector3(slot * 4.6, y, -3.2 - (Math.abs(slot) % 2) * 1.6);
+      return { pos: new THREE.Vector3(slot * 4.6, y, -3.2 - (Math.abs(slot) % 2) * 1.6), k: 1 };
     };
-    const flowerPosition = (index: number, garden: boolean, ideasOnly: boolean): THREE.Vector3 => {
+    const flowerPosition = (
+      index: number,
+      count: number,
+      ready: boolean,
+      garden: boolean,
+      ideasOnly: boolean,
+    ): { pos: THREE.Vector3; k: number } => {
+      if (layoutRef.current === "ball") {
+        const shell = ready ? BALL_SHELL_READY : BALL_SHELL_FORMING;
+        // Rotate the idea shell off the process shell so nodes never eclipse.
+        const dir = fibSphereDir(index, count).applyAxisAngle(new THREE.Vector3(0, 1, 0), 1.1);
+        return {
+          pos: dir.multiplyScalar(shell * BALL_RADIUS).add(new THREE.Vector3(0, BALL_CENTER_Y, 0)),
+          k: poincareScale(shell),
+        };
+      }
+      if (layoutRef.current === "disk") {
+        const rNorm = ready ? DISK_R_READY : DISK_R_FORMING;
+        const angle = index * GOLDEN_ANGLE + 0.7;
+        const r = rNorm * DISK_RADIUS;
+        return { pos: new THREE.Vector3(Math.cos(angle) * r, diskY(), Math.sin(angle) * r), k: poincareScale(rNorm) };
+      }
       const spacing = ideasOnly ? 3.6 : 2.9;
       const slot = centeredSlot(index);
       const z = ideasOnly ? 2.2 + (Math.abs(slot) % 2) * 1.6 : 3.6 + (Math.abs(slot) % 2) * 1.2;
       const y = garden ? 0 : 1.3 + (Math.abs(slot) % 2) * 0.8;
-      return new THREE.Vector3(slot * spacing, y, z);
+      return { pos: new THREE.Vector3(slot * spacing, y, z), k: 1 };
     };
 
     const ideaSpecChanged = (a: IdeaOrbSpec, b: IdeaOrbSpec) =>
@@ -770,11 +978,14 @@ export function RoomScene({ ideas, trees, mode, view, fitSignal, onAcceptIdea, o
 
     let env: SceneEnv | null = null;
     let builtMode: SceneMode | null = null;
+    let builtKey: string | null = null;
 
     const reconcile = () => {
       const garden = modeRef.current === "garden";
-      if (builtMode !== modeRef.current) {
-        // Mode switch: tear the world down and regrow it.
+      const hyper = layoutRef.current !== "radial";
+      const key = `${modeRef.current}|${layoutRef.current}`;
+      if (builtKey !== key) {
+        // Style/layout switch: tear the world down and regrow it.
         env?.dispose();
         env = garden ? buildGardenEnv() : buildOrbitEnv();
         for (const entry of ideaEntries.values()) {
@@ -785,7 +996,9 @@ export function RoomScene({ ideas, trees, mode, view, fitSignal, onAcceptIdea, o
           disposeEntry(entry);
         }
         treeEntries.clear();
+        buildLayoutDecor();
         builtMode = modeRef.current;
+        builtKey = key;
         resetRig();
       }
       const ideasOnly = viewRef.current === "ideas";
@@ -803,14 +1016,21 @@ export function RoomScene({ ideas, trees, mode, view, fitSignal, onAcceptIdea, o
         const specId = ideaKey(spec);
         seenIdeas.add(specId);
         const existing = ideaEntries.get(specId);
-        const targetPos = flowerPosition(index, garden, ideasOnly);
-        const labelLift = (Math.abs(centeredSlot(index)) % 2) * 0.55;
+        const placed = flowerPosition(index, ideaSpecs.length, spec.status === "ready", garden, ideasOnly);
+        const labelLift = hyper ? 0 : (Math.abs(centeredSlot(index)) % 2) * 0.55;
         const create = () => {
-          const entry = garden ? buildFlower(spec) : buildOrbIdea(spec);
+          const entry = hyper
+            ? garden
+              ? buildFloraIdea(spec)
+              : buildOrbIdea(spec)
+            : garden
+              ? buildFlower(spec)
+              : buildOrbIdea(spec);
           entry.label?.position.setY(entry.label.position.y + labelLift);
-          entry.targetPos = targetPos;
+          entry.targetPos = placed.pos;
+          entry.scaleMult = placed.k;
           entry.phase = index * 1.9;
-          entry.group.position.copy(targetPos);
+          entry.group.position.copy(placed.pos);
           entry.group.scale.setScalar(0.01);
           ideaEntries.set(specId, entry);
           scene.add(entry.group);
@@ -836,7 +1056,8 @@ export function RoomScene({ ideas, trees, mode, view, fitSignal, onAcceptIdea, o
             entry.flashStart = performance.now();
           }
         } else {
-          existing.targetPos = targetPos;
+          existing.targetPos = placed.pos;
+          existing.scaleMult = placed.k;
           existing.removing = false;
           existing.targetScale = 1;
         }
@@ -852,14 +1073,21 @@ export function RoomScene({ ideas, trees, mode, view, fitSignal, onAcceptIdea, o
       treeSpecs.forEach((spec, index) => {
         seenTrees.add(spec.upid);
         const existing = treeEntries.get(spec.upid);
-        const targetPos = treePosition(index, garden);
-        const scale = garden ? 0.62 + Math.min(Math.max(spec.progress, 0), 100) / 100 * 0.33 : 1;
+        const placed = treePosition(index, treeSpecs.length, garden);
+        const scale = !hyper && garden ? 0.62 + Math.min(Math.max(spec.progress, 0), 100) / 100 * 0.33 : 1;
         const create = () => {
-          const entry = garden ? buildTree(spec) : buildOrbProcess(spec);
-          entry.targetPos = targetPos;
+          const entry = hyper
+            ? garden
+              ? buildFloraProcess(spec)
+              : buildOrbProcess(spec)
+            : garden
+              ? buildTree(spec)
+              : buildOrbProcess(spec);
+          entry.targetPos = placed.pos;
           entry.targetScale = scale;
+          entry.scaleMult = placed.k;
           entry.phase = index * 1.3;
-          entry.group.position.copy(targetPos);
+          entry.group.position.copy(placed.pos);
           entry.group.scale.setScalar(0.01);
           treeEntries.set(spec.upid, entry);
           scene.add(entry.group);
@@ -877,8 +1105,9 @@ export function RoomScene({ ideas, trees, mode, view, fitSignal, onAcceptIdea, o
           entry.group.position.copy(keepPos);
           entry.group.scale.setScalar(Math.max(keepScale, 0.01));
         } else {
-          existing.targetPos = targetPos;
+          existing.targetPos = placed.pos;
           existing.targetScale = scale;
+          existing.scaleMult = placed.k;
           existing.removing = false;
         }
       });
@@ -927,6 +1156,11 @@ export function RoomScene({ ideas, trees, mode, view, fitSignal, onAcceptIdea, o
     let dragMoved = 0;
     let lastX = 0;
     let lastY = 0;
+    // Flick inertia: velocities sampled during the drag keep the camera
+    // gliding after release, decaying exponentially.
+    let angVel = 0;
+    let heightVel = 0;
+    let lastMoveAt = 0;
 
     const pick = (clientX: number, clientY: number): { kind: string; key?: string; callsign?: string } | null => {
       const rect = renderer.domElement.getBoundingClientRect();
@@ -967,6 +1201,11 @@ export function RoomScene({ ideas, trees, mode, view, fitSignal, onAcceptIdea, o
       dragMoved = 0;
       lastX = event.clientX;
       lastY = event.clientY;
+      angVel = 0;
+      heightVel = 0;
+      lastMoveAt = performance.now();
+      // Keep the drag alive even when the pointer crosses a floating panel.
+      renderer.domElement.setPointerCapture(event.pointerId);
     };
     const onPointerMove = (event: PointerEvent) => {
       if (dragging) {
@@ -975,6 +1214,9 @@ export function RoomScene({ ideas, trees, mode, view, fitSignal, onAcceptIdea, o
         dragMoved += Math.abs(dx) + Math.abs(dy);
         lastX = event.clientX;
         lastY = event.clientY;
+        const nowMs = performance.now();
+        const dtMove = Math.max((nowMs - lastMoveAt) / 1000, 0.001);
+        lastMoveAt = nowMs;
         if (panning || event.shiftKey) {
           panning = true;
           const panSpeed = 0.0045 * rig.radius;
@@ -983,8 +1225,13 @@ export function RoomScene({ ideas, trees, mode, view, fitSignal, onAcceptIdea, o
           rig.dTargetX -= Math.sin(rig.angle) * dy * panSpeed;
           rig.dTargetZ -= Math.cos(rig.angle) * dy * panSpeed;
         } else {
-          rig.dAngle -= dx * 0.005;
-          rig.dHeight = Math.max(1.4, Math.min(30, rig.dHeight + dy * 0.045));
+          const dAngle = -dx * 0.005;
+          const dHeight = dy * 0.045;
+          rig.dAngle += dAngle;
+          rig.dHeight = Math.max(1.4, Math.min(30, rig.dHeight + dHeight));
+          // Exponential moving average keeps the flick velocity stable.
+          angVel = angVel * 0.75 + (dAngle / dtMove) * 0.25;
+          heightVel = heightVel * 0.75 + (dHeight / dtMove) * 0.25;
         }
         return;
       }
@@ -1076,7 +1323,21 @@ export function RoomScene({ ideas, trees, mode, view, fitSignal, onAcceptIdea, o
         fitToContent();
       }
       const smoothing = 1 - Math.exp(-dt * 7);
-      const camSmoothing = 1 - Math.exp(-dt * 9);
+      // Track the hand tightly while dragging; glide softly once released.
+      const camSmoothing = 1 - Math.exp(-dt * (dragging ? 16 : 6));
+
+      // Flick inertia: after release the last drag velocity keeps the orbit
+      // drifting, decaying exponentially (~0.4s half-life).
+      if (!dragging && !reducedMotion) {
+        if (Math.abs(angVel) > 1e-4) {
+          rig.dAngle += angVel * dt;
+          angVel *= Math.exp(-dt * 2.2);
+        }
+        if (Math.abs(heightVel) > 1e-3) {
+          rig.dHeight = Math.max(1.4, Math.min(30, rig.dHeight + heightVel * dt));
+          heightVel *= Math.exp(-dt * 2.6);
+        }
+      }
 
       rig.angle = THREE.MathUtils.lerp(rig.angle, rig.dAngle, camSmoothing);
       rig.radius = THREE.MathUtils.lerp(rig.radius, rig.dRadius, camSmoothing);
@@ -1088,10 +1349,11 @@ export function RoomScene({ ideas, trees, mode, view, fitSignal, onAcceptIdea, o
       env?.update(t);
 
       const garden = builtMode === "garden";
+      const radial = builtKey !== null && builtKey.endsWith("radial");
       for (const [specId, entry] of ideaEntries) {
         entry.group.position.lerp(entry.targetPos, smoothing);
         const hovered = hoveredIdea === specId;
-        const target = entry.targetScale * (hovered ? 1.12 : 1);
+        const target = entry.targetScale * entry.scaleMult * (hovered ? 1.12 : 1);
         const next = THREE.MathUtils.lerp(entry.group.scale.x, target, smoothing);
         entry.group.scale.setScalar(Math.max(next, 0.0001));
         if (entry.removing && entry.group.scale.x < 0.02) {
@@ -1099,7 +1361,7 @@ export function RoomScene({ ideas, trees, mode, view, fitSignal, onAcceptIdea, o
           ideaEntries.delete(specId);
           continue;
         }
-        if (!reducedMotion) {
+        if (!reducedMotion && radial) {
           if (garden) {
             entry.group.rotation.z = Math.sin(t * 0.6 + entry.phase) * 0.04;
             if (entry.head !== null) {
@@ -1129,7 +1391,7 @@ export function RoomScene({ ideas, trees, mode, view, fitSignal, onAcceptIdea, o
       for (const [specId, entry] of treeEntries) {
         entry.group.position.lerp(entry.targetPos, smoothing);
         const hovered = hoveredProc === entry.treeSpec?.callsign;
-        const target = entry.targetScale * (hovered ? (garden ? 1.06 : 1.12) : 1);
+        const target = entry.targetScale * entry.scaleMult * (hovered ? (garden ? 1.06 : 1.12) : 1);
         const next = THREE.MathUtils.lerp(entry.group.scale.x, target, smoothing);
         entry.group.scale.setScalar(Math.max(next, 0.0001));
         if (entry.removing && entry.group.scale.x < 0.02) {
@@ -1138,16 +1400,13 @@ export function RoomScene({ ideas, trees, mode, view, fitSignal, onAcceptIdea, o
           continue;
         }
         if (!reducedMotion) {
-          if (garden) {
+          if (garden && radial) {
             entry.group.rotation.z = Math.sin(t * 0.4 + entry.phase) * 0.015;
-            if (entry.treeSpec?.state === "active") {
-              entry.mats[0].emissiveIntensity = 0.2 + Math.sin(t * 1.6 + entry.phase) * 0.06;
-            }
-          } else {
+          } else if (!garden && radial) {
             entry.group.position.y = entry.targetPos.y + Math.sin(t * 0.55 + entry.phase) * 0.25;
-            if (entry.treeSpec?.state === "active") {
-              entry.mats[0].emissiveIntensity = 0.5 + Math.sin(t * 1.6 + entry.phase) * 0.08;
-            }
+          }
+          if (entry.treeSpec?.state === "active") {
+            entry.mats[0].emissiveIntensity = entry.baseEmissive + Math.sin(t * 1.6 + entry.phase) * 0.07;
           }
         }
       }
@@ -1172,6 +1431,7 @@ export function RoomScene({ ideas, trees, mode, view, fitSignal, onAcceptIdea, o
         disposeEntry(entry);
       }
       treeEntries.clear();
+      clearLayoutDecor();
       env?.dispose();
       Object.values(GEO).forEach((geometry) => geometry.dispose());
       trunkMat.dispose();
@@ -1196,6 +1456,7 @@ export function RoomScene({ ideas, trees, mode, view, fitSignal, onAcceptIdea, o
       data-testid="room-scene"
       data-region="fleet"
       data-mode={mode}
+      data-layout={layout}
       data-idea-count={ideas.length}
       data-tree-count={trees.length}
       aria-label={`Room ${mode}: ${ideas.length} idea${ideas.length === 1 ? "" : "s"}, ${trees.length} build${trees.length === 1 ? "" : "s"}`}

@@ -17,6 +17,7 @@ const KEYBOARD_SHORTCUTS: ReadonlyArray<readonly [keys: string, action: string]>
   ["u", "unmute the room"],
   ["q", "QR import overlay"],
   ["g", "garden ↔ orbit scene"],
+  ["l", "layout: radial / ball / disk"],
   ["z", "zen mode (hide all chrome)"],
   ["f", "fit everything in view"],
   ["`", "hide/unhide menu (0 clears)"],

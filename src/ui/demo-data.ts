@@ -176,6 +176,20 @@ export function busyRoomSnapshot(): ProjectorSnapshot {
         events: ["spawn confirmed", "plan accepted", "steered by room", "summary emitted"],
         buildStatus: "ready",
         previewUrl: "http://127.0.0.1:4801/",
+        slides: [
+          {
+            title: "What Atlas does",
+            html: "<p><strong>Blocker announcer</strong> — reads the standup notes, finds anything phrased as a blocker, and posts a spoken + written announcement so nothing gets lost.</p><ul><li>Watches the meeting-notes doc</li><li>Extracts blockers with a small LLM pass</li><li>Announces to <code>#standup</code> with owner + age</li></ul>",
+          },
+          {
+            title: "How it's going",
+            html: "<p>Scan pipeline is done and the announcement copy is written. Currently wiring the Slack post.</p><p><strong>72%</strong> complete · preview is live — click the fleet panel to open it.</p>",
+          },
+          {
+            title: "Try it",
+            html: "<p>Say a blocker out loud in standup and watch it surface within a minute. The room steered it once already: <em>“include the run name in the summary.”</em></p>",
+          },
+        ],
       },
       {
         upid: "upid_ember_2a9",
@@ -192,6 +206,16 @@ export function busyRoomSnapshot(): ProjectorSnapshot {
         lastAction: "steered: ship to standup channel",
         events: ["spawn confirmed", "plan accepted", "fetching messages", "clustering"],
         buildStatus: "building",
+        slides: [
+          {
+            title: "What Ember does",
+            html: "<p><strong>Slack standup digest bot</strong> — pulls the day's updates, clusters them into themes, and ships one readable digest instead of forty pings.</p><ul><li>14 updates → 3 themes so far</li><li>Digest formatted as a single threaded post</li></ul>",
+          },
+          {
+            title: "Status",
+            html: "<p>Mid-build at <strong>55%</strong> — the room just steered it to ship into the standup channel. Rendering the digest now.</p>",
+          },
+        ],
       },
       {
         upid: "upid_cobalt_5e0",
@@ -206,6 +230,16 @@ export function busyRoomSnapshot(): ProjectorSnapshot {
         lastOutput: "Planning the dry-run path before touching files.",
         lastAction: "spawned from accepted suggestion",
         events: ["spawn confirmed", "resource check", "planning"],
+        slides: [
+          {
+            title: "What Cobalt does",
+            html: "<p><strong>Repo migration dry-run</strong> — rehearses the monorepo move on a throwaway clone and reports what would break, before anything is touched.</p>",
+          },
+          {
+            title: "Status",
+            html: "<p>Early planning (<strong>18%</strong>): mapping the import graph and checking runner capacity. No files modified yet — dry-run by design.</p>",
+          },
+        ],
       },
       {
         upid: "upid_iris_913",
@@ -222,6 +256,16 @@ export function busyRoomSnapshot(): ProjectorSnapshot {
         events: ["spawn confirmed", "plan accepted", "auth check failed"],
         buildStatus: "failed",
         source: { kind: "github-import", url: "https://github.com/acme/pr-triage" },
+        slides: [
+          {
+            title: "What Iris does",
+            html: "<p><strong>PR triage dashboard</strong> — imported from <code>acme/pr-triage</code> via the QR wall. Ranks open PRs by review urgency.</p>",
+          },
+          {
+            title: "Why it's blocked",
+            html: "<p>The GitHub token is missing the <code>repo</code> scope, so the API calls 403. <strong>Fix:</strong> re-issue the token with repo scope and say <em>“Vibersyn, resume Iris.”</em></p>",
+          },
+        ],
       },
       {
         upid: "upid_nova_44c",
@@ -238,6 +282,16 @@ export function busyRoomSnapshot(): ProjectorSnapshot {
         events: ["spawn confirmed", "plan accepted", "built", "preview ready"],
         buildStatus: "ready",
         previewUrl: "http://127.0.0.1:4802/",
+        slides: [
+          {
+            title: "What Nova shipped",
+            html: "<p><strong>Retro wall</strong> — clusters the week's wins and gripes side by side so the retro starts from evidence, not memory.</p><ul><li>22 cards clustered</li><li>Wins vs gripes, auto-grouped by theme</li></ul>",
+          },
+          {
+            title: "Done — see it live",
+            html: "<p>Build finished at <strong>100%</strong>; the preview is being served locally. This is what talk→build looks like when it lands.</p>",
+          },
+        ],
       },
     ],
     transcript: [
