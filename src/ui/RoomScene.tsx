@@ -38,6 +38,11 @@ export interface TreeSpec {
   // True when this process is the live steering target — the node gets a
   // steering ring so the room can see where spoken transcript is routing.
   steering: boolean;
+  // TWO-STAGE language, legible at projector distance: a "concept" (kickoff:
+  // mock lanes + pitch deck) renders as a SAPLING; a "commissioned" project
+  // (real subscription execution) grows into the FULL tree with a gold
+  // commission ring. Absent = concept (legacy callers).
+  stage?: "concept" | "commissioned";
 }
 
 export type SceneMode = "garden" | "orbit";
@@ -86,6 +91,8 @@ const STATE_COLOR: Record<TreeSpec["state"], number> = {
 const BUD_COLOR = 0x6b8296;
 const VERIFIED_COLOR = 0x9affc9;
 const STEERING_COLOR = 0x9ee2ff;
+// Gold ground ring marking a COMMISSIONED project (real execution running).
+const COMMISSION_COLOR = 0xffd166;
 const TRUNK_COLOR = 0x4a3527;
 const FLASH_MS = 1500;
 
@@ -95,10 +102,12 @@ function treeTitle(spec: TreeSpec): string {
   return spec.task.length > 0 ? spec.task : spec.callsign;
 }
 
-// Node label status: state · progress, with the live steering marker appended
-// so the steering target reads from across the room.
+// Node label status: stage · state · progress, with the live steering marker
+// appended so the steering target reads from across the room. The stage word
+// carries the two-stage language onto every node in every render style.
 function treeStatus(spec: TreeSpec): string {
-  return `${spec.state} · ${Math.round(spec.progress)}%${spec.steering ? " · ⟵ steering" : ""}`;
+  const stage = spec.stage === "commissioned" ? "commissioned" : "concept";
+  return `${stage} · ${spec.state} · ${Math.round(spec.progress)}%${spec.steering ? " · ⟵ steering" : ""}`;
 }
 
 // ── hyperbolic layout constants (after the visualizer's H3/disk modes) ───────
@@ -752,39 +761,68 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
 
     const buildTree = (spec: TreeSpec): Entry => {
       const color = STATE_COLOR[spec.state];
+      const commissioned = spec.stage === "commissioned";
       const group = new THREE.Group();
       const foliageMat = new THREE.MeshPhongMaterial({
         color,
         emissive: color,
         emissiveIntensity: spec.state === "halted" || spec.state === "blocked" ? 0.1 : 0.2,
       });
-      const base = new THREE.Mesh(GEO.trunkBase, trunkMat);
-      base.position.y = 0.6;
-      group.add(base);
-      const mid = new THREE.Mesh(GEO.trunkMid, trunkMat);
-      mid.position.y = 1.8;
-      group.add(mid);
-      const top = new THREE.Mesh(GEO.trunkTop, trunkMat);
-      top.position.y = 2.8;
-      group.add(top);
-      const main = new THREE.Mesh(GEO.foliageMain, foliageMat);
-      main.position.y = 4.2;
-      main.userData.pick = { kind: "process", callsign: spec.callsign };
-      group.add(main);
-      const tuft = new THREE.Mesh(GEO.foliageTop, foliageMat);
-      tuft.position.y = 5.6;
-      tuft.userData.pick = { kind: "process", callsign: spec.callsign };
-      group.add(tuft);
-      for (const offset of [
-        { dx: 1, dy: 3.6, dz: 0.4 },
-        { dx: -0.9, dy: 3.8, dz: 0.6 },
-        { dx: 0.4, dy: 3.5, dz: -1 },
-        { dx: -0.6, dy: 4, dz: -0.7 },
-      ]) {
-        const side = new THREE.Mesh(GEO.foliageSide, foliageMat);
-        side.position.set(offset.dx, offset.dy, offset.dz);
-        side.userData.pick = { kind: "process", callsign: spec.callsign };
-        group.add(side);
+      if (!commissioned) {
+        // CONCEPT = SAPLING: a short single-stem seedling with one modest
+        // crown — reads as "young / not yet real" from projector distance.
+        const stem = new THREE.Mesh(GEO.trunkBase, trunkMat);
+        stem.scale.set(0.55, 0.85, 0.55);
+        stem.position.y = 0.5;
+        group.add(stem);
+        const crown = new THREE.Mesh(GEO.foliageSide, foliageMat);
+        crown.scale.setScalar(1.5);
+        crown.position.y = 1.75;
+        crown.userData.pick = { kind: "process", callsign: spec.callsign };
+        group.add(crown);
+        const sprout = new THREE.Mesh(GEO.foliageTop, foliageMat);
+        sprout.scale.setScalar(0.55);
+        sprout.position.y = 2.6;
+        sprout.userData.pick = { kind: "process", callsign: spec.callsign };
+        group.add(sprout);
+      } else {
+        // COMMISSIONED = the full-grown tree.
+        const base = new THREE.Mesh(GEO.trunkBase, trunkMat);
+        base.position.y = 0.6;
+        group.add(base);
+        const mid = new THREE.Mesh(GEO.trunkMid, trunkMat);
+        mid.position.y = 1.8;
+        group.add(mid);
+        const top = new THREE.Mesh(GEO.trunkTop, trunkMat);
+        top.position.y = 2.8;
+        group.add(top);
+        const main = new THREE.Mesh(GEO.foliageMain, foliageMat);
+        main.position.y = 4.2;
+        main.userData.pick = { kind: "process", callsign: spec.callsign };
+        group.add(main);
+        const tuft = new THREE.Mesh(GEO.foliageTop, foliageMat);
+        tuft.position.y = 5.6;
+        tuft.userData.pick = { kind: "process", callsign: spec.callsign };
+        group.add(tuft);
+        for (const offset of [
+          { dx: 1, dy: 3.6, dz: 0.4 },
+          { dx: -0.9, dy: 3.8, dz: 0.6 },
+          { dx: 0.4, dy: 3.5, dz: -1 },
+          { dx: -0.6, dy: 4, dz: -0.7 },
+        ]) {
+          const side = new THREE.Mesh(GEO.foliageSide, foliageMat);
+          side.position.set(offset.dx, offset.dy, offset.dz);
+          side.userData.pick = { kind: "process", callsign: spec.callsign };
+          group.add(side);
+        }
+        // Gold commission ring: the ground halo that says "this one is real".
+        const commissionRing = new THREE.Mesh(
+          new THREE.TorusGeometry(2.4, 0.06, 8, 64),
+          new THREE.MeshBasicMaterial({ color: COMMISSION_COLOR, transparent: true, opacity: 0.55 }),
+        );
+        commissionRing.rotation.x = Math.PI / 2;
+        commissionRing.position.y = 0.06;
+        group.add(commissionRing);
       }
       if (spec.steering) {
         // Steering target ring: a glowing ground halo around the tree so the
@@ -798,7 +836,7 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         group.add(ring);
       }
       const label = makeLabelSprite(treeTitle(spec), treeStatus(spec), cssHex(color));
-      label.position.y = 6.6;
+      label.position.y = commissioned ? 6.6 : 3.4;
       group.add(label);
       return { kind: "tree", treeSpec: spec, group, mats: [foliageMat], baseEmissive: foliageMat.emissiveIntensity, head: null, headY: 0, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false };
     };
@@ -858,6 +896,14 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       );
       halo.scale.setScalar(radius * 3.2);
       group.add(halo);
+      if (spec.stage === "commissioned") {
+        const ring = new THREE.Mesh(
+          new THREE.TorusGeometry(radius * 1.7, 0.04, 8, 64),
+          new THREE.MeshBasicMaterial({ color: COMMISSION_COLOR, transparent: true, opacity: 0.55 }),
+        );
+        ring.rotation.x = Math.PI * 0.42;
+        group.add(ring);
+      }
       if (spec.steering) {
         const ring = new THREE.Mesh(
           new THREE.TorusGeometry(radius * 1.5, 0.03, 8, 64),
@@ -889,9 +935,18 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         new THREE.MeshPhongMaterial({ color: 0xffe08a, emissive: 0xffe08a, emissiveIntensity: 0.4 }),
       );
       bloom.position.y = 0.95;
-      bloom.scale.setScalar(1.5);
+      // A commissioned build's crowning bloom is visibly larger + brighter.
+      bloom.scale.setScalar(spec.stage === "commissioned" ? 2.1 : 1.5);
       bloom.userData.pick = { kind: "process", callsign: spec.callsign };
       group.add(bloom);
+      if (spec.stage === "commissioned") {
+        const ring = new THREE.Mesh(
+          new THREE.TorusGeometry(1.7, 0.04, 8, 64),
+          new THREE.MeshBasicMaterial({ color: COMMISSION_COLOR, transparent: true, opacity: 0.55 }),
+        );
+        ring.rotation.x = Math.PI * 0.42;
+        group.add(ring);
+      }
       if (spec.steering) {
         const ring = new THREE.Mesh(
           new THREE.TorusGeometry(1.5, 0.03, 8, 64),
@@ -1065,7 +1120,8 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       a.pitch !== b.pitch || Math.abs(a.confidence - b.confidence) > 0.005;
     const treeSpecChanged = (a: TreeSpec, b: TreeSpec) =>
       a.state !== b.state || a.callsign !== b.callsign || a.task !== b.task ||
-      a.steering !== b.steering || Math.round(a.progress) !== Math.round(b.progress);
+      a.steering !== b.steering || a.stage !== b.stage ||
+      Math.round(a.progress) !== Math.round(b.progress);
 
     let env: SceneEnv | null = null;
     let builtMode: SceneMode | null = null;
@@ -1186,6 +1242,9 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         if (existing === undefined) {
           create();
         } else if (existing.treeSpec !== undefined && treeSpecChanged(existing.treeSpec, spec)) {
+          // Concept → commissioned is THE transformation moment: flash the
+          // regrown (now full-size) tree so the room sees it happen.
+          const promoted = existing.treeSpec.stage !== "commissioned" && spec.stage === "commissioned";
           const keepPos = existing.group.position.clone();
           const keepScale = existing.group.scale.x;
           const keepPhase = existing.phase;
@@ -1194,6 +1253,9 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
           entry.phase = keepPhase;
           entry.group.position.copy(keepPos);
           entry.group.scale.setScalar(Math.max(keepScale, 0.01));
+          if (promoted) {
+            entry.flashStart = performance.now();
+          }
         } else {
           existing.targetPos = placed.pos;
           existing.targetScale = scale;

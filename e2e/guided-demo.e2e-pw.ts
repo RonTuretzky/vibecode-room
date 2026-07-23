@@ -1,7 +1,9 @@
 import { expect, test, type Page } from "@playwright/test";
 
 /**
- * Browser e2e for the GUIDED DEMO — the coached visitor walkthrough.
+ * Browser e2e for the GUIDED DEMO — the coached visitor walkthrough of the
+ * KICKOFF/IDEA phase (rescoped: the demo ends at the deck's "How should we
+ * continue?" decision; commissioning is an epilogue, never waited on).
  *
  * Runs the REAL mechanics end-to-end in ?dwell=mouse mode (the documented
  * camera-free path: the mouse drives the same point→highlight→dwell→activate
@@ -11,8 +13,9 @@ import { expect, test, type Page } from "@playwright/test";
  *                        applies unmute+capture locally; live POSTs the API);
  *   steps 3–5          — driven by snapshot changes through the same window
  *                        hook the other specs use, asserting the machine's
- *                        advance conditions (new process → build lanes →
- *                        first-ready → auto-opened deck with backend tabs).
+ *                        advance conditions (new process → mock lanes race →
+ *                        first mock ready → auto-opened deck with the
+ *                        decision bar; any decision completes the demo).
  */
 
 async function waitForHook(page: Page): Promise<void> {
@@ -39,7 +42,7 @@ async function parkMouse(page: Page): Promise<void> {
 }
 
 test.describe("guided demo — coached flow with mouse-dwell", () => {
-  test("orbs → record → idea → build lanes → first-ready opens the deck with backend tabs", async ({ page }) => {
+  test("orbs → record → idea → mock race → first-ready opens the deck; a decision finishes", async ({ page }) => {
     test.setTimeout(120_000);
     await page.goto("/?live=0&demo=guided&dwell=mouse");
     await waitForHook(page);
@@ -70,7 +73,7 @@ test.describe("guided demo — coached flow with mouse-dwell", () => {
     expect(flags.autoAccept).toBe(true);
 
     // STEP 3: the live transcript renders; a NEW process (vs the baseline)
-    // advances to build and becomes the camera focus.
+    // advances to the mock race and becomes the camera focus.
     await expect(page.getByTestId("guided-transcript")).toBeVisible();
     const baseline = await page.evaluate(() =>
       (window as any).__VIBERSYN__.getSnapshot().processes.map((p: any) => p.upid),
@@ -103,11 +106,11 @@ test.describe("guided demo — coached flow with mouse-dwell", () => {
       });
       return upids;
     }, baseline);
-    await expect(demo).toHaveAttribute("data-step", "build", { timeout: 4_000 });
+    await expect(demo).toHaveAttribute("data-step", "race", { timeout: 4_000 });
     await expect(page.getByTestId("guided-celebrate")).toBeVisible();
 
-    // STEP 4: one labeled lane per framework, all building; a failed lane
-    // shows FAILED without wedging; the FIRST ready lane advances.
+    // STEP 4: one labeled MOCK lane per framework, all racing; a failed lane
+    // shows FAILED without wedging; the FIRST mock-ready lane advances.
     await expect(page.getByTestId("guided-lane")).toHaveCount(3);
     await expect(page.locator('[data-testid="guided-lane"][data-backend="smithers"]')).toContainText("Smithers");
     await expect(page.locator('[data-testid="guided-lane"][data-backend="eliza"]')).toContainText("ElizaOS");
@@ -133,35 +136,43 @@ test.describe("guided demo — coached flow with mouse-dwell", () => {
       ],
     });
 
-    // Native fails → still on the build step, lane says FAILED.
+    // Native fails → still on the race step, lane says FAILED.
     await page.evaluate((proc) => {
       const snap = (window as any).__VIBERSYN__.getSnapshot();
       (window as any).__VIBERSYN__.applySnapshot({
         processes: snap.processes.map((p: any) => (p.upid === "upid_guided_e2e" ? proc : p)),
       });
     }, withStatus("building", "building", "failed", false));
-    await expect(demo).toHaveAttribute("data-step", "build");
+    await expect(demo).toHaveAttribute("data-step", "race");
     await expect(page.locator('[data-testid="guided-lane"][data-backend="native"]')).toContainText("FAILED");
 
-    // ElizaOS finishes FIRST (with a real deck URL) → story + auto-opened
-    // slideshow on eliza's slide; per-backend tabs label the other lanes.
+    // ElizaOS's MOCK finishes FIRST (with a real deck URL) → decide +
+    // auto-opened pitch deck on eliza's slide; per-backend tabs label the
+    // other lanes and the "How should we continue?" decision bar is up.
     await page.evaluate((proc) => {
       const snap = (window as any).__VIBERSYN__.getSnapshot();
       (window as any).__VIBERSYN__.applySnapshot({
         processes: snap.processes.map((p: any) => (p.upid === "upid_guided_e2e" ? proc : p)),
       });
     }, withStatus("building", "ready", "failed", true));
-    await expect(demo).toHaveAttribute("data-step", "story", { timeout: 4_000 });
+    await expect(demo).toHaveAttribute("data-step", "decide", { timeout: 4_000 });
     await expect(page.getByTestId("slideshow-overlay")).toBeVisible();
     await expect(page.getByTestId("deck-backend-tab")).toHaveCount(3);
     await expect(page.locator('[data-testid="deck-backend-tab"][data-backend="eliza"]')).toHaveAttribute("aria-selected", "true");
     await expect(page.locator('[data-testid="deck-backend-tab"][data-backend="smithers"]')).toBeDisabled();
     await expect(page.locator('[data-testid="deck-backend-tab"][data-backend="native"]')).toContainText("failed");
 
-    // Finish closes the demo (the deck closes with the first Esc).
-    await page.keyboard.press("Escape"); // close deck
-    await page.getByTestId("guided-finish-button").click();
-    await expect(page.getByTestId("guided-demo")).toHaveCount(0);
+    // FINALE: the room-native decision bar (dwell-operable buttons) is on the
+    // deck. Picking "Build it for real" fires the commission as an EPILOGUE —
+    // the demo completes immediately (never waits for the full build) and the
+    // process transforms to COMMISSIONED (executing chip).
+    await expect(page.getByTestId("deck-decision")).toBeVisible();
+    await parkMouse(page);
+    await dwell(page, "decision-commission");
+    await expect(page.getByTestId("guided-demo")).toHaveCount(0, { timeout: 6_000 });
+    await expect(page.getByTestId("guided-epilogue")).toBeVisible();
+    await expect(page.getByTestId("execution-chip").first()).toBeVisible();
+    await expect(page.getByTestId("deck-stage")).toContainText("COMMISSIONED");
   });
 
   test("skip at every step, Esc exits, HUD button re-enters fresh", async ({ page }) => {
@@ -173,11 +184,11 @@ test.describe("guided demo — coached flow with mouse-dwell", () => {
     const demo = page.getByTestId("guided-demo");
     await expect(demo).toHaveAttribute("data-step", "orientation");
 
-    for (const next of ["record", "idea", "build", "story"]) {
+    for (const next of ["record", "idea", "race", "decide"]) {
       await page.getByTestId("guided-skip-button").click();
       await expect(demo).toHaveAttribute("data-step", next);
     }
-    // Esc exits from the story step.
+    // Esc exits from the decide step.
     await page.keyboard.press("Escape");
     await expect(page.getByTestId("guided-demo")).toHaveCount(0);
 

@@ -12,7 +12,10 @@ import {
 } from "./machine";
 
 /**
- * Guided demo overlay — the coached, projector-friendly walkthrough.
+ * Guided demo overlay — the coached, projector-friendly walkthrough of the
+ * KICKOFF/IDEA phase (see ./machine.ts for the rescoped step contract: the
+ * demo ends at the deck's "How should we continue?" decision; a "Build it for
+ * real" pick fires the commission as an epilogue, never waited on).
  *
  * Big glass panels over the live room; EVERYTHING shown is real room state
  * (the machine in ./machine.ts reads only the live snapshot). The overlay
@@ -40,8 +43,8 @@ const STEP_TITLES: Record<GuidedState["step"], string> = {
   orientation: "Point with your hand",
   record: "Start the room recording",
   idea: "Say an idea",
-  build: "Watch it build — three frameworks race",
-  story: "The story",
+  race: "Watch the concepts race — three mock lanes",
+  decide: "How should we continue?",
 };
 
 // Practice-orb resting spots (viewport %), spread so a visitor sweeps the wall.
@@ -73,7 +76,7 @@ export function GuidedDemo({
   useEffect(() => {
     const prev = prevStepRef.current;
     prevStepRef.current = state.step;
-    if (prev === "idea" && (state.step === "build" || state.step === "story")) {
+    if (prev === "idea" && (state.step === "race" || state.step === "decide")) {
       setCelebrate(true);
       const timer = setTimeout(() => setCelebrate(false), 3_200);
       return () => clearTimeout(timer);
@@ -82,13 +85,13 @@ export function GuidedDemo({
 
   const notice = guidedNotice(state, snapshot);
   const step = state.step;
-  const slim = step === "story";
+  const slim = step === "decide";
 
   return (
     <div className={`guided-demo guided-step-${step}`} data-testid="guided-demo" data-step={step}>
       {celebrate ? (
         <div className="guided-celebrate" data-testid="guided-celebrate" role="status">
-          🎉 Idea captured — the room is building it
+          🎉 Idea captured — the room is sketching concepts
         </div>
       ) : null}
 
@@ -159,11 +162,11 @@ export function GuidedDemo({
           <RecordBody snapshot={snapshot} micState={micState} micError={micError} />
         ) : null}
         {step === "idea" ? <IdeaBody snapshot={snapshot} micState={micState} /> : null}
-        {step === "build" ? <BuildBody state={state} snapshot={snapshot} /> : null}
-        {step === "story" ? <StoryBody state={state} snapshot={snapshot} /> : null}
+        {step === "race" ? <RaceBody state={state} snapshot={snapshot} /> : null}
+        {step === "decide" ? <DecideBody state={state} snapshot={snapshot} /> : null}
 
         <footer className="guided-actions">
-          {step === "story" ? (
+          {step === "decide" ? (
             <button
               type="button"
               className="ctl-button guided-finish"
@@ -266,7 +269,8 @@ function IdeaBody({
       <p className="guided-lede">
         <strong>Say an idea out loud</strong> — describe something buildable in
         a sentence or two. The room transcribes you live, the detector listens
-        for a buildable idea, and Auto-Build starts it the moment one lands.
+        for a buildable idea, and the moment one lands it kicks off as a
+        concept.
       </p>
       <div className="guided-transcript" data-testid="guided-transcript">
         {lines.length === 0 ? (
@@ -285,7 +289,7 @@ function IdeaBody({
   );
 }
 
-function BuildBody({ state, snapshot }: { state: GuidedState; snapshot: ProjectorSnapshot }) {
+function RaceBody({ state, snapshot }: { state: GuidedState; snapshot: ProjectorSnapshot }) {
   const lanes = guidedLanes(state, snapshot);
   const process = focusProcess(state, snapshot);
   const allFailed = lanesAllFailed(lanes);
@@ -295,11 +299,12 @@ function BuildBody({ state, snapshot }: { state: GuidedState; snapshot: Projecto
         {process !== null ? (
           <>
             <strong>{process.task.length > 0 ? process.task : process.callsign}</strong>{" "}
-            is being built by every enabled agent framework at once — same idea,
-            three lanes racing. First one ready unlocks the story.
+            is being sketched by every enabled framework at once — same idea,
+            three MOCK concept lanes racing. The first mock ready opens the
+            pitch deck.
           </>
         ) : (
-          <>Waiting for a project… say an idea (or skip back) — no build has started yet.</>
+          <>Waiting for a project… say an idea (or skip back) — no kickoff has started yet.</>
         )}
       </p>
       {lanes.length > 0 ? (
@@ -317,9 +322,9 @@ function BuildBody({ state, snapshot }: { state: GuidedState; snapshot: Projecto
                 {lane.status === "queued"
                   ? "queued…"
                   : lane.status === "building"
-                    ? `${lane.progressLabel ?? "building…"}${lane.percent !== null ? ` · ${Math.round(lane.percent)}%` : ""}`
+                    ? `${lane.progressLabel ?? "mocking…"}${lane.percent !== null ? ` · ${Math.round(lane.percent)}%` : ""}`
                     : lane.status === "ready"
-                      ? "READY ✓"
+                      ? "MOCK READY ✓"
                       : "FAILED"}
               </span>
               <span className="guided-lane-track" aria-hidden="true">
@@ -341,15 +346,15 @@ function BuildBody({ state, snapshot }: { state: GuidedState; snapshot: Projecto
       ) : null}
       {allFailed ? (
         <p className="guided-sub guided-all-failed" data-testid="guided-all-failed">
-          Every lane failed — that&rsquo;s the honest state of this build. Skip
-          ahead, or exit and try another idea.
+          Every lane failed — that&rsquo;s the honest state of this kickoff.
+          Skip ahead, or exit and try another idea.
         </p>
       ) : null}
     </div>
   );
 }
 
-function StoryBody({ state, snapshot }: { state: GuidedState; snapshot: ProjectorSnapshot }) {
+function DecideBody({ state, snapshot }: { state: GuidedState; snapshot: ProjectorSnapshot }) {
   const process = focusProcess(state, snapshot);
   const builds = process !== null ? buildsOf(process) : [];
   const hasDeck = builds.some((build) => build.slideshowUrl !== null);
@@ -358,24 +363,27 @@ function StoryBody({ state, snapshot }: { state: GuidedState; snapshot: Projecto
     <div className="guided-body">
       {hasDeck ? (
         <p className="guided-lede">
-          This deck was <strong>generated by the winning build</strong>. Dwell
-          the framework tabs to compare each result — lanes still building or
-          failed say so on their tab.
+          The pitch deck is open — it was <strong>generated by the winning
+          mock</strong>. Dwell a choice on its{" "}
+          <strong>&ldquo;How should we continue?&rdquo;</strong> bar to finish:
+          any choice completes the demo, and <strong>Build it for real</strong>{" "}
+          commissions the full build as an epilogue (the wall keeps working
+          after you&rsquo;re done).
         </p>
       ) : (
         <p className="guided-lede">
-          The first build finished <strong>without publishing a deck</strong>
+          The first mock finished <strong>without publishing a deck</strong>
           {readyPreview !== undefined && readyPreview.previewUrl !== null ? (
             <>
-              {" — but its live preview is real: "}
+              {" — but its concept preview is real: "}
               <a href={readyPreview.previewUrl} target="_blank" rel="noreferrer">
                 open preview ↗
               </a>
             </>
           ) : (
-            " and no preview is up — that is the honest state of this run."
+            " and no preview is up — that is the honest state of this kickoff."
           )}
-          .
+          . Finish below to complete the demo.
         </p>
       )}
     </div>

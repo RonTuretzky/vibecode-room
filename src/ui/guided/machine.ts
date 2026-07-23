@@ -4,6 +4,14 @@ import { backendsOf, buildsOf } from "../buildloop";
 /**
  * Guided-demo step machine — the PURE core of the coached wall demo.
  *
+ * DEMO RESCOPE: the guided demo covers ONLY the KICKOFF/IDEA phase of the
+ * two-stage pipeline. The visitor takes an idea from spoken words to racing
+ * concept MOCKS and the auto-opened pitch deck, then DECIDES how to continue
+ * on the deck's "How should we continue?" surface. Any decision completes the
+ * demo; picking "Build it for real" fires the real commission
+ * (POST /api/process/:upid/execute) as an EPILOGUE — the demo never waits for
+ * the full subscription build.
+ *
  * Every advance condition reads REAL room state (the projector snapshot the
  * live server publishes over /api/state + SSE); nothing here fabricates
  * progress. The React overlay (GuidedDemo.tsx) renders `GuidedState` and the
@@ -21,13 +29,18 @@ import { backendsOf, buildsOf } from "../buildloop";
  *   idea        — advances when a process appears whose upid was NOT in the
  *                 baseline (the real pipeline: mic → ASR → detector →
  *                 auto-accept → spawn). That newcomer becomes `focusUpid`.
- *   build       — advances when the focus process's real builds[] carry any
- *                 entry with status "ready" (legacy fallback: buildStatus ===
+ *   race        — the three framework MOCK lanes race (kickoff stage; fast).
+ *                 Advances when the focus process's real builds[] carry any
+ *                 entry with status "ready" — i.e. the first MOCK is ready and
+ *                 its pitch deck can open (legacy fallback: buildStatus ===
  *                 "ready" when builds[] is absent). Failed lanes NEVER advance
  *                 and never wedge — the overlay shows them failed and the skip
  *                 affordance always works.
- *   story       — terminal content step; `skipStep` (Finish) returns null =
- *                 demo complete.
+ *   decide      — terminal step: the pitch deck is auto-opened and the visitor
+ *                 dwell-picks a "How should we continue?" choice (rendered by
+ *                 the deck overlay's room-native decision bar). ANY choice
+ *                 completes the demo (the App exits on decision); `skipStep`
+ *                 (the Finish button) returns null = demo complete too.
  *
  * Skip is available at every step; re-entering (startGuided) always begins a
  * fresh run with a fresh baseline.
@@ -35,14 +48,14 @@ import { backendsOf, buildsOf } from "../buildloop";
 
 export const PRACTICE_ORB_COUNT = 3;
 
-export type GuidedStep = "orientation" | "record" | "idea" | "build" | "story";
+export type GuidedStep = "orientation" | "record" | "idea" | "race" | "decide";
 
 export const GUIDED_STEP_ORDER: readonly GuidedStep[] = [
   "orientation",
   "record",
   "idea",
-  "build",
-  "story",
+  "race",
+  "decide",
 ];
 
 export interface GuidedState {
@@ -52,9 +65,9 @@ export interface GuidedState {
   // The upids present when the demo (re)entered / when "record" completed —
   // the idea step looks for a process NOT in this set.
   baselineUpids: readonly string[];
-  // The project born during the demo (steps build/story focus the camera on it).
+  // The project born during the demo (steps race/decide focus the camera on it).
   focusUpid: string | null;
-  // Which backend's build was FIRST ready (build → story transition) so the
+  // Which backend's MOCK was FIRST ready (race → decide transition) so the
   // deck can open on that framework's real slideshow, whichever one won.
   readyBackend: string | null;
 }
@@ -97,7 +110,7 @@ export function focusProcess(state: GuidedState, snapshot: ProjectorSnapshot): P
   return snapshot.processes.find((process) => process.upid === state.focusUpid) ?? null;
 }
 
-// The FIRST backend whose build is ready, or null. Legacy servers without
+// The FIRST backend whose MOCK is ready, or null. Legacy servers without
 // builds[] fall back to the single process-level buildStatus ("build" lane).
 function firstReadyBackend(process: ProjectorProcess | null): string | null {
   if (process === null) {
@@ -129,16 +142,16 @@ export function advanceOnSnapshot(state: GuidedState, snapshot: ProjectorSnapsho
         (process) => !state.baselineUpids.includes(process.upid),
       );
       if (newcomer !== undefined) {
-        // A very fast backend may already be ready in this same frame; run the
-        // build check immediately so the demo never shows a stale step.
+        // A very fast mock lane may already be ready in this same frame; run
+        // the race check immediately so the demo never shows a stale step.
         return advanceOnSnapshot(
-          { ...state, step: "build", focusUpid: newcomer.upid },
+          { ...state, step: "race", focusUpid: newcomer.upid },
           snapshot,
         );
       }
       return state;
     }
-    case "build": {
+    case "race": {
       let next = state;
       // A skipped idea step has no focus yet: adopt the first newcomer.
       if (next.focusUpid === null) {
@@ -151,7 +164,7 @@ export function advanceOnSnapshot(state: GuidedState, snapshot: ProjectorSnapsho
       }
       const readyBackend = firstReadyBackend(focusProcess(next, snapshot));
       if (readyBackend !== null) {
-        return { ...next, step: "story", readyBackend };
+        return { ...next, step: "decide", readyBackend };
       }
       return next;
     }
@@ -171,19 +184,19 @@ export function skipStep(state: GuidedState, snapshot: ProjectorSnapshot): Guide
       // appears later still registers as the demo's newcomer.
       return { ...state, step: "idea", baselineUpids: upidsOf(snapshot) };
     case "idea":
-      return advanceOnSnapshot({ ...state, step: "build" }, snapshot);
-    case "build":
+      return advanceOnSnapshot({ ...state, step: "race" }, snapshot);
+    case "race":
       return {
         ...state,
-        step: "story",
+        step: "decide",
         readyBackend: firstReadyBackend(focusProcess(state, snapshot)),
       };
-    case "story":
+    case "decide":
       return null;
   }
 }
 
-// ── build lanes (step 4) ─────────────────────────────────────────────────────
+// ── mock lanes (step 4, the concept race) ────────────────────────────────────
 
 export type GuidedLaneStatus = ProcessBuildStatus | "queued";
 
@@ -273,7 +286,7 @@ export function guidedNotice(state: GuidedState, snapshot: ProjectorSnapshot): s
   if (snapshot.emergencyStopTriggered) {
     return "EMERGENCY STOP is active — the room is halted, so the demo cannot proceed. Clear the stop (or exit the demo).";
   }
-  if ((state.step === "idea" || state.step === "build") && snapshot.muted) {
+  if ((state.step === "idea" || state.step === "race") && snapshot.muted) {
     return "The room went muted, so nothing can be heard. Unmute (the Unmute button or the U key) to continue, or skip ahead.";
   }
   if (state.step === "idea" && snapshot.mic?.mode === "replay") {

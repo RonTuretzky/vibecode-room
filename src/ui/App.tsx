@@ -10,9 +10,11 @@ import { IdeaTray } from "./IdeaTray";
 import { QrImport } from "./QrImport";
 import { HelpOverlay } from "./HelpOverlay";
 import { BackendSelector } from "./BackendSelector";
-import { BuildChips, ProcessControls } from "./BuildChips";
+import { BuildChips, CommissionButton, ExecutionChip, ProcessControls } from "./BuildChips";
 import { backendsOf, buildsOf, lifecycleActionsFor, looksLikeSnapshot } from "./buildloop";
 import type { BuildloopSnapshot, LifecycleAction } from "./buildloop";
+import { executionOf, parseDeckDecisionMessage, stageOf } from "./stage";
+import type { DecisionChoice, StagedProcess } from "./stage";
 import { parseProjectorUrl } from "./url-params";
 import { GuidedDemo } from "./guided/GuidedDemo";
 import { advanceOnSnapshot, popPracticeOrb, skipStep, startGuided, type GuidedState } from "./guided/machine";
@@ -185,17 +187,51 @@ export function ProjectorApp({ initialSnapshot, urlSearch }: ProjectorAppProps) 
     setGuided((current) => (current === null ? current : advanceOnSnapshot(current, snapshot)));
   }, [snapshot]);
 
-  // Entering the story step auto-opens the REAL generated deck of the project
-  // born during the demo, starting on whichever framework finished first.
+  // Entering the decide step auto-opens the REAL generated pitch deck of the
+  // project born during the demo, starting on whichever mock finished first —
+  // the deck's "How should we continue?" bar is the demo's finale surface.
   const guidedStepRef = useRef<GuidedState["step"] | null>(null);
   useEffect(() => {
     const step = guided?.step ?? null;
     const previous = guidedStepRef.current;
     guidedStepRef.current = step;
-    if (step === "story" && previous !== "story" && guided?.focusUpid != null) {
+    if (step === "decide" && previous !== "decide" && guided?.focusUpid != null) {
       setSlideshowUpid(guided.focusUpid);
     }
   }, [guided]);
+
+  // GUIDED EPILOGUE: the transient completion note after the decide finale
+  // ("Build it for real" says the commission fired; the demo never waits for
+  // the full build). Cleared automatically a few seconds later.
+  const [guidedEpilogue, setGuidedEpilogue] = useState<string | null>(null);
+  useEffect(() => {
+    if (guidedEpilogue === null) {
+      return;
+    }
+    const timer = setTimeout(() => setGuidedEpilogue(null), 8_000);
+    return () => clearTimeout(timer);
+  }, [guidedEpilogue]);
+
+  // DECIDE-STEP COMMISSION WATCHER: the generated deck's own in-iframe
+  // decision buttons POST /api/process/:upid/execute directly — no event
+  // reaches the room. But the SNAPSHOT tells the truth: the focus process
+  // grows an execution lane. If that happens while the demo is waiting on the
+  // decide finale, the decision was made — complete the demo with the
+  // commission epilogue (the room-native bar's path does the same via
+  // deckDecision).
+  useEffect(() => {
+    const current = guidedRef.current;
+    if (current === null || current.step !== "decide" || current.focusUpid === null) {
+      return;
+    }
+    const focus = snapshot.processes.find((process) => process.upid === current.focusUpid);
+    if (focus !== undefined && stageOf(focus) === "commissioned") {
+      setGuided(null);
+      setGuidedEpilogue(
+        "Commissioned! The real build is now executing — watch this concept's tree grow.",
+      );
+    }
+  }, [snapshot]);
 
   const gatePercent = useMemo(() => {
     const { gate } = snapshot.suggestion;
@@ -451,6 +487,110 @@ export function ProjectorApp({ initialSnapshot, urlSearch }: ProjectorAppProps) 
     },
     [liveMode],
   );
+
+  // COMMISSION (the two-stage pivot's explicit second stage): POST
+  // /api/process/:upid/execute starts the real subscription execution lane
+  // (executing → built with the full-app preview). Live mode applies the
+  // returned snapshot when it is one (guarded, so a thin {"ok":true} ack can
+  // never wipe the wall); offline demo writes local execution telemetry so
+  // the concept→commissioned transformation stays demonstrable end-to-end.
+  const commissionProcess = useCallback(
+    async (upid: string) => {
+      if (!liveMode || mockModeRef.current) {
+        setSnapshot((current) => ({
+          ...current,
+          processes: current.processes.map((process) =>
+            process.upid === upid
+              ? ({
+                  ...process,
+                  execution: {
+                    status: "executing",
+                    progressLabel: "subscription run queued",
+                    percent: 4,
+                    previewUrl: null,
+                    summary: null,
+                  },
+                } as StagedProcess)
+              : process,
+          ),
+        }));
+        return;
+      }
+      try {
+        const response = await fetch(`/api/process/${encodeURIComponent(upid)}/execute`, {
+          method: "POST",
+        });
+        if (response.ok && response.headers.get("content-type")?.includes("application/json")) {
+          const body: unknown = await response.json();
+          if (looksLikeSnapshot(body)) {
+            setSnapshot(body);
+          }
+        }
+      } catch {
+        // Non-authoritative projector: a failed commission POST must never
+        // block the UI; the chip simply stays on concept until the SSE stream
+        // reports otherwise.
+      }
+    },
+    [liveMode],
+  );
+
+  // DECK DECISION ("How should we continue?") — fired by the deck overlay's
+  // room-native decision bar (dwell/click) or by a postMessage from the
+  // generated deck's in-iframe decision slide (see the bridge effect below).
+  //   commission → fire the REAL commission for the deck's process; the deck
+  //                stays open so the executing chip is immediately visible.
+  //   iterate/done → close the deck.
+  // If the guided demo is at its decide finale, ANY choice completes the demo
+  // (with an epilogue note; commissioning is an epilogue, never waited on).
+  const deckDecision = useCallback(
+    (upid: string, choice: DecisionChoice) => {
+      if (choice === "commission") {
+        void commissionProcess(upid);
+      } else {
+        setSlideshowUpid(null);
+      }
+      if (guidedRef.current !== null && guidedRef.current.step === "decide") {
+        setGuided(null);
+        setGuidedEpilogue(
+          choice === "commission"
+            ? "Commissioned! The real build is now executing — watch this concept's tree grow."
+            : choice === "iterate"
+              ? "Demo complete — keep talking to reshape the concept."
+              : "Demo complete — the concept stays on the wall.",
+        );
+      }
+    },
+    [commissionProcess],
+  );
+  const deckDecisionRef = useRef(deckDecision);
+  deckDecisionRef.current = deckDecision;
+
+  // DECK DWELL BRIDGE (postMessage half): the generated deck renders its own
+  // decision slide with data-dwell buttons inside an iframe, which the dwell
+  // layer cannot reach — so the room mirrors the choices as native buttons
+  // (Slideshow's deck-decision bar). But a mouse/touch click INSIDE the
+  // iframe still lands here: the deck posts {type:"vibersyn:decision",
+  // choice} and this listener routes it through the same handler. Origin is
+  // deliberately open (decks are served from per-build 127.0.0.1 ports); the
+  // payload is strictly validated and only acted on while a deck is open.
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const onMessage = (messageEvent: MessageEvent) => {
+      const choice = parseDeckDecisionMessage(messageEvent.data);
+      if (choice === null) {
+        return;
+      }
+      const upid = slideshowRef.current;
+      if (upid !== null) {
+        deckDecisionRef.current(upid, choice);
+      }
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, []);
 
   const releaseMute = useCallback(async () => {
     setIsUnmuting(true);
@@ -965,8 +1105,9 @@ export function ProjectorApp({ initialSnapshot, urlSearch }: ProjectorAppProps) 
 
   // Scene trees: one per process (minus anything hidden via the hide menu).
   // Each spec carries the INFERRED project title (process.task) for the node
-  // label plus the live steering flag so the scene can ring the current
-  // steering target.
+  // label, the live steering flag so the scene can ring the current steering
+  // target, and the TWO-STAGE stage: concepts render as saplings, a
+  // commissioned project visibly grows into the full tree (gold ring).
   const treeSpecs = useMemo<TreeSpec[]>(
     () =>
       snapshot.processes
@@ -978,6 +1119,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch }: ProjectorAppProps) 
           progress: process.progress,
           task: process.task,
           steering: process.upid === steeringUpid,
+          stage: stageOf(process),
         })),
     [snapshot.processes, hiddenTrees, steeringUpid],
   );
@@ -1046,7 +1188,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch }: ProjectorAppProps) 
         wall={urlConfig.wall}
         fitSignal={fitSignal}
         focusUpid={
-          guided !== null && (guided.step === "build" || guided.step === "story")
+          guided !== null && (guided.step === "race" || guided.step === "decide")
             ? guided.focusUpid
             : null
         }
@@ -1069,6 +1211,11 @@ export function ProjectorApp({ initialSnapshot, urlSearch }: ProjectorAppProps) 
       {voiceFlash !== null ? (
         <div className="voice-flash" data-testid="voice-flash" role="status">
           🎤 vibersyn → {voiceFlash}
+        </div>
+      ) : null}
+      {guidedEpilogue !== null ? (
+        <div className="guided-epilogue" data-testid="guided-epilogue" role="status">
+          ✨ {guidedEpilogue}
         </div>
       ) : null}
 
@@ -1169,7 +1316,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch }: ProjectorAppProps) 
             data-state={guided !== null ? "on" : "off"}
             aria-pressed={guided !== null}
             onClick={enterGuidedDemo}
-            title="Guided demo: a coached walkthrough — point, record, say an idea, watch three frameworks build it. Restarts from step 1."
+            title="Guided demo (kickoff phase): point, record, say an idea, watch three mock concepts race, then decide on the pitch deck. Restarts from step 1."
           >
             Guided Demo
           </button>
@@ -1219,6 +1366,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch }: ProjectorAppProps) 
               onSelect={(id) => void steerProcess(id)}
               onLifecycle={(upid, action) => void processLifecycle(upid, action)}
               onOpenDeck={(upid) => setSlideshowUpid(upid)}
+              onCommission={(upid) => void commissionProcess(upid)}
             />
             <TranscriptStream lines={snapshot.transcript} />
           </aside>
@@ -1353,7 +1501,8 @@ export function ProjectorApp({ initialSnapshot, urlSearch }: ProjectorAppProps) 
                 process={deckProcess}
                 onLifecycle={(upid, action) => void processLifecycle(upid, action)}
                 onClose={() => setSlideshowUpid(null)}
-                initialBackend={guided?.step === "story" ? guided.readyBackend : null}
+                initialBackend={guided?.step === "decide" ? guided.readyBackend : null}
+                onDecision={(choice) => deckDecision(deckProcess.upid, choice)}
               />
             ) : null;
           })()
@@ -1466,6 +1615,7 @@ function FleetPanel({
   onSelect,
   onLifecycle,
   onOpenDeck,
+  onCommission,
 }: {
   processes: ProjectorProcess[];
   selected: string | null;
@@ -1473,6 +1623,7 @@ function FleetPanel({
   onSelect: (id: string) => void;
   onLifecycle: (upid: string, action: LifecycleAction) => void;
   onOpenDeck: (upid: string) => void;
+  onCommission: (upid: string) => void;
 }) {
   return (
     <section className="rail-card fleet-card">
@@ -1484,6 +1635,17 @@ function FleetPanel({
         {processes.map((process) => {
           const steering = process.upid === steeringUpid;
           const builds = buildsOf(process);
+          // TWO-STAGE surfaces: a project with mock lanes is a CONCEPT until
+          // an explicit commission starts the execution lane (COMMISSIONED).
+          // Legacy processes with no build surfaces at all get no badge.
+          const stage = stageOf(process);
+          const execution = executionOf(process);
+          const hasBuildSurface =
+            builds.length > 0 || execution !== null || typeof process.buildStatus === "string";
+          // Commission is offered once ANY mock lane is ready (there is a
+          // concept worth executing) and only while still a concept.
+          const commissionable =
+            stage === "concept" && builds.some((build) => build.status === "ready");
           // A deck exists when the process carries fixture slides (mock room) or
           // any backend build published a REAL generated slideshow.
           const hasDeck =
@@ -1491,17 +1653,27 @@ function FleetPanel({
           return (
           <article
             key={process.upid}
-            className={`fleet-panel state-${process.state}${process.callsign === selected ? " selected" : ""}${steering ? " steering" : ""}`}
+            className={`fleet-panel state-${process.state}${process.callsign === selected ? " selected" : ""}${steering ? " steering" : ""} stage-${stage}`}
             data-testid="fleet-panel"
             data-dwell="steer"
             data-callsign={process.callsign}
             data-state={process.state}
             data-steering={steering ? "true" : "false"}
+            data-stage={stage}
             onClick={() => onSelect(process.callsign)}
           >
             <div className="fleet-panel-head">
               <strong className="fleet-callsign">{process.callsign}</strong>
               <span className={`fleet-state badge state-${process.state}`}>{process.state}</span>
+              {hasBuildSurface ? (
+                <span
+                  className={`stage-badge stage-${stage}`}
+                  data-testid="process-stage"
+                  data-stage={stage}
+                >
+                  {stage === "concept" ? "🌱 concept" : "🌳 commissioned"}
+                </span>
+              ) : null}
               {steering ? <span className="fleet-steering" data-testid="fleet-steering">steering →</span> : null}
             </div>
             {process.task.length > 0 ? (
@@ -1509,9 +1681,13 @@ function FleetPanel({
             ) : null}
             <p className="fleet-output">{process.lastOutput || "—"}</p>
             <p className="fleet-action">↳ {process.lastAction}</p>
-            <BuildChips builds={builds} />
+            <BuildChips builds={builds} stage={stage} />
+            {execution !== null ? <ExecutionChip execution={execution} /> : null}
             <div className="fleet-actions-row">
               <ProcessControls upid={process.upid} state={process.state} onLifecycle={onLifecycle} />
+              {commissionable ? (
+                <CommissionButton upid={process.upid} onCommission={onCommission} />
+              ) : null}
               {hasDeck ? (
                 <button
                   type="button"

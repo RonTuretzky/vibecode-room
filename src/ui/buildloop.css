@@ -293,12 +293,247 @@
   font-size: 12.5px;
 }
 
+/* ============================================================================
+   TWO-STAGE kickoff/commission surfaces: stage badges, the "mock ready" tag
+   on concept lanes, the execution chip (commissioned lane), the commission
+   button, and the deck's "How should we continue?" decision bar.
+   ============================================================================ */
+
+/* Stage badge: CONCEPT (cool sprout green-blue) vs COMMISSIONED (gold). */
+.stage-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 999px;
+  border: 1px solid var(--glass-line);
+  padding: 1px 9px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  vertical-align: middle;
+}
+
+.stage-badge.stage-concept {
+  border-color: rgba(56, 189, 248, 0.45);
+  color: var(--c-planning);
+  background: rgba(56, 189, 248, 0.08);
+}
+
+.stage-badge.stage-commissioned {
+  border-color: rgba(255, 209, 102, 0.55);
+  color: #ffd166;
+  background: rgba(255, 209, 102, 0.1);
+}
+
+.slideshow-title .stage-badge {
+  margin-left: 10px;
+  font-size: 11px;
+}
+
+/* Concept lanes: a ready MOCK is honestly labeled, never sold as built. */
+.build-chip-mock {
+  color: var(--c-active);
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 10px;
+}
+
+/* Execution chip — the commissioned subscription run's live telemetry. */
+.execution-chip {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  border: 1px solid rgba(255, 209, 102, 0.4);
+  border-radius: 8px;
+  background: rgba(40, 30, 8, 0.4);
+  padding: 4px 8px;
+  font-size: 11.5px;
+  color: var(--ink-soft);
+  margin: 4px 0;
+}
+
+.execution-chip-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+  background: #ffd166;
+}
+
+.execution-chip-label {
+  font-weight: 800;
+  color: #ffd166;
+  letter-spacing: 0.04em;
+}
+
+.execution-chip.status-executing {
+  animation: execution-chip-pulse 1.4s ease-in-out infinite;
+}
+
+.execution-chip.status-executing .execution-chip-dot {
+  box-shadow: 0 0 10px #ffd166;
+}
+
+.execution-chip.status-built {
+  border-color: rgba(0, 255, 136, 0.5);
+  background: rgba(4, 34, 20, 0.5);
+}
+
+.execution-chip.status-built .execution-chip-dot {
+  background: var(--c-active);
+  box-shadow: 0 0 8px var(--c-active);
+}
+
+.execution-chip.status-built .execution-chip-label {
+  color: var(--c-active);
+}
+
+.execution-chip.status-failed {
+  border-color: rgba(255, 59, 48, 0.45);
+}
+
+.execution-chip.status-failed .execution-chip-dot {
+  background: var(--c-halted);
+}
+
+.execution-chip.status-failed .execution-chip-label {
+  color: var(--c-halted);
+}
+
+.execution-chip-progress {
+  color: #ffd166;
+  font-variant-numeric: tabular-nums;
+}
+
+.execution-chip-track {
+  flex: 1 1 48px;
+  min-width: 32px;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(255, 209, 102, 0.16);
+  overflow: hidden;
+}
+
+.execution-chip-fill {
+  display: block;
+  height: 100%;
+  background: linear-gradient(90deg, #ffd166, var(--c-active));
+  transition: width 400ms ease;
+}
+
+.execution-chip-link {
+  margin-left: auto;
+}
+
+@keyframes execution-chip-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 rgba(255, 209, 102, 0);
+  }
+  50% {
+    box-shadow: 0 0 14px rgba(255, 209, 102, 0.45);
+  }
+}
+
+/* The commission button — the one control that makes a concept real. */
+.fleet-ctl-commission {
+  border-color: rgba(255, 209, 102, 0.5);
+  color: #ffd166;
+  margin: 6px 0;
+}
+
+.fleet-ctl-commission:hover,
+.fleet-ctl-commission[data-dwell-hot] {
+  border-color: #ffd166;
+  color: #ffe6a8;
+  background: rgba(255, 209, 102, 0.14);
+  box-shadow: 0 0 14px rgba(255, 209, 102, 0.35);
+}
+
+/* --- Deck decision bar ("How should we continue?") ---
+   Room-native buttons pinned under the deck, so the choice is dwell-operable
+   even though the generated deck's own decision slide lives in an iframe.
+   Sticky within the scrollable deck card: the finale choice can never be
+   below the fold at projector distance. */
+.deck-decision {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  border: 1px solid rgba(255, 209, 102, 0.35);
+  border-radius: 12px;
+  background: rgba(30, 24, 8, 0.92);
+  padding: 10px 14px;
+  margin-top: 10px;
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+}
+
+.deck-decision-title {
+  font-size: 14px;
+  font-weight: 800;
+  color: var(--ink);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.deck-decision-choices {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.deck-decision-btn {
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 750;
+  border-radius: 999px;
+  border: 1px solid var(--glass-line);
+  background: rgba(10, 18, 26, 0.6);
+  color: var(--ink);
+  padding: 8px 18px;
+  cursor: pointer;
+  transition: border-color 160ms ease, color 160ms ease, background 160ms ease, box-shadow 160ms ease;
+}
+
+.deck-decision-btn.decision-commission {
+  border-color: rgba(255, 209, 102, 0.55);
+  color: #ffd166;
+}
+
+.deck-decision-btn.decision-commission:hover,
+.deck-decision-btn.decision-commission[data-dwell-hot] {
+  background: rgba(255, 209, 102, 0.16);
+  box-shadow: 0 0 18px rgba(255, 209, 102, 0.4);
+  color: #ffe6a8;
+}
+
+.deck-decision-btn.decision-iterate:hover,
+.deck-decision-btn.decision-iterate[data-dwell-hot] {
+  border-color: var(--c-planning);
+  color: var(--c-planning);
+  box-shadow: 0 0 14px rgba(56, 189, 248, 0.35);
+}
+
+.deck-decision-btn.decision-done:hover,
+.deck-decision-btn.decision-done[data-dwell-hot] {
+  border-color: var(--c-active);
+  color: var(--c-active);
+  box-shadow: 0 0 14px rgba(0, 255, 136, 0.3);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .build-chip.status-building,
-  .bubble-preview-pending {
+  .bubble-preview-pending,
+  .execution-chip.status-executing {
     animation: none !important;
   }
-  .build-chip-fill {
+  .build-chip-fill,
+  .execution-chip-fill {
     transition: none;
   }
 }

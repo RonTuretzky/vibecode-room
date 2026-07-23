@@ -915,6 +915,30 @@ main.gesture-mode * {
   to { opacity: 1; transform: translate(-50%, 0); }
 }
 
+/* Guided-demo epilogue toast — the completion note after the decide finale
+   ("Build it for real" fired the commission; the demo never waits on it). */
+.guided-epilogue {
+  position: fixed;
+  top: 132px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 40;
+  max-width: min(720px, 86vw);
+  text-align: center;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: #ffd166;
+  border: 1px solid rgba(255, 209, 102, 0.45);
+  border-radius: 999px;
+  padding: 11px 24px;
+  background: rgba(40, 30, 8, 0.72);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 0 28px rgba(255, 209, 102, 0.35);
+  pointer-events: none;
+  animation: voice-flash-in 240ms ease;
+}
+
 /* ============================================================================
    Live mic control
    ============================================================================ */
@@ -2326,8 +2350,8 @@ main.gesture-mode * {
   animation: fade-in 280ms ease;
 }
 
-/* Story step: shrink to a slim top banner so the REAL generated deck below
-   stays fully visible and dwellable. */
+/* Decide step: shrink to a slim top banner so the REAL generated pitch deck
+   below (and its decision bar) stays fully visible and dwellable. */
 .guided-card.slim {
   bottom: auto;
   top: 2vh;

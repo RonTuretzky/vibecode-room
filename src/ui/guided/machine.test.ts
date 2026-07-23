@@ -142,26 +142,26 @@ describe("guided demo — idea step (real detection → spawn)", () => {
       state,
       recordingRoom({ processes: [makeProcess("upid_old"), makeProcess("upid_new")] }),
     );
-    expect(advanced.step).toBe("build");
+    expect(advanced.step).toBe("race");
     expect(advanced.focusUpid).toBe("upid_new");
   });
 
-  test("a newcomer that is ALREADY ready falls straight through to story", () => {
+  test("a newcomer whose mock is ALREADY ready falls straight through to decide", () => {
     const state = atIdea([]);
     const readyProc = makeProcess("upid_fast", { builds: [build("native", "ready")] });
     const advanced = advanceOnSnapshot(state, recordingRoom({ processes: [readyProc] }));
-    expect(advanced.step).toBe("story");
+    expect(advanced.step).toBe("decide");
     expect(advanced.readyBackend).toBe("native");
   });
 });
 
-describe("guided demo — build step (three-framework race)", () => {
-  const atBuild = () => {
+describe("guided demo — race step (three MOCK lanes)", () => {
+  const atRace = () => {
     const state = advanceOnSnapshot(
       atIdeaState(),
       recordingRoom({ processes: [makeProcess("upid_demo")] }),
     );
-    expect(state.step).toBe("build");
+    expect(state.step).toBe("race");
     return state;
   };
   const atIdeaState = () => {
@@ -172,8 +172,8 @@ describe("guided demo — build step (three-framework race)", () => {
     return advanceOnSnapshot(state, recordingRoom());
   };
 
-  test("building lanes do NOT advance; the FIRST ready lane does (whichever backend wins)", () => {
-    const state = atBuild();
+  test("mocking lanes do NOT advance; the FIRST mock-ready lane does (whichever backend wins)", () => {
+    const state = atRace();
     const stillBuilding = recordingRoom({
       processes: [
         makeProcess("upid_demo", {
@@ -191,12 +191,12 @@ describe("guided demo — build step (three-framework race)", () => {
       ],
     });
     const advanced = advanceOnSnapshot(state, elizaWins);
-    expect(advanced.step).toBe("story");
+    expect(advanced.step).toBe("decide");
     expect(advanced.readyBackend).toBe("eliza");
   });
 
-  test("failed lanes never advance and never wedge (skip still reaches story)", () => {
-    const state = atBuild();
+  test("failed lanes never advance and never wedge (skip still reaches decide)", () => {
+    const state = atRace();
     const allFailed = recordingRoom({
       processes: [
         makeProcess("upid_demo", { builds: [build("smithers", "failed"), build("eliza", "failed")] }),
@@ -206,40 +206,40 @@ describe("guided demo — build step (three-framework race)", () => {
     expect(lanesAllFailed(guidedLanes(state, allFailed))).toBe(true);
 
     const skipped = skipStep(state, allFailed);
-    expect(skipped?.step).toBe("story");
+    expect(skipped?.step).toBe("decide");
     expect(skipped?.readyBackend).toBeNull();
   });
 
   test("legacy fallback: no builds[] but process.buildStatus ready advances", () => {
-    const state = atBuild();
+    const state = atRace();
     const legacy = recordingRoom({
       processes: [makeProcess("upid_demo", { buildStatus: "ready" }) as ProjectorProcess],
     });
     const advanced = advanceOnSnapshot(state, legacy);
-    expect(advanced.step).toBe("story");
+    expect(advanced.step).toBe("decide");
     expect(advanced.readyBackend).toBe("build");
   });
 
-  test("a build step with no focus (skipped idea) adopts the first newcomer", () => {
-    const skippedToBuild = skipStep(skipStep(atIdeaState(), recordingRoom())!, recordingRoom());
-    // atIdeaState is already "idea": one skip → build (focus null).
+  test("a race step with no focus (skipped idea) adopts the first newcomer", () => {
+    const skippedToDecide = skipStep(skipStep(atIdeaState(), recordingRoom())!, recordingRoom());
+    // atIdeaState is already "idea": one skip → race (focus null).
     const state = skipStep(atIdeaState(), recordingRoom())!;
-    expect(state.step).toBe("build");
+    expect(state.step).toBe("race");
     expect(state.focusUpid).toBeNull();
-    expect(skippedToBuild?.step).toBe("story");
+    expect(skippedToDecide?.step).toBe("decide");
 
     const adopted = advanceOnSnapshot(
       state,
       recordingRoom({ processes: [makeProcess("upid_late", { builds: [build("smithers", "building")] })] }),
     );
-    expect(adopted.step).toBe("build");
+    expect(adopted.step).toBe("race");
     expect(adopted.focusUpid).toBe("upid_late");
   });
 });
 
 describe("guided demo — lanes derivation", () => {
-  const stateAtBuild = (focusUpid: string | null) => ({
-    step: "build" as const,
+  const stateAtRace = (focusUpid: string | null) => ({
+    step: "race" as const,
     orbsPopped: PRACTICE_ORB_COUNT,
     baselineUpids: [] as string[],
     focusUpid,
@@ -259,7 +259,7 @@ describe("guided demo — lanes derivation", () => {
         }),
       ],
     });
-    const lanes = guidedLanes(stateAtBuild("upid_demo"), snapshot);
+    const lanes = guidedLanes(stateAtRace("upid_demo"), snapshot);
     expect(lanes.map((lane) => lane.id)).toEqual(["smithers", "eliza"]);
     expect(lanes[0]).toMatchObject({ label: "Smithers", status: "building", percent: 62, progressLabel: "scaffolding" });
     expect(lanes[1]).toMatchObject({ label: "ElizaOS", status: "queued" });
@@ -270,7 +270,7 @@ describe("guided demo — lanes derivation", () => {
       backends: [{ id: "smithers", label: "Smithers", enabled: true, available: true }],
       processes: [makeProcess("upid_demo", { builds: [build("native", "ready", { slideshowUrl: "http://x/d" })] })],
     });
-    const lanes = guidedLanes(stateAtBuild("upid_demo"), snapshot);
+    const lanes = guidedLanes(stateAtRace("upid_demo"), snapshot);
     expect(lanes.map((lane) => lane.id)).toEqual(["smithers", "native"]);
     expect(lanes[1]).toMatchObject({ label: "Native · homebrewed", status: "ready", hasDeck: true });
   });
@@ -279,7 +279,7 @@ describe("guided demo — lanes derivation", () => {
     const snapshot = recordingRoom({
       processes: [makeProcess("upid_demo", { buildStatus: "building", progressLabel: "compiling", progress: 33 })],
     });
-    const lanes = guidedLanes(stateAtBuild("upid_demo"), snapshot);
+    const lanes = guidedLanes(stateAtRace("upid_demo"), snapshot);
     expect(lanes).toHaveLength(1);
     expect(lanes[0]).toMatchObject({ id: "build", status: "building", progressLabel: "compiling", percent: 33 });
   });
@@ -291,14 +291,14 @@ describe("guided demo — lanes derivation", () => {
         { id: "eliza", label: "ElizaOS", enabled: true, available: true },
       ],
     });
-    const lanes = guidedLanes(stateAtBuild(null), snapshot);
+    const lanes = guidedLanes(stateAtRace(null), snapshot);
     expect(lanes.every((lane) => lane.status === "queued")).toBe(true);
     expect(lanes).toHaveLength(2);
   });
 });
 
 describe("guided demo — skip, finish, re-enter", () => {
-  test("skip walks every step in order and finishing story returns null (demo done)", () => {
+  test("skip walks every step in order and finishing decide returns null (demo done)", () => {
     const snapshot = makeSnapshot();
     let state: ReturnType<typeof startGuided> | null = startGuided(snapshot);
     const walked: string[] = [state.step];
@@ -308,7 +308,7 @@ describe("guided demo — skip, finish, re-enter", () => {
         walked.push(state.step);
       }
     }
-    expect(walked).toEqual(["orientation", "record", "idea", "build", "story"]);
+    expect(walked).toEqual(["orientation", "record", "idea", "race", "decide"]);
   });
 
   test("skipping record still re-baselines so a later spawn is detected", () => {
@@ -329,14 +329,14 @@ describe("guided demo — skip, finish, re-enter", () => {
   });
 
   test("re-entering starts a FRESH run: step 1, zero orbs, new baseline", () => {
-    // First run reaches story…
+    // First run reaches the race…
     let state = startGuided(makeSnapshot());
     for (let i = 0; i < PRACTICE_ORB_COUNT; i += 1) {
       state = popPracticeOrb(state);
     }
     const withProc = recordingRoom({ processes: [makeProcess("upid_first")] });
     state = advanceOnSnapshot(advanceOnSnapshot(state, recordingRoom()), withProc);
-    expect(state.step).toBe("build");
+    expect(state.step).toBe("race");
 
     // …then re-entry resets everything and treats upid_first as pre-existing.
     const again = startGuided(withProc);

@@ -388,6 +388,109 @@ describe("project deck (slideshow)", () => {
   });
 });
 
+// TWO-STAGE kickoff/commission UX: a freshly kicked-off project is a CONCEPT
+// (mock lanes racing, "mock ready" chips, commission button); an explicit
+// commission transforms it (executing chip → BUILT with the full-app link).
+describe("two-stage kickoff/commission surfaces", () => {
+  const conceptProcess = (): BuildloopProcess => ({
+    ...demoProjectorSnapshot.processes[0]!,
+    builds: [
+      { backend: "smithers", label: "Smithers", status: "building", previewUrl: null, summary: null, slideshowUrl: null, progressLabel: "mocking", percent: 40 },
+      { backend: "native", label: "Native", status: "ready", previewUrl: "http://127.0.0.1:4100/", summary: null, slideshowUrl: "http://127.0.0.1:4100/slides.html" },
+    ],
+  });
+  const commissionedProcess = (): BuildloopProcess & { execution: unknown } => ({
+    ...conceptProcess(),
+    execution: { status: "executing", progressLabel: "run step 2/9", percent: 22 },
+  });
+
+  test("a concept fleet card: 🌱 badge, MOCK READY chip tag, and the commission button", () => {
+    const processes = demoProjectorSnapshot.processes.map((process, index) =>
+      index === 0 ? conceptProcess() : process,
+    );
+    const html = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={{ ...demoProjectorSnapshot, processes }} />,
+    );
+    expect(html).toContain('data-testid="process-stage"');
+    expect(html).toContain('data-stage="concept"');
+    expect(html).toContain('data-testid="build-chip-mock"');
+    expect(html).toContain("mock ready");
+    expect(html).toContain('data-testid="commission-button"');
+    expect(html).not.toContain('data-testid="execution-chip"');
+  });
+
+  test("a commissioned card: 🌳 badge + pulsing execution chip, commission button gone", () => {
+    const processes = demoProjectorSnapshot.processes.map((process, index) =>
+      index === 0 ? commissionedProcess() : process,
+    );
+    const html = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={{ ...demoProjectorSnapshot, processes }} />,
+    );
+    expect(html).toContain('data-stage="commissioned"');
+    expect(html).toContain('data-testid="execution-chip"');
+    expect(html).toContain('data-status="executing"');
+    expect(html).toContain("run step 2/9");
+    expect(html).not.toContain('data-testid="commission-button"');
+  });
+
+  test("a BUILT execution links the full-app preview", () => {
+    const built = {
+      ...conceptProcess(),
+      execution: { status: "built", previewUrl: "http://127.0.0.1:4300/", summary: "The full app." },
+    };
+    const processes = demoProjectorSnapshot.processes.map((process, index) =>
+      index === 0 ? (built as BuildloopProcess) : process,
+    );
+    const html = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={{ ...demoProjectorSnapshot, processes }} />,
+    );
+    expect(html).toContain('data-testid="execution-preview-link"');
+    expect(html).toContain("http://127.0.0.1:4300/");
+    expect(html).toContain("BUILT ✓");
+  });
+
+  test("legacy processes with no build surfaces get no stage badge (fixtures stay clean)", () => {
+    const html = renderToStaticMarkup(<ProjectorApp initialSnapshot={demoProjectorSnapshot} />);
+    expect(html).not.toContain('data-testid="process-stage"');
+    expect(html).not.toContain('data-testid="commission-button"');
+    expect(html).not.toContain('data-testid="execution-chip"');
+  });
+
+  test("the deck shows the stage badge and the dwellable decision bar for concepts", () => {
+    const html = renderToStaticMarkup(
+      <Slideshow process={conceptProcess()} onLifecycle={() => {}} onClose={() => {}} onDecision={() => {}} />,
+    );
+    expect(html).toContain('data-testid="deck-stage"');
+    expect(html).toContain("CONCEPT");
+    // The room-native decision bar: three plain <button>s (auto dwell targets).
+    expect(html).toContain('data-testid="deck-decision"');
+    expect(html).toContain("How should we continue?");
+    expect(html).toContain('data-decision="commission"');
+    expect(html).toContain('data-decision="iterate"');
+    expect(html).toContain('data-decision="done"');
+    expect(html).toContain("Build it for real");
+  });
+
+  test("the decision bar disappears once commissioned (and without an onDecision handler)", () => {
+    const commissioned = renderToStaticMarkup(
+      <Slideshow
+        process={commissionedProcess() as BuildloopProcess}
+        onLifecycle={() => {}}
+        onClose={() => {}}
+        onDecision={() => {}}
+      />,
+    );
+    expect(commissioned).toContain("COMMISSIONED");
+    expect(commissioned).not.toContain('data-testid="deck-decision"');
+    expect(commissioned).toContain('data-testid="execution-chip"');
+
+    const noHandler = renderToStaticMarkup(
+      <Slideshow process={conceptProcess()} onLifecycle={() => {}} onClose={() => {}} />,
+    );
+    expect(noHandler).not.toContain('data-testid="deck-decision"');
+  });
+});
+
 describe("qr import overlay", () => {
   test("first paint (before /api/import/info resolves) shows the pending state", () => {
     // Static render = no effects, so this is the pre-fetch skeleton: the overlay
