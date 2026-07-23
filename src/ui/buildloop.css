@@ -233,6 +233,66 @@
   color: var(--c-halted);
 }
 
+/* Inferred project title on the fleet card — the LLM-named build headline. */
+.fleet-task {
+  margin: 2px 0 4px;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--ink);
+  line-height: 1.35;
+}
+
+/* Lifecycle controls + the Deck opener share one row on the fleet card. */
+.fleet-actions-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.fleet-actions-row .fleet-controls {
+  margin: 6px 0;
+}
+
+.fleet-ctl-deck {
+  margin: 6px 0;
+}
+
+.fleet-ctl-deck:hover {
+  border-color: var(--c-selected);
+  color: var(--c-selected);
+}
+
+/* --- Deck HUD: per-backend build chips + live slideshow slides in the deck --- */
+.slideshow-builds .build-chips {
+  margin: 0;
+}
+
+.slideshow-card .fleet-controls {
+  margin: 0;
+}
+
+/* A REAL generated slideshow embedded as a deck slide. */
+.slide-live {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.slide-live-frame {
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  min-height: 280px;
+  border: 1px solid var(--glass-line);
+  border-radius: 12px;
+  background: rgba(4, 10, 16, 0.85);
+}
+
+.slide-live-open {
+  align-self: flex-end;
+  font-size: 12.5px;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .build-chip.status-building,
   .bubble-preview-pending {

@@ -6,6 +6,12 @@ export type SuggestionState = "idle" | "queued" | "speaking" | "accepted" | "dec
 // for processes that never triggered a build (e.g. the seeded demo fleet).
 export type ProcessBuildStatus = "building" | "ready" | "failed";
 
+// One slide of a project's explainer deck (HTML body; fixture/demo content).
+export interface ProjectSlide {
+  title: string;
+  html: string;
+}
+
 export interface ProjectorProcess {
   upid: string;
   runId: string;
@@ -19,6 +25,9 @@ export interface ProjectorProcess {
   lastOutput: string;
   lastAction: string;
   events: string[];
+  // Optional explainer slideshow: when present, clicking the project in the
+  // 3D scene opens this deck instead of steering (mock/demo affordance).
+  slides?: ProjectSlide[];
   // Real live-preview surface (accept->build->preview). `previewUrl` is the
   // reachable http://127.0.0.1:<port>/ once the scaffolded page is served;
   // `buildStatus` tracks building -> ready | failed. Both null/absent until an

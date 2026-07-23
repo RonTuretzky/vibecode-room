@@ -1,11 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
-import { demoProjectorSnapshot, withUnmuted } from "./demo-data";
-import type { LogEvent } from "../types";
+import { demoProjectorSnapshot, busyRoomSnapshot, withUnmuted } from "./demo-data";
 import type { ProjectorProcess, ProjectorSnapshot, TranscriptLine } from "./types";
-import { Atmosphere } from "./Atmosphere";
 import { GestureLayer } from "./gesture/GestureLayer";
-import { ProcessBubble, IdeaBubble } from "./Bubble";
+import { RoomScene, type IdeaOrbSpec, type SceneLayout, type SceneMode, type TreeSpec } from "./RoomScene";
+import { Slideshow } from "./Slideshow";
 import { BuildDetail } from "./BuildDetail";
 import { IdeaTray } from "./IdeaTray";
 import { QrImport } from "./QrImport";
@@ -16,16 +15,13 @@ import { backendsOf, buildsOf, lifecycleActionsFor, looksLikeSnapshot } from "./
 import type { BuildloopSnapshot, LifecycleAction } from "./buildloop";
 import { parseProjectorUrl } from "./url-params";
 import "./buildloop.css";
-import { traceClass, traceTag, summarizeMeta } from "./trace-utils";
 import { startMicCapture, type MicCaptureHandle } from "./mic";
 
 export const REQUIRED_PROJECTOR_REGIONS = [
   "status",
   "suggestion",
   "fleet",
-  "audio",
   "transcript",
-  "trace",
 ] as const;
 
 interface ProjectorAppProps {
@@ -57,6 +53,57 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
   const micHandleRef = useRef<MicCaptureHandle | null>(null);
   const [qrOpen, setQrOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  // MOCK ROOM: a client-only demo showing several projects building at once.
+  // While on, the live SSE stream is held back (see the guard below) so the
+  // fixture is not overwritten; toggling off re-syncs the real state.
+  const [mockMode, setMockMode] = useState(false);
+  const mockModeRef = useRef(false);
+  mockModeRef.current = mockMode;
+  // Scene controls (visualizer parity): garden/orbit render mode, zen mode
+  // (all chrome hidden), the hide/unhide menu, and a fit-to-content signal.
+  const [sceneMode, setSceneMode] = useState<SceneMode>("garden");
+  // Layout strategy axis (visualizer parity): standard radial, H3 Poincaré
+  // ball, or the Poincaré disk. Crossed with the garden/orbit style axis.
+  const [sceneLayout, setSceneLayout] = useState<SceneLayout>("radial");
+  // Project explainer deck: the upid whose slideshow is open, or null.
+  const [slideshowUpid, setSlideshowUpid] = useState<string | null>(null);
+  const slideshowRef = useRef<string | null>(null);
+  slideshowRef.current = slideshowUpid;
+  const [zenMode, setZenMode] = useState(false);
+  const zenModeRef = useRef(false);
+  zenModeRef.current = zenMode;
+  const [hideMenuOpen, setHideMenuOpen] = useState(false);
+  const hideMenuOpenRef = useRef(false);
+  hideMenuOpenRef.current = hideMenuOpen;
+  const [hiddenIdeas, setHiddenIdeas] = useState<ReadonlySet<string>>(new Set());
+  const [hiddenTrees, setHiddenTrees] = useState<ReadonlySet<string>>(new Set());
+  const [fitSignal, setFitSignal] = useState(0);
+  const toggleHiddenIdea = useCallback((id: string) => {
+    setHiddenIdeas((current) => {
+      const next = new Set(current);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }, []);
+  const toggleHiddenTree = useCallback((upid: string) => {
+    setHiddenTrees((current) => {
+      const next = new Set(current);
+      if (next.has(upid)) {
+        next.delete(upid);
+      } else {
+        next.add(upid);
+      }
+      return next;
+    });
+  }, []);
+  const clearHidden = useCallback(() => {
+    setHiddenIdeas(new Set());
+    setHiddenTrees(new Set());
+  }, []);
   // The transient voice-command confirmation ("🎤 vibersyn → build"), or null.
   const [voiceFlash, setVoiceFlash] = useState<string | null>(null);
 
@@ -154,7 +201,7 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
   // suggestion and starts the real build; the returned snapshot is applied. In
   // offline demo there is no runtime, so it falls back to opening the idea detail.
   const acceptIdea = useCallback(async () => {
-    if (!liveMode) {
+    if (!liveMode || mockModeRef.current) {
       selectBubble(IDEA_ID);
       return;
     }
@@ -174,7 +221,7 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
   // stays interactive.
   const actOnIdea = useCallback(
     async (id: string, action: "accept" | "dismiss") => {
-      if (!liveMode) {
+      if (!liveMode || mockModeRef.current) {
         setSnapshot((current) => ({
           ...current,
           ideas: (current.ideas ?? []).filter((idea) => idea.id !== id),
@@ -209,7 +256,7 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
   // builds itself with no click. The returned snapshot carries the new state.
   const autoAccept = snapshot.autoAccept ?? false;
   const toggleAutoAccept = useCallback(async () => {
-    if (!liveMode) {
+    if (!liveMode || mockModeRef.current) {
       return;
     }
     try {
@@ -231,7 +278,7 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
   // building stays explicit (tray/keyboard/voice) unless Auto-Build is also on.
   const captureMode = snapshot.captureMode ?? false;
   const toggleCaptureMode = useCallback(async () => {
-    if (!liveMode) {
+    if (!liveMode || mockModeRef.current) {
       return;
     }
     try {
@@ -257,7 +304,7 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
       const match = snapshotRef.current.processes.find(
         (process) => process.callsign === id || process.upid === id,
       );
-      if (!liveMode || match === undefined) {
+      if (!liveMode || mockModeRef.current || match === undefined) {
         selectBubble(id);
         return;
       }
@@ -489,7 +536,7 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
           return;
         }
         const liveSnapshot = (await response.json()) as ProjectorSnapshot;
-        if (!closed) {
+        if (!closed && !mockModeRef.current) {
           setSnapshot(liveSnapshot);
         }
       } catch {
@@ -508,7 +555,7 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
         void syncState(); // resync current state immediately on (re)connect
       });
       source.addEventListener("snapshot", (messageEvent) => {
-        if (closed) {
+        if (closed || mockModeRef.current) {
           return;
         }
         try {
@@ -613,6 +660,18 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
         // Close the topmost overlay first; fall back to closing the detail.
         // Help renders after (above) the QR overlay in the tree, so it closes
         // first — otherwise Escape appears to do nothing while both are open.
+        if (slideshowRef.current !== null) {
+          setSlideshowUpid(null);
+          return;
+        }
+        if (hideMenuOpenRef.current) {
+          setHideMenuOpen(false);
+          return;
+        }
+        if (zenModeRef.current) {
+          setZenMode(false);
+          return;
+        }
         if (helpOpenRef.current) {
           setHelpOpen(false);
           return;
@@ -623,6 +682,32 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
         }
         setSelected(null);
         return;
+      }
+      // Scene controls (visualizer parity): ` hide menu, g garden/orbit,
+      // z zen, f fit-to-content, 0 clears filters while the menu is open.
+      if (keyEvent.key === "`") {
+        setHideMenuOpen((open) => !open);
+        return;
+      }
+      if (keyEvent.key === "0" && hideMenuOpenRef.current) {
+        clearHidden();
+        return;
+      }
+      switch (keyEvent.key) {
+        case "g":
+          setSceneMode((current) => (current === "garden" ? "orbit" : "garden"));
+          return;
+        case "l":
+          setSceneLayout((current) => (current === "radial" ? "ball" : current === "ball" ? "disk" : "radial"));
+          return;
+        case "z":
+          setZenMode((zen) => !zen);
+          return;
+        case "f":
+          setFitSignal((n) => n + 1);
+          return;
+        default:
+          break;
       }
       // Shift+E only — a deliberate chord for the kill-all, so brushing "e" while
       // reaching for other keys can never stop the room.
@@ -692,40 +777,151 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
     releaseMute,
     triggerEmergency,
     processLifecycle,
+    clearHidden,
   ]);
-
-  // Significance-driven sizing: selected/active largest, planning mid, others base.
-  const bubbleSize = useCallback(
-    (process: ProjectorProcess): number => {
-      if (process.callsign === selected) {
-        return 300;
-      }
-      if (process.state === "active") {
-        return 264;
-      }
-      if (process.state === "planning") {
-        return 232;
-      }
-      return 212;
-    },
-    [selected],
-  );
 
   const detailOpen = selectedProcess !== null;
   const listeningState = snapshot.muted ? "muted" : "listening";
 
+  // MOCK ROOM toggle: swap in the busy fixture (several projects at once) and
+  // hold back the live stream; toggling off re-syncs the authoritative state
+  // (offline demo just restores its own fixture).
+  const toggleMockMode = useCallback(() => {
+    const turningOn = !mockModeRef.current;
+    setMockMode(turningOn);
+    if (turningOn) {
+      setSnapshot(busyRoomSnapshot());
+      setSelected(null);
+      return;
+    }
+    if (!liveMode) {
+      setSnapshot(demoProjectorSnapshot);
+      return;
+    }
+    void fetch("/api/state", { headers: { accept: "application/json" } })
+      .then((response) =>
+        response.ok && response.headers.get("content-type")?.includes("application/json")
+          ? (response.json() as Promise<ProjectorSnapshot>)
+          : null,
+      )
+      .then((restored) => {
+        if (restored) {
+          setSnapshot(restored);
+        }
+      })
+      .catch(() => {
+        // A failed resync must never wedge the UI; the live stream will catch up.
+      });
+  }, [liveMode]);
+
   // Two-wall view split: the ideas wall hides the build fleet, the builds wall
   // hides the idea surfaces; "full" (default) shows everything on one screen.
-  const showIdeaSurfaces = view !== "builds";
-  const showFleetSurfaces = view !== "ideas";
+  // Mock room forces the full layout so every project is visible at once.
+  const effectiveView = mockMode ? "full" : view;
+  const showIdeaSurfaces = effectiveView !== "builds";
+  const showFleetSurfaces = effectiveView !== "ideas";
   // The tray renders whenever there are candidates; the dedicated ideas wall
   // always shows it (with an empty-state hint) so the surface reads as present.
   const ideas = snapshot.ideas ?? [];
-  const showIdeaTray = showIdeaSurfaces && (view === "ideas" || ideas.length > 0);
+  const showIdeaTray = showIdeaSurfaces && (effectiveView === "ideas" || ideas.length > 0);
+
+  // 3D constellation input: every ledger candidate as an orb; with an empty
+  // ledger, the primary pending suggestion (id null) is the lone orb.
+  const ideaOrbs = useMemo<IdeaOrbSpec[]>(() => {
+    if (ideas.length > 0) {
+      return ideas.map((idea) => ({
+        id: idea.id,
+        pitch: idea.pitch,
+        confidence: idea.confidence,
+        status: idea.status,
+        maturity: idea.maturity,
+        verified: idea.verified,
+      }));
+    }
+    if (snapshot.suggestion.pitch.length > 0) {
+      return [
+        {
+          id: null,
+          pitch: snapshot.suggestion.pitch,
+          confidence: snapshot.suggestion.confidence,
+          status: "ready",
+          maturity: "proposed",
+          verified: false,
+        },
+      ];
+    }
+    return [];
+  }, [ideas, snapshot.suggestion.pitch, snapshot.suggestion.confidence]);
+
+  // Scene trees: one per process (minus anything hidden via the hide menu).
+  // The scene itself drops trees on the dedicated ideas wall (view gating
+  // lives in RoomScene's reconcile). Each spec carries the INFERRED project
+  // title (process.task) for the node label plus the live steering flag so the
+  // scene can ring the current steering target.
+  const treeSpecs = useMemo<TreeSpec[]>(
+    () =>
+      snapshot.processes
+        .filter((process) => !hiddenTrees.has(process.upid))
+        .map((process) => ({
+          upid: process.upid,
+          callsign: process.callsign,
+          state: process.state,
+          progress: process.progress,
+          task: process.task,
+          steering: process.upid === steeringUpid,
+        })),
+    [snapshot.processes, hiddenTrees, steeringUpid],
+  );
+
+  const visibleIdeaOrbs = useMemo<IdeaOrbSpec[]>(
+    () => ideaOrbs.filter((orb) => !hiddenIdeas.has(orb.id ?? "__primary__")),
+    [ideaOrbs, hiddenIdeas],
+  );
+
+  // Clicking a project in the scene: mock/demo processes with a FIXTURE deck
+  // open their slideshow (mock room has no rail, so the scene click is the only
+  // deck path there); every live process steers — click-to-steer stays the
+  // primary live semantic, and real generated decks open from the fleet card's
+  // "Deck ▸" button instead.
+  const selectSceneProcess = useCallback(
+    (callsign: string) => {
+      const process = snapshotRef.current.processes.find(
+        (candidate) => candidate.callsign === callsign || candidate.upid === callsign,
+      );
+      if (process !== undefined && (process.slides?.length ?? 0) > 0) {
+        setSlideshowUpid(process.upid);
+        return;
+      }
+      void steerProcess(callsign);
+    },
+    [steerProcess],
+  );
+
+  // Clicking a ready orb builds it: ledger candidates go through the per-idea
+  // accept endpoint, the primary suggestion through /api/suggestion/accept.
+  const acceptOrb = useCallback(
+    (id: string | null) => {
+      if (id === null) {
+        void acceptIdea();
+      } else {
+        void actOnIdea(id, "accept");
+      }
+    },
+    [acceptIdea, actOnIdea],
+  );
 
   return (
-    <main className="deep" data-testid="app" data-view={view}>
-      <Atmosphere />
+    <main className={`deep${zenMode ? " zen" : ""}`} data-testid="app" data-view={view} data-zen={zenMode ? "true" : "false"}>
+      <RoomScene
+        ideas={visibleIdeaOrbs}
+        trees={treeSpecs}
+        mode={sceneMode}
+        layout={sceneLayout}
+        view={effectiveView}
+        fitSignal={fitSignal}
+        onAcceptIdea={acceptOrb}
+        onSelectProcess={selectSceneProcess}
+      />
       {urlConfig.gesture ? (
         <GestureLayer wall={urlConfig.gesture.wall} fusionUrl={urlConfig.gesture.fusionUrl} />
       ) : null}
@@ -832,52 +1028,23 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
           </button>
           <button
             type="button"
-            className="ctl-button emergency"
-            data-testid="emergency-button"
-            onClick={triggerEmergency}
+            className={`ctl-button mock-room${mockMode ? " on" : ""}`}
+            data-testid="mock-room-button"
+            data-state={mockMode ? "on" : "off"}
+            aria-pressed={mockMode}
+            onClick={toggleMockMode}
+            title="Demo: fill the room with several projects building at once. Toggle off to return to the live state."
           >
-            Emergency
+            {mockMode ? "● Mock Room" : "Mock Room"}
           </button>
         </div>
       </header>
 
+      {showIdeaSurfaces && !mockMode ? <SuggestionRegion pitch={snapshot.suggestion.pitch} /> : null}
+
       <div className={`stage${detailOpen ? " stage-dimmed" : ""}`}>
         <div className="stage-main">
-          <section className="bubble-field" data-region="fleet" data-testid="bubble-field" onClick={closeDetail}>
-            {showIdeaSurfaces ? <SuggestionRegion pitch={snapshot.suggestion.pitch} /> : null}
-            <div className="field-inner" onClick={(clickEvent) => clickEvent.stopPropagation()}>
-              {showIdeaSurfaces ? (
-                <IdeaBubble
-                  state={snapshot.suggestion.state}
-                  pitch={snapshot.suggestion.pitch}
-                  confidence={snapshot.suggestion.confidence}
-                  gatePercent={gatePercent}
-                  selected={ideaSelected}
-                  size={ideaSelected ? 250 : 196}
-                  evidence={snapshot.suggestion.contextSpan?.quote}
-                  onSelect={() => void acceptIdea()}
-                />
-              ) : null}
-              {showFleetSurfaces
-                ? snapshot.processes.map((process, index) => (
-                    <ProcessBubble
-                      key={process.upid}
-                      process={{
-                        ...process,
-                        selected: process.callsign === selected,
-                        steering: process.upid === steeringUpid,
-                      }}
-                      index={index}
-                      size={bubbleSize(process)}
-                      hotkey={index < 9 ? index + 1 : null}
-                      onSelect={() => void steerProcess(process.callsign)}
-                    />
-                  ))
-                : null}
-            </div>
-          </section>
-
-          {showIdeaTray ? (
+          {showIdeaTray && !mockMode ? (
             <IdeaTray
               ideas={ideas}
               onBuild={(id) => void actOnIdea(id, "accept")}
@@ -886,27 +1053,143 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
           ) : null}
         </div>
 
-        <aside className="rail">
-          {showFleetSurfaces ? (
-            <BackendSelector
-              backends={backends}
-              onToggle={(id, enabled) => void toggleBackend(id, enabled)}
-            />
-          ) : null}
-          {showFleetSurfaces ? (
-            <FleetPanel
-              processes={snapshot.processes}
-              selected={selected}
-              steeringUpid={steeringUpid}
-              onSelect={(id) => void steerProcess(id)}
-              onLifecycle={(upid, action) => void processLifecycle(upid, action)}
-            />
-          ) : null}
-          <AudioReadout snapshot={snapshot} />
-          <TranscriptStream lines={snapshot.transcript} />
-          <TraceRail trace={snapshot.trace} />
-        </aside>
+        {/* Mock room is a pure 3D showcase — the 2D rail/tray stay hidden. */}
+        {!mockMode ? (
+          <aside className="rail">
+            {showFleetSurfaces ? (
+              <BackendSelector
+                backends={backends}
+                onToggle={(id, enabled) => void toggleBackend(id, enabled)}
+              />
+            ) : null}
+            {showFleetSurfaces ? (
+              <FleetPanel
+                processes={snapshot.processes}
+                selected={selected}
+                steeringUpid={steeringUpid}
+                onSelect={(id) => void steerProcess(id)}
+                onLifecycle={(upid, action) => void processLifecycle(upid, action)}
+                onOpenDeck={(upid) => setSlideshowUpid(upid)}
+              />
+            ) : null}
+            <TranscriptStream lines={snapshot.transcript} />
+          </aside>
+        ) : null}
       </div>
+
+      {/* Scene controls (visualizer parity): mode / fit / hide / zen. */}
+      <div className="scene-controls" data-testid="scene-controls">
+        <button
+          type="button"
+          className="ctl-button scene-toggle"
+          data-testid="scene-mode-button"
+          data-mode={sceneMode}
+          onClick={() => setSceneMode((current) => (current === "garden" ? "orbit" : "garden"))}
+          title="Switch between the garden and orbit renderings (G)."
+        >
+          {sceneMode === "garden" ? "🌳 Garden" : "🪐 Orbit"}
+        </button>
+        <button
+          type="button"
+          className="ctl-button scene-layout"
+          data-testid="scene-layout-button"
+          data-layout={sceneLayout}
+          onClick={() =>
+            setSceneLayout((current) => (current === "radial" ? "ball" : current === "ball" ? "disk" : "radial"))
+          }
+          title="Cycle the spatial layout (L): radial → H3 Poincaré ball → Poincaré disk."
+        >
+          {sceneLayout === "radial" ? "⊹ Radial" : sceneLayout === "ball" ? "◉ Ball" : "⊙ Disk"}
+        </button>
+        <button
+          type="button"
+          className="ctl-button scene-fit"
+          data-testid="scene-fit-button"
+          onClick={() => setFitSignal((n) => n + 1)}
+          title="Frame everything in view (F). Drag orbits · Shift+drag pans · scroll zooms."
+        >
+          ⤢ Fit
+        </button>
+        <button
+          type="button"
+          className={`ctl-button scene-hide${hideMenuOpen ? " on" : ""}`}
+          data-testid="scene-hide-button"
+          aria-pressed={hideMenuOpen}
+          onClick={() => setHideMenuOpen((open) => !open)}
+          title="Hide or unhide builds and ideas (`)."
+        >
+          ◐ Hide
+        </button>
+        <button
+          type="button"
+          className="ctl-button scene-zen"
+          data-testid="scene-zen-button"
+          onClick={() => setZenMode(true)}
+          title="Zen: hide every panel and button (Z or Esc to exit)."
+        >
+          ◉ Zen
+        </button>
+      </div>
+
+      {hideMenuOpen ? (
+        <div className="hide-menu" data-testid="hide-menu">
+          <div className="rail-title-row">
+            <h3 className="rail-title">Hide / Unhide</h3>
+            <button type="button" className="ctl-button hide-clear" onClick={clearHidden} title="Show everything (0)">
+              0 · Clear
+            </button>
+          </div>
+          {snapshot.processes.length > 0 ? (
+            <>
+              <span className="hide-section">Builds</span>
+              {snapshot.processes.map((process) => {
+                const hidden = hiddenTrees.has(process.upid);
+                return (
+                  <button
+                    key={process.upid}
+                    type="button"
+                    className={`hide-item${hidden ? " is-hidden" : ""}`}
+                    data-testid="hide-item"
+                    onClick={() => toggleHiddenTree(process.upid)}
+                  >
+                    <span className="hide-name">{process.callsign}</span>
+                    <span className="hide-state">{hidden ? "hidden" : "visible"}</span>
+                  </button>
+                );
+              })}
+            </>
+          ) : null}
+          {ideaOrbs.filter((orb) => orb.pitch.length > 0).length > 0 ? (
+            <>
+              <span className="hide-section">Ideas</span>
+              {ideaOrbs
+                .filter((orb) => orb.pitch.length > 0)
+                .map((orb) => {
+                  const key = orb.id ?? "__primary__";
+                  const hidden = hiddenIdeas.has(key);
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      className={`hide-item${hidden ? " is-hidden" : ""}`}
+                      data-testid="hide-item"
+                      onClick={() => toggleHiddenIdea(key)}
+                    >
+                      <span className="hide-name">{orb.pitch.length > 42 ? `${orb.pitch.slice(0, 42)}…` : orb.pitch}</span>
+                      <span className="hide-state">{hidden ? "hidden" : "visible"}</span>
+                    </button>
+                  );
+                })}
+            </>
+          ) : null}
+        </div>
+      ) : null}
+
+      {zenMode ? (
+        <div className="zen-hint" data-testid="zen-hint">
+          ◎ zen — z to exit
+        </div>
+      ) : null}
 
       {detailOpen && selectedProcess ? (
         <div className="detail-overlay" onClick={closeDetail}>
@@ -914,6 +1197,18 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot }: Projec
         </div>
       ) : null}
 
+      {slideshowUpid !== null
+        ? (() => {
+            const deckProcess = snapshot.processes.find((candidate) => candidate.upid === slideshowUpid);
+            return deckProcess !== undefined ? (
+              <Slideshow
+                process={deckProcess}
+                onLifecycle={(upid, action) => void processLifecycle(upid, action)}
+                onClose={() => setSlideshowUpid(null)}
+              />
+            ) : null;
+          })()
+        : null}
       {qrOpen ? <QrImport processes={snapshot.processes} onClose={() => setQrOpen(false)} /> : null}
       {helpOpen ? <HelpOverlay onClose={() => setHelpOpen(false)} /> : null}
     </main>
@@ -1008,12 +1303,14 @@ function FleetPanel({
   steeringUpid,
   onSelect,
   onLifecycle,
+  onOpenDeck,
 }: {
   processes: ProjectorProcess[];
   selected: string | null;
   steeringUpid: string | null;
   onSelect: (id: string) => void;
   onLifecycle: (upid: string, action: LifecycleAction) => void;
+  onOpenDeck: (upid: string) => void;
 }) {
   return (
     <section className="rail-card fleet-card">
@@ -1024,6 +1321,11 @@ function FleetPanel({
       <div className="fleet-panels">
         {processes.map((process) => {
           const steering = process.upid === steeringUpid;
+          const builds = buildsOf(process);
+          // A deck exists when the process carries fixture slides (mock room) or
+          // any backend build published a REAL generated slideshow.
+          const hasDeck =
+            (process.slides?.length ?? 0) > 0 || builds.some((build) => build.slideshowUrl !== null);
           return (
           <article
             key={process.upid}
@@ -1039,10 +1341,29 @@ function FleetPanel({
               <span className={`fleet-state badge state-${process.state}`}>{process.state}</span>
               {steering ? <span className="fleet-steering" data-testid="fleet-steering">steering →</span> : null}
             </div>
+            {process.task.length > 0 ? (
+              <p className="fleet-task" data-testid="fleet-task">{process.task}</p>
+            ) : null}
             <p className="fleet-output">{process.lastOutput || "—"}</p>
             <p className="fleet-action">↳ {process.lastAction}</p>
-            <BuildChips builds={buildsOf(process)} />
-            <ProcessControls upid={process.upid} state={process.state} onLifecycle={onLifecycle} />
+            <BuildChips builds={builds} />
+            <div className="fleet-actions-row">
+              <ProcessControls upid={process.upid} state={process.state} onLifecycle={onLifecycle} />
+              {hasDeck ? (
+                <button
+                  type="button"
+                  className="fleet-ctl fleet-ctl-deck"
+                  data-testid="process-deck-button"
+                  title="Open this project's slideshow deck."
+                  onClick={(clickEvent) => {
+                    clickEvent.stopPropagation();
+                    onOpenDeck(process.upid);
+                  }}
+                >
+                  Deck ▸
+                </button>
+              ) : null}
+            </div>
             {process.events.length > 0 ? (
               <ol className="fleet-log">
                 {process.events.slice(-5).map((entry, index) => (
@@ -1064,22 +1385,6 @@ function FleetPanel({
   );
 }
 
-function AudioReadout({ snapshot }: { snapshot: ProjectorSnapshot }) {
-  return (
-    <section className="rail-card audio-card" data-region="audio">
-      <h3 className="rail-title">Audio</h3>
-      <div className="audio-row">
-        <span className="audio-label">last spoken</span>
-        <p className="audio-spoken">{snapshot.audio.lastSpoken}</p>
-      </div>
-      <div className="audio-foot">
-        <span className="audio-earcon">♪ {snapshot.audio.earcon}</span>
-        <span className="audio-silence">{Math.round(snapshot.audio.silenceRatio * 100)}% silence</span>
-      </div>
-    </section>
-  );
-}
-
 function TranscriptStream({ lines }: { lines: TranscriptLine[] }) {
   return (
     <section className="rail-card transcript-card" data-region="transcript">
@@ -1095,77 +1400,6 @@ function TranscriptStream({ lines }: { lines: TranscriptLine[] }) {
           </div>
         ))}
       </div>
-    </section>
-  );
-}
-
-// Trace rail: color-coded stream, auto-scroll DISABLED. When new events arrive
-// while the operator has scrolled up, a "NEW" pill appears; clicking it jumps to
-// the bottom (navigational, not operational).
-function TraceRail({ trace }: { trace: LogEvent[] }) {
-  const scrollRef = useRef<HTMLDivElement | null>(null);
-  const atBottomRef = useRef(true);
-  const [pinnedToBottom, setPinnedToBottom] = useState(true);
-  const [unseen, setUnseen] = useState(false);
-  const prevCount = useRef(trace.length);
-
-  const onScroll = useCallback(() => {
-    const node = scrollRef.current;
-    if (node === null) {
-      return;
-    }
-    const distance = node.scrollHeight - node.scrollTop - node.clientHeight;
-    const atBottom = distance < 24;
-    atBottomRef.current = atBottom;
-    setPinnedToBottom(atBottom);
-    if (atBottom) {
-      setUnseen(false);
-    }
-  }, []);
-
-  // Track new events without auto-scrolling: only mark "unseen" if scrolled up.
-  useEffect(() => {
-    if (trace.length > prevCount.current && !atBottomRef.current) {
-      setUnseen(true);
-    }
-    prevCount.current = trace.length;
-  }, [trace.length]);
-
-  const scrollToBottom = useCallback(() => {
-    const node = scrollRef.current;
-    if (node !== null) {
-      node.scrollTop = node.scrollHeight;
-    }
-    setUnseen(false);
-    setPinnedToBottom(true);
-    atBottomRef.current = true;
-  }, []);
-
-  return (
-    <section className="rail-card trace-card" data-region="trace" data-testid="trace-rail">
-      <div className="rail-title-row">
-        <h3 className="rail-title">Trace</h3>
-        <span className="trace-count">{trace.length} events</span>
-      </div>
-      <div className="trace-scroll" ref={scrollRef} onScroll={onScroll}>
-        {trace.map((event, index) => (
-          <div
-            key={`${event.event}-${event.correlationId ?? index}`}
-            className={`trace-event ${traceClass(event.event)}`}
-            data-testid="trace-event"
-            data-event={event.event}
-          >
-            <span className="tc-tag">{traceTag(event.event)}</span>
-            <code className="tc-name">{event.event}</code>
-            <span className="tc-meta">{summarizeMeta(event.meta)}</span>
-          </div>
-        ))}
-      </div>
-      {unseen && !pinnedToBottom ? (
-        <button type="button" className="new-events-pill" data-testid="new-events-pill" onClick={scrollToBottom}>
-          NEW ↓
-        </button>
-      ) : null}
     </section>
   );
 }

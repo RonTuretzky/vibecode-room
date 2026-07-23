@@ -86,6 +86,308 @@ button {
   transition: filter 480ms ease, opacity 480ms ease;
 }
 
+/* The stage is now a transparent HUD overlay: panels catch the pointer, the
+   gaps between them fall through to the 3D scene (drag/orbit/zoom). */
+.stage {
+  pointer-events: none;
+  align-items: end;
+}
+
+.stage .rail-card,
+.stage .idea-tray {
+  pointer-events: auto;
+}
+
+.stage-main {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  min-height: 0;
+}
+
+/* Floating HUD header over the scene. */
+.status-bar {
+  position: relative;
+  z-index: 10;
+  background: linear-gradient(180deg, rgba(4, 12, 18, 0.78), rgba(4, 12, 18, 0.42));
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+}
+
+/* Scene controls: a floating glass cluster, bottom-left (visualizer HUD). */
+.scene-controls {
+  position: fixed;
+  left: 18px;
+  bottom: 16px;
+  z-index: 20;
+  display: flex;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 14px;
+  background: rgba(8, 18, 26, 0.66);
+  border: 1px solid var(--glass-line);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  transition: opacity 0.4s ease;
+}
+
+.ctl-button.scene-toggle {
+  color: #c9f7d8;
+  border-color: rgba(0, 255, 136, 0.35);
+  background: rgba(0, 255, 136, 0.08);
+  white-space: nowrap;
+}
+
+.ctl-button.scene-toggle[data-mode="orbit"] {
+  color: #cfe0ff;
+  border-color: rgba(80, 130, 255, 0.4);
+  background: rgba(80, 130, 255, 0.1);
+}
+
+.ctl-button.scene-fit,
+.ctl-button.scene-hide,
+.ctl-button.scene-zen {
+  color: var(--ink-soft);
+  border-color: var(--glass-line);
+  background: rgba(20, 34, 44, 0.6);
+  white-space: nowrap;
+}
+
+.ctl-button.scene-hide.on {
+  color: #04141a;
+  background: var(--c-selected, #00bcd4);
+  border-color: rgba(0, 188, 212, 0.9);
+}
+
+/* Hide/unhide menu — floating above the scene controls. */
+.hide-menu {
+  position: fixed;
+  left: 18px;
+  bottom: 72px;
+  z-index: 30;
+  width: 320px;
+  max-height: min(60vh, 480px);
+  overflow-y: auto;
+  padding: 14px;
+  border-radius: 16px;
+  background: rgba(7, 16, 24, 0.9);
+  border: 1px solid var(--glass-line);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  animation: pill-in 220ms ease;
+}
+
+.hide-section {
+  margin-top: 6px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.hide-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  background: rgba(20, 34, 44, 0.5);
+  color: var(--ink);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.hide-item:hover {
+  border-color: rgba(0, 188, 212, 0.4);
+}
+
+.hide-item.is-hidden {
+  opacity: 0.45;
+}
+
+.hide-item.is-hidden .hide-name {
+  text-decoration: line-through;
+}
+
+.hide-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hide-state {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.hide-item:not(.is-hidden) .hide-state {
+  color: var(--c-active);
+}
+
+.ctl-button.hide-clear {
+  color: var(--ink-soft);
+  border-color: var(--glass-line);
+  background: rgba(20, 34, 44, 0.6);
+  font-size: 10px;
+  padding: 4px 10px;
+}
+
+/* Zen mode: fade every panel/button away; the scene remains (visualizer's
+   zen). The tiny hint is the only thing left, and Z / Esc brings it back. */
+.deep .status-bar,
+.deep .stage,
+.deep .scene-controls,
+.deep .suggestion-banner,
+.deep .wall-badge {
+  transition: opacity 0.4s ease;
+}
+
+.deep.zen .status-bar,
+.deep.zen .stage,
+.deep.zen .scene-controls,
+.deep.zen .hide-menu,
+.deep.zen .suggestion-banner,
+.deep.zen .wall-badge,
+.deep.zen .voice-flash {
+  opacity: 0;
+  pointer-events: none !important;
+}
+
+.zen-hint {
+  position: fixed;
+  right: 18px;
+  bottom: 14px;
+  z-index: 40;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--ink-faint);
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+/* Project explainer slideshow — a glass deck over the scene. */
+.slideshow-card {
+  width: min(680px, 92vw);
+  max-height: 82vh;
+  overflow-y: auto;
+  padding: 26px 30px 22px;
+  border-radius: 20px;
+  background: rgba(7, 16, 24, 0.93);
+  border: 1px solid var(--glass-line);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  animation: detail-rise 320ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.slideshow-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.slideshow-title {
+  margin: 4px 0 0;
+  font-size: 20px;
+  font-weight: 650;
+  color: var(--ink);
+}
+
+.slide {
+  min-height: 150px;
+}
+
+.slide-title {
+  margin: 0 0 10px;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: #bfeefc;
+  text-transform: uppercase;
+}
+
+.slide-body {
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--ink-soft);
+}
+
+.slide-body p {
+  margin: 0 0 10px;
+}
+
+.slide-body ul {
+  margin: 0 0 10px;
+  padding-left: 20px;
+}
+
+.slide-body li {
+  margin-bottom: 4px;
+}
+
+.slide-body strong {
+  color: var(--ink);
+}
+
+.slide-body em {
+  color: #bfeefc;
+}
+
+.slide-body code {
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: rgba(0, 188, 212, 0.12);
+  color: #9be4f5;
+  font-size: 12.5px;
+}
+
+.slideshow-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.slide-dots {
+  display: flex;
+  gap: 8px;
+}
+
+.slide-dot {
+  width: 9px;
+  height: 9px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(158, 226, 255, 0.25);
+  cursor: pointer;
+}
+
+.slide-dot.active {
+  background: var(--c-selected);
+  box-shadow: 0 0 8px rgba(0, 188, 212, 0.6);
+}
+
+.ctl-button.slide-prev:disabled,
+.ctl-button.slide-next:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
 .stage-dimmed {
   filter: blur(7px) brightness(0.55) saturate(0.85);
   opacity: 0.7;
@@ -525,6 +827,26 @@ button {
   color: var(--c-selected);
 }
 
+/* Mock room — a demo control that fills the wall with several projects at once.
+   Calm neutral when off; a warm amber "on" so it never reads as live state. */
+.ctl-button.mock-room {
+  color: #f6dca6;
+  border-color: rgba(245, 176, 66, 0.45);
+  background: rgba(245, 176, 66, 0.1);
+  white-space: nowrap;
+}
+
+.ctl-button.mock-room:hover {
+  background: rgba(245, 176, 66, 0.2);
+}
+
+.ctl-button.mock-room.on {
+  color: #1c1204;
+  background: #f5b042;
+  border-color: rgba(245, 176, 66, 0.9);
+  box-shadow: 0 0 20px rgba(245, 176, 66, 0.45);
+}
+
 /* Wall identity badge — a subtle corner label ("WALL A · IDEAS") so a two-wall
    room reads which projection it is facing at a glance. Never interactive. */
 .wall-badge {
@@ -664,11 +986,12 @@ button {
 }
 
 .suggestion-banner {
-  position: absolute;
-  top: 14px;
+  position: fixed;
+  top: 86px;
   left: 50%;
   transform: translateX(-50%);
-  z-index: 3;
+  z-index: 6;
+  pointer-events: none; /* non-interactive text; don't shadow the 3D canvas */
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -695,9 +1018,23 @@ button {
   -webkit-box-orient: vertical;
 }
 
+/* The 3D scene IS the app background — every panel floats over it. */
+.room-scene {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+}
+
+.room-scene canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
 .field-inner {
   position: absolute;
   inset: 0;
+  z-index: 2;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -711,6 +1048,7 @@ button {
    ---------------------------------------------------------------------------- */
 .bubble {
   position: relative;
+  pointer-events: auto; /* re-enable inside the pointer-transparent field-inner */
   width: var(--size, 220px);
   height: var(--size, 220px);
   border: none;
@@ -1546,6 +1884,10 @@ button {
   -webkit-backdrop-filter: blur(14px);
   padding: 14px 18px;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  /* The scene-controls cluster floats fixed at the bottom-left; lift the tray
+     above it so the first card's Build/Dismiss buttons are never shadowed by
+     (and unclickable under) the floating cluster. */
+  margin-bottom: 56px;
 }
 
 .idea-tray-empty {

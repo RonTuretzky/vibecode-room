@@ -8,11 +8,14 @@ async function waitForHook(page: Page): Promise<void> {
   });
 }
 
-test.describe("projector UI — mobile fleet layout", () => {
-  test("keeps every process bubble fully visible in a narrow viewport", async ({ page }) => {
+test.describe("projector UI — mobile layout", () => {
+  test("the 3D scene and every fleet panel fit a narrow viewport without horizontal cutoff", async ({ page }) => {
     await page.goto("/?live=0");
     await waitForHook(page);
     await expect(page.getByTestId("app")).toBeVisible();
+
+    // The full-viewport scene must be up (the canvas is the app background).
+    await expect(page.getByTestId("room-scene").locator("canvas")).toBeVisible();
 
     const callsigns = await page.evaluate(() =>
       (window as any).__VIBERSYN__.getSnapshot().processes.map((process: { callsign: string }) => process.callsign),
@@ -20,23 +23,20 @@ test.describe("projector UI — mobile fleet layout", () => {
     const viewport = page.viewportSize();
     expect(viewport).not.toBeNull();
 
-    // Guard against a silent no-op: the demo fleet must actually render bubbles,
+    // Guard against a silent no-op: the demo fleet must actually render panels,
     // otherwise the loop below would vacuously pass on an empty board.
     expect(callsigns).toEqual(expect.arrayContaining(["Atlas", "Cobalt"]));
 
     for (const callsign of callsigns) {
-      const bubble = page.locator(`[data-testid="bubble"][data-callsign="${callsign}"]`);
-      await expect(bubble).toBeVisible();
+      const panel = page.locator(`[data-testid="fleet-panel"][data-callsign="${callsign}"]`);
+      await panel.scrollIntoViewIfNeeded();
+      await expect(panel).toBeVisible();
 
-      const box = await bubble.boundingBox();
-      expect(box, `${callsign} bubble should have a bounding box`).not.toBeNull();
+      const box = await panel.boundingBox();
+      expect(box, `${callsign} panel should have a bounding box`).not.toBeNull();
       expect(box!.x, `${callsign} left edge should be in viewport`).toBeGreaterThanOrEqual(0);
       expect(box!.x + box!.width, `${callsign} right edge should be in viewport`).toBeLessThanOrEqual(
         viewport!.width,
-      );
-      expect(box!.y, `${callsign} top should be in viewport`).toBeGreaterThanOrEqual(0);
-      expect(box!.y + box!.height, `${callsign} bottom should be in viewport`).toBeLessThanOrEqual(
-        viewport!.height,
       );
     }
   });

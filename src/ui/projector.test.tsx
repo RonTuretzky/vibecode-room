@@ -4,7 +4,8 @@ import { ProjectorApp, REQUIRED_PROJECTOR_REGIONS } from "./App";
 import { IdeaTray } from "./IdeaTray";
 import { HelpOverlay } from "./HelpOverlay";
 import { QrImport } from "./QrImport";
-import { demoProjectorSnapshot } from "./demo-data";
+import { Slideshow } from "./Slideshow";
+import { demoProjectorSnapshot, busyRoomSnapshot } from "./demo-data";
 import type { BuildloopProcess, BuildloopSnapshot } from "./buildloop";
 
 function countOccurrences(haystack: string, needle: string): number {
@@ -22,7 +23,6 @@ describe("projector UI contract", () => {
     expect(html).toContain("Atlas");
     expect(html).toContain("Cobalt");
     expect(html).toContain("Turn the meeting notes into a blocker announcer.");
-    expect(html).toContain("route.action");
   });
 
   test("shows the bounded unmute control only while muted", () => {
@@ -154,6 +154,80 @@ describe("build loop surfaces (backward compatible)", () => {
     expect(countOccurrences(html, 'data-testid="process-pause-button"')).toBe(1);
     expect(countOccurrences(html, 'data-testid="process-halt-button"')).toBe(1);
     expect(html).not.toContain('data-testid="process-resume-button"');
+  });
+});
+
+describe("project deck (slideshow)", () => {
+  test("a mock-room process renders its fixture deck headed by the inferred title", () => {
+    const process = busyRoomSnapshot().processes[0]!;
+    const html = renderToStaticMarkup(
+      <Slideshow process={process} onLifecycle={() => {}} onClose={() => {}} />,
+    );
+    expect(html).toContain('data-testid="slideshow-overlay"');
+    // The deck headline is the INFERRED project title, not the upid/callsign.
+    expect(html).toContain("Blocker announcer");
+    expect(html).toContain('data-slide-index="0"');
+    expect(html).not.toContain('data-testid="slideshow-live-frame"');
+  });
+
+  test("a build with a real slideshowUrl becomes an embedded live slide with an open link", () => {
+    const process: BuildloopProcess = {
+      ...demoProjectorSnapshot.processes[0]!,
+      builds: [
+        {
+          backend: "native",
+          label: "Native",
+          status: "ready",
+          previewUrl: "http://127.0.0.1:4100/",
+          summary: null,
+          slideshowUrl: "http://127.0.0.1:4100/slides.html",
+        },
+      ],
+    };
+    const html = renderToStaticMarkup(
+      <Slideshow process={process} onLifecycle={() => {}} onClose={() => {}} />,
+    );
+    expect(html).toContain('data-testid="slideshow-live-frame"');
+    expect(html).toContain('data-testid="slideshow-open-live"');
+    expect(html).toContain("http://127.0.0.1:4100/slides.html");
+    // The deck HUD surfaces per-backend build chips + lifecycle controls.
+    expect(html).toContain('data-testid="slideshow-builds"');
+    expect(html).toContain('data-testid="build-chip"');
+    expect(html).toContain('data-testid="fleet-controls"');
+  });
+
+  test("a process with neither fixture slides nor live decks renders no deck", () => {
+    const html = renderToStaticMarkup(
+      <Slideshow process={demoProjectorSnapshot.processes[0]!} onLifecycle={() => {}} onClose={() => {}} />,
+    );
+    expect(html).toBe("");
+  });
+
+  test("the fleet card offers Deck ▸ only when a deck exists", () => {
+    const processes: BuildloopProcess[] = demoProjectorSnapshot.processes.map((process, index) =>
+      index === 0
+        ? {
+            ...process,
+            builds: [
+              {
+                backend: "smithers",
+                label: "Smithers",
+                status: "ready",
+                previewUrl: null,
+                summary: null,
+                slideshowUrl: "http://127.0.0.1:4200/deck/",
+              },
+            ],
+          }
+        : process,
+    );
+    const withDeck = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={{ ...demoProjectorSnapshot, processes }} />,
+    );
+    expect(countOccurrences(withDeck, 'data-testid="process-deck-button"')).toBe(1);
+
+    const without = renderToStaticMarkup(<ProjectorApp initialSnapshot={demoProjectorSnapshot} />);
+    expect(without).not.toContain('data-testid="process-deck-button"');
   });
 });
 
