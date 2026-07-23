@@ -564,6 +564,19 @@ button {
 .status-bar .status-center { justify-self: center; }
 .status-bar .status-right { justify-self: end; max-width: 100%; }
 
+/* Gesture mode: the XL dwell buttons span (and wrap across) nearly the whole
+   wall, so a cluster pill becomes a giant dark panel over the scene — strip
+   the backing entirely and let each button be its own solid block. */
+main.gesture-mode .status-bar .status-left,
+main.gesture-mode .status-bar .status-center,
+main.gesture-mode .status-bar .status-right {
+  background: none;
+  border: none;
+  padding: 0;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
 .status-left {
   display: flex;
   align-items: center;
