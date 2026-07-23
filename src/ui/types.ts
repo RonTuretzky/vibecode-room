@@ -81,6 +81,46 @@ export interface TranscriptLine {
   kind: "room" | "vibersyn" | "process";
 }
 
+// ── RESEARCH MODE (VoxTerm-inspired dialogue tree + research quests) ────────
+
+// One committed room utterance with a STABLE id — the 3D dialogue tree anchors
+// research nodes to the exact turn they grew from.
+export interface DialogueTurn {
+  id: string;
+  speaker: string | null;
+  text: string;
+  atMs: number;
+}
+
+export type ResearchTrayKind = "fact-check" | "deep-dive" | "bias-scan";
+export type ResearchTrayStatus = "proposed" | "researching" | "complete" | "failed";
+
+// One research quest surfaced to the wall: a proposed suggestion (click to
+// spawn the research), live agent progress, or a completed dossier whose deck
+// (HTML slideshow with per-source QR codes) is at `deckUrl`.
+export interface ResearchTrayItem {
+  id: string;
+  kind: ResearchTrayKind;
+  topic: string;
+  claim: string;
+  confidence: number;
+  status: ResearchTrayStatus;
+  progress: number;
+  progressLabel: string;
+  rationale?: string;
+  // Verbatim evidence quote from the grounding span, when available.
+  evidence?: string;
+  // The grounding turn id (contextSpan end) — the dialogue-tree anchor.
+  turnId?: string;
+  // Report shape summary, present once complete.
+  sourceCount: number;
+  biasCount: number;
+  verdicts?: { supported: number; refuted: number; mixed: number; unverified: number };
+  // The dossier slideshow URL once complete (GET /api/research/:id/deck).
+  deckUrl?: string | null;
+  error?: string;
+}
+
 export interface ProjectorSuggestion {
   state: SuggestionState;
   pitch: string;
@@ -166,4 +206,18 @@ export interface ProjectorSnapshot {
     lastCommand: string;
     at: string;
   } | null;
+  // RESEARCH MODE: when true, the research suggester watches the conversation
+  // and proposes quests (fact-checks, deep-dives, bias scans) alongside idea
+  // detection. Toggled via POST /api/research-mode or voice "research on".
+  researchMode?: boolean;
+  // True while a suggestion round's model inference is in flight — the wall's
+  // "scanning the conversation" indicator (a crystal might be forming).
+  researchThinking?: boolean;
+  // Every live research quest, tray-ordered (researching → proposed by
+  // confidence → complete → failed). Absent in legacy/static fixtures.
+  research?: ResearchTrayItem[];
+  // The rolling dialogue window (turns with stable ids) feeding the 3D
+  // dialogue tree. Mirrors the transcript but id-addressable, so research
+  // quests can anchor to the exact turn they grew from.
+  dialogue?: DialogueTurn[];
 }

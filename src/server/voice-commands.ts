@@ -29,6 +29,9 @@ export type VoiceCommandKind =
   | "dismiss"
   | "auto-on"
   | "auto-off"
+  | "research-on"
+  | "research-off"
+  | "research"
   | "emergency";
 
 export interface VoiceCommand {
@@ -109,6 +112,10 @@ const COMMAND_TABLE: ReadonlyArray<readonly [VoiceCommandKind, ReadonlySet<strin
   ["dismiss", new Set(["dismiss", "skip", "no", "next"])],
   ["auto-on", new Set(["auto build on"])],
   ["auto-off", new Set(["auto build off"])],
+  ["research-on", new Set(["research on", "research mode", "start researching"])],
+  ["research-off", new Set(["research off", "stop researching"])],
+  // Accept the strongest proposed research quest (or surface one to accept).
+  ["research", new Set(["research it", "research that", "research this", "fact check", "fact check it", "fact check that", "look it up"])],
   ["emergency", new Set(["emergency", "stop everything", "kill everything", "shut down"])],
 ];
 
@@ -132,6 +139,9 @@ const COMMAND_LABELS: Record<VoiceCommandKind, string> = {
   dismiss: "dismiss",
   "auto-on": "auto-build on",
   "auto-off": "auto-build off",
+  "research-on": "research on",
+  "research-off": "research off",
+  research: "research",
   emergency: "emergency stop",
 };
 
