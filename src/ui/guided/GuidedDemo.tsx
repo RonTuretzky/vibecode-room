@@ -292,21 +292,21 @@ function IdeaBody({
               ? `Building in ${Math.max(1, Math.ceil(settle.firesInMs / 1000))}s — keep talking to refine, or hit Done.`
               : "Ready to build — keep talking to refine, or hit Done."}
           </p>
-          <button
-            type="button"
-            className="ctl-button guided-done"
-            data-testid="guided-done-button"
-            onClick={onDone}
-          >
-            ✓ Done — build it
-          </button>
         </div>
       ) : (
         <p className="guided-settle-waiting" data-testid="guided-settle-waiting">
-          The room is listening — a Done button appears as soon as it has heard
-          a buildable idea.
+          The room is listening — hit Done whenever you&rsquo;ve said your idea
+          and it will build from what it heard (or move you along).
         </p>
       )}
+      <button
+        type="button"
+        className="ctl-button guided-done"
+        data-testid="guided-done-button"
+        onClick={onDone}
+      >
+        ✓ Done — build it
+      </button>
       <div className="guided-transcript" data-testid="guided-transcript">
         {lines.length === 0 ? (
           <p className="guided-transcript-empty" data-testid="guided-transcript-empty">

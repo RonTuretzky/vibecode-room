@@ -1021,6 +1021,29 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     return this.#snapshot;
   }
 
+  // DONE pressed with NOTHING surfaced: build a suggestion from what the room
+  // actually said — the last few spoken (kind "room") transcript lines become
+  // the pitch. Null when the visitor has not spoken yet, which is the only
+  // case where an explicit Done has nothing to act on.
+  private forcedSuggestionFromTranscript(correlationId: string): PendingSuggestion | null {
+    const spoken = this.#snapshot.transcript
+      .filter((line) => line.kind === "room")
+      .slice(-6)
+      .map((line) => line.text.trim())
+      .filter((text) => text.length > 0);
+    if (spoken.length === 0) {
+      return null;
+    }
+    return {
+      suggestionId: `sug-forced-${crypto.randomUUID()}`,
+      pitch: spoken.join(". "),
+      mcqs: ["Proceed?"],
+      answers: ["Yes, build it"],
+      correlationId,
+      expiresAt: this.#clock() + DETECTION_BUBBLE_TTL_MS,
+    };
+  }
+
   // CLICK THE IDEA BUBBLE -> BUILD. Accept the CURRENT pending suggestion directly,
   // bypassing the spoken AcceptanceClassifier/semantic gate, by spawning through
   // the same accept path the spoken "yes" takes (the ProcessRegistry seam's
@@ -1042,7 +1065,14 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       suggestion = pendingSuggestionFromCandidate(primary, correlationId, this.#clock() + DETECTION_BUBBLE_TTL_MS);
     }
     if (suggestion === null) {
-      // Nothing on screen to accept — the click is a no-op; return the live snapshot.
+      // Nothing surfaced at all — but Done must still honor whatever the room
+      // actually SAID. The detector missing an utterance must never leave the
+      // Done button a no-op, so synthesize a suggestion from the recent spoken
+      // transcript and build from that.
+      suggestion = this.forcedSuggestionFromTranscript(correlationId);
+    }
+    if (suggestion === null) {
+      // Nothing on screen AND nothing spoken — the click is a true no-op.
       return this.#snapshot;
     }
     // An explicit accept (Done button, bubble click, voice) supersedes the

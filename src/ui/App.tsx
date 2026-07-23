@@ -322,19 +322,22 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
   // click POSTs /api/suggestion/accept, which accepts the current pending
   // suggestion and starts the real build; the returned snapshot is applied. In
   // offline demo there is no runtime, so it falls back to opening the idea detail.
-  const acceptIdea = useCallback(async () => {
+  const acceptIdea = useCallback(async (): Promise<ProjectorSnapshot | null> => {
     if (!liveMode || mockModeRef.current) {
       selectBubble(IDEA_ID);
-      return;
+      return null;
     }
     try {
       const response = await fetch("/api/suggestion/accept", { method: "POST" });
       if (response.ok && response.headers.get("content-type")?.includes("application/json")) {
-        setSnapshot((await response.json()) as ProjectorSnapshot);
+        const fresh = (await response.json()) as ProjectorSnapshot;
+        setSnapshot(fresh);
+        return fresh;
       }
     } catch {
       // Non-authoritative projector: a failed accept must never block the UI.
     }
+    return null;
   }, [liveMode, selectBubble]);
 
   // IDEA TRAY actions: Build/Dismiss a SPECIFIC ledger candidate (not just the
@@ -1362,16 +1365,20 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
               onToggle={() => void toggleMicCapture()}
             />
           ) : null}
-          {snapshot.ideaSettle?.armed ? (
+          {snapshot.ideaSettle?.armed === true || snapshot.transcript.some((line) => line.kind === "room") ? (
             <button
               type="button"
               className="ctl-button idea-done"
               data-testid="idea-done-button"
-              title="Stop refining and build the heard idea now"
+              title={
+                snapshot.ideaSettle?.armed === true
+                  ? "Stop refining and build the heard idea now"
+                  : "Build from what you've said so far"
+              }
               onClick={() => void acceptIdea()}
             >
               ✓ Done — build it
-              {snapshot.ideaSettle.firesInMs !== null
+              {snapshot.ideaSettle?.armed === true && snapshot.ideaSettle.firesInMs !== null
                 ? ` (${Math.max(1, Math.ceil(snapshot.ideaSettle.firesInMs / 1000))}s)`
                 : ""}
             </button>
@@ -1646,7 +1653,19 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
           onSkip={guidedSkip}
           onExit={exitGuidedDemo}
           onFinish={exitGuidedDemo}
-          onDone={() => void acceptIdea()}
+          onDone={() => {
+            // Done is ALWAYS actionable: accept builds from the surfaced idea
+            // (or the raw transcript, server-side). If nothing spawned — the
+            // visitor hasn't spoken — advance the step instead, so Done never
+            // leaves the demo stuck.
+            const before = new Set(snapshot.processes.map((process) => process.upid));
+            void acceptIdea().then((fresh) => {
+              const spawned = fresh !== null && fresh.processes.some((process) => !before.has(process.upid));
+              if (!spawned) {
+                guidedSkip();
+              }
+            });
+          }}
         />
       ) : null}
     </main>

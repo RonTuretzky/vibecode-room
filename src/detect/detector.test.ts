@@ -221,6 +221,14 @@ describe("BUILDABLE_CUES artifact nouns (word-boundary matching)", () => {
   });
 });
 
+describe("BUILDABLE_CUES ASR verb forms", () => {
+  test("'built' and 'building' cue like 'build' — Deepgram hears live speech in those forms", () => {
+    for (const text of ["uber for cats built uber for cats", "we should be building a ride app for pets"]) {
+      expect(new HeuristicIdeaDetector().detectSync(input([turn("t1", text)])).candidates).toHaveLength(1);
+    }
+  });
+});
+
 describe("selectIdeaDetector", () => {
   test("defaults to host-claude; heuristic override; unknown throws", () => {
     expect(selectIdeaDetector({}).mode).toBe("host-claude");

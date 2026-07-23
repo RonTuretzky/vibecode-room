@@ -200,6 +200,29 @@ describe("composition accept path — real build + preview on the snapshot", () 
     await runtime.ideaBuilds.settle(fresh[0]!.upid);
   });
 
+  test("Done with NOTHING surfaced force-builds from the spoken transcript", async () => {
+    runtime = await createProjectorRuntime(liveEnv(replayPath), { buildsRoot, builderAgent: noopBuilder });
+    const before = new Set(runtime.snapshot().processes.map((process) => process.upid));
+
+    // No buildable cue at all: the heuristic detector surfaces nothing...
+    await drive([final("cats need rides across town somehow", "utt-nocue")]);
+    expect(runtime.detection.primary()).toBeNull();
+
+    // ...but an explicit Done still builds, pitching what was actually said.
+    await runtime.acceptPendingSuggestion("corr-forced-done");
+    const spawned = runtime.snapshot().processes.find((process) => !before.has(process.upid));
+    expect(spawned).toBeDefined();
+    if (spawned === undefined) return;
+    await runtime.ideaBuilds.settle(spawned.upid);
+  });
+
+  test("Done with an empty transcript stays a no-op (nothing spoken, nothing to build)", async () => {
+    runtime = await createProjectorRuntime(liveEnv(replayPath), { buildsRoot, builderAgent: noopBuilder });
+    const before = runtime.snapshot().processes.length;
+    await runtime.acceptPendingSuggestion("corr-forced-empty");
+    expect(runtime.snapshot().processes).toHaveLength(before);
+  });
+
   test("emergency stop tears the live preview server down so its URL stops responding", async () => {
     runtime = await createProjectorRuntime(liveEnv(replayPath), { buildsRoot, builderAgent: noopBuilder });
 

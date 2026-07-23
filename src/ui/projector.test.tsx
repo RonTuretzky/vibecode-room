@@ -845,8 +845,17 @@ describe("settle-gate Done UX: countdown + Done button while an idea is armed", 
     expect(html).toContain("(5s)");
   });
 
-  test("HUD hides the Done button when no idea is armed", () => {
+  test("HUD keeps Done available once anything was spoken — no countdown until armed", () => {
+    // demo data has kind:"room" transcript lines, so Done is pressable (it
+    // force-builds from the transcript server-side) — just without a countdown.
     const html = renderToStaticMarkup(<ProjectorApp initialSnapshot={demoProjectorSnapshot} />);
+    expect(html).toContain('data-testid="idea-done-button"');
+    expect(html).not.toContain("(5s)");
+  });
+
+  test("HUD hides Done only when nothing has been spoken at all", () => {
+    const silent = { ...demoProjectorSnapshot, transcript: demoProjectorSnapshot.transcript.filter((line) => line.kind !== "room") };
+    const html = renderToStaticMarkup(<ProjectorApp initialSnapshot={silent} />);
     expect(html).not.toContain('data-testid="idea-done-button"');
   });
 
@@ -872,8 +881,10 @@ describe("settle-gate Done UX: countdown + Done button while an idea is armed", 
     expect(armedHtml).toContain("a dashboard tool");
     expect(armedHtml).toContain("Building in 5s");
 
+    // Done is ALWAYS pressable during the idea step — it builds from the
+    // transcript (or advances the step) even before anything is armed.
     const idleHtml = renderToStaticMarkup(<GuidedDemo {...props} snapshot={demoProjectorSnapshot} />);
-    expect(idleHtml).not.toContain('data-testid="guided-done-button"');
+    expect(idleHtml).toContain('data-testid="guided-done-button"');
     expect(idleHtml).toContain('data-testid="guided-settle-waiting"');
   });
 });
