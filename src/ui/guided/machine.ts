@@ -26,9 +26,12 @@ import { backendsOf, buildsOf } from "../buildloop";
  *                 Record button POSTs the real /api/unmute + /api/capture +
  *                 /api/auto-accept, but a keyboard u/c or voice command counts
  *                 identically). On advance the process baseline is re-captured.
- *   idea        — advances when a process appears whose upid was NOT in the
- *                 baseline (the real pipeline: mic → ASR → detector →
- *                 auto-accept → spawn). That newcomer becomes `focusUpid`.
+ *   idea        — advances ONLY on explicit visitor action (the Done button /
+ *                 Skip, both routed through `skipStep`). The room may detect
+ *                 and even auto-build in the background, but the coach never
+ *                 yanks the visitor forward on its own; the race step adopts
+ *                 the newborn process (first upid NOT in the baseline) as
+ *                 `focusUpid` when it enters.
  *   race        — the three framework MOCK lanes race (kickoff stage; fast).
  *                 Advances when the focus process's real builds[] carry any
  *                 entry with status "ready" — i.e. the first MOCK is ready and
@@ -147,21 +150,10 @@ export function advanceOnSnapshot(state: GuidedState, snapshot: ProjectorSnapsho
       }
       return state;
     }
-    case "idea": {
-      const newcomer = snapshot.processes.find(
-        (process) => !state.baselineUpids.includes(process.upid),
-      );
-      if (newcomer !== undefined) {
-        // Enter the race with a fresh dwell stamp; the recursive check below
-        // lets a very fast mock advance further ONLY once the dwell allows.
-        return advanceOnSnapshot(
-          { ...state, step: "race", focusUpid: newcomer.upid, enteredAtMs: nowMs },
-          snapshot,
-          nowMs,
-        );
-      }
+    case "idea":
+      // Deliberately inert: a background auto-build must not move the visitor
+      // to step 4 — only their own Done/Skip (skipStep) advances the idea step.
       return state;
-    }
     case "race": {
       let next = state;
       // A skipped idea step has no focus yet: adopt the first newcomer.

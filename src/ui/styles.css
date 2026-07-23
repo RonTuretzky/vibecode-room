@@ -3195,3 +3195,11 @@ main.gesture-mode[data-view="builds"] .transcript-card {
   border-color: rgba(64, 200, 120, 0.6);
 }
 .fullscreen-key-hint { opacity: 0.6; font-size: 0.8em; }
+
+/* Idea step: dock the coach card to the TOP edge — bottom-center covered the
+   HUD (mic/capture, Done) and the idea bubbles the visitor must watch while
+   they talk. */
+.guided-step-idea .guided-card {
+  bottom: auto;
+  top: 2vh;
+}

@@ -1669,16 +1669,12 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
           onExit={exitGuidedDemo}
           onFinish={exitGuidedDemo}
           onDone={() => {
-            // Done is ALWAYS actionable: accept builds from the surfaced idea
-            // (or the raw transcript, server-side). If nothing spawned — the
-            // visitor hasn't spoken — advance the step instead, so Done never
-            // leaves the demo stuck.
-            const before = new Set(snapshot.processes.map((process) => process.upid));
-            void acceptIdea().then((fresh) => {
-              const spawned = fresh !== null && fresh.processes.some((process) => !before.has(process.upid));
-              if (!spawned) {
-                guidedSkip();
-              }
+            // Done is the ONLY way forward from the idea step: accept builds
+            // from the surfaced idea (or the raw transcript, server-side),
+            // then the demo advances — the race adopts the newborn process,
+            // and a silent Done still moves the visitor along.
+            void acceptIdea().then(() => {
+              guidedSkip();
             });
           }}
         />
