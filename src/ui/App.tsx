@@ -1820,11 +1820,15 @@ function FleetPanel({
 }
 
 function TranscriptStream({ lines }: { lines: TranscriptLine[] }) {
+  // Newest line FIRST: this is a passive wall display with no scroll
+  // interaction, and appending at the bottom of an overflowing card meant new
+  // lines landed below the fold — the transcript looked permanently frozen.
+  const newestFirst = [...lines].reverse();
   return (
     <section className="rail-card transcript-card" data-region="transcript">
       <h3 className="rail-title">Transcript</h3>
       <div className="transcript-scroll">
-        {lines.map((line) => (
+        {newestFirst.map((line) => (
           <div key={`${line.time}-${line.speaker}-${line.text}`} className={`tx-line tx-${line.kind}`}>
             <span className="tx-meta">
               <time>{line.time}</time>
