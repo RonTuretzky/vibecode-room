@@ -53,10 +53,15 @@ export function idToHue(id) {
 export function parseParams(search) {
   const p = new URLSearchParams(search || "");
   const wall = p.get("wall") || "A";
-  const server = p.get("server") || `ws://${(typeof location !== "undefined" && location.hostname) || "localhost"}:8770`;
+  const host = (typeof location !== "undefined" && location.hostname) || "localhost";
+  const server = p.get("server") || `ws://${host}:8770`;
   const rows = clampInt(p.get("rows"), 2, 1, 8);
   const cols = clampInt(p.get("cols"), 3, 1, 12);
-  return { wall, server, rows, cols };
+  // Auto-calibration watcher: the wall page doubles as the calibration surface
+  // (see AutocalWatcher), so ONE window stays on each projector forever.
+  // "off" disables; otherwise a base URL for the autocal HTTP server.
+  const autocal = p.get("autocal") || `http://${host}:8801`;
+  return { wall, server, rows, cols, autocal };
 }
 
 function clampInt(raw, dflt, lo, hi) {
@@ -98,6 +103,77 @@ export function staleIds(cursors, t, staleSeconds = STALE_SECONDS) {
 // resolveTarget so it cannot commit. Returns a new array (does not mutate).
 export function unlockedZones(zones, locks, t) {
   return zones.filter(z => !isZoneLocked(locks, z.id, t));
+}
+
+// Decide what the calibration overlay should show for THIS wall given an
+// autocal /calib/state payload. Pure so it is testable without a DOM.
+// Returns { active, dot } — active covers the tiles with an opaque black
+// surface while a calibration RUNS (the OFF/ON marker diffing needs a dark
+// wall); dot = {u, v} in [0,1]^2 only when the current marker targets this
+// wall (the other wall stays black while ours idles between markers).
+export function autocalOverlay(state, wall) {
+  if (!state || state.phase !== "running") return { active: false, dot: null };
+  const m = state.marker;
+  const dot = m && m.wall === wall
+    ? { u: Number(m.u), v: Number(m.v) }
+    : null;
+  return { active: true, dot };
+}
+
+// --------------------------------------------------------------------------- //
+// Auto-calibration watcher: the wall page IS the calibration page
+// --------------------------------------------------------------------------- //
+// Polls the autocal server; while a calibration runs, an opaque black overlay
+// (plus the magenta marker disc for this wall) replaces the tiles, and when it
+// finishes the tiles return — no window juggling between "the wall" and "the
+// calibration page". Quiet when no autocal server is running (slow backoff).
+class AutocalWatcher {
+  constructor(baseUrl, wall) {
+    this.base = baseUrl.replace(/\/+$/, "");
+    this.wall = wall;
+    this.overlay = document.createElement("div");
+    this.overlay.style.cssText =
+      "position:fixed;inset:0;background:#000;z-index:999;display:none;" +
+      "cursor:none";
+    this.dot = document.createElement("div");
+    this.dot.style.cssText =
+      "position:fixed;border-radius:50%;background:#ff00ff;display:none;" +
+      "box-shadow:0 0 40px 12px rgba(255,0,255,.55)";
+    this.overlay.appendChild(this.dot);
+    document.body.appendChild(this.overlay);
+    this._tick();
+  }
+
+  async _tick() {
+    let delay = 5000; // backoff when the autocal server isn't running
+    try {
+      const res = await fetch(`${this.base}/calib/state`, { cache: "no-store" });
+      const state = await res.json();
+      this._apply(autocalOverlay(state, this.wall));
+      // Fast cadence while reachable: the dot must appear/disappear within
+      // the autocal capture drains (OFF drain is 0.7 s).
+      delay = 150;
+    } catch (e) {
+      this._apply({ active: false, dot: null });
+    }
+    setTimeout(() => this._tick(), delay);
+  }
+
+  _apply({ active, dot }) {
+    this.overlay.style.display = active ? "block" : "none";
+    if (active && dot) {
+      const W = window.innerWidth, H = window.innerHeight;
+      // Same disc sizing as the standalone autocal page: big enough to
+      // detect from a far/oblique camera, small enough to localize.
+      const r = Math.max(46, Math.min(W, H) * 0.11);
+      this.dot.style.width = this.dot.style.height = `${2 * r}px`;
+      this.dot.style.left = `${dot.u * W - r}px`;
+      this.dot.style.top = `${dot.v * H - r}px`;
+      this.dot.style.display = "block";
+    } else {
+      this.dot.style.display = "none";
+    }
+  }
 }
 
 // --------------------------------------------------------------------------- //
@@ -433,5 +509,8 @@ if (typeof document !== "undefined") {
     // Surface the resolved params for debugging.
     console.log(`[wall] wall=${params.wall} server=${params.server} grid=${params.rows}x${params.cols}`);
     new WallClient(params);
+    // The wall page doubles as this wall's calibration surface (?autocal=off
+    // to disable, ?autocal=<url> to point at a non-default autocal server).
+    if (params.autocal !== "off") new AutocalWatcher(params.autocal, params.wall);
   });
 }

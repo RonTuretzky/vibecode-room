@@ -79,6 +79,11 @@ class WallCfg:
     rows: int
     cols: int
     plane: WallPlane | None = None
+    # Operator-measured width of the LIT projected image in metres (optional).
+    # Autocal pins the fitted plane's width to this when no --width is given
+    # on its command line — measure with a tape/laser after any projector
+    # change and store it here so every recalibration picks it up.
+    width_m: float | None = None
 
 
 @dataclass
@@ -139,6 +144,11 @@ class ServerCfg:
     # Depth-mode pointing model: how the ray origin is chosen (direction is always
     # toward the wrist). 'eye_hand' | 'forearm' | 'shoulder_hand'.
     pointing: str = "eye_hand"
+    # Cursor smoothing strength (both modes; > 0). 1.0 = the historical 1-Euro
+    # tuning; higher = steadier cursor at the cost of a little more lag (the
+    # filter cutoffs are divided by this). Tune live: 1.5-2.5 feels noticeably
+    # calmer for wall pointing; beyond ~4 the cursor visibly trails the hand.
+    smoothing: float = 1.0
 
 
 @dataclass
@@ -270,6 +280,8 @@ class RoomConfig:
             raise ValueError("server.num_poses must be >= 1")
         if not (0.0 <= self.server.min_confidence <= 1.0):
             raise ValueError("server.min_confidence must be in [0, 1]")
+        if self.server.smoothing <= 0:
+            raise ValueError("server.smoothing must be > 0")
 
     # --- mode ------------------------------------------------------------- #
     @property
@@ -512,9 +524,14 @@ def _parse_walls(raw: object) -> dict[str, WallCfg]:
         cols = _as_int(grid.get("cols"), f"wall {wall_id!r} grid.cols")
         _require(rows >= 1 and cols >= 1,
                  f"wall {wall_id!r} grid rows/cols must be >= 1")
+        width_m = wraw.get("width_m")
+        if width_m is not None:
+            width_m = _as_number(width_m, f"wall {wall_id!r} width_m")
+            _require(width_m > 0, f"wall {wall_id!r} width_m must be > 0")
         plane = _parse_plane(wraw.get("plane"), f"wall {wall_id!r} plane")
         walls[wall_id] = WallCfg(
-            display=display, rows=rows, cols=cols, plane=plane)
+            display=display, rows=rows, cols=cols, plane=plane,
+            width_m=width_m)
     return walls
 
 
@@ -621,6 +638,8 @@ def _parse_server(raw: object) -> ServerCfg:
             "server.min_confidence"),
         model=_check_model(raw.get("model", d.model)),
         pointing=_check_pointing(raw.get("pointing", d.pointing)),
+        smoothing=_as_number(raw.get("smoothing", d.smoothing),
+                             "server.smoothing"),
     )
 
 

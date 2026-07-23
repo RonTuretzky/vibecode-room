@@ -575,3 +575,18 @@ def test_single_gemini_validates_with_cross_camera_false(depth_dict):
     cfg = RoomConfig.from_dict(d)
     assert cfg.fusion.cross_camera is False
     assert cfg.mode == "depth"
+
+
+# --------------------------------------------------------------------------- #
+# server.smoothing (cursor steadiness knob)                                    #
+# --------------------------------------------------------------------------- #
+def test_server_smoothing_default_and_parse(example_dict):
+    assert RoomConfig.from_dict(example_dict).server.smoothing == 1.0
+    example_dict["server"]["smoothing"] = 2.5
+    assert RoomConfig.from_dict(example_dict).server.smoothing == 2.5
+
+
+def test_server_smoothing_must_be_positive(example_dict):
+    example_dict["server"]["smoothing"] = 0
+    with pytest.raises(ValueError, match="smoothing"):
+        RoomConfig.from_dict(example_dict)

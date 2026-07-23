@@ -239,14 +239,20 @@ class Pipeline:
         # ray joints UPSTREAM of the wall intersection (before ~5x amplification);
         # HOMOGRAPHY mode (no rays) smooths the final 2D cursor. One stage each.
         fps = float(config.server.fps)
+        # server.smoothing scales BOTH 1-Euro cutoffs down (min_cutoff and
+        # beta), so one config number means "this much steadier": jitter at
+        # rest AND speed-adaptivity shrink together. 1.0 = historical tuning.
+        s = float(config.server.smoothing)
         if config.mode == "depth":
             self.fusion = DepthFusionEngine(config)
-            self.ray_smoother: RaySmoother | None = RaySmoother(freq=fps)
+            self.ray_smoother: RaySmoother | None = RaySmoother(
+                freq=fps, min_cutoff=1.0 / s, beta=0.4 / s)
             self.smoother: CursorSmoother | None = None
         else:
             self.fusion = FusionEngine(config)
             self.ray_smoother = None
-            self.smoother = CursorSmoother(freq=fps)
+            self.smoother = CursorSmoother(
+                freq=fps, min_cutoff=1.0 / s, beta=0.02 / s)
 
     def step(self, persons_by_camera: dict[str, list[Person]],
              t: float) -> dict[str, list[Cursor]]:
@@ -510,7 +516,17 @@ def start_http_server(directory: str, port: int) -> "object":
     import functools
     from http.server import HTTPServer, SimpleHTTPRequestHandler
 
-    handler = functools.partial(SimpleHTTPRequestHandler, directory=directory)
+    class _NoCacheHandler(SimpleHTTPRequestHandler):
+        """Always revalidate: a stale cached wall.js on a projector silently
+        skips new behavior (e.g. the calibration overlay) — an entire failed
+        calibration session was traced to exactly that. no-cache still allows
+        conditional requests, so unchanged files stay cheap."""
+
+        def end_headers(self):
+            self.send_header("Cache-Control", "no-cache")
+            super().end_headers()
+
+    handler = functools.partial(_NoCacheHandler, directory=directory)
     httpd = HTTPServer(("", port), handler)
     threading.Thread(target=httpd.serve_forever, name="http", daemon=True).start()
     return httpd
