@@ -116,7 +116,10 @@ describe("run-events-snapshot e2e — live run progress reaches the published sn
     // its live event stream.
     const executed = await runtime.executeProcess(spawned.upid);
     expect(executed.ok).toBe(true);
-    expect(transport.launchedRunIds()).toEqual([`vibersyn-${spawned.upid}`]);
+    // The commission launches under exactly the runId the snapshot advertised
+    // (a per-boot nonce is folded in, so assert against the advertised id rather
+    // than a hardcoded `vibersyn-<upid>`).
+    expect(transport.launchedRunIds()).toEqual([spawned.runId]);
 
     // Wait for the in-flight subscription to fold in the live frames, then the
     // republish-driven snapshot reflects the overlay.
@@ -128,7 +131,7 @@ describe("run-events-snapshot e2e — live run progress reaches the published sn
 
     // The commission execution lane is on the snapshot, fed by the same frames.
     const lane = (overlaid as { execution?: { status: string; percent: number; runId: string } }).execution;
-    expect(lane).toMatchObject({ status: "executing", percent: 24, runId: `vibersyn-${spawned.upid}` });
+    expect(lane).toMatchObject({ status: "executing", percent: 24, runId: spawned.runId });
 
     // The live frames — NOT the fixture/registry default — now drive the panel.
     expect(overlaid.state).toBe("active");
@@ -138,7 +141,7 @@ describe("run-events-snapshot e2e — live run progress reaches the published sn
     expect(overlaid.progress).toBeGreaterThan(0);
 
     // The runtime streamed exactly the spawned run's gateway-issued runId.
-    expect(transport.streamedRunIds).toContain(`vibersyn-${spawned.upid}`);
+    expect(transport.streamedRunIds).toContain(spawned.runId);
 
     // The seeded fleet has no live run, so its fixtures are untouched.
     const seeded = runtime.snapshot().processes.filter((process) => seededUpids.has(process.upid));

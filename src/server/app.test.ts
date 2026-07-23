@@ -423,6 +423,9 @@ describe("POST /api/process/:upid/execute — the COMMISSION stage", () => {
     expect(accepted.status).toBe(200);
     const acceptedSnapshot = (await accepted.json()) as ProjectorSnapshot;
     const upid = acceptedSnapshot.processes[0]?.upid;
+    // The per-boot nonce is folded into the pre-assigned runId; the commission
+    // launches under exactly this advertised id.
+    const spawnedRunId = acceptedSnapshot.processes[0]?.runId;
     expect(upid).toBeDefined();
     if (upid === undefined) return;
     // KICKOFF invariant: accept produced a process with NO execution lane.
@@ -436,7 +439,7 @@ describe("POST /api/process/:upid/execute — the COMMISSION stage", () => {
     const lane = (snapshot.processes.find((process) => process.upid === upid) as {
       execution?: { status: string; runId: string; percent: number; previewUrl: string | null };
     }).execution;
-    expect(lane).toMatchObject({ status: "executing", runId: `vibersyn-${upid}`, percent: 0, previewUrl: null });
+    expect(lane).toMatchObject({ status: "executing", runId: spawnedRunId, percent: 0, previewUrl: null });
     expect(runtime.registry.hasDurableRun(upid)).toBe(true);
 
     // Idempotent: a second execute is a 400, not a second launch.

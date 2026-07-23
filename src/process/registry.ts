@@ -87,6 +87,14 @@ export interface ProcessRegistryOptions {
   // addressing must stay stable for the session. undefined = default (Cerebras
   // via CEREBRAS_API_KEY when present); null = disabled.
   namer?: ((pitch: string) => Promise<InferredProjectName | null>) | null;
+  // Session nonce folded into pre-assigned runIds ("vibersyn-<upid>-<nonce>").
+  // The gateway's runs are DURABLE across room restarts while UPIDs restart
+  // from upid-1 every session — without a nonce a commission collides with a
+  // previous session's finished "vibersyn-upid-1" run and instantly replays it
+  // (stale artifacts included) instead of launching fresh work. Default: none
+  // (bare "vibersyn-<upid>", the existing test contract); production passes a
+  // per-boot nonce.
+  runIdNonce?: string;
 }
 
 export type RegistrySpawnResult =
@@ -144,6 +152,7 @@ export class ProcessRegistry {
   // already-executing instead of double-spawning (the stable idempotency key
   // additionally protects the gateway itself).
   readonly #executeInFlight = new Set<string>();
+  #runIdNonce: string | null = null;
   #selectedUPID: string | null = null;
   #upidSeq = 0;
 
@@ -163,6 +172,7 @@ export class ProcessRegistry {
     this.#orchestrator = options.orchestrator ?? null;
     this.#execution = options.execution ?? null;
     this.#namer = options.namer !== undefined ? options.namer : defaultNamerFromEnv();
+    this.#runIdNonce = options.runIdNonce ?? null;
   }
 
   // The multi-backend builds[] snapshot fragment for one process — the runtime
@@ -257,7 +267,7 @@ export class ProcessRegistry {
     const workflow = seed.workflow ?? "vibersyn-process";
     const spawn: SpawnResult = {
       upid,
-      runId: seed.runId ?? `vibersyn-${upid}`,
+      runId: seed.runId ?? (this.#runIdNonce === null ? `vibersyn-${upid}` : `vibersyn-${upid}-${this.#runIdNonce}`),
       workflow,
       parentId: seed.parentId ?? null,
     };

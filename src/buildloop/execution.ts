@@ -22,6 +22,7 @@
 // leaves a reachable preview up.
 
 import { existsSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { servePreviewDirectory, type PreviewServer } from "../server/idea-builder";
 
@@ -92,6 +93,19 @@ export class ExecutionRegistry {
   // The artifacts directory the durable run writes for one UPID.
   artifactsDir(upid: string): string {
     return join(this.#artifactsRoot, safeSegment(upid));
+  }
+
+  // Called BEFORE the durable run is launched: a fresh commission must not
+  // inherit a previous session's artifacts under the same UPID (the artifacts
+  // root outlives room restarts, so a stale index.html would make complete()
+  // claim "built" with last session's app). A live/settled lane for this UPID
+  // owns its artifacts and is left alone — execute() reports already-executing
+  // or already-built for those without launching.
+  async prepare(upid: string): Promise<void> {
+    if (this.#lanes.has(upid)) {
+      return;
+    }
+    await rm(this.artifactsDir(upid), { recursive: true, force: true });
   }
 
   // Open the lane at commission time: the durable run has been launched.

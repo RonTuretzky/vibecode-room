@@ -100,9 +100,11 @@ describe("gateway-accept-spawn e2e — say yes spawns a gateway-backed process",
     if (process === undefined) return;
     expect(["planning", "active"]).toContain(process.state);
 
-    // The snapshot's runId is pre-assigned deterministically (`vibersyn-<upid>`)
-    // so the later commission launches under the same id.
-    expect(process.runId).toBe(`vibersyn-${process.upid}`);
+    // The snapshot's runId is pre-assigned deterministically
+    // (`vibersyn-<upid>-<nonce>`, the per-boot nonce guarding a fresh commission
+    // against a previous session's finished durable run) so the later commission
+    // launches under the same id.
+    expect(process.runId).toMatch(new RegExp(`^vibersyn-${process.upid}-[a-z0-9]+$`, "u"));
 
     // KICKOFF invariant: accepting the idea launched NOTHING on the gateway.
     expect(transport.launchedRunIds().length).toBe(launchesBefore);

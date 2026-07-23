@@ -586,6 +586,11 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       sessionId,
       now: clock,
       maxConcurrentProcesses: maxConcurrent,
+      // Per-boot nonce so commissioned runIds never collide with a PREVIOUS
+      // session's durable gateway runs (upids restart at upid-1 every boot;
+      // the gateway's finished "vibersyn-upid-1" would otherwise be replayed
+      // instantly, stale artifacts and all).
+      runIdNonce: Date.now().toString(36),
       ideaBuilds: this.ideaBuilds,
       orchestrator: useOrchestrator ? this.buildOrchestrator : null,
       execution: this.executionRegistry,
@@ -2443,6 +2448,9 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     }
     let result: Awaited<ReturnType<ProcessRegistry["execute"]>>;
     try {
+      // Clear any PREVIOUS session's stale artifacts for this UPID before the
+      // durable run launches (no-op when this session already has a lane).
+      await this.executionRegistry.prepare(upid);
       result = await this.registry.execute(upid, { correlationId });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

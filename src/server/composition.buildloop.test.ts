@@ -331,6 +331,9 @@ describe("commission stage — two-stage pivot", () => {
     const upid = runtime.snapshot().processes[0]?.upid;
     expect(upid).toBeDefined();
     if (upid === undefined) return;
+    // The pre-assigned runId carries the per-boot nonce; the durable run launches
+    // and streams under exactly this id, so drive the ingests with it too.
+    const runId = runtime.snapshot().processes[0]?.runId ?? `vibersyn-${upid}`;
 
     // KICKOFF: mock lane fans out, but there is no durable run / execution lane.
     await waitFor(() => runtime.registry.builds(upid).some((build) => build.status === "ready"));
@@ -343,14 +346,14 @@ describe("commission stage — two-stage pivot", () => {
     const executed = await runtime.executeProcess(upid, "corr-commission");
     expect(executed.ok).toBe(true);
     expect(runtime.registry.hasDurableRun(upid)).toBe(true);
-    expect(runtime.registry.execution(upid)).toMatchObject({ status: "executing", runId: `vibersyn-${upid}` });
+    expect(runtime.registry.execution(upid)).toMatchObject({ status: "executing", runId });
 
     // The durable run lands its full-app artifacts, then completes: the lane
     // flips to built and the artifacts serve as the execution previewUrl.
     await Bun.write(join(runtime.executionRegistry.artifactsDir(upid), "index.html"), "<html>the full app</html>");
-    runtime.runEventDriver.ingest({ upid, runId: `vibersyn-${upid}`, kind: "output", text: "building the app", seq: 3 });
+    runtime.runEventDriver.ingest({ upid, runId, kind: "output", text: "building the app", seq: 3 });
     expect(runtime.registry.execution(upid)).toMatchObject({ status: "executing", label: "building the app" });
-    runtime.runEventDriver.ingest({ upid, runId: `vibersyn-${upid}`, kind: "completed", text: "run finished", seq: 4 });
+    runtime.runEventDriver.ingest({ upid, runId, kind: "completed", text: "run finished", seq: 4 });
     await waitFor(() => runtime.registry.execution(upid)?.status === "built");
 
     const lane = runtime.registry.execution(upid);
