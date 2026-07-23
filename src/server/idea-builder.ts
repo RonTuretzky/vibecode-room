@@ -82,6 +82,29 @@ export function servePreviewDirectory(dir: string, host: string = DEFAULT_HOST):
   return serveDirectory(dir, host);
 }
 
+// The pitch deck served off a preview port posts its decision buttons to
+// RELATIVE /api/... endpoints (template.ts contract: same-origin). The preview
+// server is NOT the room server, so those posts land here — forward them to
+// the room (VIBERSYN_PORT, default 8788) instead of 404ing the deck's
+// "Build it for real" button.
+function roomApiTarget(pathname: string, search: string): string {
+  const port = Number.parseInt(process.env.VIBERSYN_PORT ?? "8788", 10);
+  return `http://127.0.0.1:${Number.isInteger(port) && port > 0 ? port : 8788}${pathname}${search}`;
+}
+
+async function forwardApiRequest(request: Request, pathname: string, search: string): Promise<Response> {
+  try {
+    const forwarded = await fetch(roomApiTarget(pathname, search), {
+      method: request.method,
+      headers: { "content-type": request.headers.get("content-type") ?? "application/json" },
+      ...(request.method === "GET" || request.method === "HEAD" ? {} : { body: await request.arrayBuffer() }),
+    });
+    return new Response(forwarded.body, { status: forwarded.status, headers: { ...NO_CACHE_HEADERS } });
+  } catch {
+    return new Response("Room server unreachable", { status: 502, headers: NO_CACHE_HEADERS });
+  }
+}
+
 async function serveDirectory(dir: string, host: string): Promise<PreviewServer> {
   const bun = (globalThis as { Bun?: typeof import("bun") }).Bun;
   if (bun !== undefined && typeof bun.serve === "function") {
@@ -89,7 +112,11 @@ async function serveDirectory(dir: string, host: string): Promise<PreviewServer>
       hostname: host,
       port: 0, // ephemeral
       async fetch(request) {
-        const file = resolveRequestedFile(dir, new URL(request.url).pathname);
+        const url = new URL(request.url);
+        if (url.pathname.startsWith("/api/")) {
+          return forwardApiRequest(request, url.pathname, url.search);
+        }
+        const file = resolveRequestedFile(dir, url.pathname);
         let handle = bun.file(file);
         if (!(await handle.exists())) {
           // Subdirectory index: "/smithers" or "/smithers/" -> smithers/index.html.
@@ -120,6 +147,31 @@ async function serveDirectoryNode(dir: string, host: string): Promise<PreviewSer
   const server = http.createServer((request, response) => {
     void (async () => {
       try {
+        const rawPath = (request.url ?? "/").split("#")[0] ?? "/";
+        const [pathname = "/", query] = rawPath.split("?");
+        if (pathname.startsWith("/api/")) {
+          // Same deck-decision forward as the Bun path (see forwardApiRequest).
+          const chunks: Buffer[] = [];
+          for await (const chunk of request) {
+            chunks.push(chunk as Buffer);
+          }
+          const method = request.method ?? "POST";
+          const forwarded = await forwardApiRequest(
+            new Request(`http://forward.local${rawPath}`, {
+              method,
+              headers: { "content-type": request.headers["content-type"] ?? "application/json" },
+              ...(method === "GET" || method === "HEAD" ? {} : { body: Buffer.concat(chunks) }),
+            }),
+            pathname,
+            query === undefined || query.length === 0 ? "" : `?${query}`,
+          );
+          response.statusCode = forwarded.status;
+          for (const [name, value] of Object.entries(NO_CACHE_HEADERS)) {
+            response.setHeader(name, value);
+          }
+          response.end(Buffer.from(await forwarded.arrayBuffer()));
+          return;
+        }
         let file = resolveRequestedFile(dir, request.url ?? "/");
         let info = await stat(file).catch(() => null);
         if (info !== null && info.isDirectory()) {
