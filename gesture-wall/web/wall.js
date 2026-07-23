@@ -115,7 +115,8 @@ export function autocalOverlay(state, wall) {
   if (!state || state.phase !== "running") return { active: false, dot: null };
   const m = state.marker;
   const dot = m && m.wall === wall
-    ? { u: Number(m.u), v: Number(m.v) }
+    ? (m.r ? { u: Number(m.u), v: Number(m.v), r: Number(m.r) }
+           : { u: Number(m.u), v: Number(m.v) })
     : null;
   return { active: true, dot };
 }
@@ -163,9 +164,9 @@ class AutocalWatcher {
     this.overlay.style.display = active ? "block" : "none";
     if (active && dot) {
       const W = window.innerWidth, H = window.innerHeight;
-      // Same disc sizing as the standalone autocal page: big enough to
-      // detect from a far/oblique camera, small enough to localize.
-      const r = Math.max(46, Math.min(W, H) * 0.11);
+      // Size comes from the server when given (bigger discs for far/oblique
+      // walls, retry passes) — the page is just the renderer.
+      const r = Math.max(46, Math.min(W, H) * (dot.r || 0.11));
       this.dot.style.width = this.dot.style.height = `${2 * r}px`;
       this.dot.style.left = `${dot.u * W - r}px`;
       this.dot.style.top = `${dot.v * H - r}px`;

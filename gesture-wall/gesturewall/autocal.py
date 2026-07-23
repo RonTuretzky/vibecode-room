@@ -47,6 +47,14 @@ from .room import RoomConfig
 # stays fully on screen (and away from projector edge blending).
 MARKER_GRID = [(u, v) for v in (0.15, 0.5, 0.85) for u in (0.12, 0.5, 0.88)]
 
+# Marker disc radius as a fraction of the page's smaller dimension. The pages
+# use the server-sent value, so dot size is tuned HERE, not in the frontends.
+# The base size struggled on far/oblique wall stretches (3+ m at grazing
+# angles: fewer camera pixels per dot, light spread over more wall), so the
+# base is generous and missed markers get retried once even bigger.
+DOT_R = 0.16
+DOT_R_RETRY = 0.24
+
 # Detection thresholds. Tuned on a 512x424 registered color image, but the
 # area gates are FRAME FRACTIONS so the same disc still passes at higher
 # resolutions (at the Gemini 335's 1280x720 it covers ~3.8x the pixels).
@@ -143,6 +151,22 @@ def detect_marker(off_bgr, on_bgr):
     if m["m00"] == 0:
         return None
     return (m["m10"] / m["m00"], m["m01"] / m["m00"], peak)
+
+
+def missed_markers(samples, walls, cam_walls):
+    """Grid points with NO detection from any camera meant to see that wall.
+
+    Pure and order-preserving (wall-major, grid order) so the retry pass
+    walks the walls the same way the main pass did.
+    """
+    out = []
+    for wall in walls:
+        cams = [c for c in samples[wall] if wall in cam_walls.get(c, ())]
+        got = {(u, v) for c in cams for (u, v, _p) in samples[wall][c]}
+        for (u, v) in MARKER_GRID:
+            if (u, v) not in got:
+                out.append((wall, u, v))
+    return out
 
 
 def median_frame(frames):
@@ -546,12 +570,34 @@ class AutoCalibrator:
         cam_ids = list(self.cameras)
         # First read spawns each bridge; allow a generous first-frame window so
         # marker #1 doesn't read as a "stall" while the Kinects boot.
-        for c in cam_ids:
-            got = self._capture(c, n_frames=1, deadline_s=20.0)
-            if got is None:
-                raise RuntimeError(f"camera {c} produced no frames in 20 s — "
-                                   f"is it plugged in and powered?")
-            self._log(f"{c}: streaming")
+        # Two warmup attempts: the first open after a process handoff often
+        # delivers nothing until the source's auto-recovery (close/reboot)
+        # kicks in — retrying here makes every run self-healing instead of
+        # requiring the operator to fire twice.
+        for attempt in (1, 2):
+            stalled = None
+            for c in cam_ids:
+                got = self._capture(c, n_frames=1, deadline_s=20.0)
+                if got is None:
+                    stalled = c
+                    break
+                self._log(f"{c}: streaming")
+            if stalled is None:
+                break
+            if attempt == 1:
+                self._log(f"camera {stalled} silent — cycling sources and "
+                          f"retrying warmup")
+                self._set(msg="camera silent; retrying")
+                for src_ in self.cameras.values():
+                    try:
+                        src_.close()
+                    except Exception:  # noqa: BLE001
+                        pass
+                time.sleep(8)
+            else:
+                raise RuntimeError(
+                    f"camera {stalled} produced no frames in two warmup "
+                    f"attempts — is it plugged in and powered?")
         self._set(msg="capturing")
         # samples[wall][cam_id] = list of (u, v, point3-in-that-camera-frame)
         samples = {w: {c: [] for c in cam_ids} for w in self.walls}
@@ -559,43 +605,63 @@ class AutoCalibrator:
         total = len(self.walls) * len(MARKER_GRID)
         done = 0
 
+        def capture_marker(wall, u, v, r, on_drain=1.1, on_frames=6):
+            """One OFF/ON cycle for a marker; appends detections to samples."""
+            self._set(marker=None)
+            self._drain(0.7)
+            off = {c: self._capture(c, n_frames=4) for c in cam_ids}
+            # ON — longer settle + more frames so a dim/distant dot is caught
+            self._set(marker={"wall": wall, "u": u, "v": v, "r": r})
+            self._drain(on_drain)
+            on = {c: self._capture(c, n_frames=on_frames) for c in cam_ids}
+
+            for c in cam_ids:
+                if off[c] is None or on[c] is None:
+                    self._log(f"{wall}({u:.2f},{v:.2f}) {c}: camera stalled")
+                    continue
+                off_med = median_frame(off[c][0])
+                on_med = median_frame(on[c][0])
+                intrinsics[c] = on[c][2]
+                # A camera that can't see this wall would only detect a
+                # REFLECTION of its dot — skip so phantoms never enter the fit.
+                if wall not in self.cam_walls[c]:
+                    continue
+                det = detect_marker(off_med, on_med)
+                if det is None:
+                    continue
+                px, py, peak = det
+                p3 = marker_point3(px, py, on[c][1], intrinsics[c])
+                if p3 is None:
+                    self._log(f"{wall}({u:.2f},{v:.2f}) {c}: blob but no depth")
+                    continue
+                samples[wall][c].append((u, v, p3))
+
+        def publish_progress():
+            with self._lock:
+                self.status["progress"] = min(1.0, done / total)
+                self.status["detections"] = {
+                    w: {c: len(samples[w][c]) for c in cam_ids}
+                    for w in self.walls}
+
         for wall in self.walls:
             for (u, v) in MARKER_GRID:
-                # OFF baseline
-                self._set(marker=None)
-                self._drain(0.7)
-                off = {c: self._capture(c, n_frames=4) for c in cam_ids}
-                # ON — longer settle + more frames so a dim/distant dot is caught
-                self._set(marker={"wall": wall, "u": u, "v": v})
-                self._drain(1.1)
-                on = {c: self._capture(c, n_frames=6) for c in cam_ids}
-
-                for c in cam_ids:
-                    if off[c] is None or on[c] is None:
-                        self._log(f"{wall}({u:.2f},{v:.2f}) {c}: camera stalled")
-                        continue
-                    off_med = median_frame(off[c][0])
-                    on_med = median_frame(on[c][0])
-                    intrinsics[c] = on[c][2]
-                    # A camera that can't see this wall would only detect a
-                    # REFLECTION of its dot — skip so phantoms never enter the fit.
-                    if wall not in self.cam_walls[c]:
-                        continue
-                    det = detect_marker(off_med, on_med)
-                    if det is None:
-                        continue
-                    px, py, peak = det
-                    p3 = marker_point3(px, py, on[c][1], intrinsics[c])
-                    if p3 is None:
-                        self._log(f"{wall}({u:.2f},{v:.2f}) {c}: blob but no depth")
-                        continue
-                    samples[wall][c].append((u, v, p3))
+                capture_marker(wall, u, v, DOT_R)
                 done += 1
-                with self._lock:
-                    self.status["progress"] = done / total
-                    self.status["detections"] = {
-                        w: {c: len(samples[w][c]) for c in cam_ids}
-                        for w in self.walls}
+                publish_progress()
+
+        # Retry pass: every missed marker gets ONE more chance with a much
+        # bigger disc and a longer settle — far/oblique stretches (wall B's
+        # seam side at 3+ m) sit right at the detection threshold, and a
+        # single missed flash should not cost the run.
+        retries = missed_markers(samples, self.walls, self.cam_walls)
+        if retries:
+            self._log(f"retrying {len(retries)} missed marker(s) with "
+                      f"bigger discs")
+            self._set(msg="retrying missed markers")
+            for (wall, u, v) in retries:
+                capture_marker(wall, u, v, DOT_R_RETRY,
+                               on_drain=1.4, on_frames=8)
+                publish_progress()
 
         self._set(marker=None, msg="solving")
         counts = {w: {c: len(samples[w][c]) for c in cam_ids} for w in self.walls}
