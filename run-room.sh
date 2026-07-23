@@ -31,6 +31,8 @@
 #                                 # =full); the view no longer filters content
 #   ./run-room.sh --gesture       # legacy: real cameras (needs gesture-wall deps + room.json)
 #   ./run-room.sh --fake          # legacy: gesture mode with synthetic cursors
+#   ./run-room.sh --fake-hands    # pinch camera with synthetic hands (no TD, no cameras)
+#   ./run-room.sh --hands=ws://td-mac:9980   # pinch camera fed by a TouchDesigner rig
 #   ./run-room.sh --gesture --config=my.json
 #   ./run-room.sh --calibrate     # projector auto-calibration (no Vibersyn)
 #
@@ -39,6 +41,8 @@
 #      PYTHON(gesture-wall/.venv/bin/python if present, else python3)
 #      WALL_A_M / WALL_B_M (unset = tape-measured widths stored in the room
 #      config as walls.<id>.width_m; set to override) AUTOCAL_PORT(8801)
+#      HANDS_PORT(9980) HANDS_URL(unset = ws://localhost:$HANDS_PORT)
+#      HANDS_WALLS(A — set A,B to drive BOTH wall cameras from one hands stream)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -46,6 +50,8 @@ cd "$ROOT"
 
 GESTURE=0
 FAKE=0
+HANDS=0                               # TouchDesigner hand-pinch camera (--hands / --hands=URL / --fake-hands)
+FAKE_HANDS=0
 SINGLE=0
 SINGLE_VIEW="${SINGLE_VIEW:-full}"   # full | ideas | builds (--single=<view>; legacy badge, never filters)
 CALIBRATE=0
@@ -53,6 +59,9 @@ CONFIG="${ROOM_CONFIG:-gesture-wall/room.json}"
 VIBERSYN_PORT="${VIBERSYN_PORT:-8788}"
 HOST="${HOST:-0.0.0.0}"               # bind all interfaces so phones reach /submit (QR import)
 WS_PORT="${WS_PORT:-8770}"
+HANDS_PORT="${HANDS_PORT:-9980}"      # hands WS (TD or fake-hands); the default --hands URL uses it
+HANDS_URL="${HANDS_URL:-}"            # explicit hands source; empty = ws://localhost:$HANDS_PORT
+HANDS_WALLS="${HANDS_WALLS:-A}"       # walls that get &hands= — one stream driving BOTH cameras is opt-in (A,B)
 BROWSER="${BROWSER:-Google Chrome}"
 WALL_A_POS="${WALL_A_POS:-0,0}"
 WALL_B_POS="${WALL_B_POS:-1920,0}"
@@ -76,12 +85,15 @@ for arg in "$@"; do
   case "$arg" in
     --gesture) GESTURE=1 ;;
     --fake) GESTURE=1; FAKE=1 ;;   # --fake implies gesture mode, minus the cameras
+    --hands) HANDS=1 ;;
+    --hands=*) HANDS=1; HANDS_URL="${arg#*=}" ;;   # explicit TD source, e.g. ws://td-mac:9980
+    --fake-hands) HANDS=1; FAKE_HANDS=1 ;;   # pinch camera minus TouchDesigner (synthetic hands)
     --single) SINGLE=1 ;;
     --single=*) SINGLE=1; SINGLE_VIEW="${arg#*=}" ;;
     --calibrate) CALIBRATE=1 ;;
     --config=*) CONFIG="${arg#*=}" ;;
     -h|--help)
-      sed -n '2,41p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,45p' "$0" | sed 's/^# \{0,1\}//'
       exit 0 ;;
     *) echo "[room] unknown arg: $arg" >&2; exit 2 ;;
   esac
@@ -203,6 +215,14 @@ if [ "$GESTURE" = "1" ]; then
   fi
 fi
 
+# Hand-pinch camera source: --fake-hands runs the synthetic choreography emitter
+# (the real path is an external TouchDesigner rig — see gesture-wall/touchdesigner/).
+if [ "$FAKE_HANDS" = "1" ]; then
+  echo "[room] hands: camera-free preview (fake) on ws://localhost:$HANDS_PORT"
+  FAKE_HANDS_PORT="$HANDS_PORT" bun gesture-wall/tools/fake-hands.mjs &
+  PIDS+=($!)
+fi
+
 # ── 2) build + serve Vibersyn ────────────────────────────────────────────────
 echo "[room] building Vibersyn UI…"
 bun run build >/dev/null 2>&1 || { echo "[room] ERROR: UI build failed (run 'bun run build' to see why)." >&2; exit 1; }
@@ -223,15 +243,29 @@ GESTURE_QS=""
 if [ "$GESTURE" = "1" ]; then
   GESTURE_QS="&gesture=1&fusion=ws://localhost:$WS_PORT"
 fi
+# Hand-pinch camera stream: wall A (and --single) always; wall B only when
+# HANDS_WALLS opts in — one hands stream driving two cameras at once is deliberate.
+HANDS_QS=""
+HANDS_QS_B=""
+if [ "$HANDS" = "1" ]; then
+  if [ "$FAKE_HANDS" = "1" ]; then
+    # --fake-hands must drive the server it just launched — a leftover
+    # HANDS_URL (real-rig session) would point the walls at an absent TD host.
+    HANDS_QS="&hands=ws://localhost:$HANDS_PORT"
+  else
+    HANDS_QS="&hands=${HANDS_URL:-ws://localhost:$HANDS_PORT}"
+  fi
+  case ",$HANDS_WALLS," in *,B,*) HANDS_QS_B="$HANDS_QS" ;; esac
+fi
 # Mock Room (fixture decks) is HIDDEN from the default UI (no-mocks audit);
 # VIBERSYN_MOCK_ROOM=1 in the env opts the toggle back in via ?mock=1.
 MOCK_QS=""
 if [ "${VIBERSYN_MOCK_ROOM:-}" = "1" ]; then
   MOCK_QS="&mock=1"
 fi
-URL_A="http://localhost:$VIBERSYN_PORT/?live=1&wall=A&view=ideas$GESTURE_QS$MOCK_QS"
-URL_B="http://localhost:$VIBERSYN_PORT/?live=1&wall=B&view=builds$GESTURE_QS$MOCK_QS"
-URL_SINGLE="http://localhost:$VIBERSYN_PORT/?live=1&view=$SINGLE_VIEW$GESTURE_QS$MOCK_QS"
+URL_A="http://localhost:$VIBERSYN_PORT/?live=1&wall=A&view=ideas$GESTURE_QS$HANDS_QS$MOCK_QS"
+URL_B="http://localhost:$VIBERSYN_PORT/?live=1&wall=B&view=builds$GESTURE_QS$HANDS_QS_B$MOCK_QS"
+URL_SINGLE="http://localhost:$VIBERSYN_PORT/?live=1&view=$SINGLE_VIEW$GESTURE_QS$HANDS_QS$MOCK_QS"
 
 open_wall() { # $1=window-position  $2=url
   if command -v open >/dev/null 2>&1; then
@@ -266,6 +300,9 @@ if [ "$GESTURE" = "1" ]; then
 else
   echo "[room] running. Say \"Vibersyn\" to start Idea Capture; \"Vibersyn, build it\" builds; press ? for the keyboard cheat sheet."
   echo "[room] (tip: the QR Import button adds a GitHub repo to the wall from your phone.)  Ctrl-C to stop."
+fi
+if [ "$HANDS" = "1" ]; then
+  echo "[room] hand camera: pinch-hold-drag one hand to orbit (flick to coast); pinch BOTH hands and spread/squeeze to zoom."
 fi
 echo "[room] (tip: dwell/click \"Guided Demo\" — or add &demo=guided to a wall URL — for the coached visitor walkthrough.)"
 wait

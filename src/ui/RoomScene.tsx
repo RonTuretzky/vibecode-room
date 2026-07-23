@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import type { IdeaTrayItem, ProjectorProcess } from "./types";
 import { registerSceneDwellSource, type SceneDwellRect } from "./gesture/scene-source";
+import { registerSceneCameraControl } from "./gesture/camera-source";
 
 // The full-viewport 3D stage (after conductor-github-visualizer): the scene IS
 // the app background and every panel floats over it. Two render modes share
@@ -1313,6 +1314,9 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
     let angVel = 0;
     let heightVel = 0;
     let lastMoveAt = 0;
+    // True while the pinch-camera layer holds a live grab: the rig tracks
+    // tightly (like a mouse drag) and flick inertia stays out of the way.
+    let externalGrab = false;
 
     const pick = (clientX: number, clientY: number): { kind: string; key?: string; callsign?: string } | null => {
       const rect = renderer.domElement.getBoundingClientRect();
@@ -1520,6 +1524,49 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         dwellHighlights = ids;
       },
     });
+    // PINCH-CAMERA SEAM: the hand-pinch layer drives the SAME desired-rig d*
+    // fields as the mouse, so writers interleave latest-writer-wins (fit /
+    // focus / resetRig may also write d*; external input keeps writing and
+    // wins). The scene owns the rig and ALL clamps — the layer never touches
+    // three.js and cannot push the rig outside the mouse's envelope.
+    const unregisterCameraControl = registerSceneCameraControl({
+      orbitBy: (dYaw, dHeight) => {
+        // Exact mirror of the onPointerMove orbit path (incl. height clamp).
+        rig.dAngle += dYaw;
+        rig.dHeight = Math.max(1.4, Math.min(30, rig.dHeight + dHeight));
+      },
+      panBy: (dxPx, dyPx) => {
+        // Exact mirror of the onPointerMove shift-pan path.
+        const panSpeed = 0.0045 * rig.radius;
+        rig.dTargetX -= Math.cos(rig.angle) * dxPx * panSpeed;
+        rig.dTargetZ += Math.sin(rig.angle) * dxPx * panSpeed;
+        rig.dTargetX -= Math.sin(rig.angle) * dyPx * panSpeed;
+        rig.dTargetZ -= Math.cos(rig.angle) * dyPx * panSpeed;
+      },
+      zoomBy: (scale) => {
+        if (!Number.isFinite(scale) || scale <= 0) {
+          return; // defensive: a bad ratio must never NaN the rig
+        }
+        // Multiplicative dolly, re-clamped to the onWheel envelope [4,45].
+        rig.dRadius = Math.max(4, Math.min(45, rig.dRadius * scale));
+      },
+      // Params deliberately NOT named angVel/heightVel — they must not shadow
+      // the inertia vars this feeds.
+      flick: (yawVel, hVel) => {
+        // Defensive re-clamp (the interpreter caps too): a rogue velocity must
+        // never launch the camera.
+        angVel = Math.max(-4, Math.min(4, yawVel));
+        heightVel = Math.max(-30, Math.min(30, hVel));
+      },
+      setTracking: (on) => {
+        externalGrab = on;
+        if (on) {
+          // Same takeover onPointerDown does: a fresh grab kills residual coast.
+          angVel = 0;
+          heightVel = 0;
+        }
+      },
+    });
 
     // Pure gesture mode: pointing must not fight drag-orbit, so the pointer
     // never binds at all (see Help overlay). Desk/mouse-dwell modes keep the
@@ -1591,11 +1638,11 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       }
       const smoothing = 1 - Math.exp(-dt * 7);
       // Track the hand tightly while dragging; glide softly once released.
-      const camSmoothing = 1 - Math.exp(-dt * (dragging ? 16 : 6));
+      const camSmoothing = 1 - Math.exp(-dt * (dragging || externalGrab ? 16 : 6));
 
       // Flick inertia: after release the last drag velocity keeps the orbit
       // drifting, decaying exponentially (~0.4s half-life).
-      if (!dragging && !reducedMotion) {
+      if (!dragging && !externalGrab && !reducedMotion) {
         if (Math.abs(angVel) > 1e-4) {
           rig.dAngle += angVel * dt;
           angVel *= Math.exp(-dt * 2.2);
@@ -1714,6 +1761,7 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
     return () => {
       stopLoop();
       unregisterDwellSource();
+      unregisterCameraControl();
       document.removeEventListener("visibilitychange", onSceneVisibility);
       observer.disconnect();
       if (pointerNavRef.current) {

@@ -32,6 +32,7 @@ From the repo **ROOT**:
 ./run-room.sh --gesture      # the room, gesture-controlled: one Gemini 335 serves BOTH walls
 ./run-room.sh --calibrate    # projector auto-calibration (re-run after moving anything)
 ./run-room.sh --fake         # gesture mode with synthetic cursors (no camera needed)
+./run-room.sh --fake-hands   # hand-pinch camera with synthetic hands (no TouchDesigner — see below)
 ```
 
 `--gesture` starts the gesture server (`python -m gesturewall.server --config
@@ -52,6 +53,76 @@ Two operational notes (details in [GEMINI.md](GEMINI.md)):
   password ready when the script starts them.
 - **Keep some ambient light on people.** Depth is IR and immune to lighting,
   but pose runs on the *color* image — a dark projected room starves it.
+
+## TouchDesigner pinch camera (hands protocol, :9980)
+
+An optional SECOND gesture input, fully independent of the fusion pipeline
+above: a TouchDesigner network (webcam + MediaPipe hand tracking — install and
+network layout in [touchdesigner/README.md](touchdesigner/README.md)) runs a
+WebSocket **server** on **:9980** streaming per-hand pinch frames at 30 Hz
+(tolerated 10–60 Hz). A wall opened with `&hands=ws://<td-host>:9980` (or
+`?hands=1` for `ws://<page-host>:9980`) mounts the pinch-camera layer:
+pinch-hold-drag one hand = orbit (release with a flick = coast through the
+rig's existing inertia); both hands pinched, spread/squeeze = ratio-preserving
+zoom + gentle midpoint pan. Port **9980** is clear of :8770 (fusion WS), :8781
+(gesture-wall http), :8788 (Vibersyn), :8801 (autocal) and the MediaPipe
+plugin's internal server.
+
+Wire protocol (JSON text frames only):
+
+```
+client -> server, first frame after open (informational; servers log/ignore it):
+
+  {"type":"hello","client":"vibersyn-pinch","wall":"A"}
+
+server -> client, one frame per tick at 30 Hz. An EMPTY hands array IS sent
+every tick — liveness contract, same as the fusion server's empty cursors:
+
+  {"type":"hands",
+   "t": 123.456,          // float seconds (TD absTime.seconds). Informational —
+                          //   the browser uses ITS OWN clock for staleness
+   "aspect": 1.7778,      // camera frame w/h so the browser aspect-corrects
+                          //   inter-hand distance; optional, default 16/9
+   "hands": [
+     {"id": 1,            // int detection slot (1|2). NOT stable identity across
+                          //   re-entry; the browser defends against swaps
+      "hand": "Left",     // "Left" | "Right" | null (informational)
+      "x": 0.42, "y": 0.31, // normalized [0,1], y DOWN (raw MediaPipe screen
+                          //   convention — never flipped in TD). x IS mirrored
+                          //   in TD (MIRROR_X=True): moving your hand to YOUR
+                          //   right increases x
+      "pinch": 0.2143,    // continuous ratio dist(thumb_tip,index_tip) /
+                          //   dist(wrist,middle_mcp), aspect-corrected, 4 dp.
+                          //   THE BROWSER'S HYSTERESIS RUNS ON THIS — feel
+                          //   tuning lives in one place
+      "pinching": true,   // TD-side hysteresis-latched bool (ON<0.30, OFF>0.45).
+                          //   Browser FALLBACK only when pinch is absent/null
+      "conf": 0.95        // optional, default 1
+     }]}
+```
+
+Contracts (browser side: `src/ui/gesture/hands-client.ts` + `pinch-cam.ts`):
+
+- **Liveness & staleness.** Empty `hands` frames flow every tick. The browser
+  enforces staleness with its OWN clock: a latched hand unseen for **0.25 s**
+  is a pinch CANCEL (release WITHOUT flick), and the layer's **250 ms** idle
+  tick releases everything if the whole stream stalls. A flick is suppressed
+  when the last real motion sample is older than **0.15 s** — loss of tracking
+  never launches the camera.
+- **Smoothing split.** The browser's 1-Euro filter owns positional smoothing;
+  an upstream Lag CHOP (~0.05 s) in TD is optional belt+braces, never required.
+- **Camera-control only.** This stream drives ONLY the camera rig and is fully
+  independent of the :8770 cursors/dwell stream — both may run at once. Known
+  interaction: a person pinching near a wall could also dwell-fire via the
+  fusion stream; fix sketched as a shared idle-flag gate, not built.
+- **Optional `wall` field.** A hands frame carrying a string `wall` that
+  mismatches the client's configured wall is dropped; absent = accepted. TD
+  omits it — this field (and the hello's `wall`) exists so a future fusion
+  server emitting hands frames can route per-wall.
+- **Frames with any other `type`** are silently ignored (future multiplexing).
+- **Concurrent rig writers.** A camera reset / fit / focus landing mid-pinch
+  snaps the camera once and self-heals — external input keeps writing and wins
+  (the rig's latest-writer-wins contract).
 
 ## Legacy: wall.html + tile bridge
 

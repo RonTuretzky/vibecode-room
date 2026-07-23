@@ -3,6 +3,7 @@ import type { CSSProperties } from "react";
 import { demoProjectorSnapshot, busyRoomSnapshot, emptyProjectorSnapshot, withUnmuted } from "./demo-data";
 import type { ProjectorProcess, ProjectorSnapshot, TranscriptLine } from "./types";
 import { GestureLayer } from "./gesture/GestureLayer";
+import { PinchCameraLayer } from "./gesture/PinchCameraLayer";
 import { RoomScene, type IdeaOrbSpec, type SceneLayout, type SceneMode, type TreeSpec } from "./RoomScene";
 import { Slideshow } from "./Slideshow";
 import { BuildDetail } from "./BuildDetail";
@@ -1204,6 +1205,11 @@ export function ProjectorApp({ initialSnapshot, urlSearch }: ProjectorAppProps) 
           mouseTest={urlConfig.dwell === "mouse"}
         />
       ) : null}
+      {/* PINCH CAMERA (?hands=): composes with gesture mode — pointerNav only
+          unbinds DOM listeners, the rig stays drivable through the registered
+          camera control — and with desk mode via the rig's latest-writer-wins
+          d* contract. */}
+      {urlConfig.hands !== null ? <PinchCameraLayer url={urlConfig.hands.url} wall={urlConfig.wall} /> : null}
       {urlConfig.badge ? (
         <div className="wall-badge" data-testid="wall-badge">
           {urlConfig.badge}

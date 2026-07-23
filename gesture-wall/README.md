@@ -14,6 +14,8 @@ depth cameras or fine finger tracking.
 > **Try it right now without a camera:** `python3 run.py` runs a **mouse test
 > mode** that drives the exact same selection pipeline with your mouse.
 
+Sibling deliverable: [touchdesigner/](touchdesigner/README.md) — hand-**pinch camera control** for the Vibersyn room UI, streamed from TouchDesigner (independent of this dwell/select pipeline).
+
 ---
 
 ## How you interact
