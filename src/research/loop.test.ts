@@ -230,3 +230,36 @@ describe("ResearchLoop lifecycle", () => {
     expect(order.slice(1)).toEqual(["B", "C"]); // proposed by confidence desc
   });
 });
+
+describe("ResearchLoop direct turn research", () => {
+  test("researchTurn spawns and runs a quest even for a turn the heuristic declines", async () => {
+    const loop = makeLoop();
+    loop.setActive(true);
+    loop.ingestTurn({ speaker: "s1", text: "hmm okay", atMs: 1 }); // too short for any heuristic
+    const turnId = loop.turns()[0]!.id;
+    const spawned = loop.researchTurn(turnId);
+    expect(spawned!.status).toBe("researching");
+    expect(spawned!.kind).toBe("deep-dive"); // human asked → deep-dive fallback
+    expect(spawned!.contextSpan.startTurnId).toBe(turnId);
+    await Bun.sleep(0);
+    expect(loop.quest(spawned!.id)!.status).toBe("complete");
+  });
+
+  test("researchTurn is idempotent per turn and 404-free on unknown ids", () => {
+    const loop = makeLoop();
+    loop.setActive(true);
+    expect(loop.researchTurn("rturn-nope")).toBeNull();
+    loop.ingestTurn({ speaker: "s1", text: "how much money would vending machines save by using crypto", atMs: 1 });
+    const turnId = loop.turns()[0]!.id;
+    const first = loop.researchTurn(turnId)!;
+    const second = loop.researchTurn(turnId)!;
+    expect(second.id).toBe(first.id); // double-click cannot double-spawn
+  });
+
+  test("researchTurn is inert while research mode is off", () => {
+    const loop = makeLoop();
+    loop.ingestTurn({ speaker: "s1", text: "a checkable claim with the number 42 in it", atMs: 1 });
+    const turnId = loop.turns()[0]!.id;
+    expect(loop.researchTurn(turnId)).toBeNull();
+  });
+});

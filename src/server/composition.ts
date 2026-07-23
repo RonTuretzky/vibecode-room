@@ -243,6 +243,10 @@ export interface ProjectorRuntime {
   // bias scan + sources) in the background. 404-free: unknown/non-proposed ids
   // are a no-op returning the current snapshot.
   acceptResearch(id: string, correlationId?: string): ProjectorSnapshot;
+  // Research a dialogue TURN directly (the wall clicked a turn node): creates
+  // the quest and spawns the agent in one step, bypassing the passive
+  // suggestion cadence. Unknown turn / mode off → no-op current snapshot.
+  researchTurn(turnId: string, correlationId?: string): ProjectorSnapshot;
   // Dismiss a quest: proposed → dropped + topic suppressed; researching →
   // cancelled; complete/failed → cleared from the wall.
   dismissResearch(id: string, correlationId?: string): ProjectorSnapshot;
@@ -1329,6 +1333,14 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       return this.#snapshot;
     }
     this.research.accept(id, correlationId);
+    return this.publishNow();
+  }
+
+  researchTurn(turnId: string, correlationId = `corr-research-turn-${crypto.randomUUID()}`): ProjectorSnapshot {
+    if (this.#emergencyTriggered) {
+      return this.#snapshot;
+    }
+    this.research.researchTurn(turnId, correlationId);
     return this.publishNow();
   }
 

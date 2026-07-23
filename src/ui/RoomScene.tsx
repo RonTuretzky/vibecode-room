@@ -185,6 +185,8 @@ interface RoomSceneProps {
   dialogue?: DialogueNodeSpec[];
   research?: ResearchNodeSpec[];
   onResearchNode?: (id: string) => void;
+  // Click/dwell a dialogue TURN node: research that utterance directly.
+  onDialogueNode?: (turnId: string) => void;
 }
 
 const MATURITY_COLOR: Record<IdeaTrayItem["maturity"], number> = {
@@ -518,7 +520,7 @@ interface Entry {
   removing: boolean;
 }
 
-export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, focusUpid = null, pointerNav = true, cornerLock = false, onAcceptIdea, onSelectProcess, dialogue = [], research = [], onResearchNode }: RoomSceneProps) {
+export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, focusUpid = null, pointerNav = true, cornerLock = false, onAcceptIdea, onSelectProcess, dialogue = [], research = [], onResearchNode, onDialogueNode }: RoomSceneProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const ideasRef = useRef(ideas);
   ideasRef.current = ideas;
@@ -530,6 +532,8 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
   researchRef.current = research;
   const onResearchRef = useRef(onResearchNode);
   onResearchRef.current = onResearchNode;
+  const onDialogueRef = useRef(onDialogueNode);
+  onDialogueRef.current = onDialogueNode;
   const modeRef = useRef(mode);
   modeRef.current = mode;
   const layoutRef = useRef(layout);
@@ -1693,12 +1697,25 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       mat.emissive.set(color);
       mat.emissiveIntensity = labeled ? 0.45 : 0.2;
       const node = new THREE.Mesh(GEO.turn, mat);
+      node.userData.pick = { kind: "dialogue", key: spec.id };
       group.add(node);
       const halo = new THREE.Sprite(
         new THREE.SpriteMaterial({ map: glowTexture, color, transparent: true, opacity: labeled ? 0.35 : 0.15, blending: THREE.AdditiveBlending, depthWrite: false }),
       );
       halo.scale.setScalar(0.9);
       group.add(halo);
+      // Turns are DIRECTLY researchable (click/dwell → spawn the quest), and
+      // the visible ball is tiny — a generous invisible hit sphere makes the
+      // turn pointable from projector distance, label included.
+      const hit = new THREE.Mesh(
+        new THREE.SphereGeometry(1.1, 8, 8),
+        new THREE.MeshBasicMaterial({ visible: false }),
+      );
+      hit.userData.ownGeometry = true;
+      hit.userData.ownMaterial = true;
+      hit.userData.pick = { kind: "dialogue", key: spec.id };
+      hit.position.y = 0.15;
+      group.add(hit);
       let label: THREE.Sprite | null = null;
       if (labeled && spec.text.length > 0) {
         label = makeLabelSprite(spec.text, spec.speaker ?? "room", cssHex(color));
@@ -2235,6 +2252,7 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
     let hoveredIdea: string | null = null;
     let hoveredProc: string | null = null;
     let hoveredResearch: string | null = null;
+    let hoveredTurn: string | null = null;
     let dragging = false;
     let panning = false;
     let dragMoved = 0;
@@ -2268,6 +2286,11 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         }
       }
       for (const entry of researchEntries.values()) {
+        if (!entry.removing) {
+          targets.push(entry.group);
+        }
+      }
+      for (const entry of dialogueEntries.values()) {
         if (!entry.removing) {
           targets.push(entry.group);
         }
@@ -2331,6 +2354,7 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       hoveredIdea = null;
       hoveredProc = null;
       hoveredResearch = null;
+      hoveredTurn = null;
       if (picked?.kind === "idea" && picked.key !== undefined && picked.key !== "__idle__") {
         const entry = ideaEntries.get(picked.key);
         if (entry?.ideaSpec?.status === "ready") {
@@ -2344,9 +2368,11 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         if (status === "proposed" || status === "complete") {
           hoveredResearch = picked.key;
         }
+      } else if (picked?.kind === "dialogue" && picked.key !== undefined) {
+        hoveredTurn = picked.key;
       }
       renderer.domElement.style.cursor =
-        hoveredIdea !== null || hoveredProc !== null || hoveredResearch !== null
+        hoveredIdea !== null || hoveredProc !== null || hoveredResearch !== null || hoveredTurn !== null
           ? "pointer"
           : dragging
             ? "grabbing"
@@ -2369,6 +2395,8 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         onSelectRef.current(picked.callsign);
       } else if (picked?.kind === "research" && picked.key !== undefined) {
         onResearchRef.current?.(picked.key);
+      } else if (picked?.kind === "dialogue" && picked.key !== undefined) {
+        onDialogueRef.current?.(picked.key);
       }
     };
     const onPointerLeave = () => {
@@ -2377,6 +2405,7 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       hoveredIdea = null;
       hoveredProc = null;
       hoveredResearch = null;
+      hoveredTurn = null;
       renderer.domElement.style.cursor = "grab";
     };
     const onWheel = (event: WheelEvent) => {
@@ -2390,6 +2419,7 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
     const SCENE_IDEA_PREFIX = "scene:idea:";
     const SCENE_PROC_PREFIX = "scene:proc:";
     const SCENE_RESEARCH_PREFIX = "scene:research:";
+    const SCENE_TURN_PREFIX = "scene:turn:";
     let dwellHighlights: ReadonlySet<string> = new Set();
     const sceneTargetIdOf = (picked: { kind: string; key?: string; callsign?: string } | null): string | null => {
       if (picked?.kind === "idea" && picked.key !== undefined && picked.key !== "__idle__") {
@@ -2405,6 +2435,11 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         if ((status === "proposed" || status === "complete") && entry !== undefined && !entry.removing) {
           return `${SCENE_RESEARCH_PREFIX}${picked.key}`;
         }
+      } else if (picked?.kind === "dialogue" && picked.key !== undefined) {
+        const entry = dialogueEntries.get(picked.key);
+        if (entry !== undefined && !entry.removing) {
+          return `${SCENE_TURN_PREFIX}${picked.key}`;
+        }
       }
       return null;
     };
@@ -2414,6 +2449,9 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       }
       if (id.startsWith(SCENE_RESEARCH_PREFIX)) {
         return researchEntries.get(id.slice(SCENE_RESEARCH_PREFIX.length)) ?? null;
+      }
+      if (id.startsWith(SCENE_TURN_PREFIX)) {
+        return dialogueEntries.get(id.slice(SCENE_TURN_PREFIX.length)) ?? null;
       }
       if (id.startsWith(SCENE_PROC_PREFIX)) {
         const callsign = id.slice(SCENE_PROC_PREFIX.length);
@@ -2478,6 +2516,8 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
           onAcceptRef.current(entry.ideaSpec.id);
         } else if (id.startsWith(SCENE_RESEARCH_PREFIX) && entry.researchSpec !== undefined) {
           onResearchRef.current?.(entry.researchSpec.id);
+        } else if (id.startsWith(SCENE_TURN_PREFIX) && entry.dialogueSpec !== undefined) {
+          onDialogueRef.current?.(entry.dialogueSpec.id);
         } else if (id.startsWith(SCENE_PROC_PREFIX) && entry.treeSpec !== undefined) {
           onSelectRef.current(entry.treeSpec.callsign);
         }
@@ -2730,8 +2770,17 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       // Dialogue turns: glide to their helix slot, gentle removal fade.
       for (const [specId, entry] of dialogueEntries) {
         entry.group.position.lerp(entry.targetPos, smoothing);
-        const next = THREE.MathUtils.lerp(entry.group.scale.x, entry.targetScale * (entry.removing ? 0 : 1), smoothing);
+        // Turns are researchable targets: hover/dwell reads back as the same
+        // grow-and-glow the crystals use, so pointing feels alive everywhere.
+        const turnHovered =
+          hoveredTurn === specId || dwellHighlights.has(`${SCENE_TURN_PREFIX}${specId}`);
+        const next = THREE.MathUtils.lerp(
+          entry.group.scale.x,
+          entry.targetScale * (entry.removing ? 0 : turnHovered ? 1.35 : 1),
+          smoothing,
+        );
         entry.group.scale.setScalar(Math.max(next, 0.0001));
+        entry.mats[0].emissiveIntensity = entry.baseEmissive + (turnHovered ? 0.35 : 0);
         if (entry.removing && entry.group.scale.x < 0.02) {
           disposeEntry(entry);
           dialogueEntries.delete(specId);

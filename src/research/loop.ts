@@ -7,6 +7,7 @@
 // only while the mode is active.
 
 import type { TranscriptTurn } from "../detect/types";
+import { suggestFromTurn } from "./suggester";
 import type {
   ResearchAgent,
   ResearchQuest,
@@ -47,7 +48,9 @@ export interface ResearchLoopOptions {
 const DEFAULT_WINDOW_TURNS = 40;
 const DEFAULT_MAX_PROPOSED = 6;
 const DEFAULT_MIN_ROUND_INTERVAL_MS = 6_000;
-const DEFAULT_NEW_WORDS_THRESHOLD = 18;
+// One spoken sentence is enough to be worth a round — 18 forced the room to
+// keep talking before ANY crystal could appear, which read as "broken".
+const DEFAULT_NEW_WORDS_THRESHOLD = 8;
 const DEFAULT_STALE_MISSED_ROUNDS = 6;
 const DEFAULT_SUPPRESS_MS = 5 * 60_000;
 
@@ -358,6 +361,67 @@ export class ResearchLoop {
         this.#emit();
       });
     return quest;
+  }
+
+  // DIRECT spawn: the wall clicked a dialogue TURN — research it now, skipping
+  // the passive suggestion cadence entirely. The heuristic classifier picks
+  // the kind; a turn it declines still deep-dives (a human explicitly asked,
+  // so word/shape thresholds don't apply). The maxProposed cap and topic
+  // suppression are also bypassed — both exist to keep PASSIVE proposals
+  // glanceable. A turn already grounding a quest re-uses it (proposed →
+  // accept; otherwise no-op returning it) so double-clicks can't double-spawn.
+  researchTurn(turnId: string, correlationId = `corr-research-turn-${turnId}`): ResearchQuest | null {
+    if (!this.#active) {
+      return null;
+    }
+    const turn = this.#turns.find((candidate) => candidate.id === turnId);
+    if (turn === undefined) {
+      return null;
+    }
+    const existing = [...this.#quests.values()].find(
+      (quest) => quest.contextSpan.startTurnId === turnId && quest.status !== "failed",
+    );
+    if (existing !== undefined) {
+      return existing.status === "proposed" ? this.accept(existing.id, correlationId) : existing;
+    }
+    const text = turn.text.trim();
+    const topicWords = text.split(/\s+/u).slice(0, 8).join(" ");
+    const suggestion: ResearchSuggestion = suggestFromTurn(turn) ?? {
+      matchId: null,
+      kind: "deep-dive",
+      topic: topicWords.charAt(0).toUpperCase() + topicWords.slice(1),
+      claim: text.slice(0, 280),
+      rationale: "Asked directly from the wall.",
+      confidence: 0.75,
+      contextSpan: { startTurnId: turn.id, endTurnId: turn.id, quote: text.slice(0, 180) },
+    };
+    const nowMs = this.#clock();
+    const quest: ResearchQuest = {
+      id: `rq-${this.#idFactory()}`,
+      kind: suggestion.kind,
+      topic: suggestion.topic,
+      claim: suggestion.claim,
+      rationale: suggestion.rationale,
+      confidence: clamp01(Math.max(suggestion.confidence, 0.75)),
+      contextSpan: { ...suggestion.contextSpan },
+      status: "proposed",
+      progress: 0,
+      progressLabel: "",
+      report: null,
+      error: null,
+      roundsSeen: 1,
+      missedRounds: 0,
+      firstSeenAtMs: nowMs,
+      updatedAtMs: nowMs,
+    };
+    this.#quests.set(quest.id, quest);
+    this.#trace("research.turn.spawn", "info", correlationId, {
+      id: quest.id,
+      turnId,
+      kind: quest.kind,
+      topic: quest.topic,
+    });
+    return this.accept(quest.id, correlationId);
   }
 
   // Dismiss: a proposed quest is dropped and its topic suppressed for the

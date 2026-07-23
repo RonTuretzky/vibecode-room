@@ -528,6 +528,26 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
     [actOnResearch],
   );
 
+  // Clicking a dialogue TURN in the 3D tree: research that utterance directly —
+  // the server creates the quest and spawns the agent in one step, no passive
+  // suggestion round required.
+  const onDialogueNode = useCallback(
+    async (turnId: string) => {
+      if (!liveMode || mockModeRef.current) {
+        return; // offline demo: turns render but the direct spawn needs the server
+      }
+      try {
+        const response = await fetch(`/api/research/turn/${encodeURIComponent(turnId)}`, { method: "POST" });
+        if (response.ok && response.headers.get("content-type")?.includes("application/json")) {
+          setSnapshot((await response.json()) as ProjectorSnapshot);
+        }
+      } catch {
+        // Non-authoritative projector: a failed POST must never block the UI.
+      }
+    },
+    [liveMode],
+  );
+
   // CLICK A PROJECT -> STEER IT. In live mode, clicking a process bubble/panel sets
   // it as the steering target (so subsequent transcript routes to it); clicking the
   // current target again clears steering. In offline demo it falls back to opening
@@ -1435,6 +1455,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
         dialogue={dialogueSpecs}
         research={researchSpecs}
         onResearchNode={onResearchNode}
+        onDialogueNode={(turnId) => void onDialogueNode(turnId)}
       />
       {dwellLayerOn ? (
         <GestureLayer

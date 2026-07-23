@@ -178,6 +178,14 @@ export function createProjectorApp(runtime: ProjectorRuntime, options: Projector
     }
     return context.json(runtime.acceptResearch(context.req.param("id")));
   });
+  // DIALOGUE TREE: research a TURN directly — clicking/dwelling a turn node on
+  // the wall spawns the quest+agent in one step (no proposal round needed).
+  app.post("/api/research/turn/:id", (context) => {
+    if (isOfflineDemoRequest(context.req.header("referer"))) {
+      return context.json(runtime.snapshot());
+    }
+    return context.json(runtime.researchTurn(context.req.param("id")));
+  });
   // RESEARCH TRAY: dismiss a quest (proposed → suppressed for the cooldown;
   // researching → cancelled; complete/failed → cleared from the wall).
   app.post("/api/research/:id/dismiss", (context) => {

@@ -118,7 +118,8 @@ const REPORTED_SPEECH =
 const SUPERLATIVE =
   /\b(best|worst|most|least|biggest|smallest|fastest|slowest|first|last|only|never|always|every|all|none|no one|nobody)\b/u;
 const NUMERIC = /\d/u;
-const QUESTION = /\b(what if|what is|what are|how does|how do|why does|why do|why is|why are|i wonder|is it true)\b/u;
+const QUESTION =
+  /\b(what if|what is|what are|how does|how do|how much|how many|how long|how often|why does|why do|why is|why are|i wonder|is it true|is it worth|would it|could we|should we)\b/u;
 const MIN_CLAIM_WORDS = 6;
 const MIN_TOPIC_WORDS = 12;
 
@@ -142,7 +143,9 @@ export class HeuristicResearchSuggester implements ResearchSuggester {
   }
 }
 
-function suggestFromTurn(turn: TranscriptTurn): ResearchSuggestion | null {
+// Classify ONE turn into a research suggestion. Exported for the loop's
+// direct spawn path (clicking a dialogue node on the wall researches it now).
+export function suggestFromTurn(turn: TranscriptTurn): ResearchSuggestion | null {
   const text = turn.text.trim();
   const lower = text.toLowerCase();
   const words = lower.split(/\s+/u).filter((word) => word.length > 0);
