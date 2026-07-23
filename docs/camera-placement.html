@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kinect placement planner — single-wall gesture rig</title>
+<style>
+  .viz-root {
+    /* palette roles (light) */
+    --surface-1:    #fcfcfb;
+    --page:         #f9f9f7;
+    --text-primary: #0b0b0b;
+    --text-secondary:#52514e;
+    --text-muted:   #898781;
+    --grid:         #e1e0d9;
+    --baseline:     #c3c2b7;
+    --border:       rgba(11,11,11,0.10);
+    --fov:          #2a78d6;  /* series-1 blue: camera FOV coverage */
+    --zone:         #1baf7a;  /* series-2 aqua: interaction zone */
+    --proj:         #4a3aa7;  /* series-5 violet: projected image */
+    --status-good:      #0ca30c;
+    --status-warning:   #fab219;
+    --status-serious:   #ec835a;
+    --status-critical:  #d03b3b;
+  }
+  @media (prefers-color-scheme: dark) {
+    .viz-root {
+      --surface-1:    #1a1a19;
+      --page:         #0d0d0d;
+      --text-primary: #ffffff;
+      --text-secondary:#c3c2b7;
+      --text-muted:   #898781;
+      --grid:         #2c2c2a;
+      --baseline:     #383835;
+      --border:       rgba(255,255,255,0.10);
+      --fov:          #3987e5;
+      --zone:         #199e70;
+      --proj:         #9085e9;
+    }
+  }
+  html, body { margin:0; padding:0; background: var(--page); }
+  .viz-root {
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    color: var(--text-primary);
+    background: var(--page);
+    max-width: 1060px; margin: 0 auto; padding: 20px 16px 40px;
+  }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: var(--text-secondary); font-size: 13px; margin: 0 0 16px; max-width: 72ch; }
+  .panel {
+    background: var(--surface-1); border: 1px solid var(--border);
+    border-radius: 10px; padding: 14px 16px; margin-bottom: 14px;
+  }
+  /* controls row */
+  .controls { display: flex; flex-wrap: wrap; gap: 14px 22px; align-items: flex-end; }
+  .ctl { display: flex; flex-direction: column; gap: 3px; min-width: 130px; }
+  .ctl label { font-size: 11px; color: var(--text-secondary); letter-spacing: .02em; }
+  .ctl output { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .ctl input[type=range] { width: 150px; accent-color: var(--fov); }
+  .ctl select {
+    font: inherit; font-size: 13px; color: var(--text-primary);
+    background: var(--surface-1); border: 1px solid var(--baseline); border-radius: 6px; padding: 3px 6px;
+  }
+  .presets { display: flex; gap: 8px; }
+  .presets button {
+    font: inherit; font-size: 12px; padding: 5px 10px; border-radius: 7px;
+    border: 1px solid var(--baseline); background: var(--surface-1);
+    color: var(--text-primary); cursor: pointer;
+  }
+  .presets button:hover { border-color: var(--fov); }
+  /* verdict tiles */
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(185px, 1fr)); gap: 10px; }
+  .tile {
+    background: var(--surface-1); border: 1px solid var(--border); border-radius: 10px;
+    padding: 10px 12px; display: flex; flex-direction: column; gap: 2px;
+  }
+  .tile .head { display: flex; align-items: center; gap: 7px; font-size: 12.5px; font-weight: 600; }
+  .tile .head svg { flex: none; }
+  .tile .why { font-size: 11.5px; color: var(--text-secondary); line-height: 1.35; }
+  .tile .num { font-size: 12px; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+  /* diagrams */
+  .diagrams { display: grid; grid-template-columns: 1fr; gap: 14px; }
+  @media (min-width: 900px) { .diagrams { grid-template-columns: 3fr 2fr; } }
+  .fig h2 { font-size: 13px; margin: 0 0 2px; }
+  .fig .cap { font-size: 11.5px; color: var(--text-secondary); margin: 0 0 8px; }
+  svg text { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 11.5px; color: var(--text-secondary); margin-top: 8px; }
+  .legend .it { display: inline-flex; align-items: center; gap: 6px; }
+  .sw { width: 14px; height: 10px; border-radius: 2px; display: inline-block; }
+  /* numbers table */
+  table { border-collapse: collapse; font-size: 12.5px; width: 100%; }
+  th { text-align: left; color: var(--text-secondary); font-weight: 600; padding: 4px 10px 4px 0; border-bottom: 1px solid var(--grid); }
+  td { padding: 4px 10px 4px 0; border-bottom: 1px solid var(--grid); font-variant-numeric: tabular-nums; }
+  td.l { color: var(--text-secondary); }
+  .foot { font-size: 11.5px; color: var(--text-muted); margin-top: 10px; line-height: 1.45; max-width: 90ch; }
+  /* hover tooltip */
+  #tip {
+    position: fixed; pointer-events: none; display: none; z-index: 10;
+    background: var(--surface-1); color: var(--text-primary);
+    border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px;
+    font-size: 11.5px; max-width: 240px; line-height: 1.4;
+    box-shadow: 0 4px 14px rgba(0,0,0,.14);
+  }
+  #tip b { display: block; margin-bottom: 2px; }
+</style>
+</head>
+<body>
+<div class="viz-root">
+  <h1>Kinect v2 placement planner — single-wall gesture rig</h1>
+  <p class="sub">
+    Where to put the camera so people can point at the wall and dwell-select.
+    Topology: the Kinect faces the wall from <b>behind</b> the people; it sees their
+    backs, casts a shoulder→hand ray, and intersects it with the calibrated wall plane.
+    Drag the sliders — the verdicts and both views update with the real Kinect&nbsp;v2
+    constraints (70.6°×60° depth FOV, reliable range 0.5–4.5&nbsp;m).
+  </p>
+
+  <div class="panel">
+    <div class="controls">
+      <div class="ctl"><label for="w">Projected image width</label>
+        <input type="range" id="w" min="1.0" max="4.5" step="0.02" value="2.86">
+        <output id="wo">2.86 m</output></div>
+      <div class="ctl"><label for="d">Camera → wall distance</label>
+        <input type="range" id="d" min="1.0" max="6.0" step="0.05" value="3.00">
+        <output id="do">3.00 m</output></div>
+      <div class="ctl"><label for="yaw">Camera yaw off-square</label>
+        <input type="range" id="yaw" min="0" max="30" step="0.5" value="0">
+        <output id="yawo">0°</output></div>
+      <div class="ctl"><label for="h">Camera height</label>
+        <input type="range" id="h" min="0.6" max="2.4" step="0.05" value="1.70">
+        <output id="ho">1.70 m</output></div>
+      <div class="ctl"><label for="b">Image bottom above floor</label>
+        <input type="range" id="b" min="0.1" max="1.6" step="0.05" value="0.70">
+        <output id="bo">0.70 m</output></div>
+      <div class="ctl"><label for="asp">Image aspect</label>
+        <select id="asp">
+          <option value="2.25" selected>as calibrated (2.25:1)</option>
+          <option value="1.78">16:9 (1.78:1)</option>
+        </select></div>
+      <div class="ctl"><label>Presets</label>
+        <div class="presets">
+          <button id="pMeasured" title="The numbers autocal measured on this rig today">Rig as calibrated</button>
+          <button id="pIdeal" title="Same wall, camera squared up and pulled back">Recommended</button>
+        </div></div>
+    </div>
+  </div>
+
+  <div class="tiles" id="tiles"></div>
+
+  <div class="diagrams" style="margin-top:14px">
+    <div class="panel fig">
+      <h2>Top-down view</h2>
+      <p class="cap">Wall at top; camera at bottom. Hover any zone for what it means.</p>
+      <svg id="top" viewBox="0 0 560 430" width="100%" role="img" aria-label="Top-down room diagram"></svg>
+      <div class="legend">
+        <span class="it"><span class="sw" style="background:var(--proj)"></span>projected image</span>
+        <span class="it"><span class="sw" style="background:color-mix(in srgb, var(--fov) 22%, transparent); border:1px solid var(--fov)"></span>depth-camera FOV</span>
+        <span class="it"><span class="sw" style="background:color-mix(in srgb, var(--zone) 30%, transparent); border:1px solid var(--zone)"></span>interaction zone (stand here)</span>
+        <span class="it"><span class="sw" style="background:repeating-linear-gradient(45deg, var(--baseline) 0 2px, transparent 2px 5px)"></span>blind &lt; 0.5 m</span>
+      </div>
+    </div>
+    <div class="panel fig">
+      <h2>Side view</h2>
+      <p class="cap">Vertical 60° FOV from camera height, level aim.</p>
+      <svg id="side" viewBox="0 0 400 430" width="100%" role="img" aria-label="Side view room diagram"></svg>
+      <div class="legend">
+        <span class="it"><span class="sw" style="background:var(--proj)"></span>projected image</span>
+        <span class="it"><span class="sw" style="background:color-mix(in srgb, var(--fov) 22%, transparent); border:1px solid var(--fov)"></span>vertical FOV</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2 style="font-size:13px;margin:0 0 8px">The numbers</h2>
+    <table id="nums" aria-label="Computed placement numbers"></table>
+    <p class="foot">
+      Rules encoded here: horizontal depth-FOV coverage at the wall ≈ 1.41 × distance
+      (2·tan 35.3°), vertical ≈ 1.15 × distance (2·tan 30°); time-of-flight depth is blind
+      under 0.5 m and degrades past ~4.5 m (auto-calibration reads depth <i>off the wall</i>,
+      so the wall itself must stay inside that range); autocal refuses projections narrower
+      than 1.0 m or wider than 4.5 m. Squareness matters less than it looks — the ray→plane
+      math is exact at any angle — but past ~10° the far side of the wall gets noticeably
+      fewer, noisier depth pixels (this rig calibrated fine at 17° off-square; square it up
+      when you mount it permanently). Keep ambient light <b>on the people</b> (pose runs on
+      the color image), no direct sunlight, rigid mount, recalibrate after any bump —
+      <code>./run-room.sh --calibrate --config=gesture-wall/room.kinect.json</code> (~1 min).
+    </p>
+  </div>
+</div>
+<div id="tip"></div>
+
+<script>
+(() => {
+  const HFOV = 70.6 * Math.PI/180, VFOV = 60 * Math.PI/180;
+  const TOF_MIN = 0.5, TOF_MAX = 4.5;
+  const $ = id => document.getElementById(id);
+  const state = { w: 2.86, d: 3.0, yaw: 0, h: 1.7, b: 0.7, asp: 2.25 };
+
+  // ---- verdict logic ----------------------------------------------------
+  function verdicts(s) {
+    const half = HFOV/2, th = s.yaw * Math.PI/180;
+    // covered x-range on the wall line z = d (camera at origin, +x right)
+    const xl = s.d * Math.tan(th - half), xr = s.d * Math.tan(th + half);
+    const need = s.w/2;
+    const marginL = -need - xl >= 0 ? xl - (-need) : xl + need;  // signed slack
+    const slackL = -need - xl, slackR = xr - need;               // ≥0 ⇒ edge covered
+    const slack = Math.min(slackL, slackR);
+    const v = [];
+    v.push(slack >= 0.2
+      ? { s:'good', t:'Projection fits the FOV', why:`≥ ${fmt(slack)} m spare beyond each edge`, n:`covers ${fmt(xl)}…${fmt(xr)} m` }
+      : slack >= 0
+      ? { s:'warning', t:'Projection barely fits', why:`only ${fmt(slack)} m spare at the worst edge — autocal wants margin`, n:'' }
+      : { s:'critical', t:'Projection cut off', why:`${fmt(-slack)} m of the image is outside the depth frame — autocal will miss markers`, n:'' });
+    v.push(s.d <= 4.2 && s.d >= 1.5
+      ? { s:'good', t:'Wall in depth sweet spot', why:`${fmt(s.d)} m — clean ToF returns for calibration`, n:'' }
+      : s.d <= TOF_MAX
+      ? { s:'warning', t:'Wall at depth limit', why:`${fmt(s.d)} m — ToF quality falls off near 4.5 m`, n:'' }
+      : s.d < 1.5
+      ? { s:'warning', t:'Camera very close', why:'under ~1.5 m the interaction zone disappears', n:'' }
+      : { s:'critical', t:'Wall beyond depth range', why:`${fmt(s.d)} m > 4.5 m — calibration cannot sample the wall`, n:'' });
+    const band = Math.max(0, (s.d - 0.6) - 0.8);   // people: 0.8 m from lens … 0.6 m from wall
+    v.push(band >= 1.0
+      ? { s:'good', t:'Room for people', why:`${fmt(band)} m deep standing band (0.8 m from lens → 0.6 m from wall)`, n:'' }
+      : band > 0.3
+      ? { s:'warning', t:'Tight standing band', why:`only ${fmt(band)} m between lens clearance and the wall`, n:'' }
+      : { s:'serious', t:'No standing band', why:'pull the camera back — people have nowhere to stand', n:'' });
+    v.push(s.yaw <= 10
+      ? { s:'good', t:'Camera square to wall', why:`${s.yaw}° off-square — even depth quality across the wall`, n:'' }
+      : s.yaw <= 20
+      ? { s:'warning', t:'Camera skewed', why:`${s.yaw}° — far side of the wall gets fewer, noisier depth pixels`, n:'' }
+      : { s:'serious', t:'Camera badly skewed', why:`${s.yaw}° — square it up; detection on the far side will suffer`, n:'' });
+    const hp = s.w / s.asp, top = s.b + hp;
+    const yTop = s.h + s.d * Math.tan(VFOV/2), yBot = s.h - s.d * Math.tan(VFOV/2);
+    v.push(top <= yTop && s.b >= Math.max(0, yBot)
+      ? { s:'good', t:'Image inside vertical FOV', why:`frame spans ${fmt(Math.max(0,yBot))}–${fmt(yTop)} m at the wall`, n:'' }
+      : { s:'warning', t:'Image clipped vertically', why:`frame spans ${fmt(Math.max(0,yBot))}–${fmt(yTop)} m; image is ${fmt(s.b)}–${fmt(top)} m — adjust height or distance`, n:'' });
+    const okW = s.w >= 1.0 && s.w <= 4.5;
+    if (!okW) v.push({ s:'critical', t:'Autocal size gate', why:`projection must be 1.0–4.5 m wide (is ${fmt(s.w)} m)`, n:'' });
+    return { v, xl, xr, band, hp, top, yTop, yBot };
+  }
+  const fmt = x => (Math.round(x*100)/100).toFixed(2).replace(/\.?0+$/,'') || '0';
+
+  const ICONS = {
+    good:     '<svg width="15" height="15" viewBox="0 0 15 15"><circle cx="7.5" cy="7.5" r="7" fill="var(--status-good)"/><path d="M4.2 7.8l2.2 2.2 4.4-4.9" stroke="#fff" stroke-width="1.7" fill="none" stroke-linecap="round"/></svg>',
+    warning:  '<svg width="15" height="15" viewBox="0 0 15 15"><path d="M7.5 1L14 13H1z" fill="var(--status-warning)"/><rect x="6.8" y="5" width="1.4" height="4" rx=".7" fill="#0b0b0b"/><circle cx="7.5" cy="11" r=".9" fill="#0b0b0b"/></svg>',
+    serious:  '<svg width="15" height="15" viewBox="0 0 15 15"><rect x="1" y="1" width="13" height="13" rx="3" fill="var(--status-serious)"/><rect x="6.8" y="3.6" width="1.4" height="5" rx=".7" fill="#fff"/><circle cx="7.5" cy="10.9" r=".95" fill="#fff"/></svg>',
+    critical: '<svg width="15" height="15" viewBox="0 0 15 15"><circle cx="7.5" cy="7.5" r="7" fill="var(--status-critical)"/><path d="M4.8 4.8l5.4 5.4M10.2 4.8l-5.4 5.4" stroke="#fff" stroke-width="1.7" stroke-linecap="round"/></svg>'
+  };
+
+  // ---- rendering --------------------------------------------------------
+  const tipEl = $('tip');
+  function zoneHover(el, title, body) {
+    el.addEventListener('mousemove', e => {
+      tipEl.style.display = 'block';
+      tipEl.innerHTML = '<b>' + title + '</b>' + body;
+      const x = Math.min(e.clientX + 14, window.innerWidth - 260);
+      tipEl.style.left = x + 'px'; tipEl.style.top = (e.clientY + 14) + 'px';
+    });
+    el.addEventListener('mouseleave', () => tipEl.style.display = 'none');
+  }
+  const NS = 'http://www.w3.org/2000/svg';
+  function el(svg, tag, attrs, hover) {
+    const n = document.createElementNS(NS, tag);
+    for (const k in attrs) n.setAttribute(k, attrs[k]);
+    svg.appendChild(n);
+    if (hover) { n.style.pointerEvents = 'all'; zoneHover(n, hover[0], hover[1]); }
+    return n;
+  }
+  function txt(svg, x, y, s, fill, size, anchor, weight) {
+    const t = el(svg, 'text', { x, y, fill: fill || 'var(--text-secondary)',
+      'font-size': size || 10.5, 'text-anchor': anchor || 'start' });
+    if (weight) t.setAttribute('font-weight', weight);
+    t.textContent = s; return t;
+  }
+
+  function drawTop(s, g) {
+    const svg = $('top'); svg.innerHTML = '';
+    // world→px: x∈[-3.2,3.2] → [20,540]; z: wall at top. depth axis 0..6.2 m
+    const W = 560, H = 430, SC = (540-20)/6.4;
+    const px = x => 280 + x*SC, pz = z => 40 + (s.d - z + (6.0 - s.d))*0 + (H-60) - z*SC + 0; // computed below instead
+    const zpx = z => (H - 40) - z * ((H-90)/6.0);  // z=0 bottom, z=6 top
+    const camY = zpx(0), wallY = zpx(s.d);
+    // hatch pattern for blind zone
+    const defs = el(svg, 'defs', {});
+    const pat = document.createElementNS(NS, 'pattern');
+    pat.setAttribute('id','hatch'); pat.setAttribute('width','6'); pat.setAttribute('height','6');
+    pat.setAttribute('patternUnits','userSpaceOnUse'); pat.setAttribute('patternTransform','rotate(45)');
+    const pl = document.createElementNS(NS,'rect');
+    pl.setAttribute('width','2'); pl.setAttribute('height','6'); pl.setAttribute('fill','var(--baseline)');
+    pat.appendChild(pl); defs.appendChild(pat);
+
+    // metre grid (recessive)
+    for (let z = 1; z <= 6; z++) {
+      el(svg, 'line', { x1: 20, x2: 540, y1: zpx(z), y2: zpx(z), stroke: 'var(--grid)', 'stroke-width': 1 });
+      txt(svg, 26, zpx(z)-3, z + ' m', 'var(--text-muted)', 9.5);
+    }
+    // FOV wedge (blue translucent), clipped at wall depth + a bit beyond
+    const th = s.yaw*Math.PI/180, half = HFOV/2;
+    const zf = Math.min(s.d + 0.55, 6.0);
+    const wx1 = zf * Math.tan(th - half), wx2 = zf * Math.tan(th + half);
+    el(svg, 'path', {
+      d: `M ${px(0)} ${camY} L ${px(wx1)} ${zpx(zf)} L ${px(wx2)} ${zpx(zf)} Z`,
+      fill: 'color-mix(in srgb, var(--fov) 18%, transparent)',
+      stroke: 'var(--fov)', 'stroke-width': 1.5
+    }, ['Depth-camera FOV', `70.6° horizontal. At the wall it covers ${fmt(g.xl)} m to ${fmt(g.xr)} m (≈1.41 × distance when square). Everything you care about — the whole projection and the people — must be inside this wedge.`]);
+    // blind radius hatch
+    el(svg, 'path', {
+      d: `M ${px(0)} ${camY} L ${px(TOF_MIN*Math.tan(th-half))} ${zpx(TOF_MIN)} L ${px(TOF_MIN*Math.tan(th+half))} ${zpx(TOF_MIN)} Z`,
+      fill: 'url(#hatch)', opacity: .55
+    }, ['Blind zone', 'Time-of-flight depth returns nothing under 0.5 m. Nobody can be tracked here.']);
+    // interaction zone band
+    const zi0 = 0.8, zi1 = Math.max(zi0, s.d - 0.6);
+    if (zi1 > zi0) {
+      const ix1 = z => z * Math.tan(th - half), ix2 = z => z * Math.tan(th + half);
+      el(svg, 'path', {
+        d: `M ${px(ix1(zi0))} ${zpx(zi0)} L ${px(ix1(zi1))} ${zpx(zi1)} L ${px(ix2(zi1))} ${zpx(zi1)} L ${px(ix2(zi0))} ${zpx(zi0)} Z`,
+        fill: 'color-mix(in srgb, var(--zone) 26%, transparent)', stroke: 'var(--zone)', 'stroke-width': 1.2, 'stroke-dasharray': '4 3'
+      }, ['Interaction zone', `Stand 0.8 m from the lens to 0.6 m from the wall (${fmt(g.band)} m deep here), inside the wedge, backs to the camera, pointing at the wall.`]);
+      // people glyphs
+      const zp = (zi0+zi1)/2;
+      [-0.55, 0.45].forEach(fx => {
+        const gx = px(zp*Math.tan(th) + fx), gy = zpx(zp);
+        el(svg, 'circle', { cx: gx, cy: gy, r: 7, fill: 'none', stroke: 'var(--text-secondary)', 'stroke-width': 1.6 });
+        el(svg, 'line', { x1: gx, y1: gy-7, x2: gx, y2: gy-13, stroke: 'var(--text-secondary)', 'stroke-width': 1.6 });
+      });
+    }
+    // wall line + projection
+    el(svg, 'line', { x1: 20, x2: 540, y1: wallY, y2: wallY, stroke: 'var(--baseline)', 'stroke-width': 2 });
+    el(svg, 'line', { x1: px(-s.w/2), x2: px(s.w/2), y1: wallY, y2: wallY, stroke: 'var(--proj)', 'stroke-width': 6, 'stroke-linecap': 'round' },
+      ['Projected image', `${fmt(s.w)} m wide. Tape-measure this and put it in walls.A.width_m — autocal pins its plane fit to it.`]);
+    txt(svg, px(0), wallY - 10, `projection ${fmt(s.w)} m`, 'var(--proj)', 11, 'middle', 600);
+    // covered-span ticks on the wall
+    const cl = Math.max(g.xl, -3.1), cr = Math.min(g.xr, 3.1);
+    el(svg, 'line', { x1: px(cl), x2: px(cr), y1: wallY+7, y2: wallY+7, stroke: 'var(--fov)', 'stroke-width': 2 });
+    txt(svg, px((cl+cr)/2), wallY+19, `depth frame covers ${fmt(cr-cl)} m at the wall`, 'var(--fov)', 10, 'middle');
+    // camera glyph
+    el(svg, 'rect', { x: px(0)-11, y: camY-8, width: 22, height: 12, rx: 3, fill: 'var(--fov)' },
+      ['Kinect v2', `Camera at the room origin, ${fmt(s.d)} m from the wall${s.yaw ? ', yawed ' + s.yaw + '°' : ', square to the wall'}. Mount it rigidly — any bump means recalibrating.`]);
+    txt(svg, px(0), camY + 18, 'Kinect v2  (cam0 = room origin)', 'var(--text-primary)', 11, 'middle', 600);
+    // distance dimension line
+    el(svg, 'line', { x1: 500, x2: 500, y1: camY, y2: wallY, stroke: 'var(--text-muted)', 'stroke-width': 1, 'stroke-dasharray': '3 3' });
+    txt(svg, 508, (camY+wallY)/2, fmt(s.d) + ' m', 'var(--text-muted)', 10);
+  }
+
+  function drawSide(s, g) {
+    const svg = $('side'); svg.innerHTML = '';
+    const H = 430, SC = (H-90)/3.4;              // y: 0..3.4 m
+    const ypx = y => (H - 45) - y * SC;
+    const SCX = (330-40)/6.0, xpx = z => 40 + z * SCX;  // camera left, wall right
+    // floor + height grid
+    for (let y = 1; y <= 3; y++) {
+      el(svg, 'line', { x1: 40, x2: 380, y1: ypx(y), y2: ypx(y), stroke: 'var(--grid)', 'stroke-width': 1 });
+      txt(svg, 384, ypx(y)+3, y + ' m', 'var(--text-muted)', 9.5, 'end');
+    }
+    el(svg, 'line', { x1: 20, x2: 380, y1: ypx(0), y2: ypx(0), stroke: 'var(--baseline)', 'stroke-width': 2 });
+    txt(svg, 24, ypx(0)+14, 'floor', 'var(--text-muted)', 10);
+    const wallX = xpx(s.d);
+    // vertical FOV wedge
+    const yT = s.h + s.d*Math.tan(VFOV/2), yB = s.h - s.d*Math.tan(VFOV/2);
+    el(svg, 'path', {
+      d: `M ${xpx(0)} ${ypx(s.h)} L ${wallX} ${ypx(yT)} L ${wallX} ${ypx(Math.max(0,yB))} ${yB<0?`L ${xpx(s.h/Math.tan(VFOV/2))} ${ypx(0)}`:''} Z`,
+      fill: 'color-mix(in srgb, var(--fov) 18%, transparent)', stroke: 'var(--fov)', 'stroke-width': 1.5
+    }, ['Vertical FOV', `60°, aimed level from ${fmt(s.h)} m: spans ${fmt(Math.max(0,yB))}–${fmt(yT)} m at the wall. The whole image (and people's shoulders + hands) must sit inside.`]);
+    // wall + projection band
+    el(svg, 'line', { x1: wallX, x2: wallX, y1: ypx(0), y2: ypx(3.3), stroke: 'var(--baseline)', 'stroke-width': 2 });
+    el(svg, 'line', { x1: wallX, x2: wallX, y1: ypx(s.b), y2: ypx(g.top), stroke: 'var(--proj)', 'stroke-width': 6, 'stroke-linecap': 'round' },
+      ['Projected image', `${fmt(g.hp)} m tall (${s.asp}:1 of ${fmt(s.w)} m), bottom edge ${fmt(s.b)} m above the floor.`]);
+    txt(svg, wallX - 8, ypx((s.b+g.top)/2), `${fmt(g.hp)} m`, 'var(--proj)', 10.5, 'end', 600);
+    // camera glyph + height
+    el(svg, 'rect', { x: xpx(0)-7, y: ypx(s.h)-6, width: 16, height: 10, rx: 3, fill: 'var(--fov)' },
+      ['Kinect v2', `Mounted at ${fmt(s.h)} m (tripod or shelf), aimed level. Tilting shifts the vertical band — fine, autocal measures whatever the pose is; just keep the image inside.`]);
+    el(svg, 'line', { x1: xpx(0)+1, x2: xpx(0)+1, y1: ypx(0), y2: ypx(s.h)-6, stroke: 'var(--text-muted)', 'stroke-width': 1, 'stroke-dasharray': '3 3' });
+    txt(svg, xpx(0)+7, ypx(s.h/2), fmt(s.h) + ' m', 'var(--text-muted)', 10);
+    // person glyph mid-zone
+    const zp = Math.max(0.9, (0.8 + Math.max(0.8, s.d-0.6))/2);
+    const gx = xpx(zp);
+    el(svg, 'circle', { cx: gx, cy: ypx(1.62), r: 6, fill: 'none', stroke: 'var(--zone)', 'stroke-width': 1.6 });
+    el(svg, 'line', { x1: gx, y1: ypx(1.62)+6, x2: gx, y2: ypx(0.95), stroke: 'var(--zone)', 'stroke-width': 1.6 });
+    el(svg, 'line', { x1: gx, y1: ypx(1.38), x2: gx+16, y2: ypx(1.52), stroke: 'var(--zone)', 'stroke-width': 1.6 });
+    txt(svg, gx, ypx(0.95)-(-14), 'pointing', 'var(--zone)', 10, 'middle');
+  }
+
+  function drawTiles(g) {
+    $('tiles').innerHTML = g.v.map(t =>
+      `<div class="tile"><div class="head">${ICONS[t.s]}<span>${t.t}</span></div>
+       <div class="why">${t.why}</div>${t.n?`<div class="num">${t.n}</div>`:''}</div>`).join('');
+  }
+  function drawNums(s, g) {
+    const rows = [
+      ['Horizontal coverage at the wall', fmt(Math.min(g.xr,3.2)-Math.max(g.xl,-3.2)) + ' m  (' + fmt(g.xl) + ' … ' + fmt(g.xr) + ' m)'],
+      ['Vertical coverage at the wall', fmt(Math.max(0,g.yBot)) + ' – ' + fmt(g.yTop) + ' m above floor'],
+      ['Projected image', fmt(s.w) + ' × ' + fmt(g.hp) + ' m, bottom at ' + fmt(s.b) + ' m'],
+      ['Standing band (0.8 m from lens → 0.6 m from wall)', fmt(g.band) + ' m deep'],
+      ['ToF depth window', TOF_MIN + ' – ' + TOF_MAX + ' m (wall at ' + fmt(s.d) + ' m)'],
+    ];
+    $('nums').innerHTML = '<tr><th>Quantity</th><th>Value</th></tr>' +
+      rows.map(r => `<tr><td class="l">${r[0]}</td><td>${r[1]}</td></tr>`).join('');
+  }
+
+  function render() {
+    const g = verdicts(state);
+    $('wo').value = fmt(state.w) + ' m'; $('do').value = fmt(state.d) + ' m';
+    $('yawo').value = state.yaw + '°'; $('ho').value = fmt(state.h) + ' m'; $('bo').value = fmt(state.b) + ' m';
+    drawTiles(g); drawTop(state, g); drawSide(state, g); drawNums(state, g);
+  }
+  ['w','d','yaw','h','b'].forEach(k => $(k).addEventListener('input', e => { state[k] = +e.target.value; render(); }));
+  $('asp').addEventListener('change', e => { state.asp = +e.target.value; render(); });
+  function setAll(o) { Object.assign(state, o);
+    $('w').value = o.w; $('d').value = o.d; $('yaw').value = o.yaw; $('h').value = o.h; $('b').value = o.b;
+    $('asp').value = String(o.asp); render(); }
+  // measured on 2026-07-23 by autocal: 2.86 m projection, wall centre 2.48 m, 17° oblique
+  $('pMeasured').addEventListener('click', () => setAll({ w: 2.86, d: 2.5, yaw: 17, h: 1.7, b: 0.7, asp: 2.25 }));
+  $('pIdeal').addEventListener('click',    () => setAll({ w: 2.86, d: 3.0, yaw: 0,  h: 1.7, b: 0.7, asp: 2.25 }));
+  render();
+})();
+</script>
+</body>
+</html>
