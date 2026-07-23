@@ -73,6 +73,15 @@ synthetic cursors so you can see it work. See
 [`gesture-wall/GEMINI.md`](gesture-wall/GEMINI.md) for the hardware setup and
 [`gesture-wall/VIBERSYN.md`](gesture-wall/VIBERSYN.md).
 
+### Single-wall Kinect rig
+
+The one-projector variant: a single wall driven by an old **Kinect v2
+(Xbox One)** instead of the Orbbec — same gesture layer, no sudo, runs with
+`ROOM_CONFIG=gesture-wall/room.kinect.json ./run-room.sh --single --gesture`.
+Full bring-up (which Kinect you have, camera placement, libfreenect2 +
+bridge build, calibration, troubleshooting):
+[`docs/KINECT-SINGLE-WALL.md`](docs/KINECT-SINGLE-WALL.md).
+
 ## Model
 
 The Cerebras decision path (`VIBERSYN_DECISION_LLM=cue-cerebras`, needs

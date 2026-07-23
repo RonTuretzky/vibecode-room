@@ -10,6 +10,9 @@ dist/
 # writes a self-contained prototype under builds/<upid>/ and serves it live; the
 # directory is runtime output, not source.
 builds/
+# Commissioned full-build outputs (durable Smithers runs write the real app
+# here and the preview server serves it live) — runtime output, not source.
+artifacts/vibersyn-runs/
 
 # The committed Cue build fixture (ISSUE-0025 / GAP-006) is an already-"built"
 # stand-in: its dist/ entrypoints ARE the artifact under test, so they must

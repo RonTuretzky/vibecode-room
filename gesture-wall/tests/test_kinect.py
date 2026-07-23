@@ -17,7 +17,10 @@ The source converts native millimetre depth to **metres** (mm/1000).
 
 from __future__ import annotations
 
+import os
 import struct
+import subprocess
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -235,6 +238,16 @@ def test_empty_buffer():
 # --------------------------------------------------------------------------- #
 # FakeFrameSource                                                             #
 # --------------------------------------------------------------------------- #
+def test_fake_frame_source_accepts_timeout_kwarg():
+    """Contract parity: every frame source honours ``read(timeout=None)``."""
+    intr = CameraIntrinsics(fx=FX, fy=FY, cx=CX, cy=CY, width=W, height=H)
+    color = sample_color()
+    depth_m = (sample_depth_mm() / 1000.0).astype(np.float32)
+    src = FakeFrameSource([(color, depth_m, intr)])
+    assert src.read(timeout=0.5) is not None  # timeout ignored, frame served
+    assert src.read(timeout=0.5) is None      # exhausted -> None as ever
+
+
 def test_fake_frame_source_yields_then_stops():
     intr = CameraIntrinsics(fx=FX, fy=FY, cx=CX, cy=CY, width=W, height=H)
     color = sample_color()
@@ -266,3 +279,88 @@ def test_kinectv2source_construction_does_not_spawn():
     src._ingest(make_intrinsics_bytes())
     assert isinstance(src.intrinsics, CameraIntrinsics)
     src.close()  # no process was started; close must be safe
+
+
+# --------------------------------------------------------------------------- #
+# KinectV2Source: bounded reads + one-shot bridge-death diagnostics            #
+#                                                                             #
+# No bridge and no hardware: we inject a fake "process" whose stdout is the   #
+# read end of an os.pipe(), which gives read()'s select/read loop a real fd   #
+# to block on. This drives the exact stall (nothing written), streaming        #
+# (full protocol written), and EOF (write end closed) paths.                   #
+# --------------------------------------------------------------------------- #
+def make_piped_source(poll_result=None, wait_raises=False):
+    """A KinectV2Source wired to a pipe-backed fake bridge process.
+
+    Returns ``(src, write_fd)``: write protocol bytes into ``write_fd`` to feed
+    the source; close it to simulate the bridge exiting (stdout EOF).
+    ``poll_result`` is what the fake process's ``poll()``/``wait()`` report.
+    """
+    r, w = os.pipe()
+    reader = os.fdopen(r, "rb", buffering=0)  # unbuffered, like Popen bufsize=0
+
+    def wait(timeout=None):
+        if wait_raises:
+            raise subprocess.TimeoutExpired("fake-bridge", timeout)
+        return poll_result
+
+    src = KinectV2Source(bridge_path="/nonexistent/kinect-v2-bridge")
+    src._proc = SimpleNamespace(stdout=reader,
+                                poll=lambda: poll_result,
+                                wait=wait)
+    return src, w
+
+
+def close_piped_source(src) -> None:
+    src._proc.stdout.close()
+    src._proc = None  # the fake has no terminate(); skip KinectV2Source.close
+
+
+def test_read_with_timeout_returns_none_on_stall_then_frame():
+    src, w = make_piped_source()
+    try:
+        # Nothing written: a live-but-stalled bridge. Bounded read gives up.
+        assert src.read(timeout=0.05) is None
+        # Now the "bridge" produces a full K2IN + K2RG stream: same call works.
+        color = sample_color()
+        depth_mm = sample_depth_mm()
+        os.write(w, make_intrinsics_bytes() + make_frame_bytes(4, color, depth_mm))
+        item = src.read(timeout=2.0)
+        assert item is not None
+        got_color, got_depth, intr = item
+        np.testing.assert_array_equal(got_color, color)
+        np.testing.assert_allclose(got_depth, depth_mm / 1000.0, rtol=1e-6)
+        assert intr.fx == pytest.approx(FX)
+    finally:
+        os.close(w)
+        close_piped_source(src)
+
+
+def test_bridge_eof_logs_exit_code_once(capsys):
+    # Bridge "exits with code 3" (e.g. libfreenect2 could not start the device):
+    # stdout hits EOF, and the source must say so ONCE — not per read() tick.
+    src, w = make_piped_source(poll_result=3)
+    try:
+        os.close(w)  # bridge died: EOF on stdout
+        assert src.read(timeout=1.0) is None
+        out = capsys.readouterr().out
+        assert "exited with code 3" in out
+        assert "kinect bridge" in out
+        # Subsequent reads stay None and stay quiet.
+        assert src.read(timeout=0.05) is None
+        assert capsys.readouterr().out == ""
+    finally:
+        close_piped_source(src)
+
+
+def test_bridge_eof_with_still_running_process_logs_that(capsys):
+    # EOF but poll()/wait() say the process is alive (closed its own stdout):
+    # a different, honest one-line diagnostic.
+    src, w = make_piped_source(poll_result=None, wait_raises=True)
+    try:
+        os.close(w)
+        assert src.read(timeout=1.0) is None
+        out = capsys.readouterr().out
+        assert "still running" in out
+    finally:
+        close_piped_source(src)

@@ -16,12 +16,13 @@
 # the real Python camera server, or a camera-free preview emitter with --fake —
 # and binds each wall's gesture layer to it (&gesture=1&fusion=ws://…:8770).
 # NOTE: on macOS an Orbbec (Gemini 335) camera can only be opened with elevated
-# permissions, so the camera process runs under 'sudo -E' (password prompt).
+# permissions, so Orbbec configs run the camera under 'sudo -E' (password
+# prompt). Kinect v2 configs need no elevation — no prompt appears.
 #
 # --calibrate skips Vibersyn entirely and runs the projector auto-calibration
-# for this room instead (gesturewall.autocal): open autocal.html?wall=A and
-# ?wall=B fullscreen on the projectors, step out of the camera's view, then
-# POST /calib/start. Results are written back into the room config.
+# for this room instead (gesturewall.autocal): open autocal.html?wall=<id>
+# fullscreen on each configured wall's projector, step out of the camera's
+# view, then POST /calib/start. Results are written back into the room config.
 #
 # Usage:
 #   ./run-room.sh                 # desk mode: two walls, EACH the full room
@@ -32,6 +33,8 @@
 #   ./run-room.sh --gesture       # legacy: real cameras (needs gesture-wall deps + room.json)
 #   ./run-room.sh --fake          # legacy: gesture mode with synthetic cursors
 #   ./run-room.sh --gesture --config=my.json
+#   ./run-room.sh --single --gesture --config=gesture-wall/room.kinect.json
+#                                 # ONE wall + ONE Kinect v2 (docs/KINECT-SINGLE-WALL.md)
 #   ./run-room.sh --calibrate     # projector auto-calibration (no Vibersyn)
 #
 # Env: VIBERSYN_PORT(8788) HOST(0.0.0.0) WS_PORT(8770) BROWSER("Google Chrome")
@@ -81,7 +84,7 @@ for arg in "$@"; do
     --calibrate) CALIBRATE=1 ;;
     --config=*) CONFIG="${arg#*=}" ;;
     -h|--help)
-      sed -n '2,41p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,44p' "$0" | sed 's/^# \{0,1\}//'
       exit 0 ;;
     *) echo "[room] unknown arg: $arg" >&2; exit 2 ;;
   esac
@@ -116,6 +119,14 @@ config_uses_orbbec() { # cheap grep, no python needed
   grep -q '"kind": *"gemini' "$1" 2>/dev/null || grep -q '"orbbec"' "$1" 2>/dev/null
 }
 
+config_uses_kinect() { # cheap grep, no python needed (matches "kind": "kinect_v2")
+  grep -q '"kind": *"kinect' "$1" 2>/dev/null
+}
+
+config_walls() { # space-separated wall ids from the config; empty if the parse fails
+  "$PYTHON" -c 'import json,sys; print(" ".join(json.load(open(sys.argv[1]))["walls"]))' "$1" 2>/dev/null || true
+}
+
 check_camera_deps() {
   if ! "$PYTHON" -c "import cv2" >/dev/null 2>&1; then
     echo "[room] ERROR: OpenCV not importable by $PYTHON. Install the camera deps:" >&2
@@ -127,6 +138,34 @@ check_camera_deps() {
     echo "[room] ERROR: $CONFIG declares an Orbbec camera but pyorbbecsdk is not importable by $PYTHON." >&2
     echo "         $PYTHON -m pip install 'pyorbbecsdk2>=2.1.1'   # PyPI name; imports as pyorbbecsdk" >&2
     exit 1
+  fi
+  if config_uses_kinect "$CONFIG"; then
+    if ! "$PYTHON" -c "import mediapipe, websockets" >/dev/null 2>&1; then
+      echo "[room] ERROR: $CONFIG declares a Kinect v2 camera but mediapipe/websockets are not importable by $PYTHON." >&2
+      echo "         $PYTHON -m pip install -r gesture-wall/requirements.txt" >&2
+      exit 1
+    fi
+    if [ ! -x gesture-wall/bin/kinect-v2-bridge ]; then
+      echo "[room] ERROR: $CONFIG declares a Kinect v2 camera but gesture-wall/bin/kinect-v2-bridge is missing." >&2
+      echo "       Build it (needs libfreenect2 installed under \$HOME/.local):" >&2
+      echo "         cd gesture-wall && bash native/build_kinect_v2.sh" >&2
+      echo "       Full bring-up: docs/KINECT-SINGLE-WALL.md" >&2
+      exit 1
+    fi
+    # Pose model: missing is fine ONLINE (gesturewall auto-downloads it on first
+    # start), but say so up front — an offline first boot dies in the camera worker.
+    MODEL_REL="$("$PYTHON" -c 'import json,sys; print(json.load(open(sys.argv[1])).get("server",{}).get("model","models/pose_landmarker_lite.task"))' "$CONFIG" 2>/dev/null || true)"
+    MODEL_PATH=""
+    case "$MODEL_REL" in
+      "") : ;;                                # config parse failed — skip the note
+      /*) MODEL_PATH="$MODEL_REL" ;;          # absolute path in the config
+      *)  MODEL_PATH="gesture-wall/$MODEL_REL" ;;  # relative to gesture-wall/ (server CWD)
+    esac
+    if [ -n "$MODEL_PATH" ] && [ ! -f "$MODEL_PATH" ]; then
+      echo "[room] NOTE: pose model $MODEL_PATH is missing — it auto-downloads on first start"
+      echo "       (needs internet once). Offline? Pre-seed it from the MediaPipe model bucket:"
+      echo "       see docs/KINECT-SINGLE-WALL.md."
+    fi
   fi
 }
 
@@ -148,21 +187,37 @@ if [ "$CALIBRATE" = "1" ]; then
   check_camera_deps
   setup_sudo
   CONFIG_ABS="$(cd "$(dirname "$CONFIG")" && pwd)/$(basename "$CONFIG")"
+  # Instructions + width pins are driven by the walls actually declared in the
+  # config (a single-wall Kinect room has only wall A — hardcoding A+B would
+  # send the operator chasing a projector page that doesn't exist).
+  WALLS="$(config_walls "$CONFIG")"
+  [ -n "$WALLS" ] || WALLS="A B"   # config parse failed — assume the classic two walls
+  wall_in_config() { case " $WALLS " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
   # Wall-width pins: an explicit WALL_A_M/WALL_B_M wins; otherwise autocal pins
   # to the measured widths stored in the config (walls.<id>.width_m) — passing
-  # CLI --width unconditionally would stomp them with stale defaults.
+  # CLI --width unconditionally would stomp them with stale defaults. A pin for
+  # a wall the config doesn't declare is dropped (autocal hard-errors on it).
   WIDTH_ARGS=()
-  [ -n "$WALL_A_M" ] && WIDTH_ARGS+=(--width "A=$WALL_A_M")
-  [ -n "$WALL_B_M" ] && WIDTH_ARGS+=(--width "B=$WALL_B_M")
+  if [ -n "$WALL_A_M" ]; then
+    if wall_in_config A; then WIDTH_ARGS+=(--width "A=$WALL_A_M")
+    else echo "[room] NOTE: WALL_A_M is set but wall 'A' is not in $CONFIG — ignoring it."; fi
+  fi
+  if [ -n "$WALL_B_M" ]; then
+    if wall_in_config B; then WIDTH_ARGS+=(--width "B=$WALL_B_M")
+    else echo "[room] NOTE: WALL_B_M is set but wall 'B' is not in $CONFIG — ignoring it."; fi
+  fi
   if [ "${#WIDTH_ARGS[@]}" -gt 0 ]; then
-    echo "[room] auto-calibration: wall widths A=${WALL_A_M:-config}m B=${WALL_B_M:-config}m (from WALL_A_M/WALL_B_M)"
+    echo "[room] auto-calibration: wall width overrides ${WIDTH_ARGS[*]} (from WALL_A_M/WALL_B_M)"
   else
     echo "[room] auto-calibration: wall widths pinned from $CONFIG (walls.<id>.width_m; override with WALL_A_M/WALL_B_M)"
   fi
-  echo "[room] 1. Open FULLSCREEN on wall A's projector: http://localhost:$AUTOCAL_PORT/autocal.html?wall=A"
-  echo "[room] 2. Open FULLSCREEN on wall B's projector: http://localhost:$AUTOCAL_PORT/autocal.html?wall=B"
+  STEP=1
+  for W in $WALLS; do
+    echo "[room] $STEP. Open FULLSCREEN on wall $W's projector: http://localhost:$AUTOCAL_PORT/autocal.html?wall=$W"
+    STEP=$((STEP + 1))
+  done
   echo "[room]    (unified pages: each transforms into its wall client when calibration completes)"
-  echo "[room] 3. Step out of the camera's view, then start the sweep:"
+  echo "[room] $STEP. Step out of the camera's view, then start the sweep:"
   echo "[room]      curl -X POST http://localhost:$AUTOCAL_PORT/calib/start"
   echo "[room] Results are written back into $CONFIG. Ctrl-C when done."
   # Foreground: the script waits on autocal; Ctrl-C reaches it even under sudo.
@@ -180,6 +235,14 @@ if [ "$GESTURE" = "1" ]; then
     PIDS+=($!)
   else
     if [ ! -f "$CONFIG" ]; then
+      # Never seed a kinect/depth-named config from the legacy webcam example —
+      # that would silently drive the 2D homography pipeline under a depth name.
+      case "$(basename "$CONFIG")" in
+        *kinect*|*depth*)
+          echo "[room] ERROR: room config '$CONFIG' not found. For the single-wall Kinect rig" >&2
+          echo "       start from gesture-wall/room.kinect.json (see docs/KINECT-SINGLE-WALL.md)." >&2
+          exit 1 ;;
+      esac
       if [ -f gesture-wall/room.example.json ]; then
         echo "[room] no $CONFIG — created it from gesture-wall/room.example.json."
         cp gesture-wall/room.example.json "$CONFIG"

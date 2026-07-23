@@ -331,6 +331,22 @@ class FakeSource:
         self.closed = True
 
 
+def frame_read_timeout(kind: str, fps: int) -> float | None:
+    """Bounded-read timeout (seconds) for a depth camera ``kind``, or ``None``.
+
+    Pure policy helper for :func:`make_pose_source`. The Kinect bridge can
+    wedge mid-stream with its process still alive (USB hiccup — the exact
+    failure the ``read(timeout=...)`` contract exists for), so the kinect path
+    gets a couple of frame periods before the camera worker's read gives up
+    for that tick and tries again. The Orbbec source instead manages a stall
+    budget internally and RELIES on the no-timeout contract to close and
+    respawn a dead pipeline, so every non-kinect kind returns ``None``.
+    """
+    if kind != "kinect_v2":
+        return None
+    return 2.0 / max(1, fps)
+
+
 def make_pose_source(config: RoomConfig, camera_id: str):
     """Construct the real pose source for a configured camera (mode-aware).
 
@@ -363,6 +379,7 @@ def make_pose_source(config: RoomConfig, camera_id: str):
             min_confidence=srv.min_confidence,
             model_path=srv.model,
             pointing=srv.pointing,
+            read_timeout=frame_read_timeout(kind, srv.fps),
         )
 
     from .multipose import MultiPoseSource  # lazy: pulls in cv2/mediapipe

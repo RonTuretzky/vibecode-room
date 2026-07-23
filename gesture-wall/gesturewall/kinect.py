@@ -172,7 +172,10 @@ class FakeFrameSource:
         self._frames = list(frames)
         self._i = 0
 
-    def read(self):
+    def read(self, timeout: float | None = None):
+        # ``timeout`` is accepted for contract parity with the live sources
+        # (see gesturewall.framesource): a scripted fake never stalls, so it is
+        # simply ignored.
         if self._i >= len(self._frames):
             return None
         item = self._frames[self._i]
@@ -207,6 +210,7 @@ class KinectV2Source:
         self._buffer = b""
         self._intrinsics: CameraIntrinsics | None = None
         self._pending: list[dict] = []  # decoded but not-yet-returned frames
+        self._eof_logged = False  # log the bridge's death once, not per read()
 
     def start(self) -> None:
         """Spawn the bridge subprocess (idempotent).
@@ -229,6 +233,7 @@ class KinectV2Source:
             bufsize=0,
             env=env,
         )
+        self._eof_logged = False  # a fresh spawn may die anew: log that too
 
     @property
     def intrinsics(self) -> CameraIntrinsics | None:
@@ -278,8 +283,39 @@ class KinectV2Source:
                     return None
             chunk = self._proc.stdout.read(self._read_chunk)
             if not chunk:  # bridge closed stdout / exited
+                self._log_bridge_eof()
                 return None
             self._ingest(chunk)
+
+    def _log_bridge_eof(self) -> None:
+        """Print ONE diagnostic line when the bridge's stdout hits EOF.
+
+        Without this, a bridge that spawns and immediately dies (no Kinect
+        plugged in, libfreenect2 dylib not loadable, device busy) is silent:
+        its single stderr line scrolls away and every subsequent ``read()``
+        just returns ``None`` — which looks exactly like "nobody is in front
+        of the camera". Logging the exit code once makes bring-up debuggable.
+        """
+        if self._eof_logged:
+            return
+        self._eof_logged = True
+        proc = self._proc
+        code = None
+        if proc is not None:
+            code = proc.poll()
+            if code is None:  # EOF usually means it just died; give it a beat
+                try:
+                    code = proc.wait(timeout=1.0)
+                except subprocess.TimeoutExpired:  # pragma: no cover - rare
+                    code = None
+        if code is None:
+            print(f"[gesturewall] kinect bridge closed its stream but is "
+                  f"still running: {self._bridge_path}")
+        else:
+            print(f"[gesturewall] kinect bridge exited with code {code} — no "
+                  f"more Kinect frames will arrive. Check its stderr above "
+                  f"(no Kinect v2 found? libfreenect2 dylib missing? device "
+                  f"busy?). Bridge: {self._bridge_path}")
 
     def close(self) -> None:
         """Terminate the bridge subprocess and release its pipe."""
