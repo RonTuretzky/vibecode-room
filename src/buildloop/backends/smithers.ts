@@ -23,10 +23,14 @@ export const SMITHERS_BACKEND_LABEL = "Smithers";
 export const SMITHERS_ENTRYPOINT = "index.html";
 
 // A concept mock is one small page — tight ceiling so a kickoff lane settles
-// fast, not the old full-app three minutes. 120s (not 60s): during a 3-idea
-// fan-out concurrent one-shots contend for the same claude subscription and a
-// 60s ceiling SIGKILLed otherwise-healthy mocks (exit 137).
-const DEFAULT_TIMEOUT_MS = 120_000;
+// fast, not the old full-app three minutes. The ceiling is a completion
+// CHECKPOINT, not a death sentence: during a 3-idea fan-out concurrent
+// one-shots contend for the same claude subscription and the CLI regularly
+// writes index.html early, then gets SIGKILLed (exit 137) composing its final
+// reply turn — build() salvages a killed run whose entrypoint landed during
+// that run (see the exitCode branch), so 90s keeps lanes inside the kickoff
+// budget without discarding real artifacts.
+const DEFAULT_TIMEOUT_MS = 90_000;
 const MAX_PROMPT_FILE_CHARS = 20_000;
 const MAX_READ_FILE_BYTES = 512 * 1024;
 const SUMMARY_MAX_CHARS = 600;
@@ -110,6 +114,7 @@ export class SmithersBuildBackend implements BuildBackend {
         prompt = smithersCorrectionPrompt(req.prompt, files, correction);
       }
 
+      const runStartedAt = Date.now();
       const run = await runner({
         cli: cli ?? "claude",
         prompt,
@@ -119,7 +124,16 @@ export class SmithersBuildBackend implements BuildBackend {
       });
       signal.throwIfAborted();
       if (run.exitCode !== 0) {
-        throw new Error(`claude builder exited ${run.exitCode}`);
+        // The ceiling SIGKILL (exit 137) regularly lands AFTER the CLI already
+        // wrote the mock: under fan-out contention the final reply turn is what
+        // times out, not the artifact. If THIS run wrote the entrypoint, the
+        // mock is real — salvage it (the summary falls back to the pitch line).
+        // A nonzero exit with no freshly-written entrypoint stays fatal, so a
+        // stale mock from an earlier boot is never passed off as this idea's.
+        const landedAt = await entrypointMtimeMs(req.outDir);
+        if (landedAt === null || landedAt < runStartedAt) {
+          throw new Error(`claude builder exited ${run.exitCode}`);
+        }
       }
 
       if (!existsSync(join(req.outDir, SMITHERS_ENTRYPOINT))) {
@@ -268,6 +282,17 @@ export const defaultClaudeRunner: ClaudeRunner = async ({ cli, prompt, cwd, sign
     signal.removeEventListener("abort", killHard);
   }
 };
+
+// mtime of the mock entrypoint, or null when it does not exist — the salvage
+// gate for ceiling-killed runs (only an entrypoint written during the run
+// counts; a stale one from an earlier boot never does).
+async function entrypointMtimeMs(outDir: string): Promise<number | null> {
+  try {
+    return (await stat(join(outDir, SMITHERS_ENTRYPOINT))).mtimeMs;
+  } catch {
+    return null;
+  }
+}
 
 // Read the existing app's text files (for the correction prompt). Depth-safe:
 // skips binaries, oversized files, and anything unreadable.

@@ -97,6 +97,35 @@ describe("smithers backend — build via injected runner", () => {
     expect(result.error).toContain("index.html");
   });
 
+  test("ceiling-killed run (exit 137) whose entrypoint landed during the run is salvaged as ready", async () => {
+    const outDir = join(await tempDir(), "smithers");
+    const runner: ClaudeRunner = async ({ cwd }) => {
+      // The CLI wrote the mock, then got SIGKILLed composing its final reply.
+      await writeFile(join(cwd, "index.html"), "<!doctype html><h1>salvaged mock</h1>", "utf8");
+      return { exitCode: 137, stdout: "" };
+    };
+    const backend = new SmithersBuildBackend({ runner });
+
+    const result = await backend.build(request(outDir));
+    expect(result.ok).toBe(true);
+    expect(result.entrypoint).toBe(SMITHERS_ENTRYPOINT);
+    expect(result.summary).toContain("Build a pomodoro timer"); // deterministic fallback pitch line
+  });
+
+  test("nonzero exit with only a STALE pre-run entrypoint stays failed (no stale salvage)", async () => {
+    const outDir = join(await tempDir(), "smithers");
+    // A mock from an earlier boot is already on disk…
+    await Bun.write(join(outDir, "index.html"), "<!doctype html><h1>stale other idea</h1>");
+    // …and mtimes have ms precision: make sure the stale file is strictly older
+    // than the run start before the runner crashes without writing anything.
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const backend = new SmithersBuildBackend({ runner: async () => ({ exitCode: 1, stdout: "" }) });
+
+    const result = await backend.build(request(outDir));
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("exited 1");
+  });
+
   test("correction mode: existing files + correction reach the prompt; app rewritten in place", async () => {
     const outDir = join(await tempDir(), "smithers");
     const backend = new SmithersBuildBackend({
