@@ -3194,3 +3194,4 @@ main.gesture-mode[data-view="builds"] .transcript-card {
   background: rgba(64, 200, 120, 0.2);
   border-color: rgba(64, 200, 120, 0.6);
 }
+.fullscreen-key-hint { opacity: 0.6; font-size: 0.8em; }

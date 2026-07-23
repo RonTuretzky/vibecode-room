@@ -1665,11 +1665,33 @@ function FullscreenButton() {
   const [visible, setVisible] = useState<boolean>(() => needsFullscreenHint());
   useEffect(() => {
     const update = () => setVisible(needsFullscreenHint());
+    // Keyboard path: plain "f" toggles fullscreen (keydown counts as a real
+    // user gesture, so requestFullscreen is honored). Stays bound while the
+    // button is hidden so "f" also EXITS fullscreen. Ignored with modifiers
+    // held or while typing into a field.
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "f" && event.key !== "F") return;
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      const target = event.target as HTMLElement | null;
+      if (
+        target !== null &&
+        (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)
+      ) {
+        return;
+      }
+      if (document.fullscreenElement !== null) {
+        void document.exitFullscreen?.();
+      } else {
+        void document.documentElement.requestFullscreen?.();
+      }
+    };
     document.addEventListener("fullscreenchange", update);
     window.addEventListener("resize", update);
+    window.addEventListener("keydown", onKey);
     return () => {
       document.removeEventListener("fullscreenchange", update);
       window.removeEventListener("resize", update);
+      window.removeEventListener("keydown", onKey);
     };
   }, []);
   if (!visible) {
@@ -1680,12 +1702,12 @@ function FullscreenButton() {
       type="button"
       className="ctl-button fullscreen-button"
       data-testid="fullscreen-button"
-      title="Fullscreen this wall on its projector"
+      title="Fullscreen this wall on its projector (or press F)"
       onClick={() => {
         void document.documentElement.requestFullscreen?.();
       }}
     >
-      ⛶ Fullscreen
+      ⛶ Fullscreen <span className="fullscreen-key-hint">(F)</span>
     </button>
   );
 }
