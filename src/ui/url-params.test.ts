@@ -32,6 +32,25 @@ describe("parseProjectorUrl", () => {
     expect(empty.gesture).toEqual({ wall: "A", fusionUrl: "ws://localhost:8770" });
   });
 
+  test("?dwell=mouse enables the mouse-dwell fallback WITHOUT gesture mode", () => {
+    const config = parseProjectorUrl("?dwell=mouse", "h");
+    expect(config.dwell).toBe("mouse");
+    expect(config.gesture).toBeNull(); // OS cursor stays; only the dwell layer mounts
+  });
+
+  test("dwell defaults to null and rejects unknown values", () => {
+    expect(parseProjectorUrl("", "h").dwell).toBeNull();
+    expect(parseProjectorUrl("?dwell=eyeball", "h").dwell).toBeNull();
+    // Gesture mode does not imply the mouse-test cursor.
+    expect(parseProjectorUrl("?gesture=1", "h").dwell).toBeNull();
+  });
+
+  test("?gesture=1&dwell=mouse combines: fusion cursors + the mouse test cursor", () => {
+    const config = parseProjectorUrl("?gesture=1&dwell=mouse", "h");
+    expect(config.gesture).not.toBeNull();
+    expect(config.dwell).toBe("mouse");
+  });
+
   // The view param is LEGACY: it still parses (old URLs + badge text) but it is
   // inert for content — every window renders the full room (see projector tests).
   test("view parsing: ideas/builds are recognized, anything else falls back to full", () => {

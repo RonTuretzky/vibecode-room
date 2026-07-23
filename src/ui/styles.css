@@ -798,8 +798,9 @@ button {
   background: rgba(255, 59, 48, 0.12);
 }
 
-/* Gesture cursor overlay — full-viewport canvas drawn above everything, never
-   intercepts pointer events (dwell fires synthetic clicks on the UI beneath). */
+/* Gesture dwell overlay — full-viewport canvas drawn above everything, never
+   intercepts pointer events (dwell fires synthetic clicks on the UI beneath).
+   It renders NO cursor glyph: only per-target dwell rings + fire flashes. */
 .gesture-overlay {
   position: fixed;
   inset: 0;
@@ -807,6 +808,25 @@ button {
   height: 100vh;
   pointer-events: none;
   z-index: 2000;
+}
+
+/* Gesture mode: the OS cursor is hidden EVERYWHERE and no pointer glyph is
+   drawn — the pointed-at target's highlight + dwell ring ARE the feedback. */
+main.gesture-mode,
+main.gesture-mode * {
+  cursor: none !important;
+}
+
+/* Dwell targeting: the control a gesture (or ?dwell=mouse) cursor is pointing
+   at grows + glows while its radial ring fills. Applied per-frame by the
+   gesture layer; scene nodes get the equivalent emissive boost in-scene. */
+[data-dwell-hot] {
+  box-shadow:
+    0 0 0 2px rgba(158, 226, 255, 0.85),
+    0 0 26px rgba(94, 210, 255, 0.45) !important;
+  transform: scale(1.06);
+  transition: transform 120ms ease, box-shadow 120ms ease;
+  z-index: 5;
 }
 
 .ctl-button.emergency:hover {

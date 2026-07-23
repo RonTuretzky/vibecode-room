@@ -19,6 +19,10 @@ export interface ProjectorUrlConfig {
   badge: string | null;
   // Gesture layer config, non-null ONLY when explicitly requested via the URL.
   gesture: { wall: string; fusionUrl: string } | null;
+  // ?dwell=mouse — testing/accessibility fallback: the mouse drives the SAME
+  // point→highlight→dwell-select mechanic (no cameras needed). The OS cursor
+  // stays visible; only pure gesture mode hides it.
+  dwell: "mouse" | null;
 }
 
 export function parseProjectorUrl(search: string, hostname: string): ProjectorUrlConfig {
@@ -46,6 +50,10 @@ export function parseProjectorUrl(search: string, hostname: string): ProjectorUr
       }
     : null;
 
+  // Mouse-dwell fallback (?dwell=mouse): desk testing / accessibility path for
+  // the gesture interaction — independent of gesture mode.
+  const dwell = params.get("dwell") === "mouse" ? ("mouse" as const) : null;
+
   // Corner identity badge: shown whenever the window is wall- or view-scoped so
   // an operator glancing across the room knows which projection they're facing.
   const badge =
@@ -55,5 +63,5 @@ export function parseProjectorUrl(search: string, hostname: string): ProjectorUr
         ? view.toUpperCase()
         : null;
 
-  return { view, wall, badge, gesture };
+  return { view, wall, badge, gesture, dwell };
 }

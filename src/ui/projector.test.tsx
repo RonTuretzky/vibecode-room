@@ -294,3 +294,38 @@ describe("qr import overlay", () => {
     expect(html).not.toContain('data-testid="qr-import-success"');
   });
 });
+
+// GESTURE-DWELL CURSOR POLICY: in gesture mode the UI hides the OS cursor
+// (gesture-mode class → cursor:none) and mounts the dwell layer; ?dwell=mouse
+// mounts the SAME dwell layer for desk testing but keeps the OS cursor.
+describe("gesture dwell-select interaction", () => {
+  test("?gesture=1: dwell layer mounts and the OS cursor is hidden (gesture-mode)", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch="?live=0&wall=A&gesture=1" />,
+    );
+    expect(html).toContain('data-testid="gesture-overlay"');
+    expect(html).toContain("gesture-mode");
+    expect(html).toContain('data-gesture="true"');
+  });
+
+  test("?dwell=mouse: dwell layer mounts WITHOUT hiding the OS cursor", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch="?live=0&dwell=mouse" />,
+    );
+    expect(html).toContain('data-testid="gesture-overlay"');
+    expect(html).not.toContain("gesture-mode");
+    expect(html).toContain('data-gesture="false"');
+  });
+
+  test("fleet panels opt into dwell targeting via data-dwell", () => {
+    const html = renderToStaticMarkup(<ProjectorApp initialSnapshot={demoProjectorSnapshot} />);
+    expect(html).toContain('data-dwell="steer"');
+  });
+
+  test("help overlay documents the gesture dwell mechanic and the camera lock", () => {
+    const html = renderToStaticMarkup(<HelpOverlay onClose={() => {}} gestureMode />);
+    expect(html).toContain('data-testid="help-gesture"');
+    expect(html).toContain("point, hold, select");
+    expect(html).toContain("LOCKED in gesture mode");
+  });
+});

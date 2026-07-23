@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import type { IdeaTrayItem, ProjectorProcess } from "./types";
+import { registerSceneDwellSource, type SceneDwellRect } from "./gesture/scene-source";
 
 // The full-viewport 3D stage (after conductor-github-visualizer): the scene IS
 // the app background and every panel floats over it. Two render modes share
@@ -54,6 +55,11 @@ interface RoomSceneProps {
   wall?: string | null;
   // Increment to request a one-shot fit-to-content camera move.
   fitSignal: number;
+  // When false (pure gesture mode: hands point, nobody drags), the pointer
+  // never binds to the scene — no drag-orbit/pan/zoom/click, so pointing at a
+  // node can never fight the camera. Keyboard camera controls (G/L/F) and the
+  // dwell layer's raycast targeting still work. Fixed per window (URL-derived).
+  pointerNav?: boolean;
   onAcceptIdea: (id: string | null) => void;
   onSelectProcess: (callsign: string) => void;
 }
@@ -315,7 +321,7 @@ interface Entry {
   removing: boolean;
 }
 
-export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, onAcceptIdea, onSelectProcess }: RoomSceneProps) {
+export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, pointerNav = true, onAcceptIdea, onSelectProcess }: RoomSceneProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const ideasRef = useRef(ideas);
   ideasRef.current = ideas;
@@ -329,6 +335,9 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
   // the mount-once scene effect honest about never re-running for it.
   const wallRef = useRef(wall);
   wallRef.current = wall;
+  // Same deal: gesture windows never rebind pointer navigation mid-session.
+  const pointerNavRef = useRef(pointerNav);
+  pointerNavRef.current = pointerNav;
   const fitRef = useRef(fitSignal);
   fitRef.current = fitSignal;
   const onAcceptRef = useRef(onAcceptIdea);
@@ -1351,12 +1360,109 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       event.preventDefault();
       rig.dRadius = Math.max(4, Math.min(45, rig.dRadius + event.deltaY * 0.02));
     };
-    renderer.domElement.style.cursor = "grab";
-    renderer.domElement.addEventListener("pointerdown", onPointerDown);
-    renderer.domElement.addEventListener("pointermove", onPointerMove);
-    renderer.domElement.addEventListener("pointerup", onPointerUp);
-    renderer.domElement.addEventListener("pointerleave", onPointerLeave);
-    renderer.domElement.addEventListener("wheel", onWheel, { passive: false });
+    // GESTURE-DWELL SEAM: expose real raycast picking + projected node rects +
+    // click-equivalent activation to the gesture layer, so pointing a hand at a
+    // node highlights it and a completed dwell fires the exact click semantics
+    // (ready idea → build, process → steer/deck) — without any pointer events.
+    const SCENE_IDEA_PREFIX = "scene:idea:";
+    const SCENE_PROC_PREFIX = "scene:proc:";
+    let dwellHighlights: ReadonlySet<string> = new Set();
+    const sceneTargetIdOf = (picked: { kind: string; key?: string; callsign?: string } | null): string | null => {
+      if (picked?.kind === "idea" && picked.key !== undefined && picked.key !== "__idle__") {
+        const entry = ideaEntries.get(picked.key);
+        if (entry?.ideaSpec?.status === "ready" && !entry.removing) {
+          return `${SCENE_IDEA_PREFIX}${picked.key}`;
+        }
+      } else if (picked?.kind === "process" && picked.callsign !== undefined) {
+        return `${SCENE_PROC_PREFIX}${picked.callsign}`;
+      }
+      return null;
+    };
+    const entryForTargetId = (id: string): Entry | null => {
+      if (id.startsWith(SCENE_IDEA_PREFIX)) {
+        return ideaEntries.get(id.slice(SCENE_IDEA_PREFIX.length)) ?? null;
+      }
+      if (id.startsWith(SCENE_PROC_PREFIX)) {
+        const callsign = id.slice(SCENE_PROC_PREFIX.length);
+        for (const entry of treeEntries.values()) {
+          if (entry.treeSpec?.callsign === callsign) {
+            return entry;
+          }
+        }
+      }
+      return null;
+    };
+    const dwellBox = new THREE.Box3();
+    const dwellCorner = new THREE.Vector3();
+    const dwellRectFor = (id: string): SceneDwellRect | null => {
+      const entry = entryForTargetId(id);
+      if (entry === null || entry.removing) {
+        return null;
+      }
+      const domRect = renderer.domElement.getBoundingClientRect();
+      if (domRect.width === 0 || domRect.height === 0) {
+        return null;
+      }
+      dwellBox.setFromObject(entry.group);
+      if (dwellBox.isEmpty()) {
+        return null;
+      }
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+      for (let i = 0; i < 8; i += 1) {
+        dwellCorner.set(
+          (i & 1) === 0 ? dwellBox.min.x : dwellBox.max.x,
+          (i & 2) === 0 ? dwellBox.min.y : dwellBox.max.y,
+          (i & 4) === 0 ? dwellBox.min.z : dwellBox.max.z,
+        );
+        dwellCorner.project(camera);
+        if (dwellCorner.z > 1) {
+          continue; // behind the camera
+        }
+        const sx = domRect.left + ((dwellCorner.x + 1) / 2) * domRect.width;
+        const sy = domRect.top + ((1 - dwellCorner.y) / 2) * domRect.height;
+        minX = Math.min(minX, sx);
+        minY = Math.min(minY, sy);
+        maxX = Math.max(maxX, sx);
+        maxY = Math.max(maxY, sy);
+      }
+      if (!Number.isFinite(minX) || maxX <= minX || maxY <= minY) {
+        return null;
+      }
+      return { left: minX, top: minY, width: maxX - minX, height: maxY - minY };
+    };
+    const unregisterDwellSource = registerSceneDwellSource({
+      pick: (clientX, clientY) => sceneTargetIdOf(pick(clientX, clientY)),
+      rectFor: dwellRectFor,
+      activate: (id) => {
+        const entry = entryForTargetId(id);
+        if (entry === null || entry.removing) {
+          return;
+        }
+        if (id.startsWith(SCENE_IDEA_PREFIX) && entry.ideaSpec !== undefined && entry.ideaSpec.status === "ready") {
+          onAcceptRef.current(entry.ideaSpec.id);
+        } else if (id.startsWith(SCENE_PROC_PREFIX) && entry.treeSpec !== undefined) {
+          onSelectRef.current(entry.treeSpec.callsign);
+        }
+      },
+      setHighlights: (ids) => {
+        dwellHighlights = ids;
+      },
+    });
+
+    // Pure gesture mode: pointing must not fight drag-orbit, so the pointer
+    // never binds at all (see Help overlay). Desk/mouse-dwell modes keep the
+    // full drag-orbit / pan / zoom / click surface.
+    if (pointerNavRef.current) {
+      renderer.domElement.style.cursor = "grab";
+      renderer.domElement.addEventListener("pointerdown", onPointerDown);
+      renderer.domElement.addEventListener("pointermove", onPointerMove);
+      renderer.domElement.addEventListener("pointerup", onPointerUp);
+      renderer.domElement.addEventListener("pointerleave", onPointerLeave);
+      renderer.domElement.addEventListener("wheel", onWheel, { passive: false });
+    }
 
     const resize = () => {
       const width = container.clientWidth;
@@ -1425,7 +1531,8 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       const radial = builtKey !== null && builtKey.endsWith("radial");
       for (const [specId, entry] of ideaEntries) {
         entry.group.position.lerp(entry.targetPos, smoothing);
-        const hovered = hoveredIdea === specId;
+        // Mouse hover and gesture-dwell targeting share the same grow/glow.
+        const hovered = hoveredIdea === specId || dwellHighlights.has(`${SCENE_IDEA_PREFIX}${specId}`);
         const target = entry.targetScale * entry.scaleMult * (hovered ? 1.12 : 1);
         const next = THREE.MathUtils.lerp(entry.group.scale.x, target, smoothing);
         entry.group.scale.setScalar(Math.max(next, 0.0001));
@@ -1463,7 +1570,9 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
 
       for (const [specId, entry] of treeEntries) {
         entry.group.position.lerp(entry.targetPos, smoothing);
-        const hovered = hoveredProc === entry.treeSpec?.callsign;
+        const hovered =
+          hoveredProc === entry.treeSpec?.callsign ||
+          (entry.treeSpec !== undefined && dwellHighlights.has(`${SCENE_PROC_PREFIX}${entry.treeSpec.callsign}`));
         const target = entry.targetScale * entry.scaleMult * (hovered ? (garden ? 1.06 : 1.12) : 1);
         const next = THREE.MathUtils.lerp(entry.group.scale.x, target, smoothing);
         entry.group.scale.setScalar(Math.max(next, 0.0001));
@@ -1516,13 +1625,16 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
 
     return () => {
       stopLoop();
+      unregisterDwellSource();
       document.removeEventListener("visibilitychange", onSceneVisibility);
       observer.disconnect();
-      renderer.domElement.removeEventListener("pointerdown", onPointerDown);
-      renderer.domElement.removeEventListener("pointermove", onPointerMove);
-      renderer.domElement.removeEventListener("pointerup", onPointerUp);
-      renderer.domElement.removeEventListener("pointerleave", onPointerLeave);
-      renderer.domElement.removeEventListener("wheel", onWheel);
+      if (pointerNavRef.current) {
+        renderer.domElement.removeEventListener("pointerdown", onPointerDown);
+        renderer.domElement.removeEventListener("pointermove", onPointerMove);
+        renderer.domElement.removeEventListener("pointerup", onPointerUp);
+        renderer.domElement.removeEventListener("pointerleave", onPointerLeave);
+        renderer.domElement.removeEventListener("wheel", onWheel);
+      }
       for (const entry of ideaEntries.values()) {
         disposeEntry(entry);
       }

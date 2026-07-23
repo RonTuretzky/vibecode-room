@@ -914,8 +914,23 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot, urlSearc
     [acceptIdea, actOnIdea],
   );
 
+  // GESTURE MODE (fusion cursors drive the UI): there is NO cursor glyph and NO
+  // OS cursor — the `gesture-mode` class hides the pointer everywhere, and the
+  // pointed-at target's highlight + dwell ring are the only feedback. Pointer
+  // navigation on the scene is disabled so pointing never fights drag-orbit.
+  // ?dwell=mouse mounts the same dwell layer driven by the mouse (testing/
+  // accessibility) with the OS cursor and drag-orbit left intact.
+  const gestureMode = urlConfig.gesture !== null;
+  const dwellLayerOn = gestureMode || urlConfig.dwell === "mouse";
+
   return (
-    <main className={`deep${zenMode ? " zen" : ""}`} data-testid="app" data-view={view} data-zen={zenMode ? "true" : "false"}>
+    <main
+      className={`deep${zenMode ? " zen" : ""}${gestureMode ? " gesture-mode" : ""}`}
+      data-testid="app"
+      data-view={view}
+      data-zen={zenMode ? "true" : "false"}
+      data-gesture={gestureMode ? "true" : "false"}
+    >
       <RoomScene
         ideas={visibleIdeaOrbs}
         trees={treeSpecs}
@@ -923,11 +938,16 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot, urlSearc
         layout={sceneLayout}
         wall={urlConfig.wall}
         fitSignal={fitSignal}
+        pointerNav={!gestureMode}
         onAcceptIdea={acceptOrb}
         onSelectProcess={selectSceneProcess}
       />
-      {urlConfig.gesture ? (
-        <GestureLayer wall={urlConfig.gesture.wall} fusionUrl={urlConfig.gesture.fusionUrl} />
+      {dwellLayerOn ? (
+        <GestureLayer
+          wall={urlConfig.gesture?.wall ?? "A"}
+          fusionUrl={urlConfig.gesture?.fusionUrl ?? ""}
+          mouseTest={urlConfig.dwell === "mouse"}
+        />
       ) : null}
       {urlConfig.badge ? (
         <div className="wall-badge" data-testid="wall-badge">
@@ -1210,7 +1230,7 @@ export function ProjectorApp({ initialSnapshot = demoProjectorSnapshot, urlSearc
           })()
         : null}
       {qrOpen ? <QrImport processes={snapshot.processes} onClose={() => setQrOpen(false)} /> : null}
-      {helpOpen ? <HelpOverlay onClose={() => setHelpOpen(false)} /> : null}
+      {helpOpen ? <HelpOverlay onClose={() => setHelpOpen(false)} gestureMode={gestureMode} /> : null}
     </main>
   );
 }
@@ -1331,6 +1351,7 @@ function FleetPanel({
             key={process.upid}
             className={`fleet-panel state-${process.state}${process.callsign === selected ? " selected" : ""}${steering ? " steering" : ""}`}
             data-testid="fleet-panel"
+            data-dwell="steer"
             data-callsign={process.callsign}
             data-state={process.state}
             data-steering={steering ? "true" : "false"}
