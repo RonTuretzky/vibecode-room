@@ -1,21 +1,31 @@
-// Slideshow generator: after a build backend finishes, turn the build into a
-// SELF-CONTAINED clickable HTML slideshow at <outDir>/slideshow/index.html —
-// six projector-friendly slides: the spoken idea verbatim, what was built, how
-// it works, key files (highlighted excerpts read from disk), how to demo it,
-// and next steps.
+// Pitch-deck generator: at kickoff, turn a spoken idea + its framework concept
+// mocks into a SELF-CONTAINED interactive pitch at <outDir>/slideshow/index.html
+// — four projector-friendly slides that END BY ASKING HOW TO CONTINUE:
+//   1. the idea, verbatim as heard (big type);
+//   2. the concept: what we'd build (the pitch summary from the kickoff mocks);
+//   3. the mocks: a switchable gallery of the framework concept mocks (iframes);
+//   4. "How should we continue?" — three large decision buttons wired to the
+//      room's API: Build it for real (POST /api/process/:upid/execute), Steer it
+//      (spoken correction, typed fallback -> POST /api/process/:upid/steer), and
+//      Park it for later (POST /api/idea/:id/dismiss).
 //
 // Copy generation makes ONE Cerebras call (OpenAI-compatible chat/completions,
 // CEREBRAS_API_KEY, gemma-4-31b) bounded by a hard time budget, and merges the
 // result field-by-field over a DETERMINISTIC no-network fallback built purely
-// from the inputs — so slideshow generation NEVER fails a build for model
-// reasons: no key, network down, timeout, garbage output all degrade to the
-// template text. The model is injectable so tests run with fakes and zero
-// network. The only aborts that propagate are the caller's own AbortSignal
-// (emergency stop) — honored between phases and passed into fetch.
+// from the inputs — so deck generation NEVER fails a kickoff for model reasons:
+// no key, network down, timeout, garbage output all degrade to the template
+// text. The model is injectable so tests run with fakes and zero network. The
+// only aborts that propagate are the caller's own AbortSignal (emergency stop)
+// — honored between phases and passed into fetch.
 
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
-import { renderSlideshowHtml, type Slide, type SlideCode } from "./template";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import {
+  renderSlideshowHtml,
+  type Slide,
+  type SlideDecision,
+  type SlideMock,
+} from "./template";
 
 // Mirrors BuildBackendId in src/buildloop/types.ts BY CONVENTION — that module
 // is owned by the buildloop track and this track must stand alone (no
@@ -23,8 +33,15 @@ import { renderSlideshowHtml, type Slide, type SlideCode } from "./template";
 // BuildBackendId is directly assignable here.
 export type SlideshowBackendId = "smithers" | "eliza" | "native";
 
-// Where the slideshow lives inside a build directory, and the public URL
-// convention the wall consumes: previewUrl + "slideshow/".
+// Wall-facing lane labels; match the buildloop's registered backend labels.
+const BACKEND_LABELS: Record<SlideshowBackendId, string> = {
+  smithers: "Smithers",
+  eliza: "ElizaOS",
+  native: "Native",
+};
+
+// Where the deck lives inside a build directory, and the public URL convention
+// the wall consumes: previewUrl + "slideshow/".
 export const SLIDESHOW_DIRNAME = "slideshow";
 export const SLIDESHOW_ENTRYPOINT = "slideshow/index.html";
 
@@ -38,26 +55,37 @@ export function slideshowUrl(previewUrl: string | null): string | null {
   return `${previewUrl.trim().replace(/\/+$/u, "")}/${SLIDESHOW_DIRNAME}/`;
 }
 
+// One concept-mock lane for the gallery slide — per-backend previewUrl straight
+// from process.builds[] (the kickoff contract). previewUrl null renders a
+// "not ready yet" panel instead of an iframe.
+export interface PitchMock {
+  backend: SlideshowBackendId;
+  previewUrl: string | null;
+}
+
 export interface GenerateSlideshowInput {
   upid: string;
+  // Idea-ledger id powering "Park it for later" (POST /api/idea/:id/dismiss).
+  // The orchestrator's slideshow hook always passes it; when absent the upid is
+  // used so the button still POSTs somewhere 404-free.
+  ideaId?: string | null;
   prompt: string; // the spoken idea, shown VERBATIM on slide 1
   callsign: string | null;
-  backend: SlideshowBackendId;
-  outDir: string; // ABSOLUTE build dir; slideshow written to <outDir>/slideshow/
-  summary: string; // one-paragraph build summary from the backend
-  // Key files to excerpt, relative to outDir. Omitted/empty -> the generator
-  // scans outDir itself (index.html first), so wiring stays a one-liner.
-  files?: readonly string[];
+  backend: SlideshowBackendId; // the lane this deck is written into
+  outDir: string; // ABSOLUTE build dir; deck written to <outDir>/slideshow/
+  summary: string; // pitch summary from the kickoff mocks
+  // All concept-mock lanes for the gallery slide. Omitted/empty -> the deck
+  // shows this lane's own mock via the relative URL "../" (the deck lives at
+  // previewUrl + "slideshow/", so "../" is always this lane's live mock).
+  mocks?: readonly PitchMock[];
 }
 
 // The copy the model (or the deterministic fallback) supplies. Slide 1 (the
-// verbatim idea) and slide 4 (real file excerpts) are NEVER model-authored.
+// verbatim idea), slide 3 (the real mocks), and slide 4 (the fixed decision
+// buttons) are NEVER model-authored.
 export interface SlideshowCopy {
-  tagline: string; // slide-2 headline, <=~10 words
-  whatWasBuilt: string[];
-  howItWorks: string[];
-  demoSteps: string[];
-  nextSteps: string[];
+  tagline: string; // slide-2 headline: what we'd build, <=~10 words
+  concept: string[]; // slide-2 bullets pitching the full build
 }
 
 export interface SlideshowCopyRequest {
@@ -65,7 +93,7 @@ export interface SlideshowCopyRequest {
   summary: string;
   backend: SlideshowBackendId;
   callsign: string | null;
-  files: readonly string[]; // excerpt file names, for grounding
+  mocks: readonly string[]; // gallery lane backend ids, for grounding
 }
 
 // Injectable copy model. Return null (or reject, or hang past the budget) to
@@ -77,9 +105,8 @@ export type SlideshowCopyModel = (
 
 export interface GenerateSlideshowOptions {
   model?: SlideshowCopyModel; // default: one Cerebras chat/completions call
-  signal?: AbortSignal; // the build's abort signal (emergency stop)
+  signal?: AbortSignal; // the kickoff's abort signal (emergency stop)
   timeoutMs?: number; // model budget; the fallback path is instant
-  maxFiles?: number; // excerpt count cap for the key-files slide
 }
 
 export interface SlideshowArtifact {
@@ -90,19 +117,14 @@ export interface SlideshowArtifact {
 }
 
 const DEFAULT_TIMEOUT_MS = 8_000;
-const DEFAULT_MAX_FILES = 4;
-const EXCERPT_MAX_LINES = 14;
-const EXCERPT_MAX_COLS = 96;
-const EXCERPT_MAX_BYTES = 200_000;
-const EXCERPT_EXTENSIONS = /\.(?:html|css|js|mjs|ts|tsx|jsx|json|md|svg)$/u;
 const COPY_LINE_MAX = 220;
 const COPY_LINES_MAX = 6;
 
 // --- Public entrypoint ------------------------------------------------------
 
-// Generate the slideshow. Model failures never propagate; the only throws are
+// Generate the pitch deck. Model failures never propagate; the only throws are
 // caller aborts and filesystem errors on the build dir itself (callers should
-// still wrap this — the slideshow is garnish, never a reason to fail a build).
+// still wrap this — the deck is garnish, never a reason to fail a kickoff).
 export async function generateSlideshow(
   input: GenerateSlideshowInput,
   options: GenerateSlideshowOptions = {},
@@ -110,11 +132,7 @@ export async function generateSlideshow(
   const signal = options.signal;
   signal?.throwIfAborted();
 
-  // 1. Deterministic ground truth: real excerpts read from the build dir.
-  const excerpts = await collectExcerpts(input.outDir, input.files, options.maxFiles ?? DEFAULT_MAX_FILES);
-  signal?.throwIfAborted();
-
-  // 2. Copy: one bounded model call merged over the deterministic fallback.
+  // 1. Copy: one bounded model call merged over the deterministic fallback.
   const fallback = fallbackCopy(input);
   const model = options.model ?? cerebrasCopyModel;
   const request: SlideshowCopyRequest = {
@@ -122,16 +140,16 @@ export async function generateSlideshow(
     summary: input.summary,
     backend: input.backend,
     callsign: input.callsign,
-    files: excerpts.map((entry) => entry.file),
+    mocks: pitchMocks(input).map((mock) => mock.id),
   };
   const raw = await callModelWithBudget(model, request, options.timeoutMs ?? DEFAULT_TIMEOUT_MS, signal);
   signal?.throwIfAborted();
   const { copy, usedModel } = mergeCopy(raw, fallback);
 
-  // 3. Render + write. The template escapes everything; we hand it raw text.
-  const slides = buildSlides(input, copy, excerpts);
+  // 2. Render + write. The template escapes everything; we hand it raw text.
+  const slides = buildSlides(input, copy);
   const html = renderSlideshowHtml({
-    title: `${ideaTitle(input.prompt)} — build slides`,
+    title: `${ideaTitle(input.prompt)} — pitch`,
     footer: footerLine(input),
     slides,
   });
@@ -148,32 +166,15 @@ export function fallbackCopy(input: GenerateSlideshowInput): SlideshowCopy {
   const callsign = normalizeCallsign(input.callsign);
   const steerLine =
     callsign === null
-      ? 'Say "steer it ..." out loud to apply a spoken correction live.'
-      : `Say "steer ${callsign} ..." out loud to apply a spoken correction live.`;
+      ? 'Say "steer it ..." out loud (or use the Steer it button) to reshape it before committing.'
+      : `Say "steer ${callsign} ..." out loud (or use the Steer it button) to reshape it before committing.`;
   return {
     tagline: ideaTitle(input.prompt),
-    whatWasBuilt: [
-      "A working, self-contained web app — index.html is the entrypoint.",
-      `Assembled end-to-end by the ${input.backend} build backend.`,
-      "Served live by the room; the preview link always shows the current files.",
-    ],
-    howItWorks: [
-      `The room heard the idea and handed it to the ${input.backend} build backend.`,
-      "The backend wrote a complete app into this build directory — plain HTML/CSS/JS, no build step.",
-      "A static server serves the directory as the preview, so file edits appear on refresh.",
-      "Spoken steering rewrites the same directory in place while the process keeps running.",
-    ],
-    demoSteps: [
-      "Open the preview link on this process card — it is the real, working app.",
-      "Interact with it: click around and exercise the actual behavior, not a mock.",
+    concept: [
+      "Concept first: each framework sketched the idea as a clickable mock, not a promise.",
       steerLine,
-      "Use pause / halt on the process card if you need to stop the build loop.",
-    ],
-    nextSteps: [
-      "Steer it a few times to sharpen the behavior while the room watches.",
-      "Promote it: copy the build directory into a real repo and keep iterating with an agent.",
-      "Compare backends — the same idea may have sibling builds; keep the best one.",
-      "Say the next idea out loud; the room is listening.",
+      "Commission it and the full build spins up — the wall shows it happen live.",
+      "Parked ideas keep their seed in the tray; nothing said in the room is lost.",
     ],
   };
 }
@@ -192,7 +193,7 @@ export function mergeCopy(raw: unknown, fallback: SlideshowCopy): { copy: Slides
     copy.tagline = tagline;
     usedModel = true;
   }
-  for (const key of ["whatWasBuilt", "howItWorks", "demoSteps", "nextSteps"] as const) {
+  for (const key of ["concept"] as const) {
     const lines = cleanLines(raw[key]);
     if (lines !== null) {
       copy[key] = lines;
@@ -239,56 +240,102 @@ function cleanLines(value: unknown): string[] | null {
 
 // --- Slides -----------------------------------------------------------------
 
-export function buildSlides(
-  input: GenerateSlideshowInput,
-  copy: SlideshowCopy,
-  excerpts: readonly SlideCode[],
-): Slide[] {
-  const callsign = normalizeCallsign(input.callsign);
-  const spoken = input.prompt.trim();
+// The gallery lanes. Explicit mocks (per-backend previewUrl from
+// process.builds[]) pass through; omitted/empty falls back to this lane's own
+// mock via the relative URL "../" — always live, needs zero configuration.
+export function pitchMocks(input: GenerateSlideshowInput): SlideMock[] {
+  const lanes: readonly PitchMock[] =
+    input.mocks !== undefined && input.mocks.length > 0
+      ? input.mocks
+      : [{ backend: input.backend, previewUrl: "../" }];
+  return lanes.map((lane) => {
+    const src = lane.previewUrl === null || lane.previewUrl.trim().length === 0 ? null : lane.previewUrl.trim();
+    return {
+      id: lane.backend,
+      label: BACKEND_LABELS[lane.backend] ?? lane.backend,
+      src,
+      caption: `${lane.backend} · framework concept mock`,
+    };
+  });
+}
+
+// The three fixed how-to-continue decisions, endpoints encoded per the kickoff
+// contract. upid/ideaId are URI-encoded into the paths (and the template
+// HTML-escapes the attributes on top).
+export function decisionButtons(
+  upid: string,
+  ideaId: string,
+  callsign: string | null,
+): SlideDecision[] {
+  const processPath = `/api/process/${encodeURIComponent(upid)}`;
+  const steerSpoken = callsign === null ? '"steer it ..."' : `"steer ${callsign} ..."`;
   return [
     {
-      kicker: "Spoken in the room",
-      title: ideaTitle(input.prompt),
+      id: "execute",
+      label: "Build it for real",
+      detail: "Commission the full build now — then watch it go up on the wall.",
+      endpoint: `${processPath}/execute`,
+      confirmation: "Commissioned — watch the wall.",
+      terminal: true,
+    },
+    {
+      id: "steer",
+      label: "Steer it",
+      detail: `Say ${steerSpoken} out loud — or type a correction here.`,
+      endpoint: `${processPath}/steer`,
+      confirmation: "Correction sent — the concept will shift on the wall.",
+      prompt: {
+        hint: "Say the correction out loud — or type it and send:",
+        field: "text",
+        placeholder: "e.g. make it neon, lean into the leaderboard",
+        submitLabel: "Send correction",
+      },
+    },
+    {
+      id: "dismiss",
+      label: "Park it for later",
+      detail: "Keep the idea as a seed in the tray — nothing is lost.",
+      endpoint: `/api/idea/${encodeURIComponent(ideaId)}/dismiss`,
+      confirmation: "Parked — the idea stays in the tray for later.",
+      terminal: true,
+    },
+  ];
+}
+
+export function buildSlides(input: GenerateSlideshowInput, copy: SlideshowCopy): Slide[] {
+  const callsign = normalizeCallsign(input.callsign);
+  const spoken = input.prompt.trim();
+  const mocks = pitchMocks(input);
+  const ideaId = input.ideaId ?? null;
+  return [
+    {
+      kicker: "Heard in the room",
+      title: "The idea, verbatim",
+      hero: true,
       quote: spoken.length > 0 ? spoken : "(no transcript captured)",
       bullets: [
         callsign === null ? `Process ${input.upid}` : `Callsign “${callsign}” — process ${input.upid}`,
-        `Built by the ${input.backend} backend`,
       ],
     },
     {
-      kicker: "What was built",
+      kicker: "The concept",
       title: copy.tagline,
       paragraphs: [
         input.summary.trim().length > 0
           ? input.summary.trim()
-          : "The build finished without a summary — open the preview to see it.",
+          : "The kickoff produced no pitch summary — the mocks on the next slide speak for themselves.",
       ],
-      bullets: copy.whatWasBuilt,
+      bullets: copy.concept,
     },
     {
-      kicker: "How it works",
-      title: "From spoken idea to running app",
-      bullets: copy.howItWorks,
+      kicker: "The mocks",
+      title: mocks.length === 1 ? "One concept mock, live" : `${mocks.length} concept mocks, live`,
+      mocks,
     },
     {
-      kicker: "Key files",
-      title: "Inside the build",
-      paragraphs:
-        excerpts.length === 0
-          ? ["No source files captured — open the preview and view-source to explore the build."]
-          : undefined,
-      code: excerpts,
-    },
-    {
-      kicker: "Demo it",
-      title: "Try it right now",
-      bullets: copy.demoSteps,
-    },
-    {
-      kicker: "Next steps",
-      title: "Where this goes",
-      bullets: copy.nextSteps,
+      kicker: "Your call",
+      title: "How should we continue?",
+      decisions: decisionButtons(input.upid, ideaId === null || ideaId.trim().length === 0 ? input.upid : ideaId.trim(), callsign),
     },
   ];
 }
@@ -320,108 +367,6 @@ function normalizeCallsign(callsign: string | null): string | null {
   }
   const trimmed = callsign.trim();
   return trimmed.length === 0 ? null : trimmed;
-}
-
-// --- Key-file excerpts (deterministic, read from the build dir) --------------
-
-async function collectExcerpts(
-  outDir: string,
-  files: readonly string[] | undefined,
-  maxFiles: number,
-): Promise<SlideCode[]> {
-  const candidates =
-    files !== undefined && files.length > 0 ? [...files] : await scanCandidateFiles(outDir);
-  const excerpts: SlideCode[] = [];
-  for (const relative of candidates) {
-    if (excerpts.length >= maxFiles) {
-      break;
-    }
-    const excerpt = await readFileExcerpt(outDir, relative);
-    if (excerpt !== null) {
-      excerpts.push({ file: relative, excerpt });
-    }
-  }
-  return excerpts;
-}
-
-// Read a short excerpt of one build file. Null (skip, never throw) on missing
-// files, path escapes, binary-looking content, or oversized files.
-async function readFileExcerpt(outDir: string, relative: string): Promise<string | null> {
-  const root = resolve(outDir);
-  const target = resolve(root, relative);
-  if (target !== root && !target.startsWith(`${root}/`)) {
-    return null; // refuses to excerpt outside the build dir
-  }
-  let text: string;
-  try {
-    text = await readFile(target, "utf8");
-  } catch {
-    return null;
-  }
-  if (text.length === 0 || text.length > EXCERPT_MAX_BYTES || text.includes("\u0000")) {
-    return null;
-  }
-  const lines = text.split("\n");
-  const shown = lines
-    .slice(0, EXCERPT_MAX_LINES)
-    .map((line) => (line.length > EXCERPT_MAX_COLS ? `${line.slice(0, EXCERPT_MAX_COLS)}…` : line));
-  const excerpt = shown.join("\n").trimEnd();
-  if (excerpt.length === 0) {
-    return null;
-  }
-  return lines.length > EXCERPT_MAX_LINES ? `${excerpt}\n…` : excerpt;
-}
-
-// When the caller names no files, scan the build dir (depth <= 2, deterministic
-// order): index.html first, then other pages, then scripts, styles, the rest.
-async function scanCandidateFiles(outDir: string): Promise<string[]> {
-  const skip = new Set([SLIDESHOW_DIRNAME, "node_modules"]);
-  const found: Array<{ rel: string; depth: number }> = [];
-  const walk = async (dir: string, prefix: string, depth: number): Promise<void> => {
-    if (depth > 2) {
-      return;
-    }
-    let entries;
-    try {
-      entries = await readdir(dir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    entries.sort((a, b) => a.name.localeCompare(b.name));
-    for (const entry of entries) {
-      if (entry.name.startsWith(".")) {
-        continue;
-      }
-      if (entry.isDirectory()) {
-        if (!skip.has(entry.name)) {
-          await walk(join(dir, entry.name), `${prefix}${entry.name}/`, depth + 1);
-        }
-      } else if (entry.isFile() && EXCERPT_EXTENSIONS.test(entry.name)) {
-        found.push({ rel: `${prefix}${entry.name}`, depth });
-      }
-    }
-  };
-  await walk(outDir, "", 0);
-  found.sort(
-    (a, b) => excerptRank(a.rel) - excerptRank(b.rel) || a.depth - b.depth || a.rel.localeCompare(b.rel),
-  );
-  return found.map((entry) => entry.rel);
-}
-
-function excerptRank(relative: string): number {
-  if (relative === "index.html") {
-    return 0;
-  }
-  if (relative.endsWith(".html")) {
-    return 1;
-  }
-  if (/\.(?:js|mjs|ts|tsx|jsx)$/u.test(relative)) {
-    return 2;
-  }
-  if (relative.endsWith(".css")) {
-    return 3;
-  }
-  return 4;
 }
 
 // --- Model plumbing ---------------------------------------------------------
@@ -461,12 +406,12 @@ export const CEREBRAS_CHAT_URL = "https://api.cerebras.ai/v1/chat/completions";
 export const CEREBRAS_SLIDESHOW_MODEL = "gemma-4-31b";
 
 const COPY_SYSTEM_PROMPT =
-  "You write projector slide copy for a live demo room where spoken ideas become working web apps. " +
-  "Terse, vivid, concrete — every line must fit on a big-type slide. Respond with ONLY a JSON object " +
-  "(no markdown fences, no prose) matching exactly: " +
-  '{"tagline": string (<=10 word headline for what was built), ' +
-  '"whatWasBuilt": string[] (2-4 bullets), "howItWorks": string[] (3-5 bullets on how the app works), ' +
-  '"demoSteps": string[] (3-5 imperative steps to demo it), "nextSteps": string[] (2-4 bullets)}.';
+  "You write projector slide copy for a live demo room that pitches spoken ideas back as clickable " +
+  "concept mocks. This is a PITCH for what the full build would be — not a report. Terse, vivid, " +
+  "concrete; every line must fit on a big-type slide. Respond with ONLY a JSON object (no markdown " +
+  "fences, no prose) matching exactly: " +
+  '{"tagline": string (<=10 word headline for what we would build), ' +
+  '"concept": string[] (2-4 bullets pitching the full build)}.';
 
 // Default production model: ONE Cerebras chat/completions call. Null on any
 // miss (no key, HTTP error, unparseable output); errors reject and are
@@ -482,17 +427,17 @@ export const cerebrasCopyModel: SlideshowCopyModel = async (request, signal) => 
     body: JSON.stringify({
       model: process.env.CEREBRAS_MODEL ?? CEREBRAS_SLIDESHOW_MODEL,
       temperature: 0,
-      max_completion_tokens: 700,
+      max_completion_tokens: 500,
       messages: [
         { role: "system", content: COPY_SYSTEM_PROMPT },
         {
           role: "user",
           content: JSON.stringify({
             ideaSpokenInRoom: request.prompt,
-            buildSummary: request.summary,
+            pitchSummary: request.summary,
             backend: request.backend,
             callsign: request.callsign,
-            files: request.files,
+            conceptMockLanes: request.mocks,
           }),
         },
       ],
