@@ -1,5 +1,6 @@
 import type { LogEvent, OutputDecision } from "../types";
 import type { ProcessBuildSnapshot } from "../buildloop/orchestrator";
+import type { ExecutionRegistry, ExecutionSnapshot } from "../buildloop/execution";
 import { CallsignAllocator, type CallsignAssignment } from "../routing/callsigns";
 import { inferProjectName, llmProjectName, type InferredProjectName } from "./project-name";
 import type { SmithersClient, SpawnSeed, SpawnResult } from "../seam/smithers-client";
@@ -33,13 +34,20 @@ export interface RegistryProcess {
 // structural Pick so tests can inject a fake). When present it OWNS the accept
 // path's app artifacts: spawn(build:true) fans the idea out to every enabled
 // backend, steer forwards the spoken correction, halt aborts the UPID's builds,
-// and builds() is the snapshot fragment the runtime merges per process.
+// and builds() is the snapshot fragment the runtime merges per process. Since
+// the two-stage pivot the fan-out produces CONCEPT MOCKS (kickoff), not full
+// apps — the full app is the separate commission stage (execute()).
 export interface BuildLoopOrchestrator {
   start(input: { upid: string; ideaId: string; prompt: string; callsign: string | null }): Promise<void>;
   steer(upid: string, text: string): Promise<void>;
   abortAll(upid: string): Promise<void>;
   builds(upid: string): ProcessBuildSnapshot[];
 }
+
+// The commission-stage execution lane seam (src/buildloop/execution.ts —
+// structural Pick so tests can inject a fake). Owns the artifacts preview +
+// snapshot fragment for the durable subscription run execute() launches.
+export type ExecutionLaneRegistry = Pick<ExecutionRegistry, "start" | "snapshot" | "isExecuting" | "stop">;
 
 export interface ProcessRegistryOptions {
   client: Pick<SmithersClient, "spawn" | "pause" | "resume" | "halt" | "steer">;
@@ -68,6 +76,11 @@ export interface ProcessRegistryOptions {
   // backend, spoken steers re-run ready builds with the correction, and halt
   // aborts the UPID's in-flight builds within the emergency budget.
   orchestrator?: BuildLoopOrchestrator | null;
+  // Commission-stage execution lane (src/buildloop/execution.ts). execute()
+  // opens a lane here when it launches the durable subscription run; halt and
+  // the emergency stop tear it down. Optional — without it execute() still
+  // launches the run and the registry synthesizes a minimal lane snapshot.
+  execution?: ExecutionLaneRegistry | null;
   // LLM project namer: called fire-and-forget after a spawn to upgrade the
   // deterministic placeholder title ("Annual Snowfall App") to a model-named
   // one ("Snow Sip Calculator"). The spoken callsign is NOT renamed — voice
@@ -86,6 +99,20 @@ export type RegistrySpawnResult =
       resourceCheck: Extract<ResourceCheckResult, { ok: false }>;
     };
 
+// COMMISSION (execute) result. Idempotent by contract: a process whose durable
+// run is already launched reports started:false with the live lane instead of
+// double-launching (the stable per-UPID correlation doubles as the gateway
+// idempotency key, so even a race cannot launch twice).
+export type RegistryExecuteResult =
+  | { started: true; runId: string; execution: ExecutionSnapshot | null }
+  | { started: false; reason: "already-executing" | "already-built"; execution: ExecutionSnapshot | null };
+
+export interface RegistryExecuteOptions {
+  correlationId?: string;
+  // Override the commissioned prompt; defaults to the kickoff pitch.
+  prompt?: string;
+}
+
 export class ProcessRegistry {
   readonly client: ProcessRegistryOptions["client"];
   readonly sessionId: string;
@@ -100,8 +127,23 @@ export class ProcessRegistry {
   readonly onHalt?: (upid: string) => void;
   readonly #ideaBuilds: IdeaBuildRegistry | null;
   readonly #orchestrator: BuildLoopOrchestrator | null;
+  readonly #execution: ExecutionLaneRegistry | null;
   readonly #namer: ((pitch: string) => Promise<InferredProjectName | null>) | null;
   readonly #processes = new Map<string, RegistryProcess>();
+  // Kickoff seed facts kept per UPID so a later execute() can commission the
+  // durable run with the same pitch/steering-window contract the accept carried.
+  readonly #seeds = new Map<
+    string,
+    { workflow: string; prompt: string; input: Record<string, unknown> | undefined; steeringWindowId: string | null; parentId: string | null }
+  >();
+  // UPIDs whose durable subscription run HAS been launched (commissioned).
+  // Client-side steer/pause/resume/halt only reach the smithers client for
+  // these — a kickoff-only process has no gateway run to signal.
+  readonly #durableRuns = new Map<string, { runId: string; startedAtMs: number }>();
+  // Commissions currently launching: a racing second execute() reports
+  // already-executing instead of double-spawning (the stable idempotency key
+  // additionally protects the gateway itself).
+  readonly #executeInFlight = new Set<string>();
   #selectedUPID: string | null = null;
   #upidSeq = 0;
 
@@ -119,14 +161,45 @@ export class ProcessRegistry {
     this.onHalt = options.onHalt;
     this.#ideaBuilds = options.ideaBuilds ?? null;
     this.#orchestrator = options.orchestrator ?? null;
+    this.#execution = options.execution ?? null;
     this.#namer = options.namer !== undefined ? options.namer : defaultNamerFromEnv();
   }
 
   // The multi-backend builds[] snapshot fragment for one process — the runtime
   // merges this into the per-process snapshot entry. Empty when no orchestrator
-  // is wired or the UPID never fanned out.
+  // is wired or the UPID never fanned out. Since the pivot these are the
+  // kickoff CONCEPT MOCK lanes.
   builds(upid: string): ProcessBuildSnapshot[] {
     return this.#orchestrator?.builds(upid) ?? [];
+  }
+
+  // The commission-stage execution lane for one process, or null before the
+  // room has commissioned it. Prefers the wired ExecutionRegistry's snapshot
+  // (live percent + artifacts preview); without one, a minimal lane is
+  // synthesized from the launch record so the stage is still visible.
+  execution(upid: string): ExecutionSnapshot | null {
+    const launched = this.#durableRuns.get(upid);
+    if (launched === undefined) {
+      return null;
+    }
+    const lane = this.#execution?.snapshot(upid);
+    if (lane !== null && lane !== undefined) {
+      return lane;
+    }
+    return {
+      status: "executing",
+      runId: launched.runId,
+      percent: 0,
+      label: "commissioned",
+      previewUrl: null,
+      startedAtMs: launched.startedAtMs,
+      error: null,
+    };
+  }
+
+  // Has this process's durable subscription run been launched (commissioned)?
+  hasDurableRun(upid: string): boolean {
+    return this.#durableRuns.has(upid);
   }
 
   records(): RegistryProcess[] {
@@ -175,16 +248,25 @@ export class ProcessRegistry {
     } catch {
       assignment = this.callsigns.assign(upid, null);
     }
-    const spawn = await this.client.spawn({
+    // KICKOFF ONLY — the durable gateway run is NOT launched here anymore.
+    // Accepting an idea produces the fast concept mocks (orchestrator fan-out
+    // below) + deck; the heavyweight subscription run is the separate,
+    // user-triggered COMMISSION stage (execute()). The runId is pre-assigned
+    // deterministically (matching the gateway client's own `vibersyn-<upid>`
+    // default) so it stays stable when execute() launches the run later.
+    const workflow = seed.workflow ?? "vibersyn-process";
+    const spawn: SpawnResult = {
       upid,
-      runId: seed.runId,
-      workflow: seed.workflow ?? "vibersyn-process",
-      prompt: seed.prompt,
-      callsign: assignment.callsign,
+      runId: seed.runId ?? `vibersyn-${upid}`,
+      workflow,
+      parentId: seed.parentId ?? null,
+    };
+    this.#seeds.set(upid, {
+      workflow,
+      prompt: seed.prompt ?? "",
+      input: seed.input,
       steeringWindowId: seed.steeringWindowId ?? `window-${assignment.callsign}`,
       parentId: seed.parentId ?? null,
-      input: seed.input,
-      correlationId: seed.correlationId,
     });
     for (const record of this.#processes.values()) {
       record.selected = false;
@@ -272,9 +354,67 @@ export class ProcessRegistry {
     };
   }
 
+  // COMMISSION: launch the durable subscription run for a kicked-off process.
+  // This is the explicit, user-triggered EXECUTION stage — the heavyweight full
+  // build the mocks pitched. It spawns the `vibersyn-process` durable run on
+  // the gateway (claude subscription via the existing shim + steer-window
+  // workflow) and opens the execution lane the snapshot exposes. Idempotent:
+  // a process already executing (or built) reports started:false, and the
+  // stable per-UPID correlation id doubles as the gateway idempotency key.
+  // NO Cerebras on this path — kickoff-only concerns (mocks/decider/namer/deck
+  // copy) never run here.
+  async execute(upid: string, options: RegistryExecuteOptions = {}): Promise<RegistryExecuteResult> {
+    const process = this.requireLive(upid);
+    const existing = this.#durableRuns.get(upid);
+    if (existing !== undefined || this.#executeInFlight.has(upid)) {
+      const lane = this.execution(upid);
+      return {
+        started: false,
+        reason: lane?.status === "built" ? "already-built" : "already-executing",
+        execution: lane,
+      };
+    }
+    this.#executeInFlight.add(upid);
+    try {
+      const correlationId = options.correlationId ?? `corr-execute-${upid}`;
+      const seed = this.#seeds.get(upid);
+      const prompt = options.prompt ?? (seed !== undefined && seed.prompt.length > 0 ? seed.prompt : pitchFromInput(seed?.input));
+      const spawn = await this.client.spawn({
+        upid,
+        runId: process.runId,
+        workflow: seed?.workflow ?? "vibersyn-process",
+        prompt,
+        callsign: process.callsign,
+        steeringWindowId: seed?.steeringWindowId ?? `window-${process.callsign}`,
+        parentId: seed?.parentId ?? null,
+        input: seed?.input,
+        correlationId,
+      });
+      this.#durableRuns.set(upid, { runId: spawn.runId, startedAtMs: this.now() });
+      this.#execution?.start(upid, spawn.runId);
+      this.patch(upid, {
+        runId: spawn.runId,
+        lastAction: "execute",
+        updatedAtMs: this.now(),
+      });
+      this.trace("process.execute", correlationId, upid, {
+        runId: spawn.runId,
+        workflow: spawn.workflow,
+        callsign: process.callsign,
+      });
+      return { started: true, runId: spawn.runId, execution: this.execution(upid) };
+    } finally {
+      this.#executeInFlight.delete(upid);
+    }
+  }
+
   async steer(upid: string, payload: unknown, correlationId: string): Promise<void> {
     const before = this.requireLive(upid);
-    await this.client.steer(upid, payload);
+    // The smithers-client steer signal only exists for a COMMISSIONED process —
+    // a kickoff-only process has no durable run parked in a steer window.
+    if (this.#durableRuns.has(upid)) {
+      await this.client.steer(upid, payload);
+    }
     // REAL steering of the built artifacts: forward the spoken correction to the
     // multi-backend orchestrator, which re-runs every ready build with it (in
     // place, version-bumped). Fire-and-forget — a correction re-run takes
@@ -313,7 +453,11 @@ export class ProcessRegistry {
     if (process.state === "paused") {
       return;
     }
-    await this.client.pause(upid);
+    // Only a commissioned process has a durable run to pause; a kickoff-only
+    // process just flips its registry state.
+    if (this.#durableRuns.has(upid)) {
+      await this.client.pause(upid);
+    }
     this.patch(upid, { state: "paused", lastAction: "pause", updatedAtMs: this.now() });
     this.trace("process.pause", correlationId, upid, { scope: "single-upid" });
   }
@@ -323,7 +467,9 @@ export class ProcessRegistry {
     if (process.state !== "paused") {
       throw new Error(`Cannot resume ${upid} from ${process.state}.`);
     }
-    await this.client.resume(upid);
+    if (this.#durableRuns.has(upid)) {
+      await this.client.resume(upid);
+    }
     this.patch(upid, { state: "active", lastAction: "resume", updatedAtMs: this.now() });
     this.trace("process.resume", correlationId, upid, { scope: "single-upid" });
   }
@@ -338,16 +484,24 @@ export class ProcessRegistry {
 
   async halt(upid: string, correlationId: string, trigger = "panic"): Promise<void> {
     this.requireLive(upid);
-    await this.client.halt(upid);
-    // Tear down this process's live preview server (accept->build->preview): a
-    // halted build must not leave a reachable loopback preview up. The
+    // Cancel the durable run only when one was commissioned — a kickoff-only
+    // process has no gateway run, and the gateway client would throw looking up
+    // a correlation record that never existed (breaking the emergency stop).
+    if (this.#durableRuns.has(upid)) {
+      await this.client.halt(upid);
+      this.#durableRuns.delete(upid);
+    }
+    // Tear down this process's live preview servers (mock lanes + execution
+    // lane): a halted build must not leave a reachable loopback preview up. The
     // orchestrator abort SIGKILLs every in-flight backend build within the
     // emergency budget and stops the per-UPID preview server.
     await this.#ideaBuilds?.stop(upid).catch(() => undefined);
     await this.#orchestrator?.abortAll(upid).catch(() => undefined);
+    await this.#execution?.stop(upid).catch(() => undefined);
     this.onHalt?.(upid);
     this.patch(upid, { state: "dead", selected: false, lastAction: "halt", updatedAtMs: this.now() });
     this.callsigns.release(upid);
+    this.#seeds.delete(upid);
     if (this.#selectedUPID === upid) {
       this.#selectedUPID = null;
     }

@@ -91,7 +91,13 @@ async function makeApp(args: MakeAppArgs = {}): Promise<{ app: ReturnType<typeof
       VIBERSYN_DETECT_MIN_INTERVAL_MS: "0",
       VIBERSYN_DETECT_TICK_MS: "0",
     },
-    { ideaDetector: args.detector, buildsRoot, builderAgent: noopBuilder, buildBackends: args.buildBackends },
+    {
+      ideaDetector: args.detector,
+      buildsRoot,
+      builderAgent: noopBuilder,
+      buildBackends: args.buildBackends,
+      executionArtifactsRoot: join(buildsRoot, "vibersyn-runs"),
+    },
   );
   runtimes.push(runtime);
   const app = createProjectorApp(runtime, {
@@ -402,6 +408,59 @@ describe("POST /api/process/:upid lifecycle + steer routes", () => {
     const snapshot = (await halted.json()) as ProjectorSnapshot;
     expect(snapshot.processes.find((process) => process.upid === upid)?.state).toBe("halted");
     expect(runtime.registry.builds(upid)).toHaveLength(0);
+  });
+});
+
+describe("POST /api/process/:upid/execute — the COMMISSION stage", () => {
+  test("kickoff accept never launches the durable run; execute opens the execution lane, and a repeat is a 400", async () => {
+    const backend = new RouteFakeBackend();
+    const { app, runtime } = await makeApp({
+      detector: new ScriptedDetector([ideaResult("a commissionable dashboard", 0.9)]),
+      buildBackends: [backend],
+    });
+    const id = await surfaceIdea(runtime, "a commissionable dashboard");
+    const accepted = await postJson(app, `/api/idea/${id}/accept`);
+    expect(accepted.status).toBe(200);
+    const acceptedSnapshot = (await accepted.json()) as ProjectorSnapshot;
+    const upid = acceptedSnapshot.processes[0]?.upid;
+    expect(upid).toBeDefined();
+    if (upid === undefined) return;
+    // KICKOFF invariant: accept produced a process with NO execution lane.
+    expect((acceptedSnapshot.processes[0] as { execution?: unknown }).execution ?? null).toBeNull();
+    expect(runtime.registry.hasDurableRun(upid)).toBe(false);
+
+    // COMMISSION: 200 with the fresh snapshot carrying the executing lane.
+    const executed = await postJson(app, `/api/process/${upid}/execute`);
+    expect(executed.status).toBe(200);
+    const snapshot = (await executed.json()) as ProjectorSnapshot;
+    const lane = (snapshot.processes.find((process) => process.upid === upid) as {
+      execution?: { status: string; runId: string; percent: number; previewUrl: string | null };
+    }).execution;
+    expect(lane).toMatchObject({ status: "executing", runId: `vibersyn-${upid}`, percent: 0, previewUrl: null });
+    expect(runtime.registry.hasDurableRun(upid)).toBe(true);
+
+    // Idempotent: a second execute is a 400, not a second launch.
+    const again = await postJson(app, `/api/process/${upid}/execute`);
+    expect(again.status).toBe(400);
+    const body = (await again.json()) as { ok: boolean; error: string };
+    expect(body.ok).toBe(false);
+    expect(body.error).toContain("already executing");
+  });
+
+  test("an unknown upid is a 404; a halted process cannot be commissioned", async () => {
+    const { app, runtime } = await makeApp({
+      detector: new ScriptedDetector([ideaResult("a doomed dashboard", 0.9)]),
+      buildBackends: [new RouteFakeBackend()],
+    });
+    expect((await postJson(app, "/api/process/upid-ghost/execute")).status).toBe(404);
+
+    const id = await surfaceIdea(runtime, "a doomed dashboard");
+    await postJson(app, `/api/idea/${id}/accept`);
+    const upid = runtime.snapshot().processes[0]?.upid;
+    expect(upid).toBeDefined();
+    if (upid === undefined) return;
+    await postJson(app, `/api/process/${upid}/halt`);
+    expect((await postJson(app, `/api/process/${upid}/execute`)).status).toBe(404);
   });
 });
 

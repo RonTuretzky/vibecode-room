@@ -242,8 +242,13 @@ function setupClassifier(llm: DecisionLLM): { classifier: AcceptanceClassifier; 
   return { classifier, pending };
 }
 
+// TWO-STAGE PIVOT: an accept is KICKOFF only — registry.spawn no longer calls
+// the smithers client (the durable run launches at the separate commission
+// stage), so "how many spawns happened" is the registry's record count. The
+// no-gateway-launch-at-accept invariant is asserted once explicitly below.
 function spawnCalls(runtime: Runtime): number {
-  return runtime.client.calls.filter((call) => call.name === "spawn").length;
+  expect(runtime.client.calls.filter((call) => call.name === "spawn")).toHaveLength(0);
+  return runtime.registry.records().length;
 }
 
 function suggestion(): PendingSuggestion {

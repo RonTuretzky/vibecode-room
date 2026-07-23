@@ -64,8 +64,8 @@ describe("selectSmithersClient — client selection by gateway config (unit)", (
   });
 });
 
-describe("gateway-backed registry routes spawn/halt through the transport (integration)", () => {
-  test("registry.spawn -> launchRun and registry.halt -> cancelRun are observed on the transport", async () => {
+describe("gateway-backed registry routes execute/halt through the transport (integration)", () => {
+  test("KICKOFF spawn never reaches the transport; registry.execute -> launchRun and registry.halt -> cancelRun", async () => {
     const transport = new RecordingTransport();
     const correlations = new MemoryCorrelationStore();
     const client = selectSmithersClient({}, { transport, correlations });
@@ -81,17 +81,23 @@ describe("gateway-backed registry routes spawn/halt through the transport (integ
       correlationId: "corr-gw-spawn",
     });
     expect(spawned.accepted).toBe(true);
+    // TWO-STAGE PIVOT: accepting an idea is kickoff only — no gateway launch.
+    expect(transport.requests).toHaveLength(0);
 
+    // COMMISSION: the explicit execute launches the durable run, under the
+    // runId pre-assigned at kickoff and a stable per-UPID idempotency key.
+    const executed = await registry.execute("upid-gw-1");
+    expect(executed.started).toBe(true);
     const launch = transport.requests.find((entry) => entry.method === "launchRun");
     expect(launch).toBeDefined();
     expect(launch?.params).toEqual(
       expect.objectContaining({
         workflow: "vibersyn-process",
-        options: expect.objectContaining({ runId: "run-gw-1", idempotencyKey: "corr-gw-spawn" }),
+        options: expect.objectContaining({ runId: "run-gw-1", idempotencyKey: "corr-execute-upid-gw-1" }),
       }),
     );
 
-    // The spawn must have persisted a correlation record so the halt below can
+    // The execute must have persisted a correlation record so the halt below can
     // resolve the runId — otherwise GatewaySmithersClient.halt cannot fire cancelRun.
     expect(await correlations.findByUPID("upid-gw-1")).toEqual(
       expect.objectContaining({ runId: "run-gw-1" }),

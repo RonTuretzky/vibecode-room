@@ -4,11 +4,11 @@ import { MemorySmithersClient } from "../../src/process/test-helpers";
 import { GatewayRegistryClient } from "../../src/server/smithers-select";
 import type { GatewayEventFrame, GatewayRpcTransport, StreamRunEventsOptions } from "../../src/seam/smithers-client";
 
-// ISSUE-0011 e2e (GAP-004): the live runtime drives a real-run gateway when the
-// gateway flag is set, and stays in-memory by default. A stub transport stands in
-// for the real gateway so the seeded fleet's spawns surface as launchRun RPCs with
-// no network. The seed step (createProjectorRuntime -> seedDemoFleet) is the
-// accepted spawn that must reach the transport.
+// ISSUE-0011 e2e (GAP-004), updated for the TWO-STAGE PIVOT: the live runtime
+// selects the gateway client when the gateway flag is set, and stays in-memory
+// by default. A stub transport stands in for the real gateway. Since the pivot
+// a spawn (including the seeded fleet's) is KICKOFF ONLY and launches nothing;
+// the explicit COMMISSION (executeProcess) is what surfaces as a launchRun RPC.
 
 class StubGatewayTransport implements GatewayRpcTransport {
   readonly requests: Array<{ method: string; params?: Record<string, unknown> }> = [];
@@ -34,10 +34,9 @@ function baseEnv(): ProjectorRuntimeEnv {
 }
 
 describe("gateway-smithers e2e — live runtime drives the gateway when flagged", () => {
-  test("gateway env + stub transport records launchRun on an accepted spawn", async () => {
+  test("gateway env + stub transport: spawn is kickoff-only, commission records launchRun", async () => {
     const transport = new StubGatewayTransport();
-    // Opt into the seeded fleet: this asserts the seed's two spawns reach the
-    // gateway transport, the accepted spawn under test.
+    // Opt into the seeded fleet so there are live processes to commission.
     const env: ProjectorRuntimeEnv = {
       ...baseEnv(),
       VIBERSYN_SEED_DEMO_FLEET: "1",
@@ -46,12 +45,18 @@ describe("gateway-smithers e2e — live runtime drives the gateway when flagged"
 
     const runtime = await createProjectorRuntime(env, { smithersTransport: transport });
 
-    // The seeded fleet (Atlas + Cobalt) spawns through the gateway client.
+    // The seeded fleet (Atlas + Cobalt) registers through the gateway client,
+    // but KICKOFF launches nothing on the gateway (two-stage pivot).
     expect(runtime.registry.client).toBeInstanceOf(GatewayRegistryClient);
-    expect(transport.methods()).toContain("launchRun");
-    const launchCount = transport.requests.filter((entry) => entry.method === "launchRun").length;
-    expect(launchCount).toBe(2);
     expect(runtime.registry.activeRecords().length).toBe(2);
+    expect(transport.requests.filter((entry) => entry.method === "launchRun")).toHaveLength(0);
+
+    // COMMISSION one process: exactly one launchRun reaches the transport.
+    const upid = runtime.registry.activeRecords()[0]!.upid;
+    const executed = await runtime.executeProcess(upid);
+    expect(executed.ok).toBe(true);
+    expect(transport.methods()).toContain("launchRun");
+    expect(transport.requests.filter((entry) => entry.method === "launchRun")).toHaveLength(1);
   });
 
   test("no gateway config -> runtime stays on the in-memory client", async () => {

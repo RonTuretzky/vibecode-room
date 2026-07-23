@@ -139,6 +139,11 @@ async function seededRegistry(): Promise<{
   });
   await registry.spawn({ correlationId: "corr-spawn-atlas", upid: "upid-atlas", callsign: "Atlas", workflow: "wf" });
   await registry.spawn({ correlationId: "corr-spawn-bravo", upid: "upid-bravo", callsign: "Bravo", workflow: "wf" });
+  // TWO-STAGE PIVOT: spoken panic must cancel the DURABLE run when one exists,
+  // so this REQ-12 slice commissions both processes (client.halt only fires for
+  // commissioned processes; a kickoff-only process halts registry-side).
+  await registry.execute("upid-atlas");
+  await registry.execute("upid-bravo");
   registry.advanceAutonomousTick("corr-running");
   return { client, registry, traces };
 }

@@ -8,14 +8,14 @@ import type {
 } from "../../src/seam/smithers-client";
 import type { TranscriptObservation } from "../../src/types";
 
-// ISSUE-0020 e2e: the full accept->spawn path on the LIVE runtime, but with the
-// Smithers gateway flagged on (VIBERSYN_SMITHERS_GATEWAY_URL) and a stub transport
-// standing in for the real gateway. A fired suggestion followed by a spoken "yes"
-// routes through the AcceptanceController -> ProcessRegistry.spawn -> the gateway
-// client, so the spawned ProjectorProcess on the snapshot carries the
-// gateway-issued runId (`vibersyn-<upid>`) and that exact runId was launched over the
-// transport. This proves the accept->spawn seam runs against the real gateway
-// client, not just the in-memory default.
+// ISSUE-0020 e2e, updated for the TWO-STAGE PIVOT: the full accept->spawn path
+// on the LIVE runtime, with the Smithers gateway flagged on
+// (VIBERSYN_SMITHERS_GATEWAY_URL) and a stub transport standing in for the real
+// gateway. A fired suggestion followed by a spoken "yes" routes through the
+// AcceptanceController -> ProcessRegistry.spawn — KICKOFF ONLY: the process
+// appears on the snapshot with its pre-assigned runId (`vibersyn-<upid>`) but
+// NOTHING is launched on the gateway. The explicit executeProcess COMMISSION is
+// what drives launchRun over the transport, under that exact runId.
 
 class StubGatewayTransport implements GatewayRpcTransport {
   readonly requests: Array<{ method: string; params?: Record<string, unknown> }> = [];
@@ -100,15 +100,24 @@ describe("gateway-accept-spawn e2e — say yes spawns a gateway-backed process",
     if (process === undefined) return;
     expect(["planning", "active"]).toContain(process.state);
 
-    // The snapshot's runId is the gateway-issued one (`vibersyn-<upid>`), not the
-    // in-memory client's `run-<upid>`.
+    // The snapshot's runId is pre-assigned deterministically (`vibersyn-<upid>`)
+    // so the later commission launches under the same id.
     expect(process.runId).toBe(`vibersyn-${process.upid}`);
 
-    // And that exact runId was launched over the gateway transport by the accept
-    // path (one new launchRun beyond whatever the seeded fleet launched).
+    // KICKOFF invariant: accepting the idea launched NOTHING on the gateway.
+    expect(transport.launchedRunIds().length).toBe(launchesBefore);
+
+    // COMMISSION: the explicit execute launches exactly that runId.
+    const executed = await runtime.executeProcess(process.upid);
+    expect(executed.ok).toBe(true);
     const launches = transport.launchedRunIds();
     expect(launches.length).toBe(launchesBefore + 1);
     expect(launches).toContain(process.runId);
+
+    // Idempotent commission: a second execute is refused, no second launch.
+    const again = await runtime.executeProcess(process.upid);
+    expect(again.ok).toBe(false);
+    expect(transport.launchedRunIds().length).toBe(launchesBefore + 1);
 
     // Heuristic decider + stubbed gateway only: nothing touched the network.
     expect(fetchCalls).toBe(0);

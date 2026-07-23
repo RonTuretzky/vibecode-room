@@ -8,13 +8,15 @@ import type {
 } from "../../src/seam/smithers-client";
 import type { TranscriptObservation } from "../../src/types";
 
-// ISSUE-0021 e2e: a spawned run's LIVE gateway events reach the published process
-// snapshot. With the Smithers gateway flagged on and a stub transport, a fired
-// suggestion + a spoken "yes" spawns a process through the registry; the runtime
-// auto-subscribes that run to the transport's streamRunEvents. Synthetic
-// GatewayEventFrames then drive the spawned process's progress/lastOutput/state on
-// the published snapshot — replacing the registry/fixture defaults — while the
-// seeded fleet (no live run) keeps its fixtures.
+// ISSUE-0021 e2e, updated for the TWO-STAGE PIVOT: a COMMISSIONED run's LIVE
+// gateway events reach the published process snapshot. With the Smithers
+// gateway flagged on and a stub transport, a fired suggestion + a spoken "yes"
+// spawns a KICKOFF-ONLY process (no gateway launch, no stream); the explicit
+// executeProcess commission then launches the durable run and subscribes it to
+// the transport's streamRunEvents. Synthetic GatewayEventFrames then drive the
+// process's progress/lastOutput/state (and the execution lane's percent) on
+// the published snapshot — while the seeded fleet (no live run) keeps its
+// fixtures.
 
 // Frames the stub gateway replays for the one streamed run. node.started keeps the
 // run "active" mid-stream; node.output advances progress and carries the summary
@@ -100,22 +102,33 @@ describe("run-events-snapshot e2e — live run progress reaches the published sn
 
     const seededUpids = new Set(runtime.snapshot().processes.map((process) => process.upid));
 
-    // Drive accept->spawn: the registry spawns one process and the runtime
-    // subscribes it to the gateway's live event stream.
+    // Drive accept->spawn: KICKOFF only. The registry spawns one process but
+    // launches nothing on the gateway and streams nothing.
     await driveMic(runtime);
 
     const spawned = runtime.snapshot().processes.find((process) => !seededUpids.has(process.upid));
     expect(spawned).toBeDefined();
     if (spawned === undefined) return;
+    expect(transport.launchedRunIds()).toHaveLength(0);
+    expect(transport.streamedRunIds).toHaveLength(0);
 
-    // Before the stream is consumed, the process panel shows the registry default
-    // (progress 0, lastOutput "spawn"). Wait for the in-flight subscription to fold
-    // in the live frames, then republish-driven snapshot reflects the overlay.
+    // COMMISSION: the explicit execute launches the durable run and subscribes
+    // its live event stream.
+    const executed = await runtime.executeProcess(spawned.upid);
+    expect(executed.ok).toBe(true);
+    expect(transport.launchedRunIds()).toEqual([`vibersyn-${spawned.upid}`]);
+
+    // Wait for the in-flight subscription to fold in the live frames, then the
+    // republish-driven snapshot reflects the overlay.
     await runtime.runEventDriver.idle();
 
     const overlaid = runtime.snapshot().processes.find((process) => process.upid === spawned.upid);
     expect(overlaid).toBeDefined();
     if (overlaid === undefined) return;
+
+    // The commission execution lane is on the snapshot, fed by the same frames.
+    const lane = (overlaid as { execution?: { status: string; percent: number; runId: string } }).execution;
+    expect(lane).toMatchObject({ status: "executing", percent: 24, runId: `vibersyn-${spawned.upid}` });
 
     // The live frames — NOT the fixture/registry default — now drive the panel.
     expect(overlaid.state).toBe("active");

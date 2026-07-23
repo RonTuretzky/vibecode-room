@@ -4,7 +4,17 @@ import { createCerebrasRetryFetch, type CerebrasBackoffOptions } from "../cerebr
 import type { BuildBackend, BuildBackendId, BuildRequest, BuildResult } from "../types";
 
 /**
- * The "eliza" BuildBackend: an ElizaOS-character-faithful build loop.
+ * The "eliza" BuildBackend: an ElizaOS-character-faithful CONCEPT-MOCK loop.
+ *
+ * KICKOFF SCOPE (two-stage pivot): the character plans then implements ONE
+ * small self-contained concept-mock page (hero screen, visual identity,
+ * headline pitch line, one lightly-sketched interaction) — never the full app
+ * (that is the separate commission stage). The old critique/revise rounds are
+ * gone from the fresh build: plan -> implement, small single-file output,
+ * tight per-call timeout. This also fixes the JSON-truncation failures the
+ * full-app outputs used to hit — a single small index.html fits comfortably in
+ * one completion (the 429 backoff transport is unchanged). Corrections (steer)
+ * keep the single revise pass.
  *
  * What is REAL ElizaOS here (loaded at runtime from @elizaos/core@1.7.x):
  *   - the coder Character (full Character schema: system/bio/topics/adjectives/
@@ -33,8 +43,8 @@ export const ELIZA_ENTRYPOINT = "index.html";
 export const ELIZA_CORE_PACKAGE = "@elizaos/core";
 export const CEREBRAS_OPENAI_BASE_URL = "https://api.cerebras.ai/v1";
 
-const DEFAULT_MAX_ROUNDS = 3;
-const DEFAULT_CALL_TIMEOUT_MS = 180_000;
+// Tight per-call ceiling: a mock lane targets ~60s total (plan + implement).
+const DEFAULT_CALL_TIMEOUT_MS = 45_000;
 const DEFAULT_MAX_COMPLETION_TOKENS = 16_384;
 const MAX_PROMPT_FILE_CHARS = 20_000;
 const MAX_READ_FILE_BYTES = 512 * 1024;
@@ -251,18 +261,19 @@ export const ELIZA_CODER_CHARACTER: ElizaCharacter = {
   name: "Syn",
   username: "syn_shipwright",
   system: [
-    "You are Syn, the resident builder for a live vibe-coding wall: you turn spoken idea pitches into tiny, delightful,",
-    `SELF-CONTAINED static web apps. Hard rules: the entrypoint is ${ELIZA_ENTRYPOINT}; all CSS/JS is inline or in sibling`,
-    "local files you also emit; NO CDN links, NO external URLs, NO network calls, NO build steps, NO frameworks —",
-    "vanilla HTML/CSS/JS only. You always reply with a single JSON object and nothing else — no prose, no markdown fences.",
+    "You are Syn, the resident concept artist for a live vibe-coding wall: you turn spoken idea pitches into small,",
+    "seductive CONCEPT MOCKS — one self-contained page selling the imagined app, never the full app. Hard rules: the",
+    `entrypoint is ${ELIZA_ENTRYPOINT} and it is the ONLY file, with all CSS/JS inline; NO CDN links, NO external URLs,`,
+    "NO network calls, NO build steps, NO frameworks — vanilla HTML/CSS/JS only. Keep output SMALL. You always reply",
+    "with a single JSON object and nothing else — no prose, no markdown fences.",
   ].join(" "),
   bio: [
-    "Ships a working toy in one sitting rather than a perfect thing never.",
-    "Treats every pitch as buildable and finds the smallest delightful version of it.",
+    "Sells the dream in one screen rather than shipping a mediocre whole.",
+    "Treats every pitch as imaginable and finds the hero shot that makes the room want it.",
     "Allergic to dependencies; believes an index.html should stand alone forever.",
   ],
-  topics: ["static web apps", "vanilla javascript", "css", "interaction design", "creative coding"],
-  adjectives: ["pragmatic", "playful", "terse", "meticulous"],
+  topics: ["concept mocks", "visual identity", "vanilla javascript", "css", "interaction design"],
+  adjectives: ["evocative", "playful", "terse", "meticulous"],
   settings: {
     // How the model provider is pointed at Cerebras, in @elizaos/plugin-openai's
     // own configuration vocabulary (values are non-secret; the key stays in env).
@@ -270,36 +281,29 @@ export const ELIZA_CODER_CHARACTER: ElizaCharacter = {
     OPENAI_LARGE_MODEL: "gemma-4-31b",
   },
   style: {
-    all: ["reply with strict JSON only", "prefer small, complete, working output over sketches"],
-    chat: ["never explain, just build"],
+    all: ["reply with strict JSON only", "prefer one small complete page over a sprawling sketch"],
+    chat: ["never explain, just mock it up"],
   },
   templates: {
     plan: [
-      "{{agentName}} is planning a build for the room.",
+      "{{agentName}} is imagining a concept mock for the room.",
       "Idea pitch: {{pitch}}",
       "",
-      `Plan a minimal but polished self-contained web app for this idea (1-4 files, ${ELIZA_ENTRYPOINT} required).`,
-      'Reply with ONLY JSON: {"summary": "<one-paragraph human summary of the app you will build>",',
-      '"spec": "<concise implementation spec: layout, interactions, state, styling>",',
-      `"files": [{"path": "${ELIZA_ENTRYPOINT}", "purpose": "..."}]}`,
+      "Imagine the app this pitch describes and plan a CONCEPT MOCK — one small self-contained page:",
+      "the app's hero screen, a strong visual identity (name, palette, typography), a prominently displayed",
+      "headline pitch line, and ONE key interaction lightly sketched. Full functionality is NOT the goal.",
+      'Reply with ONLY JSON: {"pitch": "<one punchy headline pitch line for the app>",',
+      '"spec": "<concise mock spec: hero layout, visual identity, the one sketched interaction>"}',
     ].join("\n"),
     implement: [
       "Idea pitch: {{pitch}}",
+      "Headline: {{headline}}",
       "Spec: {{spec}}",
-      "Planned files: {{manifest}}",
       "",
-      "Write the COMPLETE content of every planned file.",
-      'Reply with ONLY strict JSON: {"files": {"<path>": "<full file content>", ...}}.',
-      `${ELIZA_ENTRYPOINT} is required. Escape file contents as valid JSON strings. No markdown fences, no commentary.`,
-    ].join("\n"),
-    critique: [
-      "Idea pitch: {{pitch}}",
-      "Built files (JSON map of path -> content):",
-      "{{filesJson}}",
-      "",
-      `Review the app against the idea. Fail it only for real problems: broken/missing ${ELIZA_ENTRYPOINT}, JS errors,`,
-      "external URLs/CDN usage, or the core idea not actually implemented. Pass a reasonable working version — do not nitpick.",
-      'Reply with ONLY JSON: {"pass": true|false, "issues": ["<specific fixable issue>", ...]}',
+      `Write the COMPLETE concept mock as a single SMALL ${ELIZA_ENTRYPOINT} (all CSS/JS inline).`,
+      `Reply with ONLY strict JSON: {"files": {"${ELIZA_ENTRYPOINT}": "<full file content>"}}.`,
+      "This is a mock of the imagined app, not the app — keep it compact.",
+      "Escape the content as a valid JSON string. No markdown fences, no commentary.",
     ].join("\n"),
     revise: [
       "Idea pitch: {{pitch}}",
@@ -311,7 +315,7 @@ export const ELIZA_CODER_CHARACTER: ElizaCharacter = {
       "{{issues}}",
       "",
       'Reply with ONLY strict JSON: {"files": {"<path>": "<full new file content>", ...}} containing ONLY the files you change or add.',
-      "Each changed file must be complete. No markdown fences, no commentary.",
+      "Each changed file must be complete and stay a small self-contained mock. No markdown fences, no commentary.",
     ].join("\n"),
   },
 };
@@ -430,40 +434,30 @@ export async function processAction(
 // is fatal for {"files": {...}} and {"pass": false} payloads.
 
 export interface ElizaPlan {
+  // The headline pitch line — this becomes the BuildResult.summary.
   summary: string;
   spec: string;
-  manifest: Array<{ path: string; purpose: string }>;
 }
 
-// A bad plan never fails the build — fall back to a one-file plan from the pitch.
+// A bad plan never fails the mock — fall back to a pitch-line plan from the
+// room's pitch. Accepts the new {"pitch", "spec"} shape and tolerates a legacy
+// {"summary"} key.
 export function parsePlanContent(obj: Record<string, unknown> | null, pitch: string): ElizaPlan {
   const fallback: ElizaPlan = {
-    summary: `A self-contained web app built from the room's pitch: ${truncate(pitch, 160)}.`,
-    spec: `Implement the pitch as a single-page self-contained app: ${pitch}`,
-    manifest: [{ path: ELIZA_ENTRYPOINT, purpose: "the whole app (markup, styles, script inline)" }],
+    summary: `${truncate(pitch.trim(), 160)} — concept mock, ready to commission.`,
+    spec: `A one-page concept mock of the pitch: hero screen, visual identity, headline pitch line, one sketched interaction. Pitch: ${pitch}`,
   };
   if (obj === null) {
     return fallback;
   }
-  const summary = typeof obj.summary === "string" && obj.summary.trim().length > 0 ? obj.summary.trim() : fallback.summary;
+  const headline =
+    typeof obj.pitch === "string" && obj.pitch.trim().length > 0
+      ? obj.pitch.trim()
+      : typeof obj.summary === "string" && obj.summary.trim().length > 0
+        ? obj.summary.trim()
+        : fallback.summary;
   const spec = typeof obj.spec === "string" && obj.spec.trim().length > 0 ? obj.spec.trim() : fallback.spec;
-  const manifest: Array<{ path: string; purpose: string }> = [];
-  if (Array.isArray(obj.files)) {
-    for (const entry of obj.files) {
-      if (!isRecord(entry) || typeof entry.path !== "string") {
-        continue;
-      }
-      const safe = sanitizeAppPath(entry.path);
-      if (safe === null) {
-        continue;
-      }
-      manifest.push({ path: safe, purpose: typeof entry.purpose === "string" ? entry.purpose : "" });
-    }
-  }
-  if (!manifest.some((f) => f.path === ELIZA_ENTRYPOINT)) {
-    manifest.unshift({ path: ELIZA_ENTRYPOINT, purpose: "entrypoint" });
-  }
-  return { summary, spec, manifest: manifest.slice(0, 8) };
+  return { summary: truncate(headline, 300), spec };
 }
 
 // {"files": {path: content}}; tolerates a bare top-level {path: content} map
@@ -491,25 +485,6 @@ export function parseFilesContent(obj: Record<string, unknown> | null): Map<stri
     }
   }
   return out.size > 0 ? out : null;
-}
-
-export interface ElizaCritique {
-  pass: boolean;
-  issues: string[];
-}
-
-// An unparseable critique never wedges the loop — it counts as a pass.
-export function parseCritiqueContent(obj: Record<string, unknown> | null): ElizaCritique {
-  if (obj === null || typeof obj.pass !== "boolean") {
-    return { pass: true, issues: [] };
-  }
-  const issues = Array.isArray(obj.issues)
-    ? obj.issues.filter((issue): issue is string => typeof issue === "string" && issue.trim().length > 0).slice(0, 8)
-    : [];
-  if (!obj.pass && issues.length === 0) {
-    return { pass: false, issues: ["Critique failed the app without specifics; improve fidelity to the idea and overall polish."] };
-  }
-  return { pass: obj.pass, issues };
 }
 
 // Tolerant JSON-object extraction: bare JSON, then fenced ```json blocks, then
@@ -567,10 +542,8 @@ export interface ElizaBuildBackendOptions {
   /** Env source (tests inject; defaults to process.env). */
   env?: Record<string, string | undefined>;
   fetchImpl?: typeof fetch;
-  /** Per-model-call timeout. Default 180s. */
+  /** Per-model-call timeout. Default 45s (mock lanes target ~60s total). */
   timeoutMs?: number;
-  /** Critique→revise cycles after the first implement pass. Default 3. */
-  maxRounds?: number;
   character?: ElizaCharacter;
 }
 
@@ -580,13 +553,11 @@ export class ElizaBuildBackend implements BuildBackend {
   readonly #options: ElizaBuildBackendOptions;
   readonly #env: Record<string, string | undefined>;
   readonly #character: ElizaCharacter;
-  readonly #maxRounds: number;
 
   constructor(options: ElizaBuildBackendOptions = {}) {
     this.#options = options;
     this.#env = options.env ?? process.env;
     this.#character = options.character ?? ELIZA_CODER_CHARACTER;
-    this.#maxRounds = Math.max(1, options.maxRounds ?? DEFAULT_MAX_ROUNDS);
   }
 
   async #core(): Promise<ElizaCoreLoad> {
@@ -624,14 +595,14 @@ export class ElizaBuildBackend implements BuildBackend {
   async build(req: BuildRequest): Promise<BuildResult> {
     const load = await this.#core();
     if (!load.ok) {
-      return { ok: false, entrypoint: null, summary: "ElizaOS build could not start.", error: load.reason };
+      return { ok: false, entrypoint: null, summary: "ElizaOS mock could not start.", error: load.reason };
     }
     const model = this.#model();
     if (model === null) {
       return {
         ok: false,
         entrypoint: null,
-        summary: "ElizaOS build could not start.",
+        summary: "ElizaOS mock could not start.",
         error: "no model handler: CEREBRAS_API_KEY is not set",
       };
     }
@@ -642,7 +613,7 @@ export class ElizaBuildBackend implements BuildBackend {
       return {
         ok: false,
         entrypoint: null,
-        summary: aborted ? "Build aborted by emergency stop." : "ElizaOS build failed before completion.",
+        summary: aborted ? "Mock aborted by emergency stop." : "ElizaOS mock failed before completion.",
         error: aborted ? "aborted" : errorMessage(error),
       };
     }
@@ -673,16 +644,18 @@ export class ElizaBuildBackend implements BuildBackend {
       return this.#runCorrection(req, core, runtime, message, generate, req.correction.trim());
     }
 
-    onProgress({ label: "planning", percent: 5, detail: `character ${character.name}` });
+    // CONCEPT-MOCK loop: plan -> implement -> write. Deliberately no
+    // critique/revise rounds at kickoff — small single-file output, fast lane.
+    onProgress({ label: "imagining concept", percent: 10, detail: `character ${character.name}` });
     const plan = parsePlanContent(extractJsonContent(await generate("plan", {})), req.prompt);
     signal.throwIfAborted();
 
-    onProgress({ label: "implementing", percent: 25, detail: plan.manifest.map((f) => f.path).join(", ") });
+    onProgress({ label: "mocking", percent: 40, detail: truncate(plan.summary, 120) });
     const implemented = parseFilesContent(
       extractJsonContent(
         await generate("implement", {
+          headline: plan.summary,
           spec: plan.spec,
-          manifest: plan.manifest.map((f) => `${f.path} — ${f.purpose}`).join("; "),
         }),
       ),
     );
@@ -692,63 +665,18 @@ export class ElizaBuildBackend implements BuildBackend {
     signal.throwIfAborted();
 
     const project = new Map<string, string>();
-    onProgress({ label: "writing files", percent: 45, detail: `${implemented.size} file(s)` });
+    onProgress({ label: "staging mock", percent: 80, detail: `${implemented.size} file(s)` });
     await this.#dispatchWrite(req, runtime, message, implemented, project);
-
-    let passed = false;
-    let lastIssues: string[] = [];
-    const max = this.#maxRounds;
-    const percentAt = (round: number, revising: boolean): number =>
-      Math.min(95, Math.round(50 + ((round - 1) * 2 + (revising ? 1 : 0)) * (45 / (max * 2))));
-
-    for (let round = 1; round <= max; round += 1) {
-      signal.throwIfAborted();
-      onProgress({ label: `critiquing (${round}/${max})`, percent: percentAt(round, false) });
-      let critique: ElizaCritique;
-      if (!project.has(ELIZA_ENTRYPOINT)) {
-        critique = {
-          pass: false,
-          issues: [`No ${ELIZA_ENTRYPOINT} was produced; emit a complete ${ELIZA_ENTRYPOINT} entrypoint.`],
-        };
-      } else {
-        critique = parseCritiqueContent(extractJsonContent(await generate("critique", { filesJson: serializeProject(project) })));
-      }
-      if (critique.pass) {
-        passed = true;
-        lastIssues = [];
-        break;
-      }
-      lastIssues = critique.issues;
-      if (round === max) {
-        break;
-      }
-      signal.throwIfAborted();
-      onProgress({ label: `revising (${round}/${max - 1})`, percent: percentAt(round, true), detail: critique.issues[0] });
-      const revised = parseFilesContent(
-        extractJsonContent(
-          await generate("revise", {
-            specLine: `Spec: ${plan.spec}`,
-            filesJson: serializeProject(project),
-            issues: critique.issues.map((issue, index) => `${index + 1}. ${issue}`).join("\n"),
-          }),
-        ),
-      );
-      if (revised === null) {
-        break; // the model couldn't produce fixes; ship what we have
-      }
-      await this.#dispatchWrite(req, runtime, message, revised, project);
-    }
 
     if (!project.has(ELIZA_ENTRYPOINT)) {
       return { ok: false, entrypoint: null, summary: plan.summary, error: `the model never produced an ${ELIZA_ENTRYPOINT} entrypoint` };
     }
-    onProgress({ label: "ready", percent: 100 });
-    const summary = passed || lastIssues.length === 0 ? plan.summary : `${plan.summary} Known rough edges: ${lastIssues.join("; ")}.`;
-    return { ok: true, entrypoint: ELIZA_ENTRYPOINT, summary };
+    onProgress({ label: "mock ready", percent: 100 });
+    return { ok: true, entrypoint: ELIZA_ENTRYPOINT, summary: plan.summary };
   }
 
-  // Steer mode: the app already exists in outDir — read it, run ONE revise pass
-  // with the spoken correction as the issue list, and dispatch the write action.
+  // Steer mode: the mock already exists in outDir — read it, run ONE revise
+  // pass with the spoken correction as the issue list, and dispatch the write.
   async #runCorrection(
     req: BuildRequest,
     _core: ElizaCoreModule,
@@ -758,10 +686,10 @@ export class ElizaBuildBackend implements BuildBackend {
     correction: string,
   ): Promise<BuildResult> {
     const { signal, onProgress } = req;
-    onProgress({ label: "reading app", percent: 10 });
+    onProgress({ label: "reading mock", percent: 10 });
     const project = await readProjectFiles(req.outDir);
     if (project.size === 0) {
-      return { ok: false, entrypoint: null, summary: "", error: "steer requested but the build directory has no app to correct" };
+      return { ok: false, entrypoint: null, summary: "", error: "steer requested but the build directory has no mock to correct" };
     }
     signal.throwIfAborted();
 
@@ -783,9 +711,9 @@ export class ElizaBuildBackend implements BuildBackend {
     await this.#dispatchWrite(req, runtime, message, revised, project);
 
     if (!project.has(ELIZA_ENTRYPOINT)) {
-      return { ok: false, entrypoint: null, summary: "", error: `corrected app has no ${ELIZA_ENTRYPOINT} entrypoint` };
+      return { ok: false, entrypoint: null, summary: "", error: `corrected mock has no ${ELIZA_ENTRYPOINT} entrypoint` };
     }
-    onProgress({ label: "ready", percent: 100 });
+    onProgress({ label: "mock ready", percent: 100 });
     return { ok: true, entrypoint: ELIZA_ENTRYPOINT, summary: `Applied spoken correction: "${truncate(correction, 200)}".` };
   }
 

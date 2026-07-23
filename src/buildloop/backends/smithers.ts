@@ -1,12 +1,13 @@
-// The "smithers" BuildBackend: the EXISTING one-shot preview build (the host
-// `claude` CLI writing a self-contained static app into a directory — see
-// src/server/idea-builder.ts defaultClaudeBuilderAgent) adapted into the
-// multi-backend BuildBackend seam. The durable gateway run is NOT owned here:
-// the process registry keeps spawning its SmithersClient run as before — this
-// backend owns only the app ARTIFACT under builds/<upid>/smithers/.
+// The "smithers" BuildBackend: a claude-shim ONE-SHOT that produces a fast
+// CONCEPT MOCK at kickoff — one self-contained static page pitching the
+// imagined app (hero screen, visual identity, headline pitch line, one
+// lightly-functional key interaction). The FULL app is deliberately not built
+// here anymore: that is the separate, user-triggered COMMISSION stage (the
+// durable subscription run — see src/buildloop/execution.ts). This backend
+// owns only the mock ARTIFACT under builds/<upid>/smithers/.
 //
 // Correction (steer) mode: the existing files' content is serialized INTO the
-// prompt together with the spoken correction, and the CLI rewrites the app in
+// prompt together with the spoken correction, and the CLI rewrites the mock in
 // place in the same directory.
 //
 // The claude subprocess is killable within the ~2s emergency-stop budget: the
@@ -21,7 +22,9 @@ import type { BuildBackend, BuildBackendId, BuildRequest, BuildResult } from "..
 export const SMITHERS_BACKEND_LABEL = "Smithers";
 export const SMITHERS_ENTRYPOINT = "index.html";
 
-const DEFAULT_TIMEOUT_MS = 180_000;
+// A concept mock is one small page — tight ceiling so a kickoff lane settles in
+// about a minute, not the old full-app three.
+const DEFAULT_TIMEOUT_MS = 60_000;
 const MAX_PROMPT_FILE_CHARS = 20_000;
 const MAX_READ_FILE_BYTES = 512 * 1024;
 const SUMMARY_MAX_CHARS = 600;
@@ -92,13 +95,13 @@ export class SmithersBuildBackend implements BuildBackend {
       const correction = typeof req.correction === "string" && req.correction.trim().length > 0 ? req.correction.trim() : null;
       let prompt: string;
       if (correction === null) {
-        onProgress({ label: "building with claude", percent: 10 });
+        onProgress({ label: "mocking with claude", percent: 10 });
         prompt = smithersBuildPrompt(req.prompt);
       } else {
-        onProgress({ label: "reading app", percent: 10 });
+        onProgress({ label: "reading mock", percent: 10 });
         const files = await readProjectFiles(req.outDir);
         if (files.size === 0) {
-          return { ok: false, entrypoint: null, summary: "", error: "steer requested but the build directory has no app to correct" };
+          return { ok: false, entrypoint: null, summary: "", error: "steer requested but the build directory has no mock to correct" };
         }
         signal.throwIfAborted();
         onProgress({ label: "applying correction", percent: 30, detail: truncate(correction, 120) });
@@ -122,10 +125,10 @@ export class SmithersBuildBackend implements BuildBackend {
           ok: false,
           entrypoint: null,
           summary: "",
-          error: `the claude build produced no ${SMITHERS_ENTRYPOINT} entrypoint`,
+          error: `the claude mock produced no ${SMITHERS_ENTRYPOINT} entrypoint`,
         };
       }
-      onProgress({ label: "ready", percent: 100 });
+      onProgress({ label: "mock ready", percent: 100 });
       return {
         ok: true,
         entrypoint: SMITHERS_ENTRYPOINT,
@@ -136,7 +139,7 @@ export class SmithersBuildBackend implements BuildBackend {
       return {
         ok: false,
         entrypoint: null,
-        summary: aborted ? "Build aborted by emergency stop." : "Smithers build failed before completion.",
+        summary: aborted ? "Mock aborted by emergency stop." : "Smithers mock failed before completion.",
         error: aborted ? "aborted" : error instanceof Error ? error.message : String(error),
       };
     }
@@ -145,31 +148,32 @@ export class SmithersBuildBackend implements BuildBackend {
 
 // --- prompts (pure; unit-tested) --------------------------------------------
 
-// Fresh build: same shape as the existing one-shot preview build's prompt
-// (idea-builder builderPrompt) — a self-contained static app written into cwd.
+// Fresh kickoff: a fast CONCEPT MOCK — one self-contained static page selling
+// the imagined app, NOT the full working app (that's the commission stage).
 export function smithersBuildPrompt(pitch: string): string {
   const idea = pitch.trim().length > 0 ? pitch.trim() : "A small useful web tool.";
   return [
-    "You are a coding agent building a real, working web app from a one-line idea.",
+    "You are a rapid concept artist producing a CONCEPT MOCK of an imagined app — a pitch, not the product.",
     "",
     `IDEA: ${idea}`,
     "",
-    "Build a SELF-CONTAINED static web app that implements this idea:",
-    "- Plain HTML/CSS/JavaScript only. NO build step, NO frameworks requiring compilation, NO package install.",
-    "- The app must run by simply serving this directory over HTTP — opening index.html must work.",
-    `- Write ${SMITHERS_ENTRYPOINT} as the entry file. Prefer inlining CSS and JS inside ${SMITHERS_ENTRYPOINT} to avoid MIME issues.`,
-    "- Make it actually functional and interactive, not a description of the idea — implement the real behavior.",
-    "- Write the files directly into the current working directory. Overwrite any existing scaffold files.",
+    "Build ONE small SELF-CONTAINED static page that sells this idea:",
+    "- The HERO SCREEN of the imagined app: what its main screen would look like, with a strong visual identity (name, palette, typography).",
+    "- A HEADLINE PITCH LINE displayed prominently — one punchy sentence that sells the idea.",
+    "- ONE key interaction, lightly sketched: a single button/input/toggle that demonstrates the core feel. Full functionality is NOT the goal — this is a concept mock.",
+    `- Plain HTML/CSS/JavaScript, everything inline in a single ${SMITHERS_ENTRYPOINT}. NO build step, NO CDN, NO extra files. Keep it SMALL.`,
+    "- Write the file directly into the current working directory. Overwrite any existing scaffold files.",
     "",
-    "Do not ask questions. Build the app now.",
+    "Do not ask questions. Do not build the full app. Produce the concept mock now,",
+    "then reply with ONLY the headline pitch line as a single sentence.",
   ].join("\n");
 }
 
 // Steer mode: the existing files' content + the spoken correction, and the CLI
-// rewrites the app in place (same directory, same entrypoint).
+// rewrites the mock in place (same directory, same entrypoint).
 export function smithersCorrectionPrompt(pitch: string, files: ReadonlyMap<string, string>, correction: string): string {
   return [
-    "You are a coding agent CORRECTING an existing, working web app in the current working directory.",
+    "You are a rapid concept artist CORRECTING an existing concept mock in the current working directory.",
     "",
     `ORIGINAL IDEA: ${pitch.trim().length > 0 ? pitch.trim() : "A small useful web tool."}`,
     "",
@@ -178,21 +182,22 @@ export function smithersCorrectionPrompt(pitch: string, files: ReadonlyMap<strin
     "",
     `SPOKEN CORRECTION FROM THE ROOM — apply it faithfully: ${correction}`,
     "",
-    "Rewrite the app IN PLACE:",
+    "Rewrite the mock IN PLACE:",
     "- Overwrite the existing files in the current working directory with the corrected versions.",
-    `- Keep it a SELF-CONTAINED static app: plain HTML/CSS/JS, ${SMITHERS_ENTRYPOINT} stays the entry file, no build step, no CDN.`,
+    `- Keep it a SMALL SELF-CONTAINED concept mock: plain HTML/CSS/JS inline, ${SMITHERS_ENTRYPOINT} stays the entry file, no build step, no CDN.`,
     "- Preserve everything that already works; change only what the correction requires.",
     "",
     "Do not ask questions. Apply the correction now.",
   ].join("\n");
 }
 
-// The 1-paragraph human summary for the snapshot: the claude JSON envelope's
-// `result` text when parseable, else a deterministic line from the pitch.
+// The pitch-line summary for the snapshot: the claude JSON envelope's `result`
+// text when parseable (the prompt asks for exactly the headline pitch line),
+// else a deterministic pitch line from the idea.
 export function summaryFromClaudeOutput(stdout: string, pitch: string, correction: string | null): string {
   const fallback =
     correction === null
-      ? `A self-contained web app built by the claude CLI from the pitch: ${truncate(pitch.trim(), 200)}`
+      ? `${truncate(pitch.trim(), 160)} — concept mock, ready to commission.`
       : `Applied spoken correction: "${truncate(correction, 200)}".`;
   const trimmed = stdout.trim();
   if (trimmed.length === 0) {

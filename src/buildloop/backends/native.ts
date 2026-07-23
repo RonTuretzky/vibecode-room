@@ -9,8 +9,10 @@ export const NATIVE_BACKEND_LABEL = "Native Loop";
 export const NATIVE_ENTRYPOINT = "index.html";
 export const CEREBRAS_CHAT_COMPLETIONS_URL = "https://api.cerebras.ai/v1/chat/completions";
 
-const DEFAULT_MAX_ITERATIONS = 3;
-const DEFAULT_CALL_TIMEOUT_MS = 180_000;
+// Mock lanes stay tight: at most 2 critique cycles and 45s per model call so a
+// kickoff lane settles around a minute.
+const DEFAULT_MAX_ITERATIONS = 2;
+const DEFAULT_CALL_TIMEOUT_MS = 45_000;
 const KILL_ESCALATION_MS = 1_000;
 const DEFAULT_MAX_COMPLETION_TOKENS = 16_384;
 const MAX_PROMPT_FILE_CHARS = 20_000;
@@ -48,17 +50,21 @@ export interface NativeBuildBackendOptions {
 
 /**
  * The "native" BuildBackend: a self-built inner/outer agent loop with no
- * framework. Outer loop = PLAN (manifest + spec) → IMPLEMENT (strict JSON
- * {files}) → CRITIQUE (issues vs. the idea) → REVISE, early-exiting when the
- * critique passes, at most `maxIterations` critique cycles. Inner calls go to
- * the Cerebras chat-completions API (through the shared 429/5xx backoff +
- * concurrency throttle in ../cerebras-retry.ts) and fail over to the host
- * claude CLI after Cerebras fails twice — the CLI fallback is unchanged; each
- * Cerebras "failure" now happens only after backoff retries are exhausted.
- * Files are written with Bun.write into req.outDir; the
- * entrypoint is always index.html and the app must be self-contained (no CDN).
- * The AbortSignal is honored between every model call and aborts in-flight
- * fetches / kills subprocesses (emergency-stop budget ~2s).
+ * framework, rescoped since the two-stage pivot to produce a fast CONCEPT
+ * MOCK at kickoff (one small self-contained page: hero screen, visual
+ * identity, headline pitch line, one lightly-sketched interaction) — never
+ * the full app (that's the separate commission stage). Outer loop keeps its
+ * plan/critique character: PLAN (pitch line + mock spec) → IMPLEMENT (strict
+ * JSON {files}, one small index.html) → CRITIQUE (vs. the concept-mock brief)
+ * → REVISE, early-exiting when the critique passes, at most `maxIterations`
+ * critique cycles (tight default). Inner calls go to the Cerebras
+ * chat-completions API (through the shared 429/5xx backoff + concurrency
+ * throttle in ../cerebras-retry.ts) and fail over to the host claude CLI
+ * after Cerebras fails twice. Files are written with Bun.write into
+ * req.outDir; the entrypoint is always index.html and the mock must be
+ * self-contained (no CDN). The AbortSignal is honored between every model
+ * call and aborts in-flight fetches / kills subprocesses (emergency-stop
+ * budget ~2s).
  */
 export class NativeBuildBackend implements BuildBackend {
   readonly id: BuildBackendId = "native";
@@ -109,7 +115,7 @@ export class NativeBuildBackend implements BuildBackend {
       return {
         ok: false,
         entrypoint: null,
-        summary: aborted ? "Build aborted by emergency stop." : "Native build failed before completion.",
+        summary: aborted ? "Mock aborted by emergency stop." : "Native mock failed before completion.",
         error: aborted ? "aborted" : errorMessage(error),
       };
     }
@@ -122,12 +128,12 @@ export class NativeBuildBackend implements BuildBackend {
       return this.#runCorrection(req, model, req.correction.trim());
     }
 
-    onProgress({ label: "planning", percent: 5 });
+    onProgress({ label: "planning concept", percent: 5 });
     const planReply = await model({ stage: "plan", system: NATIVE_SYSTEM_PROMPT, user: planPrompt(req.prompt), signal });
     const plan = parsePlanReply(planReply, req.prompt);
     signal.throwIfAborted();
 
-    onProgress({ label: "implementing", percent: 25, detail: plan.manifest.map((f) => f.path).join(", ") });
+    onProgress({ label: "mocking", percent: 25, detail: plan.manifest.map((f) => f.path).join(", ") });
     const implementReply = await model({
       stage: "implement",
       system: NATIVE_SYSTEM_PROMPT,
@@ -142,7 +148,7 @@ export class NativeBuildBackend implements BuildBackend {
     mergeSanitized(project, implemented);
     signal.throwIfAborted();
 
-    onProgress({ label: "writing files", percent: 45, detail: `${project.size} file(s)` });
+    onProgress({ label: "staging mock", percent: 45, detail: `${project.size} file(s)` });
     await writeProject(req.outDir, project);
 
     let passed = false;
@@ -153,7 +159,7 @@ export class NativeBuildBackend implements BuildBackend {
 
     for (let iteration = 1; iteration <= max; iteration += 1) {
       signal.throwIfAborted();
-      onProgress({ label: `critiquing (${iteration}/${max})`, percent: percentAt(iteration, false) });
+      onProgress({ label: `reviewing mock (${iteration}/${max})`, percent: percentAt(iteration, false) });
       let critique: CritiqueVerdict;
       if (!project.has(NATIVE_ENTRYPOINT)) {
         critique = {
@@ -179,7 +185,7 @@ export class NativeBuildBackend implements BuildBackend {
         break;
       }
       signal.throwIfAborted();
-      onProgress({ label: `revising (${iteration}/${max - 1})`, percent: percentAt(iteration, true), detail: critique.issues[0] });
+      onProgress({ label: `polishing mock (${iteration}/${max - 1})`, percent: percentAt(iteration, true), detail: critique.issues[0] });
       const reviseReply = await model({
         stage: "revise",
         system: NATIVE_SYSTEM_PROMPT,
@@ -197,19 +203,19 @@ export class NativeBuildBackend implements BuildBackend {
     if (!project.has(NATIVE_ENTRYPOINT)) {
       return { ok: false, entrypoint: null, summary: plan.summary, error: `the model never produced an ${NATIVE_ENTRYPOINT} entrypoint` };
     }
-    onProgress({ label: "ready", percent: 100 });
+    onProgress({ label: "mock ready", percent: 100 });
     const summary = passed || lastIssues.length === 0 ? plan.summary : `${plan.summary} Known rough edges: ${lastIssues.join("; ")}.`;
     return { ok: true, entrypoint: NATIVE_ENTRYPOINT, summary };
   }
 
-  // Steer mode: the app already exists in outDir — read it, run ONE revise pass
-  // with the spoken correction as the issue list, and write the changed files.
+  // Steer mode: the mock already exists in outDir — read it, run ONE revise
+  // pass with the spoken correction as the issue list, and write the changes.
   async #runCorrection(req: BuildRequest, model: ModelCall, correction: string): Promise<BuildResult> {
     const { signal, onProgress } = req;
-    onProgress({ label: "reading app", percent: 10 });
+    onProgress({ label: "reading mock", percent: 10 });
     const project = await readProjectFiles(req.outDir);
     if (project.size === 0) {
-      return { ok: false, entrypoint: null, summary: "", error: "steer requested but the build directory has no app to correct" };
+      return { ok: false, entrypoint: null, summary: "", error: "steer requested but the build directory has no mock to correct" };
     }
     signal.throwIfAborted();
 
@@ -226,13 +232,13 @@ export class NativeBuildBackend implements BuildBackend {
     }
     signal.throwIfAborted();
     const changed = mergeSanitized(project, revised);
-    onProgress({ label: "writing files", percent: 80, detail: `${changed.size} file(s)` });
+    onProgress({ label: "staging mock", percent: 80, detail: `${changed.size} file(s)` });
     await writeProject(req.outDir, changed);
 
     if (!project.has(NATIVE_ENTRYPOINT)) {
-      return { ok: false, entrypoint: null, summary: "", error: `corrected app has no ${NATIVE_ENTRYPOINT} entrypoint` };
+      return { ok: false, entrypoint: null, summary: "", error: `corrected mock has no ${NATIVE_ENTRYPOINT} entrypoint` };
     }
-    onProgress({ label: "ready", percent: 100 });
+    onProgress({ label: "mock ready", percent: 100 });
     return { ok: true, entrypoint: NATIVE_ENTRYPOINT, summary: `Applied spoken correction: "${truncate(correction, 200)}".` };
   }
 }
@@ -240,43 +246,49 @@ export class NativeBuildBackend implements BuildBackend {
 // --- prompts --------------------------------------------------------------
 
 export const NATIVE_SYSTEM_PROMPT = [
-  "You are the builder for a live vibe-coding wall: you produce tiny, delightful, SELF-CONTAINED static web apps.",
-  `Hard rules: the entrypoint is ${NATIVE_ENTRYPOINT}; all CSS/JS is inline or in sibling local files you also emit;`,
-  "NO CDN links, NO external URLs, NO network calls, NO build steps, NO frameworks — vanilla HTML/CSS/JS only.",
-  "You always reply with a single JSON object and nothing else — no prose, no markdown fences.",
+  "You are the concept artist for a live vibe-coding wall: you produce small, seductive CONCEPT MOCKS of imagined",
+  "apps — one self-contained page selling the idea (hero screen, visual identity, headline pitch line, ONE lightly",
+  `sketched interaction), never the full app. Hard rules: the entrypoint is ${NATIVE_ENTRYPOINT} and it is the ONLY`,
+  "file, with all CSS/JS inline; NO CDN links, NO external URLs, NO network calls, NO build steps, NO frameworks —",
+  "vanilla HTML/CSS/JS only. Keep output SMALL. You always reply with a single JSON object and nothing else —",
+  "no prose, no markdown fences.",
 ].join(" ");
 
 function planPrompt(pitch: string): string {
   return [
     `Idea pitch: ${pitch}`,
     "",
-    `Plan a minimal but polished self-contained web app for this idea (1-4 files, ${NATIVE_ENTRYPOINT} required).`,
-    'Reply with ONLY JSON: {"summary": "<one-paragraph human summary of the app you will build>",',
-    '"spec": "<concise implementation spec: layout, interactions, state, styling>",',
-    `"files": [{"path": "${NATIVE_ENTRYPOINT}", "purpose": "..."}]}`,
+    "Plan a CONCEPT MOCK for this idea — one small self-contained page: the imagined app's hero screen, a strong",
+    "visual identity (name, palette, typography), a prominently displayed headline pitch line, and ONE key",
+    `interaction lightly sketched. Full functionality is NOT the goal. Single file: ${NATIVE_ENTRYPOINT}.`,
+    'Reply with ONLY JSON: {"pitch": "<one punchy headline pitch line for the app>",',
+    '"spec": "<concise mock spec: hero layout, visual identity, the one sketched interaction>",',
+    `"files": [{"path": "${NATIVE_ENTRYPOINT}", "purpose": "the whole mock"}]}`,
   ].join("\n");
 }
 
 function implementPrompt(pitch: string, plan: NativePlan): string {
   return [
     `Idea pitch: ${pitch}`,
+    `Headline: ${plan.summary}`,
     `Spec: ${plan.spec}`,
-    `Planned files: ${plan.manifest.map((f) => `${f.path} — ${f.purpose}`).join("; ")}`,
     "",
-    "Write the COMPLETE content of every planned file.",
+    `Write the COMPLETE concept mock as a single SMALL ${NATIVE_ENTRYPOINT} (all CSS/JS inline).`,
     'Reply with ONLY strict JSON: {"files": {"<path>": "<full file content>", ...}}.',
-    `${NATIVE_ENTRYPOINT} is required. Escape file contents as valid JSON strings. No markdown fences, no commentary.`,
+    `${NATIVE_ENTRYPOINT} is required. This is a mock of the imagined app, not the app — keep it compact.`,
+    "Escape file contents as valid JSON strings. No markdown fences, no commentary.",
   ].join("\n");
 }
 
 function critiquePrompt(pitch: string, files: ReadonlyMap<string, string>): string {
   return [
     `Idea pitch: ${pitch}`,
-    "Built files (JSON map of path -> content):",
+    "Mock files (JSON map of path -> content):",
     serializeFiles(files),
     "",
-    `Review the app against the idea. Fail it only for real problems: broken/missing ${NATIVE_ENTRYPOINT}, JS errors,`,
-    "external URLs/CDN usage, or the core idea not actually implemented. Pass a reasonable working version — do not nitpick.",
+    `Review the CONCEPT MOCK against the idea. Fail it only for real problems: broken/missing ${NATIVE_ENTRYPOINT},`,
+    "JS errors, external URLs/CDN usage, no visible headline pitch line, or nothing of the idea's hero screen present.",
+    "It is a mock — do NOT fail it for missing full functionality, and do not nitpick.",
     'Reply with ONLY JSON: {"pass": true|false, "issues": ["<specific fixable issue>", ...]}',
   ].join("\n");
 }
@@ -292,7 +304,7 @@ function revisePrompt(pitch: string, spec: string | null, files: ReadonlyMap<str
     ...issues.map((issue, index) => `${index + 1}. ${issue}`),
     "",
     'Reply with ONLY strict JSON: {"files": {"<path>": "<full new file content>", ...}} containing ONLY the files you change or add.',
-    "Each changed file must be complete. No markdown fences, no commentary.",
+    "Each changed file must be complete and stay a small self-contained mock. No markdown fences, no commentary.",
   ].join("\n");
 }
 
@@ -304,18 +316,25 @@ export interface NativePlan {
   manifest: Array<{ path: string; purpose: string }>;
 }
 
-// A bad plan never fails the build — fall back to a one-file plan from the pitch.
+// A bad plan never fails the mock — fall back to a one-file plan from the
+// pitch. `summary` is the headline pitch line (the model's "pitch" key, with a
+// legacy "summary" key tolerated).
 export function parsePlanReply(reply: string, pitch: string): NativePlan {
   const fallback: NativePlan = {
-    summary: `A self-contained web app built from the room's pitch: ${truncate(pitch, 160)}.`,
-    spec: `Implement the pitch as a single-page self-contained app: ${pitch}`,
-    manifest: [{ path: NATIVE_ENTRYPOINT, purpose: "the whole app (markup, styles, script inline)" }],
+    summary: `${truncate(pitch.trim(), 160)} — concept mock, ready to commission.`,
+    spec: `A one-page concept mock of the pitch: hero screen, visual identity, headline pitch line, one sketched interaction. Pitch: ${pitch}`,
+    manifest: [{ path: NATIVE_ENTRYPOINT, purpose: "the whole mock (markup, styles, script inline)" }],
   };
   const obj = extractJsonObject(reply);
   if (obj === null) {
     return fallback;
   }
-  const summary = typeof obj.summary === "string" && obj.summary.trim().length > 0 ? obj.summary.trim() : fallback.summary;
+  const summary =
+    typeof obj.pitch === "string" && obj.pitch.trim().length > 0
+      ? truncate(obj.pitch.trim(), 300)
+      : typeof obj.summary === "string" && obj.summary.trim().length > 0
+        ? obj.summary.trim()
+        : fallback.summary;
   const spec = typeof obj.spec === "string" && obj.spec.trim().length > 0 ? obj.spec.trim() : fallback.spec;
   const manifest: Array<{ path: string; purpose: string }> = [];
   if (Array.isArray(obj.files)) {

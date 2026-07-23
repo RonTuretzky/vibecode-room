@@ -21,6 +21,8 @@ import { selectAudioSink, type AudioSink, type AudioSinkMode } from "./audio-dev
 import { IdeaBuildRegistry, type BuilderAgent } from "./idea-builder";
 import { BackendSelector } from "../buildloop/selector";
 import { BuildOrchestrator, mergeLegacyBuildState, type ProcessBuildSnapshot } from "../buildloop/orchestrator";
+import { ExecutionRegistry, type ExecutionSnapshot } from "../buildloop/execution";
+import type { RunEventOverlay } from "./run-event-driver";
 import type { BuildBackend } from "../buildloop/types";
 import { SmithersBuildBackend } from "../buildloop/backends/smithers";
 import { NativeBuildBackend } from "../buildloop/backends/native";
@@ -122,9 +124,21 @@ export interface ProjectorRuntime {
   // backend roster + enable/availability state (the snapshot's top-level
   // `backends[]` and POST /api/backends); the orchestrator fans each accepted
   // idea out to every enabled+available backend concurrently and tracks the
-  // per-process builds[] fragment the wall consumes.
+  // per-process builds[] fragment the wall consumes. Since the two-stage pivot
+  // these lanes are fast CONCEPT MOCKS (kickoff), not full apps.
   readonly buildSelector: BackendSelector;
   readonly buildOrchestrator: BuildOrchestrator;
+  // COMMISSION stage (two-stage pivot): the per-UPID execution lane for the
+  // durable subscription run — artifacts preview + lane snapshot. Launched
+  // only by an explicit executeProcess (never at accept), torn down on halt /
+  // emergency stop.
+  readonly executionRegistry: ExecutionRegistry;
+  // COMMISSION a kicked-off process: launch the durable `vibersyn-process`
+  // gateway run (claude subscription via the existing shim + steer-window
+  // workflow), flip the process's execution lane to `executing`, and subscribe
+  // its live run-event telemetry. Idempotent per UPID; errors are typed so the
+  // HTTP route can 400/404 honestly.
+  executeProcess(upid: string, correlationId?: string): Promise<ExecuteProcessResult>;
   pendingSuggestion(): PendingQueuedSuggestion | null;
   snapshot(): ProjectorSnapshot;
   // Rebuild + broadcast the snapshot NOW and return it. The HTTP control routes
@@ -176,6 +190,13 @@ export interface ProjectorRuntime {
 }
 
 export type ImportProjectResult = { ok: true; snapshot: ProjectorSnapshot } | { ok: false; error: string };
+
+// COMMISSION result for the HTTP/voice surfaces. `status` maps directly onto
+// the /api/process/:upid/execute response code: 404 unknown/dead UPID, 400
+// already executing/built or emergency-stopped.
+export type ExecuteProcessResult =
+  | { ok: true; execution: ExecutionSnapshot | null; snapshot: ProjectorSnapshot }
+  | { ok: false; status: 400 | 404; error: string; execution?: ExecutionSnapshot | null };
 
 interface SeededProcessView {
   upid: string;
@@ -240,6 +261,10 @@ export interface ProjectorRuntimeOptions {
   // gateway is configured. Tests inject a scripted/heuristic detector so detection
   // is deterministic with no model spawn.
   ideaDetector?: IdeaDetector;
+  // Root directory the COMMISSIONED durable runs write their full-app artifacts
+  // under (the vibersyn-process workflow's contract-fixed output root). Defaults
+  // to <cwd>/artifacts/vibersyn-runs. Tests point it at a temp dir.
+  executionArtifactsRoot?: string;
 }
 
 export async function createProjectorRuntime(
@@ -303,6 +328,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   readonly ideaBuilds: IdeaBuildRegistry;
   readonly buildSelector: BackendSelector;
   readonly buildOrchestrator: BuildOrchestrator;
+  readonly executionRegistry: ExecutionRegistry;
   // Session-start onboarding glue: REQ-1 consent disclosure (spoken+traced once,
   // folded into the wall transcript), the authoritative mic-stream listening
   // indicator (E2 on stopped→streaming), and the whole-session transcripts-only
@@ -510,6 +536,14 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       },
       onUpdate: () => this.publish(),
     });
+    // COMMISSION-stage execution lanes (two-stage pivot): the durable
+    // subscription run's artifacts land under artifacts/vibersyn-runs/<upid>/
+    // and are served as the execution lane's previewUrl once built. No Cerebras
+    // anywhere on this path.
+    this.executionRegistry = new ExecutionRegistry({
+      artifactsRoot: options.executionArtifactsRoot,
+      onUpdate: () => this.publish(),
+    });
     // Boot probe (fire-and-forget) so the first snapshot shows availability.
     void this.buildSelector.probeAll();
     // Seam contract (see ProjectorRuntimeOptions.buildBackends): an injected
@@ -527,6 +561,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       maxConcurrentProcesses: maxConcurrent,
       ideaBuilds: this.ideaBuilds,
       orchestrator: useOrchestrator ? this.buildOrchestrator : null,
+      execution: this.executionRegistry,
       // A halted/emergency-stopped process drops its preview; republish so the
       // "Preview ->" link disappears from the snapshot immediately. If the halted
       // process was the steering target, drop the target so transcript stops
@@ -544,9 +579,12 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     // off the same selected Smithers client the registry spawns through; on each
     // overlay change it republishes so the snapshot reflects live progress. In the
     // in-memory default the stream is empty, so the seeded fleet keeps its fixtures.
+    // Since the two-stage pivot the overlay also FEEDS the commission execution
+    // lane: percent/label track the live run events, and a completed run flips
+    // the lane to `built` once its artifacts are served.
     this.runEventDriver = new RunEventDriver({
       client: runEventStreamClient(smithersClient),
-      onUpdate: () => this.publish(),
+      onUpdate: (upid, overlay) => this.onRunOverlay(upid, overlay),
     });
     // Seam action API (/api/seam/*): the dispatcher's client/correlation seams
     // are registry adapters, so seam-dispatched spawn/steer/pause/resume/halt/
@@ -782,6 +820,10 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       // their subprocesses and the per-UPID preview servers stop, all inside the
       // orchestrator's ~2s abort budget — no build outlives the emergency stop.
       await this.buildOrchestrator.abortEverything().catch(() => undefined);
+      // Tear down every commission execution lane too (registry.halt per
+      // process already cancelled the durable runs via the gateway client);
+      // no full-app artifacts preview outlives the session either.
+      await this.executionRegistry.stopAll().catch(() => undefined);
       // Drop any in-flight idea candidates so the bubble clears with the kill-all,
       // and stop the capture creation loop.
       this.detection.clear();
@@ -835,7 +877,8 @@ class LiveProjectorRuntime implements ProjectorRuntime {
         }
         this.#detectionPrimaryId = null;
         await this.spawnAck(spawn, correlationId);
-        this.subscribeRunEvents(spawn.process.upid, spawn.process.runId);
+        // No run-event subscription here: an accept is KICKOFF only (mocks +
+        // deck). Telemetry starts when the room commissions (executeProcess).
       }
     } catch (error) {
       this.recordExternalTrace({
@@ -881,7 +924,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
           this.#detectionPrimaryId = null;
         }
         await this.spawnAck(spawn, correlationId);
-        this.subscribeRunEvents(spawn.process.upid, spawn.process.runId);
+        // Kickoff only — run-event telemetry starts at executeProcess.
       }
     } catch (error) {
       this.recordExternalTrace({
@@ -1304,11 +1347,8 @@ class LiveProjectorRuntime implements ProjectorRuntime {
           this.#detectionPrimaryId = null;
         }
         await this.spawnAck(result.spawn, acceptanceCorrelationId);
-        // Subscribe the freshly spawned run to its live event stream so the
-        // process panel reflects real progress (ISSUE-0021). Fire-and-forget: the
-        // overlay updates republish on their own, and a stream failure must not
-        // abort acceptance routing.
-        this.subscribeRunEvents(result.spawn.process.upid, result.spawn.process.runId);
+        // Kickoff only (mocks + deck) — no durable run exists yet, so there is
+        // nothing to stream. Run-event telemetry starts at executeProcess.
       }
     } catch (error) {
       this.recordExternalTrace({
@@ -1456,6 +1496,38 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       meta: { command: command?.kind ?? "unrecognized", matched: wake.matched, text: observation.text },
     });
     if (command === null) {
+      // COMMISSION by voice (two-stage pivot): "vibersyn execute" /
+      // "vibersyn commission [it]" / "vibersyn make it real" launches the
+      // durable subscription run for the steered/selected process. Handled
+      // here (not in the fixed COMMAND_TABLE) so the voice grammar table's
+      // contract stays untouched.
+      if (isExecutePhrase(wake.afterWake)) {
+        const target = this.#steeringUpid ?? this.registry.selectedUPID() ?? soleActiveUpid(this.registry);
+        this.#voice = { lastCommand: "execute", at: new Date().toISOString() };
+        if (target === null) {
+          this.recordExternalTrace({
+            event: "voice.execute.no-target",
+            level: "warn",
+            sessionId: this.sessionId,
+            correlationId: voiceCorrelationId,
+            meta: { text: observation.text },
+          });
+        } else {
+          const result = await this.executeProcess(target, voiceCorrelationId);
+          if (!result.ok) {
+            this.recordExternalTrace({
+              event: "voice.execute.refused",
+              level: "warn",
+              sessionId: this.sessionId,
+              correlationId: voiceCorrelationId,
+              upid: target,
+              meta: { error: result.error },
+            });
+          }
+        }
+        this.publish();
+        return;
+      }
       // Near-miss soft landing (onboarding): the room ADDRESSED us (wake phrase
       // matched) but the remainder matched nothing. Instead of dropping it
       // silently, offer "Did you mean …?" for the first 20 minutes of the session.
@@ -2034,7 +2106,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     return ideaTrayFromCandidates(this.detection.candidates());
   }
 
-  private processSnapshots(): BuildloopProcess[] {
+  private processSnapshots(): Array<BuildloopProcess & { execution: ExecutionSnapshot | null }> {
     const demoByUpid = new Map(this.#demoProcesses.map((process) => [process.upid, process]));
 
     return this.registry.records().map((record) => {
@@ -2054,20 +2126,31 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       // emergency stop) still comes from the registry record, so a dead import
       // shows halted like everything else.
       const imported = this.#imports.get(record.upid);
-      // Multi-backend BUILD LOOP fragment: one entry per fanned-out backend
-      // (status/progress/previewUrl/summary/slideshowUrl). A dead process shows
-      // no builds — the orchestrator tore its servers down on halt. The legacy
-      // per-process previewUrl/buildStatus derive from builds[] when the legacy
-      // single-build path did not run (mergeLegacyBuildState), so the old
-      // "Preview ->" link stays lit on orchestrated builds.
+      // Multi-backend KICKOFF fragment: one CONCEPT-MOCK entry per fanned-out
+      // backend (status/progress/previewUrl/summary/slideshowUrl). A dead
+      // process shows no builds — the orchestrator tore its servers down on
+      // halt. The legacy per-process previewUrl/buildStatus derive from
+      // builds[] when the legacy single-build path did not run
+      // (mergeLegacyBuildState), so the old "Preview ->" link stays lit.
       const builds: ProcessBuildSnapshot[] = record.state === "dead" ? [] : this.registry.builds(record.upid);
       const orchestrated = mergeLegacyBuildState(builds);
+      // COMMISSION execution lane (two-stage pivot): null until the room
+      // explicitly executes; then executing (percent/label from live run
+      // events) -> built with the full-app artifacts preview. A dead process
+      // shows no lane — halt tore the preview down.
+      const execution: ExecutionSnapshot | null = record.state === "dead" ? null : this.registry.execution(record.upid);
       return {
         upid: record.upid,
         runId: record.runId,
-        previewUrl: record.state === "dead" ? null : imported?.url ?? build?.previewUrl ?? orchestrated?.previewUrl ?? null,
+        // A BUILT commission preview (the real full app) outranks every mock
+        // preview on the legacy per-process field.
+        previewUrl:
+          record.state === "dead"
+            ? null
+            : imported?.url ?? execution?.previewUrl ?? build?.previewUrl ?? orchestrated?.previewUrl ?? null,
         buildStatus: build?.status ?? orchestrated?.status ?? null,
         builds,
+        execution,
         // The registry normalizes callsigns to lowercase for voice matching; the
         // projector shows the pre-authored display casing ("Atlas"/"COBALT"-style
         // repo callsigns for imports).
@@ -2156,7 +2239,9 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     }
   }
 
-  // Subscribe one spawned run to its live gateway event stream (ISSUE-0021). The
+  // Subscribe one COMMISSIONED run to its live gateway event stream
+  // (ISSUE-0021). Since the two-stage pivot this fires at execute time, not at
+  // accept — a kickoff-only process has no durable run to stream. The
   // RunEventDriver folds frames into a per-UPID overlay and republishes via its
   // onUpdate hook, so the process panel tracks real progress. Fire-and-forget: a
   // stream/transport failure is swallowed so it can never wedge live ingestion.
@@ -2170,6 +2255,77 @@ class LiveProjectorRuntime implements ProjectorRuntime {
         meta: { message: error instanceof Error ? error.message : String(error) },
       });
     });
+  }
+
+  // Fold one live run-event overlay change into the commission execution lane
+  // (percent/label from real telemetry) and, on run completion, flip the lane
+  // to `built` by serving the artifacts directory (fire-and-forget — the
+  // ExecutionRegistry republishes when the preview server is up).
+  private onRunOverlay(upid: string, overlay: RunEventOverlay): void {
+    if (this.executionRegistry.isExecuting(upid)) {
+      this.executionRegistry.progress(upid, { percent: overlay.progress, label: overlay.lastOutput });
+      if (overlay.state === "completed") {
+        void this.executionRegistry
+          .complete(upid)
+          .then((lane) => {
+            this.recordExternalTrace({
+              event: "process.execute.artifacts",
+              level: lane?.status === "built" ? "info" : "warn",
+              sessionId: this.sessionId,
+              upid,
+              meta: { status: lane?.status ?? "gone", previewUrl: lane?.previewUrl ?? null, error: lane?.error ?? null },
+            });
+          })
+          .catch(() => undefined);
+      }
+    }
+    this.publish();
+  }
+
+  // COMMISSION: the explicit, user-triggered EXECUTION stage. Launches the
+  // durable subscription run for a kicked-off process (registry.execute),
+  // subscribes its live telemetry, and republishes. Never reachable at accept
+  // time — kickoff stays mocks + deck only. No Cerebras on this path.
+  async executeProcess(
+    upid: string,
+    correlationId = `corr-execute-${upid}`,
+  ): Promise<ExecuteProcessResult> {
+    if (this.#emergencyTriggered) {
+      return { ok: false, status: 400, error: "Emergency stop is active." };
+    }
+    const live = this.registry.activeRecords().some((record) => record.upid === upid);
+    if (!live) {
+      return { ok: false, status: 404, error: `No live process for UPID ${upid}.` };
+    }
+    let result: Awaited<ReturnType<ProcessRegistry["execute"]>>;
+    try {
+      result = await this.registry.execute(upid, { correlationId });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.recordExternalTrace({
+        event: "process.execute.error",
+        level: "error",
+        sessionId: this.sessionId,
+        correlationId,
+        upid,
+        meta: { message },
+      });
+      return { ok: false, status: 400, error: message };
+    }
+    if (!result.started) {
+      return {
+        ok: false,
+        status: 400,
+        error:
+          result.reason === "already-built"
+            ? `Process ${upid} has already been executed and built.`
+            : `Process ${upid} is already executing.`,
+        execution: result.execution,
+      };
+    }
+    this.subscribeRunEvents(upid, result.runId);
+    this.publish();
+    return { ok: true, execution: result.execution, snapshot: this.#snapshot };
   }
 
   // Speak a fired suggestion and record the SUGGESTION_DELIVERY transition.
@@ -2336,6 +2492,35 @@ const SOFT_LANDING_COMMANDS: readonly DocumentedCommand[] = [
 // Spoken word count for grammar-generated TTS output decisions.
 function countSpokenWords(text: string): number {
   return text.trim().split(/\s+/u).filter(Boolean).length;
+}
+
+// COMMISSION voice phrases (after the wake word): normalized-token match, same
+// idiom as the wake-router COMMAND_TABLE. Exported for the colocated tests.
+const EXECUTE_PHRASES: ReadonlySet<string> = new Set([
+  "execute",
+  "execute it",
+  "execute that",
+  "commission",
+  "commission it",
+  "commission that",
+  "make it real",
+  "full build",
+]);
+
+export function isExecutePhrase(afterWake: string): boolean {
+  const normalized = afterWake
+    .toLowerCase()
+    .split(/[^a-z0-9]+/u)
+    .filter((token) => token.length > 0)
+    .join(" ");
+  return EXECUTE_PHRASES.has(normalized);
+}
+
+// The commission target of last resort: when nothing is steered/selected but
+// exactly ONE process is live, "vibersyn execute" unambiguously means it.
+function soleActiveUpid(registry: ProcessRegistry): string | null {
+  const active = registry.activeRecords();
+  return active.length === 1 ? active[0]!.upid : null;
 }
 
 // Spoken form of a fired suggestion: the pitch plus its lead question, mirroring

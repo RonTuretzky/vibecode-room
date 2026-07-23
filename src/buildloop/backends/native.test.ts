@@ -87,8 +87,8 @@ describe("NativeBuildBackend — build()", () => {
     expect(result).toEqual({ ok: true, entrypoint: "index.html", summary: "A tiny todo app." });
     await expect(Bun.file(join(outDir, "index.html")).text()).resolves.toContain("TODO");
     expect(model.calls.map((c) => c.stage)).toEqual(["plan", "implement", "critique"]);
-    expect(progress[0]).toMatchObject({ label: "planning" });
-    expect(progress.at(-1)).toMatchObject({ label: "ready", percent: 100 });
+    expect(progress[0]).toMatchObject({ label: "planning concept" });
+    expect(progress.at(-1)).toMatchObject({ label: "mock ready", percent: 100 });
   });
 
   test("critique fails once, revise fixes it, second critique passes", async () => {
@@ -206,7 +206,7 @@ describe("NativeBuildBackend — build()", () => {
     expect(result).toEqual({
       ok: false,
       entrypoint: null,
-      summary: "Build aborted by emergency stop.",
+      summary: "Mock aborted by emergency stop.",
       error: "aborted",
     });
   });
@@ -222,7 +222,7 @@ describe("NativeBuildBackend — build()", () => {
     expect(result).toEqual({
       ok: false,
       entrypoint: null,
-      summary: "Build aborted by emergency stop.",
+      summary: "Mock aborted by emergency stop.",
       error: "aborted",
     });
     expect(model.calls).toHaveLength(0);
@@ -255,7 +255,7 @@ describe("NativeBuildBackend — correction (steer) mode", () => {
     const result = await backend.build(makeRequest({ outDir, correction: "make it pop" }));
 
     expect(result.ok).toBe(false);
-    expect(result.error).toBe("steer requested but the build directory has no app to correct");
+    expect(result.error).toBe("steer requested but the build directory has no mock to correct");
     expect(model.calls).toHaveLength(0);
   });
 
@@ -314,8 +314,8 @@ describe("parsePlanReply", () => {
 
   test("falls back to a single-file plan on unparseable input, never throwing", () => {
     const out = parsePlanReply("not json", "a todo app");
-    expect(out.summary).toBe("A self-contained web app built from the room's pitch: a todo app.");
-    expect(out.manifest).toEqual([{ path: "index.html", purpose: "the whole app (markup, styles, script inline)" }]);
+    expect(out.summary).toBe("a todo app — concept mock, ready to commission.");
+    expect(out.manifest).toEqual([{ path: "index.html", purpose: "the whole mock (markup, styles, script inline)" }]);
   });
 });
 

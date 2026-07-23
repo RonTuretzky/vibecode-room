@@ -253,6 +253,25 @@ export function createProjectorApp(runtime: ProjectorRuntime, options: Projector
     }
     return context.json(runtime.publishNow());
   });
+  // COMMISSION (two-stage pivot): explicitly launch the heavyweight full build
+  // for a kicked-off process — the durable `vibersyn-process` subscription run.
+  // Kickoff (accept) only produced concept mocks + deck; THIS is the moment the
+  // room commits. Success returns the fresh snapshot (the process entry carries
+  // the `execution` lane: status executing/percent from live run events →
+  // 'built' with the full-app previewUrl once artifacts land under
+  // artifacts/vibersyn-runs/<upid>/). 400 when already executing/built (or the
+  // emergency stop is active); 404 for an unknown/dead UPID.
+  app.post("/api/process/:upid/execute", async (context) => {
+    if (isOfflineDemoRequest(context.req.header("referer"))) {
+      return context.json(runtime.snapshot());
+    }
+    const upid = context.req.param("upid");
+    const result = await runtime.executeProcess(upid);
+    if (!result.ok) {
+      return context.json({ ok: false, error: result.error, execution: result.execution ?? null }, result.status);
+    }
+    return context.json(runtime.publishNow());
+  });
   // Text steering — the SAME path spoken steering takes (registry.steer forwards
   // to the smithers client AND fires the build orchestrator's correction re-run
   // on every ready build). Body {"text": string}; empty/malformed is a 400.

@@ -8,12 +8,14 @@ import type {
   StreamRunEventsOptions,
 } from "../../src/seam/smithers-client";
 
-// ISSUE-0020 integration: with the gateway client selected (here via an injected
-// transport, the same seam `VIBERSYN_SMITHERS_GATEWAY_URL` turns on in production), a
-// ProcessRegistry.spawn drives `launchRun` over the transport and persists a
-// UPID->runId correlation record. A later halt resolves that persisted runId and
-// fires `cancelRun` for it — proving the in-memory client is swappable for the real
-// gateway client without the registry knowing the difference.
+// ISSUE-0020 integration, updated for the TWO-STAGE PIVOT: with the gateway
+// client selected (here via an injected transport, the same seam
+// `VIBERSYN_SMITHERS_GATEWAY_URL` turns on in production), a ProcessRegistry
+// SPAWN is kickoff-only and never touches the gateway; the explicit COMMISSION
+// (registry.execute) drives `launchRun` over the transport and persists a
+// UPID->runId correlation record. A later halt resolves that persisted runId
+// and fires `cancelRun` for it — proving the in-memory client is swappable for
+// the real gateway client without the registry knowing the difference.
 
 class RecordingTransport implements GatewayRpcTransport {
   readonly requests: Array<{ method: string; params?: Record<string, unknown> }> = [];
@@ -37,8 +39,8 @@ class RecordingTransport implements GatewayRpcTransport {
   }
 }
 
-describe("gateway spawn persists a runId and halt cancels it (integration)", () => {
-  test("launchRun goes through the injected transport and the persisted runId is cancelled on halt", async () => {
+describe("gateway commission persists a runId and halt cancels it (integration)", () => {
+  test("spawn stays kickoff-only; execute drives launchRun and the persisted runId is cancelled on halt", async () => {
     const transport = new RecordingTransport();
     const correlations = new MemoryCorrelationStore();
     const client = selectSmithersClient(
@@ -47,9 +49,9 @@ describe("gateway spawn persists a runId and halt cancels it (integration)", () 
     );
     const registry = new ProcessRegistry({ client, sessionId: "gateway-spawn-itest" });
 
-    // No explicit runId on the seed: the gateway client issues `vibersyn-<upid>`, so
-    // this asserts the gateway-issued runId — not a caller-supplied one — is what
-    // flows through launchRun, gets persisted, and is later cancelled.
+    // No explicit runId on the seed: the registry pre-assigns `vibersyn-<upid>`
+    // (matching the gateway client's own default) so the SAME id flows through
+    // launchRun at execute time, gets persisted, and is later cancelled.
     const spawned = await registry.spawn({
       upid: "upid-itest-1",
       callsign: "Atlas",
@@ -63,18 +65,22 @@ describe("gateway spawn persists a runId and halt cancels it (integration)", () 
 
     const runId = spawned.spawn.runId;
     expect(runId).toBe("vibersyn-upid-itest-1");
+    // TWO-STAGE PIVOT: the accept launched nothing on the gateway.
+    expect(transport.requests).toHaveLength(0);
 
-    // launchRun reached the transport carrying the gateway-issued runId.
+    // COMMISSION: execute launches the durable run under the pre-assigned runId.
+    const executed = await registry.execute("upid-itest-1");
+    expect(executed.started).toBe(true);
     const launch = transport.find("launchRun");
     expect(launch).toBeDefined();
     expect(launch?.params).toEqual(
       expect.objectContaining({
         workflow: "vibersyn-process",
-        options: expect.objectContaining({ runId, idempotencyKey: "corr-itest-spawn" }),
+        options: expect.objectContaining({ runId, idempotencyKey: "corr-execute-upid-itest-1" }),
       }),
     );
 
-    // The UPID->runId correlation record was persisted on spawn.
+    // The UPID->runId correlation record was persisted on execute.
     const record = await correlations.findByUPID("upid-itest-1");
     expect(record).toEqual(expect.objectContaining({ upid: "upid-itest-1", runId }));
 
@@ -85,7 +91,7 @@ describe("gateway spawn persists a runId and halt cancels it (integration)", () 
     expect(cancel).toBeDefined();
     expect(cancel?.params).toEqual({ runId });
 
-    // The registry process is now dead and the transport saw spawn then cancel.
+    // The registry process is now dead and the transport saw launch then cancel.
     expect(registry.activeRecords()).toHaveLength(0);
     expect(transport.methods()).toEqual(["launchRun", "cancelRun"]);
   });

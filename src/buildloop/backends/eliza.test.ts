@@ -11,7 +11,6 @@ import {
   composePitchMessage,
   createCerebrasChatModel,
   extractJsonContent,
-  parseCritiqueContent,
   parseFilesContent,
   parsePlanContent,
   processAction,
@@ -99,72 +98,48 @@ function makeBackend(model: ElizaModelHandler, overrides: Partial<ConstructorPar
 // --- outer loop: happy paths -----------------------------------------------
 
 describe("ElizaBuildBackend — build()", () => {
-  test("plan -> implement -> critique(pass): writes files via the action, no revise", async () => {
+  test("mock kickoff: plan -> implement writes the single-file mock via the action — exactly two model calls, no critique", async () => {
     const model = queueModel([
-      toJson({ summary: "A kaleidoscope toy.", spec: "canvas with mirrored wedges", files: [{ path: "index.html", purpose: "entrypoint" }] }),
+      toJson({ pitch: "Spin your day into color.", spec: "hero canvas with mirrored wedges, one Spin button" }),
       toJson({ files: { "index.html": "<!doctype html><body>KALEIDO</body>" } }),
-      toJson({ pass: true, issues: [] }),
     ]);
     const progress: Array<{ label: string; percent?: number }> = [];
     const outDir = await tempOutDir();
     const backend = makeBackend(model);
     const result = await backend.build(makeRequest({ outDir, onProgress: (u) => progress.push(u) }));
 
-    expect(result).toEqual({ ok: true, entrypoint: "index.html", summary: "A kaleidoscope toy." });
+    // BuildResult.summary is the headline pitch line.
+    expect(result).toEqual({ ok: true, entrypoint: "index.html", summary: "Spin your day into color." });
     await expect(Bun.file(join(outDir, "index.html")).text()).resolves.toContain("KALEIDO");
-    expect(model.calls).toHaveLength(3);
+    // The queue doubles as the spec: exactly plan + implement, nothing more.
+    expect(model.calls).toHaveLength(2);
     // Every prompt is composed from the character templates with the pitch substituted.
     for (const call of model.calls) {
       expect(call.prompt).toContain("Build a tiny kaleidoscope toy");
       expect(call.prompt).not.toContain("{{");
       expect(call.system).toBe(ELIZA_CODER_CHARACTER.system!);
     }
-    expect(model.calls[0]!.prompt).toContain("Syn is planning a build");
-    expect(progress[0]).toMatchObject({ label: "planning" });
-    expect(progress.at(-1)).toMatchObject({ label: "ready", percent: 100 });
+    expect(model.calls[0]!.prompt).toContain("Syn is imagining a concept mock");
+    expect(model.calls[1]!.prompt).toContain("Spin your day into color.");
+    expect(progress[0]).toMatchObject({ label: "imagining concept" });
+    expect(progress.at(-1)).toMatchObject({ label: "mock ready", percent: 100 });
   });
 
-  test("critique fails once, revise fixes it, second critique passes", async () => {
-    const model = queueModel([
-      toJson({ summary: "S", spec: "spec", files: [{ path: "index.html", purpose: "x" }] }),
-      toJson({ files: { "index.html": "<html>v1</html>" } }),
-      toJson({ pass: false, issues: ["missing footer"] }),
-      toJson({ files: { "index.html": "<html>v2 with footer</html>" } }),
-      toJson({ pass: true, issues: [] }),
-    ]);
+  test("a junk plan never fails the mock — falls back to a pitch-line plan and still implements", async () => {
+    const model = queueModel(["prose, not json", toJson({ files: { "index.html": "<html>fallback mock</html>" } })]);
     const outDir = await tempOutDir();
     const result = await makeBackend(model).build(makeRequest({ outDir }));
 
-    expect(result).toEqual({ ok: true, entrypoint: "index.html", summary: "S" });
-    await expect(Bun.file(join(outDir, "index.html")).text()).resolves.toBe("<html>v2 with footer</html>");
-    expect(model.calls).toHaveLength(5);
-    expect(model.calls[3]!.prompt).toContain("missing footer");
-  });
-
-  test("exhausts rounds without passing: still ships, summary notes the rough edges", async () => {
-    const model = queueModel([
-      toJson({ summary: "S", spec: "spec", files: [{ path: "index.html", purpose: "x" }] }),
-      toJson({ files: { "index.html": "<html>v1</html>" } }),
-      toJson({ pass: false, issues: ["issueA"] }),
-      toJson({ files: { "index.html": "<html>v2</html>" } }),
-      toJson({ pass: false, issues: ["issueB"] }),
-    ]);
-    const outDir = await tempOutDir();
-    const result = await makeBackend(model, { maxRounds: 2 }).build(makeRequest({ outDir }));
-
     expect(result.ok).toBe(true);
-    expect(result.summary).toBe("S Known rough edges: issueB.");
-    await expect(Bun.file(join(outDir, "index.html")).text()).resolves.toBe("<html>v2</html>");
+    expect(result.summary).toContain("Build a tiny kaleidoscope toy");
+    expect(result.summary).toContain("concept mock");
+    await expect(Bun.file(join(outDir, "index.html")).text()).resolves.toBe("<html>fallback mock</html>");
   });
 
-  test("model never produces the entrypoint: forced critiques, then a clean failure", async () => {
-    // Rounds critique without a model call when index.html is missing, so the
-    // queue is exactly: plan, implement, revise, revise (maxRounds default 3).
+  test("model never produces the entrypoint: clean failure after the two-call loop", async () => {
     const model = queueModel([
-      toJson({ summary: "S", spec: "spec", files: [{ path: "app.js", purpose: "logic" }] }),
+      toJson({ pitch: "P.", spec: "spec" }),
       toJson({ files: { "app.js": "console.log(1)" } }),
-      toJson({ files: { "app.js": "console.log(2)" } }),
-      toJson({ files: { "app.js": "console.log(3)" } }),
     ]);
     const outDir = await tempOutDir();
     const result = await makeBackend(model).build(makeRequest({ outDir }));
@@ -172,12 +147,12 @@ describe("ElizaBuildBackend — build()", () => {
     expect(result.ok).toBe(false);
     expect(result.entrypoint).toBeNull();
     expect(result.error).toContain(ELIZA_ENTRYPOINT);
-    expect(model.calls).toHaveLength(4);
+    expect(model.calls).toHaveLength(2);
   });
 
-  test("unparseable implement reply fails the build without throwing", async () => {
+  test("unparseable implement reply fails the mock without throwing", async () => {
     const model = queueModel([
-      toJson({ summary: "S", spec: "spec", files: [{ path: "index.html", purpose: "x" }] }),
+      toJson({ pitch: "P.", spec: "spec" }),
       "sorry, I can only reply in prose today",
     ]);
     const outDir = await tempOutDir();
@@ -230,7 +205,7 @@ describe("ElizaBuildBackend — correction mode", () => {
     const result = await makeBackend(model).build(makeRequest({ outDir, correction: "make it blue" }));
 
     expect(result.ok).toBe(false);
-    expect(result.error).toContain("no app");
+    expect(result.error).toContain("no mock");
     expect(model.calls).toHaveLength(0);
   });
 });
@@ -349,8 +324,7 @@ describe("createCerebrasChatModel", () => {
 describe("character templates and state composition", () => {
   const stageExtras: Record<string, string[]> = {
     plan: [],
-    implement: ["spec", "manifest"],
-    critique: ["filesJson"],
+    implement: ["headline", "spec"],
     revise: ["specLine", "filesJson", "issues"],
   };
 
@@ -467,23 +441,21 @@ describe("extractJsonContent", () => {
 });
 
 describe("parsePlanContent", () => {
-  test("keeps a good plan, sanitizes paths, forces the entrypoint", () => {
-    const plan = parsePlanContent(
-      { summary: "Sum.", spec: "Spec.", files: [{ path: "./app.js", purpose: "logic" }, { path: "../evil", purpose: "x" }] },
-      "pitch",
-    );
-    expect(plan.summary).toBe("Sum.");
+  test("keeps a good {pitch, spec} plan; tolerates a legacy summary key", () => {
+    const plan = parsePlanContent({ pitch: "Punchy line.", spec: "Spec." }, "pitch");
+    expect(plan.summary).toBe("Punchy line.");
     expect(plan.spec).toBe("Spec.");
-    expect(plan.manifest.map((f) => f.path)).toEqual(["index.html", "app.js"]);
+    const legacy = parsePlanContent({ summary: "Old summary.", spec: "Spec." }, "pitch");
+    expect(legacy.summary).toBe("Old summary.");
   });
 
-  test("null or junk falls back to a one-file plan from the pitch", () => {
+  test("null or junk falls back to a pitch-line plan from the room's pitch", () => {
     const fromNull = parsePlanContent(null, "my pitch");
     expect(fromNull.summary).toContain("my pitch");
-    expect(fromNull.manifest).toEqual([{ path: "index.html", purpose: "the whole app (markup, styles, script inline)" }]);
+    expect(fromNull.summary).toContain("concept mock");
+    expect(fromNull.spec).toContain("my pitch");
     const fromJunk = parsePlanContent({ nonsense: 1 }, "my pitch");
     expect(fromJunk.summary).toContain("my pitch");
-    expect(fromJunk.manifest).toEqual([{ path: "index.html", purpose: "entrypoint" }]);
   });
 });
 
@@ -503,21 +475,6 @@ describe("parseFilesContent", () => {
     expect(parseFilesContent({ files: "not a map" })).toBeNull();
     expect(parseFilesContent({ mixed: "yes", other: 4 })).toBeNull();
     expect(parseFilesContent({ files: {} })).toBeNull();
-  });
-});
-
-describe("parseCritiqueContent", () => {
-  test("passes, fails-with-issues, and defaults a specifics-free failure", () => {
-    expect(parseCritiqueContent({ pass: true, issues: [] })).toEqual({ pass: true, issues: [] });
-    expect(parseCritiqueContent({ pass: false, issues: ["bad footer", 3, "  "] })).toEqual({ pass: false, issues: ["bad footer"] });
-    const defaulted = parseCritiqueContent({ pass: false });
-    expect(defaulted.pass).toBe(false);
-    expect(defaulted.issues).toHaveLength(1);
-  });
-
-  test("unparseable critiques count as a pass so the loop never wedges", () => {
-    expect(parseCritiqueContent(null)).toEqual({ pass: true, issues: [] });
-    expect(parseCritiqueContent({ pass: "yes" })).toEqual({ pass: true, issues: [] });
   });
 });
 

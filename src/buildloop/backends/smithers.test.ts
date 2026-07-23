@@ -40,11 +40,15 @@ function request(outDir: string, overrides: Partial<BuildRequest> = {}): BuildRe
 }
 
 describe("smithers backend — prompts (pure)", () => {
-  test("fresh prompt carries the pitch and the self-contained static-app rules", () => {
+  test("fresh prompt asks for a CONCEPT MOCK (hero, pitch line, one interaction), not the full app", () => {
     const prompt = smithersBuildPrompt("A kanban wall");
     expect(prompt).toContain("IDEA: A kanban wall");
     expect(prompt).toContain("SELF-CONTAINED");
     expect(prompt).toContain(SMITHERS_ENTRYPOINT);
+    expect(prompt).toContain("CONCEPT MOCK");
+    expect(prompt).toContain("HERO SCREEN");
+    expect(prompt).toContain("HEADLINE PITCH LINE");
+    expect(prompt).toContain("Do not build the full app");
   });
 
   test("correction prompt includes the existing files' content AND the spoken correction", () => {
@@ -116,7 +120,7 @@ describe("smithers backend — build via injected runner", () => {
     const backend = new SmithersBuildBackend({ runner: async () => ({ exitCode: 0, stdout: "" }) });
     const result = await backend.build(request(outDir, { correction: "make it faster" }));
     expect(result.ok).toBe(false);
-    expect(result.error).toContain("no app to correct");
+    expect(result.error).toContain("no mock to correct");
   });
 
   test("abort: the signal rejects the run and the result reports 'aborted'", async () => {

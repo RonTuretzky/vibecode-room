@@ -322,6 +322,70 @@ describe("voice callsign steering", () => {
   });
 });
 
+describe("commission stage — two-stage pivot", () => {
+  test("accept is kickoff-only; executeProcess opens the lane; completed run events serve the artifacts as built", async () => {
+    const backend = new FakeBackend();
+    const { runtime } = await makeRuntime({ buildBackends: [backend] });
+    await drive(runtime, [final(BUILDABLE, "utt-build")]);
+    await runtime.acceptPendingSuggestion("corr-commission-accept");
+    const upid = runtime.snapshot().processes[0]?.upid;
+    expect(upid).toBeDefined();
+    if (upid === undefined) return;
+
+    // KICKOFF: mock lane fans out, but there is no durable run / execution lane.
+    await waitFor(() => runtime.registry.builds(upid).some((build) => build.status === "ready"));
+    expect(runtime.registry.hasDurableRun(upid)).toBe(false);
+    expect(runtime.registry.execution(upid)).toBeNull();
+    // Mock lanes speak mock language and pitch-line summaries.
+    expect(runtime.registry.builds(upid)[0]?.progressLabel).toBe("mock ready");
+
+    // COMMISSION: the lane opens executing.
+    const executed = await runtime.executeProcess(upid, "corr-commission");
+    expect(executed.ok).toBe(true);
+    expect(runtime.registry.hasDurableRun(upid)).toBe(true);
+    expect(runtime.registry.execution(upid)).toMatchObject({ status: "executing", runId: `vibersyn-${upid}` });
+
+    // The durable run lands its full-app artifacts, then completes: the lane
+    // flips to built and the artifacts serve as the execution previewUrl.
+    await Bun.write(join(runtime.executionRegistry.artifactsDir(upid), "index.html"), "<html>the full app</html>");
+    runtime.runEventDriver.ingest({ upid, runId: `vibersyn-${upid}`, kind: "output", text: "building the app", seq: 3 });
+    expect(runtime.registry.execution(upid)).toMatchObject({ status: "executing", label: "building the app" });
+    runtime.runEventDriver.ingest({ upid, runId: `vibersyn-${upid}`, kind: "completed", text: "run finished", seq: 4 });
+    await waitFor(() => runtime.registry.execution(upid)?.status === "built");
+
+    const lane = runtime.registry.execution(upid);
+    expect(lane).toMatchObject({ status: "built", percent: 100 });
+    expect(lane?.previewUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/\?v=1$/u);
+    const served = await fetch(lane!.previewUrl!);
+    expect(served.status).toBe(200);
+    expect(await served.text()).toContain("the full app");
+    // The legacy per-process previewUrl prefers the BUILT full app over mocks.
+    const process = runtime.snapshot().processes.find((entry) => entry.upid === upid);
+    expect(process?.previewUrl).toBe(lane?.previewUrl ?? null);
+
+    // Emergency stop tears the execution lane down with everything else.
+    await runtime.emergencyStop("corr-commission-emergency");
+    expect(runtime.executionRegistry.snapshot(upid)).toBeNull();
+  });
+
+  test("voice 'vibersyn execute' commissions the selected process through the same path", async () => {
+    const backend = new FakeBackend();
+    const { runtime } = await makeRuntime({ buildBackends: [backend] });
+    await drive(runtime, [final(BUILDABLE, "utt-build")]);
+    await runtime.acceptPendingSuggestion("corr-voice-exec-accept");
+    const upid = runtime.snapshot().processes[0]?.upid;
+    expect(upid).toBeDefined();
+    if (upid === undefined) return;
+    expect(runtime.registry.hasDurableRun(upid)).toBe(false);
+
+    await drive(runtime, [final("vibersyn execute", "utt-execute")]);
+
+    expect(runtime.registry.hasDurableRun(upid)).toBe(true);
+    expect(runtime.registry.execution(upid)).toMatchObject({ status: "executing" });
+    expect(runtime.snapshot().voice?.lastCommand).toBe("execute");
+  });
+});
+
 // --- harness -----------------------------------------------------------------
 
 async function makeRuntime(
@@ -342,7 +406,7 @@ async function makeRuntime(
       VIBERSYN_DETECT_TICK_MS: "0",
       ...env,
     },
-    { buildsRoot: join(dir, "builds"), ...runtimeOptions },
+    { buildsRoot: join(dir, "builds"), executionArtifactsRoot: join(dir, "vibersyn-runs"), ...runtimeOptions },
   );
   runtimes.push(runtime);
   runtimePaths.set(runtime, path);

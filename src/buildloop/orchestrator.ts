@@ -1,8 +1,11 @@
-// Multi-backend build orchestrator: for one accepted idea, fan build() out to
+// Multi-backend KICKOFF orchestrator: for one accepted idea, fan build() out to
 // every enabled+available backend CONCURRENTLY, each into its own
 // builds/<upid>/<backendId>/ subdirectory, all served off ONE per-UPID preview
 // server (idea-builder's servePreviewDirectory — no-cache headers, per-backend
-// subdir index resolution) so every backend gets its own previewUrl.
+// subdir index resolution) so every backend gets its own previewUrl. Since the
+// two-stage pivot each backend produces a fast CONCEPT MOCK (status stays the
+// machine enum building/ready/failed; progressLabel carries the mock-oriented
+// wording) — the full app is the separate commission stage (execution.ts).
 //
 // Per-(upid,backend) status/progress is tracked live and exposed as the
 // snapshot builds[] fragment the wall consumes. steer(upid, text) re-runs every
@@ -297,7 +300,7 @@ export class BuildOrchestrator {
         build.entrypoint = result.entrypoint;
         build.version += 1;
         build.error = undefined;
-        build.progressLabel = correction === null ? "ready" : "correction applied";
+        build.progressLabel = correction === null ? "mock ready" : "correction applied";
         build.percent = 100;
         this.#onUpdate();
         await this.#generateSlideshow(state, backend.id, outDir, controller.signal);
