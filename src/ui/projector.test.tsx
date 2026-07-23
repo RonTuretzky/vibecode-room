@@ -756,6 +756,30 @@ describe("corner-locked two-wall gesture mode", () => {
     }
   });
 
+  // SPAN (?span=1): hands + corner-lock coexist — the pair STAYS locked and
+  // the pinch camera drives the SHARED corner rig (corner-shared.ts). Without
+  // span, an explicit ?hands= keeps winning (single-wall rigs free-orbit).
+  test("?hands= without span unlocks the pair (single-wall free orbit)", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch="?live=0&wall=A&gesture=1&hands=1" />,
+    );
+    expect(html).toContain('data-corner-lock="false"');
+    expect(html).toContain('data-corner-shared="false"');
+  });
+
+  test("?span=1 keeps the corner lock WITH hands and marks the shared rig", () => {
+    for (const wall of ["A", "B"]) {
+      const html = renderToStaticMarkup(
+        <ProjectorApp
+          initialSnapshot={demoProjectorSnapshot}
+          urlSearch={`?live=0&wall=${wall}&gesture=1&hands=1&span=1`}
+        />,
+      );
+      expect(html).toContain('data-corner-lock="true"');
+      expect(html).toContain('data-corner-shared="true"');
+    }
+  });
+
   test("desk mode + camera-less wall windows keep the scene controls and stay unlocked", () => {
     const desk = renderToStaticMarkup(<ProjectorApp initialSnapshot={demoProjectorSnapshot} />);
     expect(desk).toContain('data-testid="scene-controls"');

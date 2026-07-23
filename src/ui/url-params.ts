@@ -32,6 +32,11 @@ export interface ProjectorUrlConfig {
   // Independent of the dwell gesture layer — composes with desk, ?dwell=mouse
   // and ?gesture=1.
   hands: { url: string } | null;
+  // ?span=1 — keep the corner-locked two-wall panorama even when the pinch
+  // camera (?hands=) is on: hands then drive the SHARED corner rig (yaw/height/
+  // zoom synced across windows via corner-shared.ts) instead of a per-window
+  // free orbit. Without it, hands still win over corner-lock (single-wall rigs).
+  span: boolean;
   // ?demo=guided — auto-enter the coached guided-demo flow on load (the HUD
   // "Guided Demo" button enters the same flow interactively).
   demo: "guided" | null;
@@ -80,6 +85,7 @@ export function parseProjectorUrl(search: string, hostname: string): ProjectorUr
       : null;
 
   // Guided demo auto-entry + the env-gated Mock Room toggle.
+  const span = params.get("span") === "1";
   const demo = params.get("demo") === "guided" ? ("guided" as const) : null;
   const mock = params.get("mock") === "1";
 
@@ -94,5 +100,5 @@ export function parseProjectorUrl(search: string, hostname: string): ProjectorUr
         ? view.toUpperCase()
         : null;
 
-  return { view, wall, badge, gesture, dwell, hands, demo, mock };
+  return { view, wall, badge, gesture, dwell, hands, span, demo, mock };
 }

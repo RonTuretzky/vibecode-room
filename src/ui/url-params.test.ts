@@ -81,6 +81,14 @@ describe("parseProjectorUrl", () => {
     expect(config.hands).not.toBeNull();
   });
 
+  // ?span=1 keeps the corner-locked pair even with hands on: the pinch camera
+  // then drives the SHARED corner rig instead of a per-window free orbit.
+  test("?span=1 parses; default and ?span=0 stay off", () => {
+    expect(parseProjectorUrl("?span=1", "h").span).toBe(true);
+    expect(parseProjectorUrl("?span=0", "h").span).toBe(false);
+    expect(parseProjectorUrl("", "h").span).toBe(false);
+  });
+
   // The view param scopes each wall's 2D surfaces + controls (ideas vs builds;
   // the 3D scene always stays full — see projector tests for the render table).
   test("view parsing: ideas/builds are recognized, anything else falls back to full", () => {

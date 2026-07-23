@@ -1235,11 +1235,14 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
   // point, yaws exactly 90° apart, 90° horizontal FOV per window, no camera
   // animation (see corner-lock.ts). Scene CONTENT stays full on both windows.
   // The two-wall rigid corner rig. The pinch camera (?hands=) is a FREE-orbit
-  // control, which corner-lock reasserts away every frame — the two intents are
-  // mutually exclusive, so an explicit pinch-camera opt-in wins (single-wall
-  // Kinect + hands must be able to orbit). Without hands, corner-lock stays as
-  // the two-wall gesture pair intends.
-  const cornerLock = gestureMode && urlConfig.wall !== null && urlConfig.hands === null;
+  // control, which corner-lock reasserts away every frame — so by default an
+  // explicit pinch-camera opt-in wins (single-wall Kinect + hands must be able
+  // to orbit). ?span=1 overrides that: the pair STAYS corner-locked and hands
+  // instead drive the SHARED corner rig (yaw/crane/dolly synced across the
+  // wall windows via corner-shared.ts — the seam survives because both windows
+  // apply identical offsets, wall A's window being the single driver).
+  const cornerLock = gestureMode && urlConfig.wall !== null && (urlConfig.hands === null || urlConfig.span);
+  const cornerShared = cornerLock && urlConfig.span;
   const dwellLayerOn = gestureMode || urlConfig.dwell === "mouse";
   // AUDIT (no-mocks): the Mock Room toggle renders ONLY behind ?mock=1.
   const mockRoomEnabled = urlConfig.mock;
@@ -1259,6 +1262,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
         layout={sceneLayout}
         wall={urlConfig.wall}
         cornerLock={cornerLock}
+        cornerShared={cornerShared}
         fitSignal={fitSignal}
         focusUpid={
           guided !== null && (guided.step === "race" || guided.step === "decide")

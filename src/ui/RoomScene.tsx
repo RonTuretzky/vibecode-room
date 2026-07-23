@@ -3,7 +3,15 @@ import * as THREE from "three";
 import type { IdeaTrayItem, ProjectorProcess } from "./types";
 import { registerSceneDwellSource, type SceneDwellRect } from "./gesture/scene-source";
 import { registerSceneCameraControl } from "./gesture/camera-source";
-import { cornerEye, cornerVerticalFovDeg, cornerYaw } from "./corner-lock";
+import { CORNER_EYE_DISTANCE, CORNER_EYE_HEIGHT, CORNER_SEAM_YAW, cornerVerticalFovDeg, cornerYaw } from "./corner-lock";
+import {
+  CORNER_OFFSETS_ZERO,
+  clampCornerOffsets,
+  isCornerDriver,
+  readCornerOffsets,
+  subscribeCornerOffsets,
+  writeCornerOffsets,
+} from "./corner-shared";
 import { loadGardenFlora, type FloraLibrary } from "./garden-flora";
 
 // The full-viewport 3D stage (after conductor-github-visualizer): the scene IS
@@ -73,6 +81,11 @@ interface RoomSceneProps {
   // apart, exactly 90° horizontal FOV, and NO drift/orbit/fit/focus so the
   // seam edge stays coherent. Fixed per window (URL-derived).
   cornerLock?: boolean;
+  // SHARED CORNER RIG (?span=1): the corner-locked pair may MOVE as one — the
+  // pinch camera drives shared yaw/crane/dolly offsets, synced across windows
+  // via localStorage (corner-shared.ts). Wall index 0 is the single driver;
+  // every other window mirrors the absolute offsets, so the seam cannot drift.
+  cornerShared?: boolean;
   // Increment to request a one-shot fit-to-content camera move.
   fitSignal: number;
   // GUIDED-DEMO FOCUS: when set, the camera glides to frame this process's
@@ -352,7 +365,7 @@ interface Entry {
   removing: boolean;
 }
 
-export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, focusUpid = null, pointerNav = true, cornerLock = false, onAcceptIdea, onSelectProcess }: RoomSceneProps) {
+export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, focusUpid = null, pointerNav = true, cornerLock = false, cornerShared = false, onAcceptIdea, onSelectProcess }: RoomSceneProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const ideasRef = useRef(ideas);
   ideasRef.current = ideas;
@@ -372,6 +385,8 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
   // Same deal: the corner lock is URL-derived and fixed for the window's life.
   const cornerLockRef = useRef(cornerLock);
   cornerLockRef.current = cornerLock;
+  const cornerSharedRef = useRef(cornerShared);
+  cornerSharedRef.current = cornerShared;
   const fitRef = useRef(fitSignal);
   fitRef.current = fitSignal;
   const focusRef = useRef<string | null>(focusUpid);
@@ -464,15 +479,61 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
     // direction whose yaw is exactly 90° apart per wall, and (in resize) a
     // fov pinned to exactly 90° HORIZONTAL — so the two windows tile one
     // continuous world around the physical corner: wall A's right edge
-    // continues onto wall B's left edge. NOTHING may move this camera: drag/
-    // wheel are unbound in gesture mode, and fit/focus/inertia/lerp are all
-    // gated off below. The orbit rig is bypassed entirely.
+    // continues onto wall B's left edge. Without ?span=1 NOTHING may move this
+    // camera: drag/wheel are unbound in gesture mode, and fit/focus/inertia/
+    // lerp are all gated off below. The orbit rig is bypassed entirely.
+    //
+    // SHARED CORNER RIG (?span=1): the pair moves AS ONE — yaw spins the whole
+    // panorama about the vertical axis through the origin, height cranes the
+    // shared eye (view stays horizontal), dist dollies it. All three are seam-
+    // safe because both windows apply IDENTICAL offsets: the wall-index-0
+    // window (the driver) turns pinch intents into offsets and persists them
+    // to localStorage; mirror windows apply the absolute values from storage
+    // events, so they can never drift or double-integrate.
     const cornerLocked = cornerLockRef.current;
+    const cornerSharedOn = cornerLocked && cornerSharedRef.current;
+    const cornerDriver = cornerSharedOn && isCornerDriver(wallRef.current);
     const cornerLockedYaw = cornerYaw(wallRef.current);
+    // actual (rendered this frame) vs desired (driver-written/mirror-received);
+    // the frame loop lerps actual → desired for the same glide the free rig has.
+    const cornerOff = { ...(cornerSharedOn ? readCornerOffsets() : CORNER_OFFSETS_ZERO) };
+    const cornerOffD = { ...cornerOff };
+    let cornerYawVel = 0;
+    let cornerHeightVel = 0;
+    let cornerGrab = false;
+    // Driver → mirrors, ~30 Hz with an epsilon gate. Called from the control
+    // mutators too (not just the frame loop) so a HIDDEN driver window — rAF
+    // parked, but its hands WS callbacks still firing — keeps feeding mirrors.
+    let cornerLastWrite = { yaw: NaN, height: NaN, dist: NaN };
+    let cornerLastWriteMs = 0;
+    const persistCorner = () => {
+      if (!cornerDriver) {
+        return;
+      }
+      const nowMs = performance.now();
+      if (nowMs - cornerLastWriteMs < 33) {
+        return;
+      }
+      if (
+        Math.abs(cornerOffD.yaw - cornerLastWrite.yaw) < 1e-4 &&
+        Math.abs(cornerOffD.height - cornerLastWrite.height) < 1e-3 &&
+        Math.abs(cornerOffD.dist - cornerLastWrite.dist) < 1e-4
+      ) {
+        return;
+      }
+      cornerLastWriteMs = nowMs;
+      cornerLastWrite = { ...cornerOffD };
+      writeCornerOffsets({ ...cornerOffD });
+    };
     const applyCornerRig = () => {
-      const eye = cornerEye();
-      camera.position.set(eye.x, eye.y, eye.z);
-      camera.lookAt(eye.x - Math.sin(cornerLockedYaw), eye.y, eye.z - Math.cos(cornerLockedYaw));
+      const seam = CORNER_SEAM_YAW + cornerOff.yaw;
+      const dist = CORNER_EYE_DISTANCE * cornerOff.dist;
+      const eyeY = CORNER_EYE_HEIGHT + cornerOff.height;
+      const yaw = cornerLockedYaw + cornerOff.yaw;
+      const eyeX = Math.sin(seam) * dist;
+      const eyeZ = Math.cos(seam) * dist;
+      camera.position.set(eyeX, eyeY, eyeZ);
+      camera.lookAt(eyeX - Math.sin(yaw), eyeY, eyeZ - Math.cos(yaw));
     };
 
     resetRig();
@@ -1859,13 +1920,13 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
     // focus / resetRig may also write d*; external input keeps writing and
     // wins). The scene owns the rig and ALL clamps — the layer never touches
     // three.js and cannot push the rig outside the mouse's envelope.
-    const unregisterCameraControl = registerSceneCameraControl({
-      orbitBy: (dYaw, dHeight) => {
+    const freeCameraControl = {
+      orbitBy: (dYaw: number, dHeight: number) => {
         // Exact mirror of the onPointerMove orbit path (incl. height clamp).
         rig.dAngle += dYaw;
         rig.dHeight = Math.max(1.4, Math.min(30, rig.dHeight + dHeight));
       },
-      panBy: (dxPx, dyPx) => {
+      panBy: (dxPx: number, dyPx: number) => {
         // Exact mirror of the onPointerMove shift-pan path.
         const panSpeed = 0.0045 * rig.radius;
         rig.dTargetX -= Math.cos(rig.angle) * dxPx * panSpeed;
@@ -1873,7 +1934,7 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         rig.dTargetX -= Math.sin(rig.angle) * dyPx * panSpeed;
         rig.dTargetZ -= Math.cos(rig.angle) * dyPx * panSpeed;
       },
-      zoomBy: (scale) => {
+      zoomBy: (scale: number) => {
         if (!Number.isFinite(scale) || scale <= 0) {
           return; // defensive: a bad ratio must never NaN the rig
         }
@@ -1882,13 +1943,13 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       },
       // Params deliberately NOT named angVel/heightVel — they must not shadow
       // the inertia vars this feeds.
-      flick: (yawVel, hVel) => {
+      flick: (yawVel: number, hVel: number) => {
         // Defensive re-clamp (the interpreter caps too): a rogue velocity must
         // never launch the camera.
         angVel = Math.max(-4, Math.min(4, yawVel));
         heightVel = Math.max(-30, Math.min(30, hVel));
       },
-      setTracking: (on) => {
+      setTracking: (on: boolean) => {
         externalGrab = on;
         if (on) {
           // Same takeover onPointerDown does: a fresh grab kills residual coast.
@@ -1896,7 +1957,50 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
           heightVel = 0;
         }
       },
-    });
+    };
+    // SHARED CORNER RIG driver control: the same intent verbs, retargeted at
+    // the pair's shared offsets (corner-shared.ts clamps mirror the free rig's
+    // envelope). panBy stays a no-op — a lateral pan of the pair is seam-safe
+    // in principle but disorienting wrapped around a corner, so v1 omits it.
+    const cornerCameraControl = {
+      orbitBy: (dYaw: number, dHeight: number) => {
+        cornerOffD.yaw += dYaw;
+        cornerOffD.height = clampCornerOffsets({ ...cornerOffD, height: cornerOffD.height + dHeight }).height;
+        persistCorner();
+      },
+      panBy: () => {},
+      zoomBy: (scale: number) => {
+        if (!Number.isFinite(scale) || scale <= 0) {
+          return;
+        }
+        cornerOffD.dist = clampCornerOffsets({ ...cornerOffD, dist: cornerOffD.dist * scale }).dist;
+        persistCorner();
+      },
+      flick: (yawVel: number, hVel: number) => {
+        cornerYawVel = Math.max(-4, Math.min(4, yawVel));
+        cornerHeightVel = Math.max(-30, Math.min(30, hVel));
+      },
+      setTracking: (on: boolean) => {
+        cornerGrab = on;
+        if (on) {
+          cornerYawVel = 0;
+          cornerHeightVel = 0;
+        }
+      },
+    };
+    // Plain corner lock (and span mirrors) must ignore every camera intent —
+    // the pair may not be moved by this window. Mirrors receive their pose via
+    // storage events instead, so a mirror-side pinch can never double-apply.
+    const noopCameraControl = {
+      orbitBy: () => {},
+      panBy: () => {},
+      zoomBy: () => {},
+      flick: () => {},
+      setTracking: () => {},
+    };
+    const unregisterCameraControl = registerSceneCameraControl(
+      cornerLocked ? (cornerDriver ? cornerCameraControl : noopCameraControl) : freeCameraControl,
+    );
 
     // Pure gesture mode: pointing must not fight drag-orbit, so the pointer
     // never binds at all (see Help overlay). Desk/mouse-dwell modes keep the
@@ -1992,9 +2096,28 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       const smoothing = 1 - Math.exp(-dt * 7);
       if (cornerLocked) {
         // Rigid corner pair: reassert the locked framing every frame so no
-        // stray camera write can ever drift the seam between the walls. The
-        // pinch-camera external grab is a no-op here (like F/focus) — the pair
-        // never moves.
+        // stray camera write can ever drift the seam between the walls.
+        // Without ?span=1 the offsets stay zero — the pair never moves. With
+        // it, the driver integrates flick inertia + glides toward the desired
+        // shared offsets (mirrors receive desired via storage and glide the
+        // same way), then the reassert renders the shared pose.
+        if (cornerSharedOn) {
+          if (cornerDriver && !cornerGrab && !reducedMotion) {
+            if (Math.abs(cornerYawVel) > 1e-4) {
+              cornerOffD.yaw += cornerYawVel * dt;
+              cornerYawVel *= Math.exp(-dt * 2.2);
+            }
+            if (Math.abs(cornerHeightVel) > 1e-3) {
+              cornerOffD.height = clampCornerOffsets({ ...cornerOffD, height: cornerOffD.height + cornerHeightVel * dt }).height;
+              cornerHeightVel *= Math.exp(-dt * 2.6);
+            }
+            persistCorner();
+          }
+          const cornerSmoothing = 1 - Math.exp(-dt * (cornerGrab ? 16 : 7));
+          cornerOff.yaw = THREE.MathUtils.lerp(cornerOff.yaw, cornerOffD.yaw, cornerSmoothing);
+          cornerOff.height = THREE.MathUtils.lerp(cornerOff.height, cornerOffD.height, cornerSmoothing);
+          cornerOff.dist = THREE.MathUtils.lerp(cornerOff.dist, cornerOffD.dist, cornerSmoothing);
+        }
         applyCornerRig();
       } else {
         // Track the hand tightly while dragging OR while the pinch camera holds
@@ -2121,8 +2244,30 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
     document.addEventListener("visibilitychange", onSceneVisibility);
     onSceneVisibility();
 
+    // SHARED CORNER RIG mirror: adopt the driver's absolute offsets from the
+    // cross-window storage channel. While this window is PARKED (hidden /
+    // occluded — see the visibility handler above), snap-and-render directly
+    // on each event (≤30 Hz, cheap) so an occluded wall stays current instead
+    // of waking up seconds behind the pair.
+    let unsubscribeCorner: () => void = () => {};
+    if (cornerSharedOn && !cornerDriver) {
+      unsubscribeCorner = subscribeCornerOffsets((o) => {
+        cornerOffD.yaw = o.yaw;
+        cornerOffD.height = o.height;
+        cornerOffD.dist = o.dist;
+        if (!running) {
+          cornerOff.yaw = o.yaw;
+          cornerOff.height = o.height;
+          cornerOff.dist = o.dist;
+          applyCornerRig();
+          renderer.render(scene, camera);
+        }
+      });
+    }
+
     return () => {
       stopLoop();
+      unsubscribeCorner();
       unregisterDwellSource();
       unregisterCameraControl();
       document.removeEventListener("visibilitychange", onSceneVisibility);
@@ -2170,6 +2315,7 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       data-mode={mode}
       data-layout={layout}
       data-corner-lock={cornerLock ? "true" : "false"}
+      data-corner-shared={cornerLock && cornerShared ? "true" : "false"}
       data-idea-count={ideas.length}
       data-tree-count={trees.length}
       aria-label={`Room ${mode}: ${ideas.length} idea${ideas.length === 1 ? "" : "s"}, ${trees.length} build${trees.length === 1 ? "" : "s"}`}

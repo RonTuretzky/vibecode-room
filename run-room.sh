@@ -2,15 +2,19 @@
 #
 # Vibecode Room — one command to run the whole thing.
 #
-# Default = DESK MODE (no cameras, no Python): builds the UI, serves Vibersyn on
-# all interfaces (HOST=0.0.0.0 so your phone can reach the QR-import page), and
-# opens two fullscreen windows — wall A AND wall B each render the COMPLETE 3D
-# room (all ideas + all builds). The ?view=/?wall= URL params are legacy labels
-# that no longer split content: ?wall= only badges the window and seeds a
-# different default camera angle, and every window owns its camera (drag/zoom/
-# fit/zen are per-window; live state is shared over the same SSE stream). You
-# drive it with mouse + keyboard (press "?" for the cheat sheet) + voice (say
-# "Vibersyn").
+# Default = THE FULL ROOM (live-room request 2026-07-23): joystick fusion
+# (--arcade) + gesture-mode XL UI + hand-pinch camera (--hands) + the SPANNED
+# corner pair (&span=1) all at once. The two wall windows render ONE continuous
+# corner-locked panorama; the joystick cursor roams across BOTH walls (crossing
+# the seam), and the pinch camera yaws/cranes/dollies the WHOLE pair as one
+# (wall A's window is the driver; wall B mirrors via localStorage). The hands
+# camera bridge is NOT auto-launched — run yours on ws://localhost:9980 (a
+# startup hint prints the exact command when nothing is listening there).
+#
+# --desk restores the old camera-less desk default: two independent windows,
+# mouse + keyboard (press "?" for the cheat sheet) + voice (say "Vibersyn").
+# Every mode serves Vibersyn on all interfaces (HOST=0.0.0.0 so your phone can
+# reach the QR-import page); live state is shared over the same SSE stream.
 #
 # Camera (gesture) mode (--gesture) additionally starts the gesture fusion source —
 # the real Python camera server, or a camera-free preview emitter with --fake —
@@ -25,9 +29,12 @@
 # view, then POST /calib/start. Results are written back into the room config.
 #
 # Usage:
-#   ./run-room.sh                 # desk mode: two walls, EACH the full room
-#   ./run-room.sh --single        # desk mode, ONE window — a laptop or
-#                                 # single projector, no cameras, no Python
+#   ./run-room.sh                 # DEFAULT: the full room — joystick (arcade) +
+#                                 # gesture XL UI + hands + spanned corner pair
+#   ./run-room.sh --desk          # desk mode: two independent windows, mouse +
+#                                 # keyboard + voice, no cameras, no Python
+#   ./run-room.sh --single        # ONE window — a laptop or single projector
+#                                 # (composes with the default full-room sources)
 #   ./run-room.sh --single=ideas  # same window with a legacy view badge (=builds,
 #                                 # =full); the view no longer filters content
 #   ./run-room.sh --gesture       # legacy: real cameras (needs gesture-wall deps + room.json)
@@ -62,10 +69,12 @@ cd "$ROOT"
 
 GESTURE=0
 FAKE=0
+ARCADE=0                              # --arcade: joystick as the fusion cursor source
 SELF_MODE=0
 HANDS=0                               # TouchDesigner hand-pinch camera (--hands / --hands=URL / --fake-hands / --real-hands)
 FAKE_HANDS=0
 REAL_HANDS=0                          # --real-hands: launch the standalone MediaPipe bridge (real laptop camera, no TD)
+MODE_CHOSEN=0                         # any explicit source-mode flag; 0 = apply the full-room default
 SINGLE=0
 SINGLE_VIEW="${SINGLE_VIEW:-full}"   # full | ideas | builds (--single=<view>; legacy badge, never filters)
 CALIBRATE=0
@@ -73,9 +82,11 @@ CONFIG="${ROOM_CONFIG:-gesture-wall/room.json}"
 VIBERSYN_PORT="${VIBERSYN_PORT:-8788}"
 HOST="${HOST:-0.0.0.0}"               # bind all interfaces so phones reach /submit (QR import)
 WS_PORT="${WS_PORT:-8770}"
+MERGE_WS_PORT="${MERGE_WS_PORT:-8771}"   # depth-camera fusion the arcade bridge merges from
 HANDS_PORT="${HANDS_PORT:-9980}"      # hands WS (TD or fake-hands); the default --hands URL uses it
 HANDS_URL="${HANDS_URL:-}"            # explicit hands source; empty = ws://localhost:$HANDS_PORT
-HANDS_WALLS="${HANDS_WALLS:-A}"       # walls that get &hands= — one stream driving BOTH cameras is opt-in (A,B)
+HANDS_WALLS="${HANDS_WALLS:-}"        # walls that get &hands= — empty = auto (A,B when the spanned
+                                      # corner pair is on so BOTH windows show the hands HUD, else A)
 BROWSER="${BROWSER:-Google Chrome}"
 WALL_A_POS="${WALL_A_POS:-0,0}"
 WALL_B_POS="${WALL_B_POS:-1920,0}"
@@ -97,24 +108,46 @@ fi
 
 for arg in "$@"; do
   case "$arg" in
-    --gesture) GESTURE=1 ;;
-    --fake) GESTURE=1; FAKE=1 ;;   # --fake implies gesture mode, minus the cameras
-    --arcade) GESTURE=1; ARCADE=1 ;;   # joystick as THE fusion cursor source (gesture-mode XL UI, no cameras)
-    --hands) HANDS=1 ;;
-    --hands=*) HANDS=1; HANDS_URL="${arg#*=}" ;;   # explicit TD source, e.g. ws://td-mac:9980
-    --fake-hands) HANDS=1; FAKE_HANDS=1 ;;   # pinch camera minus TouchDesigner (synthetic hands)
-    --real-hands) HANDS=1; REAL_HANDS=1 ;;   # pinch camera from the REAL laptop camera via the standalone MediaPipe bridge (no TD)
+    --desk) MODE_CHOSEN=1 ;;   # the old camera-less default: desk mode only
+    --gesture) GESTURE=1; MODE_CHOSEN=1 ;;
+    --fake) GESTURE=1; FAKE=1; MODE_CHOSEN=1 ;;   # --fake implies gesture mode, minus the cameras
+    --arcade) GESTURE=1; ARCADE=1; MODE_CHOSEN=1 ;;   # joystick as THE fusion cursor source (gesture-mode XL UI, no cameras)
+    --hands) HANDS=1; MODE_CHOSEN=1 ;;
+    --hands=*) HANDS=1; HANDS_URL="${arg#*=}"; MODE_CHOSEN=1 ;;   # explicit TD source, e.g. ws://td-mac:9980
+    --fake-hands) HANDS=1; FAKE_HANDS=1; MODE_CHOSEN=1 ;;   # pinch camera minus TouchDesigner (synthetic hands)
+    --real-hands) HANDS=1; REAL_HANDS=1; MODE_CHOSEN=1 ;;   # pinch camera from the REAL laptop camera via the standalone MediaPipe bridge (no TD)
     --single) SINGLE=1 ;;
     --single=*) SINGLE=1; SINGLE_VIEW="${arg#*=}" ;;
-    --self) SELF_MODE=1 ;;   # self-hosting: VIBERSYN_SELF_MODE=1 + supervisor loop
-    --calibrate) CALIBRATE=1 ;;
+    --self) SELF_MODE=1; MODE_CHOSEN=1 ;;   # self-hosting: VIBERSYN_SELF_MODE=1 + supervisor loop
+    --calibrate) CALIBRATE=1; MODE_CHOSEN=1 ;;
     --config=*) CONFIG="${arg#*=}" ;;
     -h|--help)
-      sed -n '2,55p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,62p' "$0" | sed 's/^# \{0,1\}//'
       exit 0 ;;
     *) echo "[room] unknown arg: $arg" >&2; exit 2 ;;
   esac
 done
+
+# DEFAULT = THE FULL ROOM: no explicit source-mode flag means joystick fusion
+# + gesture XL UI + hand-pinch camera, all at once (--desk opts back out).
+if [ "$MODE_CHOSEN" = "0" ]; then
+  GESTURE=1
+  ARCADE=1
+  HANDS=1
+fi
+
+# SPAN: hands + the two-wall gesture pair keep the corner-locked panorama and
+# drive it as ONE shared rig (&span=1 → corner-shared offsets; wall A's window
+# is the driver). Single-window and hands-less runs don't span.
+SPAN=0
+if [ "$GESTURE" = "1" ] && [ "$HANDS" = "1" ] && [ "$SINGLE" = "0" ] && [ "$CALIBRATE" = "0" ]; then
+  SPAN=1
+fi
+# HANDS_WALLS auto-default: the spanned pair wants the hands HUD (and the
+# pinch stream) on BOTH windows; otherwise wall A only, as before.
+if [ -z "$HANDS_WALLS" ]; then
+  if [ "$SPAN" = "1" ]; then HANDS_WALLS="A,B"; else HANDS_WALLS="A"; fi
+fi
 
 case "$SINGLE_VIEW" in
   full|ideas|builds) : ;;
@@ -265,9 +298,53 @@ if [ "$GESTURE" = "1" ]; then
       echo "         $PYTHON -m pip install -r gesture-wall/requirements.txt" >&2
       exit 1
     fi
-    echo "[room] fusion: arcade joystick bridge on ws://localhost:$WS_PORT"
-    "$PYTHON" gesture-wall/tools/arcade_fusion.py --port "$WS_PORT" --wall A &
+    # Two-wall runs span the stick across BOTH walls: the cursor crosses the
+    # A→B seam exactly like the corner-locked panorama reads.
+    ARCADE_WALLS="A,B"
+    [ "$SINGLE" = "1" ] && ARCADE_WALLS="A"
+    # DEPTH-CAMERA MERGE: when a room config exists, the bridge also subscribes
+    # to a camera fusion server on MERGE_WS_PORT (one connection per wall) and
+    # folds its people-pointing cursors in with the stick. The subscription
+    # reconnects forever, so the camera server may join a RUNNING room late.
+    MERGE_ARGS=()
+    [ -f "$CONFIG" ] && MERGE_ARGS=(--merge-from "ws://localhost:$MERGE_WS_PORT")
+    echo "[room] fusion: arcade joystick bridge on ws://localhost:$WS_PORT (walls $ARCADE_WALLS)"
+    "$PYTHON" gesture-wall/tools/arcade_fusion.py --port "$WS_PORT" --walls "$ARCADE_WALLS" \
+        ${MERGE_ARGS[@]+"${MERGE_ARGS[@]}"} &
     PIDS+=($!)
+    # Start the depth-camera server on the merge port when this shell can:
+    # camera deps importable, and (for a macOS Orbbec) sudo obtainable — a
+    # cached credential or an interactive tty for the password prompt. When it
+    # can't, keep the joystick-only room and print the exact join-late command.
+    if [ -f "$CONFIG" ]; then
+      CAM_OK=1
+      "$PYTHON" -c "import cv2" >/dev/null 2>&1 || CAM_OK=0
+      if config_uses_orbbec "$CONFIG"; then
+        "$PYTHON" -c "import pyorbbecsdk" >/dev/null 2>&1 || CAM_OK=0
+      fi
+      CAM_SUDO=""
+      if [ "$CAM_OK" = "1" ] && [ "$(uname -s)" = "Darwin" ] && [ "$(id -u)" != "0" ] && config_uses_orbbec "$CONFIG"; then
+        if sudo -n true 2>/dev/null; then
+          CAM_SUDO="sudo -E"
+        elif [ -t 0 ]; then
+          echo "[room] depth camera ($CONFIG): macOS opens the Orbbec only as root — password prompt now."
+          if sudo -v; then CAM_SUDO="sudo -E"; else CAM_OK=0; fi
+        else
+          CAM_OK=0   # headless shell: can't prompt for the Orbbec's sudo
+        fi
+      fi
+      if [ "$CAM_OK" = "1" ]; then
+        CONFIG_ABS="$(cd "$(dirname "$CONFIG")" && pwd)/$(basename "$CONFIG")"
+        echo "[room] depth camera: ${CAM_SUDO:+$CAM_SUDO }gesturewall.server on ws://localhost:$MERGE_WS_PORT (merged into the joystick bridge)"
+        ( cd gesture-wall && exec $CAM_SUDO "$PYTHON" -m gesturewall.server --config "$CONFIG_ABS" --ws-port "$MERGE_WS_PORT" --http-port "$GW_HTTP_PORT" ) &
+        PIDS+=($!)
+        [ -n "$CAM_SUDO" ] && SUDO_PID=$!
+      else
+        echo "[room] depth camera: NOT started (missing deps or no sudo from this shell). Join it live any time:"
+        echo "[room]   cd $ROOT/gesture-wall && sudo -E $PYTHON -m gesturewall.server --config $(basename "$CONFIG" 2>/dev/null || echo room.json) --ws-port $MERGE_WS_PORT --http-port $GW_HTTP_PORT"
+        echo "[room]   (the joystick bridge merges its cursors automatically once it's up — no restart)"
+      fi
+    fi
   elif [ "$FAKE" = "1" ]; then
     echo "[room] fusion: camera-free preview (fake) on ws://localhost:$WS_PORT"
     FAKE_WS_PORT="$WS_PORT" bun gesture-wall/tools/fake-fusion.mjs &
@@ -376,8 +453,12 @@ MOCK_QS=""
 if [ "${VIBERSYN_MOCK_ROOM:-}" = "1" ]; then
   MOCK_QS="&mock=1"
 fi
-URL_A="http://localhost:$VIBERSYN_PORT/?live=1&wall=A&view=ideas$GESTURE_QS$HANDS_QS$MOCK_QS"
-URL_B="http://localhost:$VIBERSYN_PORT/?live=1&wall=B&view=builds$GESTURE_QS$HANDS_QS_B$MOCK_QS"
+# SPAN (&span=1): hands + corner-lock coexist — the pair stays locked and the
+# pinch camera drives the SHARED corner rig (see src/ui/corner-shared.ts).
+SPAN_QS=""
+[ "$SPAN" = "1" ] && SPAN_QS="&span=1"
+URL_A="http://localhost:$VIBERSYN_PORT/?live=1&wall=A&view=ideas$GESTURE_QS$HANDS_QS$SPAN_QS$MOCK_QS"
+URL_B="http://localhost:$VIBERSYN_PORT/?live=1&wall=B&view=builds$GESTURE_QS$HANDS_QS_B$SPAN_QS$MOCK_QS"
 URL_SINGLE="http://localhost:$VIBERSYN_PORT/?live=1&view=$SINGLE_VIEW$GESTURE_QS$HANDS_QS$MOCK_QS"
 
 open_wall() { # $1=window-position  $2=url
@@ -416,6 +497,14 @@ else
 fi
 if [ "$HANDS" = "1" ]; then
   echo "[room] hand camera: pinch-hold-drag one hand to orbit (flick to coast); pinch BOTH hands and spread/squeeze to zoom."
+  # Bare --hands (no fake/real bridge launched, no explicit URL): the walls
+  # point at ws://localhost:$HANDS_PORT — say so when nothing is serving it yet.
+  if [ "$FAKE_HANDS" = "0" ] && [ "$REAL_HANDS" = "0" ] && [ -z "$HANDS_URL" ] \
+      && ! lsof -nP -iTCP:"$HANDS_PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+    echo "[room] hands: NOTHING is serving ws://localhost:$HANDS_PORT yet — start your camera bridge:"
+    echo "[room]   gesture-wall/.venv-hands/bin/python gesture-wall/touchdesigner/hands_mediapipe.py --port $HANDS_PORT --wall A --camera 1"
+    echo "[room]   (the walls auto-reconnect every 1.5s — no refresh needed)"
+  fi
 fi
 echo "[room] (tip: dwell/click \"Guided Demo\" — or add &demo=guided to a wall URL — for the coached visitor walkthrough.)"
 wait
