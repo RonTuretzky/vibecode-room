@@ -4,6 +4,7 @@ import type { IdeaTrayItem, ProjectorProcess } from "./types";
 import { registerSceneDwellSource, type SceneDwellRect } from "./gesture/scene-source";
 import { registerSceneCameraControl } from "./gesture/camera-source";
 import { cornerEye, cornerVerticalFovDeg, cornerYaw } from "./corner-lock";
+import { loadGardenFlora, type FloraLibrary } from "./garden-flora";
 
 // The full-viewport 3D stage (after conductor-github-visualizer): the scene IS
 // the app background and every panel floats over it. Two render modes share
@@ -399,6 +400,12 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
     // cap the pixel ratio, and (below) pause the frame loop while hidden.
     const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    // Software rasterizers (headless test Chromium, GPU-less kiosks) crawl
+    // under the photoscan flora — they keep the sky/ground and the primitive
+    // node glyphs, and skip the instanced vegetation + real-model nodes.
+    const debugInfo = renderer.getContext().getExtension("WEBGL_debug_renderer_info");
+    const gpuName = debugInfo === null ? "" : String(renderer.getContext().getParameter(debugInfo.UNMASKED_RENDERER_WEBGL));
+    const softwareGL = /swiftshader|llvmpipe|softpipe|software/i.test(gpuName);
     container.appendChild(renderer.domElement);
 
     // Lighting is per-environment (added to each env's group): the garden is a
@@ -482,10 +489,12 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
     }
 
     // ── environments ────────────────────────────────────────────────────────
-    // Pastoral daylight garden: blue sky, drifting cumulus, a warm sun,
-    // rolling haze-tinted hills, and a fresh green meadow with natural
-    // wildflowers, butterflies and drifting seed motes. Node/label data colors
-    // are unchanged — the dark glass label cards pop against the bright sky.
+    // Pastoral daylight garden built from real CC0 Poly Haven photoscans: a
+    // partly-cloudy sky panorama, a tiled grass ground, and instanced
+    // grass/wildflower/shrub/rock/tree models (see garden-flora.ts +
+    // public/assets/garden/ASSETS.md), plus butterflies and drifting seed
+    // motes. Node/label data colors are unchanged — the dark glass label
+    // cards pop against the bright sky.
     const buildGardenEnv = (): SceneEnv => {
       const rng = mulberry32(0x47415244);
       const group = new THREE.Group();
@@ -494,221 +503,169 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       // melt into the sky instead of ending at a hard disc edge.
       scene.fog = new THREE.Fog(0xdcedf8, 80, 210);
 
-      // Daylight rig (env-local): warm sun key, blue-sky/grass hemisphere
-      // bounce, and a soft cool fill so shaded sides stay readable.
-      group.add(new THREE.HemisphereLight(0xbdd9f2, 0x7fae62, 0.7));
-      const sunLight = new THREE.DirectionalLight(0xfff2d9, 0.95);
+      // Daylight rig (env-local): warm sun key matching the panorama's sun,
+      // blue-sky/grass hemisphere bounce, and a soft cool fill so shaded
+      // sides stay readable. (Photoscan albedos run darker than flat colors,
+      // hence hotter intensities than the old procedural pass.)
+      group.add(new THREE.HemisphereLight(0xbdd9f2, 0x86b46a, 1.15));
+      const sunLight = new THREE.DirectionalLight(0xfff2d9, 1.55);
       sunLight.position.set(-24, 42, -30);
       group.add(sunLight);
-      const fillLight = new THREE.DirectionalLight(0xcfe4ff, 0.25);
+      const fillLight = new THREE.DirectionalLight(0xcfe4ff, 0.35);
       fillLight.position.set(18, 12, 16);
       group.add(fillLight);
 
-      const sky = makeSkyDome(0xeaf6fc, 0x9fd0f0, 0x3e8ed8);
-      group.add(sky);
-
-      // Sun + bloom, upper-left of the default framing (clear of the HUD).
-      const sun = new THREE.Mesh(
-        new THREE.SphereGeometry(2.8, 24, 24),
-        new THREE.MeshBasicMaterial({ color: 0xfff8e6, fog: false }),
+      // Sky: real tonemapped equirect panorama (Poly Haven puresky) on a
+      // vertically SQUASHED dome — the camera rig only frames ~12° above the
+      // horizon, and every panorama keeps its blue at the zenith, so the
+      // squash compresses that blue down into the visible band. World-
+      // anchored, so the two-wall/corner-lock pair stays continuous.
+      const skyTexture = new THREE.TextureLoader().load(
+        "/assets/garden/sky/sunflowers_puresky_4k.jpg",
       );
-      // Low morning sun: the default rig only frames ~12° above the horizon,
-      // so the sun (and the clouds below) must hug the horizon band to be
-      // seen without panning up.
-      sun.position.set(-34, 17, -70);
-      group.add(sun);
-      const sunHalo = new THREE.Sprite(
-        new THREE.SpriteMaterial({ map: glowTexture, color: 0xfff2c8, transparent: true, opacity: 0.75, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }),
+      skyTexture.colorSpace = THREE.SRGBColorSpace;
+      const skyDome = new THREE.Mesh(
+        new THREE.SphereGeometry(340, 48, 32),
+        new THREE.MeshBasicMaterial({ map: skyTexture, side: THREE.BackSide, fog: false, depthWrite: false }),
       );
-      sunHalo.position.copy(sun.position);
-      sunHalo.scale.setScalar(26);
-      group.add(sunHalo);
-      const sunBloom = new THREE.Sprite(
-        new THREE.SpriteMaterial({ map: glowTexture, color: 0xfff6da, transparent: true, opacity: 0.3, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }),
-      );
-      sunBloom.position.copy(sun.position);
-      sunBloom.scale.setScalar(46);
-      group.add(sunBloom);
+      skyDome.scale.y = 0.32;
+      group.add(skyDome);
 
-      // Cumulus: soft canvas-blob sprites drifting slowly around the dome.
-      const makeCloudTexture = (seed: number): THREE.CanvasTexture => {
-        const cloudRng = mulberry32(seed);
-        const canvas = document.createElement("canvas");
-        canvas.width = 256;
-        canvas.height = 128;
-        const ctx = canvas.getContext("2d")!;
-        // Clustered blobs with bright cores so the sprite reads as one
-        // defined cumulus, not a smear of haze.
-        for (let i = 0; i < 16; i++) {
-          const cx = 128 + (cloudRng() - 0.5) * 150;
-          const cy = 68 + (cloudRng() - 0.5) * 44;
-          const cr = 20 + cloudRng() * 30;
-          const blob = ctx.createRadialGradient(cx, cy, 0, cx, cy, cr);
-          blob.addColorStop(0, "rgba(255,255,255,0.9)");
-          blob.addColorStop(0.55, "rgba(255,255,255,0.45)");
-          blob.addColorStop(1, "rgba(255,255,255,0)");
-          ctx.fillStyle = blob;
-          ctx.fillRect(cx - cr, cy - cr, cr * 2, cr * 2);
-        }
-        return new THREE.CanvasTexture(canvas);
-      };
-      const cloudTextures = [makeCloudTexture(0x434c31), makeCloudTexture(0x434c32)];
-      const clouds: { sprite: THREE.Sprite; angle: number; dist: number; height: number; speed: number; phase: number }[] = [];
-      for (let i = 0; i < 9; i++) {
-        const sprite = new THREE.Sprite(
-          new THREE.SpriteMaterial({ map: cloudTextures[i % cloudTextures.length], transparent: true, opacity: 0.75 + rng() * 0.2, depthWrite: false, fog: false }),
-        );
-        const width = 30 + rng() * 25;
-        sprite.scale.set(width, width * (0.34 + rng() * 0.1), 1);
-        const cloud = {
-          sprite,
-          angle: (i / 9) * Math.PI * 2 + rng(),
-          dist: 85 + rng() * 40,
-          height: 8 + rng() * 14,
-          speed: 0.004 + rng() * 0.006,
-          phase: rng() * Math.PI * 2,
-        };
-        sprite.position.set(Math.cos(cloud.angle) * cloud.dist, cloud.height, Math.sin(cloud.angle) * cloud.dist);
-        group.add(sprite);
-        clouds.push(cloud);
-      }
-
-      // Ground: mottled pasture disc — a fresh-to-deep green radial gradient
-      // with soft patch blobs so the meadow reads grown, not painted.
-      const gCanvas = document.createElement("canvas");
-      gCanvas.width = 512;
-      gCanvas.height = 512;
-      const gCtx = gCanvas.getContext("2d")!;
-      const gGrad = gCtx.createRadialGradient(256, 256, 20, 256, 256, 256);
-      gGrad.addColorStop(0, "#7fbf62");
-      gGrad.addColorStop(0.55, "#5da84b");
-      gGrad.addColorStop(1, "#4f9a52");
-      gCtx.fillStyle = gGrad;
-      gCtx.fillRect(0, 0, 512, 512);
-      for (let i = 0; i < 70; i++) {
-        const px = rng() * 512;
-        const py = rng() * 512;
-        const pr = 12 + rng() * 40;
-        const patch = gCtx.createRadialGradient(px, py, 0, px, py, pr);
-        const tone = rng() < 0.5 ? "58, 132, 64" : "152, 208, 116";
-        patch.addColorStop(0, `rgba(${tone}, 0.22)`);
-        patch.addColorStop(1, `rgba(${tone}, 0)`);
-        gCtx.fillStyle = patch;
-        gCtx.fillRect(px - pr, py - pr, pr * 2, pr * 2);
-      }
-      const groundTexture = new THREE.CanvasTexture(gCanvas);
+      // Ground: tiled photoscan grass (1k diff+normal over ~10-unit tiles;
+      // the tiling repeat hides under fog, flora cover and label chrome).
+      const texLoader = new THREE.TextureLoader();
+      const groundDiff = texLoader.load("/assets/garden/ground/aerial_grass_rock_diff_1k.jpg");
+      groundDiff.wrapS = THREE.RepeatWrapping;
+      groundDiff.wrapT = THREE.RepeatWrapping;
+      groundDiff.repeat.set(22, 22);
+      groundDiff.colorSpace = THREE.SRGBColorSpace;
+      groundDiff.anisotropy = 8;
+      const groundNor = texLoader.load("/assets/garden/ground/aerial_grass_rock_nor_1k.jpg");
+      groundNor.wrapS = THREE.RepeatWrapping;
+      groundNor.wrapT = THREE.RepeatWrapping;
+      groundNor.repeat.set(22, 22);
+      groundNor.anisotropy = 8;
       const ground = new THREE.Mesh(
         new THREE.CircleGeometry(110, 64),
-        new THREE.MeshPhongMaterial({ map: groundTexture, shininess: 6, side: THREE.DoubleSide }),
+        // Tint pushes the olive scan toward lush pasture green.
+        new THREE.MeshStandardMaterial({ map: groundDiff, normalMap: groundNor, color: 0xaef29a, roughness: 1, metalness: 0 }),
       );
       ground.rotation.x = -Math.PI / 2;
       group.add(ground);
 
-      // Rolling hills ring the horizon (haze-tinted by the fog) so the meadow
-      // ends in pasture, not at a disc edge; some carry distant tree clumps.
-      // Haze-baked tones: the fog only part-covers the hills, so their base
-      // color already leans toward the horizon pale for aerial perspective.
-      const hillTones = [0x93bb8a, 0x9fc497, 0x8ab188];
-      const clumpMat = new THREE.MeshPhongMaterial({ color: 0x6f9d6a });
-      for (let i = 0; i < 7; i++) {
-        const angle = (i / 7) * Math.PI * 2 + rng() * 0.5;
-        const dist = 96 + rng() * 14;
-        const rx = 26 + rng() * 20;
-        const ry = 3 + rng() * 3;
-        const hill = new THREE.Mesh(
-          new THREE.SphereGeometry(1, 24, 16),
-          new THREE.MeshPhongMaterial({ color: hillTones[i % hillTones.length] }),
-        );
-        hill.scale.set(rx, ry, 14 + rng() * 8);
-        hill.position.set(Math.cos(angle) * dist, -ry * 0.35, Math.sin(angle) * dist);
-        group.add(hill);
-        if (rng() < 0.6) {
-          const clumps = 2 + Math.floor(rng() * 3);
-          for (let c = 0; c < clumps; c++) {
-            const clump = new THREE.Mesh(new THREE.IcosahedronGeometry(0.9 + rng() * 1.1, 1), clumpMat);
-            clump.position.set(
-              hill.position.x + (rng() - 0.5) * rx * 0.7,
-              ry * 0.4,
-              hill.position.z + (rng() - 0.5) * 10,
-            );
-            group.add(clump);
+      // Flora: instanced photoscan scatter. Loads async (cached for the page
+      // after the first garden build); each species lands as a handful of
+      // InstancedMesh draw calls, so density is nearly free. The rng here is
+      // dedicated so the async arrival can't perturb the env's other seeds.
+      const floraRng = mulberry32(0x464c4f52);
+      // Counts × per-model tri budgets (see fetch-garden-assets.py) keep the
+      // whole flora pass near ~2M triangles — dense to the eye, cheap to the
+      // two projector GPUs. Scales compensate REAL model sizes (the scans are
+      // multi-plant patches in meters: the grass patch is ~2.8m wide, the
+      // shrub ~3m tall, the jacaranda ~12m).
+      // Scales are calibrated to the scans' TRUE sizes (grass tufts ~0.34m,
+      // dandelions ~0.17m, the jacaranda ~19m tall): small plants scale UP
+      // ~2-3× for projector legibility, the tree scales down to ~8-12 units.
+      const FLORA_SCATTER: { name: string; count: number; rMin: number; rMax: number; sMin: number; sMax: number }[] = [
+        { name: "grass_medium_01", count: 380, rMin: 3, rMax: 74, sMin: 3.0, sMax: 4.5 },
+        { name: "flower_gazania", count: 90, rMin: 4, rMax: 62, sMin: 2.8, sMax: 4.0 },
+        { name: "flower_ursinia", count: 90, rMin: 4, rMax: 62, sMin: 2.5, sMax: 3.8 },
+        { name: "dandelion_01", count: 80, rMin: 4, rMax: 66, sMin: 3.0, sMax: 4.5 },
+        { name: "periwinkle_plant", count: 60, rMin: 5, rMax: 58, sMin: 2.5, sMax: 3.5 },
+        { name: "shrub_02", count: 20, rMin: 12, rMax: 80, sMin: 0.8, sMax: 1.2 },
+        { name: "shrub_03", count: 20, rMin: 10, rMax: 76, sMin: 2.0, sMax: 3.5 },
+        { name: "rock_moss_set_01", count: 12, rMin: 10, rMax: 82, sMin: 0.5, sMax: 0.9 },
+        { name: "tree_stump_01", count: 4, rMin: 15, rMax: 55, sMin: 0.9, sMax: 1.2 },
+        { name: "jacaranda_tree", count: 10, rMin: 34, rMax: 82, sMin: 0.45, sMax: 0.62 },
+      ];
+      let floraDisposed = false;
+      const scatterFlora = (flora: FloraLibrary) => {
+        const dummy = new THREE.Object3D();
+        for (const spec of FLORA_SCATTER) {
+          const variants = flora.get(spec.name);
+          if (variants === undefined || variants.length === 0) {
+            continue;
           }
+          // Instance i takes variant i % n; angles are an evenly-spaced ring
+          // with jitter so even low-count species (the trees) land in every
+          // camera wedge instead of gambling on uniform randomness.
+          const matrices: THREE.Matrix4[][] = variants.map(() => []);
+          for (let i = 0; i < spec.count; i++) {
+            const angle = ((i + floraRng() * 0.9) / spec.count) * Math.PI * 2;
+            const radius = spec.rMin + floraRng() * (spec.rMax - spec.rMin);
+            dummy.position.set(Math.cos(angle) * radius, 0, Math.sin(angle) * radius);
+            dummy.rotation.y = floraRng() * Math.PI * 2;
+            dummy.scale.setScalar(spec.sMin + floraRng() * (spec.sMax - spec.sMin));
+            dummy.updateMatrix();
+            matrices[i % variants.length].push(dummy.matrix.clone());
+          }
+          variants.forEach((variant, v) => {
+            if (matrices[v].length === 0) {
+              return;
+            }
+            for (const piece of variant.pieces) {
+              const instanced = new THREE.InstancedMesh(piece.geometry, piece.material, matrices[v].length);
+              matrices[v].forEach((matrix, i) => instanced.setMatrixAt(i, matrix));
+              // Geometry/material belong to the page-lifetime flora cache;
+              // the dispose traverse below only releases instance buffers.
+              instanced.userData.sharedAsset = true;
+              // Instances span the whole meadow — skip per-mesh culling
+              // rather than trusting instance-unaware bounding volumes.
+              instanced.frustumCulled = false;
+              group.add(instanced);
+            }
+          });
         }
+      };
+      if (!softwareGL) {
+        loadGardenFlora()
+          .then((flora) => {
+            floraLib = flora;
+            // Rebuild the data nodes as real models on the next frame.
+            floraNodesDirty = true;
+            if (!floraDisposed) {
+              scatterFlora(flora);
+            }
+          })
+          .catch((error: unknown) => {
+            console.warn("garden flora failed to load; primitive glyphs stay", error);
+          });
       }
 
-      // Decorations: grass tufts, natural wildflowers (daisy / buttercup /
-      // poppy / cornflower / lavender), leafy bushes.
-      const grassMats = [0x6db457, 0x7cc266, 0x61aa4d].map(
-        (color) => new THREE.MeshPhongMaterial({ color, side: THREE.DoubleSide }),
-      );
-      const bushMat = new THREE.MeshPhongMaterial({ color: 0x58a046 });
-      const daisyEyeMat = new THREE.MeshPhongMaterial({ color: 0xf7c948, emissive: 0xf7c948, emissiveIntensity: 0.1 });
-      const DAISY_WHITE = 0xfdf6e3;
-      const wildColors = [DAISY_WHITE, 0xffd75e, 0xe8654f, 0x7fa8e0, 0xb590dd];
-      for (let i = 0; i < 240; i++) {
-        const angle = rng() * Math.PI * 2;
-        const radius = 5 + rng() * 62;
-        const x = Math.cos(angle) * radius;
-        const z = Math.sin(angle) * radius;
-        const kind = rng();
-        if (kind < 0.45) {
-          const tuft = new THREE.Group();
-          const mat = grassMats[Math.floor(rng() * grassMats.length)];
-          const blades = 3 + Math.floor(rng() * 3);
-          for (let b = 0; b < blades; b++) {
-            const blade = new THREE.Mesh(new THREE.PlaneGeometry(0.08, 0.4 + rng() * 0.35), mat);
-            blade.position.set((rng() - 0.5) * 0.2, 0.22 + rng() * 0.14, (rng() - 0.5) * 0.2);
-            blade.rotation.y = rng() * Math.PI;
-            blade.rotation.x = -0.15 + rng() * 0.3;
-            tuft.add(blade);
-          }
-          tuft.position.set(x, 0, z);
-          group.add(tuft);
-        } else if (kind < 0.75) {
-          const color = wildColors[Math.floor(rng() * wildColors.length)];
-          const mat = new THREE.MeshPhongMaterial({ color, emissive: color, emissiveIntensity: 0.05 });
-          const flower = new THREE.Group();
-          const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.04, 0.42, 4), grassMats[0]);
-          stem.position.y = 0.21;
-          flower.add(stem);
-          const head = new THREE.Mesh(new THREE.SphereGeometry(0.1, 8, 8), mat);
-          head.position.y = 0.46;
-          flower.add(head);
-          if (color === DAISY_WHITE) {
-            const eye = new THREE.Mesh(new THREE.SphereGeometry(0.045, 6, 6), daisyEyeMat);
-            eye.position.y = 0.55;
-            flower.add(eye);
-          }
-          flower.position.set(x, 0, z);
-          group.add(flower);
-        } else {
-          const bush = new THREE.Group();
-          const puffs = 2 + Math.floor(rng() * 2);
-          for (let p = 0; p < puffs; p++) {
-            const size = 0.18 + rng() * 0.22;
-            const puff = new THREE.Mesh(new THREE.IcosahedronGeometry(size, 1), bushMat);
-            puff.position.set((rng() - 0.5) * 0.35, size * 0.8, (rng() - 0.5) * 0.35);
-            bush.add(puff);
-          }
-          bush.position.set(x, 0, z);
-          group.add(bush);
-        }
+      // Rolling hills ring the horizon (haze-tinted by the fog) so the meadow
+      // ends in pasture, not at a disc edge; some carry distant tree clumps.
+      // Low rolling downs past the meadow edge (same tiled grass texture,
+      // tinted toward the horizon pale) — kept FLAT and far so the fog reads
+      // them as aerial perspective, with the real jacaranda band in front.
+      const hillTones = [0xc2d8b2, 0xcfe2c0, 0xb8cfae];
+      for (let i = 0; i < 5; i++) {
+        const angle = (i / 5) * Math.PI * 2 + rng() * 0.7;
+        const dist = 98 + rng() * 12;
+        const rx = 30 + rng() * 22;
+        const ry = 2.2 + rng() * 2.2;
+        const hill = new THREE.Mesh(
+          new THREE.SphereGeometry(1, 24, 16),
+          new THREE.MeshStandardMaterial({ map: groundDiff, color: hillTones[i % hillTones.length], roughness: 1 }),
+        );
+        hill.scale.set(rx, ry, 16 + rng() * 8);
+        hill.position.set(Math.cos(angle) * dist, -ry * 0.35, Math.sin(angle) * dist);
+        group.add(hill);
       }
 
       // Butterflies: two wings hinged on the body line, flapping while they
       // wander a slow Lissajous over the meadow (the day shift's fireflies).
-      const wingLeftGeo = new THREE.PlaneGeometry(0.2, 0.28);
-      wingLeftGeo.translate(0.11, 0, 0);
+      const wingLeftGeo = new THREE.PlaneGeometry(0.15, 0.21);
+      wingLeftGeo.translate(0.08, 0, 0);
       wingLeftGeo.rotateX(-Math.PI / 2);
-      const wingRightGeo = new THREE.PlaneGeometry(0.2, 0.28);
-      wingRightGeo.translate(-0.11, 0, 0);
+      const wingRightGeo = new THREE.PlaneGeometry(0.15, 0.21);
+      wingRightGeo.translate(-0.08, 0, 0);
       wingRightGeo.rotateX(-Math.PI / 2);
       const butterflyBodyGeo = new THREE.CylinderGeometry(0.015, 0.022, 0.24, 5);
       butterflyBodyGeo.rotateX(Math.PI / 2);
       const butterflyBodyMat = new THREE.MeshPhongMaterial({ color: 0x4a3527 });
       const butterflyColors = [0xfff6e8, 0xffd166, 0xf5a0c1, 0x9ad7f0, 0xffa94d];
       const butterflies: { group: THREE.Group; left: THREE.Mesh; right: THREE.Mesh; base: THREE.Vector3; phase: number; speed: number }[] = [];
-      for (let i = 0; i < 10; i++) {
+      for (let i = 0; i < 8; i++) {
         const color = butterflyColors[i % butterflyColors.length];
         const mat = new THREE.MeshPhongMaterial({ color, emissive: color, emissiveIntensity: 0.18, side: THREE.DoubleSide });
         const fly = new THREE.Group();
@@ -717,7 +674,7 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         fly.add(left);
         fly.add(right);
         fly.add(new THREE.Mesh(butterflyBodyGeo, butterflyBodyMat));
-        const base = new THREE.Vector3((rng() - 0.5) * 34, 1.8 + rng() * 2.6, (rng() - 0.5) * 26);
+        const base = new THREE.Vector3((rng() - 0.5) * 34, 1.5 + rng() * 1.8, (rng() - 0.5) * 26);
         fly.position.copy(base);
         group.add(fly);
         butterflies.push({ group: fly, left, right, base, phase: rng() * Math.PI * 2, speed: 0.22 + rng() * 0.18 });
@@ -740,14 +697,6 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         update: (t) => {
           if (reducedMotion) {
             return;
-          }
-          for (const cloud of clouds) {
-            const a = cloud.angle + t * cloud.speed;
-            cloud.sprite.position.set(
-              Math.cos(a) * cloud.dist,
-              cloud.height + Math.sin(t * 0.12 + cloud.phase) * 0.8,
-              Math.sin(a) * cloud.dist,
-            );
           }
           for (const fly of butterflies) {
             fly.group.position.set(
@@ -775,11 +724,20 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
           }
         },
         dispose: () => {
+          floraDisposed = true;
           scene.remove(group);
           scene.fog = null;
-          groundTexture.dispose();
-          cloudTextures.forEach((texture) => texture.dispose());
+          scene.background = null;
+          skyTexture.dispose();
+          groundDiff.dispose();
+          groundNor.dispose();
           group.traverse((node) => {
+            if (node instanceof THREE.InstancedMesh) {
+              // Flora instances: release ONLY the instance buffers — the
+              // geometry/material belong to the page-lifetime flora cache.
+              node.dispose();
+              return;
+            }
             if (node instanceof THREE.Mesh || node instanceof THREE.Points) {
               node.geometry.dispose();
               (Array.isArray(node.material) ? node.material : [node.material]).forEach((m) => m.dispose());
@@ -898,6 +856,11 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         entry.label.material.dispose();
       }
       entry.group.traverse((node) => {
+        // Per-node geometries (rings, hit volumes) are flagged ownGeometry;
+        // everything else on a node is shared (GEO.* or the flora cache).
+        if (node instanceof THREE.Mesh && node.userData.ownGeometry === true) {
+          node.geometry.dispose();
+        }
         if (node instanceof THREE.Sprite && node !== entry.label) {
           node.material.dispose();
         }
@@ -905,7 +868,156 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
     };
 
     // ── garden builders ─────────────────────────────────────────────────────
+    // Once the photoscan library lands, the radial-garden DATA NODES are real
+    // models too: a build is an actual jacaranda (sapling while a concept,
+    // full-grown once commissioned) and an idea is an actual flower (gazania
+    // when ready, dandelion puffball while forming). The DATA channels ride
+    // ON TOP as overlays: the glass label, a state-colored glowing ground
+    // ring (also the active-pulse/flash target), the gold commission ring,
+    // the steering ring, and a maturity-colored glow at the flower's heart.
+    // Until flora arrives (or on software GL) the primitive glyphs render.
+    let floraLib: FloraLibrary | null = null;
+    let floraNodesDirty = false;
+    const invisibleHitMat = new THREE.MeshBasicMaterial({ visible: false });
+
+    const buildRealTree = (spec: TreeSpec): Entry | null => {
+      const variants = floraLib?.get("jacaranda_tree");
+      if (variants === undefined || variants.length === 0) {
+        return null;
+      }
+      const color = STATE_COLOR[spec.state];
+      const commissioned = spec.stage === "commissioned";
+      const group = new THREE.Group();
+      const mats: THREE.MeshStandardMaterial[] = [];
+      // The scan is ~19 units tall at scale 1; sapling vs full tree.
+      const treeScale = commissioned ? 0.5 : 0.24;
+      const tree = new THREE.Group();
+      for (const piece of variants[0].pieces) {
+        const mesh = new THREE.Mesh(piece.geometry, piece.material);
+        // Picking goes through the coarse invisible hit volume below — a
+        // 43k-tri raycast per pointer move would drag the frame loop.
+        mesh.raycast = () => {};
+        tree.add(mesh);
+      }
+      tree.scale.setScalar(treeScale);
+      group.add(tree);
+      const hit = new THREE.Mesh(
+        new THREE.SphereGeometry(commissioned ? 3.6 : 1.9, 10, 10),
+        invisibleHitMat,
+      );
+      hit.position.y = commissioned ? 6.2 : 3.0;
+      hit.userData.ownGeometry = true;
+      hit.userData.pick = { kind: "process", callsign: spec.callsign };
+      group.add(hit);
+      // State ring: the state-color channel (and the pulse/flash target).
+      const ringMat = new THREE.MeshStandardMaterial({
+        color,
+        emissive: color,
+        emissiveIntensity: 0.55,
+        transparent: true,
+        opacity: 0.85,
+        roughness: 0.5,
+      });
+      mats.push(ringMat);
+      const stateRing = new THREE.Mesh(new THREE.TorusGeometry(commissioned ? 2.9 : 1.9, 0.09, 10, 64), ringMat);
+      stateRing.userData.ownGeometry = true;
+      stateRing.rotation.x = Math.PI / 2;
+      stateRing.position.y = 0.1;
+      group.add(stateRing);
+      if (commissioned) {
+        const commissionRing = new THREE.Mesh(
+          new THREE.TorusGeometry(2.4, 0.06, 8, 64),
+          new THREE.MeshBasicMaterial({ color: COMMISSION_COLOR, transparent: true, opacity: 0.55 }),
+        );
+        commissionRing.userData.ownGeometry = true;
+        commissionRing.rotation.x = Math.PI / 2;
+        commissionRing.position.y = 0.06;
+        group.add(commissionRing);
+      }
+      if (spec.steering) {
+        const steerRing = new THREE.Mesh(
+          new THREE.TorusGeometry(2.1, 0.05, 8, 64),
+          new THREE.MeshBasicMaterial({ color: STEERING_COLOR, transparent: true, opacity: 0.65 }),
+        );
+        steerRing.userData.ownGeometry = true;
+        steerRing.rotation.x = Math.PI / 2;
+        steerRing.position.y = 0.14;
+        group.add(steerRing);
+      }
+      const label = makeLabelSprite(treeTitle(spec), treeStatus(spec), cssHex(color));
+      label.position.y = commissioned ? 10.2 : 5.1;
+      group.add(label);
+      return { kind: "tree", treeSpec: spec, group, mats, baseEmissive: 0.55, head: null, headY: 0, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false };
+    };
+
+    const buildRealFlower = (spec: IdeaOrbSpec): Entry | null => {
+      const ready = spec.status === "ready";
+      const variants = floraLib?.get(ready ? "flower_gazania" : "dandelion_01");
+      if (variants === undefined || variants.length === 0) {
+        return null;
+      }
+      const color = ready ? MATURITY_COLOR[spec.maturity] : BUD_COLOR;
+      const size = ready ? 0.9 + spec.confidence * 1.0 : 0.55 + spec.confidence * 0.45;
+      const baseEmissive = ready ? 0.5 + spec.confidence * 0.3 : 0.2;
+      const group = new THREE.Group();
+      const mats: THREE.MeshStandardMaterial[] = [];
+      // Deterministic variant per idea so cards don't reshuffle on updates.
+      const variant = variants[Math.abs(ideaKey(spec).split("").reduce((h, ch) => h * 31 + ch.charCodeAt(0), 7)) % variants.length];
+      const plant = new THREE.Group();
+      for (const piece of variant.pieces) {
+        const mesh = new THREE.Mesh(piece.geometry, piece.material);
+        mesh.raycast = () => {};
+        plant.add(mesh);
+      }
+      // The scans are ~0.2m plants; scale to data size (confidence).
+      plant.scale.setScalar(size * 4.5);
+      group.add(plant);
+      // The idea's data color glows at the plant's heart + as a soft halo.
+      const coreMat = new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: baseEmissive, roughness: 0.4 });
+      mats.push(coreMat);
+      const core = new THREE.Mesh(GEO.flowerCenter, coreMat);
+      core.scale.setScalar(size * 0.55);
+      core.position.y = 0.4 * size;
+      group.add(core);
+      const halo = new THREE.Sprite(
+        new THREE.SpriteMaterial({ map: glowTexture, color, transparent: true, opacity: ready ? 0.4 : 0.16, blending: THREE.AdditiveBlending, depthWrite: false }),
+      );
+      halo.position.y = 0.45 * size;
+      halo.scale.setScalar(1.9 * size);
+      group.add(halo);
+      if (ready && spec.verified) {
+        const ring = new THREE.Mesh(
+          GEO.ring,
+          new THREE.MeshBasicMaterial({ color: VERIFIED_COLOR, transparent: true, opacity: 0.55 }),
+        );
+        ring.scale.setScalar(size * 1.6);
+        ring.rotation.x = Math.PI / 2;
+        ring.position.y = 0.08;
+        group.add(ring);
+      }
+      const hit = new THREE.Mesh(
+        new THREE.SphereGeometry(Math.max(0.55, 0.5 * size), 8, 8),
+        invisibleHitMat,
+      );
+      hit.position.y = 0.4 * size;
+      hit.userData.ownGeometry = true;
+      hit.userData.pick = { kind: "idea", key: ideaKey(spec) };
+      group.add(hit);
+      let label: THREE.Sprite | null = null;
+      if (ready && spec.pitch.length > 0) {
+        const statusLine = `${Math.round(spec.confidence * 100)}% · ${spec.maturity}${spec.verified ? " ✓" : ""}`;
+        label = makeLabelSprite(spec.pitch, statusLine, cssHex(color));
+        label.position.y = 1.1 * size + 0.45;
+        group.add(label);
+      }
+      return { kind: "flower", ideaSpec: spec, group, mats, baseEmissive, head: null, headY: 0, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false };
+    };
+
     const buildFlower = (spec: IdeaOrbSpec): Entry => {
+      const real = buildRealFlower(spec);
+      if (real !== null) {
+        return real;
+      }
       const ready = spec.status === "ready";
       const color = ready ? MATURITY_COLOR[spec.maturity] : BUD_COLOR;
       const size = ready ? 0.9 + spec.confidence * 1.0 : 0.55 + spec.confidence * 0.45;
@@ -973,6 +1085,10 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
     };
 
     const buildTree = (spec: TreeSpec): Entry => {
+      const real = buildRealTree(spec);
+      if (real !== null) {
+        return real;
+      }
       const color = STATE_COLOR[spec.state];
       const commissioned = spec.stage === "commissioned";
       const group = new THREE.Group();
@@ -1837,6 +1953,20 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         lastTick = tick.current;
         reconcile();
       }
+      if (floraNodesDirty) {
+        // The photoscan library just landed: regrow the data nodes as real
+        // models (they re-enter through the normal grow-in animation).
+        floraNodesDirty = false;
+        for (const entry of ideaEntries.values()) {
+          disposeEntry(entry);
+        }
+        ideaEntries.clear();
+        for (const entry of treeEntries.values()) {
+          disposeEntry(entry);
+        }
+        treeEntries.clear();
+        reconcile();
+      }
       if (fitRef.current !== lastFit) {
         lastFit = fitRef.current;
         if (!cornerLocked) {
@@ -2017,6 +2147,7 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       Object.values(GEO).forEach((geometry) => geometry.dispose());
       trunkMat.dispose();
       stemMat.dispose();
+      invisibleHitMat.dispose();
       glowTexture.dispose();
       scene.traverse((node) => {
         if (node instanceof THREE.Mesh && node.geometry !== undefined) {
