@@ -239,23 +239,37 @@ export class BuildOrchestrator {
       return;
     }
     const targets: BuildBackend[] = [];
+    const freshTargets: BuildBackend[] = [];
     for (const id of state.order) {
       const build = state.builds.get(id)!;
       const backend = this.#selector.backend(id);
-      // Only builds that are READY take a correction — a still-building or
-      // failed backend has nothing coherent to rewrite in place.
-      if (backend !== undefined && build.status === "ready" && build.entrypoint !== null) {
+      if (backend === undefined) {
+        continue;
+      }
+      // READY builds take the correction as an in-place rewrite. A FAILED lane
+      // has nothing coherent to rewrite — steering revives it with a fresh
+      // fan-out run instead of leaving it dead for the rest of the kickoff.
+      if (build.status === "ready" && build.entrypoint !== null) {
         build.status = "building";
         build.progressLabel = "applying correction";
         build.percent = 0;
         targets.push(backend);
+      } else if (build.status === "failed") {
+        build.status = "building";
+        build.progressLabel = "restarting mock";
+        build.percent = 0;
+        build.error = undefined;
+        freshTargets.push(backend);
       }
     }
-    if (targets.length === 0) {
+    if (targets.length === 0 && freshTargets.length === 0) {
       return;
     }
     this.#onUpdate();
-    await Promise.allSettled(targets.map((backend) => this.#track(state, this.#runBuild(state, backend, correction))));
+    await Promise.allSettled([
+      ...targets.map((backend) => this.#track(state, this.#runBuild(state, backend, correction))),
+      ...freshTargets.map((backend) => this.#track(state, this.#runBuild(state, backend, null))),
+    ]);
   }
 
   // Emergency path for one UPID: abort every in-flight build (backends SIGKILL
