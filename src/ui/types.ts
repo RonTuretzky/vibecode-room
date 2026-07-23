@@ -126,6 +126,11 @@ export interface ProjectorSnapshot {
   // loop — detection runs eagerly and every surfaced idea builds itself. The
   // projector shows a distinct "capturing" indicator.
   captureMode?: boolean;
+  // AUTO-BUILD SETTLE GATE surface: while an idea is armed and waiting for the
+  // room to go quiet, the walls show the heard pitch, a live countdown
+  // (firesInMs is SERVER-computed and republished every second), and a Done
+  // button that accepts immediately.
+  ideaSettle?: { armed: boolean; title: string | null; firesInMs: number | null };
   // Optional live-microphone status. Absent in the static demo fixtures; the
   // server runtime sets it when a browser mic session is wired through
   // /api/mic. `mode` is the ASR backend ("deepgram" = real transcription,

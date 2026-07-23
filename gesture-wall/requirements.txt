@@ -7,6 +7,9 @@ opencv-python>=4.8
 # If your Python version has no mediapipe wheel, the mouse mode + tests still run.
 mediapipe>=0.10.9
 
+# Arcade-stick input — required only for `--source arcade` (8BitDo model 80fe).
+pygame>=2.5
+
 # Multi-wall / multi-user server (gesturewall.server) — websocket fan-out to
 # the per-wall browser clients (web/wall.html). Single-wall app does not need it.
 websockets>=12.0

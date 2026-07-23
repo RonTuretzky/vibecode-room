@@ -12,6 +12,7 @@ import {
   skipStep,
   startGuided,
   stepNumber,
+  RACE_MIN_DWELL_MS,
 } from "./machine";
 
 // ── fake snapshot feed helpers (no network, no fixtures from demo-data) ──────
@@ -130,37 +131,34 @@ describe("guided demo — idea step (real detection → spawn)", () => {
     return advanceOnSnapshot(state, recordingRoom({ processes: start.processes }));
   };
 
-  test("a NEW process (not in the baseline) advances to build and becomes the focus", () => {
+  test("a NEW process does NOT auto-advance — only the visitor's Done/Skip does", () => {
     const state = atIdea(["upid_old"]);
-    const unchanged = advanceOnSnapshot(
-      state,
-      recordingRoom({ processes: [makeProcess("upid_old")] }),
-    );
-    expect(unchanged).toBe(state);
+    // The room built something in the background: the coach stays put.
+    const withNewcomer = recordingRoom({ processes: [makeProcess("upid_old"), makeProcess("upid_new")] });
+    expect(advanceOnSnapshot(state, withNewcomer)).toBe(state);
 
-    const advanced = advanceOnSnapshot(
-      state,
-      recordingRoom({ processes: [makeProcess("upid_old"), makeProcess("upid_new")] }),
-    );
-    expect(advanced.step).toBe("race");
-    expect(advanced.focusUpid).toBe("upid_new");
+    // The visitor's own Done (routed through skipStep) advances, and the race
+    // adopts the newborn process as its focus.
+    const advanced = skipStep(state, withNewcomer);
+    expect(advanced?.step).toBe("race");
+    expect(advanced?.focusUpid).toBe("upid_new");
   });
 
-  test("a newcomer whose mock is ALREADY ready falls straight through to decide", () => {
+  test("Done with an ALREADY-ready mock falls straight through to decide (no-clock legacy path)", () => {
     const state = atIdea([]);
     const readyProc = makeProcess("upid_fast", { builds: [build("native", "ready")] });
-    const advanced = advanceOnSnapshot(state, recordingRoom({ processes: [readyProc] }));
-    expect(advanced.step).toBe("decide");
-    expect(advanced.readyBackend).toBe("native");
+    const advanced = skipStep(state, recordingRoom({ processes: [readyProc] }));
+    expect(advanced?.step).toBe("decide");
+    expect(advanced?.readyBackend).toBe("native");
   });
 });
 
 describe("guided demo — race step (three MOCK lanes)", () => {
   const atRace = () => {
-    const state = advanceOnSnapshot(
+    const state = skipStep(
       atIdeaState(),
       recordingRoom({ processes: [makeProcess("upid_demo")] }),
-    );
+    )!;
     expect(state.step).toBe("race");
     return state;
   };
@@ -319,13 +317,14 @@ describe("guided demo — skip, finish, re-enter", () => {
     const atIdea = skipStep(atRecord, preExisting)!;
     expect(atIdea.step).toBe("idea");
     expect(atIdea.baselineUpids).toEqual(["upid_pre"]);
-    // upid_pre must NOT trigger the idea step; a genuine newcomer must.
+    // The idea step never auto-advances; the visitor's Done/Skip must adopt
+    // only the genuine newcomer (upid_pre is baseline).
     expect(advanceOnSnapshot(atIdea, preExisting)).toBe(atIdea);
-    const advanced = advanceOnSnapshot(
+    const advanced = skipStep(
       atIdea,
       recordingRoom({ processes: [makeProcess("upid_pre"), makeProcess("upid_new")] }),
     );
-    expect(advanced.focusUpid).toBe("upid_new");
+    expect(advanced?.focusUpid).toBe("upid_new");
   });
 
   test("re-entering starts a FRESH run: step 1, zero orbs, new baseline", () => {
@@ -335,7 +334,7 @@ describe("guided demo — skip, finish, re-enter", () => {
       state = popPracticeOrb(state);
     }
     const withProc = recordingRoom({ processes: [makeProcess("upid_first")] });
-    state = advanceOnSnapshot(advanceOnSnapshot(state, recordingRoom()), withProc);
+    state = skipStep(advanceOnSnapshot(state, recordingRoom()), withProc)!;
     expect(state.step).toBe("race");
 
     // …then re-entry resets everything and treats upid_first as pre-existing.
@@ -366,5 +365,60 @@ describe("guided demo — resilience notices (say it, never wedge)", () => {
     expect(guidedNotice(state, replay)).toContain("replay");
     const deepgram = recordingRoom({ mic: { mode: "deepgram", active: true, bytesReceived: 100 } });
     expect(guidedNotice(state, deepgram)).toBeNull();
+  });
+});
+
+describe("guided demo — race minimum dwell (steps must not fly by)", () => {
+  const atIdeaNow = (nowMs: number) => {
+    const start = makeSnapshot({ processes: [] });
+    let state = startGuided(start);
+    for (let i = 0; i < PRACTICE_ORB_COUNT; i += 1) {
+      state = popPracticeOrb(state);
+    }
+    return advanceOnSnapshot(state, recordingRoom({ processes: start.processes }), nowMs);
+  };
+
+  test("an instantly-ready mock HOLDS the race for RACE_MIN_DWELL_MS, then advances", () => {
+    const t0 = 1_000_000;
+    const state = atIdeaNow(t0);
+    const readySnap = recordingRoom({
+      processes: [makeProcess("upid_fast", { builds: [build("native", "ready")] })],
+    });
+
+    // The visitor hits Done: the race opens but must NOT cascade to decide.
+    const entered = skipStep(state, readySnap, t0)!;
+    expect(entered.step).toBe("race");
+    expect(entered.focusUpid).toBe("upid_fast");
+
+    // Mid-dwell ticks keep holding.
+    const held = advanceOnSnapshot(entered, readySnap, t0 + RACE_MIN_DWELL_MS - 1);
+    expect(held.step).toBe("race");
+
+    // Dwell elapsed: the race releases to decide with the winning backend.
+    const decided = advanceOnSnapshot(held, readySnap, t0 + RACE_MIN_DWELL_MS);
+    expect(decided.step).toBe("decide");
+    expect(decided.readyBackend).toBe("native");
+  });
+
+  test("skipping FROM the race is explicit and bypasses the dwell", () => {
+    const t0 = 2_000_000;
+    const readySnap = recordingRoom({
+      processes: [makeProcess("upid_fast", { builds: [build("native", "ready")] })],
+    });
+    const entered = skipStep(atIdeaNow(t0), readySnap, t0)!;
+    expect(entered.step).toBe("race");
+    const skipped = skipStep(entered, readySnap, t0 + 1);
+    expect(skipped?.step).toBe("decide");
+    expect(skipped?.readyBackend).toBe("native");
+  });
+
+  test("legacy no-clock callers keep the immediate cascade (no dwell enforced)", () => {
+    const state = atIdeaNow(3_000_000);
+    const readySnap = recordingRoom({
+      processes: [makeProcess("upid_fast", { builds: [build("native", "ready")] })],
+    });
+    // no nowMs anywhere in the chain — dwell must not apply
+    const advanced = skipStep(state, readySnap);
+    expect(advanced?.step).toBe("decide");
   });
 });

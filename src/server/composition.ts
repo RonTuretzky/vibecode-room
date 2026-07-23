@@ -424,6 +424,9 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   readonly #autoBuildSettleMs: number;
   #autoBuildTimer: ReturnType<typeof setTimeout> | null = null;
   #autoBuildArmedId: string | null = null;
+  // While armed, republish once per second so every wall's settle countdown
+  // (snapshot.ideaSettle.firesInMs) ticks live. Cleared on disarm/fire.
+  #settleTickTimer: ReturnType<typeof setInterval> | null = null;
   // IDEA CAPTURE mode: an explicit alternative to passive auto-detect. When on,
   // detection runs EAGERLY on every final (a rate-limited force-detect, no
   // word/turn schedule) so deliberately-described ideas surface fast. Capture is
@@ -1018,6 +1021,29 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     return this.#snapshot;
   }
 
+  // DONE pressed with NOTHING surfaced: build a suggestion from what the room
+  // actually said — the last few spoken (kind "room") transcript lines become
+  // the pitch. Null when the visitor has not spoken yet, which is the only
+  // case where an explicit Done has nothing to act on.
+  private forcedSuggestionFromTranscript(correlationId: string): PendingSuggestion | null {
+    const spoken = this.#snapshot.transcript
+      .filter((line) => line.kind === "room")
+      .slice(-6)
+      .map((line) => line.text.trim())
+      .filter((text) => text.length > 0);
+    if (spoken.length === 0) {
+      return null;
+    }
+    return {
+      suggestionId: `sug-forced-${crypto.randomUUID()}`,
+      pitch: spoken.join(". "),
+      mcqs: ["Proceed?"],
+      answers: ["Yes, build it"],
+      correlationId,
+      expiresAt: this.#clock() + DETECTION_BUBBLE_TTL_MS,
+    };
+  }
+
   // CLICK THE IDEA BUBBLE -> BUILD. Accept the CURRENT pending suggestion directly,
   // bypassing the spoken AcceptanceClassifier/semantic gate, by spawning through
   // the same accept path the spoken "yes" takes (the ProcessRegistry seam's
@@ -1039,9 +1065,20 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       suggestion = pendingSuggestionFromCandidate(primary, correlationId, this.#clock() + DETECTION_BUBBLE_TTL_MS);
     }
     if (suggestion === null) {
-      // Nothing on screen to accept — the click is a no-op; return the live snapshot.
+      // Nothing surfaced at all — but Done must still honor whatever the room
+      // actually SAID. The detector missing an utterance must never leave the
+      // Done button a no-op, so synthesize a suggestion from the recent spoken
+      // transcript and build from that.
+      suggestion = this.forcedSuggestionFromTranscript(correlationId);
+    }
+    if (suggestion === null) {
+      // Nothing on screen AND nothing spoken — the click is a true no-op.
       return this.#snapshot;
     }
+    // An explicit accept (Done button, bubble click, voice) supersedes the
+    // armed settle timer — without this the timer could fire later and
+    // double-build the same idea.
+    this.disarmAutoBuild();
     this.recordExternalTrace({
       event: "suggestion.accept.click",
       level: "info",
@@ -2144,6 +2181,11 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       return;
     }
     this.scheduleAutoBuildCheck();
+    if (this.#settleTickTimer === null) {
+      const tick = setInterval(() => this.publish(), 1_000);
+      (tick as { unref?: () => void }).unref?.();
+      this.#settleTickTimer = tick;
+    }
   }
 
   private scheduleAutoBuildCheck(): void {
@@ -2172,6 +2214,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   private fireArmedAutoBuild(): void {
     const candidateId = this.#autoBuildArmedId;
     this.#autoBuildArmedId = null;
+    this.clearSettleTick();
     if (candidateId === null || !this.#autoAccept || this.#emergencyTriggered) {
       return;
     }
@@ -2192,6 +2235,30 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       clearTimeout(this.#autoBuildTimer);
       this.#autoBuildTimer = null;
     }
+    this.clearSettleTick();
+  }
+
+  private clearSettleTick(): void {
+    if (this.#settleTickTimer !== null) {
+      clearInterval(this.#settleTickTimer);
+      this.#settleTickTimer = null;
+    }
+  }
+
+  // Settle-gate surface for the walls: while a candidate is armed the UI shows
+  // "heard <pitch>, building in Ns" plus a Done button; firesInMs is computed
+  // server-side (the client must not guess from its own clock).
+  private ideaSettleSnapshot(): { armed: boolean; title: string | null; firesInMs: number | null } {
+    if (this.#autoBuildArmedId === null) {
+      return { armed: false, title: null, firesInMs: null };
+    }
+    const primary = this.detection.primary();
+    const title = primary !== null && primary.id === this.#autoBuildArmedId ? primary.pitch : null;
+    const nowMs = this.#clock();
+    const firesInMs = this.#autoBuildSettleMs > 0
+      ? Math.max(0, (this.#lastFinalAtMs ?? nowMs) + this.#autoBuildSettleMs - nowMs)
+      : 0;
+    return { armed: true, title, firesInMs };
   }
 
   // Wall-clock watchdog: a delivered suggestion that is never voice-accepted must
@@ -2315,6 +2382,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       steeringUpid: this.#steeringUpid,
       autoAccept: this.#autoAccept,
       captureMode: this.#captureMode,
+      ideaSettle: this.ideaSettleSnapshot(),
       // Multi-backend build loop: the registered backend roster with enabled +
       // last-probed availability — the wall's toggle chips (POST /api/backends).
       backends: this.buildSelector.snapshot(),
