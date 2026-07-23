@@ -387,6 +387,46 @@ describe("commission stage — two-stage pivot", () => {
     expect(runtime.registry.execution(upid)).toMatchObject({ status: "executing" });
     expect(runtime.snapshot().voice?.lastCommand).toBe("execute");
   });
+
+  test("a terminal frame the stream misses cannot wedge the lane: the status watchdog completes it", async () => {
+    // Gateway-mode transport whose event stream NEVER yields (the live-repro
+    // failure: a reconnect resumed past the compacted replay so run.completed
+    // was never delivered). Only the getRun status poll can observe the finish.
+    let runStatus = "running";
+    const transport = {
+      async request(method: string): Promise<unknown> {
+        if (method === "getRun") {
+          return { status: runStatus };
+        }
+        return {};
+      },
+    };
+    const backend = new FakeBackend();
+    const { runtime } = await makeRuntime({
+      buildBackends: [backend],
+      smithersTransport: transport,
+      env: { VIBERSYN_RUN_POLL_MS: "25" },
+    });
+    await drive(runtime, [final(BUILDABLE, "utt-build")]);
+    await runtime.acceptPendingSuggestion("corr-watchdog-accept");
+    const upid = runtime.snapshot().processes[0]?.upid;
+    expect(upid).toBeDefined();
+    if (upid === undefined) return;
+    await waitFor(() => runtime.registry.builds(upid).some((build) => build.status === "ready"));
+
+    const executed = await runtime.executeProcess(upid, "corr-watchdog-commission");
+    expect(executed.ok).toBe(true);
+    expect(runtime.registry.execution(upid)).toMatchObject({ status: "executing" });
+
+    // The durable run lands artifacts and finishes — but no stream frame says so.
+    await Bun.write(join(runtime.executionRegistry.artifactsDir(upid), "index.html"), "<html>the full app</html>");
+    runStatus = "finished";
+
+    // The watchdog poll folds the synthetic completion and the lane flips.
+    await waitFor(() => runtime.registry.execution(upid)?.status === "built");
+    expect(runtime.registry.execution(upid)).toMatchObject({ status: "built", percent: 100 });
+    expect(runtime.trace.events().some((event) => event.event === "process.execute.terminal.poll")).toBe(true);
+  });
 });
 
 // --- harness -----------------------------------------------------------------
