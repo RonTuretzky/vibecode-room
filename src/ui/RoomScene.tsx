@@ -2530,15 +2530,19 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       },
     });
 
-    // Pure gesture mode: pointing must not fight drag-orbit, so the pointer
-    // never binds at all (see Help overlay). Desk/mouse-dwell modes keep the
-    // full drag-orbit / pan / zoom / click surface.
+    // Pure gesture mode: pointing must not fight drag-orbit, so the DRAG
+    // surface (pointerdown/wheel) never binds — but hover picking and plain
+    // clicks still work: with no pointerdown, `dragging` stays false, so
+    // pointermove is pure hover highlight and pointerup is pure activation.
+    // A laptop trackpad at the gesture wall can therefore click nodes and
+    // crystals directly, while orbit stays exclusive to the fusion/pinch rigs.
+    // Desk/mouse-dwell modes keep the full drag-orbit / pan / zoom surface.
+    renderer.domElement.addEventListener("pointermove", onPointerMove);
+    renderer.domElement.addEventListener("pointerup", onPointerUp);
+    renderer.domElement.addEventListener("pointerleave", onPointerLeave);
     if (pointerNavRef.current) {
       renderer.domElement.style.cursor = "grab";
       renderer.domElement.addEventListener("pointerdown", onPointerDown);
-      renderer.domElement.addEventListener("pointermove", onPointerMove);
-      renderer.domElement.addEventListener("pointerup", onPointerUp);
-      renderer.domElement.addEventListener("pointerleave", onPointerLeave);
       renderer.domElement.addEventListener("wheel", onWheel, { passive: false });
     }
 
@@ -2812,11 +2816,11 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       unregisterCameraControl();
       document.removeEventListener("visibilitychange", onSceneVisibility);
       observer.disconnect();
+      renderer.domElement.removeEventListener("pointermove", onPointerMove);
+      renderer.domElement.removeEventListener("pointerup", onPointerUp);
+      renderer.domElement.removeEventListener("pointerleave", onPointerLeave);
       if (pointerNavRef.current) {
         renderer.domElement.removeEventListener("pointerdown", onPointerDown);
-        renderer.domElement.removeEventListener("pointermove", onPointerMove);
-        renderer.domElement.removeEventListener("pointerup", onPointerUp);
-        renderer.domElement.removeEventListener("pointerleave", onPointerLeave);
         renderer.domElement.removeEventListener("wheel", onWheel);
       }
       for (const entry of ideaEntries.values()) {
