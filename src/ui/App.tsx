@@ -4,6 +4,7 @@ import { demoProjectorSnapshot, busyRoomSnapshot, emptyProjectorSnapshot, withUn
 import type { ProjectorProcess, ProjectorSnapshot, TranscriptLine } from "./types";
 import { GestureLayer } from "./gesture/GestureLayer";
 import { PinchCameraLayer } from "./gesture/PinchCameraLayer";
+import { HandSkeletonHud } from "./gesture/HandSkeletonHud";
 import type { HandsStatus } from "./gesture/hands-client";
 import { RoomScene, type IdeaOrbSpec, type SceneLayout, type SceneMode, type TreeSpec } from "./RoomScene";
 import { Slideshow } from "./Slideshow";
@@ -1265,6 +1266,9 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
       {handsOn ? (
         <PinchCameraLayer url={handsUrl} wall={urlConfig.wall} onStatus={setHandsStatus} />
       ) : null}
+      {/* In-room hand-tracking HUD (top-left): live skeleton + id + pinch text,
+          no camera image. Same 9980 stream; shows whenever the hand camera is on. */}
+      {handsOn ? <HandSkeletonHud url={handsUrl} wall={urlConfig.wall} /> : null}
       {urlConfig.badge ? (
         <div className="wall-badge" data-testid="wall-badge">
           {urlConfig.badge}

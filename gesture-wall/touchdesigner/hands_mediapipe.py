@@ -245,6 +245,15 @@ def encode_hand(landmarks: Sequence, hand_id: int, handedness: Optional[str],
         cx = 1.0 - cx
     ratio = pinch_ratio(landmarks, aspect)
     hand = handedness if handedness in ("Left", "Right") else None
+    # Compact 21-point skeleton for the in-room debug HUD: [[x,y],...] in the
+    # SAME mirrored, normalized [0,1] space as the cursor. Backward-compatible
+    # extra field — cursor/pinch consumers ignore it.
+    lm = []
+    for i in range(21):
+        lx, ly = _xy(landmarks, i)
+        if mirror:
+            lx = 1.0 - lx
+        lm.append([round(_clamp01(lx), 3), round(_clamp01(ly), 3)])
     return {
         "id": int(hand_id),
         "hand": hand,
@@ -253,6 +262,7 @@ def encode_hand(landmarks: Sequence, hand_id: int, handedness: Optional[str],
         "pinch": round(min(max(ratio, 0.0), PINCH_CAP), 4),
         "pinching": bool(pinching),
         "conf": round(_clamp01(float(score)), 4),
+        "lm": lm,
     }
 
 
