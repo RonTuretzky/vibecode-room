@@ -171,6 +171,13 @@ export class ResearchLoop {
     this.#wordsSinceRound = 0;
     this.#round += 1;
     const correlationId = `corr-research-round-${this.#round}`;
+    // Round visibility: the start + result (even an EMPTY one) are traced and
+    // the ledger republishes so the wall can show "scanning…" — an inference
+    // round that finds nothing must read as a shrug, never as a dead feature.
+    this.#trace("research.suggest.round", "info", correlationId, {
+      round: this.#round,
+      turns: this.#turns.length,
+    });
     const run = this.#suggester
       .suggest({
         sessionId: this.#sessionId,
@@ -181,6 +188,9 @@ export class ResearchLoop {
           .map((quest) => ({ id: quest.id, kind: quest.kind, topic: quest.topic, claim: quest.claim })),
       })
       .then((suggestions) => {
+        if (suggestions.length === 0) {
+          this.#trace("research.suggest.empty", "info", correlationId, { round: this.#round });
+        }
         this.#reconcile(suggestions, this.#clock(), correlationId);
       })
       .catch((error) => {
@@ -190,9 +200,22 @@ export class ResearchLoop {
       })
       .finally(() => {
         this.#inFlight = null;
+        this.#emit();
+        // Words that arrived DURING the round were never evaluated — re-arm so
+        // the tail of an utterance can't silently miss its round forever.
+        if (this.#active && this.#wordsSinceRound >= this.#newWordsThreshold) {
+          void this.maybeSuggest();
+        }
       });
     this.#inFlight = run;
+    this.#emit();
     return run;
+  }
+
+  // True while a suggestion round's inference is in flight (the wall's
+  // "scanning the conversation" indicator).
+  thinking(): boolean {
+    return this.#inFlight !== null;
   }
 
   async flush(): Promise<void> {

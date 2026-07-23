@@ -2325,6 +2325,31 @@ main.gesture-mode[data-view="builds"] .transcript-card {
   color: var(--ink-faint);
 }
 
+/* "A crystal might be forming": pulsing scan line while a suggestion round's
+   inference is in flight — the round must be VISIBLE even when it ends empty. */
+.research-scanning {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 13px;
+  color: #9ad7f0;
+}
+
+.research-scan-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #38bdf8;
+  box-shadow: 0 0 10px rgba(56, 189, 248, 0.8);
+  animation: research-scan-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes research-scan-pulse {
+  0%, 100% { transform: scale(0.8); opacity: 0.5; }
+  50% { transform: scale(1.25); opacity: 1; }
+}
+
 .research-tray-items {
   display: flex;
   gap: 12px;

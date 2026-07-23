@@ -12,6 +12,8 @@ import type { ResearchTrayItem } from "./types";
 
 export interface ResearchTrayProps {
   quests: ResearchTrayItem[];
+  // A suggestion round's inference is in flight — a crystal might be forming.
+  thinking?: boolean;
   onAccept: (id: string) => void;
   onDismiss: (id: string) => void;
   onOpenDeck: (id: string) => void;
@@ -23,7 +25,7 @@ const KIND_GLYPH: Record<ResearchTrayItem["kind"], string> = {
   "bias-scan": "⚖",
 };
 
-export function ResearchTray({ quests, onAccept, onDismiss, onOpenDeck }: ResearchTrayProps) {
+export function ResearchTray({ quests, thinking = false, onAccept, onDismiss, onOpenDeck }: ResearchTrayProps) {
   return (
     <section className="research-tray" data-testid="research-tray" aria-label="Research tray">
       <div className="rail-title-row">
@@ -32,10 +34,20 @@ export function ResearchTray({ quests, onAccept, onDismiss, onOpenDeck }: Resear
           {quests.length} {quests.length === 1 ? "quest" : "quests"}
         </span>
       </div>
-      {quests.length === 0 ? (
-        <p className="research-tray-empty" data-testid="research-tray-empty">
-          Listening for claims worth checking — keep talking, or say “Vibersyn, research it”.
+      {/* Live inference feedback: without it, a round that finds nothing is
+          indistinguishable from a dead feature. */}
+      {thinking ? (
+        <p className="research-scanning" data-testid="research-scanning" role="status">
+          <span className="research-scan-dot" aria-hidden="true" />
+          scanning the conversation for researchables…
         </p>
+      ) : null}
+      {quests.length === 0 ? (
+        thinking ? null : (
+          <p className="research-tray-empty" data-testid="research-tray-empty">
+            Listening for claims worth checking — click any turn on the vine, keep talking, or say “Vibersyn, research it”.
+          </p>
+        )
       ) : (
         <div className="research-tray-items">
           {quests.map((quest) => (

@@ -2771,6 +2771,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       autoAccept: this.#autoAccept,
       captureMode: this.#captureMode,
       researchMode: this.research.active(),
+      researchThinking: this.research.thinking(),
       research: this.researchSnapshot(),
       dialogue: this.dialogueSnapshot(),
       ideaSettle: this.ideaSettleSnapshot(),

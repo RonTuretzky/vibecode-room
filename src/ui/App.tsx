@@ -1680,6 +1680,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
           {researchActive && showIdeaSurfaces && !mockMode ? (
             <ResearchTray
               quests={researchQuests}
+              thinking={snapshot.researchThinking === true}
               onAccept={(id) => void actOnResearch(id, "accept")}
               onDismiss={(id) => void actOnResearch(id, "dismiss")}
               onOpenDeck={(id) => setResearchDeckId(id)}

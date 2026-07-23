@@ -46,7 +46,14 @@ export class HostClaudeResearchSuggester implements ResearchSuggester {
       model: this.#model,
       timeoutMs: this.#timeoutMs,
     });
-    return parseSuggestions(reply);
+    const parsed = parseSuggestions(reply);
+    if (parsed.length > 0) {
+      return parsed;
+    }
+    // HEURISTIC FLOOR: a shrugging (or unparseable) model must not leave a
+    // question-shaped conversation crystal-less — the deterministic classifier
+    // guarantees the obvious catches; the model adds judgement on top.
+    return new HeuristicResearchSuggester().suggest(input);
   }
 }
 
@@ -61,16 +68,16 @@ export function buildSuggestPrompt(input: ResearchSuggestInput): string {
     "You watch a live room conversation and suggest what is worth RESEARCHING right now.",
     "Look for three things:",
     '- "fact-check": a specific factual claim someone stated (numbers, dates, events, "studies show…") that could be true or false;',
-    '- "deep-dive": a substantive topic the room is circling that deserves sourced background;',
+    '- "deep-dive": a substantive topic the room is circling, or an OPEN QUESTION it is wondering about — "what would happen if…", "how much would…", "i wonder…" speculations are PRIME deep-dives (the room wants sourced answers, not silence);',
     '- "bias-scan": a one-sided framing or a claim whose usual sources are known to lean one way.',
     "Rules:",
-    "- Suggest at most 3, only genuinely researchable material — never small talk, logistics, or opinions of taste.",
+    "- Suggest at most 3, only genuinely researchable material — never small talk, logistics, or opinions of taste. A question about how the world works is almost always researchable.",
     "- If a suggestion refines something in knownQuests, set matchId to that quest's id; otherwise matchId is null.",
     "- Ground every suggestion: startTurnId/endTurnId are the inclusive turn-id range it came from, quote is a short verbatim quote from those turns.",
     "- confidence is YOUR judgement (0..1) that researching this would serve the room.",
     "Respond with ONLY a JSON array (no markdown fences, no prose), each element exactly:",
     '{"matchId": string|null, "kind": "fact-check"|"deep-dive"|"bias-scan", "topic": string (<=8 words), "claim": string (the precise claim/question to research), "rationale": string, "confidence": number, "contextSpan": {"startTurnId": string, "endTurnId": string, "quote": string}}',
-    "An empty array [] is a valid (and common) answer.",
+    "An empty array [] is valid when the turns are pure small talk.",
     "",
     `conversationTurns: ${JSON.stringify(turns)}`,
     `knownQuests: ${JSON.stringify(known)}`,

@@ -210,6 +210,9 @@ export interface ProjectorSnapshot {
   // and proposes quests (fact-checks, deep-dives, bias scans) alongside idea
   // detection. Toggled via POST /api/research-mode or voice "research on".
   researchMode?: boolean;
+  // True while a suggestion round's model inference is in flight — the wall's
+  // "scanning the conversation" indicator (a crystal might be forming).
+  researchThinking?: boolean;
   // Every live research quest, tray-ordered (researching → proposed by
   // confidence → complete → failed). Absent in legacy/static fixtures.
   research?: ResearchTrayItem[];
