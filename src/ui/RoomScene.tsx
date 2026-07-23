@@ -8,7 +8,7 @@ import { cornerEye, cornerVerticalFovDeg, cornerYaw } from "./corner-lock";
 // The full-viewport 3D stage (after conductor-github-visualizer): the scene IS
 // the app background and every panel floats over it. Two render modes share
 // the same data:
-//   garden — processes are trees, ideas are flowers on a night meadow
+//   garden — processes are trees, ideas are flowers on a sunlit pasture
 //   orbit  — processes and ideas are glowing orbs adrift in a nebula
 // Navigation matches the visualizer: drag = orbit, shift+drag = pan,
 // wheel = zoom, fit-to-content on demand. Clicks still build/steer (a drag
@@ -272,9 +272,11 @@ function makeGlowTexture(): THREE.CanvasTexture {
 }
 
 // Gradient sky dome (visualizer technique) with a 3-stop ramp for extra depth.
+// NOTE: BackSide alone makes the sphere visible from inside — flipping the
+// geometry with scale(-1,1,1) on top of it double-inverts the winding and the
+// dome vanishes (the sky rendered as the black clear color for months).
 function makeSkyDome(bottom: number, mid: number, top: number): THREE.Mesh {
   const geom = new THREE.SphereGeometry(160, 32, 32);
-  geom.scale(-1, 1, 1);
   const mat = new THREE.ShaderMaterial({
     uniforms: {
       bottomColor: { value: new THREE.Color(bottom) },
@@ -399,13 +401,9 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     container.appendChild(renderer.domElement);
 
-    scene.add(new THREE.AmbientLight(0x9fb8cc, 0.55));
-    const key = new THREE.DirectionalLight(0xdfeaff, 0.9);
-    key.position.set(8, 14, 6);
-    scene.add(key);
-    const fill = new THREE.DirectionalLight(0x3377ff, 0.3);
-    fill.position.set(-8, 4, -6);
-    scene.add(fill);
+    // Lighting is per-environment (added to each env's group): the garden is a
+    // sunny pastoral day, orbit keeps the cool night rig — one global rig can't
+    // serve both.
 
     const glowTexture = makeGlowTexture();
 
@@ -484,69 +482,182 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
     }
 
     // ── environments ────────────────────────────────────────────────────────
+    // Pastoral daylight garden: blue sky, drifting cumulus, a warm sun,
+    // rolling haze-tinted hills, and a fresh green meadow with natural
+    // wildflowers, butterflies and drifting seed motes. Node/label data colors
+    // are unchanged — the dark glass label cards pop against the bright sky.
     const buildGardenEnv = (): SceneEnv => {
       const rng = mulberry32(0x47415244);
       const group = new THREE.Group();
       scene.add(group);
-      scene.fog = new THREE.Fog(0x0a2028, 30, 130);
+      // Aerial perspective: haze tinted to the sky horizon so meadow and hills
+      // melt into the sky instead of ending at a hard disc edge.
+      scene.fog = new THREE.Fog(0xdcedf8, 80, 210);
 
-      const sky = makeSkyDome(0x1b4a52, 0x0d2436, 0x030a12);
+      // Daylight rig (env-local): warm sun key, blue-sky/grass hemisphere
+      // bounce, and a soft cool fill so shaded sides stay readable.
+      group.add(new THREE.HemisphereLight(0xbdd9f2, 0x7fae62, 0.7));
+      const sunLight = new THREE.DirectionalLight(0xfff2d9, 0.95);
+      sunLight.position.set(-24, 42, -30);
+      group.add(sunLight);
+      const fillLight = new THREE.DirectionalLight(0xcfe4ff, 0.25);
+      fillLight.position.set(18, 12, 16);
+      group.add(fillLight);
+
+      const sky = makeSkyDome(0xeaf6fc, 0x9fd0f0, 0x3e8ed8);
       group.add(sky);
 
-      const stars = makeStars(rng, 300, 0.5, 0.7, false);
-      const brightStars = makeStars(rng, 55, 1.05, 0.9, false);
-      group.add(stars);
-      group.add(brightStars);
-
-      // Moon + halo
-      const moon = new THREE.Mesh(
-        new THREE.SphereGeometry(3.4, 24, 24),
-        new THREE.MeshBasicMaterial({ color: 0xe8f2ff, fog: false }),
+      // Sun + bloom, upper-left of the default framing (clear of the HUD).
+      const sun = new THREE.Mesh(
+        new THREE.SphereGeometry(2.8, 24, 24),
+        new THREE.MeshBasicMaterial({ color: 0xfff8e6, fog: false }),
       );
-      moon.position.set(34, 30, -52);
-      group.add(moon);
-      const moonHalo = new THREE.Sprite(
-        new THREE.SpriteMaterial({ map: glowTexture, color: 0xbcd8ff, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }),
+      // Low morning sun: the default rig only frames ~12° above the horizon,
+      // so the sun (and the clouds below) must hug the horizon band to be
+      // seen without panning up.
+      sun.position.set(-34, 17, -70);
+      group.add(sun);
+      const sunHalo = new THREE.Sprite(
+        new THREE.SpriteMaterial({ map: glowTexture, color: 0xfff2c8, transparent: true, opacity: 0.75, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }),
       );
-      moonHalo.position.copy(moon.position);
-      moonHalo.scale.setScalar(22);
-      group.add(moonHalo);
+      sunHalo.position.copy(sun.position);
+      sunHalo.scale.setScalar(26);
+      group.add(sunHalo);
+      const sunBloom = new THREE.Sprite(
+        new THREE.SpriteMaterial({ map: glowTexture, color: 0xfff6da, transparent: true, opacity: 0.3, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }),
+      );
+      sunBloom.position.copy(sun.position);
+      sunBloom.scale.setScalar(46);
+      group.add(sunBloom);
 
-      // Ground: radial-gradient meadow disc.
+      // Cumulus: soft canvas-blob sprites drifting slowly around the dome.
+      const makeCloudTexture = (seed: number): THREE.CanvasTexture => {
+        const cloudRng = mulberry32(seed);
+        const canvas = document.createElement("canvas");
+        canvas.width = 256;
+        canvas.height = 128;
+        const ctx = canvas.getContext("2d")!;
+        // Clustered blobs with bright cores so the sprite reads as one
+        // defined cumulus, not a smear of haze.
+        for (let i = 0; i < 16; i++) {
+          const cx = 128 + (cloudRng() - 0.5) * 150;
+          const cy = 68 + (cloudRng() - 0.5) * 44;
+          const cr = 20 + cloudRng() * 30;
+          const blob = ctx.createRadialGradient(cx, cy, 0, cx, cy, cr);
+          blob.addColorStop(0, "rgba(255,255,255,0.9)");
+          blob.addColorStop(0.55, "rgba(255,255,255,0.45)");
+          blob.addColorStop(1, "rgba(255,255,255,0)");
+          ctx.fillStyle = blob;
+          ctx.fillRect(cx - cr, cy - cr, cr * 2, cr * 2);
+        }
+        return new THREE.CanvasTexture(canvas);
+      };
+      const cloudTextures = [makeCloudTexture(0x434c31), makeCloudTexture(0x434c32)];
+      const clouds: { sprite: THREE.Sprite; angle: number; dist: number; height: number; speed: number; phase: number }[] = [];
+      for (let i = 0; i < 9; i++) {
+        const sprite = new THREE.Sprite(
+          new THREE.SpriteMaterial({ map: cloudTextures[i % cloudTextures.length], transparent: true, opacity: 0.75 + rng() * 0.2, depthWrite: false, fog: false }),
+        );
+        const width = 30 + rng() * 25;
+        sprite.scale.set(width, width * (0.34 + rng() * 0.1), 1);
+        const cloud = {
+          sprite,
+          angle: (i / 9) * Math.PI * 2 + rng(),
+          dist: 85 + rng() * 40,
+          height: 8 + rng() * 14,
+          speed: 0.004 + rng() * 0.006,
+          phase: rng() * Math.PI * 2,
+        };
+        sprite.position.set(Math.cos(cloud.angle) * cloud.dist, cloud.height, Math.sin(cloud.angle) * cloud.dist);
+        group.add(sprite);
+        clouds.push(cloud);
+      }
+
+      // Ground: mottled pasture disc — a fresh-to-deep green radial gradient
+      // with soft patch blobs so the meadow reads grown, not painted.
       const gCanvas = document.createElement("canvas");
-      gCanvas.width = 256;
-      gCanvas.height = 256;
+      gCanvas.width = 512;
+      gCanvas.height = 512;
       const gCtx = gCanvas.getContext("2d")!;
-      const gGrad = gCtx.createRadialGradient(128, 128, 10, 128, 128, 128);
-      gGrad.addColorStop(0, "#12483a");
-      gGrad.addColorStop(0.5, "#0a2f26");
-      gGrad.addColorStop(1, "#04140f");
+      const gGrad = gCtx.createRadialGradient(256, 256, 20, 256, 256, 256);
+      gGrad.addColorStop(0, "#7fbf62");
+      gGrad.addColorStop(0.55, "#5da84b");
+      gGrad.addColorStop(1, "#4f9a52");
       gCtx.fillStyle = gGrad;
-      gCtx.fillRect(0, 0, 256, 256);
+      gCtx.fillRect(0, 0, 512, 512);
+      for (let i = 0; i < 70; i++) {
+        const px = rng() * 512;
+        const py = rng() * 512;
+        const pr = 12 + rng() * 40;
+        const patch = gCtx.createRadialGradient(px, py, 0, px, py, pr);
+        const tone = rng() < 0.5 ? "58, 132, 64" : "152, 208, 116";
+        patch.addColorStop(0, `rgba(${tone}, 0.22)`);
+        patch.addColorStop(1, `rgba(${tone}, 0)`);
+        gCtx.fillStyle = patch;
+        gCtx.fillRect(px - pr, py - pr, pr * 2, pr * 2);
+      }
       const groundTexture = new THREE.CanvasTexture(gCanvas);
       const ground = new THREE.Mesh(
-        new THREE.CircleGeometry(95, 64),
-        new THREE.MeshPhongMaterial({ map: groundTexture, side: THREE.DoubleSide }),
+        new THREE.CircleGeometry(110, 64),
+        new THREE.MeshPhongMaterial({ map: groundTexture, shininess: 6, side: THREE.DoubleSide }),
       );
       ground.rotation.x = -Math.PI / 2;
       group.add(ground);
 
-      // Decorations: grass tufts, dim wildflowers, bushes.
-      const grassMat = new THREE.MeshPhongMaterial({ color: 0x14513c, side: THREE.DoubleSide });
-      const bushMat = new THREE.MeshPhongMaterial({ color: 0x0f3d2f, emissive: 0x0f3d2f, emissiveIntensity: 0.06 });
-      const wildColors = [0x38bdf8, 0x00bcd4, 0x9affc9, 0xf5a0c1, 0xf0e68c];
+      // Rolling hills ring the horizon (haze-tinted by the fog) so the meadow
+      // ends in pasture, not at a disc edge; some carry distant tree clumps.
+      // Haze-baked tones: the fog only part-covers the hills, so their base
+      // color already leans toward the horizon pale for aerial perspective.
+      const hillTones = [0x93bb8a, 0x9fc497, 0x8ab188];
+      const clumpMat = new THREE.MeshPhongMaterial({ color: 0x6f9d6a });
+      for (let i = 0; i < 7; i++) {
+        const angle = (i / 7) * Math.PI * 2 + rng() * 0.5;
+        const dist = 96 + rng() * 14;
+        const rx = 26 + rng() * 20;
+        const ry = 3 + rng() * 3;
+        const hill = new THREE.Mesh(
+          new THREE.SphereGeometry(1, 24, 16),
+          new THREE.MeshPhongMaterial({ color: hillTones[i % hillTones.length] }),
+        );
+        hill.scale.set(rx, ry, 14 + rng() * 8);
+        hill.position.set(Math.cos(angle) * dist, -ry * 0.35, Math.sin(angle) * dist);
+        group.add(hill);
+        if (rng() < 0.6) {
+          const clumps = 2 + Math.floor(rng() * 3);
+          for (let c = 0; c < clumps; c++) {
+            const clump = new THREE.Mesh(new THREE.IcosahedronGeometry(0.9 + rng() * 1.1, 1), clumpMat);
+            clump.position.set(
+              hill.position.x + (rng() - 0.5) * rx * 0.7,
+              ry * 0.4,
+              hill.position.z + (rng() - 0.5) * 10,
+            );
+            group.add(clump);
+          }
+        }
+      }
+
+      // Decorations: grass tufts, natural wildflowers (daisy / buttercup /
+      // poppy / cornflower / lavender), leafy bushes.
+      const grassMats = [0x6db457, 0x7cc266, 0x61aa4d].map(
+        (color) => new THREE.MeshPhongMaterial({ color, side: THREE.DoubleSide }),
+      );
+      const bushMat = new THREE.MeshPhongMaterial({ color: 0x58a046 });
+      const daisyEyeMat = new THREE.MeshPhongMaterial({ color: 0xf7c948, emissive: 0xf7c948, emissiveIntensity: 0.1 });
+      const DAISY_WHITE = 0xfdf6e3;
+      const wildColors = [DAISY_WHITE, 0xffd75e, 0xe8654f, 0x7fa8e0, 0xb590dd];
       for (let i = 0; i < 240; i++) {
         const angle = rng() * Math.PI * 2;
-        const radius = 5 + rng() * 55;
+        const radius = 5 + rng() * 62;
         const x = Math.cos(angle) * radius;
         const z = Math.sin(angle) * radius;
         const kind = rng();
         if (kind < 0.45) {
           const tuft = new THREE.Group();
+          const mat = grassMats[Math.floor(rng() * grassMats.length)];
           const blades = 3 + Math.floor(rng() * 3);
           for (let b = 0; b < blades; b++) {
-            const blade = new THREE.Mesh(new THREE.PlaneGeometry(0.08, 0.35 + rng() * 0.3), grassMat);
-            blade.position.set((rng() - 0.5) * 0.2, 0.2 + rng() * 0.12, (rng() - 0.5) * 0.2);
+            const blade = new THREE.Mesh(new THREE.PlaneGeometry(0.08, 0.4 + rng() * 0.35), mat);
+            blade.position.set((rng() - 0.5) * 0.2, 0.22 + rng() * 0.14, (rng() - 0.5) * 0.2);
             blade.rotation.y = rng() * Math.PI;
             blade.rotation.x = -0.15 + rng() * 0.3;
             tuft.add(blade);
@@ -555,21 +666,26 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
           group.add(tuft);
         } else if (kind < 0.75) {
           const color = wildColors[Math.floor(rng() * wildColors.length)];
-          const mat = new THREE.MeshPhongMaterial({ color, emissive: color, emissiveIntensity: 0.12 });
+          const mat = new THREE.MeshPhongMaterial({ color, emissive: color, emissiveIntensity: 0.05 });
           const flower = new THREE.Group();
-          const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.04, 0.4, 4), grassMat);
-          stem.position.y = 0.2;
+          const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.04, 0.42, 4), grassMats[0]);
+          stem.position.y = 0.21;
           flower.add(stem);
-          const head = new THREE.Mesh(new THREE.SphereGeometry(0.09, 8, 8), mat);
-          head.position.y = 0.44;
+          const head = new THREE.Mesh(new THREE.SphereGeometry(0.1, 8, 8), mat);
+          head.position.y = 0.46;
           flower.add(head);
+          if (color === DAISY_WHITE) {
+            const eye = new THREE.Mesh(new THREE.SphereGeometry(0.045, 6, 6), daisyEyeMat);
+            eye.position.y = 0.55;
+            flower.add(eye);
+          }
           flower.position.set(x, 0, z);
           group.add(flower);
         } else {
           const bush = new THREE.Group();
           const puffs = 2 + Math.floor(rng() * 2);
           for (let p = 0; p < puffs; p++) {
-            const size = 0.18 + rng() * 0.2;
+            const size = 0.18 + rng() * 0.22;
             const puff = new THREE.Mesh(new THREE.IcosahedronGeometry(size, 1), bushMat);
             puff.position.set((rng() - 0.5) * 0.35, size * 0.8, (rng() - 0.5) * 0.35);
             bush.add(puff);
@@ -579,39 +695,90 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         }
       }
 
-      // Fireflies: drifting additive motes.
-      const fireflies: { sprite: THREE.Sprite; base: THREE.Vector3; phase: number }[] = [];
-      for (let i = 0; i < 26; i++) {
-        const sprite = new THREE.Sprite(
-          new THREE.SpriteMaterial({ map: glowTexture, color: 0xc8ffdc, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false }),
-        );
-        const base = new THREE.Vector3((rng() - 0.5) * 34, 0.8 + rng() * 2.4, (rng() - 0.5) * 26);
-        sprite.position.copy(base);
-        sprite.scale.setScalar(0.35 + rng() * 0.3);
-        group.add(sprite);
-        fireflies.push({ sprite, base, phase: rng() * Math.PI * 2 });
+      // Butterflies: two wings hinged on the body line, flapping while they
+      // wander a slow Lissajous over the meadow (the day shift's fireflies).
+      const wingLeftGeo = new THREE.PlaneGeometry(0.2, 0.28);
+      wingLeftGeo.translate(0.11, 0, 0);
+      wingLeftGeo.rotateX(-Math.PI / 2);
+      const wingRightGeo = new THREE.PlaneGeometry(0.2, 0.28);
+      wingRightGeo.translate(-0.11, 0, 0);
+      wingRightGeo.rotateX(-Math.PI / 2);
+      const butterflyBodyGeo = new THREE.CylinderGeometry(0.015, 0.022, 0.24, 5);
+      butterflyBodyGeo.rotateX(Math.PI / 2);
+      const butterflyBodyMat = new THREE.MeshPhongMaterial({ color: 0x4a3527 });
+      const butterflyColors = [0xfff6e8, 0xffd166, 0xf5a0c1, 0x9ad7f0, 0xffa94d];
+      const butterflies: { group: THREE.Group; left: THREE.Mesh; right: THREE.Mesh; base: THREE.Vector3; phase: number; speed: number }[] = [];
+      for (let i = 0; i < 10; i++) {
+        const color = butterflyColors[i % butterflyColors.length];
+        const mat = new THREE.MeshPhongMaterial({ color, emissive: color, emissiveIntensity: 0.18, side: THREE.DoubleSide });
+        const fly = new THREE.Group();
+        const left = new THREE.Mesh(wingLeftGeo, mat);
+        const right = new THREE.Mesh(wingRightGeo, mat);
+        fly.add(left);
+        fly.add(right);
+        fly.add(new THREE.Mesh(butterflyBodyGeo, butterflyBodyMat));
+        const base = new THREE.Vector3((rng() - 0.5) * 34, 1.8 + rng() * 2.6, (rng() - 0.5) * 26);
+        fly.position.copy(base);
+        group.add(fly);
+        butterflies.push({ group: fly, left, right, base, phase: rng() * Math.PI * 2, speed: 0.22 + rng() * 0.18 });
       }
 
-      const starsMat = stars.material as THREE.PointsMaterial;
+      // Drifting seeds/pollen: tiny bright motes low over the grass.
+      const motes: { sprite: THREE.Sprite; base: THREE.Vector3; phase: number }[] = [];
+      for (let i = 0; i < 16; i++) {
+        const sprite = new THREE.Sprite(
+          new THREE.SpriteMaterial({ map: glowTexture, color: 0xffffff, transparent: true, opacity: 0.4, depthWrite: false }),
+        );
+        const base = new THREE.Vector3((rng() - 0.5) * 30, 0.7 + rng() * 1.8, (rng() - 0.5) * 24);
+        sprite.position.copy(base);
+        sprite.scale.setScalar(0.14 + rng() * 0.1);
+        group.add(sprite);
+        motes.push({ sprite, base, phase: rng() * Math.PI * 2 });
+      }
+
       return {
         update: (t) => {
           if (reducedMotion) {
             return;
           }
-          starsMat.opacity = 0.62 + Math.sin(t * 0.6) * 0.12;
-          for (const fly of fireflies) {
-            fly.sprite.position.set(
-              fly.base.x + Math.sin(t * 0.32 + fly.phase) * 1.6,
-              fly.base.y + Math.sin(t * 0.55 + fly.phase * 2) * 0.5,
-              fly.base.z + Math.cos(t * 0.27 + fly.phase) * 1.6,
+          for (const cloud of clouds) {
+            const a = cloud.angle + t * cloud.speed;
+            cloud.sprite.position.set(
+              Math.cos(a) * cloud.dist,
+              cloud.height + Math.sin(t * 0.12 + cloud.phase) * 0.8,
+              Math.sin(a) * cloud.dist,
             );
-            fly.sprite.material.opacity = 0.28 + Math.abs(Math.sin(t * 0.9 + fly.phase)) * 0.4;
+          }
+          for (const fly of butterflies) {
+            fly.group.position.set(
+              fly.base.x + Math.sin(t * fly.speed + fly.phase) * 2.6,
+              fly.base.y + Math.sin(t * 0.9 + fly.phase * 2) * 0.5,
+              fly.base.z + Math.cos(t * fly.speed * 0.85 + fly.phase) * 2.6,
+            );
+            // Face the direction of travel (velocity of the Lissajous above).
+            const vx = Math.cos(t * fly.speed + fly.phase) * fly.speed;
+            const vz = -Math.sin(t * fly.speed * 0.85 + fly.phase) * fly.speed * 0.85;
+            fly.group.rotation.y = Math.atan2(vx, vz);
+            // Bias toward raised wings so a frozen frame never reads as a
+            // flat paper card lying on the meadow.
+            const flap = 0.3 + Math.abs(Math.sin(t * 9 + fly.phase)) * 0.9;
+            fly.left.rotation.z = flap;
+            fly.right.rotation.z = -flap;
+          }
+          for (const mote of motes) {
+            mote.sprite.position.set(
+              mote.base.x + Math.sin(t * 0.22 + mote.phase) * 1.8,
+              mote.base.y + Math.sin(t * 0.35 + mote.phase * 2) * 0.6,
+              mote.base.z + Math.cos(t * 0.18 + mote.phase) * 1.8,
+            );
+            mote.sprite.material.opacity = 0.22 + Math.abs(Math.sin(t * 0.7 + mote.phase)) * 0.3;
           }
         },
         dispose: () => {
           scene.remove(group);
           scene.fog = null;
           groundTexture.dispose();
+          cloudTextures.forEach((texture) => texture.dispose());
           group.traverse((node) => {
             if (node instanceof THREE.Mesh || node instanceof THREE.Points) {
               node.geometry.dispose();
@@ -630,6 +797,15 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       const group = new THREE.Group();
       scene.add(group);
       scene.fog = null;
+
+      // Cool night rig (env-local; the garden runs warm daylight instead).
+      group.add(new THREE.AmbientLight(0x9fb8cc, 0.55));
+      const key = new THREE.DirectionalLight(0xdfeaff, 0.9);
+      key.position.set(8, 14, 6);
+      group.add(key);
+      const fill = new THREE.DirectionalLight(0x3377ff, 0.3);
+      fill.position.set(-8, 4, -6);
+      group.add(fill);
 
       const sky = makeSkyDome(0x0a1a30, 0x0a2a38, 0x04060e);
       group.add(sky);
