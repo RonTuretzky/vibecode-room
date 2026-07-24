@@ -104,6 +104,99 @@ describe("RunEventDriver — streamed frames overlay the process panel for a spa
   });
 });
 
+// A failing stream must not hot-spin: each consecutive failure doubles the
+// reconnect wait from the floor up to the cap, and a successfully received
+// frame resets it. The sleep seam is injected so the sequence is observable
+// with zero real waiting (same convention as fetchWithRetry's sleep option).
+describe("RunEventDriver — reconnect backoff throttles a failing stream", () => {
+  test("the wait doubles per consecutive failure and holds at the cap", async () => {
+    const sleeps: number[] = [];
+    const client = new ScriptedStreamClient([
+      { frames: [], thenThrow: true },
+      { frames: [], thenThrow: true },
+      { frames: [], thenThrow: true },
+      { frames: [], thenThrow: true },
+      { frames: [], thenThrow: true },
+      { frames: [] }, // clean end so the subscription resolves
+    ]);
+    const driver = new RunEventDriver({
+      client,
+      reconnectDelayMs: 250,
+      reconnectMaxDelayMs: 1_000,
+      sleep: async (ms) => {
+        sleeps.push(ms);
+      },
+    });
+
+    await driver.subscribe("upid-backoff", "vibersyn-upid-backoff");
+
+    // 250 → 500 → 1000, then pinned at the cap — never a hot retry loop.
+    expect(sleeps).toEqual([250, 500, 1_000, 1_000, 1_000]);
+  });
+
+  test("a successfully received frame resets the backoff to the floor", async () => {
+    const sleeps: number[] = [];
+    const client = new ScriptedStreamClient([
+      { frames: [], thenThrow: true },
+      { frames: [], thenThrow: true },
+      // The gateway comes back: one frame lands, then the stream drops again.
+      { frames: [frame("node.started", { summary: "alive" }, 1)], thenThrow: true },
+      { frames: [], thenThrow: true },
+      { frames: [] },
+    ]);
+    const driver = new RunEventDriver({
+      client,
+      reconnectDelayMs: 250,
+      reconnectMaxDelayMs: 10_000,
+      sleep: async (ms) => {
+        sleeps.push(ms);
+      },
+    });
+
+    await driver.subscribe("upid-reset", "vibersyn-upid-reset");
+
+    // Two failures climb 250 → 500; the received frame resets, so the next two
+    // failures climb 250 → 500 again instead of continuing 1000 → 2000.
+    expect(sleeps).toEqual([250, 500, 250, 500]);
+    expect(driver.overlay("upid-reset")?.lastOutput).toBe("alive");
+  });
+
+  test("forget aborts a subscription parked in its backoff sleep", async () => {
+    // A gateway that is flat-out unreachable: every connection attempt throws.
+    let attempts = 0;
+    const client: RunEventStreamClient = {
+      async *streamRunEvents(): AsyncIterable<GatewayEventFrame> {
+        attempts += 1;
+        throw new Error("gateway unreachable");
+      },
+    };
+    const sleeps: number[] = [];
+    const driver = new RunEventDriver({
+      client,
+      // A sleep that only wakes on abort — the shape of a real multi-second
+      // backoff wait. Without the abort path this promise would never settle.
+      sleep: (ms, signal) =>
+        new Promise((resolve) => {
+          sleeps.push(ms);
+          if (signal?.aborted === true) {
+            resolve();
+            return;
+          }
+          signal?.addEventListener("abort", () => resolve(), { once: true });
+        }),
+    });
+    const subscription = driver.subscribe("upid-spin", "vibersyn-upid-spin");
+    await Bun.sleep(0); // first connection fails; the loop parks in its backoff sleep
+    expect(sleeps).toEqual([250]); // default floor
+
+    driver.forget("upid-spin");
+
+    await subscription; // resolves only because forget woke the backoff sleep
+    expect(attempts).toBe(1); // no reconnect attempt after the abort
+    await driver.idle(); // the .finally cleanup released the tracked subscription
+  });
+});
+
 // A halted run must not leave its overlay behind: forget() is the deletion path
 // the composition wires from the halt flow, so the per-UPID overlay map cannot
 // grow by one entry per run forever.

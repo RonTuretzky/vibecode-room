@@ -80,6 +80,16 @@ DEFAULT_FPS = 30
 DEFAULT_MIN_DETECTION_CONFIDENCE = 0.6
 DEFAULT_MIN_TRACKING_CONFIDENCE = 0.5
 
+# Idle inference throttle. With nobody at the wall, running MediaPipe on every
+# camera frame burned ~40% of a core 24/7. After IDLE_AFTER_FRAMES consecutive
+# zero-hand inferences (~1 s at 30 fps) the tracker goes idle and infers on
+# every IDLE_INFER_STRIDE-th frame only; ANY detection snaps back to full rate.
+# Camera reads NEVER throttle (skipped reads leave stale frames buffered in
+# V4L/AVFoundation -> laggy wake-up) and the websocket keeps its per-tick
+# empty-hands heartbeat — only the MediaPipe inference call is skipped.
+IDLE_AFTER_FRAMES = 30   # consecutive empty frames before idling (~1 s @ 30fps)
+IDLE_INFER_STRIDE = 5    # while idle, infer on every 5th frame (~6 Hz @ 30fps)
+
 _THIS = pathlib.Path(__file__).resolve()
 _GW_ROOT = _THIS.parent.parent                       # gesture-wall/
 DEFAULT_MODEL_PATH = str(_GW_ROOT / "models" / "hand_landmarker.task")
@@ -234,6 +244,48 @@ class PinchState:
         for hid in self._latched:
             if hid not in active_ids:
                 self._latched[hid] = False
+
+
+class IdleGate:
+    """Per-frame decision: run MediaPipe inference, or skip it (idle throttle).
+
+    Call :meth:`should_infer` once per CAMERA frame (reads are never gated),
+    then :meth:`observe` with the hand count of every frame that DID infer.
+    After ``idle_after`` consecutive zero-hand inferences the gate goes idle
+    and passes only every ``stride``-th frame; any detection restores full-rate
+    inference immediately (worst-case wake latency = ``stride - 1`` frames,
+    ~133 ms at the defaults). Pure — unit tested without cv2/mediapipe.
+    """
+
+    def __init__(self, idle_after: int = IDLE_AFTER_FRAMES,
+                 stride: int = IDLE_INFER_STRIDE) -> None:
+        self._idle_after = max(1, int(idle_after))
+        self._stride = max(1, int(stride))
+        self._empty_streak = 0   # consecutive zero-hand inferences (capped)
+        self._skip_left = 0      # frames left to skip before the next inference
+
+    @property
+    def idle(self) -> bool:
+        return self._empty_streak >= self._idle_after
+
+    def should_infer(self) -> bool:
+        """True = run MediaPipe on this frame. Consumes one frame of state."""
+        if self._skip_left > 0:
+            self._skip_left -= 1
+            return False
+        return True
+
+    def observe(self, hand_count: int) -> None:
+        """Feed back the detection count of a frame that ran inference."""
+        if hand_count > 0:
+            # Someone's here — full-rate tracking, instantly.
+            self._empty_streak = 0
+            self._skip_left = 0
+            return
+        if self._empty_streak < self._idle_after:   # cap: no unbounded growth
+            self._empty_streak += 1
+        if self._empty_streak >= self._idle_after:
+            self._skip_left = self._stride - 1      # re-arm the idle stride
 
 
 def encode_hand(landmarks: Sequence, hand_id: int, handedness: Optional[str],
@@ -477,6 +529,12 @@ class HandTracker(threading.Thread):
     MediaPipe inference (both thread-safe once the capture exists). The asyncio
     broadcast loop reads :meth:`snapshot`. Building the MediaPipe landmarker can
     still fail; that is reported via :attr:`error` / :meth:`wait_ready`.
+
+    When nobody is at the wall an :class:`IdleGate` throttles the MediaPipe
+    call (see the IDLE_* constants): frames are still read at full rate and the
+    snapshot still refreshes every frame (empty hands, fresh stamp), so the
+    broadcast cadence and staleness contract are untouched — only the
+    inference CPU is saved.
     """
 
     def __init__(self, cap, first_frame, model_path: str, *,
@@ -503,6 +561,7 @@ class HandTracker(threading.Thread):
         self._aspect = 16 / 9
         self._stamp = 0.0
         self._pinch = PinchState()
+        self._idle = IdleGate()
 
         self._stop = threading.Event()
         self._ready = threading.Event()
@@ -526,6 +585,26 @@ class HandTracker(threading.Thread):
         self._stop.set()
 
     # -- worker ------------------------------------------------------------- #
+    def _publish(self, cv2, frame, detections: list, encoded: list[dict],
+                 aspect: float) -> None:
+        """Annotate the preview (if on) and swap in the latest snapshot."""
+        jpeg = None
+        if self._preview:
+            # The debug overlay must NEVER kill tracking — a bug here
+            # once crashed the whole thread (and stopped the wall).
+            try:
+                jpeg = _annotate_preview(cv2, frame, detections, encoded,
+                                         mirror=self._mirror)
+            except Exception as e:  # noqa: BLE001
+                print(f"[hands] preview annotate error (tracking "
+                      f"unaffected): {e}", flush=True)
+        with self._lock:
+            self._hands = encoded
+            self._aspect = aspect
+            self._stamp = time.monotonic()
+            if jpeg is not None:
+                self._preview_jpeg = jpeg
+
     def run(self) -> None:
         try:
             import cv2
@@ -568,6 +647,15 @@ class HandTracker(threading.Thread):
                         continue
                 h, w = frame.shape[0], frame.shape[1]
                 aspect = (w / h) if h else self._aspect
+                if not self._idle.should_infer():
+                    # Idle skip: the frame was still READ (draining the driver
+                    # buffer at full rate) but MediaPipe is not run. We only
+                    # get here after IDLE_AFTER_FRAMES empty inferences, so
+                    # publishing empty hands with a fresh stamp is truthful and
+                    # keeps the broadcast loop's staleness check quiet.
+                    self._publish(cv2, frame, [], [], aspect)
+                    frame = None
+                    continue
                 rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
                 ts_ms = int(time.perf_counter() * 1000)
@@ -576,24 +664,10 @@ class HandTracker(threading.Thread):
                 last_ts_ms = ts_ms
                 result = landmarker.detect_for_video(mp_image, ts_ms)
                 detections = _detections_from_result(result)
+                self._idle.observe(len(detections))
                 encoded = encode_hands(detections, aspect, self._pinch,
                                        mirror=self._mirror)
-                jpeg = None
-                if self._preview:
-                    # The debug overlay must NEVER kill tracking — a bug here
-                    # once crashed the whole thread (and stopped the wall).
-                    try:
-                        jpeg = _annotate_preview(cv2, frame, detections, encoded,
-                                                 mirror=self._mirror)
-                    except Exception as e:  # noqa: BLE001
-                        print(f"[hands] preview annotate error (tracking "
-                              f"unaffected): {e}", flush=True)
-                with self._lock:
-                    self._hands = encoded
-                    self._aspect = aspect
-                    self._stamp = time.monotonic()
-                    if jpeg is not None:
-                        self._preview_jpeg = jpeg
+                self._publish(cv2, frame, detections, encoded, aspect)
                 frame = None
         finally:
             try:

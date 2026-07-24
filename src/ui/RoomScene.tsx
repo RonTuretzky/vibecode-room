@@ -205,6 +205,34 @@ export function treeStatus(spec: TreeSpec): string {
   return `${stageWord(spec.stage)} · ${spec.state} · ${Math.round(spec.progress)}%${spec.steering ? " · ⟵ steering" : ""}`;
 }
 
+function buildsSummaryChanged(a: TreeBuildSummary | undefined, b: TreeBuildSummary | undefined): boolean {
+  return (
+    (a?.building ?? 0) !== (b?.building ?? 0) ||
+    (a?.ready ?? 0) !== (b?.ready ?? 0) ||
+    (a?.failed ?? 0) !== (b?.failed ?? 0)
+  );
+}
+
+// Structural spec comparison: TRUE when the node's SHAPE changed and the entry
+// must be disposed and regrown — identity, state, stage, steering, indicators,
+// or the live progress arc appearing/vanishing (its mesh only exists mid-
+// flight). Progress ticking WITHIN a stage is deliberately NOT structural: a
+// live build reports ~1% ticks for hours, and rebuilding the whole entry
+// (geometries, materials, canvas label textures) per tick churned the GPU on
+// long-lived projector tabs. Those ticks update the existing entry in place
+// instead (label repaint, arc sweep, orb growth) — see reconcile. Exported for
+// tests; kept free of three.js like treeIndicators.
+export function treeSpecStructurallyChanged(a: TreeSpec, b: TreeSpec): boolean {
+  return (
+    a.state !== b.state || a.callsign !== b.callsign || a.task !== b.task ||
+    a.steering !== b.steering || a.stage !== b.stage ||
+    (a.published ?? false) !== (b.published ?? false) ||
+    (a.failedCount ?? 0) !== (b.failedCount ?? 0) ||
+    buildsSummaryChanged(a.builds, b.builds) ||
+    (treeIndicators(a).progressArc === null) !== (treeIndicators(b).progressArc === null)
+  );
+}
+
 // ── hyperbolic layout constants (after the visualizer's H3/disk modes) ───────
 // Poincaré radial coordinates r ∈ (0,1): shells picked via tanh(d/2) for a
 // hyperbolic edge length d; display scale is the conformal factor 1 - r².
@@ -309,22 +337,26 @@ function makeLabelSprite(title: string, statusLine: string, accentCss: string): 
   canvas.height = height * dpr;
   const ctx = canvas.getContext("2d")!;
   ctx.scale(dpr, dpr);
-  ctx.beginPath();
-  ctx.roundRect(0.5, 0.5, width - 1, height - 1, 9);
-  ctx.fillStyle = "rgba(6, 16, 24, 0.78)";
-  ctx.fill();
-  ctx.strokeStyle = "rgba(158, 226, 255, 0.2)";
-  ctx.lineWidth = 1;
-  ctx.stroke();
-  ctx.font = titleFont;
-  ctx.fillStyle = "#eaf6ff";
-  ctx.textBaseline = "top";
-  lines.forEach((line, i) => ctx.fillText(line, padX, padY + i * lineHeight));
-  if (statusLine.length > 0) {
-    ctx.font = statusFont;
-    ctx.fillStyle = accentCss;
-    ctx.fillText(statusLine.toUpperCase(), padX, padY + lines.length * lineHeight + 2);
-  }
+  const paint = (status: string) => {
+    ctx.clearRect(0, 0, width, height);
+    ctx.beginPath();
+    ctx.roundRect(0.5, 0.5, width - 1, height - 1, 9);
+    ctx.fillStyle = "rgba(6, 16, 24, 0.78)";
+    ctx.fill();
+    ctx.strokeStyle = "rgba(158, 226, 255, 0.2)";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.font = titleFont;
+    ctx.fillStyle = "#eaf6ff";
+    ctx.textBaseline = "top";
+    lines.forEach((line, i) => ctx.fillText(line, padX, padY + i * lineHeight));
+    if (status.length > 0) {
+      ctx.font = statusFont;
+      ctx.fillStyle = accentCss;
+      ctx.fillText(status.toUpperCase(), padX, padY + lines.length * lineHeight + 2);
+    }
+  };
+  paint(statusLine);
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
@@ -333,7 +365,22 @@ function makeLabelSprite(title: string, statusLine: string, accentCss: string): 
   sprite.scale.set(width * worldScale, height * worldScale, 1);
   sprite.center.set(0.5, 0);
   sprite.renderOrder = 12;
+  // Status-only repaint hook (live progress ticks): redraw the SAME canvas and
+  // re-upload it (needsUpdate) — no new texture/material/sprite allocation.
+  // The card geometry is frozen at build width; a percent tick shifts the
+  // status by a couple px at most, and any structural change (state, stage,
+  // title, steering) rebuilds the whole label anyway.
+  sprite.userData.updateStatus = (status: string) => {
+    paint(status);
+    texture.needsUpdate = true;
+  };
   return sprite;
+}
+
+// Repaint an existing label sprite's status line in place (see the
+// updateStatus hook above) — the sprite, material, canvas and texture persist.
+function updateLabelStatus(label: THREE.Sprite, status: string): void {
+  (label.userData.updateStatus as ((status: string) => void) | undefined)?.(status);
 }
 
 // Soft radial glow texture (halos, moon, auroras) tinted via material color.
@@ -430,6 +477,11 @@ interface Entry {
   phase: number;
   flashStart: number | null;
   removing: boolean;
+  // In-place progress refresh (label % repaint, live arc sweep, orb growth):
+  // reconcile calls it when ONLY progress ticked, so a live build never pays a
+  // full dispose+rebuild per 1% tick. Absent on idea entries (ideas rebuild
+  // through ideaSpecChanged, which has no per-tick channel).
+  updateProgress?: (spec: TreeSpec) => void;
 }
 
 export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, focusUpid = null, pointerNav = true, cornerLock = false, onAcceptIdea, onSelectProcess }: RoomSceneProps) {
@@ -996,15 +1048,29 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
     // Partial gauge arc sweeping 0→`arc` (0..1) of a ring, starting at the top.
     // `tilt` lets orbit/flora lay it in the tilted plane their other rings use;
     // omitted, it lies flat on the ground like the garden's commission ring.
-    const addProgressArc = (group: THREE.Group, arc: number, y: number, radius: number, thickness: number, tilt?: number) => {
-      const geo = new THREE.TorusGeometry(radius, thickness, 8, 48, Math.PI * 2 * Math.min(Math.max(arc, 0.02), 1));
-      const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: PROGRESS_ARC_COLOR, transparent: true, opacity: 0.85 }));
+    // Returns the mesh so builders can wire it into their in-place progress
+    // updater (setArcSweep) instead of rebuilding the entry per percent tick.
+    const arcSweepGeometry = (radius: number, thickness: number, arc: number) =>
+      new THREE.TorusGeometry(radius, thickness, 8, 48, Math.PI * 2 * Math.min(Math.max(arc, 0.02), 1));
+    const addProgressArc = (group: THREE.Group, arc: number, y: number, radius: number, thickness: number, tilt?: number): THREE.Mesh => {
+      const mesh = new THREE.Mesh(arcSweepGeometry(radius, thickness, arc), new THREE.MeshBasicMaterial({ color: PROGRESS_ARC_COLOR, transparent: true, opacity: 0.85 }));
       mesh.userData.ownGeometry = true;
       mesh.userData.ownMaterial = true;
+      // Stashed so setArcSweep regrows the sweep at the same ring dimensions.
+      mesh.userData.arcRadius = radius;
+      mesh.userData.arcThickness = thickness;
       mesh.rotation.x = tilt ?? Math.PI / 2;
       mesh.rotation.z = Math.PI / 2; // start the sweep near the top
       mesh.position.y = y;
       group.add(mesh);
+      return mesh;
+    };
+    // In-place sweep update for a live arc: swap ONLY the small partial-torus
+    // geometry — the mesh, material, transform and ownGeometry dispose flag
+    // all persist (disposeEntry's sweep frees whichever geometry is current).
+    const setArcSweep = (mesh: THREE.Mesh, arc: number) => {
+      mesh.geometry.dispose();
+      mesh.geometry = arcSweepGeometry(mesh.userData.arcRadius as number, mesh.userData.arcThickness as number, arc);
     };
 
     // A take-home publish beacon: a bright core + additive halo crowning the node.
@@ -1123,9 +1189,7 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       }
       // Live indicator overlays — progress arc, build-lane satellites, publish
       // beacon, failure pip — ride the real tree just like the primitive glyphs.
-      if (ind.progressArc !== null) {
-        addProgressArc(group, ind.progressArc, 0.18, commissioned ? 2.6 : 1.6, 0.055);
-      }
+      const arcMesh = ind.progressArc !== null ? addProgressArc(group, ind.progressArc, 0.18, commissioned ? 2.6 : 1.6, 0.055) : null;
       addLaneSatellites(group, ind.lanes, commissioned ? 5.4 : 2.6, commissioned ? 2.3 : 1.2, commissioned ? 0.95 : 0.65);
       if (ind.published) {
         addPublishedBeacon(group, commissioned ? 9.4 : 4.6, commissioned ? 1.5 : 0.95);
@@ -1136,7 +1200,16 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       const label = makeLabelSprite(treeTitle(spec), treeStatus(spec), cssHex(color));
       label.position.y = commissioned ? 10.2 : 5.1;
       group.add(label);
-      return { kind: "tree", treeSpec: spec, group, mats, baseEmissive: 0.55, head: null, headY: 0, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false };
+      // Progress-only tick: repaint the label % and regrow the arc sweep in
+      // place — no dispose, no rebuild (structural changes rebuild the entry).
+      const updateProgress = (next: TreeSpec) => {
+        const arc = treeIndicators(next).progressArc;
+        if (arcMesh !== null && arc !== null) {
+          setArcSweep(arcMesh, arc);
+        }
+        updateLabelStatus(label, treeStatus(next));
+      };
+      return { kind: "tree", treeSpec: spec, group, mats, baseEmissive: 0.55, head: null, headY: 0, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false, updateProgress };
     };
 
     const buildRealFlower = (spec: IdeaOrbSpec): Entry | null => {
@@ -1359,9 +1432,7 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       // beacon and failure pip — all sized to whichever body was grown above.
       const crownY = commissioned ? 4.4 : 1.9;
       const laneR = commissioned ? 1.7 : 0.9;
-      if (ind.progressArc !== null) {
-        addProgressArc(group, ind.progressArc, 0.1, commissioned ? 1.9 : 1.05, 0.055);
-      }
+      const arcMesh = ind.progressArc !== null ? addProgressArc(group, ind.progressArc, 0.1, commissioned ? 1.9 : 1.05, 0.055) : null;
       addLaneSatellites(group, ind.lanes, crownY, laneR, commissioned ? 0.95 : 0.65);
       if (ind.published) {
         addPublishedBeacon(group, commissioned ? 6.1 : 3.0, commissioned ? 1.5 : 0.95);
@@ -1372,7 +1443,16 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       const label = makeLabelSprite(treeTitle(spec), treeStatus(spec), cssHex(color));
       label.position.y = commissioned ? 6.6 : 3.4;
       group.add(label);
-      return { kind: "tree", treeSpec: spec, group, mats: [foliageMat], baseEmissive: foliageMat.emissiveIntensity, head: null, headY: 0, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false };
+      // Progress-only tick: repaint the label % and regrow the arc sweep in
+      // place (the tree's growth-with-progress rides targetScale in reconcile).
+      const updateProgress = (next: TreeSpec) => {
+        const arc = treeIndicators(next).progressArc;
+        if (arcMesh !== null && arc !== null) {
+          setArcSweep(arcMesh, arc);
+        }
+        updateLabelStatus(label, treeStatus(next));
+      };
+      return { kind: "tree", treeSpec: spec, group, mats: [foliageMat], baseEmissive: foliageMat.emissiveIntensity, head: null, headY: 0, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false, updateProgress };
     };
 
     // ── orbit builders ──────────────────────────────────────────────────────
@@ -1415,12 +1495,21 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       return { kind: "orb-idea", ideaSpec: spec, group, mats: [orbMat], baseEmissive, head: null, headY: 0, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false };
     };
 
+    // Orb radius grows with a run's progress; kept in one place so the build
+    // and the in-place progress updater derive the exact same size.
+    const orbProcessRadius = (progress: number) => 1.15 + Math.min(Math.max(progress, 0), 100) / 100 * 0.65;
+
     const buildOrbProcess = (spec: TreeSpec): Entry => {
       const color = STATE_COLOR[spec.state];
       const ind = treeIndicators(spec);
-      const radius = 1.15 + Math.min(Math.max(spec.progress, 0), 100) / 100 * 0.65;
+      const radius = orbProcessRadius(spec.progress);
       const tilt = Math.PI * 0.42;
       const group = new THREE.Group();
+      // Everything radius-derived (orb, halo, rings, arc, satellites, beacon,
+      // pip) lives in `body` so a progress tick grows the orb IN PLACE via one
+      // body rescale — only the label stays on the group for exact reposition.
+      const body = new THREE.Group();
+      group.add(body);
       const orbMat = new THREE.MeshStandardMaterial({ roughness: 0.3, metalness: 0.15, transparent: true, opacity: 0.94 });
       orbMat.color.set(color).multiplyScalar(0.5);
       orbMat.emissive.set(color);
@@ -1428,14 +1517,14 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       const orb = new THREE.Mesh(GEO.orb, orbMat);
       orb.scale.setScalar(radius);
       orb.userData.pick = { kind: "process", callsign: spec.callsign };
-      group.add(orb);
+      body.add(orb);
       const halo = new THREE.Sprite(
         new THREE.SpriteMaterial({ map: glowTexture, color, transparent: true, opacity: 0.45, blending: THREE.AdditiveBlending, depthWrite: false }),
       );
       halo.scale.setScalar(radius * 3.2);
-      group.add(halo);
+      body.add(halo);
       // Stage ring (commission gold / built completion) in the orbs' tilted plane.
-      addStageRing(group, ind.ring, radius * 1.7, 0, tilt);
+      addStageRing(body, ind.ring, radius * 1.7, 0, tilt);
       if (spec.steering) {
         const ring = new THREE.Mesh(
           new THREE.TorusGeometry(radius * 1.5, 0.03, 8, 64),
@@ -1444,23 +1533,34 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         ring.userData.ownGeometry = true;
         ring.userData.ownMaterial = true;
         ring.rotation.x = tilt;
-        group.add(ring);
+        body.add(ring);
       }
       // Live progress arc, build-lane satellites, take-home beacon, failure pip.
-      if (ind.progressArc !== null) {
-        addProgressArc(group, ind.progressArc, 0, radius * 1.9, 0.035, tilt);
-      }
-      addLaneSatellites(group, ind.lanes, 0, radius * 1.35, 1.0);
+      const arcMesh = ind.progressArc !== null ? addProgressArc(body, ind.progressArc, 0, radius * 1.9, 0.035, tilt) : null;
+      addLaneSatellites(body, ind.lanes, 0, radius * 1.35, 1.0);
       if (ind.published) {
-        addPublishedBeacon(group, radius + 1.0, radius * 1.3);
+        addPublishedBeacon(body, radius + 1.0, radius * 1.3);
       }
       if (ind.failed) {
-        addFailedPip(group, radius * 1.05, radius * 0.85, 1.0);
+        addFailedPip(body, radius * 1.05, radius * 0.85, 1.0);
       }
       const label = makeLabelSprite(treeTitle(spec), treeStatus(spec), cssHex(color));
       label.position.y = radius + 0.25;
       group.add(label);
-      return { kind: "orb-proc", treeSpec: spec, group, mats: [orbMat], baseEmissive: 0.5, head: null, headY: 0, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false };
+      // Progress-only tick: grow the whole body by ratio (near-everything here
+      // is radius-proportional; any residual drift is exact again at the next
+      // structural rebuild), lift the label, regrow the arc sweep, repaint %.
+      const updateProgress = (next: TreeSpec) => {
+        const nextRadius = orbProcessRadius(next.progress);
+        body.scale.setScalar(nextRadius / radius);
+        label.position.y = nextRadius + 0.25;
+        const arc = treeIndicators(next).progressArc;
+        if (arcMesh !== null && arc !== null) {
+          setArcSweep(arcMesh, arc);
+        }
+        updateLabelStatus(label, treeStatus(next));
+      };
+      return { kind: "orb-proc", treeSpec: spec, group, mats: [orbMat], baseEmissive: 0.5, head: null, headY: 0, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false, updateProgress };
     };
 
     // ── layout ──────────────────────────────────────────────────────────────
@@ -1499,9 +1599,7 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         ring.rotation.x = tilt;
         group.add(ring);
       }
-      if (ind.progressArc !== null) {
-        addProgressArc(group, ind.progressArc, 0, 1.4, 0.03, tilt);
-      }
+      const arcMesh = ind.progressArc !== null ? addProgressArc(group, ind.progressArc, 0, 1.4, 0.03, tilt) : null;
       addLaneSatellites(group, ind.lanes, 0.95, 0.9, 0.5);
       if (ind.published) {
         addPublishedBeacon(group, 1.75, 0.8);
@@ -1512,7 +1610,16 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       const label = makeLabelSprite(treeTitle(spec), treeStatus(spec), cssHex(color));
       label.position.y = 1.35;
       group.add(label);
-      return { kind: "tree", treeSpec: spec, group, mats: [folMat], baseEmissive: 0.22, head: null, headY: 0, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false };
+      // Progress-only tick: repaint the label % and regrow the arc sweep in
+      // place — no dispose, no rebuild (structural changes rebuild the entry).
+      const updateProgress = (next: TreeSpec) => {
+        const arc = treeIndicators(next).progressArc;
+        if (arcMesh !== null && arc !== null) {
+          setArcSweep(arcMesh, arc);
+        }
+        updateLabelStatus(label, treeStatus(next));
+      };
+      return { kind: "tree", treeSpec: spec, group, mats: [folMat], baseEmissive: 0.22, head: null, headY: 0, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false, updateProgress };
     };
 
     const buildFloraIdea = (spec: IdeaOrbSpec): Entry => {
@@ -1675,17 +1782,10 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
     const ideaSpecChanged = (a: IdeaOrbSpec, b: IdeaOrbSpec) =>
       a.status !== b.status || a.maturity !== b.maturity || a.verified !== b.verified ||
       a.pitch !== b.pitch || Math.abs(a.confidence - b.confidence) > 0.005;
-    const buildsSummaryChanged = (a: TreeBuildSummary | undefined, b: TreeBuildSummary | undefined) =>
-      (a?.building ?? 0) !== (b?.building ?? 0) ||
-      (a?.ready ?? 0) !== (b?.ready ?? 0) ||
-      (a?.failed ?? 0) !== (b?.failed ?? 0);
-    const treeSpecChanged = (a: TreeSpec, b: TreeSpec) =>
-      a.state !== b.state || a.callsign !== b.callsign || a.task !== b.task ||
-      a.steering !== b.steering || a.stage !== b.stage ||
-      (a.published ?? false) !== (b.published ?? false) ||
-      (a.failedCount ?? 0) !== (b.failedCount ?? 0) ||
-      buildsSummaryChanged(a.builds, b.builds) ||
-      Math.round(a.progress) !== Math.round(b.progress);
+    // Trees split changes in two: STRUCTURAL (treeSpecStructurallyChanged →
+    // dispose+rebuild) vs a bare progress tick (→ the entry's in-place
+    // updateProgress). Progress churns constantly on live builds, so it must
+    // never trigger the rebuild path.
 
     let env: SceneEnv | null = null;
     let builtMode: SceneMode | null = null;
@@ -1807,7 +1907,7 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         };
         if (existing === undefined) {
           create();
-        } else if (existing.treeSpec !== undefined && treeSpecChanged(existing.treeSpec, spec)) {
+        } else if (existing.treeSpec !== undefined && treeSpecStructurallyChanged(existing.treeSpec, spec)) {
           // Concept → grown (commissioned/built) is THE transformation moment:
           // flash the regrown (now full-size) tree so the room sees it happen.
           const wasGrown = existing.treeSpec.stage === "commissioned" || existing.treeSpec.stage === "built";
@@ -1825,6 +1925,14 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
             entry.flashStart = performance.now();
           }
         } else {
+          // Not structural — at most the progress ticked. Refresh the derived
+          // visuals IN PLACE (same rounded-percent granularity the old rebuild
+          // path keyed on) and keep the spec current so the next comparison
+          // and the in-place gate see fresh values.
+          if (existing.treeSpec !== undefined && Math.round(existing.treeSpec.progress) !== Math.round(spec.progress)) {
+            existing.updateProgress?.(spec);
+          }
+          existing.treeSpec = spec;
           existing.targetPos = placed.pos;
           existing.targetScale = scale;
           existing.scaleMult = placed.k;

@@ -31,7 +31,12 @@ export interface RunEventOverlay {
 // 100% while the run is still streaming); a completed event jumps to 100.
 const ACTIVE_PROGRESS_STEP = 12;
 const ACTIVE_PROGRESS_CAP = 95;
-const DEFAULT_RECONNECT_DELAY_MS = 5;
+// Reconnect backoff bounds: a dropped stream retries after the floor, doubling
+// per consecutive failure up to the cap; any successfully received frame resets
+// the wait back to the floor. Against an unreachable gateway this holds each
+// subscription at one attempt per 10s instead of a hot ~200/s spin.
+const RECONNECT_BASE_DELAY_MS = 250;
+const RECONNECT_MAX_DELAY_MS = 10_000;
 
 // The slice of SmithersClient the driver needs — just the live event stream.
 export type RunEventStreamClient = Pick<SmithersClient, "streamRunEvents">;
@@ -41,8 +46,14 @@ export interface RunEventDriverOptions {
   // Invoked after each overlay change so the runtime can republish the snapshot.
   // Errors are swallowed by the caller; a broken publish must not wedge the stream.
   onUpdate?: (upid: string, overlay: RunEventOverlay) => void;
-  // Backoff between stream reconnect attempts. Defaults to a few ms.
+  // Reconnect backoff floor: the wait after a first stream failure. Doubles per
+  // consecutive failure up to reconnectMaxDelayMs and resets here once a frame
+  // is successfully received. Defaults to RECONNECT_BASE_DELAY_MS.
   reconnectDelayMs?: number;
+  // Reconnect backoff cap. Defaults to RECONNECT_MAX_DELAY_MS.
+  reconnectMaxDelayMs?: number;
+  // Injectable so tests exercise the backoff sequence with zero real waiting.
+  sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
   onReconnect?: (event: { upid: string; afterSeq: number; attempt: number; error: unknown }) => void;
 }
 
@@ -50,6 +61,8 @@ export class RunEventDriver {
   readonly #client: RunEventStreamClient;
   readonly #onUpdate?: RunEventDriverOptions["onUpdate"];
   readonly #reconnectDelayMs: number;
+  readonly #reconnectMaxDelayMs: number;
+  readonly #sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
   readonly #onReconnect?: RunEventDriverOptions["onReconnect"];
   readonly #overlays = new Map<string, RunEventOverlay>();
   readonly #active = new Set<Promise<void>>();
@@ -61,7 +74,9 @@ export class RunEventDriver {
   constructor(options: RunEventDriverOptions) {
     this.#client = options.client;
     this.#onUpdate = options.onUpdate;
-    this.#reconnectDelayMs = options.reconnectDelayMs ?? DEFAULT_RECONNECT_DELAY_MS;
+    this.#reconnectDelayMs = options.reconnectDelayMs ?? RECONNECT_BASE_DELAY_MS;
+    this.#reconnectMaxDelayMs = options.reconnectMaxDelayMs ?? RECONNECT_MAX_DELAY_MS;
+    this.#sleep = options.sleep ?? sleep;
     this.#onReconnect = options.onReconnect;
   }
 
@@ -138,6 +153,9 @@ export class RunEventDriver {
     let afterSeq = this.#overlays.get(upid)?.lastSeq ?? 0;
     let applied = 0;
     let attempt = 0;
+    // Consecutive stream failures since the last received frame — the exponent
+    // of the reconnect backoff.
+    let consecutiveFailures = 0;
 
     while (isAborted(signal) === false) {
       try {
@@ -146,6 +164,9 @@ export class RunEventDriver {
           signal,
         } satisfies StreamRunEventsOptions);
         for await (const frame of stream) {
+          // A received frame proves the gateway is reachable again — reset the
+          // backoff so the next drop retries from the floor, not a 10s wait.
+          consecutiveFailures = 0;
           const event = normalizeSmithersRunEvent(frame, { upid, runId });
           const overlay = this.ingest(event);
           afterSeq = Math.max(afterSeq, event.seq);
@@ -166,7 +187,9 @@ export class RunEventDriver {
         // Resume after the last applied seq so dedup never has to re-drop a long
         // backlog; the seq guard in ingest() still catches the boundary frame.
         afterSeq = Math.max(afterSeq, this.#overlays.get(upid)?.lastSeq ?? 0);
-        await sleep(this.#reconnectDelayMs, signal);
+        const delayMs = reconnectBackoffMs(consecutiveFailures, this.#reconnectDelayMs, this.#reconnectMaxDelayMs);
+        consecutiveFailures += 1;
+        await this.#sleep(delayMs, signal);
       }
     }
   }
@@ -206,6 +229,14 @@ function projectorStateFromRunEvent(kind: RunEvent["kind"]): ProjectorProcessSta
 
 function isAborted(signal?: AbortSignal): boolean {
   return signal !== undefined && signal.aborted;
+}
+
+// Bounded exponential backoff: the Nth consecutive failure (0-based) waits
+// floor * 2^N, capped. The exponent is clamped because 2^n overflows to
+// Infinity for large n (and 0 * Infinity is NaN) — against a gateway that stays
+// down, the cap has long since taken over by then.
+function reconnectBackoffMs(consecutiveFailures: number, floorMs: number, capMs: number): number {
+  return Math.min(capMs, floorMs * 2 ** Math.min(consecutiveFailures, 30));
 }
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
