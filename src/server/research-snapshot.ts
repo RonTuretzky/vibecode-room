@@ -35,6 +35,14 @@ export function researchTrayItemFromQuest(quest: ResearchQuest): ResearchTrayIte
     sourceCount: report?.sources.length ?? 0,
     biasCount: report?.biasNotes.length ?? 0,
     verdicts,
+    // Live findings (draft while verification runs, final once complete),
+    // capped so the tray card stays glanceable.
+    findings:
+      report === null ? undefined : report.findings.slice(0, 4).map((finding) => ({ claim: finding.claim, verdict: finding.verdict })),
+    draft: quest.reportDraft === true ? true : undefined,
+    followUps:
+      report !== null && quest.status === "complete" && report.followUps.length > 0 ? report.followUps.slice(0, 4) : undefined,
+    degraded: report?.degraded !== undefined && report.degraded.length > 0 ? report.degraded : undefined,
     deckUrl: quest.status === "complete" ? `/api/research/${encodeURIComponent(quest.id)}/deck` : null,
     error: quest.error ?? undefined,
   };

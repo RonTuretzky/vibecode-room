@@ -186,6 +186,24 @@ export function createProjectorApp(runtime: ProjectorRuntime, options: Projector
     }
     return context.json(runtime.researchTurn(context.req.param("id")));
   });
+  // FOLLOW-UP: spawn one of a completed dossier's open questions as its own
+  // quest (body: {index}). Bad input degrades to a no-op current snapshot.
+  app.post("/api/research/:id/followup", async (context) => {
+    if (isOfflineDemoRequest(context.req.header("referer"))) {
+      return context.json(runtime.snapshot());
+    }
+    let index = Number.NaN;
+    try {
+      const body = (await context.req.json()) as { index?: unknown };
+      index = Number(body?.index);
+    } catch {
+      // Malformed body → NaN → the runtime no-ops.
+    }
+    if (!Number.isInteger(index) || index < 0) {
+      return context.json(runtime.snapshot());
+    }
+    return context.json(runtime.researchFollowUp(context.req.param("id"), index));
+  });
   // RESEARCH-TREE RESET: full clean slate — quests, dossiers, dialogue window
   // and topics all cleared; in-flight agents aborted.
   app.post("/api/research/tree/reset", (context) => {

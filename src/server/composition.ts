@@ -254,6 +254,9 @@ export interface ProjectorRuntime {
   // the quest and spawns the agent in one step, bypassing the passive
   // suggestion cadence. Unknown turn / mode off → no-op current snapshot.
   researchTurn(turnId: string, correlationId?: string): ProjectorSnapshot;
+  // Spawn one of a completed dossier's follow-up questions as its own quest
+  // (child crystal beside the parent). Unknown id/index → no-op snapshot.
+  researchFollowUp(parentId: string, index: number, correlationId?: string): ProjectorSnapshot;
   // RESEARCH-TREE RESET (the wall's 🌱 button): abort every in-flight agent,
   // drop all quests + dossiers, clear the dialogue window and topics.
   resetResearchTree(correlationId?: string): ProjectorSnapshot;
@@ -1362,6 +1365,18 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       return this.#snapshot;
     }
     this.research.researchTurn(turnId, correlationId);
+    return this.publishNow();
+  }
+
+  researchFollowUp(
+    parentId: string,
+    index: number,
+    correlationId = `corr-research-followup-${crypto.randomUUID()}`,
+  ): ProjectorSnapshot {
+    if (this.#emergencyTriggered) {
+      return this.#snapshot;
+    }
+    this.research.researchFollowUp(parentId, index, correlationId);
     return this.publishNow();
   }
 

@@ -412,3 +412,28 @@ describe("topic-context grounding", () => {
     }
   });
 });
+
+describe("dossier follow-ups", () => {
+  test("researchFollowUp spawns a child quest inheriting the parent's grounding", async () => {
+    const followUpReport: ResearchReport = { ...stubReport, followUps: ["How do fees compare across payment rails?"] };
+    class FollowUpAgent implements ResearchAgent {
+      async research(): Promise<ResearchReport> {
+        return followUpReport;
+      }
+    }
+    const loop = makeLoop({ agent: new FollowUpAgent() });
+    loop.setActive(true);
+    loop.ingestTurn({ speaker: "s1", text: "how much money would vending machines save by using crypto", atMs: 1 });
+    const parent = loop.researchTurn(loop.turns()[0]!.id)!;
+    await Bun.sleep(0);
+    expect(loop.quest(parent.id)!.status).toBe("complete");
+    const child = loop.researchFollowUp(parent.id, 0)!;
+    expect(child.status).toBe("researching");
+    expect(child.claim).toBe("How do fees compare across payment rails?");
+    // Child anchors to the parent's turn → its crystal buds beside the parent.
+    expect(child.contextSpan.endTurnId).toBe(parent.contextSpan.endTurnId);
+    // Unknown index / parent are 404-free no-ops.
+    expect(loop.researchFollowUp(parent.id, 9)).toBeNull();
+    expect(loop.researchFollowUp("rq-nope", 0)).toBeNull();
+  });
+});

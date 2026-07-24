@@ -679,6 +679,58 @@ export class ResearchLoop {
   }
 
   // Emergency stop: abort every in-flight agent and mark those quests failed.
+  // FOLLOW-UP spawn: one of a completed dossier's open questions, clicked on
+  // the wall. The child inherits the parent's grounding (span + topic
+  // context) so its crystal buds beside the parent, and starts researching
+  // immediately. Near-dupe claims re-use the existing quest.
+  researchFollowUp(
+    parentId: string,
+    index: number,
+    correlationId = `corr-research-followup-${parentId}-${index}`,
+  ): ResearchQuest | null {
+    if (!this.#active) {
+      return null;
+    }
+    const parent = this.#quests.get(parentId);
+    const followUp = parent?.report?.followUps[index]?.trim();
+    if (parent === undefined || followUp === undefined || followUp.length === 0) {
+      return null;
+    }
+    const existing = this.#nearDupe(followUp);
+    if (existing !== null) {
+      return existing.status === "proposed" ? this.accept(existing.id, correlationId) : existing;
+    }
+    const topicWords = followUp.split(/\s+/u).slice(0, 8).join(" ");
+    const nowMs = this.#clock();
+    const quest: ResearchQuest = {
+      id: `rq-${this.#idFactory()}`,
+      kind: "deep-dive",
+      topic: topicWords.charAt(0).toUpperCase() + topicWords.slice(1),
+      claim: followUp.slice(0, 280),
+      rationale: `Follow-up from "${parent.topic}".`,
+      confidence: 0.7,
+      contextSpan: { ...parent.contextSpan },
+      contextTurns: parent.contextTurns === undefined ? undefined : [...parent.contextTurns],
+      topicLabel: parent.topicLabel ?? null,
+      status: "proposed",
+      progress: 0,
+      progressLabel: "",
+      report: null,
+      error: null,
+      roundsSeen: 1,
+      missedRounds: 0,
+      firstSeenAtMs: nowMs,
+      updatedAtMs: nowMs,
+    };
+    this.#quests.set(quest.id, quest);
+    this.#trace("research.followup.spawn", "info", correlationId, {
+      id: quest.id,
+      parentId,
+      followUp: followUp.slice(0, 80),
+    });
+    return this.accept(quest.id, correlationId);
+  }
+
   // RESEARCH-TREE RESET (the wall's 🌱 button): a full clean slate — every
   // in-flight agent aborted, every quest (proposed AND committed) dropped, the
   // dialogue window and concept topics cleared. Deliberately total: the user

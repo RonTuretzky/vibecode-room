@@ -2328,6 +2328,62 @@ main.gesture-mode[data-view="builds"] .transcript-card {
   color: var(--ink-faint);
 }
 
+/* Live findings on a research card: verdict-glyphed lines; the draft note
+   marks unverified-in-progress sets. */
+.research-findings {
+  margin: 6px 0 0;
+  padding: 0 0 0 2px;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+
+.research-finding-draft-note {
+  font-style: italic;
+  color: #9ad7f0;
+}
+
+.research-finding .research-finding-verdict {
+  font-weight: 800;
+}
+
+.research-finding.verdict-supported .research-finding-verdict { color: #30d18a; }
+.research-finding.verdict-refuted .research-finding-verdict { color: #ff5d5d; }
+.research-finding.verdict-mixed .research-finding-verdict { color: #ffd166; }
+.research-finding.verdict-unverified .research-finding-verdict { color: var(--ink-faint); }
+
+/* Honesty line: degraded passes are said out loud, in amber. */
+.research-degraded {
+  margin: 6px 0 0;
+  font-size: 11.5px;
+  color: #ffd166;
+}
+
+/* Follow-up chips: one click each — "research this next". */
+.research-followups {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.ctl-button.research-followup {
+  padding: 5px 10px;
+  font-size: 12px;
+  text-align: left;
+  white-space: normal;
+  color: #a5dcf8;
+  border-color: rgba(56, 189, 248, 0.35);
+  background: rgba(56, 189, 248, 0.08);
+}
+
+.ctl-button.research-followup:hover {
+  background: rgba(56, 189, 248, 0.2);
+}
+
 /* 🌱 Reset tree: a compact colorless chip at the tray header's right edge. */
 .ctl-button.research-reset {
   margin-left: auto;

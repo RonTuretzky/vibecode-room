@@ -536,6 +536,28 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
     [actOnResearch],
   );
 
+  // ↳ Spawn a dossier's follow-up question as its own quest (child crystal).
+  const researchFollowUp = useCallback(
+    async (id: string, index: number) => {
+      if (!liveMode || mockModeRef.current) {
+        return;
+      }
+      try {
+        const response = await fetch(`/api/research/${encodeURIComponent(id)}/followup`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ index }),
+        });
+        if (response.ok && response.headers.get("content-type")?.includes("application/json")) {
+          setSnapshot((await response.json()) as ProjectorSnapshot);
+        }
+      } catch {
+        // Non-authoritative projector: a failed POST must never block the UI.
+      }
+    },
+    [liveMode],
+  );
+
   // 🌱 Reset the research tree: full clean slate server-side (vine, crystals,
   // dossiers). The returned snapshot repaints the wall in one hop.
   const resetResearchTree = useCallback(async () => {
@@ -1740,6 +1762,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
               onAccept={(id) => void actOnResearch(id, "accept")}
               onDismiss={(id) => void actOnResearch(id, "dismiss")}
               onOpenDeck={(id) => setResearchDeckId(id)}
+              onFollowUp={(id, index) => void researchFollowUp(id, index)}
               onReset={() => void resetResearchTree()}
             />
           ) : null}

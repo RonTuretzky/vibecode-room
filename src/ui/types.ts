@@ -119,6 +119,15 @@ export interface ResearchTrayItem {
   sourceCount: number;
   biasCount: number;
   verdicts?: { supported: number; refuted: number; mixed: number; unverified: number };
+  // Live findings (capped): the synthesized DRAFT while verification runs
+  // (draft=true), the fact-checked set once complete.
+  findings?: { claim: string; verdict: "supported" | "refuted" | "mixed" | "unverified" }[];
+  draft?: boolean;
+  // Follow-up questions from the completed dossier — each is one click away
+  // from spawning its own research (POST /api/research/:id/followup).
+  followUps?: string[];
+  // Honest degradation notes ("fact-check pass failed — findings unverified").
+  degraded?: string[];
   // The dossier slideshow URL once complete (GET /api/research/:id/deck).
   deckUrl?: string | null;
   error?: string;

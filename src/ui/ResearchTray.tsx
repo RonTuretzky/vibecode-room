@@ -17,6 +17,8 @@ export interface ResearchTrayProps {
   onAccept: (id: string) => void;
   onDismiss: (id: string) => void;
   onOpenDeck: (id: string) => void;
+  // Spawn a completed dossier's follow-up question as its own quest.
+  onFollowUp?: (id: string, index: number) => void;
   // Full research-tree reset (vine + crystals + dossiers). Absent = no chip.
   onReset?: () => void;
 }
@@ -27,7 +29,14 @@ const KIND_GLYPH: Record<ResearchTrayItem["kind"], string> = {
   "bias-scan": "⚖",
 };
 
-export function ResearchTray({ quests, thinking = false, onAccept, onDismiss, onOpenDeck, onReset }: ResearchTrayProps) {
+const VERDICT_GLYPH: Record<"supported" | "refuted" | "mixed" | "unverified", string> = {
+  supported: "✓",
+  refuted: "✗",
+  mixed: "≈",
+  unverified: "?",
+};
+
+export function ResearchTray({ quests, thinking = false, onAccept, onDismiss, onOpenDeck, onFollowUp, onReset }: ResearchTrayProps) {
   return (
     <section className="research-tray" data-testid="research-tray" aria-label="Research tray">
       <div className="rail-title-row">
@@ -64,7 +73,7 @@ export function ResearchTray({ quests, thinking = false, onAccept, onDismiss, on
       ) : (
         <div className="research-tray-items">
           {quests.map((quest) => (
-            <ResearchCard key={quest.id} quest={quest} onAccept={onAccept} onDismiss={onDismiss} onOpenDeck={onOpenDeck} />
+            <ResearchCard key={quest.id} quest={quest} onAccept={onAccept} onDismiss={onDismiss} onOpenDeck={onOpenDeck} onFollowUp={onFollowUp} />
           ))}
         </div>
       )}
@@ -77,11 +86,13 @@ function ResearchCard({
   onAccept,
   onDismiss,
   onOpenDeck,
+  onFollowUp,
 }: {
   quest: ResearchTrayItem;
   onAccept: (id: string) => void;
   onDismiss: (id: string) => void;
   onOpenDeck: (id: string) => void;
+  onFollowUp?: (id: string, index: number) => void;
 }) {
   return (
     <article
@@ -118,6 +129,24 @@ function ResearchCard({
           <span className="research-progress-label">{quest.progressLabel || "researching"}</span>
         </div>
       ) : null}
+      {/* Live findings: the synthesized DRAFT while verification runs, the
+          fact-checked set once complete. Verdict glyph per line. */}
+      {quest.findings !== undefined && quest.findings.length > 0 ? (
+        <ul className="research-findings" data-testid="research-findings" data-draft={quest.draft === true ? "true" : "false"}>
+          {quest.draft === true ? <li className="research-finding-draft-note">draft findings — verification running…</li> : null}
+          {quest.findings.map((finding, index) => (
+            <li key={index} className={`research-finding verdict-${finding.verdict}`}>
+              <span className="research-finding-verdict">{VERDICT_GLYPH[finding.verdict]}</span> {finding.claim}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {/* Honesty surface: a degraded pass is SAID, never silent. */}
+      {quest.degraded !== undefined && quest.degraded.length > 0 ? (
+        <p className="research-degraded" data-testid="research-degraded">
+          ⚠ {quest.degraded.join(" · ")}
+        </p>
+      ) : null}
       {quest.status === "complete" ? (
         <p className="research-item-result" data-testid="research-result">
           {verdictSummary(quest)} · {quest.sourceCount} source{quest.sourceCount === 1 ? "" : "s"}
@@ -126,6 +155,24 @@ function ResearchCard({
       ) : null}
       {quest.status === "failed" && quest.error !== undefined ? (
         <p className="research-item-error">{quest.error}</p>
+      ) : null}
+      {/* Open questions from the dossier — each one click from becoming its
+          own quest (a child crystal budding beside this one). */}
+      {quest.followUps !== undefined && quest.followUps.length > 0 && onFollowUp !== undefined ? (
+        <div className="research-followups" data-testid="research-followups">
+          {quest.followUps.map((followUp, index) => (
+            <button
+              key={index}
+              type="button"
+              className="ctl-button research-followup"
+              data-testid="research-followup-button"
+              onClick={() => onFollowUp(quest.id, index)}
+              title="Research this follow-up question — it becomes its own crystal."
+            >
+              ↳ {followUp}
+            </button>
+          ))}
+        </div>
       ) : null}
       <div className="research-item-actions">
         {quest.status === "proposed" ? (
