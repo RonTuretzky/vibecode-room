@@ -393,3 +393,22 @@ describe("ResearchLoop full reset (the wall's 🌱 button)", () => {
     expect(loop.turns().length).toBe(1);
   });
 });
+
+describe("topic-context grounding", () => {
+  test("a direct turn click carries the whole concept branch as context", () => {
+    const loop = makeLoop();
+    loop.setActive(true);
+    // Distinct speakers defeat coalescing; shared vocabulary clusters them.
+    loop.ingestTurn({ speaker: "s1", text: "vending machines could take crypto payments", atMs: 1 });
+    loop.ingestTurn({ speaker: "s2", text: "crypto payments would cut vending machine fees", atMs: 60_000 });
+    const turnId = loop.turns()[1]!.id;
+    const spawned = loop.researchTurn(turnId)!;
+    expect(spawned.contextTurns!.length).toBeGreaterThanOrEqual(1);
+    expect(spawned.contextTurns!.some((turn) => turn.text.includes("cut vending machine fees"))).toBe(true);
+    // When both turns clustered into one topic, the sibling rides along too.
+    if (loop.topics().length === 1) {
+      expect(spawned.contextTurns!.length).toBe(2);
+      expect(spawned.topicLabel).toBe(loop.topics()[0]!.label);
+    }
+  });
+});

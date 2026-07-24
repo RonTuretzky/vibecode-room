@@ -98,6 +98,12 @@ export interface ResearchQuest {
   rationale: string;
   confidence: number;
   contextSpan: ContextSpan;
+  // TOPIC CONTEXT: the grounding turn's whole concept branch (verbatim member
+  // turns, capped) + its inferred label — the agent researches the thread the
+  // room actually had, not one utterance out of context. Absent when the
+  // concept tree has no branch for the turn yet.
+  contextTurns?: { id: string; speaker: string | null; text: string }[];
+  topicLabel?: string | null;
   status: ResearchQuestStatus;
   // Live agent progress while researching (0–100 + a human stage label).
   progress: number;
@@ -129,6 +135,9 @@ export interface ResearchSuggestInput {
   // The rolling window of turns (chronological) — same shape idea detection uses.
   turns: TranscriptTurn[];
   known: KnownQuest[];
+  // The concept clustering over the window ({label, turnIds}) so the model
+  // proposes research per coherent topic instead of per stray fragment.
+  topics?: { label: string; turnIds: string[] }[];
 }
 
 export interface ResearchSuggester {

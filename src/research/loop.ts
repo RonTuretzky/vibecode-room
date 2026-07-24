@@ -76,6 +76,9 @@ const NEAR_DUPE_JACCARD = 0.6;
 // …and weak proposals decay on a shorter leash than confident ones.
 const WEAK_CONFIDENCE = 0.55;
 const WEAK_STALE_MISSED_ROUNDS = 3;
+// Topic context handed to the research agent: bounded so prompts stay sane.
+const CONTEXT_MAX_TURNS = 8;
+const CONTEXT_MAX_CHARS = 1_200;
 
 interface RunningQuest {
   controller: AbortController;
@@ -255,6 +258,8 @@ export class ResearchLoop {
         known: [...this.#quests.values()]
           .filter((quest) => quest.status === "proposed" || quest.status === "researching")
           .map((quest) => ({ id: quest.id, kind: quest.kind, topic: quest.topic, claim: quest.claim })),
+        // Concept structure so the model reasons per topic, not per fragment.
+        topics: this.#tree.topics().map((topic) => ({ label: topic.label, turnIds: [...topic.turnIds] })),
       })
       .then((suggestions) => {
         if (suggestions.length === 0) {
@@ -356,6 +361,7 @@ export class ResearchLoop {
       if (this.#proposedCount() >= this.#maxProposed) {
         continue;
       }
+      const grounding = this.#contextForTurn(suggestion.contextSpan.endTurnId);
       const quest: ResearchQuest = {
         id: `rq-${this.#idFactory()}`,
         kind: suggestion.kind,
@@ -364,6 +370,8 @@ export class ResearchLoop {
         rationale: suggestion.rationale,
         confidence: clamp01(suggestion.confidence),
         contextSpan: { ...suggestion.contextSpan },
+        contextTurns: grounding.contextTurns,
+        topicLabel: grounding.topicLabel,
         status: "proposed",
         progress: 0,
         progressLabel: "",
@@ -402,6 +410,26 @@ export class ResearchLoop {
     if (changed) {
       this.#emit();
     }
+  }
+
+  // TOPIC CONTEXT for a quest: the grounding turn's concept branch — its
+  // inferred label plus the member turns verbatim (newest-biased, capped so
+  // agent prompts stay bounded). Null label + lone turn when unclustered.
+  #contextForTurn(turnId: string): { contextTurns: { id: string; speaker: string | null; text: string }[]; topicLabel: string | null } {
+    const topic = this.#tree.topics().find((candidate) => candidate.turnIds.includes(turnId));
+    const memberIds = new Set(topic?.turnIds ?? [turnId]);
+    const members = this.#turns.filter((turn) => memberIds.has(turn.id));
+    // Newest-biased cap: keep the freshest CONTEXT_MAX_TURNS, chronological.
+    const capped = members.slice(-CONTEXT_MAX_TURNS);
+    let budget = CONTEXT_MAX_CHARS;
+    const contextTurns: { id: string; speaker: string | null; text: string }[] = [];
+    for (let index = capped.length - 1; index >= 0 && budget > 0; index -= 1) {
+      const turn = capped[index]!;
+      const text = turn.text.slice(0, Math.max(0, budget));
+      budget -= text.length;
+      contextTurns.unshift({ id: turn.id, speaker: turn.speaker, text });
+    }
+    return { contextTurns, topicLabel: topic?.label ?? null };
   }
 
   // A quote is grounded when it (normalized) appears inside some window turn,
@@ -583,14 +611,20 @@ export class ResearchLoop {
       contextSpan: { startTurnId: turn.id, endTurnId: turn.id, quote: text.slice(0, 180) },
     };
     const nowMs = this.#clock();
+    // The click's real power: the whole concept branch rides along, so a tap
+    // on a turn (or a branch-tip label routing its freshest turn) researches
+    // the THREAD, not one fragment. Topic label upgrades the crystal's title.
+    const grounding = this.#contextForTurn(turn.id);
     const quest: ResearchQuest = {
       id: `rq-${this.#idFactory()}`,
       kind: suggestion.kind,
-      topic: suggestion.topic,
+      topic: grounding.topicLabel ?? suggestion.topic,
       claim: suggestion.claim,
       rationale: suggestion.rationale,
       confidence: clamp01(Math.max(suggestion.confidence, 0.75)),
       contextSpan: { ...suggestion.contextSpan },
+      contextTurns: grounding.contextTurns,
+      topicLabel: grounding.topicLabel,
       status: "proposed",
       progress: 0,
       progressLabel: "",

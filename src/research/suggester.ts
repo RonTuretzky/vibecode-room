@@ -78,8 +78,13 @@ export function buildSuggestPrompt(input: ResearchSuggestInput): string {
     "An empty array [] is valid when the turns are pure small talk.",
     "",
     `conversationTurns: ${JSON.stringify(turns)}`,
+    // The concept clustering over the window: propose research per coherent
+    // TOPIC (span the topic's turns in contextSpan), never per stray fragment.
+    (input.topics?.length ?? 0) > 0 ? `conversationTopics: ${JSON.stringify(input.topics)}` : "",
     `knownQuests: ${JSON.stringify(known)}`,
-  ].join("\n");
+  ]
+    .filter((line) => line.length > 0)
+    .join("\n");
 }
 
 // Parse model output that may be wrapped in prose/fences: take the outermost

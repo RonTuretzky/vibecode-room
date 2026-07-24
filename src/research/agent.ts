@@ -89,6 +89,7 @@ export function researchPrompt(quest: ResearchQuest): string {
     `Topic: ${quest.topic}`,
     `The claim/question to research: ${quest.claim}`,
     quest.contextSpan.quote.length > 0 ? `Heard in the room as: "${quest.contextSpan.quote}"` : "",
+    conversationContext(quest),
     "Requirements:",
     "- Break the material into 2-6 specific findings, each with a verdict: supported / refuted / mixed / unverified.",
     "- Cite 3-8 sources with REAL urls; prefer primary sources and name each publisher.",
@@ -108,9 +109,25 @@ export function factCheckPrompt(quest: ResearchQuest, report: ResearchReport): s
     "- Correct explanations, fix or add sources (real urls only), and drop findings that are not actually about the claim.",
     "- Keep the same JSON shape; keep biasNotes as-is.",
     `The claim under research: ${quest.claim}`,
+    conversationContext(quest),
     `Report to verify: ${JSON.stringify(report)}`,
     `Respond with ONLY the corrected JSON object matching exactly: ${REPORT_SHAPE}`,
-  ].join("\n");
+  ]
+    .filter((line) => line.length > 0)
+    .join("\n");
+}
+
+// The grounding turn's whole concept branch, verbatim — so the agent
+// researches the thread the room actually had, not one utterance stripped of
+// its qualifiers. Empty string when the quest carries no topic context.
+function conversationContext(quest: ResearchQuest): string {
+  const turns = quest.contextTurns ?? [];
+  if (turns.length === 0) {
+    return "";
+  }
+  const label = quest.topicLabel ? ` (topic: ${quest.topicLabel})` : "";
+  const lines = turns.map((turn) => `- ${turn.speaker ?? "room"}: ${turn.text}`);
+  return [`Conversation context${label} — the thread this came from, verbatim:`, ...lines].join("\n");
 }
 
 export function biasPrompt(quest: ResearchQuest, report: ResearchReport): string {
