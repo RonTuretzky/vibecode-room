@@ -316,7 +316,7 @@ describe("help overlay", () => {
   test("lists the full keyboard map and the voice command set", () => {
     const html = renderToStaticMarkup(<HelpOverlay onClose={() => {}} />);
     expect(html).toContain('data-testid="help-overlay"');
-    for (const key of ["1–9", "Enter / b", "x", "c", "a", "k", "m", "u", "q", "? / h", "Shift+E", "Esc"]) {
+    for (const key of ["1–9", "Enter / b", "x", "c", "W A S D", "Shift+A", "k", "m", "u", "q", "? / h", "Shift+E", "Esc"]) {
       expect(html).toContain(`<kbd>${key}</kbd>`);
     }
     expect(html).toContain("Vibersyn, build it");

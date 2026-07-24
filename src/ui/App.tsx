@@ -6,7 +6,7 @@ import { GestureLayer } from "./gesture/GestureLayer";
 import { PinchCameraLayer } from "./gesture/PinchCameraLayer";
 import { HandSkeletonHud } from "./gesture/HandSkeletonHud";
 import type { HandsStatus } from "./gesture/hands-client";
-import { RoomScene, type DialogueNodeSpec, type IdeaOrbSpec, type ResearchNodeSpec, type SceneLayout, type SceneMode, type TreeSpec } from "./RoomScene";
+import { RoomScene, type DialogueNodeSpec, type DialogueTopicSpec, type IdeaOrbSpec, type ResearchNodeSpec, type SceneLayout, type SceneMode, type TreeSpec } from "./RoomScene";
 import { Slideshow } from "./Slideshow";
 import { BuildDetail } from "./BuildDetail";
 import { IdeaTray } from "./IdeaTray";
@@ -1044,8 +1044,8 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
 
   // --- Keyboard: the primary desk-mode control surface (SSR-guarded) ---
   // 1–9 select/steer · b/Enter build top idea · x dismiss · c/m mic+capture
-  // (one control) · a auto-build · u unmute · q QR · ?/h help · k halt
-  // selected · Shift+E emergency · Esc close.
+  // (one control) · Shift+A auto-build (plain a/w/s/d = scene WASD walk) ·
+  // u unmute · q QR · ?/h help · k halt selected · Shift+E emergency · Esc close.
   useEffect(() => {
     if (typeof window === "undefined") {
       return;
@@ -1153,7 +1153,9 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
           // Both legacy keys drive the MERGED mic+capture control.
           void toggleMicCapture();
           return;
-        case "a":
+        // Shift+A: plain "a" is now WASD strafe-left in the 3D scene, so the
+        // Auto-Build toggle takes a deliberate chord (mnemonic preserved).
+        case "A":
           void toggleAutoAccept();
           return;
         case "r":
@@ -1340,6 +1342,11 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
     () => (showResearch ? (snapshot.dialogue ?? []) : []),
     [showResearch, snapshot.dialogue],
   );
+  // Concept clusters over the dialogue window: the tree's topic BRANCHES.
+  const topicSpecs = useMemo<DialogueTopicSpec[]>(
+    () => (showResearch ? (snapshot.dialogueTopics ?? []) : []),
+    [showResearch, snapshot.dialogueTopics],
+  );
   const researchSpecs = useMemo<ResearchNodeSpec[]>(
     () =>
       showResearch
@@ -1453,6 +1460,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
         onAcceptIdea={acceptOrb}
         onSelectProcess={selectSceneProcess}
         dialogue={dialogueSpecs}
+        topics={topicSpecs}
         research={researchSpecs}
         onResearchNode={onResearchNode}
         onDialogueNode={(turnId) => void onDialogueNode(turnId)}

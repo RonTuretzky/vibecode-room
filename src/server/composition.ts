@@ -51,6 +51,7 @@ import {
   renderResearchDeckHtml,
   selectResearchAgent,
   selectResearchSuggester,
+  type ConceptTree,
   type DeckSource,
   type ResearchAgent,
   type ResearchSuggester,
@@ -357,6 +358,10 @@ export interface ProjectorRuntimeOptions {
   // search); tests inject deterministic fakes so no model spawns.
   researchSuggester?: ResearchSuggester;
   researchAgent?: ResearchAgent;
+  // Concept-topic clustering seam (research/tree.ts). Tests inject a
+  // heuristic-only tree (model: null); production defaults to the loop's own
+  // tree with the bounded Cerebras refiner.
+  researchConceptTree?: ConceptTree;
 }
 
 export async function createProjectorRuntime(
@@ -1014,6 +1019,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       sessionId,
       suggester: options.researchSuggester ?? selectResearchSuggester(env).suggester,
       agent: options.researchAgent ?? selectResearchAgent(env).agent,
+      conceptTree: options.researchConceptTree,
       clock,
       onUpdate: () => this.publish(),
       onTrace: (event) =>
@@ -2774,6 +2780,9 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       researchThinking: this.research.thinking(),
       research: this.researchSnapshot(),
       dialogue: this.dialogueSnapshot(),
+      // Concept clusters over the dialogue window — each topic a BRANCH of the
+      // 3D conversation tree (turns point back via topicId).
+      dialogueTopics: this.research.topics(),
       ideaSettle: this.ideaSettleSnapshot(),
       // Multi-backend build loop: the registered backend roster with enabled +
       // last-probed availability — the wall's toggle chips (POST /api/backends).
@@ -2800,12 +2809,21 @@ class LiveProjectorRuntime implements ProjectorRuntime {
 
   // The dialogue window mirrors the transcript region (persists across mute)
   // but is id-addressable so research quests anchor to their grounding turn.
+  // Each turn carries its concept-topic id so the tree can hang it on the
+  // right branch (dialogueTopics is the branch list itself).
   private dialogueSnapshot(): DialogueTurn[] {
+    const topicByTurn = new Map<string, string>();
+    for (const topic of this.research.topics()) {
+      for (const turnId of topic.turnIds) {
+        topicByTurn.set(turnId, topic.id);
+      }
+    }
     return this.research.turns().map((turn) => ({
       id: turn.id,
       speaker: turn.speaker,
       text: turn.text,
       atMs: turn.atMs,
+      topicId: topicByTurn.get(turn.id) ?? null,
     }));
   }
 

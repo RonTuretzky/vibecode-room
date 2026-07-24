@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { ResearchLoop, type ResearchLoopOptions } from "./loop";
+import { ConceptTree } from "./tree";
 import type { ResearchAgent, ResearchReport, ResearchSuggester, ResearchSuggestion } from "./types";
 
 function suggestion(overrides: Partial<ResearchSuggestion> = {}): ResearchSuggestion {
@@ -63,6 +64,8 @@ function makeLoop(overrides: Partial<ResearchLoopOptions> = {}): ResearchLoop {
     clock: overrides.clock ?? (() => (clock += 100)),
     minRoundIntervalMs: 0,
     newWordsThreshold: 1,
+    // Heuristic-only clustering: no debounce timers, no model calls in tests.
+    conceptTree: new ConceptTree({ model: null }),
     ...overrides,
   });
 }
@@ -71,7 +74,8 @@ describe("ResearchLoop dialogue window", () => {
   test("ingested turns get stable ids and respect the window cap", () => {
     const loop = makeLoop({ windowTurns: 3 });
     for (let index = 0; index < 5; index += 1) {
-      loop.ingestTurn({ speaker: "s1", text: `turn ${index}`, atMs: index });
+      // Spaced past the coalesce gap so each ingest is its own turn.
+      loop.ingestTurn({ speaker: "s1", text: `turn ${index}`, atMs: index * 10_000 });
     }
     const turns = loop.turns();
     expect(turns).toHaveLength(3);
@@ -261,5 +265,104 @@ describe("ResearchLoop direct turn research", () => {
     loop.ingestTurn({ speaker: "s1", text: "a checkable claim with the number 42 in it", atMs: 1 });
     const turnId = loop.turns()[0]!.id;
     expect(loop.researchTurn(turnId)).toBeNull();
+  });
+});
+
+describe("ResearchLoop fragment coalescing", () => {
+  test("same-speaker fragments inside the gap grow the newest turn in place", () => {
+    const loop = makeLoop();
+    const first = loop.ingestTurn({ speaker: "s1", text: "we could build a", atMs: 1_000 });
+    const merged = loop.ingestTurn({ speaker: "s1", text: "vending machine that takes crypto", atMs: 3_000 });
+    expect(merged.id).toBe(first.id);
+    expect(loop.turns()).toHaveLength(1);
+    expect(loop.turns()[0]!.text).toBe("we could build a vending machine that takes crypto");
+    // atMs stays at the FIRST fragment — the turn's position in time is where
+    // the utterance started.
+    expect(loop.turns()[0]!.atMs).toBe(1_000);
+  });
+
+  test("speaker change, long gaps, and full turns all break the merge", () => {
+    const loop = makeLoop({ coalesceMaxWords: 5 });
+    loop.ingestTurn({ speaker: "s1", text: "first fragment here", atMs: 1_000 });
+    loop.ingestTurn({ speaker: "s2", text: "different speaker", atMs: 2_000 });
+    expect(loop.turns()).toHaveLength(2); // speaker change → new turn
+    loop.ingestTurn({ speaker: "s2", text: "way later", atMs: 20_000 });
+    expect(loop.turns()).toHaveLength(3); // > gap → new turn
+    loop.ingestTurn({ speaker: "s2", text: "one two three four five", atMs: 21_000 });
+    expect(loop.turns()).toHaveLength(3); // still under the word cap → merged
+    loop.ingestTurn({ speaker: "s2", text: "overflow", atMs: 22_000 });
+    expect(loop.turns()).toHaveLength(4); // newest turn is full → new turn
+  });
+
+  test("continuous speech merges by LAST-growth freshness, not first-fragment atMs", () => {
+    const loop = makeLoop();
+    loop.ingestTurn({ speaker: "s1", text: "started talking", atMs: 0 });
+    loop.ingestTurn({ speaker: "s1", text: "still going", atMs: 5_000 });
+    // 10s after the first fragment but only 5s after the last — same utterance.
+    loop.ingestTurn({ speaker: "s1", text: "and going", atMs: 10_000 });
+    expect(loop.turns()).toHaveLength(1);
+  });
+
+  test("coalesced words still count toward the suggestion cadence", async () => {
+    const suggester = new ScriptedSuggester([[suggestion()]]);
+    const loop = makeLoop({ suggester, newWordsThreshold: 6 });
+    loop.setActive(true);
+    loop.ingestTurn({ speaker: "s1", text: "three little words", atMs: 1_000 });
+    await loop.flush();
+    expect(suggester.calls).toBe(0); // 3 words < threshold
+    loop.ingestTurn({ speaker: "s1", text: "and three more", atMs: 2_000 });
+    await loop.flush();
+    expect(suggester.calls).toBe(1); // merged, but 6 spoken words → round fires
+  });
+
+  test("quest turn anchors survive coalescing growth", async () => {
+    const loop = makeLoop();
+    loop.setActive(true);
+    loop.ingestTurn({ speaker: "s1", text: "how much money would vending machines save by using crypto", atMs: 1_000 });
+    const turnId = loop.turns()[0]!.id;
+    const quest = loop.researchTurn(turnId)!;
+    expect(quest.contextSpan.startTurnId).toBe(turnId);
+    loop.ingestTurn({ speaker: "s1", text: "asking for a friend", atMs: 2_000 });
+    // The anchor turn GREW but kept its id — the quest still resolves it.
+    expect(loop.turns()).toHaveLength(1);
+    expect(loop.turns()[0]!.id).toBe(turnId);
+    expect(loop.quest(quest.id)!.contextSpan.startTurnId).toBe(turnId);
+    await Bun.sleep(0); // let the instant agent settle before teardown
+  });
+});
+
+describe("ResearchLoop concept topics", () => {
+  test("loop.topics() surfaces the heuristic clustering with turn membership", () => {
+    const loop = makeLoop();
+    loop.ingestTurn({ speaker: "s1", text: "vending machines accept crypto payments", atMs: 1_000 });
+    loop.ingestTurn({ speaker: "s2", text: "kabul weather looks snowy tonight", atMs: 2_000 });
+    loop.ingestTurn({ speaker: "s1", text: "crypto payments make vending machines cheaper", atMs: 20_000 });
+    const topics = loop.topics();
+    expect(topics).toHaveLength(2);
+    expect(topics[0]!.turnIds).toEqual(["rturn-0001", "rturn-0003"]);
+    expect(topics[1]!.turnIds).toEqual(["rturn-0002"]);
+    expect(topics[0]!.freshAtMs).toBe(20_000);
+  });
+
+  test("coalescing growth re-scores the merged turn's topic", () => {
+    const loop = makeLoop();
+    loop.ingestTurn({ speaker: "s1", text: "solar panels power the roof", atMs: 1_000 });
+    loop.ingestTurn({ speaker: "s2", text: "cats", atMs: 2_000 });
+    expect(loop.topics()).toHaveLength(2);
+    // The cats turn grows into solar-panel territory → it moves branches.
+    loop.ingestTurn({ speaker: "s2", text: "sleep on warm solar panels", atMs: 3_000 });
+    const topics = loop.topics();
+    expect(topics).toHaveLength(1);
+    expect(topics[0]!.turnIds).toEqual(["rturn-0001", "rturn-0002"]);
+  });
+
+  test("topics never outlive the rolling window", () => {
+    const loop = makeLoop({ windowTurns: 2 });
+    loop.ingestTurn({ speaker: "s1", text: "alpha rocket engines", atMs: 0 });
+    loop.ingestTurn({ speaker: "s1", text: "pasta cooking tips", atMs: 10_000 });
+    loop.ingestTurn({ speaker: "s1", text: "gardening in winter", atMs: 20_000 });
+    const topics = loop.topics();
+    const surfaced = topics.flatMap((topic) => topic.turnIds);
+    expect(surfaced.sort()).toEqual(["rturn-0002", "rturn-0003"]);
   });
 });

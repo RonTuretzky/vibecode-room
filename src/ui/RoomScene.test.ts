@@ -1,5 +1,19 @@
 import { describe, expect, test } from "bun:test";
-import { stageWord, treeIndicators, treeStatus, treeTitle, type TreeSpec } from "./RoomScene";
+import {
+  dialogueBranchLength,
+  dialogueBranchPoint,
+  dialogueBranches,
+  dialogueLeafPosition,
+  dialogueLeafT,
+  dialogueTrunkHeight,
+  stageWord,
+  treeIndicators,
+  treeStatus,
+  treeTitle,
+  type DialogueNodeSpec,
+  type DialogueTopicSpec,
+  type TreeSpec,
+} from "./RoomScene";
 
 // A minimal legacy TreeSpec: only the fields callers set before the richer
 // indicators existed. Every new field is left absent to prove back-compat.
@@ -102,5 +116,124 @@ describe("tree label helpers", () => {
   test("treeTitle prefers the inferred task, falling back to the callsign", () => {
     expect(treeTitle(baseSpec({ task: "Blocker announcer" }))).toBe("Blocker announcer");
     expect(treeTitle(baseSpec({ task: "" }))).toBe("Atlas");
+  });
+});
+
+// ── the conversation tree layout ────────────────────────────────────────────
+
+function turn(id: string, topicId?: string | null): DialogueNodeSpec {
+  return { id, speaker: "speaker-1", text: `text of ${id}`, atMs: 0, topicId };
+}
+
+function topic(id: string, turnIds: string[] = []): DialogueTopicSpec {
+  return { id, label: `label ${id}`, turnIds, freshAtMs: 0 };
+}
+
+describe("dialogueBranches — topic grouping with the never-vanish fallback", () => {
+  test("groups turns under their topicId in window order", () => {
+    const branches = dialogueBranches(
+      [turn("t1", "a"), turn("t2", "b"), turn("t3", "a")],
+      [topic("a"), topic("b")],
+    );
+    expect(branches.map((branch) => branch.topicId)).toEqual(["a", "b"]);
+    expect(branches[0].turnIds).toEqual(["t1", "t3"]);
+    expect(branches[1].turnIds).toEqual(["t2"]);
+  });
+
+  test("honors the topic's turnIds when the turn carries no topicId", () => {
+    const branches = dialogueBranches([turn("t1"), turn("t2")], [topic("a", ["t2"])]);
+    expect(branches.find((branch) => branch.topicId === "a")?.turnIds).toEqual(["t2"]);
+    expect(branches.find((branch) => branch.topicId === null)?.turnIds).toEqual(["t1"]);
+  });
+
+  test("unmatched turns (unknown topicId) fall to a single fallback branch", () => {
+    const branches = dialogueBranches([turn("t1", "ghost"), turn("t2", "ghost")], [topic("a")]);
+    const fallback = branches[branches.length - 1];
+    expect(fallback.topicId).toBeNull();
+    expect(fallback.turnIds).toEqual(["t1", "t2"]);
+  });
+
+  test("no topics at all (server degraded) → one fallback branch holds every turn", () => {
+    const branches = dialogueBranches([turn("t1"), turn("t2"), turn("t3")], []);
+    expect(branches).toHaveLength(1);
+    expect(branches[0].topicId).toBeNull();
+    expect(branches[0].turnIds).toEqual(["t1", "t2", "t3"]);
+  });
+
+  test("every windowed turn lands on exactly one branch", () => {
+    const turns = [turn("t1", "a"), turn("t2"), turn("t3", "nope"), turn("t4", "b")];
+    const branches = dialogueBranches(turns, [topic("a"), topic("b", ["t2"])]);
+    const placed = branches.flatMap((branch) => branch.turnIds);
+    expect([...placed].sort()).toEqual(["t1", "t2", "t3", "t4"]);
+    expect(placed).toHaveLength(new Set(placed).size);
+  });
+
+  test("empty in, empty out — the tree costs nothing when research is off", () => {
+    expect(dialogueBranches([], [])).toEqual([]);
+  });
+});
+
+describe("conversation tree layout math", () => {
+  test("trunk height scales gently with topic count, clamped to ~4-9", () => {
+    expect(dialogueTrunkHeight(0)).toBe(4);
+    expect(dialogueTrunkHeight(3)).toBeGreaterThan(dialogueTrunkHeight(1));
+    expect(dialogueTrunkHeight(50)).toBe(9);
+  });
+
+  test("branch length grows with membership and caps out", () => {
+    expect(dialogueBranchLength(1)).toBe(3.2);
+    expect(dialogueBranchLength(8)).toBeGreaterThan(dialogueBranchLength(4));
+    expect(dialogueBranchLength(100)).toBe(7.5);
+  });
+
+  test("branches attach to the trunk axis and curve outward + upward", () => {
+    const h = dialogueTrunkHeight(3);
+    const root = dialogueBranchPoint(1, 3, h, 4, 0);
+    // t=0 sits ON the trunk axis, above the meadow and below the crown.
+    expect(Math.hypot(root.x, root.z)).toBeLessThan(1e-9);
+    expect(root.y).toBeGreaterThan(0);
+    expect(root.y).toBeLessThan(h);
+    // Outward reach and height both rise monotonically along the branch.
+    let lastRadial = 0;
+    let lastY = root.y;
+    for (const t of [0.25, 0.5, 0.75, 1]) {
+      const p = dialogueBranchPoint(1, 3, h, 4, t);
+      const radial = Math.hypot(p.x, p.z);
+      expect(radial).toBeGreaterThan(lastRadial);
+      expect(p.y).toBeGreaterThan(lastY);
+      lastRadial = radial;
+      lastY = p.y;
+    }
+    expect(lastRadial).toBeCloseTo(4, 5);
+  });
+
+  test("oldest topic attaches lowest; golden-angle azimuths separate branches", () => {
+    const h = dialogueTrunkHeight(3);
+    const first = dialogueBranchPoint(0, 3, h, 4, 0);
+    const last = dialogueBranchPoint(2, 3, h, 4, 0);
+    expect(first.y).toBeLessThan(last.y);
+    const tipA = dialogueBranchPoint(0, 3, h, 4, 1);
+    const tipB = dialogueBranchPoint(1, 3, h, 4, 1);
+    expect(tipA.distanceTo(tipB)).toBeGreaterThan(2);
+  });
+
+  test("leaves order along the branch by recency, newest nearest the tip", () => {
+    let last = 0;
+    for (let j = 0; j < 5; j += 1) {
+      const t = dialogueLeafT(j, 5);
+      expect(t).toBeGreaterThan(last);
+      expect(t).toBeLessThan(1);
+      last = t;
+    }
+  });
+
+  test("alternating leaf offsets keep neighbors separated", () => {
+    const h = dialogueTrunkHeight(2);
+    const len = dialogueBranchLength(6);
+    for (let j = 0; j < 5; j += 1) {
+      const a = dialogueLeafPosition(0, 2, h, len, j, 6);
+      const b = dialogueLeafPosition(0, 2, h, len, j + 1, 6);
+      expect(a.distanceTo(b)).toBeGreaterThan(0.5);
+    }
   });
 });

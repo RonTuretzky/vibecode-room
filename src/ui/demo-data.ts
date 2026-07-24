@@ -140,11 +140,18 @@ export const demoProjectorSnapshot: ProjectorSnapshot = {
   // (garden + idea surfaces); flipping 🔍 Research reveals these fixtures.
   researchMode: false,
   dialogue: [
-    { id: "rturn-0001", speaker: "speaker-1", text: "The standup notes keep losing blockers.", atMs: 1750096800000 },
-    { id: "rturn-0002", speaker: "speaker-2", text: "I read that most remote teams miss half their blockers in async standups.", atMs: 1750096815000 },
-    { id: "rturn-0003", speaker: "speaker-1", text: "We could turn the meeting notes into a blocker announcer.", atMs: 1750096832000 },
-    { id: "rturn-0004", speaker: "speaker-3", text: "How do other tools handle surfacing blockers automatically?", atMs: 1750096851000 },
-    { id: "rturn-0005", speaker: "speaker-2", text: "Apparently the biggest standup tools all pivoted away from daily meetings entirely.", atMs: 1750096870000 },
+    { id: "rturn-0001", speaker: "speaker-1", text: "The standup notes keep losing blockers.", atMs: 1750096800000, topicId: "rtopic-blockers" },
+    { id: "rturn-0002", speaker: "speaker-2", text: "I read that most remote teams miss half their blockers in async standups.", atMs: 1750096815000, topicId: "rtopic-async" },
+    { id: "rturn-0003", speaker: "speaker-1", text: "We could turn the meeting notes into a blocker announcer.", atMs: 1750096832000, topicId: "rtopic-blockers" },
+    { id: "rturn-0004", speaker: "speaker-3", text: "How do other tools handle surfacing blockers automatically?", atMs: 1750096851000, topicId: "rtopic-tools" },
+    { id: "rturn-0005", speaker: "speaker-2", text: "Apparently the biggest standup tools all pivoted away from daily meetings entirely.", atMs: 1750096870000, topicId: "rtopic-tools" },
+  ],
+  // Concept clusters over the fixture turns: each topic grows a BRANCH of the
+  // conversation tree (oldest first → attached lowest on the trunk).
+  dialogueTopics: [
+    { id: "rtopic-blockers", label: "Standup blockers", turnIds: ["rturn-0001", "rturn-0003"], freshAtMs: 1750096832000 },
+    { id: "rtopic-async", label: "Async standup claims", turnIds: ["rturn-0002"], freshAtMs: 1750096815000 },
+    { id: "rtopic-tools", label: "Blocker tooling landscape", turnIds: ["rturn-0004", "rturn-0005"], freshAtMs: 1750096870000 },
   ],
   // Tray order mirrors the live loop contract: researching → proposed →
   // complete, so the offline demo reads the same as a live room.

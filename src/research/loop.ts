@@ -4,10 +4,12 @@
 // stays one class: the suggester/agent own the intelligence, the loop owns
 // reconciliation + lifecycle. Turns are ALWAYS ingested (the dialogue tree is
 // live data even before research mode is toggled); suggestion inference runs
-// only while the mode is active.
+// only while the mode is active. Fragment coalescing + concept topics
+// (tree.ts) keep the window utterance-shaped instead of ASR-fragment-shaped.
 
 import type { TranscriptTurn } from "../detect/types";
 import { suggestFromTurn } from "./suggester";
+import { ConceptTree, type ConceptTopic } from "./tree";
 import type {
   ResearchAgent,
   ResearchQuest,
@@ -43,6 +45,15 @@ export interface ResearchLoopOptions {
   staleMissedRounds?: number;
   // A dismissed topic is suppressed for this long so it doesn't re-pop.
   suppressMs?: number;
+  // Concept clustering over the window (tree.ts). Injectable for tests; the
+  // default tree runs the production Cerebras refiner (a clean no-op without
+  // CEREBRAS_API_KEY) and republishes through this loop when a refinement lands.
+  conceptTree?: ConceptTree;
+  // A same-speaker fragment arriving within this gap of the newest turn's last
+  // growth merges into it instead of becoming a new turn.
+  coalesceGapMs?: number;
+  // A turn at/over this many words stops absorbing fragments.
+  coalesceMaxWords?: number;
 }
 
 const DEFAULT_WINDOW_TURNS = 40;
@@ -53,6 +64,11 @@ const DEFAULT_MIN_ROUND_INTERVAL_MS = 6_000;
 const DEFAULT_NEW_WORDS_THRESHOLD = 8;
 const DEFAULT_STALE_MISSED_ROUNDS = 6;
 const DEFAULT_SUPPRESS_MS = 5 * 60_000;
+// Deepgram finalizes every few words; a same-speaker follow-up inside this gap
+// is the SAME utterance still being spoken, not a new one.
+const DEFAULT_COALESCE_GAP_MS = 6_000;
+// Past this a "turn" stops being one clickable thought — cap the merge.
+const DEFAULT_COALESCE_MAX_WORDS = 50;
 
 interface RunningQuest {
   controller: AbortController;
@@ -72,9 +88,15 @@ export class ResearchLoop {
   readonly #newWordsThreshold: number;
   readonly #staleMissedRounds: number;
   readonly #suppressMs: number;
+  readonly #tree: ConceptTree;
+  readonly #coalesceGapMs: number;
+  readonly #coalesceMaxWords: number;
 
   #turns: TranscriptTurn[] = [];
   #turnSeq = 0;
+  // When the newest turn last grew (its atMs stays at the FIRST fragment, so
+  // continuous speech needs its own freshness marker for the coalesce gap).
+  #newestFragmentAtMs = Number.NEGATIVE_INFINITY;
   readonly #quests = new Map<string, ResearchQuest>();
   readonly #running = new Map<string, RunningQuest>();
   readonly #suppressed = new Map<string, number>();
@@ -98,6 +120,11 @@ export class ResearchLoop {
     this.#newWordsThreshold = options.newWordsThreshold ?? DEFAULT_NEW_WORDS_THRESHOLD;
     this.#staleMissedRounds = options.staleMissedRounds ?? DEFAULT_STALE_MISSED_ROUNDS;
     this.#suppressMs = options.suppressMs ?? DEFAULT_SUPPRESS_MS;
+    // A model refinement changes the clustering asynchronously — republish so
+    // the wall's branches re-arrange without waiting for the next turn.
+    this.#tree = options.conceptTree ?? new ConceptTree({ onRefined: () => this.#emit() });
+    this.#coalesceGapMs = options.coalesceGapMs ?? DEFAULT_COALESCE_GAP_MS;
+    this.#coalesceMaxWords = options.coalesceMaxWords ?? DEFAULT_COALESCE_MAX_WORDS;
   }
 
   // ── mode ──────────────────────────────────────────────────────────────────
@@ -121,18 +148,47 @@ export class ResearchLoop {
   // ── dialogue window ───────────────────────────────────────────────────────
 
   // Fold one FINAL room utterance in. Returns the stable turn (with id) so the
-  // caller can correlate. Suggestion rounds kick in the background while the
-  // mode is active — never blocking the caller's transcript path.
+  // caller can correlate. Deepgram finalizes every few words, so a fragment
+  // from the SAME speaker hot on the heels of the newest turn GROWS that turn
+  // in place — same id, same atMs — instead of spawning a ball per breath.
+  // Growth-only under the original id is a hard contract: research quests
+  // anchor to turn ids (contextSpan.startTurnId) and the wall's researchTurn
+  // click path resolves them. Suggestion rounds kick in the background while
+  // the mode is active — never blocking the caller's transcript path.
   ingestTurn(input: { speaker: string | null; text: string; atMs: number }): TranscriptTurn {
+    const text = input.text.trim();
+    const newWords = countWords(text);
+    const newest = this.#turns[this.#turns.length - 1];
+    if (
+      newest !== undefined &&
+      newest.speaker === input.speaker &&
+      input.atMs - this.#newestFragmentAtMs <= this.#coalesceGapMs &&
+      countWords(newest.text) < this.#coalesceMaxWords
+    ) {
+      newest.text = `${newest.text} ${text}`;
+      this.#newestFragmentAtMs = input.atMs;
+      // The suggester cadence counts SPOKEN words, merged or not.
+      this.#wordsSinceRound += newWords;
+      this.#tree.update(newest);
+      if (this.#active) {
+        void this.maybeSuggest();
+      }
+      this.#emit();
+      return newest;
+    }
     this.#turnSeq += 1;
     const turn: TranscriptTurn = {
       id: `rturn-${String(this.#turnSeq).padStart(4, "0")}`,
       speaker: input.speaker,
-      text: input.text,
+      text,
       atMs: input.atMs,
     };
     this.#turns = [...this.#turns, turn].slice(-this.#windowTurns);
-    this.#wordsSinceRound += turn.text.split(/\s+/u).filter((word) => word.length > 0).length;
+    this.#newestFragmentAtMs = input.atMs;
+    this.#wordsSinceRound += newWords;
+    this.#tree.assign(turn);
+    // Turns the window just dropped must not haunt the topic branches.
+    this.#tree.prune(this.#turns.map((entry) => entry.id));
     if (this.#active) {
       void this.maybeSuggest();
     }
@@ -142,6 +198,12 @@ export class ResearchLoop {
 
   turns(): readonly TranscriptTurn[] {
     return this.#turns;
+  }
+
+  // Concept topics over the window, oldest-first — the snapshot's
+  // dialogueTopics (each topic a branch of the 3D conversation tree).
+  topics(): ConceptTopic[] {
+    return this.#tree.topics();
   }
 
   // ── suggestion rounds ─────────────────────────────────────────────────────
@@ -515,6 +577,10 @@ export class ResearchLoop {
   #trace(event: string, level: ResearchTraceEvent["level"], correlationId: string, meta: Record<string, unknown>): void {
     this.#onTrace?.({ event, level, correlationId, meta: { sessionId: this.#sessionId, ...meta } });
   }
+}
+
+function countWords(text: string): number {
+  return text.split(/\s+/u).filter((word) => word.length > 0).length;
 }
 
 function suppressKey(topic: string, claim: string): string {

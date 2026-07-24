@@ -90,6 +90,9 @@ export interface DialogueTurn {
   speaker: string | null;
   text: string;
   atMs: number;
+  // The concept topic (dialogueTopics entry) this turn belongs to, when the
+  // server has clustered it. Null/absent = unclustered.
+  topicId?: string | null;
 }
 
 export type ResearchTrayKind = "fact-check" | "deep-dive" | "bias-scan";
@@ -220,4 +223,7 @@ export interface ProjectorSnapshot {
   // dialogue tree. Mirrors the transcript but id-addressable, so research
   // quests can anchor to the exact turn they grew from.
   dialogue?: DialogueTurn[];
+  // Concept clusters over the dialogue window. Each topic is a BRANCH of the
+  // 3D conversation tree; turns reference their topic via topicId.
+  dialogueTopics?: Array<{ id: string; label: string; turnIds: string[]; freshAtMs: number }>;
 }
