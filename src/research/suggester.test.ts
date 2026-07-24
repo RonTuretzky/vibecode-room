@@ -154,3 +154,22 @@ describe("inference-only suggestions (no heuristic padding)", () => {
     expect(suggestions).toEqual([]);
   });
 });
+
+describe("killed-CLI honesty", () => {
+  test("empty stdout retries once, then throws instead of reading as an empty round", async () => {
+    let calls = 0;
+    const dead = new HostClaudeResearchSuggester({
+      runner: async () => {
+        calls += 1;
+        return "   ";
+      },
+    });
+    await expect(dead.suggest(input(["a real question worth research"]))).rejects.toThrow(/no output twice/u);
+    expect(calls).toBe(2);
+
+    const flaky = new HostClaudeResearchSuggester({
+      runner: async () => (calls += 1) >= 4 ? "[]" : "",
+    });
+    expect(await flaky.suggest(input(["a real question worth research"]))).toEqual([]);
+  });
+});

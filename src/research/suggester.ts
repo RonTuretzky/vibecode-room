@@ -15,7 +15,11 @@ import {
 } from "./types";
 
 export const DEFAULT_RESEARCH_SUGGESTER_MODEL = "sonnet";
-export const DEFAULT_RESEARCH_SUGGESTER_TIMEOUT_MS = 20_000;
+// The host CLI needs ~7s just to boot and ~6-15s of API time on a real
+// prompt: 20s raced that reality and silently KILLED live rounds (the room
+// read the kill as "nothing researchable"). Rounds are async — latency is
+// cheap, a killed round is not.
+export const DEFAULT_RESEARCH_SUGGESTER_TIMEOUT_MS = 45_000;
 // At most this many fresh suggestions per round — the wall must stay glanceable.
 const MAX_SUGGESTIONS_PER_ROUND = 3;
 
@@ -42,10 +46,17 @@ export class HostClaudeResearchSuggester implements ResearchSuggester {
     if (input.turns.length === 0) {
       return [];
     }
-    const reply = await this.#runner(buildSuggestPrompt(input), {
-      model: this.#model,
-      timeoutMs: this.#timeoutMs,
-    });
+    const prompt = buildSuggestPrompt(input);
+    let reply = await this.#runner(prompt, { model: this.#model, timeoutMs: this.#timeoutMs });
+    if (reply.trim().length === 0) {
+      // Empty stdout = the CLI was killed (timeout) or died — NOT the model
+      // shrugging. Retry once; a second silence surfaces as a round ERROR so
+      // the rail never mislabels an infrastructure kill as "nothing found".
+      reply = await this.#runner(prompt, { model: this.#model, timeoutMs: this.#timeoutMs });
+      if (reply.trim().length === 0) {
+        throw new Error("suggester CLI produced no output twice (timeout/kill)");
+      }
+    }
     // INFERENCE-ONLY (no-mocks spirit): an empty model round is an honest
     // shrug, never padded by the deterministic classifier — the wall shows
     // the scan indicator, and a human can always click a turn to force
