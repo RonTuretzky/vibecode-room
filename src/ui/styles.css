@@ -780,11 +780,17 @@ main.gesture-mode .status-bar .status-right {
   transform: translateY(0);
 }
 
+/* COLORLESS CONTROLS (live-room request): every toolbar button reads like the
+   guided-demo one — accent-tinted text/border over glass, never a solid fill.
+   State (on/off) shows as border strength + a touch more tint, not paint. */
 .ctl-button.unmute {
-  color: #1a1206;
-  background: var(--c-paused);
-  border-color: rgba(245, 166, 35, 0.8);
-  box-shadow: 0 0 18px rgba(245, 166, 35, 0.35);
+  color: #ffd166;
+  border-color: rgba(245, 166, 35, 0.45);
+  background: rgba(245, 166, 35, 0.08);
+}
+
+.ctl-button.unmute:hover {
+  background: rgba(245, 166, 35, 0.2);
 }
 
 .ctl-button.unmute:disabled {
@@ -799,10 +805,9 @@ main.gesture-mode .status-bar .status-right {
 }
 
 .ctl-button.auto-build.on {
-  color: #04130c;
-  background: var(--c-active, #30d18a);
+  color: #9deec4;
+  background: rgba(48, 209, 138, 0.2);
   border-color: rgba(48, 209, 138, 0.9);
-  box-shadow: 0 0 20px rgba(48, 209, 138, 0.5);
 }
 
 .ctl-button.auto-build:hover {
@@ -818,11 +823,9 @@ main.gesture-mode .status-bar .status-right {
 }
 
 .ctl-button.capture.on {
-  color: #04141a;
-  background: var(--c-selected, #00bcd4);
+  color: #9fe8f7;
+  background: rgba(0, 188, 212, 0.2);
   border-color: rgba(0, 188, 212, 0.9);
-  box-shadow: 0 0 20px rgba(0, 188, 212, 0.5);
-  animation: capture-pulse 1.8s ease-in-out infinite;
 }
 
 .ctl-button.capture:hover {
@@ -2524,8 +2527,8 @@ main.gesture-mode[data-view="builds"] .transcript-card {
 }
 
 .ctl-button.research-toggle.on {
-  color: #041018;
-  background: var(--c-planning);
+  color: #a5dcf8;
+  background: rgba(56, 189, 248, 0.2);
   border-color: rgba(56, 189, 248, 0.8);
 }
 
@@ -3443,16 +3446,15 @@ main.gesture-mode[data-view="builds"] .transcript-card {
 }
 
 .ctl-button.mic-capture.on {
-  color: #04141a;
-  background: var(--c-selected, #00bcd4);
+  color: #9fe8f7;
+  background: rgba(0, 188, 212, 0.2);
   border-color: rgba(0, 188, 212, 0.9);
-  box-shadow: 0 0 20px rgba(0, 188, 212, 0.5);
-  animation: capture-pulse 1.8s ease-in-out infinite;
 }
 
+/* The pulsing dot stays as the only "recording" motion cue. */
 .ctl-button.mic-capture.on .mic-dot {
-  background: #04141a;
-  box-shadow: 0 0 10px rgba(4, 20, 26, 0.6);
+  background: #00bcd4;
+  box-shadow: 0 0 10px rgba(0, 188, 212, 0.7);
   animation: mic-pulse 1.2s ease-in-out infinite;
 }
 
@@ -3461,42 +3463,14 @@ main.gesture-mode[data-view="builds"] .transcript-card {
   cursor: wait;
 }
 
-/* ============================================================================
-   Cursor-dot toggle (live-room request) — rendered by the gesture layer, so it
-   exists exactly when camera/mouse dwell cursors do. Bottom-left above the
-   wall badge (clear of wall B's right-third transcript card and the status
-   bar); a plain ctl-button, so gesture mode auto-XLs it into a dwell target.
-   ============================================================================ */
-.ctl-button.cursor-toggle {
-  position: fixed;
-  left: 22px;
-  bottom: 72px;
-  z-index: 25;
-  color: #ded4ff;
-  border-color: rgba(155, 130, 255, 0.45);
-  background: rgba(120, 95, 240, 0.14);
-}
-
-.ctl-button.cursor-toggle:hover {
-  background: rgba(120, 95, 240, 0.26);
-}
-
-.ctl-button.cursor-toggle.on {
-  color: #140b2e;
-  background: #a78bfa;
-  border-color: rgba(167, 139, 250, 0.9);
-  box-shadow: 0 0 20px rgba(167, 139, 250, 0.5);
-}
-
-/* Zen mode hides all chrome — the cursor toggle included. */
-.deep.zen .ctl-button.cursor-toggle {
-  display: none;
-}
-
-/* Pinch-camera (hands) toggle: lives inline in the status-right HUD cluster,
-   so it inherits the ctl-button layout — only the armed/LIVE tint is bespoke
-   (blue, to read distinct from the violet cursor toggle). */
+/* Pinch-camera (hands) toggle: a COMPACT chip docked at the top of the fleet
+   rail (live-room request — smaller, out of the header). Blue accent, same
+   colorless glass language as every other control. */
 .ctl-button.hands-toggle {
+  justify-self: end;
+  width: fit-content;
+  padding: 5px 10px;
+  font-size: 12px;
   color: #cfe9ff;
   border-color: rgba(120, 190, 255, 0.4);
   background: rgba(70, 150, 240, 0.12);
@@ -3507,10 +3481,16 @@ main.gesture-mode[data-view="builds"] .transcript-card {
 }
 
 .ctl-button.hands-toggle.on {
-  color: #041225;
-  background: #5db4ff;
+  color: #bfe0ff;
+  background: rgba(93, 180, 255, 0.2);
   border-color: rgba(93, 180, 255, 0.9);
-  box-shadow: 0 0 18px rgba(93, 180, 255, 0.5);
+}
+
+/* Keep the chip compact even under gesture-XL button sizing. */
+main.gesture-mode .ctl-button.hands-toggle {
+  min-height: 0;
+  padding: 10px 16px;
+  font-size: 15px;
 }
 
 /* Settle-gate feedback (guided idea step + HUD): heard idea, live countdown,

@@ -1703,25 +1703,6 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
               {mockMode ? "● Mock Room" : "Mock Room"}
             </button>
           ) : null}
-          {/* PINCH CAMERA toggle (hands): global camera control, always
-              available so the rig can be armed on any wall/desk window. Seeded
-              from ?hands=; the label mirrors PinchCameraLayer's live socket
-              state (OFF / connecting / LIVE). */}
-          <button
-            type="button"
-            className={`ctl-button hands-toggle${handsOn ? " on" : ""}`}
-            data-testid="hands-toggle-button"
-            data-state={handsOn ? (handsStatus === "open" ? "live" : "connecting") : "off"}
-            aria-pressed={handsOn}
-            onClick={toggleHands}
-            title="Pinch-camera control: point with your hands (TouchDesigner/MediaPipe) to orbit, zoom and pan the room. Toggle to arm the hand tracker."
-          >
-            {!handsOn
-              ? "✋ Hands: OFF"
-              : handsStatus === "open"
-                ? "✋ Hands: LIVE"
-                : "✋ Hands: connecting"}
-          </button>
         </div>
       </header>
 
@@ -1755,6 +1736,24 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
             zone); desk mode keeps it in-rail. */}
         {!mockMode && showBuildSurfaces ? (
           <aside className="rail">
+            {/* PINCH CAMERA toggle (hands): a compact chip docked above the
+                fleet (live-room request — it was crowding the header). Seeded
+                from ?hands=; the label mirrors PinchCameraLayer's socket state. */}
+            <button
+              type="button"
+              className={`ctl-button hands-toggle${handsOn ? " on" : ""}`}
+              data-testid="hands-toggle-button"
+              data-state={handsOn ? (handsStatus === "open" ? "live" : "connecting") : "off"}
+              aria-pressed={handsOn}
+              onClick={toggleHands}
+              title="Pinch-camera control: point with your hands (TouchDesigner/MediaPipe) to orbit, zoom and pan the room. Toggle to arm the hand tracker."
+            >
+              {!handsOn
+                ? "✋ Hands: OFF"
+                : handsStatus === "open"
+                  ? "✋ Hands: LIVE"
+                  : "✋ Hands: connecting"}
+            </button>
             <FleetPanel
               processes={snapshot.processes}
               selected={selected}
