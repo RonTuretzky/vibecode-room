@@ -53,6 +53,10 @@ export class RunEventDriver {
   readonly #onReconnect?: RunEventDriverOptions["onReconnect"];
   readonly #overlays = new Map<string, RunEventOverlay>();
   readonly #active = new Set<Promise<void>>();
+  // In-flight subscription abort handles keyed by UPID so forget() can cancel a
+  // still-streaming run before dropping its overlay. A UPID can hold several
+  // (subscribe() may be called again after a reconnect-heavy stream returns).
+  readonly #subscriptionAborts = new Map<string, Set<AbortController>>();
 
   constructor(options: RunEventDriverOptions) {
     this.#client = options.client;
@@ -73,11 +77,37 @@ export class RunEventDriver {
   // Returns a tracked promise so callers (and tests) can await all in-flight
   // subscriptions via idle().
   subscribe(upid: string, runId: string, options: { signal?: AbortSignal; maxFrames?: number } = {}): Promise<void> {
-    const promise = this.#stream(upid, runId, options).finally(() => {
+    // Every subscription gets its own abort handle (combined with any caller
+    // signal) so forget() can tear down this UPID's stream on halt.
+    const controller = new AbortController();
+    const signal = options.signal === undefined ? controller.signal : AbortSignal.any([options.signal, controller.signal]);
+    const handles = this.#subscriptionAborts.get(upid) ?? new Set<AbortController>();
+    handles.add(controller);
+    this.#subscriptionAborts.set(upid, handles);
+    const promise = this.#stream(upid, runId, { signal, maxFrames: options.maxFrames }).finally(() => {
       this.#active.delete(promise);
+      handles.delete(controller);
+      if (handles.size === 0 && this.#subscriptionAborts.get(upid) === handles) {
+        this.#subscriptionAborts.delete(upid);
+      }
     });
     this.#active.add(promise);
     return promise;
+  }
+
+  // Drop a UPID's overlay and abort any in-flight subscription for it. Called
+  // when the process is halted (the composition wires this from the halt path)
+  // so a dead run's telemetry doesn't sit in the overlay map forever.
+  forget(upid: string): void {
+    this.#overlays.delete(upid);
+    const handles = this.#subscriptionAborts.get(upid);
+    if (handles === undefined) {
+      return;
+    }
+    this.#subscriptionAborts.delete(upid);
+    for (const controller of handles) {
+      controller.abort();
+    }
   }
 
   // Resolve once no subscription is in flight. Used by tests/e2e to await the

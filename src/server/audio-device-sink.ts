@@ -31,14 +31,30 @@ export interface AudioSinkSelection {
   sink: AudioSink;
 }
 
-// A real device sink that retains every (non-empty) chunk it is given. Unlike the
-// no-op sink, the bytes survive the write so they can be inspected (tests) or
-// streamed onward (the browser-broadcast sink swaps in here, ISSUE-0027). Each
-// chunk is copied on write so a reused backing buffer can't mutate the retained
-// audio after the fact.
+// Byte cap on retained audio. A long device-mode session pushes every earcon/TTS
+// PCM chunk through write(); without a cap the retained copies grow without
+// bound (tens of MB per hour), so the sink is a byte-capped ring — recent audio
+// stays inspectable while the oldest chunks are dropped once the cap is hit.
+const DEFAULT_MAX_RETAINED_BYTES = 16 * 1024 * 1024;
+
+export interface RecordingAudioSinkOptions {
+  // Retention cap in bytes; oldest chunks are evicted once exceeded.
+  maxRetainedBytes?: number;
+}
+
+// A real device sink that retains every (non-empty) chunk it is given, up to a
+// byte cap (oldest chunks evicted first). Unlike the no-op sink, the bytes
+// survive the write so they can be inspected (tests) or streamed onward (the
+// browser-broadcast sink swaps in here, ISSUE-0027). Each chunk is copied on
+// write so a reused backing buffer can't mutate the retained audio after the fact.
 export class RecordingAudioSink implements AudioSink {
   readonly chunks: Uint8Array[] = [];
+  readonly #maxRetainedBytes: number;
   #bytes = 0;
+
+  constructor(options: RecordingAudioSinkOptions = {}) {
+    this.#maxRetainedBytes = options.maxRetainedBytes ?? DEFAULT_MAX_RETAINED_BYTES;
+  }
 
   write(chunk: Uint8Array): void {
     if (chunk.byteLength === 0) {
@@ -46,6 +62,15 @@ export class RecordingAudioSink implements AudioSink {
     }
     this.chunks.push(new Uint8Array(chunk));
     this.#bytes += chunk.byteLength;
+    // Byte-capped ring: shed the oldest retained chunks until back under the
+    // cap so a long session's audio retention stays bounded.
+    while (this.#bytes > this.#maxRetainedBytes) {
+      const oldest = this.chunks.shift();
+      if (oldest === undefined) {
+        break;
+      }
+      this.#bytes -= oldest.byteLength;
+    }
   }
 
   get bytes(): number {

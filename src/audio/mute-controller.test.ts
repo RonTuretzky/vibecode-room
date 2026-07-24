@@ -154,6 +154,26 @@ describe("mute controller", () => {
     expect(provider.streamCalls).toHaveLength(1);
     expect(controller.isStreamingToCloud()).toBe(true);
   });
+
+  test("a mic session started while muted cancels its unread audio stream so queued PCM is released", async () => {
+    const provider = new ReplayASRProvider(transcriptFixture().slice(1, 3));
+    const controller = new MuteController({ sessionId: "session-asr-cancel", now: () => 100 });
+    const protectedProvider = controller.protectCloudAsr(provider);
+    let cancelled = false;
+    const audio = new ReadableStream<Uint8Array>({
+      start(streamController) {
+        streamController.enqueue(new Uint8Array(64));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+
+    await controller.handleCueKeyword("mute", { correlationId: "corr-cancel-mute" });
+    expect(await collect(protectedProvider.stream(audio))).toEqual([]);
+    expect(cancelled).toBe(true);
+    expect(provider.streamCalls).toHaveLength(0);
+  });
 });
 
 function deterministicSuggestionLlm(): DecisionLLM<SuggestionOutput> {

@@ -313,6 +313,12 @@ export class CueWebSocketTranscriptionIngress implements CueTranscriptionIngress
       return this.#ws;
     }
 
+    // Tear down a stale cached socket (e.g. stuck CONNECTING after a ready
+    // timeout) before replacing it, or live sockets stack up per retry.
+    if (this.#ws !== null && this.#ws.readyState !== WebSocket.CLOSED) {
+      this.#ws.close();
+    }
+
     const ws = new WebSocket(this.#url);
     this.#ws = ws;
     this.#ready = waitForOpen(ws, this.#readyTimeoutMs).then(async () => {

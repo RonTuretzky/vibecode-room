@@ -101,6 +101,26 @@ describe("callsign collision guard", () => {
     expect(afterCooldown.reusedAfterCooldown).toBe(true);
   });
 
+  test("release prunes expired cooldown entries so the map stays bounded", () => {
+    let now = 0;
+    const allocator = new CallsignAllocator({
+      pool: ["virellium", "quoravex"],
+      now: () => now,
+    });
+
+    allocator.assign("upid-a");
+    allocator.release("upid-a");
+    now += CALLSIGN_REUSE_COOLDOWN_MS;
+    allocator.assign("upid-b");
+    allocator.release("upid-b");
+
+    // The intervening release pruned virellium's expired cooldown entry, so
+    // the reuse succeeds and the (forgotten) cooldown history reads false.
+    const reused = allocator.assign("upid-c");
+    expect(reused.callsign).toBe("virellium");
+    expect(reused.reusedAfterCooldown).toBe(false);
+  });
+
   test("concatenated STT output still selects a callsign without a strict word-boundary regex", () => {
     const active = [
       { upid: "upid-virellium", callsign: "virellium" },

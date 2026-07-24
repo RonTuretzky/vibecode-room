@@ -191,21 +191,18 @@ export function dispatchUtterance(observation: TranscriptObservation, context: D
           localEffect: output.effect,
           handlerOutput: output,
         } satisfies DispatchDecision);
-    recordRoute(trace, decision, nowMs);
-    decision.trace = trace.events();
+    decision.trace.push(recordRoute(trace, decision, nowMs));
     return decision;
   }
 
   if (candidate.route === "suggestion") {
     const decision = { ...base, kind: "route", route: "suggestion" } satisfies DispatchDecision;
-    recordRoute(trace, decision, nowMs);
-    decision.trace = trace.events();
+    decision.trace.push(recordRoute(trace, decision, nowMs));
     return decision;
   }
 
   const decision = { ...base, kind: "pass", route: "pass", reason: candidate.passReason ?? "ambient" } satisfies DispatchDecision;
-  recordRoute(trace, decision, nowMs);
-  decision.trace = trace.events();
+  decision.trace.push(recordRoute(trace, decision, nowMs));
   return decision;
 }
 
@@ -485,9 +482,11 @@ function ackFor(candidate: Candidate): AckKind {
   return "route-declined";
 }
 
-function recordRoute(trace: TraceProcessor, decision: DispatchDecision, nowMs: number): void {
+// Returns the recorded event so callers can attach it to decision.trace,
+// which carries only THIS dispatch's events — never the shared session trace.
+function recordRoute(trace: TraceProcessor, decision: DispatchDecision, nowMs: number): LogEvent {
   const event = decision.route === "pass" ? "route.pass" : decision.route === "steer" ? "route.steer" : "route.suggestion";
-  trace.record({
+  return trace.record({
     event,
     sessionId: decision.sessionId,
     correlationId: decision.correlationId,

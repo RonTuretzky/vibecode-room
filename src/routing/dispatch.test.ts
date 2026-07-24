@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { TraceProcessor } from "../obs/trace";
 import type { TranscriptObservation } from "../types";
 import { assertHandlerCoverage } from "./handlers";
 import { DOCUMENTED_COMMANDS, ROUTING_ENV_DEFAULTS, loadRoutingVocabulary } from "./vocabulary";
@@ -177,6 +178,23 @@ describe("routing dispatch invariants", () => {
     expect(decision.addressed).toBe(true);
     expect(decision.ackKind).toBe("route-declined");
     expect(decision.targetUPID).toBeNull();
+  });
+
+  test("decision.trace carries only this dispatch's events, not the shared session history", () => {
+    const trace = new TraceProcessor();
+    const first = dispatch("Atlas, make it faster", { trace });
+    const second = dispatch("ordinary ambient chatter about lunch", { trace });
+    const third = dispatch("status", { trace });
+
+    // Each dispatch records command.recognize plus one route event.
+    for (const decision of [first, second, third]) {
+      expect(decision.trace).toHaveLength(2);
+      expect(decision.trace[0].event).toBe("command.recognize");
+      expect(decision.trace.every((event) => event.correlationId === decision.correlationId)).toBe(true);
+    }
+
+    // The shared processor still accumulates the full session history.
+    expect(trace.events()).toHaveLength(6);
   });
 
   test("word lists and thresholds are env-tunable with documented defaults", () => {
