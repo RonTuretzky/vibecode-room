@@ -17,6 +17,8 @@ export interface ResearchTrayProps {
   onAccept: (id: string) => void;
   onDismiss: (id: string) => void;
   onOpenDeck: (id: string) => void;
+  // Full research-tree reset (vine + crystals + dossiers). Absent = no chip.
+  onReset?: () => void;
 }
 
 const KIND_GLYPH: Record<ResearchTrayItem["kind"], string> = {
@@ -25,7 +27,7 @@ const KIND_GLYPH: Record<ResearchTrayItem["kind"], string> = {
   "bias-scan": "⚖",
 };
 
-export function ResearchTray({ quests, thinking = false, onAccept, onDismiss, onOpenDeck }: ResearchTrayProps) {
+export function ResearchTray({ quests, thinking = false, onAccept, onDismiss, onOpenDeck, onReset }: ResearchTrayProps) {
   return (
     <section className="research-tray" data-testid="research-tray" aria-label="Research tray">
       <div className="rail-title-row">
@@ -33,6 +35,17 @@ export function ResearchTray({ quests, thinking = false, onAccept, onDismiss, on
         <span className="trace-count">
           {quests.length} {quests.length === 1 ? "quest" : "quests"}
         </span>
+        {onReset !== undefined ? (
+          <button
+            type="button"
+            className="ctl-button research-reset"
+            data-testid="research-reset-button"
+            onClick={onReset}
+            title="Reset the research tree: clears the conversation vine, every crystal and every dossier."
+          >
+            🌱 Reset tree
+          </button>
+        ) : null}
       </div>
       {/* Live inference feedback: without it, a round that finds nothing is
           indistinguishable from a dead feature. */}

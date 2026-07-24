@@ -254,6 +254,9 @@ export interface ProjectorRuntime {
   // the quest and spawns the agent in one step, bypassing the passive
   // suggestion cadence. Unknown turn / mode off → no-op current snapshot.
   researchTurn(turnId: string, correlationId?: string): ProjectorSnapshot;
+  // RESEARCH-TREE RESET (the wall's 🌱 button): abort every in-flight agent,
+  // drop all quests + dossiers, clear the dialogue window and topics.
+  resetResearchTree(correlationId?: string): ProjectorSnapshot;
   // Dismiss a quest: proposed → dropped + topic suppressed; researching →
   // cancelled; complete/failed → cleared from the wall.
   dismissResearch(id: string, correlationId?: string): ProjectorSnapshot;
@@ -1359,6 +1362,13 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       return this.#snapshot;
     }
     this.research.researchTurn(turnId, correlationId);
+    return this.publishNow();
+  }
+
+  resetResearchTree(correlationId = `corr-research-reset-${crypto.randomUUID()}`): ProjectorSnapshot {
+    this.research.resetAll(correlationId);
+    // Cached dossier HTML belongs to the wiped quests — never serve a ghost.
+    this.#researchDecks.clear();
     return this.publishNow();
   }
 

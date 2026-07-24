@@ -536,6 +536,22 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
     [actOnResearch],
   );
 
+  // 🌱 Reset the research tree: full clean slate server-side (vine, crystals,
+  // dossiers). The returned snapshot repaints the wall in one hop.
+  const resetResearchTree = useCallback(async () => {
+    if (!liveMode || mockModeRef.current) {
+      return;
+    }
+    try {
+      const response = await fetch("/api/research/tree/reset", { method: "POST" });
+      if (response.ok && response.headers.get("content-type")?.includes("application/json")) {
+        setSnapshot((await response.json()) as ProjectorSnapshot);
+      }
+    } catch {
+      // Non-authoritative projector: a failed POST must never block the UI.
+    }
+  }, [liveMode]);
+
   // Clicking a dialogue TURN in the 3D tree: research that utterance directly —
   // the server creates the quest and spawns the agent in one step, no passive
   // suggestion round required.
@@ -1724,6 +1740,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
               onAccept={(id) => void actOnResearch(id, "accept")}
               onDismiss={(id) => void actOnResearch(id, "dismiss")}
               onOpenDeck={(id) => setResearchDeckId(id)}
+              onReset={() => void resetResearchTree()}
             />
           ) : null}
         </div>

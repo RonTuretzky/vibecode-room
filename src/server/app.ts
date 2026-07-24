@@ -186,6 +186,14 @@ export function createProjectorApp(runtime: ProjectorRuntime, options: Projector
     }
     return context.json(runtime.researchTurn(context.req.param("id")));
   });
+  // RESEARCH-TREE RESET: full clean slate — quests, dossiers, dialogue window
+  // and topics all cleared; in-flight agents aborted.
+  app.post("/api/research/tree/reset", (context) => {
+    if (isOfflineDemoRequest(context.req.header("referer"))) {
+      return context.json(runtime.snapshot());
+    }
+    return context.json(runtime.resetResearchTree());
+  });
   // RESEARCH TRAY: dismiss a quest (proposed → suppressed for the cooldown;
   // researching → cancelled; complete/failed → cleared from the wall).
   app.post("/api/research/:id/dismiss", (context) => {

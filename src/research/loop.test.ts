@@ -366,3 +366,25 @@ describe("ResearchLoop concept topics", () => {
     expect(surfaced.sort()).toEqual(["rturn-0002", "rturn-0003"]);
   });
 });
+
+describe("ResearchLoop full reset (the wall's 🌱 button)", () => {
+  test("resetAll aborts in-flight agents and clears quests, turns, and topics", async () => {
+    const agent = new HangingAgent();
+    const loop = makeLoop({ agent });
+    loop.setActive(true);
+    loop.ingestTurn({ speaker: "s1", text: "how much money would vending machines save by using crypto", atMs: 1 });
+    const turnId = loop.turns()[0]!.id;
+    const spawned = loop.researchTurn(turnId)!;
+    expect(spawned.status).toBe("researching");
+    loop.resetAll();
+    expect(agent.aborted).toBe(true);
+    expect(loop.quests()).toEqual([]);
+    expect(loop.turns()).toEqual([]);
+    expect(loop.topics()).toEqual([]);
+    // A fresh conversation grows from turn ids that keep incrementing — the
+    // reset never recycles ids old quests might still reference in traces.
+    const fresh = loop.ingestTurn({ speaker: "s1", text: "a brand new conversation", atMs: 60_000 });
+    expect(fresh.id).not.toBe(turnId);
+    expect(loop.turns().length).toBe(1);
+  });
+});

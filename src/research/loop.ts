@@ -530,6 +530,26 @@ export class ResearchLoop {
   }
 
   // Emergency stop: abort every in-flight agent and mark those quests failed.
+  // RESEARCH-TREE RESET (the wall's 🌱 button): a full clean slate — every
+  // in-flight agent aborted, every quest (proposed AND committed) dropped, the
+  // dialogue window and concept topics cleared. Deliberately total: the user
+  // asked to reset the research tree specifically, dossiers included.
+  resetAll(correlationId = "corr-research-reset"): void {
+    for (const [, running] of this.#running) {
+      running.controller.abort();
+    }
+    const dropped = this.#quests.size;
+    this.#running.clear();
+    this.#quests.clear();
+    this.#suppressed.clear();
+    this.#turns = [];
+    this.#newestFragmentAtMs = Number.NEGATIVE_INFINITY;
+    this.#wordsSinceRound = 0;
+    this.#tree.reset();
+    this.#trace("research.tree.reset", "info", correlationId, { dropped });
+    this.#emit();
+  }
+
   stopAll(reason: string): void {
     for (const [id, running] of this.#running) {
       running.controller.abort();

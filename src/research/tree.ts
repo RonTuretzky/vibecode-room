@@ -152,6 +152,19 @@ export class ConceptTree {
     return target.id;
   }
 
+  // Full clean slate (the wall's research-tree reset): drop every topic and
+  // turn assignment and cancel any pending refinement — a fresh conversation
+  // must not inherit the old one's debounce or clusters.
+  reset(): void {
+    this.#topics.clear();
+    this.#turnInfo.clear();
+    this.#pendingRefine = false;
+    if (this.#refineTimer !== null) {
+      clearTimeout(this.#refineTimer);
+      this.#refineTimer = null;
+    }
+  }
+
   // The loop's rolling window dropped turns — forget them (and any topic left
   // empty), so branches never outlive the dialogue they clustered.
   prune(liveTurnIds: Iterable<string>): void {

@@ -2328,6 +2328,20 @@ main.gesture-mode[data-view="builds"] .transcript-card {
   color: var(--ink-faint);
 }
 
+/* 🌱 Reset tree: a compact colorless chip at the tray header's right edge. */
+.ctl-button.research-reset {
+  margin-left: auto;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+
+main.gesture-mode .ctl-button.research-reset {
+  min-height: 0;
+  padding: 10px 14px;
+  font-size: 15px;
+}
+
 /* "A crystal might be forming": pulsing scan line while a suggestion round's
    inference is in flight — the round must be VISIBLE even when it ends empty. */
 .research-scanning {
