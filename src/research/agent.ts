@@ -20,8 +20,11 @@ import {
 } from "./types";
 
 export const DEFAULT_RESEARCH_AGENT_MODEL = "sonnet";
-// Per-stage budget: stage 1 does real web searching and needs headroom.
+// Per-call budget: source lanes do real web searching and need headroom.
 export const DEFAULT_RESEARCH_STAGE_TIMEOUT_MS = 150_000;
+// Overall wall-clock cap for one quest (lanes + synthesis + verification);
+// past it, whatever landed ships with honest degraded notes.
+export const DEFAULT_RESEARCH_TOTAL_BUDGET_MS = 300_000;
 
 const REPORT_SHAPE =
   '{"summary": string (3-5 sentences), "confidence": "low"|"medium"|"high", ' +
@@ -33,53 +36,173 @@ const REPORT_SHAPE =
 export interface HostClaudeResearchAgentOptions {
   model?: string;
   stageTimeoutMs?: number;
+  // Overall wall-clock cap across every phase; whatever landed by the
+  // deadline is what the room gets (with honest degraded notes).
+  totalBudgetMs?: number;
   runner?: ClaudeCliRunner;
+  clock?: () => number;
 }
+
+// The parallel source hunt: three angle-diverse lanes so the draft is built
+// from adversarially different searches, not one pass's blind spot. Capped at
+// three concurrent host-claude calls to stay kind to the subscription.
+export const RESEARCH_LANES = [
+  {
+    key: "supporting",
+    instruction:
+      "Hunt for the strongest EVIDENCE FOR the claim/question: primary sources, official data, first-hand reporting that supports or directly answers it.",
+  },
+  {
+    key: "refuting",
+    instruction:
+      "Hunt for evidence AGAINST: counterexamples, failed attempts, critiques, and sources that contradict or complicate the claim/question.",
+  },
+  {
+    key: "background",
+    instruction:
+      "Hunt for QUANTITATIVE and historical background: hard numbers, market/industry data, studies, and how this has played out before.",
+  },
+] as const;
 
 export class HostClaudeResearchAgent implements ResearchAgent {
   readonly #model: string;
   readonly #stageTimeoutMs: number;
+  readonly #totalBudgetMs: number;
   readonly #runner: ClaudeCliRunner;
+  readonly #clock: () => number;
 
   constructor(options: HostClaudeResearchAgentOptions = {}) {
     this.#model = options.model ?? DEFAULT_RESEARCH_AGENT_MODEL;
     this.#stageTimeoutMs = options.stageTimeoutMs ?? DEFAULT_RESEARCH_STAGE_TIMEOUT_MS;
+    this.#totalBudgetMs = options.totalBudgetMs ?? DEFAULT_RESEARCH_TOTAL_BUDGET_MS;
     this.#runner = options.runner ?? defaultClaudeCliRunner;
+    this.#clock = options.clock ?? (() => Date.now());
   }
 
   async research(quest: ResearchQuest, options: ResearchAgentOptions): Promise<ResearchReport> {
-    const { signal, onProgress } = options;
-    const run = (prompt: string) => this.#runner(prompt, { model: this.#model, timeoutMs: this.#stageTimeoutMs });
+    const { signal, onProgress, onDraft } = options;
+    const deadlineAt = this.#clock() + this.#totalBudgetMs;
+    // Every call's timeout is clamped to the remaining overall budget, so a
+    // slow phase eats its own slack — never the room's patience.
+    const run = (prompt: string) => {
+      const remaining = deadlineAt - this.#clock();
+      if (remaining <= 0) {
+        return Promise.reject(new Error("research budget exhausted"));
+      }
+      return this.#runner(prompt, { model: this.#model, timeoutMs: Math.min(this.#stageTimeoutMs, remaining) });
+    };
+    const degraded: string[] = [];
 
-    // Stage 1 — research. This stage MUST land; a miss fails the quest.
+    // Phase 1 — PARALLEL source hunt (angle-diverse lanes).
     signal?.throwIfAborted();
-    onProgress?.({ percent: 8, label: "researching sources" });
-    const researched = parseReport(await run(researchPrompt(quest)));
-    if (researched === null) {
-      throw new Error("research stage returned no parseable report");
+    onProgress?.({ percent: 8, label: `hunting sources (${RESEARCH_LANES.length} lanes)` });
+    let lanesLanded = 0;
+    const laneResults = await Promise.allSettled(
+      RESEARCH_LANES.map(async (lane) => {
+        const parsed = parseReport(await run(lanePrompt(quest, lane.instruction)));
+        if (parsed === null) {
+          throw new Error(`${lane.key} lane returned no parseable report`);
+        }
+        lanesLanded += 1;
+        onProgress?.({ percent: 8 + lanesLanded * 10, label: `${lanesLanded}/${RESEARCH_LANES.length} source lanes landed` });
+        return parsed;
+      }),
+    );
+    const landed: ResearchReport[] = [];
+    laneResults.forEach((result, index) => {
+      if (result.status === "fulfilled") {
+        landed.push(result.value);
+      } else {
+        degraded.push(`${RESEARCH_LANES[index]!.key} lane failed or timed out`);
+      }
+    });
+    if (landed.length === 0) {
+      throw new Error("no research lane returned a parseable report");
     }
-    let report = researched;
 
-    // Stage 2 — adversarial fact-check. Degrades to stage 1 on any miss.
+    // Phase 2 — synthesis into one draft. With a lone landed lane a dead
+    // synthesis degrades to that lane instead of failing the quest.
     signal?.throwIfAborted();
-    onProgress?.({ percent: 45, label: "fact-checking findings" });
-    const checked = parseReport(await run(factCheckPrompt(quest, report)).catch(() => ""));
+    onProgress?.({ percent: 42, label: "synthesizing findings" });
+    let draft = landed.length === 1 ? landed[0]! : null;
+    const synthesized = parseReport(await run(synthesisPrompt(quest, landed)).catch(() => ""));
+    if (synthesized !== null) {
+      draft = synthesized;
+    } else if (draft !== null) {
+      degraded.push("synthesis pass failed — single-lane draft stands");
+    }
+    if (draft === null) {
+      throw new Error("synthesis returned no parseable report");
+    }
+
+    // Progressive disclosure: the wall shows draft findings while the
+    // verification passes still run.
+    signal?.throwIfAborted();
+    draft = { ...draft, degraded: degraded.length > 0 ? [...degraded] : undefined };
+    onDraft?.(sanitizeReport(draft));
+    onProgress?.({ percent: 55, label: "verifying findings (fact-check + bias)" });
+
+    // Phase 3 — fact-check and bias scan IN PARALLEL against the draft; each
+    // degrades honestly instead of silently.
+    const [checked, scanned] = await Promise.all([
+      run(factCheckPrompt(quest, draft)).then(parseReport).catch(() => null),
+      run(biasPrompt(quest, draft)).then(parseReport).catch(() => null),
+    ]);
+    signal?.throwIfAborted();
+    let report = draft;
     if (checked !== null) {
       report = checked;
+    } else {
+      degraded.push("fact-check pass failed — findings unverified");
     }
-
-    // Stage 3 — bias scan. Merges bias notes/follow-ups; degrades silently.
-    signal?.throwIfAborted();
-    onProgress?.({ percent: 80, label: "scanning for bias" });
-    const scanned = parseReport(await run(biasPrompt(quest, report)).catch(() => ""));
     if (scanned !== null) {
-      report = scanned;
+      // Bias pass owns biasNotes and contributes follow-ups; the fact-checked
+      // findings/sources stay authoritative.
+      const followUps = [...new Set([...report.followUps, ...scanned.followUps])];
+      report = { ...report, biasNotes: scanned.biasNotes, followUps };
+    } else {
+      degraded.push("bias scan failed");
     }
 
-    signal?.throwIfAborted();
     onProgress?.({ percent: 100, label: "report ready" });
-    return sanitizeReport(report);
+    return sanitizeReport({ ...report, degraded: degraded.length > 0 ? degraded : undefined });
   }
+}
+
+// One angle-diverse source-hunt lane (phase 1). Same report JSON as every
+// other call so parseReport stays the single validator.
+export function lanePrompt(quest: ResearchQuest, instruction: string): string {
+  return [
+    "You are one lane of a parallel research effort for a live conversation room. Use your web search and web fetch tools RIGHT NOW — do not answer from memory; every finding must cite real, reachable sources you found.",
+    `Your lane: ${instruction}`,
+    `Topic: ${quest.topic}`,
+    `The claim/question under research: ${quest.claim}`,
+    quest.contextSpan.quote.length > 0 ? `Heard in the room as: "${quest.contextSpan.quote}"` : "",
+    conversationContext(quest),
+    "Requirements:",
+    "- 1-4 findings from YOUR angle only, each with a verdict: supported / refuted / mixed / unverified.",
+    "- Cite 2-5 sources with REAL urls; name each publisher.",
+    "- sourceIndexes on each finding index into the sources array.",
+    "- followUps: 0-2 sharp next questions your angle surfaced.",
+    "- Leave biasNotes as an empty array (a later pass owns it).",
+    `Respond with ONLY a JSON object (no markdown fences, no prose) matching exactly: ${REPORT_SHAPE}`,
+  ]
+    .filter((line) => line.length > 0)
+    .join("\n");
+}
+
+// Phase 2: merge the lanes' partial reports into ONE draft.
+export function synthesisPrompt(quest: ResearchQuest, lanes: ResearchReport[]): string {
+  return [
+    "You are the synthesis editor of a parallel research effort. Merge the lane reports below into ONE coherent report about the claim/question.",
+    "- Deduplicate sources by URL; keep every DISTINCT source and re-index sourceIndexes correctly.",
+    "- Merge overlapping findings; where lanes disagree, the verdict is mixed and the explanation says why.",
+    "- 2-6 findings total, ordered most important first. Write a fresh 3-5 sentence summary.",
+    "- Union the lanes' followUps (drop duplicates). Leave biasNotes empty (a later pass owns it).",
+    `The claim/question: ${quest.claim}`,
+    `Lane reports: ${JSON.stringify(lanes)}`,
+    `Respond with ONLY the merged JSON object matching exactly: ${REPORT_SHAPE}`,
+  ].join("\n");
 }
 
 export function researchPrompt(quest: ResearchQuest): string {
@@ -236,6 +359,7 @@ export function selectResearchAgent(
     agent: new HostClaudeResearchAgent({
       model: env.VIBERSYN_RESEARCH_AGENT_MODEL?.trim() || undefined,
       stageTimeoutMs: readTimeout(env.VIBERSYN_RESEARCH_STAGE_TIMEOUT_MS),
+      totalBudgetMs: readTimeout(env.VIBERSYN_RESEARCH_TOTAL_BUDGET_MS),
       runner: options.runner,
     }),
   };

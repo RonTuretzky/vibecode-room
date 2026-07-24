@@ -536,6 +536,18 @@ export class ResearchLoop {
           quest.updatedAtMs = this.#clock();
           this.#emit();
         },
+        // Progressive disclosure: the synthesized draft shows on the wall
+        // while the fact-check + bias passes still run.
+        onDraft: (draft) => {
+          if (this.#quests.get(id) !== quest || quest.status !== "researching") {
+            return;
+          }
+          quest.report = draft;
+          quest.reportDraft = true;
+          quest.updatedAtMs = this.#clock();
+          this.#trace("research.draft", "info", correlationId, { id, findings: draft.findings.length });
+          this.#emit();
+        },
       })
       .then((report) => {
         if (this.#quests.get(id) !== quest || quest.status !== "researching") {
@@ -545,6 +557,7 @@ export class ResearchLoop {
         quest.progress = 100;
         quest.progressLabel = "report ready";
         quest.report = report;
+        quest.reportDraft = false;
         quest.updatedAtMs = this.#clock();
         this.#trace("research.complete", "info", correlationId, {
           id,

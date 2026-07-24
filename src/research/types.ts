@@ -79,6 +79,9 @@ export const researchReportSchema = z
     biasNotes: z.array(researchBiasNoteSchema).default([]),
     sources: z.array(researchSourceSchema).default([]),
     followUps: z.array(z.string()).default([]),
+    // Honesty surface, set by the AGENT (never the model): which lanes/passes
+    // were dropped or timed out, so the wall can say "findings unverified".
+    degraded: z.array(z.string()).optional(),
   })
   .strict();
 export type ResearchReport = z.infer<typeof researchReportSchema>;
@@ -109,6 +112,9 @@ export interface ResearchQuest {
   progress: number;
   progressLabel: string;
   report: ResearchReport | null;
+  // True while `report` is the synthesized DRAFT (verification still running);
+  // flips false when the final fact-checked report lands.
+  reportDraft?: boolean;
   error: string | null;
   roundsSeen: number;
   // Consecutive suggestion rounds a PROPOSED quest was not re-suggested in;
@@ -152,6 +158,10 @@ export interface ResearchProgress {
 }
 
 export interface ResearchAgentOptions {
+  // Progressive disclosure: fired once when the synthesized DRAFT report is
+  // ready (before verification) so the wall can show findings while the
+  // fact-check and bias passes still run.
+  onDraft?: (draft: ResearchReport) => void;
   correlationId: string;
   onProgress?: (progress: ResearchProgress) => void;
   // Cooperative cancellation: implementations must check between stages and

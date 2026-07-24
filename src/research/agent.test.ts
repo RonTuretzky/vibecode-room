@@ -45,51 +45,85 @@ function report(overrides: Partial<ResearchReport> = {}): ResearchReport {
 }
 
 describe("HostClaudeResearchAgent", () => {
-  test("runs the three stages and returns the final (bias-scanned) report", async () => {
+  // Routes each prompt kind to its scripted reply so the parallel pipeline's
+  // calls can arrive in any order.
+  function scriptedRunner(prompts: string[], overrides: Partial<Record<"lane" | "synthesis" | "check" | "bias", string>> = {}) {
+    return async (prompt: string) => {
+      prompts.push(prompt);
+      if (prompt.includes("one lane of a parallel research")) {
+        return overrides.lane ?? JSON.stringify(report());
+      }
+      if (prompt.includes("synthesis editor")) {
+        return overrides.synthesis ?? JSON.stringify(report({ summary: "Synthesized summary." }));
+      }
+      if (prompt.includes("REFUTE")) {
+        return overrides.check ?? JSON.stringify(report({ summary: "Fact-checked summary." }));
+      }
+      return (
+        overrides.bias ??
+        JSON.stringify(report({ summary: "Bias summary.", biasNotes: [{ note: "All sources are vendor blogs.", severity: "high" }] }))
+      );
+    };
+  }
+
+  test("fans out 3 source lanes, synthesizes a draft, then verifies in parallel", async () => {
     const prompts: string[] = [];
-    const agent = new HostClaudeResearchAgent({
-      runner: async (prompt) => {
-        prompts.push(prompt);
-        if (prompts.length === 1) {
-          return JSON.stringify(report());
-        }
-        if (prompts.length === 2) {
-          return JSON.stringify(report({ summary: "Fact-checked summary." }));
-        }
-        return JSON.stringify(
-          report({ summary: "Fact-checked summary.", biasNotes: [{ note: "All sources are vendor blogs.", severity: "high" }] }),
-        );
-      },
-    });
+    const agent = new HostClaudeResearchAgent({ runner: scriptedRunner(prompts) });
     const progress: string[] = [];
+    const drafts: string[] = [];
     const result = await agent.research(quest(), {
       correlationId: "corr-test",
       onProgress: (p) => progress.push(p.label),
+      onDraft: (draft) => drafts.push(draft.summary),
     });
-    expect(prompts).toHaveLength(3);
-    expect(prompts[0]).toContain("web search");
-    expect(prompts[1]).toContain("REFUTE");
-    expect(prompts[2]).toContain("media-bias");
+    expect(prompts).toHaveLength(6); // 3 lanes + synthesis + fact-check + bias
+    expect(prompts.filter((p) => p.includes("one lane of a parallel research"))).toHaveLength(3);
+    // The draft published mid-run is the synthesis, before verification.
+    expect(drafts).toEqual(["Synthesized summary."]);
+    // Fact-check owns findings/summary; bias pass owns biasNotes.
+    expect(result.summary).toBe("Fact-checked summary.");
     expect(result.biasNotes).toHaveLength(1);
-    expect(progress).toContain("fact-checking findings");
+    expect(result.degraded).toBeUndefined();
+    expect(progress).toContain("verifying findings (fact-check + bias)");
     expect(progress).toContain("report ready");
   });
 
-  test("stage 2/3 misses degrade to the prior stage's report", async () => {
-    let call = 0;
+  test("verification misses degrade HONESTLY: draft stands, notes recorded", async () => {
+    const prompts: string[] = [];
     const agent = new HostClaudeResearchAgent({
-      runner: async () => {
-        call += 1;
-        return call === 1 ? JSON.stringify(report()) : "the model rambled with no JSON";
+      runner: scriptedRunner(prompts, { check: "no json", bias: "still no json" }),
+    });
+    const result = await agent.research(quest(), { correlationId: "corr-test" });
+    expect(result.summary).toBe("Synthesized summary.");
+    expect(result.degraded).toContain("fact-check pass failed — findings unverified");
+    expect(result.degraded).toContain("bias scan failed");
+  });
+
+  test("a dead lane is dropped with a note; the rest still synthesize", async () => {
+    const prompts: string[] = [];
+    let laneCalls = 0;
+    const agent = new HostClaudeResearchAgent({
+      runner: async (prompt: string) => {
+        prompts.push(prompt);
+        if (prompt.includes("one lane of a parallel research")) {
+          laneCalls += 1;
+          return laneCalls === 1 ? "lane junk" : JSON.stringify(report());
+        }
+        if (prompt.includes("synthesis editor")) {
+          return JSON.stringify(report({ summary: "Synthesized summary." }));
+        }
+        return JSON.stringify(report({ summary: "Verified." }));
       },
     });
     const result = await agent.research(quest(), { correlationId: "corr-test" });
-    expect(result.summary).toBe(report().summary);
+    expect(result.summary).toBe("Verified.");
+    // The final degraded notes still carry the dead lane.
+    expect(result.degraded?.some((note) => note.includes("lane failed"))).toBe(true);
   });
 
-  test("an unparseable research stage fails the quest", async () => {
+  test("all lanes unparseable fails the quest", async () => {
     const agent = new HostClaudeResearchAgent({ runner: async () => "no json at all" });
-    await expect(agent.research(quest(), { correlationId: "corr-test" })).rejects.toThrow(/no parseable report/u);
+    await expect(agent.research(quest(), { correlationId: "corr-test" })).rejects.toThrow(/no research lane/u);
   });
 
   test("an aborted signal stops between stages", async () => {
