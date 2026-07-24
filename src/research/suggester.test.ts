@@ -146,3 +146,11 @@ describe("buildSuggestPrompt", () => {
     expect(prompt).toContain("a turn about something substantive");
   });
 });
+
+describe("inference-only suggestions (no heuristic padding)", () => {
+  test("an empty model round stays empty — no deterministic fallback", async () => {
+    const suggester = new HostClaudeResearchSuggester({ runner: async () => "[]" });
+    const suggestions = await suggester.suggest(input(["i wonder what would happen if vending machines used crypto"]));
+    expect(suggestions).toEqual([]);
+  });
+});

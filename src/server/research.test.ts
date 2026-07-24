@@ -19,7 +19,7 @@ function researchSuggestion(overrides: Partial<ResearchSuggestion> = {}): Resear
     claim: "Most remote teams miss half their blockers.",
     rationale: "Reported statistic worth verifying.",
     confidence: 0.8,
-    contextSpan: { startTurnId: "rturn-0001", endTurnId: "rturn-0001", quote: "miss half their blockers" },
+    contextSpan: { startTurnId: "rturn-0001", endTurnId: "rturn-0001", quote: "a claim worth checking" },
     ...overrides,
   };
 }
@@ -201,7 +201,7 @@ describe("snapshot research/dialogue fields", () => {
     expect(snapshot.dialogue?.length).toBe(1);
     expect(snapshot.dialogue?.[0]?.id).toBe("rturn-0001");
     expect(snapshot.research?.[0]?.turnId).toBe("rturn-0001");
-    expect(snapshot.research?.[0]?.evidence).toBe("miss half their blockers");
+    expect(snapshot.research?.[0]?.evidence).toBe("a claim worth checking");
   });
 
   test("emergency stop fails in-flight research and clears proposals from the snapshot", async () => {

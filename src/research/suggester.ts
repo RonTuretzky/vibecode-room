@@ -46,14 +46,12 @@ export class HostClaudeResearchSuggester implements ResearchSuggester {
       model: this.#model,
       timeoutMs: this.#timeoutMs,
     });
-    const parsed = parseSuggestions(reply);
-    if (parsed.length > 0) {
-      return parsed;
-    }
-    // HEURISTIC FLOOR: a shrugging (or unparseable) model must not leave a
-    // question-shaped conversation crystal-less — the deterministic classifier
-    // guarantees the obvious catches; the model adds judgement on top.
-    return new HeuristicResearchSuggester().suggest(input);
+    // INFERENCE-ONLY (no-mocks spirit): an empty model round is an honest
+    // shrug, never padded by the deterministic classifier — the wall shows
+    // the scan indicator, and a human can always click a turn to force
+    // research. (The heuristic suggester remains available solely as the
+    // explicit VIBERSYN_RESEARCH_SUGGESTER=heuristic offline/CI mode.)
+    return parseSuggestions(reply);
   }
 }
 

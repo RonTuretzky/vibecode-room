@@ -11,7 +11,10 @@ function suggestion(overrides: Partial<ResearchSuggestion> = {}): ResearchSugges
     claim: "Most remote teams miss half their blockers.",
     rationale: "",
     confidence: 0.7,
-    contextSpan: { startTurnId: "rturn-0001", endTurnId: "rturn-0001", quote: "miss half their blockers" },
+    // The quote must be GROUNDED in whatever the test ingests (the reconcile
+    // precision guard drops proposals quoting things nobody said) — "the
+    // claim" token-matches the suite's standard ingested turns.
+    contextSpan: { startTurnId: "rturn-0001", endTurnId: "rturn-0001", quote: "the claim" },
     ...overrides,
   };
 }
@@ -102,7 +105,7 @@ describe("ResearchLoop reconciliation", () => {
     const suggester = new ScriptedSuggester([[suggestion({ confidence: 0.6 })]]);
     const loop = makeLoop({ suggester });
     loop.setActive(true);
-    loop.ingestTurn({ speaker: "s1", text: "first mention", atMs: 1 });
+    loop.ingestTurn({ speaker: "s1", text: "first mention of the claim", atMs: 1 });
     await loop.flush();
     const id = loop.quests()[0]!.id;
     // Second round: the model refines the same quest (higher + then lower conf).
@@ -217,15 +220,17 @@ describe("ResearchLoop lifecycle", () => {
   test("tray ordering: researching → proposed by confidence → complete → failed", async () => {
     const suggester = new ScriptedSuggester([
       [
-        suggestion({ topic: "A", claim: "claim a", confidence: 0.5 }),
-        suggestion({ topic: "B", claim: "claim b", confidence: 0.9 }),
-        suggestion({ topic: "C", claim: "claim c", confidence: 0.7 }),
+        // Token-distinct claims: the near-dupe guard merges Jaccard-similar
+        // claims, so "claim a/b/c" would collapse into one quest.
+        suggestion({ topic: "A", claim: "alpha rocket budgets claim", confidence: 0.5 }),
+        suggestion({ topic: "B", claim: "beta ocean warming claim", confidence: 0.9 }),
+        suggestion({ topic: "C", claim: "gamma cheese exports claim", confidence: 0.7 }),
       ],
     ]);
     const agent = new HangingAgent();
     const loop = makeLoop({ suggester, agent });
     loop.setActive(true);
-    loop.ingestTurn({ speaker: "s1", text: "many claims", atMs: 1 });
+    loop.ingestTurn({ speaker: "s1", text: "the claim", atMs: 1 });
     await loop.flush();
     const byTopic = (topic: string) => loop.quests().find((quest) => quest.topic === topic)!;
     loop.accept(byTopic("A").id);

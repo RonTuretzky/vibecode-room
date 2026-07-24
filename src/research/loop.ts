@@ -8,7 +8,6 @@
 // (tree.ts) keep the window utterance-shaped instead of ASR-fragment-shaped.
 
 import type { TranscriptTurn } from "../detect/types";
-import { suggestFromTurn } from "./suggester";
 import { ConceptTree, type ConceptTopic } from "./tree";
 import type {
   ResearchAgent,
@@ -69,6 +68,14 @@ const DEFAULT_SUPPRESS_MS = 5 * 60_000;
 const DEFAULT_COALESCE_GAP_MS = 6_000;
 // Past this a "turn" stops being one clickable thought — cap the merge.
 const DEFAULT_COALESCE_MAX_WORDS = 50;
+// PRECISION GUARDS (reconcile): proposals below this confidence never surface…
+const MIN_SURFACING_CONFIDENCE = 0.45;
+// …claims this token-Jaccard-similar to an existing quest merge instead of
+// spawning a sibling crystal…
+const NEAR_DUPE_JACCARD = 0.6;
+// …and weak proposals decay on a shorter leash than confident ones.
+const WEAK_CONFIDENCE = 0.55;
+const WEAK_STALE_MISSED_ROUNDS = 3;
 
 interface RunningQuest {
   controller: AbortController;
@@ -312,6 +319,40 @@ export class ResearchLoop {
       if (this.#isSuppressed(suggestion.topic, suggestion.claim, nowMs)) {
         continue;
       }
+      // PRECISION GUARDS (each traced so pruning is observable in the rail).
+      // 1. Grounding: the quoted evidence must actually exist in the window —
+      //    an inference proposal about something nobody said never surfaces.
+      if (!this.#isGrounded(suggestion.contextSpan.quote)) {
+        this.#trace("research.suggest.ungrounded", "info", correlationId, {
+          topic: suggestion.topic,
+          quote: suggestion.contextSpan.quote.slice(0, 80),
+        });
+        continue;
+      }
+      // 2. Confidence floor: weak hunches don't earn crystals.
+      if (clamp01(suggestion.confidence) < MIN_SURFACING_CONFIDENCE) {
+        this.#trace("research.suggest.lowconf", "info", correlationId, {
+          topic: suggestion.topic,
+          confidence: suggestion.confidence,
+        });
+        continue;
+      }
+      // 3. Near-dupe: a claim that substantially overlaps an existing quest
+      //    updates that quest (proposed) or is a no-op (committed) — the wall
+      //    never grows two crystals for one thought.
+      const dupe = this.#nearDupe(suggestion.claim);
+      if (dupe !== null) {
+        if (dupe.status === "proposed") {
+          dupe.confidence = Math.max(dupe.confidence, clamp01(suggestion.confidence));
+          dupe.roundsSeen += 1;
+          dupe.missedRounds = 0;
+          dupe.updatedAtMs = nowMs;
+          changed = true;
+        }
+        seen.add(dupe.id);
+        this.#trace("research.suggest.dupe", "info", correlationId, { id: dupe.id, topic: suggestion.topic });
+        continue;
+      }
       if (this.#proposedCount() >= this.#maxProposed) {
         continue;
       }
@@ -344,12 +385,15 @@ export class ResearchLoop {
       });
     }
     // Stale pruning: only PROPOSED quests decay; committed work persists.
+    // Weak proposals (below WEAK_CONFIDENCE) die faster — a hunch the model
+    // stops re-detecting was probably noise, not a slow-burning thread.
     for (const quest of this.#quests.values()) {
       if (quest.status !== "proposed" || seen.has(quest.id)) {
         continue;
       }
       quest.missedRounds += 1;
-      if (quest.missedRounds >= this.#staleMissedRounds) {
+      const staleAfter = quest.confidence < WEAK_CONFIDENCE ? WEAK_STALE_MISSED_ROUNDS : this.#staleMissedRounds;
+      if (quest.missedRounds >= staleAfter) {
         this.#quests.delete(quest.id);
         changed = true;
         this.#trace("research.suggest.stale", "info", correlationId, { id: quest.id, topic: quest.topic });
@@ -358,6 +402,60 @@ export class ResearchLoop {
     if (changed) {
       this.#emit();
     }
+  }
+
+  // A quote is grounded when it (normalized) appears inside some window turn,
+  // or shares at least half its content tokens with one — tolerant of the
+  // model lightly paraphrasing while quoting, fatal to invented material.
+  #isGrounded(quote: string): boolean {
+    const normQuote = normalizeForMatch(quote);
+    if (normQuote.length === 0) {
+      return false;
+    }
+    const quoteTokens = tokenSet(normQuote);
+    for (const turn of this.#turns) {
+      const normTurn = normalizeForMatch(turn.text);
+      if (normTurn.includes(normQuote)) {
+        return true;
+      }
+      if (quoteTokens.size > 0) {
+        let shared = 0;
+        for (const token of tokenSet(normTurn)) {
+          if (quoteTokens.has(token)) {
+            shared += 1;
+          }
+        }
+        if (shared / quoteTokens.size >= 0.5) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  // Token-Jaccard near-duplicate of an existing quest's claim, any status.
+  #nearDupe(claim: string): ResearchQuest | null {
+    const tokens = tokenSet(normalizeForMatch(claim));
+    if (tokens.size === 0) {
+      return null;
+    }
+    for (const quest of this.#quests.values()) {
+      const other = tokenSet(normalizeForMatch(quest.claim));
+      if (other.size === 0) {
+        continue;
+      }
+      let shared = 0;
+      for (const token of tokens) {
+        if (other.has(token)) {
+          shared += 1;
+        }
+      }
+      const union = tokens.size + other.size - shared;
+      if (union > 0 && shared / union >= NEAR_DUPE_JACCARD) {
+        return quest;
+      }
+    }
+    return null;
   }
 
   // ── ledger reads ──────────────────────────────────────────────────────────
@@ -471,13 +569,17 @@ export class ResearchLoop {
     }
     const text = turn.text.trim();
     const topicWords = text.split(/\s+/u).slice(0, 8).join(" ");
-    const suggestion: ResearchSuggestion = suggestFromTurn(turn) ?? {
+    // INFERENCE-ONLY policy: no heuristic classification even here — a direct
+    // click is explicit human intent, so the quest spawns as a deep-dive over
+    // the VERBATIM utterance (quoting the room, not inferring about it); the
+    // research agent's own inference decides what the material really is.
+    const suggestion: ResearchSuggestion = {
       matchId: null,
       kind: "deep-dive",
       topic: topicWords.charAt(0).toUpperCase() + topicWords.slice(1),
       claim: text.slice(0, 280),
       rationale: "Asked directly from the wall.",
-      confidence: 0.75,
+      confidence: 0.8,
       contextSpan: { startTurnId: turn.id, endTurnId: turn.id, quote: text.slice(0, 180) },
     };
     const nowMs = this.#clock();
@@ -613,4 +715,19 @@ function suppressKey(topic: string, claim: string): string {
 
 function clamp01(value: number): number {
   return Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0;
+}
+
+// Shared text normalization for the precision guards: lowercase, strip
+// punctuation, collapse whitespace — so grounding/dupe checks compare words,
+// not formatting.
+function normalizeForMatch(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]+/gu, "")
+    .replace(/\s+/gu, " ")
+    .trim();
+}
+
+function tokenSet(normalized: string): Set<string> {
+  return new Set(normalized.split(" ").filter((token) => token.length > 2));
 }
