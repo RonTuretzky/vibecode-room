@@ -3052,6 +3052,72 @@ main.gesture-mode .ctl-button.research-reset {
   background: rgba(0, 188, 212, 0.2);
 }
 
+/* Free-text steering at the decide hold: a glass field + a send button in the
+   guided-launch recipe (tinted text/border over glass, never a solid fill) so
+   a typed note can re-steer the concept while the deck stays open below. */
+.guided-steer {
+  margin: 4px 0 2px;
+}
+
+.guided-steer-label {
+  display: block;
+  margin: 0 0 6px;
+  font-size: 15px;
+  color: var(--ink-faint);
+}
+
+.guided-steer-row {
+  display: flex;
+  gap: 10px;
+  align-items: stretch;
+}
+
+.guided-steer-input {
+  flex: 1;
+  min-height: 48px;
+  resize: none;
+  padding: 8px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--glass-line);
+  background: rgba(10, 22, 32, 0.6);
+  color: var(--ink);
+  font: inherit;
+  font-size: 15px;
+  line-height: 1.4;
+}
+
+.guided-steer-input:focus {
+  outline: none;
+  border-color: rgba(0, 188, 212, 0.45);
+}
+
+.ctl-button.guided-steer-send {
+  align-self: center;
+  color: var(--c-selected);
+  border-color: rgba(0, 188, 212, 0.45);
+  background: rgba(0, 188, 212, 0.08);
+}
+
+.ctl-button.guided-steer-send:hover {
+  background: rgba(0, 188, 212, 0.2);
+}
+
+.ctl-button.guided-steer-send:disabled {
+  opacity: 0.55;
+  cursor: default;
+  transform: none;
+}
+
+.guided-steer-note {
+  margin: 6px 0 0;
+  font-size: 14px;
+  color: var(--c-active);
+}
+
+.guided-steer-note.failed {
+  color: #f6dca6;
+}
+
 /* Live status chips (step 2): pending → dim; ok → green. */
 .guided-status-row {
   display: flex;

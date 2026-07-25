@@ -892,6 +892,7 @@ describe("idea action card: contextual Done UX replaces the top-bar button", () 
       onExit: noop,
       onFinish: noop,
       onDone: noop,
+      onSteer: async () => true,
     };
 
     const armedHtml = renderToStaticMarkup(<GuidedDemo {...props} snapshot={armedSnapshot} />);
@@ -904,5 +905,51 @@ describe("idea action card: contextual Done UX replaces the top-bar button", () 
     const idleHtml = renderToStaticMarkup(<GuidedDemo {...props} snapshot={demoProjectorSnapshot} />);
     expect(idleHtml).toContain('data-testid="guided-done-button"');
     expect(idleHtml).toContain('data-testid="guided-settle-waiting"');
+  });
+
+  // DECIDE HOLD: the demo waits on the auto-opened deck; the coach card offers
+  // the free-text steer surface (textarea + send → the focus process's steer
+  // route) and the explicit Finish — never an auto-advance affordance. (The
+  // hold semantics themselves are unit-tested in guided/machine.test.ts.)
+  test("guided decide step: free-text steer surface + Finish while waiting on the deck", async () => {
+    const { GuidedDemo } = await import("./guided/GuidedDemo");
+    const { startGuided } = await import("./guided/machine");
+    const noop = () => undefined;
+    const focusUpid = "upid_atlas_7f3"; // a real demo-fixture process
+    const decideState = {
+      ...startGuided(demoProjectorSnapshot),
+      step: "decide" as const,
+      focusUpid,
+      readyBackend: "native",
+    };
+    const props = {
+      snapshot: demoProjectorSnapshot,
+      micState: "live" as const,
+      micError: null,
+      onPopOrb: noop,
+      onRecord: noop,
+      onSkip: noop,
+      onExit: noop,
+      onFinish: noop,
+      onDone: noop,
+      onSteer: async () => true,
+    };
+
+    const html = renderToStaticMarkup(<GuidedDemo {...props} state={decideState} />);
+    expect(html).toContain('data-step="decide"');
+    expect(html).toContain('data-testid="guided-steer"');
+    expect(html).toContain('data-testid="guided-steer-input"');
+    expect(html).toContain('data-testid="guided-steer-send"');
+    expect(html).toContain('data-testid="guided-finish-button"');
+    // The hold is explicit: Finish, not Skip, is the step's forward affordance.
+    expect(html).not.toContain('data-testid="guided-skip-button"');
+
+    // No focus process (a skipped-through run) → nothing to steer, no form.
+    const unfocused = renderToStaticMarkup(
+      <GuidedDemo {...props} state={{ ...decideState, focusUpid: null, readyBackend: null }} />,
+    );
+    expect(unfocused).toContain('data-step="decide"');
+    expect(unfocused).not.toContain('data-testid="guided-steer"');
+    expect(unfocused).toContain('data-testid="guided-finish-button"');
   });
 });

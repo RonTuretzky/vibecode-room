@@ -940,6 +940,48 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
     }
   }, [liveMode, releaseMute, toggleMic]);
 
+  // GUIDED FREE-TEXT STEER (the decide hold's typed input): the note rides the
+  // SAME route spoken/click steering takes — POST /api/process/:upid/steer
+  // {text} against the demo's focus process; the server forwards it to
+  // registry.steer, which re-runs every ready build (deck included). The
+  // response is the fresh snapshot (publishNow), applied when it looks like
+  // one. The demo keeps waiting on the deck either way — steering refines the
+  // concept, it never advances the step. Returns whether the send landed so
+  // the form can say "sent — rebuilding" honestly.
+  const guidedSteer = useCallback(
+    async (text: string): Promise<boolean> => {
+      const upid = guidedRef.current?.focusUpid ?? null;
+      const trimmed = text.trim();
+      if (upid === null || trimmed.length === 0) {
+        return false;
+      }
+      if (!liveMode) {
+        // Offline demo: no runtime to steer; report success so the coached
+        // flow stays demonstrable end to end without a server.
+        return true;
+      }
+      try {
+        const response = await fetch(`/api/process/${encodeURIComponent(upid)}/steer`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ text: trimmed }),
+        });
+        if (response.ok && response.headers.get("content-type")?.includes("application/json")) {
+          const body: unknown = await response.json();
+          if (looksLikeSnapshot(body)) {
+            setSnapshot(body);
+          }
+        }
+        return response.ok;
+      } catch {
+        // Non-authoritative projector: a failed steer must never wedge the
+        // demo — the form reports it and the visitor can retry.
+        return false;
+      }
+    },
+    [liveMode],
+  );
+
   // VOICE FEEDBACK: when the server recognizes a wake-word command the snapshot's
   // `voice` field changes; flash the command near the status bar so the room gets
   // visible confirmation the utterance landed. The initial value (a stale command
@@ -1997,6 +2039,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
           onSkip={guidedSkip}
           onExit={exitGuidedDemo}
           onFinish={exitGuidedDemo}
+          onSteer={guidedSteer}
           onDone={() => {
             // Done is the ONLY way forward from the idea step: accept builds
             // from the surfaced idea (or the raw transcript, server-side),

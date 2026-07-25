@@ -127,6 +127,17 @@ export function Slideshow({ process, onLifecycle, onClose, initialBackend = null
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
+      // Never steal keys from text entry: the guided demo's free-text steer
+      // textarea floats OVER the open deck (the decide hold), and this is a
+      // capture-phase window listener — without the guard a typed space or an
+      // arrow caret move would flip slides mid-sentence.
+      const target = event.target;
+      if (
+        target instanceof HTMLElement &&
+        (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)
+      ) {
+        return;
+      }
       if (event.key === "Escape") {
         // The window owns Escape while it is open — close it here (and stop the
         // room's global handlers) so the pop-up is self-sufficient.

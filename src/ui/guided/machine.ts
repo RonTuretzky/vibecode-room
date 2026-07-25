@@ -39,11 +39,16 @@ import { backendsOf, buildsOf } from "../buildloop";
  *                 "ready" when builds[] is absent). Failed lanes NEVER advance
  *                 and never wedge — the overlay shows them failed and the skip
  *                 affordance always works.
- *   decide      — terminal step: the pitch deck is auto-opened and the visitor
- *                 dwell-picks a "How should we continue?" choice (rendered by
- *                 the deck overlay's room-native decision bar). ANY choice
- *                 completes the demo (the App exits on decision); `skipStep`
- *                 (the Finish button) returns null = demo complete too.
+ *   decide      — terminal HOLD: the pitch deck is auto-opened (once, by the
+ *                 App) and the demo WAITS on it. Snapshots never advance this
+ *                 step — the visitor dwell-picks a "How should we continue?"
+ *                 choice (the deck overlay's room-native decision bar or the
+ *                 in-iframe decision slide via postMessage), swipes the deck's
+ *                 question cards, or types free-text steering notes (each one
+ *                 re-steers the concept while the demo keeps waiting). Only
+ *                 EXPLICIT actions end the run: any decision (the App exits on
+ *                 it), `skipStep` (the Finish button) returning null = demo
+ *                 complete, or Exit/Esc.
  *
  * Skip is available at every step; re-entering (startGuided) always begins a
  * fresh run with a fresh baseline.
@@ -177,6 +182,13 @@ export function advanceOnSnapshot(state: GuidedState, snapshot: ProjectorSnapsho
       }
       return next;
     }
+    case "decide":
+      // TERMINAL HOLD: the deck is open and the demo waits ON IT. However the
+      // room evolves underneath (steer rebuilds, late lanes readying, even a
+      // commission landing) no snapshot moves the visitor — only an explicit
+      // action ends the run: a deck decision (the App exits on it), the
+      // Finish button (skipStep → null), or Exit/Esc.
+      return state;
     default:
       return state;
   }

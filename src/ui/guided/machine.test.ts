@@ -346,6 +346,60 @@ describe("guided demo — skip, finish, re-enter", () => {
   });
 });
 
+describe("guided demo — decide step HOLDS on the deck (no auto-advance)", () => {
+  // Reach decide the natural way: orbs → record → idea → Done (skip) → race
+  // ready → decide.
+  const atDecide = () => {
+    let state = startGuided(makeSnapshot());
+    for (let i = 0; i < PRACTICE_ORB_COUNT; i += 1) {
+      state = popPracticeOrb(state);
+    }
+    state = advanceOnSnapshot(state, recordingRoom());
+    const readySnap = recordingRoom({
+      processes: [makeProcess("upid_demo", { builds: [build("native", "ready", { slideshowUrl: "http://127.0.0.1:1/deck" })] })],
+    });
+    const decided = skipStep(state, readySnap)!;
+    expect(decided.step).toBe("decide");
+    expect(decided.focusUpid).toBe("upid_demo");
+    return decided;
+  };
+
+  test("NO snapshot ever advances decide — more lanes readying, new processes, elapsed time", () => {
+    const state = atDecide();
+    const evolving = recordingRoom({
+      processes: [
+        makeProcess("upid_demo", {
+          builds: [
+            build("native", "ready", { slideshowUrl: "http://127.0.0.1:1/deck" }),
+            build("smithers", "ready", { slideshowUrl: "http://127.0.0.1:2/deck" }),
+          ],
+        }),
+        makeProcess("upid_other"),
+      ],
+    });
+    // Identity-stable: React setState must bail, so the SAME object comes back.
+    expect(advanceOnSnapshot(state, evolving)).toBe(state);
+    expect(advanceOnSnapshot(state, evolving, Date.now() + 3_600_000)).toBe(state);
+  });
+
+  test("a steer-triggered rebuild (lane back to building) does not move or wedge the hold", () => {
+    const state = atDecide();
+    const rebuilding = recordingRoom({
+      processes: [
+        makeProcess("upid_demo", { builds: [build("native", "building", { percent: 12, progressLabel: "re-steering" })] }),
+      ],
+    });
+    expect(advanceOnSnapshot(state, rebuilding)).toBe(state);
+    // The explicit exits still work mid-rebuild.
+    expect(skipStep(state, rebuilding)).toBeNull();
+  });
+
+  test("only the explicit Finish (skipStep) completes the demo from decide", () => {
+    const state = atDecide();
+    expect(skipStep(state, recordingRoom())).toBeNull();
+  });
+});
+
 describe("guided demo — resilience notices (say it, never wedge)", () => {
   test("emergency stop is surfaced at any step", () => {
     const state = startGuided(makeSnapshot());

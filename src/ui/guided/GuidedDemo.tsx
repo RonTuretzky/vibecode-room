@@ -40,6 +40,11 @@ export interface GuidedDemoProps {
   // "Done — build it": accept the armed idea NOW instead of waiting out the
   // settle countdown (idea step).
   onDone: () => void;
+  // Free-text steering while the demo waits on the deck (decide step): the
+  // App POSTs the note to the focus process's steer route. Resolves true when
+  // the send was accepted (the form flashes "sent"), false otherwise — the
+  // demo keeps waiting either way.
+  onSteer: (text: string) => Promise<boolean>;
 }
 
 const STEP_TITLES: Record<GuidedState["step"], string> = {
@@ -68,6 +73,7 @@ export function GuidedDemo({
   onExit,
   onFinish,
   onDone,
+  onSteer,
 }: GuidedDemoProps) {
   // Which practice orbs this run has popped (local render state; the machine
   // holds only the count). GuidedDemo unmounts on exit, so re-entry is fresh.
@@ -167,7 +173,7 @@ export function GuidedDemo({
         ) : null}
         {step === "idea" ? <IdeaBody snapshot={snapshot} micState={micState} onDone={onDone} /> : null}
         {step === "race" ? <RaceBody state={state} snapshot={snapshot} /> : null}
-        {step === "decide" ? <DecideBody state={state} snapshot={snapshot} /> : null}
+        {step === "decide" ? <DecideBody state={state} snapshot={snapshot} onSteer={onSteer} /> : null}
 
         <footer className="guided-actions">
           {step === "decide" ? (
@@ -390,7 +396,15 @@ function RaceBody({ state, snapshot }: { state: GuidedState; snapshot: Projector
   );
 }
 
-function DecideBody({ state, snapshot }: { state: GuidedState; snapshot: ProjectorSnapshot }) {
+function DecideBody({
+  state,
+  snapshot,
+  onSteer,
+}: {
+  state: GuidedState;
+  snapshot: ProjectorSnapshot;
+  onSteer: (text: string) => Promise<boolean>;
+}) {
   const process = focusProcess(state, snapshot);
   const builds = process !== null ? buildsOf(process) : [];
   const hasDeck = builds.some((build) => build.slideshowUrl !== null);
@@ -400,11 +414,12 @@ function DecideBody({ state, snapshot }: { state: GuidedState; snapshot: Project
       {hasDeck ? (
         <p className="guided-lede">
           The pitch deck is open — it was <strong>generated from the winning
-          concept</strong>. Dwell a choice on its{" "}
-          <strong>&ldquo;How should we continue?&rdquo;</strong> bar to finish:
-          any choice completes the demo, and <strong>Build it for real</strong>{" "}
-          commissions the full build as an epilogue (the wall keeps working
-          after you&rsquo;re done).
+          concept</strong>. Take your time with it: answer its question cards,
+          type extra directions below, and when you&rsquo;re ready dwell a
+          choice on its <strong>&ldquo;How should we continue?&rdquo;</strong>{" "}
+          bar — any choice completes the demo, and{" "}
+          <strong>Build it for real</strong> commissions the full build as an
+          epilogue (the wall keeps working after you&rsquo;re done).
         </p>
       ) : (
         <p className="guided-lede">
@@ -422,6 +437,80 @@ function DecideBody({ state, snapshot }: { state: GuidedState; snapshot: Project
           . Finish below to complete the demo.
         </p>
       )}
+      {/* Free-text steering rides the hold: only when a focus process exists —
+          with no newborn project there is nothing to steer. */}
+      {process !== null ? <GuidedSteerForm onSteer={onSteer} /> : null}
+    </div>
+  );
+}
+
+// Free-text ADDITIONAL input while the demo waits on the deck: the note POSTs
+// to the focus process's steer route (the same path spoken/click steering
+// takes), so the concept rebuilds with it — the demo keeps waiting, and more
+// notes can follow. Success flashes a transient "sent — rebuilding" note; a
+// failed send says so instead of pretending (honest-degradation rule).
+function GuidedSteerForm({ onSteer }: { onSteer: (text: string) => Promise<boolean> }) {
+  const [draft, setDraft] = useState("");
+  const [sending, setSending] = useState(false);
+  const [sentNote, setSentNote] = useState<"sent" | "failed" | null>(null);
+  useEffect(() => {
+    if (sentNote === null) {
+      return;
+    }
+    const timer = setTimeout(() => setSentNote(null), 4_000);
+    return () => clearTimeout(timer);
+  }, [sentNote]);
+
+  const send = async () => {
+    const text = draft.trim();
+    if (text.length === 0 || sending) {
+      return;
+    }
+    setSending(true);
+    try {
+      const ok = await onSteer(text);
+      setSentNote(ok ? "sent" : "failed");
+      if (ok) {
+        setDraft("");
+      }
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <div className="guided-steer" data-testid="guided-steer">
+      <label className="guided-steer-label" htmlFor="guided-steer-input">
+        Anything to add? Type it — your note steers this concept:
+      </label>
+      <div className="guided-steer-row">
+        <textarea
+          id="guided-steer-input"
+          className="guided-steer-input"
+          data-testid="guided-steer-input"
+          rows={2}
+          placeholder="e.g. make it neon, add a leaderboard, target phones…"
+          value={draft}
+          onChange={(changeEvent) => setDraft(changeEvent.target.value)}
+        />
+        <button
+          type="button"
+          className="ctl-button guided-steer-send"
+          data-testid="guided-steer-send"
+          onClick={() => void send()}
+          disabled={sending || draft.trim().length === 0}
+          title="Send this note as extra input — the concept rebuilds with it."
+        >
+          {sending ? "Sending…" : "Send ▸"}
+        </button>
+      </div>
+      {sentNote !== null ? (
+        <p className={`guided-steer-note ${sentNote}`} data-testid="guided-steer-note" role="status">
+          {sentNote === "sent"
+            ? "✓ Sent — rebuilding the concept with your note."
+            : "⚠ Couldn't send — the room didn't take the note. Try again."}
+        </p>
+      ) : null}
     </div>
   );
 }
