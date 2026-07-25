@@ -1057,6 +1057,20 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
           // Ignore a malformed frame; the next push or a resync recovers.
         }
       });
+      // Lightweight mic byte-counter ticks: merge into the current snapshot's
+      // mic section without a full-snapshot parse (the server no longer pushes
+      // whole snapshots just to move this counter).
+      source.addEventListener("mic", (messageEvent) => {
+        if (closed || mockModeRef.current) {
+          return;
+        }
+        try {
+          const mic = JSON.parse((messageEvent as MessageEvent).data) as ProjectorSnapshot["mic"];
+          setSnapshot((current) => ({ ...current, mic }));
+        } catch {
+          // Ignore a malformed frame; the next push or a resync recovers.
+        }
+      });
       source.addEventListener("error", () => {
         // The stream dropped (server restart / network blip). Tear it down and
         // reconnect with capped exponential backoff so the tab self-heals instead

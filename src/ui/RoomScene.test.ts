@@ -8,6 +8,7 @@ import {
   dialogueTrunkHeight,
   stageWord,
   treeIndicators,
+  treeSpecStructurallyChanged,
   treeStatus,
   treeTitle,
   type DialogueNodeSpec,
@@ -95,6 +96,41 @@ describe("treeIndicators — richer per-process state", () => {
   test("progress is clamped before it drives the arc", () => {
     expect(treeIndicators(baseSpec({ state: "active", progress: 150 })).progressArc).toBeNull();
     expect(treeIndicators(baseSpec({ state: "active", progress: -20 })).progressArc).toBeNull();
+  });
+});
+
+describe("treeSpecStructurallyChanged — rebuild only on shape changes", () => {
+  test("identical specs are not structural", () => {
+    expect(treeSpecStructurallyChanged(baseSpec(), baseSpec())).toBe(false);
+  });
+
+  test("progress ticks alone are NOT structural — live builds update in place", () => {
+    // The old comparison keyed on Math.round(progress), so a live build tore
+    // down and regrew the whole entry on every 1% tick. Mid-flight ticks must
+    // stay in-place updates.
+    expect(treeSpecStructurallyChanged(baseSpec({ progress: 41 }), baseSpec({ progress: 42 }))).toBe(false);
+    expect(treeSpecStructurallyChanged(baseSpec({ progress: 5 }), baseSpec({ progress: 95 }))).toBe(false);
+  });
+
+  test("identity / state / stage / steering / title transitions still rebuild", () => {
+    expect(treeSpecStructurallyChanged(baseSpec(), baseSpec({ callsign: "Zephyr" }))).toBe(true);
+    expect(treeSpecStructurallyChanged(baseSpec(), baseSpec({ state: "completed" }))).toBe(true);
+    expect(treeSpecStructurallyChanged(baseSpec(), baseSpec({ stage: "commissioned" }))).toBe(true);
+    expect(treeSpecStructurallyChanged(baseSpec({ stage: "commissioned" }), baseSpec({ stage: "built" }))).toBe(true);
+    expect(treeSpecStructurallyChanged(baseSpec(), baseSpec({ steering: true }))).toBe(true);
+    expect(treeSpecStructurallyChanged(baseSpec(), baseSpec({ task: "Renamed project" }))).toBe(true);
+  });
+
+  test("indicator changes (lanes, published, failures) still rebuild", () => {
+    expect(treeSpecStructurallyChanged(baseSpec(), baseSpec({ builds: { building: 1, ready: 0, failed: 0 } }))).toBe(true);
+    expect(treeSpecStructurallyChanged(baseSpec(), baseSpec({ published: true }))).toBe(true);
+    expect(treeSpecStructurallyChanged(baseSpec(), baseSpec({ failedCount: 1 }))).toBe(true);
+  });
+
+  test("the live arc appearing or vanishing IS structural (its mesh only exists mid-flight)", () => {
+    // 0% → mid-flight grows the arc mesh; hitting 100% removes it.
+    expect(treeSpecStructurallyChanged(baseSpec({ progress: 0 }), baseSpec({ progress: 5 }))).toBe(true);
+    expect(treeSpecStructurallyChanged(baseSpec({ progress: 95 }), baseSpec({ progress: 100 }))).toBe(true);
   });
 });
 

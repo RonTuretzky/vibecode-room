@@ -165,7 +165,8 @@ def test_assign_ids_unknown_label_gets_free_slot():
 def test_encode_hand_shape_and_types():
     hnd = hm.encode_hand(hm.synthetic_landmarks(False), 1, "Right", 0.9, 1.5,
                          mirror=True, pinching=True)
-    assert set(hnd) == {"id", "hand", "x", "y", "pinch", "pinching", "conf"}
+    assert set(hnd) == {"id", "hand", "x", "y", "pinch", "pinching", "conf",
+                        "lm"}
     assert isinstance(hnd["id"], int)
     assert hnd["hand"] == "Right"
     assert isinstance(hnd["pinching"], bool) and hnd["pinching"] is True
@@ -265,6 +266,79 @@ def test_frame_matches_browser_contract_ranges():
         assert 0.0 <= h["pinch"] <= 4.0     # browser clamps to [0,4]
         assert isinstance(h["pinching"], bool)
         assert 0.0 <= h["conf"] <= 1.0
+
+
+# --------------------------------------------------------------------------- #
+# idle inference throttle (IdleGate)                                           #
+# --------------------------------------------------------------------------- #
+def _run_empty_frames(gate, n):
+    """Simulate n camera frames with no hands; return # of inferences run."""
+    inferences = 0
+    for _ in range(n):
+        if gate.should_infer():
+            inferences += 1
+            gate.observe(0)
+    return inferences
+
+
+def test_idle_gate_full_rate_before_threshold():
+    # Every frame infers until IDLE_AFTER_FRAMES consecutive empties.
+    gate = hm.IdleGate()
+    n = hm.IDLE_AFTER_FRAMES - 1
+    assert _run_empty_frames(gate, n) == n
+    assert gate.idle is False
+
+
+def test_idle_gate_enters_idle_after_threshold():
+    gate = hm.IdleGate()
+    _run_empty_frames(gate, hm.IDLE_AFTER_FRAMES)
+    assert gate.idle is True
+    # The next stride-1 frames are skipped, then one inference runs.
+    skips = [gate.should_infer() for _ in range(hm.IDLE_INFER_STRIDE - 1)]
+    assert skips == [False] * (hm.IDLE_INFER_STRIDE - 1)
+    assert gate.should_infer() is True
+
+
+def test_idle_gate_strides_while_idle():
+    # Steady-state idle: exactly 1 inference per IDLE_INFER_STRIDE frames.
+    gate = hm.IdleGate()
+    _run_empty_frames(gate, hm.IDLE_AFTER_FRAMES)
+    frames = hm.IDLE_INFER_STRIDE * 10
+    assert _run_empty_frames(gate, frames) == frames // hm.IDLE_INFER_STRIDE
+
+
+def test_idle_gate_detection_restores_full_rate_immediately():
+    gate = hm.IdleGate()
+    _run_empty_frames(gate, hm.IDLE_AFTER_FRAMES * 3)   # deep in idle
+    assert gate.idle is True
+    # A hand shows up on the next inference frame -> full rate NOW.
+    while not gate.should_infer():
+        pass
+    gate.observe(2)
+    assert gate.idle is False
+    for _ in range(hm.IDLE_AFTER_FRAMES - 1):           # no skips resume early
+        assert gate.should_infer() is True
+        gate.observe(1)
+
+
+def test_idle_gate_streak_must_be_consecutive():
+    # A detection mid-streak resets the count: 2x(threshold-1) empties split by
+    # one detection never idles.
+    gate = hm.IdleGate()
+    _run_empty_frames(gate, hm.IDLE_AFTER_FRAMES - 1)
+    assert gate.should_infer() is True
+    gate.observe(1)                                     # hand flickers in
+    n = hm.IDLE_AFTER_FRAMES - 1
+    assert _run_empty_frames(gate, n) == n              # still full rate
+    assert gate.idle is False
+
+
+def test_idle_gate_clamps_degenerate_params():
+    # idle_after/stride below 1 clamp to 1: never divides by zero or wedges
+    # into a state where inference NEVER runs.
+    gate = hm.IdleGate(idle_after=0, stride=0)
+    n = hm.IDLE_INFER_STRIDE * 4
+    assert _run_empty_frames(gate, n) == n              # stride 1 = every frame
 
 
 # --------------------------------------------------------------------------- #

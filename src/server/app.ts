@@ -477,17 +477,29 @@ export function createPhoneImportApp(
   return app;
 }
 
-function eventsResponse(source: { subscribe(subscriber: (snapshot: ProjectorSnapshot) => void): () => void }): Response {
+function eventsResponse(source: {
+  subscribe(subscriber: (snapshot: ProjectorSnapshot, serialized: string) => void): () => void;
+  subscribeMic(subscriber: (serialized: string) => void): () => void;
+}): Response {
   let unsubscribe: (() => void) | undefined;
+  let unsubscribeMic: (() => void) | undefined;
   const stream = new ReadableStream({
     start(controller) {
       const encoder = new TextEncoder();
-      unsubscribe = source.subscribe((next: ProjectorSnapshot) => {
-        controller.enqueue(encoder.encode(`event: snapshot\ndata: ${JSON.stringify(next)}\n\n`));
+      // The runtime serializes each broadcast snapshot ONCE; every connected
+      // client shares that string instead of re-stringifying per connection.
+      unsubscribe = source.subscribe((_next: ProjectorSnapshot, serialized: string) => {
+        controller.enqueue(encoder.encode(`event: snapshot\ndata: ${serialized}\n\n`));
+      });
+      // Tiny mic byte-counter ticks (~60 bytes at 1 Hz) ride their own event so
+      // an open mic no longer streams full snapshots to every client.
+      unsubscribeMic = source.subscribeMic((serialized: string) => {
+        controller.enqueue(encoder.encode(`event: mic\ndata: ${serialized}\n\n`));
       });
     },
     cancel() {
       unsubscribe?.();
+      unsubscribeMic?.();
     },
   });
 

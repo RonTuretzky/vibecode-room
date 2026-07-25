@@ -88,7 +88,10 @@ import { demoProjectorSnapshot, emptyProjectorSnapshot, withUnmuted } from "../u
 import type { DialogueTurn, IdeaTrayItem, ProjectorProcess, ProjectorProcessState, ProjectorSnapshot, ProjectorSuggestion, ResearchTrayItem, TranscriptLine } from "../ui/types";
 import type { TranscriptObservation } from "../types";
 
-export type ProjectorRuntimeSubscriber = (snapshot: ProjectorSnapshot) => void;
+// Subscribers receive the snapshot object AND its one-time serialization so N
+// SSE clients share a single JSON.stringify per publish instead of each doing
+// their own.
+export type ProjectorRuntimeSubscriber = (snapshot: ProjectorSnapshot, serialized: string) => void;
 
 // A live browser-microphone session. The /api/mic WebSocket pushes raw PCM
 // frames in via `pushAudio`; the runtime streams them through the ASR provider
@@ -195,6 +198,9 @@ export interface ProjectorRuntime {
   // SSE stream both reflect the mutation immediately.
   publishNow(): ProjectorSnapshot;
   subscribe(subscriber: ProjectorRuntimeSubscriber): () => void;
+  // Lightweight mic telemetry channel (SSE `mic` events): the streaming byte
+  // counter ticks here instead of forcing full-snapshot publishes.
+  subscribeMic(subscriber: (serialized: string) => void): () => void;
   unmute(correlationId?: string): Promise<ProjectorSnapshot>;
   emergencyStop(correlationId?: string): Promise<ProjectorSnapshot>;
   startMicSession(correlationId?: string): MicSession;
@@ -456,6 +462,11 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   readonly #session: EmergencySessionState;
   readonly #env: ProjectorRuntimeEnv;
   readonly #subscribers = new Set<ProjectorRuntimeSubscriber>();
+  readonly #micSubscribers = new Set<(serialized: string) => void>();
+  // Serialized form of the last BROADCAST snapshot with updatedAt blanked:
+  // publish() compares against it and skips the whole broadcast (and every SSE
+  // client's parse) when nothing actually changed.
+  #lastComparable: string | null = null;
   // Most recent audible output per channel — the only projection audioSnapshot
   // needs. A full OutputDecision history would grow for the session's life.
   #lastSpoken: string | undefined;
@@ -1086,7 +1097,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   subscribe(subscriber: ProjectorRuntimeSubscriber): () => void {
     this.#subscribers.add(subscriber);
     try {
-      subscriber(this.#snapshot);
+      subscriber(this.#snapshot, JSON.stringify(this.#snapshot));
     } catch {
       // The initial send failed (e.g. the SSE stream closed during connect) —
       // don't leave a dead subscriber registered until the next publish prunes it.
@@ -1095,6 +1106,31 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     return () => {
       this.#subscribers.delete(subscriber);
     };
+  }
+
+  subscribeMic(subscriber: (serialized: string) => void): () => void {
+    this.#micSubscribers.add(subscriber);
+    return () => {
+      this.#micSubscribers.delete(subscriber);
+    };
+  }
+
+  // Tiny mic telemetry event: the streaming byte counter used to force a full
+  // snapshot publish (build + N stringifies + N client parses) every 200 ms for
+  // the whole time the mic was open. Now it is a ~60-byte SSE `mic` event.
+  private emitMicTick(): void {
+    if (this.#micSubscribers.size === 0) {
+      return;
+    }
+    const serialized = JSON.stringify({ mode: this.micMode, active: this.#micActive, bytesReceived: this.#micBytes });
+    for (const subscriber of this.#micSubscribers) {
+      try {
+        subscriber(serialized);
+      } catch {
+        // A closed/errored stream must not abort the broadcast — prune it.
+        this.#micSubscribers.delete(subscriber);
+      }
+    }
   }
 
   async unmute(correlationId = `corr-unmute-${crypto.randomUUID()}`): Promise<ProjectorSnapshot> {
@@ -1843,12 +1879,13 @@ class LiveProjectorRuntime implements ProjectorRuntime {
             // The stream was already closed/cancelled; drop the late frame.
           }
         }
-        // Throttle byte-counter publishes so a steady mic stream (many frames/s)
-        // doesn't flood SSE subscribers.
+        // Byte-counter ticks ride the lightweight mic channel at 1 Hz; full
+        // snapshot publishes happen only when real content changes (transcript
+        // lines, detections, ...), not per counted byte.
         const now = Date.now();
-        if (now - this.#micLastPublishMs >= 200) {
+        if (now - this.#micLastPublishMs >= 1000) {
           this.#micLastPublishMs = now;
-          this.publish();
+          this.emitMicTick();
         }
       },
       stop: async () => {
@@ -2777,10 +2814,23 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   }
 
   publish(): void {
-    this.#snapshot = this.buildSnapshot(this.#snapshot);
+    const candidate = this.buildSnapshot(this.#snapshot);
+    // Content comparison with updatedAt blanked: an unchanged room produces a
+    // byte-identical serialization, so idle ticks cost one stringify and ZERO
+    // broadcast/parse work across all clients. updatedAt therefore only moves
+    // when the snapshot content actually changed.
+    const comparable = JSON.stringify({ ...candidate, updatedAt: "" });
+    if (comparable === this.#lastComparable) {
+      return;
+    }
+    this.#lastComparable = comparable;
+    this.#snapshot = { ...candidate, updatedAt: new Date().toISOString() };
+    // One serialization shared by every subscriber (each SSE client used to
+    // stringify the full snapshot independently).
+    const serialized = JSON.stringify(this.#snapshot);
     for (const subscriber of this.#subscribers) {
       try {
-        subscriber(this.#snapshot);
+        subscriber(this.#snapshot, serialized);
       } catch {
         // A closed/errored stream must not abort the whole broadcast — prune it.
         this.#subscribers.delete(subscriber);

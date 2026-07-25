@@ -54,3 +54,12 @@ artifacts/smithering/server-logs/
 # smither harness runtime state
 .smither/
 .smither-worktrees/
+
+# Python virtualenvs (mediapipe/opencv/pyorbbecsdk/pygame — thousands of files,
+# hundreds of MB). Left untracked, workspace git-diff scans churn across the
+# whole env and spike the machine load average, so ignore all .venv*/.
+.venv/
+.venv-*/
+**/.venv/
+**/.venv-*/
+gesture-wall/.venv-hands/
