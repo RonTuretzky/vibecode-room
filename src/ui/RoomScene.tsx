@@ -782,9 +782,11 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
     };
     const rigDefaults = () => {
       if (ceiling) {
-        // Ceiling wall: a carousel AROUND the tree — mid-height orbit locked
-        // onto center stage (the near-plan look-down clipped the scene).
-        return { radius: 11.5, height: 6.2, lookY: 2.6 };
+        // Ceiling wall: a carousel AROUND the tree — orbit locked onto center
+        // stage. Framing math: FOV 46° covers ~0.85·radius vertically, and the
+        // research tree + canopy crystals reach ~12 units, so the ring sits at
+        // radius 18 (≈15.3 units of vertical field centered on lookY 4).
+        return { radius: 18, height: 8.5, lookY: 4 };
       }
       if (layoutRef.current === "ball") {
         return { radius: 12.5, height: 5.4, lookY: BALL_CENTER_Y };
