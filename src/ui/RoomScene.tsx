@@ -782,8 +782,9 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
     };
     const rigDefaults = () => {
       if (ceiling) {
-        // Overhead wall: near-plan view — high, tight radius, centered look.
-        return { radius: 5.5, height: 28, lookY: 0 };
+        // Ceiling wall: a carousel AROUND the tree — mid-height orbit locked
+        // onto center stage (the near-plan look-down clipped the scene).
+        return { radius: 11.5, height: 6.2, lookY: 2.6 };
       }
       if (layoutRef.current === "ball") {
         return { radius: 12.5, height: 5.4, lookY: BALL_CENTER_Y };
@@ -3123,10 +3124,16 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
           }
         }
 
-        // Ceiling ambient drift: the overhead wall slowly rotates so the
-        // plan view never reads as a frozen slide; any live input overrides.
-        if (ceiling && !dragging && !externalGrab && keysDown.size === 0 && !reducedMotion) {
-          rig.dAngle += dt * 0.04;
+        // Ceiling carousel: HARD-LOCKED onto the tree — the orbit target is
+        // pinned to center stage every frame (WASD/pan can't wander it) and
+        // the camera keeps circling; a live grab (pinch/drag) pauses the spin
+        // but never the centering.
+        if (ceiling) {
+          rig.dTargetX = 0;
+          rig.dTargetZ = 0;
+          if (!dragging && !externalGrab && !reducedMotion) {
+            rig.dAngle += dt * 0.08;
+          }
         }
 
         // Flick inertia: after release the last drag velocity keeps the orbit
