@@ -467,7 +467,10 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
   // conversation is watched for researchable material (fact-checks, deep-dives,
   // bias scans). Offline demo flips the flag locally so the static fixtures
   // stay interactive.
-  const researchActive = snapshot.researchMode ?? false;
+  // Per-window research pin (?research=1|0) wins over the server-wide
+  // toggle — a pinned wall stays a research wall no matter what `r` does.
+  const researchActive =
+    urlConfig.research === "on" ? true : urlConfig.research === "off" ? false : (snapshot.researchMode ?? false);
   const toggleResearchMode = useCallback(async () => {
     if (!liveMode || mockModeRef.current) {
       setSnapshot((current) => ({ ...current, researchMode: !(current.researchMode ?? false) }));
@@ -1553,6 +1556,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
         layout={sceneLayout}
         wall={urlConfig.wall}
         cornerLock={cornerLock}
+        ceiling={urlConfig.ceiling}
         fitSignal={fitSignal}
         focusUpid={
           guided !== null && (guided.step === "race" || guided.step === "decide")
@@ -1580,12 +1584,12 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
           unbinds DOM listeners, the rig stays drivable through the registered
           camera control — and with desk mode via the rig's latest-writer-wins
           d* contract. onStatus feeds the toggle's OFF/connecting/LIVE label. */}
-      {handsOn ? (
-        <PinchCameraLayer url={handsUrl} wall={urlConfig.wall} onStatus={setHandsStatus} />
-      ) : null}
+      {/* wall={null}: the pinch stream is per-CAMERA, not per-wall — one
+          laptop camera deliberately drives every window (incl. wall B). */}
+      {handsOn ? <PinchCameraLayer url={handsUrl} wall={null} onStatus={setHandsStatus} /> : null}
       {/* In-room hand-tracking HUD (top-left): live skeleton + id + pinch text,
           no camera image. Same 9980 stream; shows whenever the hand camera is on. */}
-      {handsOn ? <HandSkeletonHud url={handsUrl} wall={urlConfig.wall} /> : null}
+      {handsOn ? <HandSkeletonHud url={handsUrl} wall={null} /> : null}
       {urlConfig.badge ? (
         <div className="wall-badge" data-testid="wall-badge">
           {urlConfig.badge}

@@ -39,6 +39,16 @@ export interface ProjectorUrlConfig {
   // wall never offers canned content; run-room.sh appends it only when
   // VIBERSYN_MOCK_ROOM=1 is set in the environment.
   mock: boolean;
+  // Per-WINDOW research pin: ?research=1 always shows the research surfaces
+  // (dialogue tree + quests) on this window, ?research=0 never does — either
+  // way the window stops following the server-wide research-mode toggle.
+  // Absent = follow the server (today's behavior). Lets one wall live as a
+  // permanent research wall while another stays the build garden.
+  research: "on" | "off" | null;
+  // ?ceiling=1 — this projection is OVERHEAD (a ceiling wall): the camera
+  // defaults to a high look-down vantage with a slow drift instead of the
+  // eye-level orbit. Pinch/WASD still steer from there.
+  ceiling: boolean;
 }
 
 export function parseProjectorUrl(search: string, hostname: string): ProjectorUrlConfig {
@@ -83,6 +93,11 @@ export function parseProjectorUrl(search: string, hostname: string): ProjectorUr
   const demo = params.get("demo") === "guided" ? ("guided" as const) : null;
   const mock = params.get("mock") === "1";
 
+  // Per-window research pin + ceiling-projection camera (see the interface).
+  const researchParam = params.get("research");
+  const research = researchParam === "1" ? ("on" as const) : researchParam === "0" ? ("off" as const) : null;
+  const ceiling = params.get("ceiling") === "1";
+
   // Corner identity badge: shown whenever the window is wall- or view-scoped so
   // an operator glancing across the room knows which projection they're facing.
   // DE-THEMED: a wall badge is just "WALL A" — the walls are one continuous
@@ -94,5 +109,5 @@ export function parseProjectorUrl(search: string, hostname: string): ProjectorUr
         ? view.toUpperCase()
         : null;
 
-  return { view, wall, badge, gesture, dwell, hands, demo, mock };
+  return { view, wall, badge, gesture, dwell, hands, demo, mock, research, ceiling };
 }

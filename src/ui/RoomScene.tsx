@@ -179,6 +179,10 @@ interface RoomSceneProps {
   // apart, exactly 90° horizontal FOV, and NO drift/orbit/fit/focus so the
   // seam edge stays coherent. Fixed per window (URL-derived).
   cornerLock?: boolean;
+  // Ceiling projection (?ceiling=1): this window is OVERHEAD, so the default
+  // vantage is a high look-down with a slow ambient drift. Pinch/WASD still
+  // steer from there (d* writers win, exactly like fit/focus).
+  ceiling?: boolean;
   // Increment to request a one-shot fit-to-content camera move.
   fitSignal: number;
   // GUIDED-DEMO FOCUS: when set, the camera glides to frame this process's
@@ -689,7 +693,7 @@ interface Entry {
   updateProgress?: (spec: TreeSpec) => void;
 }
 
-export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, focusUpid = null, pointerNav = true, cornerLock = false, onAcceptIdea, onSelectProcess, dialogue = [], topics = [], research = [], onResearchNode, onDialogueNode }: RoomSceneProps) {
+export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, focusUpid = null, pointerNav = true, cornerLock = false, ceiling = false, onAcceptIdea, onSelectProcess, dialogue = [], topics = [], research = [], onResearchNode, onDialogueNode }: RoomSceneProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const ideasRef = useRef(ideas);
   ideasRef.current = ideas;
@@ -777,6 +781,10 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       dTargetZ: 0,
     };
     const rigDefaults = () => {
+      if (ceiling) {
+        // Overhead wall: near-plan view — high, tight radius, centered look.
+        return { radius: 5.5, height: 28, lookY: 0 };
+      }
       if (layoutRef.current === "ball") {
         return { radius: 12.5, height: 5.4, lookY: BALL_CENTER_Y };
       }
@@ -3113,6 +3121,12 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
             rig.dTargetX += (mx / mag) * step;
             rig.dTargetZ += (mz / mag) * step;
           }
+        }
+
+        // Ceiling ambient drift: the overhead wall slowly rotates so the
+        // plan view never reads as a frozen slide; any live input overrides.
+        if (ceiling && !dragging && !externalGrab && keysDown.size === 0 && !reducedMotion) {
+          rig.dAngle += dt * 0.04;
         }
 
         // Flick inertia: after release the last drag velocity keeps the orbit
