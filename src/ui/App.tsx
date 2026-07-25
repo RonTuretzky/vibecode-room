@@ -195,6 +195,17 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
   }, []);
   // The transient voice-command confirmation ("🎤 vibersyn → build"), or null.
   const [voiceFlash, setVoiceFlash] = useState<string | null>(null);
+  // Click feedback for build actions: the same flash surface voice uses, so a
+  // "Done — build it" click is VISIBLY acknowledged the instant it lands
+  // (the spawned tree takes seconds to appear — silence read as "broken").
+  const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flashAction = useCallback((text: string) => {
+    setVoiceFlash(text);
+    if (flashTimerRef.current !== null) {
+      clearTimeout(flashTimerRef.current);
+    }
+    flashTimerRef.current = setTimeout(() => setVoiceFlash(null), 4_000);
+  }, []);
 
   // Whether this projector is bound to the LIVE runtime (vs. the static offline
   // demo). Mirrors the /api/state + SSE gate below: ?live=0 is always offline; in
@@ -1771,7 +1782,10 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
           {showIdeaTray && !mockMode && !researchActive ? (
             <IdeaTray
               ideas={ideas}
-              onBuild={(id) => void actOnIdea(id, "accept")}
+              onBuild={(id) => {
+                flashAction("building it now");
+                void actOnIdea(id, "accept");
+              }}
               onDismiss={(id) => void actOnIdea(id, "dismiss")}
             />
           ) : null}
@@ -1911,6 +1925,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
                 : "Build this idea now"
             }
             onClick={() => {
+              flashAction(`building → ${ideaCardOrb.pitch.slice(0, 60)}`);
               if (ideaCard.id === null) {
                 void acceptIdea();
               } else {
@@ -2045,6 +2060,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
             // from the surfaced idea (or the raw transcript, server-side),
             // then the demo advances — the race adopts the newborn process,
             // and a silent Done still moves the visitor along.
+            flashAction("building your idea…");
             void acceptIdea().then(() => {
               guidedSkip();
             });
