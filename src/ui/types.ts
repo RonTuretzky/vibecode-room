@@ -81,6 +81,58 @@ export interface TranscriptLine {
   kind: "room" | "vibersyn" | "process";
 }
 
+// ── RESEARCH MODE (VoxTerm-inspired dialogue tree + research quests) ────────
+
+// One committed room utterance with a STABLE id — the 3D dialogue tree anchors
+// research nodes to the exact turn they grew from.
+export interface DialogueTurn {
+  id: string;
+  speaker: string | null;
+  text: string;
+  atMs: number;
+  // The concept topic (dialogueTopics entry) this turn belongs to, when the
+  // server has clustered it. Null/absent = unclustered.
+  topicId?: string | null;
+}
+
+export type ResearchTrayKind = "fact-check" | "deep-dive" | "bias-scan";
+export type ResearchTrayStatus = "proposed" | "researching" | "complete" | "failed";
+
+// One research quest surfaced to the wall: a proposed suggestion (click to
+// spawn the research), live agent progress, or a completed dossier whose deck
+// (HTML slideshow with per-source QR codes) is at `deckUrl`.
+export interface ResearchTrayItem {
+  id: string;
+  kind: ResearchTrayKind;
+  topic: string;
+  claim: string;
+  confidence: number;
+  status: ResearchTrayStatus;
+  progress: number;
+  progressLabel: string;
+  rationale?: string;
+  // Verbatim evidence quote from the grounding span, when available.
+  evidence?: string;
+  // The grounding turn id (contextSpan end) — the dialogue-tree anchor.
+  turnId?: string;
+  // Report shape summary, present once complete.
+  sourceCount: number;
+  biasCount: number;
+  verdicts?: { supported: number; refuted: number; mixed: number; unverified: number };
+  // Live findings (capped): the synthesized DRAFT while verification runs
+  // (draft=true), the fact-checked set once complete.
+  findings?: { claim: string; verdict: "supported" | "refuted" | "mixed" | "unverified" }[];
+  draft?: boolean;
+  // Follow-up questions from the completed dossier — each is one click away
+  // from spawning its own research (POST /api/research/:id/followup).
+  followUps?: string[];
+  // Honest degradation notes ("fact-check pass failed — findings unverified").
+  degraded?: string[];
+  // The dossier slideshow URL once complete (GET /api/research/:id/deck).
+  deckUrl?: string | null;
+  error?: string;
+}
+
 export interface ProjectorSuggestion {
   state: SuggestionState;
   pitch: string;
@@ -166,4 +218,21 @@ export interface ProjectorSnapshot {
     lastCommand: string;
     at: string;
   } | null;
+  // RESEARCH MODE: when true, the research suggester watches the conversation
+  // and proposes quests (fact-checks, deep-dives, bias scans) alongside idea
+  // detection. Toggled via POST /api/research-mode or voice "research on".
+  researchMode?: boolean;
+  // True while a suggestion round's model inference is in flight — the wall's
+  // "scanning the conversation" indicator (a crystal might be forming).
+  researchThinking?: boolean;
+  // Every live research quest, tray-ordered (researching → proposed by
+  // confidence → complete → failed). Absent in legacy/static fixtures.
+  research?: ResearchTrayItem[];
+  // The rolling dialogue window (turns with stable ids) feeding the 3D
+  // dialogue tree. Mirrors the transcript but id-addressable, so research
+  // quests can anchor to the exact turn they grew from.
+  dialogue?: DialogueTurn[];
+  // Concept clusters over the dialogue window. Each topic is a BRANCH of the
+  // 3D conversation tree; turns reference their topic via topicId.
+  dialogueTopics?: Array<{ id: string; label: string; turnIds: string[]; freshAtMs: number }>;
 }

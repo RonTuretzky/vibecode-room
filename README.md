@@ -43,12 +43,15 @@ agents building them.
 - **Mouse:** click bubbles and buttons directly.
 - **Keyboard:** press `?` (or `h`) for the cheat-sheet overlay. Highlights:
   `b`/`Enter` build the top ready idea · `x` dismiss it · `c` toggle Idea
-  Capture · `a` toggle Auto-Build · `q` QR import · `m` mic · `u` unmute ·
-  `1–9` select/steer processes · `Esc` close overlays · `Shift+E` emergency stop.
+  Capture · `a` toggle Auto-Build · `r` toggle Research mode · `q` QR import ·
+  `m` mic · `u` unmute · `1–9` select/steer processes · `Esc` close overlays ·
+  `Shift+E` emergency stop.
 - **Voice:** the wake word is **"Vibersyn"** (fuzzy-matched — "viber sin" or
   "vibersin" work too):
   - the bare name starts **Idea Capture**;
   - **"Vibersyn, build it"** builds the top ready idea;
+  - **"Vibersyn, research it"** (or "fact check") researches the top suggested
+    quest; "research on/off" toggles the mode;
   - **"Vibersyn, stop everything"** is the emergency stop;
   - also understood: "dismiss"/"skip"/"no", "auto build on/off", "stop capturing".
 - **QR Import:** the **QR Import** status-bar button shows a QR code — scan it on
@@ -63,6 +66,33 @@ agents building them.
   `VIBERSYN_PHONE_LISTENER=0`). Note: like the rest of the room API, the import
   surface is unauthenticated — anyone on the room LAN can add projects; that's the
   point, but run it on a network you trust.
+
+## Research mode
+
+Toggle **🔍 Research** (or press `r`, or say *"Vibersyn, research on"*) and the
+room's conversation grows a **3D dialogue tree** next to the idea garden — a
+rising helix of speaker-colored turn nodes (VoxTerm's flat transcript,
+re-imagined in space) — while a suggester agent watches the talk and proposes
+**research quests**: claims to *fact-check*, topics to *deep-dive*, framings to
+*bias-scan*. Each quest buds off the exact turn it was grounded in as a
+clickable crystal (blue = proposed). Nothing researches itself: click the
+crystal (or the tray's **Research** button, or say *"Vibersyn, research it"* /
+*"fact check"*) and a research agent spawns — it web-searches for sources, an
+adversarial second pass tries to **refute** every finding, and a third pass
+flags **bias and blind spots**. The finished crystal (mint) opens a
+self-contained **dossier slideshow**: findings with supported/refuted/mixed
+verdicts, bias notes, and a **QR code per source** so anyone in the room can
+scan a citation straight to their phone (`GET /api/research/:id/deck`).
+
+- `src/research/` — suggester, three-stage agent, quest ledger/loop, deck
+  renderer. Backends mirror idea detection: host-`claude` inference is the
+  no-config default (the agent gets real web search via the CLI);
+  `VIBERSYN_RESEARCH_SUGGESTER=heuristic` and `VIBERSYN_RESEARCH_AGENT=stub`
+  run deterministic offline versions (CI/tests). Models/timeouts:
+  `VIBERSYN_RESEARCH_SUGGESTER_MODEL`, `VIBERSYN_RESEARCH_AGENT_MODEL`,
+  `VIBERSYN_RESEARCH_STAGE_TIMEOUT_MS`.
+- API: `POST /api/research-mode {on}` · `POST /api/research/:id/accept` ·
+  `POST /api/research/:id/dismiss` · `GET /api/research/:id/deck`.
 
 ### Gesture wall (optional camera mode)
 

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ProjectorApp, REQUIRED_PROJECTOR_REGIONS } from "./App";
-import { GestureLayer, cursorDotsFromStored } from "./gesture/GestureLayer";
+import { cursorDotsFromStored } from "./gesture/GestureLayer";
 import { IdeaTray } from "./IdeaTray";
 import { HelpOverlay } from "./HelpOverlay";
 import { QrImport, qrPanelState } from "./QrImport";
@@ -316,7 +316,7 @@ describe("help overlay", () => {
   test("lists the full keyboard map and the voice command set", () => {
     const html = renderToStaticMarkup(<HelpOverlay onClose={() => {}} />);
     expect(html).toContain('data-testid="help-overlay"');
-    for (const key of ["1–9", "Enter / b", "x", "c", "a", "k", "m", "u", "q", "? / h", "Shift+E", "Esc"]) {
+    for (const key of ["1–9", "Enter / b", "x", "c", "W A S D", "Shift+A", "k", "m", "u", "q", "? / h", "Shift+E", "Esc"]) {
       expect(html).toContain(`<kbd>${key}</kbd>`);
     }
     expect(html).toContain("Vibersyn, build it");
@@ -806,38 +806,23 @@ describe("merged mic + capture control", () => {
   });
 });
 
-// CURSOR VISIBILITY (live-room request): the gesture layer draws a persistent
-// colored dot per tracked person (wall.js parity, hued via idToHue) — ON by
-// default, toggleable from the wall via a dwellable ctl-button, remembered in
-// localStorage. Dwell rings render regardless of the dot preference.
-describe("gesture cursor-dot toggle", () => {
-  test("the toggle mounts with the dwell layer, ON by default", () => {
-    const html = renderToStaticMarkup(
+// CURSOR VISIBILITY (live-room request v2): the per-person cursor dot is
+// HIDDEN by default and the on-wall toggle button is GONE — dwell rings are
+// the pointing feedback. localStorage "1" is the only opt-in.
+describe("gesture cursor dots (hidden default, no toggle)", () => {
+  test("no cursor toggle button renders in any dwell mode", () => {
+    const gestureWall = renderToStaticMarkup(
       <ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch="?live=0&wall=A&gesture=1" />,
     );
-    expect(html).toContain('data-testid="cursor-toggle-button" data-state="on"');
-    expect(html).toContain("Hide cursor");
-  });
-
-  test("?dwell=mouse (desk dwell testing) gets the same toggle; plain desk mode does not", () => {
+    expect(gestureWall).not.toContain('data-testid="cursor-toggle-button"');
     const mouseDwell = renderToStaticMarkup(
       <ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch="?live=0&dwell=mouse" />,
     );
-    expect(mouseDwell).toContain('data-testid="cursor-toggle-button"');
-
-    const desk = renderToStaticMarkup(<ProjectorApp initialSnapshot={demoProjectorSnapshot} />);
-    expect(desk).not.toContain('data-testid="cursor-toggle-button"');
+    expect(mouseDwell).not.toContain('data-testid="cursor-toggle-button"');
   });
 
-  test("the toggle renders the OFF state (persisted pref seam) with the 'Cursor' invite", () => {
-    const html = renderToStaticMarkup(<GestureLayer wall="A" fusionUrl="" initialCursorDots={false} />);
-    expect(html).toContain('data-testid="cursor-toggle-button" data-state="off"');
-    expect(html).toContain(">Cursor</button>");
-    expect(html).not.toContain("Hide cursor");
-  });
-
-  test("the stored preference parses: only an explicit '0' hides the dots", () => {
-    expect(cursorDotsFromStored(null)).toBe(true); // first visit → ON
+  test("the stored preference parses: only an explicit '1' shows the dots", () => {
+    expect(cursorDotsFromStored(null)).toBe(false); // first visit → hidden
     expect(cursorDotsFromStored("1")).toBe(true);
     expect(cursorDotsFromStored("0")).toBe(false);
   });

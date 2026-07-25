@@ -38,24 +38,25 @@ interface CursorState {
 
 // CURSOR DOTS (live-room request): a persistent colored dot per tracked person
 // — like the standalone wall client (gesture-wall/web/wall.js) — so people SEE
-// where they are pointing between targets. ON by default, toggleable from the
-// wall, remembered in localStorage. Dwell rings render regardless.
+// where they are pointing between targets. HIDDEN by default (live-room
+// request); localStorage "1" opts back in. Dwell rings render regardless.
 export const CURSOR_DOTS_STORAGE_KEY = "vibersyn.cursor-dots";
 
-// Pure: parse the persisted preference. Only an explicit "0" hides the dots —
-// unset (first visit) and anything else defaults ON.
+// Pure: parse the persisted preference. Hidden is THE default (live-room
+// request: the dots read as clutter) — only an explicit "1" opts back in,
+// and only via localStorage; the on-wall toggle button is gone.
 export function cursorDotsFromStored(stored: string | null): boolean {
-  return stored !== "0";
+  return stored === "1";
 }
 
 function readCursorDotsPref(): boolean {
   if (typeof window === "undefined") {
-    return true;
+    return false;
   }
   try {
     return cursorDotsFromStored(window.localStorage.getItem(CURSOR_DOTS_STORAGE_KEY));
   } catch {
-    return true; // storage unavailable (kiosk/private mode) — default ON
+    return false; // storage unavailable (kiosk/private mode) — default hidden
   }
 }
 
@@ -79,26 +80,15 @@ export interface GestureLayerProps {
 // the real UI. The pointed-at target's highlight (grow/glow via
 // [data-dwell-hot] / scene emissive boost) plus the radial dwell-progress ring
 // rendered ON the target are the selection feedback; completing the ring
-// synthesizes the activation. Additionally (live-room request) a persistent
-// per-person cursor dot — hued per cursor id like the standalone wall client —
-// is drawn ON by default, toggleable via the fixed "Hide cursor" button.
+// synthesizes the activation. A per-person cursor dot — hued per cursor id
+// like the standalone wall client — can be opted in via localStorage, but the
+// wall defaults to dwell rings only (the dots read as clutter at room scale).
 export function GestureLayer({ wall, fusionUrl, mouseTest = false, initialCursorDots }: GestureLayerProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const statusRef = useRef<GestureWallStatus>("closed");
-  const [cursorDots, setCursorDots] = useState<boolean>(() => initialCursorDots ?? readCursorDotsPref());
+  const [cursorDots] = useState<boolean>(() => initialCursorDots ?? readCursorDotsPref());
   const cursorDotsRef = useRef(cursorDots);
   cursorDotsRef.current = cursorDots;
-  const toggleCursorDots = () => {
-    setCursorDots((current) => {
-      const next = !current;
-      try {
-        window.localStorage.setItem(CURSOR_DOTS_STORAGE_KEY, next ? "1" : "0");
-      } catch {
-        // Persistence is best-effort; the in-session toggle still applies.
-      }
-      return next;
-    });
-  };
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -325,20 +315,6 @@ export function GestureLayer({ wall, fusionUrl, mouseTest = false, initialCursor
         data-testid="gesture-overlay"
         aria-hidden="true"
       />
-      {/* Cursor visibility toggle — a plain ctl-button (so it is a dwell
-          target for free and inherits the gesture-XL sizing), fixed at the
-          bottom-left where no persistent panel lives on either wall. */}
-      <button
-        type="button"
-        className={`ctl-button cursor-toggle${cursorDots ? " on" : ""}`}
-        data-testid="cursor-toggle-button"
-        data-state={cursorDots ? "on" : "off"}
-        aria-pressed={cursorDots}
-        onClick={toggleCursorDots}
-        title="Show a colored cursor dot for each tracked person (dwell rings stay on either way)."
-      >
-        {cursorDots ? "Hide cursor" : "Cursor"}
-      </button>
     </>
   );
 }

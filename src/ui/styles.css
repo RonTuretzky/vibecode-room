@@ -94,7 +94,8 @@ button {
 }
 
 .stage .rail-card,
-.stage .idea-tray {
+.stage .idea-tray,
+.stage .research-tray {
   pointer-events: auto;
 }
 
@@ -779,11 +780,17 @@ main.gesture-mode .status-bar .status-right {
   transform: translateY(0);
 }
 
+/* COLORLESS CONTROLS (live-room request): every toolbar button reads like the
+   guided-demo one — accent-tinted text/border over glass, never a solid fill.
+   State (on/off) shows as border strength + a touch more tint, not paint. */
 .ctl-button.unmute {
-  color: #1a1206;
-  background: var(--c-paused);
-  border-color: rgba(245, 166, 35, 0.8);
-  box-shadow: 0 0 18px rgba(245, 166, 35, 0.35);
+  color: #ffd166;
+  border-color: rgba(245, 166, 35, 0.45);
+  background: rgba(245, 166, 35, 0.08);
+}
+
+.ctl-button.unmute:hover {
+  background: rgba(245, 166, 35, 0.2);
 }
 
 .ctl-button.unmute:disabled {
@@ -798,10 +805,9 @@ main.gesture-mode .status-bar .status-right {
 }
 
 .ctl-button.auto-build.on {
-  color: #04130c;
-  background: var(--c-active, #30d18a);
+  color: #9deec4;
+  background: rgba(48, 209, 138, 0.2);
   border-color: rgba(48, 209, 138, 0.9);
-  box-shadow: 0 0 20px rgba(48, 209, 138, 0.5);
 }
 
 .ctl-button.auto-build:hover {
@@ -817,11 +823,9 @@ main.gesture-mode .status-bar .status-right {
 }
 
 .ctl-button.capture.on {
-  color: #04141a;
-  background: var(--c-selected, #00bcd4);
+  color: #9fe8f7;
+  background: rgba(0, 188, 212, 0.2);
   border-color: rgba(0, 188, 212, 0.9);
-  box-shadow: 0 0 20px rgba(0, 188, 212, 0.5);
-  animation: capture-pulse 1.8s ease-in-out infinite;
 }
 
 .ctl-button.capture:hover {
@@ -2293,6 +2297,364 @@ main.gesture-mode[data-view="builds"] .transcript-card {
   background: rgba(255, 59, 48, 0.1);
 }
 
+/* ============================================================================
+   Research tray — the visible quest ledger (explicit Research/Dismiss) and
+   the dossier overlay. Mirrors the idea tray's glass idiom; verdict/status
+   colors reuse the FIXED semantics (blue=proposed, green=researching,
+   mint=complete, red=failed).
+   ============================================================================ */
+.research-tray {
+  flex: none;
+  border-radius: 16px;
+  border: 1px solid var(--glass-line);
+  background: linear-gradient(180deg, rgba(14, 24, 32, 0.62), rgba(9, 16, 23, 0.42));
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  padding: 14px 18px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  margin-bottom: 12px;
+}
+
+/* When the idea tray is absent, the research tray takes over its lift above
+   the floating scene-controls cluster. */
+.stage-main .research-tray:last-child {
+  margin-bottom: 56px;
+}
+
+.research-tray-empty {
+  margin: 0;
+  font-size: 13px;
+  font-style: italic;
+  color: var(--ink-faint);
+}
+
+/* Live findings on a research card: verdict-glyphed lines; the draft note
+   marks unverified-in-progress sets. */
+.research-findings {
+  margin: 6px 0 0;
+  padding: 0 0 0 2px;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+
+.research-finding-draft-note {
+  font-style: italic;
+  color: #9ad7f0;
+}
+
+.research-finding .research-finding-verdict {
+  font-weight: 800;
+}
+
+.research-finding.verdict-supported .research-finding-verdict { color: #30d18a; }
+.research-finding.verdict-refuted .research-finding-verdict { color: #ff5d5d; }
+.research-finding.verdict-mixed .research-finding-verdict { color: #ffd166; }
+.research-finding.verdict-unverified .research-finding-verdict { color: var(--ink-faint); }
+
+/* Honesty line: degraded passes are said out loud, in amber. */
+.research-degraded {
+  margin: 6px 0 0;
+  font-size: 11.5px;
+  color: #ffd166;
+}
+
+/* Follow-up chips: one click each — "research this next". */
+.research-followups {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.ctl-button.research-followup {
+  padding: 5px 10px;
+  font-size: 12px;
+  text-align: left;
+  white-space: normal;
+  color: #a5dcf8;
+  border-color: rgba(56, 189, 248, 0.35);
+  background: rgba(56, 189, 248, 0.08);
+}
+
+.ctl-button.research-followup:hover {
+  background: rgba(56, 189, 248, 0.2);
+}
+
+/* 🌱 Reset tree: a compact colorless chip at the tray header's right edge. */
+.ctl-button.research-reset {
+  margin-left: auto;
+  padding: 4px 10px;
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+
+main.gesture-mode .ctl-button.research-reset {
+  min-height: 0;
+  padding: 10px 14px;
+  font-size: 15px;
+}
+
+/* "A crystal might be forming": pulsing scan line while a suggestion round's
+   inference is in flight — the round must be VISIBLE even when it ends empty. */
+.research-scanning {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 13px;
+  color: #9ad7f0;
+}
+
+.research-scan-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #38bdf8;
+  box-shadow: 0 0 10px rgba(56, 189, 248, 0.8);
+  animation: research-scan-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes research-scan-pulse {
+  0%, 100% { transform: scale(0.8); opacity: 0.5; }
+  50% { transform: scale(1.25); opacity: 1; }
+}
+
+.research-tray-items {
+  display: flex;
+  gap: 12px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.research-item {
+  flex: 0 0 280px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-radius: 12px;
+  border: 1px solid var(--glass-line);
+  border-left: 3px solid var(--c-planning);
+  background: rgba(10, 18, 26, 0.5);
+  padding: 10px 12px;
+}
+
+.research-item.researching { border-left-color: var(--c-active); }
+.research-item.complete { border-left-color: var(--c-completed); }
+.research-item.failed { border-left-color: var(--c-halted); opacity: 0.7; }
+
+.research-item-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.research-kind {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--glass-line);
+  color: var(--ink-soft);
+}
+
+.research-kind.kind-fact-check { color: var(--c-selected); border-color: rgba(0, 188, 212, 0.4); }
+.research-kind.kind-deep-dive { color: var(--c-planning); border-color: rgba(56, 189, 248, 0.4); }
+.research-kind.kind-bias-scan { color: var(--c-paused); border-color: rgba(245, 166, 35, 0.4); }
+
+.research-confidence {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.research-status {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.research-status.status-researching { color: var(--c-active); }
+.research-status.status-complete { color: var(--c-completed); }
+.research-status.status-failed { color: var(--c-halted); }
+
+.research-item-topic {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--ink);
+}
+
+.research-item-claim {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--ink-soft);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.research-item-evidence {
+  margin: 0;
+  font-size: 11.5px;
+  font-style: italic;
+  line-height: 1.3;
+  color: var(--ink-faint);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.research-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.research-progress-track {
+  flex: 1;
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(150, 200, 220, 0.12);
+  overflow: hidden;
+}
+
+.research-progress-fill {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--c-active);
+  transition: width 0.6s ease;
+}
+
+.research-progress-label {
+  font-size: 11px;
+  color: var(--ink-faint);
+  white-space: nowrap;
+}
+
+.research-item-result {
+  margin: 0;
+  font-size: 12px;
+  color: var(--c-completed);
+}
+
+.research-item-error {
+  margin: 0;
+  font-size: 12px;
+  color: var(--c-halted);
+}
+
+.research-item-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 4px;
+}
+
+.research-item-actions .ctl-button {
+  padding: 6px 14px;
+  font-size: 13px;
+}
+
+.ctl-button.research-accept {
+  color: #041018;
+  background: var(--c-planning);
+  border-color: rgba(56, 189, 248, 0.8);
+}
+
+.ctl-button.research-accept:hover {
+  box-shadow: 0 0 16px rgba(56, 189, 248, 0.45);
+}
+
+.ctl-button.research-deck {
+  color: #04130c;
+  background: var(--c-completed);
+  border-color: rgba(154, 255, 201, 0.8);
+}
+
+.ctl-button.research-dismiss {
+  color: var(--ink-soft);
+}
+
+.ctl-button.research-dismiss:hover {
+  color: #ffd9d6;
+  border-color: rgba(255, 59, 48, 0.45);
+  background: rgba(255, 59, 48, 0.1);
+}
+
+.ctl-button.research-toggle.on {
+  color: #a5dcf8;
+  background: rgba(56, 189, 248, 0.2);
+  border-color: rgba(56, 189, 248, 0.8);
+}
+
+/* Dossier overlay: fullscreen glass frame around the self-contained deck. */
+.research-deck-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4vh 4vw;
+  background: rgba(3, 7, 12, 0.72);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+.research-deck-frame {
+  display: flex;
+  flex-direction: column;
+  width: min(1280px, 100%);
+  height: 100%;
+  border-radius: 18px;
+  border: 1px solid var(--glass-line);
+  background: rgba(8, 15, 22, 0.92);
+  overflow: hidden;
+}
+
+.research-deck-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--glass-line);
+}
+
+.research-deck-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.research-deck-iframe {
+  flex: 1;
+  width: 100%;
+  border: 0;
+  background: #05070d;
+}
+
+.research-deck-missing {
+  margin: auto;
+  color: var(--ink-faint);
+  font-style: italic;
+}
+
 /* NOTE: ?view=ideas|builds scopes WHAT each wall renders in App.tsx (idea
    surface + idea controls vs build surface + build controls; the 3D scene
    stays full everywhere). The [data-view] attribute on .deep additionally
@@ -3154,16 +3516,15 @@ main.gesture-mode[data-view="builds"] .transcript-card {
 }
 
 .ctl-button.mic-capture.on {
-  color: #04141a;
-  background: var(--c-selected, #00bcd4);
+  color: #9fe8f7;
+  background: rgba(0, 188, 212, 0.2);
   border-color: rgba(0, 188, 212, 0.9);
-  box-shadow: 0 0 20px rgba(0, 188, 212, 0.5);
-  animation: capture-pulse 1.8s ease-in-out infinite;
 }
 
+/* The pulsing dot stays as the only "recording" motion cue. */
 .ctl-button.mic-capture.on .mic-dot {
-  background: #04141a;
-  box-shadow: 0 0 10px rgba(4, 20, 26, 0.6);
+  background: #00bcd4;
+  box-shadow: 0 0 10px rgba(0, 188, 212, 0.7);
   animation: mic-pulse 1.2s ease-in-out infinite;
 }
 
@@ -3172,42 +3533,14 @@ main.gesture-mode[data-view="builds"] .transcript-card {
   cursor: wait;
 }
 
-/* ============================================================================
-   Cursor-dot toggle (live-room request) — rendered by the gesture layer, so it
-   exists exactly when camera/mouse dwell cursors do. Bottom-left above the
-   wall badge (clear of wall B's right-third transcript card and the status
-   bar); a plain ctl-button, so gesture mode auto-XLs it into a dwell target.
-   ============================================================================ */
-.ctl-button.cursor-toggle {
-  position: fixed;
-  left: 22px;
-  bottom: 72px;
-  z-index: 25;
-  color: #ded4ff;
-  border-color: rgba(155, 130, 255, 0.45);
-  background: rgba(120, 95, 240, 0.14);
-}
-
-.ctl-button.cursor-toggle:hover {
-  background: rgba(120, 95, 240, 0.26);
-}
-
-.ctl-button.cursor-toggle.on {
-  color: #140b2e;
-  background: #a78bfa;
-  border-color: rgba(167, 139, 250, 0.9);
-  box-shadow: 0 0 20px rgba(167, 139, 250, 0.5);
-}
-
-/* Zen mode hides all chrome — the cursor toggle included. */
-.deep.zen .ctl-button.cursor-toggle {
-  display: none;
-}
-
-/* Pinch-camera (hands) toggle: lives inline in the status-right HUD cluster,
-   so it inherits the ctl-button layout — only the armed/LIVE tint is bespoke
-   (blue, to read distinct from the violet cursor toggle). */
+/* Pinch-camera (hands) toggle: a COMPACT chip docked at the top of the fleet
+   rail (live-room request — smaller, out of the header). Blue accent, same
+   colorless glass language as every other control. */
 .ctl-button.hands-toggle {
+  justify-self: end;
+  width: fit-content;
+  padding: 5px 10px;
+  font-size: 12px;
   color: #cfe9ff;
   border-color: rgba(120, 190, 255, 0.4);
   background: rgba(70, 150, 240, 0.12);
@@ -3218,10 +3551,16 @@ main.gesture-mode[data-view="builds"] .transcript-card {
 }
 
 .ctl-button.hands-toggle.on {
-  color: #041225;
-  background: #5db4ff;
+  color: #bfe0ff;
+  background: rgba(93, 180, 255, 0.2);
   border-color: rgba(93, 180, 255, 0.9);
-  box-shadow: 0 0 18px rgba(93, 180, 255, 0.5);
+}
+
+/* Keep the chip compact even under gesture-XL button sizing. */
+main.gesture-mode .ctl-button.hands-toggle {
+  min-height: 0;
+  padding: 10px 16px;
+  font-size: 15px;
 }
 
 /* Settle-gate feedback (guided idea step + HUD): heard idea, live countdown,
