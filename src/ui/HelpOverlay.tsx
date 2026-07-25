@@ -14,7 +14,6 @@ const KEYBOARD_SHORTCUTS: ReadonlyArray<readonly [keys: string, action: string]>
   ["c", "mic + Idea Capture on / off (one control)"],
   ["W A S D", "walk / strafe through the 3D scene"],
   ["Shift+A", "toggle Auto-Build"],
-  ["r", "toggle Research mode (dialogue tree + quests)"],
   ["k", "halt the selected build"],
   ["m", "same as c — mic + Idea Capture"],
   ["u", "unmute the room"],

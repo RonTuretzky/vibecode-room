@@ -471,29 +471,6 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
   // toggle — a pinned wall stays a research wall no matter what `r` does.
   const researchActive =
     urlConfig.research === "on" ? true : urlConfig.research === "off" ? false : (snapshot.researchMode ?? false);
-  const toggleResearchMode = useCallback(async () => {
-    if (!liveMode || mockModeRef.current) {
-      setSnapshot((current) => ({ ...current, researchMode: !(current.researchMode ?? false) }));
-      return;
-    }
-    try {
-      const response = await fetch("/api/research-mode", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ on: !(snapshotRef.current.researchMode ?? false) }),
-      });
-      if (response.ok && response.headers.get("content-type")?.includes("application/json")) {
-        setSnapshot((await response.json()) as ProjectorSnapshot);
-      }
-    } catch {
-      // Non-authoritative projector: a failed toggle must never block the UI.
-    }
-  }, [liveMode]);
-
-  // RESEARCH TRAY actions: accept (spawn the research agent) or dismiss a
-  // SPECIFIC quest. Live mode POSTs the per-quest endpoint and applies the
-  // returned snapshot; offline demo mutates the card locally so the static
-  // tray stays interactive.
   const actOnResearch = useCallback(
     async (id: string, action: "accept" | "dismiss") => {
       if (!liveMode || mockModeRef.current) {
@@ -1264,9 +1241,6 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
         case "A":
           void toggleAutoAccept();
           return;
-        case "r":
-          void toggleResearchMode();
-          return;
         case "u":
           if (snapshotRef.current.muted) {
             void releaseMute();
@@ -1308,7 +1282,6 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
     actOnTopIdea,
     toggleMicCapture,
     toggleAutoAccept,
-    toggleResearchMode,
     releaseMute,
     triggerEmergency,
     processLifecycle,
@@ -1703,19 +1676,6 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
               title="When on, every detected idea builds itself — no click required."
             >
               {autoAccept ? "Auto-Build: ON" : "Auto-Build: OFF"}
-            </button>
-          ) : null}
-          {showIdeaSurfaces ? (
-            <button
-              type="button"
-              className={`ctl-button research-toggle${researchActive ? " on" : ""}`}
-              data-testid="research-mode-button"
-              data-state={researchActive ? "on" : "off"}
-              aria-pressed={researchActive}
-              onClick={() => void toggleResearchMode()}
-              title="Research mode (R): the room's talk grows a 3D dialogue tree, and agents suggest what to fact-check, deep-dive, or bias-scan. Click a suggestion to spawn the research."
-            >
-              {researchActive ? "🔍 Research: ON" : "🔍 Research: OFF"}
             </button>
           ) : null}
           {/* Build-side control (phone-imports a project to BUILD): wall B + full view. */}

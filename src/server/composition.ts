@@ -1060,6 +1060,12 @@ class LiveProjectorRuntime implements ProjectorRuntime {
           meta: event.meta,
         }),
     });
+    // ALWAYS-ON research (VIBERSYN_RESEARCH_MODE=1): the suggester loop runs
+    // from boot — the room's research wall (?research=1 window pin) is a
+    // permanent surface, not a toggled mode.
+    if (env.VIBERSYN_RESEARCH_MODE?.trim() === "1") {
+      this.research.setActive(true);
+    }
   }
 
   readonly research: ResearchLoop;
