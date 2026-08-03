@@ -25,6 +25,9 @@ function Header() {
           </span>
         </a>
         <nav className="hidden items-center gap-6 md:flex">
+          <a href="#demo" className="font-parkBody text-surface-ink hover:text-primary-green">
+            Watch
+          </a>
           <a href="#how" className="font-parkBody text-surface-ink hover:text-primary-green">
             How it works
           </a>
@@ -88,6 +91,42 @@ function Hero() {
         <Caption className="mt-10 block text-surface-grey">
           Zero hardware required — a laptop, a mic, and a wall to project on.
         </Caption>
+      </div>
+    </section>
+  );
+}
+
+function Demo() {
+  return (
+    <section id="demo" className="border-b border-paper-2 bg-surface-ink py-20">
+      <div className="mx-auto max-w-5xl px-4">
+        <div className="mb-8 text-center">
+          <Chip>
+            <BroadcastIcon weight="bold" className="text-primary-green" />
+            Demo Day — Day 2 highlights
+          </Chip>
+        </div>
+        <Heading3 className="mb-4 text-center text-white">Watch the room work</Heading3>
+        <Body className="mx-auto mb-10 max-w-2xl text-center text-paper-2">
+          Two and a half minutes from Demo Day: people talking, ideas surfacing on
+          the wall, and the agent fleet turning them into running apps.
+        </Body>
+        <div className="overflow-hidden rounded-2xl border border-surface-grey-2 bg-black shadow-2xl">
+          <video
+            className="aspect-video w-full"
+            controls
+            playsInline
+            preload="none"
+            poster="/demo-poster.jpg"
+          >
+            <source src="/demo.mp4" type="video/mp4" />
+            Your browser doesn’t support embedded video —{" "}
+            <a href="/demo.mp4" className="underline">
+              download the clip
+            </a>{" "}
+            instead.
+          </video>
+        </div>
       </div>
     </section>
   );
@@ -259,6 +298,7 @@ export default function App() {
       <Header />
       <main>
         <Hero />
+        <Demo />
         <HowItWorks />
         <TheRoom />
         <RunIt />
