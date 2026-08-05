@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   SELF_BUSY_ACK,
   SELF_CALLSIGN,
+  SELF_LAUNCH_FAILED_ACK,
   SELF_RELOADING_ACK,
   SELF_TITLE,
   SELF_UPID,
@@ -110,7 +111,7 @@ interface Harness {
   setRunStatus(status: string | null): void;
 }
 
-function makeHarness(options: { pollMs?: number; withProbe?: boolean } = {}): Harness {
+function makeHarness(options: { pollMs?: number; withProbe?: boolean; failSpawnOnce?: boolean; maxProbeMisses?: number } = {}): Harness {
   const spawns: SpawnSeed[] = [];
   const halts: string[] = [];
   const outputs: OutputDecision[] = [];
@@ -118,8 +119,13 @@ function makeHarness(options: { pollMs?: number; withProbe?: boolean } = {}): Ha
   const greens: string[] = [];
   let head: GitHeadFact | null = { sha: "sha-prior", subject: "prior commit" };
   let runStatus: string | null = "running";
+  let failNextSpawn = options.failSpawnOnce === true;
   const client: SelfSpawnClient = {
     async spawn(seed) {
+      if (failNextSpawn) {
+        failNextSpawn = false;
+        throw new Error("gateway unreachable");
+      }
       spawns.push(seed);
       return { upid: seed.upid, runId: seed.runId ?? "run", workflow: seed.workflow, parentId: null };
     },
@@ -137,6 +143,7 @@ function makeHarness(options: { pollMs?: number; withProbe?: boolean } = {}): Ha
     gitHead: async () => head,
     getRunStatus: options.withProbe === false ? null : async () => runStatus,
     pollMs: options.pollMs ?? 2,
+    maxProbeMisses: options.maxProbeMisses,
   });
   return {
     commissioner,
@@ -280,6 +287,32 @@ describe("SelfCommissioner", () => {
     h.setRunStatus("finished");
     await until(() => h.commissioner.lane()?.status === "built");
     expect(h.greens).toHaveLength(1);
+  });
+
+  test("GATEWAY DOWN: a failed launch settles the lane, speaks the ack, and never wedges the mirror", async () => {
+    const h = makeHarness({ withProbe: false, failSpawnOnce: true });
+    const result = await h.commissioner.steer("first", "corr-a");
+    expect(result).toEqual({ accepted: false, reason: "launch-failed" });
+    expect(h.commissioner.lane()?.status).toBe("failed");
+    const spoken = h.outputs.filter((decision) => decision.channel === "tts").at(-1);
+    expect(spoken?.channel === "tts" ? spoken.text : null).toBe(SELF_LAUNCH_FAILED_ACK);
+    // Not wedged: the next steer (gateway back) launches normally.
+    const retry = await h.commissioner.steer("first again", "corr-b");
+    expect(retry.accepted).toBe(true);
+    expect(h.spawns).toHaveLength(1);
+  });
+
+  test("GATEWAY LOST MID-RUN: the watchdog gives up after consecutive unanswered probes — honest failure, mirror un-wedged", async () => {
+    const h = makeHarness({ pollMs: 2, maxProbeMisses: 3 });
+    h.setRunStatus(null); // gateway unreachable / run unknown: every probe misses
+    await h.commissioner.steer("first", "corr-a");
+    await until(() => h.commissioner.lane()?.status === "failed");
+    expect(h.commissioner.lane()?.error).toContain("lost contact");
+    expect(h.greens).toHaveLength(0);
+    // A later steer is accepted — the forever-executing wedge is the bug this guards.
+    h.setRunStatus("running");
+    const retry = await h.commissioner.steer("try again", "corr-b");
+    expect(retry.accepted).toBe(true);
   });
 
   test("an empty instruction is a no-op", async () => {

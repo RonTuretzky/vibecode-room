@@ -47,6 +47,13 @@ export const SELF_PIN_PROMPT =
 // Spoken refusals for the serialized self loop (word-clamped, TTS-safe).
 export const SELF_BUSY_ACK = "Mirror is mid-change. One correction at a time.";
 export const SELF_RELOADING_ACK = "The room is reloading itself. Try again in a moment.";
+export const SELF_LAUNCH_FAILED_ACK = "Mirror could not start that change. Check the smithers gateway.";
+
+// Poll-watchdog give-up threshold: this many CONSECUTIVE unanswered probes
+// (transport error / run unknown) settle the lane failed. A gateway that dies
+// mid-run must not leave the mirror "executing" forever — that would refuse
+// every steer until the room restarts. Any non-null status resets the count.
+export const SELF_WATCHDOG_MAX_MISSES = 8;
 
 export function selfModeEnabled(env: Record<string, string | undefined>): boolean {
   const raw = env.VIBERSYN_SELF_MODE?.trim();
@@ -108,6 +115,9 @@ export interface SelfCommissionerOptions {
   // run exists to poll, so completion can only arrive via the event overlay.
   getRunStatus?: ((runId: string) => Promise<string | null>) | null;
   pollMs?: number;
+  // Consecutive unanswered probes before the watchdog settles the lane failed
+  // (default SELF_WATCHDOG_MAX_MISSES).
+  maxProbeMisses?: number;
 }
 
 export class SelfCommissioner {
@@ -123,6 +133,7 @@ export class SelfCommissioner {
   readonly #gitHead: () => Promise<GitHeadFact | null>;
   readonly #getRunStatus: ((runId: string) => Promise<string | null>) | null;
   readonly #pollMs: number;
+  readonly #maxProbeMisses: number;
   #lane: SelfRunLane | null = null;
   #headAtLaunch: GitHeadFact | null = null;
   #launching = false;
@@ -148,6 +159,7 @@ export class SelfCommissioner {
     this.#gitHead = options.gitHead ?? defaultGitHead;
     this.#getRunStatus = options.getRunStatus ?? null;
     this.#pollMs = options.pollMs ?? 15_000;
+    this.#maxProbeMisses = options.maxProbeMisses ?? SELF_WATCHDOG_MAX_MISSES;
   }
 
   lane(): SelfRunLane | null {
@@ -215,6 +227,9 @@ export class SelfCommissioner {
         const message = error instanceof Error ? error.message : String(error);
         this.settle(lane, "failed", "launch failed", message);
         this.trace("error", "self.commission.error", correlationId, { runId, message });
+        // Spoken honesty: the person just addressed the mirror — a silent card
+        // flip reads as "the room ignored me" (gateway down / spawn refused).
+        this.#onOutput?.({ channel: "tts", text: SELF_LAUNCH_FAILED_ACK, wordCount: countWords(SELF_LAUNCH_FAILED_ACK), summarized: false });
         return { accepted: false, reason: "launch-failed" };
       }
       this.trace("info", "self.commission", correlationId, { runId, instruction: trimmed });
@@ -312,13 +327,17 @@ export class SelfCommissioner {
 
   // Terminal-status poll watchdog (mirrors composition.watchRunCompletion): the
   // live stream can miss the terminal frame across reconnects, so while the
-  // lane executes, poll getRun and settle from its status.
+  // lane executes, poll getRun and settle from its status. A run the gateway
+  // can no longer answer for (gateway died / run lost) is given up on after
+  // #maxProbeMisses CONSECUTIVE unanswered probes — an honest failed lane that
+  // un-wedges the mirror instead of an "executing" that refuses steers forever.
   #watchCompletion(lane: SelfRunLane, runId: string): void {
     const probe = this.#getRunStatus;
     if (probe === null) {
       return;
     }
     void (async () => {
+      let misses = 0;
       while (this.#lane === lane && lane.status === "executing") {
         await delay(this.#pollMs);
         if (this.#lane !== lane || lane.status !== "executing") {
@@ -328,6 +347,21 @@ export class SelfCommissioner {
         if (status === "finished" || status === "failed" || status === "cancelled") {
           await this.completeFromRun(status);
           return;
+        }
+        if (status === null) {
+          misses += 1;
+          if (misses >= this.#maxProbeMisses) {
+            this.settle(
+              lane,
+              "failed",
+              "run lost",
+              `lost contact with the self-run (no answer from the gateway after ${misses} polls) — steer again to retry.`,
+            );
+            this.trace("warn", "self.watchdog.lost", `corr-self-watchdog-${runId}`, { runId, misses });
+            return;
+          }
+        } else {
+          misses = 0;
         }
       }
     })();

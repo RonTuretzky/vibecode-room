@@ -36,12 +36,17 @@ routes the SELF upid into `SelfCommissioner.steer` (src/self/commission.ts):
    run start; must pass `bunx tsc --noEmit && bun run build`; commit ONLY its
    own files by explicit path as `self: <summary>` with no attribution.
 3. The SELF card shows executing telemetry (percent/label from live run
-   events) like any commission, with a poll watchdog for missed terminal frames.
+   events) like any commission, with a poll watchdog for missed terminal
+   frames. The watchdog also GIVES UP after 8 consecutive unanswered probes
+   (gateway died / run lost): the lane settles failed ("lost contact…") so the
+   mirror never wedges in "executing" refusing every steer until a restart.
 
 Serialized: a second steer while a run executes (or a reload drains) is
 refused politely with a spoken ack ("Mirror is mid-change…" / "The room is
-reloading itself…"). `POST /api/process/self/execute` is refused (400) — for
-the mirror, steering *is* commissioning.
+reloading itself…"). A steer whose durable launch FAILS (gateway down) settles
+the lane failed and speaks "Mirror could not start that change…" — never a
+silent shrug. `POST /api/process/self/execute` is refused (400) — for the
+mirror, steering *is* commissioning.
 
 ## The green gate (room-side, never trusted)
 
@@ -60,10 +65,20 @@ state. Emergency stop aborts an in-flight self-run like any commission.
   in flight, publishes `snapshot.self.reloadPending = true` (walls show the
   "room is reloading itself…" overlay), drains ~750 ms
   (`VIBERSYN_SELF_RELOAD_DELAY_MS`), then **exits 87**.
-- **Supervisor** (`scripts/self-supervisor.sh`, run by `run-room.sh --self`):
-  exit 87 → `bun run build` → relaunch the server, same env; any other exit
-  ends the loop with that code. A failed rebuild still relaunches on the old
-  build (with a loud warning) so the wall stays alive.
+- **Supervisor** (`scripts/self-supervisor.sh` — run by `run-room.sh --self`,
+  or started DIRECTLY with the launch env: it cd's to the repo root, exports
+  `VIBERSYN_SELF_MODE=1` itself, and builds `dist/` once when missing):
+  exit 87 → `bun install && bun run build` → relaunch the server, same env
+  (the env lives in the supervisor process; every relaunch inherits it).
+  A failed rebuild still relaunches on the old build (loud warning) so the
+  wall stays alive. Exit 0 / SIGINT / SIGTERM end the loop (stops are
+  forwarded to the server child — no orphaned port-holder). **Crash guard**:
+  any other exit relaunches; a quick crash-loop (< `VIBERSYN_SELF_CRASH_WINDOW_S`
+  uptime, more than `VIBERSYN_SELF_CRASH_RETRIES` times) with fresh commits
+  since the last good boot `git revert`s them (bad commits stay in history),
+  rebuilds, and relaunches the restored source — the room never dies mid-demo
+  over a bad self-commit. Only a crash-loop with nothing left to revert (an
+  environment problem) ends the loop.
 - **Walls**: `/api/health` and the snapshot carry a stable per-boot `bootId`.
   Each page binds to the first bootId it sees; when the reconnected SSE
   stream / state resync delivers a different one, `location.reload()` — both
@@ -74,7 +89,11 @@ state. Emergency stop aborts an in-flight self-run like any commission.
 - `VIBERSYN_SELF_MODE=1` — everything above; off by default (no pinned card,
   `/api/self/reload` 404s, snapshot `self: null`).
 - `VIBERSYN_SELF_RELOAD_DELAY_MS` — exit-87 drain window (default 750).
-- Supervisor test seams: `VIBERSYN_SELF_SERVER_CMD`, `VIBERSYN_SELF_BUILD_CMD`.
+- Supervisor crash-guard knobs: `VIBERSYN_SELF_CRASH_WINDOW_S` (default 30),
+  `VIBERSYN_SELF_CRASH_RETRIES` (default 2), `VIBERSYN_SELF_CRASH_BACKOFF_S`
+  (default 1).
+- Supervisor test seams: `VIBERSYN_SELF_SERVER_CMD`, `VIBERSYN_SELF_BUILD_CMD`,
+  `VIBERSYN_SELF_ROOT`.
 - Tests: `src/self/commission.test.ts` (commissioner, green gate, reserved
   callsign, routing), `src/server/composition.self.test.ts` (integration:
   pin → steer → green → 87), `src/ui/self-reload.test.ts` (bootId reload

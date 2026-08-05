@@ -46,7 +46,9 @@
 #   ./run-room.sh --self          # SELF-HOSTING: pins the "Vibersyn Room" mirror
 #                                 # project (VIBERSYN_SELF_MODE=1) and wraps the
 #                                 # server in scripts/self-supervisor.sh — exit 87
-#                                 # (green self-commit) → bun run build → relaunch
+#                                 # (green self-commit) → bun install && bun run
+#                                 # build → relaunch; boot crash-loops revert to
+#                                 # the last good source (see the script header)
 #
 # Env: VIBERSYN_PORT(8788) HOST(0.0.0.0) WS_PORT(8770) BROWSER("Google Chrome")
 #      WALL_A_POS(0,0) WALL_B_POS(1920,0) ROOM_CONFIG(gesture-wall/room.json)
@@ -329,8 +331,9 @@ echo "[room] building Vibersyn UI…"
 bun run build >/dev/null 2>&1 || { echo "[room] ERROR: UI build failed (run 'bun run build' to see why)." >&2; exit 1; }
 if [ "$SELF_MODE" = "1" ]; then
   # SELF-HOSTING: the supervisor loop owns the server — exit 87 (a green
-  # "self:" commit landed) → bun run build → relaunch, same env; any other
-  # exit ends the loop normally. The walls reload themselves on the new bootId.
+  # "self:" commit landed) → bun install && bun run build → relaunch, same env;
+  # a boot crash-loop reverts to the last good source (never dies mid-demo).
+  # The walls reload themselves on the new bootId.
   echo "[room] Vibersyn server (SELF-HOSTING supervisor) on http://localhost:$VIBERSYN_PORT (bound to $HOST)"
   HOST="$HOST" VIBERSYN_PORT="$VIBERSYN_PORT" VIBERSYN_SELF_MODE=1 bash scripts/self-supervisor.sh &
 else
