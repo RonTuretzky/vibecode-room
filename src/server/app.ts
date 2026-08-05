@@ -6,6 +6,8 @@ import type { ProjectorRuntime } from "./composition";
 import { healthPayload } from "./degradation-notice";
 import { corsEnabledWarning, vibersynCors } from "./cors";
 import { importPageHtml } from "./import-page";
+import { handsPageHtml } from "./hands-page";
+import { RemoteHandsHub, resolveHandsInfo } from "./remote-hands";
 import { resolveImportInfo, type InterfaceAddresses } from "./project-import";
 import { createSeamApp } from "../seam/dispatcher";
 
@@ -21,6 +23,13 @@ export interface ProjectorAppOptions {
   // works without HOST=0.0.0.0. Null/absent = listener disabled or bind
   // failed: fall back to deriving reachability from the main host/port.
   phonePort?: number | null;
+  // The optional TLS listener's port (guest camera hand-tracking needs a
+  // secure origin). Null/absent = TLS listener off; /api/hands/info then omits
+  // the https URL and the guest page degrades to trackpad-only off-host.
+  tlsPort?: number | null;
+  // The guest-hands relay hub, SHARED with the WS upgrade paths in index.ts so
+  // /api/hands/info reports the live guest count. Absent (tests) = own hub.
+  hands?: RemoteHandsHub;
   // Test seam for os.networkInterfaces (LAN IPv4 discovery).
   interfaces?: () => InterfaceAddresses;
 }
@@ -112,6 +121,17 @@ export function createProjectorApp(runtime: ProjectorRuntime, options: Projector
     host,
     port,
     phonePort: options.phonePort ?? null,
+    interfaces: options.interfaces,
+  });
+  // Guest-hands surface (shared with the LAN listeners — see
+  // registerHandsSurface): GET /hands, GET /api/hands/info. The WS legs
+  // (/hands/ws guest ingest, /api/hands/room wall subscription) upgrade in
+  // index.ts against the same hub.
+  registerHandsSurface(app, options.hands ?? new RemoteHandsHub(), {
+    host,
+    port,
+    phonePort: options.phonePort ?? null,
+    tlsPort: options.tlsPort ?? null,
     interfaces: options.interfaces,
   });
   // AUTO-BUILD toggle (no click required). Body `{ on: boolean }` sets it
@@ -458,19 +478,67 @@ function registerImportSurface(app: Hono, runtime: ProjectorRuntime, config: Imp
   app.get("/submit", (context) => context.html(importPageHtml()));
 }
 
+interface HandsSurfaceConfig {
+  host: string;
+  port: number;
+  phonePort: number | null;
+  tlsPort: number | null;
+  interfaces?: () => InterfaceAddresses;
+}
+
+// The guest-hands HTTP surface, registered on the main projector app AND every
+// LAN listener (phone + TLS) so guests reach the page on whichever socket their
+// browser can see. Self-contained HTML (no Vite build), same contract as the
+// phone import page.
+function registerHandsSurface(app: Hono, hub: RemoteHandsHub, config: HandsSurfaceConfig): void {
+  app.get("/hands", (context) => context.html(handsPageHtml()));
+  // What the wall's Guests overlay renders (QR + URL + live count) and what the
+  // guest page itself polls for the https upgrade hint.
+  app.get("/api/hands/info", (context) =>
+    context.json(
+      resolveHandsInfo({
+        host: config.host,
+        port: config.port,
+        phonePort: config.phonePort,
+        tlsPort: config.tlsPort,
+        interfaces: config.interfaces,
+        guestCount: hub.guestCount(),
+        walls: hub.walls(),
+      }),
+    ),
+  );
+}
+
 // The dedicated phone-facing app: ONLY the import surface. index.ts binds it
 // on 0.0.0.0:<phonePort> so phones can always reach /submit, while the main
 // app (emergency stop, seam API, mic WS — all unauthenticated) can stay on
 // loopback. Convenience redirect: / → /submit, so typing just host:port works.
 export function createPhoneImportApp(
   runtime: ProjectorRuntime,
-  options: { host?: string; port?: number; phonePort: number; interfaces?: () => InterfaceAddresses },
+  options: {
+    host?: string;
+    port?: number;
+    // Null when the phone bind failed but the TLS listener still needs the app.
+    phonePort: number | null;
+    tlsPort?: number | null;
+    hands?: RemoteHandsHub;
+    interfaces?: () => InterfaceAddresses;
+  },
 ): Hono {
   const app = new Hono();
   registerImportSurface(app, runtime, {
     host: options.host ?? "127.0.0.1",
     port: options.port ?? 8787,
     phonePort: options.phonePort,
+    interfaces: options.interfaces,
+  });
+  // Guests reach /hands on the LAN listener(s) too — the guest WS (/hands/ws)
+  // upgrades on those sockets in index.ts against the same shared hub.
+  registerHandsSurface(app, options.hands ?? new RemoteHandsHub(), {
+    host: options.host ?? "127.0.0.1",
+    port: options.port ?? 8787,
+    phonePort: options.phonePort,
+    tlsPort: options.tlsPort ?? null,
     interfaces: options.interfaces,
   });
   app.get("/", (context) => context.redirect("/submit"));

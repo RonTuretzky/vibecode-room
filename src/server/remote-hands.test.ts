@@ -1,0 +1,380 @@
+import { describe, expect, test } from "bun:test";
+import { GUEST_ID_BASE, GUEST_ID_STRIDE } from "../ui/gesture/remote";
+import {
+  MAX_GUEST_MESSAGE_CHARS,
+  RemoteHandsHub,
+  parseGuestMessage,
+  resolveHandsInfo,
+} from "./remote-hands";
+import type { InterfaceAddresses } from "./project-import";
+
+// ── parseGuestMessage ────────────────────────────────────────────────────────
+
+describe("parseGuestMessage", () => {
+  test("parses a hello with and without a wall", () => {
+    expect(parseGuestMessage(JSON.stringify({ type: "hello", wall: "B" }))).toEqual({ kind: "hello", wall: "B" });
+    expect(parseGuestMessage(JSON.stringify({ type: "hello" }))).toEqual({ kind: "hello", wall: null });
+    expect(parseGuestMessage(JSON.stringify({ type: "hello", wall: "  " }))).toEqual({ kind: "hello", wall: null });
+  });
+
+  test("parses cursors, clamping coordinates and coercing engagement", () => {
+    const msg = parseGuestMessage(
+      JSON.stringify({ type: "cursors", cursors: [{ id: 0, x: 1.7, y: -0.2, engaged: true }, { id: 1, x: 0.5, y: 0.5 }] }),
+    );
+    expect(msg).toEqual({
+      kind: "cursors",
+      cursors: [
+        { id: 0, x: 1, y: 0, engaged: true },
+        { id: 1, x: 0.5, y: 0.5, engaged: false },
+      ],
+    });
+  });
+
+  test("drops malformed input without throwing", () => {
+    expect(parseGuestMessage("not json")).toBeNull();
+    expect(parseGuestMessage(JSON.stringify({ type: "cursors" }))).toBeNull();
+    expect(parseGuestMessage(JSON.stringify({ type: "other", cursors: [] }))).toBeNull();
+    expect(parseGuestMessage(JSON.stringify([1, 2, 3]))).toBeNull();
+    expect(parseGuestMessage("x".repeat(MAX_GUEST_MESSAGE_CHARS + 1))).toBeNull();
+  });
+
+  test("rejects cursors with non-finite coords or out-of-block local ids", () => {
+    const msg = parseGuestMessage(
+      JSON.stringify({
+        type: "cursors",
+        cursors: [
+          { id: 0, x: Number.NaN, y: 0.5 },
+          { id: GUEST_ID_STRIDE, x: 0.5, y: 0.5 }, // outside the guest's block
+          { id: -1, x: 0.5, y: 0.5 },
+          { id: 1.5, x: 0.5, y: 0.5 },
+          { id: 1, x: 0.4, y: 0.6, engaged: true },
+        ],
+      }),
+    );
+    expect(msg).toEqual({ kind: "cursors", cursors: [{ id: 1, x: 0.4, y: 0.6, engaged: true }] });
+  });
+
+  test("caps a frame at two cursors and dedupes repeated local ids", () => {
+    const msg = parseGuestMessage(
+      JSON.stringify({
+        type: "cursors",
+        cursors: [
+          { id: 0, x: 0.1, y: 0.1 },
+          { id: 0, x: 0.9, y: 0.9 }, // duplicate id — first wins
+          { id: 1, x: 0.2, y: 0.2 },
+          { id: 2, x: 0.3, y: 0.3 }, // beyond the two-hand cap
+        ],
+      }),
+    );
+    expect(msg?.kind).toBe("cursors");
+    if (msg?.kind === "cursors") {
+      expect(msg.cursors.map((c) => c.id)).toEqual([0, 1]);
+      expect(msg.cursors[0].x).toBeCloseTo(0.1);
+    }
+  });
+});
+
+// ── RemoteHandsHub ───────────────────────────────────────────────────────────
+
+interface FakePeer {
+  sent: unknown[];
+  send: (raw: string) => void;
+}
+
+function fakePeer(): FakePeer {
+  const peer: FakePeer = {
+    sent: [],
+    send: (raw: string) => {
+      peer.sent.push(JSON.parse(raw));
+    },
+  };
+  return peer;
+}
+
+function makeHub(): RemoteHandsHub {
+  let tick = 0;
+  return new RemoteHandsHub({ now: () => (tick += 1) });
+}
+
+const hello = (wall?: string) => JSON.stringify({ type: "hello", ...(wall !== undefined ? { wall } : {}) });
+const cursorsFrame = (cursors: unknown[]) => JSON.stringify({ type: "cursors", cursors });
+
+describe("RemoteHandsHub", () => {
+  test("welcomes a guest with its reserved global ids and the known walls", () => {
+    const hub = makeHub();
+    const room = fakePeer();
+    hub.addRoom(room.send).message(hello("A"));
+
+    const guest = fakePeer();
+    hub.addGuest(guest.send);
+    expect(guest.sent).toEqual([
+      { type: "welcome", ids: [GUEST_ID_BASE, GUEST_ID_BASE - 1], wall: "A", walls: ["A"] },
+    ]);
+  });
+
+  test("relays guest frames to matching-wall rooms in the fusion cursors protocol", () => {
+    const hub = makeHub();
+    const roomA = fakePeer();
+    const roomB = fakePeer();
+    hub.addRoom(roomA.send).message(hello("A"));
+    hub.addRoom(roomB.send).message(hello("B"));
+
+    const guest = fakePeer();
+    const conn = hub.addGuest(guest.send);
+    conn.message(cursorsFrame([{ id: 0, x: 0.25, y: 0.75, engaged: true }]));
+
+    expect(roomA.sent).toHaveLength(1);
+    const frame = roomA.sent[0] as { type: string; wall: string; t: number; cursors: unknown[] };
+    expect(frame.type).toBe("cursors");
+    expect(frame.wall).toBe("A"); // no explicit wall → first subscribed wall
+    expect(frame.cursors).toEqual([{ id: GUEST_ID_BASE, x: 0.25, y: 0.75, engaged: true, conf: 1 }]);
+    // Wall B never sees wall-A frames — both windows render the full room, so
+    // mirroring one guest onto both would double-fire every dwell.
+    expect(roomB.sent.filter((m) => (m as { type: string }).type === "cursors")).toHaveLength(0);
+  });
+
+  test("a guest hello with a wall routes its frames to that wall", () => {
+    const hub = makeHub();
+    const roomA = fakePeer();
+    const roomB = fakePeer();
+    hub.addRoom(roomA.send).message(hello("A"));
+    hub.addRoom(roomB.send).message(hello("B"));
+
+    const guest = fakePeer();
+    const conn = hub.addGuest(guest.send);
+    conn.message(hello("B"));
+    conn.message(cursorsFrame([{ id: 1, x: 0.5, y: 0.5, engaged: false }]));
+
+    expect(roomB.sent.filter((m) => (m as { type: string }).type === "cursors")).toHaveLength(1);
+    expect(roomA.sent.filter((m) => (m as { type: string }).type === "cursors")).toHaveLength(0);
+  });
+
+  test("a guest whose chosen wall vanished follows a live wall instead of controlling nothing", () => {
+    const hub = makeHub();
+    const roomA = fakePeer();
+    const roomB = fakePeer();
+    hub.addRoom(roomA.send).message(hello("A"));
+    const roomBConn = hub.addRoom(roomB.send);
+    roomBConn.message(hello("B"));
+
+    const conn = hub.addGuest(fakePeer().send);
+    conn.message(hello("B"));
+    roomBConn.close(); // wall B window went away
+
+    conn.message(cursorsFrame([{ id: 0, x: 0.5, y: 0.5, engaged: true }]));
+    expect(roomA.sent.filter((m) => (m as { type: string }).type === "cursors")).toHaveLength(1);
+
+    // Wall B comes back: the explicit pick applies again.
+    const roomB2 = fakePeer();
+    hub.addRoom(roomB2.send).message(hello("B"));
+    conn.message(cursorsFrame([{ id: 0, x: 0.6, y: 0.6, engaged: true }]));
+    expect(roomB2.sent.filter((m) => (m as { type: string }).type === "cursors")).toHaveLength(1);
+    expect(roomA.sent.filter((m) => (m as { type: string }).type === "cursors")).toHaveLength(1);
+  });
+
+  test("each guest gets its own id block", () => {
+    const hub = makeHub();
+    const room = fakePeer();
+    hub.addRoom(room.send).message(hello("A"));
+
+    const first = hub.addGuest(fakePeer().send);
+    const second = hub.addGuest(fakePeer().send);
+    first.message(cursorsFrame([{ id: 0, x: 0.1, y: 0.1, engaged: true }]));
+    second.message(cursorsFrame([{ id: 0, x: 0.9, y: 0.9, engaged: true }]));
+
+    const ids = room.sent.map((m) => (m as { cursors: { id: number }[] }).cursors[0].id);
+    expect(ids).toEqual([GUEST_ID_BASE, GUEST_ID_BASE - GUEST_ID_STRIDE]);
+  });
+
+  test("a guest disconnect DISENGAGES its last cursors so a dwell in flight cancels", () => {
+    const hub = makeHub();
+    const room = fakePeer();
+    hub.addRoom(room.send).message(hello("A"));
+
+    const conn = hub.addGuest(fakePeer().send);
+    conn.message(cursorsFrame([{ id: 0, x: 0.4, y: 0.6, engaged: true }]));
+    conn.close();
+
+    const frames = room.sent.filter((m) => (m as { type: string }).type === "cursors") as Array<{
+      cursors: { id: number; x: number; y: number; engaged: boolean; conf: number }[];
+    }>;
+    expect(frames).toHaveLength(2);
+    expect(frames[1].cursors).toEqual([{ id: GUEST_ID_BASE, x: 0.4, y: 0.6, engaged: false, conf: 1 }]);
+    // Idempotent: a second close (socket teardown races) relays nothing more.
+    conn.close();
+    expect(room.sent.filter((m) => (m as { type: string }).type === "cursors")).toHaveLength(2);
+  });
+
+  test("keys frames relay wall-routed with the guest seq; disconnect releases held keys", () => {
+    const hub = makeHub();
+    const roomA = fakePeer();
+    const roomB = fakePeer();
+    hub.addRoom(roomA.send).message(hello("A"));
+    hub.addRoom(roomB.send).message(hello("B"));
+
+    const conn = hub.addGuest(fakePeer().send);
+    conn.message(JSON.stringify({ type: "keys", held: ["w", "d", "w", "x"] })); // dupes + junk dropped
+    const keysA = roomA.sent.filter((m) => (m as { type: string }).type === "keys") as Array<{
+      wall: string;
+      guest: number;
+      held: string[];
+    }>;
+    expect(keysA).toHaveLength(1);
+    expect(keysA[0]).toMatchObject({ wall: "A", guest: 0, held: ["w", "d"] });
+    expect(roomB.sent.filter((m) => (m as { type: string }).type === "keys")).toHaveLength(0);
+
+    conn.close();
+    const after = roomA.sent.filter((m) => (m as { type: string }).type === "keys") as Array<{ held: string[] }>;
+    expect(after).toHaveLength(2);
+    expect(after[1].held).toEqual([]); // the wall camera must never keep walking
+  });
+
+  test("malformed keys frames are dropped; an empty release is not re-sent on close", () => {
+    const hub = makeHub();
+    const room = fakePeer();
+    hub.addRoom(room.send).message(hello("A"));
+
+    const conn = hub.addGuest(fakePeer().send);
+    conn.message(JSON.stringify({ type: "keys" }));
+    conn.message(JSON.stringify({ type: "keys", held: "w" }));
+    conn.message(JSON.stringify({ type: "keys", held: ["w"] }));
+    conn.message(JSON.stringify({ type: "keys", held: [] })); // released before closing
+    conn.close();
+    const keys = room.sent.filter((m) => (m as { type: string }).type === "keys") as Array<{ held: string[] }>;
+    expect(keys.map((frame) => frame.held)).toEqual([["w"], []]);
+  });
+
+  test("guestCount and walls track connects, hellos and closes", () => {
+    const hub = makeHub();
+    expect(hub.guestCount()).toBe(0);
+    expect(hub.walls()).toEqual([]);
+
+    const roomConn = hub.addRoom(fakePeer().send);
+    roomConn.message(hello("B"));
+    const roomConn2 = hub.addRoom(fakePeer().send);
+    roomConn2.message(hello("A"));
+    expect(hub.walls()).toEqual(["A", "B"]);
+
+    const guestConn = hub.addGuest(fakePeer().send);
+    expect(hub.guestCount()).toBe(1);
+    guestConn.close();
+    expect(hub.guestCount()).toBe(0);
+
+    roomConn.close();
+    expect(hub.walls()).toEqual(["A"]);
+    roomConn2.close();
+    expect(hub.walls()).toEqual([]);
+  });
+
+  test("wall subscriptions changing pushes a live walls update to guests", () => {
+    const hub = makeHub();
+    const guest = fakePeer();
+    hub.addGuest(guest.send);
+    guest.sent.length = 0; // drop the welcome
+
+    const roomConn = hub.addRoom(fakePeer().send);
+    roomConn.message(hello("A"));
+    expect(guest.sent).toEqual([{ type: "walls", walls: ["A"] }]);
+
+    roomConn.close();
+    expect(guest.sent).toEqual([{ type: "walls", walls: ["A"] }, { type: "walls", walls: [] }]);
+  });
+
+  test("a closed room stops receiving frames; malformed guest input is inert", () => {
+    const hub = makeHub();
+    const room = fakePeer();
+    const roomConn = hub.addRoom(room.send);
+    roomConn.message(hello("A"));
+
+    const conn = hub.addGuest(fakePeer().send);
+    conn.message("garbage");
+    conn.message(cursorsFrame([{ id: 0, x: 0.5, y: 0.5, engaged: true }]));
+    expect(room.sent.filter((m) => (m as { type: string }).type === "cursors")).toHaveLength(1);
+
+    roomConn.close();
+    conn.message(cursorsFrame([{ id: 0, x: 0.6, y: 0.6, engaged: true }]));
+    expect(room.sent.filter((m) => (m as { type: string }).type === "cursors")).toHaveLength(1);
+  });
+
+  test("a throwing peer send never breaks the relay for others", () => {
+    const hub = makeHub();
+    const bad = { send: () => { throw new Error("dying socket"); } };
+    const good = fakePeer();
+    hub.addRoom(bad.send).message(hello("A"));
+    hub.addRoom(good.send).message(hello("A"));
+
+    const conn = hub.addGuest(fakePeer().send);
+    conn.message(cursorsFrame([{ id: 0, x: 0.5, y: 0.5, engaged: true }]));
+    expect(good.sent.filter((m) => (m as { type: string }).type === "cursors")).toHaveLength(1);
+  });
+});
+
+// ── resolveHandsInfo ─────────────────────────────────────────────────────────
+
+const lanInterfaces = (): InterfaceAddresses => ({
+  en0: [{ family: "IPv4", internal: false, address: "192.168.1.20" }],
+});
+const noLan = (): InterfaceAddresses => ({});
+
+describe("resolveHandsInfo", () => {
+  test("prefers the dedicated LAN listener via the best LAN IPv4", () => {
+    const info = resolveHandsInfo({
+      host: "127.0.0.1",
+      port: 8787,
+      phonePort: 8788,
+      tlsPort: 8789,
+      interfaces: lanInterfaces,
+      guestCount: 2,
+      walls: ["A"],
+    });
+    expect(info).toEqual({
+      url: "http://192.168.1.20:8788/hands",
+      httpsUrl: "https://192.168.1.20:8789/hands",
+      host: "192.168.1.20",
+      lanReachable: true,
+      guestCount: 2,
+      walls: ["A"],
+    });
+  });
+
+  test("no TLS listener → httpsUrl is null (trackpad-only off-host, honestly)", () => {
+    const info = resolveHandsInfo({
+      host: "0.0.0.0",
+      port: 8787,
+      phonePort: null,
+      tlsPort: null,
+      interfaces: lanInterfaces,
+      guestCount: 0,
+      walls: [],
+    });
+    expect(info.url).toBe("http://192.168.1.20:8787/hands");
+    expect(info.httpsUrl).toBeNull();
+    expect(info.lanReachable).toBe(true);
+  });
+
+  test("loopback bind with no LAN listener is not reachable", () => {
+    const info = resolveHandsInfo({
+      host: "127.0.0.1",
+      port: 8787,
+      phonePort: null,
+      tlsPort: null,
+      interfaces: lanInterfaces,
+      guestCount: 0,
+      walls: [],
+    });
+    expect(info).toMatchObject({ url: "http://127.0.0.1:8787/hands", lanReachable: false });
+  });
+
+  test("LAN listener bound but no LAN interface up → honest unreachable", () => {
+    const info = resolveHandsInfo({
+      host: "127.0.0.1",
+      port: 8787,
+      phonePort: 8788,
+      tlsPort: null,
+      interfaces: noLan,
+      guestCount: 0,
+      walls: [],
+    });
+    expect(info).toMatchObject({ url: "http://127.0.0.1:8788/hands", lanReachable: false });
+  });
+});

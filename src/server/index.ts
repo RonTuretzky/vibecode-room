@@ -1,7 +1,11 @@
 import { websocket as honoWebsocket } from "hono/bun";
+import { existsSync } from "node:fs";
+import type { Hono } from "hono";
 import { createProjectorRuntime } from "./composition";
 import { createPhoneImportApp, createProjectorApp } from "./app";
 import { formatDegradationNotice } from "./degradation-notice";
+import { RemoteHandsHub, resolveHandsInfo, type HubConnection } from "./remote-hands";
+import { createLanFetch, createLanWebsocket, resolvePhonePort, resolveTlsPort, type LanSocketData } from "./lan-listener";
 import { GenAiOtlpExporter } from "../obs/otel";
 
 const runtime = await createProjectorRuntime(process.env);
@@ -19,22 +23,35 @@ startOtelTraceExport(runtime);
 const host = process.env.HOST ?? "127.0.0.1";
 const port = parsePort(process.env.VIBERSYN_PORT ?? process.env.PORT ?? "8787");
 
+// GUEST HANDS relay hub — shared by every listener: LAN guests stream cursors
+// in over WS /hands/ws (any listener), wall windows subscribe on WS
+// /api/hands/room (main listener), and /api/hands/info reports the live count.
+const handsHub = new RemoteHandsHub();
+
+// The LAN listeners (phone + TLS) share one app instance; it is created AFTER
+// the binds resolve so /api/import/info + /api/hands/info always advertise the
+// ports that actually bound, never the ones we merely wanted. Routing and
+// socket handlers live in lan-listener.ts (unit-tested).
+let lanApp: Hono | null = null;
+const lanFetch = createLanFetch(() => lanApp);
+const lanWebsocket = createLanWebsocket(handsHub);
+
 // Dedicated PHONE IMPORT listener: a second socket on 0.0.0.0 serving ONLY the
-// import surface (/submit + import APIs), so the QR flow works from phones on
-// the room LAN no matter how the main server is bound — the unauthenticated
-// control APIs (emergency stop, seam, mic WS) can stay on loopback. Default
-// port: main port + 1; override with VIBERSYN_PHONE_PORT; disable with
+// import + guest-hands surfaces, so the QR flow works from phones on the room
+// LAN no matter how the main server is bound — the unauthenticated control
+// APIs (emergency stop, seam, mic WS) can stay on loopback. Default port: main
+// port + 1; override with VIBERSYN_PHONE_PORT; disable with
 // VIBERSYN_PHONE_LISTENER=0. A failed bind (port in use) degrades to the
 // legacy main-bind-derived QR URL instead of crashing the room.
 const phonePortWanted = process.env.VIBERSYN_PHONE_LISTENER === "0" ? null : resolvePhonePort(process.env.VIBERSYN_PHONE_PORT, port);
 let phonePort: number | null = null;
 if (phonePortWanted !== null) {
   try {
-    const phoneApp = createPhoneImportApp(runtime, { host, port, phonePort: phonePortWanted });
-    Bun.serve({
+    Bun.serve<LanSocketData>({
       hostname: "0.0.0.0",
       port: phonePortWanted,
-      fetch: (request) => phoneApp.fetch(request),
+      fetch: lanFetch,
+      websocket: lanWebsocket,
     });
     phonePort = phonePortWanted;
   } catch (error) {
@@ -44,29 +61,76 @@ if (phonePortWanted !== null) {
   }
 }
 
+// Optional GUEST-HANDS TLS listener: browsers only allow getUserMedia (camera
+// hand tracking on the guest's laptop) on secure origins, so run-room.sh
+// --guests generates a self-signed cert and points VIBERSYN_HANDS_TLS_CERT/KEY
+// here — a third socket on 0.0.0.0 serving the same LAN surface over https +
+// wss. Missing/unbindable cert degrades to trackpad-only guests, never a crash.
+const tlsCertPath = process.env.VIBERSYN_HANDS_TLS_CERT?.trim() ?? "";
+const tlsKeyPath = process.env.VIBERSYN_HANDS_TLS_KEY?.trim() ?? "";
+let tlsPort: number | null = null;
+if (tlsCertPath.length > 0 && tlsKeyPath.length > 0) {
+  const tlsPortWanted = resolveTlsPort(process.env.VIBERSYN_HANDS_TLS_PORT, port, phonePort);
+  if (!existsSync(tlsCertPath) || !existsSync(tlsKeyPath)) {
+    console.warn(`[hands] TLS cert/key not found (${tlsCertPath}, ${tlsKeyPath}) — https guest listener disabled.`);
+  } else {
+    try {
+      Bun.serve<LanSocketData>({
+        hostname: "0.0.0.0",
+        port: tlsPortWanted,
+        tls: { cert: Bun.file(tlsCertPath), key: Bun.file(tlsKeyPath) },
+        fetch: lanFetch,
+        websocket: lanWebsocket,
+      });
+      tlsPort = tlsPortWanted;
+    } catch (error) {
+      console.warn(
+        `[hands] TLS listener failed to bind 0.0.0.0:${tlsPortWanted} (${error instanceof Error ? error.message : String(error)}) — camera hand-tracking for guests needs it; the trackpad still works over http.`,
+      );
+    }
+  }
+}
+
+if (phonePort !== null || tlsPort !== null) {
+  lanApp = createPhoneImportApp(runtime, { host, port, phonePort, tlsPort, hands: handsHub });
+}
+
 // The HTTP routes live in createProjectorApp (app.ts) so endpoint behavior is
 // testable without a bound port; this entry only owns process-level wiring —
-// the runtime boot, the listening socket, and the /api/mic WebSocket upgrade.
-const app = createProjectorApp(runtime, { env: process.env, host, port, phonePort });
+// the runtime boot, the listening socket, and the WebSocket upgrades
+// (/api/mic, /api/hands/room, /hands/ws).
+const app = createProjectorApp(runtime, { env: process.env, host, port, phonePort, tlsPort, hands: handsHub });
 
-// Per-connection state for the live-mic WebSocket.
+// Per-connection state for the main listener's WebSockets.
 interface MicSocketData {
-  kind?: "mic";
+  kind?: "mic" | "hands-room" | "hands-guest";
   session?: import("./composition").MicSession;
+  hands?: HubConnection;
 }
 
 Bun.serve<MicSocketData>({
   hostname: host,
   port,
   fetch(request, server) {
+    const pathname = new URL(request.url).pathname;
     // The live microphone path is a WebSocket so the browser can stream raw PCM
     // continuously. Everything else stays on the Hono app.
-    if (new URL(request.url).pathname === "/api/mic") {
+    if (pathname === "/api/mic") {
       const upgraded = server.upgrade(request, { data: { kind: "mic" } });
       if (upgraded) {
         return undefined;
       }
       return new Response("Expected a WebSocket upgrade for /api/mic", { status: 426 });
+    }
+    // Guest hands: the wall subscribes to merged guest cursors here (the
+    // GestureWallClient fusion protocol), and guests on the same origin (main
+    // bind on 0.0.0.0, or the host machine's own browser) stream cursors in.
+    if (pathname === "/api/hands/room" || pathname === "/hands/ws") {
+      const kind = pathname === "/api/hands/room" ? "hands-room" : "hands-guest";
+      if (server.upgrade(request, { data: { kind } })) {
+        return undefined;
+      }
+      return new Response(`Expected a WebSocket upgrade for ${pathname}`, { status: 426 });
     }
     // Pass the server handle so hono/bun's upgradeWebSocket (the /api/seam/ws
     // route) can perform its own upgrade.
@@ -74,6 +138,14 @@ Bun.serve<MicSocketData>({
   },
   websocket: {
     open(ws) {
+      if (ws.data?.kind === "hands-room") {
+        ws.data.hands = handsHub.addRoom((raw) => ws.send(raw));
+        return;
+      }
+      if (ws.data?.kind === "hands-guest") {
+        ws.data.hands = handsHub.addGuest((raw) => ws.send(raw));
+        return;
+      }
       // Non-mic sockets (e.g. /api/seam/ws) belong to hono/bun's adapter.
       if (ws.data?.kind !== "mic") {
         (honoWebsocket as { open?: (ws: unknown) => unknown }).open?.(ws as unknown);
@@ -90,6 +162,12 @@ Bun.serve<MicSocketData>({
       ws.send(JSON.stringify({ type: "ready", mode: runtime.micMode, sessionId: ws.data.session.id }));
     },
     message(ws, message) {
+      if (ws.data?.kind === "hands-room" || ws.data?.kind === "hands-guest") {
+        if (typeof message === "string") {
+          ws.data.hands?.message(message);
+        }
+        return;
+      }
       if (ws.data?.kind !== "mic") {
         (honoWebsocket as { message?: (ws: unknown, message: unknown) => unknown }).message?.(ws as unknown, message);
         return;
@@ -102,6 +180,10 @@ Bun.serve<MicSocketData>({
       session.pushAudio(bytes);
     },
     close(ws, code, reason) {
+      if (ws.data?.kind === "hands-room" || ws.data?.kind === "hands-guest") {
+        ws.data.hands?.close();
+        return;
+      }
       if (ws.data?.kind !== "mic") {
         (honoWebsocket as { close?: (ws: unknown, code?: number, reason?: string) => unknown }).close?.(
           ws as unknown,
@@ -118,6 +200,14 @@ Bun.serve<MicSocketData>({
 console.log(`Vibersyn projector server listening on http://${host}:${port}`);
 if (phonePort !== null) {
   console.log(`[import] phone submit listener on http://0.0.0.0:${phonePort}/submit (QR points here)`);
+}
+{
+  // Where guests point their own computers for hand controls (add ?remote=1 /
+  // --guests to make a wall listen; the page itself works regardless).
+  const handsInfo = resolveHandsInfo({ host, port, phonePort, tlsPort, guestCount: 0, walls: [] });
+  console.log(
+    `[hands] guest hand-controls page: ${handsInfo.url}${handsInfo.httpsUrl !== null ? ` (camera tracking: ${handsInfo.httpsUrl})` : " (trackpad only — no TLS listener; camera tracking needs run-room.sh --guests)"}`,
+  );
 }
 // Structured startup degradation notice (ISSUE-0003): one line per stubbed leg
 // with the env var that upgrades it, computed from the resolved runtime.
@@ -165,19 +255,4 @@ function startOtelTraceExport(exportingRuntime: Awaited<ReturnType<typeof create
 function parsePort(value: string): number {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : 8787;
-}
-
-// The phone listener's port. Falls back to main+1 — NEVER to parsePort's 8787
-// default and never to the main port itself: a garbage VIBERSYN_PHONE_PORT must
-// not make the phone listener grab the main port first and crash the room's own
-// bind (the phone listener is best-effort by contract).
-function resolvePhonePort(raw: string | undefined, mainPort: number): number {
-  const parsed = Number(raw);
-  if (raw !== undefined && Number.isInteger(parsed) && parsed > 0 && parsed !== mainPort) {
-    return parsed;
-  }
-  if (raw !== undefined) {
-    console.warn(`[import] VIBERSYN_PHONE_PORT=${raw} is unusable — falling back to ${mainPort + 1}.`);
-  }
-  return mainPort + 1;
 }

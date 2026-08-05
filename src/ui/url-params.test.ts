@@ -116,4 +116,28 @@ describe("parseProjectorUrl", () => {
     expect(parseProjectorUrl("?mock=0", "h").mock).toBe(false);
     expect(parseProjectorUrl("", "h").mock).toBe(false);
   });
+
+  test("remote (guest hands) defaults to null: bare URL, ?remote=0 and empty ?remote= stay off", () => {
+    expect(parseProjectorUrl("", "h").remote).toBeNull();
+    expect(parseProjectorUrl("?remote=0", "h").remote).toBeNull();
+    expect(parseProjectorUrl("?remote=", "h").remote).toBeNull();
+    expect(parseProjectorUrl("?remote=%200%20", "h").remote).toBeNull(); // trimmed "0 "
+  });
+
+  test("?remote=1 opts in with the same-origin default (url null, resolved in App)", () => {
+    expect(parseProjectorUrl("?remote=1", "h").remote).toEqual({ url: null });
+  });
+
+  test("?remote=ws://... names an explicit subscription source (split-origin dev)", () => {
+    expect(parseProjectorUrl("?remote=ws%3A%2F%2F192.168.1.20%3A8788%2Fapi%2Fhands%2Froom", "h").remote).toEqual({
+      url: "ws://192.168.1.20:8788/api/hands/room",
+    });
+  });
+
+  test("?remote=1 composes with gesture and dwell modes", () => {
+    const config = parseProjectorUrl("?gesture=1&dwell=mouse&remote=1", "h");
+    expect(config.gesture).not.toBeNull();
+    expect(config.dwell).toBe("mouse");
+    expect(config.remote).toEqual({ url: null });
+  });
 });

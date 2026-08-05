@@ -4,6 +4,7 @@ import { idToHue } from "./core";
 import { GestureTargets, HITBOX_INFLATE_PX, inflateRect, type TargetDescriptor } from "./targets";
 import { MultiDwell } from "./multi";
 import { getSceneDwellSource } from "./scene-source";
+import { RemoteKeyHolds, visibleCursorDots } from "./remote";
 import { GestureWallClient, type GestureCursor, type GestureWallStatus } from "./wall-client";
 
 // Dwell/interaction tuning — matches the standalone wall client
@@ -66,6 +67,12 @@ export interface GestureLayerProps {
   // Fusion server WS URL (e.g. ws://localhost:8770). Empty disables the camera
   // stream (mouse-dwell testing mode uses only the local mouse cursor).
   fusionUrl: string;
+  // Guest-hands WS URL (the projector server's /api/hands/room — speaks the
+  // same fusion cursors protocol, carrying LAN guests' cursors with ids in the
+  // reserved guest block). Empty disables the remote stream. Guest cursors
+  // merge into the same dwell pipeline as camera cursors; their dots always
+  // draw (a guest aiming from their own laptop has no other feedback).
+  remoteUrl?: string;
   // When true, the mouse injects a local id=-1 cursor so the SAME
   // point→highlight→dwell mechanic can be driven without cameras
   // (?dwell=mouse — testing / accessibility fallback). Default false.
@@ -83,7 +90,7 @@ export interface GestureLayerProps {
 // synthesizes the activation. A per-person cursor dot — hued per cursor id
 // like the standalone wall client — can be opted in via localStorage, but the
 // wall defaults to dwell rings only (the dots read as clutter at room scale).
-export function GestureLayer({ wall, fusionUrl, mouseTest = false, initialCursorDots }: GestureLayerProps) {
+export function GestureLayer({ wall, fusionUrl, remoteUrl = "", mouseTest = false, initialCursorDots }: GestureLayerProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const statusRef = useRef<GestureWallStatus>("closed");
   const [cursorDots] = useState<boolean>(() => initialCursorDots ?? readCursorDotsPref());
@@ -133,6 +140,12 @@ export function GestureLayer({ wall, fusionUrl, mouseTest = false, initialCursor
     }
 
     // ── camera cursor stream ──────────────────────────────────────────────────
+    const mergeCursors = (incoming: GestureCursor[]) => {
+      const t = nowSec();
+      for (const c of incoming) {
+        cursors.set(c.id, { x: c.x, y: c.y, engaged: c.engaged, lastSeen: t, isMouse: false });
+      }
+    };
     let client: GestureWallClient | null = null;
     if (fusionUrl.trim().length > 0) {
       client = new GestureWallClient({
@@ -141,14 +154,27 @@ export function GestureLayer({ wall, fusionUrl, mouseTest = false, initialCursor
         onStatus: (s) => {
           statusRef.current = s;
         },
-        onCursors: (incoming: GestureCursor[]) => {
-          const t = nowSec();
-          for (const c of incoming) {
-            cursors.set(c.id, { x: c.x, y: c.y, engaged: c.engaged, lastSeen: t, isMouse: false });
-          }
-        },
+        onCursors: mergeCursors,
       });
       client.start();
+    }
+
+    // ── guest cursor stream (LAN guests via the projector server) ─────────────
+    // Same wire protocol, same merge: guests differ only by their reserved id
+    // block, which the dot renderer uses to always show them. Guests' WASD
+    // buttons arrive as keys frames and replay through the SAME window key
+    // events the desk keyboard produces (RoomScene's fly-through binds
+    // window-wide) — merged across guests, auto-released on silence.
+    const keyHolds = new RemoteKeyHolds();
+    let remoteClient: GestureWallClient | null = null;
+    if (remoteUrl.trim().length > 0) {
+      remoteClient = new GestureWallClient({
+        url: remoteUrl,
+        wall,
+        onCursors: mergeCursors,
+        onKeys: (keysFrame) => keyHolds.update(keysFrame.guest, keysFrame.held, nowSec()),
+      });
+      remoteClient.start();
     }
 
     const domIdFor = (el: Element): string => {
@@ -247,6 +273,17 @@ export function GestureLayer({ wall, fusionUrl, mouseTest = false, initialCursor
         rectsById.set(zone.id, { left: zone.x * vpW, top: zone.y * vpH, width: zone.w * vpW, height: zone.h * vpH });
       }
 
+      // Remote WASD: apply this frame's press/release diff as synthetic window
+      // key events (exactly what the desk keyboard would emit — RoomScene's
+      // handler takes it from there; stale guests release automatically).
+      const keyDiff = keyHolds.diff(t);
+      for (const key of keyDiff.down) {
+        window.dispatchEvent(new KeyboardEvent("keydown", { key }));
+      }
+      for (const key of keyDiff.up) {
+        window.dispatchEvent(new KeyboardEvent("keyup", { key }));
+      }
+
       const feed = [...cursors.entries()].map(([id, c]) => ({ id, x: c.x, y: c.y, engaged: c.engaged }));
       const result = multi.update(zones, feed, t);
 
@@ -304,8 +341,13 @@ export function GestureLayer({ wall, fusionUrl, mouseTest = false, initialCursor
       }
       getSceneDwellSource()?.setHighlights(new Set());
       client?.stop();
+      remoteClient?.stop();
+      // Never leave a remote guest's key held down past the layer's lifetime.
+      for (const key of keyHolds.releaseAll()) {
+        window.dispatchEvent(new KeyboardEvent("keyup", { key }));
+      }
     };
-  }, [wall, fusionUrl, mouseTest]);
+  }, [wall, fusionUrl, remoteUrl, mouseTest]);
 
   return (
     <>
@@ -313,6 +355,10 @@ export function GestureLayer({ wall, fusionUrl, mouseTest = false, initialCursor
         ref={canvasRef}
         className="gesture-overlay"
         data-testid="gesture-overlay"
+        // The wall this layer subscribes as (fusion hello AND the guest-hands
+        // relay hello) — observable so tests can pin the per-window wall
+        // routing that keeps one guest from double-firing both walls.
+        data-wall={wall}
         aria-hidden="true"
       />
     </>
@@ -398,10 +444,11 @@ function draw(
     ctx.stroke();
   }
 
-  if (!showCursorDots) {
-    return;
-  }
-  for (const [id, cursor] of cursors) {
+  // Guest cursors (the negative reserved id block) ALWAYS draw — a guest
+  // aiming from their own laptop has no arm→wall mapping, the dot IS their
+  // feedback. In-room cursors keep honoring the opt-in preference. The
+  // filtering lives in visibleCursorDots (unit-tested) — do not re-gate here.
+  for (const [id, cursor] of visibleCursorDots(cursors, showCursorDots)) {
     const x = cursor.x * vpW;
     const y = cursor.y * vpH;
     const hue = idToHue(id);

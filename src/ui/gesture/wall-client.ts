@@ -55,6 +55,27 @@ function coerceCursor(entry: unknown): GestureCursor | null {
   };
 }
 
+// Remote WASD (guest-hands relay only — the fusion server never sends these):
+// {"type":"keys","wall":"A","guest":0,"held":["w","d"],"t":12.3}. Same
+// wall-match rule as cursors. Returns null for non-keys/malformed frames.
+export interface KeysFrame {
+  guest: number;
+  held: string[];
+}
+
+export function parseKeysFrame(raw: string, wall: string): KeysFrame | null {
+  let msg: unknown;
+  try {
+    msg = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!isRecord(msg) || msg.type !== "keys" || msg.wall !== wall || typeof msg.guest !== "number" || !Array.isArray(msg.held)) {
+    return null;
+  }
+  return { guest: msg.guest, held: msg.held.filter((key): key is string => typeof key === "string") };
+}
+
 export type GestureWallStatus = "connecting" | "open" | "closed";
 
 export interface GestureWallClientOptions {
@@ -62,6 +83,8 @@ export interface GestureWallClientOptions {
   url: string;
   wall: string;
   onCursors: (cursors: GestureCursor[], t: number) => void;
+  // Remote WASD holds from the guest-hands relay (absent for fusion streams).
+  onKeys?: (frame: KeysFrame) => void;
   onStatus?: (status: GestureWallStatus) => void;
   reconnectMs?: number;
   // Injectable for tests / non-browser envs.
@@ -75,6 +98,7 @@ export class GestureWallClient {
   readonly #url: string;
   readonly #wall: string;
   readonly #onCursors: (cursors: GestureCursor[], t: number) => void;
+  readonly #onKeys?: (frame: KeysFrame) => void;
   readonly #onStatus?: (status: GestureWallStatus) => void;
   readonly #reconnectMs: number;
   readonly #WebSocketImpl: typeof WebSocket;
@@ -86,6 +110,7 @@ export class GestureWallClient {
     this.#url = options.url;
     this.#wall = options.wall;
     this.#onCursors = options.onCursors;
+    this.#onKeys = options.onKeys;
     this.#onStatus = options.onStatus;
     this.#reconnectMs = options.reconnectMs ?? 1500;
     const impl = options.WebSocketImpl ?? (typeof WebSocket !== "undefined" ? WebSocket : undefined);
@@ -152,6 +177,13 @@ export class GestureWallClient {
       const frame = parseCursorsFrame(event.data, this.#wall);
       if (frame !== null) {
         this.#onCursors(frame.cursors, frame.t);
+        return;
+      }
+      if (this.#onKeys !== undefined) {
+        const keys = parseKeysFrame(event.data, this.#wall);
+        if (keys !== null) {
+          this.#onKeys(keys);
+        }
       }
     };
     ws.onerror = () => {

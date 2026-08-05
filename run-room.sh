@@ -39,6 +39,13 @@
 #                                 # standalone MediaPipe bridge — the NO-TOUCHDESIGNER
 #                                 # path (needs macOS Camera permission on the Terminal/IDE)
 #   ./run-room.sh --hands=ws://td-mac:9980   # pinch camera fed by a TouchDesigner rig
+#   ./run-room.sh --guests        # GUEST HANDS: anyone on the room LAN opens
+#                                 # http(s)://<room-ip>:<port+1|+2>/hands on their
+#                                 # own computer and drives the wall's dwell layer —
+#                                 # webcam hand-tracking (pinch to click; runs in
+#                                 # THEIR browser) or a trackpad fallback. Generates
+#                                 # a self-signed TLS cert (browsers only allow the
+#                                 # webcam on https). Composes with every mode.
 #   ./run-room.sh --gesture --config=my.json
 #   ./run-room.sh --single --gesture --config=gesture-wall/room.kinect.json
 #                                 # ONE wall + ONE Kinect v2 (docs/KINECT-SINGLE-WALL.md)
@@ -66,6 +73,7 @@ SELF_MODE=0
 HANDS=0                               # TouchDesigner hand-pinch camera (--hands / --hands=URL / --fake-hands / --real-hands)
 FAKE_HANDS=0
 REAL_HANDS=0                          # --real-hands: launch the standalone MediaPipe bridge (real laptop camera, no TD)
+GUESTS=0                              # --guests: LAN guests drive the dwell layer from their own computers
 SINGLE=0
 SINGLE_VIEW="${SINGLE_VIEW:-full}"   # full | ideas | builds (--single=<view>; legacy badge, never filters)
 CALIBRATE=0
@@ -104,6 +112,7 @@ for arg in "$@"; do
     --hands=*) HANDS=1; HANDS_URL="${arg#*=}" ;;   # explicit TD source, e.g. ws://td-mac:9980
     --fake-hands) HANDS=1; FAKE_HANDS=1 ;;   # pinch camera minus TouchDesigner (synthetic hands)
     --real-hands) HANDS=1; REAL_HANDS=1 ;;   # pinch camera from the REAL laptop camera via the standalone MediaPipe bridge (no TD)
+    --guests) GUESTS=1 ;;   # guest hands: LAN computers get /hands + the walls listen (&remote=1)
     --single) SINGLE=1 ;;
     --single=*) SINGLE=1; SINGLE_VIEW="${arg#*=}" ;;
     --self) SELF_MODE=1 ;;   # self-hosting: VIBERSYN_SELF_MODE=1 + supervisor loop
@@ -324,6 +333,34 @@ if [ "$REAL_HANDS" = "1" ]; then
   PIDS+=($!)
 fi
 
+# ── Guest hands (--guests): self-signed TLS for webcam hand-tracking ─────────
+# Browsers only allow getUserMedia on secure origins, so guests' CAMERA mode
+# needs an https URL; the trackpad mode works over plain http regardless. The
+# cert is self-signed (one-time "proceed anyway" per guest browser), generated
+# once into artifacts/hands-tls/ (gitignored) with every current LAN IPv4 in
+# the SAN. Delete the directory to regenerate (e.g. after changing networks).
+HANDS_TLS_CERT=""
+HANDS_TLS_KEY=""
+if [ "$GUESTS" = "1" ]; then
+  TLS_DIR="$ROOT/artifacts/hands-tls"
+  mkdir -p "$TLS_DIR"
+  if [ ! -f "$TLS_DIR/cert.pem" ] || [ ! -f "$TLS_DIR/key.pem" ]; then
+    echo "[room] guests: generating self-signed TLS cert (webcam tracking needs https)…"
+    SAN="DNS:localhost,IP:127.0.0.1"
+    for ip in $(ifconfig 2>/dev/null | awk '/inet /{print $2}' | grep -v '^127\.' || true); do
+      SAN="$SAN,IP:$ip"
+    done
+    openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
+      -keyout "$TLS_DIR/key.pem" -out "$TLS_DIR/cert.pem" -days 825 -nodes \
+      -subj "/CN=vibersyn-guest-hands" -addext "subjectAltName=$SAN" >/dev/null 2>&1 \
+      || echo "[room] WARN: openssl cert generation failed — guests get trackpad-only (http)." >&2
+  fi
+  if [ -f "$TLS_DIR/cert.pem" ] && [ -f "$TLS_DIR/key.pem" ]; then
+    HANDS_TLS_CERT="$TLS_DIR/cert.pem"
+    HANDS_TLS_KEY="$TLS_DIR/key.pem"
+  fi
+fi
+
 # ── 2) build + serve Vibersyn ────────────────────────────────────────────────
 echo "[room] building Vibersyn UI…"
 bun run build >/dev/null 2>&1 || { echo "[room] ERROR: UI build failed (run 'bun run build' to see why)." >&2; exit 1; }
@@ -332,10 +369,14 @@ if [ "$SELF_MODE" = "1" ]; then
   # "self:" commit landed) → bun run build → relaunch, same env; any other
   # exit ends the loop normally. The walls reload themselves on the new bootId.
   echo "[room] Vibersyn server (SELF-HOSTING supervisor) on http://localhost:$VIBERSYN_PORT (bound to $HOST)"
-  HOST="$HOST" VIBERSYN_PORT="$VIBERSYN_PORT" VIBERSYN_SELF_MODE=1 bash scripts/self-supervisor.sh &
+  HOST="$HOST" VIBERSYN_PORT="$VIBERSYN_PORT" VIBERSYN_SELF_MODE=1 \
+    VIBERSYN_HANDS_TLS_CERT="$HANDS_TLS_CERT" VIBERSYN_HANDS_TLS_KEY="$HANDS_TLS_KEY" \
+    bash scripts/self-supervisor.sh &
 else
   echo "[room] Vibersyn server on http://localhost:$VIBERSYN_PORT (bound to $HOST)"
-  HOST="$HOST" VIBERSYN_PORT="$VIBERSYN_PORT" bun src/server/index.ts &
+  HOST="$HOST" VIBERSYN_PORT="$VIBERSYN_PORT" \
+    VIBERSYN_HANDS_TLS_CERT="$HANDS_TLS_CERT" VIBERSYN_HANDS_TLS_KEY="$HANDS_TLS_KEY" \
+    bun src/server/index.ts &
 fi
 PIDS+=($!)
 
@@ -376,9 +417,13 @@ MOCK_QS=""
 if [ "${VIBERSYN_MOCK_ROOM:-}" = "1" ]; then
   MOCK_QS="&mock=1"
 fi
-URL_A="http://localhost:$VIBERSYN_PORT/?live=1&wall=A&view=ideas$GESTURE_QS$HANDS_QS$MOCK_QS"
-URL_B="http://localhost:$VIBERSYN_PORT/?live=1&wall=B&view=builds$GESTURE_QS$HANDS_QS_B$MOCK_QS"
-URL_SINGLE="http://localhost:$VIBERSYN_PORT/?live=1&view=$SINGLE_VIEW$GESTURE_QS$HANDS_QS$MOCK_QS"
+# --guests: the walls subscribe to the guest-hands relay (&remote=1).
+REMOTE_QS=""
+if [ "$GUESTS" = "1" ]; then REMOTE_QS="&remote=1"; fi
+
+URL_A="http://localhost:$VIBERSYN_PORT/?live=1&wall=A&view=ideas$GESTURE_QS$HANDS_QS$REMOTE_QS$MOCK_QS"
+URL_B="http://localhost:$VIBERSYN_PORT/?live=1&wall=B&view=builds$GESTURE_QS$HANDS_QS_B$REMOTE_QS$MOCK_QS"
+URL_SINGLE="http://localhost:$VIBERSYN_PORT/?live=1&view=$SINGLE_VIEW$GESTURE_QS$HANDS_QS$REMOTE_QS$MOCK_QS"
 
 open_wall() { # $1=window-position  $2=url
   if command -v open >/dev/null 2>&1; then
@@ -416,6 +461,16 @@ else
 fi
 if [ "$HANDS" = "1" ]; then
   echo "[room] hand camera: pinch-hold-drag one hand to orbit (flick to coast); pinch BOTH hands and spread/squeeze to zoom."
+fi
+if [ "$GUESTS" = "1" ]; then
+  GUEST_IP="$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || echo "<room-ip>")"
+  if [ -n "$HANDS_TLS_CERT" ]; then
+    echo "[room] Guests  → https://$GUEST_IP:$((VIBERSYN_PORT + 2))/hands  (webcam hand-tracking; accept the one-time cert warning)"
+    echo "[room]           http://$GUEST_IP:$((VIBERSYN_PORT + 1))/hands  (trackpad fallback — no warning, no camera)"
+  else
+    echo "[room] Guests  → http://$GUEST_IP:$((VIBERSYN_PORT + 1))/hands  (trackpad — no TLS cert, so no webcam tracking)"
+  fi
+  echo "[room] (the 🖐 Guests button on the wall shows this URL as a QR code, with a live connected count.)"
 fi
 echo "[room] (tip: dwell/click \"Guided Demo\" — or add &demo=guided to a wall URL — for the coached visitor walkthrough.)"
 wait

@@ -32,6 +32,13 @@ export interface ProjectorUrlConfig {
   // Independent of the dwell gesture layer — composes with desk, ?dwell=mouse
   // and ?gesture=1.
   hands: { url: string } | null;
+  // GUEST HANDS (?remote=): people on the room LAN drive this wall's
+  // dwell-to-click layer from their own computers (GET /hands on the server).
+  // ?remote=1 → subscribe to the page's own origin (/api/hands/room — the
+  // production wall is served BY the projector server); ?remote=ws://… →
+  // explicit subscription URL (split-origin dev). url null = same-origin
+  // default, resolved in App where window.location exists. Absent/"0"/"" → off.
+  remote: { url: string | null } | null;
   // ?demo=guided — auto-enter the coached guided-demo flow on load (the HUD
   // "Guided Demo" button enters the same flow interactively).
   demo: "guided" | null;
@@ -79,6 +86,15 @@ export function parseProjectorUrl(search: string, hostname: string): ProjectorUr
       ? { url: handsParam !== "1" ? handsParam : `ws://${hostname || "localhost"}:9980` }
       : null;
 
+  // Guest hands (?remote=): dwell control from other computers on the LAN.
+  // Same opt-in grammar as ?hands=: "1" = default source, a ws(s) URL = that
+  // source, absent/"0"/"" (after trimming) = off.
+  const remoteParam = params.get("remote")?.trim() ?? null;
+  const remote =
+    remoteParam !== null && remoteParam !== "" && remoteParam !== "0"
+      ? { url: remoteParam !== "1" ? remoteParam : null }
+      : null;
+
   // Guided demo auto-entry + the env-gated Mock Room toggle.
   const demo = params.get("demo") === "guided" ? ("guided" as const) : null;
   const mock = params.get("mock") === "1";
@@ -94,5 +110,5 @@ export function parseProjectorUrl(search: string, hostname: string): ProjectorUr
         ? view.toUpperCase()
         : null;
 
-  return { view, wall, badge, gesture, dwell, hands, demo, mock };
+  return { view, wall, badge, gesture, dwell, hands, remote, demo, mock };
 }

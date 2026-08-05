@@ -151,6 +151,39 @@ hands pans). URL param: `?hands=1` connects to `ws://<page-host>:9980`,
   [`gesture-wall/touchdesigner/README.md`](gesture-wall/touchdesigner/README.md)
   (MediaPipe plugin install, drop-in DAT scripts, channel verification, tuning).
 
+### Guest hands (control the wall from your own computer or phone)
+
+`./run-room.sh --guests` — anyone on the room LAN opens
+**`http(s)://<room-ip>:<port+1|+2>/hands`** on their own laptop **or phone**
+and drives the wall from there. The wall's **🖐 Guests** button shows the URL
+as a QR code with a live connected count. The page also has **on-screen
+W/A/S/D buttons** (hold them — multi-touch, so a thumb can walk W+D while the
+other aims) that walk the wall's 3D fly-through camera exactly like the desk
+keyboard; a guest going silent mid-hold auto-releases within 1.5s so the
+camera never keeps walking on a dead connection. Two pointing modes, both
+streaming tiny cursor frames (never video) to the room server:
+
+- **✋ Camera** — MediaPipe hand tracking **in the guest's own browser**
+  (their webcam — front camera on a phone): point by moving your open hand
+  (palm-anchored cursor, same math as the `--real-hands` bridge), **pinch
+  thumb+index and hold still** to click. Browsers only allow the webcam on
+  secure origins, so `--guests` generates a self-signed TLS cert
+  (`artifacts/hands-tls/`, gitignored) and serves an **https** guest listener
+  on `port+2` — each guest accepts the certificate warning once. The tracker
+  loads from a CDN on the guest's device (GPU delegate with automatic CPU
+  fallback for phones).
+- **🖱 Trackpad** — zero-permission fallback that always works, including over
+  plain http (`port+1`): the pad maps 1:1 onto the wall; hover to aim, press
+  and hold still to click.
+
+Guests get their own always-visible colored cursor dot on the wall (the guest
+page shows you your color). With two walls, guest frames route to ONE wall
+(picker on the guest page) so a dwell never double-fires across both windows.
+Manual wiring without run-room: add `&remote=1` to a wall URL (or
+`&remote=ws://host:port/api/hands/room` for a split-origin dev setup) and set
+`VIBERSYN_HANDS_TLS_CERT`/`VIBERSYN_HANDS_TLS_KEY` for the https listener
+(`VIBERSYN_HANDS_TLS_PORT` overrides the default `port+2`).
+
 ## Model
 
 The Cerebras decision path (`VIBERSYN_DECISION_LLM=cue-cerebras`, needs

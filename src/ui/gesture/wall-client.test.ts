@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { GestureWallClient, parseCursorsFrame, type GestureCursor } from "./wall-client";
+import { GestureWallClient, parseCursorsFrame, parseKeysFrame, type GestureCursor, type KeysFrame } from "./wall-client";
 
 describe("parseCursorsFrame", () => {
   const frame = (over: object = {}) =>
@@ -35,6 +35,21 @@ describe("parseCursorsFrame", () => {
       { id: 2, x: 0.5, y: 0.5, engaged: false, conf: 0.1 },
     ]);
     expect(parsed?.t).toBe(0); // missing t -> 0
+  });
+});
+
+describe("parseKeysFrame", () => {
+  test("parses a keys frame for the subscribed wall; filters non-string keys", () => {
+    const raw = JSON.stringify({ type: "keys", wall: "A", guest: 3, held: ["w", 7, "d"], t: 1 });
+    expect(parseKeysFrame(raw, "A")).toEqual({ guest: 3, held: ["w", "d"] });
+  });
+
+  test("rejects wrong wall, wrong type, missing guest, and malformed JSON", () => {
+    const raw = JSON.stringify({ type: "keys", wall: "A", guest: 0, held: ["w"] });
+    expect(parseKeysFrame(raw, "B")).toBeNull();
+    expect(parseKeysFrame(JSON.stringify({ type: "cursors", wall: "A", cursors: [] }), "A")).toBeNull();
+    expect(parseKeysFrame(JSON.stringify({ type: "keys", wall: "A", held: ["w"] }), "A")).toBeNull();
+    expect(parseKeysFrame("not json", "A")).toBeNull();
   });
 });
 
@@ -94,6 +109,29 @@ describe("GestureWallClient", () => {
     ws.message(JSON.stringify({ type: "cursors", wall: "B", t: 2, cursors: [{ id: 9, x: 0, y: 0 }] }));
     expect(cursorsSeen).toHaveLength(1);
     expect(statuses).toContain("open");
+    client.stop();
+  });
+
+  test("routes keys frames to onKeys (wall-filtered) without disturbing the cursors path", () => {
+    FakeWebSocket.instances = [];
+    const cursorsSeen: GestureCursor[][] = [];
+    const keysSeen: KeysFrame[] = [];
+    const client = new GestureWallClient({
+      url: "ws://localhost:8788/api/hands/room",
+      wall: "A",
+      onCursors: (cursors) => cursorsSeen.push(cursors),
+      onKeys: (frame) => keysSeen.push(frame),
+      WebSocketImpl: FakeWebSocket as unknown as typeof WebSocket,
+    });
+    client.start();
+    const ws = FakeWebSocket.instances[0];
+    ws.open();
+    ws.message(JSON.stringify({ type: "keys", wall: "A", guest: 0, held: ["w", "d"], t: 1 }));
+    ws.message(JSON.stringify({ type: "keys", wall: "B", guest: 0, held: ["s"], t: 2 })); // other wall
+    ws.message(JSON.stringify({ type: "cursors", wall: "A", t: 3, cursors: [{ id: -1000, x: 0.1, y: 0.2 }] }));
+    expect(keysSeen).toEqual([{ guest: 0, held: ["w", "d"] }]);
+    expect(cursorsSeen).toHaveLength(1);
+    expect(cursorsSeen[0][0].id).toBe(-1000);
     client.stop();
   });
 

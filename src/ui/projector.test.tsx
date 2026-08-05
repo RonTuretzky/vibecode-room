@@ -5,6 +5,7 @@ import { cursorDotsFromStored } from "./gesture/GestureLayer";
 import { IdeaTray } from "./IdeaTray";
 import { HelpOverlay } from "./HelpOverlay";
 import { QrImport, qrPanelState } from "./QrImport";
+import { preferredGuestUrl } from "./GuestHands";
 import { Slideshow } from "./Slideshow";
 import { demoProjectorSnapshot, busyRoomSnapshot } from "./demo-data";
 import type { BuildloopProcess, BuildloopSnapshot } from "./buildloop";
@@ -638,6 +639,37 @@ describe("gesture dwell-select interaction", () => {
     expect(html).toContain('data-testid="gesture-overlay"');
     expect(html).not.toContain("gesture-mode");
     expect(html).toContain('data-gesture="false"');
+  });
+
+  test("?remote=1 (guest hands): the Guests button renders; a bare URL never shows it", () => {
+    const withRemote = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch="?live=0&remote=1" />,
+    );
+    expect(withRemote).toContain('data-testid="guest-hands-button"');
+    // A Guests button on a wall that is NOT listening would show a URL that
+    // connects to nothing — it must never render without the opt-in.
+    const bare = renderToStaticMarkup(<ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch="?live=0" />);
+    expect(bare).not.toContain('data-testid="guest-hands-button"');
+  });
+
+  test("?remote=ws://… mounts the dwell layer subscribing as THIS window's wall (desk stays desk)", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp
+        initialSnapshot={demoProjectorSnapshot}
+        urlSearch={`?live=0&wall=B&remote=${encodeURIComponent("ws://room:8788/api/hands/room")}`}
+      />,
+    );
+    expect(html).toContain('data-testid="gesture-overlay"');
+    // Wall identity is what keeps one guest from double-firing both windows.
+    expect(html).toContain('data-wall="B"');
+    expect(html).not.toContain("gesture-mode"); // remote mode alone never hides the OS cursor
+  });
+
+  test("preferredGuestUrl: the https listener wins (camera tracking); http is the fallback", () => {
+    expect(preferredGuestUrl({ url: "http://10.0.0.2:8788/hands", httpsUrl: "https://10.0.0.2:8789/hands" })).toBe(
+      "https://10.0.0.2:8789/hands",
+    );
+    expect(preferredGuestUrl({ url: "http://10.0.0.2:8788/hands", httpsUrl: null })).toBe("http://10.0.0.2:8788/hands");
   });
 
   test("fleet panels opt into dwell targeting via data-dwell", () => {

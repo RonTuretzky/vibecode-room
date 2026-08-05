@@ -13,6 +13,8 @@ import { IdeaTray } from "./IdeaTray";
 import { ResearchTray } from "./ResearchTray";
 import { ResearchDeckOverlay } from "./ResearchDeckOverlay";
 import { QrImport } from "./QrImport";
+import { GuestHands } from "./GuestHands";
+import { roomHandsSocketUrl } from "./gesture/remote";
 import { HelpOverlay } from "./HelpOverlay";
 import { BuildChips, CommissionButton, ExecutionChip, ProcessControls } from "./BuildChips";
 import { TakeHomeQr } from "./TakeHomeQr";
@@ -130,6 +132,8 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
   // down its own pipeline instead of committing it (see toggleMic).
   const micStartRef = useRef<Promise<void> | null>(null);
   const [qrOpen, setQrOpen] = useState(initialOverlay?.qrOpen ?? false);
+  // GUEST HANDS overlay (the URL/QR other computers open to get hand controls).
+  const [guestsOpen, setGuestsOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   // MOCK ROOM: a client-only demo showing several projects building at once.
   // While on, the live SSE stream is held back (see the guard below) so the
@@ -1030,7 +1034,18 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
         }
         const liveSnapshot = (await response.json()) as ProjectorSnapshot;
         if (!closed && !mockModeRef.current) {
-          setSnapshot(liveSnapshot);
+          // Out-of-order guard: a resync ISSUED before a state change can
+          // RESOLVE after that change's SSE push — applying it blindly would
+          // revert the wall to pre-change state with nothing left to correct
+          // it (no further push comes). Never let a fetched snapshot roll the
+          // clock back over one the stream already delivered.
+          setSnapshot((current) =>
+            typeof current.updatedAt === "string" &&
+            typeof liveSnapshot.updatedAt === "string" &&
+            liveSnapshot.updatedAt < current.updatedAt
+              ? current
+              : liveSnapshot,
+          );
         }
       } catch {
         // Transient (e.g. server restarting); the reconnect loop will retry.
@@ -1132,6 +1147,8 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
   // can close the topmost overlay on Escape without re-binding per keystroke.
   const qrOpenRef = useRef(qrOpen);
   qrOpenRef.current = qrOpen;
+  const guestsOpenRef = useRef(guestsOpen);
+  guestsOpenRef.current = guestsOpen;
   const helpOpenRef = useRef(helpOpen);
   helpOpenRef.current = helpOpen;
   // Current selection mirrored the same way, so 'k' (halt selected) reads the
@@ -1195,6 +1212,10 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
         }
         if (qrOpenRef.current) {
           setQrOpen(false);
+          return;
+        }
+        if (guestsOpenRef.current) {
+          setGuestsOpen(false);
           return;
         }
         // The contextual idea card closes without building anything.
@@ -1523,6 +1544,19 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
   // ?dwell=mouse mounts the same dwell layer driven by the mouse (testing/
   // accessibility) with the OS cursor and drag-orbit left intact.
   const gestureMode = urlConfig.gesture !== null;
+  // GUEST HANDS (?remote=): people on the LAN drive this wall's dwell layer
+  // from their own computers. ?remote=1 subscribes to the page's own origin
+  // (the production wall is served by the projector server); ?remote=ws://…
+  // overrides for split-origin dev setups.
+  const remoteHandsUrl = useMemo(() => {
+    if (urlConfig.remote === null) {
+      return "";
+    }
+    if (urlConfig.remote.url !== null) {
+      return urlConfig.remote.url;
+    }
+    return typeof window !== "undefined" ? roomHandsSocketUrl(window.location) : "";
+  }, [urlConfig.remote]);
   // CORNER LOCK: in gesture mode with an explicit wall, the two wall windows
   // stop being independent vantage points and become a RIGID camera pair
   // rendering ONE continuous world around the physical 90° corner — shared eye
@@ -1534,7 +1568,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
   // Kinect + hands must be able to orbit). Without hands, corner-lock stays as
   // the two-wall gesture pair intends.
   const cornerLock = gestureMode && urlConfig.wall !== null && urlConfig.hands === null;
-  const dwellLayerOn = gestureMode || urlConfig.dwell === "mouse";
+  const dwellLayerOn = gestureMode || urlConfig.dwell === "mouse" || remoteHandsUrl.length > 0;
   // AUDIT (no-mocks): the Mock Room toggle renders ONLY behind ?mock=1.
   const mockRoomEnabled = urlConfig.mock;
 
@@ -1570,8 +1604,9 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
       />
       {dwellLayerOn ? (
         <GestureLayer
-          wall={urlConfig.gesture?.wall ?? "A"}
+          wall={urlConfig.gesture?.wall ?? urlConfig.wall ?? "A"}
           fusionUrl={urlConfig.gesture?.fusionUrl ?? ""}
+          remoteUrl={remoteHandsUrl}
           mouseTest={urlConfig.dwell === "mouse"}
         />
       ) : null}
@@ -1724,6 +1759,20 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
               title="Show a QR code — scan it on a phone to add a project (context + optional link) to the wall."
             >
               QR Import
+            </button>
+          ) : null}
+          {/* GUEST HANDS: only rendered when this wall actually listens for
+              guests (?remote=1 / --guests) — a URL that connects to nothing is
+              worse than no button. */}
+          {urlConfig.remote !== null ? (
+            <button
+              type="button"
+              className="ctl-button guest-hands"
+              data-testid="guest-hands-button"
+              onClick={() => setGuestsOpen(true)}
+              title="Show the URL other computers on this network open to get hand controls for this wall (webcam hand-tracking or trackpad)."
+            >
+              🖐 Guests
             </button>
           ) : null}
           {showIdeaSurfaces ? (
@@ -2021,6 +2070,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
         <ResearchDeckOverlay quest={researchDeckQuest} onClose={() => setResearchDeckId(null)} />
       ) : null}
       {qrOpen ? <QrImport processes={snapshot.processes} onClose={() => setQrOpen(false)} /> : null}
+      {guestsOpen ? <GuestHands onClose={() => setGuestsOpen(false)} /> : null}
       {helpOpen ? <HelpOverlay onClose={() => setHelpOpen(false)} gestureMode={gestureMode} /> : null}
       {guided !== null ? (
         <GuidedDemo

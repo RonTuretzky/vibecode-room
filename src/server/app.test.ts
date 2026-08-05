@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createPhoneImportApp, createProjectorApp } from "./app";
+import { RemoteHandsHub } from "./remote-hands";
 import { createProjectorRuntime, type ProjectorRuntime, type ProjectorRuntimeOptions } from "./composition";
 import type { BuilderAgent } from "./idea-builder";
 import type { BuildBackend, BuildRequest, BuildResult } from "../buildloop/types";
@@ -79,6 +80,9 @@ interface MakeAppArgs {
   // Inject a fake build-backend roster: routes accepts through the multi-backend
   // orchestrator instead of the legacy single-build ideaBuilds path.
   buildBackends?: BuildBackend[];
+  // Guest-hands surface seams: the TLS listener port and a shared relay hub.
+  tlsPort?: number | null;
+  hands?: RemoteHandsHub;
   // Phone-import clone seam. Default: instant fake success — NO test may ever
   // run a real `git clone` (network, subprocess, teardown races).
   cloneRepoFn?: ProjectorRuntimeOptions["cloneRepoFn"];
@@ -111,6 +115,8 @@ async function makeApp(args: MakeAppArgs = {}): Promise<{ app: ReturnType<typeof
     host: args.host ?? "127.0.0.1",
     port: args.port ?? 8787,
     phonePort: args.phonePort ?? null,
+    tlsPort: args.tlsPort ?? null,
+    hands: args.hands,
     interfaces: args.interfaces,
   });
   return { app, runtime };
@@ -480,6 +486,84 @@ describe("GET /api/import/info", () => {
     const { app } = await makeApp({ host: "127.0.0.1", port: 8787, phonePort: 8788, interfaces: () => lan });
     const response = await app.request("/api/import/info");
     expect(await response.json()).toEqual({ submitUrl: "http://192.168.7.20:8788/submit", host: "192.168.7.20", lanReachable: true });
+  });
+});
+
+describe("guest hands surface (GET /hands + /api/hands/info)", () => {
+  const lan: InterfaceAddresses = {
+    en0: [{ family: "IPv4", internal: false, address: "192.168.7.20" }],
+  };
+
+  test("serves the self-contained guest page", async () => {
+    const { app } = await makeApp();
+    const response = await app.request("/hands");
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/html");
+    const html = await response.text();
+    // The page's two input modes and its ingest socket path.
+    expect(html).toContain("/hands/ws");
+    expect(html).toContain("guest-mode-hands");
+    expect(html).toContain("guest-pad");
+  });
+
+  test("/api/hands/info reports reachability, the TLS URL, and the live hub state", async () => {
+    const hub = new RemoteHandsHub();
+    hub.addRoom(() => undefined).message(JSON.stringify({ type: "hello", wall: "A" }));
+    hub.addGuest(() => undefined);
+    const { app } = await makeApp({
+      host: "127.0.0.1",
+      port: 8787,
+      phonePort: 8788,
+      tlsPort: 8789,
+      hands: hub,
+      interfaces: () => lan,
+    });
+    const response = await app.request("/api/hands/info");
+    expect(await response.json()).toEqual({
+      url: "http://192.168.7.20:8788/hands",
+      httpsUrl: "https://192.168.7.20:8789/hands",
+      host: "192.168.7.20",
+      lanReachable: true,
+      guestCount: 1,
+      walls: ["A"],
+    });
+  });
+
+  test("no TLS listener → httpsUrl null; loopback-only → honestly unreachable", async () => {
+    const { app } = await makeApp({ host: "127.0.0.1", port: 8787, interfaces: () => lan });
+    const info = (await (await app.request("/api/hands/info")).json()) as { httpsUrl: string | null; lanReachable: boolean; url: string };
+    expect(info.httpsUrl).toBeNull();
+    expect(info.lanReachable).toBe(false);
+    expect(info.url).toBe("http://127.0.0.1:8787/hands");
+  });
+
+  test("the phone (LAN) app serves the guest page too", async () => {
+    const buildsRoot = mkdtempSync(join(tmpdir(), "vibersyn-phone-hands-"));
+    tempDirs.push(buildsRoot);
+    const runtime = await createProjectorRuntime(
+      { VIBERSYN_INITIAL_MUTED: "0", VIBERSYN_IDEA_DETECTOR: "heuristic" },
+      {
+        buildsRoot,
+        builderAgent: noopBuilder,
+        executionArtifactsRoot: join(buildsRoot, "vibersyn-runs"),
+        cloneRepoFn: async ({ dir }) => ({ ok: true, dir }),
+        repoDigestFn: async () => "digest: fake repo",
+      },
+    );
+    runtimes.push(runtime);
+    const phoneApp = createPhoneImportApp(runtime, {
+      host: "127.0.0.1",
+      port: 8787,
+      phonePort: 8788,
+      tlsPort: 8789,
+      interfaces: () => lan,
+    });
+    const page = await phoneApp.request("/hands");
+    expect(page.status).toBe(200);
+    expect(await page.text()).toContain("/hands/ws");
+    const info = (await (await phoneApp.request("/api/hands/info")).json()) as { url: string; httpsUrl: string | null };
+    expect(info.url).toBe("http://192.168.7.20:8788/hands");
+    expect(info.httpsUrl).toBe("https://192.168.7.20:8789/hands");
   });
 });
 
