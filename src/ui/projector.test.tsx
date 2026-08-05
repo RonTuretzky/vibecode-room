@@ -45,6 +45,9 @@ describe("projector UI contract", () => {
   test("no URL params (SSR/full view): no wall badge, no gesture overlay", () => {
     const html = renderToStaticMarkup(<ProjectorApp initialSnapshot={demoProjectorSnapshot} />);
     expect(html).not.toContain('data-testid="wall-badge"');
+    // The default-on GUEST layer resolves its socket from window.location, so
+    // SSR (no window) never mounts it — in a browser the overlay is present
+    // by default now (passive until a guest cursor exists).
     expect(html).not.toContain('data-testid="gesture-overlay"');
     expect(html).toContain('data-view="full"');
   });
@@ -641,15 +644,15 @@ describe("gesture dwell-select interaction", () => {
     expect(html).toContain('data-gesture="false"');
   });
 
-  test("?remote=1 (guest hands): the Guests button renders; a bare URL never shows it", () => {
-    const withRemote = renderToStaticMarkup(
-      <ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch="?live=0&remote=1" />,
-    );
-    expect(withRemote).toContain('data-testid="guest-hands-button"');
-    // A Guests button on a wall that is NOT listening would show a URL that
-    // connects to nothing — it must never render without the opt-in.
+  test("guest hands is default-on: the Guests button renders on a bare URL; ?remote=0 removes it", () => {
     const bare = renderToStaticMarkup(<ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch="?live=0" />);
-    expect(bare).not.toContain('data-testid="guest-hands-button"');
+    expect(bare).toContain('data-testid="guest-hands-button"');
+    // A Guests button on a wall that is NOT listening would show a URL that
+    // connects to nothing — opting out must remove it.
+    const optedOut = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch="?live=0&remote=0" />,
+    );
+    expect(optedOut).not.toContain('data-testid="guest-hands-button"');
   });
 
   test("?remote=ws://… mounts the dwell layer subscribing as THIS window's wall (desk stays desk)", () => {

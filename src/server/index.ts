@@ -202,11 +202,11 @@ if (phonePort !== null) {
   console.log(`[import] phone submit listener on http://0.0.0.0:${phonePort}/submit (QR points here)`);
 }
 {
-  // Where guests point their own computers for hand controls (add ?remote=1 /
-  // --guests to make a wall listen; the page itself works regardless).
+  // Where guests point their own computers/phones for hand controls (walls
+  // listen by default; ?remote=0 opts a window out).
   const handsInfo = resolveHandsInfo({ host, port, phonePort, tlsPort, guestCount: 0, walls: [] });
   console.log(
-    `[hands] guest hand-controls page: ${handsInfo.url}${handsInfo.httpsUrl !== null ? ` (camera tracking: ${handsInfo.httpsUrl})` : " (trackpad only — no TLS listener; camera tracking needs run-room.sh --guests)"}`,
+    `[hands] guest hand-controls page: ${handsInfo.url}${handsInfo.httpsUrl !== null ? ` (camera tracking: ${handsInfo.httpsUrl})` : " (trackpad only — no TLS listener; run-room.sh sets one up for camera tracking)"}`,
   );
 }
 // Structured startup degradation notice (ISSUE-0003): one line per stubbed leg

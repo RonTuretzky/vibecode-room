@@ -34,10 +34,15 @@ async function apply(page: Page, partial: Record<string, unknown>): Promise<void
 }
 
 test.describe("desk mode — gesture decoupling & wall identity", () => {
-  test("?wall=A alone shows the identity badge and does NOT mount the gesture layer", async ({ page }) => {
+  // Guest hands is DEFAULT-ON: every wall carries the (passive, pointer-
+  // events:none) dwell overlay so LAN guests can join via /hands. Desk mode's
+  // essence is unchanged — no gesture-mode chrome, OS cursor visible — and
+  // ?remote=0 removes the overlay entirely.
+  test("?wall=A alone: identity badge + passive guest layer, but NOT gesture mode", async ({ page }) => {
     await gotoStatic(page, "?live=0&wall=A&view=ideas");
     await expect(page.getByTestId("wall-badge")).toHaveText("WALL A");
-    await expect(page.getByTestId("gesture-overlay")).toHaveCount(0);
+    await expect(page.getByTestId("gesture-overlay")).toBeAttached();
+    await expect(page.getByTestId("app")).toHaveAttribute("data-gesture", "false");
   });
 
   test("?gesture=1 explicitly re-enables the legacy gesture layer", async ({ page }) => {
@@ -46,10 +51,11 @@ test.describe("desk mode — gesture decoupling & wall identity", () => {
     await expect(page.getByTestId("wall-badge")).toHaveText("WALL B");
   });
 
-  test("no wall/view params: no badge, no gesture layer (plain single window)", async ({ page }) => {
-    await gotoStatic(page);
+  test("?remote=0 opts a window out of guest hands: no overlay, no Guests button", async ({ page }) => {
+    await gotoStatic(page, "?live=0&remote=0");
     await expect(page.getByTestId("wall-badge")).toHaveCount(0);
     await expect(page.getByTestId("gesture-overlay")).toHaveCount(0);
+    await expect(page.getByTestId("guest-hands-button")).toHaveCount(0);
   });
 });
 

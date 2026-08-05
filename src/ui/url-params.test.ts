@@ -117,15 +117,13 @@ describe("parseProjectorUrl", () => {
     expect(parseProjectorUrl("", "h").mock).toBe(false);
   });
 
-  test("remote (guest hands) defaults to null: bare URL, ?remote=0 and empty ?remote= stay off", () => {
-    expect(parseProjectorUrl("", "h").remote).toBeNull();
-    expect(parseProjectorUrl("?remote=0", "h").remote).toBeNull();
-    expect(parseProjectorUrl("?remote=", "h").remote).toBeNull();
-    expect(parseProjectorUrl("?remote=%200%20", "h").remote).toBeNull(); // trimmed "0 "
-  });
-
-  test("?remote=1 opts in with the same-origin default (url null, resolved in App)", () => {
+  test("remote (guest hands) is ON by default; only an explicit ?remote=0 opts out", () => {
+    expect(parseProjectorUrl("", "h").remote).toEqual({ url: null });
+    expect(parseProjectorUrl("?live=1&wall=A", "h").remote).toEqual({ url: null });
     expect(parseProjectorUrl("?remote=1", "h").remote).toEqual({ url: null });
+    expect(parseProjectorUrl("?remote=", "h").remote).toEqual({ url: null });
+    expect(parseProjectorUrl("?remote=0", "h").remote).toBeNull();
+    expect(parseProjectorUrl("?remote=%200%20", "h").remote).toBeNull(); // trimmed "0 "
   });
 
   test("?remote=ws://... names an explicit subscription source (split-origin dev)", () => {

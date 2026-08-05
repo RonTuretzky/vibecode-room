@@ -102,8 +102,8 @@ export function handsPageHtml(): string {
   </header>
 
   <div class="banner" id="no-wall-banner" hidden data-testid="guest-no-wall">
-    No wall is listening for guests right now — start the room with <code>--guests</code>
-    (or add <code>&amp;remote=1</code> to a wall URL) and this page connects by itself.
+    No wall is listening for guests right now — open the room wall (run-room.sh; guest
+    hands is on by default) and this page connects by itself.
   </div>
 
   <div class="tabs" role="tablist">
@@ -400,7 +400,7 @@ export function handsPageHtml(): string {
         camFail("Browsers only allow camera access on a secure page. Open ", httpsUrl,
           " instead (accept the one-time certificate warning) — or use the trackpad.");
       } else {
-        camFail("Browsers only allow camera access on a secure page. Start the room with --guests to get an https guest URL — or use the trackpad.");
+        camFail("Browsers only allow camera access on a secure page. Start the room with run-room.sh to get an https guest URL — or use the trackpad.");
       }
       camRunning = false; // the Camera tab may retry (e.g. after opening https)
       return;

@@ -153,10 +153,11 @@ hands pans). URL param: `?hands=1` connects to `ws://<page-host>:9980`,
 
 ### Guest hands (control the wall from your own computer or phone)
 
-`./run-room.sh --guests` — anyone on the room LAN opens
+**Always on.** Anyone on the room LAN opens
 **`http(s)://<room-ip>:<port+1|+2>/hands`** on their own laptop **or phone**
-and drives the wall from there. The wall's **🖐 Guests** button shows the URL
-as a QR code with a live connected count. The page also has **on-screen
+and drives the wall from there — click the wall's **🖐 Guests** button and it
+pops the URL as a QR code with a live connected count (add `&remote=0` to a
+wall URL to opt that window out). The page also has **on-screen
 W/A/S/D buttons** (hold them — multi-touch, so a thumb can walk W+D while the
 other aims) that walk the wall's 3D fly-through camera exactly like the desk
 keyboard; a guest going silent mid-hold auto-releases within 1.5s so the
@@ -167,7 +168,7 @@ streaming tiny cursor frames (never video) to the room server:
   (their webcam — front camera on a phone): point by moving your open hand
   (palm-anchored cursor, same math as the `--real-hands` bridge), **pinch
   thumb+index and hold still** to click. Browsers only allow the webcam on
-  secure origins, so `--guests` generates a self-signed TLS cert
+  secure origins, so run-room.sh generates a self-signed TLS cert
   (`artifacts/hands-tls/`, gitignored) and serves an **https** guest listener
   on `port+2` — each guest accepts the certificate warning once. The tracker
   loads from a CDN on the guest's device (GPU delegate with automatic CPU

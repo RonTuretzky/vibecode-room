@@ -33,11 +33,13 @@ export interface ProjectorUrlConfig {
   // and ?gesture=1.
   hands: { url: string } | null;
   // GUEST HANDS (?remote=): people on the room LAN drive this wall's
-  // dwell-to-click layer from their own computers (GET /hands on the server).
-  // ?remote=1 → subscribe to the page's own origin (/api/hands/room — the
-  // production wall is served BY the projector server); ?remote=ws://… →
-  // explicit subscription URL (split-origin dev). url null = same-origin
-  // default, resolved in App where window.location exists. Absent/"0"/"" → off.
+  // dwell-to-click layer from their own computers and phones (GET /hands on
+  // the server). DEFAULT ON — the wall always listens and carries the
+  // 🖐 Guests button that pops the QR; a guest layer with no guests costs
+  // nothing (the overlay idles until a cursor exists). ?remote=0 opts out;
+  // ?remote=ws://… names an explicit subscription URL (split-origin dev).
+  // url null = same-origin default, resolved in App where window.location
+  // exists (SSR therefore never mounts the layer).
   remote: { url: string | null } | null;
   // ?demo=guided — auto-enter the coached guided-demo flow on load (the HUD
   // "Guided Demo" button enters the same flow interactively).
@@ -86,14 +88,14 @@ export function parseProjectorUrl(search: string, hostname: string): ProjectorUr
       ? { url: handsParam !== "1" ? handsParam : `ws://${hostname || "localhost"}:9980` }
       : null;
 
-  // Guest hands (?remote=): dwell control from other computers on the LAN.
-  // Same opt-in grammar as ?hands=: "1" = default source, a ws(s) URL = that
-  // source, absent/"0"/"" (after trimming) = off.
+  // Guest hands (?remote=): dwell control from other computers/phones on the
+  // LAN. DEFAULT ON (absent/""/"1" → the same-origin relay); only an explicit
+  // "0" opts out; a ws(s) URL names an explicit source.
   const remoteParam = params.get("remote")?.trim() ?? null;
   const remote =
-    remoteParam !== null && remoteParam !== "" && remoteParam !== "0"
-      ? { url: remoteParam !== "1" ? remoteParam : null }
-      : null;
+    remoteParam === "0"
+      ? null
+      : { url: remoteParam !== null && remoteParam !== "" && remoteParam !== "1" ? remoteParam : null };
 
   // Guided demo auto-entry + the env-gated Mock Room toggle.
   const demo = params.get("demo") === "guided" ? ("guided" as const) : null;

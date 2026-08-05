@@ -132,7 +132,7 @@ export function GuestHands({ onClose }: GuestHandsProps) {
           Open the page on any computer or phone on this network: hover/point to aim, hold still
           on a control to click it, and hold the on-screen W/A/S/D buttons to walk the room
           camera. Camera hand-tracking (point with your hand, pinch to click) needs the https
-          address{info !== null && info.httpsUrl === null ? " — start the room with --guests to enable it" : " (accept the one-time certificate warning)"}.
+          address{info !== null && info.httpsUrl === null ? " — start the room with run-room.sh to enable it" : " (accept the one-time certificate warning)"}.
         </p>
       </div>
     </div>

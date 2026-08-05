@@ -240,12 +240,17 @@ export function GestureLayer({ wall, fusionUrl, remoteUrl = "", mouseTest = fals
 
       elementsById.clear();
       rectsById.clear();
-      const descriptors = collectDomTargets(vpW, vpH);
+      // IDLE GUARD: the layer now mounts on EVERY wall by default (guest
+      // hands), so with no cursor present the expensive per-frame work — the
+      // querySelectorAll + elementFromPoint occlusion sweep and the scene
+      // raycasts — must cost nothing. Remote WASD (below) still runs: guests
+      // can walk the camera without pointing.
+      const descriptors = cursors.size > 0 ? collectDomTargets(vpW, vpH) : [];
 
       // Scene nodes: raycast each engaged cursor into the 3D room; a hit node
       // becomes (or stays) a dwell target whose zone rect is the node's live
       // projected bounding box.
-      const scene = getSceneDwellSource();
+      const scene = cursors.size > 0 ? getSceneDwellSource() : null;
       if (scene !== null) {
         for (const c of cursors.values()) {
           if (!c.engaged) {
@@ -321,8 +326,10 @@ export function GestureLayer({ wall, fusionUrl, remoteUrl = "", mouseTest = fals
         el.setAttribute("data-dwell-hot", "1");
       }
       hotElements = nextHot;
-      if (scene !== null && (nextScene.size > 0 || sceneHighlights.size > 0)) {
-        scene.setHighlights(nextScene);
+      // Resolve the scene source here independently of the idle guard above —
+      // a highlight lit by the LAST cursor before eviction must still clear.
+      if (nextScene.size > 0 || sceneHighlights.size > 0) {
+        getSceneDwellSource()?.setHighlights(nextScene);
       }
       sceneHighlights = nextScene;
 
