@@ -45,7 +45,7 @@ CURSOR_ID = 900  # distinct from camera cursor ids (small ints per person)
 async def run(args: argparse.Namespace) -> int:
     from websockets.asyncio.server import serve as ws_serve
     import pygame
-    from gesturewall.arcade import ArcadeStickSource
+    from gesturewall.arcade import ArcadeStickSource, lever_direction
 
     def open_stick():
         return ArcadeStickSource(
@@ -126,6 +126,7 @@ async def run(args: argparse.Namespace) -> int:
         wall_idx = args.wall_index
         cycle_was_down = True  # require a fresh press (ignore held-at-start)
         last_cycle = 0.0
+        prev_down: set = set()  # for the button-press discovery log
         while not stop.is_set():
             tick = time.monotonic()
             x, y = last_xy
@@ -138,9 +139,56 @@ async def run(args: argparse.Namespace) -> int:
                     # the next wall in --walls. In 'any button engages' mode
                     # the source counts the cycle button too, so engage is
                     # recomputed here WITHOUT it — cycling never dwells.
+                    # SPATIAL WALL CROSSING — the room layout: walls[0]
+                    # LEFT of walls[1], walls[2] (ceiling) ABOVE both. The
+                    # cursor crosses an edge when its position is PINNED at
+                    # the clamp while the lever still pushes outward — a
+                    # resting cursor at an edge never crosses on its own.
+                    js = source._js  # noqa: SLF001 — fresh from the pump
+                    dirx, diry = lever_direction(
+                        js, args.stick_deadzone, source._dpad_buttons)  # noqa: SLF001
+                    EDGE, PUSH = 0.995, 0.3
+                    wall_now = walls[wall_idx]
+                    cross = None
+                    if len(walls) >= 2:
+                        left_w, right_w = walls[0], walls[1]
+                        ceil_w = walls[2] if len(walls) >= 3 else None
+                        if wall_now == left_w and x >= EDGE and dirx > PUSH:
+                            cross = (right_w, 0.03, y)
+                        elif wall_now == right_w and x <= 1 - EDGE and dirx < -PUSH:
+                            cross = (left_w, 0.97, y)
+                        elif (ceil_w is not None and wall_now in (left_w, right_w)
+                                and y <= 1 - EDGE and diry < -PUSH):
+                            # Up off a wall top → the ceiling's near (bottom)
+                            # edge; the two walls tile the ceiling's width.
+                            cx = x / 2 if wall_now == left_w else 0.5 + x / 2
+                            cross = (ceil_w, cx, 0.97)
+                        elif (ceil_w is not None and wall_now == ceil_w
+                                and y >= EDGE and diry > PUSH):
+                            if x < 0.5:
+                                cross = (left_w, x * 2, 0.03)
+                            else:
+                                cross = (right_w, (x - 0.5) * 2, 0.03)
+                    if cross is not None:
+                        nw, nx, ny = cross
+                        wall_idx = walls.index(nw)
+                        x = min(max(nx, 0.0), 1.0)
+                        y = min(max(ny, 0.0), 1.0)
+                        source._cursor = (x, y)  # noqa: SLF001
+                        print(f"[arcade-fusion] crossed -> wall {nw}",
+                              flush=True)
                     if args.cycle_button >= 0:
-                        js = source._js  # noqa: SLF001 — fresh from the pump
                         n = js.get_numbuttons()
+                        # DISCOVERY AID: pad button numbering varies wildly
+                        # across pads/SDL versions, so log every fresh press
+                        # by index — the operator presses their preferred
+                        # button, reads the number, and pins --cycle-button.
+                        down_now = {i for i in range(n) if js.get_button(i)}
+                        for b in sorted(down_now - prev_down):
+                            print(f"[arcade-fusion] button {b} pressed"
+                                  + (" (cycle)" if b == args.cycle_button
+                                     else ""), flush=True)
+                        prev_down = down_now
                         cycle_down = (args.cycle_button < n and
                                       bool(js.get_button(args.cycle_button)))
                         if cycle_down and args.stick_engage < 0:

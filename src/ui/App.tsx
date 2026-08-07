@@ -2176,6 +2176,10 @@ function FullscreenButton() {
       type="button"
       className="ctl-button fullscreen-button"
       data-testid="fullscreen-button"
+      // Dwell-exempt: requestFullscreen only works from a TRUSTED gesture
+      // (real mouse/keyboard). A dwell cursor "clicking" this would silently
+      // no-op — use the keyboard F, or a real mouse click.
+      data-dwell-exempt="true"
       title="Fullscreen this wall on its projector (or press F)"
       onClick={() => {
         void document.documentElement.requestFullscreen?.();

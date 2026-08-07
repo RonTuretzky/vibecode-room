@@ -27,7 +27,11 @@ const FIRE_FLASH_SECONDS = 0.45;
 // buttons plus anything opting in with data-dwell (non-button clickables like
 // the fleet panels). No per-control registry to maintain — new UI is dwellable
 // the moment it renders a <button>.
-const DWELL_DOM_SELECTOR = "button:not(:disabled), [data-dwell]";
+// data-dwell-exempt opts a button OUT of dwell targeting: browsers only honor
+// some APIs (requestFullscreen) from TRUSTED input events, and a dwell-
+// synthesized .click() is untrusted — such buttons would take the dwell and
+// then silently do nothing, which reads as "the wall is broken".
+const DWELL_DOM_SELECTOR = "button:not(:disabled):not([data-dwell-exempt]), [data-dwell]";
 
 interface CursorState {
   x: number;
