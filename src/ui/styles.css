@@ -3065,6 +3065,35 @@ main.gesture-mode .ctl-button.research-reset {
   pointer-events: none;
 }
 
+/* STAGE CLEARING — while the coach overlay runs, the wall chrome the card is
+   docked over steps aside (it all returns the moment the demo exits; :has()
+   keys off the overlay, no JS involved):
+   · suggestion banner (bottom:178px) + idea tray sat directly BEHIND the
+     bottom-docked card (orientation/record/race) — half-covered Build/Dismiss
+     buttons read as clipped and are un-dwellable anyway;
+   · scene-controls / hide-menu grazed the card's bottom-left corner, and a
+     mid-demo Zen or Hide dwell would wreck the walkthrough;
+   · the desk-only status readouts (listening orb, active cue) collided with
+     the TOP-docked idea/decide cards — gesture mode already drops them as
+     projector noise, and the coach card carries its own muted/capture chips. */
+main:has(.guided-demo) .suggestion-banner,
+main:has(.guided-demo) .idea-tray,
+main:has(.guided-demo) .scene-controls,
+main:has(.guided-demo) .hide-menu,
+main:has(.guided-demo) .status-bar .status-left,
+main:has(.guided-demo) .status-bar .status-center {
+  display: none;
+}
+
+/* With the readout cells gone the status bar collapses to the single control
+   cluster pinned top-right — the same collapse gesture mode always applies
+   (otherwise the grid re-flows .status-right into the FIRST column, dropping
+   the controls into the top-docked coach card). */
+main:has(.guided-demo) .status-bar {
+  display: flex;
+  justify-content: flex-end;
+}
+
 .guided-card {
   position: absolute;
   left: 50%;

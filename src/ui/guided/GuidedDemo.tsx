@@ -51,10 +51,12 @@ const STEP_TITLES: Record<GuidedState["step"], string> = {
 };
 
 // Practice-orb resting spots (viewport %), spread so a visitor sweeps the wall.
+// The rightmost spot stays clear of the fleet rail (left edge ≈ 1434px on the
+// 1920px full view): 68% keeps the orb — even dwell-grown — off the rail.
 const ORB_SPOTS: ReadonlyArray<{ left: string; top: string }> = [
   { left: "24%", top: "34%" },
   { left: "50%", top: "22%" },
-  { left: "74%", top: "38%" },
+  { left: "68%", top: "38%" },
 ];
 
 export function GuidedDemo({
