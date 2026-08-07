@@ -170,12 +170,11 @@ describe("per-wall scoping: each wall renders ITS surface + ITS controls", () =>
   });
 
   test("?view=ideas (wall A): idea surface + idea-side controls, NO build surfaces", () => {
-    // Idea surface: tray with every candidate + the suggestion banner.
+    // Idea surface: tray with every candidate.
     expect(wallAHtml).toContain('data-testid="idea-tray"');
     expect(countOccurrences(wallAHtml, 'data-testid="idea-item"')).toBe(
       demoProjectorSnapshot.ideas?.length ?? -1,
     );
-    expect(wallAHtml).toContain('data-region="suggestion"');
     // Idea-side controls (voice → idea pipeline).
     expect(wallAHtml).toContain('data-testid="mic-capture-button"');
     expect(wallAHtml).toContain('data-testid="auto-build-button"');
@@ -200,7 +199,6 @@ describe("per-wall scoping: each wall renders ITS surface + ITS controls", () =>
     expect(wallBHtml).toContain('data-testid="qr-import-button"');
     // Idea surfaces + idea-side controls live on wall A only.
     expect(wallBHtml).not.toContain('data-testid="idea-tray"');
-    expect(wallBHtml).not.toContain('data-region="suggestion"');
     expect(wallBHtml).not.toContain('data-testid="mic-capture-button"');
     expect(wallBHtml).not.toContain('data-testid="auto-build-button"');
     expect(wallBHtml).not.toContain('data-testid="guided-demo-button"');
@@ -833,8 +831,8 @@ describe("control dock: one calm affordance replaces the button row", () => {
   const html = renderToStaticMarkup(<ProjectorApp initialSnapshot={demoProjectorSnapshot} />);
   const trayIdx = html.indexOf('data-testid="control-dock-tray"');
   // The dock is the header's last element; everything between the tray marker
-  // and the suggestion region (the next sibling of the header) is INSIDE it.
-  const headerEndIdx = html.indexOf('data-region="suggestion"');
+  // and the header's closing tag is INSIDE it.
+  const headerEndIdx = html.indexOf("</header>");
 
   test("the dock button renders, collapsed by default", () => {
     expect(html).toContain('data-testid="control-dock" data-expanded="false"');

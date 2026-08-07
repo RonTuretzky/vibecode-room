@@ -247,7 +247,6 @@ button {
 .deep .status-bar,
 .deep .stage,
 .deep .scene-controls,
-.deep .suggestion-banner,
 .deep .wall-badge {
   transition: opacity 0.4s ease;
 }
@@ -256,7 +255,6 @@ button {
 .deep.zen .stage,
 .deep.zen .scene-controls,
 .deep.zen .hide-menu,
-.deep.zen .suggestion-banner,
 .deep.zen .wall-badge,
 .deep.zen .voice-flash {
   opacity: 0;
@@ -1348,41 +1346,6 @@ main.gesture-mode .control-dock-tray {
   border-radius: 20px;
   overflow: hidden;
   min-height: 0;
-}
-
-.suggestion-banner {
-  position: fixed;
-  /* Bottom-anchored above the floating center pill (bottom ≈114px): the
-     queued idea reads as part of the capture cluster, not a floating header. */
-  bottom: 178px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 6;
-  pointer-events: none; /* non-interactive text; don't shadow the 3D canvas */
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
-  max-width: min(640px, 80%);
-  text-align: center;
-  pointer-events: none;
-}
-
-.suggestion-eyebrow {
-  font-size: 11px;
-  letter-spacing: 0.24em;
-  text-transform: uppercase;
-  color: var(--c-planning);
-}
-
-.suggestion-pitch {
-  font-size: 15px;
-  color: var(--ink-soft);
-  font-style: italic;
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
 }
 
 /* The 3D scene IS the app background — every panel floats over it. */
@@ -2993,17 +2956,7 @@ main.gesture-mode .ctl-button.research-reset {
     min-height: auto;
   }
 
-  .suggestion-banner {
-    position: relative;
-    top: auto;
-    bottom: auto;
-    left: auto;
-    transform: none;
-    max-width: 100%;
-    margin: 0 auto 14px;
-  }
-
-  .field-inner {
+    .field-inner {
     position: relative;
     inset: auto;
     gap: 18px 16px;
@@ -3068,7 +3021,7 @@ main.gesture-mode .ctl-button.research-reset {
 /* STAGE CLEARING — while the coach overlay runs, the wall chrome the card is
    docked over steps aside (it all returns the moment the demo exits; :has()
    keys off the overlay, no JS involved):
-   · suggestion banner (bottom:178px) + idea tray sat directly BEHIND the
+   · the idea tray sat directly BEHIND the
      bottom-docked card (orientation/record/race) — half-covered Build/Dismiss
      buttons read as clipped and are un-dwellable anyway;
    · scene-controls / hide-menu grazed the card's bottom-left corner, and a
@@ -3076,7 +3029,6 @@ main.gesture-mode .ctl-button.research-reset {
    · the desk-only status readouts (listening orb, active cue) collided with
      the TOP-docked idea/decide cards — gesture mode already drops them as
      projector noise, and the coach card carries its own muted/capture chips. */
-main:has(.guided-demo) .suggestion-banner,
 main:has(.guided-demo) .idea-tray,
 main:has(.guided-demo) .scene-controls,
 main:has(.guided-demo) .hide-menu,

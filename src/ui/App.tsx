@@ -34,7 +34,6 @@ import { startMicCapture, type MicCaptureHandle } from "./mic";
 
 export const REQUIRED_PROJECTOR_REGIONS = [
   "status",
-  "suggestion",
   "fleet",
   "transcript",
 ] as const;
@@ -1907,7 +1906,6 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
         </div>
       </header>
 
-      {!mockMode && showIdeaSurfaces && !researchActive ? <SuggestionRegion pitch={snapshot.suggestion.pitch} /> : null}
 
       <div className={`stage${detailOpen ? " stage-dimmed" : ""}`}>
         <div className="stage-main">
@@ -2356,18 +2354,6 @@ function formatBytes(bytes: number): string {
     return `${(bytes / 1024).toFixed(1)} KB`;
   }
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-// A region carrying the suggestion pitch text + data-region="suggestion".
-// Kept lightweight so the headline idea reads from across the room and the
-// projector contract (the pitch string) renders even before interaction.
-function SuggestionRegion({ pitch }: { pitch: string }) {
-  return (
-    <div className="suggestion-banner" data-region="suggestion">
-      <span className="suggestion-eyebrow">queued idea</span>
-      <span className="suggestion-pitch">{pitch}</span>
-    </div>
-  );
 }
 
 // Always-visible per-process panels (spec §9): callsign / state / last spoken
