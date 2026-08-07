@@ -38,10 +38,23 @@ export interface RemoteGuestCursor {
 export const GUEST_KEYS = ["w", "a", "s", "d"] as const;
 export type GuestKey = (typeof GUEST_KEYS)[number];
 
+// Flat-pair pose sync bounds. The scene's own envelopes are yaw unbounded,
+// height [1.4,30], dist [6,45] — these are slightly WIDER so a legitimate
+// edge-of-envelope pose survives the relay bit-exact-ish while anything wild
+// (or a float that walked off) still comes back to sanity. Yaw is clamped too:
+// it is unbounded locally, but an unbounded relay would let one bad frame
+// spin the pair forever.
+export const FLAT_POSE_YAW_LIMIT = 50; // rad
+export const FLAT_POSE_HEIGHT_MIN = 1;
+export const FLAT_POSE_HEIGHT_MAX = 31;
+export const FLAT_POSE_DIST_MIN = 5;
+export const FLAT_POSE_DIST_MAX = 46;
+
 export type GuestMessage =
   | { kind: "hello"; wall: string | null }
   | { kind: "cursors"; cursors: RemoteGuestCursor[] }
-  | { kind: "keys"; held: GuestKey[] };
+  | { kind: "keys"; held: GuestKey[] }
+  | { kind: "flatpose"; yaw: number; height: number; dist: number };
 
 // Pure parser for guest → hub frames. Returns null for anything malformed —
 // unauthenticated LAN input never throws, it just gets dropped.
@@ -73,6 +86,21 @@ export function parseGuestMessage(raw: string): GuestMessage | null {
       }
     }
     return { kind: "keys", held };
+  }
+  if (msg.type === "flatpose") {
+    // The flat pair's shared panorama pose (sent by WALL windows on the room
+    // socket — see RemoteHandsHub.addRoom). Finite-or-drop, then clamped into
+    // the sane envelope: unauthenticated LAN input never throws AND never
+    // relays a pose that could fling the pair.
+    if (!isFiniteNumber(msg.yaw) || !isFiniteNumber(msg.height) || !isFiniteNumber(msg.dist)) {
+      return null;
+    }
+    return {
+      kind: "flatpose",
+      yaw: clampRange(msg.yaw, -FLAT_POSE_YAW_LIMIT, FLAT_POSE_YAW_LIMIT),
+      height: clampRange(msg.height, FLAT_POSE_HEIGHT_MIN, FLAT_POSE_HEIGHT_MAX),
+      dist: clampRange(msg.dist, FLAT_POSE_DIST_MIN, FLAT_POSE_DIST_MAX),
+    };
   }
   if (msg.type !== "cursors" || !Array.isArray(msg.cursors)) {
     return null;
@@ -158,11 +186,25 @@ export interface RemoteHandsHubOptions {
   now?: () => number;
 }
 
+// The relayed shape of a flat-pair pose (see #relayFlatPose).
+interface FlatPoseWire {
+  type: "flatpose";
+  yaw: number;
+  height: number;
+  dist: number;
+  t: number;
+}
+
 export class RemoteHandsHub {
   readonly #now: () => number;
   readonly #rooms = new Set<RoomPeer>();
   readonly #guests = new Set<GuestPeer>();
   #nextSeq = 0;
+  // The last flat-pair pose any wall published (hub-global — the flat rig has
+  // exactly one shared pose). Replayed to every freshly subscribing wall so a
+  // refreshed window snaps to its partner's pose immediately instead of
+  // waiting for the partner's next input.
+  #lastFlatPose: FlatPoseWire | null = null;
 
   constructor(options: RemoteHandsHubOptions = {}) {
     this.#now = options.now ?? (() => performance.now() / 1000);
@@ -185,7 +227,9 @@ export class RemoteHandsHub {
   }
 
   // A wall window subscribed (WS /api/hands/room). It speaks GestureWallClient's
-  // protocol: a {"type":"hello","wall":…} first, then it only listens.
+  // protocol: a {"type":"hello","wall":…} first, then it listens — and under
+  // the flat lock it may also publish {"type":"flatpose",…} pose frames, which
+  // relay to every OTHER wall window (see #relayFlatPose).
   addRoom(send: PeerSend): HubConnection {
     const peer: RoomPeer = { send, wall: null };
     this.#rooms.add(peer);
@@ -195,6 +239,17 @@ export class RemoteHandsHub {
         if (parsed?.kind === "hello") {
           peer.wall = parsed.wall;
           this.#broadcastWallsToGuests();
+          // Replay the pair's last shared pose to the fresh subscriber so a
+          // refreshed window snaps into lockstep without waiting for the
+          // partner's next input. Harmless elsewhere: non-flat windows never
+          // register a flatpose consumer, so the frame just drops client-side.
+          if (this.#lastFlatPose !== null) {
+            safeSend(peer.send, this.#lastFlatPose);
+          }
+          return;
+        }
+        if (parsed?.kind === "flatpose") {
+          this.#relayFlatPose(peer, parsed);
         }
       },
       close: () => {
@@ -203,6 +258,27 @@ export class RemoteHandsHub {
         }
       },
     };
+  }
+
+  // Flat-pair pose sync: one wall window published its shared-panorama pose —
+  // store it (for replay-on-subscribe) and relay it to every OTHER wall
+  // window. Never back to the sender (its pose is already right, and echoes
+  // would fight the very input that produced them) and never to guests (the
+  // pose is projector-rig internals, not a guest-facing stream).
+  #relayFlatPose(sender: RoomPeer, pose: { yaw: number; height: number; dist: number }): void {
+    const frame: FlatPoseWire = {
+      type: "flatpose",
+      yaw: pose.yaw,
+      height: pose.height,
+      dist: pose.dist,
+      t: this.#now(),
+    };
+    this.#lastFlatPose = frame;
+    for (const room of this.#rooms) {
+      if (room !== sender) {
+        safeSend(room.send, frame);
+      }
+    }
   }
 
   // A guest connected (WS /hands/ws from their own computer).
@@ -224,6 +300,11 @@ export class RemoteHandsHub {
         }
         if (parsed.kind === "keys") {
           this.#relayKeys(peer, parsed.held);
+          return;
+        }
+        if (parsed.kind === "flatpose") {
+          // Only wall windows (addRoom) may steer the flat pair's shared
+          // pose — a guest-sent flatpose is dropped, not relayed.
           return;
         }
         this.#relay(peer, parsed.cursors);
@@ -415,6 +496,14 @@ export function resolveHandsInfo(options: {
 
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value));
+}
+
+function clampRange(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

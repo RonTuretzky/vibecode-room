@@ -1,6 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ProjectorApp, REQUIRED_PROJECTOR_REGIONS } from "./App";
+import {
+  AUTOCAL_POLL_ABSENT_MS,
+  AUTOCAL_POLL_ACTIVE_MS,
+  discGeometry,
+  parseAutocalState,
+} from "./CalibrationOverlay";
 import { ControlDock, DOCK_COLLAPSE_MS, dockCollapseDue } from "./ControlDock";
 import { cursorDotsFromStored, fusionSources } from "./gesture/GestureLayer";
 import { FLEET_SCROLL_PX_PER_SECOND, FleetScrollRail, hoverScrollDelta, railOverflows } from "./FleetScroll";
@@ -1062,6 +1068,134 @@ describe("gesture cursor dots (hidden default, no toggle)", () => {
     expect(cursorDotsFromStored(null)).toBe(false); // first visit → hidden
     expect(cursorDotsFromStored("1")).toBe(true);
     expect(cursorDotsFromStored("0")).toBe(false);
+  });
+});
+
+// AUTO-CALIBRATION OVERLAY: wall-bound windows watch the /api/autocal proxy
+// and flip into a fullscreen calibration surface whenever the python
+// calibrator (gesturewall.autocal) is running. The static renderer cannot
+// poll, so the `initialOverlay.calibration` seam boots the overlay with a
+// calibrator state (same pattern as selected/slideshowUpid/qrOpen).
+describe("auto-calibration overlay: walls flip into calibration mode", () => {
+  test("hidden by default: a wall window with no calibrator state renders the room", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch="?live=1&wall=A&view=ideas" />,
+    );
+    expect(html).not.toContain('data-testid="calibration-overlay"');
+  });
+
+  test("non-wall (desk) windows never mount the overlay, even with a state seam", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp
+        initialSnapshot={demoProjectorSnapshot}
+        initialOverlay={{ calibration: { phase: "idle", marker: null, msg: "waiting" } }}
+      />,
+    );
+    expect(html).not.toContain('data-testid="calibration-overlay"');
+  });
+
+  test("idle: near-black surface with the big wall letter, ready text, and the dwellable Start sweep button", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp
+        initialSnapshot={demoProjectorSnapshot}
+        urlSearch="?live=1&wall=A&view=ideas"
+        initialOverlay={{ calibration: { phase: "idle", marker: null, msg: "waiting" } }}
+      />,
+    );
+    expect(html).toContain('data-testid="calibration-overlay"');
+    expect(html).toContain('data-phase="idle"');
+    expect(html).toContain('data-testid="calibration-letter"');
+    expect(html).toContain("calibration ready");
+    // Dwellable: a plain <button> (the dwell selector targets enabled buttons).
+    expect(html).toContain('data-testid="calibration-start-button"');
+    expect(html).toContain("Start sweep");
+  });
+
+  test("running: the white disc renders ONLY for this window's wall, carrying the marker geometry", () => {
+    const running = {
+      phase: "running" as const,
+      marker: { wall: "A", u: 0.5, v: 0.25, r: 0.11 },
+      msg: "sweeping",
+    };
+    const wallA = renderToStaticMarkup(
+      <ProjectorApp
+        initialSnapshot={demoProjectorSnapshot}
+        urlSearch="?live=1&wall=A&view=ideas"
+        initialOverlay={{ calibration: running }}
+      />,
+    );
+    expect(wallA).toContain('data-phase="running"');
+    expect(wallA).toContain('data-testid="calibration-disc"');
+    expect(wallA).toContain('data-u="0.5"');
+    expect(wallA).toContain('data-v="0.25"');
+    expect(wallA).toContain('data-r="0.11"');
+    // Measurement fidelity: no idle chrome pollutes the running surface.
+    expect(wallA).not.toContain('data-testid="calibration-start-button"');
+    expect(wallA).not.toContain('data-testid="calibration-letter"');
+
+    // The OTHER wall shows the pure-black surface with NO disc while A's
+    // marker is up (each projector sweeps its own marker sequence).
+    const wallB = renderToStaticMarkup(
+      <ProjectorApp
+        initialSnapshot={demoProjectorSnapshot}
+        urlSearch="?live=1&wall=B&view=builds"
+        initialOverlay={{ calibration: running }}
+      />,
+    );
+    expect(wallB).toContain('data-testid="calibration-overlay"');
+    expect(wallB).toContain('data-phase="running"');
+    expect(wallB).not.toContain('data-testid="calibration-disc"');
+  });
+
+  test("done shows the checkmark; error shows the calibrator's message", () => {
+    const done = renderToStaticMarkup(
+      <ProjectorApp
+        initialSnapshot={demoProjectorSnapshot}
+        urlSearch="?live=1&wall=A&view=ideas"
+        initialOverlay={{ calibration: { phase: "done", marker: null, msg: "ok" } }}
+      />,
+    );
+    expect(done).toContain('data-testid="calibration-done"');
+    expect(done).toContain("✓");
+
+    const error = renderToStaticMarkup(
+      <ProjectorApp
+        initialSnapshot={demoProjectorSnapshot}
+        urlSearch="?live=1&wall=A&view=ideas"
+        initialOverlay={{ calibration: { phase: "error", marker: null, msg: "camera 1 saw nothing" } }}
+      />,
+    );
+    expect(error).toContain('data-testid="calibration-error"');
+    expect(error).toContain("camera 1 saw nothing");
+  });
+
+  test("discGeometry: exact showDot parity — fraction radius, 46px floor, disc centered on (u*W, v*H)", () => {
+    const g = discGeometry({ wall: "A", u: 0.5, v: 0.25, r: 0.11 }, 1920, 1080);
+    expect(g.radius).toBeCloseTo(1080 * 0.11);
+    expect(g.left).toBeCloseTo(0.5 * 1920 - g.radius);
+    expect(g.top).toBeCloseTo(0.25 * 1080 - g.radius);
+    // The 46px floor survives tiny fractions; a null r falls back to 0.11.
+    expect(discGeometry({ wall: "A", u: 0, v: 0, r: 0.01 }, 800, 600).radius).toBe(46);
+    expect(discGeometry({ wall: "A", u: 0, v: 0, r: null }, 1920, 1080).radius).toBeCloseTo(1080 * 0.11);
+  });
+
+  test("parseAutocalState: {up:false} and junk mean 'no calibrator' (overlay stays down)", () => {
+    expect(parseAutocalState({ up: false })).toBeNull();
+    expect(parseAutocalState(null)).toBeNull();
+    expect(parseAutocalState({ phase: "warming" })).toBeNull();
+    expect(parseAutocalState({ phase: "idle", marker: null, msg: "waiting" })).toEqual({
+      phase: "idle",
+      marker: null,
+      msg: "waiting",
+    });
+    expect(
+      parseAutocalState({ phase: "running", marker: { wall: "B", u: 0.1, v: 0.9, r: 0.16 }, msg: "sweeping" }),
+    ).toEqual({ phase: "running", marker: { wall: "B", u: 0.1, v: 0.9, r: 0.16 }, msg: "sweeping" });
+  });
+
+  test("poll cadences: a cheap resting probe, tight tracking while a calibrator runs", () => {
+    expect(AUTOCAL_POLL_ABSENT_MS).toBe(3_000);
+    expect(AUTOCAL_POLL_ACTIVE_MS).toBe(150);
   });
 });
 

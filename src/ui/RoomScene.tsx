@@ -3,6 +3,7 @@ import * as THREE from "three";
 import type { IdeaTrayItem, ProjectorProcess } from "./types";
 import { registerSceneDwellSource, type SceneDwellRect } from "./gesture/scene-source";
 import { registerSceneCameraControl } from "./gesture/camera-source";
+import { getFlatPoseSender, registerSceneFlatPoseControl } from "./gesture/flat-pose-source";
 import { cornerEye, cornerVerticalFovDeg, cornerYaw } from "./corner-lock";
 import { FLAT_EYE_DISTANCE, FLAT_EYE_HEIGHT, FLAT_YAW, flatVerticalFovDeg, flatViewOffset } from "./flat-lock";
 import { loadGardenFlora, type FloraLibrary } from "./garden-flora";
@@ -843,14 +844,26 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
     //
     // SHARED ORBIT: unlike the corner pair, the flat rig is NOT frozen — the
     // pinch camera may orbit/zoom the WHOLE panorama about the scene centre,
-    // and WASD holds dolly/turn it (see the frame loop). Continuity survives
-    // because every wall window receives the IDENTICAL input stream (hands
-    // fusion; guest key holds broadcast by the relay hub) and applies the
-    // IDENTICAL deltas to this rig, so the shared pose stays in lockstep with
-    // no cross-window channel. Mouse/fit/focus stay gated off — only these
-    // deterministic stream-fed writers may move it.
+    // and WASD holds dolly/turn it (see the frame loop). Both windows receive
+    // near-identical input streams (hands fusion; guest key holds broadcast by
+    // the relay hub), but "identical forever" is not a real invariant — socket
+    // reconnects, refreshes and key-timing skew would drift the copies apart
+    // PERMANENTLY, shearing the physical seam. So the pose also SYNCS through
+    // the server: after local input this window publishes its targets (~8 Hz,
+    // dirty-flagged) up the guest-hands room socket via the flat-pose seam,
+    // the hub relays to the partner window (and replays the last pose to a
+    // fresh subscriber), and a received pose is ADOPTED verbatim as the
+    // targets — the flatView easing below smooths the correction. Adoption
+    // marks the targets clean so it never re-publishes (no echo loop);
+    // last-writer-wins is fine because both windows compute near-identical
+    // values anyway. Mouse/fit/focus stay gated off — only these writers and
+    // the sync may move it.
     const flatLocked = flatLockRef.current;
     const flatRig = { yaw: FLAT_YAW, height: FLAT_EYE_HEIGHT, dist: FLAT_EYE_DISTANCE };
+    // Local input touched flatRig since the last publish (adoption clears it).
+    let flatPoseDirty = false;
+    let flatPoseLastPublishMs = 0;
+    const FLAT_POSE_PUBLISH_MS = 125; // ~8 Hz — plenty against sub-mm/s drift
     // SMOOTHED APPLICATION: the targets above step at the 30 Hz hands-stream
     // cadence; drawing them raw makes the whole panorama judder on a 60 fps
     // render. The drawn pose eases toward the targets each frame instead.
@@ -2985,6 +2998,7 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
           // comment — so every window lands on the same pose.
           flatRig.yaw += dYaw;
           flatRig.height = Math.max(1.4, Math.min(30, flatRig.height + dHeight));
+          flatPoseDirty = true; // local input — publish to the partner window
           return;
         }
         // Exact mirror of the onPointerMove orbit path (incl. height clamp).
@@ -3011,6 +3025,7 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
         if (flatLocked) {
           // Dolly the shared panorama, clamped so the seam maths stay sane.
           flatRig.dist = Math.max(6, Math.min(45, flatRig.dist * scale));
+          flatPoseDirty = true; // local input — publish to the partner window
           return;
         }
         // Multiplicative dolly, re-clamped to the onWheel envelope [4,45].
@@ -3033,6 +3048,23 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
         }
       },
     });
+    // FLAT-POSE SYNC SEAM (flat lock only): adopt the partner window's shared
+    // panorama pose, relayed through the guest-hands hub (GestureLayer bridges
+    // the socket). Targets are set DIRECTLY — the flatView easing smooths the
+    // correction — re-clamped to this rig's own envelope (the scene owns all
+    // clamps; the hub's wider LAN-input clamp is not trusted as ours). Marking
+    // the targets clean is the loop breaker: an adopted pose must never
+    // re-publish, or the pair would echo poses at each other forever.
+    const unregisterFlatPoseControl = flatLocked
+      ? registerSceneFlatPoseControl({
+          adopt: (pose) => {
+            flatRig.yaw = pose.yaw;
+            flatRig.height = Math.max(1.4, Math.min(30, pose.height));
+            flatRig.dist = Math.max(6, Math.min(45, pose.dist));
+            flatPoseDirty = false;
+          },
+        })
+      : null;
 
     // Pure gesture mode: pointing must not fight drag-orbit, so the DRAG
     // surface (pointerdown/wheel) never binds — but hover picking and plain
@@ -3165,10 +3197,22 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
           if (keysDown.has("w") !== keysDown.has("s")) {
             const dolly = (keysDown.has("w") ? -6 : 6) * dt; // ~6 units/s
             flatRig.dist = Math.max(6, Math.min(45, flatRig.dist + dolly));
+            flatPoseDirty = true; // local input — publish to the partner window
           }
           if (keysDown.has("a") !== keysDown.has("d")) {
             flatRig.yaw += (keysDown.has("a") ? 0.9 : -0.9) * dt; // ~0.9 rad/s
+            flatPoseDirty = true;
           }
+        }
+        // FLAT-POSE PUBLISH: local input dirtied the shared targets — push
+        // them to the partner window through the hub, throttled to ~8 Hz.
+        // A freshly loaded window publishes NOTHING until local input (it
+        // adopts the first pose it hears instead), and adoption cleared the
+        // flag, so sync corrections never echo back.
+        if (flatPoseDirty && now - flatPoseLastPublishMs >= FLAT_POSE_PUBLISH_MS) {
+          flatPoseLastPublishMs = now;
+          flatPoseDirty = false;
+          getFlatPoseSender()?.({ yaw: flatRig.yaw, height: flatRig.height, dist: flatRig.dist });
         }
         // Rigid flat pair: reassert the locked framing every frame so no
         // stray camera write can ever shear the seam between the halves —
@@ -3407,6 +3451,7 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
       stopLoop();
       unregisterDwellSource();
       unregisterCameraControl();
+      unregisterFlatPoseControl?.();
       document.removeEventListener("visibilitychange", onSceneVisibility);
       observer.disconnect();
       renderer.domElement.removeEventListener("pointermove", onPointerMove);

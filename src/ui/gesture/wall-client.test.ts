@@ -1,5 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { GestureWallClient, parseCursorsFrame, parseKeysFrame, type GestureCursor, type KeysFrame } from "./wall-client";
+import {
+  GestureWallClient,
+  parseCursorsFrame,
+  parseFlatPoseFrame,
+  parseKeysFrame,
+  type FlatPoseFrame,
+  type GestureCursor,
+  type KeysFrame,
+} from "./wall-client";
 
 describe("parseCursorsFrame", () => {
   const frame = (over: object = {}) =>
@@ -50,6 +58,28 @@ describe("parseKeysFrame", () => {
     expect(parseKeysFrame(JSON.stringify({ type: "cursors", wall: "A", cursors: [] }), "A")).toBeNull();
     expect(parseKeysFrame(JSON.stringify({ type: "keys", wall: "A", held: ["w"] }), "A")).toBeNull();
     expect(parseKeysFrame("not json", "A")).toBeNull();
+  });
+});
+
+describe("parseFlatPoseFrame", () => {
+  test("parses a well-formed flatpose (no wall filter — the pose is pair-global)", () => {
+    const raw = JSON.stringify({ type: "flatpose", yaw: -0.4, height: 5.1, dist: 19, t: 7.5 });
+    expect(parseFlatPoseFrame(raw)).toEqual({ yaw: -0.4, height: 5.1, dist: 19, t: 7.5 });
+    // Missing t defaults to 0 (cursors-frame parity).
+    expect(parseFlatPoseFrame(JSON.stringify({ type: "flatpose", yaw: 0, height: 4.6, dist: 20 }))).toEqual({
+      yaw: 0,
+      height: 4.6,
+      dist: 20,
+      t: 0,
+    });
+  });
+
+  test("rejects wrong type, missing/non-finite fields, and malformed JSON", () => {
+    expect(parseFlatPoseFrame(JSON.stringify({ type: "cursors", wall: "A", cursors: [] }))).toBeNull();
+    expect(parseFlatPoseFrame(JSON.stringify({ type: "flatpose", yaw: 0, height: 4.6 }))).toBeNull(); // no dist
+    expect(parseFlatPoseFrame(JSON.stringify({ type: "flatpose", yaw: "0", height: 4.6, dist: 20 }))).toBeNull();
+    expect(parseFlatPoseFrame('{"type":"flatpose","yaw":1e999,"height":4.6,"dist":20}')).toBeNull(); // Infinity
+    expect(parseFlatPoseFrame("not json")).toBeNull();
   });
 });
 
@@ -132,6 +162,56 @@ describe("GestureWallClient", () => {
     expect(keysSeen).toEqual([{ guest: 0, held: ["w", "d"] }]);
     expect(cursorsSeen).toHaveLength(1);
     expect(cursorsSeen[0][0].id).toBe(-1000);
+    client.stop();
+  });
+
+  test("routes flatpose frames to onFlatPose; cursors/keys paths undisturbed", () => {
+    FakeWebSocket.instances = [];
+    const cursorsSeen: GestureCursor[][] = [];
+    const posesSeen: FlatPoseFrame[] = [];
+    const client = new GestureWallClient({
+      url: "ws://localhost:8788/api/hands/room",
+      wall: "A",
+      onCursors: (cursors) => cursorsSeen.push(cursors),
+      onKeys: () => {},
+      onFlatPose: (pose) => posesSeen.push(pose),
+      WebSocketImpl: FakeWebSocket as unknown as typeof WebSocket,
+    });
+    client.start();
+    const ws = FakeWebSocket.instances[0];
+    ws.open();
+    ws.message(JSON.stringify({ type: "flatpose", yaw: 0.2, height: 4.6, dist: 20, t: 1 }));
+    ws.message(JSON.stringify({ type: "cursors", wall: "A", t: 2, cursors: [{ id: 5, x: 0.1, y: 0.2 }] }));
+    ws.message(JSON.stringify({ type: "flatpose", yaw: "bad", height: 4.6, dist: 20 })); // malformed → dropped
+    expect(posesSeen).toEqual([{ yaw: 0.2, height: 4.6, dist: 20, t: 1 }]);
+    expect(cursorsSeen).toHaveLength(1);
+    client.stop();
+  });
+
+  test("send() pushes a frame only while the socket is open, silently dropping otherwise", () => {
+    FakeWebSocket.instances = [];
+    const client = new GestureWallClient({
+      url: "ws://localhost:8788/api/hands/room",
+      wall: "A",
+      onCursors: () => {},
+      reconnectMs: 60_000, // park the reconnect far away — this test drives states by hand
+      WebSocketImpl: FakeWebSocket as unknown as typeof WebSocket,
+    });
+    client.start();
+    const ws = FakeWebSocket.instances[0];
+    // Still connecting: the publish drops (pose sync repeats on input, and the
+    // hub replays on subscribe, so a lost frame costs nothing).
+    client.send({ type: "flatpose", yaw: 1, height: 5, dist: 20, t: 0 });
+    expect(ws.sent).toHaveLength(0);
+
+    ws.open(); // hello goes out
+    client.send({ type: "flatpose", yaw: 1, height: 5, dist: 20, t: 0 });
+    expect(ws.sent).toHaveLength(2);
+    expect(JSON.parse(ws.sent[1])).toEqual({ type: "flatpose", yaw: 1, height: 5, dist: 20, t: 0 });
+
+    ws.drop(); // closed → sends drop again (until the reconnect reopens)
+    client.send({ type: "flatpose", yaw: 2, height: 5, dist: 20, t: 1 });
+    expect(ws.sent).toHaveLength(2);
     client.stop();
   });
 

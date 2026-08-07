@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { GUEST_ID_BASE, GUEST_ID_STRIDE } from "../ui/gesture/remote";
 import {
+  FLAT_POSE_DIST_MAX,
+  FLAT_POSE_DIST_MIN,
+  FLAT_POSE_HEIGHT_MAX,
+  FLAT_POSE_HEIGHT_MIN,
+  FLAT_POSE_YAW_LIMIT,
   MAX_GUEST_MESSAGE_CHARS,
   RemoteHandsHub,
   parseGuestMessage,
@@ -54,6 +59,37 @@ describe("parseGuestMessage", () => {
     expect(msg).toEqual({ kind: "cursors", cursors: [{ id: 1, x: 0.4, y: 0.6, engaged: true }] });
   });
 
+  test("parses a flatpose, passing sane values through and clamping wild ones", () => {
+    expect(parseGuestMessage(JSON.stringify({ type: "flatpose", yaw: -0.4, height: 4.6, dist: 20, t: 3 }))).toEqual({
+      kind: "flatpose",
+      yaw: -0.4,
+      height: 4.6,
+      dist: 20,
+    });
+    // Out-of-envelope values come back to sanity instead of flinging the pair.
+    expect(parseGuestMessage(JSON.stringify({ type: "flatpose", yaw: 1e6, height: -3, dist: 9000 }))).toEqual({
+      kind: "flatpose",
+      yaw: FLAT_POSE_YAW_LIMIT,
+      height: FLAT_POSE_HEIGHT_MIN,
+      dist: FLAT_POSE_DIST_MAX,
+    });
+    expect(parseGuestMessage(JSON.stringify({ type: "flatpose", yaw: -1e6, height: 99, dist: 0 }))).toEqual({
+      kind: "flatpose",
+      yaw: -FLAT_POSE_YAW_LIMIT,
+      height: FLAT_POSE_HEIGHT_MAX,
+      dist: FLAT_POSE_DIST_MIN,
+    });
+  });
+
+  test("drops a flatpose with missing or non-finite fields", () => {
+    expect(parseGuestMessage(JSON.stringify({ type: "flatpose", yaw: 0, height: 4.6 }))).toBeNull(); // no dist
+    expect(parseGuestMessage(JSON.stringify({ type: "flatpose", yaw: "0", height: 4.6, dist: 20 }))).toBeNull();
+    expect(parseGuestMessage(JSON.stringify({ type: "flatpose", yaw: null, height: 4.6, dist: 20 }))).toBeNull();
+    // NaN/Infinity survive JSON.parse only as null/strings, but a hand-rolled
+    // parser upstream could still hand them over — guard at the coercion.
+    expect(parseGuestMessage('{"type":"flatpose","yaw":1e999,"height":4.6,"dist":20}')).toBeNull(); // Infinity
+  });
+
   test("caps a frame at two cursors and dedupes repeated local ids", () => {
     const msg = parseGuestMessage(
       JSON.stringify({
@@ -103,6 +139,15 @@ const keysFramesOf = (peer: FakePeer) =>
     wall: string;
     guest: number;
     held: string[];
+  }>;
+const flatPose = (yaw: number, height: number, dist: number) => JSON.stringify({ type: "flatpose", yaw, height, dist, t: 0.5 });
+const flatPosesOf = (peer: FakePeer) =>
+  peer.sent.filter((m) => (m as { type: string }).type === "flatpose") as Array<{
+    type: string;
+    yaw: number;
+    height: number;
+    dist: number;
+    t: number;
   }>;
 
 describe("RemoteHandsHub", () => {
@@ -296,6 +341,80 @@ describe("RemoteHandsHub", () => {
     conn.close();
     const keys = room.sent.filter((m) => (m as { type: string }).type === "keys") as Array<{ held: string[] }>;
     expect(keys.map((frame) => frame.held)).toEqual([["w"], []]);
+  });
+
+  test("a wall's flatpose relays to every OTHER wall window — never the sender, never guests", () => {
+    const hub = makeHub();
+    const roomA = fakePeer();
+    const roomB = fakePeer();
+    const connA = hub.addRoom(roomA.send);
+    connA.message(hello("A"));
+    hub.addRoom(roomB.send).message(hello("B"));
+    const guest = fakePeer();
+    hub.addGuest(guest.send);
+
+    connA.message(flatPose(-0.7, 5.2, 18));
+    // The partner adopts; the sender's pose is already right (an echo would
+    // fight the very input that produced it).
+    expect(flatPosesOf(roomB)).toHaveLength(1);
+    expect(flatPosesOf(roomB)[0]).toMatchObject({ yaw: -0.7, height: 5.2, dist: 18 });
+    expect(typeof flatPosesOf(roomB)[0].t).toBe("number");
+    expect(flatPosesOf(roomA)).toHaveLength(0);
+    // The pose is projector-rig internals — guests never see it.
+    expect(flatPosesOf(guest)).toHaveLength(0);
+  });
+
+  test("flatpose values are clamped in the relay; malformed flatpose frames are dropped", () => {
+    const hub = makeHub();
+    const roomA = fakePeer();
+    const roomB = fakePeer();
+    const connA = hub.addRoom(roomA.send);
+    connA.message(hello("A"));
+    hub.addRoom(roomB.send).message(hello("B"));
+
+    connA.message(flatPose(1e9, 0, 1e9));
+    expect(flatPosesOf(roomB)).toHaveLength(1);
+    expect(flatPosesOf(roomB)[0]).toMatchObject({
+      yaw: FLAT_POSE_YAW_LIMIT,
+      height: FLAT_POSE_HEIGHT_MIN,
+      dist: FLAT_POSE_DIST_MAX,
+    });
+
+    connA.message(JSON.stringify({ type: "flatpose", yaw: "spin", height: 5, dist: 20 }));
+    connA.message(JSON.stringify({ type: "flatpose", yaw: 0 })); // missing fields
+    connA.message("garbage");
+    expect(flatPosesOf(roomB)).toHaveLength(1); // nothing further relayed
+  });
+
+  test("a guest-sent flatpose is dropped — only wall windows steer the pair", () => {
+    const hub = makeHub();
+    const room = fakePeer();
+    hub.addRoom(room.send).message(hello("A"));
+
+    const conn = hub.addGuest(fakePeer().send);
+    conn.message(flatPose(1, 5, 20));
+    expect(flatPosesOf(room)).toHaveLength(0);
+    // And it is not stored either: a later wall subscription gets no replay.
+    const late = fakePeer();
+    hub.addRoom(late.send).message(hello("B"));
+    expect(flatPosesOf(late)).toHaveLength(0);
+  });
+
+  test("replays the last flatpose on subscribe so a refreshed window snaps to its partner", () => {
+    const hub = makeHub();
+    const roomA = fakePeer();
+    const connA = hub.addRoom(roomA.send);
+    // Before any pose exists a hello replays nothing.
+    connA.message(hello("A"));
+    expect(flatPosesOf(roomA)).toHaveLength(0);
+
+    connA.message(flatPose(0.3, 4.6, 22));
+    // Window B refreshes: on its hello it immediately hears the pair's pose
+    // instead of waiting for A's next input.
+    const roomB = fakePeer();
+    hub.addRoom(roomB.send).message(hello("B"));
+    expect(flatPosesOf(roomB)).toHaveLength(1);
+    expect(flatPosesOf(roomB)[0]).toMatchObject({ yaw: 0.3, height: 4.6, dist: 22 });
   });
 
   test("guestCount and walls track connects, hellos and closes", () => {

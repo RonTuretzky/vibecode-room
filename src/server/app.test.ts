@@ -86,6 +86,12 @@ interface MakeAppArgs {
   // Phone-import clone seam. Default: instant fake success — NO test may ever
   // run a real `git clone` (network, subprocess, teardown races).
   cloneRepoFn?: ProjectorRuntimeOptions["cloneRepoFn"];
+  // App-level env (e.g. VIBERSYN_AUTOCAL_PORT for the autocal proxy).
+  env?: Record<string, string | undefined>;
+  // Autocal proxy upstream seam — no test may ever reach a real calibrator.
+  autocalFetch?: (input: string | URL, init?: RequestInit) => Promise<Response>;
+  // Build-stamp stat seam — no test may ever depend on a dist build on disk.
+  distIndexStat?: () => Promise<{ mtimeMs: number }>;
 }
 
 async function makeApp(args: MakeAppArgs = {}): Promise<{ app: ReturnType<typeof createProjectorApp>; runtime: ProjectorRuntime }> {
@@ -111,13 +117,15 @@ async function makeApp(args: MakeAppArgs = {}): Promise<{ app: ReturnType<typeof
   );
   runtimes.push(runtime);
   const app = createProjectorApp(runtime, {
-    env: {},
+    env: args.env ?? {},
     host: args.host ?? "127.0.0.1",
     port: args.port ?? 8787,
     phonePort: args.phonePort ?? null,
     tlsPort: args.tlsPort ?? null,
     hands: args.hands,
     interfaces: args.interfaces,
+    autocalFetch: args.autocalFetch,
+    distIndexStat: args.distIndexStat,
   });
   return { app, runtime };
 }
@@ -822,6 +830,108 @@ describe("POST /api/process/:upid/execute — the COMMISSION stage", () => {
     if (upid === undefined) return;
     await postJson(app, `/api/process/${upid}/halt`);
     expect((await postJson(app, `/api/process/${upid}/execute`)).status).toBe(404);
+  });
+});
+
+// --- AUTOCAL PROXY: the walls' same-origin window onto the python calibrator -
+
+describe("autocal proxy — /api/autocal/state + /api/autocal/start", () => {
+  function scriptedFetch(
+    calls: Array<{ url: string; method: string | undefined }>,
+    body: unknown,
+  ): (input: string | URL, init?: RequestInit) => Promise<Response> {
+    return async (input, init) => {
+      calls.push({ url: String(input), method: init?.method });
+      return Response.json(body);
+    };
+  }
+
+  test("GET state proxies the local calibrator's JSON straight through", async () => {
+    const calls: Array<{ url: string; method: string | undefined }> = [];
+    const state = { phase: "running", marker: { wall: "A", u: 0.5, v: 0.25, r: 0.11 }, msg: "sweeping" };
+    const { app } = await makeApp({ autocalFetch: scriptedFetch(calls, state) });
+
+    const response = await app.request("/api/autocal/state");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(state);
+    expect(calls).toEqual([{ url: "http://127.0.0.1:8801/calib/state", method: "GET" }]);
+  });
+
+  test("POST start proxies the POST and returns the calibrator's ack", async () => {
+    const calls: Array<{ url: string; method: string | undefined }> = [];
+    const { app } = await makeApp({ autocalFetch: scriptedFetch(calls, { ok: true }) });
+
+    const response = await app.request("/api/autocal/start", { method: "POST" });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true });
+    expect(calls).toEqual([{ url: "http://127.0.0.1:8801/calib/start", method: "POST" }]);
+  });
+
+  test("VIBERSYN_AUTOCAL_PORT redirects the proxy's upstream", async () => {
+    const calls: Array<{ url: string; method: string | undefined }> = [];
+    const { app } = await makeApp({
+      env: { VIBERSYN_AUTOCAL_PORT: "9911" },
+      autocalFetch: scriptedFetch(calls, { phase: "idle", marker: null, msg: "waiting" }),
+    });
+    await app.request("/api/autocal/state");
+    expect(calls[0]?.url).toBe("http://127.0.0.1:9911/calib/state");
+  });
+
+  test("an unreachable calibrator is {up:false} with a 200 — the walls stay rooms", async () => {
+    const { app } = await makeApp({
+      autocalFetch: async () => {
+        throw new Error("connection refused");
+      },
+    });
+    for (const request of [app.request("/api/autocal/state"), app.request("/api/autocal/start", { method: "POST" })]) {
+      const response = await request;
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ up: false });
+    }
+  });
+
+  test("a non-OK upstream answer degrades to {up:false} too (never a 5xx to the wall)", async () => {
+    const { app } = await makeApp({
+      autocalFetch: async () => new Response("boom", { status: 500 }),
+    });
+    const response = await app.request("/api/autocal/state");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ up: false });
+  });
+});
+
+// --- BUILD STAMP: the walls' auto-reload watches this ------------------------
+
+describe("GET /api/build-stamp", () => {
+  test("shape: {stamp} derived from the served dist/index.html mtime", async () => {
+    const { app } = await makeApp({ distIndexStat: async () => ({ mtimeMs: 1723456789012 }) });
+    const response = await app.request("/api/build-stamp");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ stamp: "1723456789012" });
+  });
+
+  test("no dist build yet → {stamp:null} with a 200 (dev / first boot, never an error)", async () => {
+    const { app } = await makeApp({
+      distIndexStat: async () => {
+        throw new Error("ENOENT");
+      },
+    });
+    const response = await app.request("/api/build-stamp");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ stamp: null });
+  });
+
+  test("the stat is cached (~5s): back-to-back polls hit the fs once", async () => {
+    let statCalls = 0;
+    const { app } = await makeApp({
+      distIndexStat: async () => {
+        statCalls += 1;
+        return { mtimeMs: 42 };
+      },
+    });
+    expect(await (await app.request("/api/build-stamp")).json()).toEqual({ stamp: "42" });
+    expect(await (await app.request("/api/build-stamp")).json()).toEqual({ stamp: "42" });
+    expect(statCalls).toBe(1);
   });
 });
 

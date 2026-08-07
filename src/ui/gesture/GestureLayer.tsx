@@ -4,6 +4,7 @@ import { idToHue } from "./core";
 import { GestureTargets, HITBOX_INFLATE_PX, inflateRect, type TargetDescriptor } from "./targets";
 import { MultiDwell } from "./multi";
 import { getSceneDwellSource } from "./scene-source";
+import { getSceneFlatPoseControl, registerFlatPoseSender } from "./flat-pose-source";
 import { RemoteKeyHolds, guestDwellCaps, isGuestCursorId, visibleCursorDots } from "./remote";
 import { GestureWallClient, type GestureCursor, type GestureWallStatus } from "./wall-client";
 
@@ -198,14 +199,27 @@ export function GestureLayer({ wall, fusionUrl, remoteUrl = "", mouseTest = fals
     // window-wide) — merged across guests, auto-released on silence.
     const keyHolds = new RemoteKeyHolds();
     let remoteClient: GestureWallClient | null = null;
+    let unregisterFlatPoseSender: (() => void) | null = null;
     if (remoteUrl.trim().length > 0) {
-      remoteClient = new GestureWallClient({
+      const client = new GestureWallClient({
         url: remoteUrl,
         wall,
         onCursors: mergeCursors,
         onKeys: (keysFrame) => keyHolds.update(keysFrame.guest, keysFrame.held, nowSec()),
+        // Flat-pair pose sync (the partner window published its shared
+        // panorama pose through the hub): hand it to the scene's adopter.
+        // Only a flat-locked RoomScene registers one — everywhere else the
+        // frame drops here, by design.
+        onFlatPose: (pose) => getSceneFlatPoseControl()?.adopt(pose),
       });
-      remoteClient.start();
+      remoteClient = client;
+      client.start();
+      // The upward half of the same seam: the flat-locked scene publishes its
+      // pose after local input; this bridges it onto the room socket (dropped
+      // silently while the socket is down — the hub replays on resubscribe).
+      unregisterFlatPoseSender = registerFlatPoseSender((pose) => {
+        client.send({ type: "flatpose", ...pose, t: nowSec() });
+      });
     }
 
     const domIdFor = (el: Element): string => {
@@ -384,6 +398,7 @@ export function GestureLayer({ wall, fusionUrl, remoteUrl = "", mouseTest = fals
       for (const client of clients) {
         client.stop();
       }
+      unregisterFlatPoseSender?.();
       remoteClient?.stop();
       // Never leave a remote guest's key held down past the layer's lifetime.
       for (const key of keyHolds.releaseAll()) {

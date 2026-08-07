@@ -3812,3 +3812,72 @@ main.gesture-mode .idea-action-card {
 }
 main.gesture-mode .idea-card-pitch { font-size: 24px; }
 main.gesture-mode .idea-card-confidence { font-size: 15px; }
+
+/* ============================================================================
+   PROJECTOR AUTO-CALIBRATION overlay (CalibrationOverlay.tsx): whenever the
+   python calibrator (gesturewall.autocal) is running, every wall-bound window
+   flips into this fullscreen calibration surface. MEASUREMENT FIDELITY:
+   while running the surface is pure #000 with a single flat #fff disc — no
+   shadow, no animation, no other chrome (the Kinects difference OFF/ON frames
+   of exactly this disc). Opaque + top z-index (gesture canvas is 2000) so
+   every room surface beneath is fully suppressed. */
+.calibration-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 4000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  background: #050508; /* idle / done / error: near-black */
+  color: #e8e8f0;
+  text-align: center;
+}
+
+.calibration-overlay[data-phase="running"] {
+  background: #000; /* pure black behind the measured disc */
+}
+
+.calibration-letter {
+  font-size: 38vh;
+  font-weight: 900;
+  line-height: 1;
+  color: #3cc8dc;
+}
+
+.calibration-ready {
+  margin: 0;
+  font-size: 2.6vh;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #9a9aa8;
+}
+
+.calibration-overlay .ctl-button.calibration-start {
+  font-size: 2.4vh;
+  padding: 0.6em 1.4em;
+}
+
+.calibration-disc {
+  position: fixed;
+  border-radius: 50%;
+  background: #fff;
+  /* The camera measures this disc: no glow, no fade, no motion smoothing. */
+  box-shadow: none;
+  transition: none;
+  animation: none;
+}
+
+.calibration-done {
+  font-size: 22vh;
+  line-height: 1;
+  color: #46c66e;
+}
+
+.calibration-error {
+  margin: 0;
+  max-width: 70ch;
+  font-size: 2.4vh;
+  color: #e2685f;
+}

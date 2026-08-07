@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { stat } from "node:fs/promises";
 import { resolve } from "node:path";
 import { withUnmuted } from "../ui/demo-data";
 import type { ProjectorSnapshot } from "../ui/types";
@@ -32,7 +33,22 @@ export interface ProjectorAppOptions {
   hands?: RemoteHandsHub;
   // Test seam for os.networkInterfaces (LAN IPv4 discovery).
   interfaces?: () => InterfaceAddresses;
+  // Test seam for the /api/autocal proxy's upstream fetch (the local python
+  // calibrator on VIBERSYN_AUTOCAL_PORT). Tests inject a fake — no real
+  // network ever.
+  autocalFetch?: (input: string | URL, init?: RequestInit) => Promise<Response>;
+  // Test seam for the /api/build-stamp stat of the served dist/index.html.
+  distIndexStat?: () => Promise<{ mtimeMs: number }>;
 }
+
+// The autocal proxy's upstream budget: the calibrator is local (127.0.0.1),
+// so anything slower than this is down/wedged — answer {up:false} instead of
+// pinning the wall's poll.
+const AUTOCAL_PROXY_TIMEOUT_MS = 800;
+
+// /api/build-stamp caches its fs.stat this long: many windows poll every 20s,
+// and the stamp only ever changes when a build lands.
+const BUILD_STAMP_CACHE_MS = 5_000;
 
 // Build the projector's HTTP app over a live runtime. Extracted from the boot
 // entry (index.ts) so endpoint behavior — referer guards, validation, response
@@ -423,6 +439,52 @@ export function createProjectorApp(runtime: ProjectorRuntime, options: Projector
     }
     return context.json(runtime.publishNow());
   });
+  // PROJECTOR AUTO-CALIBRATION proxy (walls flip into calibration mode by
+  // themselves). The calibrator (gesturewall.autocal) is a separate python
+  // server on VIBERSYN_AUTOCAL_PORT (default 8801); the wall windows poll THIS
+  // same-origin proxy instead of it directly — no CORS, and it works when the
+  // wall browser is not on the calibrator's host. An absent calibrator is the
+  // NORMAL resting state, never an error: {up:false} with a 200.
+  const autocalPort = Number.parseInt(env.VIBERSYN_AUTOCAL_PORT ?? "", 10) || 8801;
+  const autocalFetch = options.autocalFetch ?? fetch;
+  const autocalProxy = async (path: "/calib/state" | "/calib/start", method: "GET" | "POST"): Promise<unknown> => {
+    try {
+      const response = await autocalFetch(`http://127.0.0.1:${autocalPort}${path}`, {
+        method,
+        signal: AbortSignal.timeout(AUTOCAL_PROXY_TIMEOUT_MS),
+      });
+      if (!response.ok) {
+        return { up: false };
+      }
+      return (await response.json()) as unknown;
+    } catch {
+      return { up: false }; // down, wedged, or non-JSON — the walls stay rooms
+    }
+  };
+  app.get("/api/autocal/state", async (context) => context.json(await autocalProxy("/calib/state", "GET")));
+  app.post("/api/autocal/start", async (context) => context.json(await autocalProxy("/calib/start", "POST")));
+
+  // BUILD STAMP (walls auto-reload when a new UI build lands): the identity of
+  // the served dist build — dist/index.html's mtime, from the SAME dist root
+  // serveStatic resolves (process.cwd()/dist). Cached ~5s so many windows on a
+  // 20s cadence never stat-storm; no build yet is {stamp:null}, which the UI
+  // treats as "nothing to compare".
+  const distIndexStat = options.distIndexStat ?? (() => stat(resolve(process.cwd(), "dist", "index.html")));
+  let buildStampCache: { at: number; stamp: string | null } | null = null;
+  app.get("/api/build-stamp", async (context) => {
+    const now = Date.now();
+    if (buildStampCache === null || now - buildStampCache.at > BUILD_STAMP_CACHE_MS) {
+      let stamp: string | null = null;
+      try {
+        stamp = String((await distIndexStat()).mtimeMs);
+      } catch {
+        stamp = null; // no dist build yet (dev / first boot)
+      }
+      buildStampCache = { at: now, stamp };
+    }
+    return context.json({ stamp: buildStampCache.stamp });
+  });
+
   app.get("*", async (context) => serveStatic(context.req.url));
 
   return app;

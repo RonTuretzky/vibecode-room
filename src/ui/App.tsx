@@ -3,6 +3,7 @@ import type { CSSProperties } from "react";
 import { demoProjectorSnapshot, busyRoomSnapshot, emptyProjectorSnapshot, withUnmuted } from "./demo-data";
 import type { ProjectorProcess, ProjectorSnapshot, ResearchTrayItem, TranscriptLine } from "./types";
 import { GestureLayer } from "./gesture/GestureLayer";
+import { CalibrationOverlay, type AutocalState } from "./CalibrationOverlay";
 import { PinchCameraLayer } from "./gesture/PinchCameraLayer";
 import { HandSkeletonHud } from "./gesture/HandSkeletonHud";
 import type { HandsStatus } from "./gesture/hands-client";
@@ -53,8 +54,17 @@ interface ProjectorAppProps {
     slideshowUpid?: string;
     qrOpen?: boolean;
     ideaCard?: { id: string | null };
+    // Boots the wall-bound auto-calibration overlay with a calibrator state
+    // (the static renderer cannot poll /api/autocal/state).
+    calibration?: AutocalState;
   };
 }
+
+// AUTO-RELOAD ON NEW BUILDS: every window polls /api/build-stamp on this
+// cadence, and a changed stamp reloads after a random 0–{jitter} delay so the
+// projector windows never hammer the freshly-restarted server simultaneously.
+const BUILD_STAMP_POLL_MS = 20_000;
+const BUILD_RELOAD_JITTER_MS = 2_000;
 
 // The synthetic id used for the (single) idea/suggestion bubble.
 const IDEA_ID = "idea";
@@ -1010,6 +1020,67 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
       window.location.reload();
     }
   }, [snapshot]);
+
+  // AUTO-CALIBRATION overlay activity, mirrored into a ref so the build-stamp
+  // auto-reload below can skip reloading mid-sweep without re-binding.
+  const calibrationActiveRef = useRef(initialOverlay?.calibration != null);
+  const onCalibrationActive = useCallback((calibrating: boolean) => {
+    calibrationActiveRef.current = calibrating;
+  }, []);
+
+  // AUTO-RELOAD ON NEW BUILDS: the server stamps the served dist build
+  // (/api/build-stamp = dist/index.html's mtime). Every window — wall-bound
+  // or not — remembers the first stamp it observes and, when it changes,
+  // reloads after a small random jitter (0–2s) so the operator never cmd-R's
+  // the projector windows after `bun run build` again. Guard: a window whose
+  // calibration overlay is up skips the reload (the camera is measuring this
+  // screen); the next 20s poll retries once the calibrator is gone.
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    let closed = false;
+    let baseline: string | null | undefined; // undefined = no successful read yet
+    let reloadTimer: ReturnType<typeof setTimeout> | undefined;
+    const check = async () => {
+      try {
+        const response = await fetch("/api/build-stamp", { headers: { accept: "application/json" } });
+        if (!response.ok || !response.headers.get("content-type")?.includes("application/json")) {
+          return;
+        }
+        const body = (await response.json()) as { stamp?: unknown };
+        const stamp = typeof body.stamp === "string" ? body.stamp : null;
+        if (closed) {
+          return;
+        }
+        if (baseline === undefined) {
+          baseline = stamp; // first observation — the build this page came from
+          return;
+        }
+        if (stamp === null || stamp === baseline || reloadTimer !== undefined) {
+          return;
+        }
+        reloadTimer = setTimeout(() => {
+          reloadTimer = undefined;
+          if (closed || calibrationActiveRef.current) {
+            return; // never blank a mid-sweep wall; the next poll retries
+          }
+          window.location.reload();
+        }, Math.random() * BUILD_RELOAD_JITTER_MS);
+      } catch {
+        // Server restarting/unreachable — keep the current page; retry next tick.
+      }
+    };
+    void check(); // capture the boot build's stamp immediately
+    const timer = setInterval(() => void check(), BUILD_STAMP_POLL_MS);
+    return () => {
+      closed = true;
+      clearInterval(timer);
+      if (reloadTimer !== undefined) {
+        clearTimeout(reloadTimer);
+      }
+    };
+  }, []);
 
   // --- Live data: fetch /api/state + subscribe to /api/events (SSR-guarded) ---
   useEffect(() => {
@@ -2121,6 +2192,18 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
               guidedSkip();
             });
           }}
+        />
+      ) : null}
+      {/* AUTO-CALIBRATION: wall-bound windows watch for a running projector
+          calibrator (gesturewall.autocal via the /api/autocal proxy) and flip
+          into the fullscreen calibration surface by themselves — rendered
+          LAST + at the top z-index so the opaque surface suppresses every
+          other overlay while the cameras measure this screen. */}
+      {urlConfig.wall !== null ? (
+        <CalibrationOverlay
+          wall={urlConfig.wall}
+          initialState={initialOverlay?.calibration ?? null}
+          onActiveChange={onCalibrationActive}
         />
       ) : null}
     </main>
