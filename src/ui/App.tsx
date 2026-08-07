@@ -1777,18 +1777,18 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
               {researchActive ? "🔍 Research: ON" : "🔍 Research: OFF"}
             </button>
           ) : null}
-          {/* Build-side control (phone-imports a project to BUILD): wall B + full view. */}
-          {showBuildSurfaces ? (
-            <button
-              type="button"
-              className="ctl-button qr-import"
-              data-testid="qr-import-button"
-              onClick={() => setQrOpen(true)}
-              title="Show a QR code — scan it on a phone to add a project (context + optional link) to the wall."
-            >
-              QR Import
-            </button>
-          ) : null}
+          {/* QR Import lives in the dock on EVERY view (live-room request):
+              the overlay opens on whichever wall summons it, so scoping the
+              button to the build view just made it look missing on wall A. */}
+          <button
+            type="button"
+            className="ctl-button qr-import"
+            data-testid="qr-import-button"
+            onClick={() => setQrOpen(true)}
+            title="Show a QR code — scan it on a phone to add a project (context + optional link) to the wall."
+          >
+            QR Import
+          </button>
           {/* GUEST HANDS: only rendered when this wall actually listens for
               guests (?remote=1 / --guests) — a URL that connects to nothing is
               worse than no button. */}

@@ -68,6 +68,10 @@ export interface ControlDockProps {
 export function ControlDock({ children, initialExpanded = false }: ControlDockProps) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [expanded, setExpanded] = useState(initialExpanded);
+  // Click-to-close latch: after an explicit collapse click, hover must not
+  // instantly re-expand (the clicking cursor is still ON the button). Held
+  // until the dock goes cold once; then hover-expand works again.
+  const holdClosed = useRef(false);
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -80,9 +84,14 @@ export function ControlDock({ children, initialExpanded = false }: ControlDockPr
       if (root !== null) {
         if (dockIsHot(root)) {
           lastHot = now;
-          setExpanded(true); // bails when already true — no re-render churn
-        } else if (dockCollapseDue(now - lastHot)) {
-          setExpanded(false);
+          if (!holdClosed.current) {
+            setExpanded(true); // bails when already true — no re-render churn
+          }
+        } else {
+          holdClosed.current = false; // cursor left — hover may expand again
+          if (dockCollapseDue(now - lastHot)) {
+            setExpanded(false);
+          }
         }
       }
       raf = requestAnimationFrame(frame);
@@ -108,10 +117,19 @@ export function ControlDock({ children, initialExpanded = false }: ControlDockPr
         aria-expanded={expanded}
         aria-label="Room controls — rest the cursor here to unfold them"
         title="Room controls: rest the cursor (or hover) here to unfold the full button cluster. It folds away by itself."
-        // Expand-only: hover already expanded it for a pointing cursor, and a
-        // dwell-synthesized click that COLLAPSED the tray would yank every
-        // target out from under the cursor mid-reach. Collapse is the timeout.
-        onClick={() => setExpanded(true)}
+        // Toggle: a click (real or dwell-fired ON this button) closes an open
+        // tray — deliberate enough, since the cursor is on the toggle, not
+        // mid-reach for a tray button. The holdClosed latch stops the hover
+        // loop from instantly reopening it under the same cursor.
+        onClick={() =>
+          setExpanded((open) => {
+            if (open) {
+              holdClosed.current = true;
+              return false;
+            }
+            return true;
+          })
+        }
       >
         ⚙ Controls
       </button>

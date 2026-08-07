@@ -1352,8 +1352,9 @@ main.gesture-mode .control-dock-tray {
 
 .suggestion-banner {
   position: fixed;
-  /* Clears the floating center pill (bottom ≈114px), not the old solid band. */
-  top: 124px;
+  /* Bottom-anchored above the floating center pill (bottom ≈114px): the
+     queued idea reads as part of the capture cluster, not a floating header. */
+  bottom: 178px;
   left: 50%;
   transform: translateX(-50%);
   z-index: 6;
@@ -2995,6 +2996,7 @@ main.gesture-mode .ctl-button.research-reset {
   .suggestion-banner {
     position: relative;
     top: auto;
+    bottom: auto;
     left: auto;
     transform: none;
     max-width: 100%;

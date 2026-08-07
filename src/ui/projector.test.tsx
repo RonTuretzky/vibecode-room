@@ -177,7 +177,9 @@ describe("per-wall scoping: each wall renders ITS surface + ITS controls", () =>
     // Build surfaces + build-side controls live on wall B only.
     expect(wallAHtml).not.toContain('data-testid="fleet-panel"');
     expect(wallAHtml).not.toContain('data-region="transcript"');
-    expect(wallAHtml).not.toContain('data-testid="qr-import-button"');
+    // QR Import is deliberately UN-scoped (live-room request): the overlay
+    // opens on whichever wall summons it, so its button rides every view.
+    expect(wallAHtml).toContain('data-testid="qr-import-button"');
   });
 
   test("?view=builds (wall B): build surface + build-side controls, NO idea surfaces", () => {
@@ -256,7 +258,7 @@ describe("de-themed walls: on-demand overlays are available on BOTH walls", () =
     expect(html).toContain('data-testid="slideshow-overlay"');
   });
 
-  test("the QR-import overlay opens on wall A (view=ideas) — only its launch button stays wall-B", () => {
+  test("the QR-import overlay AND its launch button are available on wall A (view=ideas)", () => {
     const html = renderToStaticMarkup(
       <ProjectorApp
         initialSnapshot={demoProjectorSnapshot}
@@ -265,7 +267,7 @@ describe("de-themed walls: on-demand overlays are available on BOTH walls", () =
       />,
     );
     expect(html).toContain('data-testid="qr-overlay"');
-    expect(html).not.toContain('data-testid="qr-import-button"');
+    expect(html).toContain('data-testid="qr-import-button"');
   });
 
   test("the guided demo runs on wall B (view=builds) — only its launch button stays wall-A", () => {
