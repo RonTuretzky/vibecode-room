@@ -207,6 +207,36 @@ describe("steer → self-commission → green gate → serialized exit-87 reload
     expect((runtime.snapshot() as { self?: { reloadPending: boolean } }).self?.reloadPending).toBe(false);
   });
 
+  test("the RUNTIME self-rebuild toggle vetoes the exit-87 trigger; re-arming fires the still-green reload", async () => {
+    const harness = await makeSelfRuntime();
+    const { runtime, launches, exits } = harness;
+    // Boots ON under VIBERSYN_SELF_MODE=1 and is surfaced on the snapshot.
+    expect(runtime.selfRebuild()).toBe(true);
+    expect((runtime.snapshot() as { selfRebuild?: boolean; selfSupervisor?: boolean }).selfRebuild).toBe(true);
+    expect((runtime.snapshot() as { selfSupervisor?: boolean }).selfSupervisor).toBe(true);
+
+    // The operator flips it OFF from the wall (POST /api/self-rebuild).
+    runtime.setSelfRebuild(false, "corr-toggle-off");
+    expect((runtime.snapshot() as { selfRebuild?: boolean }).selfRebuild).toBe(false);
+
+    // A steer runs green — the commit lands, the lane goes built — but the
+    // RUNTIME gate refuses the reload: no exit, no reloadPending.
+    await runtime.registry.steer(SELF_UPID, { text: "make the header blue" }, "corr-steer");
+    await until(() => launches.length === 1);
+    harness.setHead({ sha: "sha-new", subject: "self: make the header blue" });
+    harness.setRunStatus("finished");
+    await until(() => selfProcess(runtime)?.execution?.status === "built");
+    expect(exits).toHaveLength(0);
+    expect((runtime.snapshot() as { self?: { reloadPending: boolean } }).self?.reloadPending).toBe(false);
+    expect(runtime.requestSelfReload("corr-while-off")).toEqual({ ok: false, reason: "self-rebuild is toggled off" });
+
+    // Re-arm: the last run is still verified green, so the trigger now fires.
+    runtime.setSelfRebuild(true, "corr-toggle-on");
+    expect(runtime.requestSelfReload("corr-rearmed").ok).toBe(true);
+    await until(() => exits.length === 1);
+    expect(exits).toEqual([87]);
+  });
+
   test("emergency stop aborts an in-flight self-run like any commission", async () => {
     const harness = await makeSelfRuntime();
     const { runtime, launches, cancels, exits } = harness;

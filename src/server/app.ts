@@ -167,6 +167,27 @@ export function createProjectorApp(runtime: ProjectorRuntime, options: Projector
     }
     return context.json(runtime.setAutoAccept(on));
   });
+  // SELF-REBUILD toggle ("the room rebuilds itself"). Body `{ on: boolean }`
+  // sets it explicitly; absent body flips the current state. Governs the
+  // green-self-commit → exit-87 rebuild trigger at RUNTIME (requestSelfReload
+  // consults it); the supervisor wrapper itself is boot-time (--self), so
+  // without one the flag only records intent — snapshot.selfSupervisor says
+  // which. Returns the fresh snapshot.
+  app.post("/api/self-rebuild", async (context) => {
+    if (isOfflineDemoRequest(context.req.header("referer"))) {
+      return context.json(runtime.snapshot());
+    }
+    let on = !runtime.selfRebuild();
+    try {
+      const body = (await context.req.json()) as { on?: unknown };
+      if (typeof body?.on === "boolean") {
+        on = body.on;
+      }
+    } catch {
+      // no/invalid body -> toggle current state
+    }
+    return context.json(runtime.setSelfRebuild(on));
+  });
   // IDEA CAPTURE mode toggle (alternative to passive auto-detect). Body `{ on: boolean }`
   // sets it explicitly; absent body flips the current state. When on, detection runs
   // eagerly (a rate-limited force-detect per final); building still requires an explicit

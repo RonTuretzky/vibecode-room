@@ -222,6 +222,16 @@ export interface ProjectorSnapshot {
   // and proposes quests (fact-checks, deep-dives, bias scans) alongside idea
   // detection. Toggled via POST /api/research-mode or voice "research on".
   researchMode?: boolean;
+  // SELF-REBUILD ("the room rebuilds itself"): the RUNTIME toggle gating the
+  // green-self-commit → exit-87 rebuild trigger. Boots on when
+  // VIBERSYN_SELF_MODE=1 (the --self supervisor exports it); flipped from the
+  // wall via POST /api/self-rebuild.
+  selfRebuild?: boolean;
+  // True when this server was launched with VIBERSYN_SELF_MODE=1 — i.e. under
+  // the run-room --self supervisor loop, the only launch where an exit 87
+  // actually rebuilds and relaunches the process. Lets the wall title the
+  // Self-Rebuild toggle honestly (ARMED vs needs a --self launch).
+  selfSupervisor?: boolean;
   // True while a suggestion round's model inference is in flight — the wall's
   // "scanning the conversation" indicator (a crystal might be forming).
   researchThinking?: boolean;

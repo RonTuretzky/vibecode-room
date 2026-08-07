@@ -191,6 +191,14 @@ export interface ProjectorRuntime {
   readonly bootId: string;
   readonly selfMode: boolean;
   requestSelfReload(correlationId?: string): { ok: true } | { ok: false; reason: string };
+  // SELF-REBUILD runtime toggle ("the room rebuilds itself", POST
+  // /api/self-rebuild): gates the green-self-commit → exit-87 trigger at
+  // RUNTIME, independent of the boot env. Boot default is VIBERSYN_SELF_MODE
+  // (on under the --self supervisor). Flipping it cannot summon a supervisor
+  // that isn't there — off VETOES the rebuild-and-relaunch trigger, on arms
+  // it for the next verified green self-run.
+  setSelfRebuild(on: boolean, correlationId?: string): ProjectorSnapshot;
+  selfRebuild(): boolean;
   pendingSuggestion(): PendingQueuedSuggestion | null;
   snapshot(): ProjectorSnapshot;
   // Rebuild + broadcast the snapshot NOW and return it. The HTTP control routes
@@ -593,6 +601,9 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   // `#exit` is the injectable exit-87 seam the supervisor loop watches for.
   readonly bootId: string = crypto.randomUUID();
   readonly #selfMode: boolean;
+  // SELF-REBUILD runtime toggle: the operator-flippable gate consulted by the
+  // exit-87 trigger (requestSelfReload). Boots from VIBERSYN_SELF_MODE.
+  #selfRebuild: boolean;
   #selfCommission: SelfCommissioner | null = null;
   #selfReloadPending = false;
   readonly #exit: (code: number) => void;
@@ -610,6 +621,10 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     // reserved "mirror" word), the registry's orchestrator seam (self steers
     // route to the commission), and the reload trigger below.
     this.#selfMode = selfModeEnabled(env);
+    // The runtime rebuild toggle boots FROM the env flag: a --self launch
+    // starts armed, everything else starts off (and can only record intent
+    // for a future --self launch — see setSelfRebuild).
+    this.#selfRebuild = this.#selfMode;
     this.#exit = options.exitProcess ?? ((code: number) => process.exit(code));
     this.#selfReloadDelayMs = resolveSelfReloadDelayMs(env);
     // Single audible-output sink seam (ISSUE-0026): an injected sink wins, else
@@ -2892,6 +2907,11 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       // the self surface driving the mirror label + reload overlay.
       bootId: this.bootId,
       self: this.selfSurface(),
+      // SELF-REBUILD toggle state + whether the --self supervisor is actually
+      // wrapping this process (VIBERSYN_SELF_MODE=1 is the supervisor's
+      // marker), so the wall can title the toggle honestly.
+      selfRebuild: this.#selfRebuild,
+      selfSupervisor: this.#selfMode,
     };
   }
 
@@ -3407,6 +3427,31 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     return this.#selfMode;
   }
 
+  // SELF-REBUILD runtime toggle. Flip off => a verified green self-run no
+  // longer exits 87 (the commit stays on disk; the running build keeps serving
+  // the walls); flip on => the trigger is armed again — a still-pending green
+  // run can be fired via requestSelfReload / POST /api/self/reload. Purely a
+  // runtime gate: the supervisor wrapper (run-room --self) is boot-time, so
+  // outside self mode the flag only records intent for a future --self launch
+  // (surfaced honestly as snapshot.selfSupervisor).
+  setSelfRebuild(on: boolean, correlationId = `corr-self-rebuild-toggle-${crypto.randomUUID()}`): ProjectorSnapshot {
+    this.#selfRebuild = on;
+    this.recordExternalTrace({
+      event: "self.rebuild.set",
+      level: "info",
+      sessionId: this.sessionId,
+      correlationId,
+      upid: SELF_UPID,
+      meta: { on, supervisorPresent: this.#selfMode },
+    });
+    this.publish();
+    return this.#snapshot;
+  }
+
+  selfRebuild(): boolean {
+    return this.#selfRebuild;
+  }
+
   // SELF-HOSTING: pin the standing "Vibersyn Room" project at boot. A normal
   // registry spawn (so lifecycle — halt, emergency stop, selection, snapshot —
   // treats it like any project) with the reserved upid/callsign/title and NO
@@ -3471,6 +3516,12 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     };
     if (!this.#selfMode || this.#selfCommission === null) {
       return refuse("self mode is off");
+    }
+    // RUNTIME gate: the wall's Self-Rebuild toggle. Every trigger path — the
+    // commissioner's onGreen and POST /api/self/reload — lands here, so
+    // flipping the toggle off vetoes the exit-87 rebuild even mid-session.
+    if (!this.#selfRebuild) {
+      return refuse("self-rebuild is toggled off");
     }
     if (this.#emergencyTriggered) {
       return refuse("emergency stop is active");

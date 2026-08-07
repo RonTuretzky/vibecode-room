@@ -846,6 +846,7 @@ describe("control dock: one calm affordance replaces the button row", () => {
     for (const id of [
       'data-testid="mic-capture-button"',
       'data-testid="auto-build-button"',
+      'data-testid="self-rebuild-button"',
       'data-testid="research-mode-button"',
       'data-testid="qr-import-button"',
       'data-testid="guest-hands-button"',
@@ -895,6 +896,53 @@ describe("control dock: one calm affordance replaces the button row", () => {
     expect(DOCK_COLLAPSE_MS).toBeLessThanOrEqual(6_000);
     expect(dockCollapseDue(DOCK_COLLAPSE_MS - 1)).toBe(false);
     expect(dockCollapseDue(DOCK_COLLAPSE_MS + 1)).toBe(true);
+  });
+});
+
+// SELF-REBUILD dock toggle ("the room rebuilds itself"): follows the
+// Auto-Build button contract — snapshot-driven ON/OFF label + data-state,
+// rendered inside the control dock tray — plus an HONEST title: the rebuild
+// trigger is runtime-toggleable, but only a --self launch (the supervisor
+// exporting VIBERSYN_SELF_MODE=1, surfaced as snapshot.selfSupervisor) can
+// actually rebuild-and-relaunch the server on a green self: commit.
+describe("self-rebuild dock toggle", () => {
+  test("renders inside the dock tray with the label reflecting snapshot state", () => {
+    const off = renderToStaticMarkup(<ProjectorApp initialSnapshot={demoProjectorSnapshot} />);
+    const trayIdx = off.indexOf('data-testid="control-dock-tray"');
+    const buttonIdx = off.indexOf('data-testid="self-rebuild-button"');
+    expect(buttonIdx).toBeGreaterThan(trayIdx);
+    expect(buttonIdx).toBeLessThan(off.indexOf("</header>"));
+    expect(off).toContain('data-testid="self-rebuild-button" data-state="off"');
+    expect(off).toContain("🔁 Self-Rebuild: OFF");
+
+    const on = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={{ ...demoProjectorSnapshot, selfRebuild: true }} />,
+    );
+    expect(on).toContain('data-testid="self-rebuild-button" data-state="on"');
+    expect(on).toContain("🔁 Self-Rebuild: ON");
+  });
+
+  test("the title is honest about the supervisor: ARMED only when --self is live", () => {
+    // No supervisor (snapshot.selfSupervisor absent/false): flipping ON only
+    // records intent — the title says a --self launch is needed.
+    const unsupervised = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={{ ...demoProjectorSnapshot, selfRebuild: true }} />,
+    );
+    expect(unsupervised).toContain("needs --self launch to take effect");
+    expect(unsupervised).not.toContain("ARMED (supervisor live)");
+
+    // Supervisor live + toggle on: ARMED.
+    const armed = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={{ ...demoProjectorSnapshot, selfRebuild: true, selfSupervisor: true }} />,
+    );
+    expect(armed).toContain("ARMED (supervisor live)");
+
+    // Supervisor live + toggle off: says the trigger is off, not ARMED.
+    const disarmed = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={{ ...demoProjectorSnapshot, selfRebuild: false, selfSupervisor: true }} />,
+    );
+    expect(disarmed).not.toContain("ARMED (supervisor live)");
+    expect(disarmed).toContain("will NOT rebuild the room");
   });
 });
 

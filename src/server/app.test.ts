@@ -219,6 +219,48 @@ describe("POST /api/idea/:id/dismiss", () => {
   });
 });
 
+// SELF-REBUILD ("the room rebuilds itself") runtime toggle. Mirrors the
+// Auto-Build endpoint contract: explicit {on} sets, absent body flips, the
+// offline demo's referer never mutates. Outside a --self launch the boot
+// default is OFF and snapshot.selfSupervisor says no supervisor is wrapping
+// the process (the exit-87 gate itself is covered in composition.self.test.ts).
+describe("POST /api/self-rebuild", () => {
+  test("explicit {on:true} arms it; absent body toggles; the snapshot persists the state", async () => {
+    const { app, runtime } = await makeApp();
+    // Boot default outside --self (no VIBERSYN_SELF_MODE): off.
+    expect(runtime.selfRebuild()).toBe(false);
+
+    const on = await postJson(app, "/api/self-rebuild", { on: true });
+    expect(on.status).toBe(200);
+    expect(((await on.json()) as ProjectorSnapshot).selfRebuild).toBe(true);
+    expect(runtime.selfRebuild()).toBe(true);
+
+    // Persisted: a later plain snapshot still carries the state.
+    const state = await app.request("/api/state");
+    expect(((await state.json()) as ProjectorSnapshot).selfRebuild).toBe(true);
+
+    // Absent body flips the current state.
+    const toggled = await postJson(app, "/api/self-rebuild");
+    expect(((await toggled.json()) as ProjectorSnapshot).selfRebuild).toBe(false);
+    expect(runtime.selfRebuild()).toBe(false);
+  });
+
+  test("the snapshot says honestly that no supervisor is wrapping this process", async () => {
+    const { app } = await makeApp();
+    const state = await app.request("/api/state");
+    const snapshot = (await state.json()) as ProjectorSnapshot;
+    expect(snapshot.selfSupervisor).toBe(false);
+    expect(snapshot.selfRebuild).toBe(false);
+  });
+
+  test("offline-demo referer guard: cosmetic snapshot returned, nothing flips", async () => {
+    const { app, runtime } = await makeApp();
+    const response = await postJson(app, "/api/self-rebuild", { on: true }, { referer: "http://localhost:8787/?live=0" });
+    expect(response.status).toBe(200);
+    expect(runtime.selfRebuild()).toBe(false);
+  });
+});
+
 describe("GET /api/state — snapshot.ideas over HTTP", () => {
   test("maps ready-then-forming with confidence ordering and evidence", async () => {
     const both: DetectionResult = {

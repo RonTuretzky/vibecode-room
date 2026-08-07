@@ -457,6 +457,31 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
     }
   }, [liveMode]);
 
+  // SELF-REBUILD toggle ("the room rebuilds itself"). Flips the server-side
+  // runtime flag gating the green-self-commit → rebuild-and-relaunch (exit 87)
+  // trigger. The supervisor wrapper is boot-time (run-room.sh --self), so the
+  // button's title says honestly whether flipping ON arms a live supervisor
+  // (snapshot.selfSupervisor) or only records intent for a future --self launch.
+  const selfRebuild = snapshot.selfRebuild ?? false;
+  const selfSupervisor = snapshot.selfSupervisor ?? false;
+  const toggleSelfRebuild = useCallback(async () => {
+    if (!liveMode || mockModeRef.current) {
+      return;
+    }
+    try {
+      const response = await fetch("/api/self-rebuild", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ on: !snapshotRef.current.selfRebuild }),
+      });
+      if (response.ok && response.headers.get("content-type")?.includes("application/json")) {
+        setSnapshot((await response.json()) as ProjectorSnapshot);
+      }
+    } catch {
+      // Non-authoritative projector: a failed toggle must never block the UI.
+    }
+  }, [liveMode]);
+
   // IDEA CAPTURE toggle (alternative to passive auto-detect). Flips the server-side
   // capture flag: when on, detection runs eagerly on every final utterance — but
   // building stays explicit (tray/keyboard/voice) unless Auto-Build is also on.
@@ -1832,6 +1857,29 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
               title="When on, every detected idea builds itself — no click required."
             >
               {autoAccept ? "Auto-Build: ON" : "Auto-Build: OFF"}
+            </button>
+          ) : null}
+          {/* SELF-REBUILD ("the room rebuilds itself"): runtime gate on the
+              green-self-commit → rebuild-and-relaunch trigger. The title is
+              HONEST about the boot-time part: without the --self supervisor
+              wrapping this server, an exit 87 cannot rebuild anything. */}
+          {showIdeaSurfaces ? (
+            <button
+              type="button"
+              className={`ctl-button self-rebuild${selfRebuild ? " on" : ""}`}
+              data-testid="self-rebuild-button"
+              data-state={selfRebuild ? "on" : "off"}
+              aria-pressed={selfRebuild}
+              onClick={() => void toggleSelfRebuild()}
+              title={
+                selfSupervisor
+                  ? selfRebuild
+                    ? "ARMED (supervisor live): when the mirror lands a green self: commit, the server rebuilds and relaunches itself — walls reload on the new build."
+                    : "Supervisor live but the trigger is OFF: a green self: commit will NOT rebuild the room until this is switched on."
+                  : "on (needs --self launch to take effect): no supervisor is wrapping this server, so a green self: commit cannot rebuild-and-relaunch it. Start the room with run-room.sh --self."
+              }
+            >
+              {selfRebuild ? "🔁 Self-Rebuild: ON" : "🔁 Self-Rebuild: OFF"}
             </button>
           ) : null}
           {showIdeaSurfaces ? (

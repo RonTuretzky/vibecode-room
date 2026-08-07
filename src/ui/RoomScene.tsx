@@ -613,6 +613,116 @@ function makeGlowTexture(): THREE.CanvasTexture {
   return new THREE.CanvasTexture(canvas);
 }
 
+// Procedural butterfly wing for ONE side (forewing + hindwing lobes) painted
+// with transparent surround: the plane it maps is alpha-tested, so this one
+// canvas provides the two-lobed silhouette AND the pattern — dark basal
+// suffusion, veins radiating from the root, a dark margin band with pale
+// spots, and a hindwing eyespot. Texture space: u=0 body hinge → u=1 tip,
+// v=1 (canvas top) is the head end. The base hue comes from the palette.
+function makeButterflyWingTexture(base: number): THREE.CanvasTexture {
+  const size = 256;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d")!;
+  const hsl = { h: 0, s: 0, l: 0 };
+  new THREE.Color(base).getHSL(hsl);
+  const tint = (dl: number, a: number): string => {
+    const c = new THREE.Color().setHSL(hsl.h, hsl.s, THREE.MathUtils.clamp(hsl.l + dl, 0, 1));
+    return `rgba(${Math.round(c.r * 255)},${Math.round(c.g * 255)},${Math.round(c.b * 255)},${a})`;
+  };
+  const dark = (a: number): string => `rgba(38,28,24,${a})`;
+  // Silhouette: costal edge sweeping to the forewing apex, a shallow notch,
+  // then the rounder hindwing lobe with a scalloped trailing edge.
+  const trace = (): void => {
+    ctx.beginPath();
+    ctx.moveTo(4, 70);
+    ctx.quadraticCurveTo(90, 10, 212, 30); // leading (costal) edge
+    ctx.quadraticCurveTo(242, 46, 208, 100); // rounded apex → outer margin
+    ctx.quadraticCurveTo(140, 96, 100, 116); // deep notch cutting between lobes
+    ctx.quadraticCurveTo(206, 128, 180, 188); // hindwing outer bulge
+    ctx.quadraticCurveTo(150, 234, 96, 238); // trailing scallop
+    ctx.quadraticCurveTo(60, 240, 34, 218); // anal lobe
+    ctx.quadraticCurveTo(12, 196, 4, 152); // back to the body line
+    ctx.closePath();
+  };
+  // Base fill: lighter at the root, deepening slightly toward the margins.
+  const shade = ctx.createRadialGradient(14, 120, 8, 14, 120, 250);
+  shade.addColorStop(0, tint(0.1, 1));
+  shade.addColorStop(0.55, tint(0, 1));
+  shade.addColorStop(1, tint(-0.08, 1));
+  trace();
+  ctx.fillStyle = shade;
+  ctx.fill();
+  // Everything else clips to the silhouette so the alpha edge stays crisp.
+  ctx.save();
+  trace();
+  ctx.clip();
+  // Dark basal suffusion where the wing meets the body.
+  const basal = ctx.createRadialGradient(6, 120, 0, 6, 120, 85);
+  basal.addColorStop(0, dark(0.55));
+  basal.addColorStop(1, dark(0));
+  ctx.fillStyle = basal;
+  ctx.fillRect(0, 0, size, size);
+  // Veins radiating from the root across each lobe.
+  ctx.strokeStyle = dark(0.4);
+  ctx.lineWidth = 2.5;
+  ctx.lineCap = "round";
+  const vein = (x0: number, y0: number, x1: number, y1: number, bow: number): void => {
+    ctx.beginPath();
+    ctx.moveTo(x0, y0);
+    ctx.quadraticCurveTo((x0 + x1) / 2, (y0 + y1) / 2 + bow, x1, y1);
+    ctx.stroke();
+  };
+  vein(12, 96, 222, 34, -16);
+  vein(12, 98, 226, 62, -14);
+  vein(12, 102, 204, 92, -8);
+  vein(12, 106, 160, 102, -4);
+  vein(12, 148, 190, 148, 6);
+  vein(12, 152, 174, 184, 10);
+  vein(12, 156, 132, 220, 12);
+  vein(12, 160, 76, 230, 10);
+  // Dark margin band around the whole outline (half the stroke lands
+  // inside the clip), with a soft wide underlay.
+  trace();
+  ctx.strokeStyle = dark(0.25);
+  ctx.lineWidth = 36;
+  ctx.stroke();
+  trace();
+  ctx.strokeStyle = dark(0.92);
+  ctx.lineWidth = 16;
+  ctx.stroke();
+  // Pale spots riding the dark margin near the apex + hindwing edge.
+  ctx.fillStyle = "rgba(255,252,244,0.85)";
+  for (const [x, y, r] of [[218, 44, 6], [212, 70, 5], [196, 90, 4.5], [172, 182, 3.5], [138, 218, 3.5]] as const) {
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // Hindwing eyespot: dark ring, pale iris, dark pupil, white glint.
+  ctx.fillStyle = dark(0.95);
+  ctx.beginPath();
+  ctx.arc(148, 168, 14, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = tint(0.16, 1);
+  ctx.beginPath();
+  ctx.arc(148, 168, 9, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = dark(0.95);
+  ctx.beginPath();
+  ctx.arc(148, 168, 4, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = "rgba(255,255,255,0.9)";
+  ctx.beginPath();
+  ctx.arc(145.5, 165.5, 1.8, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = 4;
+  return texture;
+}
+
 // Gradient sky dome (visualizer technique) with a 3-stop ramp for extra depth.
 // NOTE: BackSide alone makes the sphere visible from inside — flipping the
 // geometry with scale(-1,1,1) on top of it double-inverts the winding and the
@@ -668,7 +778,7 @@ function makeStars(rng: () => number, count: number, size: number, opacity: numb
 }
 
 interface SceneEnv {
-  update: (t: number) => void;
+  update: (t: number, dt: number) => void;
   dispose: () => void;
 }
 
@@ -987,6 +1097,9 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         { name: "jacaranda_tree", count: 10, rMin: 34, rMax: 82, sMin: 0.45, sMax: 0.62 },
       ];
       let floraDisposed = false;
+      // Flower-top landing spots for the butterflies, filled in as the flora
+      // scatter runs (async — no flowers loaded simply means no landings).
+      const flowerSpots: { x: number; y: number; z: number }[] = [];
       const scatterFlora = (flora: FloraLibrary) => {
         const dummy = new THREE.Object3D();
         for (const spec of FLORA_SCATTER) {
@@ -994,6 +1107,12 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
           if (variants === undefined || variants.length === 0) {
             continue;
           }
+          // Blossom height per variant (bounding boxes are precomputed by
+          // garden-flora) so a landing butterfly sits ON the flower head.
+          const isFlower = spec.name.startsWith("flower_");
+          const variantTopY = variants.map((variant) =>
+            variant.pieces.reduce((maxY, piece) => Math.max(maxY, piece.geometry.boundingBox?.max.y ?? 0), 0),
+          );
           // Instance i takes variant i % n; angles are an evenly-spaced ring
           // with jitter so even low-count species (the trees) land in every
           // camera wedge instead of gambling on uniform randomness.
@@ -1006,6 +1125,13 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
             dummy.scale.setScalar(spec.sMin + floraRng() * (spec.sMax - spec.sMin));
             dummy.updateMatrix();
             matrices[i % variants.length].push(dummy.matrix.clone());
+            if (isFlower) {
+              flowerSpots.push({
+                x: dummy.position.x,
+                y: variantTopY[i % variants.length] * dummy.scale.x + 0.05,
+                z: dummy.position.z,
+              });
+            }
           }
           variants.forEach((variant, v) => {
             if (matrices[v].length === 0) {
@@ -1060,33 +1186,92 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         group.add(hill);
       }
 
-      // Butterflies: two wings hinged on the body line, flapping while they
-      // wander a slow Lissajous over the meadow (the day shift's fireflies).
-      const wingLeftGeo = new THREE.PlaneGeometry(0.15, 0.21);
-      wingLeftGeo.translate(0.08, 0, 0);
-      wingLeftGeo.rotateX(-Math.PI / 2);
-      const wingRightGeo = new THREE.PlaneGeometry(0.15, 0.21);
-      wingRightGeo.translate(-0.08, 0, 0);
-      wingRightGeo.rotateX(-Math.PI / 2);
-      const butterflyBodyGeo = new THREE.CylinderGeometry(0.015, 0.022, 0.24, 5);
-      butterflyBodyGeo.rotateX(Math.PI / 2);
-      const butterflyBodyMat = new THREE.MeshPhongMaterial({ color: 0x4a3527 });
+      // Butterflies: alpha-cutout two-lobed wings (procedural veined texture,
+      // one shared material per palette variant) hinged on the body line.
+      // Flight is a tiny per-butterfly state machine instead of a Lissajous:
+      // bursts of quick asymmetric flaps alternate with brief V-wing glides,
+      // the heading meanders on a retargeted turn rate (occasionally held
+      // hard-over into a slow loop), the body banks into turns and bobs with
+      // the flap — and once the flora arrives they sometimes land on a
+      // flower, fold their wings upright, and sit for a moment.
+      const wingLeftGeo = new THREE.PlaneGeometry(0.34, 0.4);
+      wingLeftGeo.translate(0.34 / 2 + 0.008, 0, 0); // hinge at the body line
+      wingLeftGeo.rotateX(Math.PI / 2); // lie flat; v=1 (canvas top) → +Z head
+      const wingRightGeo = wingLeftGeo.clone();
+      wingRightGeo.scale(-1, 1, 1); // mirror carries the UVs — pattern flips too
+      const butterflyBodyGeo = new THREE.CapsuleGeometry(0.016, 0.17, 3, 6);
+      butterflyBodyGeo.rotateX(Math.PI / 2); // fusiform body along the flight axis
+      const butterflyBodyMat = new THREE.MeshPhongMaterial({ color: 0x2e2115, shininess: 8 });
       const butterflyColors = [0xfff6e8, 0xffd166, 0xf5a0c1, 0x9ad7f0, 0xffa94d];
-      const butterflies: { group: THREE.Group; left: THREE.Mesh; right: THREE.Mesh; base: THREE.Vector3; phase: number; speed: number }[] = [];
+      const butterflyWingMats = butterflyColors.map(
+        (color) =>
+          new THREE.MeshPhongMaterial({
+            map: makeButterflyWingTexture(color),
+            side: THREE.DoubleSide,
+            alphaTest: 0.5,
+            transparent: true,
+            opacity: 0.92, // slight translucency — daylight glows through the membrane
+            emissive: 0xffffff,
+            emissiveIntensity: 0.3,
+            shininess: 4,
+          }),
+      );
+      butterflyWingMats.forEach((mat) => {
+        mat.emissiveMap = mat.map; // self-light follows the wing pattern
+      });
+      interface Butterfly {
+        group: THREE.Group;
+        left: THREE.Mesh;
+        right: THREE.Mesh;
+        homeX: number; // tether center so the wander stays spread over the meadow
+        homeZ: number;
+        heading: number;
+        speed: number;
+        cruise: number;
+        vy: number;
+        turnRate: number;
+        turnTarget: number;
+        turnT: number; // countdown to the next turn-rate retarget
+        targetAlt: number;
+        flapPhase: number; // in beats (advances only while flapping)
+        flapFreq: number; // beats/s
+        flapEnv: number; // 0 glide/rest ↔ 1 full flap, eased on transitions
+        flapping: boolean;
+        modeT: number; // time left in the current flap burst / glide
+        bank: number;
+        mode: 0 | 1 | 2; // 0 wander, 1 approach flower, 2 landed
+        landT: number; // wander: next landing try; approach: abort; landed: dwell
+        tx: number;
+        ty: number;
+        tz: number;
+      }
+      const butterflies: Butterfly[] = [];
       for (let i = 0; i < 8; i++) {
-        const color = butterflyColors[i % butterflyColors.length];
-        const mat = new THREE.MeshPhongMaterial({ color, emissive: color, emissiveIntensity: 0.18, side: THREE.DoubleSide });
+        const mat = butterflyWingMats[i % butterflyWingMats.length];
         const fly = new THREE.Group();
+        fly.rotation.order = "YXZ"; // yaw along the path, then pitch, then bank
         const left = new THREE.Mesh(wingLeftGeo, mat);
         const right = new THREE.Mesh(wingRightGeo, mat);
+        // Raised at rest so a reduced-motion frame never reads as flat cards.
+        left.rotation.z = 0.6;
+        right.rotation.z = -0.6;
         fly.add(left);
         fly.add(right);
         fly.add(new THREE.Mesh(butterflyBodyGeo, butterflyBodyMat));
-        const base = new THREE.Vector3((rng() - 0.5) * 34, 1.5 + rng() * 1.8, (rng() - 0.5) * 26);
-        fly.position.copy(base);
+        fly.scale.setScalar(0.85 + rng() * 0.45);
+        const homeX = (rng() - 0.5) * 34;
+        const homeZ = (rng() - 0.5) * 26;
+        fly.position.set(homeX, 1.2 + rng() * 1.8, homeZ);
         group.add(fly);
-        butterflies.push({ group: fly, left, right, base, phase: rng() * Math.PI * 2, speed: 0.22 + rng() * 0.18 });
+        butterflies.push({
+          group: fly, left, right, homeX, homeZ,
+          heading: rng() * Math.PI * 2, speed: 0.8, cruise: 0.75 + rng() * 0.55, vy: 0,
+          turnRate: 0, turnTarget: 0, turnT: rng(), targetAlt: 1.2 + rng() * 2,
+          flapPhase: rng(), flapFreq: 6.5 + rng() * 2.5, flapEnv: 1, flapping: true,
+          modeT: 0.5 + rng(), bank: 0, mode: 0, landT: 8 + rng() * 18, tx: 0, ty: 0, tz: 0,
+        });
       }
+      const wrapAngle = (a: number): number => Math.atan2(Math.sin(a), Math.cos(a));
 
       // Drifting seeds/pollen: tiny bright motes low over the grass.
       const motes: { sprite: THREE.Sprite; base: THREE.Vector3; phase: number }[] = [];
@@ -1101,26 +1286,141 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         motes.push({ sprite, base, phase: rng() * Math.PI * 2 });
       }
 
+      // Flap waveform bounds: each side sweeps from just below horizontal up
+      // to ~76° over the back; landed wings fold to ~79° and pump slowly.
+      const FLAP_MIN = -0.22;
+      const FLAP_MAX = 1.32;
+      const GLIDE_ANGLE = 0.42; // shallow dihedral V while gliding
+      const WING_FOLD = 1.38;
       return {
-        update: (t) => {
+        update: (t, dt) => {
           if (reducedMotion) {
             return;
           }
           for (const fly of butterflies) {
-            fly.group.position.set(
-              fly.base.x + Math.sin(t * fly.speed + fly.phase) * 2.6,
-              fly.base.y + Math.sin(t * 0.9 + fly.phase * 2) * 0.5,
-              fly.base.z + Math.cos(t * fly.speed * 0.85 + fly.phase) * 2.6,
-            );
-            // Face the direction of travel (velocity of the Lissajous above).
-            const vx = Math.cos(t * fly.speed + fly.phase) * fly.speed;
-            const vz = -Math.sin(t * fly.speed * 0.85 + fly.phase) * fly.speed * 0.85;
-            fly.group.rotation.y = Math.atan2(vx, vz);
-            // Bias toward raised wings so a frozen frame never reads as a
-            // flat paper card lying on the meadow.
-            const flap = 0.3 + Math.abs(Math.sin(t * 9 + fly.phase)) * 0.9;
-            fly.left.rotation.z = flap;
-            fly.right.rotation.z = -flap;
+            const pos = fly.group.position;
+            let restAngle = GLIDE_ANGLE;
+            if (fly.mode === 2) {
+              // Landed on a flower: sit still, wings folded upright with an
+              // occasional slow open-close pump, then burst off again.
+              fly.landT -= dt;
+              fly.flapping = false;
+              restAngle = WING_FOLD - Math.max(0, Math.sin(t * 1.7 + fly.flapPhase * 9)) * 0.45;
+              if (fly.landT <= 0) {
+                fly.mode = 0;
+                fly.flapping = true;
+                fly.modeT = 0.9 + rng() * 0.8; // takeoff burst
+                fly.vy = 0.9;
+                fly.speed = 0.3;
+                fly.landT = 14 + rng() * 22;
+                fly.targetAlt = 1.4 + rng() * 2;
+              }
+            } else {
+              // Flap cadence: bursts of quick beats with brief glides between
+              // (an approach stays powered all the way onto the flower).
+              fly.modeT -= dt;
+              if (fly.mode === 1) {
+                fly.flapping = true;
+              } else if (fly.modeT <= 0) {
+                fly.flapping = !fly.flapping;
+                if (fly.flapping) {
+                  fly.modeT = 0.45 + rng() * 1.1;
+                  fly.heading += (rng() - 0.5) * 0.6; // burst opens with a jink
+                } else {
+                  fly.modeT = 0.25 + rng() * 0.8;
+                }
+              }
+              // Meander: retarget the turn rate about once a second; now and
+              // then hold hard-over for seconds — the slow loop.
+              fly.turnT -= dt;
+              if (fly.turnT <= 0) {
+                if (rng() < 0.09) {
+                  fly.turnTarget = (rng() < 0.5 ? -1 : 1) * (2.2 + rng() * 0.9);
+                  fly.turnT = 1.6 + rng() * 1.6;
+                } else {
+                  fly.turnTarget = (rng() - 0.5) * 4.4;
+                  fly.turnT = 0.4 + rng() * 1.1;
+                }
+                fly.targetAlt = 1.0 + rng() * 2.4;
+              }
+              let speedTarget = fly.flapping ? fly.cruise * 1.25 : fly.cruise * 0.6;
+              if (fly.mode === 1) {
+                // Home in on the flower, bleeding speed as it closes.
+                const dx = fly.tx - pos.x;
+                const dz = fly.tz - pos.z;
+                const dist = Math.hypot(dx, dz);
+                fly.turnTarget = THREE.MathUtils.clamp(wrapAngle(Math.atan2(dx, dz) - fly.heading) * 3, -3.5, 3.5);
+                speedTarget = Math.min(speedTarget, Math.max(0.3, dist * 0.9));
+                fly.landT -= dt;
+                if (dist < 0.14 && Math.abs(fly.ty - pos.y) < 0.16) {
+                  fly.mode = 2;
+                  pos.set(fly.tx, fly.ty, fly.tz);
+                  fly.landT = 1.6 + rng() * 3;
+                  fly.speed = 0;
+                  fly.vy = 0;
+                } else if (fly.landT <= 0) {
+                  fly.mode = 0; // couldn't line it up — wander off instead
+                  fly.landT = 10 + rng() * 15;
+                }
+              } else {
+                // Home tether: steer back once the wander drifts too far.
+                const hx = fly.homeX - pos.x;
+                const hz = fly.homeZ - pos.z;
+                if (hx * hx + hz * hz > 64) {
+                  fly.turnTarget = THREE.MathUtils.clamp(wrapAngle(Math.atan2(hx, hz) - fly.heading) * 2, -3, 3);
+                }
+                // Occasionally pick a nearby flower to drop onto.
+                fly.landT -= dt;
+                if (fly.landT <= 0) {
+                  fly.landT = 12 + rng() * 20;
+                  for (let attempt = 0; attempt < 4 && flowerSpots.length > 0; attempt++) {
+                    const spot = flowerSpots[(rng() * flowerSpots.length) | 0];
+                    const dx = spot.x - pos.x;
+                    const dz = spot.z - pos.z;
+                    if (dx * dx + dz * dz < 100) {
+                      fly.mode = 1;
+                      fly.tx = spot.x;
+                      fly.ty = spot.y;
+                      fly.tz = spot.z;
+                      fly.landT = 7; // approach abort timeout
+                      break;
+                    }
+                  }
+                }
+              }
+              // Integrate: ease turn rate and speed, climb while flapping,
+              // sink through glides, drift toward the target altitude.
+              fly.turnRate += (fly.turnTarget - fly.turnRate) * (1 - Math.exp(-dt * 4));
+              fly.heading += fly.turnRate * dt;
+              fly.speed += (speedTarget - fly.speed) * (1 - Math.exp(-dt * 3));
+              const vyTarget =
+                fly.mode === 1
+                  ? THREE.MathUtils.clamp((fly.ty - pos.y) * 1.4, -0.7, 0.7)
+                  : THREE.MathUtils.clamp((fly.targetAlt - pos.y) * 0.6, -0.6, 0.6) + (fly.flapping ? 0.12 : -0.3);
+              fly.vy += (vyTarget - fly.vy) * (1 - Math.exp(-dt * 3.5));
+              pos.x += Math.sin(fly.heading) * fly.speed * dt;
+              pos.z += Math.cos(fly.heading) * fly.speed * dt;
+              pos.y = THREE.MathUtils.clamp(pos.y + fly.vy * dt, 0.5, 4.2);
+              if (fly.flapping) {
+                fly.flapPhase += fly.flapFreq * dt;
+              }
+            }
+            fly.flapEnv += ((fly.flapping ? 1 : 0) - fly.flapEnv) * (1 - Math.exp(-dt * 10));
+            // Wing beat: quick upstroke (35% of the beat) toward vertical
+            // over the back, slower downstroke to just below horizontal.
+            const s = fly.flapPhase - Math.floor(fly.flapPhase);
+            const u = s < 0.35 ? s / 0.35 : 1 - (s - 0.35) / 0.65;
+            const beat = FLAP_MIN + (FLAP_MAX - FLAP_MIN) * (0.5 - 0.5 * Math.cos(u * Math.PI));
+            const wing = restAngle + (beat - restAngle) * fly.flapEnv;
+            fly.left.rotation.z = wing;
+            fly.right.rotation.z = -wing;
+            // Attitude: yaw along the path, bank into the turn, nose-up trim
+            // with a flap-coupled pitch bob.
+            fly.group.rotation.y = fly.heading;
+            const bankTarget = fly.mode === 2 ? 0 : THREE.MathUtils.clamp(-fly.turnRate * 0.28, -0.55, 0.55);
+            fly.bank += (bankTarget - fly.bank) * (1 - Math.exp(-dt * 5));
+            fly.group.rotation.z = fly.bank;
+            fly.group.rotation.x = -0.12 + Math.sin(s * Math.PI * 2) * 0.1 * fly.flapEnv;
           }
           for (const mote of motes) {
             mote.sprite.position.set(
@@ -1139,6 +1439,7 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
           skyTexture.dispose();
           groundDiff.dispose();
           groundNor.dispose();
+          butterflyWingMats.forEach((mat) => mat.map?.dispose());
           group.traverse((node) => {
             if (node instanceof THREE.InstancedMesh) {
               // Flora instances: release ONLY the instance buffers — the
@@ -3287,7 +3588,7 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
         applyRig();
       }
 
-      env?.update(t);
+      env?.update(t, dt);
 
       const garden = builtMode === "garden";
       const radial = builtKey !== null && builtKey.endsWith("radial");
