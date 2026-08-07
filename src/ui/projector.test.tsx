@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ProjectorApp, REQUIRED_PROJECTOR_REGIONS } from "./App";
+import { ControlDock, DOCK_COLLAPSE_MS, dockCollapseDue } from "./ControlDock";
 import { cursorDotsFromStored, fusionSources } from "./gesture/GestureLayer";
 import { FLEET_SCROLL_PX_PER_SECOND, FleetScrollRail, hoverScrollDelta, railOverflows } from "./FleetScroll";
 import { IdeaTray } from "./IdeaTray";
@@ -37,10 +38,14 @@ describe("projector UI contract", () => {
     expect(listeningHtml).not.toContain("Unmute");
   });
 
-  test("status bar carries the QR Import control", () => {
+  test("the status bar's QR Import control now lives inside the control dock", () => {
     const html = renderToStaticMarkup(<ProjectorApp initialSnapshot={demoProjectorSnapshot} />);
     expect(html).toContain('data-testid="qr-import-button"');
     expect(html).toContain("QR Import");
+    // Same control, calmer resting state: it renders within the dock tray.
+    expect(html.indexOf('data-testid="qr-import-button"')).toBeGreaterThan(
+      html.indexOf('data-testid="control-dock-tray"'),
+    );
   });
 
   test("no URL params (SSR/full view): no wall badge, no gesture overlay", () => {
@@ -807,6 +812,83 @@ describe("gesture-mode status bar keeps only actionable controls", () => {
     expect(desk).toContain('data-testid="active-cue"');
     expect(desk).toContain("READ-ONLY · NON-AUTHORITATIVE");
     expect(desk).toContain('data-testid="emergency-status"');
+  });
+});
+
+// CONTROL DOCK (calm wall): the always-visible control row folded behind ONE
+// "⚙ Controls" affordance (ControlDock.tsx). Hover — mouse :hover or a dwell
+// cursor's data-dwell-hot, FleetScroll-style — expands the popover tray, and
+// ~4s after every cursor leaves it collapses again. SSR renders the tray
+// MARKUP with the dock collapsed (data-expanded="false"; CSS hides it), so
+// the moved buttons stay assertable by testid.
+describe("control dock: one calm affordance replaces the button row", () => {
+  const html = renderToStaticMarkup(<ProjectorApp initialSnapshot={demoProjectorSnapshot} />);
+  const trayIdx = html.indexOf('data-testid="control-dock-tray"');
+  // The dock is the header's last element; everything between the tray marker
+  // and the suggestion region (the next sibling of the header) is INSIDE it.
+  const headerEndIdx = html.indexOf('data-region="suggestion"');
+
+  test("the dock button renders, collapsed by default", () => {
+    expect(html).toContain('data-testid="control-dock" data-expanded="false"');
+    expect(html).toContain('data-testid="control-dock-button"');
+    expect(html).toContain("⚙ Controls");
+    expect(trayIdx).toBeGreaterThan(-1);
+    expect(headerEndIdx).toBeGreaterThan(trayIdx);
+  });
+
+  test("the routine controls render INSIDE the dock tray", () => {
+    for (const id of [
+      'data-testid="mic-capture-button"',
+      'data-testid="auto-build-button"',
+      'data-testid="research-mode-button"',
+      'data-testid="qr-import-button"',
+      'data-testid="guest-hands-button"',
+      'data-testid="guided-demo-button"',
+    ]) {
+      const idx = html.indexOf(id);
+      expect(idx).toBeGreaterThan(trayIdx);
+      expect(idx).toBeLessThan(headerEndIdx);
+    }
+  });
+
+  test("alert-state chrome stays OUTSIDE the dock: emergency banner + the muted room's Unmute", () => {
+    // The emergency banner precedes (is outside) the dock.
+    expect(html.indexOf('data-testid="emergency-status"')).toBeLessThan(trayIdx);
+    // The muted room's Unmute SAFETY control never folds behind the hover.
+    const muted = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={{ ...demoProjectorSnapshot, muted: true, listening: false }} />,
+    );
+    const unmuteIdx = muted.indexOf('data-testid="unmute-button"');
+    expect(unmuteIdx).toBeGreaterThan(-1);
+    expect(unmuteIdx).toBeLessThan(muted.indexOf('data-testid="control-dock-tray"'));
+  });
+
+  test("gesture mode carries the same single dock (the toggle is a .ctl-button → XL dwell target)", () => {
+    const gesture = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch="?live=0&wall=A&view=ideas&gesture=1" />,
+    );
+    expect(gesture).toContain('data-testid="control-dock-button"');
+    expect(gesture).toContain('data-testid="control-dock" data-expanded="false"');
+  });
+
+  test("expanded (test seam): tray buttons stay plain enabled <button>s for dwell targeting", () => {
+    const open = renderToStaticMarkup(
+      <ControlDock initialExpanded>
+        <button type="button" data-testid="docked-button">
+          Auto-Build
+        </button>
+      </ControlDock>,
+    );
+    expect(open).toContain('data-testid="control-dock" data-expanded="true"');
+    expect(open).toContain('data-testid="docked-button"');
+    expect(open).not.toContain("disabled");
+  });
+
+  test("collapse timing: ~4s of no hover-hot/:hover anywhere folds the dock", () => {
+    expect(DOCK_COLLAPSE_MS).toBeGreaterThanOrEqual(3_000);
+    expect(DOCK_COLLAPSE_MS).toBeLessThanOrEqual(6_000);
+    expect(dockCollapseDue(DOCK_COLLAPSE_MS - 1)).toBe(false);
+    expect(dockCollapseDue(DOCK_COLLAPSE_MS + 1)).toBe(true);
   });
 });
 

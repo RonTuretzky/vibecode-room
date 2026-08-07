@@ -11,9 +11,10 @@
 //
 // Wall routing: each wall window subscribes with a {"type":"hello","wall":"A"}
 // (GestureWallClient's existing handshake) and each guest picks a wall the same
-// way (defaulting to the first subscribed wall). A guest's frames go ONLY to
-// matching-wall subscribers — both wall windows render the same full room, so
-// mirroring one guest onto both would double-fire every dwell.
+// way (defaulting to the first subscribed wall). A guest's CURSOR frames go
+// ONLY to matching-wall subscribers — both wall windows render the same full
+// room, so mirroring one guest onto both would double-fire every dwell. Key
+// HOLDS are the exception: they broadcast to every window (see #relayKeys).
 
 import { GUEST_ID_STRIDE, guestCursorId } from "../ui/gesture/remote";
 import { Point2DFilter } from "../ui/gesture/core";
@@ -321,17 +322,24 @@ export class RemoteHandsHub {
     }
   }
 
-  // Remote WASD: relay a guest's held camera keys to its wall, tagged with the
-  // guest seq so the wall can merge holds across guests and time out a silent
-  // one. Same wall routing as cursors — keys must not drive both windows.
+  // Remote WASD: relay a guest's held camera keys to EVERY subscribed window,
+  // tagged with the guest seq so each wall can merge holds across guests and
+  // time out a silent one. UNLIKE cursors (wall-routed — mirroring a guest's
+  // dot onto both windows would double-fire every dwell), key HOLDS must reach
+  // every window: the flat pair shares ONE camera rig that only stays in
+  // lockstep if both windows integrate the identical hold timeline, and on the
+  // desk rig each window owns an independent camera, so both of them walking
+  // is acceptable — expected, even. Each frame is stamped with the RECEIVING
+  // room's wall because the wall client's parser drops frames stamped for
+  // another wall.
   #relayKeys(peer: GuestPeer, held: GuestKey[]): void {
     peer.lastHeld = held;
-    const wall = this.#resolveWall(peer);
-    const frame = { type: "keys" as const, wall, guest: peer.seq, held, t: this.#now() };
+    const t = this.#now();
     for (const room of this.#rooms) {
-      if (room.wall === wall) {
-        safeSend(room.send, frame);
+      if (room.wall === null) {
+        continue; // not helloed yet — its client has no wall to match on
       }
+      safeSend(room.send, { type: "keys" as const, wall: room.wall, guest: peer.seq, held, t });
     }
   }
 }

@@ -4,6 +4,7 @@ import {
   GUEST_ID_STRIDE,
   RemoteKeyHolds,
   guestCursorId,
+  guestDwellCaps,
   isGuestCursorId,
   roomHandsSocketUrl,
   shouldDrawCursorDot,
@@ -49,6 +50,16 @@ describe("isGuestCursorId", () => {
     // guest range would eventually be invaded. Negatives are disjoint forever.
     expect(isGuestCursorId(1000)).toBe(false);
     expect(isGuestCursorId(1_000_000)).toBe(false);
+  });
+});
+
+describe("guestDwellCaps", () => {
+  test("guest-block ids hover-dwell and instant-fire; camera/mouse ids keep the engaged gate", () => {
+    expect(guestDwellCaps(GUEST_ID_BASE)).toEqual({ hoverDwells: true, instantFire: true });
+    expect(guestDwellCaps(guestCursorId(2, 1))).toEqual({ hoverDwells: true, instantFire: true });
+    expect(guestDwellCaps(0)).toEqual({}); // fusion track
+    expect(guestDwellCaps(1_000_000)).toEqual({}); // long-session fusion track
+    expect(guestDwellCaps(-1)).toEqual({}); // the mouse-test cursor
   });
 });
 

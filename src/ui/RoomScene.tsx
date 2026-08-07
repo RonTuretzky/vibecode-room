@@ -842,12 +842,13 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
     // plane, so the pair tiles one continuous picture on the flat wall.
     //
     // SHARED ORBIT: unlike the corner pair, the flat rig is NOT frozen — the
-    // pinch camera may orbit/zoom the WHOLE panorama about the scene centre.
-    // Continuity survives because every wall window receives the IDENTICAL
-    // hands stream and applies the IDENTICAL deltas to this rig, so the
-    // shared pose stays in lockstep with no cross-window channel. Mouse/fit/
-    // focus/WASD stay gated off — only the deterministic stream-fed writers
-    // may move it.
+    // pinch camera may orbit/zoom the WHOLE panorama about the scene centre,
+    // and WASD holds dolly/turn it (see the frame loop). Continuity survives
+    // because every wall window receives the IDENTICAL input stream (hands
+    // fusion; guest key holds broadcast by the relay hub) and applies the
+    // IDENTICAL deltas to this rig, so the shared pose stays in lockstep with
+    // no cross-window channel. Mouse/fit/focus stay gated off — only these
+    // deterministic stream-fed writers may move it.
     const flatLocked = flatLockRef.current;
     const flatRig = { yaw: FLAT_YAW, height: FLAT_EYE_HEIGHT, dist: FLAT_EYE_DISTANCE };
     // SMOOTHED APPLICATION: the targets above step at the 30 Hz hands-stream
@@ -3151,6 +3152,24 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
       }
       const smoothing = 1 - Math.exp(-dt * 7);
       if (flatLocked) {
+        // WASD under the flat lock drives the SHARED pair targets: W/S dolly
+        // the whole panorama (flatRig.dist, the same [6,45] envelope as the
+        // pinch zoom), A/D turn it (flatRig.yaw; +yaw turns the view left in
+        // this rig's convention). Deterministic like every other flat-rig
+        // writer: both windows receive identical keydown/keyup timing from
+        // the same source (the relay hub broadcasts guest key holds to EVERY
+        // window), so the dt-integrated totals match to within one frame —
+        // the same transient tolerance the eased rig below already absorbs.
+        // (The corner lock stays keys-dead: its rigid pair never moves.)
+        if (keysDown.size > 0) {
+          if (keysDown.has("w") !== keysDown.has("s")) {
+            const dolly = (keysDown.has("w") ? -6 : 6) * dt; // ~6 units/s
+            flatRig.dist = Math.max(6, Math.min(45, flatRig.dist + dolly));
+          }
+          if (keysDown.has("a") !== keysDown.has("d")) {
+            flatRig.yaw += (keysDown.has("a") ? 0.9 : -0.9) * dt; // ~0.9 rad/s
+          }
+        }
         // Rigid flat pair: reassert the locked framing every frame so no
         // stray camera write can ever shear the seam between the halves —
         // same contract as the corner pair below (eased toward the shared

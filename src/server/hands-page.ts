@@ -119,14 +119,14 @@ export function handsPageHtml(): string {
   </div>
 
   <div class="surface" id="pad" data-testid="guest-pad">
-    <div id="pad-hint">hover to aim · press and hold still to click</div>
+    <div id="pad-hint">hover to aim · hold still to click — or press to click instantly</div>
     <div id="pad-dot"></div>
   </div>
 
   <div class="surface" id="cam" hidden>
     <canvas id="cam-canvas"></canvas>
     <div id="cam-note">starting camera…</div>
-    <div id="cam-status" hidden>pinch to click — hold still</div>
+    <div id="cam-status" hidden>pinch to click — your cursor freezes while pinched</div>
   </div>
 
   <!-- Remote WASD: walk the wall's 3D camera (same fly-through the desk
@@ -144,9 +144,10 @@ export function handsPageHtml(): string {
 
   <p class="hint">
     This pad is the wall: your dot appears on the room screen where you point. To click something,
-    hold your cursor still on it until the ring around it completes (~1s).
-    Camera mode: point by moving your open hand, click by <strong>pinching</strong> thumb+index
-    and holding still. Hand tracking runs entirely in your browser — only cursor positions are sent.
+    hold your cursor still on it until the ring around it completes (~1s) — or press/pinch while
+    on it to click instantly. Camera mode: point by moving your open hand, click by
+    <strong>pinching</strong> thumb+index; your cursor freezes while pinched, so the click always
+    lands where you aimed. Hand tracking runs entirely in your browser — only cursor positions are sent.
   </p>
 </main>
 <script type="module">
@@ -177,13 +178,15 @@ export function handsPageHtml(): string {
   const PINCH_OFF_FRAMES = 3;      // consecutive above-OFF frames to release
   const HAND_LOST_FRAMES = 5;      // pinch survives 1–2-frame tracking dropouts; gone this long → force release
   const ENGAGE_MAX_SPEED = 0.9;    // normalized units/sec (pre-filter): moving this fast suppresses NEW engage votes, never release
-  // Heisenberg fix: the pinch motion itself drags the palm centroid, so a
-  // confirmed engage snaps the cursor back to where it was BACKTRACK_MS before
-  // the first engage vote and holds it frozen until release — or until the live
-  // cursor drifts past FREEZE_RADIUS (a deliberate drag must still work).
+  // Heisenberg fix, HARD freeze (operator request): the pinch motion itself
+  // drags the palm centroid, so a confirmed engage snaps the cursor back to
+  // where it was BACKTRACK_MS before the first engage vote — and then the
+  // cursor does not move AT ALL for as long as the pinch holds (no drift
+  // unfreeze; pinch-dragging is deliberately impossible). Releasing the pinch
+  // resumes the live cursor — the filters keep running underneath, so there
+  // is no catch-up lag on release.
   const CURSOR_HISTORY = 8;        // ring buffer of filtered positions (frames)
   const BACKTRACK_MS = 120;
-  const FREEZE_RADIUS = 0.04;      // normalized units
   const ARMED_RATIO = 0.6;         // guest-side feedback: ring tightens below this ratio
   // SELF-HOSTED (offline LAN): the tracker bundle, wasm, and model are served
   // by the room itself under /hands/assets — a guest phone needs zero
@@ -580,11 +583,9 @@ export function handsPageHtml(): string {
       st.history.push({ x, y, t: tMs });
       if (st.history.length > CURSOR_HISTORY) st.history.shift();
       const ratio = st.fr(pinchRatio(lm, aspect), tSec);
-      // Unfreeze on deliberate drag (checked before the state machine so the
-      // engage-confirm frame always sends its backtracked snap position).
-      if (st.frozen !== null && Math.hypot(x - st.frozen.x, y - st.frozen.y) > FREEZE_RADIUS) {
-        st.frozen = null;
-      }
+      // HARD freeze: while engaged, st.frozen IS the cursor — the live
+      // filtered position keeps advancing underneath but never goes out on
+      // the wire until the pinch releases (which nulls st.frozen below).
       if (st.engaged) {
         st.offVotes = ratio > PINCH_OFF ? st.offVotes + 1 : 0;
         if (st.offVotes >= PINCH_OFF_FRAMES) {

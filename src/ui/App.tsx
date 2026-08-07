@@ -17,6 +17,7 @@ import { GuestHands } from "./GuestHands";
 import { roomHandsSocketUrl } from "./gesture/remote";
 import { HelpOverlay } from "./HelpOverlay";
 import { BuildChips, CommissionButton, ExecutionChip, ProcessControls } from "./BuildChips";
+import { ControlDock } from "./ControlDock";
 import { FleetScrollRail } from "./FleetScroll";
 import { TakeHomeQr } from "./TakeHomeQr";
 import { buildsOf, lifecycleActionsFor, looksLikeSnapshot } from "./buildloop";
@@ -1715,7 +1716,10 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
               {snapshot.emergencyStopTriggered ? "EMERGENCY STOP" : "ALL CLEAR"}
             </div>
           ) : null}
-          {/* Idea-side controls (voice → idea pipeline): wall A + full view. */}
+          {/* UNMUTE — the SAFETY control. A muted room must SAY so and offer
+              the release right on the wall, so it stays OUTSIDE the control
+              dock (like the emergency banner: alert-state chrome never folds
+              behind a hover). Idea-side placement: wall A + full view. */}
           {showIdeaSurfaces && snapshot.muted ? (
             <button
               type="button"
@@ -1727,6 +1731,12 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
               {isUnmuting ? "Unmuting" : "Unmute"}
             </button>
           ) : null}
+          {/* CONTROL DOCK (calm wall): every routine control folds behind ONE
+              "⚙ Controls" affordance — hover/dwell/focus expands the popover
+              tray, and it collapses ~4s after every cursor leaves (see
+              ControlDock.tsx). The per-wall ?view gating of each button is
+              unchanged; only its resting visibility moved. */}
+          <ControlDock>
           {/* ONE control for mic + capture (live-room request): activating
               unmutes + starts the mic AND turns Idea Capture on; deactivating
               stops both. Replaces the separate Mic and Idea Capture buttons. */}
@@ -1822,6 +1832,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
               {mockMode ? "● Mock Room" : "Mock Room"}
             </button>
           ) : null}
+          </ControlDock>
         </div>
       </header>
 

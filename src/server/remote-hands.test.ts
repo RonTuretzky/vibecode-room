@@ -98,6 +98,12 @@ function makeHub(): RemoteHandsHub {
 
 const hello = (wall?: string) => JSON.stringify({ type: "hello", ...(wall !== undefined ? { wall } : {}) });
 const cursorsFrame = (cursors: unknown[]) => JSON.stringify({ type: "cursors", cursors });
+const keysFramesOf = (peer: FakePeer) =>
+  peer.sent.filter((m) => (m as { type: string }).type === "keys") as Array<{
+    wall: string;
+    guest: number;
+    held: string[];
+  }>;
 
 describe("RemoteHandsHub", () => {
   test("welcomes a guest with its reserved global ids and the known walls", () => {
@@ -235,7 +241,7 @@ describe("RemoteHandsHub", () => {
     expect(room.sent.filter((m) => (m as { type: string }).type === "cursors")).toHaveLength(2);
   });
 
-  test("keys frames relay wall-routed with the guest seq; disconnect releases held keys", () => {
+  test("keys frames broadcast to EVERY window with the guest seq; disconnect releases held keys everywhere", () => {
     const hub = makeHub();
     const roomA = fakePeer();
     const roomB = fakePeer();
@@ -244,19 +250,37 @@ describe("RemoteHandsHub", () => {
 
     const conn = hub.addGuest(fakePeer().send);
     conn.message(JSON.stringify({ type: "keys", held: ["w", "d", "w", "x"] })); // dupes + junk dropped
-    const keysA = roomA.sent.filter((m) => (m as { type: string }).type === "keys") as Array<{
-      wall: string;
-      guest: number;
-      held: string[];
-    }>;
-    expect(keysA).toHaveLength(1);
-    expect(keysA[0]).toMatchObject({ wall: "A", guest: 0, held: ["w", "d"] });
-    expect(roomB.sent.filter((m) => (m as { type: string }).type === "keys")).toHaveLength(0);
+    // Unlike cursors, key holds reach BOTH windows: the flat pair shares one
+    // camera rig that only stays in lockstep if every window integrates the
+    // identical hold timeline. Each frame is stamped with the RECEIVING
+    // room's wall so the wall client's wall-match parse accepts it.
+    expect(keysFramesOf(roomA)).toHaveLength(1);
+    expect(keysFramesOf(roomA)[0]).toMatchObject({ wall: "A", guest: 0, held: ["w", "d"] });
+    expect(keysFramesOf(roomB)).toHaveLength(1);
+    expect(keysFramesOf(roomB)[0]).toMatchObject({ wall: "B", guest: 0, held: ["w", "d"] });
 
     conn.close();
-    const after = roomA.sent.filter((m) => (m as { type: string }).type === "keys") as Array<{ held: string[] }>;
-    expect(after).toHaveLength(2);
-    expect(after[1].held).toEqual([]); // the wall camera must never keep walking
+    // The release must reach every window too — no wall camera may keep walking.
+    expect(keysFramesOf(roomA)).toHaveLength(2);
+    expect(keysFramesOf(roomA)[1].held).toEqual([]);
+    expect(keysFramesOf(roomB)).toHaveLength(2);
+    expect(keysFramesOf(roomB)[1].held).toEqual([]);
+  });
+
+  test("a guest's explicit wall pick routes cursors only — both rooms still receive its key holds", () => {
+    const hub = makeHub();
+    const roomA = fakePeer();
+    const roomB = fakePeer();
+    hub.addRoom(roomA.send).message(hello("A"));
+    hub.addRoom(roomB.send).message(hello("B"));
+
+    const conn = hub.addGuest(fakePeer().send);
+    conn.message(hello("B"));
+    conn.message(JSON.stringify({ type: "keys", held: ["w"] }));
+    expect(keysFramesOf(roomA)).toHaveLength(1);
+    expect(keysFramesOf(roomA)[0]).toMatchObject({ wall: "A", guest: 0, held: ["w"] });
+    expect(keysFramesOf(roomB)).toHaveLength(1);
+    expect(keysFramesOf(roomB)[0]).toMatchObject({ wall: "B", guest: 0, held: ["w"] });
   });
 
   test("malformed keys frames are dropped; an empty release is not re-sent on close", () => {

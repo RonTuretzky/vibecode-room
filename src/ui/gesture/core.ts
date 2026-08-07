@@ -145,6 +145,25 @@ export interface DwellEvent {
   selected: boolean;
 }
 
+// Per-cursor dwell capabilities — the seam that lets LAN guest cursors (see
+// guestDwellCaps in ./remote) interact differently from camera/fusion cursors
+// without forking the selector:
+//   hoverDwells — dwell accumulates from hover alone; `engaged` is not
+//     required. Camera cursors keep the engaged gate (an open roaming hand
+//     must never click), but a guest's cursor IS deliberate aim — merely
+//     parking it on a target should click.
+//   instantFire — an engage EDGE (pinch closing / pad press landing) while
+//     over a target completes the selection immediately instead of waiting
+//     out the remaining dwell. Edge-triggered on purpose: dragging onto a
+//     target while ALREADY engaged (trackpad guests aim by press-dragging)
+//     must not fire on crossing.
+// Both paths run through the same cooldown + consumed-latch guards as a timed
+// dwell, so neither can double-fire.
+export interface DwellCaps {
+  hoverDwells?: boolean;
+  instantFire?: boolean;
+}
+
 export class DwellSelector {
   readonly #dwellSeconds: number;
   readonly #cooldownSeconds: number;
@@ -159,6 +178,11 @@ export class DwellSelector {
   #enterTime: number | null = null;
   #cooldownUntil = 0;
   #consumed: Zone | null = null;
+  // Previous update's engagement — instantFire is EDGE-triggered (fires only
+  // on the false→true transition), so a held pinch can never machine-gun.
+  // Deliberately NOT cleared by reset(): a mid-pinch reset (zone locked away,
+  // post-fire) must not manufacture a fresh edge on the next frame.
+  #wasEngaged = false;
 
   constructor(dwellSeconds = 0.8, cooldownSeconds = 0.4, hysteresis = 0.15, refireOnlyAfterLeave = false) {
     if (!(dwellSeconds > 0)) {
@@ -185,8 +209,16 @@ export class DwellSelector {
   }
 
   // `cursor` is a normalized [x,y] tuple (or null when no hand). `t` is seconds.
-  update(zones: readonly Zone[], cursor: readonly [number, number] | null, t: number, engaged = true): DwellEvent | null {
-    if (!engaged || cursor === null) {
+  update(
+    zones: readonly Zone[],
+    cursor: readonly [number, number] | null,
+    t: number,
+    engaged = true,
+    caps: DwellCaps = {},
+  ): DwellEvent | null {
+    const engagedEdge = engaged && cursor !== null && !this.#wasEngaged;
+    this.#wasEngaged = engaged && cursor !== null;
+    if (cursor === null || (!engaged && caps.hoverDwells !== true)) {
       this.#consumed = null; // hand pulled away — a fresh approach may re-fire
       this.reset();
       return null;
@@ -214,6 +246,12 @@ export class DwellSelector {
       this.reset();
       return null;
     }
+    // Fast path: an engage edge over a target fires NOW. The cooldown and
+    // consumed-latch guards above already ran (and the caller's zone lock
+    // filtered `zones`), so this cannot double-fire a just-clicked control.
+    if (engagedEdge && caps.instantFire === true) {
+      return this.#fire(target, t);
+    }
     if (target !== this.activeZone) {
       this.activeZone = target;
       this.#enterTime = t;
@@ -223,16 +261,20 @@ export class DwellSelector {
     const elapsed = t - (this.#enterTime ?? t);
     this.progress = Math.max(0, Math.min(1, elapsed / this.#dwellSeconds));
     if (elapsed >= this.#dwellSeconds) {
-      target.selected = !target.selected;
-      const event: DwellEvent = { zoneId: target.id, selected: target.selected };
-      this.#cooldownUntil = t + this.#cooldownSeconds;
-      if (this.#refireOnlyAfterLeave) {
-        this.#consumed = target;
-      }
-      this.reset();
-      return event;
+      return this.#fire(target, t);
     }
     return null;
+  }
+
+  #fire(target: Zone, t: number): DwellEvent {
+    target.selected = !target.selected;
+    const event: DwellEvent = { zoneId: target.id, selected: target.selected };
+    this.#cooldownUntil = t + this.#cooldownSeconds;
+    if (this.#refireOnlyAfterLeave) {
+      this.#consumed = target;
+    }
+    this.reset();
+    return event;
   }
 
   #resolveTarget(zones: readonly Zone[], x: number, y: number): Zone | null {

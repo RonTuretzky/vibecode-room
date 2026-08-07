@@ -15,6 +15,8 @@
 // a stable id per physical hand, which is what keeps its dwell state and hue
 // steady across frames.
 
+import type { DwellCaps } from "./core";
+
 export const GUEST_ID_BASE = -1000;
 export const GUEST_ID_STRIDE = 8;
 
@@ -27,6 +29,17 @@ export function guestCursorId(guestSeq: number, localId: number): number {
 
 export function isGuestCursorId(id: number): boolean {
   return id <= GUEST_ID_BASE;
+}
+
+// The wall-side dwell capabilities for a cursor id (fed to MultiDwell). A
+// guest steering a dot from their own laptop is ALWAYS deliberately aiming —
+// there is no "open roaming hand" state to guard against — so hover alone
+// accumulates dwell (no pinch/press marathon required to click), and a pinch
+// or pad press landing on a target clicks it immediately (the fast path).
+// Camera/fusion cursors (and the -1 mouse-test cursor) get no caps: their
+// dwell keeps requiring `engaged`, exactly as before guests existed.
+export function guestDwellCaps(id: number): DwellCaps {
+  return isGuestCursorId(id) ? { hoverDwells: true, instantFire: true } : {};
 }
 
 // Guests aiming from their own laptop NEED to see their dot on the wall (they

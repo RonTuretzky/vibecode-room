@@ -9,7 +9,7 @@
 // Pure logic — no DOM, no sockets — so the whole state machine is unit-testable
 // with fake cursor feeds.
 
-import { DwellSelector, type Zone } from "./core";
+import { DwellSelector, type DwellCaps, type Zone } from "./core";
 
 export interface DwellCursor {
   id: number;
@@ -44,6 +44,11 @@ export interface MultiDwellOptions {
   // After a zone fires it is locked for ALL cursors this long (first-to-dwell
   // wins; the runner-up cannot immediately re-fire the same control).
   lockSeconds?: number;
+  // Per-cursor dwell capabilities keyed by cursor id (see DwellCaps in
+  // ./core). The wall passes remote.ts's guestDwellCaps so LAN guest cursors
+  // hover-dwell and pinch-to-fire while camera cursors keep the engaged gate.
+  // Default: no caps for anyone.
+  capabilities?: (cursorId: number) => DwellCaps;
 }
 
 export class MultiDwell {
@@ -51,6 +56,7 @@ export class MultiDwell {
   readonly #cooldownSeconds: number;
   readonly #hysteresis: number;
   readonly #lockSeconds: number;
+  readonly #capabilities: (cursorId: number) => DwellCaps;
   readonly #dwellers = new Map<number, DwellSelector>();
   // zoneId -> owning cursorId (the primary). A zone claimed by one cursor is
   // invisible to every other cursor's target resolution.
@@ -65,6 +71,7 @@ export class MultiDwell {
     this.#cooldownSeconds = options.cooldownSeconds ?? 0.4;
     this.#hysteresis = options.hysteresis ?? 0.15;
     this.#lockSeconds = options.lockSeconds ?? 0.4;
+    this.#capabilities = options.capabilities ?? (() => ({}));
   }
 
   #isLocked(zoneId: string, t: number): boolean {
@@ -131,7 +138,7 @@ export class MultiDwell {
         }
       }
 
-      const event = dweller.update(visible, [cursor.x, cursor.y], t, cursor.engaged);
+      const event = dweller.update(visible, [cursor.x, cursor.y], t, cursor.engaged, this.#capabilities(cursor.id));
 
       // Claim bookkeeping AFTER the update so a fired (reset) dweller releases
       // its claim and a fresh acquisition claims immediately — before the next

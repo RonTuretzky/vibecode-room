@@ -4,7 +4,7 @@ import { idToHue } from "./core";
 import { GestureTargets, HITBOX_INFLATE_PX, inflateRect, type TargetDescriptor } from "./targets";
 import { MultiDwell } from "./multi";
 import { getSceneDwellSource } from "./scene-source";
-import { RemoteKeyHolds, visibleCursorDots } from "./remote";
+import { RemoteKeyHolds, guestDwellCaps, isGuestCursorId, visibleCursorDots } from "./remote";
 import { GestureWallClient, type GestureCursor, type GestureWallStatus } from "./wall-client";
 
 // Dwell/interaction tuning — matches the standalone wall client
@@ -125,6 +125,9 @@ export function GestureLayer({ wall, fusionUrl, remoteUrl = "", mouseTest = fals
       cooldownSeconds: COOLDOWN_SECONDS,
       hysteresis: HYSTERESIS,
       lockSeconds: LOCK_SECONDS,
+      // LAN guest cursors (the reserved negative id block) hover-dwell and
+      // pinch/press-to-fire; camera/fusion cursors keep the engaged gate.
+      capabilities: guestDwellCaps,
     });
     const targets = new GestureTargets();
     // Stable per-element ids: identity-keyed so a target keeps its zone (and any
@@ -276,8 +279,11 @@ export function GestureLayer({ wall, fusionUrl, remoteUrl = "", mouseTest = fals
       // projected bounding box.
       const scene = cursors.size > 0 ? getSceneDwellSource() : null;
       if (scene !== null) {
-        for (const c of cursors.values()) {
-          if (!c.engaged) {
+        for (const [cursorId, c] of cursors) {
+          // Camera cursors must be ENGAGED to spawn scene targets (an open
+          // roaming hand should not light nodes up); guest cursors hover-dwell
+          // (guestDwellCaps), so their hover must acquire scene targets too.
+          if (!c.engaged && !isGuestCursorId(cursorId)) {
             continue;
           }
           const id = scene.pick(c.x * vpW, c.y * vpH);

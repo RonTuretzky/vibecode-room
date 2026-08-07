@@ -1086,6 +1086,76 @@ main.gesture-mode[data-view="builds"] .transcript-card {
   box-shadow: 0 0 20px rgba(245, 176, 66, 0.45);
 }
 
+/* ============================================================================
+   CONTROL DOCK — ONE calm "⚙ Controls" affordance where the button row lived
+   (ControlDock.tsx). Hover — mouse :hover or a dwell cursor's data-dwell-hot —
+   expands the tray; it folds shut ~4s after every cursor leaves. The tray is a
+   POPOVER (absolutely positioned under the dock button), so expanding never
+   reflows the status bar or the wall behind it; collapsed it is display:none,
+   which also removes its buttons from dwell targeting (zero-size rects).
+   ============================================================================ */
+.control-dock {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+/* Calm neutral glass, same family as the QR-import chrome. */
+.ctl-button.dock-toggle {
+  color: var(--ink-soft);
+  border-color: var(--glass-line);
+  background: rgba(20, 34, 44, 0.6);
+  white-space: nowrap;
+}
+
+.ctl-button.dock-toggle:hover {
+  background: rgba(0, 188, 212, 0.14);
+  color: var(--c-selected);
+}
+
+.control-dock[data-expanded="true"] .dock-toggle {
+  color: var(--c-selected);
+  border-color: rgba(0, 188, 212, 0.6);
+  background: rgba(0, 188, 212, 0.12);
+}
+
+.control-dock-tray {
+  position: absolute;
+  top: calc(100% + 12px);
+  right: 0;
+  z-index: 40;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  width: max-content;
+  max-width: min(92vw, 1080px);
+  padding: 14px;
+  border-radius: 14px;
+  background: rgba(6, 13, 20, 0.88);
+  border: 1px solid var(--glass-line);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5);
+  animation: pill-in 220ms ease;
+}
+
+.control-dock[data-expanded="false"] .control-dock-tray {
+  display: none;
+}
+
+/* Gesture mode: the XL dwell buttons need XL breathing room (24–36px gaps, see
+   the GESTURE-XL section) and most of the wall's width to wrap in. The tray
+   keeps its solid glass backing even though gesture mode strips the cluster
+   pills — a popover needs contrast to read as one surface. */
+main.gesture-mode .control-dock-tray {
+  gap: 34px;
+  padding: 28px;
+  max-width: min(94vw, 1720px);
+  border-radius: 26px;
+}
+
 /* Wall identity badge — a subtle corner label ("WALL A") so a two-wall room
    reads which projection it is facing at a glance. Never interactive. */
 .wall-badge {

@@ -516,8 +516,11 @@ describe("guest hands surface (GET /hands + /api/hands/info)", () => {
     expect(html).toContain("INSET_X_MIN");           // interaction-zone mapping
     expect(html).toContain("PINCH_ON_FRAMES");       // temporal pinch debounce
     expect(html).toContain("ENGAGE_MAX_SPEED");      // velocity gate on engage
-    expect(html).toContain("FREEZE_RADIUS");         // Heisenberg click anchor
+    expect(html).toContain("BACKTRACK_MS");          // Heisenberg click anchor (snap-back)
     expect(html).toContain("HAND_LOST_FRAMES");      // dropout-tolerant release
+    // HARD pinch freeze (operator request): while engaged the cursor must not
+    // move at all — the drift-unfreeze (FREEZE_RADIUS) must stay gone.
+    expect(html).not.toContain("FREEZE_RADIUS");
   });
 
   test("the guest page loads its hand tracker from THIS server, never a CDN (offline LAN)", async () => {
