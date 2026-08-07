@@ -61,11 +61,26 @@ function readCursorDotsPref(): boolean {
   }
 }
 
+// The &fusion= param as a source list: one WS URL, or several comma-separated
+// (camera server + arcade joystick bridge). Pure so it is testable without a
+// DOM; blanks are dropped so trailing/doubled commas can't produce a client
+// that reconnect-loops against an empty URL.
+export function fusionSources(fusionUrl: string): string[] {
+  return fusionUrl
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
 export interface GestureLayerProps {
   // The wall id to subscribe to on the fusion server (e.g. "A").
   wall: string;
-  // Fusion server WS URL (e.g. ws://localhost:8770). Empty disables the camera
-  // stream (mouse-dwell testing mode uses only the local mouse cursor).
+  // Fusion server WS URL (e.g. ws://localhost:8770), or a comma-separated
+  // LIST of them (e.g. "ws://localhost:8770,ws://localhost:8771") when extra
+  // cursor sources run beside the camera server — the arcade joystick bridge
+  // being the canonical second source. All sources merge into the same dwell
+  // pipeline by cursor id (sources own disjoint id blocks). Empty disables
+  // the camera stream (mouse-dwell testing mode uses only the local mouse).
   fusionUrl: string;
   // Guest-hands WS URL (the projector server's /api/hands/room — speaks the
   // same fusion cursors protocol, carrying LAN guests' cursors with ids in the
@@ -146,16 +161,25 @@ export function GestureLayer({ wall, fusionUrl, remoteUrl = "", mouseTest = fals
         cursors.set(c.id, { x: c.x, y: c.y, engaged: c.engaged, lastSeen: t, isMouse: false });
       }
     };
-    let client: GestureWallClient | null = null;
-    if (fusionUrl.trim().length > 0) {
-      client = new GestureWallClient({
-        url: fusionUrl,
-        wall,
-        onStatus: (s) => {
-          statusRef.current = s;
-        },
-        onCursors: mergeCursors,
-      });
+    const clients: GestureWallClient[] = fusionSources(fusionUrl).map(
+      (url, i) =>
+        new GestureWallClient({
+          url,
+          wall,
+          // Only the FIRST source (the camera fusion server) drives the status
+          // badge; extra sources (e.g. the arcade joystick bridge on :8771)
+          // merge cursors silently so an unplugged stick never reads as the
+          // wall being offline.
+          onStatus:
+            i === 0
+              ? (s) => {
+                  statusRef.current = s;
+                }
+              : undefined,
+          onCursors: mergeCursors,
+        }),
+    );
+    for (const client of clients) {
       client.start();
     }
 
@@ -347,7 +371,9 @@ export function GestureLayer({ wall, fusionUrl, remoteUrl = "", mouseTest = fals
         el.removeAttribute("data-dwell-hot");
       }
       getSceneDwellSource()?.setHighlights(new Set());
-      client?.stop();
+      for (const client of clients) {
+        client.stop();
+      }
       remoteClient?.stop();
       // Never leave a remote guest's key held down past the layer's lifetime.
       for (const key of keyHolds.releaseAll()) {

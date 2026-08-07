@@ -138,4 +138,28 @@ describe("parseProjectorUrl", () => {
     expect(config.dwell).toBe("mouse");
     expect(config.remote).toEqual({ url: null });
   });
+
+  // FLAT RIG (?flat=1): the wall pair renders halves of one wide view so two
+  // side-by-side projections on ONE flat wall tile a continuous picture.
+  test("?flat=1 opts into the flat-wall pair; anything else stays off", () => {
+    expect(parseProjectorUrl("?flat=1", "h").flat).toBe(true);
+    expect(parseProjectorUrl("?flat=0", "h").flat).toBe(false);
+    expect(parseProjectorUrl("?flat=yes", "h").flat).toBe(false);
+    expect(parseProjectorUrl("", "h").flat).toBe(false);
+  });
+
+  test("?flat=1 composes with the wall identity and gesture params untouched", () => {
+    const config = parseProjectorUrl("?live=1&wall=B&view=builds&gesture=1&flat=1", "h");
+    expect(config.flat).toBe(true);
+    expect(config.wall).toBe("B");
+    expect(config.gesture?.wall).toBe("B");
+  });
+
+  // Cursor dots are hidden by default (live-room clutter request); ?dots=1 is
+  // the launcher's per-window override so pointing always has a visible dot.
+  test("?dots=1 forces cursor dots on; anything else leaves the stored default", () => {
+    expect(parseProjectorUrl("?dots=1", "h").dots).toBe(true);
+    expect(parseProjectorUrl("?dots=0", "h").dots).toBe(false);
+    expect(parseProjectorUrl("", "h").dots).toBe(false);
+  });
 });

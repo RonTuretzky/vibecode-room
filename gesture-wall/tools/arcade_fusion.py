@@ -38,18 +38,28 @@ CURSOR_ID = 900  # distinct from camera cursor ids (small ints per person)
 
 async def run(args: argparse.Namespace) -> int:
     from websockets.asyncio.server import serve as ws_serve
+    import pygame
     from gesturewall.arcade import ArcadeStickSource
 
-    try:
-        source = ArcadeStickSource(
+    def open_stick():
+        return ArcadeStickSource(
             index=args.stick_index,
             speed=args.stick_speed,
             deadzone=args.stick_deadzone,
             engage_button=args.stick_engage,
         )
+
+    # HOT-REPLUG TOLERANCE: Bluetooth pads (Switch Pro et al.) auto-sleep and
+    # vanish from pygame mid-session, leaving a dead-but-silent handle — the
+    # classic frozen cursor. So a missing stick is never fatal: start (and
+    # keep running) without one, and re-acquire whenever it comes back.
+    try:
+        source = open_stick()
     except RuntimeError as e:
         print(f"[arcade-fusion] {e}", file=sys.stderr, flush=True)
-        return 2
+        print("[arcade-fusion] no stick yet — serving anyway; will grab it "
+              "the moment it connects (wake the controller).", flush=True)
+        source = None
 
     clients: set = set()
     start = time.monotonic()
@@ -101,10 +111,48 @@ async def run(args: argparse.Namespace) -> int:
             clients.discard(ws)
 
     async def broadcast() -> None:
+        nonlocal source
         period = 1.0 / args.fps
+        last_xy = (0.5, 0.5)
+        recheck = 0.0
         while not stop.is_set():
             tick = time.monotonic()
-            _, (x, y), engaged, _info = source.read()
+            x, y = last_xy
+            engaged = False
+            if source is not None:
+                try:
+                    _, (x, y), engaged, _info = source.read()
+                    last_xy = (x, y)
+                    # Cheap once-a-second liveness check: a slept pad reads as
+                    # frozen-but-fine, so the count is the real signal.
+                    if tick >= recheck:
+                        recheck = tick + 1.0
+                        if pygame.joystick.get_count() == 0:
+                            raise RuntimeError("joystick disconnected")
+                except Exception:  # noqa: BLE001 — device vanished mid-read
+                    print("[arcade-fusion] joystick lost — waiting for it to "
+                          "reconnect (wake the controller)…", flush=True)
+                    try:
+                        source.close()
+                    except Exception:  # noqa: BLE001
+                        pass
+                    source = None
+                    x, y = last_xy
+                    engaged = False
+            else:
+                if tick >= recheck:
+                    recheck = tick + 1.0
+                    # Re-scan the bus: quit/init refreshes pygame's device
+                    # list (stale handles are already dropped above).
+                    try:
+                        pygame.joystick.quit()
+                        pygame.joystick.init()
+                        if pygame.joystick.get_count() > 0:
+                            source = open_stick()
+                            print("[arcade-fusion] joystick re-acquired: "
+                                  f"'{source._name}'", flush=True)  # noqa: SLF001
+                    except Exception:  # noqa: BLE001 — not back yet
+                        source = None
             cursors = [{
                 "id": CURSOR_ID,
                 "x": round(x, 4),
@@ -131,7 +179,8 @@ async def run(args: argparse.Namespace) -> int:
                 await asyncio.sleep(rest)
 
     async with ws_serve(handler, args.host or None, args.port):
-        print(f"[arcade-fusion] joystick '{source._name}' -> "  # noqa: SLF001
+        stick_name = source._name if source is not None else "(waiting for stick)"  # noqa: SLF001
+        print(f"[arcade-fusion] joystick '{stick_name}' -> "
               f"ws://localhost:{args.port} wall={args.wall} "
               f"(speed={args.stick_speed}/s deadzone={args.stick_deadzone})",
               flush=True)

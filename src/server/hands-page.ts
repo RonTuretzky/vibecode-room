@@ -8,20 +8,23 @@
 //
 // Two input modes, both speaking the same guest WS protocol (/hands/ws):
 //   ✋ Camera — in-browser MediaPipe hand tracking on the guest's webcam.
-//      Cursor = palm-knuckle centroid (mirrored, so moving right moves right),
-//      engage = pinch with the SAME ratio math + hysteresis as the room's
-//      standalone bridge (gesture-wall/touchdesigner/hands_mediapipe.py):
-//      |thumb_tip−index_tip| / |wrist−middle_MCP|, aspect-corrected,
-//      ON below 0.30 / OFF above 0.45. Needs a secure context (the TLS
+//      Cursor = palm-knuckle centroid, mirrored, mapped through a central
+//      interaction-zone inset (full wall reach without stretching off camera)
+//      and One-Euro filtered (port of gesture-wall/gesturewall/filters.py).
+//      Engage = pinch: |thumb_tip−index_tip| over a foreshortening-robust palm
+//      scale, same ON<0.30/OFF>0.45 thresholds as the room's standalone bridge
+//      (gesture-wall/touchdesigner/hands_mediapipe.py) but frame-debounced,
+//      velocity-gated, and click-position-anchored — the pinch motion itself
+//      must not drag the click off-target. Needs a secure context (the TLS
 //      listener's https URL, or localhost on the host machine) — browsers
 //      refuse getUserMedia on plain LAN http. Tracking runs entirely on the
 //      guest's machine; only tiny cursor frames cross the network.
 //   🖱 Trackpad — always works, everywhere: the pad maps 1:1 onto the wall
 //      (16:9). Hover to aim (dimmed dot), press-and-hold still to dwell-click.
 //
-// MediaPipe loads from the jsdelivr CDN on the GUEST's device (the room server
-// stays local-first; a guest without internet still has the trackpad — the
-// page says so honestly instead of failing silent).
+// MediaPipe is SELF-HOSTED: the tracker bundle, wasm, and hand model are
+// served by this room server under /hands/assets (registered in app.ts) — a
+// guest device needs zero internet, only the room LAN.
 
 export function handsPageHtml(): string {
   return `<!doctype html>
@@ -73,6 +76,9 @@ export function handsPageHtml(): string {
   #cam-note { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
     color: #8b93a7; font-size: 0.95rem; text-align: center; padding: 1.5rem; }
   #cam-note a { color: #9db9ff; }
+  #cam-status { position: absolute; left: 0; right: 0; bottom: 0.4rem; text-align: center;
+    color: #8b93a7; font-size: 0.8rem; pointer-events: none; text-shadow: 0 1px 3px #0b0e14; }
+  #cam-status[hidden] { display: none; }
   p.hint { color: #8b93a7; font-size: 0.85rem; line-height: 1.5; margin: 0.85rem 0 0; }
   .wasd-row { display: flex; align-items: center; justify-content: center; gap: 1.25rem; margin-top: 0.9rem; }
   .wasd { display: grid; grid-template-columns: repeat(3, 3.4rem); grid-template-rows: repeat(2, 3.4rem); gap: 0.4rem; }
@@ -120,6 +126,7 @@ export function handsPageHtml(): string {
   <div class="surface" id="cam" hidden>
     <canvas id="cam-canvas"></canvas>
     <div id="cam-note">starting camera…</div>
+    <div id="cam-status" hidden>pinch to click — hold still</div>
   </div>
 
   <!-- Remote WASD: walk the wall's 3D camera (same fly-through the desk
@@ -146,16 +153,49 @@ export function handsPageHtml(): string {
 (() => {
   const SEND_MIN_MS = 33;          // ≤30 Hz on the wire
   const HEARTBEAT_MS = 100;        // keep a still cursor alive (wall evicts at 0.5s)
-  const PINCH_ON = 0.30;           // hands_mediapipe.py parity
+  const PINCH_ON = 0.30;           // ratio thresholds: hands_mediapipe.py parity
   const PINCH_OFF = 0.45;
-  const PALM = [0, 5, 9, 13, 17];  // wrist + finger-base knuckles: pinching never drags the cursor
-  const MEDIAPIPE_CDN = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.22";
-  const MODEL_URL = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task";
+  const PALM = [0, 5, 9, 13, 17];  // wrist + finger-base knuckles: pinching barely moves this centroid
+  // One-Euro cursor filter (Casiez et al.) — values match the repo's Kinect-side
+  // filters (gesture-wall/gesturewall/filters.py): mincutoff kills still-hand
+  // jitter, beta lets fast sweeps cut through the added lag.
+  const ONE_EURO_MINCUTOFF = 1.0;
+  const ONE_EURO_BETA = 0.02;
+  const ONE_EURO_DCUTOFF = 1.0;
+  // Pinch ratio gets its own slower scalar One-Euro: it only feeds a debounced
+  // threshold, so smoothing beats responsiveness.
+  const PINCH_EURO_MINCUTOFF = 0.8;
+  const PINCH_EURO_BETA = 0.01;
+  // Interaction-zone inset ("PHIZ"): a comfortable central sub-rect of the
+  // camera frame maps to the FULL wall — edges reachable without stretching off
+  // camera, and the 4:3 camera → 16:9 wall anisotropy stops mattering. Y is
+  // upper-middle: arms drop over a session, they don't rise.
+  const INSET_X_MIN = 0.18, INSET_X_MAX = 0.82;
+  const INSET_Y_MIN = 0.12, INSET_Y_MAX = 0.70;
+  // Pinch debounce (frames): a single noisy ratio frame can no longer click.
+  const PINCH_ON_FRAMES = 2;       // consecutive below-ON frames to engage
+  const PINCH_OFF_FRAMES = 3;      // consecutive above-OFF frames to release
+  const HAND_LOST_FRAMES = 5;      // pinch survives 1–2-frame tracking dropouts; gone this long → force release
+  const ENGAGE_MAX_SPEED = 0.9;    // normalized units/sec (pre-filter): moving this fast suppresses NEW engage votes, never release
+  // Heisenberg fix: the pinch motion itself drags the palm centroid, so a
+  // confirmed engage snaps the cursor back to where it was BACKTRACK_MS before
+  // the first engage vote and holds it frozen until release — or until the live
+  // cursor drifts past FREEZE_RADIUS (a deliberate drag must still work).
+  const CURSOR_HISTORY = 8;        // ring buffer of filtered positions (frames)
+  const BACKTRACK_MS = 120;
+  const FREEZE_RADIUS = 0.04;      // normalized units
+  const ARMED_RATIO = 0.6;         // guest-side feedback: ring tightens below this ratio
+  // SELF-HOSTED (offline LAN): the tracker bundle, wasm, and model are served
+  // by the room itself under /hands/assets — a guest phone needs zero
+  // internet, only the room server.
+  const MEDIAPIPE_BASE = "/hands/assets";
+  const MODEL_URL = "/hands/assets/hand_landmarker.task";
 
   const el = (id) => document.getElementById(id);
   const statusEl = el("status"), youEl = el("you"), youDot = el("you-dot");
   const wallsEl = el("walls"), noWallBanner = el("no-wall-banner");
   const pad = el("pad"), padDot = el("pad-dot"), cam = el("cam"), camNote = el("cam-note");
+  const camStatus = el("cam-status");
   const camCanvas = el("cam-canvas"), ctx = camCanvas.getContext("2d");
   const modeHands = el("mode-hands"), modePad = el("mode-pad");
 
@@ -346,11 +386,50 @@ export function handsPageHtml(): string {
   let landmarkerLoading = null;   // single-flight CDN load, reused across retries
   const video = document.createElement("video");
   video.playsInline = true; video.muted = true;
-  const latched = new Map();   // hand id -> pinch latch (hysteresis state)
 
+  // ── One-Euro filter — port of gesture-wall/gesturewall/filters.py ──────────
+  // (also mirrored in src/ui/gesture/core.ts). Timestamp-aware: freq is refined
+  // from the wall-clock seconds passed to each call.
+  const oneEuro = (mincutoff, beta, dcutoff) => {
+    let freq = 60, lastTime = null, s = null, ds = null;
+    const alpha = (cutoff) => 1 / (1 + freq / (2 * Math.PI * cutoff));
+    return (x, t) => {
+      if (lastTime !== null && t > lastTime) freq = 1 / (t - lastTime);
+      lastTime = t;
+      const dx = s === null ? 0 : (x - s) * freq;
+      const da = alpha(dcutoff);
+      ds = ds === null ? dx : da * dx + (1 - da) * ds;
+      const a = alpha(mincutoff + beta * Math.abs(ds));
+      s = s === null ? x : a * x + (1 - a) * s;
+      return s;
+    };
+  };
+
+  // Per-hand tracking state: filters, pinch debounce votes, Heisenberg freeze,
+  // and a short ring buffer of filtered positions for the engage backtrack.
+  const hands = new Map();
+  let prevFrameIds = [];   // cursor ids sent last frame (sticky-id source)
+  const handState = (id) => {
+    let st = hands.get(id);
+    if (st === undefined) {
+      st = {
+        fx: oneEuro(ONE_EURO_MINCUTOFF, ONE_EURO_BETA, ONE_EURO_DCUTOFF),
+        fy: oneEuro(ONE_EURO_MINCUTOFF, ONE_EURO_BETA, ONE_EURO_DCUTOFF),
+        fr: oneEuro(PINCH_EURO_MINCUTOFF, PINCH_EURO_BETA, ONE_EURO_DCUTOFF),
+        engaged: false, onVotes: 0, offVotes: 0, lost: 0,
+        history: [], voteStartAt: 0, frozen: null, prevRaw: null,
+      };
+      hands.set(id, st);
+    }
+    return st;
+  };
+
+  const clamp01 = (v) => Math.max(0, Math.min(1, v));
   const dist = (a, b, aspect) => Math.hypot((a.x - b.x) * aspect, a.y - b.y);
   const pinchRatio = (lm, aspect) => {
-    const scale = dist(lm[0], lm[9], aspect);
+    // Foreshortening guard: wrist→middle_MCP collapses when the palm pitches
+    // toward the camera; the knuckle span (index_MCP→pinky_MCP) barely does.
+    const scale = Math.max(dist(lm[0], lm[9], aspect), 0.9 * dist(lm[5], lm[17], aspect));
     if (scale <= 1e-6) return 4;
     return Math.min(dist(lm[4], lm[8], aspect) / scale, 4);
   };
@@ -369,11 +448,12 @@ export function handsPageHtml(): string {
     }
     if (tail) camNote.append(document.createTextNode(tail));
     camNote.style.display = "flex";
+    camStatus.hidden = true;
   };
 
   const loadLandmarker = async () => {
-    const vision = await import(MEDIAPIPE_CDN);
-    const fileset = await vision.FilesetResolver.forVisionTasks(MEDIAPIPE_CDN + "/wasm");
+    const vision = await import(MEDIAPIPE_BASE + "/vision_bundle.mjs");
+    const fileset = await vision.FilesetResolver.forVisionTasks(MEDIAPIPE_BASE + "/wasm");
     const base = { runningMode: "VIDEO", numHands: 2 };
     try {
       return await vision.HandLandmarker.createFromOptions(fileset, { baseOptions: { modelAssetPath: MODEL_URL, delegate: "GPU" }, ...base });
@@ -441,6 +521,7 @@ export function handsPageHtml(): string {
       if (epoch !== camEpoch) return; // stopCamera already released the stream
     }
     camNote.style.display = "none";
+    camStatus.hidden = false;
     camLoop();
   };
 
@@ -460,37 +541,92 @@ export function handsPageHtml(): string {
     let result;
     try { result = landmarker.detectForVideo(video, performance.now()); } catch { return; }
 
-    const cursors = [];
+    const cursors = [];   // wire frames — {id,x,y,engaged} only, protocol unchanged
+    const marks = [];     // local draw state (adds the pinch-ratio feedback ring)
     const seen = new Set();
     const lists = result.landmarks || [];
+    const tMs = performance.now(), tSec = tMs / 1000;
     for (let i = 0; i < lists.length && cursors.length < 2; i += 1) {
       const lm = lists[i];
       if (!lm || lm.length < 21) continue;
-      // Stable local id per physical hand via handedness (fallback: list index).
-      const label = result.handednesses?.[i]?.[0]?.categoryName ?? null;
-      let id = label === "Left" ? 0 : label === "Right" ? 1 : i % 2;
-      if (seen.has(id)) id = id === 0 ? 1 : 0;
+      let id;
+      if (lists.length === 1 && prevFrameIds.length === 1) {
+        // Sticky id: with one hand tracked, a handedness-label flip must not
+        // change the cursor id (it resets wall dwell and spawns ghost dots).
+        id = prevFrameIds[0];
+      } else {
+        // Stable local id per physical hand via handedness (fallback: list index).
+        const label = result.handednesses?.[i]?.[0]?.categoryName ?? null;
+        id = label === "Left" ? 0 : label === "Right" ? 1 : i % 2;
+        if (seen.has(id)) id = id === 0 ? 1 : 0;
+      }
       seen.add(id);
+      const st = handState(id);
+      st.lost = 0;
       let cx = 0, cy = 0;
       for (const p of PALM) { cx += lm[p].x; cy += lm[p].y; }
       cx /= PALM.length; cy /= PALM.length;
-      const ratio = pinchRatio(lm, aspect);
-      const engaged = latched.get(id) === true ? ratio < PINCH_OFF : ratio < PINCH_ON;
-      latched.set(id, engaged);
-      // Mirror x (selfie view): moving your hand right moves the wall cursor right.
-      cursors.push({ id, x: Math.max(0, Math.min(1, 1 - cx)), y: Math.max(0, Math.min(1, cy)), engaged });
+      // Mirror x (selfie view) BEFORE the inset so the zone is symmetric, then
+      // map the interaction zone to the full wall and clamp.
+      const zx = clamp01(((1 - cx) - INSET_X_MIN) / (INSET_X_MAX - INSET_X_MIN));
+      const zy = clamp01((cy - INSET_Y_MIN) / (INSET_Y_MAX - INSET_Y_MIN));
+      // Pre-filter palm speed feeds the engage velocity gate.
+      let speed = 0;
+      if (st.prevRaw !== null && tSec > st.prevRaw.t) {
+        speed = Math.hypot(zx - st.prevRaw.x, zy - st.prevRaw.y) / (tSec - st.prevRaw.t);
+      }
+      st.prevRaw = { x: zx, y: zy, t: tSec };
+      const x = st.fx(zx, tSec), y = st.fy(zy, tSec);
+      st.history.push({ x, y, t: tMs });
+      if (st.history.length > CURSOR_HISTORY) st.history.shift();
+      const ratio = st.fr(pinchRatio(lm, aspect), tSec);
+      // Unfreeze on deliberate drag (checked before the state machine so the
+      // engage-confirm frame always sends its backtracked snap position).
+      if (st.frozen !== null && Math.hypot(x - st.frozen.x, y - st.frozen.y) > FREEZE_RADIUS) {
+        st.frozen = null;
+      }
+      if (st.engaged) {
+        st.offVotes = ratio > PINCH_OFF ? st.offVotes + 1 : 0;
+        if (st.offVotes >= PINCH_OFF_FRAMES) {
+          st.engaged = false; st.frozen = null; st.offVotes = 0;
+        }
+      } else if (ratio < PINCH_ON && speed <= ENGAGE_MAX_SPEED) {
+        if (st.onVotes === 0) st.voteStartAt = tMs;
+        st.onVotes += 1;
+        if (st.onVotes >= PINCH_ON_FRAMES) {
+          st.engaged = true; st.onVotes = 0; st.offVotes = 0;
+          // Heisenberg fix: click where the hand was before the pinch began —
+          // newest history entry at least BACKTRACK_MS older than the first vote.
+          let snap = st.history[0];
+          for (const h of st.history) { if (h.t <= st.voteStartAt - BACKTRACK_MS) snap = h; }
+          st.frozen = { x: snap.x, y: snap.y };
+        }
+      } else {
+        st.onVotes = 0;   // a fast or non-pinching frame breaks the streak
+      }
+      const outX = st.frozen !== null ? st.frozen.x : x;
+      const outY = st.frozen !== null ? st.frozen.y : y;
+      cursors.push({ id, x: outX, y: outY, engaged: st.engaged });
+      marks.push({ id, x: outX, y: outY, engaged: st.engaged, ratio, lm });
     }
-    // Prune latches for hands that left the frame (hands_mediapipe.py's
-    // retain() parity): a hand re-entering half-closed must NOT inherit
-    // pinching=true — it would be stuck engaged until it fully opened.
-    for (const id of [...latched.keys()]) {
-      if (!seen.has(id)) latched.delete(id);
+    prevFrameIds = [...seen];
+    // Dropout tolerance (extends hands_mediapipe.py's retain()): a mid-pinch
+    // hand often vanishes for a frame — keep its state; gone HAND_LOST_FRAMES
+    // → force release + full reset so a re-entering half-closed hand never
+    // inherits engaged=true or stale filter state.
+    for (const [id, st] of [...hands]) {
+      if (seen.has(id)) continue;
+      st.lost += 1;
+      if (st.lost >= HAND_LOST_FRAMES) hands.delete(id);
     }
     sendCursors(cursors);
-    drawPreview(cursors);
+    drawPreview(marks);
   };
 
-  const drawPreview = (cursors) => {
+  // MediaPipe hand skeleton bone pairs (wall HandSkeletonHud parity).
+  const HAND_LINKS = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
+
+  const drawPreview = (marks) => {
     const w = cam.clientWidth, h = cam.clientHeight;
     const dpr = window.devicePixelRatio || 1;
     if (camCanvas.width !== Math.round(w * dpr) || camCanvas.height !== Math.round(h * dpr)) {
@@ -498,21 +634,59 @@ export function handsPageHtml(): string {
       camCanvas.height = Math.round(h * dpr);
     }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    // Mirrored video underlay, dimmed — feedback, not a video call.
-    ctx.save();
-    ctx.translate(w, 0); ctx.scale(-1, 1);
-    ctx.globalAlpha = 0.45;
-    try { ctx.drawImage(video, 0, 0, w, h); } catch { /* not ready yet */ }
-    ctx.restore();
-    ctx.globalAlpha = 1;
-    for (const c of cursors) {
-      const hue = myIds !== null ? idToHue(myIds[c.id]) : 220;
-      const x = c.x * w, y = c.y * h;
-      ctx.strokeStyle = "hsla(" + hue + ", 95%, 62%, 0.9)";
-      ctx.fillStyle = "hsla(" + hue + ", 95%, 62%, " + (c.engaged ? 0.95 : 0.5) + ")";
-      ctx.lineWidth = 3;
-      ctx.beginPath(); ctx.arc(x, y, c.engaged ? 14 : 9, 0, Math.PI * 2); ctx.fill();
-      if (c.engaged) { ctx.beginPath(); ctx.arc(x, y, 20, 0, Math.PI * 2); ctx.stroke(); }
+    // SKELETON VIEW, not a camera feed: the video only feeds the tracker —
+    // what the guest sees is their hand skeleton on a dark stage, plus the
+    // interaction-zone rectangle so the wall-reachable area is learnable.
+    ctx.fillStyle = "#0e1320";
+    ctx.fillRect(0, 0, w, h);
+    ctx.strokeStyle = "rgba(91, 140, 255, 0.28)";
+    ctx.lineWidth = 1;
+    ctx.setLineDash([6, 5]);
+    ctx.strokeRect(INSET_X_MIN * w, INSET_Y_MIN * h, (INSET_X_MAX - INSET_X_MIN) * w, (INSET_Y_MAX - INSET_Y_MIN) * h);
+    ctx.setLineDash([]);
+    const sx = (p) => (1 - p.x) * w;   // mirrored, matching the cursor mapping
+    const sy = (p) => p.y * h;
+    for (const m of marks) {
+      const hue = myIds !== null ? idToHue(myIds[m.id]) : 220;
+      // Bones + joints in the hand's wall hue; the thumb–index pinch pair
+      // recolors with the pinch state so the gesture is legible at a glance.
+      ctx.strokeStyle = "hsla(" + hue + ", 80%, 62%, 0.75)";
+      ctx.lineWidth = 2;
+      for (const [a, b] of HAND_LINKS) {
+        ctx.beginPath(); ctx.moveTo(sx(m.lm[a]), sy(m.lm[a])); ctx.lineTo(sx(m.lm[b]), sy(m.lm[b])); ctx.stroke();
+      }
+      ctx.fillStyle = "hsla(" + hue + ", 85%, 70%, 0.9)";
+      for (const p of m.lm) {
+        ctx.beginPath(); ctx.arc(sx(p), sy(p), 2.5, 0, Math.PI * 2); ctx.fill();
+      }
+      const pinchColor = m.engaged ? "rgba(126, 226, 168, 0.95)"
+        : m.ratio < ARMED_RATIO ? "hsla(" + hue + ", 95%, 75%, 0.95)" : null;
+      if (pinchColor !== null) {
+        ctx.strokeStyle = pinchColor;
+        ctx.lineWidth = m.engaged ? 4 : 2.5;
+        ctx.beginPath(); ctx.moveTo(sx(m.lm[4]), sy(m.lm[4])); ctx.lineTo(sx(m.lm[8]), sy(m.lm[8])); ctx.stroke();
+      }
+      // Pinch-state ring on the palm: open = dot, armed = tightening ring,
+      // engaged = filled — same vocabulary as the wall's dwell feedback.
+      const px = (m.lm[0].x + m.lm[5].x + m.lm[9].x + m.lm[13].x + m.lm[17].x) / 5;
+      const py = (m.lm[0].y + m.lm[5].y + m.lm[9].y + m.lm[13].y + m.lm[17].y) / 5;
+      const x = (1 - px) * w, y = py * h;
+      if (m.engaged) {
+        ctx.fillStyle = "rgba(126, 226, 168, 0.95)";
+        ctx.strokeStyle = "rgba(126, 226, 168, 0.9)";
+        ctx.beginPath(); ctx.arc(x, y, 12, 0, Math.PI * 2); ctx.fill();
+        ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.arc(x, y, 18, 0, Math.PI * 2); ctx.stroke();
+      } else {
+        ctx.fillStyle = "hsla(" + hue + ", 95%, 62%, 0.5)";
+        ctx.beginPath(); ctx.arc(x, y, 7, 0, Math.PI * 2); ctx.fill();
+        if (m.ratio < ARMED_RATIO) {
+          const f = clamp01((m.ratio - PINCH_ON) / (ARMED_RATIO - PINCH_ON));
+          ctx.strokeStyle = "hsla(" + hue + ", 95%, 72%, 0.9)";
+          ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.arc(x, y, 10 + 12 * f, 0, Math.PI * 2); ctx.stroke();
+        }
+      }
     }
   };
 
@@ -521,7 +695,9 @@ export function handsPageHtml(): string {
     camEpoch += 1; // cancels any startCamera still awaiting the camera/tracker
     cancelAnimationFrame(camRaf);
     stopCameraStream();
-    latched.clear();
+    hands.clear();
+    prevFrameIds = [];
+    camStatus.hidden = true;
     sendCursors([]);
   };
 

@@ -16,6 +16,7 @@
 // mirroring one guest onto both would double-fire every dwell.
 
 import { GUEST_ID_STRIDE, guestCursorId } from "../ui/gesture/remote";
+import { Point2DFilter } from "../ui/gesture/core";
 import { networkInterfaces } from "node:os";
 import { preferredLanIPv4, type InterfaceAddresses } from "./project-import";
 
@@ -125,6 +126,12 @@ interface RoomPeer {
   wall: string | null; // set by the GestureWallClient hello
 }
 
+// Guest-cursor One Euro tuning: mincutoff low enough to kill hand tremor on a
+// still cursor, beta high enough that deliberate sweeps stay responsive —
+// the same tradeoff the Kinect path ships (gesturewall server.py CursorSmoother).
+const GUEST_SMOOTH_MINCUTOFF = 1.0;
+const GUEST_SMOOTH_BETA = 0.02;
+
 interface GuestPeer {
   send: PeerSend;
   seq: number;
@@ -136,6 +143,12 @@ interface GuestPeer {
   // The wall-camera keys this guest currently holds (WASD buttons on the guest
   // page) — released explicitly on disconnect so the camera never keeps walking.
   lastHeld: GuestKey[];
+  // Per-hand One Euro smoothing (same filter family as the Kinect cursor path
+  // — gesturewall's CursorSmoother): the guest page ships raw palm centroids,
+  // and unsmoothed cursors shiver at wall scale, resetting dwell on small
+  // targets. Keyed by the guest-local hand id; dropped when the hand vanishes
+  // so a re-appearing hand starts fresh instead of gliding from stale state.
+  filters: Map<number, Point2DFilter>;
 }
 
 export interface RemoteHandsHubOptions {
@@ -193,7 +206,7 @@ export class RemoteHandsHub {
 
   // A guest connected (WS /hands/ws from their own computer).
   addGuest(send: PeerSend): HubConnection {
-    const peer: GuestPeer = { send, seq: this.#nextSeq, wall: null, lastCursors: [], lastHeld: [] };
+    const peer: GuestPeer = { send, seq: this.#nextSeq, wall: null, lastCursors: [], lastHeld: [], filters: new Map() };
     this.#nextSeq += 1;
     this.#guests.add(peer);
     this.#sendWelcome(peer);
@@ -271,17 +284,35 @@ export class RemoteHandsHub {
   #relay(peer: GuestPeer, cursors: RemoteGuestCursor[]): void {
     peer.lastCursors = cursors;
     const wall = this.#resolveWall(peer);
+    const t = this.#now();
+    // Smooth here, not on the page: one fix covers every guest device, and the
+    // filter sees real arrival times (heartbeats re-send identical positions,
+    // which a One Euro simply converges on). Filters for hands absent from
+    // this frame are dropped so a re-tracked hand starts clean.
+    for (const key of peer.filters.keys()) {
+      if (!cursors.some((cursor) => cursor.id === key)) {
+        peer.filters.delete(key);
+      }
+    }
     const frame = {
       type: "cursors" as const,
       wall,
-      t: this.#now(),
-      cursors: cursors.map((cursor) => ({
-        id: guestCursorId(peer.seq, cursor.id),
-        x: cursor.x,
-        y: cursor.y,
-        engaged: cursor.engaged,
-        conf: 1,
-      })),
+      t,
+      cursors: cursors.map((cursor) => {
+        let filter = peer.filters.get(cursor.id);
+        if (filter === undefined) {
+          filter = new Point2DFilter(30, GUEST_SMOOTH_MINCUTOFF, GUEST_SMOOTH_BETA);
+          peer.filters.set(cursor.id, filter);
+        }
+        const [x, y] = filter.call(cursor.x, cursor.y, t);
+        return {
+          id: guestCursorId(peer.seq, cursor.id),
+          x,
+          y,
+          engaged: cursor.engaged,
+          conf: 1,
+        };
+      }),
     };
     for (const room of this.#rooms) {
       if (room.wall === wall) {

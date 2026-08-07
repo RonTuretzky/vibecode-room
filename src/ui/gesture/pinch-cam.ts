@@ -14,12 +14,12 @@ import type { HandsFrame } from "./hands-client";
 export const PINCH_ON = 0.3; // ratio below = down-vote to engage
 export const PINCH_OFF = 0.45; // latched hand releases only above — wide gap = never flaps
 export const CONFIRM_FRAMES = 2; // consecutive down-votes to engage (~66 ms @30 Hz — kills flicker)
-export const RELEASE_FRAMES = 1; // release is immediate — visionOS discrete pinch-up parity
+export const RELEASE_FRAMES = 3; // release debounced: a 1-frame tracking dip mid-drag must not drop the orbit (Ultraleap-style state persistence)
 export const CONF_MIN = 0.5; // below this a hand cannot START a pinch (but keeps one it owns)
 export const HAND_STALE_SECONDS = 0.25; // latched hand unseen this long = CANCEL (release WITHOUT flick)
 // Rotate
-export const YAW_PER_UNIT = 6.0; // rad per full camera-frame of horizontal travel (~2π: one frame-width ≈ one orbit)
-export const HEIGHT_PER_UNIT = 22; // world units per full-frame vertical travel (mouse parity: 0.045/px * ~500 px)
+export const YAW_PER_UNIT = 3.5; // rad per full camera-frame of horizontal travel (~200°: high enough to orbit in one sweep, low enough that hand wobble stays sub-degree)
+export const HEIGHT_PER_UNIT = 12; // world units per full-frame vertical travel — under half the height envelope per gesture, so aiming a band is possible
 export const ROTATE_MAX_STEP = 0.12; // max normalized move per frame; larger = teleport/slot-swap → discard + re-anchor
 // Flick (feeds the rig's EXISTING inertia path — a hand release coasts like a mouse flick)
 export const FLICK_EMA = 0.75; // matches the mouse drag's velocity EMA (RoomScene.tsx:1385)
@@ -57,6 +57,7 @@ interface HandTrack {
   lastSeen: number; // seconds, caller's clock
   latched: boolean;
   downStreak: number; // consecutive down-votes while unlatched
+  upStreak: number; // consecutive up-votes while latched (release debounce)
 }
 
 export class PinchCam {
@@ -101,6 +102,7 @@ export class PinchCam {
           lastSeen: t,
           latched: false,
           downStreak: 0,
+          upStreak: 0,
         };
         this.#tracks.set(hand.id, track);
       } else if (Math.hypot(hand.x - track.rawX, hand.y - track.rawY) > ROTATE_MAX_STEP) {
@@ -118,9 +120,14 @@ export class PinchCam {
       const vote = hand.pinch !== null ? hand.pinch < (track.latched ? PINCH_OFF : PINCH_ON) : hand.pinching === true;
       if (track.latched) {
         if (!vote) {
-          // RELEASE_FRAMES = 1: a single up-vote releases immediately.
-          track.latched = false;
-          track.downStreak = 0;
+          track.upStreak += 1;
+          if (track.upStreak >= RELEASE_FRAMES) {
+            track.latched = false;
+            track.downStreak = 0;
+            track.upStreak = 0;
+          }
+        } else {
+          track.upStreak = 0;
         }
       } else if (vote && hand.conf >= CONF_MIN) {
         track.downStreak += 1;

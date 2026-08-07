@@ -38,6 +38,10 @@ export interface ResearchLoopOptions {
   maxProposed?: number;
   // Minimum gap between suggestion rounds (model inference).
   minRoundIntervalMs?: number;
+  // Periodic review timer: while the mode is active, re-read the dialogue
+  // every this many ms and bud at most ONE new sphere. 0 disables the timer
+  // (tests drive periodicSuggest manually). VIBERSYN_RESEARCH_SUGGEST_INTERVAL_MS.
+  suggestIntervalMs?: number;
   // New words accumulated before a passive round is worth running.
   newWordsThreshold?: number;
   // Proposed quests missing this many consecutive rounds are pruned.
@@ -58,6 +62,15 @@ export interface ResearchLoopOptions {
 const DEFAULT_WINDOW_TURNS = 40;
 const DEFAULT_MAX_PROPOSED = 6;
 const DEFAULT_MIN_ROUND_INTERVAL_MS = 6_000;
+// Periodic review cadence: ingest-driven rounds need newWordsThreshold fresh
+// words, so a trickle below the threshold (then silence) would never get a
+// round — the timer catches that tail. Once a minute keeps the wall alive
+// without burning inference on a quiet room (the unchanged-dialogue gate
+// skips the tick entirely).
+export const DEFAULT_SUGGEST_INTERVAL_MS = 60_000;
+// A timer round buds at most ONE new sphere — a periodic tick must never dump
+// a batch of crystals on a room that was barely talking.
+const PERIODIC_MAX_NEW_QUESTS = 1;
 // One spoken sentence is enough to be worth a round — 18 forced the room to
 // keep talking before ANY crystal could appear, which read as "broken".
 const DEFAULT_NEW_WORDS_THRESHOLD = 8;
@@ -95,6 +108,7 @@ export class ResearchLoop {
   readonly #windowTurns: number;
   readonly #maxProposed: number;
   readonly #minRoundIntervalMs: number;
+  readonly #suggestIntervalMs: number;
   readonly #newWordsThreshold: number;
   readonly #staleMissedRounds: number;
   readonly #suppressMs: number;
@@ -115,6 +129,7 @@ export class ResearchLoop {
   #lastRoundAtMs: number | null = null;
   #wordsSinceRound = 0;
   #round = 0;
+  #suggestTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(options: ResearchLoopOptions) {
     this.#sessionId = options.sessionId;
@@ -127,6 +142,7 @@ export class ResearchLoop {
     this.#windowTurns = options.windowTurns ?? DEFAULT_WINDOW_TURNS;
     this.#maxProposed = options.maxProposed ?? DEFAULT_MAX_PROPOSED;
     this.#minRoundIntervalMs = options.minRoundIntervalMs ?? DEFAULT_MIN_ROUND_INTERVAL_MS;
+    this.#suggestIntervalMs = options.suggestIntervalMs ?? DEFAULT_SUGGEST_INTERVAL_MS;
     this.#newWordsThreshold = options.newWordsThreshold ?? DEFAULT_NEW_WORDS_THRESHOLD;
     this.#staleMissedRounds = options.staleMissedRounds ?? DEFAULT_STALE_MISSED_ROUNDS;
     this.#suppressMs = options.suppressMs ?? DEFAULT_SUPPRESS_MS;
@@ -151,8 +167,29 @@ export class ResearchLoop {
     if (on) {
       // Entering research mode reviews the conversation so far immediately.
       void this.maybeSuggest(true);
+      this.#startPeriodic();
+    } else {
+      // The timer's lifetime IS the mode's lifetime — an off room ticks nothing.
+      this.#stopPeriodic();
     }
     this.#emit();
+  }
+
+  #startPeriodic(): void {
+    if (this.#suggestTimer !== null || this.#suggestIntervalMs <= 0) {
+      return;
+    }
+    const timer = setInterval(() => void this.periodicSuggest(), this.#suggestIntervalMs);
+    // The periodic review must never keep the process alive on its own.
+    (timer as { unref?: () => void }).unref?.();
+    this.#suggestTimer = timer;
+  }
+
+  #stopPeriodic(): void {
+    if (this.#suggestTimer !== null) {
+      clearInterval(this.#suggestTimer);
+      this.#suggestTimer = null;
+    }
   }
 
   // ── dialogue window ───────────────────────────────────────────────────────
@@ -239,16 +276,46 @@ export class ResearchLoop {
     if (this.#turns.length === 0) {
       return Promise.resolve();
     }
+    return this.#launchRound(nowMs, {});
+  }
+
+  // TIMER tick (suggestIntervalMs): review the dialogue so far and bud at most
+  // ONE new sphere. Bypasses newWordsThreshold — this is how a sub-threshold
+  // trickle eventually gets its round — but an unchanged dialogue (zero new
+  // words since the last round) burns no inference at all.
+  periodicSuggest(): Promise<void> {
+    if (!this.#active) {
+      return Promise.resolve();
+    }
+    if (this.#inFlight !== null) {
+      return this.#inFlight; // never overlap — the running round covers this material
+    }
+    if (this.#turns.length === 0 || this.#wordsSinceRound === 0) {
+      return Promise.resolve();
+    }
+    const nowMs = this.#clock();
+    if (this.#lastRoundAtMs !== null && nowMs - this.#lastRoundAtMs < this.#minRoundIntervalMs) {
+      return Promise.resolve();
+    }
+    return this.#launchRound(nowMs, { trigger: "periodic", maxNew: PERIODIC_MAX_NEW_QUESTS });
+  }
+
+  // Launch one suggestion round NOW (callers own the gates). `maxNew` caps how
+  // many NEW quests the round may surface — refinements of existing quests are
+  // never capped.
+  #launchRound(nowMs: number, options: { trigger?: "periodic"; maxNew?: number }): Promise<void> {
     this.#lastRoundAtMs = nowMs;
     this.#wordsSinceRound = 0;
     this.#round += 1;
     const correlationId = `corr-research-round-${this.#round}`;
+    const maxNew = options.maxNew ?? Number.POSITIVE_INFINITY;
     // Round visibility: the start + result (even an EMPTY one) are traced and
     // the ledger republishes so the wall can show "scanning…" — an inference
     // round that finds nothing must read as a shrug, never as a dead feature.
     this.#trace("research.suggest.round", "info", correlationId, {
       round: this.#round,
       turns: this.#turns.length,
+      ...(options.trigger !== undefined ? { trigger: options.trigger } : {}),
     });
     const run = this.#suggester
       .suggest({
@@ -265,7 +332,11 @@ export class ResearchLoop {
         if (suggestions.length === 0) {
           this.#trace("research.suggest.empty", "info", correlationId, { round: this.#round });
         }
-        this.#reconcile(suggestions, this.#clock(), correlationId);
+        // A capped round spends its new-sphere budget on the strongest material.
+        const ordered = Number.isFinite(maxNew)
+          ? [...suggestions].sort((a, b) => b.confidence - a.confidence)
+          : suggestions;
+        this.#reconcile(ordered, this.#clock(), correlationId, maxNew);
       })
       .catch((error) => {
         this.#trace("research.suggest.error", "error", correlationId, {
@@ -298,9 +369,15 @@ export class ResearchLoop {
     }
   }
 
-  #reconcile(suggestions: ResearchSuggestion[], nowMs: number, correlationId: string): void {
+  #reconcile(
+    suggestions: ResearchSuggestion[],
+    nowMs: number,
+    correlationId: string,
+    maxNew = Number.POSITIVE_INFINITY,
+  ): void {
     const seen = new Set<string>();
     let changed = false;
+    let created = 0;
     for (const suggestion of suggestions) {
       const matched = suggestion.matchId !== null ? this.#quests.get(suggestion.matchId) : undefined;
       if (matched !== undefined && matched.status === "proposed") {
@@ -361,6 +438,11 @@ export class ResearchLoop {
       if (this.#proposedCount() >= this.#maxProposed) {
         continue;
       }
+      // 4. Round budget: past maxNew (periodic rounds: one) a fresh proposal
+      //    waits for a future round instead of surfacing now.
+      if (created >= maxNew) {
+        continue;
+      }
       const grounding = this.#contextForTurn(suggestion.contextSpan.endTurnId);
       const quest: ResearchQuest = {
         id: `rq-${this.#idFactory()}`,
@@ -384,6 +466,7 @@ export class ResearchLoop {
       };
       this.#quests.set(quest.id, quest);
       seen.add(quest.id);
+      created += 1;
       changed = true;
       this.#trace("research.suggest.new", "info", correlationId, {
         id: quest.id,
@@ -798,6 +881,24 @@ export class ResearchLoop {
   #trace(event: string, level: ResearchTraceEvent["level"], correlationId: string, meta: Record<string, unknown>): void {
     this.#onTrace?.({ event, level, correlationId, meta: { sessionId: this.#sessionId, ...meta } });
   }
+}
+
+// VIBERSYN_RESEARCH_SUGGEST_INTERVAL_MS — the periodic dialogue-review
+// cadence while research mode is on, default 60000; 0 disables the timer
+// (rounds then fire only on ingest/force). A LOOP cadence knob, so it is read
+// here rather than in the suggester's env table.
+export function readResearchSuggestIntervalMs(
+  env: Record<string, string | undefined> = process.env,
+): number {
+  const raw = env.VIBERSYN_RESEARCH_SUGGEST_INTERVAL_MS?.trim();
+  if (raw === undefined || raw === "") {
+    return DEFAULT_SUGGEST_INTERVAL_MS;
+  }
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < 0) {
+    throw new Error("VIBERSYN_RESEARCH_SUGGEST_INTERVAL_MS must be a non-negative number.");
+  }
+  return value;
 }
 
 function countWords(text: string): number {

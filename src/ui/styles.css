@@ -915,6 +915,22 @@ main.gesture-mode .fleet-ctl {
   border-radius: 18px;
 }
 
+/* Fleet hover-scroll strips: full-width secondary-size targets. A dwell
+   cursor PARKS on these (hover = scroll), so they get the full 88px+ hit
+   height even though a single glance-click is never the interaction. */
+main.gesture-mode .fleet-scroll-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 88px;
+  font-size: 30px;
+  border-radius: 16px;
+}
+
+main.gesture-mode .fleet-scroll-rail {
+  gap: 18px;
+}
+
 main.gesture-mode .deck-decision-btn {
   display: inline-flex;
   align-items: center;
@@ -1642,6 +1658,47 @@ main.gesture-mode[data-view="builds"] .transcript-card {
   overflow: auto;
   max-height: 32vh;
   min-height: 0;
+}
+
+/* Fleet HOVER-SCROLL (FleetScroll.tsx): ▲/▼ strips pinned above/below the
+   overflowing panel list. They scroll WHILE hovered — css :hover for the desk
+   mouse, [data-dwell-hot] for gesture/joystick/guest cursors, which cannot
+   wheel-scroll. Rendered only while the list actually overflows. */
+.fleet-scroll-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+}
+
+.fleet-scroll-btn {
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.24em;
+  line-height: 1;
+  border-radius: 8px;
+  border: 1px solid var(--glass-line);
+  background: rgba(10, 18, 26, 0.5);
+  color: var(--ink-soft);
+  padding: 5px 10px;
+  cursor: pointer;
+  transition: border-color 160ms ease, color 160ms ease, background 160ms ease, opacity 160ms ease;
+}
+
+/* The held state — either hover source — reads as the cyan "live" accent the
+   steering ring already uses, so "this is doing something" is unambiguous. */
+.fleet-scroll-btn:hover,
+.fleet-scroll-btn[data-dwell-hot] {
+  color: var(--c-selected);
+  border-color: var(--c-selected);
+  background: rgba(0, 188, 212, 0.14);
+}
+
+/* Nowhere left to scroll in this direction: dim, but stay a live target so a
+   mid-dwell cursor is never orphaned. */
+.fleet-scroll-btn[data-at-limit="1"] {
+  opacity: 0.35;
 }
 
 .fleet-panel {

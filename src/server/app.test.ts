@@ -506,6 +506,47 @@ describe("guest hands surface (GET /hands + /api/hands/info)", () => {
     expect(html).toContain("guest-pad");
   });
 
+  test("camera cursor pipeline: One-Euro filter, interaction-zone inset, debounced+anchored pinch", async () => {
+    const { app } = await makeApp();
+    const html = await (await app.request("/hands")).text();
+    // Named tuning constants in the inline script — renaming these should be a
+    // deliberate act (they encode researched values, and this test names them).
+    expect(html).toContain("ONE_EURO_MINCUTOFF");    // cursor jitter filter
+    expect(html).toContain("PINCH_EURO_MINCUTOFF");  // pinch-ratio scalar filter
+    expect(html).toContain("INSET_X_MIN");           // interaction-zone mapping
+    expect(html).toContain("PINCH_ON_FRAMES");       // temporal pinch debounce
+    expect(html).toContain("ENGAGE_MAX_SPEED");      // velocity gate on engage
+    expect(html).toContain("FREEZE_RADIUS");         // Heisenberg click anchor
+    expect(html).toContain("HAND_LOST_FRAMES");      // dropout-tolerant release
+  });
+
+  test("the guest page loads its hand tracker from THIS server, never a CDN (offline LAN)", async () => {
+    const { app } = await makeApp();
+    const html = await (await app.request("/hands")).text();
+    expect(html).toContain("/hands/assets");
+    expect(html).toContain("vision_bundle.mjs");
+    expect(html).toContain("/hands/assets/hand_landmarker.task");
+    expect(html).not.toContain("cdn.jsdelivr.net");
+    expect(html).not.toContain("storage.googleapis.com");
+  });
+
+  test("self-hosted tracker assets: bundle, wasm, and model all serve with sane types", async () => {
+    const { app } = await makeApp();
+    const cases: Array<[string, string]> = [
+      ["/hands/assets/vision_bundle.mjs", "text/javascript"],
+      ["/hands/assets/wasm/vision_wasm_internal.js", "text/javascript"],
+      ["/hands/assets/wasm/vision_wasm_internal.wasm", "application/wasm"],
+      ["/hands/assets/hand_landmarker.task", "application/octet-stream"],
+    ];
+    for (const [path, type] of cases) {
+      const response = await app.request(path);
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toContain(type);
+    }
+    // Unknown assets 404 rather than falling through to another route.
+    expect((await app.request("/hands/assets/nope.js")).status).toBe(404);
+  });
+
   test("/api/hands/info reports reachability, the TLS URL, and the live hub state", async () => {
     const hub = new RemoteHandsHub();
     hub.addRoom(() => undefined).message(JSON.stringify({ type: "hello", wall: "A" }));

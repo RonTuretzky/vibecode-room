@@ -48,6 +48,7 @@ import { DetectionRunner, selectDetectionRunner, type DetectionSnapshot } from "
 import { DETECTION_BUBBLE_TTL_MS, ideaTrayFromCandidates, pendingSuggestionFromCandidate, projectorSuggestionFromCandidate } from "./idea-suggestion";
 import {
   ResearchLoop,
+  readResearchSuggestIntervalMs,
   renderResearchDeckHtml,
   selectResearchAgent,
   selectResearchSuggester,
@@ -1049,6 +1050,9 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       suggester: options.researchSuggester ?? selectResearchSuggester(env).suggester,
       agent: options.researchAgent ?? selectResearchAgent(env).agent,
       conceptTree: options.researchConceptTree,
+      // While the mode is on, the loop's own timer re-reads the dialogue every
+      // interval and buds at most one new sphere (0 disables).
+      suggestIntervalMs: readResearchSuggestIntervalMs(env),
       clock,
       onUpdate: () => this.publish(),
       onTrace: (event) =>

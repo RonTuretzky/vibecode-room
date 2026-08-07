@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { ResearchLoop, type ResearchLoopOptions } from "./loop";
+import { ResearchLoop, readResearchSuggestIntervalMs, type ResearchLoopOptions } from "./loop";
 import { ConceptTree } from "./tree";
 import type { ResearchAgent, ResearchReport, ResearchSuggester, ResearchSuggestion } from "./types";
 
@@ -67,6 +67,8 @@ function makeLoop(overrides: Partial<ResearchLoopOptions> = {}): ResearchLoop {
     clock: overrides.clock ?? (() => (clock += 100)),
     minRoundIntervalMs: 0,
     newWordsThreshold: 1,
+    // No wall-clock timer: tests drive periodicSuggest() manually.
+    suggestIntervalMs: 0,
     // Heuristic-only clustering: no debounce timers, no model calls in tests.
     conceptTree: new ConceptTree({ model: null }),
     ...overrides,
@@ -97,6 +99,136 @@ describe("ResearchLoop dialogue window", () => {
     expect(suggester.calls).toBe(1);
     expect(loop.quests()).toHaveLength(1);
     expect(loop.quests()[0]!.status).toBe("proposed");
+  });
+});
+
+// A suggester whose round hangs until release() — for overlap tests.
+class GatedSuggester implements ResearchSuggester {
+  calls = 0;
+  #release: (() => void) | null = null;
+  async suggest(): Promise<ResearchSuggestion[]> {
+    this.calls += 1;
+    await new Promise<void>((resolve) => {
+      this.#release = resolve;
+    });
+    return [];
+  }
+  release(): void {
+    this.#release?.();
+    this.#release = null;
+  }
+}
+
+async function waitFor(predicate: () => boolean, timeoutMs = 2_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() > deadline) {
+      throw new Error("condition not reached in time");
+    }
+    await Bun.sleep(5);
+  }
+}
+
+describe("ResearchLoop periodic review (the interval timer)", () => {
+  test("a periodic round reviews sub-threshold trickle and buds at most ONE sphere — the strongest", async () => {
+    const suggester = new ScriptedSuggester([
+      [
+        suggestion({ topic: "A", claim: "alpha rocket budgets claim", confidence: 0.5 }),
+        suggestion({ topic: "B", claim: "beta ocean warming claim", confidence: 0.9 }),
+        suggestion({ topic: "C", claim: "gamma cheese exports claim", confidence: 0.7 }),
+      ],
+    ]);
+    // Threshold too high for ingest-driven rounds: only the periodic tick can run one.
+    const loop = makeLoop({ suggester, newWordsThreshold: 100 });
+    loop.setActive(true); // empty dialogue → the forced entry round skips
+    loop.ingestTurn({ speaker: "s1", text: "the claim", atMs: 1 });
+    await loop.flush();
+    expect(suggester.calls).toBe(0);
+    await loop.periodicSuggest();
+    expect(suggester.calls).toBe(1);
+    const quests = loop.quests();
+    expect(quests).toHaveLength(1);
+    expect(quests[0]!.topic).toBe("B"); // the capped budget goes to the highest confidence
+  });
+
+  test("periodic ticks skip while inactive, on empty dialogue, and on unchanged dialogue", async () => {
+    const suggester = new ScriptedSuggester([[suggestion()], [suggestion()]]);
+    const loop = makeLoop({ suggester, newWordsThreshold: 100 });
+    await loop.periodicSuggest();
+    expect(suggester.calls).toBe(0); // mode off
+    loop.setActive(true);
+    await loop.periodicSuggest();
+    expect(suggester.calls).toBe(0); // empty dialogue
+    loop.ingestTurn({ speaker: "s1", text: "the claim", atMs: 1 });
+    await loop.periodicSuggest();
+    expect(suggester.calls).toBe(1);
+    await loop.periodicSuggest();
+    expect(suggester.calls).toBe(1); // nothing new since the last round — zero inference
+    loop.ingestTurn({ speaker: "s1", text: "fresh words arrive", atMs: 2 });
+    await loop.periodicSuggest();
+    expect(suggester.calls).toBe(2); // new material re-arms the next tick
+  });
+
+  test("a periodic tick never overlaps an in-flight round", async () => {
+    const suggester = new GatedSuggester();
+    const loop = makeLoop({ suggester, newWordsThreshold: 100 });
+    loop.setActive(true);
+    loop.ingestTurn({ speaker: "s1", text: "the claim", atMs: 1 });
+    const first = loop.periodicSuggest();
+    expect(suggester.calls).toBe(1);
+    loop.ingestTurn({ speaker: "s1", text: "more words", atMs: 2 });
+    const second = loop.periodicSuggest();
+    expect(suggester.calls).toBe(1); // skipped — the running round wins
+    suggester.release();
+    await first;
+    await second;
+    expect(suggester.calls).toBe(1);
+  });
+
+  test("the periodic cap budgets NEW spheres only — refinements of existing quests still land", async () => {
+    const suggester = new ScriptedSuggester([[suggestion({ confidence: 0.6 })]]);
+    const loop = makeLoop({ suggester, newWordsThreshold: 100 });
+    loop.setActive(true);
+    loop.ingestTurn({ speaker: "s1", text: "the claim", atMs: 1 });
+    await loop.periodicSuggest();
+    const id = loop.quests()[0]!.id;
+    suggester.queue = [
+      [
+        suggestion({ matchId: id, confidence: 0.9, topic: "Refined topic" }),
+        suggestion({ topic: "New", claim: "beta ocean warming claim", confidence: 0.7 }),
+      ],
+    ];
+    loop.ingestTurn({ speaker: "s1", text: "more words", atMs: 2 });
+    await loop.periodicSuggest();
+    expect(loop.quests()).toHaveLength(2); // one refinement + the ONE budgeted new sphere
+    expect(loop.quest(id)!.confidence).toBeCloseTo(0.9);
+    expect(loop.quest(id)!.topic).toBe("Refined topic");
+  });
+
+  test("the mode's timer drives rounds while on and goes quiet when the mode turns off", async () => {
+    const suggester = new ScriptedSuggester([[suggestion()], [], []]);
+    const loop = makeLoop({ suggester, newWordsThreshold: 100, suggestIntervalMs: 5 });
+    loop.setActive(true);
+    loop.ingestTurn({ speaker: "s1", text: "the claim", atMs: 1 });
+    await waitFor(() => suggester.calls >= 1);
+    loop.ingestTurn({ speaker: "s1", text: "more words arrive", atMs: 2 });
+    await waitFor(() => suggester.calls >= 2);
+    loop.setActive(false);
+    const settled = suggester.calls;
+    loop.ingestTurn({ speaker: "s1", text: "words while off", atMs: 3 });
+    await Bun.sleep(30);
+    expect(suggester.calls).toBe(settled); // timer stopped with the mode
+  });
+});
+
+describe("readResearchSuggestIntervalMs", () => {
+  test("default 60s, explicit override, 0 disables, junk throws", () => {
+    expect(readResearchSuggestIntervalMs({})).toBe(60_000);
+    expect(readResearchSuggestIntervalMs({ VIBERSYN_RESEARCH_SUGGEST_INTERVAL_MS: "" })).toBe(60_000);
+    expect(readResearchSuggestIntervalMs({ VIBERSYN_RESEARCH_SUGGEST_INTERVAL_MS: "15000" })).toBe(15_000);
+    expect(readResearchSuggestIntervalMs({ VIBERSYN_RESEARCH_SUGGEST_INTERVAL_MS: "0" })).toBe(0);
+    expect(() => readResearchSuggestIntervalMs({ VIBERSYN_RESEARCH_SUGGEST_INTERVAL_MS: "soon" })).toThrow();
+    expect(() => readResearchSuggestIntervalMs({ VIBERSYN_RESEARCH_SUGGEST_INTERVAL_MS: "-1" })).toThrow();
   });
 });
 

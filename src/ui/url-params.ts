@@ -48,6 +48,24 @@ export interface ProjectorUrlConfig {
   // wall never offers canned content; run-room.sh appends it only when
   // VIBERSYN_MOCK_ROOM=1 is set in the environment.
   mock: boolean;
+  // ?flat=1 — the two wall windows sit side by side on ONE flat wall (no 90°
+  // corner): lock them into the rigid split-frustum pair (see flat-lock.ts)
+  // so the projections tile one continuous picture. run-room.sh appends it
+  // via --flat. Needs ?wall= to pick this window's half; wins over the
+  // corner lock.
+  flat: boolean;
+  // ?dots=1 — force the per-person cursor dots ON for this window, overriding
+  // the persisted hidden-by-default preference (GestureLayer). run-room.sh
+  // appends it in gesture mode so pointing always has visible feedback.
+  dots: boolean;
+  // ?research=1 — force THIS window into the research-mode scene (the 3D
+  // conversation tree + crystals) regardless of the room-wide toggle: a
+  // dedicated display (e.g. a ceiling projector) always shows the tree while
+  // the walls follow the shared mode. Local only — never writes the server.
+  research: boolean;
+  // ?zen=1 — boot with the zen (chrome-less) presentation on, same as the Z
+  // key: just the scene, no trays/status chrome. For dedicated displays.
+  zen: boolean;
 }
 
 export function parseProjectorUrl(search: string, hostname: string): ProjectorUrlConfig {
@@ -101,6 +119,18 @@ export function parseProjectorUrl(search: string, hostname: string): ProjectorUr
   const demo = params.get("demo") === "guided" ? ("guided" as const) : null;
   const mock = params.get("mock") === "1";
 
+  // Flat-wall rig (?flat=1): the wall pair renders one continuous picture as
+  // halves of a single wide frustum instead of the corner-locked yawed pair.
+  const flat = params.get("flat") === "1";
+
+  // Cursor dots (?dots=1): force-show the per-person pointing dots (they are
+  // hidden by default — an earlier live-room request found them cluttering).
+  const dots = params.get("dots") === "1";
+
+  // Dedicated-display extras: window-local research view + boot-into-zen.
+  const research = params.get("research") === "1";
+  const zen = params.get("zen") === "1";
+
   // Corner identity badge: shown whenever the window is wall- or view-scoped so
   // an operator glancing across the room knows which projection they're facing.
   // DE-THEMED: a wall badge is just "WALL A" — the walls are one continuous
@@ -112,5 +142,5 @@ export function parseProjectorUrl(search: string, hostname: string): ProjectorUr
         ? view.toUpperCase()
         : null;
 
-  return { view, wall, badge, gesture, dwell, hands, remote, demo, mock };
+  return { view, wall, badge, gesture, dwell, hands, remote, demo, mock, flat, dots, research, zen };
 }

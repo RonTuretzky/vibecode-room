@@ -29,6 +29,7 @@
   },
   "dependencies": {
     "@elizaos/core": "1.7.2",
+    "@mediapipe/tasks-vision": "0.10.21",
     "@types/three": "^0.185.1",
     "hono": "^4.12.25",
     "qrcode": "^1.5.4",

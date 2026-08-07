@@ -492,6 +492,31 @@ interface HandsSurfaceConfig {
 // phone import page.
 function registerHandsSurface(app: Hono, hub: RemoteHandsHub, config: HandsSurfaceConfig): void {
   app.get("/hands", (context) => context.html(handsPageHtml()));
+  // SELF-HOSTED hand tracker: guest phones are often on a LAN with no
+  // internet, so the MediaPipe bundle + wasm + model must come from THIS
+  // server, never a CDN. Bundle/wasm resolve from the installed
+  // @mediapipe/tasks-vision package; the model ships in gesture-wall/models.
+  const mediapipeDir = new URL("../../node_modules/@mediapipe/tasks-vision/", import.meta.url).pathname;
+  const handModelPath = new URL("../../gesture-wall/models/hand_landmarker.task", import.meta.url).pathname;
+  const HANDS_ASSETS: Record<string, { path: string; type: string }> = {
+    "vision_bundle.mjs": { path: `${mediapipeDir}vision_bundle.mjs`, type: "text/javascript" },
+    "wasm/vision_wasm_internal.js": { path: `${mediapipeDir}wasm/vision_wasm_internal.js`, type: "text/javascript" },
+    "wasm/vision_wasm_internal.wasm": { path: `${mediapipeDir}wasm/vision_wasm_internal.wasm`, type: "application/wasm" },
+    "wasm/vision_wasm_nosimd_internal.js": { path: `${mediapipeDir}wasm/vision_wasm_nosimd_internal.js`, type: "text/javascript" },
+    "wasm/vision_wasm_nosimd_internal.wasm": { path: `${mediapipeDir}wasm/vision_wasm_nosimd_internal.wasm`, type: "application/wasm" },
+    "hand_landmarker.task": { path: handModelPath, type: "application/octet-stream" },
+  };
+  app.get("/hands/assets/:name{.+}", async (context) => {
+    const asset = HANDS_ASSETS[context.req.param("name")];
+    if (asset === undefined) {
+      return context.text("not found", 404);
+    }
+    const file = Bun.file(asset.path);
+    if (!(await file.exists())) {
+      return context.text("asset missing on the room server", 404);
+    }
+    return new Response(file, { headers: { "content-type": asset.type } });
+  });
   // What the wall's Guests overlay renders (QR + URL + live count) and what the
   // guest page itself polls for the https upgrade hint.
   app.get("/api/hands/info", (context) =>

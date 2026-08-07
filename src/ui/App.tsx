@@ -17,6 +17,7 @@ import { GuestHands } from "./GuestHands";
 import { roomHandsSocketUrl } from "./gesture/remote";
 import { HelpOverlay } from "./HelpOverlay";
 import { BuildChips, CommissionButton, ExecutionChip, ProcessControls } from "./BuildChips";
+import { FleetScrollRail } from "./FleetScroll";
 import { TakeHomeQr } from "./TakeHomeQr";
 import { buildsOf, lifecycleActionsFor, looksLikeSnapshot } from "./buildloop";
 import type { LifecycleAction } from "./buildloop";
@@ -162,7 +163,8 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
   const [ideaCard, setIdeaCard] = useState<{ id: string | null } | null>(initialOverlay?.ideaCard ?? null);
   const ideaCardRef = useRef<{ id: string | null } | null>(null);
   ideaCardRef.current = ideaCard;
-  const [zenMode, setZenMode] = useState(false);
+  // ?zen=1 boots a dedicated display straight into the chrome-less scene.
+  const [zenMode, setZenMode] = useState(urlConfig.zen);
   const zenModeRef = useRef(false);
   zenModeRef.current = zenMode;
   const [hideMenuOpen, setHideMenuOpen] = useState(false);
@@ -471,7 +473,10 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
   // conversation is watched for researchable material (fact-checks, deep-dives,
   // bias scans). Offline demo flips the flag locally so the static fixtures
   // stay interactive.
-  const researchActive = snapshot.researchMode ?? false;
+  // Room-wide mode, OR-ed with the window-local ?research=1 pin: a dedicated
+  // display (ceiling projector) always shows the conversation tree while the
+  // walls keep following the shared toggle. Local only — no server writes.
+  const researchActive = (snapshot.researchMode ?? false) || urlConfig.research;
   const toggleResearchMode = useCallback(async () => {
     if (!liveMode || mockModeRef.current) {
       setSnapshot((current) => ({ ...current, researchMode: !(current.researchMode ?? false) }));
@@ -1567,7 +1572,18 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
   // mutually exclusive, so an explicit pinch-camera opt-in wins (single-wall
   // Kinect + hands must be able to orbit). Without hands, corner-lock stays as
   // the two-wall gesture pair intends.
-  const cornerLock = gestureMode && urlConfig.wall !== null && urlConfig.hands === null;
+  // FLAT LOCK: on the flat rig (?flat=1 — one wall, two side-by-side
+  // projections, docs/FLAT-WALL.md) the pair is rigid too, but coplanar:
+  // shared eye, ONE shared view direction, each window rendering its HALF of
+  // a single wide frustum (see flat-lock.ts). It applies in desk AND gesture
+  // mode — the physical wall is flat either way — so it wins over the corner
+  // lock. Unlike the corner pair, ?hands= does NOT defeat it: the pinch
+  // camera orbits the SHARED panorama (every window applies the identical
+  // stream-fed deltas, so the pair stays continuous while it spins —
+  // RoomScene's flat rig).
+  const flatLock = urlConfig.flat && urlConfig.wall !== null;
+  const cornerLock =
+    !flatLock && gestureMode && urlConfig.wall !== null && urlConfig.hands === null;
   const dwellLayerOn = gestureMode || urlConfig.dwell === "mouse" || remoteHandsUrl.length > 0;
   // AUDIT (no-mocks): the Mock Room toggle renders ONLY behind ?mock=1.
   const mockRoomEnabled = urlConfig.mock;
@@ -1587,13 +1603,14 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
         layout={sceneLayout}
         wall={urlConfig.wall}
         cornerLock={cornerLock}
+        flatLock={flatLock}
         fitSignal={fitSignal}
         focusUpid={
           guided !== null && (guided.step === "race" || guided.step === "decide")
             ? guided.focusUpid
             : null
         }
-        pointerNav={!gestureMode}
+        pointerNav={!gestureMode && !flatLock}
         onAcceptIdea={acceptOrb}
         onSelectProcess={selectSceneProcess}
         dialogue={dialogueSpecs}
@@ -1608,6 +1625,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
           fusionUrl={urlConfig.gesture?.fusionUrl ?? ""}
           remoteUrl={remoteHandsUrl}
           mouseTest={urlConfig.dwell === "mouse"}
+          initialCursorDots={urlConfig.dots ? true : undefined}
         />
       ) : null}
       {/* PINCH CAMERA (hands): runtime-toggleable (HUD button) and seeded from
@@ -2281,7 +2299,12 @@ function FleetPanel({
         <h3 className="rail-title">Fleet</h3>
         <span className="trace-count">{processes.length}/2</span>
       </div>
-      <div className="fleet-panels">
+      {/* Hover-scroll wrapper: when the panel list overflows, ▲/▼ affordances
+          appear pinned above/below it and scroll the list WHILE a cursor rests
+          on them — mouse :hover or a gesture/joystick/guest dwell cursor
+          (data-dwell-hot). Dwell cursors cannot wheel-scroll; this is their
+          only way past the fold. */}
+      <FleetScrollRail>
         {processes.map((process) => {
           const steering = process.upid === steeringUpid;
           const builds = buildsOf(process);
@@ -2376,7 +2399,7 @@ function FleetPanel({
             No second process running
           </article>
         ) : null}
-      </div>
+      </FleetScrollRail>
     </section>
   );
 }

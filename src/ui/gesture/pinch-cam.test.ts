@@ -6,6 +6,7 @@ import {
   FLICK_MAX_YAW,
   HAND_STALE_SECONDS,
   HEIGHT_PER_UNIT,
+  RELEASE_FRAMES,
   PAN_GAIN,
   PinchCam,
   ROTATE_MAX_STEP,
@@ -101,13 +102,23 @@ describe("PinchCam — ratio hysteresis", () => {
     expect(run(cam, feed, 0, 1.5)).toHaveLength(0);
   });
 
-  test("a single up-vote past PINCH_OFF releases immediately", () => {
+  test("release is DEBOUNCED: RELEASE_FRAMES up-votes to let go, a 1-frame dip holds the drag", () => {
     const cam = new PinchCam();
     const out = run(cam, (t) => frame([hand(1, 0.4, 0.5, t < 0.5 ? PINCHED : 0.46)]), 0, 1);
     const releases = out.filter((e) => e.intent.kind === "release");
     expect(releases).toHaveLength(1);
-    expect(releases[0].t).toBeGreaterThan(0.5 - DT);
-    expect(releases[0].t).toBeLessThan(0.5 + 2 * DT);
+    // Fires only once RELEASE_FRAMES consecutive up-votes accumulate.
+    expect(releases[0].t).toBeGreaterThan(0.5 + (RELEASE_FRAMES - 2) * DT);
+    expect(releases[0].t).toBeLessThan(0.5 + (RELEASE_FRAMES + 1) * DT);
+    // A single-frame tracking dip mid-pinch must NOT drop the grab.
+    const cam2 = new PinchCam();
+    const dip = run(
+      cam2,
+      (t) => frame([hand(1, 0.4, 0.5, t > 0.5 && t < 0.5 + DT ? 0.46 : PINCHED)]),
+      0,
+      1,
+    );
+    expect(dip.filter((e) => e.intent.kind === "release")).toHaveLength(0);
   });
 });
 
@@ -208,7 +219,9 @@ describe("PinchCam — flick", () => {
     for (const tTrue of [0.733, 0.766, 0.8]) {
       intents.push(...cam.update(frame([hand(1, xAt(tTrue), 0.5)]), tBurst));
     }
-    intents.push(...cam.update(frame([hand(1, xAt(0.8), 0.5, OPEN)]), tBurst));
+    for (let vote = 0; vote < RELEASE_FRAMES; vote += 1) {
+      intents.push(...cam.update(frame([hand(1, xAt(0.8), 0.5, OPEN)]), tBurst));
+    }
     const releases = intents.filter((i): i is Extract<CameraIntent, { kind: "release" }> => i.kind === "release");
     expect(releases).toHaveLength(1);
     // The flick reflects the honest pre-stall velocity, never the cap.
@@ -245,7 +258,7 @@ describe("PinchCam — teleport guard", () => {
     const swallowed = ofKind(after, "orbit").reduce((s, o) => s + Math.abs(o.dYaw) + Math.abs(o.dHeight), 0);
     expect(swallowed).toBe(0);
     // Release right after: motion the user never made must never flick.
-    const rel = run(cam, () => frame([hand(1, 0.55, 0.5, OPEN)]), 1.0 + DT, 1.0 + DT);
+    const rel = run(cam, () => frame([hand(1, 0.55, 0.5, OPEN)]), 1.0 + DT, 1.0 + (RELEASE_FRAMES + 1) * DT);
     expect(ofKind(rel, "release")).toEqual([{ kind: "release", yawVel: 0, heightVel: 0 }]);
   });
 

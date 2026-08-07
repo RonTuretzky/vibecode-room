@@ -133,6 +133,36 @@ describe("RemoteHandsHub", () => {
     expect(roomB.sent.filter((m) => (m as { type: string }).type === "cursors")).toHaveLength(0);
   });
 
+  test("guest cursors are One-Euro smoothed in the relay: jitter attenuates, resets on hand loss", () => {
+    // 30 Hz clock so the filter sees realistic frame spacing.
+    let tick = 0;
+    const hub = new RemoteHandsHub({ now: () => (tick += 1 / 30) });
+    const room = fakePeer();
+    hub.addRoom(room.send).message(hello("A"));
+    const conn = hub.addGuest(fakePeer().send);
+
+    const relayedX = () => {
+      const frame = room.sent[room.sent.length - 1] as { cursors: Array<{ x: number }> };
+      return frame.cursors[0].x;
+    };
+    // First sample passes through exactly (filter seeds on it).
+    conn.message(cursorsFrame([{ id: 0, x: 0.5, y: 0.5, engaged: false }]));
+    expect(relayedX()).toBe(0.5);
+    // Settle, then a single-frame jitter spike: the relayed cursor must move
+    // well under the raw spike (this shiver is what resets dwell on the wall).
+    for (let i = 0; i < 5; i += 1) {
+      conn.message(cursorsFrame([{ id: 0, x: 0.5, y: 0.5, engaged: false }]));
+    }
+    conn.message(cursorsFrame([{ id: 0, x: 0.56, y: 0.5, engaged: false }]));
+    expect(relayedX()).toBeGreaterThan(0.5);
+    expect(relayedX()).toBeLessThan(0.53);
+    // Hand vanishes for a frame → its filter drops; the re-tracked hand seeds
+    // fresh at its new position instead of gliding from stale state.
+    conn.message(cursorsFrame([]));
+    conn.message(cursorsFrame([{ id: 0, x: 0.9, y: 0.1, engaged: false }]));
+    expect(relayedX()).toBe(0.9);
+  });
+
   test("a guest hello with a wall routes its frames to that wall", () => {
     const hub = makeHub();
     const roomA = fakePeer();

@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ProjectorApp, REQUIRED_PROJECTOR_REGIONS } from "./App";
-import { cursorDotsFromStored } from "./gesture/GestureLayer";
+import { cursorDotsFromStored, fusionSources } from "./gesture/GestureLayer";
+import { FLEET_SCROLL_PX_PER_SECOND, FleetScrollRail, hoverScrollDelta, railOverflows } from "./FleetScroll";
 import { IdeaTray } from "./IdeaTray";
 import { HelpOverlay } from "./HelpOverlay";
 import { QrImport, qrPanelState } from "./QrImport";
@@ -688,6 +689,57 @@ describe("gesture dwell-select interaction", () => {
   });
 });
 
+// FLEET HOVER-SCROLL (FleetScroll.tsx): the dwell cursor cannot wheel-scroll,
+// so an overflowing fleet rail grows ▲/▼ strips that scroll WHILE hovered —
+// css :hover (mouse) or data-dwell-hot (gesture/joystick/guest cursors).
+describe("fleet rail hover-scroll", () => {
+  test("the fleet rail always renders inside the hover-scroll wrapper", () => {
+    const html = renderToStaticMarkup(<ProjectorApp initialSnapshot={demoProjectorSnapshot} />);
+    expect(html).toContain('data-testid="fleet-scroll-rail"');
+    // SSR (and any non-overflowing list) shows NO scroll chrome: overflow is
+    // measured per-frame in the browser, and a 2-panel fleet never needs it.
+    expect(html).not.toContain('data-testid="fleet-scroll-up"');
+    expect(html).not.toContain('data-testid="fleet-scroll-down"');
+  });
+
+  test("once the list overflows, both strips render as ENABLED plain <button>s (dwell-targetable)", () => {
+    const html = renderToStaticMarkup(
+      <FleetScrollRail initialOverflowing>
+        <div data-testid="fleet-panel" />
+      </FleetScrollRail>,
+    );
+    expect(html).toContain('data-testid="fleet-scroll-up"');
+    expect(html).toContain('data-testid="fleet-scroll-down"');
+    // The dwell selector is "button:not(:disabled), [data-dwell]" — the strips
+    // must be enabled buttons so GestureLayer targets them (and decorates the
+    // pointed-at one with data-dwell-hot, which is what drives the scroll).
+    expect(countOccurrences(html, "<button")).toBe(2);
+    expect(html).not.toContain("disabled");
+    // The scrolling list itself still renders the panels between the strips.
+    expect(html).toContain('class="fleet-panels"');
+    expect(html).toContain('data-testid="fleet-panel"');
+  });
+
+  test("hoverScrollDelta: a few hundred px/s, signed by direction", () => {
+    // A 60fps frame moves rate/60 px; twenty of them ≈ a third of a second.
+    expect(hoverScrollDelta(1, 1 / 60)).toBeCloseTo(FLEET_SCROLL_PX_PER_SECOND / 60);
+    expect(hoverScrollDelta(-1, 1 / 60)).toBeCloseTo(-FLEET_SCROLL_PX_PER_SECOND / 60);
+    expect(FLEET_SCROLL_PX_PER_SECOND).toBeGreaterThanOrEqual(200);
+    expect(FLEET_SCROLL_PX_PER_SECOND).toBeLessThanOrEqual(500);
+  });
+
+  test("hoverScrollDelta clamps runaway frame deltas (a resumed background tab must not teleport the list)", () => {
+    expect(hoverScrollDelta(1, 5)).toBe(hoverScrollDelta(1, 0.1));
+    expect(hoverScrollDelta(1, -0.02)).toBe(0); // clock skew: never scroll backwards
+  });
+
+  test("railOverflows: true only past the sub-pixel tolerance", () => {
+    expect(railOverflows(900, 300)).toBe(true);
+    expect(railOverflows(300, 300)).toBe(false);
+    expect(railOverflows(303, 300)).toBe(false); // rounding jitter must not flicker the strips in
+  });
+});
+
 // PINCH CAMERA (?hands=): camera CONTROL only — an opt-in hidden layer,
 // independent of the dwell/gesture layers and composable with them.
 describe("pinch camera layer", () => {
@@ -809,6 +861,72 @@ describe("corner-locked two-wall gesture mode", () => {
     );
     expect(gestureNoWall).toContain('data-corner-lock="false"');
     expect(gestureNoWall).not.toContain('data-testid="scene-controls"');
+  });
+});
+
+// FLAT-LOCKED two-wall pair (?flat=1&wall=A|B): the flat-rig sibling of the
+// corner lock — two side-by-side projections on ONE wall render halves of a
+// single wide frustum (flat-lock.ts / flat-lock.test.ts), surfaced on the
+// scene container as data-flat-lock. It applies in desk AND gesture mode
+// (the physical wall is flat either way) and wins over the corner lock.
+describe("flat-locked two-wall pair", () => {
+  test("?flat=1&wall=A|B: the scene is flat-locked (desk mode) and content stays FULL on both walls", () => {
+    for (const wall of ["A", "B"]) {
+      const html = renderToStaticMarkup(
+        <ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch={`?live=1&wall=${wall}&flat=1`} />,
+      );
+      expect(html).toContain('data-flat-lock="true"');
+      // No scene-content filtering: every idea and every build, both windows.
+      expect(html).toContain(`data-idea-count="${demoProjectorSnapshot.ideas?.length ?? -1}"`);
+      expect(html).toContain(`data-tree-count="${demoProjectorSnapshot.processes.length}"`);
+    }
+  });
+
+  test("?flat=1 in gesture mode replaces the corner lock (one rigid rig at a time)", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch="?live=0&wall=A&gesture=1&flat=1" />,
+    );
+    expect(html).toContain('data-flat-lock="true"');
+    expect(html).toContain('data-corner-lock="false"');
+  });
+
+  test("flat lock needs a wall identity; the pinch camera COMPOSES with it (shared orbit)", () => {
+    // No ?wall=: a single window has no half to render — stays unlocked.
+    const noWall = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch="?live=1&flat=1" />,
+    );
+    expect(noWall).toContain('data-flat-lock="false"');
+    // ?hands= does NOT defeat the flat pair (unlike corner lock): the pinch
+    // camera orbits the SHARED panorama — every window applies the identical
+    // stream-fed deltas, so the pair stays continuous while it spins.
+    const hands = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch="?live=1&wall=A&flat=1&hands=1" />,
+    );
+    expect(hands).toContain('data-flat-lock="true"');
+    // And plain desk walls without ?flat=1 keep their independent vantages.
+    const plain = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch="?live=1&wall=A&view=ideas" />,
+    );
+    expect(plain).toContain('data-flat-lock="false"');
+  });
+});
+
+// MULTI-SOURCE FUSION: &fusion= may list several cursor servers (camera
+// fusion + the arcade joystick bridge); the gesture layer opens one client
+// per source and merges every stream into the same dwell pipeline.
+describe("fusionSources: the &fusion= param as a source list", () => {
+  test("a single URL stays a single source; a comma-separated list splits", () => {
+    expect(fusionSources("ws://localhost:8770")).toEqual(["ws://localhost:8770"]);
+    expect(fusionSources("ws://localhost:8770,ws://localhost:8771")).toEqual([
+      "ws://localhost:8770",
+      "ws://localhost:8771",
+    ]);
+  });
+
+  test("blanks are dropped: empty string, padding, trailing/doubled commas", () => {
+    expect(fusionSources("")).toEqual([]);
+    expect(fusionSources(" ws://a:1 , ws://b:2 ")).toEqual(["ws://a:1", "ws://b:2"]);
+    expect(fusionSources("ws://a:1,,")).toEqual(["ws://a:1"]);
   });
 });
 

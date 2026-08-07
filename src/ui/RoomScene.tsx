@@ -4,6 +4,7 @@ import type { IdeaTrayItem, ProjectorProcess } from "./types";
 import { registerSceneDwellSource, type SceneDwellRect } from "./gesture/scene-source";
 import { registerSceneCameraControl } from "./gesture/camera-source";
 import { cornerEye, cornerVerticalFovDeg, cornerYaw } from "./corner-lock";
+import { FLAT_EYE_DISTANCE, FLAT_EYE_HEIGHT, FLAT_YAW, flatVerticalFovDeg, flatViewOffset } from "./flat-lock";
 import { loadGardenFlora, type FloraLibrary } from "./garden-flora";
 
 // The full-viewport 3D stage (after conductor-github-visualizer): the scene IS
@@ -179,6 +180,15 @@ interface RoomSceneProps {
   // apart, exactly 90° horizontal FOV, and NO drift/orbit/fit/focus so the
   // seam edge stays coherent. Fixed per window (URL-derived).
   cornerLock?: boolean;
+  // FLAT LOCK (?flat=1 with an explicit wall): the flat-rig sibling of the
+  // corner lock — the two windows sit side by side on ONE physical wall, so
+  // they render halves of a SINGLE wide frustum (shared eye, one shared view
+  // direction, per-window setViewOffset — see flat-lock.ts) and the pair
+  // tiles one continuous picture. Mouse/fit/focus/WASD stay gated off, but
+  // the pinch camera may orbit/zoom the SHARED panorama: every window applies
+  // the identical hands-stream deltas, keeping the pair in lockstep. Fixed
+  // per window (URL-derived).
+  flatLock?: boolean;
   // Increment to request a one-shot fit-to-content camera move.
   fitSignal: number;
   // GUIDED-DEMO FOCUS: when set, the camera glides to frame this process's
@@ -689,7 +699,7 @@ interface Entry {
   updateProgress?: (spec: TreeSpec) => void;
 }
 
-export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, focusUpid = null, pointerNav = true, cornerLock = false, onAcceptIdea, onSelectProcess, dialogue = [], topics = [], research = [], onResearchNode, onDialogueNode }: RoomSceneProps) {
+export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, focusUpid = null, pointerNav = true, cornerLock = false, flatLock = false, onAcceptIdea, onSelectProcess, dialogue = [], topics = [], research = [], onResearchNode, onDialogueNode }: RoomSceneProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const ideasRef = useRef(ideas);
   ideasRef.current = ideas;
@@ -719,6 +729,9 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
   // Same deal: the corner lock is URL-derived and fixed for the window's life.
   const cornerLockRef = useRef(cornerLock);
   cornerLockRef.current = cornerLock;
+  // Same deal: the flat lock is URL-derived and fixed for the window's life.
+  const flatLockRef = useRef(flatLock);
+  flatLockRef.current = flatLock;
   const fitRef = useRef(fitSignal);
   fitRef.current = fitSignal;
   const focusRef = useRef<string | null>(focusUpid);
@@ -821,9 +834,43 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       camera.position.set(eye.x, eye.y, eye.z);
       camera.lookAt(eye.x - Math.sin(cornerLockedYaw), eye.y, eye.z - Math.cos(cornerLockedYaw));
     };
+    // ── flat lock (?flat=1 with an explicit wall) ───────────────────────────
+    // The FLAT rig's rigid pair: the two windows are halves of a SINGLE wide
+    // frustum — one shared eye, ONE shared view direction (no per-wall yaw),
+    // and (in resize) a per-window setViewOffset slicing this window's column
+    // out of the combined panorama. Coplanar halves share the projection
+    // plane, so the pair tiles one continuous picture on the flat wall.
+    //
+    // SHARED ORBIT: unlike the corner pair, the flat rig is NOT frozen — the
+    // pinch camera may orbit/zoom the WHOLE panorama about the scene centre.
+    // Continuity survives because every wall window receives the IDENTICAL
+    // hands stream and applies the IDENTICAL deltas to this rig, so the
+    // shared pose stays in lockstep with no cross-window channel. Mouse/fit/
+    // focus/WASD stay gated off — only the deterministic stream-fed writers
+    // may move it.
+    const flatLocked = flatLockRef.current;
+    const flatRig = { yaw: FLAT_YAW, height: FLAT_EYE_HEIGHT, dist: FLAT_EYE_DISTANCE };
+    // SMOOTHED APPLICATION: the targets above step at the 30 Hz hands-stream
+    // cadence; drawing them raw makes the whole panorama judder on a 60 fps
+    // render. The drawn pose eases toward the targets each frame instead.
+    // Lockstep survives because both windows ease toward IDENTICAL targets
+    // with the same rate — any transient divergence decays within ~100 ms.
+    const flatView = { yaw: FLAT_YAW, height: FLAT_EYE_HEIGHT, dist: FLAT_EYE_DISTANCE };
+    const applyFlatRig = (dt?: number) => {
+      const k = dt === undefined ? 1 : 1 - Math.exp(-dt * 14);
+      flatView.yaw += (flatRig.yaw - flatView.yaw) * k;
+      flatView.height += (flatRig.height - flatView.height) * k;
+      flatView.dist += (flatRig.dist - flatView.dist) * k;
+      const eyeX = Math.sin(flatView.yaw) * flatView.dist;
+      const eyeZ = Math.cos(flatView.yaw) * flatView.dist;
+      camera.position.set(eyeX, flatView.height, eyeZ);
+      camera.lookAt(eyeX - Math.sin(flatView.yaw), flatView.height, eyeZ - Math.cos(flatView.yaw));
+    };
 
     resetRig();
-    if (cornerLocked) {
+    if (flatLocked) {
+      applyFlatRig();
+    } else if (cornerLocked) {
       applyCornerRig();
     } else {
       // Per-window boot framing: the wall identity only seeds the default yaw
@@ -2931,11 +2978,24 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
     // three.js and cannot push the rig outside the mouse's envelope.
     const unregisterCameraControl = registerSceneCameraControl({
       orbitBy: (dYaw, dHeight) => {
+        if (flatLocked) {
+          // Shared flat pair: orbit the whole panorama about the scene
+          // centre. Deterministic per the hands stream — see the flat-rig
+          // comment — so every window lands on the same pose.
+          flatRig.yaw += dYaw;
+          flatRig.height = Math.max(1.4, Math.min(30, flatRig.height + dHeight));
+          return;
+        }
         // Exact mirror of the onPointerMove orbit path (incl. height clamp).
         rig.dAngle += dYaw;
         rig.dHeight = Math.max(1.4, Math.min(30, rig.dHeight + dHeight));
       },
       panBy: (dxPx, dyPx) => {
+        if (flatLocked) {
+          // Panning would slide the pair off its seam-centred origin — the
+          // panorama stays anchored; orbit/zoom are the flat-pair verbs.
+          return;
+        }
         // Exact mirror of the onPointerMove shift-pan path.
         const panSpeed = 0.0045 * rig.radius;
         rig.dTargetX -= Math.cos(rig.angle) * dxPx * panSpeed;
@@ -2946,6 +3006,11 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
       zoomBy: (scale) => {
         if (!Number.isFinite(scale) || scale <= 0) {
           return; // defensive: a bad ratio must never NaN the rig
+        }
+        if (flatLocked) {
+          // Dolly the shared panorama, clamped so the seam maths stay sane.
+          flatRig.dist = Math.max(6, Math.min(45, flatRig.dist * scale));
+          return;
         }
         // Multiplicative dolly, re-clamped to the onWheel envelope [4,45].
         rig.dRadius = Math.max(4, Math.min(45, rig.dRadius * scale));
@@ -2997,7 +3062,23 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
       }
       renderer.setSize(width, height);
       camera.aspect = width / height;
-      if (cornerLocked) {
+      if (flatLocked) {
+        // This window renders ITS column of the pair's single wide frustum.
+        // setViewOffset also sets camera.aspect to the FULL panorama's, and
+        // the fov (VERTICAL in three.js, describing the full frustum) is
+        // recomputed so the combined HORIZONTAL fov stays pinned whatever
+        // the window size.
+        const view = flatViewOffset(wallRef.current, width, height);
+        camera.setViewOffset(
+          view.fullWidth,
+          view.fullHeight,
+          view.offsetX,
+          view.offsetY,
+          view.width,
+          view.height,
+        );
+        camera.fov = flatVerticalFovDeg(camera.aspect);
+      } else if (cornerLocked) {
         // camera.fov is VERTICAL in three.js: recompute it from the aspect so
         // the HORIZONTAL fov stays pinned at exactly 90° and the wall pair
         // keeps tiling the corner seamlessly at any window size.
@@ -3048,13 +3129,13 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
       }
       if (fitRef.current !== lastFit) {
         lastFit = fitRef.current;
-        if (!cornerLocked) {
-          fitToContent(); // corner lock: F is a camera no-op — the pair may not move
+        if (!cornerLocked && !flatLocked) {
+          fitToContent(); // corner/flat lock: F is a camera no-op — the pair may not move
         }
       }
       // Guided-demo focus: glide the rig to the requested process node
-      // (disabled under corner lock — the rigid pair never reframes).
-      const wantFocus = cornerLocked ? null : focusRef.current;
+      // (disabled under corner/flat lock — a rigid pair never reframes).
+      const wantFocus = cornerLocked || flatLocked ? null : focusRef.current;
       if (wantFocus !== appliedFocus) {
         if (wantFocus === null) {
           appliedFocus = null;
@@ -3069,7 +3150,13 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
         }
       }
       const smoothing = 1 - Math.exp(-dt * 7);
-      if (cornerLocked) {
+      if (flatLocked) {
+        // Rigid flat pair: reassert the locked framing every frame so no
+        // stray camera write can ever shear the seam between the halves —
+        // same contract as the corner pair below (eased toward the shared
+        // targets; see applyFlatRig).
+        applyFlatRig(dt);
+      } else if (cornerLocked) {
         // Rigid corner pair: reassert the locked framing every frame so no
         // stray camera write can ever drift the seam between the walls. The
         // pinch-camera external grab is a no-op here (like F/focus) — the pair
@@ -3359,6 +3446,7 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
       data-mode={mode}
       data-layout={layout}
       data-corner-lock={cornerLock ? "true" : "false"}
+      data-flat-lock={flatLock ? "true" : "false"}
       data-idea-count={ideas.length}
       data-tree-count={trees.length}
       data-dialogue-count={dialogue.length}
