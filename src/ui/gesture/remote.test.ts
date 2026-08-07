@@ -8,6 +8,7 @@ import {
   isGuestCursorId,
   roomHandsSocketUrl,
   shouldDrawCursorDot,
+  shouldDrawNameTag,
   visibleCursorDots,
 } from "./remote";
 
@@ -79,6 +80,22 @@ describe("shouldDrawCursorDot / visibleCursorDots", () => {
     ]);
     expect(visibleCursorDots(cursors, false).map(([id]) => id)).toEqual([GUEST_ID_BASE]);
     expect(visibleCursorDots(cursors, true).map(([id]) => id)).toEqual([GUEST_ID_BASE, 7, -1]);
+  });
+});
+
+describe("shouldDrawNameTag", () => {
+  test("only a guest cursor WITH a name gets a tag", () => {
+    expect(shouldDrawNameTag(GUEST_ID_BASE, "Zoë")).toBe(true);
+    expect(shouldDrawNameTag(guestCursorId(3, 1), "Ada")).toBe(true);
+    expect(shouldDrawNameTag(GUEST_ID_BASE, undefined)).toBe(false); // anonymous guest
+    expect(shouldDrawNameTag(GUEST_ID_BASE, null)).toBe(false);
+    expect(shouldDrawNameTag(GUEST_ID_BASE, "")).toBe(false);
+  });
+
+  test("camera/fusion and mouse cursors never get a tag, even with a leaked name field", () => {
+    expect(shouldDrawNameTag(7, "Mallory")).toBe(false);
+    expect(shouldDrawNameTag(1_000_000, "Mallory")).toBe(false);
+    expect(shouldDrawNameTag(-1, "Mallory")).toBe(false); // the mouse-test cursor
   });
 });
 

@@ -5,7 +5,7 @@ import { GestureTargets, HITBOX_INFLATE_PX, inflateRect, type TargetDescriptor }
 import { MultiDwell } from "./multi";
 import { getSceneDwellSource } from "./scene-source";
 import { getSceneFlatPoseControl, registerFlatPoseSender } from "./flat-pose-source";
-import { RemoteKeyHolds, guestDwellCaps, isGuestCursorId, visibleCursorDots } from "./remote";
+import { RemoteKeyHolds, guestDwellCaps, isGuestCursorId, shouldDrawNameTag, visibleCursorDots } from "./remote";
 import { GestureWallClient, type GestureCursor, type GestureWallStatus } from "./wall-client";
 
 // Dwell/interaction tuning — matches the standalone wall client
@@ -40,6 +40,9 @@ interface CursorState {
   engaged: boolean;
   lastSeen: number; // seconds
   isMouse: boolean;
+  // Guest display name (hub-sanitized, guest cursors only) — rendered as a
+  // small tag beside the dot so the room knows whose dot is whose.
+  name?: string;
 }
 
 // CURSOR DOTS (live-room request): a persistent colored dot per tracked person
@@ -166,7 +169,7 @@ export function GestureLayer({ wall, fusionUrl, remoteUrl = "", mouseTest = fals
     const mergeCursors = (incoming: GestureCursor[]) => {
       const t = nowSec();
       for (const c of incoming) {
-        cursors.set(c.id, { x: c.x, y: c.y, engaged: c.engaged, lastSeen: t, isMouse: false });
+        cursors.set(c.id, { x: c.x, y: c.y, engaged: c.engaged, lastSeen: t, isMouse: false, name: c.name });
       }
     };
     const clients: GestureWallClient[] = fusionSources(fusionUrl).map(
@@ -528,5 +531,38 @@ function draw(
     ctx.beginPath();
     ctx.arc(x, y, 3.5, 0, Math.PI * 2);
     ctx.fill();
+  }
+
+  // Guest name tags — a second pass over the SAME visible-dot list (the tag
+  // rides the dot's visibility), drawn AFTER every dot so a crowd of cursors
+  // can never occlude a name. Only guest cursors that set one get a tag
+  // (shouldDrawNameTag, unit-tested); camera/fusion dots stay anonymous.
+  ctx.font = '13px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+  ctx.textBaseline = "middle";
+  for (const [id, cursor] of visibleCursorDots(cursors, showCursorDots)) {
+    const name = cursor.name;
+    if (!shouldDrawNameTag(id, name)) {
+      continue;
+    }
+    const x = cursor.x * vpW;
+    const y = cursor.y * vpH;
+    const hue = idToHue(id);
+    const alpha = cursor.engaged ? 0.95 : 0.7;
+    const padX = 7;
+    const tagH = 20;
+    const tagW = ctx.measureText(name).width + padX * 2;
+    // Below-right of the dot, nudged back on-screen at the wall's edges so the
+    // tag never renders off-canvas.
+    const tx = Math.max(2, Math.min(x + 13, vpW - tagW - 2));
+    const ty = Math.max(2, Math.min(y + 13, vpH - tagH - 2));
+    ctx.fillStyle = `rgba(11, 14, 20, ${0.82 * alpha})`;
+    ctx.beginPath();
+    ctx.roundRect(tx, ty, tagW, tagH, 7);
+    ctx.fill();
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = `hsla(${hue}, 90%, 62%, ${0.55 * alpha})`;
+    ctx.stroke();
+    ctx.fillStyle = `hsla(${hue}, 90%, 72%, ${alpha})`;
+    ctx.fillText(name, tx + padX, ty + tagH / 2 + 0.5);
   }
 }

@@ -13,6 +13,10 @@ export interface GestureCursor {
   y: number;
   engaged: boolean;
   conf: number;
+  // Guest display name (guest-hands relay only — the hub attaches it, already
+  // sanitized, to a named guest's cursors; fusion frames never carry one).
+  // The wall renders it as a small tag beside the guest's dot.
+  name?: string;
 }
 
 export interface CursorsFrame {
@@ -52,6 +56,7 @@ function coerceCursor(entry: unknown): GestureCursor | null {
     y: clamp01(entry.y),
     engaged: entry.engaged !== false, // default engaged unless explicitly false
     conf: typeof entry.conf === "number" ? entry.conf : 1,
+    ...(typeof entry.name === "string" && entry.name.length > 0 ? { name: entry.name } : {}),
   };
 }
 

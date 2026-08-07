@@ -7,19 +7,66 @@ import {
   FLAT_POSE_HEIGHT_MIN,
   FLAT_POSE_YAW_LIMIT,
   MAX_GUEST_MESSAGE_CHARS,
+  MAX_GUEST_NAME_CHARS,
   RemoteHandsHub,
   parseGuestMessage,
   resolveHandsInfo,
+  sanitizeGuestName,
 } from "./remote-hands";
 import type { InterfaceAddresses } from "./project-import";
 
 // ── parseGuestMessage ────────────────────────────────────────────────────────
 
+describe("sanitizeGuestName", () => {
+  test("trims, caps at MAX_GUEST_NAME_CHARS, and strips control chars", () => {
+    expect(sanitizeGuestName("  Zoë  ")).toBe("Zoë");
+    expect(sanitizeGuestName("a".repeat(MAX_GUEST_NAME_CHARS + 10))).toBe("a".repeat(MAX_GUEST_NAME_CHARS));
+    // Control chars go BEFORE the cap so they can't eat visible budget, and a
+    // cap that lands on trailing whitespace re-trims.
+    expect(sanitizeGuestName("Ro\u0000n\u001b \u007f")).toBe("Ron");
+    expect(sanitizeGuestName("evil\nname")).toBe("evilname");
+  });
+
+  test("empty and non-string inputs are 'no name' (null)", () => {
+    expect(sanitizeGuestName("")).toBeNull();
+    expect(sanitizeGuestName("   ")).toBeNull();
+    expect(sanitizeGuestName("\u0000\u001f")).toBeNull(); // control-only
+    expect(sanitizeGuestName(undefined)).toBeNull();
+    expect(sanitizeGuestName(42)).toBeNull();
+    expect(sanitizeGuestName({ name: "x" })).toBeNull();
+  });
+});
+
 describe("parseGuestMessage", () => {
   test("parses a hello with and without a wall", () => {
-    expect(parseGuestMessage(JSON.stringify({ type: "hello", wall: "B" }))).toEqual({ kind: "hello", wall: "B" });
-    expect(parseGuestMessage(JSON.stringify({ type: "hello" }))).toEqual({ kind: "hello", wall: null });
-    expect(parseGuestMessage(JSON.stringify({ type: "hello", wall: "  " }))).toEqual({ kind: "hello", wall: null });
+    expect(parseGuestMessage(JSON.stringify({ type: "hello", wall: "B" }))).toEqual({ kind: "hello", wall: "B", name: null });
+    expect(parseGuestMessage(JSON.stringify({ type: "hello" }))).toEqual({ kind: "hello", wall: null, name: null });
+    expect(parseGuestMessage(JSON.stringify({ type: "hello", wall: "  " }))).toEqual({ kind: "hello", wall: null, name: null });
+  });
+
+  test("a hello carries a sanitized optional display name", () => {
+    expect(parseGuestMessage(JSON.stringify({ type: "hello", wall: "A", name: "  Zoë  " }))).toEqual({
+      kind: "hello",
+      wall: "A",
+      name: "Zoë",
+    });
+    // Over-long and control-char-laden names come back wall-safe.
+    expect(parseGuestMessage(JSON.stringify({ type: "hello", name: "x".repeat(99) }))).toEqual({
+      kind: "hello",
+      wall: null,
+      name: "x".repeat(MAX_GUEST_NAME_CHARS),
+    });
+    // Junk name values never sink the hello itself.
+    expect(parseGuestMessage(JSON.stringify({ type: "hello", wall: "A", name: 7 }))).toEqual({
+      kind: "hello",
+      wall: "A",
+      name: null,
+    });
+    expect(parseGuestMessage(JSON.stringify({ type: "hello", name: "   " }))).toEqual({
+      kind: "hello",
+      wall: null,
+      name: null,
+    });
   });
 
   test("parses cursors, clamping coordinates and coercing engagement", () => {
@@ -182,6 +229,55 @@ describe("RemoteHandsHub", () => {
     // Wall B never sees wall-A frames — both windows render the full room, so
     // mirroring one guest onto both would double-fire every dwell.
     expect(roomB.sent.filter((m) => (m as { type: string }).type === "cursors")).toHaveLength(0);
+  });
+
+  test("a named guest's relayed cursors carry the sanitized name; nameless hellos clear it", () => {
+    const hub = makeHub();
+    const room = fakePeer();
+    hub.addRoom(room.send).message(hello("A"));
+
+    const conn = hub.addGuest(fakePeer().send);
+    const lastCursor = () => {
+      const frames = room.sent.filter((m) => (m as { type: string }).type === "cursors") as Array<{
+        cursors: Array<Record<string, unknown>>;
+      }>;
+      return frames[frames.length - 1].cursors[0];
+    };
+
+    // Anonymous guest: the wire shape is exactly the pre-names protocol — no
+    // name key at all (not name:null), so old consumers see identical frames.
+    conn.message(cursorsFrame([{ id: 0, x: 0.25, y: 0.75, engaged: true }]));
+    expect(lastCursor()).toEqual({ id: GUEST_ID_BASE, x: 0.25, y: 0.75, engaged: true, conf: 1 });
+
+    // A fresh hello with a name (how the page announces an edit): every
+    // subsequent cursor carries it, sanitized by the hub.
+    conn.message(JSON.stringify({ type: "hello", wall: "A", name: "  Zoë   " }));
+    conn.message(cursorsFrame([{ id: 0, x: 0.25, y: 0.75, engaged: true }]));
+    expect(lastCursor()).toEqual({ id: GUEST_ID_BASE, x: 0.25, y: 0.75, engaged: true, conf: 1, name: "Zoë" });
+
+    // Clearing the field on the page sends a nameless hello: the tag comes off.
+    conn.message(JSON.stringify({ type: "hello", wall: "A" }));
+    conn.message(cursorsFrame([{ id: 0, x: 0.25, y: 0.75, engaged: false }]));
+    expect(lastCursor()).toEqual({ id: GUEST_ID_BASE, x: 0.25, y: 0.75, engaged: false, conf: 1 });
+  });
+
+  test("each named guest tags only its OWN cursors", () => {
+    const hub = makeHub();
+    const room = fakePeer();
+    hub.addRoom(room.send).message(hello("A"));
+
+    const named = hub.addGuest(fakePeer().send);
+    named.message(JSON.stringify({ type: "hello", name: "Ada" }));
+    const anonymous = hub.addGuest(fakePeer().send);
+
+    named.message(cursorsFrame([{ id: 0, x: 0.1, y: 0.1, engaged: true }]));
+    anonymous.message(cursorsFrame([{ id: 0, x: 0.9, y: 0.9, engaged: true }]));
+
+    const frames = room.sent.filter((m) => (m as { type: string }).type === "cursors") as Array<{
+      cursors: Array<Record<string, unknown>>;
+    }>;
+    expect(frames[0].cursors[0]).toMatchObject({ id: GUEST_ID_BASE, name: "Ada" });
+    expect(frames[1].cursors[0]).toEqual({ id: GUEST_ID_BASE - GUEST_ID_STRIDE, x: 0.9, y: 0.9, engaged: true, conf: 1 });
   });
 
   test("guest cursors are One-Euro smoothed in the relay: jitter attenuates, resets on hand loss", () => {

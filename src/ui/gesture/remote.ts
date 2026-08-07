@@ -61,6 +61,16 @@ export function visibleCursorDots<T>(
   return [...cursors].filter(([id]) => shouldDrawCursorDot(id, dotsPreference));
 }
 
+// Name tags: only a GUEST cursor that set a display name gets one — camera/
+// fusion cursors never do, even if a name field somehow leaked onto their
+// frames (guests are the only peers whose hub attaches names). Pure for the
+// same reason as visibleCursorDots: GestureLayer.draw() must gate on THIS,
+// so the rule stays unit-tested even though the canvas renderer is not. The
+// tag rides the dot's visibility (guests' dots always draw).
+export function shouldDrawNameTag(id: number, name: string | null | undefined): name is string {
+  return isGuestCursorId(id) && typeof name === "string" && name.length > 0;
+}
+
 // The wall's same-origin subscription socket for merged guest cursors. The
 // production wall is served BY the projector server (run-room.sh), so the
 // page's own origin is the right default; ?remote=ws://… overrides it for

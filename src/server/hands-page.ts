@@ -49,6 +49,13 @@ export function handsPageHtml(): string {
   .status[data-state="connecting"] { color: #f0c674; border-color: #5a4c2c; }
   .you { display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.8rem; color: #8b93a7; }
   .you .dot { width: 0.7rem; height: 0.7rem; border-radius: 50%; background: #5b8cff; box-shadow: 0 0 8px currentColor; }
+  #guest-name {
+    padding: 0.3rem 0.6rem; font-size: 0.8rem; width: 9.5rem; border-radius: 0.6rem;
+    border: 1px solid #2a3040; background: #131826; color: #e6e9f0;
+    font-family: inherit;
+  }
+  #guest-name::placeholder { color: #46506a; }
+  #guest-name:focus { outline: none; border-color: #5b8cff; }
   .tabs { display: flex; gap: 0.5rem; margin: 1rem 0 0.75rem; }
   .tabs button {
     padding: 0.55rem 0.9rem; font-size: 0.95rem; border-radius: 0.6rem; cursor: pointer;
@@ -104,6 +111,11 @@ export function handsPageHtml(): string {
   <header class="top">
     <h1>✋ Vibersyn hand controls</h1>
     <span class="status" id="status" data-testid="guest-status" data-state="connecting">connecting…</span>
+    <!-- Display name: rendered as a small tag beside your dot on the wall.
+         Optional, persisted on this device, editable mid-session. -->
+    <input id="guest-name" data-testid="guest-name" type="text" maxlength="24"
+      autocomplete="off" spellcheck="false" placeholder="your name"
+      aria-label="your name, shown beside your dot on the wall" />
     <span class="you" id="you" hidden><span class="dot" id="you-dot"></span>your dot on the wall</span>
   </header>
 
@@ -196,6 +208,7 @@ export function handsPageHtml(): string {
 
   const el = (id) => document.getElementById(id);
   const statusEl = el("status"), youEl = el("you"), youDot = el("you-dot");
+  const nameInput = el("guest-name");
   const wallsEl = el("walls"), noWallBanner = el("no-wall-banner");
   const pad = el("pad"), padDot = el("pad-dot"), cam = el("cam"), camNote = el("cam-note");
   const camStatus = el("cam-status");
@@ -205,6 +218,17 @@ export function handsPageHtml(): string {
   // idToHue parity with the wall (src/ui/gesture/core.ts) so "your dot" here
   // matches the color the room sees.
   const idToHue = (id) => (((id * 137.508) % 360) + 360) % 360;
+
+  // ── display name (rendered as a tag beside your dot on the wall) ───────────
+  // Optional, persisted per device, and re-announced via a fresh hello whenever
+  // it changes (debounced) — the hub sanitizes again server-side.
+  const NAME_KEY = "vibersyn.guest-name";
+  const NAME_MAX_CHARS = 24;
+  const NAME_DEBOUNCE_MS = 500;
+  const cleanName = (value) =>
+    value.replace(/[\\u0000-\\u001f\\u007f]/g, "").trim().slice(0, NAME_MAX_CHARS).trim();
+  let guestName = cleanName(localStorage.getItem(NAME_KEY) || "");
+  nameInput.value = guestName;
 
   // ── connection state ───────────────────────────────────────────────────────
   let ws = null, wsOpen = false, stopped = false;
@@ -224,6 +248,29 @@ export function handsPageHtml(): string {
       try { ws.send(JSON.stringify(payload)); } catch { /* reconnect handles it */ }
     }
   };
+
+  // EVERY hello carries the current wall pick and name — connect, wall change,
+  // and name change all speak the same frame, so the hub's newest-hello-wins
+  // state can never desync from the page.
+  const sendHello = () => send({
+    type: "hello",
+    client: "vibersyn-guest",
+    ...(chosenWall ? { wall: chosenWall } : {}),
+    ...(guestName ? { name: guestName } : {}),
+  });
+
+  let nameTimer = 0;
+  nameInput.addEventListener("input", () => {
+    clearTimeout(nameTimer);
+    nameTimer = setTimeout(() => {
+      const next = cleanName(nameInput.value);
+      if (next === guestName) return;
+      guestName = next;
+      if (guestName) localStorage.setItem(NAME_KEY, guestName);
+      else localStorage.removeItem(NAME_KEY);
+      sendHello(); // a fresh hello re-announces (or clears) the name mid-session
+    }, NAME_DEBOUNCE_MS);
+  });
 
   const sendCursors = (cursors, force = false) => {
     lastCursors = cursors;
@@ -259,7 +306,7 @@ export function handsPageHtml(): string {
       b.addEventListener("click", () => {
         chosenWall = wall;
         localStorage.setItem("vibersyn.guest-wall", wall);
-        send({ type: "hello", client: "vibersyn-guest", wall });
+        sendHello();
         renderWalls();
       });
       wallsEl.appendChild(b);
@@ -275,7 +322,7 @@ export function handsPageHtml(): string {
     ws.onopen = () => {
       wsOpen = true;
       setStatus("live", "connected");
-      send({ type: "hello", client: "vibersyn-guest", ...(chosenWall ? { wall: chosenWall } : {}) });
+      sendHello();
     };
     ws.onmessage = (event) => {
       if (typeof event.data !== "string") return;

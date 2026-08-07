@@ -556,6 +556,14 @@ describe("guest hands surface (GET /hands + /api/hands/info)", () => {
     expect(html).toContain("guest-pad");
   });
 
+  test("guest page: display-name input, persisted per device, announced via hello", async () => {
+    const { app } = await makeApp();
+    const html = await (await app.request("/hands")).text();
+    expect(html).toContain('data-testid="guest-name"'); // the name input near the status header
+    expect(html).toContain('placeholder="your name"');
+    expect(html).toContain("vibersyn.guest-name"); // localStorage persistence key
+  });
+
   test("camera cursor pipeline: One-Euro filter, interaction-zone inset, debounced+anchored pinch", async () => {
     const { app } = await makeApp();
     const html = await (await app.request("/hands")).text();

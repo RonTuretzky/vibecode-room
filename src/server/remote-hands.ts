@@ -25,6 +25,8 @@ import { preferredLanIPv4, type InterfaceAddresses } from "./project-import";
 export const MAX_GUEST_MESSAGE_CHARS = 8_192;
 // numHands=2 everywhere upstream — a guest has at most two hands on camera.
 export const MAX_CURSORS_PER_FRAME = 2;
+// A guest display name is a small tag beside a cursor dot, not a banner.
+export const MAX_GUEST_NAME_CHARS = 24;
 
 export interface RemoteGuestCursor {
   id: number; // guest-local hand id, 0..GUEST_ID_STRIDE-1
@@ -51,10 +53,23 @@ export const FLAT_POSE_DIST_MIN = 5;
 export const FLAT_POSE_DIST_MAX = 46;
 
 export type GuestMessage =
-  | { kind: "hello"; wall: string | null }
+  | { kind: "hello"; wall: string | null; name: string | null }
   | { kind: "cursors"; cursors: RemoteGuestCursor[] }
   | { kind: "keys"; held: GuestKey[] }
   | { kind: "flatpose"; yaw: number; height: number; dist: number };
+
+// A guest's display name, made wall-safe: control chars stripped (a name is
+// rendered verbatim on the room canvas — nothing may smuggle escapes into it),
+// trimmed, capped at MAX_GUEST_NAME_CHARS. Anything non-string or emptied by
+// the scrub is "no name" (null) — the wall then draws no tag.
+export function sanitizeGuestName(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  // eslint-disable-next-line no-control-regex
+  const scrubbed = value.replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, MAX_GUEST_NAME_CHARS).trim();
+  return scrubbed.length > 0 ? scrubbed : null;
+}
 
 // Pure parser for guest → hub frames. Returns null for anything malformed —
 // unauthenticated LAN input never throws, it just gets dropped.
@@ -73,7 +88,7 @@ export function parseGuestMessage(raw: string): GuestMessage | null {
   }
   if (msg.type === "hello") {
     const wall = typeof msg.wall === "string" && msg.wall.trim().length > 0 ? msg.wall.trim() : null;
-    return { kind: "hello", wall };
+    return { kind: "hello", wall, name: sanitizeGuestName(msg.name) };
   }
   if (msg.type === "keys") {
     if (!Array.isArray(msg.held)) {
@@ -165,6 +180,9 @@ interface GuestPeer {
   send: PeerSend;
   seq: number;
   wall: string | null; // chosen by the guest page; null = follow the room
+  // Sanitized display name from the guest's latest hello (the page re-hellos
+  // when its name field changes); null = anonymous, and the wall draws no tag.
+  name: string | null;
   // The last frame relayed for this guest — replayed DISENGAGED on disconnect
   // so a dwell in progress cancels immediately instead of ghost-firing during
   // the wall's 0.5s stale-cursor grace window.
@@ -283,7 +301,7 @@ export class RemoteHandsHub {
 
   // A guest connected (WS /hands/ws from their own computer).
   addGuest(send: PeerSend): HubConnection {
-    const peer: GuestPeer = { send, seq: this.#nextSeq, wall: null, lastCursors: [], lastHeld: [], filters: new Map() };
+    const peer: GuestPeer = { send, seq: this.#nextSeq, wall: null, name: null, lastCursors: [], lastHeld: [], filters: new Map() };
     this.#nextSeq += 1;
     this.#guests.add(peer);
     this.#sendWelcome(peer);
@@ -295,6 +313,10 @@ export class RemoteHandsHub {
         }
         if (parsed.kind === "hello") {
           peer.wall = parsed.wall;
+          // Every hello carries the CURRENT name (the page includes it on
+          // connect, wall picks, and name edits alike) — so a nameless hello
+          // legitimately clears a previously set name.
+          peer.name = parsed.name;
           this.#sendWelcome(peer);
           return;
         }
@@ -393,6 +415,10 @@ export class RemoteHandsHub {
           y,
           engaged: cursor.engaged,
           conf: 1,
+          // Name tag beside the guest's dot on the wall — only when set, so
+          // the wire shape for anonymous guests (and the whole camera/fusion
+          // path, which never passes through here) is byte-identical to before.
+          ...(peer.name !== null ? { name: peer.name } : {}),
         };
       }),
     };
