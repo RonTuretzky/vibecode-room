@@ -39,6 +39,12 @@ export interface AutocalState {
 // so the overlay tracks at 150ms — near autocal.html's own 120ms tick.
 export const AUTOCAL_POLL_ABSENT_MS = 3_000;
 export const AUTOCAL_POLL_ACTIVE_MS = 150;
+// A finished sweep flips the wall back to the room by itself after this long
+// on the ✓ screen — the calibrator process may keep serving its "done" state
+// (the legacy operator contract was Ctrl-C), and the room must not wait on
+// it. Errors do NOT auto-dismiss: a failed calibration stays visible until
+// the calibrator exits.
+export const AUTOCAL_DONE_LINGER_MS = 8_000;
 
 // Parse a /api/autocal/state proxy body. Null = no calibrator: the proxy's
 // {up:false} answer, or anything that is not a calibrator state — the overlay
@@ -124,6 +130,7 @@ export function CalibrationOverlay({
     }
     let closed = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    let doneSince: number | null = null;
     const poll = async () => {
       let next: AutocalState | null = null;
       try {
@@ -136,6 +143,17 @@ export function CalibrationOverlay({
       }
       if (closed) {
         return;
+      }
+      // Auto-return after a completed sweep even while the calibrator still
+      // serves "done" — the wall's job is finished once the ✓ has been seen.
+      if (next !== null && next.phase === "done") {
+        if (doneSince === null) {
+          doneSince = Date.now();
+        } else if (Date.now() - doneSince > AUTOCAL_DONE_LINGER_MS) {
+          next = null;
+        }
+      } else {
+        doneSince = null;
       }
       setState(next);
       timer = setTimeout(poll, next === null ? AUTOCAL_POLL_ABSENT_MS : AUTOCAL_POLL_ACTIVE_MS);
