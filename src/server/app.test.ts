@@ -94,6 +94,9 @@ interface MakeAppArgs {
   autocalFetch?: (input: string | URL, init?: RequestInit) => Promise<Response>;
   // Build-stamp stat seam — no test may ever depend on a dist build on disk.
   distIndexStat?: () => Promise<{ mtimeMs: number }>;
+  // Self-repo forest-loader seam — no test may ever kick the process-wide
+  // loader (it spawns a real gh and pollutes shared forest state).
+  forestLoader?: { load: (org: string) => Promise<void> };
 }
 
 async function makeApp(args: MakeAppArgs = {}): Promise<{ app: ReturnType<typeof createProjectorApp>; runtime: ProjectorRuntime }> {
@@ -128,6 +131,7 @@ async function makeApp(args: MakeAppArgs = {}): Promise<{ app: ReturnType<typeof
     interfaces: args.interfaces,
     autocalFetch: args.autocalFetch,
     distIndexStat: args.distIndexStat,
+    forestLoader: args.forestLoader ?? { load: async () => undefined },
   });
   return { app, runtime };
 }
@@ -260,6 +264,34 @@ describe("POST /api/self-rebuild", () => {
     const response = await postJson(app, "/api/self-rebuild", { on: true }, { referer: "http://localhost:8787/?live=0" });
     expect(response.status).toBe(200);
     expect(runtime.selfRebuild()).toBe(false);
+  });
+});
+
+// SELF-REPO surface: names the room's own repository for the wall's
+// SelfRepoTree panel, and — because the panel always asks here before polling
+// /api/forest — warms the forest loader whenever the room is armed (this is
+// what makes a supervisor boot, where no toggle press ever fires, show data).
+describe("GET /api/self-repo", () => {
+  test("names the repo (default and VIBERSYN_SELF_REPO override)", async () => {
+    const { app } = await makeApp();
+    expect(await (await app.request("/api/self-repo")).json()).toEqual({ repo: "RonTuretzky/vibecode-room" });
+
+    const { app: overridden } = await makeApp({ env: { VIBERSYN_SELF_REPO: "acme/room-fork" } });
+    expect(await (await overridden.request("/api/self-repo")).json()).toEqual({ repo: "acme/room-fork" });
+  });
+
+  test("armed → the GET kicks the forest loader with the owner half; unarmed → it does not", async () => {
+    const kicked: string[] = [];
+    const { app } = await makeApp({ forestLoader: { load: async (org) => void kicked.push(org) } });
+
+    await app.request("/api/self-repo");
+    expect(kicked).toEqual([]);
+
+    await postJson(app, "/api/self-rebuild", { on: true });
+    // Arming itself kicks once; the panel's follow-up GET kicks again (the
+    // loader dedupes/caches internally — this seam only records intent).
+    await app.request("/api/self-repo");
+    expect(kicked).toEqual(["RonTuretzky", "RonTuretzky"]);
   });
 });
 
