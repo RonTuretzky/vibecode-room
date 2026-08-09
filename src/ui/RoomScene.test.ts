@@ -291,8 +291,8 @@ describe("shouldAutoRefit — hysteresis so idle scenes never twitch", () => {
   test("tuning constants pin the contract: 0.75s poll, 4s resume, 6% / 0.3u bands", () => {
     expect(AUTO_FIT_INTERVAL_MS).toBe(750);
     expect(AUTO_FIT_RESUME_MS).toBe(4000);
-    expect(AUTO_FIT_RADIUS_RATIO).toBeCloseTo(0.1, 5);
-    expect(AUTO_FIT_CENTER_DRIFT).toBeCloseTo(0.8, 5);
+    expect(AUTO_FIT_RADIUS_RATIO).toBeCloseTo(0.06, 5);
+    expect(AUTO_FIT_CENTER_DRIFT).toBeCloseTo(0.3, 5);
   });
 
   test("identical framing never refits — a completed refit is a fixed point", () => {
