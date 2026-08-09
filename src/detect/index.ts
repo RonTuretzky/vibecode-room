@@ -54,6 +54,7 @@ export {
   HEURISTIC_DETECTOR_ENV_DEFAULTS,
   HeuristicIdeaDetector,
   type HeuristicIdeaDetectorOptions,
+  hasBuildableCue,
   HostClaudeIdeaDetector,
   HostClaudeIdeaJudge,
   type HostClaudeIdeaDetectorOptions,

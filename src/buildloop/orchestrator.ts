@@ -106,6 +106,12 @@ interface TrackedBuild {
 
 interface TrackedProcess {
   input: OrchestratorStartInput;
+  // Per-kickoff cache-bust nonce: preview ports are ephemeral and recycled
+  // across UPIDs/sessions, and two lanes both at ?v=1 on a reused port make
+  // the wall's iframe src byte-identical — it never re-navigates, serving the
+  // PREVIOUS idea's mock/deck. version stays a small per-lane counter (steer
+  // bumps), the nonce makes the URL globally unique.
+  nonce: string;
   dir: string;
   server: PreviewServer | null;
   order: BuildBackendId[];
@@ -145,6 +151,7 @@ export class BuildOrchestrator {
     }
     const state: TrackedProcess = {
       input,
+      nonce: Date.now().toString(36),
       dir: join(this.#buildsRoot, safeSegment(input.upid)),
       server: null,
       order: [],
@@ -228,9 +235,9 @@ export class BuildOrchestrator {
         backend: build.backend,
         label: build.label,
         status: build.status,
-        previewUrl: base === null ? null : `${base}?v=${build.version}`,
+        previewUrl: base === null ? null : `${base}?v=${state.nonce}.${build.version}`,
         summary: build.summary,
-        slideshowUrl: base !== null && build.hasSlideshow ? `${base}slideshow/?v=${build.version}` : null,
+        slideshowUrl: base !== null && build.hasSlideshow ? `${base}slideshow/?v=${state.nonce}.${build.version}` : null,
         ...(build.progressLabel === undefined ? {} : { progressLabel: build.progressLabel }),
         ...(build.percent === undefined ? {} : { percent: build.percent }),
         ...(build.error === undefined ? {} : { error: build.error }),

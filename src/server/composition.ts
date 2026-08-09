@@ -46,6 +46,28 @@ import {
 } from "../suggest/engine";
 import { DetectionRunner, selectDetectionRunner, type DetectionSnapshot } from "./detection-runner";
 import { DETECTION_BUBBLE_TTL_MS, ideaTrayFromCandidates, pendingSuggestionFromCandidate, projectorSuggestionFromCandidate } from "./idea-suggestion";
+
+// Forced-suggestion pitch cap: enough words for a spoken idea, too few for a
+// transcript dump to reach the deck's verbatim slide.
+const FORCED_PITCH_MAX_WORDS = 40;
+
+// Pure: the pitch for a forced (nothing-surfaced) accept. STARTS at the last
+// spoken line with a buildable cue — joining every collected line shipped
+// unrelated chatter straight onto the deck's "verbatim idea" slide ("i love
+// waffles. i love pancakes. i want an app…"). No cue anywhere → the last two
+// lines are the best guess. Word-capped against rambling tails.
+export function forcedPitchFromLines(lines: readonly string[]): string {
+  let start = -1;
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    if (hasBuildableCue(lines[i])) {
+      start = i;
+      break;
+    }
+  }
+  const tail = start >= 0 ? lines.slice(start) : lines.slice(-2);
+  const words = tail.join(". ").split(/\s+/);
+  return words.slice(0, FORCED_PITCH_MAX_WORDS).join(" ");
+}
 import {
   ResearchLoop,
   readResearchSuggestIntervalMs,
@@ -82,6 +104,7 @@ import { createCorrelationRecord, type CorrelationRecord, type CorrelationStore 
 import { callsignFromRepo, parseImportRequest } from "./project-import";
 import { cloneRepo, repoDigest } from "./repo-clone";
 import { buildImportPlanPrompt, buildImportPlanQuestions } from "./import-plan";
+import { hasBuildableCue } from "../detect";
 import type { IdeaCandidate, IdeaDetector, PlanQuestion } from "../detect";
 import { StageSequencer, type CanonicalStage } from "../spine/stage-sequencer";
 import type { DispatchedAction, LogEvent, OutputDecision, PendingSuggestion } from "../types";
@@ -1233,9 +1256,10 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     if (spoken.length === 0) {
       return null;
     }
+    const pitch = forcedPitchFromLines(spoken);
     return {
       suggestionId: `sug-forced-${crypto.randomUUID()}`,
-      pitch: spoken.join(". "),
+      pitch,
       mcqs: ["Proceed?"],
       answers: ["Yes, build it"],
       correlationId,

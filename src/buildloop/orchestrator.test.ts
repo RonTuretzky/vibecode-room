@@ -73,7 +73,7 @@ describe("BuildOrchestrator — fan-out", () => {
     ]);
     // Each backend gets its OWN subdir URL off the shared per-UPID server.
     for (const build of builds) {
-      expect(build.previewUrl).toMatch(new RegExp(`^http://127\\.0\\.0\\.1:\\d+/${build.backend}/\\?v=1$`, "u"));
+      expect(build.previewUrl).toMatch(new RegExp(`^http://127\\.0\\.0\\.1:\\d+/${build.backend}/\\?v=[a-z0-9]+\\.1$`, "u"));
       const response = await fetch(build.previewUrl!);
       expect(response.status).toBe(200);
       expect(response.headers.get("cache-control") ?? "").toContain("no-store");
@@ -129,7 +129,7 @@ describe("BuildOrchestrator — fan-out", () => {
     await orchestrator.start({ ...startInput("upid-slides"), planQuestions });
 
     const [smithers, native] = orchestrator.builds("upid-slides");
-    expect(smithers!.slideshowUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/smithers\/slideshow\/\?v=1$/u);
+    expect(smithers!.slideshowUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/smithers\/slideshow\/\?v=[a-z0-9]+\.1$/u);
     expect((await fetch(smithers!.slideshowUrl!)).status).toBe(200);
     expect(native!.status).toBe("ready"); // hook failure is garnish, not a build failure
     expect(native!.slideshowUrl).toBeNull();
@@ -152,7 +152,7 @@ describe("BuildOrchestrator — steer", () => {
     const after = orchestrator.builds("upid-steer");
     for (const [index, build] of after.entries()) {
       expect(build.status).toBe("ready");
-      expect(build.previewUrl).toContain("?v=2");
+      expect(build.previewUrl).toMatch(/\.2$/u);
       expect(build.previewUrl).not.toBe(before[index]!.previewUrl);
       const body = await (await fetch(build.previewUrl!)).text();
       expect(body).toContain("corrected:make it purple");
@@ -184,7 +184,7 @@ describe("BuildOrchestrator — steer", () => {
     expect(corrections).toBe(1);
     const [build] = orchestrator.builds("upid-steer-fail");
     expect(build!.status).toBe("ready");
-    expect(build!.previewUrl).toContain("?v=1"); // no bump — old version still serves
+    expect(build!.previewUrl).toMatch(/\.1$/u); // no bump — old version still serves
     expect(await (await fetch(build!.previewUrl!)).text()).toContain("original");
   });
 });

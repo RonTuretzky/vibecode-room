@@ -123,8 +123,8 @@ describe("buildloop wiring — accept fans out through the orchestrator", () => 
     expect(builds[0]?.backend).toBe("native");
     expect(builds[0]?.status).toBe("ready");
     expect(builds[0]?.summary).toBe("A fake app, built instantly.");
-    expect(builds[0]?.previewUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/native\/\?v=1$/u);
-    expect(builds[0]?.slideshowUrl).toMatch(/\/native\/slideshow\/\?v=1$/u);
+    expect(builds[0]?.previewUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/native\/\?v=[a-z0-9]+\.1$/u);
+    expect(builds[0]?.slideshowUrl).toMatch(/\/native\/slideshow\/\?v=[a-z0-9]+\.1$/u);
     // Legacy fields merge from the orchestrated builds (mergeLegacyBuildState).
     expect(process?.buildStatus).toBe("ready");
     expect(process?.previewUrl).toBe(builds[0]?.previewUrl ?? null);
@@ -190,7 +190,7 @@ describe("buildloop wiring — accept fans out through the orchestrator", () => 
     await runtime.registry.steer(upid, { text: "make the header blue", source: "test" }, "corr-steer");
     await waitFor(() => backend.corrections.length === 1);
     expect(backend.corrections[0]).toBe("make the header blue");
-    await waitFor(() => runtime.registry.builds(upid)[0]?.previewUrl?.endsWith("?v=2") === true);
+    await waitFor(() => /\.2$/u.test(runtime.registry.builds(upid)[0]?.previewUrl ?? "") === true);
     expect(runtime.registry.builds(upid)[0]?.status).toBe("ready");
   });
 
@@ -392,7 +392,7 @@ describe("commission stage — two-stage pivot", () => {
 
     const lane = runtime.registry.execution(upid);
     expect(lane).toMatchObject({ status: "built", percent: 100 });
-    expect(lane?.previewUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/\?v=1$/u);
+    expect(lane?.previewUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/\?v=[A-Za-z0-9.-]+$/u);
     const served = await fetch(lane!.previewUrl!);
     expect(served.status).toBe(200);
     expect(await served.text()).toContain("the full app");

@@ -489,7 +489,11 @@ export function decisionButtons(
 
 export function buildSlides(input: GenerateSlideshowInput, copy: SlideshowCopy): Slide[] {
   const callsign = normalizeCallsign(input.callsign);
-  const spoken = input.prompt.trim();
+  // Cap the "verbatim" quote: a rambling forced pitch or a repo-import's
+  // multi-paragraph plan must never flood the hero slide.
+  const spokenWords = input.prompt.trim().split(/\s+/);
+  const spoken =
+    spokenWords.length > 60 ? `${spokenWords.slice(0, 60).join(" ")}…` : spokenWords.join(" ");
   const mocks = pitchMocks(input);
   const ideaId = input.ideaId ?? null;
   return [

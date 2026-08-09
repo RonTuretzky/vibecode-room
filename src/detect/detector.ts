@@ -287,7 +287,10 @@ function spansOverlap(span: ContextSpan, startId: string, endId: string, turns: 
   return Math.max(a0, b0) <= Math.min(a1, b1);
 }
 
-function hasBuildableCue(text: string): boolean {
+// Exported for the forced-suggestion pitch sanitizer (composition.ts): the
+// pitch should START at the last spoken line that actually proposes building
+// something, not drag five lines of unrelated chatter along with it.
+export function hasBuildableCue(text: string): boolean {
   return countCues(text) > 0;
 }
 

@@ -744,11 +744,14 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
           if (looksLikeSnapshot(body)) {
             setSnapshot(body);
           }
+        } else if (!response.ok) {
+          // "Build it for real" must never be a perceived no-op: say the
+          // commission failed instead of leaving the deck silently unchanged.
+          setGuidedEpilogue(`Commission failed (${response.status}) — the concept is untouched; try again.`);
         }
       } catch {
-        // Non-authoritative projector: a failed commission POST must never
-        // block the UI; the chip simply stays on concept until the SSE stream
-        // reports otherwise.
+        // Network failure: same rule — a dead button reads as a broken wall.
+        setGuidedEpilogue("Commission failed (network) — the concept is untouched; try again.");
       }
     },
     [liveMode],

@@ -23,6 +23,9 @@
 .slideshow-card.slideshow-window {
   width: min(1040px, 94vw);
   max-height: 88vh;
+  /* Fixed-chrome window: the card never scrolls itself — only .slideshow-body
+     does — so tabs/decisions/nav stay put and never overlap the deck. */
+  overflow: hidden;
   gap: 14px;
   box-shadow:
     0 48px 140px rgba(0, 0, 0, 0.62),
@@ -205,4 +208,41 @@
   .deck-placeholder-spinner {
     animation: none;
   }
+}
+
+/* The deck window sits ABOVE all fixed room chrome (docks z-40/60, fullscreen
+   button z-60, guided card z-60): clicks and dwell targeting must reach the
+   tabs and the decision bar — chrome under the modal is intentionally
+   occluded while it is open. */
+.detail-overlay.slideshow-overlay {
+  z-index: 70;
+}
+
+.slideshow-window .slideshow-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Inside the fixed-chrome window the decision bar is plain flow layout —
+   sticky positioning made it paint over the deck body. */
+.slideshow-window .deck-decision {
+  position: static;
+}
+
+/* Right-size the gesture-XL decision buttons inside the window so the three
+   choices fit ONE row instead of ballooning into a multi-row band. */
+main.gesture-mode .slideshow-window .deck-decision-btn {
+  min-height: 88px;
+  padding: 18px 30px;
+  font-size: 24px;
+}
+
+/* A switched-to tab must read as selected at projector distance. */
+.slideshow-window .deck-tab.active {
+  border-color: var(--c-selected, #3cc8dc);
+  background: rgba(60, 200, 220, 0.18);
+  color: #eafcff;
 }

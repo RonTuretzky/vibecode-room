@@ -274,6 +274,10 @@ export function Slideshow({ process, onLifecycle, onClose, initialBackend = null
         ) : null}
         <ProcessControls upid={process.upid} state={process.state} onLifecycle={onLifecycle} />
 
+        {/* Only THIS body scrolls — title bar, tabs, decision bar, and nav are
+            fixed window chrome, so the decision buttons can never paint over
+            the deck nor be pushed under other fixed chrome. */}
+        <div className="slideshow-body" data-testid="slideshow-body">
         {slide !== null ? (
           <section className="slide" data-testid="slideshow-slide" data-slide-index={clamped}>
             <h3 className="slide-title">{slide.title}</h3>
@@ -283,6 +287,9 @@ export function Slideshow({ process, onLifecycle, onClose, initialBackend = null
             ) : (
               <div className="slide-body slide-live" data-testid="slideshow-live">
                 <iframe
+                  /* keyed by URL: a tab switch REMOUNTS the frame, so the
+                     switch is visible instead of a silent src swap. */
+                  key={slide.url}
                   className="slide-live-frame"
                   data-testid="slideshow-live-frame"
                   src={slide.url}
@@ -344,6 +351,7 @@ export function Slideshow({ process, onLifecycle, onClose, initialBackend = null
             )}
           </section>
         )}
+        </div>
 
         {/* The room-native "How should we continue?" decision/answer bar
             (concept stage with real build lanes only) — see the DECK DWELL

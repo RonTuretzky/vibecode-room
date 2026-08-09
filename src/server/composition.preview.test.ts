@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createProjectorRuntime, type ProjectorRuntime } from "./composition";
+import { createProjectorRuntime, forcedPitchFromLines, type ProjectorRuntime } from "./composition";
 import type { BuilderAgent } from "./idea-builder";
 import type { TranscriptObservation } from "../types";
 
@@ -214,6 +214,24 @@ describe("composition accept path — real build + preview on the snapshot", () 
     expect(spawned).toBeDefined();
     if (spawned === undefined) return;
     await runtime.ideaBuilds.settle(spawned.upid);
+  });
+
+  test("forcedPitchFromLines starts at the last buildable-cue line, not five lines of chatter", () => {
+    expect(
+      forcedPitchFromLines([
+        "states",
+        "i love waffles",
+        "i love pancakes",
+        "how much would it cost to make a thousand pancakes",
+        "i want an app that shows me all the citi bikes",
+        "in brooklyn",
+      ]),
+    ).toBe("i want an app that shows me all the citi bikes. in brooklyn");
+    // No cue anywhere: the last two lines are the best guess.
+    expect(forcedPitchFromLines(["one", "two", "three"])).toBe("two. three");
+    // Rambling tails are word-capped.
+    const rant = Array.from({ length: 30 }, (_, i) => `word${i}`).join(" ");
+    expect(forcedPitchFromLines([`build an app ${rant} ${rant}`]).split(/\s+/).length).toBeLessThanOrEqual(40);
   });
 
   test("Done with an empty transcript stays a no-op (nothing spoken, nothing to build)", async () => {

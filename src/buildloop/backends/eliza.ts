@@ -582,15 +582,23 @@ export class ElizaBuildBackend implements BuildBackend {
   }
 
   #model(): ElizaModelHandler | null {
-    return (
-      this.#options.model ??
-      createCerebrasChatModel({
-        apiKey: this.#env.CEREBRAS_API_KEY,
-        model: this.#env.CEREBRAS_MODEL,
-        fetchImpl: this.#options.fetchImpl,
-        timeoutMs: this.#options.timeoutMs,
-      })
-    );
+    if (this.#options.model !== undefined) {
+      return this.#options.model;
+    }
+    // The injected env is authoritative: without a key HERE the backend is
+    // unavailable. Falling through to createCerebrasChatModel's own
+    // process.env fallback made an injected empty env (tests, explicit
+    // isolation) silently pick up ambient keys — bun auto-loads .env, so
+    // every test run had one.
+    if (this.#env.CEREBRAS_API_KEY === undefined || this.#env.CEREBRAS_API_KEY === "") {
+      return null;
+    }
+    return createCerebrasChatModel({
+      apiKey: this.#env.CEREBRAS_API_KEY,
+      model: this.#env.CEREBRAS_MODEL,
+      fetchImpl: this.#options.fetchImpl,
+      timeoutMs: this.#options.timeoutMs,
+    });
   }
 
   async available(): Promise<{ ok: boolean; reason?: string }> {
