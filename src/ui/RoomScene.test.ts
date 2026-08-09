@@ -22,6 +22,13 @@ import {
   type DialogueTopicSpec,
   type TreeSpec,
 } from "./RoomScene";
+import {
+  DIALOGUE_FALLBACK_BRANCH_ID,
+  DIALOGUE_LEAF_PALETTE,
+  DIALOGUE_TREE_ID,
+  dialogueTreeSpec3D,
+  treeSpecSignature,
+} from "./tree";
 
 // A minimal legacy TreeSpec: only the fields callers set before the richer
 // indicators existed. Every new field is left absent to prove back-compat.
@@ -278,6 +285,164 @@ describe("conversation tree layout math", () => {
       const b = dialogueLeafPosition(0, 2, h, len, j + 1, 6);
       expect(a.distanceTo(b)).toBeGreaterThan(0.5);
     }
+  });
+});
+
+// ── the HD tree spec (dialogue layout → TreeSpec3D, pure) ───────────────────
+
+describe("dialogueTreeSpec3D — HD tree spec from the tested layout", () => {
+  const turns = [turn("t1", "a"), turn("t2", "b"), turn("t3", "a"), turn("t4", "b")];
+  const topics = [topic("a"), topic("b")];
+
+  test("trunk height matches dialogueTrunkHeight of the resolved branch count", () => {
+    const spec = dialogueTreeSpec3D(turns, topics);
+    expect(spec.id).toBe(DIALOGUE_TREE_ID);
+    expect(spec.trunk.height).toBe(dialogueTrunkHeight(2));
+    expect(spec.trunk.radius).toBeGreaterThan(0);
+  });
+
+  test("one branch per dialogueBranches entry, in order, with stable ids", () => {
+    const spec = dialogueTreeSpec3D([...turns, turn("t5", "ghost")], topics);
+    const branches = dialogueBranches([...turns, turn("t5", "ghost")], topics);
+    expect(spec.branches.map((branch) => branch.id)).toEqual(
+      branches.map((branch) => branch.topicId ?? DIALOGUE_FALLBACK_BRANCH_ID),
+    );
+  });
+
+  test("branch endpoints are EXACT layout points — the raycast/label contract", () => {
+    const spec = dialogueTreeSpec3D(turns, topics);
+    const branches = dialogueBranches(turns, topics);
+    const trunkHeight = dialogueTrunkHeight(branches.length);
+    spec.branches.forEach((branchSpec, index) => {
+      const length = dialogueBranchLength(branches[index].turnIds.length);
+      const root = dialogueBranchPoint(index, branches.length, trunkHeight, length, 0);
+      const tip = dialogueBranchPoint(index, branches.length, trunkHeight, length, 1);
+      const first = branchSpec.points[0];
+      const last = branchSpec.points[branchSpec.points.length - 1];
+      expect(Math.hypot(first.x - root.x, first.y - root.y, first.z - root.z)).toBeLessThan(1e-9);
+      expect(Math.hypot(last.x - tip.x, last.y - tip.y, last.z - tip.z)).toBeLessThan(1e-9);
+    });
+  });
+
+  test("interior points wobble organically but stay near the tested curve", () => {
+    const spec = dialogueTreeSpec3D(turns, topics);
+    const branches = dialogueBranches(turns, topics);
+    const trunkHeight = dialogueTrunkHeight(branches.length);
+    let wobbled = 0;
+    spec.branches.forEach((branchSpec, index) => {
+      const length = dialogueBranchLength(branches[index].turnIds.length);
+      const steps = branchSpec.points.length - 1;
+      branchSpec.points.forEach((point, step) => {
+        const base = dialogueBranchPoint(index, branches.length, trunkHeight, length, step / steps);
+        const drift = Math.hypot(point.x - base.x, point.y - base.y, point.z - base.z);
+        // Gentle: never further than ~12% of the branch length off the spine.
+        expect(drift).toBeLessThan(length * 0.12);
+        if (drift > 1e-6) {
+          wobbled += 1;
+        }
+      });
+    });
+    expect(wobbled).toBeGreaterThan(0);
+  });
+
+  test("deterministic: the same conversation regrows the identical spec", () => {
+    expect(dialogueTreeSpec3D(turns, topics)).toEqual(dialogueTreeSpec3D(turns, topics));
+  });
+
+  test("different branch ids grow different interior curves (seeded variation)", () => {
+    const spec = dialogueTreeSpec3D([turn("t1", "a"), turn("t2", "b")], [topic("a"), topic("b")]);
+    // Compare interior wobble OFFSETS (endpoint-relative drift differs even
+    // though the two branches share length/membership).
+    const branches = dialogueBranches([turn("t1", "a"), turn("t2", "b")], [topic("a"), topic("b")]);
+    const trunkHeight = dialogueTrunkHeight(branches.length);
+    const drifts = spec.branches.map((branchSpec, index) => {
+      const length = dialogueBranchLength(branches[index].turnIds.length);
+      const steps = branchSpec.points.length - 1;
+      return branchSpec.points.map((point, step) => {
+        const base = dialogueBranchPoint(index, branches.length, trunkHeight, length, step / steps);
+        return Math.hypot(point.x - base.x, point.y - base.y, point.z - base.z).toFixed(5);
+      });
+    });
+    expect(drifts[0]).not.toEqual(drifts[1]);
+  });
+
+  test("tips carry the topic label, member count and the freshest turn pickId", () => {
+    const spec = dialogueTreeSpec3D(turns, topics);
+    expect(spec.branches[0].tip).toMatchObject({ kind: "topic", label: "label a", sub: "2 turns", pickId: "t3" });
+    expect(spec.branches[1].tip).toMatchObject({ sub: "2 turns", pickId: "t4" });
+  });
+
+  test("no topics → the fallback branch holds every turn and stays pickable", () => {
+    const spec = dialogueTreeSpec3D([turn("t1"), turn("t2")], []);
+    expect(spec.branches).toHaveLength(1);
+    expect(spec.branches[0].id).toBe(DIALOGUE_FALLBACK_BRANCH_ID);
+    expect(spec.branches[0].tip?.pickId).toBe("t2");
+  });
+
+  test("a leaf tuft adornment per windowed turn at the EXACT leaf slot, stemmed on the wood", () => {
+    const spec = dialogueTreeSpec3D(turns, topics);
+    const branches = dialogueBranches(turns, topics);
+    const trunkHeight = dialogueTrunkHeight(branches.length);
+    const tufts = (spec.adornments ?? []).filter((adornment) => adornment.kind === "leaf");
+    expect(tufts.map((tuft) => tuft.id).sort()).toEqual(["tuft:t1", "tuft:t2", "tuft:t3", "tuft:t4"]);
+    branches.forEach((branch, branchIndex) => {
+      const length = dialogueBranchLength(branch.turnIds.length);
+      branch.turnIds.forEach((turnId, memberIndex) => {
+        const slot = dialogueLeafPosition(branchIndex, branches.length, trunkHeight, length, memberIndex, branch.turnIds.length);
+        const tuft = tufts.find((candidate) => candidate.id === `tuft:${turnId}`)!;
+        expect(Math.hypot(tuft.position.x - slot.x, tuft.position.y - slot.y, tuft.position.z - slot.z)).toBeLessThan(1e-9);
+        // The petiole stem attaches on the branch, close to (but off) the leaf.
+        expect(tuft.stem).toBeDefined();
+        const stemGap = Math.hypot(tuft.stem!.x - slot.x, tuft.stem!.y - slot.y, tuft.stem!.z - slot.z);
+        expect(stemGap).toBeGreaterThan(0.1);
+        expect(stemGap).toBeLessThan(1.5);
+        expect(DIALOGUE_LEAF_PALETTE).toContain(tuft.color);
+      });
+    });
+  });
+
+  test("empty conversation → empty spec (the tree costs nothing when research is off)", () => {
+    const spec = dialogueTreeSpec3D([], []);
+    expect(spec.branches).toEqual([]);
+    expect(spec.adornments).toEqual([]);
+  });
+
+  test("foliage density grows with conversation size and clamps at 1", () => {
+    const few = dialogueTreeSpec3D([turn("t1", "a")], [topic("a")]);
+    const many = dialogueTreeSpec3D(
+      Array.from({ length: 12 }, (_, i) => turn(`t${i}`, "a")),
+      [topic("a")],
+    );
+    expect(many.foliage!.density).toBeGreaterThan(few.foliage!.density);
+    const huge = dialogueTreeSpec3D(
+      Array.from({ length: 40 }, (_, i) => turn(`t${i}`, `topic${i % 6}`)),
+      Array.from({ length: 6 }, (_, i) => topic(`topic${i}`)),
+    );
+    expect(huge.foliage!.density).toBe(1);
+  });
+});
+
+describe("treeSpecSignature — reconcile skips identical regrowth", () => {
+  const turns = [turn("t1", "a"), turn("t2", "b")];
+  const topics = [topic("a"), topic("b")];
+
+  test("identical conversations sign identically", () => {
+    expect(treeSpecSignature(dialogueTreeSpec3D(turns, topics))).toBe(
+      treeSpecSignature(dialogueTreeSpec3D(turns, topics)),
+    );
+  });
+
+  test("a new turn changes the signature (leaves + tip counts move)", () => {
+    const before = treeSpecSignature(dialogueTreeSpec3D(turns, topics));
+    const after = treeSpecSignature(dialogueTreeSpec3D([...turns, turn("t3", "a")], topics));
+    expect(after).not.toBe(before);
+  });
+
+  test("a relabeled topic changes the signature (tip chrome must repaint)", () => {
+    const renamed = [{ ...topic("a"), label: "renamed" }, topic("b")];
+    expect(treeSpecSignature(dialogueTreeSpec3D(turns, renamed))).not.toBe(
+      treeSpecSignature(dialogueTreeSpec3D(turns, topics)),
+    );
   });
 });
 

@@ -7,6 +7,31 @@ import { getFlatPoseSender, registerSceneFlatPoseControl } from "./gesture/flat-
 import { cornerEye, cornerVerticalFovDeg, cornerYaw } from "./corner-lock";
 import { FLAT_EYE_DISTANCE, FLAT_EYE_HEIGHT, FLAT_YAW, flatVerticalFovDeg, flatViewOffset } from "./flat-lock";
 import { loadGardenFlora, type FloraLibrary } from "./garden-flora";
+import {
+  DIALOGUE_CENTER_X,
+  DIALOGUE_CENTER_Z,
+  buildTreeLOD,
+  dialogueBranchLength,
+  dialogueBranches,
+  dialogueLeafPosition,
+  dialogueTreeSpec3D,
+  dialogueTrunkHeight,
+  treeSpecSignature,
+  type BuiltTree,
+} from "./tree";
+
+// The pure conversation-tree layout maths now live in the reusable HD tree
+// module (src/ui/tree/dialogue-layout.ts) — re-exported here so every existing
+// consumer and the RoomScene.test.ts suite keep their import path.
+export {
+  dialogueBranchLength,
+  dialogueBranchPoint,
+  dialogueBranches,
+  dialogueLeafPosition,
+  dialogueLeafT,
+  dialogueTrunkHeight,
+  type DialogueBranch,
+} from "./tree";
 
 // The full-viewport 3D stage (after conductor-github-visualizer): the scene IS
 // the app background and every panel floats over it. Two render modes share
@@ -281,17 +306,9 @@ const SPEAKER_COLORS = [0x9ee2ff, 0x7fe0c3, 0xffd9a0, 0xa8c7ff, 0xffb3c7, 0xd6f0
 // by golden angle, oldest topics attached lowest, curving outward and upward),
 // and each TURN hangs from its topic's branch as a speaker-colored LEAF
 // (newest nearest the tip). Crystals keep budding outward from their leaf.
-const DIALOGUE_CENTER_X = 0;
-const DIALOGUE_CENTER_Z = 0;
 // Rendered turn cap + how many of the newest turns carry text labels.
 const DIALOGUE_MAX_NODES = 20;
 const DIALOGUE_LABELED = 6;
-// Trunk height envelope (GEO.trunkBase/Mid/Top stack to 3.2 units at scale 1).
-const TREE_TRUNK_MIN = 4;
-const TREE_TRUNK_MAX = 9;
-// The unclustered fallback branch (no topic matched / server degraded): the
-// tree must NEVER vanish while turns exist.
-const TREE_FALLBACK_LABEL = "new growth";
 
 function speakerColor(speaker: string | null): number {
   if (speaker === null || speaker.length === 0) {
@@ -302,113 +319,6 @@ function speakerColor(speaker: string | null): number {
     hash = (hash * 31 + speaker.charCodeAt(index)) >>> 0;
   }
   return SPEAKER_COLORS[hash % SPEAKER_COLORS.length];
-}
-
-// ── conversation-tree layout (pure, unit-tested) ────────────────────────────
-
-// One resolved branch of the conversation tree: a real topic, or the null-
-// topic fallback that collects unclustered turns. `turnIds` is the branch's
-// members present in the window, in chronological (window) order.
-export interface DialogueBranch {
-  topicId: string | null;
-  label: string;
-  turnIds: string[];
-}
-
-// Group the windowed turns under their topic branches (array order = topic
-// age, oldest first → attached lowest). Membership honors BOTH sides of the
-// contract (a turn's topicId or the topic's turnIds); anything unmatched —
-// including everything, when the server has no topics yet — falls to a single
-// fallback branch so the tree never vanishes while turns exist.
-export function dialogueBranches(
-  turns: readonly DialogueNodeSpec[],
-  topics: readonly DialogueTopicSpec[],
-): DialogueBranch[] {
-  const branches: DialogueBranch[] = topics.map((topic) => ({ topicId: topic.id, label: topic.label, turnIds: [] }));
-  const byTopic = new Map(branches.map((branch) => [branch.topicId as string, branch]));
-  const claimed = new Map<string, string>();
-  for (const topic of topics) {
-    for (const turnId of topic.turnIds) {
-      if (!claimed.has(turnId)) {
-        claimed.set(turnId, topic.id);
-      }
-    }
-  }
-  const orphans: string[] = [];
-  for (const turn of turns) {
-    const topicId = turn.topicId ?? claimed.get(turn.id) ?? null;
-    const branch = topicId !== null ? byTopic.get(topicId) : undefined;
-    if (branch !== undefined) {
-      branch.turnIds.push(turn.id);
-    } else {
-      orphans.push(turn.id);
-    }
-  }
-  if (orphans.length > 0) {
-    branches.push({ topicId: null, label: TREE_FALLBACK_LABEL, turnIds: orphans });
-  }
-  return branches;
-}
-
-// Trunk height grows gently with the topic count, clamped to ~4–9 units.
-export function dialogueTrunkHeight(branchCount: number): number {
-  return Math.min(TREE_TRUNK_MAX, TREE_TRUNK_MIN + Math.max(branchCount, 0) * 0.72);
-}
-
-// Branch reach grows with membership so a busy topic's leaves keep separation.
-export function dialogueBranchLength(memberCount: number): number {
-  return Math.min(7.5, 3.2 + 0.5 * Math.max(0, memberCount - 3));
-}
-
-// Point at parameter t ∈ [0,1] along branch `index` of `count`: azimuth by
-// golden angle around the trunk, attachment height by topic order (oldest
-// lowest), and an outward-plus-upward quadratic curve toward the light.
-export function dialogueBranchPoint(
-  index: number,
-  count: number,
-  trunkHeight: number,
-  length: number,
-  t: number,
-): THREE.Vector3 {
-  const azimuth = index * GOLDEN_ANGLE + 0.6;
-  const attachY = count <= 1 ? trunkHeight * 0.62 : 1.6 + (trunkHeight * 0.85 - 1.6) * (index / (count - 1));
-  const reach = t * length;
-  const rise = 0.55 + length * 0.28;
-  return new THREE.Vector3(
-    DIALOGUE_CENTER_X + Math.cos(azimuth) * reach,
-    attachY + t * 0.35 + t * t * rise,
-    DIALOGUE_CENTER_Z + Math.sin(azimuth) * reach,
-  );
-}
-
-// Member j of m sits at this branch parameter: chronological along the branch
-// so the newest (j = m-1) lands closest to the tip — but never ON it (the tip
-// is the topic label's spot).
-export function dialogueLeafT(memberIndex: number, memberCount: number): number {
-  return (memberIndex + 1) / (Math.max(memberCount, 1) + 0.55);
-}
-
-// Leaf world position: its branch-spine slot pushed sideways (alternating, so
-// consecutive leaves never overlap) with a small upward lift off the wood.
-export function dialogueLeafPosition(
-  branchIndex: number,
-  branchCount: number,
-  trunkHeight: number,
-  length: number,
-  memberIndex: number,
-  memberCount: number,
-): THREE.Vector3 {
-  const p = dialogueBranchPoint(branchIndex, branchCount, trunkHeight, length, dialogueLeafT(memberIndex, memberCount));
-  const side = memberIndex % 2 === 0 ? 1 : -1;
-  const radial = Math.hypot(p.x - DIALOGUE_CENTER_X, p.z - DIALOGUE_CENTER_Z);
-  if (radial > 1e-6) {
-    const offsetX = (-(p.z - DIALOGUE_CENTER_Z) / radial) * side * 0.5;
-    const offsetZ = ((p.x - DIALOGUE_CENTER_X) / radial) * side * 0.5;
-    p.x += offsetX;
-    p.z += offsetZ;
-  }
-  p.y += 0.22 + (memberIndex % 2) * 0.12;
-  return p;
 }
 
 // Node label title: the inferred project title when the server has named the
@@ -1630,14 +1540,23 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       }
       dialogueLines = [];
     };
-    // The conversation tree's STRUCTURE (trunk sections, branch tubes + glow,
-    // tip labels + their hit spheres, leaf filaments), rebuilt whole each
-    // reconcile like the lines. Trunk sections/tubes reuse the shared garden
-    // trunk geometry/material; everything per-build carries the usual
-    // ownGeometry/ownMaterial flags (label sprites also own their canvas map;
-    // glow sprites share glowTexture, so only their material is freed).
+    // The conversation tree's STRUCTURE is the HD tree module's output (one
+    // merged bark mesh + instanced foliage/tip buds, LOD-wrapped) plus the
+    // scene-owned tip chrome (topic labels, tip glows, hit spheres). A cheap
+    // spec signature skips the rebuild when a snapshot tick didn't actually
+    // change the tree, so live rooms don't churn geometry. The module frees
+    // its own GPU resources via BuiltTree.dispose; the chrome carries the
+    // usual ownGeometry/ownMaterial flags (label sprites also own their canvas
+    // map; glow sprites share glowTexture, so only their material is freed).
     let dialogueTreeGroup: THREE.Group | null = null;
+    let dialogueTreeBuilt: BuiltTree | null = null;
+    let dialogueTreeSig: string | null = null;
     const clearDialogueTree = () => {
+      dialogueTreeSig = null;
+      if (dialogueTreeBuilt !== null) {
+        dialogueTreeBuilt.dispose();
+        dialogueTreeBuilt = null;
+      }
       if (dialogueTreeGroup === null) {
         return;
       }
@@ -2886,98 +2805,57 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
         }
       }
 
-      // Tree structure + filaments: trunk sections, one wood tube + glow line
-      // + tip label per branch, a filament per leaf, and one filament per
-      // anchored crystal. Endpoints are TARGET positions (nodes glide to them
-      // fast); rebuilt whole each reconcile — a trunk, a handful of tubes,
-      // and cheap lines.
+      // Tree structure: the HD tree module grows the wood (tapered merged
+      // tubes along organic curves), the instanced canopy, the leaf-tuft
+      // petioles and the tip buds from the SAME tested layout (the pure
+      // dialogueTreeSpec3D mapping) — branch tips and leaf slots stay exactly
+      // where the raycast/dwell targeting expects them. The scene layers its
+      // tip chrome (topic label, glow, hit sphere) on top. Skipped whole when
+      // the spec signature is unchanged; crystal filaments below stay cheap
+      // lines rebuilt every reconcile (their endpoints track entries).
       clearDialogueLines();
-      clearDialogueTree();
-      if (branches.length > 0) {
-        const treeGroup = new THREE.Group();
-        // TRUNK: the garden's tapered trunk sections, restacked to trunkHeight
-        // (base+mid+top total 3.2 units at scale 1) and thickened so the tree
-        // reads as THE center-stage object. Shared geometry/material — the
-        // clear pass frees neither.
-        const yScale = trunkHeight / 3.2;
-        const girth = 1.7;
-        const trunkSections: [THREE.CylinderGeometry, number][] = [
-          [GEO.trunkBase, 0.6],
-          [GEO.trunkMid, 1.8],
-          [GEO.trunkTop, 2.8],
-        ];
-        for (const [geometry, centerY] of trunkSections) {
-          const section = new THREE.Mesh(geometry, trunkMat);
-          section.position.set(DIALOGUE_CENTER_X, centerY * yScale, DIALOGUE_CENTER_Z);
-          section.scale.set(girth, yScale, girth);
-          treeGroup.add(section);
-        }
-        branches.forEach((branch, branchIndex) => {
-          const memberCount = branch.turnIds.length;
-          const length = dialogueBranchLength(memberCount);
-          const points: THREE.Vector3[] = [];
-          for (let step = 0; step <= 8; step += 1) {
-            points.push(dialogueBranchPoint(branchIndex, branches.length, trunkHeight, length, step / 8));
-          }
-          // Branch wood: one tube along the curve in trunk tones…
-          const tube = new THREE.Mesh(
-            new THREE.TubeGeometry(new THREE.CatmullRomCurve3(points), 12, 0.1, 6, false),
-            trunkMat,
-          );
-          tube.userData.ownGeometry = true;
-          treeGroup.add(tube);
-          // …with a soft canopy-light glow along it.
-          const glowLine = new THREE.Line(
-            new THREE.BufferGeometry().setFromPoints(points),
-            new THREE.LineBasicMaterial({ color: BUILT_RING_COLOR, transparent: true, opacity: 0.22, blending: THREE.AdditiveBlending }),
-          );
-          treeGroup.add(glowLine);
-          const tip = points[points.length - 1];
-          const tipGlow = new THREE.Sprite(
-            new THREE.SpriteMaterial({ map: glowTexture, color: 0x9affc9, transparent: true, opacity: 0.3, blending: THREE.AdditiveBlending, depthWrite: false }),
-          );
-          tipGlow.position.set(tip.x, tip.y + 0.2, tip.z);
-          tipGlow.scale.setScalar(1.7);
-          treeGroup.add(tipGlow);
-          // The concept readout: the topic label rides the branch tip, always
-          // visible (its canvas map is per-label — the clear pass frees it).
-          const label = makeLabelSprite(branch.label, `${memberCount} turn${memberCount === 1 ? "" : "s"}`, cssHex(0x9affc9));
-          label.userData.ownMap = true;
-          label.position.set(tip.x, tip.y + 0.3, tip.z);
-          treeGroup.add(label);
-          // Concept branches are research targets too: the tip cluster's hit
-          // sphere picks as the topic's FRESHEST utterance, so clicking or
-          // dwelling a branch label researches it through the existing
-          // dialogue path — zero new plumbing.
-          if (memberCount > 0) {
-            const hit = new THREE.Mesh(new THREE.SphereGeometry(1.3, 8, 8), invisibleHitMat);
-            hit.userData.ownGeometry = true;
-            hit.userData.pick = { kind: "dialogue", key: branch.turnIds[memberCount - 1] };
-            hit.position.set(tip.x, tip.y + 0.55, tip.z);
-            treeGroup.add(hit);
-          }
-          // Leaf filaments: branch spine → each leaf's resting slot.
-          branch.turnIds.forEach((turnId, memberIndex) => {
-            const leafPos = turnPositions.get(turnId);
-            if (leafPos === undefined) {
-              return;
+      const treeSpec = branches.length > 0 ? dialogueTreeSpec3D(dialogueSpecs, topicsRef.current) : null;
+      const treeSig = treeSpec === null ? null : treeSpecSignature(treeSpec);
+      if (treeSig !== dialogueTreeSig) {
+        clearDialogueTree();
+        dialogueTreeSig = treeSig;
+        if (treeSpec !== null) {
+          dialogueTreeBuilt = buildTreeLOD(treeSpec);
+          const treeGroup = new THREE.Group();
+          treeGroup.add(dialogueTreeBuilt.group);
+          for (const branchSpec of treeSpec.branches) {
+            const tipSpec = branchSpec.tip;
+            if (tipSpec === undefined || branchSpec.points.length === 0) {
+              continue;
             }
-            const stemPoint = dialogueBranchPoint(
-              branchIndex,
-              branches.length,
-              trunkHeight,
-              length,
-              dialogueLeafT(memberIndex, memberCount),
+            const tip = branchSpec.points[branchSpec.points.length - 1];
+            const tipGlow = new THREE.Sprite(
+              new THREE.SpriteMaterial({ map: glowTexture, color: tipSpec.color, transparent: true, opacity: 0.3, blending: THREE.AdditiveBlending, depthWrite: false }),
             );
-            const filament = new THREE.Line(
-              new THREE.BufferGeometry().setFromPoints([stemPoint, leafPos]),
-              new THREE.LineBasicMaterial({ color: 0x7fe0c3, transparent: true, opacity: 0.35 }),
-            );
-            treeGroup.add(filament);
-          });
-        });
-        scene.add(treeGroup);
-        dialogueTreeGroup = treeGroup;
+            tipGlow.position.set(tip.x, tip.y + 0.2, tip.z);
+            tipGlow.scale.setScalar(1.7);
+            treeGroup.add(tipGlow);
+            // The concept readout: the topic label rides the branch tip, always
+            // visible (its canvas map is per-label — the clear pass frees it).
+            const label = makeLabelSprite(tipSpec.label ?? "", tipSpec.sub ?? "", cssHex(tipSpec.color));
+            label.userData.ownMap = true;
+            label.position.set(tip.x, tip.y + 0.3, tip.z);
+            treeGroup.add(label);
+            // Concept branches are research targets too: the tip cluster's hit
+            // sphere picks as the topic's FRESHEST utterance, so clicking or
+            // dwelling a branch label researches it through the existing
+            // dialogue path — zero new plumbing.
+            if (tipSpec.pickId !== null && tipSpec.pickId !== undefined) {
+              const hit = new THREE.Mesh(new THREE.SphereGeometry(1.3, 8, 8), invisibleHitMat);
+              hit.userData.ownGeometry = true;
+              hit.userData.pick = { kind: "dialogue", key: tipSpec.pickId };
+              hit.position.set(tip.x, tip.y + 0.55, tip.z);
+              treeGroup.add(hit);
+            }
+          }
+          scene.add(treeGroup);
+          dialogueTreeGroup = treeGroup;
+        }
       }
       for (const spec of researchSpecs) {
         const anchor = spec.turnId !== null ? turnPositions.get(spec.turnId) : undefined;
@@ -3722,6 +3600,11 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
       }
 
       env?.update(t, dt);
+      // HD conversation tree: leaf-card wind sway (instance matrices only —
+      // the wood never moves, so pinned leaf entries/labels stay attached).
+      if (!reducedMotion) {
+        dialogueTreeBuilt?.update(t);
+      }
 
       const garden = builtMode === "garden";
       const radial = builtKey !== null && builtKey.endsWith("radial");
