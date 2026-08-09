@@ -288,7 +288,7 @@ function framing(targetX: number, targetZ: number, radius: number): AutoFitFrami
 }
 
 describe("shouldAutoRefit — hysteresis so idle scenes never twitch", () => {
-  test("tuning constants pin the contract: 0.75s poll, 4s resume, 10% / 0.8u bands", () => {
+  test("tuning constants pin the contract: 0.75s poll, 4s resume, 6% / 0.3u bands", () => {
     expect(AUTO_FIT_INTERVAL_MS).toBe(750);
     expect(AUTO_FIT_RESUME_MS).toBe(4000);
     expect(AUTO_FIT_RADIUS_RATIO).toBeCloseTo(0.1, 5);
@@ -305,12 +305,12 @@ describe("shouldAutoRefit — hysteresis so idle scenes never twitch", () => {
     expect(shouldAutoRefit(framing(0, 0, 10), framing(0, 0, 8.9))).toBe(true);
   });
 
-  test("radius drift within 10% stays put", () => {
-    expect(shouldAutoRefit(framing(0, 0, 10), framing(0, 0, 10.9))).toBe(false);
-    expect(shouldAutoRefit(framing(0, 0, 10), framing(0, 0, 9.1))).toBe(false);
+  test("radius drift within 6% stays put", () => {
+    expect(shouldAutoRefit(framing(0, 0, 10), framing(0, 0, 10.5))).toBe(false);
+    expect(shouldAutoRefit(framing(0, 0, 10), framing(0, 0, 9.5))).toBe(false);
   });
 
-  test("the 10% band is relative to the CURRENT radius", () => {
+  test("the 6% band is relative to the CURRENT radius", () => {
     // Same absolute +2 delta: negligible on a wide shot, decisive close in.
     expect(shouldAutoRefit(framing(0, 0, 40), framing(0, 0, 42))).toBe(false);
     expect(shouldAutoRefit(framing(0, 0, 8), framing(0, 0, 10))).toBe(true);
@@ -323,9 +323,9 @@ describe("shouldAutoRefit — hysteresis so idle scenes never twitch", () => {
     expect(shouldAutoRefit(framing(0, 0, 15), framing(0.6, 0.6, 15))).toBe(true);
   });
 
-  test("centre drift within 0.8 world units stays put", () => {
-    expect(shouldAutoRefit(framing(0, 0, 15), framing(0.5, 0.5, 15))).toBe(false); // hypot ≈ 0.71
-    expect(shouldAutoRefit(framing(3, -3, 15), framing(3.7, -3, 15))).toBe(false);
+  test("centre drift within 0.3 world units stays put (tight centering for the ceiling)", () => {
+    expect(shouldAutoRefit(framing(0, 0, 15), framing(0.2, 0.1, 15))).toBe(false); // hypot ≈ 0.22
+    expect(shouldAutoRefit(framing(3, -3, 15), framing(3.25, -3, 15))).toBe(false);
   });
 });
 

@@ -466,9 +466,9 @@ export const AUTO_FIT_INTERVAL_MS = 750;
 export const AUTO_FIT_RESUME_MS = 4000;
 // Hysteresis so idle scenes never twitch: only refit when the ideal radius
 // moved more than this fraction of the current one…
-export const AUTO_FIT_RADIUS_RATIO = 0.1;
+export const AUTO_FIT_RADIUS_RATIO = 0.06;
 // …or the ideal orbit-target centre drifted farther than this (world units).
-export const AUTO_FIT_CENTER_DRIFT = 0.8;
+export const AUTO_FIT_CENTER_DRIFT = 0.3;
 
 // The rig framing the decision compares: the orbit target on the ground plane
 // plus the orbit radius (height follows radius in the fit maths, so it never

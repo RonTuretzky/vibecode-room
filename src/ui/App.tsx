@@ -1760,15 +1760,29 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
           still need the one tree control: a corner chip, dimmed until a
           cursor rests on it, dwellable like everything else. */}
       {urlConfig.research ? (
-        <button
-          type="button"
-          className="ctl-button ceiling-reset"
-          data-testid="ceiling-reset-button"
-          title="Reset the conversation tree (vine + crystals + dossiers)"
-          onClick={() => void resetResearchTree()}
-        >
-          🧹 Reset tree
-        </button>
+        <div className="ceiling-dock">
+          <ControlDock>
+            <button
+              type="button"
+              className="ctl-button ceiling-reset"
+              data-testid="ceiling-reset-button"
+              title="Reset the conversation tree (vine + crystals + dossiers)"
+              onClick={() => void resetResearchTree()}
+            >
+              🧹 Reset tree
+            </button>
+            <button
+              type="button"
+              className={`ctl-button research-toggle${researchEngineOn ? " on" : ""}`}
+              data-testid="ceiling-research-button"
+              data-state={researchEngineOn ? "on" : "off"}
+              onClick={() => void toggleResearchMode()}
+              title="Research engine: while ON, the room reviews the talk (~1/min) and buds spheres onto this tree."
+            >
+              {researchEngineOn ? "🔍 Research: ON" : "🔍 Research: OFF"}
+            </button>
+          </ControlDock>
+        </div>
       ) : null}
       {voiceFlash !== null ? (
         <div className="voice-flash" data-testid="voice-flash" role="status">
