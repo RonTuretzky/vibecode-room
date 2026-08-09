@@ -1036,6 +1036,31 @@ describe("flat-locked two-wall pair", () => {
   });
 });
 
+// SELF-REBUILD REPO TREE: armed walls show the room's own repo as a pointable
+// tree panel; unarmed walls and the research-pinned ceiling never do.
+describe("self-repo tree panel while self-rebuild is armed", () => {
+  test("armed wall renders the panel; unarmed wall and the ceiling do not", () => {
+    const armed = renderToStaticMarkup(
+      <ProjectorApp
+        initialSnapshot={{ ...demoProjectorSnapshot, selfRebuild: true }}
+        urlSearch="?live=1&wall=A&view=ideas"
+      />,
+    );
+    expect(armed).toContain('data-testid="self-repo-tree"');
+    const unarmed = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch="?live=1&wall=A&view=ideas" />,
+    );
+    expect(unarmed).not.toContain('data-testid="self-repo-tree"');
+    const ceiling = renderToStaticMarkup(
+      <ProjectorApp
+        initialSnapshot={{ ...demoProjectorSnapshot, selfRebuild: true }}
+        urlSearch="?live=1&wall=C&research=1&zen=1"
+      />,
+    );
+    expect(ceiling).not.toContain('data-testid="self-repo-tree"');
+  });
+});
+
 // CEILING RESET CHIP: research-pinned displays are zen (chrome-less) but keep
 // exactly one control — the corner tree-reset chip.
 describe("ceiling reset chip on research-pinned windows", () => {

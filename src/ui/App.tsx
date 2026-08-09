@@ -19,6 +19,7 @@ import { roomHandsSocketUrl } from "./gesture/remote";
 import { HelpOverlay } from "./HelpOverlay";
 import { BuildChips, CommissionButton, ExecutionChip, ProcessControls } from "./BuildChips";
 import { ControlDock } from "./ControlDock";
+import { SelfRepoTree } from "./SelfRepoTree";
 import { FleetScrollRail } from "./FleetScroll";
 import { TakeHomeQr } from "./TakeHomeQr";
 import { buildsOf, lifecycleActionsFor, looksLikeSnapshot } from "./buildloop";
@@ -1829,6 +1830,10 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
         </div>
       ) : null}
       <FullscreenButton />
+      {/* SELF-REBUILD REPO TREE: while the toggle is armed, wall windows show
+          THIS repo as an HD tree with its PRs pointable (SelfRepoTree.tsx).
+          Wall-bound only — the ceiling keeps its research pin. */}
+      {snapshot.selfRebuild === true && urlConfig.wall !== null && !urlConfig.research ? <SelfRepoTree /> : null}
       {/* Research-pinned displays (the ceiling) run zen — chrome-less — but
           still need the one tree control: a corner chip, dimmed until a
           cursor rests on it, dwellable like everything else. */}

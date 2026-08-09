@@ -3892,3 +3892,46 @@ main.gesture-mode .idea-card-confidence { font-size: 15px; }
   font-size: 12px;
   color: #9a9aa8;
 }
+
+/* ── Self-rebuild repo tree panel (SelfRepoTree.tsx) ──────────────────────
+   Corner panel while 🔁 Self-Rebuild is armed: the room's own repo as an HD
+   tree + a dwellable PR list. Below the deck window (z-70), above the scene. */
+.self-repo-tree {
+  position: fixed;
+  left: 18px;
+  bottom: 16px;
+  z-index: 45;
+  width: min(620px, 44vw);
+  background: rgba(10, 14, 24, 0.82);
+  border: 1px solid rgba(120, 160, 220, 0.25);
+  border-radius: 14px;
+  backdrop-filter: blur(6px);
+  overflow: hidden;
+}
+.self-repo-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 10px 14px 6px;
+}
+.self-repo-title { font-size: 13px; letter-spacing: 0.14em; color: #8fd8a8; }
+.self-repo-name { font-size: 12px; color: #8b93a7; }
+.self-repo-body { display: flex; gap: 8px; padding: 0 10px 10px; }
+.self-repo-canvas { flex: 1 1 60%; height: 260px; border-radius: 10px; overflow: hidden; }
+.self-repo-canvas canvas { width: 100% !important; height: 100% !important; }
+.self-repo-prs { flex: 1 1 40%; max-height: 260px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+.self-repo-empty { color: #67718a; font-size: 12px; padding: 8px; }
+.self-repo-pr {
+  display: flex; gap: 8px; align-items: baseline; text-align: left;
+  padding: 8px 10px; border-radius: 8px; cursor: pointer;
+  border: 1px solid rgba(120, 160, 220, 0.2); background: rgba(20, 26, 40, 0.7); color: #cfd6e4;
+}
+.self-repo-pr.picked { border-color: var(--c-selected, #3cc8dc); }
+.self-repo-pr-num { color: #8b93a7; font-size: 12px; }
+.self-repo-pr-title { flex: 1; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.self-repo-pr-ci { font-size: 11px; letter-spacing: 0.08em; }
+.self-repo-pr.ci-pass .self-repo-pr-ci { color: #46c66e; }
+.self-repo-pr.ci-fail .self-repo-pr-ci { color: #e05555; }
+.self-repo-pr.ci-pending .self-repo-pr-ci { color: #f0c674; }
+main.gesture-mode .self-repo-pr { padding: 14px 16px; }
+main.gesture-mode .self-repo-pr-title { font-size: 15px; }

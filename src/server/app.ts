@@ -40,6 +40,9 @@ export interface ProjectorAppOptions {
   autocalFetch?: (input: string | URL, init?: RequestInit) => Promise<Response>;
   // Test seam for the /api/build-stamp stat of the served dist/index.html.
   distIndexStat?: () => Promise<{ mtimeMs: number }>;
+  // Test seam for the forest loader the self-rebuild toggle kicks (the repo
+  // tree the wall shows while armed). Absent = the shared module loader.
+  forestLoader?: { load: (org: string) => Promise<void> };
 }
 
 // The autocal proxy's upstream budget: the calibrator is local (127.0.0.1),
@@ -180,6 +183,15 @@ export function createProjectorApp(runtime: ProjectorRuntime, options: Projector
   // consults it); the supervisor wrapper itself is boot-time (--self), so
   // without one the flag only records intent — snapshot.selfSupervisor says
   // which. Returns the fresh snapshot.
+  // The room's own repository — the tree the wall shows while self-rebuild is
+  // armed ("watch the room grow itself"). Owner half feeds the forest loader.
+  const selfRepo = env.VIBERSYN_SELF_REPO ?? "RonTuretzky/vibecode-room";
+  app.get("/api/self-repo", (context) => context.json({ repo: selfRepo }));
+  // Under the supervisor (--self) the toggle BOOTS armed — kick the repo-tree
+  // loader now, not just on a toggle press, so the wall panel has data.
+  if (runtime.selfRebuild()) {
+    void (options.forestLoader ?? sharedForestLoader()).load(selfRepo.split("/")[0]).catch(() => undefined);
+  }
   app.post("/api/self-rebuild", async (context) => {
     if (isOfflineDemoRequest(context.req.header("referer"))) {
       return context.json(runtime.snapshot());
@@ -192,6 +204,12 @@ export function createProjectorApp(runtime: ProjectorRuntime, options: Projector
       }
     } catch {
       // no/invalid body -> toggle current state
+    }
+    if (on) {
+      // Arming self-rebuild kicks the repo-tree data: the wall's SelfRepoTree
+      // panel reads /api/forest, which the loader fills (cache-first, 5-min
+      // refresh). Fire-and-forget — the toggle must never wait on GitHub.
+      void (options.forestLoader ?? sharedForestLoader()).load(selfRepo.split("/")[0]).catch(() => undefined);
     }
     return context.json(runtime.setSelfRebuild(on));
   });
