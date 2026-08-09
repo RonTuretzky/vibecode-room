@@ -1,13 +1,16 @@
 // Pure pinch → camera-intent interpreter for the TouchDesigner hands stream.
 // ONE latched hand = grab-the-world orbit with a flick on release (fed to the
-// rig's EXISTING inertia path); TWO latched hands = ratio-preserving zoom
-// (radius *= d_prev/d_curr — spreading zooms IN, release stops dead) plus a
-// gentle damped midpoint pan. Pure logic — no DOM, no sockets, no three.js —
-// so the whole state machine is unit-testable with scripted HandsFrame feeds.
+// rig's EXISTING inertia path) PLUS a depth dolly: the palm's apparent size is
+// the monocular depth proxy (hand toward the camera = palm grows = move
+// forward), telescoping by the same per-frame ratio math as the two-hand
+// spread. TWO latched hands = ratio-preserving zoom (radius *= d_prev/d_curr —
+// spreading zooms IN, release stops dead) plus a gentle damped midpoint pan.
+// Pure logic — no DOM, no sockets, no three.js — so the whole state machine is
+// unit-testable with scripted HandsFrame feeds.
 // All timestamps are SECONDS on the CALLER's clock (never frame.t).
 
-import { Point2DFilter } from "./core";
-import type { HandsFrame } from "./hands-client";
+import { OneEuroFilter, Point2DFilter } from "./core";
+import type { HandsFrame, PinchHand } from "./hands-client";
 
 // Pinch detection (browser-authoritative on the continuous ratio; the TD
 // `pinching` bool is transport-level FALLBACK only, used when the ratio is absent).
@@ -33,6 +36,12 @@ export const ZOOM_MIN_DIST = 0.02; // hands overlapping → ratio untrustworthy,
 export const DOLLY_DEADBAND = 0.015; // |d/d_seed - 1| must exceed this once before zoom engages (kills micro-zoom while holding)
 export const DOLLY_MAX_STEP = 1.25; // per-frame scale clamp to [1/1.25, 1.25] (teleport/filter-reset defense)
 export const PAN_GAIN = 0.6; // midpoint pan, fraction of mouse-pan feel (gentler so zoom doesn't drift)
+// One-hand depth dolly (palm size = monocular depth proxy; needs the bridge's
+// `lm` skeleton — hands_mediapipe.py sends it, the TD stream may not: no
+// skeleton simply means no dolly, rotate is unaffected).
+export const DEPTH_DEADBAND = 0.08; // |span/span_seed - 1| must exceed this once — palm pitch wobbles size more than two-hand spread wobbles distance
+export const DEPTH_MIN_SPAN = 0.015; // palm smaller than this (too far from the camera) = size ratio untrustworthy, skip
+export const DEPTH_JUMP_RATIO = 1.5; // one-frame raw span jump beyond this factor = tracking glitch → reset the size filter (position-teleport analogue)
 // Input smoothing (we own it — TD is a new source; a Lag CHOP upstream is optional belt+braces).
 export const FILTER_MINCUTOFF = 1.0; // raise BETA if fast sweeps lag; lower it if jittery
 export const FILTER_BETA = 0.15;
@@ -54,10 +63,26 @@ interface HandTrack {
   rawX: number; // last RAW sample — teleport detection must see the unfiltered
   rawY: number; // jump (the 1-Euro filter dilutes a one-frame jump ~5x, so a
   // smoothed-delta check alone lets slot-swaps whip the camera via the chase)
+  sizeFilter: OneEuroFilter; // palm-span smoothing (the depth proxy is noisier than position)
+  sSize: number | null; // smoothed palm span; null until the bridge sends a skeleton
+  rawSize: number | null; // last RAW span — the size-jump guard must see the unfiltered value
   lastSeen: number; // seconds, caller's clock
   latched: boolean;
   downStreak: number; // consecutive down-votes while unlatched
   upStreak: number; // consecutive up-votes while latched (release debounce)
+}
+
+// Palm span from the 21-point skeleton: wrist→middle-MCP, guarded against palm
+// pitch foreshortening by the knuckle span (the same formula hands-page.ts uses
+// to normalize its pinch ratio), aspect-corrected like the inter-hand distance.
+// Apparent span ∝ 1/distance-from-camera — the monocular depth signal.
+export function palmSpan(lm: PinchHand["lm"], aspect: number): number | null {
+  if (lm === undefined || lm.length !== 21) {
+    return null;
+  }
+  const d = (a: number, b: number) => Math.hypot((lm[a][0] - lm[b][0]) * aspect, lm[a][1] - lm[b][1]);
+  const span = Math.max(d(0, 9), 0.9 * d(5, 17));
+  return Number.isFinite(span) && span > 0 ? span : null;
 }
 
 export class PinchCam {
@@ -70,6 +95,10 @@ export class PinchCam {
   #lastMotionAt = -Infinity;
   // Zoom: seedDist anchors the deadband; prevDist/prevMid are per-frame baselines.
   #zoom = { seedDist: 0, prevDist: 0, prevMidX: 0, prevMidY: 0, engaged: false };
+  // One-hand depth dolly: seedSize anchors the deadband (null = unseeded — the
+  // anchor hand has not yet shown a usable palm span); prevSize is the
+  // per-frame ratio baseline. Reset on every rotate (re-)anchor.
+  #depth: { seedSize: number | null; prevSize: number; engaged: boolean } = { seedSize: null, prevSize: 0, engaged: false };
   #aspect = 16 / 9; // last seen frame aspect — inter-hand distance is aspect-corrected
   #lastT: number | null = null;
 
@@ -99,6 +128,9 @@ export class PinchCam {
           sy: hand.y,
           rawX: hand.x,
           rawY: hand.y,
+          sizeFilter: new OneEuroFilter(30, FILTER_MINCUTOFF, FILTER_BETA, FILTER_DCUTOFF),
+          sSize: null,
+          rawSize: null,
           lastSeen: t,
           latched: false,
           downStreak: 0,
@@ -111,10 +143,22 @@ export class PinchCam {
         // frames. The snap trips the smoothed-step guards below exactly once
         // (discard + re-anchor/re-seed) — a one-frame pause, never a swing.
         track.filter = new Point2DFilter(30, FILTER_MINCUTOFF, FILTER_BETA, FILTER_DCUTOFF);
+        track.sizeFilter = new OneEuroFilter(30, FILTER_MINCUTOFF, FILTER_BETA, FILTER_DCUTOFF);
       }
       track.rawX = hand.x;
       track.rawY = hand.y;
       [track.sx, track.sy] = track.filter.call(hand.x, hand.y, t);
+      // Palm span (depth proxy): smoothed like position; a one-frame size jump
+      // beyond DEPTH_JUMP_RATIO is a tracking glitch — snap the filter so the
+      // per-frame dolly clamp absorbs it once instead of chasing it.
+      const span = palmSpan(hand.lm, this.#aspect);
+      if (span !== null) {
+        if (track.rawSize !== null && (span > track.rawSize * DEPTH_JUMP_RATIO || span < track.rawSize / DEPTH_JUMP_RATIO)) {
+          track.sizeFilter = new OneEuroFilter(30, FILTER_MINCUTOFF, FILTER_BETA, FILTER_DCUTOFF);
+        }
+        track.rawSize = span;
+        track.sSize = track.sizeFilter.call(span, t);
+      }
       // Down-vote: the continuous ratio is authoritative (hysteresis lives HERE);
       // TD's latched bool only when the ratio is absent.
       const vote = hand.pinch !== null ? hand.pinch < (track.latched ? PINCH_OFF : PINCH_ON) : hand.pinching === true;
@@ -178,6 +222,7 @@ export class PinchCam {
           const [id, track] = latched[0];
           this.#mode = "rotate";
           this.#anchor = { handId: id, x: track.sx, y: track.sy };
+          this.#seedDepth(track);
           this.#yawVel = 0;
           this.#heightVel = 0;
           intents.push({ kind: "grab" });
@@ -204,6 +249,7 @@ export class PinchCam {
           // hand off silently — re-anchor, zero the EMAs, stay grabbed.
           const [id, track] = latched[0];
           this.#anchor = { handId: id, x: track.sx, y: track.sy };
+          this.#seedDepth(track);
           this.#yawVel = 0;
           this.#heightVel = 0;
         } else if (live) {
@@ -213,9 +259,11 @@ export class PinchCam {
           if (Math.hypot(dxN, dyN) > ROTATE_MAX_STEP) {
             // Teleport/slot-swap (filter reset at ingest snapped the smoothed
             // position): discard the step, re-anchor, leave the EMA untouched
-            // — worst case is a one-frame pause, never a jump.
+            // — worst case is a one-frame pause, never a jump. Depth re-seeds
+            // for the same reason: the snapped span must not read as a dolly.
             this.#anchor.x = track.sx;
             this.#anchor.y = track.sy;
+            this.#seedDepth(track);
           } else {
             // Signs mirror the mouse drag exactly (RoomScene.tsx:1380-1383,
             // y-down input): hand right = yaw negative, hand down = height up.
@@ -238,6 +286,32 @@ export class PinchCam {
             }
             this.#anchor.x = track.sx;
             this.#anchor.y = track.sy;
+            // DEPTH DOLLY: palm toward the camera = span grows = scale < 1 =
+            // move forward (the per-frame ratios telescope exactly like the
+            // two-hand spread). Deadband against the SEED span so holding a
+            // pinch still doesn't breathe the camera; the [1/DOLLY_MAX_STEP,
+            // DOLLY_MAX_STEP] clamp is the teleport/filter-reset defense. No
+            // dolly inertia on release — parity with the two-hand zoom.
+            const span = track.sSize;
+            if (span !== null && span >= DEPTH_MIN_SPAN) {
+              if (this.#depth.seedSize === null) {
+                // First usable span mid-grab (skeleton arrived late): baseline
+                // here — never dolly against a span from before the grab.
+                this.#depth.seedSize = span;
+                this.#depth.prevSize = span;
+              } else {
+                if (!this.#depth.engaged && Math.abs(span / this.#depth.seedSize - 1) > DEPTH_DEADBAND) {
+                  this.#depth.engaged = true;
+                }
+                if (this.#depth.engaged && this.#depth.prevSize > 0) {
+                  const scale = clamp(this.#depth.prevSize / span, 1 / DOLLY_MAX_STEP, DOLLY_MAX_STEP);
+                  if (scale !== 1) {
+                    intents.push({ kind: "zoom", scale });
+                  }
+                }
+                this.#depth.prevSize = span;
+              }
+            }
           }
         }
         break;
@@ -285,10 +359,12 @@ export class PinchCam {
           this.#zoom.prevMidY = midY;
         } else if (latched.length === 1) {
           // Seamless 2→1: the survivor keeps the grab; anchor at its CURRENT
-          // smoothed position so the first rotate frame has zero delta.
+          // smoothed position so the first rotate frame has zero delta (and
+          // depth re-seeds so the survivor's span baseline is fresh).
           const [id, track] = latched[0];
           this.#mode = "rotate";
           this.#anchor = { handId: id, x: track.sx, y: track.sy };
+          this.#seedDepth(track);
           this.#yawVel = 0;
           this.#heightVel = 0;
         } else {
@@ -317,6 +393,14 @@ export class PinchCam {
   #seedZoom(a: HandTrack, b: HandTrack): void {
     const d = this.#dist(a, b);
     this.#zoom = { seedDist: d, prevDist: d, prevMidX: (a.sx + b.sx) / 2, prevMidY: (a.sy + b.sy) / 2, engaged: false };
+  }
+
+  // (Re-)baseline the depth dolly on the anchor hand's CURRENT smoothed span.
+  // Null span (no skeleton yet) leaves it unseeded — the rotate loop seeds on
+  // the first usable frame instead.
+  #seedDepth(track: HandTrack): void {
+    const span = track.sSize !== null && track.sSize >= DEPTH_MIN_SPAN ? track.sSize : null;
+    this.#depth = { seedSize: span, prevSize: span ?? 0, engaged: false };
   }
 
   // Aspect-corrected inter-hand distance: x is a fraction of the camera frame

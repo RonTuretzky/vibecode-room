@@ -3,6 +3,7 @@ import type { HandsFrame, PinchHand } from "./hands-client";
 import {
   CONFIRM_FRAMES,
   DOLLY_MAX_STEP,
+  palmSpan,
   FLICK_MAX_YAW,
   HAND_STALE_SECONDS,
   HEIGHT_PER_UNIT,
@@ -470,5 +471,100 @@ describe("PinchCam — idleTick", () => {
     const baseline = flickOf(false);
     expect(baseline).toBeLessThan(0); // sanity: the sweep produces a real flick
     expect(flickOf(true)).toBe(baseline);
+  });
+});
+
+describe("PinchCam — one-hand depth dolly (palm span = depth proxy)", () => {
+  // A hand whose 21-point skeleton is degenerate except wrist (lm[0]) and
+  // middle-MCP (lm[9]) stacked vertically `span` apart — knuckle span is zero,
+  // so palmSpan(lm, 1) === span exactly.
+  function sized(id: number, x: number, y: number, span: number, pinch: number | null = PINCHED): PinchHand {
+    const lm = Array.from({ length: 21 }, () => [x, y] as const);
+    (lm as Array<readonly [number, number]>)[9] = [x, y + span] as const;
+    return { ...hand(id, x, y, pinch), lm };
+  }
+
+  test("palmSpan: no skeleton → null; degenerate skeleton → the wrist-MCP span", () => {
+    expect(palmSpan(undefined, 1)).toBeNull();
+    const h = sized(1, 0.5, 0.5, 0.12);
+    expect(palmSpan(h.lm, 1)).toBeCloseTo(0.12, 6);
+  });
+
+  test("no skeleton on the stream → rotate works, zero zoom intents", () => {
+    const cam = new PinchCam();
+    const out = run(cam, (t) => frame([hand(1, sweep(t, 0, 1, 0.3, 0.6), 0.5)]), 0, 1);
+    expect(ofKind(out, "orbit").length).toBeGreaterThan(0);
+    expect(ofKind(out, "zoom")).toHaveLength(0);
+  });
+
+  test("holding still (span wobble under the deadband) never breathes the camera", () => {
+    const cam = new PinchCam();
+    const wobble = (t: number) => 0.1 * (1 + 0.04 * Math.sin(t * 20)); // ±4% < DEPTH_DEADBAND
+    const out = run(cam, (t) => frame([sized(1, 0.5, 0.5, wobble(t))]), 0, 2);
+    expect(ofKind(out, "zoom")).toHaveLength(0);
+  });
+
+  test("palm toward the camera (span grows) → zoom-in intents that telescope to the total ratio", () => {
+    const cam = new PinchCam();
+    // Stationary hand; span 0.10 → 0.20 over [0.5, 1.5].
+    const out = run(cam, (t) => frame([sized(1, 0.5, 0.5, sweep(t, 0.5, 1.5, 0.1, 0.2))]), 0, 2);
+    const zooms = ofKind(out, "zoom");
+    expect(zooms.length).toBeGreaterThan(0);
+    for (const z of zooms) {
+      expect(z.scale).toBeLessThan(1); // approach = forward, every frame
+    }
+    // Per-frame ratios telescope ≈ span_at_engage / span_final: strictly inside
+    // (1/2, 1) — the deadband ate the first ~8%, smoothing lags the tail.
+    const product = zooms.reduce((acc, z) => acc * z.scale, 1);
+    expect(product).toBeGreaterThan(0.5);
+    expect(product).toBeLessThan(0.65);
+  });
+
+  test("palm away from the camera (span shrinks) → zoom-out intents (scale > 1)", () => {
+    const cam = new PinchCam();
+    const out = run(cam, (t) => frame([sized(1, 0.5, 0.5, sweep(t, 0.5, 1.5, 0.2, 0.1))]), 0, 2);
+    const zooms = ofKind(out, "zoom");
+    expect(zooms.length).toBeGreaterThan(0);
+    for (const z of zooms) {
+      expect(z.scale).toBeGreaterThan(1);
+    }
+  });
+
+  test("orbit and dolly compose in the same gesture", () => {
+    const cam = new PinchCam();
+    const out = run(cam, (t) => frame([sized(1, sweep(t, 0.3, 1.7, 0.3, 0.6), 0.5, sweep(t, 0.3, 1.7, 0.1, 0.18))]), 0, 2);
+    expect(ofKind(out, "orbit").length).toBeGreaterThan(0);
+    expect(ofKind(out, "zoom").length).toBeGreaterThan(0);
+  });
+
+  test("a one-frame span teleport is clamped to DOLLY_MAX_STEP, never a jump-cut", () => {
+    const cam = new PinchCam();
+    // Engage cleanly (0.10→0.13), then the span doubles in a single frame.
+    const spanAt = (t: number) => (t < 1 ? sweep(t, 0.2, 1, 0.1, 0.13) : 0.26);
+    const out = run(cam, (t) => frame([sized(1, 0.5, 0.5, spanAt(t))]), 0, 1.5);
+    for (const z of ofKind(out, "zoom")) {
+      expect(z.scale).toBeGreaterThanOrEqual(1 / DOLLY_MAX_STEP - 1e-9);
+      expect(z.scale).toBeLessThanOrEqual(DOLLY_MAX_STEP + 1e-9);
+    }
+  });
+
+  test("a span too small to trust (< DEPTH_MIN_SPAN) emits no dolly", () => {
+    const cam = new PinchCam();
+    const out = run(cam, (t) => frame([sized(1, 0.5, 0.5, sweep(t, 0.5, 1.5, 0.005, 0.012))]), 0, 2);
+    expect(ofKind(out, "zoom")).toHaveLength(0);
+  });
+
+  test("2→1 handoff re-seeds the survivor's span — no dolly from the stale baseline", () => {
+    const cam = new PinchCam();
+    // Two hands zoom (fixed spread), hand 2 releases at t=1; hand 1's span is
+    // LARGE the whole time — after the handoff that must be the new zero, so
+    // holding still emits nothing.
+    const feed = (t: number) =>
+      t < 1
+        ? frame([sized(1, 0.4, 0.5, 0.2), sized(2, 0.6, 0.5, 0.2)])
+        : frame([sized(1, 0.4, 0.5, 0.2)]);
+    const out = run(cam, feed, 0, 2);
+    const afterHandoff = out.filter((e) => e.t > 1 + 2 * DT);
+    expect(afterHandoff.filter((e) => e.intent.kind === "zoom")).toHaveLength(0);
   });
 });
