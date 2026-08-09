@@ -1532,6 +1532,11 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         },
         dispose: () => {
           floraDisposed = true;
+          // The park detaches + disposes itself FIRST — its InstancedMesh
+          // owns real geometry/material, unlike the shared-cache flora the
+          // traverse below is calibrated for.
+          parkBuild?.dispose();
+          parkBuild = null;
           scene.remove(group);
           scene.fog = null;
           scene.background = null;

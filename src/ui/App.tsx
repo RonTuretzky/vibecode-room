@@ -1852,6 +1852,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
         onResearchNode={onResearchNode}
         onDialogueNode={(turnId) => void onDialogueNode(turnId)}
         selfTree={selfTree}
+        park={urlConfig.park}
       />
       {dwellLayerOn ? (
         <GestureLayer

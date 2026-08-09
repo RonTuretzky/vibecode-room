@@ -36,3 +36,13 @@ disc.
 `sunflowers_puresky` tonemapped JPG, downscaled 8k→4k, mapped onto a
 vertically squashed dome so the zenith blue reaches the camera's low
 horizon band.
+
+## Central Park layout (`central-park.json`)
+
+Baked vector map of the real Central Park for the `?park=1` diorama layer
+(`src/ui/central-park.ts`): park outline, water bodies, lawn/garden/wood
+polygons, every footpath, and ~1.6k individually-surveyed tree positions.
+Regenerate with `bun run scripts/build-central-park.ts`.
+
+Data © OpenStreetMap contributors, licensed
+[ODbL](https://www.openstreetmap.org/copyright), fetched via the Overpass API.

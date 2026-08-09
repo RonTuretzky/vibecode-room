@@ -66,6 +66,10 @@ export interface ProjectorUrlConfig {
   // ?zen=1 — boot with the zen (chrome-less) presentation on, same as the Z
   // key: just the scene, no trays/status chrome. For dedicated displays.
   zen: boolean;
+  // ?park=1 — lay the REAL Central Park under the garden as a stylized
+  // diorama (baked OSM data: water bodies, lawns, every footpath, and the
+  // surveyed trees at their true positions — see src/ui/central-park.ts).
+  park: boolean;
   // ?autofit= — continuous auto-framing override (the camera re-fits itself
   // to keep the whole scene in view as it grows): "1" forces it on for any
   // unlocked window, "0" forces it off, absent/unknown → null so App applies
@@ -137,6 +141,9 @@ export function parseProjectorUrl(search: string, hostname: string): ProjectorUr
   const research = params.get("research") === "1";
   const zen = params.get("zen") === "1";
 
+  // Central Park diorama layer under the garden (?park=1).
+  const park = params.get("park") === "1";
+
   // Continuous auto-framing tri-state: explicit "1"/"0" override, anything
   // else defers (null) to App's default (on for research-pinned windows).
   const autoFitParam = params.get("autofit");
@@ -153,5 +160,5 @@ export function parseProjectorUrl(search: string, hostname: string): ProjectorUr
         ? view.toUpperCase()
         : null;
 
-  return { view, wall, badge, gesture, dwell, hands, remote, demo, mock, flat, dots, research, zen, autoFit };
+  return { view, wall, badge, gesture, dwell, hands, remote, demo, mock, flat, dots, research, zen, park, autoFit };
 }
