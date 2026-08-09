@@ -285,10 +285,10 @@ function IdeaBody({
   return (
     <div className="guided-body">
       <p className="guided-lede">
-        <strong>Say an idea out loud</strong> — and take your time describing
-        it. The room transcribes you live and listens for a buildable idea; it
-        waits for a natural pause before kicking anything off, so keep talking
-        until you&rsquo;ve said the whole thing.
+        <strong>Say your idea out loud</strong> — take your time and describe
+        the whole thing. The room transcribes as you go and{" "}
+        <strong>builds nothing until you hit Done</strong>: your words only
+        shape what it will make, they never launch it.
       </p>
       {armed ? (
         <div className="guided-settle" data-testid="guided-settle">
@@ -298,15 +298,15 @@ function IdeaBody({
             </p>
           ) : null}
           <p className="guided-settle-countdown">
-            {settle?.firesInMs !== null && settle?.firesInMs !== undefined
-              ? `Building in ${Math.max(1, Math.ceil(settle.firesInMs / 1000))}s — keep talking to refine, or hit Done.`
-              : "Ready to build — keep talking to refine, or hit Done."}
+            Got it — keep talking to sharpen it, and hit{" "}
+            <strong>Done — build it</strong> when it&rsquo;s all said. That
+            starts the concept race.
           </p>
         </div>
       ) : (
         <p className="guided-settle-waiting" data-testid="guided-settle-waiting">
-          The room is listening — hit Done whenever you&rsquo;ve said your idea
-          and it will build from what it heard (or move you along).
+          The room is listening for the shape of an idea. Describe it fully —
+          nothing kicks off on its own — then hit Done.
         </p>
       )}
       <button

@@ -97,6 +97,9 @@ interface MakeAppArgs {
   // Self-repo forest-loader seam — no test may ever kick the process-wide
   // loader (it spawns a real gh and pollutes shared forest state).
   forestLoader?: { load: (org: string) => Promise<void> };
+  // Extra RUNTIME env (e.g. VIBERSYN_AUTOBUILD_SETTLE_MS for settle-gate
+  // tests) — merged over makeApp's deterministic defaults.
+  runtimeEnv?: Record<string, string>;
 }
 
 async function makeApp(args: MakeAppArgs = {}): Promise<{ app: ReturnType<typeof createProjectorApp>; runtime: ProjectorRuntime }> {
@@ -109,6 +112,7 @@ async function makeApp(args: MakeAppArgs = {}): Promise<{ app: ReturnType<typeof
       VIBERSYN_DETECT_MIN_NEW_TURNS: "1",
       VIBERSYN_DETECT_MIN_INTERVAL_MS: "0",
       VIBERSYN_DETECT_TICK_MS: "0",
+      ...args.runtimeEnv,
     },
     {
       ideaDetector: args.detector,
@@ -292,6 +296,47 @@ describe("GET /api/self-repo", () => {
     // loader dedupes/caches internally — this seam only records intent).
     await app.request("/api/self-repo");
     expect(kicked).toEqual(["RonTuretzky", "RonTuretzky"]);
+  });
+});
+
+// GUIDED-DEMO HOLD: while a wall's demo sits on "describe your idea", the
+// armed auto-build must not fire on its own — Done is the only trigger.
+describe("POST /api/guided/hold", () => {
+  test("held: a zero-settle auto-build stays ARMED instead of firing; release fires it", async () => {
+    const { app, runtime } = await makeApp({
+      detector: new ScriptedDetector([ideaResult("a garden kiosk", 0.9)]),
+      runtimeEnv: { VIBERSYN_AUTOBUILD_SETTLE_MS: "0" },
+    });
+    await postJson(app, "/api/auto-accept", { on: true });
+    await postJson(app, "/api/guided/hold", { on: true });
+    await surfaceIdea(runtime, "a garden kiosk");
+    // The zero-settle legacy path would spawn on the spot — the hold gates it,
+    // keeping the candidate armed so the demo's Done can accept exactly it.
+    await new Promise((resolveTick) => setTimeout(resolveTick, 30));
+    expect(runtime.snapshot().processes).toHaveLength(0);
+    expect(runtime.snapshot().ideas ?? []).toHaveLength(1);
+
+    await postJson(app, "/api/guided/hold", { on: false });
+    for (let attempt = 0; attempt < 200 && runtime.snapshot().processes.length === 0; attempt += 1) {
+      await new Promise((resolveTick) => setTimeout(resolveTick, 10));
+    }
+    expect(runtime.snapshot().processes).toHaveLength(1);
+  });
+
+  test("offline-demo referer guard: cosmetic snapshot returned, no hold set", async () => {
+    const { app, runtime } = await makeApp({
+      detector: new ScriptedDetector([ideaResult("a mural wall", 0.9)]),
+      runtimeEnv: { VIBERSYN_AUTOBUILD_SETTLE_MS: "0" },
+    });
+    await postJson(app, "/api/auto-accept", { on: true });
+    const response = await postJson(app, "/api/guided/hold", { on: true }, { referer: "http://localhost:8787/?live=0" });
+    expect(response.status).toBe(200);
+    // The guard means the hold never landed: the zero-settle fire proceeds.
+    await surfaceIdea(runtime, "a mural wall");
+    for (let attempt = 0; attempt < 200 && runtime.snapshot().processes.length === 0; attempt += 1) {
+      await new Promise((resolveTick) => setTimeout(resolveTick, 10));
+    }
+    expect(runtime.snapshot().processes).toHaveLength(1);
   });
 });
 

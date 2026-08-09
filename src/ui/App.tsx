@@ -1083,11 +1083,30 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
   }, []);
   const exitGuidedDemo = useCallback(() => setGuided(null), []);
   const guidedPopOrb = useCallback(() => {
-    setGuided((current) => (current === null ? current : popPracticeOrb(current)));
+    // Snapshot-aware: a room already unmuted+capturing skips the record step
+    // (its button would be a no-op) and lands straight on "describe your idea".
+    setGuided((current) => (current === null ? current : popPracticeOrb(current, snapshotRef.current, Date.now())));
   }, []);
   const guidedSkip = useCallback(() => {
     setGuided((current) => (current === null ? current : skipStep(current, snapshotRef.current, Date.now())));
   }, []);
+  // GUIDED HOLD: while the demo sits on "describe your idea", the room must
+  // not auto-build mid-description — the Done button is the only trigger.
+  // Posted on the step's boundary transitions only; the server TTLs the hold
+  // so a wall that dies here can never wedge auto-build.
+  const guidedHoldRef = useRef(false);
+  useEffect(() => {
+    const on = guided !== null && guided.step === "idea";
+    if (on === guidedHoldRef.current) {
+      return;
+    }
+    guidedHoldRef.current = on;
+    void fetch("/api/guided/hold", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ on }),
+    }).catch(() => undefined);
+  }, [guided]);
 
   // GUIDED RECORD (step 2's big button): REALLY unmute (/api/unmute), turn on
   // Idea Capture (/api/capture {on:true}) and Auto-Build (/api/auto-accept

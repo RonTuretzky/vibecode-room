@@ -486,9 +486,9 @@ describe("guided demo — skip, finish, re-enter", () => {
   test("skipping record still re-baselines so a later spawn is detected", () => {
     const start = startGuided(makeSnapshot());
     const preExisting = recordingRoom({ processes: [makeProcess("upid_pre")] });
-    const atRecord = skipStep(start, preExisting)!;
-    expect(atRecord.step).toBe("record");
-    const atIdea = skipStep(atRecord, preExisting)!;
+    // A recording room skips the record step entirely: the orientation skip
+    // lands straight on idea, baseline captured at the jump.
+    const atIdea = skipStep(start, preExisting)!;
     expect(atIdea.step).toBe("idea");
     expect(atIdea.baselineUpids).toEqual(["upid_pre"]);
     // The idea step never auto-advances; the visitor's Done/Skip must adopt
@@ -621,5 +621,41 @@ describe("guided demo — race minimum dwell (steps must not fly by)", () => {
     // no nowMs anywhere in the chain — dwell must not apply
     const advanced = skipStep(state, readySnap);
     expect(advanced?.step).toBe("decide");
+  });
+});
+
+describe("guided demo — the record step is skipped when the room already records", () => {
+  test("orb completion on a recording room jumps straight to idea (watermarked + re-baselined)", () => {
+    const snapshot = recordingRoom({
+      processes: [makeProcess("upid_pre")],
+      transcript: [turn("00:00:01", "hours of earlier session chatter")],
+    });
+    let state = startGuided(makeSnapshot());
+    for (let i = 0; i < PRACTICE_ORB_COUNT - 1; i += 1) {
+      state = popPracticeOrb(state, snapshot, 5);
+      expect(state.step).toBe("orientation");
+    }
+    const atIdea = popPracticeOrb(state, snapshot, 5);
+    expect(atIdea.step).toBe("idea");
+    // Baseline captured AT the jump: the pre-existing process must never read
+    // as this demo's newcomer, and earlier speech sits behind the watermark.
+    expect(atIdea.baselineUpids).toEqual(["upid_pre"]);
+    expect(freshTranscript(atIdea, snapshot)).toHaveLength(0);
+  });
+
+  test("orb completion on a muted room still lands on the record step", () => {
+    let state = startGuided(makeSnapshot());
+    for (let i = 0; i < PRACTICE_ORB_COUNT; i += 1) {
+      state = popPracticeOrb(state, makeSnapshot({ muted: true }), 5);
+    }
+    expect(state.step).toBe("record");
+  });
+
+  test("legacy call without a snapshot keeps the record step (no behavior change)", () => {
+    let state = startGuided(makeSnapshot());
+    for (let i = 0; i < PRACTICE_ORB_COUNT; i += 1) {
+      state = popPracticeOrb(state);
+    }
+    expect(state.step).toBe("record");
   });
 });

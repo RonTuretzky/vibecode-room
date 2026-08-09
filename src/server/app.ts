@@ -217,6 +217,25 @@ export function createProjectorApp(runtime: ProjectorRuntime, options: Projector
     }
     return context.json(runtime.setSelfRebuild(on));
   });
+  // GUIDED-DEMO HOLD: the wall posts {on:true} entering the demo's "describe
+  // your idea" step and {on:false} leaving it — while held, an armed auto-build
+  // never fires on its own (Done is the only trigger). TTL'd server-side so a
+  // crashed wall cannot wedge the room. Absent body = arm.
+  app.post("/api/guided/hold", async (context) => {
+    if (isOfflineDemoRequest(context.req.header("referer"))) {
+      return context.json(runtime.snapshot());
+    }
+    let on = true;
+    try {
+      const body = (await context.req.json()) as { on?: unknown };
+      if (typeof body?.on === "boolean") {
+        on = body.on;
+      }
+    } catch {
+      // no/invalid body -> arm the hold
+    }
+    return context.json(runtime.setGuidedHold(on));
+  });
   // IDEA CAPTURE mode toggle (alternative to passive auto-detect). Body `{ on: boolean }`
   // sets it explicitly; absent body flips the current state. When on, detection runs
   // eagerly (a rate-limited force-detect per final); building still requires an explicit

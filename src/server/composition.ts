@@ -282,6 +282,10 @@ export interface ProjectorRuntime {
   // accepted+built the instant it pops.
   setAutoAccept(on: boolean, correlationId?: string): ProjectorSnapshot;
   autoAccept(): boolean;
+  // GUIDED-DEMO HOLD: suspends the armed auto-build's self-firing while the
+  // demo's "describe your idea" step is up (Done is the only trigger). TTL'd
+  // server-side; releasing re-checks an armed candidate immediately.
+  setGuidedHold(on: boolean): ProjectorSnapshot;
   // IDEA CAPTURE mode toggle: when on, detection runs EAGERLY (a rate-limited
   // force-detect per final) so ideas surface fast. Capture no longer implies
   // building — auto-building happens ONLY when autoAccept is on; otherwise the
@@ -577,6 +581,8 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   readonly #autoBuildSettleMs: number;
   #autoBuildTimer: ReturnType<typeof setTimeout> | null = null;
   #autoBuildArmedId: string | null = null;
+  // Guided-demo hold deadline (0 = no hold). See setGuidedHold.
+  #guidedHoldUntilMs = 0;
   // While armed, republish once per second so every wall's settle countdown
   // (snapshot.ideaSettle.firesInMs) ticks live. Cleared on disarm/fire.
   #settleTickTimer: ReturnType<typeof setInterval> | null = null;
@@ -1809,6 +1815,20 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     return this.#snapshot;
   }
 
+  // GUIDED-DEMO HOLD: while a visitor is on the demo's "describe your idea"
+  // step, the armed auto-build must not fire on its own — the Done button is
+  // the only trigger. The hold is TTL'd (a crashed/closed wall can never wedge
+  // the room's auto-build forever); releasing it re-checks an armed candidate
+  // immediately so a post-demo room resumes normal settle behavior.
+  setGuidedHold(on: boolean): ProjectorSnapshot {
+    this.#guidedHoldUntilMs = on ? this.#clock() + GUIDED_HOLD_TTL_MS : 0;
+    if (!on && this.#autoBuildArmedId !== null) {
+      this.scheduleAutoBuildCheck();
+    }
+    this.publish();
+    return this.#snapshot;
+  }
+
   autoAccept(): boolean {
     return this.#autoAccept;
   }
@@ -2783,6 +2803,23 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   }
 
   private fireArmedAutoBuild(): void {
+    const holdRemainingMs = this.#guidedHoldUntilMs - this.#clock();
+    if (holdRemainingMs > 0 && this.#autoBuildArmedId !== null) {
+      // Guided-demo hold: the visitor is mid-"describe your idea". Keep the
+      // candidate ARMED (the Done button accepts exactly this candidate) and
+      // re-check when the hold lapses — releasing the hold early re-checks
+      // immediately via setGuidedHold's scheduleAutoBuildCheck.
+      if (this.#autoBuildTimer !== null) {
+        clearTimeout(this.#autoBuildTimer);
+      }
+      const timer = setTimeout(() => {
+        this.#autoBuildTimer = null;
+        this.fireArmedAutoBuild();
+      }, holdRemainingMs + 50);
+      (timer as { unref?: () => void }).unref?.();
+      this.#autoBuildTimer = timer;
+      return;
+    }
     const candidateId = this.#autoBuildArmedId;
     this.#autoBuildArmedId = null;
     this.clearSettleTick();
@@ -2826,9 +2863,13 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     const primary = this.detection.primary();
     const title = primary !== null && primary.id === this.#autoBuildArmedId ? primary.pitch : null;
     const nowMs = this.#clock();
-    const firesInMs = this.#autoBuildSettleMs > 0
-      ? Math.max(0, (this.#lastFinalAtMs ?? nowMs) + this.#autoBuildSettleMs - nowMs)
-      : 0;
+    // Under a guided hold there IS no countdown — the Done button is the only
+    // trigger, so the wall must not show a timer that will never fire.
+    const firesInMs = nowMs < this.#guidedHoldUntilMs
+      ? null
+      : this.#autoBuildSettleMs > 0
+        ? Math.max(0, (this.#lastFinalAtMs ?? nowMs) + this.#autoBuildSettleMs - nowMs)
+        : 0;
     return { armed: true, title, firesInMs };
   }
 
@@ -4115,6 +4156,10 @@ function resolveSelfReloadDelayMs(env: Record<string, string | undefined>): numb
 export const MIC_ENDPOINTING_BASE_MS = 900;
 
 export const DEFAULT_AUTOBUILD_SETTLE_MS = 8_000;
+
+// Guided-demo hold TTL: a wall that crashed/closed mid-"describe your idea"
+// must never wedge auto-build — the hold self-expires after this long.
+export const GUIDED_HOLD_TTL_MS = 10 * 60_000;
 
 // VIBERSYN_AUTOBUILD_SETTLE_MS — quiet period (ms) required before an armed
 // auto-build fires. 0 restores the legacy immediate fire (fast tests).

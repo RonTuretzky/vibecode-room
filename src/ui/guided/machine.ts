@@ -202,12 +202,25 @@ export function stepNumber(step: GuidedStep): number {
   return GUIDED_STEP_ORDER.indexOf(step) + 1;
 }
 
-// One practice orb popped (dwell-fired or clicked). All popped → record step.
-export function popPracticeOrb(state: GuidedState): GuidedState {
+// The room is already live-listening: unmuted AND capturing. Entering the
+// record step then would offer a button whose whole job is already done, so
+// both entries into record (orb completion, orientation skip) test this and
+// jump straight to the idea step instead — freezing the watermarks and the
+// process baseline at the jump, exactly as the record step's own exit would.
+export function alreadyRecording(snapshot: ProjectorSnapshot): boolean {
+  return snapshot.muted === false && snapshot.captureMode === true;
+}
+
+// One practice orb popped (dwell-fired or clicked). All popped → record step —
+// or straight past it when the room is already recording (snapshot provided).
+export function popPracticeOrb(state: GuidedState, snapshot?: ProjectorSnapshot, nowMs?: number): GuidedState {
   if (state.step !== "orientation") {
     return state;
   }
   const orbsPopped = Math.min(state.orbsPopped + 1, PRACTICE_ORB_COUNT);
+  if (orbsPopped >= PRACTICE_ORB_COUNT && snapshot !== undefined && alreadyRecording(snapshot)) {
+    return { ...state, orbsPopped, ...watermarksOf(snapshot), step: "idea", baselineUpids: upidsOf(snapshot), enteredAtMs: nowMs };
+  }
   return {
     ...state,
     orbsPopped,
@@ -305,7 +318,11 @@ export function skipStep(state: GuidedState, snapshot: ProjectorSnapshot, nowMs?
   switch (state.step) {
     case "orientation":
       // Freeze the speech/idea watermarks at this exact moment: everything
-      // beyond them is this visitor's own recording session.
+      // beyond them is this visitor's own recording session. A room already
+      // recording skips the record step entirely (its button would be a no-op).
+      if (alreadyRecording(snapshot)) {
+        return { ...state, ...watermarksOf(snapshot), step: "idea", baselineUpids: upidsOf(snapshot), enteredAtMs: nowMs };
+      }
       return { ...state, ...watermarksOf(snapshot), step: "record", enteredAtMs: nowMs };
     case "record":
       // Same baseline reset the natural advance performs, so a process that
