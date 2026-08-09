@@ -6,8 +6,9 @@ import type { ReactNode } from "react";
  * button row used to live (live-room request: the wall should be calm).
  *
  * Resting ANY cursor on the dock button expands a glass popover tray with the
- * full button cluster; the tray folds shut ~4s after every cursor has left the
- * dock. Two hover sources feed the same check (FleetScroll's pattern):
+ * full button cluster; the tray then STAYS open until the toggle is clicked
+ * (live-room request — no idle timeout). Two hover sources feed the open
+ * check (FleetScroll's pattern):
  *
  *   - css :hover        — a desk mouse resting on the dock/tray;
  *   - [data-dwell-hot]  — the attribute GestureLayer stamps per-frame on the
@@ -29,15 +30,9 @@ import type { ReactNode } from "react";
  * never folded behind a hover.
  */
 
-// "~4s": long enough that a wandering cursor (or a dwell cursor re-aiming
-// between two tray buttons) never sees the tray vanish mid-reach, short enough
-// that the wall returns to calm soon after everyone walks away.
-export const DOCK_COLLAPSE_MS = 4_000;
-
-// Pure: is the collapse due? sinceHotMs is how long the dock has been cold.
-export function dockCollapseDue(sinceHotMs: number): boolean {
-  return sinceHotMs > DOCK_COLLAPSE_MS;
-}
+// STICKY TRAY (live-room request): once open, the tray stays open until the
+// toggle is clicked again — no idle timeout. Hover/dwell-hot still OPENS it
+// (walk-up discoverability); only an explicit click closes.
 
 // Is any cursor "on" the dock? Attribute first (needs no selector engine),
 // then :hover on the root (true while the mouse is over ANY descendant), then
@@ -78,20 +73,15 @@ export function ControlDock({ children, initialExpanded = false }: ControlDockPr
       return;
     }
     let raf = 0;
-    let lastHot = performance.now();
-    const frame = (now: number) => {
+    const frame = () => {
       const root = rootRef.current;
       if (root !== null) {
         if (dockIsHot(root)) {
-          lastHot = now;
           if (!holdClosed.current) {
             setExpanded(true); // bails when already true — no re-render churn
           }
         } else {
           holdClosed.current = false; // cursor left — hover may expand again
-          if (dockCollapseDue(now - lastHot)) {
-            setExpanded(false);
-          }
         }
       }
       raf = requestAnimationFrame(frame);

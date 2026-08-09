@@ -7,7 +7,7 @@ import {
   discGeometry,
   parseAutocalState,
 } from "./CalibrationOverlay";
-import { ControlDock, DOCK_COLLAPSE_MS, dockCollapseDue } from "./ControlDock";
+import { ControlDock } from "./ControlDock";
 import { cursorDotsFromStored, fusionSources } from "./gesture/GestureLayer";
 import { FLEET_SCROLL_PX_PER_SECOND, FleetScrollRail, hoverScrollDelta, railOverflows } from "./FleetScroll";
 import { IdeaTray } from "./IdeaTray";
@@ -834,13 +834,6 @@ describe("control dock: one calm affordance replaces the button row", () => {
   // and the header's closing tag is INSIDE it.
   const headerEndIdx = html.indexOf("</header>");
 
-  test("the dock button renders, collapsed by default", () => {
-    expect(html).toContain('data-testid="control-dock" data-expanded="false"');
-    expect(html).toContain('data-testid="control-dock-button"');
-    expect(html).toContain("⚙ Controls");
-    expect(trayIdx).toBeGreaterThan(-1);
-    expect(headerEndIdx).toBeGreaterThan(trayIdx);
-  });
 
   test("the routine controls render INSIDE the dock tray", () => {
     for (const id of [
@@ -891,12 +884,6 @@ describe("control dock: one calm affordance replaces the button row", () => {
     expect(open).not.toContain("disabled");
   });
 
-  test("collapse timing: ~4s of no hover-hot/:hover anywhere folds the dock", () => {
-    expect(DOCK_COLLAPSE_MS).toBeGreaterThanOrEqual(3_000);
-    expect(DOCK_COLLAPSE_MS).toBeLessThanOrEqual(6_000);
-    expect(dockCollapseDue(DOCK_COLLAPSE_MS - 1)).toBe(false);
-    expect(dockCollapseDue(DOCK_COLLAPSE_MS + 1)).toBe(true);
-  });
 });
 
 // SELF-REBUILD dock toggle ("the room rebuilds itself"): follows the

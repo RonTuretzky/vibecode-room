@@ -511,7 +511,12 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
   // Room-wide mode, OR-ed with the window-local ?research=1 pin: a dedicated
   // display (ceiling projector) always shows the conversation tree while the
   // walls keep following the shared toggle. Local only — no server writes.
-  const researchActive = (snapshot.researchMode ?? false) || urlConfig.research;
+  // DISPLAY is window-local ONLY (?research=1 — the ceiling projector): on
+  // this rig the tree has a dedicated display, so the walls never flip
+  // scenes. The room-wide researchMode is purely the ENGINE switch (dialogue
+  // review + sphere suggestions run server-side while it is on).
+  const researchActive = urlConfig.research;
+  const researchEngineOn = snapshot.researchMode ?? false;
   const toggleResearchMode = useCallback(async () => {
     if (!liveMode || mockModeRef.current) {
       setSnapshot((current) => ({ ...current, researchMode: !(current.researchMode ?? false) }));
@@ -1887,12 +1892,12 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
               type="button"
               className={`ctl-button research-toggle${researchActive ? " on" : ""}`}
               data-testid="research-mode-button"
-              data-state={researchActive ? "on" : "off"}
-              aria-pressed={researchActive}
+              data-state={researchEngineOn ? "on" : "off"}
+              aria-pressed={researchEngineOn}
               onClick={() => void toggleResearchMode()}
-              title="Research mode (R): the room's talk grows a 3D dialogue tree, and agents suggest what to fact-check, deep-dive, or bias-scan. Click a suggestion to spawn the research."
+              title="Research engine (R): while ON, the room reviews the conversation (~1/min) and buds research spheres onto the dialogue tree — shown on the dedicated ?research=1 display (the ceiling). Wall scenes stay put."
             >
-              {researchActive ? "🔍 Research: ON" : "🔍 Research: OFF"}
+              {researchEngineOn ? "🔍 Research: ON" : "🔍 Research: OFF"}
             </button>
           ) : null}
           {/* QR Import lives in the dock on EVERY view (live-room request):
