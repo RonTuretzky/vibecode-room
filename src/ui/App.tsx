@@ -1756,6 +1756,20 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
         </div>
       ) : null}
       <FullscreenButton />
+      {/* Research-pinned displays (the ceiling) run zen — chrome-less — but
+          still need the one tree control: a corner chip, dimmed until a
+          cursor rests on it, dwellable like everything else. */}
+      {urlConfig.research ? (
+        <button
+          type="button"
+          className="ctl-button ceiling-reset"
+          data-testid="ceiling-reset-button"
+          title="Reset the conversation tree (vine + crystals + dossiers)"
+          onClick={() => void resetResearchTree()}
+        >
+          🧹 Reset tree
+        </button>
+      ) : null}
       {voiceFlash !== null ? (
         <div className="voice-flash" data-testid="voice-flash" role="status">
           🎤 vibersyn → {voiceFlash}

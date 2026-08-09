@@ -1034,6 +1034,21 @@ describe("flat-locked two-wall pair", () => {
   });
 });
 
+// CEILING RESET CHIP: research-pinned displays are zen (chrome-less) but keep
+// exactly one control — the corner tree-reset chip.
+describe("ceiling reset chip on research-pinned windows", () => {
+  test("?research=1 renders the reset chip; plain windows do not", () => {
+    const ceiling = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch="?live=1&wall=C&research=1&zen=1" />,
+    );
+    expect(ceiling).toContain('data-testid="ceiling-reset-button"');
+    const wallA = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch="?live=1&wall=A&view=ideas" />,
+    );
+    expect(wallA).not.toContain('data-testid="ceiling-reset-button"');
+  });
+});
+
 // MULTI-SOURCE FUSION: &fusion= may list several cursor servers (camera
 // fusion + the arcade joystick bridge); the gesture layer opens one client
 // per source and merges every stream into the same dwell pipeline.

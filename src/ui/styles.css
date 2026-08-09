@@ -3833,3 +3833,23 @@ main.gesture-mode .idea-card-confidence { font-size: 15px; }
   font-size: 2.4vh;
   color: #e2685f;
 }
+
+/* Ceiling reset chip: parked bottom-right on research-pinned displays, nearly
+   invisible until a cursor (mouse or dwell-hot) rests on it. Deliberately NOT
+   in the zen hide lists — it is the ceiling's one control. */
+.ceiling-reset {
+  position: fixed;
+  right: 18px;
+  bottom: 16px;
+  z-index: 60;
+  opacity: 0.22;
+  transition: opacity 0.25s ease;
+}
+.ceiling-reset:hover,
+.ceiling-reset[data-dwell-hot] {
+  opacity: 1;
+}
+main.gesture-mode .ceiling-reset {
+  padding: 20px 28px;
+  font-size: 22px;
+}
