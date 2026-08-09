@@ -10,6 +10,7 @@ import { importPageHtml } from "./import-page";
 import { handsPageHtml } from "./hands-page";
 import { RemoteHandsHub, resolveHandsInfo } from "./remote-hands";
 import { resolveImportInfo, type InterfaceAddresses } from "./project-import";
+import { registerForestSurface, sharedForestLoader } from "./github-org";
 import { createSeamApp } from "../seam/dispatcher";
 
 export interface ProjectorAppOptions {
@@ -150,6 +151,12 @@ export function createProjectorApp(runtime: ProjectorRuntime, options: Projector
     tlsPort: options.tlsPort ?? null,
     interfaces: options.interfaces,
   });
+  // GITHUB FOREST surface: POST /api/org/import {org} kicks the gh-CLI org
+  // loader (disk-cached, ~5-minute refresh) and 202s; GET /api/forest serves
+  // the current payload (or {org:null}) for the grove window. One process-wide
+  // loader — every app instance shares the same org state, and nothing spawns
+  // until the first import.
+  registerForestSurface(app, { loader: sharedForestLoader() });
   // AUTO-BUILD toggle (no click required). Body `{ on: boolean }` sets it
   // explicitly; absent body flips the current state. Returns the fresh snapshot.
   app.post("/api/auto-accept", async (context) => {
@@ -432,9 +439,13 @@ export function createProjectorApp(runtime: ProjectorRuntime, options: Projector
     }
     return context.json(runtime.publishNow());
   });
-  // Swipe-deck answers: a chosen answer to a build-forking question is forwarded
-  // as a framed steer so the fleet incorporates the decision. Offline/published
-  // deck copies short-circuit (no room to reach).
+  // Swipe-deck answers: a chosen answer to a build-forking question is
+  // RECORDED in the runtime's answer ledger (so every regenerated deck renders
+  // the card pre-decided) and then forwarded as a framed steer so the fleet
+  // incorporates the decision. The deck sends the question `prompt` alongside
+  // questionId/answer; the steer framing uses it (falling back to the id) so
+  // the correction reads as the actual question, not an opaque hash.
+  // Offline/published deck copies short-circuit (no room to reach).
   app.post("/api/process/:upid/answer", async (context) => {
     if (isOfflineDemoRequest(context.req.header("referer"))) {
       return context.json(runtime.snapshot());
@@ -448,11 +459,16 @@ export function createProjectorApp(runtime: ProjectorRuntime, options: Projector
     ) {
       return context.json({ ok: false, error: "body must be {questionId: string, answer: string}" }, 400);
     }
-    const question = typeof body.prompt === "string" && body.prompt.trim().length > 0 ? body.prompt.trim() : body.questionId;
+    const questionId = body.questionId.trim();
+    const answer = body.answer.trim();
+    const question = typeof body.prompt === "string" && body.prompt.trim().length > 0 ? body.prompt.trim() : questionId;
+    // Ledger first: the steer below regenerates the deck, and the regeneration
+    // must already see this decision to render the card pre-decided.
+    runtime.recordAnswer(upid, { questionId, prompt: question, answer });
     try {
       await runtime.registry.steer(
         upid,
-        { text: `Decision — for "${question}", the choice is "${body.answer.trim()}". Build accordingly.`, source: "api" },
+        { text: `Decision — for "${question}", the choice is "${answer}". Build accordingly.`, source: "api" },
         `corr-api-answer-${crypto.randomUUID()}`,
       );
     } catch {

@@ -469,6 +469,76 @@
   box-shadow: 0 0 14px rgba(0, 255, 136, 0.3);
 }
 
+/* Decide redesign: the explanations are VISIBLE sub-lines inside each button
+   (tooltips don't exist at projector distance) — choice on top, detail under. */
+.deck-decision-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  text-align: left;
+  border-radius: 14px;
+}
+
+.deck-decision-btn .decision-choice {
+  font-weight: 800;
+}
+
+.deck-decision-btn .decision-detail {
+  font-size: 0.82em;
+  font-weight: 500;
+  color: var(--ink-dim, rgba(230, 240, 255, 0.62));
+  max-width: 30ch;
+}
+
+/* POST-CHOICE states: the bar collapses to a status strip (commissioned /
+   parked) or the inline steer input (keep shaping it). */
+.deck-decision-strip {
+  justify-content: center;
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.deck-decision-strip.strip-commissioned {
+  border-color: rgba(255, 209, 102, 0.55);
+  color: #ffe6a8;
+}
+
+.deck-decision-strip.strip-parked {
+  border-color: rgba(0, 255, 136, 0.45);
+  color: var(--c-active, #7dffb0);
+}
+
+.deck-decision-steer .deck-steer-form {
+  display: flex;
+  flex: 1 1 auto;
+  gap: 10px;
+  min-width: 240px;
+}
+
+.deck-steer-input {
+  flex: 1 1 auto;
+  font: inherit;
+  font-size: 14px;
+  color: var(--ink);
+  background: rgba(10, 18, 26, 0.7);
+  border: 1px solid var(--glass-line);
+  border-radius: 10px;
+  padding: 8px 12px;
+}
+
+.deck-steer-input:focus {
+  outline: none;
+  border-color: var(--c-planning);
+}
+
+.deck-steer-sent {
+  flex-basis: 100%;
+  font-size: 13px;
+  color: var(--c-active, #7dffb0);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .build-chip.status-building,
   .bubble-preview-pending,

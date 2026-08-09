@@ -68,6 +68,10 @@ const BUILD_RELOAD_JITTER_MS = 2_000;
 // The synthetic id used for the (single) idea/suggestion bubble.
 const IDEA_ID = "idea";
 
+// "Park it for later" shows its confirmation strip this long before the deck
+// window closes itself (the choice must visibly land at projector distance).
+const PARK_CONFIRM_MS = 2_000;
+
 declare global {
   interface Window {
     __VIBERSYN__?: {
@@ -165,6 +169,20 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
   const [slideshowBackend, setSlideshowBackend] = useState<string | null>(null);
   const slideshowRef = useRef<string | null>(null);
   slideshowRef.current = slideshowUpid;
+  // POST-CHOICE deck decision state for the OPEN deck window (Phase 2 decide
+  // redesign): null = still asking; "commission" collapses the bar to a
+  // status strip, "iterate" swaps it for the inline steer input (deck stays
+  // open), "done" shows the parked confirmation for ~2s and then closes.
+  // Reset whenever the deck target changes (each open deck asks fresh).
+  const [deckDecisionState, setDeckDecisionState] = useState<DecisionChoice | null>(null);
+  const parkCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    setDeckDecisionState(null);
+    if (parkCloseTimerRef.current !== null) {
+      clearTimeout(parkCloseTimerRef.current);
+      parkCloseTimerRef.current = null;
+    }
+  }, [slideshowUpid]);
   // Research dossier overlay: the quest id whose deck is open, or null.
   const [researchDeckId, setResearchDeckId] = useState<string | null>(null);
   const researchDeckRef = useRef<string | null>(null);
@@ -716,8 +734,10 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
   // returned snapshot when it is one (guarded, so a thin {"ok":true} ack can
   // never wipe the wall); offline demo writes local execution telemetry so
   // the concept→commissioned transformation stays demonstrable end-to-end.
+  // Returns whether the commission LANDED — the deck's post-choice strip must
+  // not keep claiming "the real build is running" after a failed POST.
   const commissionProcess = useCallback(
-    async (upid: string) => {
+    async (upid: string): Promise<boolean> => {
       if (!liveMode || mockModeRef.current) {
         setSnapshot((current) => ({
           ...current,
@@ -736,7 +756,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
               : process,
           ),
         }));
-        return;
+        return true;
       }
       try {
         const response = await fetch(`/api/process/${encodeURIComponent(upid)}/execute`, {
@@ -751,10 +771,13 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
           // "Build it for real" must never be a perceived no-op: say the
           // commission failed instead of leaving the deck silently unchanged.
           setGuidedEpilogue(`Commission failed (${response.status}) — the concept is untouched; try again.`);
+          return false;
         }
+        return true;
       } catch {
         // Network failure: same rule — a dead button reads as a broken wall.
         setGuidedEpilogue("Commission failed (network) — the concept is untouched; try again.");
+        return false;
       }
     },
     [liveMode],
@@ -763,17 +786,34 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
   // DECK DECISION ("How should we continue?") — fired by the deck overlay's
   // room-native decision bar (dwell/click) or by a postMessage from the
   // generated deck's in-iframe decision slide (see the bridge effect below).
-  //   commission → fire the REAL commission for the deck's process; the deck
-  //                stays open so the executing chip is immediately visible.
-  //   iterate/done → close the deck.
+  // Every choice leaves a VISIBLE post-choice state (Slideshow.decisionState):
+  //   commission → fire the REAL commission; the bar collapses to the
+  //                "Commissioned" status strip and the deck stays open so the
+  //                executing chip is immediately visible.
+  //   iterate    → the bar becomes the inline steer input; the deck stays open.
+  //   done       → the "Parked" confirmation strip for ~2s, then the deck
+  //                closes (timer guarded by upid; reset on deck change).
   // If the guided demo is at its decide finale, ANY choice completes the demo
   // (with an epilogue note; commissioning is an epilogue, never waited on).
   const deckDecision = useCallback(
     (upid: string, choice: DecisionChoice) => {
+      setDeckDecisionState(choice);
       if (choice === "commission") {
-        void commissionProcess(upid);
-      } else {
-        setSlideshowUpid(null);
+        // A failed commission re-opens the question (the strip must not lie);
+        // the epilogue toast explains what happened.
+        void commissionProcess(upid).then((landed) => {
+          if (!landed) {
+            setDeckDecisionState((current) => (current === "commission" ? null : current));
+          }
+        });
+      } else if (choice === "done") {
+        if (parkCloseTimerRef.current !== null) {
+          clearTimeout(parkCloseTimerRef.current);
+        }
+        parkCloseTimerRef.current = setTimeout(() => {
+          parkCloseTimerRef.current = null;
+          setSlideshowUpid((current) => (current === upid ? null : current));
+        }, PARK_CONFIRM_MS);
       }
       if (guidedRef.current !== null && guidedRef.current.step === "decide") {
         setGuided(null);
@@ -781,12 +821,39 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
           choice === "commission"
             ? "Commissioned! The real build is now executing — watch this concept's tree grow."
             : choice === "iterate"
-              ? "Demo complete — keep talking to reshape the concept."
-              : "Demo complete — the concept stays on the wall.",
+              ? "Demo complete — keep talking (or type below) to reshape the concept."
+              : "Demo complete — the idea is parked in the tray.",
         );
       }
     },
     [commissionProcess],
+  );
+  // Inline steer sender for the iterate post-choice state: the SAME endpoint
+  // the spoken "steer <callsign> …" path and the in-deck typed form use. Live
+  // mode applies the returned snapshot when it is one; offline demo is a
+  // visual no-op (the input still confirms locally).
+  const deckSteer = useCallback(
+    async (upid: string, text: string) => {
+      if (!liveMode || mockModeRef.current) {
+        return;
+      }
+      try {
+        const response = await fetch(`/api/process/${encodeURIComponent(upid)}/steer`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ text }),
+        });
+        if (response.ok && response.headers.get("content-type")?.includes("application/json")) {
+          const body: unknown = await response.json();
+          if (looksLikeSnapshot(body)) {
+            setSnapshot(body);
+          }
+        }
+      } catch {
+        // Non-authoritative projector: a failed steer POST must never block the UI.
+      }
+    },
+    [liveMode],
   );
   const deckDecisionRef = useRef(deckDecision);
   deckDecisionRef.current = deckDecision;
@@ -2260,6 +2327,11 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
                 onClose={() => setSlideshowUpid(null)}
                 initialBackend={guided?.step === "decide" ? guided.readyBackend : slideshowBackend}
                 onDecision={(choice) => deckDecision(deckProcess.upid, choice)}
+                decisionState={deckDecisionState}
+                onSteer={(text) => void deckSteer(deckProcess.upid, text)}
+                /* The guided demo's decide finale opens the generated deck
+                   STRAIGHT on its decision slide (#decision hash nav). */
+                openAtDecision={guided?.step === "decide"}
               />
             ) : null;
           })()

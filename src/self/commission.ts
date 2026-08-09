@@ -370,12 +370,13 @@ export function selfRoutingOrchestrator(
         await base.start(input);
       }
     },
-    async steer(upid, text) {
+    async steer(upid, revision) {
       if (upid === SELF_UPID) {
-        await self()?.steer(text);
+        // The self commissioner speaks flattened text (a durable-run pitch).
+        await self()?.steer(typeof revision === "string" ? revision : revision.text);
         return;
       }
-      await base?.steer(upid, text);
+      await base?.steer(upid, revision);
     },
     async abortAll(upid) {
       if (upid === SELF_UPID) {

@@ -7,10 +7,14 @@ import {
   cerebrasCopyModel,
   clampCopy,
   decisionButtons,
+  deckQuestions,
+  FALLBACK_DECK_QUESTIONS,
   fallbackCopy,
   fetchWithRetry,
   generateSlideshow,
   ideaTitle,
+  judgeQuestionPrompts,
+  MAX_DECK_QUESTIONS,
   mergeCopy,
   parseModelCopy,
   pitchMocks,
@@ -88,6 +92,13 @@ describe("fallbackCopy", () => {
     const copy = fallbackCopy(base);
     expect(copy.concept.some((line) => line.toLowerCase().includes("mock"))).toBe(true);
     expect(copy.concept.some((line) => line.toLowerCase().includes("commission"))).toBe(true);
+  });
+
+  test("carries the deterministic fallback questions so a no-model deck still asks", () => {
+    const copy = fallbackCopy(base);
+    expect(copy.questions?.map((question) => question.prompt)).toEqual(
+      FALLBACK_DECK_QUESTIONS.map((question) => question.prompt),
+    );
   });
 
   test("references generic spoken steering when there is no callsign", () => {
@@ -342,16 +353,168 @@ describe("decisionButtons", () => {
 
   test("execute shows the commissioned confirmation; execute/dismiss terminal, steer prompts", () => {
     const decisions = decisionButtons("u", "i", null);
-    expect(decisions[0]!.confirmation).toBe("Commissioned — watch the wall.");
+    expect(decisions[0]!.confirmation).toBe("🚀 Commissioned — the real build is running.");
     expect(decisions[0]!.terminal).toBe(true);
     expect(decisions[2]!.terminal).toBe(true);
     expect(decisions[1]!.terminal).toBeUndefined();
     expect(decisions[1]!.prompt).toMatchObject({ field: "text" });
   });
 
+  test("ONE VOCABULARY with the room-native bar: unified labels + visible detail sub-lines", () => {
+    const decisions = decisionButtons("u", "i", null);
+    expect(decisions.map((d) => d.label)).toEqual(["🚀 Build it for real", "🔁 Keep shaping it", "🅿 Park it for later"]);
+    // The explanations are DETAILS (rendered as visible sub-lines by the
+    // template) — tooltips don't exist at projector distance.
+    for (const decision of decisions) {
+      expect((decision.detail ?? "").length).toBeGreaterThan(0);
+    }
+  });
+
+  test("every button bridges its choice to the room; execute is bridge-only (no doubled POST)", () => {
+    const decisions = decisionButtons("u", "i", null);
+    expect(decisions.map((d) => d.bridgeChoice)).toEqual(["commission", "iterate", "park"]);
+    // Embedded, the room fires the commission POST itself — the deck must not
+    // double it into a false 400. Steer/park keep their own endpoints.
+    expect(decisions[0]!.bridgeOnly).toBe(true);
+    expect(decisions[1]!.bridgeOnly).toBeUndefined();
+    expect(decisions[2]!.bridgeOnly).toBeUndefined();
+  });
+
   test("steer detail speaks the callsign when present", () => {
     expect(decisionButtons("u", "i", "falcon")[1]!.detail).toContain('"steer falcon ..."');
     expect(decisionButtons("u", "i", null)[1]!.detail).toContain('"steer it ..."');
+  });
+});
+
+// --- deckQuestions (EVERY deck asks something) -----------------------------------
+
+describe("deckQuestions — the priority merge", () => {
+  const base: GenerateSlideshowInput = {
+    upid: "upid-3",
+    ideaId: "idea-9",
+    prompt: "a tip calculator",
+    callsign: null,
+    backend: "native",
+    outDir: "/tmp/whatever",
+    summary: "a concept pitch",
+  };
+  const emptyCopy: SlideshowCopy = { tagline: "t", concept: ["c"] };
+  const brief = {
+    pitch: "a tip calculator",
+    sourceQuote: "quote",
+    rationale: "why",
+    qa: [{ id: "qa-1", prompt: "Which repo?", answers: ["Slack bot", "Notes doc"] }],
+    callsign: null,
+  };
+
+  test("a bare offline input still asks the two deterministic fallback questions", () => {
+    const cards = deckQuestions(base, emptyCopy);
+    expect(cards.map((card) => card.prompt)).toEqual(FALLBACK_DECK_QUESTIONS.map((question) => question.prompt));
+    // Fallback ids are deterministic (same prompt → same id across regens).
+    expect(cards[0]!.id).toBe(deckQuestions(base, emptyCopy)[0]!.id);
+  });
+
+  test("priority merge: brief.qa first, then planning questions, then model top-up, capped", () => {
+    const input: GenerateSlideshowInput = {
+      ...base,
+      brief,
+      questions: [{ id: "plan-1", prompt: "Real money or points first?", answers: ["Real money", "Points"] }],
+    };
+    const copy: SlideshowCopy = {
+      ...emptyCopy,
+      questions: [
+        { prompt: "Leaderboard or solo?", answers: ["Leaderboard", "Solo"] },
+        { prompt: "One more fork?", answers: ["A", "B"] },
+      ],
+    };
+    const cards = deckQuestions(input, copy);
+    expect(cards).toHaveLength(MAX_DECK_QUESTIONS);
+    expect(cards.map((card) => card.prompt)).toEqual([
+      "Which repo?",
+      "Real money or points first?",
+      "Leaderboard or solo?",
+    ]);
+    // Judge questions keep their upstream ids (the ledger keys on them).
+    expect(cards[0]!.id).toBe("qa-1");
+    expect(cards[1]!.id).toBe("plan-1");
+  });
+
+  test("a model repeat of a judge question is deduped by normalized prompt", () => {
+    const input: GenerateSlideshowInput = { ...base, brief };
+    const copy: SlideshowCopy = {
+      ...emptyCopy,
+      questions: [{ prompt: "which REPO??", answers: ["Slack bot", "Notes doc"] }],
+    };
+    const cards = deckQuestions(input, copy);
+    expect(cards.filter((card) => card.prompt.toLowerCase().startsWith("which repo")).length).toBe(1);
+  });
+
+  test("a question without a real fork (fewer than 2 answers) is dropped whole", () => {
+    const input: GenerateSlideshowInput = {
+      ...base,
+      questions: [{ id: "plan-x", prompt: "Rhetorical?", answers: ["Only choice"] }],
+    };
+    const cards = deckQuestions(input, emptyCopy);
+    expect(cards.some((card) => card.id === "plan-x")).toBe(false);
+  });
+
+  test("answer ledger overlay: a recorded answer pre-decides its card", () => {
+    const input: GenerateSlideshowInput = {
+      ...base,
+      brief,
+      answeredQuestions: [{ questionId: "qa-1", prompt: "Which repo?", answer: "Slack bot" }],
+    };
+    const cards = deckQuestions(input, emptyCopy);
+    expect(cards[0]).toMatchObject({ id: "qa-1", chosen: "Slack bot" });
+    // The un-answered fallback cards stay open.
+    expect(cards.slice(1).every((card) => card.chosen === undefined)).toBe(true);
+  });
+
+  test("an answer whose question fell out of the merge still renders as a decided card", () => {
+    const input: GenerateSlideshowInput = {
+      ...base,
+      answeredQuestions: [{ questionId: "q-gone", prompt: "A question from last regen?", answer: "Yes" }],
+    };
+    const cards = deckQuestions(input, emptyCopy);
+    const survivor = cards.find((card) => card.id === "q-gone");
+    expect(survivor).toMatchObject({ prompt: "A question from last regen?", answers: ["Yes"], chosen: "Yes" });
+  });
+
+  test("the ledger wins over brief.qa's own chosen (the ledger is newer)", () => {
+    const input: GenerateSlideshowInput = {
+      ...base,
+      brief: {
+        ...brief,
+        qa: [{ id: "qa-1", prompt: "Which repo?", answers: ["Slack bot", "Notes doc"], chosen: "Notes doc" }],
+      },
+      answeredQuestions: [{ questionId: "qa-1", prompt: "Which repo?", answer: "Slack bot" }],
+    };
+    expect(deckQuestions(input, emptyCopy)[0]!.chosen).toBe("Slack bot");
+  });
+});
+
+describe("judgeQuestionPrompts", () => {
+  test("collects brief.qa + planning prompts, deduped, for the copy model's already-asked list", () => {
+    const input: GenerateSlideshowInput = {
+      upid: "u",
+      prompt: "p",
+      callsign: null,
+      backend: "native",
+      outDir: "/tmp/x",
+      summary: "s",
+      brief: {
+        pitch: "p",
+        sourceQuote: "q",
+        rationale: "r",
+        qa: [{ id: "qa-1", prompt: "Which repo?", answers: ["A", "B"] }],
+        callsign: null,
+      },
+      questions: [
+        { id: "plan-1", prompt: "which repo?", answers: ["A", "B"] }, // dup of qa-1 (case)
+        { id: "plan-2", prompt: "Real money?", answers: ["Yes", "No"] },
+      ],
+    };
+    expect(judgeQuestionPrompts(input)).toEqual(["Which repo?", "Real money?"]);
   });
 });
 
@@ -551,6 +714,53 @@ describe("generateSlideshow", () => {
     await generateSlideshow(baseInput(dir), { model: capturingModel });
     expect(Object.keys(requests[0] as Record<string, unknown>)).not.toContain("sourceQuote");
     expect(Object.keys(requests[0] as Record<string, unknown>)).not.toContain("rationale");
+  });
+
+  test("EVERY deck asks: a no-model deck still renders the fallback question cards", async () => {
+    dir = await mkdtemp(join(tmpdir(), "slideshow-test-"));
+    const artifact = await generateSlideshow(
+      { ...baseInput(dir), answerEndpoint: "/api/process/upid-7/answer" },
+      { model: async () => null },
+    );
+    const html = await readFile(artifact.indexPath, "utf8");
+    for (const question of FALLBACK_DECK_QUESTIONS) {
+      expect(html).toContain(question.prompt);
+    }
+    // Cards are wired to the live answer endpoint and carry their prompt.
+    expect(html).toContain('data-answer-endpoint="/api/process/upid-7/answer"');
+    expect(html).toContain('data-question-prompt="Who is v1 for?"');
+  });
+
+  test("the copy request lists already-asked judge questions; model top-ups render as cards", async () => {
+    dir = await mkdtemp(join(tmpdir(), "slideshow-test-"));
+    const requests: unknown[] = [];
+    const model: SlideshowCopyModel = async (request) => {
+      requests.push(request);
+      return { tagline: "t", concept: ["c"], questions: [{ prompt: "Leaderboard or solo?", answers: ["Leaderboard", "Solo"] }] };
+    };
+    const input: GenerateSlideshowInput = {
+      ...baseInput(dir),
+      questions: [{ id: "plan-1", prompt: "Real money or points first?", answers: ["Real money", "Points"] }],
+    };
+    const artifact = await generateSlideshow(input, { model });
+    expect(requests[0]).toMatchObject({ askedQuestions: ["Real money or points first?"] });
+    const html = await readFile(artifact.indexPath, "utf8");
+    expect(html).toContain("Real money or points first?");
+    expect(html).toContain("Leaderboard or solo?");
+  });
+
+  test("answer-ledger answers render their cards pre-decided in the regenerated deck", async () => {
+    dir = await mkdtemp(join(tmpdir(), "slideshow-test-"));
+    const input: GenerateSlideshowInput = {
+      ...baseInput(dir),
+      questions: [{ id: "plan-1", prompt: "Real money or points first?", answers: ["Real money", "Points"] }],
+      answeredQuestions: [{ questionId: "plan-1", prompt: "Real money or points first?", answer: "Points" }],
+      answerEndpoint: "/api/process/upid-7/answer",
+    };
+    const artifact = await generateSlideshow(input, { model: async () => null });
+    const html = await readFile(artifact.indexPath, "utf8");
+    expect(html).toContain('data-decided="1"');
+    expect(html).toContain("You chose: Points");
   });
 
   test("merges a working fake model's copy into the rendered slides", async () => {

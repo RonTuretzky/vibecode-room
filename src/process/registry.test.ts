@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import type { ProcessBuildSnapshot } from "../buildloop/orchestrator";
+import type { OrchestratorRevisionInput, ProcessBuildSnapshot } from "../buildloop/orchestrator";
 import { CallsignAllocator } from "../routing/callsigns";
 import { MemorySmithersClient } from "./test-helpers";
-import { ProcessRegistry, steerText, type BuildLoopOrchestrator } from "./registry";
+import { ProcessRegistry, steerRevision, steerText, type BuildLoopOrchestrator } from "./registry";
 
 describe("process registry", () => {
   test("AC13.1 holds two live processes with independent state — and a KICKOFF spawn never launches the durable run", async () => {
@@ -154,7 +154,7 @@ describe("process registry", () => {
 
 // A recording fake of the multi-backend build orchestrator seam.
 class FakeOrchestrator implements BuildLoopOrchestrator {
-  readonly calls: Array<{ name: string; upid?: string; input?: unknown; text?: string }> = [];
+  readonly calls: Array<{ name: string; upid?: string; input?: unknown; text?: string; revision?: OrchestratorRevisionInput }> = [];
   buildsByUpid = new Map<string, ProcessBuildSnapshot[]>();
 
   async start(input: {
@@ -167,8 +167,8 @@ class FakeOrchestrator implements BuildLoopOrchestrator {
     this.calls.push({ name: "start", upid: input.upid, input });
   }
 
-  async steer(upid: string, text: string): Promise<void> {
-    this.calls.push({ name: "steer", upid, text });
+  async steer(upid: string, revision: string | OrchestratorRevisionInput): Promise<void> {
+    this.calls.push({ name: "steer", upid, ...(typeof revision === "string" ? { text: revision } : { revision }) });
   }
 
   async abortAll(upid: string): Promise<void> {
@@ -425,6 +425,54 @@ describe("process registry × build orchestrator", () => {
     expect(steerText({ text: "   " })).toBeNull();
     expect(steerText({ command: "no text field" })).toBeNull();
     expect(steerText(42)).toBeNull();
+  });
+
+  test("steerRevision passes structured revision fields through tolerantly, else degrades to the bare string", () => {
+    // Plain payloads stay the legacy bare string (byte-identical behavior).
+    expect(steerRevision({ text: "tighten the layout", source: "live-transcript" })).toBe("tighten the layout");
+    expect(steerRevision("bare string correction")).toBe("bare string correction");
+    expect(steerRevision({ text: "   " })).toBeNull();
+    expect(steerRevision(42)).toBeNull();
+    // A payload carrying revision fields forwards them (source never rides).
+    expect(
+      steerRevision({
+        text: " lock it in ",
+        source: "api",
+        kind: "answer",
+        questionId: "q-scope",
+        answer: "Sketch",
+        targetScreens: ["Hero", 7, "#/flow"],
+        seq: 3,
+      }),
+    ).toEqual({
+      text: "lock it in",
+      kind: "answer",
+      questionId: "q-scope",
+      answer: "Sketch",
+      targetScreens: ["Hero", "#/flow"],
+      seq: 3,
+    });
+    // Junk revision fields are dropped, never a throw — the text still steers.
+    expect(steerRevision({ text: "go", kind: "bogus", questionId: 9 })).toEqual({ text: "go" });
+  });
+
+  test("a structured answer payload passes through registry.steer to the orchestrator as a revision", async () => {
+    const orchestrator = new FakeOrchestrator();
+    const registry = new ProcessRegistry({ client: new MemorySmithersClient(), sessionId: "reg-orch-rev", orchestrator });
+    await registry.spawn({ correlationId: "corr-a", upid: "upid-a", workflow: "wf" });
+
+    await registry.steer(
+      "upid-a",
+      { text: "three columns", source: "api", kind: "answer", questionId: "q-cols", answer: "Three", targetScreens: ["#/"] },
+      "corr-steer-rev",
+    );
+    await Bun.sleep(0);
+
+    expect(orchestrator.calls).toContainEqual({
+      name: "steer",
+      upid: "upid-a",
+      revision: { text: "three columns", kind: "answer", questionId: "q-cols", answer: "Three", targetScreens: ["#/"] },
+    });
   });
 });
 

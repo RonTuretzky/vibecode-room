@@ -16,11 +16,17 @@
 //   form[data-decision-form=<id>] whose submit POSTs {<data-field>: text}.
 //   Results land in [data-decision-status].
 // - Question cards (swipe-to-answer): a section[data-question-slide] wraps a
-//   div.answers[data-answers][data-question-id=<id>] of button.answer[data-answer=<text>]
-//   options. Tapping — or swiping — an option selects it: the choice POSTs
-//   {questionId, answer} to the group's data-answer-endpoint and echoes into the
-//   card's [data-answer-status]. The POST is best-effort (guarded), so the
-//   published take-home copy still selects locally when the room API 404s.
+//   div.answers[data-answers][data-question-id=<id>][data-question-prompt=<q>]
+//   of button.answer[data-answer=<text>] options. Tapping — or swiping — an
+//   option selects it: the choice POSTs {questionId, prompt, answer} to the
+//   group's data-answer-endpoint, the card confirms the mocks are rebuilding,
+//   and the deck auto-navigates to the mock gallery. The POST is best-effort
+//   (guarded), so the published take-home copy still selects locally when the
+//   room API 404s. A pre-decided card (data-decided) renders locked.
+// - Decision bridge: a decision with data-bridge also posts
+//   {type:"vibersyn:decision", choice} to the parent window when embedded
+//   (parsed by src/ui/stage.ts); data-bridge-only buttons then skip their own
+//   POST so the room's native API call is never doubled.
 // - Swipe navigation: a horizontal touch/pointer drag over empty deck space moves
 //   between slides (momentum-free); dots + arrows + click-nav are preserved.
 
@@ -50,6 +56,15 @@ export interface SlideDecision {
   confirmation: string; // status line shown after a successful POST
   terminal?: boolean; // success disables the whole decision group (execute/dismiss)
   prompt?: SlideDecisionPrompt; // present => typed-fallback form before POSTing
+  // Choice id ALSO posted to the parent window as {type:"vibersyn:decision",
+  // choice} when the deck runs embedded in the room's deck window (the parser
+  // waits in src/ui/stage.ts). Absent = no bridge, POST-only.
+  bridgeChoice?: string;
+  // With bridgeChoice: when the bridge DELIVERED (embedded), skip the direct
+  // endpoint POST — the room fires the API call itself (prevents a doubled
+  // commission POST reading as a false failure). Standalone copies (opened
+  // directly / published) still POST: the bridge has no parent there.
+  bridgeOnly?: boolean;
 }
 
 // One slide. Every field is optional except the headline pair; the template
@@ -73,7 +88,11 @@ export interface Slide {
 export interface SlideQuestion {
   id: string; // stable question id, echoed in the answer POST as questionId
   prompt: string; // the question, shown as the card headline
-  answers: readonly string[]; // option labels; selecting one POSTs {questionId, answer}
+  answers: readonly string[]; // option labels; selecting one POSTs {questionId, prompt, answer}
+  // Already-answered card (the runtime's answer ledger): renders PRE-DECIDED —
+  // options locked, the chosen one highlighted, status "You chose: …" — so an
+  // answer visibly survives deck regeneration.
+  chosen?: string;
 }
 
 export interface SlideshowTemplateOptions {
@@ -157,6 +176,12 @@ function renderDecisions(decisions: readonly SlideDecision[]): string {
     if (decision.prompt !== undefined) {
       attrs.push('data-prompt="1"');
     }
+    if (decision.bridgeChoice !== undefined) {
+      attrs.push(`data-bridge="${escapeHtml(decision.bridgeChoice)}"`);
+    }
+    if (decision.bridgeOnly === true) {
+      attrs.push('data-bridge-only="1"');
+    }
     const detail =
       decision.detail === undefined
         ? ""
@@ -229,11 +254,13 @@ interface NormalQuestion {
   id: string;
   prompt: string;
   answers: string[];
+  chosen?: string;
 }
 
 // Drop junk questions: a card needs a non-empty id + prompt and at least one
 // non-empty answer. Answers are trimmed here; blanks are removed. Tolerant of a
-// missing/garbage `questions` input (absent === no cards).
+// missing/garbage `questions` input (absent === no cards). A non-empty `chosen`
+// survives normalization and marks the card pre-decided.
 function normalizeQuestions(questions: readonly SlideQuestion[] | undefined): NormalQuestion[] {
   if (questions === undefined) {
     return [];
@@ -255,16 +282,25 @@ function normalizeQuestions(questions: readonly SlideQuestion[] | undefined): No
       .filter((answer): answer is string => typeof answer === "string" && answer.trim().length > 0)
       .map((answer) => answer.trim());
     if (answers.length > 0) {
-      out.push({ id: question.id, prompt: question.prompt, answers });
+      const chosen = typeof question.chosen === "string" ? question.chosen.trim() : "";
+      out.push({
+        id: question.id,
+        prompt: question.prompt,
+        answers,
+        ...(chosen.length === 0 ? {} : { chosen }),
+      });
     }
   }
   return out;
 }
 
 // Render one swipe-to-answer question card as a slide. The answer group carries
-// the questionId (echoed in the POST) and the answer endpoint (when known); each
-// option is a plain <button> so tap, dwell, and swipe all reach the same select
-// path. A per-card status line receives the local echo / confirmation.
+// the questionId + prompt (both echoed in the POST) and the answer endpoint
+// (when known); each option is a plain <button> so tap, dwell, and swipe all
+// reach the same select path. A per-card status line receives the local echo /
+// confirmation. A DECIDED card (question.chosen — the answer ledger) renders
+// its options locked with the chosen one highlighted and the status pre-filled
+// "You chose: …", so an already-made call reads as made, not re-askable.
 function renderQuestionSlide(
   question: NormalQuestion,
   qIndex: number,
@@ -273,31 +309,47 @@ function renderQuestionSlide(
   total: number,
   answerEndpoint: string | undefined,
 ): string {
-  const groupAttrs = ['class="answers"', "data-answers", `data-question-id="${escapeHtml(question.id)}"`];
+  const decided = question.chosen !== undefined;
+  const groupAttrs = [
+    'class="answers"',
+    "data-answers",
+    `data-question-id="${escapeHtml(question.id)}"`,
+    `data-question-prompt="${escapeHtml(question.prompt)}"`,
+  ];
   if (answerEndpoint !== undefined && answerEndpoint.length > 0) {
     groupAttrs.push(`data-answer-endpoint="${escapeHtml(answerEndpoint)}"`);
   }
+  if (decided) {
+    groupAttrs.push('data-decided="1"');
+  }
   const options = question.answers
-    .map(
-      (answer, i) =>
-        `        <button class="answer" type="button" data-answer="${escapeHtml(answer)}" ` +
+    .map((answer, i) => {
+      const isChosen = decided && answer === question.chosen;
+      return (
+        `        <button class="answer${isChosen ? " chosen" : ""}" type="button" data-answer="${escapeHtml(answer)}" ` +
         `data-dwell="answer-${escapeHtml(question.id)}-${i}" ` +
-        `aria-label="Answer: ${escapeHtml(answer)}">${escapeHtml(answer)}</button>`,
-    )
+        `${decided ? "disabled " : ""}` +
+        `aria-label="Answer: ${escapeHtml(answer)}">${escapeHtml(answer)}</button>`
+      );
+    })
     .join("\n");
-  const kicker = qTotal > 1 ? `Question ${qIndex + 1} of ${qTotal}` : "Quick question";
+  const baseKicker = qTotal > 1 ? `Question ${qIndex + 1} of ${qTotal}` : "Quick question";
+  const kicker = decided ? `${baseKicker} · answered` : baseKicker;
+  const status = decided
+    ? `<p class="answer-status ok" data-answer-status role="status" aria-live="polite">You chose: ${escapeHtml(question.chosen ?? "")}</p>`
+    : '<p class="answer-status" data-answer-status role="status" aria-live="polite"></p>';
   const classes = ["slide", "question"];
   if (index === 0) {
     classes.push("active");
   }
   return [
-    `    <section class="${classes.join(" ")}" data-slide data-question-slide aria-label="Slide ${index + 1} of ${total}">`,
+    `    <section class="${classes.join(" ")}" data-slide data-question-slide${decided ? ' data-decided-slide="1"' : ""} aria-label="Slide ${index + 1} of ${total}">`,
     `      <p class="kicker">${escapeHtml(kicker)}</p>`,
     `      <h1 class="headline">${escapeHtml(question.prompt)}</h1>`,
     `      <div ${groupAttrs.join(" ")}>`,
     options,
     "      </div>",
-    '      <p class="answer-status" data-answer-status role="status" aria-live="polite"></p>',
+    `      ${status}`,
     "    </section>",
   ].join("\n");
 }
@@ -320,9 +372,35 @@ const DECK_SCRIPT = `(function () {
   var counter = document.querySelector("[data-counter]");
   var statusEl = document.querySelector("[data-decision-status]");
   var index = 0;
-  var fromHash = parseInt((location.hash || "").replace("#", ""), 10);
-  if (!isNaN(fromHash) && fromHash >= 1 && fromHash <= slides.length) {
-    index = fromHash - 1;
+  function decisionSlideIndex() {
+    for (var i = 0; i < slides.length; i++) {
+      if (slides[i].querySelector("[data-decisions]")) {
+        return i;
+      }
+    }
+    return -1;
+  }
+  function mockSlideIndex() {
+    for (var i = 0; i < slides.length; i++) {
+      if (slides[i].querySelector("[data-mocks]")) {
+        return i;
+      }
+    }
+    return -1;
+  }
+  var rawHash = (location.hash || "").replace("#", "");
+  if (rawHash === "decision") {
+    // #decision: open straight on the how-should-we-continue slide (the guided
+    // demo's decide step lands here) wherever it sits after question cards.
+    var decisionAt = decisionSlideIndex();
+    if (decisionAt !== -1) {
+      index = decisionAt;
+    }
+  } else {
+    var fromHash = parseInt(rawHash, 10);
+    if (!isNaN(fromHash) && fromHash >= 1 && fromHash <= slides.length) {
+      index = fromHash - 1;
+    }
   }
   function show(next) {
     if (slides.length === 0) {
@@ -380,6 +458,13 @@ const DECK_SCRIPT = `(function () {
       statusEl.classList.toggle("ok", !!ok);
     }
   }
+  function lockDecisions(terminalButton) {
+    var all = document.querySelectorAll("[data-decision]");
+    for (var i = 0; i < all.length; i++) {
+      all[i].disabled = true;
+      all[i].classList.toggle("chosen", all[i] === terminalButton);
+    }
+  }
   function send(endpoint, body, confirmation, terminalButton) {
     setStatus("Sending…", false);
     fetch(endpoint, {
@@ -390,11 +475,7 @@ const DECK_SCRIPT = `(function () {
       if (response.ok) {
         setStatus(confirmation, true);
         if (terminalButton) {
-          var all = document.querySelectorAll("[data-decision]");
-          for (var i = 0; i < all.length; i++) {
-            all[i].disabled = true;
-            all[i].classList.toggle("chosen", all[i] === terminalButton);
-          }
+          lockDecisions(terminalButton);
         }
       } else {
         setStatus("The room said no (HTTP " + response.status + ") — try again.", false);
@@ -402,6 +483,23 @@ const DECK_SCRIPT = `(function () {
     }, function () {
       setStatus("Could not reach the room — is the server running?", false);
     });
+  }
+  // DECISION BRIDGE (half 1 lives here; half 2 = the parser in the room's
+  // src/ui/stage.ts): when the deck runs embedded in the room's deck window,
+  // a decision ALSO posts {type:"vibersyn:decision", choice} to the parent so
+  // the room reacts natively (status strip / inline steer / park-and-close).
+  // Standalone (opened directly or the published copy) there is no parent —
+  // the direct endpoint POSTs remain the standalone fallback.
+  function bridgeDecision(choice) {
+    if (!choice || !window.parent || window.parent === window) {
+      return false;
+    }
+    try {
+      window.parent.postMessage({ type: "vibersyn:decision", choice: choice }, "*");
+      return true;
+    } catch (err) {
+      return false;
+    }
   }
   function switchMockTab(tab) {
     var mockId = tab.getAttribute("data-mock-tab");
@@ -419,6 +517,7 @@ const DECK_SCRIPT = `(function () {
     }
   }
   function activateDecision(decision) {
+    var bridged = bridgeDecision(decision.getAttribute("data-bridge"));
     if (decision.getAttribute("data-prompt") === "1") {
       var form = document.querySelector('[data-decision-form="' + decision.getAttribute("data-decision") + '"]');
       if (form) {
@@ -430,6 +529,13 @@ const DECK_SCRIPT = `(function () {
           }
         }
       }
+    } else if (bridged && decision.getAttribute("data-bridge-only") === "1") {
+      // The room heard the choice and fires the API call itself — mirror the
+      // confirmation locally so the in-deck slide visibly settles too.
+      setStatus(decision.getAttribute("data-confirmation"), true);
+      if (decision.getAttribute("data-terminal") === "1") {
+        lockDecisions(decision);
+      }
     } else {
       send(
         decision.getAttribute("data-endpoint"),
@@ -440,12 +546,15 @@ const DECK_SCRIPT = `(function () {
     }
   }
   // Swipe-to-answer. Highlight the chosen option, echo it into the card's own
-  // status line, and POST {questionId, answer} to the group's endpoint. The POST
+  // status line, and POST {questionId, prompt, answer} to the group's endpoint
+  // (the prompt lets the room frame the steer as the actual question). The POST
   // is best-effort: no endpoint (or a 404 in the published standalone copy) just
-  // means the local selection stands — never an error.
+  // means the local selection stands — never an error. With a live endpoint the
+  // answer VISIBLY reshapes the build: the card says the mocks are rebuilding
+  // and the deck auto-navigates to the mock gallery ~1.5s later to show it.
   function selectAnswer(button) {
     var group = closest(button, hasAttr("data-answers"));
-    if (!group) {
+    if (!group || group.getAttribute("data-decided") === "1") {
       return;
     }
     var options = group.querySelectorAll("[data-answer]");
@@ -453,15 +562,26 @@ const DECK_SCRIPT = `(function () {
       options[i].classList.toggle("chosen", options[i] === button);
     }
     var answer = button.getAttribute("data-answer");
+    var endpoint = group.getAttribute("data-answer-endpoint");
     var card = closest(group, hasAttr("data-question-slide"));
     var answerStatus = card ? card.querySelector("[data-answer-status]") : null;
     if (answerStatus) {
-      answerStatus.textContent = "You picked: " + answer;
+      answerStatus.textContent = endpoint
+        ? "Locked in — the mocks are rebuilding with this choice"
+        : "You picked: " + answer;
       answerStatus.classList.add("ok");
     }
-    postAnswer(group.getAttribute("data-answer-endpoint"), group.getAttribute("data-question-id"), answer);
+    postAnswer(endpoint, group.getAttribute("data-question-id"), group.getAttribute("data-question-prompt"), answer);
+    if (endpoint) {
+      setTimeout(function () {
+        var mockAt = mockSlideIndex();
+        if (mockAt !== -1) {
+          show(mockAt);
+        }
+      }, 1500);
+    }
   }
-  function postAnswer(endpoint, questionId, answer) {
+  function postAnswer(endpoint, questionId, prompt, answer) {
     if (!endpoint) {
       return;
     }
@@ -469,7 +589,7 @@ const DECK_SCRIPT = `(function () {
       fetch(endpoint, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ questionId: questionId, answer: answer })
+        body: JSON.stringify({ questionId: questionId, prompt: prompt, answer: answer })
       }).then(function () {}, function () {});
     } catch (err) {
       // Standalone/published copy with no room API — the local highlight stands.
@@ -851,7 +971,9 @@ body {
   background: rgba(90, 209, 255, 0.12);
   transform: translateY(-2px);
 }
+.answer:disabled { opacity: 0.45; cursor: default; transform: none; }
 .answer.chosen { border-color: var(--ok); background: rgba(157, 255, 176, 0.12); }
+.answer.chosen:disabled { opacity: 1; }
 .answer-status {
   min-height: 1.6em;
   margin: 1rem 0 0;

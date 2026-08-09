@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BuildOrchestrator, mergeLegacyBuildState, type ProcessBuildSnapshot } from "./orchestrator";
 import { BackendSelector } from "./selector";
-import type { BuildBackend, BuildBackendId, BuildRequest, BuildResult } from "./types";
+import type { BuildBackend, BuildBackendId, BuildRequest, BuildResult, BuildRevision } from "./types";
 
 // Fake backends write REAL files; the orchestrator runs its REAL per-UPID
 // preview server (ephemeral loopback port), so previewUrl assertions are
@@ -55,6 +55,24 @@ function track(orchestrator: BuildOrchestrator): BuildOrchestrator {
 }
 
 const startInput = (upid: string) => ({ upid, ideaId: `idea-${upid}`, prompt: "a tiny app", callsign: "atlas" });
+
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
+
+async function until(predicate: () => boolean, timeoutMs = 2_000): Promise<void> {
+  const startedAt = Date.now();
+  while (!predicate()) {
+    if (Date.now() - startedAt > timeoutMs) {
+      throw new Error("until(): condition never became true");
+    }
+    await Bun.sleep(5);
+  }
+}
 
 describe("BuildOrchestrator — fan-out", () => {
   test("builds every enabled+available backend concurrently, each with its own live previewUrl", async () => {
@@ -177,6 +195,216 @@ describe("BuildOrchestrator — fan-out", () => {
     await orchestrator.start(startInput("upid-no-brief"));
     expect(buildBriefs).toEqual([brief, undefined]);
     expect(hookBriefs).toEqual([brief, undefined]);
+  });
+});
+
+describe("BuildOrchestrator — stage ladder (ready-ratchet)", () => {
+  test("hero flips the lane ready mid-build; flows/meta bump ?v; meta re-fires the deck hook with screens", async () => {
+    const enrich = deferred();
+    const screens = [
+      { path: "#/flow", title: "Flow map" },
+      { path: "detail.html", title: "Detail" },
+    ];
+    const questions = ["Who is v1 for?", "How polished?"];
+    const ladder = writingBackend("smithers", {
+      build: async (req: BuildRequest): Promise<BuildResult> => {
+        await Bun.write(join(req.outDir, "index.html"), "<!doctype html><h1>hero</h1>");
+        req.onStage?.({ stage: "hero", entrypoint: "index.html", summary: "Hero pitch line." });
+        await enrich.promise; // the test inspects the hero-ready lane here
+        await Bun.write(join(req.outDir, "index.html"), "<!doctype html><h1>hero + flows</h1>");
+        await Bun.write(join(req.outDir, "detail.html"), "<!doctype html><h1>detail</h1>");
+        req.onStage?.({ stage: "flows", entrypoint: "index.html" });
+        req.onStage?.({ stage: "meta", entrypoint: "index.html", screens, suggestedQuestions: questions });
+        return {
+          ok: true,
+          entrypoint: "index.html",
+          summary: "Hero pitch line.",
+          completedStages: ["hero", "flows", "meta"],
+          screens,
+          suggestedQuestions: questions,
+        };
+      },
+    });
+    const hookCalls: Array<{ screens?: unknown; suggestedQuestions?: unknown }> = [];
+    const selector = new BackendSelector({ backends: [ladder], env: { VIBERSYN_BUILD_BACKENDS: "smithers" } });
+    const orchestrator = track(
+      new BuildOrchestrator({
+        selector,
+        buildsRoot: await tempRoot(),
+        slideshow: async (input) => {
+          hookCalls.push({ screens: input.screens, suggestedQuestions: input.suggestedQuestions });
+          await Bun.write(join(input.outDir, "slideshow", "index.html"), "<!doctype html><h1>slides</h1>");
+        },
+      }),
+    );
+
+    const started = orchestrator.start(startInput("upid-ladder"));
+    // READY-RATCHET: the lane is live at the hero stage, while build() still runs.
+    await until(() => orchestrator.builds("upid-ladder")[0]?.status === "ready");
+    const hero = orchestrator.builds("upid-ladder")[0]!;
+    expect(hero.phase).toBe("enriching");
+    expect(hero.summary).toBe("Hero pitch line.");
+    expect(hero.previewUrl).toMatch(/\.1$/u); // hero = version bump #1
+    expect(await (await fetch(hero.previewUrl!)).text()).toContain("hero");
+    // The deck generates off the hero (no screens yet — meta hasn't landed).
+    await until(() => hookCalls.length === 1);
+    expect(hookCalls[0]).toEqual({ screens: undefined, suggestedQuestions: undefined });
+
+    enrich.resolve();
+    await started;
+
+    const complete = orchestrator.builds("upid-ladder")[0]!;
+    expect(complete.status).toBe("ready");
+    expect(complete.phase).toBe("complete");
+    // hero(1) + flows(2) + meta(3): each stage cache-busts the wall's iframe.
+    expect(complete.previewUrl).toMatch(/\.3$/u);
+    // Validated screens surface as directly-openable URLs: hash routes ride the
+    // entrypoint's fragment, file screens get their own path.
+    expect(complete.screens).toHaveLength(2);
+    expect(complete.screens![0]!.url).toMatch(/\/smithers\/\?v=[a-z0-9]+\.3#\/flow$/u);
+    expect(complete.screens![1]!.url).toMatch(/\/smithers\/detail\.html\?v=[a-z0-9]+\.3$/u);
+    expect((await fetch(complete.screens![1]!.url)).status).toBe(200);
+    // The meta stage RE-FIRED the deck hook with the validated mock.json facts.
+    expect(hookCalls).toHaveLength(2);
+    expect(hookCalls[1]).toEqual({ screens, suggestedQuestions: questions });
+    expect(complete.slideshowUrl).toMatch(/\.3$/u);
+  });
+
+  test("enrichment failure never regresses a hero-ready lane, and it is NOT retried from scratch", async () => {
+    let buildCalls = 0;
+    const ladder = writingBackend("smithers", {
+      build: async (req: BuildRequest): Promise<BuildResult> => {
+        buildCalls += 1;
+        await Bun.write(join(req.outDir, "index.html"), "<!doctype html><h1>hero stands</h1>");
+        req.onStage?.({ stage: "hero", entrypoint: "index.html", summary: "Hero line." });
+        // The backend reports the enrichment failure as a failed RESULT while
+        // the hero already ratcheted the lane ready.
+        return { ok: false, entrypoint: null, summary: "", error: "flows blew up", completedStages: ["hero"] };
+      },
+    });
+    const selector = new BackendSelector({ backends: [ladder], env: { VIBERSYN_BUILD_BACKENDS: "smithers" } });
+    const orchestrator = track(new BuildOrchestrator({ selector, buildsRoot: await tempRoot() }));
+
+    await orchestrator.start(startInput("upid-hero-stands"));
+
+    const [build] = orchestrator.builds("upid-hero-stands");
+    expect(build!.status).toBe("ready"); // never regresses
+    expect(build!.phase).toBe("hero");
+    expect(build!.error).toBe("flows blew up");
+    expect(build!.previewUrl).toMatch(/\.1$/u);
+    expect(await (await fetch(build!.previewUrl!)).text()).toContain("hero stands");
+    // Retry happens ONLY from status "failed" — a hero-ready lane is never rebuilt.
+    expect(buildCalls).toBe(1);
+  });
+});
+
+describe("BuildOrchestrator — revision contract", () => {
+  test("steer normalizes a structured revision (kind/questionId/targetScreens, seq assigned) into the backend request", async () => {
+    const revisions: Array<BuildRevision | undefined> = [];
+    const corrections: Array<string | undefined> = [];
+    const backend = writingBackend("smithers", {
+      build: async (req: BuildRequest): Promise<BuildResult> => {
+        if (req.revision !== undefined || req.correction !== undefined) {
+          revisions.push(req.revision);
+          corrections.push(req.correction);
+        }
+        await Bun.write(join(req.outDir, "index.html"), "<!doctype html><h1>app</h1>");
+        return { ok: true, entrypoint: "index.html", summary: "built" };
+      },
+    });
+    const selector = new BackendSelector({ backends: [backend], env: { VIBERSYN_BUILD_BACKENDS: "smithers" } });
+    const orchestrator = track(new BuildOrchestrator({ selector, buildsRoot: await tempRoot() }));
+    await orchestrator.start(startInput("upid-rev"));
+
+    await orchestrator.steer("upid-rev", {
+      kind: "answer",
+      text: "  three columns, not five  ",
+      questionId: "q-cols",
+      answer: "Three",
+      targetScreens: [" #/ ", ""],
+    });
+    const expected: BuildRevision = {
+      kind: "answer",
+      text: "three columns, not five",
+      questionId: "q-cols",
+      answer: "Three",
+      targetScreens: ["#/"],
+      seq: 1,
+    };
+    expect(revisions).toEqual([expected]);
+    // The flattened alias rides along for single-shot backends (eliza/native).
+    expect(corrections).toEqual(["three columns, not five"]);
+
+    // A legacy bare string is a plain steer; seq keeps advancing.
+    await orchestrator.steer("upid-rev", "make it purple");
+    expect(revisions[1]).toEqual({ kind: "steer", text: "make it purple", seq: 2 });
+
+    // The snapshot carries the applied revision history, most recent last.
+    const [build] = orchestrator.builds("upid-rev");
+    expect(build!.revisions).toEqual([expected, { kind: "steer", text: "make it purple", seq: 2 }]);
+
+    // Empty text is a no-op, not a rebuild.
+    await orchestrator.steer("upid-rev", "   ");
+    await orchestrator.steer("upid-rev", { text: "" });
+    expect(revisions).toHaveLength(2);
+  });
+
+  test("an incoming revision ABORTS in-flight enrichment — freshest human intent wins", async () => {
+    const heroLanded = deferred();
+    let enrichmentAborted = false;
+    const backend = writingBackend("smithers", {
+      build: async (req: BuildRequest): Promise<BuildResult> => {
+        if (req.revision === undefined) {
+          await Bun.write(join(req.outDir, "index.html"), "<!doctype html><h1>hero</h1>");
+          req.onStage?.({ stage: "hero", entrypoint: "index.html", summary: "Hero line." });
+          heroLanded.resolve();
+          // Enrichment hangs until the revision aborts it (the backend's
+          // subprocess SIGKILL path), then the hero survives as an ok result.
+          await new Promise<void>((resolvePromise) => {
+            if (req.signal.aborted) {
+              resolvePromise();
+              return;
+            }
+            req.signal.addEventListener("abort", () => resolvePromise(), { once: true });
+          });
+          enrichmentAborted = req.signal.aborted;
+          return { ok: true, entrypoint: "index.html", summary: "Hero line.", completedStages: ["hero"] };
+        }
+        await Bun.write(join(req.outDir, "index.html"), `<!doctype html><h1>corrected:${req.revision.text}</h1>`);
+        return { ok: true, entrypoint: "index.html", summary: "corrected" };
+      },
+    });
+    const selector = new BackendSelector({ backends: [backend], env: { VIBERSYN_BUILD_BACKENDS: "smithers" } });
+    const orchestrator = track(new BuildOrchestrator({ selector, buildsRoot: await tempRoot() }));
+
+    const started = orchestrator.start(startInput("upid-abort-enrich"));
+    await heroLanded.promise;
+    await until(() => orchestrator.builds("upid-abort-enrich")[0]?.status === "ready");
+
+    await orchestrator.steer("upid-abort-enrich", "make it neon");
+    await started;
+
+    expect(enrichmentAborted).toBe(true);
+    const [build] = orchestrator.builds("upid-abort-enrich");
+    expect(build!.status).toBe("ready");
+    expect(build!.revisions).toEqual([{ kind: "steer", text: "make it neon", seq: 1 }]);
+    expect(build!.previewUrl).toMatch(/\.2$/u); // hero bump + correction bump
+    expect(await (await fetch(build!.previewUrl!)).text()).toContain("corrected:make it neon");
+  });
+
+  test("the snapshot's revision history is capped at 8, most recent last", async () => {
+    const selector = new BackendSelector({ backends: [writingBackend("smithers")], env: { VIBERSYN_BUILD_BACKENDS: "smithers" } });
+    const orchestrator = track(new BuildOrchestrator({ selector, buildsRoot: await tempRoot() }));
+    await orchestrator.start(startInput("upid-cap"));
+
+    for (let index = 1; index <= 10; index += 1) {
+      await orchestrator.steer("upid-cap", `steer-${index}`);
+    }
+
+    const [build] = orchestrator.builds("upid-cap");
+    expect(build!.revisions).toHaveLength(8);
+    expect(build!.revisions![0]).toEqual({ kind: "steer", text: "steer-3", seq: 3 });
+    expect(build!.revisions!.at(-1)).toEqual({ kind: "steer", text: "steer-10", seq: 10 });
   });
 });
 

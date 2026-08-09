@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Hono } from "hono";
 import { createPhoneImportApp, createProjectorApp } from "./app";
+import { registerForestSurface, type ForestState, type ForestSurfaceLoader } from "./github-org";
 import { RemoteHandsHub } from "./remote-hands";
 import { createProjectorRuntime, type ProjectorRuntime, type ProjectorRuntimeOptions } from "./composition";
 import type { BuilderAgent } from "./idea-builder";
@@ -827,6 +829,59 @@ describe("POST /api/process/:upid lifecycle + steer routes", () => {
   });
 });
 
+describe("POST /api/process/:upid/answer — swipe-deck answers", () => {
+  test("records the answer in the ledger AND steers the build with the question-framed correction", async () => {
+    const backend = new RouteFakeBackend();
+    const { app, runtime } = await makeApp({
+      detector: new ScriptedDetector([ideaResult("an answerable quiz", 0.9)]),
+      buildBackends: [backend],
+    });
+    const id = await surfaceIdea(runtime, "an answerable quiz");
+    const accepted = await postJson(app, `/api/idea/${id}/accept`);
+    const upid = ((await accepted.json()) as ProjectorSnapshot).processes[0]?.upid;
+    expect(upid).toBeDefined();
+    if (upid === undefined) return;
+    await waitFor(() => runtime.registry.builds(upid).some((build) => build.status === "ready"));
+
+    const answered = await postJson(app, `/api/process/${upid}/answer`, {
+      questionId: "q-scope",
+      prompt: "Real money or points first?",
+      answer: "Points",
+    });
+    expect(answered.status).toBe(200);
+    // Ledger first: the regeneration triggered by the steer must already see
+    // this decision (renders the card pre-decided).
+    expect(runtime.answeredQuestions(upid)).toEqual([
+      { questionId: "q-scope", prompt: "Real money or points first?", answer: "Points" },
+    ]);
+    // The steer is framed as the ACTUAL question, not an opaque id.
+    await waitFor(() => backend.corrections.length === 1);
+    expect(backend.corrections[0]).toBe('Decision — for "Real money or points first?", the choice is "Points". Build accordingly.');
+  });
+
+  test("a re-answer replaces the ledger entry (latest answer per question wins)", async () => {
+    const { app, runtime } = await makeApp({ buildBackends: [new RouteFakeBackend()] });
+    await postJson(app, "/api/process/upid-quiz/answer", { questionId: "q-1", prompt: "Fork?", answer: "Left" });
+    await postJson(app, "/api/process/upid-quiz/answer", { questionId: "q-1", prompt: "Fork?", answer: "Right" });
+    expect(runtime.answeredQuestions("upid-quiz")).toEqual([{ questionId: "q-1", prompt: "Fork?", answer: "Right" }]);
+  });
+
+  test("a missing prompt falls back to the questionId for the framing (older deck copies)", async () => {
+    const { app, runtime } = await makeApp({ buildBackends: [new RouteFakeBackend()] });
+    const response = await postJson(app, "/api/process/upid-old/answer", { questionId: "q-legacy", answer: "Yes" });
+    expect(response.status).toBe(200);
+    expect(runtime.answeredQuestions("upid-old")).toEqual([{ questionId: "q-legacy", prompt: "q-legacy", answer: "Yes" }]);
+  });
+
+  test("malformed bodies are a 400 and never touch the ledger", async () => {
+    const { app, runtime } = await makeApp({ buildBackends: [new RouteFakeBackend()] });
+    expect((await postJson(app, "/api/process/upid-x/answer", { questionId: "q", answer: "  " })).status).toBe(400);
+    expect((await postJson(app, "/api/process/upid-x/answer", { answer: "Yes" })).status).toBe(400);
+    expect((await postJson(app, "/api/process/upid-x/answer")).status).toBe(400);
+    expect(runtime.answeredQuestions("upid-x")).toEqual([]);
+  });
+});
+
 describe("POST /api/process/:upid/execute — the COMMISSION stage", () => {
   test("kickoff accept never launches the durable run; execute opens the execution lane, and a repeat is a 400", async () => {
     const backend = new RouteFakeBackend();
@@ -1021,5 +1076,95 @@ describe("seam action API — /api/seam/* over the live runtime", () => {
     const status = await app.request("/api/seam/status");
     const statusBody = (await status.json()) as { summary: string };
     expect(statusBody.summary.toLowerCase()).toContain("atlas");
+  });
+});
+
+// --- GITHUB FOREST surface: /api/org/import + /api/forest ---------------------
+// Route behavior over an INJECTED loader fake (registerForestSurface's seam) —
+// no test ever touches the process-wide gh-CLI loader with a POST.
+
+describe("forest surface — POST /api/org/import + GET /api/forest", () => {
+  function fakeForestLoader(state: ForestState): { loader: ForestSurfaceLoader; loads: string[] } {
+    const loads: string[] = [];
+    return {
+      loads,
+      loader: {
+        async load(org: string): Promise<void> {
+          loads.push(org);
+        },
+        current: () => state,
+      },
+    };
+  }
+
+  function forestApp(state: ForestState): { app: Hono; loads: string[] } {
+    const app = new Hono();
+    const { loader, loads } = fakeForestLoader(state);
+    registerForestSurface(app, { loader });
+    return { app, loads };
+  }
+
+  test("POST {org} starts loading and 202s with the normalized org", async () => {
+    const { app, loads } = forestApp({ org: null });
+    const response = await postJson(app, "/api/org/import", { org: "acme" });
+    expect(response.status).toBe(202);
+    expect(await response.json()).toEqual({ ok: true, org: "acme" });
+    expect(loads).toEqual(["acme"]);
+  });
+
+  test("a github URL normalizes to its org before loading", async () => {
+    const { app, loads } = forestApp({ org: null });
+    const response = await postJson(app, "/api/org/import", { org: "https://github.com/Acme-Org/some-repo" });
+    expect(response.status).toBe(202);
+    expect(await response.json()).toEqual({ ok: true, org: "Acme-Org" });
+    expect(loads).toEqual(["Acme-Org"]);
+  });
+
+  test("malformed bodies are a 400 and never reach the loader", async () => {
+    const { app, loads } = forestApp({ org: null });
+    for (const body of [undefined, {}, { org: "" }, { org: "not a name" }, { org: 42 }, { org: "../../etc" }]) {
+      const response = await postJson(app, "/api/org/import", body);
+      expect(response.status).toBe(400);
+      const parsed = (await response.json()) as { ok: boolean; error?: string };
+      expect(parsed.ok).toBe(false);
+      expect(parsed.error?.length ?? 0).toBeGreaterThan(0);
+    }
+    expect(loads).toEqual([]);
+  });
+
+  test("GET /api/forest serves the loader's current payload verbatim", async () => {
+    const payload: ForestState = {
+      org: "acme",
+      fetchedAtMs: 1_723_450_000_000,
+      repos: [
+        {
+          name: "widget",
+          pushedAtMs: 1_723_400_000_000,
+          prs: [
+            { number: 12, title: "Add grove", draft: false, ci: "pass", baseRef: "main", headRef: "feat/grove" },
+            { number: 13, title: "Polish", draft: true, ci: "pending", baseRef: "feat/grove", headRef: "feat/polish", stackedOn: 12 },
+          ],
+          issues: [{ number: 3, title: "Crash on load", labels: ["bug"] }],
+        },
+      ],
+    };
+    const { app } = forestApp(payload);
+    const response = await app.request("/api/forest");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(payload);
+  });
+
+  test("no org imported yet → {org:null}", async () => {
+    const { app } = forestApp({ org: null });
+    expect(await (await app.request("/api/forest")).json()).toEqual({ org: null });
+  });
+
+  test("the real projector app registers the surface (GET answers before the static catch-all)", async () => {
+    const { app } = await makeApp();
+    const response = await app.request("/api/forest");
+    expect(response.status).toBe(200);
+    // The process-wide loader starts empty; this test only asserts the route
+    // exists — it must never POST an import (that would spawn a real gh).
+    expect(((await response.json()) as { org: string | null }).org).toBeNull();
   });
 });

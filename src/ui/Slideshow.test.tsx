@@ -210,4 +210,107 @@ describe("Slideshow decision bar", () => {
     const html = renderToStaticMarkup(<Slideshow process={process} onLifecycle={() => {}} onClose={() => {}} />);
     expect(html).not.toContain('data-testid="deck-decision"');
   });
+
+  test("unified vocabulary with VISIBLE sub-line explanations (no tooltip-only details)", () => {
+    const process = liveProcess([
+      build({ backend: "native", label: "Native", status: "ready", slideshowUrl: "http://127.0.0.1:4100/s.html" }),
+    ]);
+    const html = renderToStaticMarkup(
+      <Slideshow process={process} onLifecycle={() => {}} onClose={() => {}} onDecision={() => {}} />,
+    );
+    // Same three labels as the generated deck's own decision slide.
+    expect(html).toContain("🚀 Build it for real");
+    expect(html).toContain("🔁 Keep shaping it");
+    expect(html).toContain("🅿 Park it for later");
+    // Each button carries its explanation as a rendered sub-line.
+    const details = html.match(/class="decision-detail"/gu) ?? [];
+    expect(details).toHaveLength(3);
+    expect(html).toContain("Commission the real build");
+  });
+});
+
+// ── Post-choice decision states (Phase 2 decide redesign) ───────────────────
+describe("Slideshow post-choice decision states", () => {
+  const conceptProcess = () =>
+    liveProcess([
+      build({ backend: "native", label: "Native", status: "ready", slideshowUrl: "http://127.0.0.1:4100/s.html" }),
+    ]);
+
+  test('decisionState="commission" collapses the bar to the commissioned status strip', () => {
+    const html = renderToStaticMarkup(
+      <Slideshow
+        process={conceptProcess()}
+        onLifecycle={() => {}}
+        onClose={() => {}}
+        onDecision={() => {}}
+        decisionState="commission"
+      />,
+    );
+    expect(html).toContain('data-testid="decision-status-commissioned"');
+    expect(html).toContain("Commissioned — the real build is running");
+    expect(html).not.toContain('data-testid="deck-decision"');
+  });
+
+  test("the commissioned strip survives the stage flipping off concept (execution lane live)", () => {
+    const process = { ...conceptProcess(), stage: "commissioned" };
+    const html = renderToStaticMarkup(
+      <Slideshow
+        process={process}
+        onLifecycle={() => {}}
+        onClose={() => {}}
+        onDecision={() => {}}
+        decisionState="commission"
+      />,
+    );
+    expect(html).toContain('data-testid="decision-status-commissioned"');
+  });
+
+  test('decisionState="iterate" swaps the bar for the inline steer input (deck stays open)', () => {
+    const html = renderToStaticMarkup(
+      <Slideshow
+        process={conceptProcess()}
+        onLifecycle={() => {}}
+        onClose={() => {}}
+        onDecision={() => {}}
+        decisionState="iterate"
+        onSteer={() => {}}
+      />,
+    );
+    expect(html).toContain('data-testid="decision-steer"');
+    expect(html).toContain('data-testid="deck-steer-input"');
+    expect(html).toContain('data-testid="deck-steer-send"');
+    // "…or say it out loud" — spoken steering stays advertised.
+    expect(html).toContain("say it out loud");
+    expect(html).not.toContain('data-testid="deck-decision"');
+  });
+
+  test('decisionState="done" shows the parked confirmation strip', () => {
+    const html = renderToStaticMarkup(
+      <Slideshow
+        process={conceptProcess()}
+        onLifecycle={() => {}}
+        onClose={() => {}}
+        onDecision={() => {}}
+        decisionState="done"
+      />,
+    );
+    expect(html).toContain('data-testid="decision-status-parked"');
+    expect(html).toContain("Parked");
+    expect(html).not.toContain('data-testid="deck-decision"');
+  });
+
+  test("openAtDecision loads the live deck iframe on its #decision slide (guided decide step)", () => {
+    const html = renderToStaticMarkup(
+      <Slideshow process={conceptProcess()} onLifecycle={() => {}} onClose={() => {}} openAtDecision />,
+    );
+    expect(html).toContain('src="http://127.0.0.1:4100/s.html#decision"');
+  });
+
+  test("without openAtDecision the iframe src carries no decision hash", () => {
+    const html = renderToStaticMarkup(
+      <Slideshow process={conceptProcess()} onLifecycle={() => {}} onClose={() => {}} />,
+    );
+    expect(html).toContain('src="http://127.0.0.1:4100/s.html"');
+    expect(html).not.toContain("#decision");
+  });
 });

@@ -224,6 +224,13 @@ export interface ProjectorRuntime {
   // its live run-event telemetry. Idempotent per UPID; errors are typed so the
   // HTTP route can 400/404 honestly.
   executeProcess(upid: string, correlationId?: string): Promise<ExecuteProcessResult>;
+  // ANSWER LEDGER (the deck's swipe-to-answer cards): record a chosen answer
+  // for a process (latest answer per questionId wins) and read them back. The
+  // /answer route records BEFORE steering; the slideshow hook passes the
+  // ledger into every deck regeneration so answered cards render pre-decided
+  // — an answer survives the steer → rebuild → deck-regen loop.
+  recordAnswer(upid: string, entry: DeckAnswer): void;
+  answeredQuestions(upid: string): DeckAnswer[];
   // SELF-HOSTING MODE (VIBERSYN_SELF_MODE=1). `bootId` is this process's
   // stable per-boot id — surfaced on /api/health and the snapshot so a wall
   // can detect that the server it reconnected to is a NEW build and reload
@@ -330,6 +337,18 @@ export interface ProjectorRuntime {
 export type ImportProjectResult =
   | { ok: true; snapshot: ProjectorSnapshot; upid: string; callsign: string; title: string | null }
   | { ok: false; error: string };
+
+// One recorded swipe-deck answer (the deck's question cards). The slideshow
+// track consumes this shape as AnsweredDeckQuestion (structural mirror).
+export interface DeckAnswer {
+  questionId: string;
+  prompt: string;
+  answer: string;
+}
+
+// Answer-ledger bound per process: the deck asks ≤3 questions per generation,
+// but regenerations can introduce new ones — cap generously, evict oldest.
+const MAX_DECK_ANSWERS_PER_UPID = 24;
 
 // COMMISSION result for the HTTP/voice surfaces. `status` maps directly onto
 // the /api/process/:upid/execute response code: 404 unknown/dead UPID, 400
@@ -620,6 +639,10 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   readonly #publishKicked = new Set<string>();
   readonly #deckDirs = new Map<string, Map<string, string>>();
   readonly #published = new Map<string, { url: string; qrSvg: string; repo: string }>();
+  // ANSWER LEDGER: upid -> questionId -> the latest chosen answer. Insertion
+  // order is answer order (a re-answer moves to the back), so regenerated
+  // decks replay decisions in the order the room made them.
+  readonly #deckAnswers = new Map<string, Map<string, DeckAnswer>>();
   // Idea detection wiring. `#detectionMode` records which backend was selected
   // (host-claude | heuristic | smithers | injected) for the degradation notice;
   // `#detectionPrimaryId` is the candidate currently surfaced as the bubble (so a
@@ -815,11 +838,14 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       slideshow: async (input) => {
         // The accept's planning questions ride into the deck as INTERACTIVE
         // swipe-to-answer cards; each chosen answer POSTs to this process's
-        // answer route (app.ts /api/process/:upid/answer -> registry.steer).
+        // answer route (app.ts /api/process/:upid/answer -> ledger + steer).
+        // The answer ledger rides along so a steer-regenerated deck renders
+        // already-answered cards pre-decided instead of re-asking them.
         await generateSlideshow(
           {
             ...input,
             questions: input.planQuestions,
+            answeredQuestions: this.answeredQuestions(input.upid),
             answerEndpoint: `/api/process/${encodeURIComponent(input.upid)}/answer`,
           },
           { signal: input.signal },
@@ -3033,6 +3059,36 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       return [];
     }
     return ideaTrayFromCandidates(this.detection.candidates());
+  }
+
+  // --- Deck answer ledger (swipe-to-answer question cards) ------------------
+
+  // Record a chosen answer for a process. Latest answer per questionId wins
+  // (a re-answer replaces and moves to the back); the per-UPID map is capped
+  // so a hot deck can never grow the runtime unbounded. Called by the /answer
+  // route BEFORE it steers, so the steer-triggered deck regeneration already
+  // sees the decision.
+  recordAnswer(upid: string, entry: DeckAnswer): void {
+    let forUpid = this.#deckAnswers.get(upid);
+    if (forUpid === undefined) {
+      forUpid = new Map();
+      this.#deckAnswers.set(upid, forUpid);
+    }
+    forUpid.delete(entry.questionId);
+    forUpid.set(entry.questionId, entry);
+    while (forUpid.size > MAX_DECK_ANSWERS_PER_UPID) {
+      const oldest = forUpid.keys().next().value;
+      if (oldest === undefined) {
+        break;
+      }
+      forUpid.delete(oldest);
+    }
+  }
+
+  // The recorded answers for a process, in answer order. Passed through the
+  // slideshow hook so regenerated decks render answered cards pre-decided.
+  answeredQuestions(upid: string): DeckAnswer[] {
+    return [...(this.#deckAnswers.get(upid)?.values() ?? [])];
   }
 
   // --- Take-home publishing (GitHub Pages + QR) -----------------------------

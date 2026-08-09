@@ -1,6 +1,6 @@
 import { ideaBriefSchema, type IdeaBrief, type LogEvent, type OutputDecision } from "../types";
 import { questionsFromAssessment, type PlanQuestion } from "../detect";
-import type { ProcessBuildSnapshot } from "../buildloop/orchestrator";
+import type { OrchestratorRevisionInput, ProcessBuildSnapshot } from "../buildloop/orchestrator";
 import type { ExecutionRegistry, ExecutionSnapshot } from "../buildloop/execution";
 import { CallsignAllocator, type CallsignAssignment } from "../routing/callsigns";
 import { inferProjectName, llmProjectName, type InferredProjectName } from "./project-name";
@@ -51,7 +51,10 @@ export interface BuildLoopOrchestrator {
     // identical to the orchestrator's own BuildBrief mirror.
     brief?: IdeaBrief;
   }): Promise<void>;
-  steer(upid: string, text: string): Promise<void>;
+  // Accepts the legacy bare correction string OR a structured revision
+  // ({kind, text, questionId, answer, targetScreens} — the orchestrator
+  // normalizes either into a full Revision).
+  steer(upid: string, revision: string | OrchestratorRevisionInput): Promise<void>;
   abortAll(upid: string): Promise<void>;
   builds(upid: string): ProcessBuildSnapshot[];
 }
@@ -507,9 +510,12 @@ export class ProcessRegistry {
     }
     // REAL steering of the built artifacts: forward the spoken correction to the
     // multi-backend orchestrator, which re-runs every ready build with it (in
-    // place, version-bumped). Fire-and-forget — a correction re-run takes
-    // minutes and must never stall the live transcript path awaiting steer().
-    const correction = steerText(payload);
+    // place, version-bumped). Structured revision fields on the payload (kind/
+    // questionId/answer/targetScreens — the deck's answer route) pass through
+    // tolerantly; a plain {text} payload stays the legacy bare string. Fire-and-
+    // forget — a correction re-run takes minutes and must never stall the live
+    // transcript path awaiting steer().
+    const correction = steerRevision(payload);
     if (this.#orchestrator !== null && correction !== null) {
       const orchestrator = this.#orchestrator;
       void orchestrator.steer(upid, correction).then(
@@ -743,6 +749,43 @@ export function steerText(payload: unknown): string | null {
     }
   }
   return null;
+}
+
+// TOLERANT structured-revision passthrough for the orchestrator seam: a payload
+// carrying any revision field (kind/questionId/answer/targetScreens/seq) next
+// to its text forwards as a structured revision (the orchestrator normalizes
+// and validates); anything else degrades to steerText's bare string. Never
+// throws, never rejects a payload steerText would have accepted.
+export function steerRevision(payload: unknown): string | OrchestratorRevisionInput | null {
+  const text = steerText(payload);
+  if (text === null) {
+    return null;
+  }
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    return text;
+  }
+  const record = payload as Record<string, unknown>;
+  const structured =
+    record.kind !== undefined ||
+    record.questionId !== undefined ||
+    record.answer !== undefined ||
+    record.targetScreens !== undefined ||
+    record.seq !== undefined;
+  if (!structured) {
+    return text;
+  }
+  return {
+    text,
+    ...(record.kind === "steer" || record.kind === "answer" ? { kind: record.kind } : {}),
+    ...(typeof record.questionId === "string" && record.questionId.trim().length > 0
+      ? { questionId: record.questionId.trim() }
+      : {}),
+    ...(typeof record.answer === "string" && record.answer.trim().length > 0 ? { answer: record.answer.trim() } : {}),
+    ...(Array.isArray(record.targetScreens)
+      ? { targetScreens: record.targetScreens.filter((screen): screen is string => typeof screen === "string") }
+      : {}),
+    ...(typeof record.seq === "number" && Number.isFinite(record.seq) ? { seq: record.seq } : {}),
+  };
 }
 
 // Deck-ready planning questions recovered from the spawn input: the acceptance

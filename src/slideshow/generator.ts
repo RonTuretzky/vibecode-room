@@ -25,6 +25,7 @@ import {
   type Slide,
   type SlideDecision,
   type SlideMock,
+  type SlideQuestion,
 } from "./template";
 
 // Mirrors BuildBackendId in src/buildloop/types.ts BY CONVENTION — that module
@@ -105,11 +106,35 @@ export interface GenerateSlideshowInput {
   // Build-forking decision questions ({id, prompt, answers}) from the planning
   // routine (src/detect/plan-questions.ts). When present they render as
   // swipe-to-answer cards in the deck; each choice POSTs to `answerEndpoint`.
-  // Absent = no question cards (the fixed decision slide still renders).
+  // They merge FIRST (alongside brief.qa) into the deck's question cards; the
+  // copy model tops the list up and two deterministic fallbacks guarantee that
+  // EVERY deck asks something even fully offline (see deckQuestions).
   questions?: readonly { id: string; prompt: string; answers: string[] }[];
+  // ANSWER LEDGER (src/server/composition.ts): the answers already chosen for
+  // this process's questions. A matching question card renders PRE-DECIDED
+  // ("You chose: …") instead of open, and an answer whose question no longer
+  // exists still renders as a decided card — an answer survives deck
+  // regeneration. Absent/empty = every card is open.
+  answeredQuestions?: readonly AnsweredDeckQuestion[];
   // Room endpoint a chosen answer POSTs to, e.g. /api/process/<upid>/answer.
   // Absent = the deck records the choice locally only (published/offline copy).
   answerEndpoint?: string;
+}
+
+// One recorded swipe-deck answer. Mirrors the runtime's answer-ledger entry
+// (src/server/composition.ts) BY CONVENTION — structural, no cross-track import.
+export interface AnsweredDeckQuestion {
+  questionId: string;
+  prompt: string;
+  answer: string;
+}
+
+// One decision question as the copy model (or the deterministic fallback)
+// proposes it — no id yet; deterministic ids are derived from the prompt at
+// assembly time (deckQuestions), mirroring src/detect/plan-questions.ts.
+export interface SlideshowCopyQuestion {
+  prompt: string;
+  answers: string[];
 }
 
 // The copy the model (or the deterministic fallback) supplies. Slide 1 (the
@@ -118,6 +143,10 @@ export interface GenerateSlideshowInput {
 export interface SlideshowCopy {
   tagline: string; // slide-2 headline: what we'd build, <=~10 words
   concept: string[]; // slide-2 bullets pitching the full build
+  // Build-forking decision questions the model proposes (swipe-to-answer
+  // cards). Optional: they only TOP UP the judge's own questions, and the
+  // deterministic fallback questions cover a deck with neither.
+  questions?: SlideshowCopyQuestion[];
 }
 
 export interface SlideshowCopyRequest {
@@ -130,6 +159,9 @@ export interface SlideshowCopyRequest {
   // and the judge's buildability rationale. Absent for brief-less kickoffs.
   sourceQuote?: string;
   rationale?: string;
+  // Prompts of the judge's own decision questions (brief.qa / planQuestions),
+  // so the model tops the deck up with NEW forks instead of repeating them.
+  askedQuestions?: readonly string[];
 }
 
 // Injectable copy model. Return null (or reject, or hang past the budget) to
@@ -158,6 +190,27 @@ const COPY_LINES_MAX = 6;
 // Headline clamp: the slide-2 tagline renders at big type (max-width ~22ch, so
 // it wraps) — this bounds it so a runaway model tagline never overflows.
 const TAGLINE_MAX = 100;
+// Question caps/clamps mirror src/detect/plan-questions.ts BY CONVENTION (the
+// detection track owns that module; same no-cross-track-import rule as the
+// backend id union above): ≤3 questions of ≤4 answers, 120/48-char clamps.
+export const MAX_DECK_QUESTIONS = 3;
+export const MAX_DECK_ANSWERS = 4;
+const QUESTION_PROMPT_MAX = 120;
+const QUESTION_ANSWER_MAX = 48;
+
+// The deterministic fallback questions: EVERY deck asks something, even fully
+// offline (no judge questions on the accept, no model, no key, no network).
+// Both fork v1 scope, so any answer is a meaningful steer.
+export const FALLBACK_DECK_QUESTIONS: readonly SlideshowCopyQuestion[] = [
+  {
+    prompt: "Who is v1 for?",
+    answers: ["Just this room", "Friends & early testers", "Anyone on the internet"],
+  },
+  {
+    prompt: "How polished should v1 feel?",
+    answers: ["Rough sketch — speed first", "Clean demo", "Launch-ready"],
+  },
+];
 
 // Retry budget for the production model's HTTP call. Bounded by BOTH the attempt
 // count AND the overall time budget (the combined abort signal): whichever trips
@@ -184,6 +237,7 @@ export async function generateSlideshow(
   const brief = input.brief ?? null;
   const briefQuote = brief?.sourceQuote.trim() ?? "";
   const briefRationale = brief?.rationale.trim() ?? "";
+  const askedQuestions = judgeQuestionPrompts(input);
   const request: SlideshowCopyRequest = {
     prompt: input.prompt,
     summary: input.summary,
@@ -192,6 +246,7 @@ export async function generateSlideshow(
     mocks: pitchMocks(input).map((mock) => mock.id),
     ...(briefQuote.length === 0 ? {} : { sourceQuote: briefQuote }),
     ...(briefRationale.length === 0 ? {} : { rationale: briefRationale }),
+    ...(askedQuestions.length === 0 ? {} : { askedQuestions }),
   };
   const raw = await callModelWithBudget(model, request, options.timeoutMs ?? DEFAULT_TIMEOUT_MS, signal);
   signal?.throwIfAborted();
@@ -202,12 +257,14 @@ export async function generateSlideshow(
   const usedModel = merged.usedModel;
 
   // 2. Render + write. The template escapes everything; we hand it raw text.
+  // Question cards are the PRIORITY MERGE of judge questions → model top-up →
+  // deterministic fallbacks, with already-answered cards rendered pre-decided.
   const slides = buildSlides(input, copy);
   const html = renderSlideshowHtml({
     title: `${ideaTitle(input.prompt)} — pitch`,
     footer: footerLine(input),
     slides,
-    questions: input.questions,
+    questions: deckQuestions(input, copy),
     answerEndpoint: input.answerEndpoint,
   });
   const dir = join(input.outDir, SLIDESHOW_DIRNAME);
@@ -245,6 +302,9 @@ export function fallbackCopy(input: GenerateSlideshowInput): SlideshowCopy {
   return {
     tagline: ideaTitle(input.prompt),
     concept,
+    // The deterministic questions ride the fallback so a no-model deck still
+    // asks something (deckQuestions also re-adds them as its own last tier).
+    questions: FALLBACK_DECK_QUESTIONS.map((question) => ({ prompt: question.prompt, answers: [...question.answers] })),
   };
 }
 
@@ -316,6 +376,11 @@ export function mergeCopy(raw: unknown, fallback: SlideshowCopy): { copy: Slides
       usedModel = true;
     }
   }
+  const questions = cleanQuestions(raw.questions);
+  if (questions !== null) {
+    copy.questions = questions;
+    usedModel = true;
+  }
   return { copy, usedModel };
 }
 
@@ -333,10 +398,40 @@ export function clampCopy(copy: SlideshowCopy, fallback: SlideshowCopy): Slidesh
     .map((line) => clampText(line, COPY_LINE_MAX))
     .filter((line) => line.length > 0)
     .slice(0, COPY_LINES_MAX);
+  // Questions clamp like everything else, with a per-field fall back to the
+  // fallback's own questions. Unlike tagline/concept the field CAN end empty
+  // (deckQuestions' deterministic last tier still guarantees the deck asks
+  // something) — an empty list is therefore omitted, not defaulted.
+  const questions = clampQuestions(copy.questions);
+  const fallbackQuestions = clampQuestions(fallback.questions);
+  const keptQuestions = questions.length > 0 ? questions : fallbackQuestions;
   return {
     tagline: tagline.length > 0 ? tagline : clampText(fallback.tagline, TAGLINE_MAX) || "Untitled idea",
     concept: concept.length > 0 ? concept : fallbackConcept.length > 0 ? fallbackConcept : ["The concept, sketched — commission it or steer it."],
+    ...(keptQuestions.length > 0 ? { questions: keptQuestions } : {}),
   };
+}
+
+// Bound every question to the plan-questions caps (≤3 questions, ≤4 answers,
+// 120/48-char clamps); a question that loses its fork (fewer than 2 surviving
+// answers) is dropped whole.
+function clampQuestions(questions: readonly SlideshowCopyQuestion[] | undefined): SlideshowCopyQuestion[] {
+  const out: SlideshowCopyQuestion[] = [];
+  for (const question of questions ?? []) {
+    const prompt = clampText(question.prompt, QUESTION_PROMPT_MAX);
+    const answers = (question.answers ?? [])
+      .map((answer) => clampText(answer, QUESTION_ANSWER_MAX))
+      .filter((answer) => answer.length > 0)
+      .slice(0, MAX_DECK_ANSWERS);
+    if (prompt.length === 0 || answers.length < 2) {
+      continue;
+    }
+    out.push({ prompt, answers });
+    if (out.length >= MAX_DECK_QUESTIONS) {
+      break;
+    }
+  }
+  return out;
 }
 
 // Trim, collapse whitespace, and hard-cap a single line. When truncated it breaks
@@ -450,6 +545,162 @@ function cleanLines(value: unknown): string[] | null {
   return lines.length === 0 ? null : lines;
 }
 
+// Sanitize the model's `questions` array: each entry needs a non-empty prompt
+// and at least 2 usable answer labels (a decision question with one option is
+// not a fork). Caps/clamps mirror plan-questions.ts. Null when nothing survives
+// — the fallback questions then stand.
+function cleanQuestions(value: unknown): SlideshowCopyQuestion[] | null {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+  const out: SlideshowCopyQuestion[] = [];
+  for (const entry of value) {
+    if (!isRecord(entry)) {
+      continue;
+    }
+    const prompt = cleanLine(entry.prompt, QUESTION_PROMPT_MAX);
+    if (prompt === null) {
+      continue;
+    }
+    const answers = Array.isArray(entry.answers)
+      ? entry.answers
+          .map((answer) => cleanLine(answer, QUESTION_ANSWER_MAX))
+          .filter((answer): answer is string => answer !== null)
+          .slice(0, MAX_DECK_ANSWERS)
+      : [];
+    if (answers.length < 2) {
+      continue;
+    }
+    out.push({ prompt, answers });
+    if (out.length >= MAX_DECK_QUESTIONS) {
+      break;
+    }
+  }
+  return out.length === 0 ? null : out;
+}
+
+// --- Deck questions (EVERY deck asks something) ------------------------------
+
+// The prompts the judge already asked (brief.qa + planQuestions), deduped —
+// handed to the copy model so its top-up questions explore NEW forks.
+export function judgeQuestionPrompts(input: GenerateSlideshowInput): string[] {
+  const prompts: string[] = [];
+  const seen = new Set<string>();
+  for (const question of [...(input.brief?.qa ?? []), ...(input.questions ?? [])]) {
+    const prompt = clampText(question.prompt, QUESTION_PROMPT_MAX);
+    const key = questionKey(prompt);
+    if (key.length === 0 || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    prompts.push(prompt);
+  }
+  return prompts;
+}
+
+// Assemble the deck's swipe-to-answer cards, PRIORITY-MERGED so every deck asks
+// something even fully offline:
+//   1. judge questions — brief.qa first (may carry `chosen`), then the accept's
+//      planQuestions (same normalizer upstream, so ids dedup naturally);
+//   2. model questions from the copy call, topping the list up to 3;
+//   3. the deterministic FALLBACK_DECK_QUESTIONS.
+// Then the ANSWER LEDGER overlays: a recorded answer pre-decides its card
+// ("You chose: …" — the ledger wins over brief.chosen because it is newer),
+// and an answer whose question fell out of the merge still renders as a
+// decided single-option card, so an answer always survives deck regeneration.
+export function deckQuestions(input: GenerateSlideshowInput, copy: SlideshowCopy): SlideQuestion[] {
+  const cards: { id: string; prompt: string; answers: string[]; chosen?: string }[] = [];
+  const seen = new Set<string>();
+  const push = (id: string | null, prompt: string, answers: readonly string[], chosen?: string): void => {
+    if (cards.length >= MAX_DECK_QUESTIONS) {
+      return;
+    }
+    const cleanPrompt = clampText(prompt, QUESTION_PROMPT_MAX);
+    const key = questionKey(cleanPrompt);
+    if (key.length === 0 || seen.has(key)) {
+      return;
+    }
+    const cleanAnswers: string[] = [];
+    for (const answer of answers) {
+      const label = clampText(answer, QUESTION_ANSWER_MAX);
+      if (label.length > 0 && !cleanAnswers.includes(label)) {
+        cleanAnswers.push(label);
+      }
+      if (cleanAnswers.length >= MAX_DECK_ANSWERS) {
+        break;
+      }
+    }
+    if (cleanAnswers.length < 2) {
+      return;
+    }
+    seen.add(key);
+    const cleanChosen = chosen?.trim() ?? "";
+    cards.push({
+      id: id ?? deckQuestionId(key),
+      prompt: cleanPrompt,
+      answers: cleanAnswers,
+      ...(cleanChosen.length === 0 ? {} : { chosen: clampText(cleanChosen, QUESTION_ANSWER_MAX) }),
+    });
+  };
+  for (const question of input.brief?.qa ?? []) {
+    push(question.id, question.prompt, question.answers, question.chosen);
+  }
+  for (const question of input.questions ?? []) {
+    push(question.id, question.prompt, question.answers);
+  }
+  for (const question of copy.questions ?? []) {
+    push(null, question.prompt, question.answers);
+  }
+  for (const question of FALLBACK_DECK_QUESTIONS) {
+    push(null, question.prompt, question.answers);
+  }
+
+  // Answer-ledger overlay: pre-decide matching cards, then append survivors.
+  const answered = input.answeredQuestions ?? [];
+  const byId = new Map(answered.map((entry) => [entry.questionId, entry]));
+  const decided: SlideQuestion[] = cards.map((card) => {
+    const entry = byId.get(card.id);
+    return entry === undefined ? card : { ...card, chosen: clampText(entry.answer, QUESTION_ANSWER_MAX) };
+  });
+  for (const entry of answered) {
+    if (decided.some((card) => card.id === entry.questionId)) {
+      continue;
+    }
+    const prompt = clampText(entry.prompt, QUESTION_PROMPT_MAX);
+    const answer = clampText(entry.answer, QUESTION_ANSWER_MAX);
+    if (prompt.length === 0 || answer.length === 0) {
+      continue;
+    }
+    decided.push({ id: entry.questionId, prompt, answers: [answer], chosen: answer });
+  }
+  return decided;
+}
+
+// Normalize a prompt for dedup + id derivation: lowercase, non-alphanumerics
+// collapsed to single spaces (mirrors plan-questions.ts normalizeKey).
+function questionKey(prompt: string): string {
+  return prompt.toLowerCase().replace(/[^a-z0-9]+/gu, " ").trim();
+}
+
+// Deterministic question id from the normalized prompt: slug + djb2 hash,
+// mirroring plan-questions.ts questionId BY CONVENTION — the same prompt
+// always yields the same id, so a judge question and its regenerated twin key
+// the same ledger answer.
+function deckQuestionId(key: string): string {
+  const slug = key.replace(/\s+/gu, "-").slice(0, 32).replace(/^-+|-+$/gu, "");
+  return `q-${slug || "question"}-${hash36(key)}`;
+}
+
+// djb2, base36 — deterministic and dependency-free (mirrors the repo's other
+// no-crypto id helpers). Never used for security, only for id disambiguation.
+function hash36(text: string): string {
+  let h = 5381;
+  for (let i = 0; i < text.length; i += 1) {
+    h = ((h << 5) + h + text.charCodeAt(i)) >>> 0;
+  }
+  return h.toString(36);
+}
+
 // --- Slides -----------------------------------------------------------------
 
 // The gallery lanes. Explicit mocks (per-backend previewUrl from
@@ -473,7 +724,14 @@ export function pitchMocks(input: GenerateSlideshowInput): SlideMock[] {
 
 // The three fixed how-to-continue decisions, endpoints encoded per the kickoff
 // contract. upid/ideaId are URI-encoded into the paths (and the template
-// HTML-escapes the attributes on top).
+// HTML-escapes the attributes on top). ONE VOCABULARY with the room-native
+// deck-decision bar (src/ui/Slideshow.tsx): 🚀 Build it for real / 🔁 Keep
+// shaping it / 🅿 Park it for later — with VISIBLE sub-lines (tooltips do not
+// exist at projector distance). Every button also bridges its choice to the
+// parent window ({type:"vibersyn:decision"}, parsed by src/ui/stage.ts) when
+// the deck is embedded; the direct endpoint POSTs stay as the standalone
+// fallback, and execute is bridge-only when embedded so the room's own
+// commission POST is never doubled into a false 400.
 export function decisionButtons(
   upid: string,
   ideaId: string,
@@ -484,32 +742,36 @@ export function decisionButtons(
   return [
     {
       id: "execute",
-      label: "Build it for real",
-      detail: "Commission the full build now — then watch it go up on the wall.",
+      label: "🚀 Build it for real",
+      detail: "Commission the real build now — the wall keeps building it live.",
       endpoint: `${processPath}/execute`,
-      confirmation: "Commissioned — watch the wall.",
+      confirmation: "🚀 Commissioned — the real build is running.",
       terminal: true,
+      bridgeChoice: "commission",
+      bridgeOnly: true,
     },
     {
       id: "steer",
-      label: "Steer it",
-      detail: `Say ${steerSpoken} out loud — or type a correction here.`,
+      label: "🔁 Keep shaping it",
+      detail: `Say ${steerSpoken} out loud — or type a change here.`,
       endpoint: `${processPath}/steer`,
-      confirmation: "Correction sent — the concept will shift on the wall.",
+      confirmation: "Locked in — the mocks are rebuilding with this change.",
+      bridgeChoice: "iterate",
       prompt: {
-        hint: "Say the correction out loud — or type it and send:",
+        hint: "Type a change — or just say it out loud:",
         field: "text",
         placeholder: "e.g. make it neon, lean into the leaderboard",
-        submitLabel: "Send correction",
+        submitLabel: "Send it",
       },
     },
     {
       id: "dismiss",
-      label: "Park it for later",
+      label: "🅿 Park it for later",
       detail: "Keep the idea as a seed in the tray — nothing is lost.",
       endpoint: `/api/idea/${encodeURIComponent(ideaId)}/dismiss`,
-      confirmation: "Parked — the idea stays in the tray for later.",
+      confirmation: "🅿 Parked — the idea stays in the tray for later.",
       terminal: true,
+      bridgeChoice: "park",
     },
   ];
 }
@@ -637,7 +899,10 @@ const COPY_SYSTEM_PROMPT =
   "concrete; every line must fit on a big-type slide. Respond with ONLY a JSON object (no markdown " +
   "fences, no prose) matching exactly: " +
   '{"tagline": string (<=10 word headline for what we would build), ' +
-  '"concept": string[] (2-4 bullets pitching the full build)}.';
+  '"concept": string[] (2-4 bullets pitching the full build), ' +
+  '"questions": [{"prompt": string (<=120 chars, a decision question that FORKS how v1 gets built), ' +
+  '"answers": string[] (2-4 short option labels, <=48 chars each)}] ' +
+  "(0-3 entries; specific to THIS idea; never repeat anything in questionsAlreadyAsked)}.";
 
 // Default production model: ONE logical Cerebras chat/completions call, with a
 // BOUNDED retry (exponential backoff, honoring Retry-After) on transient
@@ -655,7 +920,8 @@ export const cerebrasCopyModel: SlideshowCopyModel = async (request, signal) => 
     body: JSON.stringify({
       model: process.env.CEREBRAS_MODEL ?? CEREBRAS_SLIDESHOW_MODEL,
       temperature: 0,
-      max_completion_tokens: 500,
+      // Room for tagline + concept bullets + up to 3 question cards.
+      max_completion_tokens: 700,
       messages: [
         { role: "system", content: COPY_SYSTEM_PROMPT },
         {
@@ -669,6 +935,9 @@ export const cerebrasCopyModel: SlideshowCopyModel = async (request, signal) => 
             // IdeaBrief grounding (present only when the kickoff carried one).
             ...(request.sourceQuote === undefined ? {} : { asHeardInTheRoomVerbatim: request.sourceQuote }),
             ...(request.rationale === undefined ? {} : { whyItIsBuildable: request.rationale }),
+            // The judge's own decision questions — the model must top up with
+            // NEW forks, never repeats.
+            ...(request.askedQuestions === undefined ? {} : { questionsAlreadyAsked: request.askedQuestions }),
           }),
         },
       ],

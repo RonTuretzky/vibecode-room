@@ -7,21 +7,39 @@
 // machine enum building/ready/failed; progressLabel carries the mock-oriented
 // wording) — the full app is the separate commission stage (execution.ts).
 //
+// STAGE LADDER (smithers): a backend may report per-stage progress via
+// BuildRequest.onStage. The hero stage is a READY-RATCHET: the lane flips
+// ready (version bump, slideshow hook) the moment the hero lands, while the
+// backend keeps enriching (flow screens, mock.json meta). Later stages bump
+// the version again (iframe cache-bust) and the meta stage re-fires the
+// slideshow hook with the validated screens/suggestedQuestions so the deck can
+// consume them. A hero-ready lane NEVER regresses: enrichment failure keeps it
+// ready, and retry-from-scratch happens only from status "failed".
+//
 // Per-(upid,backend) status/progress is tracked live and exposed as the
-// snapshot builds[] fragment the wall consumes. steer(upid, text) re-runs every
-// backend that has a ready build with the spoken correction (concurrent,
-// rewritten in place) and bumps a per-build version so the previewUrl changes
-// (?v=N) and the wall's iframe cache-busts. abortAll(upid)/abortEverything()
-// abort every in-flight build via its AbortSignal (backends SIGKILL their
-// subprocesses) inside the ~2s emergency-stop budget.
+// snapshot builds[] fragment the wall consumes. steer(upid, revision) accepts
+// a bare correction string OR a structured revision ({kind, text, questionId,
+// answer, targetScreens}); it re-runs every ready build with the revision
+// (concurrent, rewritten in place) and bumps a per-build version so the
+// previewUrl changes (?v=N) and the wall's iframe cache-busts. An incoming
+// revision ABORTS in-flight enrichment stages first — freshest human intent
+// wins. abortAll(upid)/abortEverything() abort every in-flight build via its
+// AbortSignal (backends SIGKILL their subprocesses) inside the ~2s
+// emergency-stop budget.
 
 import { mkdir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { servePreviewDirectory, type PreviewServer } from "../server/idea-builder";
 import type { BackendSelector } from "./selector";
-import type { BuildBackend, BuildBackendId, BuildBrief } from "./types";
+import type { BuildBackend, BuildBackendId, BuildBrief, BuildRevision, BuildScreen, BuildStageId } from "./types";
 
 export type OrchestratorBuildStatus = "building" | "ready" | "failed";
+
+// The ladder phase riding NEXT TO the machine status enum (which stays
+// untouched so eliza/native and the wall chips keep working): "hero" = only
+// the hero-level mock exists, "enriching" = hero is live and later stages are
+// in flight, "complete" = the full ladder (incl. mock.json meta) landed.
+export type OrchestratorBuildPhase = "hero" | "enriching" | "complete";
 
 // The snapshot builds[] entry the wall UI consumes (contract shape).
 export interface ProcessBuildSnapshot {
@@ -35,6 +53,12 @@ export interface ProcessBuildSnapshot {
   percent?: number;
   /** Last backend failure message (honesty surface — present only when set). */
   error?: string;
+  /** Stage-ladder phase (present only for ladder backends). */
+  phase?: OrchestratorBuildPhase;
+  /** Validated mock screens as directly-openable URLs (from mock.json meta). */
+  screens?: Array<{ title: string; url: string }>;
+  /** Revision history applied to this lane, most recent last (capped). */
+  revisions?: readonly BuildRevision[];
 }
 
 export interface OrchestratorStartInput {
@@ -56,12 +80,25 @@ export interface OrchestratorStartInput {
   brief?: BuildBrief;
 }
 
+// The structured revision steer() accepts next to the legacy bare string.
+// `seq` is normally assigned by the orchestrator (per-process monotonic).
+export interface OrchestratorRevisionInput {
+  kind?: "steer" | "answer";
+  text: string;
+  questionId?: string;
+  answer?: string;
+  targetScreens?: readonly string[];
+  seq?: number;
+}
+
 // Optional per-build slideshow hook (the slideshow track's generateSlideshow,
-// wired by the integrator). Called after a successful build/correction; a
-// resolved hook flips the build's slideshowUrl on (previewUrl + "slideshow/").
-// The accept's planQuestions pass through untouched so the integrator can wire
-// them into the deck's interactive swipe-to-answer cards. Failures are
-// swallowed — the slideshow is garnish, never a build failure.
+// wired by the integrator). Called after a successful build/correction — and
+// RE-FIRED after the meta stage with the validated screens/suggestedQuestions
+// so the deck can consume mock.json data; a resolved hook flips the build's
+// slideshowUrl on (previewUrl + "slideshow/"). The accept's planQuestions pass
+// through untouched so the integrator can wire them into the deck's
+// interactive swipe-to-answer cards. Failures are swallowed — the slideshow is
+// garnish, never a build failure.
 export type SlideshowHook = (input: {
   upid: string;
   ideaId: string;
@@ -73,6 +110,10 @@ export type SlideshowHook = (input: {
   outDir: string;
   summary: string;
   signal: AbortSignal;
+  /** Validated mock screens (routes/files that exist) once the meta stage lands. */
+  screens?: readonly BuildScreen[];
+  /** Deck decision questions suggested by the mock's meta stage. */
+  suggestedQuestions?: readonly string[];
 }) => Promise<void>;
 
 export interface BuildOrchestratorOptions {
@@ -93,6 +134,16 @@ export interface BuildOrchestratorOptions {
 
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_ABORT_BUDGET_MS = 2_000;
+// Revision history riding every snapshot is bounded (snapshot bloat guard).
+const REVISION_HISTORY_CAP = 8;
+
+// The in-flight run of one lane: `enriching` flips true at the hero ratchet —
+// from then on an incoming revision may abort this run (freshest intent wins).
+interface TrackedRun {
+  controller: AbortController;
+  enriching: boolean;
+  settled: Promise<void>;
+}
 
 interface TrackedBuild {
   backend: BuildBackendId;
@@ -105,10 +156,16 @@ interface TrackedBuild {
   // stays visible through a steer re-run (old content serves until rewritten).
   entrypoint: string | null;
   hasSlideshow: boolean;
-  // Bumped on every successful build/correction; previewUrl carries ?v=<version>
-  // so the wall's iframe cache-busts on steer.
+  // Bumped on every successful build/correction AND on every ladder stage;
+  // previewUrl carries ?v=<version> so the wall's iframe cache-busts.
   version: number;
   error?: string;
+  phase?: OrchestratorBuildPhase;
+  // Validated mock screens ({path,title} — URLs derived in builds()).
+  screens?: readonly BuildScreen[];
+  // Applied revisions, most recent last, capped at REVISION_HISTORY_CAP.
+  revisions: BuildRevision[];
+  run?: TrackedRun;
 }
 
 interface TrackedProcess {
@@ -126,6 +183,8 @@ interface TrackedProcess {
   controllers: Set<AbortController>;
   tasks: Set<Promise<unknown>>;
   aborted: boolean;
+  // Monotonic revision counter — assigns Revision.seq when the caller didn't.
+  revisionSeq: number;
 }
 
 export class BuildOrchestrator {
@@ -166,6 +225,7 @@ export class BuildOrchestrator {
       controllers: new Set(),
       tasks: new Set(),
       aborted: false,
+      revisionSeq: 0,
     };
     this.#processes.set(input.upid, state);
 
@@ -201,6 +261,7 @@ export class BuildOrchestrator {
         entrypoint: null,
         hasSlideshow: false,
         version: 0,
+        revisions: [],
       });
     }
     this.#onUpdate();
@@ -209,7 +270,9 @@ export class BuildOrchestrator {
 
   // Fresh fan-out with ONE automatic retry: a mock lane that fails its first
   // pass (quota blip, transient timeout) gets exactly one clean re-run before
-  // it is surfaced as failed. Corrections (steer) never retry.
+  // it is surfaced as failed. Corrections (steer) never retry — and a
+  // hero-ready lane whose ENRICHMENT failed reads "ready", so it is never
+  // rebuilt from scratch either (retry only from status "failed").
   async #runFreshWithRetry(state: TrackedProcess, backend: BuildBackend): Promise<void> {
     await this.#runBuild(state, backend, null);
     const build = state.builds.get(backend.id)!;
@@ -248,36 +311,59 @@ export class BuildOrchestrator {
         ...(build.progressLabel === undefined ? {} : { progressLabel: build.progressLabel }),
         ...(build.percent === undefined ? {} : { percent: build.percent }),
         ...(build.error === undefined ? {} : { error: build.error }),
+        ...(build.phase === undefined ? {} : { phase: build.phase }),
+        ...(build.screens === undefined || build.screens.length === 0 || base === null
+          ? {}
+          : {
+              screens: build.screens.map((screen) => ({
+                title: screen.title,
+                url: screenPreviewUrl(base, state.nonce, build.version, screen.path),
+              })),
+            }),
+        ...(build.revisions.length === 0 ? {} : { revisions: [...build.revisions] }),
       };
     });
   }
 
-  // Spoken steering: re-run every backend whose build is ready with the
-  // correction, concurrently, rewriting each app in place. Version bumps on
-  // success so the previewUrl cache-busts. Resolves when corrections settle.
-  async steer(upid: string, text: string): Promise<void> {
+  // Spoken/structured steering: normalize the input to a Revision, abort any
+  // in-flight ENRICHMENT (freshest human intent wins), then re-run every
+  // backend whose build is ready with the revision, concurrently, rewriting
+  // each app in place. Version bumps on success so the previewUrl cache-busts.
+  // A FAILED lane has nothing coherent to rewrite — steering revives it with a
+  // fresh fan-out run instead of leaving it dead for the rest of the kickoff.
+  // Resolves when the re-runs settle.
+  async steer(upid: string, input: string | OrchestratorRevisionInput): Promise<void> {
     const state = this.#processes.get(upid);
-    const correction = text.trim();
-    if (state === undefined || state.aborted || correction.length === 0) {
+    if (state === undefined || state.aborted) {
       return;
     }
-    const targets: BuildBackend[] = [];
+    const revision = normalizeRevision(state, input);
+    if (revision === null) {
+      return;
+    }
+    const correctionTargets: BuildBackend[] = [];
     const freshTargets: BuildBackend[] = [];
+    const supersededRuns: Promise<void>[] = [];
     for (const id of state.order) {
       const build = state.builds.get(id)!;
       const backend = this.#selector.backend(id);
       if (backend === undefined) {
         continue;
       }
-      // READY builds take the correction as an in-place rewrite. A FAILED lane
-      // has nothing coherent to rewrite — steering revives it with a fresh
-      // fan-out run instead of leaving it dead for the rest of the kickoff.
       if (build.status === "ready" && build.entrypoint !== null) {
+        // RULE: an incoming revision aborts in-flight enrichment stages — the
+        // hero already serves, and the human's correction outranks bonus work.
+        if (build.run !== undefined && build.run.enriching) {
+          build.run.controller.abort();
+          supersededRuns.push(build.run.settled);
+        }
+        recordRevision(build, revision);
         build.status = "building";
         build.progressLabel = "applying correction";
         build.percent = 0;
-        targets.push(backend);
+        correctionTargets.push(backend);
       } else if (build.status === "failed") {
+        recordRevision(build, revision);
         build.status = "building";
         build.progressLabel = "restarting mock";
         build.percent = 0;
@@ -285,12 +371,17 @@ export class BuildOrchestrator {
         freshTargets.push(backend);
       }
     }
-    if (targets.length === 0 && freshTargets.length === 0) {
+    if (correctionTargets.length === 0 && freshTargets.length === 0) {
       return;
     }
     this.#onUpdate();
+    if (supersededRuns.length > 0) {
+      // Let the aborted enrichment runs settle (bounded) before the correction
+      // rewrites the same files — the backends SIGKILL fast.
+      await settleWithin(supersededRuns, this.#abortBudgetMs);
+    }
     await Promise.allSettled([
-      ...targets.map((backend) => this.#track(state, this.#runBuild(state, backend, correction))),
+      ...correctionTargets.map((backend) => this.#track(state, this.#runBuild(state, backend, revision))),
       ...freshTargets.map((backend) => this.#track(state, this.#runBuild(state, backend, null))),
     ]);
   }
@@ -327,13 +418,30 @@ export class BuildOrchestrator {
     return `http://${this.#host}:${state.server.port}/${id}/`;
   }
 
-  async #runBuild(state: TrackedProcess, backend: BuildBackend, correction: string | null): Promise<void> {
+  async #runBuild(state: TrackedProcess, backend: BuildBackend, revision: BuildRevision | null): Promise<void> {
     const build = state.builds.get(backend.id)!;
     const controller = new AbortController();
     state.controllers.add(controller);
     const outDir = join(state.dir, backend.id);
+    let settleRun!: () => void;
+    const run: TrackedRun = {
+      controller,
+      enriching: false,
+      settled: new Promise<void>((resolveSettled) => {
+        settleRun = resolveSettled;
+      }),
+    };
+    build.run = run;
+    // Hook calls are chained so a hero-stage deck generation and the meta-stage
+    // re-fire never interleave on the same outDir.
+    let hookChain: Promise<void> = Promise.resolve();
+    const queueHook = (extra?: { screens?: readonly BuildScreen[]; suggestedQuestions?: readonly string[] }): Promise<void> => {
+      hookChain = hookChain.then(() => this.#generateSlideshow(state, backend.id, outDir, controller.signal, extra));
+      return this.#track(state, hookChain);
+    };
+    let heroSeen = false;
     try {
-      if (correction === null) {
+      if (revision === null) {
         // Fresh fan-out: the backend starts from an empty per-backend directory.
         await rm(outDir, { recursive: true, force: true });
         await mkdir(outDir, { recursive: true });
@@ -345,33 +453,104 @@ export class BuildOrchestrator {
         callsign: state.input.callsign,
         ...(state.input.brief === undefined ? {} : { brief: state.input.brief }),
         outDir,
-        ...(correction === null ? {} : { correction }),
+        ...(revision === null ? {} : { correction: revision.text, revision }),
         signal: controller.signal,
         onProgress: (update) => {
+          if (state.aborted || controller.signal.aborted) {
+            return; // a superseded/aborted run must not clobber the successor's labels
+          }
           build.progressLabel = update.label;
           build.percent = update.percent;
           this.#onUpdate();
         },
+        onStage: (event) => {
+          if (state.aborted || controller.signal.aborted) {
+            return;
+          }
+          if (event.stage === "hero") {
+            // READY-RATCHET: the lane goes live the moment the hero lands.
+            heroSeen = true;
+            run.enriching = true;
+            build.status = "ready";
+            build.entrypoint = event.entrypoint;
+            if (event.summary !== undefined && event.summary.length > 0) {
+              build.summary = event.summary;
+            }
+            build.version += 1;
+            build.error = undefined;
+            build.phase = "enriching";
+            this.#onUpdate();
+            void queueHook();
+          } else if (event.stage === "flows") {
+            build.version += 1; // iframe cache-bust: the filled screens serve now
+            this.#onUpdate();
+          } else {
+            build.version += 1;
+            if (event.screens !== undefined) {
+              build.screens = event.screens;
+            }
+            this.#onUpdate();
+            // Re-fire the deck hook with the validated mock.json facts.
+            void queueHook({ screens: event.screens, suggestedQuestions: event.suggestedQuestions });
+          }
+        },
       });
-      if (state.aborted) {
+      if (state.aborted || controller.signal.aborted) {
+        // Aborted fan-out, or superseded by a fresher revision — the successor
+        // run owns the lane's fields now.
         return;
       }
       if (result.ok) {
-        build.status = "ready";
-        build.summary = result.summary;
-        build.entrypoint = result.entrypoint;
-        build.version += 1;
-        build.error = undefined;
-        build.progressLabel = correction === null ? "mock ready" : "correction applied";
-        build.percent = 100;
-        this.#onUpdate();
-        await this.#generateSlideshow(state, backend.id, outDir, controller.signal);
-      } else if (correction !== null && build.entrypoint !== null) {
-        // A failed correction leaves the previous working app in place — the
+        if (heroSeen) {
+          // Ladder path: the per-stage events already ratcheted status/version;
+          // the resolution only settles the final facts (no extra bump).
+          build.status = "ready";
+          if (result.summary.length > 0) {
+            build.summary = result.summary;
+          }
+          if (result.entrypoint !== null) {
+            build.entrypoint = result.entrypoint;
+          }
+          if (result.screens !== undefined) {
+            build.screens = result.screens;
+          }
+          build.phase = result.completedStages?.includes("meta") === true ? "complete" : "hero";
+          build.error = undefined;
+          build.percent = 100;
+          this.#onUpdate();
+        } else {
+          build.status = "ready";
+          build.summary = result.summary;
+          build.entrypoint = result.entrypoint;
+          build.version += 1;
+          build.error = undefined;
+          build.progressLabel = revision === null ? "mock ready" : "correction applied";
+          build.percent = 100;
+          if (result.screens !== undefined) {
+            build.screens = result.screens;
+          }
+          if (result.completedStages !== undefined) {
+            build.phase = result.completedStages.includes("meta") ? "complete" : "hero";
+          }
+          this.#onUpdate();
+          void queueHook(
+            result.screens === undefined && result.suggestedQuestions === undefined
+              ? undefined
+              : { screens: result.screens, suggestedQuestions: result.suggestedQuestions },
+          );
+        }
+        await hookChain;
+      } else if (heroSeen || (revision !== null && build.entrypoint !== null)) {
+        // NEVER regress: a hero-ready lane survives enrichment failure, and a
+        // failed correction leaves the previous working app in place — the
         // build stays ready (old version serves) instead of going dark.
         build.status = "ready";
         build.error = result.error;
-        build.progressLabel = "correction failed";
+        if (heroSeen) {
+          build.phase = "hero";
+        } else {
+          build.progressLabel = "correction failed";
+        }
         build.percent = 100;
       } else {
         build.status = "failed";
@@ -380,10 +559,15 @@ export class BuildOrchestrator {
         build.progressLabel = "failed";
       }
     } catch (error) {
-      if (!state.aborted) {
-        if (correction !== null && build.entrypoint !== null) {
+      if (!state.aborted && !controller.signal.aborted) {
+        if (heroSeen || (revision !== null && build.entrypoint !== null)) {
           build.status = "ready";
-          build.progressLabel = "correction failed";
+          if (heroSeen) {
+            build.phase = "hero";
+            build.progressLabel = "enrichment failed — hero mock stands";
+          } else {
+            build.progressLabel = "correction failed";
+          }
         } else {
           build.status = "failed";
         }
@@ -391,11 +575,21 @@ export class BuildOrchestrator {
       }
     } finally {
       state.controllers.delete(controller);
+      if (build.run === run) {
+        build.run = undefined;
+      }
+      settleRun();
       this.#onUpdate();
     }
   }
 
-  async #generateSlideshow(state: TrackedProcess, id: BuildBackendId, outDir: string, signal: AbortSignal): Promise<void> {
+  async #generateSlideshow(
+    state: TrackedProcess,
+    id: BuildBackendId,
+    outDir: string,
+    signal: AbortSignal,
+    extra?: { screens?: readonly BuildScreen[]; suggestedQuestions?: readonly string[] },
+  ): Promise<void> {
     if (this.#slideshow === null || signal.aborted) {
       return;
     }
@@ -412,6 +606,8 @@ export class BuildOrchestrator {
         outDir,
         summary: build.summary ?? "",
         signal,
+        ...(extra?.screens === undefined ? {} : { screens: extra.screens }),
+        ...(extra?.suggestedQuestions === undefined ? {} : { suggestedQuestions: extra.suggestedQuestions }),
       });
       build.hasSlideshow = true;
     } catch {
@@ -445,6 +641,55 @@ export function mergeLegacyBuildState(
     return { status: "building", previewUrl: null };
   }
   return { status: "failed", previewUrl: null };
+}
+
+// Normalize steer()'s union input to a full Revision. A bare string is a plain
+// steer; a structured input keeps its typed intent. `seq` is assigned from the
+// per-process monotonic counter when absent (and the counter always advances
+// past an explicit seq so later revisions still order after it). Empty text →
+// null (nothing to apply).
+function normalizeRevision(state: TrackedProcess, input: string | OrchestratorRevisionInput): BuildRevision | null {
+  if (typeof input === "string") {
+    const text = input.trim();
+    if (text.length === 0) {
+      return null;
+    }
+    state.revisionSeq += 1;
+    return { kind: "steer", text, seq: state.revisionSeq };
+  }
+  const text = typeof input.text === "string" ? input.text.trim() : "";
+  if (text.length === 0) {
+    return null;
+  }
+  const seq =
+    typeof input.seq === "number" && Number.isFinite(input.seq) && input.seq > state.revisionSeq
+      ? input.seq
+      : state.revisionSeq + 1;
+  state.revisionSeq = seq;
+  const targetScreens = (input.targetScreens ?? [])
+    .filter((screen): screen is string => typeof screen === "string" && screen.trim().length > 0)
+    .map((screen) => screen.trim());
+  return {
+    kind: input.kind === "answer" ? "answer" : "steer",
+    text,
+    ...(typeof input.questionId === "string" && input.questionId.length > 0 ? { questionId: input.questionId } : {}),
+    ...(typeof input.answer === "string" && input.answer.length > 0 ? { answer: input.answer } : {}),
+    ...(targetScreens.length > 0 ? { targetScreens } : {}),
+    seq,
+  };
+}
+
+function recordRevision(build: TrackedBuild, revision: BuildRevision): void {
+  build.revisions.push(revision);
+  if (build.revisions.length > REVISION_HISTORY_CAP) {
+    build.revisions.splice(0, build.revisions.length - REVISION_HISTORY_CAP);
+  }
+}
+
+// A screen's directly-openable URL: hash routes ride the entrypoint URL's
+// fragment; file screens get their own path (both keep the cache-bust query).
+function screenPreviewUrl(base: string, nonce: string, version: number, path: string): string {
+  return path.startsWith("#") ? `${base}?v=${nonce}.${version}${path}` : `${base}${path}?v=${nonce}.${version}`;
 }
 
 async function settleWithin(tasks: readonly Promise<unknown>[], budgetMs: number): Promise<void> {
