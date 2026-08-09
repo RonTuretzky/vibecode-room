@@ -19,6 +19,8 @@ import { demoProjectorSnapshot, busyRoomSnapshot } from "./demo-data";
 import type { SelfTreeSeed } from "./self-repo";
 import type { BuildloopProcess, BuildloopSnapshot } from "./buildloop";
 import { PRACTICE_ORB_COUNT } from "./guided/machine";
+import { DISMISS_CONFIRM_MS, TREE_MENU_WIDTH, treeMenuModel, treeMenuPlacement } from "./TreeMenu";
+import type { ProjectorProcess } from "./types";
 
 function countOccurrences(haystack: string, needle: string): number {
   return haystack.split(needle).length - 1;
@@ -32,8 +34,10 @@ describe("projector UI contract", () => {
       expect(html).toContain(`data-region="${region}"`);
     }
 
+    // The fleet region IS the 3D garden now (one tree per process; the rail
+    // of 2D fleet cards is gone) — the transcript still names the fleet.
+    expect(html).toContain(`data-tree-count="${demoProjectorSnapshot.processes.length}"`);
     expect(html).toContain("Atlas");
-    expect(html).toContain("Cobalt");
     expect(html).toContain("Turn the meeting notes into a blocker announcer.");
   });
 
@@ -188,13 +192,11 @@ describe("per-wall scoping: each wall renders ITS surface + ITS controls", () =>
     expect(wallAHtml).toContain('data-testid="qr-import-button"');
   });
 
-  test("?view=builds (wall B): build surface + build-side controls, NO idea surfaces", () => {
-    // Build surface: the whole fleet + transcript rail.
-    expect(countOccurrences(wallBHtml, 'data-testid="fleet-panel"')).toBe(
-      demoProjectorSnapshot.processes.length,
-    );
-    expect(wallBHtml).toContain("Atlas");
-    expect(wallBHtml).toContain("Cobalt");
+  test("?view=builds (wall B): transcript rail + controls stay, the FLEET RAIL IS GONE", () => {
+    // Operator-directed redesign: no 2D fleet cards down the wall edge — the
+    // per-tree menu (pick a tree in the garden) replaced them.
+    expect(wallBHtml).not.toContain('data-testid="fleet-panel"');
+    expect(wallBHtml).not.toContain('data-testid="fleet-scroll-rail"');
     expect(wallBHtml).toContain('data-region="transcript"');
     // Build-side control.
     expect(wallBHtml).toContain('data-testid="qr-import-button"');
@@ -213,11 +215,10 @@ describe("per-wall scoping: each wall renders ITS surface + ITS controls", () =>
     }
   });
 
-  test("the default full view (desk mode) still renders everything", () => {
+  test("the default full view (desk mode) still renders everything (minus the dead rail)", () => {
     expect(fullHtml).toContain('data-testid="idea-tray"');
-    expect(countOccurrences(fullHtml, 'data-testid="fleet-panel"')).toBe(
-      demoProjectorSnapshot.processes.length,
-    );
+    // The fleet rail is deprecated on EVERY view — desk mode included.
+    expect(fullHtml).not.toContain('data-testid="fleet-panel"');
     expect(fullHtml).toContain('data-testid="qr-import-button"');
     expect(fullHtml).toContain('data-testid="mic-capture-button"');
     for (const region of REQUIRED_PROJECTOR_REGIONS) {
@@ -235,12 +236,13 @@ describe("per-wall scoping: each wall renders ITS surface + ITS controls", () =>
 });
 
 // DE-THEMED WALLS: the two walls are ONE continuous room. On-demand overlays
-// (build detail, project deck, QR import, guided demo) open on WHICHEVER wall
-// summons them — a person dwelling a build tree on wall A gets the detail
-// overlay right there. Only the PERSISTENT single-instance panels stay placed
-// per wall (tray/capture cluster on A, fleet rail + QR button on B).
+// (per-tree menu, project deck, QR import, guided demo) open on WHICHEVER
+// wall summons them — a person dwelling a build tree on wall A gets the
+// anchored tree menu right there. Only the PERSISTENT single-instance panels
+// stay placed per wall (tray/capture cluster on A, transcript + QR button
+// on B).
 describe("de-themed walls: on-demand overlays are available on BOTH walls", () => {
-  test("the build-detail overlay opens on wall A (view=ideas)", () => {
+  test("a picked tree's menu opens on wall A (view=ideas) — the simulated-select seam", () => {
     const html = renderToStaticMarkup(
       <ProjectorApp
         initialSnapshot={demoProjectorSnapshot}
@@ -248,7 +250,9 @@ describe("de-themed walls: on-demand overlays are available on BOTH walls", () =
         initialOverlay={{ selected: "Atlas" }}
       />,
     );
-    expect(html).toContain('data-testid="build-detail"');
+    expect(html).toContain('data-testid="tree-menu"');
+    // The old modal BuildDetail is gone — one per-tree surface, not two.
+    expect(html).not.toContain('data-testid="build-detail"');
   });
 
   test("the project deck overlay opens on wall A (view=ideas)", () => {
@@ -291,8 +295,148 @@ describe("de-themed walls: on-demand overlays are available on BOTH walls", () =
         initialOverlay={{ selected: "Atlas", qrOpen: true }}
       />,
     );
-    expect(html).toContain('data-testid="build-detail"');
+    expect(html).toContain('data-testid="tree-menu"');
     expect(html).toContain('data-testid="qr-overlay"');
+  });
+});
+
+// PER-TREE MENU (operator-directed redesign): the fleet rail is gone — pick a
+// tree in the garden and THAT instance's controls expand in a panel anchored
+// beside it. The static renderer cannot raycast the WebGL tree, so the
+// initialOverlay.selected seam stands in for the pick (same pattern as
+// slideshowUpid/qrOpen); anchored placement is covered by the pure
+// treeMenuPlacement tests below.
+describe("per-tree menu: the tree is the interface", () => {
+  const conceptBuilds: BuildloopProcess["builds"] = [
+    { backend: "smithers", label: "Smithers", status: "building", previewUrl: null, summary: null, slideshowUrl: null, progressLabel: "mocking", percent: 40 },
+    { backend: "native", label: "Native", status: "ready", previewUrl: "http://127.0.0.1:4100/", summary: null, slideshowUrl: "http://127.0.0.1:4100/slides.html" },
+    { backend: "eliza", label: "ElizaOS", status: "failed", previewUrl: null, summary: "boom", slideshowUrl: null },
+  ];
+  const conceptSnapshot = (): BuildloopSnapshot => ({
+    ...demoProjectorSnapshot,
+    processes: demoProjectorSnapshot.processes.map((process, index) =>
+      index === 0 ? ({ ...process, builds: conceptBuilds } as BuildloopProcess) : process,
+    ),
+  });
+
+  test("header: title/callsign/state-progress line + the ✕ close button", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={demoProjectorSnapshot} initialOverlay={{ selected: "Atlas" }} />,
+    );
+    expect(html).toContain('data-testid="tree-menu"');
+    expect(html).toContain('data-testid="tree-menu-title"');
+    expect(html).toContain("Blocker announcer"); // the inferred project title
+    expect(html).toContain('data-testid="tree-menu-callsign"');
+    expect(html).toContain("Atlas");
+    expect(html).toContain('data-testid="tree-menu-status"');
+    expect(html).toContain("active · 68%");
+    expect(html).toContain('data-testid="tree-menu-close"');
+  });
+
+  test("concept lanes: ready = View button, building = honest percent row, failed = FAILED", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={conceptSnapshot()} initialOverlay={{ selected: "Atlas" }} />,
+    );
+    expect(countOccurrences(html, 'data-testid="tree-menu-lane"')).toBe(3);
+    expect(html).toContain("mocking · 40%");
+    expect(html).toContain("MOCK READY ✓");
+    expect(html).toContain("View ▸");
+    expect(html).toContain("FAILED");
+    // The building/failed rows are NOT buttons — no dead controls, just truth.
+    const buildingIdx = html.indexOf('data-status="building"');
+    expect(html.slice(html.lastIndexOf("<", buildingIdx), buildingIdx)).not.toContain("button");
+  });
+
+  test("steer: the menu says the pick armed steering and offers the typed input", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={demoProjectorSnapshot} initialOverlay={{ selected: "Atlas" }} />,
+    );
+    expect(html).toContain('data-testid="tree-menu-steer"');
+    expect(html).toContain("talking steers this build");
+    expect(html).toContain('data-testid="tree-menu-steer-input"');
+    expect(html).toContain('data-testid="tree-menu-steer-send"');
+  });
+
+  test("remove is TWO-STAGE: resting shows 🗑 remove, never the armed confirm", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={demoProjectorSnapshot} initialOverlay={{ selected: "Atlas" }} />,
+    );
+    expect(html).toContain('data-testid="tree-menu-remove"');
+    expect(html).toContain("🗑 remove");
+    // The confirm stage only appears after the first press (and it disarms
+    // itself after DISMISS_CONFIRM_MS — a wandering dwell must not delete).
+    expect(html).not.toContain('data-testid="tree-menu-remove-confirm"');
+    expect(DISMISS_CONFIRM_MS).toBeGreaterThanOrEqual(2_000);
+    expect(DISMISS_CONFIRM_MS).toBeLessThanOrEqual(8_000);
+  });
+
+  test("the SELF/mirror tree: 'the room' flavor, room-steer chat, NO remove button", () => {
+    const selfProcess = {
+      ...demoProjectorSnapshot.processes[0]!,
+      upid: "self",
+      callsign: "mirror",
+      task: "Vibersyn Room",
+      stage: "self",
+    } as ProjectorProcess;
+    const html = renderToStaticMarkup(
+      <ProjectorApp
+        initialSnapshot={{ ...demoProjectorSnapshot, processes: [selfProcess, ...demoProjectorSnapshot.processes.slice(1)] }}
+        initialOverlay={{ selected: "mirror" }}
+      />,
+    );
+    expect(html).toContain('data-self="true"');
+    expect(html).toContain("the room");
+    expect(html).toContain("talking changes the room");
+    expect(html).toContain('data-testid="tree-menu-steer-input"');
+    // The room must not dismiss itself.
+    expect(html).not.toContain('data-testid="tree-menu-remove"');
+  });
+
+  test("no selection → no menu anywhere", () => {
+    const html = renderToStaticMarkup(<ProjectorApp initialSnapshot={demoProjectorSnapshot} />);
+    expect(html).not.toContain('data-testid="tree-menu"');
+  });
+
+  // ── pure derivations ───────────────────────────────────────────────────────
+
+  test("treeMenuModel: lanes ride the shared guided derivation (roster queued lanes included)", () => {
+    const snapshot: BuildloopSnapshot = {
+      ...conceptSnapshot(),
+      backends: [
+        { id: "smithers", label: "Smithers", enabled: true, available: true },
+        { id: "eliza", label: "ElizaOS", enabled: true, available: true },
+        { id: "native", label: "Native", enabled: false, available: false },
+      ],
+    };
+    const model = treeMenuModel(snapshot.processes[0]!, snapshot);
+    // Enabled roster first (smithers/eliza), then the un-rostered native lane
+    // that still carries a real build — never hide a real build.
+    expect(model.lanes.map((lane) => lane.id)).toEqual(["smithers", "eliza", "native"]);
+    expect(model.lanes[0]).toMatchObject({ status: "building", percent: 40 });
+    expect(model.lanes[2]).toMatchObject({ status: "ready", hasDeck: true, previewUrl: "http://127.0.0.1:4100/" });
+    expect(model.isSelf).toBe(false);
+    expect(model.title).toBe("Blocker announcer");
+  });
+
+  test("treeMenuPlacement: opens beside the anchor rect, never over it, clamped to the viewport", () => {
+    const viewport = { width: 1920, height: 1080 };
+    const menu = { width: TREE_MENU_WIDTH, height: 560 };
+    // Room on the right → the panel sits right of the tree's rect.
+    const right = treeMenuPlacement({ left: 200, top: 300, width: 100, height: 200 }, viewport, menu);
+    expect(right.left).toBeGreaterThanOrEqual(200 + 100); // clear of the tree
+    // Tree near the right edge → the panel flips to the left side.
+    const flipped = treeMenuPlacement({ left: 1700, top: 300, width: 150, height: 200 }, viewport, menu);
+    expect(flipped.left + menu.width).toBeLessThanOrEqual(1700);
+    // Every placement stays inside the viewport.
+    for (const placement of [right, flipped, treeMenuPlacement({ left: 100, top: 0, width: 600, height: 600 }, { width: 800, height: 600 }, menu)]) {
+      expect(placement.left).toBeGreaterThanOrEqual(0);
+      expect(placement.top).toBeGreaterThanOrEqual(0);
+      expect(placement.left + menu.width).toBeLessThanOrEqual(1920);
+    }
+    // No anchor (keyboard select / degenerate projection) → edge resting spot.
+    const rest = treeMenuPlacement(null, viewport, menu);
+    expect(rest.left + menu.width).toBeLessThanOrEqual(viewport.width);
+    expect(rest.top).toBeGreaterThanOrEqual(0);
   });
 });
 
@@ -362,7 +506,7 @@ describe("build loop surfaces (backward compatible)", () => {
     expect(html).not.toContain("still booting");
   });
 
-  test("process.builds[] renders a chip per backend build with status-driven affordances", () => {
+  test("process.builds[] surfaces as the picked tree's MENU LANES (the fleet-card chips are gone)", () => {
     const processes: BuildloopProcess[] = demoProjectorSnapshot.processes.map((process, index) =>
       index === 0
         ? {
@@ -374,31 +518,33 @@ describe("build loop surfaces (backward compatible)", () => {
           }
         : process,
     );
-    const html = renderToStaticMarkup(
+    const closed = renderToStaticMarkup(
       <ProjectorApp initialSnapshot={{ ...demoProjectorSnapshot, processes }} />,
     );
-    expect(countOccurrences(html, 'data-testid="build-chip"')).toBe(2);
+    // No menu open → no lane surfaces anywhere (the rail no longer leaks them).
+    expect(closed).not.toContain('data-testid="build-chip"');
+    expect(closed).not.toContain('data-testid="tree-menu-lane"');
+
+    const html = renderToStaticMarkup(
+      <ProjectorApp
+        initialSnapshot={{ ...demoProjectorSnapshot, processes }}
+        initialOverlay={{ selected: "Atlas" }}
+      />,
+    );
+    expect(countOccurrences(html, 'data-testid="tree-menu-lane"')).toBe(2);
+    // A building lane is an HONEST status row (live label + percent), never a
+    // silent dead button; a ready lane is the in-room View ▸ button.
     expect(html).toContain('data-status="building"');
-    expect(html).toContain("scaffolding");
+    expect(html).toContain("scaffolding · 40%");
     expect(html).toContain('data-status="ready"');
-    // ONE in-room View button per ready lane (the old Preview/Slides _blank
-    // anchors were popup-blocked for every dwell cursor).
-    expect(html).toContain('data-testid="build-view-button"');
+    expect(html).toContain("MOCK READY ✓");
+    expect(html).toContain("View ▸");
     expect(html).not.toContain('data-testid="build-preview-link"');
   });
 
-  test("per-card lifecycle buttons match the process state (halted offers none)", () => {
-    const processes = demoProjectorSnapshot.processes.map((process) =>
-      process.callsign === "Atlas" ? { ...process, state: "halted" as const } : process,
-    );
-    const html = renderToStaticMarkup(
-      <ProjectorApp initialSnapshot={{ ...demoProjectorSnapshot, processes }} />,
-    );
-    // Atlas (halted): no lifecycle buttons. Cobalt (planning): pause + halt.
-    expect(countOccurrences(html, 'data-testid="process-pause-button"')).toBe(1);
-    expect(countOccurrences(html, 'data-testid="process-halt-button"')).toBe(1);
-    expect(html).not.toContain('data-testid="process-resume-button"');
-  });
+  // Per-process lifecycle (pause/resume/halt) now lives in the deck window's
+  // HUD (Slideshow renders ProcessControls — covered in the deck describe);
+  // the menu's 🗑 remove covers stop+remove, and 'k' still halts the selected.
 });
 
 describe("project deck (slideshow)", () => {
@@ -483,7 +629,7 @@ describe("project deck (slideshow)", () => {
     expect(html).toBe("");
   });
 
-  test("the fleet card offers Deck ▸ only when a deck exists", () => {
+  test("the tree menu offers a deck path only when a deck exists (ready lane View ▸ / fixture Deck ▸)", () => {
     const processes: BuildloopProcess[] = demoProjectorSnapshot.processes.map((process, index) =>
       index === 0
         ? {
@@ -502,12 +648,28 @@ describe("project deck (slideshow)", () => {
         : process,
     );
     const withDeck = renderToStaticMarkup(
-      <ProjectorApp initialSnapshot={{ ...demoProjectorSnapshot, processes }} />,
+      <ProjectorApp
+        initialSnapshot={{ ...demoProjectorSnapshot, processes }}
+        initialOverlay={{ selected: "Atlas" }}
+      />,
     );
-    expect(countOccurrences(withDeck, 'data-testid="process-deck-button"')).toBe(1);
+    // The ready lane's row is the deck button (View ▸ opens that backend's tab).
+    expect(withDeck).toContain('data-testid="tree-menu-lane"');
+    expect(withDeck).toContain("View ▸");
 
-    const without = renderToStaticMarkup(<ProjectorApp initialSnapshot={demoProjectorSnapshot} />);
-    expect(without).not.toContain('data-testid="process-deck-button"');
+    // Fixture decks (mock room) get the plain Deck ▸ button instead.
+    const busy = busyRoomSnapshot();
+    const fixture = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={busy} initialOverlay={{ selected: busy.processes[0]!.callsign }} />,
+    );
+    expect(fixture).toContain('data-testid="tree-menu-deck"');
+
+    // A deck-less legacy process offers neither.
+    const without = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={demoProjectorSnapshot} initialOverlay={{ selected: "Atlas" }} />,
+    );
+    expect(without).not.toContain('data-testid="tree-menu-deck"');
+    expect(without).not.toContain("View ▸");
   });
 });
 
@@ -527,36 +689,43 @@ describe("two-stage kickoff/commission surfaces", () => {
     execution: { status: "executing", progressLabel: "run step 2/9", percent: 22 },
   });
 
-  test("a concept fleet card: 🌱 badge, MOCK READY chip tag, and the commission button", () => {
+  test("a concept tree's menu: 🌱 stage, honest building percent, MOCK READY ✓ View lane", () => {
     const processes = demoProjectorSnapshot.processes.map((process, index) =>
       index === 0 ? conceptProcess() : process,
     );
     const html = renderToStaticMarkup(
-      <ProjectorApp initialSnapshot={{ ...demoProjectorSnapshot, processes }} />,
+      <ProjectorApp
+        initialSnapshot={{ ...demoProjectorSnapshot, processes }}
+        initialOverlay={{ selected: "Atlas" }}
+      />,
     );
-    expect(html).toContain('data-testid="process-stage"');
+    expect(html).toContain('data-testid="tree-menu"');
     expect(html).toContain('data-stage="concept"');
-    expect(html).toContain('data-testid="build-chip-mock"');
-    expect(html).toContain("mock ready");
-    expect(html).toContain('data-testid="commission-button"');
+    expect(html).toContain("🌱 concept");
+    expect(html).toContain("mocking · 40%");
+    expect(html).toContain("MOCK READY ✓");
+    expect(html).toContain("View ▸");
     expect(html).not.toContain('data-testid="execution-chip"');
   });
 
-  test("a commissioned card: 🌳 badge + pulsing execution chip, commission button gone", () => {
+  test("a commissioned tree's menu: 🌳 stage + the pulsing execution chip", () => {
     const processes = demoProjectorSnapshot.processes.map((process, index) =>
       index === 0 ? commissionedProcess() : process,
     );
     const html = renderToStaticMarkup(
-      <ProjectorApp initialSnapshot={{ ...demoProjectorSnapshot, processes }} />,
+      <ProjectorApp
+        initialSnapshot={{ ...demoProjectorSnapshot, processes }}
+        initialOverlay={{ selected: "Atlas" }}
+      />,
     );
     expect(html).toContain('data-stage="commissioned"');
+    expect(html).toContain("🌳 commissioned");
     expect(html).toContain('data-testid="execution-chip"');
     expect(html).toContain('data-status="executing"');
     expect(html).toContain("run step 2/9");
-    expect(html).not.toContain('data-testid="commission-button"');
   });
 
-  test("a BUILT execution links the full-app preview", () => {
+  test("a BUILT execution links the full-app preview from the menu", () => {
     const built = {
       ...conceptProcess(),
       execution: { status: "built", previewUrl: "http://127.0.0.1:4300/", summary: "The full app." },
@@ -565,17 +734,22 @@ describe("two-stage kickoff/commission surfaces", () => {
       index === 0 ? (built as BuildloopProcess) : process,
     );
     const html = renderToStaticMarkup(
-      <ProjectorApp initialSnapshot={{ ...demoProjectorSnapshot, processes }} />,
+      <ProjectorApp
+        initialSnapshot={{ ...demoProjectorSnapshot, processes }}
+        initialOverlay={{ selected: "Atlas" }}
+      />,
     );
     expect(html).toContain('data-testid="execution-preview-link"');
     expect(html).toContain("http://127.0.0.1:4300/");
     expect(html).toContain("BUILT ✓");
   });
 
-  test("legacy processes with no build surfaces get no stage badge (fixtures stay clean)", () => {
-    const html = renderToStaticMarkup(<ProjectorApp initialSnapshot={demoProjectorSnapshot} />);
-    expect(html).not.toContain('data-testid="process-stage"');
-    expect(html).not.toContain('data-testid="commission-button"');
+  test("legacy processes with no build surfaces get a lane-less menu (fixtures stay clean)", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={demoProjectorSnapshot} initialOverlay={{ selected: "Atlas" }} />,
+    );
+    expect(html).toContain('data-testid="tree-menu"');
+    expect(html).not.toContain('data-testid="tree-menu-lanes"');
     expect(html).not.toContain('data-testid="execution-chip"');
   });
 
@@ -690,9 +864,18 @@ describe("gesture dwell-select interaction", () => {
     expect(preferredGuestUrl({ url: "http://10.0.0.2:8788/hands", httpsUrl: null })).toBe("http://10.0.0.2:8788/hands");
   });
 
-  test("fleet panels opt into dwell targeting via data-dwell", () => {
-    const html = renderToStaticMarkup(<ProjectorApp initialSnapshot={demoProjectorSnapshot} />);
-    expect(html).toContain('data-dwell="steer"');
+  test("the tree menu's controls are plain enabled <button>s (automatic dwell targets)", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={demoProjectorSnapshot} initialOverlay={{ selected: "Atlas" }} />,
+    );
+    // GestureLayer.collectDomTargets targets "button:not(:disabled)" — every
+    // menu control must therefore be a plain enabled <button>.
+    for (const id of ['data-testid="tree-menu-close"', 'data-testid="tree-menu-steer-send"', 'data-testid="tree-menu-remove"']) {
+      const idx = html.indexOf(id);
+      expect(idx).toBeGreaterThan(-1);
+      // The <button …data-testid…> open tag carries no disabled attribute.
+      expect(html.slice(html.lastIndexOf("<button", idx), html.indexOf(">", idx))).not.toContain("disabled");
+    }
   });
 
   test("help overlay documents the gesture dwell mechanic and the camera lock", () => {
@@ -703,17 +886,18 @@ describe("gesture dwell-select interaction", () => {
   });
 });
 
-// FLEET HOVER-SCROLL (FleetScroll.tsx): the dwell cursor cannot wheel-scroll,
-// so an overflowing fleet rail grows ▲/▼ strips that scroll WHILE hovered —
-// css :hover (mouse) or data-dwell-hot (gesture/joystick/guest cursors).
-describe("fleet rail hover-scroll", () => {
-  test("the fleet rail always renders inside the hover-scroll wrapper", () => {
-    const html = renderToStaticMarkup(<ProjectorApp initialSnapshot={demoProjectorSnapshot} />);
-    expect(html).toContain('data-testid="fleet-scroll-rail"');
-    // SSR (and any non-overflowing list) shows NO scroll chrome: overflow is
-    // measured per-frame in the browser, and a 2-panel fleet never needs it.
-    expect(html).not.toContain('data-testid="fleet-scroll-up"');
-    expect(html).not.toContain('data-testid="fleet-scroll-down"');
+// FLEET HOVER-SCROLL (FleetScroll.tsx): DEPRECATED from the walls — the App
+// renders no fleet rail anywhere (the per-tree menu replaced it); the
+// component itself stays compiling + covered for any remaining consumer.
+describe("fleet rail hover-scroll (component only — the App rail is gone)", () => {
+  test("the App renders NO fleet rail on any view (per-tree menus replaced it)", () => {
+    for (const search of [undefined, "?live=1&wall=B&view=builds", "?live=1&wall=A&view=ideas"]) {
+      const html = renderToStaticMarkup(
+        <ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch={search} />,
+      );
+      expect(html).not.toContain('data-testid="fleet-scroll-rail"');
+      expect(html).not.toContain('data-testid="fleet-panel"');
+    }
   });
 
   test("once the list overflows, both strips render as ENABLED plain <button>s (dwell-targetable)", () => {

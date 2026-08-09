@@ -861,6 +861,67 @@ describe("POST /api/process/:upid lifecycle + steer routes", () => {
   });
 });
 
+// PER-PROCESS DISMISS (the tree menu's 🗑 remove): unlike halt — which keeps
+// a dead card on the wall — dismiss stops the process's builds AND removes it
+// from the snapshot entirely. Builds bookkeeping only; the pinned SELF
+// project is refused (the room must not dismiss itself).
+describe("POST /api/process/:upid/dismiss", () => {
+  test("stops the builds and removes the process from the snapshot (no dead card)", async () => {
+    const { app, runtime } = await makeApp({
+      detector: new ScriptedDetector([ideaResult("a removable dashboard", 0.9)]),
+      buildBackends: [new RouteFakeBackend()],
+    });
+    const id = await surfaceIdea(runtime, "a removable dashboard");
+    const accepted = await postJson(app, `/api/idea/${id}/accept`);
+    const upid = ((await accepted.json()) as ProjectorSnapshot).processes[0]?.upid;
+    expect(upid).toBeDefined();
+    if (upid === undefined) return;
+    await waitFor(() => runtime.registry.builds(upid).some((build) => build.status === "ready"));
+
+    const dismissed = await postJson(app, `/api/process/${upid}/dismiss`);
+    expect(dismissed.status).toBe(200);
+    const snapshot = (await dismissed.json()) as ProjectorSnapshot;
+    // Halt leaves a dead card; dismiss leaves NOTHING — the tree is gone.
+    expect(snapshot.processes.find((process) => process.upid === upid)).toBeUndefined();
+    expect(runtime.registry.records().find((record) => record.upid === upid)).toBeUndefined();
+    expect(runtime.registry.builds(upid)).toHaveLength(0);
+  });
+
+  test("an unknown upid is 404-free: 200 with the snapshot unchanged", async () => {
+    const { app } = await makeApp({ buildBackends: [new RouteFakeBackend()] });
+    const response = await postJson(app, "/api/process/upid-ghost/dismiss");
+    expect(response.status).toBe(200);
+    expect(((await response.json()) as ProjectorSnapshot).processes).toHaveLength(0);
+  });
+
+  test("the SELF project is refused: the room must not dismiss itself", async () => {
+    const { app } = await makeApp({ buildBackends: [new RouteFakeBackend()] });
+    const response = await postJson(app, "/api/process/self/dismiss");
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { ok: boolean; error: string };
+    expect(body.ok).toBe(false);
+    expect(body.error).toContain("cannot dismiss itself");
+  });
+
+  test("offline-demo referer guard: nothing is removed, cosmetic snapshot returned", async () => {
+    const { app, runtime } = await makeApp({
+      detector: new ScriptedDetector([ideaResult("a sticky dashboard", 0.9)]),
+      buildBackends: [new RouteFakeBackend()],
+    });
+    const id = await surfaceIdea(runtime, "a sticky dashboard");
+    const accepted = await postJson(app, `/api/idea/${id}/accept`);
+    const upid = ((await accepted.json()) as ProjectorSnapshot).processes[0]?.upid;
+    expect(upid).toBeDefined();
+    if (upid === undefined) return;
+
+    const response = await postJson(app, `/api/process/${upid}/dismiss`, undefined, {
+      referer: "http://localhost:8787/?live=0",
+    });
+    expect(response.status).toBe(200);
+    expect(runtime.registry.records().find((record) => record.upid === upid)).toBeDefined();
+  });
+});
+
 describe("POST /api/process/:upid/answer — swipe-deck answers", () => {
   test("records the answer in the ledger AND steers the build with the question-framed correction", async () => {
     const backend = new RouteFakeBackend();

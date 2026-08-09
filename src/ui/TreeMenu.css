@@ -1,0 +1,229 @@
+/* ============================================================================
+   Tree menu — the per-tree control panel anchored beside the picked tree
+   (TreeMenu.tsx). Position comes inline (left/top from treeMenuPlacement);
+   this file owns the glass card look + the gesture-XL sizing so every button
+   is a comfortable dwell target.
+   ============================================================================ */
+.tree-menu {
+  position: fixed;
+  z-index: 30; /* over the scene + rails, under the deck/QR overlays (50+) */
+  width: min(440px, 92vw);
+  max-height: 86vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  border-radius: 20px;
+  border: 1px solid rgba(160, 210, 230, 0.22);
+  padding: 20px 22px;
+  background: linear-gradient(180deg, rgba(16, 28, 38, 0.92), rgba(9, 16, 24, 0.88));
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.45);
+  animation: fade-in 200ms ease;
+}
+
+.tree-menu-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.tree-menu-identity {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.tree-menu-eyebrow {
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-dim, rgba(190, 214, 228, 0.7));
+}
+
+.tree-menu-title {
+  margin: 0;
+  font-size: 21px;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.tree-menu-callsign {
+  font-size: 14px;
+  font-weight: 700;
+  color: rgba(158, 226, 255, 0.9);
+}
+
+.tree-menu-status {
+  font-size: 13px;
+  color: var(--ink-dim, rgba(190, 214, 228, 0.7));
+}
+
+.tree-menu-close {
+  flex-shrink: 0;
+}
+
+/* Concept lanes: one row per backend. Ready rows are BUTTONS (dwell targets);
+   building/queued/failed rows are honest status readouts. */
+.tree-menu-lanes {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.tree-menu-lane {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 16px;
+  border-radius: 14px;
+  border: 1px solid rgba(160, 210, 230, 0.16);
+  background: rgba(20, 34, 46, 0.6);
+  color: inherit;
+  font: inherit;
+  font-size: 14.5px;
+  text-align: left;
+}
+
+button.tree-menu-lane.lane-ready {
+  border-color: rgba(0, 255, 136, 0.4);
+  cursor: pointer;
+}
+
+button.tree-menu-lane.lane-ready:hover {
+  background: rgba(0, 255, 136, 0.1);
+}
+
+.tree-menu-lane.lane-failed {
+  border-color: rgba(255, 59, 48, 0.4);
+}
+
+.tree-lane-label {
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.tree-lane-status {
+  flex: 1;
+  min-width: 0;
+  color: var(--ink-dim, rgba(190, 214, 228, 0.72));
+}
+
+.tree-menu-lane.lane-ready .tree-lane-status {
+  color: rgba(0, 255, 136, 0.85);
+}
+
+.tree-lane-open {
+  flex-shrink: 0;
+  font-weight: 800;
+  color: rgba(158, 226, 255, 0.95);
+}
+
+/* Steer: the armed note + the typed input (deck iterate-bar contract). */
+.tree-menu-steer {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.tree-menu-steer-note {
+  font-size: 13.5px;
+  color: rgba(158, 226, 255, 0.85);
+}
+
+.tree-menu-steer-form {
+  display: flex;
+  gap: 10px;
+}
+
+.tree-menu-steer-input {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(160, 210, 230, 0.25);
+  background: rgba(6, 12, 18, 0.8);
+  color: inherit;
+  font: inherit;
+  font-size: 14.5px;
+}
+
+.tree-menu-steer-sent {
+  font-size: 13px;
+  color: rgba(0, 255, 136, 0.85);
+}
+
+/* Two-stage remove: resting is calm; armed goes red and asks again. */
+.tree-menu-remove {
+  align-self: flex-start;
+  border-color: rgba(255, 120, 110, 0.4);
+}
+
+.tree-menu-remove.is-armed {
+  background: rgba(255, 59, 48, 0.18);
+  border-color: rgba(255, 59, 48, 0.75);
+  color: #ffb4ad;
+  font-weight: 800;
+}
+
+/* ── GESTURE-XL (main.gesture-mode — mirrors styles.css conventions): the
+   menu is THE wall control surface, so rows/buttons take the secondary
+   104px/88px hit heights and the inter-target gaps exceed the 48px dwell-
+   hitbox inflation budget. ────────────────────────────────────────────── */
+main.gesture-mode .tree-menu {
+  width: min(620px, 46vw);
+  gap: 28px;
+  padding: 30px 32px;
+}
+
+main.gesture-mode .tree-menu-title {
+  font-size: 34px;
+}
+
+main.gesture-mode .tree-menu-callsign {
+  font-size: 22px;
+}
+
+main.gesture-mode .tree-menu-status,
+main.gesture-mode .tree-menu-eyebrow {
+  font-size: 19px;
+}
+
+main.gesture-mode .tree-menu-lanes {
+  gap: 26px;
+}
+
+main.gesture-mode .tree-menu-lane {
+  min-height: 104px;
+  padding: 22px 28px;
+  font-size: 24px;
+  border-radius: 18px;
+}
+
+main.gesture-mode .tree-menu-steer {
+  gap: 24px;
+}
+
+main.gesture-mode .tree-menu-steer-note {
+  font-size: 22px;
+}
+
+main.gesture-mode .tree-menu-steer-form {
+  gap: 26px;
+}
+
+main.gesture-mode .tree-menu-steer-input {
+  min-height: 88px;
+  font-size: 24px;
+}
+
+/* The close/deck/send/remove buttons already inherit the gesture .ctl-button
+   XL sizing from styles.css; the close chip alone drops to the secondary
+   size so the header keeps room for the title. */
+main.gesture-mode .tree-menu-close {
+  min-height: 104px;
+  padding: 22px 34px;
+  font-size: 30px;
+}

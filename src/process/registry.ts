@@ -605,6 +605,23 @@ export class ProcessRegistry {
     this.trace("process.halt", correlationId, upid, { trigger });
   }
 
+  // PER-PROCESS DISMISS (the tree menu's 🗑 remove): stop this process's
+  // builds and take it OFF the wall entirely. A live process goes through the
+  // full halt teardown first (durable-run cancel, preview stop, orchestrator
+  // abort — the same emergency-budget machinery); then the record is deleted
+  // so the next published snapshot simply has no such tree (halt alone keeps a
+  // dead card for visibility). Builds bookkeeping only: nothing here touches
+  // GitHub or files beyond what halt's own registries already stop. Throws for
+  // an unknown UPID (the HTTP route maps that to the 404-free no-op idiom).
+  async dismiss(upid: string, correlationId: string): Promise<void> {
+    const record = this.require(upid);
+    if (record.state !== "dead") {
+      await this.halt(upid, correlationId, "dismiss");
+    }
+    this.#processes.delete(upid);
+    this.trace("process.dismiss", correlationId, upid, {});
+  }
+
   select(upid: string, correlationId: string): void {
     this.requireLive(upid);
     for (const process of this.#processes.values()) {

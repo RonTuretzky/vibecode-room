@@ -8,6 +8,7 @@ import {
   guidedLanes,
   guidedNotice,
   guidedSettle,
+  laneStatusLabel,
   lanesAllFailed,
   stepNumber,
   type GuidedState,
@@ -363,15 +364,7 @@ function RaceBody({ state, snapshot }: { state: GuidedState; snapshot: Projector
               data-status={lane.status}
             >
               <span className="guided-lane-label">Concept {index + 1}</span>
-              <span className="guided-lane-status">
-                {lane.status === "queued"
-                  ? "queued…"
-                  : lane.status === "building"
-                    ? `${lane.progressLabel ?? "mocking…"}${lane.percent !== null ? ` · ${Math.round(lane.percent)}%` : ""}`
-                    : lane.status === "ready"
-                      ? "MOCK READY ✓"
-                      : "FAILED"}
-              </span>
+              <span className="guided-lane-status">{laneStatusLabel(lane)}</span>
               <span className="guided-lane-track" aria-hidden="true">
                 <span
                   className="guided-lane-fill"

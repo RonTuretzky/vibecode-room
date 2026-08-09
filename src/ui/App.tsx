@@ -8,8 +8,9 @@ import { PinchCameraLayer } from "./gesture/PinchCameraLayer";
 import { HandSkeletonHud } from "./gesture/HandSkeletonHud";
 import type { HandsStatus } from "./gesture/hands-client";
 import { RoomScene, type DialogueNodeSpec, type DialogueTopicSpec, type IdeaOrbSpec, type ResearchNodeSpec, type SceneLayout, type SceneMode, type TreeSpec } from "./RoomScene";
+import type { SceneDwellRect } from "./gesture/scene-source";
 import { Slideshow } from "./Slideshow";
-import { BuildDetail } from "./BuildDetail";
+import { TreeMenu } from "./TreeMenu";
 import { IdeaTray } from "./IdeaTray";
 import { ResearchTray } from "./ResearchTray";
 import { ResearchDeckOverlay } from "./ResearchDeckOverlay";
@@ -17,11 +18,8 @@ import { QrImport } from "./QrImport";
 import { GuestHands } from "./GuestHands";
 import { roomHandsSocketUrl } from "./gesture/remote";
 import { HelpOverlay } from "./HelpOverlay";
-import { BuildChips, CommissionButton, ExecutionChip, ProcessControls } from "./BuildChips";
 import { ControlDock } from "./ControlDock";
 import { useSelfRepoTree, type SelfTreeSeed } from "./self-repo";
-import { FleetScrollRail } from "./FleetScroll";
-import { TakeHomeQr } from "./TakeHomeQr";
 import { buildsOf, lifecycleActionsFor, looksLikeSnapshot } from "./buildloop";
 import type { LifecycleAction } from "./buildloop";
 import { executionOf, parseDeckDecisionMessage, sceneStageOf, stageOf } from "./stage";
@@ -46,9 +44,11 @@ interface ProjectorAppProps {
   urlSearch?: string;
   // Test seam: boot with an on-demand overlay already open so the (static,
   // effect-free) test renderer can assert the de-themed overlay contract —
-  // detail/deck/QR overlays open on WHICHEVER wall summons them, never only
-  // on view=builds. `selected` takes a callsign/upid, `slideshowUpid` a upid,
-  // `ideaCard` an idea-action-card target (id null = the primary suggestion).
+  // menu/deck/QR overlays open on WHICHEVER wall summons them, never only
+  // on view=builds. `selected` takes a callsign/upid and opens the per-tree
+  // MENU (the static renderer's stand-in for a scene pick), `slideshowUpid`
+  // a upid, `ideaCard` an idea-action-card target (id null = the primary
+  // suggestion).
   initialOverlay?: {
     selected?: string;
     slideshowUpid?: string;
@@ -138,6 +138,10 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
   // interactive demo fixture in an effect below.
   const [snapshot, setSnapshot] = useState(initialSnapshot ?? emptyProjectorSnapshot);
   const [selected, setSelected] = useState<string | null>(initialOverlay?.selected ?? null);
+  // Where the selected tree stood ON SCREEN at pick time (RoomScene projects
+  // its dwell rect through onSelectProcess) — the tree menu anchors beside it.
+  // Null = no projection (keyboard select / test seam): the menu edge-rests.
+  const [menuAnchor, setMenuAnchor] = useState<SceneDwellRect | null>(null);
   const [isUnmuting, setIsUnmuting] = useState(false);
   const [micState, setMicState] = useState<"off" | "connecting" | "live">("off");
   const [micLevel, setMicLevel] = useState(0);
@@ -388,16 +392,18 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
     [],
   );
 
-  // Toggle selection: selecting the already-open bubble closes it.
+  // Toggle selection: selecting the already-open bubble closes it. Keyboard/
+  // programmatic selects carry no screen anchor — the menu edge-rests.
   const selectBubble = useCallback(
     (id: string) => {
       const next = resolveSelection(id);
+      setMenuAnchor(null);
       setSelected((current) => (current !== null && current === next ? null : next));
     },
     [resolveSelection],
   );
 
-  const closeDetail = useCallback(() => setSelected(null), []);
+  const closeMenu = useCallback(() => setSelected(null), []);
 
   // The current steering target UPID (CLICK A PROJECT -> STEER IT). Surfaced on the
   // live snapshot; null in the static demo.
@@ -678,23 +684,20 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
     [liveMode],
   );
 
-  // CLICK A PROJECT -> STEER IT. In live mode, clicking a process bubble/panel sets
-  // it as the steering target (so subsequent transcript routes to it); clicking the
-  // current target again clears steering. In offline demo it falls back to opening
-  // the process detail.
-  const steerProcess = useCallback(
-    async (id: string) => {
-      const match = snapshotRef.current.processes.find(
-        (process) => process.callsign === id || process.upid === id,
-      );
-      if (!liveMode || mockModeRef.current || match === undefined) {
-        selectBubble(id);
+  // CLICK/DWELL A TREE -> ITS MENU (+ STEER-ARM IT). Picking a garden tree
+  // opens that instance's anchored control menu right there (the fleet rail
+  // is gone from the walls — the tree IS the interface) AND sets it as the
+  // steering target so subsequent transcript routes to it. Re-picking the
+  // current target keeps steering armed (the menu says "talking steers this
+  // build", so it must not silently clear). Offline demo skips the POST; the
+  // menu still opens over the static fixtures.
+  const steerArmProcess = useCallback(
+    async (upid: string) => {
+      if (!liveMode || mockModeRef.current || snapshotRef.current.steeringUpid === upid) {
         return;
       }
-      const clearing = snapshotRef.current.steeringUpid === match.upid;
-      const url = clearing ? "/api/process/select/clear" : `/api/process/${encodeURIComponent(match.upid)}/select`;
       try {
-        const response = await fetch(url, { method: "POST" });
+        const response = await fetch(`/api/process/${encodeURIComponent(upid)}/select`, { method: "POST" });
         if (response.ok && response.headers.get("content-type")?.includes("application/json")) {
           setSnapshot((await response.json()) as ProjectorSnapshot);
         }
@@ -702,7 +705,36 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
         // Non-authoritative projector: a failed select must never block the UI.
       }
     },
-    [liveMode, selectBubble],
+    [liveMode],
+  );
+
+  // 🗑 REMOVE (the tree menu's two-stage delete): stop this project's builds
+  // and remove it from the snapshot entirely — POST /api/process/:upid/dismiss.
+  // Offline demo drops the process locally so the static garden stays
+  // interactive. The menu closes immediately either way (its tree is going).
+  const dismissProcess = useCallback(
+    async (upid: string) => {
+      setSelected(null);
+      if (!liveMode || mockModeRef.current) {
+        setSnapshot((current) => ({
+          ...current,
+          processes: current.processes.filter((process) => process.upid !== upid),
+        }));
+        return;
+      }
+      try {
+        const response = await fetch(`/api/process/${encodeURIComponent(upid)}/dismiss`, { method: "POST" });
+        if (response.ok && response.headers.get("content-type")?.includes("application/json")) {
+          const body: unknown = await response.json();
+          if (looksLikeSnapshot(body)) {
+            setSnapshot(body);
+          }
+        }
+      } catch {
+        // Non-authoritative projector: a failed dismiss must never block the UI.
+      }
+    },
+    [liveMode],
   );
 
   // NOTE: the BackendSelector UI is gone (the rooms run env-configured
@@ -1526,7 +1558,6 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
     clearHidden,
   ]);
 
-  const detailOpen = selectedProcess !== null;
   const listeningState = snapshot.muted ? "muted" : "listening";
 
   // MOCK ROOM toggle: swap in the busy fixture (several projects at once) and
@@ -1562,13 +1593,15 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
 
   // PER-WALL CONTRACT (DE-THEMED): the two walls are ONE continuous room —
   // neither is "the idea wall" or "the build wall". The 3D room scene renders
-  // in FULL on every window, and ON-DEMAND overlays (build detail, deck, QR
+  // in FULL on every window, and ON-DEMAND overlays (tree menu, deck, QR
   // import, guided demo) open on WHICHEVER wall summons them. ?view only
   // places the single-instance PERSISTENT panels pragmatically so the two
   // projections don't duplicate them: view=ideas (wall A) carries the idea
   // tray + suggestion + capture/auto-build/mic/guided-demo cluster,
-  // view=builds (wall B) the fleet rail + transcript + QR-import button, and
-  // the default full view (single-window desk mode) carries everything.
+  // view=builds (wall B) the transcript rail + QR-import button, and the
+  // default full view (single-window desk mode) carries everything. Per-
+  // process controls are NOT a rail anymore: pick a tree in the garden and
+  // its anchored menu expands right there (TreeMenu.tsx).
   // Genuinely global chrome (status bar, scene controls, help) stays on both
   // walls. Only Mock Room hides the 2D rail/tray entirely (a pure 3D showcase).
   const showIdeaSurfaces = view !== "builds";
@@ -1701,23 +1734,24 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
     }
   }, [ideaCard, ideaCardOrb]);
 
-  // Clicking a project in the scene: mock/demo processes with a FIXTURE deck
-  // open their slideshow (mock room has no rail, so the scene click is the only
-  // deck path there); every live process steers — click-to-steer stays the
-  // primary live semantic, and real generated decks open from the fleet card's
-  // "Deck ▸" button instead.
+  // Picking a tree in the scene (click or dwell): open ITS anchored menu at
+  // the pick-time screen rect and steer-arm the process. Picking another tree
+  // MOVES the menu (selected changes, anchor re-derives); the deck, previews,
+  // steer input and remove all live inside the menu now — including fixture
+  // decks (mock room), which get the menu's "Deck ▸" button.
   const selectSceneProcess = useCallback(
-    (callsign: string) => {
+    (callsign: string, anchor?: SceneDwellRect | null) => {
       const process = snapshotRef.current.processes.find(
         (candidate) => candidate.callsign === callsign || candidate.upid === callsign,
       );
-      if (process !== undefined && (process.slides?.length ?? 0) > 0) {
-        setSlideshowUpid(process.upid);
-        return;
+      if (process === undefined) {
+        return; // e.g. the synthetic self tree before the mirror is pinned
       }
-      void steerProcess(callsign);
+      setMenuAnchor(anchor ?? null);
+      setSelected(process.callsign);
+      void steerArmProcess(process.upid);
     },
-    [steerProcess],
+    [steerArmProcess],
   );
 
   // Clicking an idea orb OPENS its contextual action card — building is the
@@ -1811,6 +1845,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
         pointerNav={!gestureMode && !flatLock}
         onAcceptIdea={acceptOrb}
         onSelectProcess={selectSceneProcess}
+        onPickMiss={closeMenu}
         dialogue={dialogueSpecs}
         topics={topicSpecs}
         research={researchSpecs}
@@ -2086,7 +2121,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
       </header>
 
 
-      <div className={`stage${detailOpen ? " stage-dimmed" : ""}`}>
+      <div className="stage">
         <div className="stage-main">
           {showIdeaTray && !mockMode && !researchActive ? (
             <IdeaTray
@@ -2109,15 +2144,17 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
         </div>
 
         {/* Mock room is a pure 3D showcase — the 2D rail/tray stay hidden.
-            The rail (fleet / transcript) is the persistent panel cluster that
-            wall B carries (single-instance placement, not a wall theme). In
+            THE FLEET RAIL IS GONE (operator-directed redesign): per-process
+            controls live in the anchored per-tree menu now (pick a tree →
+            TreeMenu opens beside it). The rail keeps only the transcript
+            card + the hands toggle — wall B's single-instance placement. In
             gesture mode the transcript card is lifted into wall B's right
             third by CSS (display-only content may use the pointing-forbidden
             zone); desk mode keeps it in-rail. */}
         {!mockMode && showBuildSurfaces ? (
           <aside className="rail">
-            {/* PINCH CAMERA toggle (hands): a compact chip docked above the
-                fleet (live-room request — it was crowding the header). Seeded
+            {/* PINCH CAMERA toggle (hands): a compact chip docked in the rail
+                (live-room request — it was crowding the header). Seeded
                 from ?hands=; the label mirrors PinchCameraLayer's socket state. */}
             <button
               type="button"
@@ -2134,18 +2171,6 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
                   ? "✋ Hands: LIVE"
                   : "✋ Hands: connecting"}
             </button>
-            <FleetPanel
-              processes={snapshot.processes}
-              selected={selected}
-              steeringUpid={steeringUpid}
-              onSelect={(id) => void steerProcess(id)}
-              onLifecycle={(upid, action) => void processLifecycle(upid, action)}
-              onOpenDeck={(upid, backend) => {
-                setSlideshowBackend(backend ?? null);
-                setSlideshowUpid(upid);
-              }}
-              onCommission={(upid) => void commissionProcess(upid)}
-            />
             <TranscriptStream lines={snapshot.transcript} />
           </aside>
         ) : null}
@@ -2322,14 +2347,29 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
         </div>
       ) : null}
 
-      {/* ON-DEMAND overlays (detail / deck / QR) open on WHICHEVER wall
+      {/* ON-DEMAND overlays (tree menu / deck / QR) open on WHICHEVER wall
           summons them — the walls are one continuous room, so a person
-          dwelling a build tree on wall A gets the detail overlay right there
-          (per-wall safe-zone CSS repositions each card). */}
-      {detailOpen && selectedProcess ? (
-        <div className="detail-overlay" onClick={closeDetail}>
-          <BuildDetail process={selectedProcess} trace={snapshot.trace} onClose={closeDetail} />
-        </div>
+          dwelling a build tree on wall A gets the anchored menu right there.
+          The TREE MENU replaces the old modal BuildDetail: it expands beside
+          the picked tree (RoomScene passes the pick-time screen rect) and
+          closes on ✕, on picking empty ground (onPickMiss), or moves when
+          another tree is picked. Its plain enabled <button>s are dwell
+          targets automatically (GestureLayer collectDomTargets). */}
+      {selectedProcess !== null ? (
+        <TreeMenu
+          process={selectedProcess}
+          snapshot={snapshot}
+          anchor={menuAnchor}
+          onClose={closeMenu}
+          onOpenDeck={(upid, backend) => {
+            // The deck window takes over — one overlay at a time.
+            setSelected(null);
+            setSlideshowBackend(backend ?? null);
+            setSlideshowUpid(upid);
+          }}
+          onSteer={(text) => void deckSteer(selectedProcess.upid, text)}
+          onDismiss={(upid) => void dismissProcess(upid)}
+        />
       ) : null}
 
       {slideshowUpid !== null
@@ -2543,141 +2583,10 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-// Always-visible per-process panels (spec §9): callsign / state / last spoken
-// output / last action / UPID + the recent action log — so a passive room viewer
-// reads "how each build is going" without interacting. V0 caps the operable fleet
-// at 2; when fewer than 2 run, an explicit "No second process running" slot shows.
-function FleetPanel({
-  processes,
-  selected,
-  steeringUpid,
-  onSelect,
-  onLifecycle,
-  onOpenDeck,
-  onCommission,
-}: {
-  processes: ProjectorProcess[];
-  selected: string | null;
-  steeringUpid: string | null;
-  onSelect: (id: string) => void;
-  onLifecycle: (upid: string, action: LifecycleAction) => void;
-  onOpenDeck: (upid: string, backend?: string) => void;
-  onCommission: (upid: string) => void;
-}) {
-  return (
-    <section className="rail-card fleet-card">
-      <div className="rail-title-row">
-        <h3 className="rail-title">Fleet</h3>
-        <span className="trace-count">{processes.length}/2</span>
-      </div>
-      {/* Hover-scroll wrapper: when the panel list overflows, ▲/▼ affordances
-          appear pinned above/below it and scroll the list WHILE a cursor rests
-          on them — mouse :hover or a gesture/joystick/guest dwell cursor
-          (data-dwell-hot). Dwell cursors cannot wheel-scroll; this is their
-          only way past the fold. */}
-      <FleetScrollRail>
-        {processes.map((process) => {
-          const steering = process.upid === steeringUpid;
-          const builds = buildsOf(process);
-          // TWO-STAGE surfaces: a project with mock lanes is a CONCEPT until
-          // an explicit commission starts the execution lane (COMMISSIONED).
-          // Legacy processes with no build surfaces at all get no badge.
-          const stage = stageOf(process);
-          const execution = executionOf(process);
-          // The SELF (mirror) project always shows its stage badge — its whole
-          // identity is the stage — even before any self-run opens a lane.
-          const hasBuildSurface =
-            builds.length > 0 || execution !== null || typeof process.buildStatus === "string" || stage === "self";
-          // Commission is offered once ANY mock lane is ready (there is a
-          // concept worth executing) and only while still a concept.
-          const commissionable =
-            stage === "concept" && builds.some((build) => build.status === "ready");
-          // A deck exists when the process carries fixture slides (mock room) or
-          // any backend build published a REAL generated slideshow.
-          const hasDeck =
-            (process.slides?.length ?? 0) > 0 || builds.some((build) => build.slideshowUrl !== null);
-          return (
-          <article
-            key={process.upid}
-            className={`fleet-panel state-${process.state}${process.callsign === selected ? " selected" : ""}${steering ? " steering" : ""} stage-${stage}`}
-            data-testid="fleet-panel"
-            data-dwell="steer"
-            data-callsign={process.callsign}
-            data-state={process.state}
-            data-steering={steering ? "true" : "false"}
-            data-stage={stage}
-            onClick={() => onSelect(process.callsign)}
-          >
-            <div className="fleet-panel-head">
-              <strong className="fleet-callsign">{process.callsign}</strong>
-              <span className={`fleet-state badge state-${process.state}`}>{process.state}</span>
-              {hasBuildSurface ? (
-                <span
-                  className={`stage-badge stage-${stage}`}
-                  data-testid="process-stage"
-                  data-stage={stage}
-                >
-                  {stage === "self" ? "🪞 SELF" : stage === "concept" ? "🌱 concept" : "🌳 commissioned"}
-                </span>
-              ) : null}
-              {steering ? <span className="fleet-steering" data-testid="fleet-steering">steering →</span> : null}
-            </div>
-            {process.task.length > 0 ? (
-              <p className="fleet-task" data-testid="fleet-task">{process.task}</p>
-            ) : null}
-            <p className="fleet-output">{process.lastOutput || "—"}</p>
-            <p className="fleet-action">↳ {process.lastAction}</p>
-            <BuildChips
-              builds={builds}
-              stage={stage}
-              onOpenDeck={(backend) => onOpenDeck(process.upid, backend)}
-            />
-            {execution !== null ? <ExecutionChip execution={execution} /> : null}
-            {/* Take-home QR: the published deck's Pages URL, scannable from a
-                phone at projector distance. */}
-            {typeof process.publishedUrl === "string" && typeof process.publishedQrSvg === "string" ? (
-              <TakeHomeQr url={process.publishedUrl} qrSvg={process.publishedQrSvg} size="card" />
-            ) : null}
-            <div className="fleet-actions-row">
-              <ProcessControls upid={process.upid} state={process.state} onLifecycle={onLifecycle} />
-              {commissionable ? (
-                <CommissionButton upid={process.upid} onCommission={onCommission} />
-              ) : null}
-              {hasDeck ? (
-                <button
-                  type="button"
-                  className="fleet-ctl fleet-ctl-deck"
-                  data-testid="process-deck-button"
-                  title="Open this project's slideshow deck."
-                  onClick={(clickEvent) => {
-                    clickEvent.stopPropagation();
-                    onOpenDeck(process.upid);
-                  }}
-                >
-                  Deck ▸
-                </button>
-              ) : null}
-            </div>
-            {process.events.length > 0 ? (
-              <ol className="fleet-log">
-                {process.events.slice(-5).map((entry, index) => (
-                  <li key={`${entry}-${index}`}>{entry}</li>
-                ))}
-              </ol>
-            ) : null}
-            <code className="fleet-upid">{process.upid}</code>
-          </article>
-          );
-        })}
-        {processes.length < 2 ? (
-          <article className="fleet-panel empty" data-testid="fleet-empty">
-            No second process running
-          </article>
-        ) : null}
-      </FleetScrollRail>
-    </section>
-  );
-}
+// NOTE: the FleetPanel rail is GONE (operator-directed redesign): its
+// per-process controls now live in the anchored per-tree menu (TreeMenu.tsx),
+// opened by picking a tree in the garden. FleetScroll.tsx / BuildChips.tsx
+// stay as components — the deck HUD still composes BuildChips/ProcessControls.
 
 function TranscriptStream({ lines }: { lines: TranscriptLine[] }) {
   // Newest line FIRST: this is a passive wall display with no scroll

@@ -7,6 +7,7 @@ import { getFlatPoseSender, registerSceneFlatPoseControl } from "./gesture/flat-
 import { cornerEye, cornerVerticalFovDeg, cornerYaw } from "./corner-lock";
 import { FLAT_EYE_DISTANCE, FLAT_EYE_HEIGHT, FLAT_YAW, flatVerticalFovDeg, flatViewOffset } from "./flat-lock";
 import { loadGardenFlora, type FloraLibrary } from "./garden-flora";
+import { buildCentralPark, loadCentralParkLayout, type CentralParkBuild } from "./central-park";
 import type { SelfTreeSpec } from "./self-repo";
 import {
   DIALOGUE_CENTER_X,
@@ -238,7 +239,15 @@ interface RoomSceneProps {
   // dwell layer's raycast targeting still work. Fixed per window (URL-derived).
   pointerNav?: boolean;
   onAcceptIdea: (id: string | null) => void;
-  onSelectProcess: (callsign: string) => void;
+  // Tree pick → the anchored per-tree menu. `anchor` is the picked tree's
+  // screen-projected bounding rect (the dwell rect), re-derived at pick time
+  // so the menu opens BESIDE the tree instead of over it; null when the
+  // projection is unavailable (degenerate rect / zero-size canvas).
+  onSelectProcess: (callsign: string, anchor?: SceneDwellRect | null) => void;
+  // A plain click on empty ground (no node hit, not a drag): App closes the
+  // open tree menu. Mouse/touch only — dwell cursors have no "miss" gesture,
+  // so the menu's ✕ button covers gesture mode.
+  onPickMiss?: () => void;
   // RESEARCH MODE (all optional so legacy callers/tests are untouched): the
   // dialogue window + research quests to grow the 3D dialogue tree from, and
   // the click handler for research crystals (proposed → accept and spawn the
@@ -261,6 +270,10 @@ interface RoomSceneProps {
   // adopts the mirror's live TreeSpec from `trees`, so selecting it steers
   // the room itself.
   selfTree?: SelfTreeSpec | null;
+  // CENTRAL PARK (?park=1): lay the real park under the garden as a stylized
+  // diorama (baked OSM layers + the surveyed trees — see central-park.ts).
+  // Fixed per window (URL-derived, like the locks).
+  park?: boolean;
 }
 
 const MATURITY_COLOR: Record<IdeaTrayItem["maturity"], number> = {
@@ -853,7 +866,7 @@ interface Entry {
   disposeExtra?: () => void;
 }
 
-export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, focusUpid = null, pointerNav = true, cornerLock = false, flatLock = false, autoFit = false, onAcceptIdea, onSelectProcess, dialogue = [], topics = [], research = [], onResearchNode, onDialogueNode, selfTree = null }: RoomSceneProps) {
+export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, focusUpid = null, pointerNav = true, cornerLock = false, flatLock = false, autoFit = false, onAcceptIdea, onSelectProcess, onPickMiss, dialogue = [], topics = [], research = [], onResearchNode, onDialogueNode, selfTree = null, park = false }: RoomSceneProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const ideasRef = useRef(ideas);
   ideasRef.current = ideas;
@@ -885,6 +898,9 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
   // Same deal: the corner lock is URL-derived and fixed for the window's life.
   const cornerLockRef = useRef(cornerLock);
   cornerLockRef.current = cornerLock;
+  // Same deal: the Central Park layer is URL-derived and fixed per window.
+  const parkRef = useRef(park);
+  parkRef.current = park;
   // Same deal: the flat lock is URL-derived and fixed for the window's life.
   const flatLockRef = useRef(flatLock);
   flatLockRef.current = flatLock;
@@ -899,6 +915,8 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
   onAcceptRef.current = onAcceptIdea;
   const onSelectRef = useRef(onSelectProcess);
   onSelectRef.current = onSelectProcess;
+  const onPickMissRef = useRef(onPickMiss);
+  onPickMissRef.current = onPickMiss;
   const tick = useRef(0);
 
   useEffect(() => {
@@ -1145,6 +1163,10 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         { name: "jacaranda_tree", count: 10, rMin: 34, rMax: 82, sMin: 0.45, sMax: 0.62 },
       ];
       let floraDisposed = false;
+      // Central Park diorama (?park=1): built (async) BEFORE the flora
+      // scatters, so the scatter can keep grass and jacarandas out of the
+      // park's real water bodies via the layer's point test.
+      let parkBuild: CentralParkBuild | null = null;
       // Flower-top landing spots for the butterflies, filled in as the flora
       // scatter runs (async — no flowers loaded simply means no landings).
       const flowerSpots: { x: number; y: number; z: number }[] = [];
@@ -1167,7 +1189,18 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
           const matrices: THREE.Matrix4[][] = variants.map(() => []);
           for (let i = 0; i < spec.count; i++) {
             const angle = ((i + floraRng() * 0.9) / spec.count) * Math.PI * 2;
-            const radius = spec.rMin + floraRng() * (spec.rMax - spec.rMin);
+            let radius = spec.rMin + floraRng() * (spec.rMax - spec.rMin);
+            // Park layer: nothing sprouts out of the Reservoir — re-roll the
+            // radius a few times (same wedge, so ring coverage survives),
+            // then concede the instance to the water.
+            if (parkBuild !== null) {
+              for (let tries = 0; tries < 6 && parkBuild.isWater(Math.cos(angle) * radius, Math.sin(angle) * radius); tries++) {
+                radius = spec.rMin + floraRng() * (spec.rMax - spec.rMin);
+              }
+              if (parkBuild.isWater(Math.cos(angle) * radius, Math.sin(angle) * radius)) {
+                continue;
+              }
+            }
             dummy.position.set(Math.cos(angle) * radius, 0, Math.sin(angle) * radius);
             dummy.rotation.y = floraRng() * Math.PI * 2;
             dummy.scale.setScalar(spec.sMin + floraRng() * (spec.sMax - spec.sMin));
@@ -1200,18 +1233,36 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         }
       };
       if (!softwareGL) {
-        loadGardenFlora()
-          .then((flora) => {
-            floraLib = flora;
-            // Rebuild the data nodes as real models on the next frame.
-            floraNodesDirty = true;
-            if (!floraDisposed) {
-              scatterFlora(flora);
-            }
-          })
-          .catch((error: unknown) => {
-            console.warn("garden flora failed to load; primitive glyphs stay", error);
-          });
+        // The park layer (when requested) resolves BEFORE the flora scatter so
+        // the scatter's water test sees it; a failed park fetch degrades to
+        // the plain meadow rather than blocking the flora.
+        const parkReady = parkRef.current
+          ? loadCentralParkLayout()
+              .then((parkLayout) => {
+                if (floraDisposed) {
+                  return;
+                }
+                parkBuild = buildCentralPark(parkLayout);
+                group.add(parkBuild.group);
+              })
+              .catch((error: unknown) => {
+                console.warn("central park layer failed to load; plain meadow stays", error);
+              })
+          : Promise.resolve();
+        parkReady.then(() =>
+          loadGardenFlora()
+            .then((flora) => {
+              floraLib = flora;
+              // Rebuild the data nodes as real models on the next frame.
+              floraNodesDirty = true;
+              if (!floraDisposed) {
+                scatterFlora(flora);
+              }
+            })
+            .catch((error: unknown) => {
+              console.warn("garden flora failed to load; primitive glyphs stay", error);
+            }),
+        );
       }
 
       // Rolling hills ring the horizon (haze-tinted by the fog) so the meadow
@@ -3332,11 +3383,16 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
           onAcceptRef.current(entry.ideaSpec.id);
         }
       } else if (picked?.kind === "process" && picked.callsign !== undefined) {
-        onSelectRef.current(picked.callsign);
+        // The anchor is the tree's screen-projected rect (same projection the
+        // dwell layer targets), so the App's menu can open beside the tree.
+        onSelectRef.current(picked.callsign, dwellRectFor(`${SCENE_PROC_PREFIX}${picked.callsign}`));
       } else if (picked?.kind === "research" && picked.key !== undefined) {
         onResearchRef.current?.(picked.key);
       } else if (picked?.kind === "dialogue" && picked.key !== undefined) {
         onDialogueRef.current?.(picked.key);
+      } else if (picked === null) {
+        // Empty ground: a deliberate click on nothing closes the tree menu.
+        onPickMissRef.current?.();
       }
     };
     const onPointerLeave = () => {
@@ -3489,7 +3545,8 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
         } else if (id.startsWith(SCENE_TURN_PREFIX) && entry.dialogueSpec !== undefined) {
           onDialogueRef.current?.(entry.dialogueSpec.id);
         } else if (id.startsWith(SCENE_PROC_PREFIX) && entry.treeSpec !== undefined) {
-          onSelectRef.current(entry.treeSpec.callsign);
+          // Dwell activation: same anchor contract as the click path.
+          onSelectRef.current(entry.treeSpec.callsign, dwellRectFor(id));
         }
       },
       setHighlights: (ids) => {

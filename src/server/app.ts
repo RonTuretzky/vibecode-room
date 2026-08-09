@@ -383,6 +383,28 @@ export function createProjectorApp(runtime: ProjectorRuntime, options: Projector
     }
     return context.json(runtime.publishNow());
   });
+  // PER-PROCESS DISMISS (the tree menu's 🗑 remove, behind its two-stage
+  // confirm): stop the process's builds AND remove it from the snapshot —
+  // unlike halt, no dead card stays behind. Builds bookkeeping only (registry
+  // dismiss = halt teardown + record delete); never GitHub, never files
+  // outside the build registries. The pinned SELF project is refused — the
+  // room must not dismiss itself. 404-free idiom otherwise: an unknown UPID
+  // is a no-op returning the current snapshot.
+  app.post("/api/process/:upid/dismiss", async (context) => {
+    if (isOfflineDemoRequest(context.req.header("referer"))) {
+      return context.json(runtime.snapshot());
+    }
+    const upid = context.req.param("upid");
+    if (upid === "self") {
+      return context.json({ ok: false, error: "the room cannot dismiss itself" }, 400);
+    }
+    try {
+      await runtime.registry.dismiss(upid, `corr-api-dismiss-${crypto.randomUUID()}`);
+    } catch {
+      // Unknown UPID — return the current snapshot unchanged.
+    }
+    return context.json(runtime.publishNow());
+  });
   app.post("/api/process/:upid/pause", async (context) => {
     if (isOfflineDemoRequest(context.req.header("referer"))) {
       return context.json(runtime.snapshot());

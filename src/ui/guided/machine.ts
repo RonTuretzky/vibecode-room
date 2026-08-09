@@ -340,6 +340,8 @@ export interface GuidedLane {
   percent: number | null;
   summary: string | null;
   hasDeck: boolean;
+  // The lane's live mock preview (ready lanes), for in-room View semantics.
+  previewUrl: string | null;
 }
 
 // Framework display names for the race lanes. Unknown backend ids fall back to
@@ -355,12 +357,13 @@ export function laneLabel(id: string, fallback?: string): string {
 }
 
 // One lane per ENABLED backend (snapshot.backends roster), each carrying the
-// focus process's REAL builds[] telemetry for that backend — or "queued" until
-// the fan-out publishes its entry. Backends missing from the roster but present
+// process's REAL builds[] telemetry for that backend — or "queued" until the
+// fan-out publishes its entry. Backends missing from the roster but present
 // in builds[] still get a lane (never hide a real build). Legacy servers with
 // no roster and no builds[] surface the single process-level buildStatus.
-export function guidedLanes(state: GuidedState, snapshot: ProjectorSnapshot): GuidedLane[] {
-  const process = focusProcess(state, snapshot);
+// Process-centric so BOTH lane consumers share it: the guided demo's race
+// (via guidedLanes below) and the per-tree menu (TreeMenu.tsx).
+export function processLanes(process: ProjectorProcess | null, snapshot: ProjectorSnapshot): GuidedLane[] {
   const builds = process !== null ? buildsOf(process) : [];
   const roster = backendsOf(snapshot).filter((backend) => backend.enabled);
 
@@ -383,6 +386,7 @@ export function guidedLanes(state: GuidedState, snapshot: ProjectorSnapshot): Gu
         percent: Number.isFinite(process.progress) ? process.progress : null,
         summary: null,
         hasDeck: false,
+        previewUrl: process.previewUrl ?? null,
       },
     ];
   }
@@ -390,7 +394,16 @@ export function guidedLanes(state: GuidedState, snapshot: ProjectorSnapshot): Gu
   return laneIds.map(({ id, label }) => {
     const build = builds.find((candidate) => (candidate.backend as string) === id);
     if (build === undefined) {
-      return { id, label, status: "queued" as const, progressLabel: null, percent: null, summary: null, hasDeck: false };
+      return {
+        id,
+        label,
+        status: "queued" as const,
+        progressLabel: null,
+        percent: null,
+        summary: null,
+        hasDeck: false,
+        previewUrl: null,
+      };
     }
     return {
       id,
@@ -400,8 +413,30 @@ export function guidedLanes(state: GuidedState, snapshot: ProjectorSnapshot): Gu
       percent: build.percent ?? null,
       summary: build.summary,
       hasDeck: build.slideshowUrl !== null,
+      previewUrl: build.previewUrl,
     };
   });
+}
+
+// The guided demo's race lanes: the focus process's lanes.
+export function guidedLanes(state: GuidedState, snapshot: ProjectorSnapshot): GuidedLane[] {
+  return processLanes(focusProcess(state, snapshot), snapshot);
+}
+
+// ONE status vocabulary for a lane, shared by the race overlay and the
+// per-tree menu: "queued…" / "{progressLabel} · {percent}%" / "MOCK READY ✓" /
+// "FAILED" — an honest percent instead of a silent dead row while building.
+export function laneStatusLabel(lane: GuidedLane): string {
+  switch (lane.status) {
+    case "queued":
+      return "queued…";
+    case "building":
+      return `${lane.progressLabel ?? "mocking…"}${lane.percent !== null ? ` · ${Math.round(lane.percent)}%` : ""}`;
+    case "ready":
+      return "MOCK READY ✓";
+    case "failed":
+      return "FAILED";
+  }
 }
 
 // Honest failure state: every lane exists and every lane failed. The overlay
