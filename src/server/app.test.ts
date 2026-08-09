@@ -268,7 +268,7 @@ describe("POST /api/self-rebuild", () => {
 });
 
 // SELF-REPO surface: names the room's own repository for the wall's
-// SelfRepoTree panel, and — because the panel always asks here before polling
+// self-repo garden tree, and — because the wall always asks here before polling
 // /api/forest — warms the forest loader whenever the room is armed (this is
 // what makes a supervisor boot, where no toggle press ever fires, show data).
 describe("GET /api/self-repo", () => {

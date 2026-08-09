@@ -19,7 +19,7 @@ import { roomHandsSocketUrl } from "./gesture/remote";
 import { HelpOverlay } from "./HelpOverlay";
 import { BuildChips, CommissionButton, ExecutionChip, ProcessControls } from "./BuildChips";
 import { ControlDock } from "./ControlDock";
-import { SelfRepoTree } from "./SelfRepoTree";
+import { useSelfRepoTree, type SelfTreeSeed } from "./self-repo";
 import { FleetScrollRail } from "./FleetScroll";
 import { TakeHomeQr } from "./TakeHomeQr";
 import { buildsOf, lifecycleActionsFor, looksLikeSnapshot } from "./buildloop";
@@ -58,6 +58,10 @@ interface ProjectorAppProps {
     // (the static renderer cannot poll /api/autocal/state).
     calibration?: AutocalState;
   };
+  // Test seam: seeds the self-repo tree data (the effect-free static renderer
+  // cannot fetch /api/self-repo + /api/forest), so armed-wall markup tests can
+  // assert the garden receives the room's own tree.
+  initialSelfTree?: SelfTreeSeed;
 }
 
 // AUTO-RELOAD ON NEW BUILDS: every window polls /api/build-stamp on this
@@ -85,7 +89,7 @@ declare global {
   }
 }
 
-export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: ProjectorAppProps) {
+export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initialSelfTree }: ProjectorAppProps) {
   // Window configuration from the URL, parsed FIRST — the guided-demo entry
   // and Mock-Room gates below depend on it: wall identity badge (?wall=A|B),
   // the view param (?view=ideas|builds — scopes the 2D surfaces + controls to
@@ -486,6 +490,15 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
   // (snapshot.selfSupervisor) or only records intent for a future --self launch.
   const selfRebuild = snapshot.selfRebuild ?? false;
   const selfSupervisor = snapshot.selfSupervisor ?? false;
+  // SELF-REBUILD REPO TREE: while the toggle is armed on a WALL window (never
+  // the research-pinned ceiling), poll the forest payload and grow the room's
+  // OWN repo as ONE MORE tree inside the RoomScene garden — not a panel. The
+  // hook returns null while unarmed/warming, and RoomScene simply omits the
+  // tree then.
+  const selfTree = useSelfRepoTree(
+    selfRebuild && urlConfig.wall !== null && !urlConfig.research,
+    initialSelfTree,
+  );
   const toggleSelfRebuild = useCallback(async () => {
     if (!liveMode || mockModeRef.current) {
       return;
@@ -1803,6 +1816,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
         research={researchSpecs}
         onResearchNode={onResearchNode}
         onDialogueNode={(turnId) => void onDialogueNode(turnId)}
+        selfTree={selfTree}
       />
       {dwellLayerOn ? (
         <GestureLayer
@@ -1830,10 +1844,6 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
         </div>
       ) : null}
       <FullscreenButton />
-      {/* SELF-REBUILD REPO TREE: while the toggle is armed, wall windows show
-          THIS repo as an HD tree with its PRs pointable (SelfRepoTree.tsx).
-          Wall-bound only — the ceiling keeps its research pin. */}
-      {snapshot.selfRebuild === true && urlConfig.wall !== null && !urlConfig.research ? <SelfRepoTree /> : null}
       {/* Research-pinned displays (the ceiling) run zen — chrome-less — but
           still need the one tree control: a corner chip, dimmed until a
           cursor rests on it, dwellable like everything else. */}

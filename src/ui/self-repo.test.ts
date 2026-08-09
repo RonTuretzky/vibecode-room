@@ -1,0 +1,81 @@
+import { describe, expect, test } from "bun:test";
+import { FOREST_CI_COLORS, type ForestPayload } from "./forest-spec";
+import { SELF_REPO_POLL_MS, selfGardenTree, selfRepoState } from "./self-repo";
+
+// The self-rebuild repo tree DATA path: /api/forest payload → the ONE garden
+// tree input RoomScene grows among the fleet. Pure functions only — the poll
+// hook is exercised live; the mapping is what must never drift.
+
+const payload: ForestPayload = {
+  org: "acme",
+  fetchedAtMs: Date.parse("2026-08-09T00:00:00Z"),
+  repos: [
+    {
+      name: "vibecode-room",
+      pushedAtMs: Date.parse("2026-08-08T00:00:00Z"),
+      prs: [
+        { number: 7, title: "Grow the self tree", draft: false, ci: "pass", baseRef: "main", headRef: "feat/self-tree" },
+        { number: 9, title: "Repair the wall seam", draft: false, ci: "fail", baseRef: "main", headRef: "fix/seam" },
+      ],
+      issues: [{ number: 2, title: "Flaky boot", labels: ["bug"] }],
+    },
+    { name: "other-repo", pushedAtMs: 0, prs: [], issues: [] },
+  ],
+};
+
+describe("selfRepoState — filter the forest to the one self repo", () => {
+  test("matches the owner/name tail and keeps the payload shape", () => {
+    const state = selfRepoState(payload, "acme/vibecode-room");
+    expect(state).not.toBeNull();
+    expect(state!.org).toBe("acme");
+    expect((state as ForestPayload).repos.map((repo) => repo.name)).toEqual(["vibecode-room"]);
+  });
+
+  test("null payload, org-less state and unknown repos all map to null", () => {
+    expect(selfRepoState(null, "acme/vibecode-room")).toBeNull();
+    expect(selfRepoState({ org: null, loading: "acme" }, "acme/vibecode-room")).toBeNull();
+    expect(selfRepoState(payload, "acme/absent")).toBeNull();
+  });
+});
+
+describe("selfGardenTree — payload → the ONE garden tree spec", () => {
+  test("one branch per open PR, CI-colored tips, CI-word subs, repo-named input", () => {
+    const tree = selfGardenTree(payload, "acme/vibecode-room");
+    expect(tree).not.toBeNull();
+    expect(tree!.repo).toBe("acme/vibecode-room");
+    expect(tree!.spec.id).toBe("forest:acme/vibecode-room");
+    expect(tree!.spec.branches.map((branch) => branch.id).sort()).toEqual(["pr-7", "pr-9"]);
+    const tips = new Map(tree!.spec.branches.map((branch) => [branch.id, branch.tip]));
+    expect(tips.get("pr-7")?.label).toBe("#7 Grow the self tree");
+    expect(tips.get("pr-7")?.color).toBe(FOREST_CI_COLORS.pass);
+    // The tip card's second line carries the CI VERDICT (the deleted corner
+    // panel's PR list used to spell it out; the garden tip is now the only
+    // place to read it), not the repo name the org forest shows.
+    expect(tips.get("pr-7")?.sub).toBe("CI passing");
+    expect(tips.get("pr-9")?.color).toBe(FOREST_CI_COLORS.fail);
+    expect(tips.get("pr-9")?.sub).toBe("CI failing");
+  });
+
+  test("issue markers stay OFF in the garden (issuesVisible=false)", () => {
+    const tree = selfGardenTree(payload, "acme/vibecode-room");
+    expect(tree!.spec.adornments).toEqual([]);
+  });
+
+  test("no payload / warming loader / missing repo → null (the tree is absent)", () => {
+    expect(selfGardenTree(null, "acme/vibecode-room")).toBeNull();
+    expect(selfGardenTree({ org: null, loading: "acme" }, "acme/vibecode-room")).toBeNull();
+    expect(selfGardenTree(payload, "acme/absent")).toBeNull();
+  });
+
+  test("a re-fetched but unchanged payload maps to an identical spec (reconcile no-op)", () => {
+    const a = selfGardenTree(payload, "acme/vibecode-room");
+    const b = selfGardenTree({ ...payload, repos: [...payload.repos] }, "acme/vibecode-room");
+    expect(JSON.stringify(a)).toBe(JSON.stringify(b));
+  });
+});
+
+describe("poll cadence", () => {
+  test("the forest poll only re-reads the server loader's ~5-minute cache", () => {
+    expect(SELF_REPO_POLL_MS).toBe(30_000);
+  });
+});

@@ -67,3 +67,6 @@ artifacts/smithering/server-logs/
 **/.venv/
 **/.venv-*/
 gesture-wall/.venv-hands/
+
+# forest loader disk cache (gh-derived, per-org JSON)
+artifacts/forest/

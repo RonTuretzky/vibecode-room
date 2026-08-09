@@ -16,6 +16,7 @@ import { QrImport, qrPanelState } from "./QrImport";
 import { preferredGuestUrl } from "./GuestHands";
 import { Slideshow } from "./Slideshow";
 import { demoProjectorSnapshot, busyRoomSnapshot } from "./demo-data";
+import type { SelfTreeSeed } from "./self-repo";
 import type { BuildloopProcess, BuildloopSnapshot } from "./buildloop";
 import { PRACTICE_ORB_COUNT } from "./guided/machine";
 
@@ -1036,28 +1037,68 @@ describe("flat-locked two-wall pair", () => {
   });
 });
 
-// SELF-REBUILD REPO TREE: armed walls show the room's own repo as a pointable
-// tree panel; unarmed walls and the research-pinned ceiling never do.
-describe("self-repo tree panel while self-rebuild is armed", () => {
-  test("armed wall renders the panel; unarmed wall and the ceiling do not", () => {
+// SELF-REBUILD REPO TREE: while the toggle is armed, wall windows grow the
+// room's own repo as ONE MORE TREE inside the RoomScene garden (no corner
+// panel, no second canvas); unarmed walls and the research-pinned ceiling
+// never receive it. The seed prop stands in for the /api/self-repo +
+// /api/forest polls the static renderer cannot make.
+describe("self-repo garden tree while self-rebuild is armed", () => {
+  const selfTreeSeed: SelfTreeSeed = {
+    repo: "acme/vibecode-room",
+    forest: {
+      org: "acme",
+      fetchedAtMs: Date.parse("2026-08-09T00:00:00Z"),
+      repos: [
+        {
+          name: "vibecode-room",
+          pushedAtMs: Date.parse("2026-08-08T00:00:00Z"),
+          prs: [
+            { number: 7, title: "Grow the self tree", draft: false, ci: "pass", baseRef: "main", headRef: "feat/self-tree" },
+          ],
+          issues: [],
+        },
+      ],
+    },
+  };
+
+  test("armed wall feeds RoomScene the self tree; unarmed wall and the ceiling do not", () => {
     const armed = renderToStaticMarkup(
       <ProjectorApp
         initialSnapshot={{ ...demoProjectorSnapshot, selfRebuild: true }}
         urlSearch="?live=1&wall=A&view=ideas"
+        initialSelfTree={selfTreeSeed}
       />,
     );
-    expect(armed).toContain('data-testid="self-repo-tree"');
+    expect(armed).toContain('data-self-tree="true"');
+    // The old corner panel is GONE — the tree lives inside the garden scene.
+    expect(armed).not.toContain('data-testid="self-repo-tree"');
     const unarmed = renderToStaticMarkup(
-      <ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch="?live=1&wall=A&view=ideas" />,
+      <ProjectorApp
+        initialSnapshot={demoProjectorSnapshot}
+        urlSearch="?live=1&wall=A&view=ideas"
+        initialSelfTree={selfTreeSeed}
+      />,
     );
-    expect(unarmed).not.toContain('data-testid="self-repo-tree"');
+    expect(unarmed).toContain('data-self-tree="false"');
     const ceiling = renderToStaticMarkup(
       <ProjectorApp
         initialSnapshot={{ ...demoProjectorSnapshot, selfRebuild: true }}
         urlSearch="?live=1&wall=C&research=1&zen=1"
+        initialSelfTree={selfTreeSeed}
       />,
     );
-    expect(ceiling).not.toContain('data-testid="self-repo-tree"');
+    expect(ceiling).toContain('data-self-tree="false"');
+  });
+
+  test("armed but wall-less windows (no ?wall=) also go without the self tree", () => {
+    const noWall = renderToStaticMarkup(
+      <ProjectorApp
+        initialSnapshot={{ ...demoProjectorSnapshot, selfRebuild: true }}
+        urlSearch="?live=1"
+        initialSelfTree={selfTreeSeed}
+      />,
+    );
+    expect(noWall).toContain('data-self-tree="false"');
   });
 });
 

@@ -7,6 +7,7 @@ import { getFlatPoseSender, registerSceneFlatPoseControl } from "./gesture/flat-
 import { cornerEye, cornerVerticalFovDeg, cornerYaw } from "./corner-lock";
 import { FLAT_EYE_DISTANCE, FLAT_EYE_HEIGHT, FLAT_YAW, flatVerticalFovDeg, flatViewOffset } from "./flat-lock";
 import { loadGardenFlora, type FloraLibrary } from "./garden-flora";
+import type { SelfTreeSpec } from "./self-repo";
 import {
   DIALOGUE_CENTER_X,
   DIALOGUE_CENTER_Z,
@@ -250,6 +251,13 @@ interface RoomSceneProps {
   onResearchNode?: (id: string) => void;
   // Click/dwell a dialogue TURN node: research that utterance directly.
   onDialogueNode?: (turnId: string) => void;
+  // SELF-REBUILD (armed walls): the room's OWN repository as ONE MORE garden
+  // tree — the HD forest spec (open PRs as CI-tipped branches) fed by App's
+  // useSelfRepoTree hook. Null/absent = no self tree (toggle off, ceiling
+  // research pin, loader still warming). Rendered in the garden's radial
+  // layout only, in the slot right after the fleet; identity is stable
+  // (upid "self:repo") so reconciliation never churns it.
+  selfTree?: SelfTreeSpec | null;
 }
 
 const MATURITY_COLOR: Record<IdeaTrayItem["maturity"], number> = {
@@ -283,6 +291,13 @@ const PROGRESS_ARC_COLOR = 0x9affc9;
 const FAILED_PIP_COLOR = 0xff3b30;
 const TRUNK_COLOR = 0x4a3527;
 const FLASH_MS = 1500;
+// SELF-REBUILD repo tree (the room's OWN repository standing in the garden):
+// the stable reconcile identity, the label accent, and the height adaptation
+// — the forest spec authors trunks at 5.5–10u (org-grove scale), scaled so
+// the self tree stands WITH the fleet trees, not over them.
+const SELF_TREE_UPID = "self:repo";
+const SELF_TREE_ACCENT = 0x8fd8a8;
+const SELF_TREE_SCALE = 0.75;
 
 // Research crystal colors reuse the FIXED status semantics: proposed=planning
 // blue, researching=active green, complete=completed mint, failed=halted red.
@@ -771,9 +786,15 @@ interface Entry {
   // full dispose+rebuild per 1% tick. Absent on idea entries (ideas rebuild
   // through ideaSpecChanged, which has no per-tick channel).
   updateProgress?: (spec: TreeSpec) => void;
+  // The self-repo tree's spec signature (treeSpecSignature): reconcile only
+  // rebuilds the entry when the forest payload actually changed shape.
+  selfSig?: string;
+  // Module-owned GPU resources beyond the generic sweep (the self tree's
+  // BuiltTree): disposeEntry invokes it after the traverse.
+  disposeExtra?: () => void;
 }
 
-export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, focusUpid = null, pointerNav = true, cornerLock = false, flatLock = false, autoFit = false, onAcceptIdea, onSelectProcess, dialogue = [], topics = [], research = [], onResearchNode, onDialogueNode }: RoomSceneProps) {
+export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, focusUpid = null, pointerNav = true, cornerLock = false, flatLock = false, autoFit = false, onAcceptIdea, onSelectProcess, dialogue = [], topics = [], research = [], onResearchNode, onDialogueNode, selfTree = null }: RoomSceneProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const ideasRef = useRef(ideas);
   ideasRef.current = ideas;
@@ -785,6 +806,8 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
   topicsRef.current = topics;
   const researchRef = useRef(research);
   researchRef.current = research;
+  const selfTreeRef = useRef(selfTree);
+  selfTreeRef.current = selfTree;
   const onResearchRef = useRef(onResearchNode);
   onResearchRef.current = onResearchNode;
   const onDialogueRef = useRef(onDialogueNode);
@@ -821,7 +844,7 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
 
   useEffect(() => {
     tick.current += 1;
-  }, [ideas, trees, mode, layout, dialogue, topics, research]);
+  }, [ideas, trees, mode, layout, dialogue, topics, research, selfTree]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -1601,6 +1624,11 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       entry.group.traverse((node) => {
         if (node instanceof THREE.Sprite) {
           if (node !== entry.label) {
+            // Per-node label sprites (the self tree's PR tip cards) own their
+            // canvas map — same ownMap convention as the dialogue tree chrome.
+            if (node.userData.ownMap === true) {
+              node.material.map?.dispose();
+            }
             node.material.dispose();
           }
           return;
@@ -1612,6 +1640,7 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
           (Array.isArray(node.material) ? node.material : [node.material]).forEach((mat) => mat.dispose());
         }
       });
+      entry.disposeExtra?.();
     };
 
     // ── richer per-process indicators (shared by every render style) ─────────
@@ -2057,6 +2086,74 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         updateLabelStatus(label, treeStatus(next));
       };
       return { kind: "tree", treeSpec: spec, group, mats: [foliageMat], baseEmissive: foliageMat.emissiveIntensity, head: null, headY: 0, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false, updateProgress };
+    };
+
+    // ── the self-rebuild repo tree ──────────────────────────────────────────
+    // The room's OWN repository as ONE MORE garden tree while 🔁 Self-Rebuild
+    // is armed — grown by the HD tree module (the conversation tree's engine)
+    // from the forest spec: every open PR is a branch and CI colors its tip
+    // bud. The scene layers the standard garden chrome on top — the glass
+    // label names the repo, each PR tip carries its "#n title / CI word" card
+    // (the dialogue tree's exact tip vocabulary), and invisible process-pick
+    // hit volumes make hover/click/dwell behave exactly like a fleet tree
+    // (selection routes through the same onSelectProcess handler).
+    let selfTreeBuilt: BuiltTree | null = null;
+    const buildSelfTree = (input: SelfTreeSpec): Entry => {
+      const group = new THREE.Group();
+      const built = buildTreeLOD(input.spec);
+      group.add(built.group);
+      selfTreeBuilt = built;
+      const trunkH = input.spec.trunk.height;
+      // Coarse trunk+canopy hit volume: picking goes through this — the
+      // engine's merged wood/instanced foliage never raycast (module policy),
+      // exactly like the photoscan trees' invisible hit spheres.
+      const hit = new THREE.Mesh(new THREE.SphereGeometry(Math.max(2.2, trunkH * 0.34), 10, 10), invisibleHitMat);
+      hit.position.y = trunkH * 0.58;
+      hit.userData.ownGeometry = true;
+      hit.userData.pick = { kind: "process", callsign: input.repo };
+      group.add(hit);
+      for (const branchSpec of input.spec.branches) {
+        const tipSpec = branchSpec.tip;
+        if (tipSpec === undefined || branchSpec.points.length === 0) {
+          continue;
+        }
+        const tip = branchSpec.points[branchSpec.points.length - 1];
+        const tipGlow = new THREE.Sprite(
+          new THREE.SpriteMaterial({ map: glowTexture, color: tipSpec.color, transparent: true, opacity: 0.3, blending: THREE.AdditiveBlending, depthWrite: false }),
+        );
+        tipGlow.position.set(tip.x, tip.y + 0.15, tip.z);
+        tipGlow.scale.setScalar(1.3);
+        group.add(tipGlow);
+        // The PR readout rides the branch tip: "#n title" over the CI word,
+        // accented in the tip's CI color (per-tip canvas map → ownMap).
+        const tipLabel = makeLabelSprite(tipSpec.label ?? "", tipSpec.sub ?? "", cssHex(tipSpec.color));
+        tipLabel.userData.ownMap = true;
+        tipLabel.position.set(tip.x, tip.y + 0.25, tip.z);
+        group.add(tipLabel);
+        const tipHit = new THREE.Mesh(new THREE.SphereGeometry(1.0, 8, 8), invisibleHitMat);
+        tipHit.userData.ownGeometry = true;
+        tipHit.userData.pick = { kind: "process", callsign: input.repo };
+        tipHit.position.set(tip.x, tip.y + 0.3, tip.z);
+        group.add(tipHit);
+      }
+      const prCount = input.spec.branches.length;
+      const label = makeLabelSprite(input.repo, `self-rebuild · ${prCount} open PR${prCount === 1 ? "" : "s"}`, cssHex(SELF_TREE_ACCENT));
+      label.position.y = trunkH + 1.3;
+      group.add(label);
+      // Synthetic TreeSpec so the shared machinery (hover keyed on callsign,
+      // dwell entryForTargetId, activation) treats the entry first-class. The
+      // "completed" state keeps the frame loop's active-pulse (mats[0]) off.
+      const treeSpec: TreeSpec = { upid: SELF_TREE_UPID, callsign: input.repo, state: "completed", progress: 100, task: input.repo, steering: false, stage: "built" };
+      return {
+        kind: "tree", treeSpec, group, mats: [], baseEmissive: 0, head: null, headY: 0, label,
+        targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false,
+        disposeExtra: () => {
+          built.dispose();
+          if (selfTreeBuilt === built) {
+            selfTreeBuilt = null;
+          }
+        },
+      };
     };
 
     // ── orbit builders ──────────────────────────────────────────────────────
@@ -2664,6 +2761,47 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
           existing.removing = false;
         }
       });
+
+      // ── the room's OWN repo as ONE MORE garden tree (self-rebuild armed) ──
+      // Not a panel: while App feeds selfTree (toggle armed on a wall window),
+      // the repo stands in the NEXT radial slot after the fleet, grown by the
+      // HD tree engine with the standard garden chrome (see buildSelfTree).
+      // Keyed by the stable SELF_TREE_UPID in treeEntries so picking, hover
+      // grow/glow, the dwell seam, fit bounds and the removal fade all reuse
+      // the fleet-tree machinery untouched. treeSpecSignature gates rebuilds
+      // (a re-fetched but unchanged payload is a no-op); garden-radial only —
+      // orbit and the hyperbolic layouts simply omit it, and the sweep below
+      // fades it out whenever it stops being fed.
+      const selfInput = selfTreeRef.current;
+      if (selfInput !== null && garden && !hyper) {
+        seenTrees.add(SELF_TREE_UPID);
+        const placed = treePosition(treeSpecs.length, treeSpecs.length + 1, garden);
+        const sig = treeSpecSignature(selfInput.spec);
+        const existing = treeEntries.get(SELF_TREE_UPID);
+        if (existing === undefined || existing.selfSig !== sig) {
+          const keepPos = existing?.group.position.clone();
+          const keepScale = existing?.group.scale.x;
+          if (existing !== undefined) {
+            disposeEntry(existing);
+          }
+          const entry = buildSelfTree(selfInput);
+          entry.selfSig = sig;
+          entry.targetPos = placed.pos;
+          entry.targetScale = SELF_TREE_SCALE;
+          entry.scaleMult = placed.k;
+          entry.phase = treeSpecs.length * 1.3;
+          entry.group.position.copy(keepPos ?? placed.pos);
+          entry.group.scale.setScalar(Math.max(keepScale ?? 0.01, 0.01));
+          treeEntries.set(SELF_TREE_UPID, entry);
+          scene.add(entry.group);
+        } else {
+          existing.targetPos = placed.pos;
+          existing.targetScale = SELF_TREE_SCALE;
+          existing.scaleMult = placed.k;
+          existing.removing = false;
+        }
+      }
+
       for (const [specId, entry] of treeEntries) {
         if (!seenTrees.has(specId)) {
           entry.removing = true;
@@ -3602,8 +3740,10 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
       env?.update(t, dt);
       // HD conversation tree: leaf-card wind sway (instance matrices only —
       // the wood never moves, so pinned leaf entries/labels stay attached).
+      // The self-repo tree shares the engine, so its foliage sways too.
       if (!reducedMotion) {
         dialogueTreeBuilt?.update(t);
+        selfTreeBuilt?.update(t);
       }
 
       const garden = builtMode === "garden";
@@ -3833,6 +3973,7 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
       data-dialogue-count={dialogue.length}
       data-topic-count={topics.length}
       data-research-count={research.length}
+      data-self-tree={selfTree !== null ? "true" : "false"}
       aria-label={`Room ${mode}: ${ideas.length} idea${ideas.length === 1 ? "" : "s"}, ${trees.length} build${trees.length === 1 ? "" : "s"}${research.length > 0 ? `, ${research.length} research quest${research.length === 1 ? "" : "s"}` : ""}`}
     />
   );

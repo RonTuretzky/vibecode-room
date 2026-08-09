@@ -187,7 +187,7 @@ export function createProjectorApp(runtime: ProjectorRuntime, options: Projector
   // armed ("watch the room grow itself"). Owner half feeds the forest loader.
   const selfRepo = env.VIBERSYN_SELF_REPO ?? "RonTuretzky/vibecode-room";
   app.get("/api/self-repo", (context) => {
-    // The SelfRepoTree panel names the repo through this route before it polls
+    // The wall's self-repo garden tree names the repo through this route before it polls
     // /api/forest — so an armed room (including one that BOOTED armed under the
     // supervisor, where no toggle press ever fires) warms the loader here.
     // Fire-and-forget; app creation itself stays side-effect-free.
@@ -210,8 +210,8 @@ export function createProjectorApp(runtime: ProjectorRuntime, options: Projector
       // no/invalid body -> toggle current state
     }
     if (on) {
-      // Arming self-rebuild kicks the repo-tree data: the wall's SelfRepoTree
-      // panel reads /api/forest, which the loader fills (cache-first, 5-min
+      // Arming self-rebuild kicks the repo-tree data: the wall's self-repo garden
+      // tree reads /api/forest, which the loader fills (cache-first, 5-min
       // refresh). Fire-and-forget — the toggle must never wait on GitHub.
       void (options.forestLoader ?? sharedForestLoader()).load(selfRepo.split("/")[0]).catch(() => undefined);
     }
