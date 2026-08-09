@@ -160,6 +160,9 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
   const [sceneLayout, setSceneLayout] = useState<SceneLayout>("radial");
   // Project explainer deck: the upid whose slideshow is open, or null.
   const [slideshowUpid, setSlideshowUpid] = useState<string | null>(initialOverlay?.slideshowUpid ?? null);
+  // Which backend tab the deck window opens on (a lane's View button targets
+  // its own lane; null = the window's default).
+  const [slideshowBackend, setSlideshowBackend] = useState<string | null>(null);
   const slideshowRef = useRef<string | null>(null);
   slideshowRef.current = slideshowUpid;
   // Research dossier overlay: the quest id whose deck is open, or null.
@@ -2055,7 +2058,10 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
               steeringUpid={steeringUpid}
               onSelect={(id) => void steerProcess(id)}
               onLifecycle={(upid, action) => void processLifecycle(upid, action)}
-              onOpenDeck={(upid) => setSlideshowUpid(upid)}
+              onOpenDeck={(upid, backend) => {
+                setSlideshowBackend(backend ?? null);
+                setSlideshowUpid(upid);
+              }}
               onCommission={(upid) => void commissionProcess(upid)}
             />
             <TranscriptStream lines={snapshot.transcript} />
@@ -2252,7 +2258,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
                 process={deckProcess}
                 onLifecycle={(upid, action) => void processLifecycle(upid, action)}
                 onClose={() => setSlideshowUpid(null)}
-                initialBackend={guided?.step === "decide" ? guided.readyBackend : null}
+                initialBackend={guided?.step === "decide" ? guided.readyBackend : slideshowBackend}
                 onDecision={(choice) => deckDecision(deckProcess.upid, choice)}
               />
             ) : null;
@@ -2468,7 +2474,7 @@ function FleetPanel({
   steeringUpid: string | null;
   onSelect: (id: string) => void;
   onLifecycle: (upid: string, action: LifecycleAction) => void;
-  onOpenDeck: (upid: string) => void;
+  onOpenDeck: (upid: string, backend?: string) => void;
   onCommission: (upid: string) => void;
 }) {
   return (
@@ -2534,7 +2540,11 @@ function FleetPanel({
             ) : null}
             <p className="fleet-output">{process.lastOutput || "—"}</p>
             <p className="fleet-action">↳ {process.lastAction}</p>
-            <BuildChips builds={builds} stage={stage} />
+            <BuildChips
+              builds={builds}
+              stage={stage}
+              onOpenDeck={(backend) => onOpenDeck(process.upid, backend)}
+            />
             {execution !== null ? <ExecutionChip execution={execution} /> : null}
             {/* Take-home QR: the published deck's Pages URL, scannable from a
                 phone at projector distance. */}

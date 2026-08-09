@@ -77,6 +77,45 @@ export const credentialSourceSchema = z.discriminatedUnion("kind", [
 ]);
 export type CredentialSource = z.infer<typeof credentialSourceSchema>;
 
+// ── idea brief ──────────────────────────────────────────────────────────────
+// The full context an accepted idea carries into the build pipeline: the pitch,
+// the VERBATIM room speech it was grounded in (contextSpan.quote), the judge's
+// rationale, and the deck-ready decision Q&A. Constructed ONCE at acceptance
+// (src/server/idea-suggestion.ts) and threaded — as an optional field — through
+// the spawn seed, the registry, the kickoff orchestrator, every backend prompt,
+// the pitch deck, and the commission workflow. This is the canonical zod; the
+// buildloop and slideshow tracks carry structural mirrors (no cross-track
+// imports, per house convention).
+export const ideaBriefQaSchema = z
+  .object({
+    id: z.string().min(1),
+    prompt: z.string().min(1),
+    answers: z.array(z.string()),
+    // Set once the room has answered (deck swipe / spoken answer).
+    chosen: z.string().optional(),
+  })
+  .strict();
+export type IdeaBriefQa = z.infer<typeof ideaBriefQaSchema>;
+
+// Prompt-growth clamps (constructors clamp BEFORE parse; the schema enforces).
+export const IDEA_BRIEF_QUOTE_MAX_CHARS = 300;
+export const IDEA_BRIEF_RATIONALE_MAX_CHARS = 200;
+
+export const ideaBriefSchema = z
+  .object({
+    pitch: z.string().min(1),
+    // Verbatim room speech the idea is grounded in, clamped at construction so
+    // backend prompts never flood.
+    sourceQuote: z.string().max(IDEA_BRIEF_QUOTE_MAX_CHARS),
+    rationale: z.string().max(IDEA_BRIEF_RATIONALE_MAX_CHARS),
+    qa: z.array(ideaBriefQaSchema),
+    // Null until a spawn assigns the spoken handle.
+    callsign: z.string().nullable(),
+    maturity: z.enum(["forming", "proposed", "elaborated", "actionable"]).optional(),
+  })
+  .strict();
+export type IdeaBrief = z.infer<typeof ideaBriefSchema>;
+
 export const pendingSuggestionSchema = z
   .object({
     suggestionId: z.string().min(1),
@@ -85,6 +124,12 @@ export const pendingSuggestionSchema = z
     answers: z.array(z.string()),
     correlationId: z.string().min(1),
     expiresAt: z.number().finite(),
+    // The idea's context brief (provenance quote, rationale, deck Q&A).
+    // OPTIONAL: engine-synthesized and legacy suggestions carry none. It MUST
+    // be declared here because this schema is .strict() — an undeclared brief
+    // would fail every re-parse on the acceptance path (pending.ts) and the
+    // context would die at acceptance exactly like before.
+    brief: ideaBriefSchema.optional(),
   })
   .strict();
 export type PendingSuggestion = z.infer<typeof pendingSuggestionSchema>;

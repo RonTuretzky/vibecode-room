@@ -301,8 +301,11 @@ export function Slideshow({ process, onLifecycle, onClose, initialBackend = null
                   href={slide.url}
                   target="_blank"
                   rel="noreferrer"
+                  // Dwell-exempt: synthesized clicks on _blank links are
+                  // popup-blocked — external open is a real-mouse nicety.
+                  data-dwell-exempt="true"
                 >
-                  Open in window ↗
+                  Open in window ↗ (mouse)
                 </a>
               </div>
             )}

@@ -19,7 +19,7 @@ import { mkdir, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { servePreviewDirectory, type PreviewServer } from "../server/idea-builder";
 import type { BackendSelector } from "./selector";
-import type { BuildBackend, BuildBackendId } from "./types";
+import type { BuildBackend, BuildBackendId, BuildBrief } from "./types";
 
 export type OrchestratorBuildStatus = "building" | "ready" | "failed";
 
@@ -48,6 +48,12 @@ export interface OrchestratorStartInput {
   // cross-track imports); the shapes are structurally identical. Absent for
   // kickoffs without questions (repo imports, demo seeds).
   planQuestions?: readonly { id: string; prompt: string; answers: string[] }[];
+  // The idea's context brief riding the accept (see BuildBrief in ./types —
+  // the structural mirror of src/types.ts's IdeaBrief, same no-cross-track
+  // rule as planQuestions above). Threaded verbatim into every backend's
+  // BuildRequest and the slideshow hook. Absent for kickoffs without one
+  // (repo imports, demo seeds).
+  brief?: BuildBrief;
 }
 
 // Optional per-build slideshow hook (the slideshow track's generateSlideshow,
@@ -62,6 +68,7 @@ export type SlideshowHook = (input: {
   prompt: string;
   callsign: string | null;
   planQuestions?: readonly { id: string; prompt: string; answers: string[] }[];
+  brief?: BuildBrief;
   backend: BuildBackendId;
   outDir: string;
   summary: string;

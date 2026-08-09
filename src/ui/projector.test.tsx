@@ -380,8 +380,10 @@ describe("build loop surfaces (backward compatible)", () => {
     expect(html).toContain('data-status="building"');
     expect(html).toContain("scaffolding");
     expect(html).toContain('data-status="ready"');
-    expect(html).toContain('data-testid="build-preview-link"');
-    expect(html).toContain('data-testid="build-slides-link"');
+    // ONE in-room View button per ready lane (the old Preview/Slides _blank
+    // anchors were popup-blocked for every dwell cursor).
+    expect(html).toContain('data-testid="build-view-button"');
+    expect(html).not.toContain('data-testid="build-preview-link"');
   });
 
   test("per-card lifecycle buttons match the process state (halted offers none)", () => {
