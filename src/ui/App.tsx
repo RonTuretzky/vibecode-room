@@ -1683,8 +1683,11 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
   // stream-fed deltas, so the pair stays continuous while it spins —
   // RoomScene's flat rig).
   const flatLock = urlConfig.flat && urlConfig.wall !== null;
+  // A research-pinned window (?research=1 — the ceiling projector) is a
+  // dedicated aux display, never one half of the corner pair: corner-locking
+  // it would aim its camera at the pair's OTHER quadrant, away from the tree.
   const cornerLock =
-    !flatLock && gestureMode && urlConfig.wall !== null && urlConfig.hands === null;
+    !flatLock && !urlConfig.research && gestureMode && urlConfig.wall !== null && urlConfig.hands === null;
   const dwellLayerOn = gestureMode || urlConfig.dwell === "mouse" || remoteHandsUrl.length > 0;
   // AUDIT (no-mocks): the Mock Room toggle renders ONLY behind ?mock=1.
   const mockRoomEnabled = urlConfig.mock;
