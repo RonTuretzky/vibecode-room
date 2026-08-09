@@ -418,6 +418,21 @@ describe("per-tree menu: the tree is the interface", () => {
     expect(model.title).toBe("Blocker announcer");
   });
 
+  test("treeMenuModel: the SELF/mirror tree gets NO concept lanes (roster 'queued…' rows on the room's own tree read as dead deck buttons — live-room report)", () => {
+    const snapshot: BuildloopSnapshot = {
+      ...conceptSnapshot(),
+      backends: [
+        { id: "smithers", label: "Smithers", enabled: true, available: true },
+        { id: "native", label: "Native", enabled: true, available: true },
+      ],
+    };
+    const mirror = { ...snapshot.processes[0]!, upid: "self", callsign: "mirror", stage: "self" as const, builds: [] };
+    const model = treeMenuModel(mirror, snapshot);
+    expect(model.isSelf).toBe(true);
+    expect(model.lanes).toEqual([]);
+    expect(model.title).toBe("the room");
+  });
+
   test("treeMenuPlacement: opens beside the anchor rect, never over it, clamped to the viewport", () => {
     const viewport = { width: 1920, height: 1080 };
     const menu = { width: TREE_MENU_WIDTH, height: 560 };

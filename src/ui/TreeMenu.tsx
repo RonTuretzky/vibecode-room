@@ -112,7 +112,11 @@ export function treeMenuModel(process: ProjectorProcess, snapshot: ProjectorSnap
     statusLine: `${process.state} · ${Math.round(process.progress)}%${
       process.progressLabel.length > 0 ? ` · ${process.progressLabel}` : ""
     }`,
-    lanes: processLanes(process, snapshot),
+    // The MIRROR runs durable self-runs, never concept lanes — roster-derived
+    // "queued…" rows on the room's own tree read as dead deck buttons from
+    // projector distance (live-room report). Its real telemetry is the
+    // ExecutionChip below.
+    lanes: isSelf ? [] : processLanes(process, snapshot),
     isSelf,
     hasFixtureDeck: (process.slides?.length ?? 0) > 0,
     published:
