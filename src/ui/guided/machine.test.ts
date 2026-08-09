@@ -1,12 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import type { ProjectorProcess, ProjectorSnapshot } from "../types";
+import type { IdeaTrayItem, ProjectorProcess, ProjectorSnapshot, TranscriptLine } from "../types";
 import type { BuildloopProcess, BuildloopSnapshot, ProcessBuild } from "../buildloop";
 import { emptyProjectorSnapshot } from "../demo-data";
 import {
   PRACTICE_ORB_COUNT,
   advanceOnSnapshot,
+  freshIdeas,
+  freshTranscript,
   guidedLanes,
   guidedNotice,
+  guidedSettle,
   lanesAllFailed,
   popPracticeOrb,
   skipStep,
@@ -51,9 +54,22 @@ function build(backend: string, status: ProcessBuild["status"], extra: Partial<P
   };
 }
 
+function turn(time: string, text: string, kind: TranscriptLine["kind"] = "room"): TranscriptLine {
+  return { time, speaker: kind === "room" ? "Room" : "Vibersyn", text, kind };
+}
+
+function idea(id: string, pitch = `pitch ${id}`): IdeaTrayItem {
+  return { id, pitch, confidence: 0.8, status: "ready", maturity: "actionable", verified: true };
+}
+
 // A room mid-recording (unmuted + capturing) — the record step's exit state.
 const recordingRoom = (overrides: Partial<BuildloopSnapshot> = {}) =>
   makeSnapshot({ muted: false, captureMode: true, ...overrides });
+
+// A recording room where the visitor has ALSO said something new — the full
+// record-step exit condition (fresh speech beyond the watermark).
+const spokenRoom = (overrides: Partial<BuildloopSnapshot> = {}) =>
+  recordingRoom({ transcript: [turn("00:00:01", "hello room, new idea")], ...overrides });
 
 describe("guided demo — entry & orientation", () => {
   test("startGuided begins at orientation with the current fleet as baseline", () => {
@@ -101,20 +117,69 @@ describe("guided demo — record step (real unmute + capture)", () => {
     return state;
   };
 
-  test("advances ONLY when the room is unmuted AND capturing", () => {
+  test("advances ONLY when the room is unmuted AND capturing AND has heard NEW speech", () => {
     const state = atRecord();
-    expect(advanceOnSnapshot(state, makeSnapshot({ muted: true, captureMode: true }))).toBe(state);
-    expect(advanceOnSnapshot(state, makeSnapshot({ muted: false, captureMode: false }))).toBe(state);
-    expect(advanceOnSnapshot(state, makeSnapshot({ muted: false, captureMode: undefined }))).toBe(state);
-    const advanced = advanceOnSnapshot(state, recordingRoom());
+    const freshLine = [turn("00:00:01", "hello room, new idea")];
+    expect(advanceOnSnapshot(state, makeSnapshot({ muted: true, captureMode: true, transcript: freshLine }))).toBe(state);
+    expect(advanceOnSnapshot(state, makeSnapshot({ muted: false, captureMode: false, transcript: freshLine }))).toBe(state);
+    expect(advanceOnSnapshot(state, makeSnapshot({ muted: false, captureMode: undefined, transcript: freshLine }))).toBe(state);
+    // Unmuted + capturing but SILENT (no post-watermark line): not recorded yet.
+    expect(advanceOnSnapshot(state, recordingRoom())).toBe(state);
+    const advanced = advanceOnSnapshot(state, spokenRoom());
     expect(advanced.step).toBe("idea");
+  });
+
+  test("40 pre-existing transcript turns do NOT advance record — a NEW turn does", () => {
+    const history = Array.from({ length: 40 }, (_, i) => turn(`00:${i}`, `old line ${i}`));
+    // The whole history exists BEFORE the demo enters (and the room was even
+    // left unmuted + capturing): the record step must not consider the room
+    // "recorded" off that session history.
+    let state = startGuided(recordingRoom({ transcript: history }));
+    for (let i = 0; i < PRACTICE_ORB_COUNT; i += 1) {
+      state = popPracticeOrb(state);
+    }
+    expect(state.step).toBe("record");
+    expect(advanceOnSnapshot(state, recordingRoom({ transcript: history }))).toBe(state);
+
+    const withNewTurn = recordingRoom({ transcript: [...history, turn("01:00", "a brand new idea")] });
+    const advanced = advanceOnSnapshot(state, withNewTurn);
+    expect(advanced.step).toBe("idea");
+  });
+
+  test("speech during ORIENTATION slides the watermark — record measures from its own entry", () => {
+    // The demo may auto-enter off an empty placeholder snapshot; lines that
+    // land while the visitor is still popping orbs are NOT record-step speech.
+    let state = startGuided(makeSnapshot());
+    const duringOrientation = recordingRoom({ transcript: [turn("00:01", "chatter while practicing")] });
+    state = advanceOnSnapshot(state, duringOrientation);
+    expect(state.step).toBe("orientation");
+    for (let i = 0; i < PRACTICE_ORB_COUNT; i += 1) {
+      state = popPracticeOrb(state);
+    }
+    expect(state.step).toBe("record");
+    expect(advanceOnSnapshot(state, duringOrientation)).toBe(state);
+
+    const newSpeech = recordingRoom({
+      transcript: [turn("00:01", "chatter while practicing"), turn("00:02", "now I am recording")],
+    });
+    expect(advanceOnSnapshot(state, newSpeech).step).toBe("idea");
+  });
+
+  test("the room's own voice and process output are NOT visitor speech", () => {
+    const state = atRecord();
+    const notSpeech = recordingRoom({
+      transcript: [turn("00:01", "Routed to Atlas.", "vibersyn"), turn("00:02", "build log line", "process")],
+    });
+    expect(advanceOnSnapshot(state, notSpeech)).toBe(state);
+    const spoken = recordingRoom({ transcript: [...notSpeech.transcript, turn("00:03", "a human idea")] });
+    expect(advanceOnSnapshot(state, spoken).step).toBe("idea");
   });
 
   test("advancing re-captures the process baseline at that moment", () => {
     const state = atRecord();
     const advanced = advanceOnSnapshot(
       state,
-      recordingRoom({ processes: [makeProcess("upid_pre")] }),
+      spokenRoom({ processes: [makeProcess("upid_pre")] }),
     );
     expect(advanced.step).toBe("idea");
     expect(advanced.baselineUpids).toEqual(["upid_pre"]);
@@ -128,7 +193,7 @@ describe("guided demo — idea step (real detection → spawn)", () => {
     for (let i = 0; i < PRACTICE_ORB_COUNT; i += 1) {
       state = popPracticeOrb(state);
     }
-    return advanceOnSnapshot(state, recordingRoom({ processes: start.processes }));
+    return advanceOnSnapshot(state, spokenRoom({ processes: start.processes }));
   };
 
   test("a NEW process does NOT auto-advance — only the visitor's Done/Skip does", () => {
@@ -153,6 +218,87 @@ describe("guided demo — idea step (real detection → spawn)", () => {
   });
 });
 
+describe("guided demo — idea/speech watermarks (session history is not the visitor's)", () => {
+  // A demo entered over a room with real session history: old transcript
+  // lines, an already-detected idea, and its armed build countdown.
+  const history = [turn("09:00", "old meeting chatter"), turn("09:01", "more old chatter")];
+  const preDemo = recordingRoom({
+    transcript: history,
+    ideas: [idea("idea_pre", "an idea from before the demo")],
+    ideaSettle: { armed: true, title: "an idea from before the demo", firesInMs: 5_000 },
+  });
+  const atIdeaOverHistory = () => {
+    let state = startGuided(preDemo);
+    for (let i = 0; i < PRACTICE_ORB_COUNT; i += 1) {
+      state = popPracticeOrb(state);
+    }
+    return advanceOnSnapshot(
+      state,
+      recordingRoom({ ...preDemo, transcript: [...history, turn("09:05", "my new spoken idea")] }),
+    );
+  };
+
+  test("freshTranscript surfaces ONLY post-watermark lines (the idea step's transcript view)", () => {
+    const state = atIdeaOverHistory();
+    expect(state.step).toBe("idea");
+    const now = recordingRoom({ ...preDemo, transcript: [...history, turn("09:05", "my new spoken idea")] });
+    expect(freshTranscript(state, now).map((line) => line.text)).toEqual(["my new spoken idea"]);
+    // Even when old lines dominate the window, none of them leak through.
+    expect(freshTranscript(state, preDemo)).toEqual([]);
+  });
+
+  test("pre-demo ideas are ignored; a post-watermark idea surfaces", () => {
+    const state = atIdeaOverHistory();
+    expect(freshIdeas(state, preDemo)).toEqual([]);
+
+    const withNewIdea = recordingRoom({
+      ...preDemo,
+      ideas: [idea("idea_pre", "an idea from before the demo"), idea("idea_live", "the visitor's own idea")],
+    });
+    expect(freshIdeas(state, withNewIdea).map((item) => item.id)).toEqual(["idea_live"]);
+  });
+
+  test("the settle countdown armed BEFORE the demo is hidden; a fresh arm shows", () => {
+    const state = atIdeaOverHistory();
+    // Still the pre-demo idea counting down: not the visitor's — hidden.
+    expect(guidedSettle(state, preDemo)).toBeNull();
+
+    // A different title = a new detection: shown.
+    const rearmed = recordingRoom({
+      ...preDemo,
+      ideaSettle: { armed: true, title: "the visitor's own idea", firesInMs: 5_000 },
+    });
+    expect(guidedSettle(state, rearmed)?.title).toBe("the visitor's own idea");
+
+    // Same title but a post-watermark tray idea backs it: shown (re-detected).
+    const rebacked = recordingRoom({
+      ...preDemo,
+      ideas: [...(preDemo.ideas ?? []), idea("idea_live")],
+    });
+    expect(guidedSettle(state, rebacked)?.title).toBe("an idea from before the demo");
+
+    // Disarmed: nothing to show.
+    expect(guidedSettle(state, recordingRoom({ ...preDemo, ideaSettle: { armed: false, title: null, firesInMs: null } }))).toBeNull();
+  });
+
+  test("a legacy feed without an idea tray still shows a countdown armed AFTER entry", () => {
+    // No `ideas` field at all (older server): the demo entered with nothing
+    // armed, so a later arm is necessarily fresh.
+    const legacyQuiet = recordingRoom({ ideas: undefined, ideaSettle: undefined });
+    let state = startGuided(legacyQuiet);
+    for (let i = 0; i < PRACTICE_ORB_COUNT; i += 1) {
+      state = popPracticeOrb(state);
+    }
+    state = advanceOnSnapshot(state, recordingRoom({ ideas: undefined, transcript: [turn("00:01", "an idea")] }));
+    expect(state.step).toBe("idea");
+    const armedLater = recordingRoom({
+      ideas: undefined,
+      ideaSettle: { armed: true, title: "heard just now", firesInMs: 3_000 },
+    });
+    expect(guidedSettle(state, armedLater)?.title).toBe("heard just now");
+  });
+});
+
 describe("guided demo — race step (three MOCK lanes)", () => {
   const atRace = () => {
     const state = skipStep(
@@ -167,7 +313,7 @@ describe("guided demo — race step (three MOCK lanes)", () => {
     for (let i = 0; i < PRACTICE_ORB_COUNT; i += 1) {
       state = popPracticeOrb(state);
     }
-    return advanceOnSnapshot(state, recordingRoom());
+    return advanceOnSnapshot(state, spokenRoom());
   };
 
   test("mocking lanes do NOT advance; the FIRST mock-ready lane does (whichever backend wins)", () => {
@@ -218,6 +364,31 @@ describe("guided demo — race step (three MOCK lanes)", () => {
     expect(advanced.readyBackend).toBe("build");
   });
 
+  test("a PRE-DEMO process going ready never advances the race (only a post-watermark newcomer)", () => {
+    // upid_old exists before the demo enters — even its mock turning ready
+    // must not be adopted or advance race/decide.
+    const preExisting = makeProcess("upid_old", { builds: [build("smithers", "ready", { slideshowUrl: "http://x/d" })] });
+    let state = startGuided(makeSnapshot({ processes: [preExisting] }));
+    for (let i = 0; i < PRACTICE_ORB_COUNT; i += 1) {
+      state = popPracticeOrb(state);
+    }
+    state = advanceOnSnapshot(state, spokenRoom({ processes: [preExisting] }));
+    expect(state.step).toBe("idea");
+    const race = skipStep(state, recordingRoom({ processes: [preExisting] }))!;
+    expect(race.step).toBe("race");
+    expect(race.focusUpid).toBeNull();
+
+    // The pre-existing ready process is history: the race holds.
+    expect(advanceOnSnapshot(race, recordingRoom({ processes: [preExisting] }))).toBe(race);
+
+    // A genuine newcomer (born after the watermark) is adopted and races.
+    const newcomer = makeProcess("upid_new", { builds: [build("eliza", "ready")] });
+    const advanced = advanceOnSnapshot(race, recordingRoom({ processes: [preExisting, newcomer] }));
+    expect(advanced.focusUpid).toBe("upid_new");
+    expect(advanced.step).toBe("decide");
+    expect(advanced.readyBackend).toBe("eliza");
+  });
+
   test("a race step with no focus (skipped idea) adopts the first newcomer", () => {
     const skippedToDecide = skipStep(skipStep(atIdeaState(), recordingRoom())!, recordingRoom());
     // atIdeaState is already "idea": one skip → race (focus null).
@@ -240,6 +411,9 @@ describe("guided demo — lanes derivation", () => {
     step: "race" as const,
     orbsPopped: PRACTICE_ORB_COUNT,
     baselineUpids: [] as string[],
+    baselineTurnKeys: [] as string[],
+    baselineIdeaIds: [] as string[],
+    baselineSettleTitle: null,
     focusUpid,
     readyBackend: null,
   });
@@ -333,8 +507,8 @@ describe("guided demo — skip, finish, re-enter", () => {
     for (let i = 0; i < PRACTICE_ORB_COUNT; i += 1) {
       state = popPracticeOrb(state);
     }
-    const withProc = recordingRoom({ processes: [makeProcess("upid_first")] });
-    state = skipStep(advanceOnSnapshot(state, recordingRoom()), withProc)!;
+    const withProc = spokenRoom({ processes: [makeProcess("upid_first")] });
+    state = skipStep(advanceOnSnapshot(state, spokenRoom()), withProc)!;
     expect(state.step).toBe("race");
 
     // …then re-entry resets everything and treats upid_first as pre-existing.
@@ -343,6 +517,33 @@ describe("guided demo — skip, finish, re-enter", () => {
     expect(again.orbsPopped).toBe(0);
     expect(again.focusUpid).toBeNull();
     expect(again.baselineUpids).toEqual(["upid_first"]);
+  });
+
+  test("re-entering RE-WATERMARKS: the first run's speech and ideas are the next run's history", () => {
+    // Everything the first run produced — its spoken line, its detected idea —
+    // is on the wall when the demo is entered AGAIN.
+    const afterFirstRun = recordingRoom({
+      transcript: [turn("00:00:01", "hello room, new idea")],
+      ideas: [idea("idea_from_run1")],
+      ideaSettle: { armed: true, title: "the first visitor's idea", firesInMs: 4_000 },
+    });
+    let again = startGuided(afterFirstRun);
+    for (let i = 0; i < PRACTICE_ORB_COUNT; i += 1) {
+      again = popPracticeOrb(again);
+    }
+    expect(again.step).toBe("record");
+    // The first run's speech no longer counts as fresh…
+    expect(advanceOnSnapshot(again, afterFirstRun)).toBe(again);
+    // …its idea and armed countdown are history…
+    const atIdea = skipStep(again, afterFirstRun)!;
+    expect(freshIdeas(atIdea, afterFirstRun)).toEqual([]);
+    expect(guidedSettle(atIdea, afterFirstRun)).toBeNull();
+    // …and only the SECOND visitor's new turn advances record.
+    const secondVisitor = recordingRoom({
+      ...afterFirstRun,
+      transcript: [...afterFirstRun.transcript, turn("00:09:00", "a different idea entirely")],
+    });
+    expect(advanceOnSnapshot(again, secondVisitor).step).toBe("idea");
   });
 });
 
@@ -375,7 +576,7 @@ describe("guided demo — race minimum dwell (steps must not fly by)", () => {
     for (let i = 0; i < PRACTICE_ORB_COUNT; i += 1) {
       state = popPracticeOrb(state);
     }
-    return advanceOnSnapshot(state, recordingRoom({ processes: start.processes }), nowMs);
+    return advanceOnSnapshot(state, spokenRoom({ processes: start.processes }), nowMs);
   };
 
   test("an instantly-ready mock HOLDS the race for RACE_MIN_DWELL_MS, then advances", () => {

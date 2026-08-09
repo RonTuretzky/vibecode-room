@@ -4,8 +4,10 @@ import { buildsOf } from "../buildloop";
 import {
   PRACTICE_ORB_COUNT,
   focusProcess,
+  freshTranscript,
   guidedLanes,
   guidedNotice,
+  guidedSettle,
   lanesAllFailed,
   stepNumber,
   type GuidedState,
@@ -167,7 +169,7 @@ export function GuidedDemo({
         {step === "record" ? (
           <RecordBody snapshot={snapshot} micState={micState} micError={micError} />
         ) : null}
-        {step === "idea" ? <IdeaBody snapshot={snapshot} micState={micState} onDone={onDone} /> : null}
+        {step === "idea" ? <IdeaBody state={state} snapshot={snapshot} micState={micState} onDone={onDone} /> : null}
         {step === "race" ? <RaceBody state={state} snapshot={snapshot} /> : null}
         {step === "decide" ? <DecideBody state={state} snapshot={snapshot} /> : null}
 
@@ -263,17 +265,22 @@ function RecordBody({
 }
 
 function IdeaBody({
+  state,
   snapshot,
   micState,
   onDone,
 }: {
+  state: GuidedState;
   snapshot: ProjectorSnapshot;
   micState: "off" | "connecting" | "live";
   onDone: () => void;
 }) {
-  const lines = snapshot.transcript.slice(-4);
-  const settle = snapshot.ideaSettle;
-  const armed = settle?.armed === true;
+  // ONLY this demo run's speech and ideas: session history (old transcript
+  // lines, a countdown armed before the demo entered) is behind the machine's
+  // watermarks and never showcased as the visitor's own.
+  const lines = freshTranscript(state, snapshot).slice(-4);
+  const settle = guidedSettle(state, snapshot);
+  const armed = settle !== null;
   return (
     <div className="guided-body">
       <p className="guided-lede">

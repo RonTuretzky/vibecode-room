@@ -1688,6 +1688,12 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
   // it would aim its camera at the pair's OTHER quadrant, away from the tree.
   const cornerLock =
     !flatLock && !urlConfig.research && gestureMode && urlConfig.wall !== null && urlConfig.hands === null;
+  // CONTINUOUS AUTO-FRAMING: a research-pinned dedicated display (the ceiling
+  // projector) must keep the WHOLE conversation tree in view as it grows, so
+  // auto-fit defaults ON there; ?autofit=0 opts out, ?autofit=1 forces it on
+  // any other window. Never under the corner/flat lock — rigid pairs may not
+  // move (RoomScene gates it again defensively).
+  const autoFit = !cornerLock && !flatLock && (urlConfig.autoFit ?? urlConfig.research);
   const dwellLayerOn = gestureMode || urlConfig.dwell === "mouse" || remoteHandsUrl.length > 0;
   // AUDIT (no-mocks): the Mock Room toggle renders ONLY behind ?mock=1.
   const mockRoomEnabled = urlConfig.mock;
@@ -1708,6 +1714,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
         wall={urlConfig.wall}
         cornerLock={cornerLock}
         flatLock={flatLock}
+        autoFit={autoFit}
         fitSignal={fitSignal}
         focusUpid={
           guided !== null && (guided.step === "race" || guided.step === "decide")

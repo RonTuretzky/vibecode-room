@@ -66,6 +66,12 @@ export interface ProjectorUrlConfig {
   // ?zen=1 — boot with the zen (chrome-less) presentation on, same as the Z
   // key: just the scene, no trays/status chrome. For dedicated displays.
   zen: boolean;
+  // ?autofit= — continuous auto-framing override (the camera re-fits itself
+  // to keep the whole scene in view as it grows): "1" forces it on for any
+  // unlocked window, "0" forces it off, absent/unknown → null so App applies
+  // the default (ON for research-pinned windows — the ceiling projector).
+  // Corner/flat-locked pairs ignore it entirely: rigid pairs may not move.
+  autoFit: boolean | null;
 }
 
 export function parseProjectorUrl(search: string, hostname: string): ProjectorUrlConfig {
@@ -131,6 +137,11 @@ export function parseProjectorUrl(search: string, hostname: string): ProjectorUr
   const research = params.get("research") === "1";
   const zen = params.get("zen") === "1";
 
+  // Continuous auto-framing tri-state: explicit "1"/"0" override, anything
+  // else defers (null) to App's default (on for research-pinned windows).
+  const autoFitParam = params.get("autofit");
+  const autoFit = autoFitParam === "1" ? true : autoFitParam === "0" ? false : null;
+
   // Corner identity badge: shown whenever the window is wall- or view-scoped so
   // an operator glancing across the room knows which projection they're facing.
   // DE-THEMED: a wall badge is just "WALL A" — the walls are one continuous
@@ -142,5 +153,5 @@ export function parseProjectorUrl(search: string, hostname: string): ProjectorUr
         ? view.toUpperCase()
         : null;
 
-  return { view, wall, badge, gesture, dwell, hands, remote, demo, mock, flat, dots, research, zen };
+  return { view, wall, badge, gesture, dwell, hands, remote, demo, mock, flat, dots, research, zen, autoFit };
 }

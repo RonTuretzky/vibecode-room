@@ -1,16 +1,23 @@
 import { describe, expect, test } from "bun:test";
 import {
+  AUTO_FIT_CENTER_DRIFT,
+  AUTO_FIT_INTERVAL_MS,
+  AUTO_FIT_RADIUS_RATIO,
+  AUTO_FIT_RESUME_MS,
+  autoFitSuspended,
   dialogueBranchLength,
   dialogueBranchPoint,
   dialogueBranches,
   dialogueLeafPosition,
   dialogueLeafT,
   dialogueTrunkHeight,
+  shouldAutoRefit,
   stageWord,
   treeIndicators,
   treeSpecStructurallyChanged,
   treeStatus,
   treeTitle,
+  type AutoFitFraming,
   type DialogueNodeSpec,
   type DialogueTopicSpec,
   type TreeSpec,
@@ -271,5 +278,69 @@ describe("conversation tree layout math", () => {
       const b = dialogueLeafPosition(0, 2, h, len, j + 1, 6);
       expect(a.distanceTo(b)).toBeGreaterThan(0.5);
     }
+  });
+});
+
+// ── continuous auto-framing (the ceiling projector's self-driving camera) ───
+
+function framing(targetX: number, targetZ: number, radius: number): AutoFitFraming {
+  return { targetX, targetZ, radius };
+}
+
+describe("shouldAutoRefit — hysteresis so idle scenes never twitch", () => {
+  test("tuning constants pin the contract: 0.75s poll, 4s resume, 10% / 0.8u bands", () => {
+    expect(AUTO_FIT_INTERVAL_MS).toBe(750);
+    expect(AUTO_FIT_RESUME_MS).toBe(4000);
+    expect(AUTO_FIT_RADIUS_RATIO).toBeCloseTo(0.1, 5);
+    expect(AUTO_FIT_CENTER_DRIFT).toBeCloseTo(0.8, 5);
+  });
+
+  test("identical framing never refits — a completed refit is a fixed point", () => {
+    const ideal = framing(4.2, -1.7, 23.4);
+    expect(shouldAutoRefit({ ...ideal }, ideal)).toBe(false);
+  });
+
+  test("radius drift beyond 10% refits, growing out AND zooming back in", () => {
+    expect(shouldAutoRefit(framing(0, 0, 10), framing(0, 0, 11.1))).toBe(true);
+    expect(shouldAutoRefit(framing(0, 0, 10), framing(0, 0, 8.9))).toBe(true);
+  });
+
+  test("radius drift within 10% stays put", () => {
+    expect(shouldAutoRefit(framing(0, 0, 10), framing(0, 0, 10.9))).toBe(false);
+    expect(shouldAutoRefit(framing(0, 0, 10), framing(0, 0, 9.1))).toBe(false);
+  });
+
+  test("the 10% band is relative to the CURRENT radius", () => {
+    // Same absolute +2 delta: negligible on a wide shot, decisive close in.
+    expect(shouldAutoRefit(framing(0, 0, 40), framing(0, 0, 42))).toBe(false);
+    expect(shouldAutoRefit(framing(0, 0, 8), framing(0, 0, 10))).toBe(true);
+  });
+
+  test("centre drift beyond 0.8 world units refits (euclidean — diagonals count)", () => {
+    expect(shouldAutoRefit(framing(0, 0, 15), framing(0.9, 0, 15))).toBe(true);
+    expect(shouldAutoRefit(framing(0, 0, 15), framing(0, -0.9, 15))).toBe(true);
+    // hypot(0.6, 0.6) ≈ 0.85 > 0.8 although neither axis alone crosses it.
+    expect(shouldAutoRefit(framing(0, 0, 15), framing(0.6, 0.6, 15))).toBe(true);
+  });
+
+  test("centre drift within 0.8 world units stays put", () => {
+    expect(shouldAutoRefit(framing(0, 0, 15), framing(0.5, 0.5, 15))).toBe(false); // hypot ≈ 0.71
+    expect(shouldAutoRefit(framing(3, -3, 15), framing(3.7, -3, 15))).toBe(false);
+  });
+});
+
+describe("autoFitSuspended — manual camera input pauses the auto-framing", () => {
+  test("a live drag or external pinch grab suspends regardless of timing", () => {
+    expect(autoFitSuspended(1_000_000, -AUTO_FIT_RESUME_MS, true)).toBe(true);
+  });
+
+  test("stays suspended within 4s of the last input, resumes right after", () => {
+    const lastInput = 10_000;
+    expect(autoFitSuspended(lastInput + AUTO_FIT_RESUME_MS - 1, lastInput, false)).toBe(true);
+    expect(autoFitSuspended(lastInput + AUTO_FIT_RESUME_MS, lastInput, false)).toBe(false);
+  });
+
+  test("a fresh window (input stamp seeded one resume-window in the past) is eligible at t=0", () => {
+    expect(autoFitSuspended(0, -AUTO_FIT_RESUME_MS, false)).toBe(false);
   });
 });

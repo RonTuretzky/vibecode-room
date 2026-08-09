@@ -190,6 +190,15 @@ interface RoomSceneProps {
   // the identical hands-stream deltas, keeping the pair in lockstep. Fixed
   // per window (URL-derived).
   flatLock?: boolean;
+  // CONTINUOUS AUTO-FRAMING (dedicated displays — the research ceiling
+  // projector): every ~0.75s the desk rig re-measures the content bounds and,
+  // when the ideal framing drifted meaningfully (see shouldAutoRefit), writes
+  // the fit targets so the existing lerp glides the camera out/recenters —
+  // the whole conversation tree stays in view as it grows. Suspended during
+  // manual camera input and for 4s after (autoFitSuspended); inert under the
+  // corner/flat lock (rigid pairs may not move). Fixed per window
+  // (URL-derived, like the locks).
+  autoFit?: boolean;
   // Increment to request a one-shot fit-to-content camera move.
   fitSignal: number;
   // GUIDED-DEMO FOCUS: when set, the camera glides to frame this process's
@@ -445,6 +454,50 @@ export function treeSpecStructurallyChanged(a: TreeSpec, b: TreeSpec): boolean {
     buildsSummaryChanged(a.builds, b.builds) ||
     (treeIndicators(a).progressArc === null) !== (treeIndicators(b).progressArc === null)
   );
+}
+
+// ── continuous auto-framing (dedicated displays — the ceiling projector) ────
+// The desk rig re-measures the content bounds on this cadence and glides
+// out/recenters by itself when the scene outgrew the frame, so a pinned
+// window keeps the WHOLE conversation tree in view with nobody at the desk.
+export const AUTO_FIT_INTERVAL_MS = 750;
+// Manual camera input (drag / wheel / WASD / pinch / joystick) suspends the
+// auto-framing; it resumes this long after the LAST touch.
+export const AUTO_FIT_RESUME_MS = 4000;
+// Hysteresis so idle scenes never twitch: only refit when the ideal radius
+// moved more than this fraction of the current one…
+export const AUTO_FIT_RADIUS_RATIO = 0.1;
+// …or the ideal orbit-target centre drifted farther than this (world units).
+export const AUTO_FIT_CENTER_DRIFT = 0.8;
+
+// The rig framing the decision compares: the orbit target on the ground plane
+// plus the orbit radius (height follows radius in the fit maths, so it never
+// votes separately). Pure data — no three.js — so tests stay render-free.
+export interface AutoFitFraming {
+  targetX: number;
+  targetZ: number;
+  radius: number;
+}
+
+// The "should refit" hysteresis decision, extracted pure for tests: TRUE when
+// the ideal fit differs meaningfully from the current DESIRED rig (the d*
+// lerp targets — comparing desired-to-desired means a completed refit is a
+// fixed point, so a static scene can never oscillate).
+export function shouldAutoRefit(current: AutoFitFraming, ideal: AutoFitFraming): boolean {
+  const radiusBase = Math.max(Math.abs(current.radius), 1e-6);
+  if (Math.abs(ideal.radius - current.radius) / radiusBase > AUTO_FIT_RADIUS_RATIO) {
+    return true;
+  }
+  const dx = ideal.targetX - current.targetX;
+  const dz = ideal.targetZ - current.targetZ;
+  return Math.hypot(dx, dz) > AUTO_FIT_CENTER_DRIFT;
+}
+
+// The suspend gate, also pure for tests: auto-framing pauses while input is
+// live (drag / external pinch grab) and for AUTO_FIT_RESUME_MS after the last
+// input stamp, then resumes.
+export function autoFitSuspended(nowMs: number, lastInputMs: number, inputActive: boolean): boolean {
+  return inputActive || nowMs - lastInputMs < AUTO_FIT_RESUME_MS;
 }
 
 // ── hyperbolic layout constants (after the visualizer's H3/disk modes) ───────
@@ -810,7 +863,7 @@ interface Entry {
   updateProgress?: (spec: TreeSpec) => void;
 }
 
-export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, focusUpid = null, pointerNav = true, cornerLock = false, flatLock = false, onAcceptIdea, onSelectProcess, dialogue = [], topics = [], research = [], onResearchNode, onDialogueNode }: RoomSceneProps) {
+export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, focusUpid = null, pointerNav = true, cornerLock = false, flatLock = false, autoFit = false, onAcceptIdea, onSelectProcess, dialogue = [], topics = [], research = [], onResearchNode, onDialogueNode }: RoomSceneProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const ideasRef = useRef(ideas);
   ideasRef.current = ideas;
@@ -843,6 +896,9 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
   // Same deal: the flat lock is URL-derived and fixed for the window's life.
   const flatLockRef = useRef(flatLock);
   flatLockRef.current = flatLock;
+  // Same deal: auto-fit is URL-derived (App: ?research/?autofit) and fixed.
+  const autoFitRef = useRef(autoFit);
+  autoFitRef.current = autoFit;
   const fitRef = useRef(fitSignal);
   fitRef.current = fitSignal;
   const focusRef = useRef<string | null>(focusUpid);
@@ -2944,32 +3000,59 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
     };
 
     // ── fit to content (visualizer's fitToScreen, adapted to the orbit rig) ─
-    const fitToContent = () => {
-      const box = new THREE.Box3();
-      let hasContent = false;
-      const include = (entries: Map<string, Entry>) => {
-        for (const entry of entries.values()) {
-          if (!entry.removing) {
-            box.expandByPoint(entry.targetPos);
-            hasContent = true;
-          }
+    // The one-shot F/fitSignal fit and the continuous auto-fit poll share ONE
+    // framing computation over the same bounds: every live entry's target
+    // position — ideas, build trees, dialogue TURN leaves and research
+    // crystals alike (the dialogue trunk sits at the origin inside the leaves'
+    // hull, and branch tips/labels ride within the +7 radius margin, so the
+    // whole conversation tree stays framed). Scratch objects are hoisted and
+    // reused: the ~0.75s auto-fit poll must not allocate.
+    const fitBox = new THREE.Box3();
+    const fitCenter = new THREE.Vector3();
+    const fitSize = new THREE.Vector3();
+    const fitExpand = (entries: Map<string, Entry>): boolean => {
+      let any = false;
+      for (const entry of entries.values()) {
+        if (!entry.removing) {
+          fitBox.expandByPoint(entry.targetPos);
+          any = true;
         }
-      };
-      include(ideaEntries);
-      include(treeEntries);
-      include(dialogueEntries);
-      include(researchEntries);
+      }
+      return any;
+    };
+    // Ideal fit framing → out; FALSE when the scene is empty (caller decides:
+    // one-shot fit resets the rig, the auto-fit poll just waits).
+    const computeFitTargets = (out: { targetX: number; targetZ: number; radius: number; height: number }): boolean => {
+      fitBox.makeEmpty();
+      let hasContent = fitExpand(ideaEntries);
+      hasContent = fitExpand(treeEntries) || hasContent;
+      hasContent = fitExpand(dialogueEntries) || hasContent;
+      hasContent = fitExpand(researchEntries) || hasContent;
       if (!hasContent) {
+        return false;
+      }
+      fitBox.getCenter(fitCenter);
+      fitBox.getSize(fitSize);
+      const spread = Math.max(fitSize.x, fitSize.z, 6);
+      out.targetX = fitCenter.x;
+      out.targetZ = fitCenter.z;
+      out.radius = Math.min(40, spread * 0.85 + 7);
+      out.height = Math.min(26, out.radius * 0.34 + 2);
+      return true;
+    };
+    const fitIdeal = { targetX: 0, targetZ: 0, radius: 0, height: 0 };
+    const applyFitTargets = () => {
+      rig.dTargetX = fitIdeal.targetX;
+      rig.dTargetZ = fitIdeal.targetZ;
+      rig.dRadius = fitIdeal.radius;
+      rig.dHeight = fitIdeal.height;
+    };
+    const fitToContent = () => {
+      if (!computeFitTargets(fitIdeal)) {
         resetRig();
         return;
       }
-      const center = box.getCenter(new THREE.Vector3());
-      const size = box.getSize(new THREE.Vector3());
-      const spread = Math.max(size.x, size.z, 6);
-      rig.dTargetX = center.x;
-      rig.dTargetZ = center.z;
-      rig.dRadius = Math.min(40, spread * 0.85 + 7);
-      rig.dHeight = Math.min(26, rig.dRadius * 0.34 + 2);
+      applyFitTargets();
     };
 
     // ── pointer: orbit / pan / zoom / click-with-drag-suppression ───────────
@@ -2992,6 +3075,16 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
     // True while the pinch-camera layer holds a live grab: the rig tracks
     // tightly (like a mouse drag) and flick inertia stays out of the way.
     let externalGrab = false;
+    // CONTINUOUS AUTO-FRAMING bookkeeping (desk rig only): every manual
+    // camera input (pointer, wheel, WASD holds, pinch/joystick seam calls)
+    // stamps its time here and the poll stays suspended until
+    // AUTO_FIT_RESUME_MS after the last stamp. Seeded in the past so a fresh
+    // window is eligible immediately; the current-framing scratch keeps the
+    // poll allocation-free.
+    const autoFitOn = autoFitRef.current && !cornerLockRef.current && !flatLockRef.current;
+    let lastCameraInputMs = -AUTO_FIT_RESUME_MS;
+    let lastAutoFitPollMs = 0;
+    const autoFitCurrent = { targetX: 0, targetZ: 0, radius: 0 };
 
     const pick = (clientX: number, clientY: number): { kind: string; key?: string; callsign?: string } | null => {
       const rect = renderer.domElement.getBoundingClientRect();
@@ -3050,6 +3143,7 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
       angVel = 0;
       heightVel = 0;
       lastMoveAt = performance.now();
+      lastCameraInputMs = lastMoveAt; // manual input — suspend auto-framing
       // Keep the drag alive even when the pointer crosses a floating panel.
       renderer.domElement.setPointerCapture(event.pointerId);
     };
@@ -3170,6 +3264,7 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
     };
     const onWheel = (event: WheelEvent) => {
       event.preventDefault();
+      lastCameraInputMs = performance.now(); // manual input — suspend auto-framing
       rig.dRadius = Math.max(4, Math.min(45, rig.dRadius + event.deltaY * 0.02));
     };
     // GESTURE-DWELL SEAM: expose real raycast picking + projected node rects +
@@ -3292,7 +3387,11 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
     // wins). The scene owns the rig and ALL clamps — the layer never touches
     // three.js and cannot push the rig outside the mouse's envelope.
     const unregisterCameraControl = registerSceneCameraControl({
+      // Every seam verb is manual camera input (pinch camera, guest joystick
+      // keys, …): stamp it so the continuous auto-framing stays suspended
+      // while someone is orbiting and for AUTO_FIT_RESUME_MS after.
       orbitBy: (dYaw, dHeight) => {
+        lastCameraInputMs = performance.now();
         if (flatLocked) {
           // Shared flat pair: orbit the whole panorama about the scene
           // centre. Deterministic per the hands stream — see the flat-rig
@@ -3307,6 +3406,7 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
         rig.dHeight = Math.max(1.4, Math.min(30, rig.dHeight + dHeight));
       },
       panBy: (dxPx, dyPx) => {
+        lastCameraInputMs = performance.now();
         if (flatLocked) {
           // Panning would slide the pair off its seam-centred origin — the
           // panorama stays anchored; orbit/zoom are the flat-pair verbs.
@@ -3323,6 +3423,7 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
         if (!Number.isFinite(scale) || scale <= 0) {
           return; // defensive: a bad ratio must never NaN the rig
         }
+        lastCameraInputMs = performance.now();
         if (flatLocked) {
           // Dolly the shared panorama, clamped so the seam maths stay sane.
           flatRig.dist = Math.max(6, Math.min(45, flatRig.dist * scale));
@@ -3335,12 +3436,14 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
       // Params deliberately NOT named angVel/heightVel — they must not shadow
       // the inertia vars this feeds.
       flick: (yawVel, hVel) => {
+        lastCameraInputMs = performance.now();
         // Defensive re-clamp (the interpreter caps too): a rogue velocity must
         // never launch the camera.
         angVel = Math.max(-4, Math.min(4, yawVel));
         heightVel = Math.max(-30, Math.min(30, hVel));
       },
       setTracking: (on) => {
+        lastCameraInputMs = performance.now();
         externalGrab = on;
         if (on) {
           // Same takeover onPointerDown does: a fresh grab kills residual coast.
@@ -3577,6 +3680,36 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
           if (Math.abs(heightVel) > 1e-3) {
             rig.dHeight = Math.max(1.4, Math.min(30, rig.dHeight + heightVel * dt));
             heightVel *= Math.exp(-dt * 2.6);
+          }
+        }
+
+        // CONTINUOUS AUTO-FRAMING (autoFit — the research ceiling projector):
+        // every AUTO_FIT_INTERVAL_MS re-measure the same bounds fitToContent
+        // uses and, when the ideal framing drifted past the hysteresis
+        // (shouldAutoRefit), write the fit targets into rig.d* and let the
+        // existing lerp glide the camera out/recenter. Held camera input
+        // (drag / pinch grab / WASD) re-stamps here so autoFitSuspended keeps
+        // it paused until AUTO_FIT_RESUME_MS after the last touch; a live
+        // guided-demo focus keeps its framing too. Manual F/fitSignal above
+        // stays the way to force an immediate fit.
+        if (autoFitOn) {
+          if (dragging || externalGrab || keysDown.size > 0) {
+            lastCameraInputMs = now;
+          }
+          if (now - lastAutoFitPollMs >= AUTO_FIT_INTERVAL_MS) {
+            lastAutoFitPollMs = now;
+            if (
+              !autoFitSuspended(now, lastCameraInputMs, dragging || externalGrab) &&
+              focusRef.current === null &&
+              computeFitTargets(fitIdeal)
+            ) {
+              autoFitCurrent.targetX = rig.dTargetX;
+              autoFitCurrent.targetZ = rig.dTargetZ;
+              autoFitCurrent.radius = rig.dRadius;
+              if (shouldAutoRefit(autoFitCurrent, fitIdeal)) {
+                applyFitTargets();
+              }
+            }
           }
         }
 

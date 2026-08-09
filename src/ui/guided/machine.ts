@@ -1,4 +1,4 @@
-import type { ProcessBuildStatus, ProjectorProcess, ProjectorSnapshot } from "../types";
+import type { IdeaTrayItem, ProcessBuildStatus, ProjectorProcess, ProjectorSnapshot, TranscriptLine } from "../types";
 import { backendsOf, buildsOf } from "../buildloop";
 
 /**
@@ -25,7 +25,12 @@ import { backendsOf, buildsOf } from "../buildloop";
  *                 captureMode === true (however achieved: the overlay's big
  *                 Record button POSTs the real /api/unmute + /api/capture +
  *                 /api/auto-accept, but a keyboard u/c or voice command counts
- *                 identically). On advance the process baseline is re-captured.
+ *                 identically) AND the room has actually HEARD the visitor —
+ *                 at least one kind:"room" transcript line beyond the speech
+ *                 watermark (i.e. spoken after this run reached the record
+ *                 step). A room left unmuted+capturing with hours of session
+ *                 transcript never completes the step by itself. On advance
+ *                 the process baseline is re-captured.
  *   idea        — advances ONLY on explicit visitor action (the Done button /
  *                 Skip, both routed through `skipStep`). The room may detect
  *                 and even auto-build in the background, but the coach never
@@ -47,6 +52,22 @@ import { backendsOf, buildsOf } from "../buildloop";
  *
  * Skip is available at every step; re-entering (startGuided) always begins a
  * fresh run with a fresh baseline.
+ *
+ * WATERMARKS (feeds vs. session history): the room accumulates transcript
+ * turns, detected ideas and processes for as long as it runs — the demo must
+ * only ever react to items born AFTER it (re)entered, never to that history.
+ * So the machine carries per-feed high-water marks in its state:
+ *   baselineTurnKeys / baselineIdeaIds / baselineSettleTitle — captured by
+ *   startGuided, slid forward on every snapshot WHILE ORIENTATION RUNS (the
+ *   orientation→record edge, popPracticeOrb, never sees a snapshot — and the
+ *   ?demo=guided auto-entry may start from an empty placeholder snapshot
+ *   before the first live one lands), then FROZEN from record entry on. From
+ *   that moment "beyond the watermark" means "this visitor's own speech /
+ *   the ideas it produced".
+ *   baselineUpids — the process watermark (recaptured entering idea, see
+ *   above) so race/decide only ever adopt a process born during the demo.
+ * The pure helpers freshTranscript / freshIdeas / guidedSettle expose the
+ * post-watermark view; the overlay showcases ONLY that.
  */
 
 export const PRACTICE_ORB_COUNT = 3;
@@ -74,6 +95,17 @@ export interface GuidedState {
   // The upids present when the demo (re)entered / when "record" completed —
   // the idea step looks for a process NOT in this set.
   baselineUpids: readonly string[];
+  // Speech watermark: identity keys (time|speaker|text) of the transcript
+  // lines already on the wall when the record step began. Only lines beyond
+  // these count as demo speech (record's advance, the idea step's transcript).
+  baselineTurnKeys: readonly string[];
+  // Idea watermark: tray ids already detected when the record step began —
+  // pre-demo ideas are never showcased as the visitor's.
+  baselineIdeaIds: readonly string[];
+  // The settle-gate title that was ALREADY armed when the record step began
+  // (null when nothing was armed). ideaSettle carries no id, so the stale
+  // pre-demo countdown is recognized by this title (see guidedSettle).
+  baselineSettleTitle: string | null;
   // The project born during the demo (steps race/decide focus the camera on it).
   focusUpid: string | null;
   // Which backend's MOCK was FIRST ready (race → decide transition) so the
@@ -89,14 +121,81 @@ function upidsOf(snapshot: ProjectorSnapshot): string[] {
   return snapshot.processes.map((process) => process.upid);
 }
 
+// Identity key for a transcript line (the feed carries no stable id; this is
+// the same tuple the overlay already keys its React rows by). Two verbatim
+// duplicates collapse — acceptable: the second is indistinguishable anyway.
+function turnKeyOf(line: TranscriptLine): string {
+  return `${line.time}\u001f${line.speaker}\u001f${line.text}`;
+}
+
+// The current high-water marks of every speech/idea feed in one capture.
+function watermarksOf(
+  snapshot: ProjectorSnapshot,
+): Pick<GuidedState, "baselineTurnKeys" | "baselineIdeaIds" | "baselineSettleTitle"> {
+  return {
+    baselineTurnKeys: snapshot.transcript.map(turnKeyOf),
+    baselineIdeaIds: (snapshot.ideas ?? []).map((idea) => idea.id),
+    baselineSettleTitle: snapshot.ideaSettle?.armed === true ? snapshot.ideaSettle.title : null,
+  };
+}
+
+function sameStrings(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((value, index) => value === b[index]);
+}
+
 export function startGuided(snapshot: ProjectorSnapshot): GuidedState {
   return {
     step: "orientation",
     orbsPopped: 0,
     baselineUpids: upidsOf(snapshot),
+    ...watermarksOf(snapshot),
     focusUpid: null,
     readyBackend: null,
   };
+}
+
+// ── post-watermark feed views (what the demo may react to / showcase) ────────
+
+// Transcript lines beyond the speech watermark — the visitor's own demo
+// speech. The overlay's idea step shows ONLY these; record advances on them.
+export function freshTranscript(state: GuidedState, snapshot: ProjectorSnapshot): TranscriptLine[] {
+  const seen = new Set(state.baselineTurnKeys);
+  return snapshot.transcript.filter((line) => !seen.has(turnKeyOf(line)));
+}
+
+// Actual visitor speech: kind "room" is the transcribed human; "vibersyn"
+// (the room's own voice) and "process" (agent output) must not count.
+function hasFreshRoomSpeech(state: GuidedState, snapshot: ProjectorSnapshot): boolean {
+  return freshTranscript(state, snapshot).some((line) => line.kind === "room");
+}
+
+// Tray ideas beyond the idea watermark — detected during THIS demo run.
+export function freshIdeas(state: GuidedState, snapshot: ProjectorSnapshot): IdeaTrayItem[] {
+  const seen = new Set(state.baselineIdeaIds);
+  return (snapshot.ideas ?? []).filter((idea) => !seen.has(idea.id));
+}
+
+// The settle gate (armed idea + countdown) the idea step may honestly show:
+// null while nothing is armed AND while the armed idea is the stale pre-demo
+// one — recognized by carrying the exact title that was already armed when
+// the record step began with no post-watermark idea backing it. A fresh tray
+// idea (or a new title) proves the countdown belongs to this visitor.
+export function guidedSettle(
+  state: GuidedState,
+  snapshot: ProjectorSnapshot,
+): NonNullable<ProjectorSnapshot["ideaSettle"]> | null {
+  const settle = snapshot.ideaSettle;
+  if (settle === undefined || settle.armed !== true) {
+    return null;
+  }
+  if (
+    state.baselineSettleTitle !== null &&
+    settle.title === state.baselineSettleTitle &&
+    freshIdeas(state, snapshot).length === 0
+  ) {
+    return null;
+  }
+  return settle;
 }
 
 export function stepNumber(step: GuidedStep): number {
@@ -144,8 +243,26 @@ function firstReadyBackend(process: ProjectorProcess | null): string | null {
 // nothing advances, so React setState bails without re-rendering.
 export function advanceOnSnapshot(state: GuidedState, snapshot: ProjectorSnapshot, nowMs?: number): GuidedState {
   switch (state.step) {
+    case "orientation": {
+      // Slide the speech/idea watermarks while the visitor practices: the
+      // record step must measure freshness from ITS OWN entry, but the
+      // orientation→record edge (popPracticeOrb) never sees a snapshot — so
+      // the marks ride every feed forward until orientation ends. This also
+      // heals the ?demo=guided auto-entry, which may have baselined an empty
+      // placeholder snapshot before the first live one (with the session's
+      // whole history) arrived.
+      const marks = watermarksOf(snapshot);
+      if (
+        sameStrings(marks.baselineTurnKeys, state.baselineTurnKeys) &&
+        sameStrings(marks.baselineIdeaIds, state.baselineIdeaIds) &&
+        marks.baselineSettleTitle === state.baselineSettleTitle
+      ) {
+        return state;
+      }
+      return { ...state, ...marks };
+    }
     case "record": {
-      if (!snapshot.muted && snapshot.captureMode === true) {
+      if (!snapshot.muted && snapshot.captureMode === true && hasFreshRoomSpeech(state, snapshot)) {
         return { ...state, step: "idea", baselineUpids: upidsOf(snapshot), enteredAtMs: nowMs };
       }
       return state;
@@ -187,7 +304,9 @@ export function advanceOnSnapshot(state: GuidedState, snapshot: ProjectorSnapsho
 export function skipStep(state: GuidedState, snapshot: ProjectorSnapshot, nowMs?: number): GuidedState | null {
   switch (state.step) {
     case "orientation":
-      return { ...state, step: "record", enteredAtMs: nowMs };
+      // Freeze the speech/idea watermarks at this exact moment: everything
+      // beyond them is this visitor's own recording session.
+      return { ...state, ...watermarksOf(snapshot), step: "record", enteredAtMs: nowMs };
     case "record":
       // Same baseline reset the natural advance performs, so a process that
       // appears later still registers as the demo's newcomer.

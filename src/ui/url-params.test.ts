@@ -162,4 +162,25 @@ describe("parseProjectorUrl", () => {
     expect(parseProjectorUrl("?dots=0", "h").dots).toBe(false);
     expect(parseProjectorUrl("", "h").dots).toBe(false);
   });
+
+  // CONTINUOUS AUTO-FRAMING (?autofit=): tri-state override for the
+  // self-driving camera. App defaults it ON for research-pinned windows
+  // (?research=1 — the ceiling projector); the URL param forces either way.
+  test("?autofit=1 forces auto-framing on; ?autofit=0 forces it off", () => {
+    expect(parseProjectorUrl("?autofit=1", "h").autoFit).toBe(true);
+    expect(parseProjectorUrl("?autofit=0", "h").autoFit).toBe(false);
+  });
+
+  test("absent/unknown ?autofit defers to the default (null tri-state)", () => {
+    expect(parseProjectorUrl("", "h").autoFit).toBeNull();
+    expect(parseProjectorUrl("?research=1", "h").autoFit).toBeNull();
+    expect(parseProjectorUrl("?autofit=yes", "h").autoFit).toBeNull();
+    expect(parseProjectorUrl("?autofit=", "h").autoFit).toBeNull();
+  });
+
+  test("?autofit composes with the research pin untouched (ceiling projector opt-out)", () => {
+    const config = parseProjectorUrl("?research=1&autofit=0", "h");
+    expect(config.research).toBe(true);
+    expect(config.autoFit).toBe(false);
+  });
 });
