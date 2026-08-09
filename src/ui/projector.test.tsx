@@ -1548,7 +1548,7 @@ describe("idea action card: contextual Done UX replaces the top-bar button", () 
     expect(html).not.toContain('data-testid="idea-done-button"');
   });
 
-  test("guided idea step shows heard title + countdown + Done when armed, listening hint otherwise", async () => {
+  test("guided idea step shows heard title + Done-is-the-trigger copy when armed, listening hint otherwise", async () => {
     const { GuidedDemo } = await import("./guided/GuidedDemo");
     const { startGuided } = await import("./guided/machine");
     const ideaState = { ...startGuided(demoProjectorSnapshot), step: "idea" as const };
@@ -1568,7 +1568,10 @@ describe("idea action card: contextual Done UX replaces the top-bar button", () 
     const armedHtml = renderToStaticMarkup(<GuidedDemo {...props} snapshot={armedSnapshot} />);
     expect(armedHtml).toContain('data-testid="guided-done-button"');
     expect(armedHtml).toContain("a dashboard tool");
-    expect(armedHtml).toContain("Building in 5s");
+    // Deferred build: no countdown — Done is the only trigger, and the copy
+    // says so.
+    expect(armedHtml).not.toContain("Building in");
+    expect(armedHtml).toContain("starts the concept race");
 
     // Done is ALWAYS pressable during the idea step — it builds from the
     // transcript (or advances the step) even before anything is armed.
