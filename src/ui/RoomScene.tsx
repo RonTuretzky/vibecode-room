@@ -256,7 +256,10 @@ interface RoomSceneProps {
   // useSelfRepoTree hook. Null/absent = no self tree (toggle off, ceiling
   // research pin, loader still warming). Rendered in the garden's radial
   // layout only, in the slot right after the fleet; identity is stable
-  // (upid "self:repo") so reconciliation never churns it.
+  // (upid "self:repo") so reconciliation never churns it. While standing it
+  // REPLACES the mirror process's generic fleet tree (visibleTreeSpecs) and
+  // adopts the mirror's live TreeSpec from `trees`, so selecting it steers
+  // the room itself.
   selfTree?: SelfTreeSpec | null;
 }
 
@@ -295,9 +298,15 @@ const FLASH_MS = 1500;
 // the stable reconcile identity, the label accent, and the height adaptation
 // — the forest spec authors trunks at 5.5–10u (org-grove scale), scaled so
 // the self tree stands WITH the fleet trees, not over them.
-const SELF_TREE_UPID = "self:repo";
+export const SELF_TREE_UPID = "self:repo";
 const SELF_TREE_ACCENT = 0x8fd8a8;
 const SELF_TREE_SCALE = 0.75;
+// The standing SELF process — the mirror, THE control surface for steering the
+// room's own source — is pinned server-side with upid "self" / callsign
+// "mirror" (src/self/commission.ts: SELF_UPID / SELF_CALLSIGN). That module
+// sits behind server-only deps, so the UI matches on the upid STRING here
+// instead of importing it.
+export const SELF_PROCESS_UPID = "self";
 
 // Research crystal colors reuse the FIXED status semantics: proposed=planning
 // blue, researching=active green, complete=completed mint, failed=halted red.
@@ -351,6 +360,56 @@ export function stageWord(stage: TreeSpec["stage"]): string {
 // appended so the steering target reads from across the room.
 export function treeStatus(spec: TreeSpec): string {
   return `${stageWord(spec.stage)} · ${spec.state} · ${Math.round(spec.progress)}%${spec.steering ? " · ⟵ steering" : ""}`;
+}
+
+// ── the self-rebuild repo tree ↔ the mirror process ─────────────────────────
+// The HD self-repo tree and the mirror process are ONE thing: while the HD
+// tree is standing it REPLACES the mirror's generic fleet tree, adopts the
+// mirror's LIVE TreeSpec, and picking it carries the mirror's callsign — so
+// select → talk steers the room exactly like clicking the mirror's old node.
+// All three seams are pure (no three.js) and unit-tested directly.
+
+// Pure: the fleet specs reconcile actually grows. selfTreePresent = the HD
+// self tree renders this pass (self-rebuild armed + forest loaded + garden
+// radial); then the upid-"self" fleet spec (the mirror) is skipped — the HD
+// tree stands in for it, never drawing the room twice. Whenever the HD tree
+// is absent (unarmed, loader warming, orbit/hyperbolic layouts) the mirror
+// keeps its normal fleet tree: a LIVE process never drops to zero
+// representations.
+export function visibleTreeSpecs(trees: TreeSpec[], selfTreePresent: boolean): TreeSpec[] {
+  return selfTreePresent ? trees.filter((spec) => spec.upid !== SELF_PROCESS_UPID) : trees;
+}
+
+// Pure: the TreeSpec the HD self tree adopts — the mirror's live spec when
+// the fleet carries it (state ring, steering pulse, hover keying and label
+// chrome all reflect the real process), with a synthetic built/completed
+// stand-in when the mirror is absent (demo snapshots, tests). The tree's pick
+// payloads carry THIS spec's callsign, so the standard select path opens the
+// mirror's detail and arms click-steer.
+export function selfTreeProcessSpec(input: SelfTreeSpec, trees: TreeSpec[]): TreeSpec {
+  return (
+    trees.find((spec) => spec.upid === SELF_PROCESS_UPID) ?? {
+      upid: SELF_TREE_UPID,
+      callsign: input.repo,
+      state: "completed",
+      progress: 100,
+      task: input.repo,
+      steering: false,
+      stage: "built",
+    }
+  );
+}
+
+// Pure label chrome for the HD self tree: the title reads the live mirror
+// process (inferred title, falling back to the callsign), the sub keeps the
+// repo-name + open-PR flavor and appends the live steering marker so the
+// steering target reads from across the room.
+export function selfTreeLabel(input: SelfTreeSpec, spec: TreeSpec): { title: string; sub: string } {
+  const prCount = input.spec.branches.length;
+  return {
+    title: treeTitle(spec),
+    sub: `${input.repo} · ${prCount} open PR${prCount === 1 ? "" : "s"}${spec.steering ? " · ⟵ steering" : ""}`,
+  };
 }
 
 function buildsSummaryChanged(a: TreeBuildSummary | undefined, b: TreeBuildSummary | undefined): boolean {
@@ -2093,12 +2152,15 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
     // is armed — grown by the HD tree module (the conversation tree's engine)
     // from the forest spec: every open PR is a branch and CI colors its tip
     // bud. The scene layers the standard garden chrome on top — the glass
-    // label names the repo, each PR tip carries its "#n title / CI word" card
-    // (the dialogue tree's exact tip vocabulary), and invisible process-pick
-    // hit volumes make hover/click/dwell behave exactly like a fleet tree
-    // (selection routes through the same onSelectProcess handler).
+    // label reads the live mirror process over the repo + PR count, each PR
+    // tip carries its "#n title / CI word" card (the dialogue tree's exact tip
+    // vocabulary), and invisible process-pick hit volumes make hover/click/
+    // dwell behave exactly like a fleet tree. The entry ADOPTS the mirror's
+    // live TreeSpec (`spec`, via selfTreeProcessSpec) and every pick payload
+    // carries the mirror's callsign, so selecting the tree routes through the
+    // same onSelectProcess handler into the mirror's detail + click-steer.
     let selfTreeBuilt: BuiltTree | null = null;
-    const buildSelfTree = (input: SelfTreeSpec): Entry => {
+    const buildSelfTree = (input: SelfTreeSpec, spec: TreeSpec): Entry => {
       const group = new THREE.Group();
       const built = buildTreeLOD(input.spec);
       group.add(built.group);
@@ -2110,7 +2172,7 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       const hit = new THREE.Mesh(new THREE.SphereGeometry(Math.max(2.2, trunkH * 0.34), 10, 10), invisibleHitMat);
       hit.position.y = trunkH * 0.58;
       hit.userData.ownGeometry = true;
-      hit.userData.pick = { kind: "process", callsign: input.repo };
+      hit.userData.pick = { kind: "process", callsign: spec.callsign };
       group.add(hit);
       for (const branchSpec of input.spec.branches) {
         const tipSpec = branchSpec.tip;
@@ -2132,20 +2194,37 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         group.add(tipLabel);
         const tipHit = new THREE.Mesh(new THREE.SphereGeometry(1.0, 8, 8), invisibleHitMat);
         tipHit.userData.ownGeometry = true;
-        tipHit.userData.pick = { kind: "process", callsign: input.repo };
+        // Tip picks carry the mirror too: PR cards stay info displays, but
+        // picking one is never a dead end — it selects the mirror process.
+        tipHit.userData.pick = { kind: "process", callsign: spec.callsign };
         tipHit.position.set(tip.x, tip.y + 0.3, tip.z);
         group.add(tipHit);
       }
-      const prCount = input.spec.branches.length;
-      const label = makeLabelSprite(input.repo, `self-rebuild · ${prCount} open PR${prCount === 1 ? "" : "s"}`, cssHex(SELF_TREE_ACCENT));
+      const chrome = selfTreeLabel(input, spec);
+      const label = makeLabelSprite(chrome.title, chrome.sub, cssHex(SELF_TREE_ACCENT));
       label.position.y = trunkH + 1.3;
       group.add(label);
-      // Synthetic TreeSpec so the shared machinery (hover keyed on callsign,
-      // dwell entryForTargetId, activation) treats the entry first-class. The
-      // "completed" state keeps the frame loop's active-pulse (mats[0]) off.
-      const treeSpec: TreeSpec = { upid: SELF_TREE_UPID, callsign: input.repo, state: "completed", progress: 100, task: input.repo, steering: false, stage: "built" };
+      // Live-process chrome from the ADOPTED mirror spec: the stage ring says
+      // concept/commissioned/built like any fleet tree, and the steering ring
+      // marks the tree while spoken transcript routes to the mirror.
+      addStageRing(group, treeIndicators(spec).ring, 2.4, 0.06, Math.PI / 2);
+      if (spec.steering) {
+        const ring = new THREE.Mesh(
+          new THREE.TorusGeometry(2.1, 0.05, 8, 64),
+          new THREE.MeshBasicMaterial({ color: STEERING_COLOR, transparent: true, opacity: 0.65 }),
+        );
+        ring.userData.ownGeometry = true;
+        ring.userData.ownMaterial = true;
+        ring.rotation.x = Math.PI / 2;
+        ring.position.y = 0.08;
+        group.add(ring);
+      }
+      // The adopted spec keys the shared machinery (hover on callsign, dwell
+      // entryForTargetId, activation) to the MIRROR, first-class. mats stays
+      // empty — the module owns its materials — so the frame loop's
+      // active-pulse (mats[0]) skips this entry even in "active" state.
       return {
-        kind: "tree", treeSpec, group, mats: [], baseEmissive: 0, head: null, headY: 0, label,
+        kind: "tree", treeSpec: spec, group, mats: [], baseEmissive: 0, head: null, headY: 0, label,
         targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false,
         disposeExtra: () => {
           built.dispose();
@@ -2643,7 +2722,13 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
         ideasRef.current.length > 0
           ? ideasRef.current
           : [{ id: "__idle__", pitch: "", confidence: 0.25, status: "forming", maturity: "forming", verified: false }];
-      const treeSpecs = treesRef.current;
+      // The HD self-repo tree stands in the garden's radial layout only —
+      // resolving it HERE (null everywhere else) lets visibleTreeSpecs skip
+      // the mirror's fleet tree exactly when the HD tree replaces it, and
+      // keep it whenever the HD tree is absent (never zero representations
+      // of the live SELF process).
+      const selfInput = garden && !hyper ? selfTreeRef.current : null;
+      const treeSpecs = visibleTreeSpecs(treesRef.current, selfInput !== null);
 
       const seenIdeas = new Set<string>();
       ideaSpecs.forEach((spec, index) => {
@@ -2765,26 +2850,37 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
       // ── the room's OWN repo as ONE MORE garden tree (self-rebuild armed) ──
       // Not a panel: while App feeds selfTree (toggle armed on a wall window),
       // the repo stands in the NEXT radial slot after the fleet, grown by the
-      // HD tree engine with the standard garden chrome (see buildSelfTree).
+      // HD tree engine with the standard garden chrome (see buildSelfTree) —
+      // and it IS the mirror process's node: the fleet sweep above already
+      // skipped the upid-"self" spec (visibleTreeSpecs), and the entry adopts
+      // the mirror's live TreeSpec so picking/hover/steering route to it.
       // Keyed by the stable SELF_TREE_UPID in treeEntries so picking, hover
       // grow/glow, the dwell seam, fit bounds and the removal fade all reuse
-      // the fleet-tree machinery untouched. treeSpecSignature gates rebuilds
-      // (a re-fetched but unchanged payload is a no-op); garden-radial only —
-      // orbit and the hyperbolic layouts simply omit it, and the sweep below
-      // fades it out whenever it stops being fed.
-      const selfInput = selfTreeRef.current;
-      if (selfInput !== null && garden && !hyper) {
+      // the fleet-tree machinery untouched. Rebuilds are gated on the forest
+      // payload's treeSpecSignature (a re-fetched but unchanged payload is a
+      // no-op) OR a structural change in the adopted mirror spec (steering
+      // flipping, state/stage moves — the rings and label must repaint);
+      // garden-radial only — orbit and the hyperbolic layouts simply omit it
+      // (selfInput resolves null above), and the sweep below fades it out
+      // whenever it stops being fed.
+      if (selfInput !== null) {
         seenTrees.add(SELF_TREE_UPID);
         const placed = treePosition(treeSpecs.length, treeSpecs.length + 1, garden);
         const sig = treeSpecSignature(selfInput.spec);
+        const selfSpec = selfTreeProcessSpec(selfInput, treesRef.current);
         const existing = treeEntries.get(SELF_TREE_UPID);
-        if (existing === undefined || existing.selfSig !== sig) {
+        if (
+          existing === undefined ||
+          existing.selfSig !== sig ||
+          existing.treeSpec === undefined ||
+          treeSpecStructurallyChanged(existing.treeSpec, selfSpec)
+        ) {
           const keepPos = existing?.group.position.clone();
           const keepScale = existing?.group.scale.x;
           if (existing !== undefined) {
             disposeEntry(existing);
           }
-          const entry = buildSelfTree(selfInput);
+          const entry = buildSelfTree(selfInput, selfSpec);
           entry.selfSig = sig;
           entry.targetPos = placed.pos;
           entry.targetScale = SELF_TREE_SCALE;
@@ -2795,6 +2891,9 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
           treeEntries.set(SELF_TREE_UPID, entry);
           scene.add(entry.group);
         } else {
+          // Non-structural drift (progress ticks): keep the adopted mirror
+          // spec current so the next comparison sees fresh values.
+          existing.treeSpec = selfSpec;
           existing.targetPos = placed.pos;
           existing.targetScale = SELF_TREE_SCALE;
           existing.scaleMult = placed.k;
@@ -3593,7 +3692,11 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
         if (wantFocus === null) {
           appliedFocus = null;
         } else {
-          const focusEntry = treeEntries.get(wantFocus);
+          // While the HD self tree stands in for the mirror's fleet node, a
+          // focus request for the mirror process glides to the HD tree.
+          const focusEntry =
+            treeEntries.get(wantFocus) ??
+            (wantFocus === SELF_PROCESS_UPID ? treeEntries.get(SELF_TREE_UPID) : undefined);
           if (focusEntry !== undefined && !focusEntry.removing) {
             rig.dTargetX = focusEntry.targetPos.x;
             rig.dTargetZ = focusEntry.targetPos.z;
@@ -3806,7 +3909,10 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
           } else if (!garden && radial) {
             entry.group.position.y = entry.targetPos.y + Math.sin(t * 0.55 + entry.phase) * 0.25;
           }
-          if (entry.treeSpec?.state === "active") {
+          // mats guard: the HD self tree adopts the LIVE mirror spec (often
+          // "active") but owns no overlay materials — the module renders its
+          // own wood/foliage, so the pulse simply skips it.
+          if (entry.treeSpec?.state === "active" && entry.mats.length > 0) {
             entry.mats[0].emissiveIntensity = entry.baseEmissive + Math.sin(t * 1.6 + entry.phase) * 0.07;
           }
         }

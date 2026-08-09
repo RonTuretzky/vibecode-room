@@ -4,6 +4,8 @@ import {
   AUTO_FIT_INTERVAL_MS,
   AUTO_FIT_RADIUS_RATIO,
   AUTO_FIT_RESUME_MS,
+  SELF_PROCESS_UPID,
+  SELF_TREE_UPID,
   autoFitSuspended,
   dialogueBranchLength,
   dialogueBranchPoint,
@@ -11,17 +13,21 @@ import {
   dialogueLeafPosition,
   dialogueLeafT,
   dialogueTrunkHeight,
+  selfTreeLabel,
+  selfTreeProcessSpec,
   shouldAutoRefit,
   stageWord,
   treeIndicators,
   treeSpecStructurallyChanged,
   treeStatus,
   treeTitle,
+  visibleTreeSpecs,
   type AutoFitFraming,
   type DialogueNodeSpec,
   type DialogueTopicSpec,
   type TreeSpec,
 } from "./RoomScene";
+import type { SelfTreeSpec } from "./self-repo";
 import {
   DIALOGUE_FALLBACK_BRANCH_ID,
   DIALOGUE_LEAF_PALETTE,
@@ -166,6 +172,99 @@ describe("tree label helpers", () => {
   test("treeTitle prefers the inferred task, falling back to the callsign", () => {
     expect(treeTitle(baseSpec({ task: "Blocker announcer" }))).toBe("Blocker announcer");
     expect(treeTitle(baseSpec({ task: "" }))).toBe("Atlas");
+  });
+});
+
+// ── the self-repo garden tree ↔ the mirror process ──────────────────────────
+// While self-rebuild is armed the HD repo tree REPLACES the mirror process's
+// generic fleet tree and ADOPTS its live spec, so selecting the tree selects
+// the mirror (→ click-steer arms → talking steers the room's own source).
+
+// The pinned SELF process as App's treeSpecs useMemo projects it: upid "self"
+// (src/self/commission.ts: SELF_UPID), callsign "mirror" (SELF_CALLSIGN).
+function mirrorSpec(overrides: Partial<TreeSpec> = {}): TreeSpec {
+  return baseSpec({ upid: SELF_PROCESS_UPID, callsign: "mirror", task: "Vibersyn Room", stage: "commissioned", ...overrides });
+}
+
+// A minimal forest-derived garden-tree input (two open PRs as branches).
+const selfInput: SelfTreeSpec = {
+  repo: "acme/vibecode-room",
+  spec: {
+    id: "repo:acme/vibecode-room",
+    trunk: { height: 7, radius: 0.3 },
+    branches: [
+      { id: "pr-7", points: [{ x: 0, y: 3, z: 0 }, { x: 2, y: 5, z: 0 }], thickness: 0.12, tip: { kind: "status", color: 0x00ff88, label: "#7 Grow the self tree", sub: "pass" } },
+      { id: "pr-9", points: [{ x: 0, y: 4, z: 0 }, { x: -2, y: 6, z: 1 }], thickness: 0.12, tip: { kind: "status", color: 0xff3b30, label: "#9 Fix CI", sub: "fail" } },
+    ],
+  },
+};
+
+describe("visibleTreeSpecs — the HD self tree replaces the mirror's fleet tree", () => {
+  const fleet = [baseSpec(), mirrorSpec(), baseSpec({ upid: "u2", callsign: "Nova" })];
+
+  test("skips the upid-'self' fleet spec while the self tree is present", () => {
+    expect(visibleTreeSpecs(fleet, true).map((spec) => spec.upid)).toEqual(["u1", "u2"]);
+  });
+
+  test("keeps the mirror's fleet tree when the self tree is absent — never zero representations", () => {
+    expect(visibleTreeSpecs(fleet, false)).toEqual(fleet);
+  });
+
+  test("a fleet without the pinned mirror passes through either way", () => {
+    const noMirror = [baseSpec(), baseSpec({ upid: "u2", callsign: "Nova" })];
+    expect(visibleTreeSpecs(noMirror, true)).toEqual(noMirror);
+    expect(visibleTreeSpecs(noMirror, false)).toEqual(noMirror);
+  });
+});
+
+describe("selfTreeProcessSpec — the HD tree IS the mirror's live spec", () => {
+  test("adopts the mirror's TreeSpec verbatim when the fleet carries it", () => {
+    const mirror = mirrorSpec({ state: "active", steering: true });
+    expect(selfTreeProcessSpec(selfInput, [baseSpec(), mirror])).toBe(mirror);
+  });
+
+  test("pick payloads resolve to the MIRROR callsign — selecting the tree steers the room", () => {
+    // buildSelfTree stamps every trunk/tip hit volume with
+    // { kind: "process", callsign: <this spec's callsign> }.
+    expect(selfTreeProcessSpec(selfInput, [mirrorSpec()]).callsign).toBe("mirror");
+  });
+
+  test("falls back to a sensible synthetic when the mirror spec is absent", () => {
+    const fallback = selfTreeProcessSpec(selfInput, [baseSpec()]);
+    expect(fallback).toMatchObject({
+      upid: SELF_TREE_UPID,
+      callsign: "acme/vibecode-room",
+      state: "completed",
+      stage: "built",
+      steering: false,
+    });
+  });
+
+  test("structural mirror changes (steering flip) rebuild the entry like any fleet tree", () => {
+    // The reconcile gate reuses treeSpecStructurallyChanged on the adopted
+    // spec, so the steering ring appears/vanishes with the live target.
+    expect(treeSpecStructurallyChanged(mirrorSpec(), mirrorSpec({ steering: true }))).toBe(true);
+  });
+});
+
+describe("selfTreeLabel — mirror title over the repo + PR-count chrome", () => {
+  test("title reads the live mirror process; sub keeps repo + open-PR count", () => {
+    expect(selfTreeLabel(selfInput, mirrorSpec())).toEqual({
+      title: "Vibersyn Room",
+      sub: "acme/vibecode-room · 2 open PRs",
+    });
+  });
+
+  test("the live steering marker rides the sub line", () => {
+    expect(selfTreeLabel(selfInput, mirrorSpec({ steering: true })).sub).toContain("⟵ steering");
+  });
+
+  test("fallback (no mirror pinned) titles by the repo and counts singular PRs", () => {
+    const onePr = { ...selfInput, spec: { ...selfInput.spec, branches: selfInput.spec.branches.slice(0, 1) } };
+    expect(selfTreeLabel(onePr, selfTreeProcessSpec(onePr, []))).toEqual({
+      title: "acme/vibecode-room",
+      sub: "acme/vibecode-room · 1 open PR",
+    });
   });
 });
 
