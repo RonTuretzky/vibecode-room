@@ -62,6 +62,11 @@ const inputSchema = z.object({
   // this exact value as their correlationKey — see the header comment.
   correlationId: z.string().nullable().default(null),
   steerWaitMs: z.number().int().nullable().default(null),
+  // The idea's context brief (IdeaBrief, src/types.ts) riding the acceptance
+  // seed's spawn input. z.unknown() so the gateway never rejects a launch over
+  // brief drift; nullable keeps PARKED durable runs (launched before the brief
+  // existed) compatible on resume. Rendered into the build prompt below.
+  brief: z.unknown().nullable().default(null),
 });
 
 const buildOutputSchema = z.object({
@@ -116,11 +121,48 @@ function normalizeSteerWaitMs(value: number | null | undefined): number {
   return Math.min(Math.max(Math.floor(value), 1_000), 60 * 60_000);
 }
 
+// Render the IdeaBrief context block for the build prompt. Mirrors
+// src/buildloop/brief.ts's briefContextBlock BY CONVENTION — smithers-source
+// stands alone (no src imports). Tolerant: the brief arrives as unknown
+// (nullable input, unknown schema), so every field is re-checked and anything
+// malformed renders to "".
+function briefContextFrom(value: unknown): string {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return "";
+  const brief = value as Record<string, unknown>;
+  const lines: string[] = [];
+  const sourceQuote = typeof brief.sourceQuote === "string" ? brief.sourceQuote.trim() : "";
+  if (sourceQuote.length > 0) lines.push(`AS HEARD IN THE ROOM (verbatim): "${sourceQuote}"`);
+  const rationale = typeof brief.rationale === "string" ? brief.rationale.trim() : "";
+  if (rationale.length > 0) lines.push(`WHY IT IS BUILDABLE: ${rationale}`);
+  const decided: string[] = [];
+  const open: string[] = [];
+  for (const entry of Array.isArray(brief.qa) ? brief.qa : []) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const question = entry as Record<string, unknown>;
+    const prompt = typeof question.prompt === "string" ? question.prompt.trim() : "";
+    if (prompt.length === 0) continue;
+    const chosen = typeof question.chosen === "string" ? question.chosen.trim() : "";
+    if (chosen.length > 0) {
+      decided.push(`- ${prompt} → ${chosen}`);
+    } else {
+      const answers = (Array.isArray(question.answers) ? question.answers : [])
+        .filter((answer): answer is string => typeof answer === "string" && answer.trim().length > 0)
+        .map((answer) => answer.trim());
+      open.push(answers.length > 0 ? `- ${prompt} (options: ${answers.join(" / ")})` : `- ${prompt}`);
+    }
+  }
+  if (decided.length > 0) lines.push("DECISIONS ALREADY MADE:", ...decided);
+  if (open.length > 0) lines.push("OPEN QUESTIONS:", ...open);
+  return lines.join("\n");
+}
+
 export default smithers((ctx) => {
   const prompt = ctx.input.prompt ?? "Build a small self-contained static web app.";
   const upid = ctx.input.upid ?? "upid-unknown";
   const callsign = ctx.input.callsign ?? null;
   const steerWaitMs = normalizeSteerWaitMs(ctx.input.steerWaitMs);
+  // IdeaBrief context block ("" when the launch carried no/a malformed brief).
+  const briefBlock = briefContextFrom(ctx.input.brief ?? null);
   // Current steer-loop iteration (0-based). `ctx.iterations` is keyed by the
   // Loop id; `ctx.iteration` mirrors it while this is the only loop.
   const iteration = ctx.iterations?.[STEER_LOOP_ID] ?? ctx.iteration ?? 0;
@@ -144,7 +186,7 @@ export default smithers((ctx) => {
           {`You are building a room-accepted idea${callsign ? ` (callsign ${callsign})` : ""}.
 
 IDEA: ${prompt}
-
+${briefBlock === "" ? "" : `\n${briefBlock}\n`}
 Create a small, self-contained static web app for this idea in the directory
 ${outputDirLine} — create it if needed, and write ONLY
 inside that directory; never modify any other path in this repository.

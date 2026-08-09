@@ -1,5 +1,5 @@
 import { questionsFromAssessment, type IdeaCandidate } from "../detect";
-import type { PendingSuggestion } from "../types";
+import { IDEA_BRIEF_QUOTE_MAX_CHARS, IDEA_BRIEF_RATIONALE_MAX_CHARS, type IdeaBrief, type PendingSuggestion } from "../types";
 import type { IdeaTrayItem, ProjectorSuggestion } from "../ui/types";
 
 // How long a surfaced idea bubble stays acceptable before its pending suggestion
@@ -26,10 +26,33 @@ export function projectorSuggestionFromCandidate(candidate: IdeaCandidate): Proj
   };
 }
 
+// The idea's context brief, constructed ONCE here from the ledger candidate:
+// this is where acceptance used to strip everything down to pitch+mcqs+answers
+// and the context died. The brief carries the VERBATIM grounding quote, the
+// judge's rationale, and the deck-ready Q&A (normalized by plan-questions.ts)
+// through the whole build pipeline. Clamps match the canonical ideaBriefSchema
+// caps so the brief always re-parses on the acceptance path.
+export function briefFromCandidate(candidate: IdeaCandidate): IdeaBrief {
+  return {
+    pitch: candidate.pitch,
+    sourceQuote: clampChars(candidate.contextSpan.quote.trim(), IDEA_BRIEF_QUOTE_MAX_CHARS),
+    rationale: clampChars(candidate.rationale.trim(), IDEA_BRIEF_RATIONALE_MAX_CHARS),
+    qa: questionsFromAssessment(candidate).map((question) => ({
+      id: question.id,
+      prompt: question.prompt,
+      answers: [...question.answers],
+    })),
+    // The spoken handle is assigned at spawn, after acceptance.
+    callsign: null,
+    maturity: candidate.maturity,
+  };
+}
+
 // Convert a detected idea candidate to a PendingSuggestion the acceptance/build
 // path already understands. The suggestionId embeds the candidate id so the
 // runtime can consume the right candidate after a build. pitch is guaranteed
 // non-empty (the detector drops empty pitches); mcqs falls back to a default.
+// The brief rides along so downstream prompts/decks stay grounded in the room.
 export function pendingSuggestionFromCandidate(
   candidate: IdeaCandidate,
   correlationId: string,
@@ -42,6 +65,7 @@ export function pendingSuggestionFromCandidate(
     answers: [...candidate.answers],
     correlationId,
     expiresAt,
+    brief: briefFromCandidate(candidate),
   };
 }
 
@@ -81,4 +105,10 @@ export function ideaTrayItemFromCandidate(candidate: IdeaCandidate): IdeaTrayIte
 
 function clamp01(value: number): number {
   return Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0;
+}
+
+// Hard char clamp with a trailing ellipsis; the result NEVER exceeds `max`
+// (the ellipsis replaces the last kept char), matching the brief schema caps.
+function clampChars(text: string, max: number): string {
+  return text.length <= max ? text : `${text.slice(0, max - 1)}…`;
 }

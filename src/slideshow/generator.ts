@@ -33,6 +33,19 @@ import {
 // BuildBackendId is directly assignable here.
 export type SlideshowBackendId = "smithers" | "eliza" | "native";
 
+// The idea's context brief riding the kickoff. Mirrors IdeaBrief in
+// src/types.ts BY CONVENTION (same no-cross-track-import rule as
+// SlideshowBackendId above); the shapes are structurally identical, so both an
+// IdeaBrief and the buildloop's BuildBrief are directly assignable here.
+export interface SlideshowBrief {
+  pitch: string;
+  sourceQuote: string; // verbatim room speech (clamped ≤300 chars upstream)
+  rationale: string; // why the judge thinks it is buildable (≤200 chars upstream)
+  qa: readonly { id: string; prompt: string; answers: readonly string[]; chosen?: string }[];
+  callsign: string | null;
+  maturity?: string;
+}
+
 // Wall-facing lane labels; match the buildloop's registered backend labels.
 const BACKEND_LABELS: Record<SlideshowBackendId, string> = {
   smithers: "Smithers",
@@ -84,6 +97,11 @@ export interface GenerateSlideshowInput {
   // imported codebase. Absent for spoken-idea kickoffs — the fallback still reads
   // well without it.
   repoDigest?: string | null;
+  // The idea's context brief when the kickoff carried one. Slide 1 then quotes
+  // brief.sourceQuote — the room's ACTUAL words — as the hero quote (the pitch
+  // moves into the bullets), and the copy model receives the quote + rationale
+  // for grounding. Absent/null = legacy behavior (the prompt is the quote).
+  brief?: SlideshowBrief | null;
   // Build-forking decision questions ({id, prompt, answers}) from the planning
   // routine (src/detect/plan-questions.ts). When present they render as
   // swipe-to-answer cards in the deck; each choice POSTs to `answerEndpoint`.
@@ -108,6 +126,10 @@ export interface SlideshowCopyRequest {
   backend: SlideshowBackendId;
   callsign: string | null;
   mocks: readonly string[]; // gallery lane backend ids, for grounding
+  // IdeaBrief grounding when the kickoff carried one: the verbatim room quote
+  // and the judge's buildability rationale. Absent for brief-less kickoffs.
+  sourceQuote?: string;
+  rationale?: string;
 }
 
 // Injectable copy model. Return null (or reject, or hang past the budget) to
@@ -159,12 +181,17 @@ export async function generateSlideshow(
   // 1. Copy: one bounded model call merged over the deterministic fallback.
   const fallback = fallbackCopy(input);
   const model = options.model ?? cerebrasCopyModel;
+  const brief = input.brief ?? null;
+  const briefQuote = brief?.sourceQuote.trim() ?? "";
+  const briefRationale = brief?.rationale.trim() ?? "";
   const request: SlideshowCopyRequest = {
     prompt: input.prompt,
     summary: input.summary,
     backend: input.backend,
     callsign: input.callsign,
     mocks: pitchMocks(input).map((mock) => mock.id),
+    ...(briefQuote.length === 0 ? {} : { sourceQuote: briefQuote }),
+    ...(briefRationale.length === 0 ? {} : { rationale: briefRationale }),
   };
   const raw = await callModelWithBudget(model, request, options.timeoutMs ?? DEFAULT_TIMEOUT_MS, signal);
   signal?.throwIfAborted();
@@ -489,11 +516,14 @@ export function decisionButtons(
 
 export function buildSlides(input: GenerateSlideshowInput, copy: SlideshowCopy): Slide[] {
   const callsign = normalizeCallsign(input.callsign);
-  // Cap the "verbatim" quote: a rambling forced pitch or a repo-import's
+  // When the kickoff carried a brief the hero quote is the brief's SOURCE
+  // QUOTE — the room's ACTUAL words — and the pitch moves into the bullets.
+  // Without one, the prompt stays the quote (legacy behavior). Either way the
+  // "verbatim" quote is word-capped: a rambling forced pitch or a repo-import's
   // multi-paragraph plan must never flood the hero slide.
-  const spokenWords = input.prompt.trim().split(/\s+/);
-  const spoken =
-    spokenWords.length > 60 ? `${spokenWords.slice(0, 60).join(" ")}…` : spokenWords.join(" ");
+  const sourceQuote = input.brief?.sourceQuote.trim() ?? "";
+  const spoken = capWords(sourceQuote.length > 0 ? sourceQuote : input.prompt, 60);
+  const briefPitch = sourceQuote.length > 0 ? (input.brief?.pitch ?? "").trim() : "";
   const mocks = pitchMocks(input);
   const ideaId = input.ideaId ?? null;
   return [
@@ -503,6 +533,7 @@ export function buildSlides(input: GenerateSlideshowInput, copy: SlideshowCopy):
       hero: true,
       quote: spoken.length > 0 ? spoken : "(no transcript captured)",
       bullets: [
+        ...(briefPitch.length > 0 ? [capWords(briefPitch, 60)] : []),
         callsign === null ? `Process ${input.upid}` : `Callsign “${callsign}” — process ${input.upid}`,
       ],
     },
@@ -527,6 +558,12 @@ export function buildSlides(input: GenerateSlideshowInput, copy: SlideshowCopy):
       decisions: decisionButtons(input.upid, ideaId === null || ideaId.trim().length === 0 ? input.upid : ideaId.trim(), callsign),
     },
   ];
+}
+
+// Word-cap with a trailing ellipsis (the hero-slide quote/pitch cap).
+function capWords(text: string, maxWords: number): string {
+  const words = text.trim().split(/\s+/u).filter(Boolean);
+  return words.length <= maxWords ? words.join(" ") : `${words.slice(0, maxWords).join(" ")}…`;
 }
 
 // First clause of the spoken idea, capped at 10 words, capitalized — the same
@@ -629,6 +666,9 @@ export const cerebrasCopyModel: SlideshowCopyModel = async (request, signal) => 
             backend: request.backend,
             callsign: request.callsign,
             conceptMockLanes: request.mocks,
+            // IdeaBrief grounding (present only when the kickoff carried one).
+            ...(request.sourceQuote === undefined ? {} : { asHeardInTheRoomVerbatim: request.sourceQuote }),
+            ...(request.rationale === undefined ? {} : { whyItIsBuildable: request.rationale }),
           }),
         },
       ],

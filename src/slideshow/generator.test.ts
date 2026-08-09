@@ -400,6 +400,37 @@ describe("buildSlides", () => {
     expect(first!.quote).toBe("(no transcript captured)");
   });
 
+  test("slide 1 with an IdeaBrief quotes the SOURCE QUOTE and moves the pitch into the bullets", () => {
+    const brief = {
+      pitch: "build me a tip calculator",
+      sourceQuote: "ugh splitting the check took twenty minutes again, build me a tip calculator",
+      rationale: "Concrete, tiny, everyone gets it.",
+      qa: [],
+      callsign: null,
+    };
+    const [first] = buildSlides({ ...input, brief }, copy);
+    // The hero quote is the room's ACTUAL words, not the synthesized pitch.
+    expect(first!.quote).toBe("ugh splitting the check took twenty minutes again, build me a tip calculator");
+    expect(first!.bullets).toEqual([
+      "build me a tip calculator",
+      "Callsign “falcon” — process upid-3",
+    ]);
+  });
+
+  test("slide 1's brief source quote keeps the 60-word cap", () => {
+    const words = Array.from({ length: 80 }, (_, i) => `word${i}`).join(" ");
+    const brief = { pitch: "the pitch", sourceQuote: words, rationale: "", qa: [], callsign: null };
+    const [first] = buildSlides({ ...input, brief }, copy);
+    expect(first!.quote).toBe(`${words.split(" ").slice(0, 60).join(" ")}…`);
+  });
+
+  test("a brief with a blank source quote falls back to the prompt (legacy hero)", () => {
+    const brief = { pitch: "the pitch", sourceQuote: "   ", rationale: "", qa: [], callsign: null };
+    const [first] = buildSlides({ ...input, brief }, copy);
+    expect(first!.quote).toBe("build me a tip calculator");
+    expect(first!.bullets).toEqual(["Callsign “falcon” — process upid-3"]);
+  });
+
   test("slide 2 pitches the concept: model tagline + kickoff summary + concept bullets", () => {
     const slides = buildSlides(input, copy);
     expect(slides[1]!.title).toBe("Tip calculator");
@@ -492,6 +523,34 @@ describe("generateSlideshow", () => {
     expect(html).toContain('data-dwell="decision-execute"');
     expect(html).toContain('src="/preview/upid-7/eliza/"');
     expect(html).toContain('data-mock-tab="smithers"');
+  });
+
+  test("the copy request carries the brief's quote + rationale for grounding (and the deck quotes the room)", async () => {
+    dir = await mkdtemp(join(tmpdir(), "slideshow-test-"));
+    const brief = {
+      pitch: "build a pomodoro timer that yells at me",
+      sourceQuote: "i never notice the timer ending, it should literally yell",
+      rationale: "One screen, one loud interaction.",
+      qa: [],
+      callsign: "otter",
+    };
+    const requests: unknown[] = [];
+    const capturingModel: SlideshowCopyModel = async (request) => {
+      requests.push(request);
+      return null;
+    };
+    const artifact = await generateSlideshow({ ...baseInput(dir), brief }, { model: capturingModel });
+    expect(requests[0]).toMatchObject({
+      sourceQuote: "i never notice the timer ending, it should literally yell",
+      rationale: "One screen, one loud interaction.",
+    });
+    const html = await readFile(artifact.indexPath, "utf8");
+    expect(html).toContain("i never notice the timer ending, it should literally yell");
+    // Without a brief the request omits the grounding keys entirely.
+    requests.length = 0;
+    await generateSlideshow(baseInput(dir), { model: capturingModel });
+    expect(Object.keys(requests[0] as Record<string, unknown>)).not.toContain("sourceQuote");
+    expect(Object.keys(requests[0] as Record<string, unknown>)).not.toContain("rationale");
   });
 
   test("merges a working fake model's copy into the rendered slides", async () => {

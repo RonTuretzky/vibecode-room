@@ -1,5 +1,6 @@
 import { readdir, stat } from "node:fs/promises";
 import { extname, join, sep } from "node:path";
+import { briefContextBlock } from "../brief";
 import { createCerebrasRetryFetch, type CerebrasBackoffOptions } from "../cerebras-retry";
 import type { BuildBackend, BuildBackendId, BuildRequest, BuildResult } from "../types";
 
@@ -297,9 +298,14 @@ export const ELIZA_CODER_CHARACTER: ElizaCharacter = {
     chat: ["never explain, just mock it up"],
   },
   templates: {
+    // {{briefContext}} is the IdeaBrief context block (briefContextBlock in
+    // ../brief) — the verbatim room quote, rationale, decided/open questions.
+    // It defaults to "" in composeBuildState, so kickoffs without a brief
+    // render a blank line here (string-level grounding, no schema change).
     plan: [
       "{{agentName}} is imagining a concept mock for the room.",
       "Idea pitch: {{pitch}}",
+      "{{briefContext}}",
       "",
       "Imagine the app this pitch describes and plan a CONCEPT MOCK — one small self-contained page:",
       "the app's hero screen, a strong visual identity (name, palette, typography), a prominently displayed",
@@ -311,6 +317,7 @@ export const ELIZA_CODER_CHARACTER: ElizaCharacter = {
       "Idea pitch: {{pitch}}",
       "Headline: {{headline}}",
       "Spec: {{spec}}",
+      "{{briefContext}}",
       "",
       `Write the COMPLETE concept mock as a single SMALL ${ELIZA_ENTRYPOINT} (all CSS/JS inline).`,
       `Reply with ONLY strict JSON: {"files": {"${ELIZA_ENTRYPOINT}": "<full file content>"}}.`,
@@ -364,6 +371,9 @@ export function composeBuildState(
       adjectives: (character.adjectives ?? []).join(", "),
       topics: (character.topics ?? []).join(", "),
       pitch: message.content.text ?? "",
+      // IdeaBrief context block; overridden via extras when the accept carried
+      // a brief so the {{briefContext}} template key always resolves.
+      briefContext: "",
       ...extras,
     },
     data: {},
@@ -664,10 +674,15 @@ export class ElizaBuildBackend implements BuildBackend {
       return this.#runCorrection(req, core, runtime, message, generate, req.correction.trim());
     }
 
+    // The IdeaBrief context block rides the compose state (string-level only):
+    // {{briefContext}} defaults to "" and is overridden here when present.
+    const briefContext = briefContextBlock(req.brief);
+    const contextExtras: Record<string, string> = briefContext.length === 0 ? {} : { briefContext };
+
     // CONCEPT-MOCK loop: plan -> implement -> write. Deliberately no
     // critique/revise rounds at kickoff — small single-file output, fast lane.
     onProgress({ label: "imagining concept", percent: 10, detail: `character ${character.name}` });
-    const plan = parsePlanContent(extractJsonContent(await generate("plan", {})), req.prompt);
+    const plan = parsePlanContent(extractJsonContent(await generate("plan", { ...contextExtras })), req.prompt);
     signal.throwIfAborted();
 
     onProgress({ label: "mocking", percent: 40, detail: truncate(plan.summary, 120) });
@@ -676,6 +691,7 @@ export class ElizaBuildBackend implements BuildBackend {
         await generate("implement", {
           headline: plan.summary,
           spec: plan.spec,
+          ...contextExtras,
         }),
       ),
     );
@@ -694,6 +710,7 @@ export class ElizaBuildBackend implements BuildBackend {
               `${plan.spec}\n\nIMPORTANT: your ENTIRE reply must be one strictly valid JSON object — ` +
               `every newline inside file content escaped as \\n, every quote as \\", no trailing commas, ` +
               `no markdown fences, no text before or after the JSON.`,
+            ...contextExtras,
           }),
         ),
       );

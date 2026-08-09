@@ -68,6 +68,27 @@ export function forcedPitchFromLines(lines: readonly string[]): string {
   const words = tail.join(". ").split(/\s+/);
   return words.slice(0, FORCED_PITCH_MAX_WORDS).join(" ");
 }
+
+// Pure: the DEGENERATE IdeaBrief for a forced (nothing-surfaced) accept. No
+// judge ran, so the sourceQuote IS the spoken tail — honest by construction:
+// the deck's "as heard in the room" slide quotes what the room actually said.
+// When the joined tail exceeds the brief's quote cap the END is kept (recency
+// is where the idea lives), marked with a leading ellipsis. No rationale, no
+// Q&A, no maturity — those only exist when the detection judge produced them.
+export function forcedBriefFromLines(lines: readonly string[]): IdeaBrief {
+  const joined = lines
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .join(". ");
+  return {
+    pitch: forcedPitchFromLines(lines),
+    sourceQuote:
+      joined.length <= IDEA_BRIEF_QUOTE_MAX_CHARS ? joined : `…${joined.slice(-(IDEA_BRIEF_QUOTE_MAX_CHARS - 1))}`,
+    rationale: "",
+    qa: [],
+    callsign: null,
+  };
+}
 import {
   ResearchLoop,
   readResearchSuggestIntervalMs,
@@ -107,7 +128,7 @@ import { buildImportPlanPrompt, buildImportPlanQuestions } from "./import-plan";
 import { hasBuildableCue } from "../detect";
 import type { IdeaCandidate, IdeaDetector, PlanQuestion } from "../detect";
 import { StageSequencer, type CanonicalStage } from "../spine/stage-sequencer";
-import type { DispatchedAction, LogEvent, OutputDecision, PendingSuggestion } from "../types";
+import { IDEA_BRIEF_QUOTE_MAX_CHARS, type DispatchedAction, type IdeaBrief, type LogEvent, type OutputDecision, type PendingSuggestion } from "../types";
 import { demoProjectorSnapshot, emptyProjectorSnapshot, withUnmuted } from "../ui/demo-data";
 import type { DialogueTurn, IdeaTrayItem, ProjectorProcess, ProjectorProcessState, ProjectorSnapshot, ProjectorSuggestion, ResearchTrayItem, TranscriptLine } from "../ui/types";
 import type { TranscriptObservation } from "../types";
@@ -1256,14 +1277,18 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     if (spoken.length === 0) {
       return null;
     }
-    const pitch = forcedPitchFromLines(spoken);
+    // The degenerate brief keeps the forced path honest downstream: the deck
+    // and backend prompts quote the spoken tail verbatim instead of passing
+    // the synthesized pitch off as the room's words.
+    const brief = forcedBriefFromLines(spoken);
     return {
       suggestionId: `sug-forced-${crypto.randomUUID()}`,
-      pitch,
+      pitch: brief.pitch,
       mcqs: ["Proceed?"],
       answers: ["Yes, build it"],
       correlationId,
       expiresAt: this.#clock() + DETECTION_BUBBLE_TTL_MS,
+      brief,
     };
   }
 

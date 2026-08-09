@@ -1,4 +1,4 @@
-import type { LogEvent, OutputDecision } from "../types";
+import { ideaBriefSchema, type IdeaBrief, type LogEvent, type OutputDecision } from "../types";
 import { questionsFromAssessment, type PlanQuestion } from "../detect";
 import type { ProcessBuildSnapshot } from "../buildloop/orchestrator";
 import type { ExecutionRegistry, ExecutionSnapshot } from "../buildloop/execution";
@@ -47,6 +47,9 @@ export interface BuildLoopOrchestrator {
     prompt: string;
     callsign: string | null;
     planQuestions?: readonly PlanQuestion[];
+    // The idea's context brief (IdeaBrief, src/types.ts) — structurally
+    // identical to the orchestrator's own BuildBrief mirror.
+    brief?: IdeaBrief;
   }): Promise<void>;
   steer(upid: string, text: string): Promise<void>;
   abortAll(upid: string): Promise<void>;
@@ -372,7 +375,10 @@ export class ProcessRegistry {
   // each other's builds/<upid>/ directory. Returns false (no build started)
   // for unknown or dead processes — a halt/emergency stop between spawn and a
   // deferred build must win.
-  startBuild(upid: string, options: { correlationId: string; prompt?: string; planQuestions?: readonly PlanQuestion[] }): boolean {
+  startBuild(
+    upid: string,
+    options: { correlationId: string; prompt?: string; planQuestions?: readonly PlanQuestion[]; brief?: IdeaBrief },
+  ): boolean {
     const record = this.#processes.get(upid);
     const stored = this.#seeds.get(upid);
     if (record === undefined || record.state === "dead" || stored === undefined) {
@@ -394,6 +400,10 @@ export class ProcessRegistry {
         options.planQuestions !== undefined && options.planQuestions.length > 0
           ? options.planQuestions
           : planQuestionsFromInput(stored.input);
+      // The idea's context brief: explicit override first (deferred callers),
+      // else the acceptance seed's brief riding the spawn input. Absent for
+      // inputs without one (repo imports, demo seeds) — omitted entirely.
+      const brief = options.brief ?? briefFromInput(stored.input);
       void orchestrator
         .start({
           upid,
@@ -401,6 +411,7 @@ export class ProcessRegistry {
           prompt: pitch,
           callsign: record.callsign,
           ...(planQuestions.length === 0 ? {} : { planQuestions }),
+          ...(brief === null ? {} : { brief }),
         })
         .then(
           () => {
@@ -749,6 +760,18 @@ function planQuestionsFromInput(input: unknown): PlanQuestion[] {
 
 function onlyStrings(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
+}
+
+// The idea's context brief recovered from the spawn input: the acceptance seam
+// spreads the accepted seed onto `input`, so a judged idea's brief (IdeaBrief,
+// ../types) rides along. Tolerant — a malformed or absent brief is simply null
+// (repo imports, demo seeds), never a spawn failure.
+function briefFromInput(input: unknown): IdeaBrief | null {
+  if (input === null || typeof input !== "object" || Array.isArray(input)) {
+    return null;
+  }
+  const parsed = ideaBriefSchema.safeParse((input as Record<string, unknown>).brief);
+  return parsed.success ? parsed.data : null;
 }
 
 // The originating idea id when the accept path carried one on the spawn input;

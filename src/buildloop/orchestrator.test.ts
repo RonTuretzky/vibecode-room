@@ -135,6 +135,49 @@ describe("BuildOrchestrator — fan-out", () => {
     expect(native!.slideshowUrl).toBeNull();
     expect(hookQuestions).toEqual([planQuestions, planQuestions]);
   });
+
+  test("the accept's IdeaBrief rides start() into every backend BuildRequest AND the slideshow hook", async () => {
+    const brief = {
+      pitch: "a tiny app",
+      sourceQuote: "what if the wall just built a tiny app for that",
+      rationale: "Small, concrete, one interaction.",
+      qa: [{ id: "q-scope", prompt: "How polished?", answers: ["Sketch", "Demo-ready"] }],
+      callsign: "atlas",
+      maturity: "proposed",
+    };
+    const buildBriefs: unknown[] = [];
+    const hookBriefs: unknown[] = [];
+    const selector = new BackendSelector({
+      backends: [
+        writingBackend("smithers", {
+          build: async (req) => {
+            buildBriefs.push(req.brief);
+            await Bun.write(join(req.outDir, "index.html"), "<!doctype html><h1>ok</h1>");
+            return { ok: true, entrypoint: "index.html", summary: "ok" };
+          },
+        }),
+      ],
+      env: { VIBERSYN_BUILD_BACKENDS: "smithers" },
+    });
+    const orchestrator = track(
+      new BuildOrchestrator({
+        selector,
+        buildsRoot: await tempRoot(),
+        slideshow: async (input) => {
+          hookBriefs.push(input.brief);
+        },
+      }),
+    );
+
+    await orchestrator.start({ ...startInput("upid-brief"), brief });
+    expect(buildBriefs).toEqual([brief]);
+    expect(hookBriefs).toEqual([brief]);
+
+    // A brief-less start passes NO brief key at all (legacy contract intact).
+    await orchestrator.start(startInput("upid-no-brief"));
+    expect(buildBriefs).toEqual([brief, undefined]);
+    expect(hookBriefs).toEqual([brief, undefined]);
+  });
 });
 
 describe("BuildOrchestrator — steer", () => {

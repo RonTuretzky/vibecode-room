@@ -17,7 +17,8 @@ import { existsSync } from "node:fs";
 import { mkdir, readdir, stat } from "node:fs/promises";
 import { extname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { BuildBackend, BuildBackendId, BuildRequest, BuildResult } from "../types";
+import { briefContextBlock } from "../brief";
+import type { BuildBackend, BuildBackendId, BuildBrief, BuildRequest, BuildResult } from "../types";
 
 export const SMITHERS_BACKEND_LABEL = "Smithers";
 export const SMITHERS_ENTRYPOINT = "index.html";
@@ -102,7 +103,7 @@ export class SmithersBuildBackend implements BuildBackend {
       let prompt: string;
       if (correction === null) {
         onProgress({ label: "mocking with claude", percent: 10 });
-        prompt = smithersBuildPrompt(req.prompt);
+        prompt = smithersBuildPrompt(req.prompt, req.brief);
       } else {
         onProgress({ label: "reading mock", percent: 10 });
         const files = await readProjectFiles(req.outDir);
@@ -166,13 +167,17 @@ export class SmithersBuildBackend implements BuildBackend {
 
 // Fresh kickoff: a fast CONCEPT MOCK — one self-contained static page selling
 // the imagined app, NOT the full working app (that's the commission stage).
-export function smithersBuildPrompt(pitch: string): string {
+// When the accept carried an IdeaBrief its context block (the verbatim room
+// quote, the judge's rationale, decided/open questions) grounds the mock.
+export function smithersBuildPrompt(pitch: string, brief?: BuildBrief): string {
   const idea = pitch.trim().length > 0 ? pitch.trim() : "A small useful web tool.";
+  const context = briefContextBlock(brief);
   return [
     "You are a rapid concept artist producing a CONCEPT MOCK of an imagined app — a pitch, not the product.",
     "",
     `IDEA: ${idea}`,
     "",
+    ...(context.length === 0 ? [] : [context, ""]),
     "Build ONE small SELF-CONTAINED static page that sells this idea:",
     "- The HERO SCREEN of the imagined app: what its main screen would look like, with a strong visual identity (name, palette, typography).",
     "- A HEADLINE PITCH LINE displayed prominently — one punchy sentence that sells the idea.",

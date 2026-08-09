@@ -242,6 +242,74 @@ describe("process registry × build orchestrator", () => {
     expect(Object.keys(plain?.input as Record<string, unknown>)).not.toContain("planQuestions");
   });
 
+  test("a build:true spawn threads the acceptance seed's IdeaBrief into orchestrator.start", async () => {
+    const orchestrator = new FakeOrchestrator();
+    const registry = new ProcessRegistry({ client: new MemorySmithersClient(), sessionId: "reg-orch-brief", orchestrator });
+
+    // The acceptance seam spreads the accepted seed onto the spawn input, so a
+    // judged idea's brief rides along and MUST reach the kickoff fan-out.
+    const brief = {
+      pitch: "build a metronome",
+      sourceQuote: "what if we had a metronome that follows the drummer",
+      rationale: "Concrete audio tool with one obvious interaction.",
+      qa: [{ id: "q-sound", prompt: "Which sound set?", answers: ["Wood", "Electronic"] }],
+      callsign: null,
+      maturity: "proposed" as const,
+    };
+    await registry.spawn({
+      correlationId: "corr-accept-brief",
+      upid: "upid-brief",
+      workflow: "wf",
+      prompt: "build a metronome",
+      input: { pitch: "build a metronome", brief },
+      build: true,
+    });
+    await Bun.sleep(0);
+
+    const start = orchestrator.calls.find((call) => call.name === "start" && call.upid === "upid-brief");
+    expect((start?.input as { brief?: unknown }).brief).toEqual(brief);
+
+    // A malformed brief on the input is dropped, never a spawn failure — and
+    // the field is omitted entirely (same contract as planQuestions).
+    await registry.spawn({
+      correlationId: "corr-accept-badbrief",
+      upid: "upid-badbrief",
+      workflow: "wf",
+      prompt: "build a metronome",
+      input: { pitch: "build a metronome", brief: { sourceQuote: 42 } },
+      build: true,
+    });
+    await Bun.sleep(0);
+    const bad = orchestrator.calls.find((call) => call.name === "start" && call.upid === "upid-badbrief");
+    expect(Object.keys(bad?.input as Record<string, unknown>)).not.toContain("brief");
+  });
+
+  test("an explicit startBuild brief override beats the input-derived one (deferred-build shape)", async () => {
+    const orchestrator = new FakeOrchestrator();
+    const registry = new ProcessRegistry({ client: new MemorySmithersClient(), sessionId: "reg-orch-brief-override", orchestrator });
+
+    const inputBrief = {
+      pitch: "seed pitch",
+      sourceQuote: "from the input",
+      rationale: "",
+      qa: [],
+      callsign: null,
+    };
+    await registry.spawn({
+      correlationId: "corr-brief-import",
+      upid: "upid-brief-import",
+      workflow: "wf",
+      prompt: "seed pitch",
+      input: { pitch: "seed pitch", brief: inputBrief },
+    });
+    const drafted = { ...inputBrief, sourceQuote: "drafted by the import routine" };
+    registry.startBuild("upid-brief-import", { correlationId: "corr-brief-kick", brief: drafted });
+    await Bun.sleep(0);
+
+    const start = orchestrator.calls.find((call) => call.name === "start" && call.upid === "upid-brief-import");
+    expect((start?.input as { brief?: { sourceQuote: string } }).brief?.sourceQuote).toBe("drafted by the import routine");
+  });
+
   test("an explicit startBuild planQuestions override beats the input-derived mcqs/answers", async () => {
     const orchestrator = new FakeOrchestrator();
     const registry = new ProcessRegistry({ client: new MemorySmithersClient(), sessionId: "reg-orch-q-override", orchestrator });

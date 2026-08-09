@@ -91,6 +91,33 @@ describe("NativeBuildBackend — build()", () => {
     expect(progress.at(-1)).toMatchObject({ label: "mock ready", percent: 100 });
   });
 
+  test("the request's IdeaBrief context block reaches the plan AND implement prompts (not critique)", async () => {
+    const brief = {
+      pitch: "Build a tiny todo app",
+      sourceQuote: "honestly i just want a todo list that lives on the wall",
+      rationale: "Concrete, one screen, one interaction.",
+      qa: [{ id: "q-persist", prompt: "Persist between sessions?", answers: ["Yes", "No"] }],
+      callsign: null,
+    };
+    const model = scriptedModel({
+      plan: [toJson({ summary: "A tiny todo app.", spec: "single page list", files: [{ path: "index.html", purpose: "entrypoint" }] })],
+      implement: [toJson({ files: { "index.html": "<!doctype html><body>TODO</body>" } })],
+      critique: [toJson({ pass: true, issues: [] })],
+    });
+    const backend = new NativeBuildBackend({ model });
+    const result = await backend.build(makeRequest({ outDir: await tempOutDir(), brief }));
+
+    expect(result.ok).toBe(true);
+    const byStage = Object.fromEntries(model.calls.map((call) => [call.stage, call.user]));
+    for (const stage of ["plan", "implement"] as const) {
+      expect(byStage[stage]).toContain('AS HEARD IN THE ROOM (verbatim): "honestly i just want a todo list that lives on the wall"');
+      expect(byStage[stage]).toContain("WHY IT IS BUILDABLE: Concrete, one screen, one interaction.");
+      expect(byStage[stage]).toContain("OPEN QUESTIONS:\n- Persist between sessions? (options: Yes / No)");
+    }
+    // Critique reviews the artifact, not the accept context.
+    expect(byStage.critique).not.toContain("AS HEARD IN THE ROOM");
+  });
+
   test("critique fails once, revise fixes it, second critique passes", async () => {
     const model = scriptedModel({
       plan: [toJson({ summary: "S", spec: "spec", files: [{ path: "index.html", purpose: "x" }] })],

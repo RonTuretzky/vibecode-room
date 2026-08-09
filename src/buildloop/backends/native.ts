@@ -2,8 +2,9 @@ import { existsSync } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
 import { extname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { briefContextBlock } from "../brief";
 import { createCerebrasRetryFetch, type CerebrasBackoffOptions } from "../cerebras-retry";
-import type { BuildBackend, BuildBackendId, BuildRequest, BuildResult } from "../types";
+import type { BuildBackend, BuildBackendId, BuildBrief, BuildRequest, BuildResult } from "../types";
 
 export const NATIVE_BACKEND_LABEL = "Native Loop";
 export const NATIVE_ENTRYPOINT = "index.html";
@@ -129,7 +130,7 @@ export class NativeBuildBackend implements BuildBackend {
     }
 
     onProgress({ label: "planning concept", percent: 5 });
-    const planReply = await model({ stage: "plan", system: NATIVE_SYSTEM_PROMPT, user: planPrompt(req.prompt), signal });
+    const planReply = await model({ stage: "plan", system: NATIVE_SYSTEM_PROMPT, user: planPrompt(req.prompt, req.brief), signal });
     const plan = parsePlanReply(planReply, req.prompt);
     signal.throwIfAborted();
 
@@ -137,7 +138,7 @@ export class NativeBuildBackend implements BuildBackend {
     const implementReply = await model({
       stage: "implement",
       system: NATIVE_SYSTEM_PROMPT,
-      user: implementPrompt(req.prompt, plan),
+      user: implementPrompt(req.prompt, plan, req.brief),
       signal,
     });
     const implemented = parseFilesReply(implementReply);
@@ -254,9 +255,14 @@ export const NATIVE_SYSTEM_PROMPT = [
   "no prose, no markdown fences.",
 ].join(" ");
 
-function planPrompt(pitch: string): string {
+// Fresh-build prompts carry the IdeaBrief context block (verbatim room quote,
+// rationale, decided/open questions) when the accept carried one, so the mock
+// grounds itself in what the room actually said — string-level only.
+function planPrompt(pitch: string, brief?: BuildBrief): string {
+  const context = briefContextBlock(brief);
   return [
     `Idea pitch: ${pitch}`,
+    ...(context.length === 0 ? [] : ["", context]),
     "",
     "Plan a CONCEPT MOCK for this idea — one small self-contained page: the imagined app's hero screen, a strong",
     "visual identity (name, palette, typography), a prominently displayed headline pitch line, and ONE key",
@@ -267,11 +273,13 @@ function planPrompt(pitch: string): string {
   ].join("\n");
 }
 
-function implementPrompt(pitch: string, plan: NativePlan): string {
+function implementPrompt(pitch: string, plan: NativePlan, brief?: BuildBrief): string {
+  const context = briefContextBlock(brief);
   return [
     `Idea pitch: ${pitch}`,
     `Headline: ${plan.summary}`,
     `Spec: ${plan.spec}`,
+    ...(context.length === 0 ? [] : ["", context]),
     "",
     `Write the COMPLETE concept mock as a single SMALL ${NATIVE_ENTRYPOINT} (all CSS/JS inline).`,
     'Reply with ONLY strict JSON: {"files": {"<path>": "<full file content>", ...}}.',

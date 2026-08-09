@@ -51,6 +51,28 @@ describe("smithers backend — prompts (pure)", () => {
     expect(prompt).toContain("Do not build the full app");
   });
 
+  test("fresh prompt appends the IdeaBrief context block when the request carries one", () => {
+    const brief = {
+      pitch: "A kanban wall",
+      sourceQuote: "we keep losing track of tickets, put a kanban on the wall",
+      rationale: "Named tool, obvious hero screen.",
+      qa: [
+        { id: "q-cols", prompt: "How many columns?", answers: ["Three", "Five"] },
+        { id: "q-drag", prompt: "Drag and drop?", answers: ["Yes", "Later"], chosen: "Yes" },
+      ],
+      callsign: null,
+    };
+    const prompt = smithersBuildPrompt("A kanban wall", brief);
+    expect(prompt).toContain('AS HEARD IN THE ROOM (verbatim): "we keep losing track of tickets, put a kanban on the wall"');
+    expect(prompt).toContain("WHY IT IS BUILDABLE: Named tool, obvious hero screen.");
+    expect(prompt).toContain("DECISIONS ALREADY MADE:\n- Drag and drop? → Yes");
+    expect(prompt).toContain("OPEN QUESTIONS:\n- How many columns? (options: Three / Five)");
+    // The concept-mock instructions still follow the context block.
+    expect(prompt).toContain("Build ONE small SELF-CONTAINED static page");
+    // Without a brief the prompt is unchanged — no stray context headers.
+    expect(smithersBuildPrompt("A kanban wall")).not.toContain("AS HEARD IN THE ROOM");
+  });
+
   test("correction prompt includes the existing files' content AND the spoken correction", () => {
     const files = new Map([["index.html", "<h1>old app</h1>"]]);
     const prompt = smithersCorrectionPrompt("A kanban wall", files, "make the columns draggable");
@@ -85,6 +107,30 @@ describe("smithers backend — build via injected runner", () => {
     expect(result).toEqual({ ok: true, entrypoint: SMITHERS_ENTRYPOINT, summary: "Built the pomodoro timer." });
     expect(seenPrompts[0]).toContain("Build a pomodoro timer");
     await expect(readFile(join(outDir, "index.html"), "utf8")).resolves.toContain("timer");
+  });
+
+  test("the request's IdeaBrief reaches the claude prompt (fresh build)", async () => {
+    const outDir = join(await tempDir(), "smithers");
+    const seenPrompts: string[] = [];
+    const runner: ClaudeRunner = async ({ prompt, cwd }) => {
+      seenPrompts.push(prompt);
+      await writeFile(join(cwd, "index.html"), "<!doctype html><h1>ok</h1>", "utf8");
+      return { exitCode: 0, stdout: "" };
+    };
+    const backend = new SmithersBuildBackend({ runner });
+    const result = await backend.build(
+      request(outDir, {
+        brief: {
+          pitch: "Build a pomodoro timer",
+          sourceQuote: "the timer should yell when the break is over",
+          rationale: "",
+          qa: [],
+          callsign: null,
+        },
+      }),
+    );
+    expect(result.ok).toBe(true);
+    expect(seenPrompts[0]).toContain('AS HEARD IN THE ROOM (verbatim): "the timer should yell when the break is over"');
   });
 
   test("a run that produces no index.html fails with a specific error", async () => {
