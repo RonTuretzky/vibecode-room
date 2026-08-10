@@ -1247,6 +1247,12 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         { name: "rock_moss_set_01", count: 12, rMin: 10, rMax: 82, sMin: 0.5, sMax: 0.9 },
         { name: "tree_stump_01", count: 4, rMin: 15, rMax: 55, sMin: 0.9, sMax: 1.2 },
         { name: "jacaranda_tree", count: 10, rMin: 34, rMax: 82, sMin: 0.45, sMax: 0.62 },
+        // Indian trees: the jacaranda scan (widely planted across India — the
+        // "blue gulmohar" — and standing in here for the country's iconic broad
+        // canopies, the Banyan among them) scattered as a second, taller inner
+        // band so the meadow carries more of India's big-crowned trees at the
+        // SAME photoscan quality as the other trees.
+        { name: "jacaranda_tree", count: 8, rMin: 22, rMax: 70, sMin: 0.5, sMax: 0.7 },
       ];
       let floraDisposed = false;
       // Central Park diorama (?park=1): built (async) BEFORE the flora
