@@ -8,7 +8,7 @@ import { PinchCameraLayer } from "./gesture/PinchCameraLayer";
 import { HandSkeletonHud } from "./gesture/HandSkeletonHud";
 import type { HandsStatus } from "./gesture/hands-client";
 import { RoomScene, type DialogueNodeSpec, type DialogueTopicSpec, type IdeaOrbSpec, type ResearchNodeSpec, type SceneLayout, type SceneMode, type TreeSpec } from "./RoomScene";
-import type { SceneDwellRect } from "./gesture/scene-source";
+import { getSceneDwellSource, procDwellTargetId, type SceneDwellRect } from "./gesture/scene-source";
 import { Slideshow } from "./Slideshow";
 import { TreeMenu } from "./TreeMenu";
 import { IdeaTray } from "./IdeaTray";
@@ -684,29 +684,14 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
     [liveMode],
   );
 
-  // CLICK/DWELL A TREE -> ITS MENU (+ STEER-ARM IT). Picking a garden tree
-  // opens that instance's anchored control menu right there (the fleet rail
-  // is gone from the walls — the tree IS the interface) AND sets it as the
-  // steering target so subsequent transcript routes to it. Re-picking the
-  // current target keeps steering armed (the menu says "talking steers this
-  // build", so it must not silently clear). Offline demo skips the POST; the
-  // menu still opens over the static fixtures.
-  const steerArmProcess = useCallback(
-    async (upid: string) => {
-      if (!liveMode || mockModeRef.current || snapshotRef.current.steeringUpid === upid) {
-        return;
-      }
-      try {
-        const response = await fetch(`/api/process/${encodeURIComponent(upid)}/select`, { method: "POST" });
-        if (response.ok && response.headers.get("content-type")?.includes("application/json")) {
-          setSnapshot((await response.json()) as ProjectorSnapshot);
-        }
-      } catch {
-        // Non-authoritative projector: a failed select must never block the UI.
-      }
-    },
-    [liveMode],
-  );
+  // CLICK/DWELL A TREE -> ITS MENU, NOTHING MORE. Picking a garden tree opens
+  // that instance's anchored control menu right there (the fleet rail is gone
+  // from the walls — the tree IS the interface). Picking deliberately does
+  // NOT touch voice steering: it used to POST /api/process/:upid/select as a
+  // side effect, which meant any dwell that landed on a tree silently routed
+  // the operator's narration into that build (live-room P0). The
+  // RecordSteerToggle inside the menu is the ONLY armer — it POSTs
+  // select/select-clear itself and lights from the snapshot's steering flag.
 
   // 🗑 REMOVE (the tree menu's two-stage delete): stop this project's builds
   // and remove it from the snapshot entirely — POST /api/process/:upid/dismiss.
@@ -1754,9 +1739,10 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
   }, [ideaCard, ideaCardOrb]);
 
   // Picking a tree in the scene (click or dwell): open ITS anchored menu at
-  // the pick-time screen rect and steer-arm the process. Picking another tree
+  // the pick-time screen rect — and ONLY that (steering stays with the menu's
+  // RecordSteerToggle; see the steer-arm note above). Picking another tree
   // MOVES the menu (selected changes, anchor re-derives); the deck, previews,
-  // steer input and remove all live inside the menu now — including fixture
+  // steer toggle and remove all live inside the menu now — including fixture
   // decks (mock room), which get the menu's "Deck ▸" button.
   const selectSceneProcess = useCallback(
     (callsign: string, anchor?: SceneDwellRect | null) => {
@@ -1768,10 +1754,93 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
       }
       setMenuAnchor(anchor ?? null);
       setSelected(process.callsign);
-      void steerArmProcess(process.upid);
     },
-    [steerArmProcess],
+    [],
   );
+
+  // ANCHOR CHASE (menu ↔ tree): while a menu is open, refresh its anchor from
+  // the tree's LIVE projected dwell rect about once a second — slot re-shuffles
+  // and settle easing move trees after pick time, and a menu pinned to a stale
+  // rect reads as orphaned glass. Lightweight by design: 1 Hz (never
+  // per-frame), one projected-box query through the existing scene-source
+  // seam, and the guarded set keeps identical rects from re-rendering. A null
+  // rect (tree gone / degenerate projection this beat) keeps the last anchor.
+  // Side benefit: a keyboard/hook select (anchor null → edge-rest) adopts the
+  // real anchor within a second.
+  const selectedMenuCallsign = selectedProcess?.callsign ?? null;
+  useEffect(() => {
+    if (selectedMenuCallsign === null || typeof window === "undefined") {
+      return;
+    }
+    const timer = setInterval(() => {
+      const rect = getSceneDwellSource()?.rectFor(procDwellTargetId(selectedMenuCallsign)) ?? null;
+      if (rect === null) {
+        return;
+      }
+      setMenuAnchor((current) =>
+        current !== null &&
+        Math.abs(current.left - rect.left) < 1 &&
+        Math.abs(current.top - rect.top) < 1 &&
+        Math.abs(current.width - rect.width) < 1 &&
+        Math.abs(current.height - rect.height) < 1
+          ? current
+          : rect,
+      );
+    }, 1_000);
+    return () => clearInterval(timer);
+  }, [selectedMenuCallsign]);
+
+  // TWO GLASS PANELS NEVER OVERLAP (projector legibility): an opening tree
+  // menu folds the control dock's tray via its collapse seam; hover/dwell on
+  // the dock re-opens it as usual afterwards.
+  const [dockCollapseSignal, setDockCollapseSignal] = useState(0);
+  const treeMenuOpen = selectedProcess !== null;
+  useEffect(() => {
+    if (treeMenuOpen) {
+      setDockCollapseSignal((n) => n + 1);
+    }
+  }, [treeMenuOpen]);
+
+  // AUTO-FIT ON IMPORT: when a upid never seen before appears in the snapshot
+  // (QR import, voice build, mock toggle), pulse the EXISTING one-shot fit
+  // (fitSignal → RoomScene's fitToContent) once so the garden reframes with
+  // every tree mid-frame instead of the new one clipping the bottom edge.
+  // Baseline = the mount snapshot, so the first live /api/state sync frames
+  // the standing garden too. RoomScene keeps its own guards: rigid corner/
+  // flat pairs ignore the pulse (their cameras may not move).
+  const seenUpidsRef = useRef<Set<string> | null>(null);
+  useEffect(() => {
+    const seen = seenUpidsRef.current;
+    if (seen === null) {
+      seenUpidsRef.current = new Set(snapshot.processes.map((process) => process.upid));
+      return;
+    }
+    let grewNewTree = false;
+    for (const process of snapshot.processes) {
+      if (!seen.has(process.upid)) {
+        seen.add(process.upid);
+        grewNewTree = true;
+      }
+    }
+    if (grewNewTree) {
+      setFitSignal((n) => n + 1);
+    }
+  }, [snapshot.processes]);
+
+  // DWELL-MISS / WALKED-AWAY CLOSE (GestureLayer → popup-dismiss.ts): the
+  // gesture wall's ground-click. Closes the TOP popup only — the tree menu
+  // first, else the idea action card. Deliberately narrow: the deck/QR/help
+  // overlays keep their explicit close buttons (auto-closing a deck mid-pitch
+  // because nobody pointed for 6s would be worse than stale glass).
+  const closeTopPopup = useCallback(() => {
+    if (selectedRef.current !== null) {
+      setSelected(null);
+      return;
+    }
+    if (ideaCardRef.current !== null) {
+      setIdeaCard(null);
+    }
+  }, []);
 
   // Clicking an idea orb OPENS its contextual action card — building is the
   // card's explicit "✓ Done — build it" press, never the orb click itself.
@@ -1880,6 +1949,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
           remoteUrl={remoteHandsUrl}
           mouseTest={urlConfig.dwell === "mouse"}
           initialCursorDots={urlConfig.dots ? true : undefined}
+          onDwellMiss={closeTopPopup}
         />
       ) : null}
       {/* PINCH CAMERA (hands): runtime-toggleable (HUD button) and seeded from
@@ -2016,8 +2086,10 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
               "⚙ Controls" affordance — hover/dwell/focus expands the popover
               tray, and it collapses ~4s after every cursor leaves (see
               ControlDock.tsx). The per-wall ?view gating of each button is
-              unchanged; only its resting visibility moved. */}
-          <ControlDock>
+              unchanged; only its resting visibility moved. An opening tree
+              menu folds the tray (collapseSignal) so two glass panels never
+              overlap on the projector. */}
+          <ControlDock collapseSignal={dockCollapseSignal}>
           {/* ONE control for mic + capture (live-room request): activating
               unmutes + starts the mic AND turns Idea Capture on; deactivating
               stops both. Replaces the separate Mic and Idea Capture buttons. */}
@@ -2262,7 +2334,15 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
           the old instant-accept behavior (primary → /api/suggestion/accept,
           ledger idea → per-idea accept), close (✕ / Esc) just dismisses. */}
       {ideaCard !== null && ideaCardOrb !== null && !researchActive ? (
-        <div className="idea-action-card" data-testid="idea-action-card" role="dialog" aria-label="Build this idea?">
+        <div
+          className="idea-action-card"
+          data-testid="idea-action-card"
+          // Dwell-miss dismissal shield (popup-dismiss.ts): a cursor reading
+          // the pitch/confidence copy must not close the card under it.
+          data-dwell-shield="1"
+          role="dialog"
+          aria-label="Build this idea?"
+        >
           <div className="idea-card-copy">
             <span className="idea-card-pitch">{ideaCardOrb.pitch}</span>
             {ideaCardOrb.confidence > 0 ? (

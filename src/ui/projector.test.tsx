@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ProjectorApp, REQUIRED_PROJECTOR_REGIONS } from "./App";
 import {
@@ -19,7 +20,7 @@ import { demoProjectorSnapshot, busyRoomSnapshot } from "./demo-data";
 import type { SelfTreeSeed } from "./self-repo";
 import type { BuildloopProcess, BuildloopSnapshot } from "./buildloop";
 import { PRACTICE_ORB_COUNT } from "./guided/machine";
-import { DISMISS_CONFIRM_MS, TREE_MENU_WIDTH, treeMenuModel, treeMenuPlacement } from "./TreeMenu";
+import { DISMISS_CONFIRM_MS, TREE_MENU_GESTURE_WIDTH, TREE_MENU_WIDTH, treeMenuModel, treeMenuPlacement } from "./TreeMenu";
 import type { ProjectorProcess } from "./types";
 
 function countOccurrences(haystack: string, needle: string): number {
@@ -347,6 +348,20 @@ describe("per-tree menu: the tree is the interface", () => {
     expect(html.slice(html.lastIndexOf("<", buildingIdx), buildingIdx)).not.toContain("button");
   });
 
+  test("the panel shields its WHOLE rect from the dwell-miss close (data-dwell-shield)", () => {
+    // A cursor reading the menu's non-button regions (title/status, building-
+    // lane rows, QR, ExecutionChip) must not count as empty ground: the
+    // GestureLayer's dismiss check treats [data-dwell-shield] rects as
+    // on-target, so the panel opts in on its own root element.
+    const html = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={demoProjectorSnapshot} initialOverlay={{ selected: "Atlas" }} />,
+    );
+    const idx = html.indexOf('data-testid="tree-menu"');
+    expect(idx).toBeGreaterThan(-1);
+    const openTag = html.slice(html.lastIndexOf("<", idx), html.indexOf(">", idx));
+    expect(openTag).toContain("data-dwell-shield");
+  });
+
   test("steer: the menu offers the record toggle (no typed input anywhere)", () => {
     const html = renderToStaticMarkup(
       <ProjectorApp initialSnapshot={demoProjectorSnapshot} initialOverlay={{ selected: "Atlas" }} />,
@@ -451,6 +466,106 @@ describe("per-tree menu: the tree is the interface", () => {
     const rest = treeMenuPlacement(null, viewport, menu);
     expect(rest.left + menu.width).toBeLessThanOrEqual(viewport.width);
     expect(rest.top).toBeGreaterThanOrEqual(0);
+  });
+
+  // P0 REGRESSION (live-room, reproduced twice): gesture mode widens the panel
+  // to 620px via CSS while placement math assumed 440px — the ✕ close button
+  // landed past x=1920, the occlusion check dropped it as a dwell target, and
+  // the wall had NO way to dismiss the menu. TreeMenu now measures its REAL
+  // rendered footprint and re-places from it; this pins the pure math at the
+  // gesture width so the panel (and the ✕ at its top-right) always fits.
+  test("gesture-width placement: the panel (and its ✕) stays fully on-screen at 1920×1080", () => {
+    const viewport = { width: 1920, height: 1080 };
+    expect(TREE_MENU_GESTURE_WIDTH).toBeGreaterThan(TREE_MENU_WIDTH); // the failure mode existed
+    const menu = { width: TREE_MENU_GESTURE_WIDTH, height: 900 }; // widest content, gesture XL
+    const anchors = [
+      { left: 200, top: 300, width: 100, height: 200 }, // room on the right
+      { left: 1700, top: 300, width: 150, height: 200 }, // near the right edge → flips left
+      { left: 1500, top: 100, width: 400, height: 800 }, // wide tree crowding the right edge
+      { left: 100, top: 0, width: 1800, height: 1000 }, // tree fills the frame
+      null, // keyboard/hook select → edge rest
+    ];
+    for (const anchor of anchors) {
+      const placement = treeMenuPlacement(anchor, viewport, menu);
+      expect(placement.left).toBeGreaterThanOrEqual(0);
+      expect(placement.top).toBeGreaterThanOrEqual(0);
+      // The whole panel fits horizontally — the ✕ lives at its top-right, so
+      // this is exactly "the close button is reachable/dwellable".
+      expect(placement.left + menu.width).toBeLessThanOrEqual(viewport.width);
+      expect(placement.top + Math.min(menu.height, viewport.height)).toBeLessThanOrEqual(viewport.height + menu.height);
+    }
+  });
+
+  // P1 REGRESSION (anchor chase × moving cameras): the ~1 Hz chase adopts the
+  // tree's LIVE projected rect while a menu is open, and cameras move under it
+  // (WASD, guest fly, pinch cam, palm-depth walk, the auto-fit pulse) — so
+  // placement must survive anchors partially or ENTIRELY off-screen. Before
+  // the unconditional horizontal clamp, the right-of branch let an off-left
+  // anchor yield a negative left, and the left-of branch let an off-right
+  // anchor push the panel past the viewport (anchor {left:2200,width:200} at
+  // 1920×1080 with the 620×900 gesture menu → left 1562, right edge 2182: the
+  // ✕ off-screen, dropped as a dwell target — the original P0 mode returns).
+  test("off-screen anchors (chased mid-camera-move): the panel and its ✕ stay inside the margins", () => {
+    const viewport = { width: 1920, height: 1080 };
+    const menu = { width: TREE_MENU_GESTURE_WIDTH, height: 900 };
+    const margin = 16; // treeMenuPlacement's VIEWPORT_MARGIN
+    const anchors = [
+      { left: 2200, top: 300, width: 200, height: 200 }, // straddles the right edge
+      { left: 3000, top: 300, width: 200, height: 200 }, // entirely off right
+      { left: -900, top: 300, width: 200, height: 200 }, // entirely off left
+      { left: -150, top: -300, width: 200, height: 200 }, // off the top-left corner
+      { left: 900, top: 2000, width: 200, height: 200 }, // off the bottom
+    ];
+    for (const anchor of anchors) {
+      const placement = treeMenuPlacement(anchor, viewport, menu);
+      expect(placement.left).toBeGreaterThanOrEqual(margin);
+      expect(placement.left + menu.width).toBeLessThanOrEqual(viewport.width - margin);
+      expect(placement.top).toBeGreaterThanOrEqual(margin);
+    }
+  });
+});
+
+// STEER-ARM DECOUPLED FROM PICK (P0: any dwell that landed on a tree used to
+// POST /api/process/:upid/select as a side effect, silently routing operator
+// narration into that build). Picking opens the MENU only; the menu's
+// RecordSteerToggle is the ONLY armer.
+describe("picking a tree never arms voice steering", () => {
+  test("a picked tree's menu shows the UNARMED record toggle when nothing is steering", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp
+        initialSnapshot={{ ...demoProjectorSnapshot, steeringUpid: null }}
+        initialOverlay={{ selected: "Atlas" }}
+      />,
+    );
+    // The pick opened the menu…
+    expect(html).toContain('data-testid="tree-menu"');
+    // …but steering is NOT claimed: the toggle invites, it does not report.
+    expect(html).toContain('data-testid="record-steer-start"');
+    expect(html).not.toContain('data-testid="record-steer-stop"');
+  });
+
+  test("the armed state comes from the snapshot's steering flag (the toggle's POST), not the pick", () => {
+    const processes = demoProjectorSnapshot.processes.map((process, index) =>
+      index === 0 ? { ...process, steering: true } : process,
+    );
+    const html = renderToStaticMarkup(
+      <ProjectorApp
+        initialSnapshot={{ ...demoProjectorSnapshot, processes, steeringUpid: processes[0]!.upid }}
+        initialOverlay={{ selected: "Atlas" }}
+      />,
+    );
+    expect(html).toContain('data-testid="record-steer-stop"');
+  });
+
+  test("source contract: the App has NO select POST left — RecordSteerToggle is the only armer", () => {
+    // SSR tests cannot click a WebGL tree, so this pins the regression at the
+    // source seam: the pick path must never regrow a select-endpoint fetch.
+    // (The endpoint only ever appears as a template literal ending "/select`".)
+    const appSource = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+    expect(appSource).not.toMatch(/\/select`/);
+    const togglerSource = readFileSync(new URL("./RecordSteerToggle.tsx", import.meta.url), "utf8");
+    expect(togglerSource).toMatch(/\/select`/);
+    expect(togglerSource).toContain("/api/process/select/clear");
   });
 });
 
@@ -1552,6 +1667,16 @@ describe("idea action card: contextual Done UX replaces the top-bar button", () 
     expect(html).toContain("A retro wall that clusters this week");
     expect(html).toContain('data-testid="idea-done-button"');
     expect(html).not.toContain("(5s)");
+  });
+
+  test("the card shields itself from the dwell-miss close (reading the pitch is not a dismissal)", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={armedSnapshot} initialOverlay={{ ideaCard: { id: null } }} />,
+    );
+    const idx = html.indexOf('data-testid="idea-action-card"');
+    expect(idx).toBeGreaterThan(-1);
+    const openTag = html.slice(html.lastIndexOf("<", idx), html.indexOf(">", idx));
+    expect(openTag).toContain("data-dwell-shield");
   });
 
   test("a card whose idea is gone from the snapshot never renders (auto-close contract)", () => {

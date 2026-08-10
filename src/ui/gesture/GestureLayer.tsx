@@ -9,6 +9,14 @@ import { RemoteKeyHolds, guestDwellCaps, isGuestCursorId, shouldDrawNameTag, vis
 import { GestureWallClient, type GestureCursor, type GestureWallStatus } from "./wall-client";
 import { applyCameraIntents } from "./camera-source";
 import { PinchCam } from "./pinch-cam";
+import {
+  DWELL_SHIELD_SELECTOR,
+  POPUP_DISMISS_IDLE,
+  cursorOverRect,
+  popupDismissStep,
+  type DismissRect,
+  type PopupDismissState,
+} from "./popup-dismiss";
 
 // Dwell/interaction tuning — matches the standalone wall client
 // (gesture-wall/web/wall.js): 0.8s dwell, 0.4s cooldown, 15% sticky
@@ -105,6 +113,11 @@ export interface GestureLayerProps {
   // Test seam: overrides the persisted cursor-dot preference (the SSR test
   // renderer has no localStorage). Default: read localStorage, ON when unset.
   initialCursorDots?: boolean;
+  // DWELL-MISS CLOSE (popup-dismiss.ts): fired when a present cursor parks on
+  // EMPTY ground for ~1.5s, or when NO cursor exists for ~6s — the App closes
+  // its topmost popup (tree menu / idea card). The gesture wall's equivalent
+  // of the mouse's ground-click close.
+  onDwellMiss?: () => void;
 }
 
 // A full-viewport, pointer-events:none overlay that turns the gesture-wall
@@ -115,12 +128,16 @@ export interface GestureLayerProps {
 // synthesizes the activation. A per-person cursor dot — hued per cursor id
 // like the standalone wall client — can be opted in via localStorage, but the
 // wall defaults to dwell rings only (the dots read as clutter at room scale).
-export function GestureLayer({ wall, fusionUrl, remoteUrl = "", mouseTest = false, initialCursorDots }: GestureLayerProps) {
+export function GestureLayer({ wall, fusionUrl, remoteUrl = "", mouseTest = false, initialCursorDots, onDwellMiss }: GestureLayerProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const statusRef = useRef<GestureWallStatus>("closed");
   const [cursorDots] = useState<boolean>(() => initialCursorDots ?? readCursorDotsPref());
   const cursorDotsRef = useRef(cursorDots);
   cursorDotsRef.current = cursorDots;
+  // Ref-carried so a changing callback identity never tears down the sockets
+  // (the main effect keys on connection config only).
+  const onDwellMissRef = useRef(onDwellMiss);
+  onDwellMissRef.current = onDwellMiss;
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -153,6 +170,8 @@ export function GestureLayer({ wall, fusionUrl, remoteUrl = "", mouseTest = fals
     let sceneHighlights = new Set<string>();
     const fireFlashes: { x: number; y: number; r: number; hue: number; at: number }[] = [];
     let raf = 0;
+    // Dwell-miss / walked-away popup dismissal (pure fold, popup-dismiss.ts).
+    let dismissState: PopupDismissState = POPUP_DISMISS_IDLE;
 
     const nowSec = () => performance.now() / 1000;
 
@@ -324,20 +343,24 @@ export function GestureLayer({ wall, fusionUrl, remoteUrl = "", mouseTest = fals
       // can walk the camera without pointing.
       const descriptors = cursors.size > 0 ? collectDomTargets(vpW, vpH) : [];
 
-      // Scene nodes: raycast each engaged cursor into the 3D room; a hit node
-      // becomes (or stays) a dwell target whose zone rect is the node's live
-      // projected bounding box.
+      // Scene nodes: raycast each cursor into the 3D room; a hit node becomes
+      // (or stays) a dwell target whose zone rect is the node's live projected
+      // bounding box. Every cursor is picked (the dwell-miss close below must
+      // know a roaming open hand is still OVER a tree — that is not "empty
+      // ground"), but only engaged/guest cursors SPAWN targets: an open
+      // roaming hand should not light nodes up.
+      let cursorOverScene = false;
       const scene = cursors.size > 0 ? getSceneDwellSource() : null;
       if (scene !== null) {
         for (const [cursorId, c] of cursors) {
-          // Camera cursors must be ENGAGED to spawn scene targets (an open
-          // roaming hand should not light nodes up); guest cursors hover-dwell
-          // (guestDwellCaps), so their hover must acquire scene targets too.
-          if (!c.engaged && !isGuestCursorId(cursorId)) {
+          const id = scene.pick(c.x * vpW, c.y * vpH);
+          if (id === null) {
             continue;
           }
-          const id = scene.pick(c.x * vpW, c.y * vpH);
-          if (id !== null) {
+          cursorOverScene = true;
+          // Guest cursors hover-dwell (guestDwellCaps), so their hover must
+          // acquire scene targets too; camera cursors keep the engaged gate.
+          if (c.engaged || isGuestCursorId(cursorId)) {
             sceneSeen.set(id, t);
           }
         }
@@ -356,6 +379,49 @@ export function GestureLayer({ wall, fusionUrl, remoteUrl = "", mouseTest = fals
       const zones: Zone[] = targets.sync(descriptors, vpW, vpH);
       for (const zone of zones) {
         rectsById.set(zone.id, { left: zone.x * vpW, top: zone.y * vpH, width: zone.w * vpW, height: zone.h * vpH });
+      }
+
+      // DWELL-MISS CLOSE: is any cursor over ANY target (scene node above, or
+      // a zone rect — the inflated DOM hitboxes, so aiming jitter around a
+      // button never reads as empty ground)? Feed the pure fold; a sustained
+      // all-miss (~1.5s) or a cursorless stretch (~6s) closes the App's top
+      // popup — the gesture wall's equivalent of the mouse ground-click.
+      // Zone rects are tested with the SAME sticky halo the dwell selector
+      // uses (HYSTERESIS): a cursor the selector still holds in the halo —
+      // or one parked there right after firing a menu button — must not read
+      // as empty ground and close the popup out from under the user. Open
+      // popups additionally shield their WHOLE panel (DWELL_SHIELD_SELECTOR):
+      // reading a menu's title/status/QR is not a dismissal.
+      let anyOnTarget = cursorOverScene;
+      if (!anyOnTarget && cursors.size > 0) {
+        const shields: DismissRect[] = [];
+        document.querySelectorAll(DWELL_SHIELD_SELECTOR).forEach((el) => {
+          const r = el.getBoundingClientRect();
+          if (r.width > 0 && r.height > 0) {
+            shields.push({ left: r.left, top: r.top, width: r.width, height: r.height });
+          }
+        });
+        outer: for (const c of cursors.values()) {
+          const px = c.x * vpW;
+          const py = c.y * vpH;
+          for (const r of rectsById.values()) {
+            if (cursorOverRect(px, py, r, HYSTERESIS)) {
+              anyOnTarget = true;
+              break outer;
+            }
+          }
+          for (const r of shields) {
+            if (cursorOverRect(px, py, r)) {
+              anyOnTarget = true;
+              break outer;
+            }
+          }
+        }
+      }
+      const dismissStep = popupDismissStep(dismissState, { cursorCount: cursors.size, anyOnTarget }, t);
+      dismissState = dismissStep.state;
+      if (dismissStep.dismiss) {
+        onDwellMissRef.current?.();
       }
 
       // Remote WASD: apply this frame's press/release diff as synthetic window

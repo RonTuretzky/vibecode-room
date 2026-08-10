@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import type { IdeaTrayItem, ProjectorProcess } from "./types";
-import { registerSceneDwellSource, type SceneDwellRect } from "./gesture/scene-source";
+import { registerSceneDwellSource, SCENE_PROC_TARGET_PREFIX, type SceneDwellRect } from "./gesture/scene-source";
 import { registerSceneCameraControl } from "./gesture/camera-source";
 import { getFlatPoseSender, registerSceneFlatPoseControl } from "./gesture/flat-pose-source";
 import { cornerEye, cornerVerticalFovDeg, cornerYaw } from "./corner-lock";
@@ -3497,7 +3497,8 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
     // node highlights it and a completed dwell fires the exact click semantics
     // (ready idea → build, process → steer/deck) — without any pointer events.
     const SCENE_IDEA_PREFIX = "scene:idea:";
-    const SCENE_PROC_PREFIX = "scene:proc:";
+    // Shared with the App's tree-menu anchor refresh — one namespace, no drift.
+    const SCENE_PROC_PREFIX = SCENE_PROC_TARGET_PREFIX;
     const SCENE_RESEARCH_PREFIX = "scene:research:";
     const SCENE_TURN_PREFIX = "scene:turn:";
     let dwellHighlights: ReadonlySet<string> = new Set();

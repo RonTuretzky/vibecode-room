@@ -17,6 +17,15 @@ export interface SceneDwellRect {
   height: number;
 }
 
+// The process-node target namespace — the ONE id format shared by RoomScene's
+// registration and outside callers (the App's tree-menu anchor refresh asks
+// rectFor(procDwellTargetId(callsign)) once a second while a menu is open).
+export const SCENE_PROC_TARGET_PREFIX = "scene:proc:";
+
+export function procDwellTargetId(callsign: string): string {
+  return `${SCENE_PROC_TARGET_PREFIX}${callsign}`;
+}
+
 export interface SceneDwellSource {
   // Raycast at viewport (client px) coordinates → target id or null.
   pick(clientX: number, clientY: number): string | null;

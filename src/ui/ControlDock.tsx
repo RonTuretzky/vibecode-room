@@ -58,15 +58,30 @@ export interface ControlDockProps {
   // run the hover-check effect, so tests can boot the tray open. The live app
   // never passes this — expansion is hover/focus-driven.
   initialExpanded?: boolean;
+  // COLLAPSE-ON-DEMAND: the App bumps this counter when another glass panel
+  // (the tree menu) opens — two glass panels overlapping on the projector
+  // reads as broken, so the tray folds away. Hover/dwell re-opens it as usual
+  // once the cursor comes back to the dock.
+  collapseSignal?: number;
 }
 
-export function ControlDock({ children, initialExpanded = false }: ControlDockProps) {
+export function ControlDock({ children, initialExpanded = false, collapseSignal = 0 }: ControlDockProps) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [expanded, setExpanded] = useState(initialExpanded);
   // Click-to-close latch: after an explicit collapse click, hover must not
   // instantly re-expand (the clicking cursor is still ON the button). Held
   // until the dock goes cold once; then hover-expand works again.
   const holdClosed = useRef(false);
+
+  // A bumped collapseSignal folds the tray (see the prop doc). The latch stops
+  // the hover loop from reopening it under a cursor still resting on the dock;
+  // it releases the moment the dock goes cold, like the click path.
+  useEffect(() => {
+    if (collapseSignal > 0) {
+      holdClosed.current = true;
+      setExpanded(false);
+    }
+  }, [collapseSignal]);
 
   useEffect(() => {
     if (typeof window === "undefined") {

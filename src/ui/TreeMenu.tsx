@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ProjectorProcess, ProjectorSnapshot } from "./types";
 import type { SceneDwellRect } from "./gesture/scene-source";
 import { laneStatusLabel, processLanes, type GuidedLane } from "./guided/machine";
@@ -13,12 +13,13 @@ import "./TreeMenu.css";
  *
  * THE TREE IS THE INTERFACE: the fleet rail is gone from the walls, so
  * click/dwell-picking a garden tree opens THIS panel right next to it. It
- * re-derives its position from the pick-time anchor (the tree's screen-
- * projected dwell rect — RoomScene passes it through onSelectProcess) and
- * clamps to the viewport WITHOUT covering the tree; it does not chase the
- * tree frame-by-frame. Every control is a plain enabled <button> at
- * gesture-mode sizes, so GestureLayer's collectDomTargets makes the whole
- * menu dwell-native automatically.
+ * re-derives its position from the anchor (the tree's screen-projected dwell
+ * rect — RoomScene passes it through onSelectProcess, and the App refreshes
+ * it ~1×/s from the live rect while open, so slot re-shuffles/settle easing
+ * never orphan the panel) and clamps to the viewport WITHOUT covering the
+ * tree; it does not chase the tree frame-by-frame. Every control is a plain
+ * enabled <button> at gesture-mode sizes, so GestureLayer's collectDomTargets
+ * makes the whole menu dwell-native automatically.
  *
  * Contents (reuse before reinvent — the guided demo already solved these):
  *   - header: inferred project title / callsign / state·progress line + ✕.
@@ -38,13 +39,25 @@ import "./TreeMenu.css";
 // seconds later must not delete a build).
 export const DISMISS_CONFIRM_MS = 4_000;
 
-// Placement geometry (desk-mode footprint; gesture mode scales the CONTENT,
-// the panel clamps the same way). Estimated height: placement must be pure +
-// SSR-safe, so it works from a nominal size instead of a DOM measurement.
+// Placement geometry. The pure function stays SSR-safe by working from a
+// NOMINAL size, but the rendered panel is measured (layout effect below) and
+// re-placed from its REAL footprint: gesture mode widens the panel to 620px
+// via CSS (TreeMenu.css `main.gesture-mode .tree-menu`), and placing a 620px
+// panel with 440px math pushed the ✕ close button off-screen at 1920×1080 —
+// the occlusion check then dropped it as a dwell target, leaving a gesture
+// wall with NO way to dismiss the menu (live-room P0).
 export const TREE_MENU_WIDTH = 440;
+// Mirror of the gesture-mode CSS width — exported so placement tests exercise
+// the widest real footprint, not just the desk nominal.
+export const TREE_MENU_GESTURE_WIDTH = 620;
 export const TREE_MENU_EST_HEIGHT = 560;
 const MENU_GAP = 18;
 const VIEWPORT_MARGIN = 16;
+
+// useLayoutEffect measures before paint in the browser; on the server (the
+// SSR unit tests render with renderToStaticMarkup) it downgrades to useEffect
+// to keep React quiet — the nominal-size placement is the SSR answer anyway.
+const useIsomorphicLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
 
 export interface TreeMenuPlacement {
   left: number;
@@ -53,8 +66,14 @@ export interface TreeMenuPlacement {
 
 // Pure: where the panel opens. Prefers the side of the anchor rect with room
 // (right first — labels read left-to-right), so the menu never covers the tree
-// it belongs to; everything clamps inside the viewport margins. A null anchor
-// (projection unavailable / keyboard select) rests against the right edge.
+// it belongs to; EVERY branch clamps inside the viewport margins. A null
+// anchor (projection unavailable / keyboard select) rests against the right
+// edge. The unconditional horizontal clamp is load-bearing: the ~1 Hz anchor
+// chase adopts LIVE projected rects while cameras move (WASD, guest fly,
+// pinch cam, palm-depth walk, the auto-fit pulse), so an anchor may sit
+// partially or entirely OFF-screen — the side-picking branches alone would
+// then push the panel (and its ✕, the dwell wall's close verb) past the
+// viewport edge, the exact live-room P0.
 export function treeMenuPlacement(
   anchor: SceneDwellRect | null,
   viewport: { width: number; height: number },
@@ -62,9 +81,11 @@ export function treeMenuPlacement(
 ): TreeMenuPlacement {
   const clampTop = (top: number): number =>
     Math.min(Math.max(VIEWPORT_MARGIN, top), Math.max(VIEWPORT_MARGIN, viewport.height - menu.height - VIEWPORT_MARGIN));
+  const clampLeft = (left: number): number =>
+    Math.min(Math.max(VIEWPORT_MARGIN, left), Math.max(VIEWPORT_MARGIN, viewport.width - menu.width - VIEWPORT_MARGIN));
   if (anchor === null) {
     return {
-      left: Math.max(VIEWPORT_MARGIN, viewport.width - menu.width - VIEWPORT_MARGIN),
+      left: clampLeft(viewport.width - menu.width - VIEWPORT_MARGIN),
       top: clampTop((viewport.height - menu.height) / 2),
     };
   }
@@ -72,15 +93,19 @@ export function treeMenuPlacement(
   const leftOf = anchor.left - MENU_GAP - menu.width;
   let left: number;
   if (rightOf + menu.width <= viewport.width - VIEWPORT_MARGIN) {
+    // Right edge fits; the clamp below still lifts a negative left (anchor
+    // off the LEFT edge) back inside the margin.
     left = rightOf;
   } else if (leftOf >= VIEWPORT_MARGIN) {
+    // Left edge fits; the clamp below still pulls the right edge back inside
+    // when the anchor sits off the RIGHT edge (leftOf alone can exceed it).
     left = leftOf;
   } else {
-    // Neither side fits fully (tree fills the frame): clamp toward the right
+    // Neither side fits fully (tree fills the frame): rest toward the right
     // edge — partial overlap beats an off-screen panel.
-    left = Math.min(Math.max(VIEWPORT_MARGIN, rightOf), Math.max(VIEWPORT_MARGIN, viewport.width - menu.width - VIEWPORT_MARGIN));
+    left = rightOf;
   }
-  return { left, top: clampTop(anchor.top + anchor.height / 2 - menu.height / 2) };
+  return { left: clampLeft(left), top: clampTop(anchor.top + anchor.height / 2 - menu.height / 2) };
 }
 
 export interface TreeMenuModel {
@@ -144,13 +169,36 @@ export interface TreeMenuProps {
 export function TreeMenu({ process, snapshot, anchor, onClose, onOpenDeck, onDismiss }: TreeMenuProps) {
   const model = treeMenuModel(process, snapshot);
   const execution = executionOf(process);
-  // Re-derived per render — the anchor prop only changes on a fresh pick, so
-  // the panel holds still between picks (no frame-by-frame tracking).
+  // Re-derived per render — the anchor prop changes on a fresh pick and on the
+  // App's ~1 Hz anchor refresh, never frame-by-frame.
   const viewport =
     typeof window !== "undefined"
       ? { width: window.innerWidth, height: window.innerHeight }
       : { width: 1920, height: 1080 };
-  const placement = treeMenuPlacement(anchor, viewport);
+  // REAL-SIZE PLACEMENT: measure the rendered panel (CSS decides the true
+  // footprint — gesture mode widens it) and re-place from that. The measure
+  // runs pre-paint (layout effect), so the nominal-size first pass is never
+  // visible; the guarded setState bails once the size settles, so this cannot
+  // loop. Re-measured every render because the CONTENT changes size too
+  // (lanes appear, remove arms, QR lands).
+  const panelRef = useRef<HTMLElement | null>(null);
+  const [measured, setMeasured] = useState<{ width: number; height: number } | null>(null);
+  useIsomorphicLayoutEffect(() => {
+    const panel = panelRef.current;
+    if (panel === null) {
+      return;
+    }
+    const rect = panel.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) {
+      return;
+    }
+    setMeasured((current) =>
+      current !== null && Math.abs(current.width - rect.width) < 1 && Math.abs(current.height - rect.height) < 1
+        ? current
+        : { width: rect.width, height: rect.height },
+    );
+  });
+  const placement = treeMenuPlacement(anchor, viewport, measured ?? undefined);
 
   // TWO-STAGE remove: the first press arms "really remove?"; it disarms by
   // itself after DISMISS_CONFIRM_MS. Both stages reset when the menu moves to
@@ -169,11 +217,16 @@ export function TreeMenu({ process, snapshot, anchor, onClose, onOpenDeck, onDis
 
   return (
     <section
+      ref={panelRef}
       className={`tree-menu stage-${model.stage}`}
       data-testid="tree-menu"
       data-upid={process.upid}
       data-stage={model.stage}
       data-self={model.isSelf ? "true" : "false"}
+      // Dwell-miss dismissal shield (popup-dismiss.ts): the panel's WHOLE rect
+      // counts as on-target ground, so a cursor reading the title/status/lane
+      // rows/QR — none of which are dwell targets — never closes the menu.
+      data-dwell-shield="1"
       role="dialog"
       aria-label={`Tree controls for ${model.callsign}`}
       style={{ left: `${Math.round(placement.left)}px`, top: `${Math.round(placement.top)}px` }}
