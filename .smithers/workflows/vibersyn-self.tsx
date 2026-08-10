@@ -66,6 +66,18 @@ HARD RULES — all of them, no exceptions:
    (\`bun run build\` regenerating dist/ is fine; committing dist/ is not.)
 3. Make the SMALLEST change that satisfies the instruction, matching the
    codebase's existing seams and idioms. Do not refactor beyond it.
+3b. THE CHANGE MUST TAKE REAL EFFECT. ANY arbitrary change to the room is in
+   scope — visuals, server behavior, voice pipeline, gestures, endpoints —
+   but it only counts if the code you edit is ON THE LIVE PATH for the
+   instruction's domain. Trace that path FIRST (grep for who imports/mounts/
+   calls it): walls render src/ui/App.tsx (3D garden/meadow/trees/creatures =
+   src/ui/RoomScene.tsx; decks/menus/panels = Slideshow/TreeMenu/HoloPanel);
+   the server boots src/server/index.ts -> composition.ts (voice, ideas,
+   builds, endpoints live there); gestures flow src/ui/gesture/. Editing
+   dead/unmounted/unreached code fails the instruction even when tests are
+   green — a previous self-run added a feature to an unmounted scene file and
+   the room rebuilt itself for nothing. If you cannot show (import/mount
+   chain) that your edit executes, pick the file where it does.
 4. GREEN GATE: run \`bunx tsc --noEmit && bun run build\` and keep fixing your
    own change until BOTH pass clean. Never commit red.
 5. Commit ONLY the files you created or edited, staged by EXPLICIT path
