@@ -196,6 +196,10 @@ export interface ProjectorSnapshot {
   // instead of seeding a new ambient suggestion. Surfaced so the projector can
   // highlight the steered bubble and show a "steering ->" indicator.
   steeringUpid?: string | null;
+  // The room/<slug> branch the steering target is scoped to (the record toggle
+  // dwelled on a specific branch of an adopted tree), or null when the select
+  // was unscoped. Lives and dies with steeringUpid.
+  steeringBranch?: string | null;
   // AUTO-BUILD: when true, every fired idea is accepted+built without a click. The
   // projector shows the toggle as ON.
   autoAccept?: boolean;

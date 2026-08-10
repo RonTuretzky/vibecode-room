@@ -127,6 +127,9 @@ import { cloneRepo, repoDigest } from "./repo-clone";
 import { resolveDeployUrl } from "./deploy-resolver";
 import { TreeGitSubstrate, treeGitEnabled, type GitCommandRunner } from "./tree-git";
 import type { ForestCommandRunner } from "./github-org";
+import { applySteerEdit, steerApplierEnabled } from "./steer-applier";
+import { appendSliceLine, joinedSliceText, type SteerSliceLine } from "./transcript-slice";
+import { TreeIssuesCache, type TreeIssue } from "./tree-issues";
 import { buildImportPlanPrompt, buildImportPlanQuestions } from "./import-plan";
 import { hasBuildableCue } from "../detect";
 import type { IdeaCandidate, IdeaDetector, PlanQuestion } from "../detect";
@@ -300,12 +303,22 @@ export interface ProjectorRuntime {
   acceptPendingSuggestion(correlationId?: string): Promise<ProjectorSnapshot>;
   // Click-to-steer (CLICK A PROJECT -> STEER IT): set the steering target UPID so
   // subsequent live FINAL transcript lines route to THAT process's agent loop
-  // (registry.steer) instead of seeding a fresh ambient suggestion.
-  setSteeringTarget(upid: string, correlationId?: string): ProjectorSnapshot;
+  // (registry.steer) instead of seeding a fresh ambient suggestion. `branch`
+  // (a room/<slug> name) scopes the record toggle's spoken-change window to a
+  // specific room branch of an adopted tree — stored beside the target and
+  // cleared with it.
+  setSteeringTarget(upid: string, correlationId?: string, branch?: string | null): ProjectorSnapshot;
   // Clear the steering target; live transcript returns to ambient suggestion +
-  // click-to-build behavior.
+  // click-to-build behavior. For an ADOPTED tree with a non-empty spoken slice,
+  // the clear ALSO fires the steer applier (steer-applier.ts): the joined
+  // slice becomes a real, bounded commit on the tree's room/<slug> branch.
   clearSteeringTarget(correlationId?: string): ProjectorSnapshot;
   steeringTarget(): string | null;
+  steeringBranch(): string | null;
+  // ADOPTED-TREE ISSUES (GET /api/process/:upid/issues): the origin repo's
+  // open issues via the gh seam ({issues: [{number, title, labels}]}),
+  // 60s-cached per upid, {issues: []} for local/self trees or ANY failure.
+  treeIssues(upid: string): Promise<{ issues: TreeIssue[] }>;
   // AUTO-BUILD toggle (no click required): when on, every fired suggestion is
   // accepted+built the instant it pops.
   setAutoAccept(on: boolean, correlationId?: string): ProjectorSnapshot;
@@ -608,6 +621,15 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   // instead of seeding a fresh ambient suggestion. Set/cleared by the projector
   // click endpoints; cleared automatically if the target stops being live.
   #steeringUpid: string | null = null;
+  // Branch scope for the steering target (the record toggle dwelled on a
+  // specific room/<slug> of an adopted tree). Lives and dies with
+  // #steeringUpid; rides the snapshot as steeringBranch.
+  #steeringBranch: string | null = null;
+  // STEER TRANSCRIPT SLICE: the FINAL lines that arrived while steering an
+  // ADOPTED tree — reset on target set, drained on clear into the steer
+  // applier (the toggle-on→toggle-off window exactly; joinedSliceText trims
+  // it to the trailing 60s). Pure state; logic lives in transcript-slice.ts.
+  #steerSlice: SteerSliceLine[] = [];
   // AUTO-BUILD toggle. When true, every fired suggestion is accepted+built the
   // instant it pops — no click required. Operator flips it from the projector
   // (POST /api/auto-accept) or boots with VIBERSYN_AUTO_ACCEPT=1. A re-entrancy guard
@@ -689,6 +711,9 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   // lane, published (private GitHub repo + draft PRs) on commission. Null =
   // disabled (VIBERSYN_TREE_GIT=0 or the injected-null test seam).
   readonly #treeGit: TreeGitSubstrate | null;
+  // ADOPTED-TREE ISSUES cache (tree-issues.ts): the origin repo's open issues
+  // via the same gh seam (options.treeGhRunner), 60s per upid.
+  readonly #treeIssues: TreeIssuesCache;
   // TAKE-HOME PUBLISHING (GitHub Pages). `#publishDeckFn` is the injected/real
   // publisher (null = disabled); `#publishKicked` guards ONE publish attempt
   // per kicked-off UPID; `#deckDirs` remembers every generated local deck dir
@@ -893,6 +918,9 @@ class LiveProjectorRuntime implements ProjectorRuntime {
             onUpdate: () => this.publish(),
             now: clock,
           });
+    // Issues ride the SAME gh seam as the substrate's PR engine — an injected
+    // fake covers both; only adopted trees with a recorded origin ever fetch.
+    this.#treeIssues = new TreeIssuesCache({ runGh: options.treeGhRunner, now: clock });
     this.ideaBuilds = new IdeaBuildRegistry({
       buildsRoot: options.buildsRoot,
       builderAgent: options.builderAgent,
@@ -992,7 +1020,10 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       // routing into a dead process and returns to ambient handling.
       onHalt: (upid) => {
         if (this.#steeringUpid === upid) {
+          // Silent drop (no applier): a halted target's slice must not commit.
           this.#steeringUpid = null;
+          this.#steeringBranch = null;
+          this.#steerSlice = [];
         }
         // A process halted mid-clone kills its git subprocess too; the clone
         // routine's post-clone build kick then sees the abort and stands down.
@@ -2001,7 +2032,11 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   // FINAL transcript lines route to that process's agent loop (registry.steer)
   // instead of seeding a fresh ambient suggestion. The steered bubble is surfaced
   // via the snapshot's `steeringUpid` + per-process `steering` flag.
-  setSteeringTarget(upid: string, correlationId = `corr-steer-select-${crypto.randomUUID()}`): ProjectorSnapshot {
+  setSteeringTarget(
+    upid: string,
+    correlationId = `corr-steer-select-${crypto.randomUUID()}`,
+    branch: string | null = null,
+  ): ProjectorSnapshot {
     if (this.#emergencyTriggered) {
       return this.#snapshot;
     }
@@ -2012,23 +2047,35 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       return this.clearSteeringTarget(correlationId);
     }
     this.#steeringUpid = upid;
+    // Branch scope (the record toggle dwelled on a specific room/<slug>) rides
+    // beside the target; setting a target (re)opens the spoken-change window,
+    // so the slice resets — stage narration before toggle-on never leaks in.
+    this.#steeringBranch = branch;
+    this.#steerSlice = [];
     this.recordExternalTrace({
       event: "steering.target.set",
       level: "info",
       sessionId: this.sessionId,
       correlationId,
       upid,
-      meta: { upid },
+      meta: { upid, branch },
     });
     this.publish();
     return this.#snapshot;
   }
 
   // Clear the steering target; live transcript returns to ambient suggestion +
-  // click-to-build behavior.
+  // click-to-build behavior. For an ADOPTED tree that collected spoken FINALs
+  // in the toggle window, the clear fires the STEER APPLIER (fire-and-forget):
+  // the joined slice becomes a real, bounded commit on the room/<slug> branch
+  // — the stage guarantee that the one-dwell PR is never empty.
   clearSteeringTarget(correlationId = `corr-steer-clear-${crypto.randomUUID()}`): ProjectorSnapshot {
     const had = this.#steeringUpid;
+    const branch = this.#steeringBranch;
+    const slice = this.#steerSlice;
     this.#steeringUpid = null;
+    this.#steeringBranch = null;
+    this.#steerSlice = [];
     if (had !== null) {
       this.recordExternalTrace({
         event: "steering.target.cleared",
@@ -2038,6 +2085,10 @@ class LiveProjectorRuntime implements ProjectorRuntime {
         upid: had,
         meta: { upid: had },
       });
+      const text = joinedSliceText(slice, this.#clock());
+      if (text.length > 0 && this.#treeGit?.isAdopted(had) === true && steerApplierEnabled(this.#env)) {
+        void this.#applySteerSlice(had, branch, text, correlationId).catch(() => undefined);
+      }
     }
     this.publish();
     return this.#snapshot;
@@ -2045,6 +2096,73 @@ class LiveProjectorRuntime implements ProjectorRuntime {
 
   steeringTarget(): string | null {
     return this.#steeringUpid;
+  }
+
+  steeringBranch(): string | null {
+    return this.#steeringBranch;
+  }
+
+  // STEER APPLIER wiring (steer-applier.ts). Resolve the room branch the
+  // spoken slice lands on — the explicit steeringBranch when the toggle was
+  // branch-scoped (created off origin/main if it does not exist yet; the
+  // substrate's createBranch is idempotent), else the tree's most recently
+  // created room/* branch, else a fresh room/spoken-changes — then apply the
+  // bounded edit + commit and republish so the branch's commit count ticks.
+  async #applySteerSlice(upid: string, explicitBranch: string | null, text: string, correlationId: string): Promise<void> {
+    if (this.#treeGit === null) {
+      return;
+    }
+    let resolved: { ok: true; branch: string } | { ok: false; error: string };
+    if (explicitBranch !== null) {
+      resolved = await this.#treeGit.createBranch(upid, explicitBranch);
+    } else {
+      const latest = this.#latestRoomBranch(upid);
+      resolved = latest !== null ? { ok: true, branch: latest } : await this.#treeGit.createBranch(upid, "spoken-changes");
+    }
+    if (!resolved.ok) {
+      this.recordExternalTrace({
+        event: "steer.applier.error",
+        level: "warn",
+        sessionId: this.sessionId,
+        correlationId,
+        upid,
+        meta: { stage: "branch", error: resolved.error },
+      });
+      return;
+    }
+    const result = await applySteerEdit({
+      repoDir: join(this.#buildsRoot, upid, "repo"),
+      branch: resolved.branch,
+      text,
+      upid,
+      treeGit: this.#treeGit,
+      now: this.#clock,
+      env: this.#env,
+    });
+    this.recordExternalTrace({
+      event: result.ok ? "steer.applier.applied" : "steer.applier.error",
+      level: result.ok ? "info" : "warn",
+      sessionId: this.sessionId,
+      correlationId,
+      upid,
+      meta: result.ok ? { branch: result.branch, unchanged: result.unchanged, text } : { stage: "apply", error: result.error },
+    });
+    // The substrate's onUpdate republished on a landed commit; republishing
+    // here too covers the unchanged/no-commit path so the wall settles honest.
+    this.publish();
+  }
+
+  // The most recently created room/* branch in tree-git state (branch order is
+  // insertion order — creation order within the session).
+  #latestRoomBranch(upid: string): string | null {
+    const branches = this.#treeGit?.snapshot(upid)?.branches ?? [];
+    for (let index = branches.length - 1; index >= 0; index -= 1) {
+      const name = branches[index]!.name;
+      if (name.startsWith("room/")) {
+        return name;
+      }
+    }
+    return null;
   }
 
   startMicSession(correlationId = `corr-mic-${crypto.randomUUID()}`): MicSession {
@@ -2321,6 +2439,13 @@ class LiveProjectorRuntime implements ProjectorRuntime {
         await this.driveDetection(observation, correlationId);
       }
       return;
+    }
+    // STEER TRANSCRIPT SLICE: while the record toggle steers an ADOPTED tree,
+    // collect every FINAL in the window — the joined slice becomes the steer
+    // applier's commit on toggle-off (clearSteeringTarget). ADDITIVE: the
+    // per-final registry.steer routing below is untouched.
+    if (this.#treeGit?.isAdopted(upid) === true) {
+      this.#steerSlice = appendSliceLine(this.#steerSlice, { text: observation.text, atMs: this.#clock() });
     }
     const steerCorrelationId = `${correlationId}-${observation.utteranceId}`;
     try {
@@ -3134,6 +3259,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       updatedAt: new Date().toISOString(),
       mic: { mode: this.micMode, active: this.#micActive, bytesReceived: this.#micBytes },
       steeringUpid: this.#steeringUpid,
+      steeringBranch: this.#steeringBranch,
       autoAccept: this.#autoAccept,
       captureMode: this.#captureMode,
       researchMode: this.research.active(),
@@ -3830,6 +3956,18 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       upid,
       meta: { branch, ...meta },
     });
+  }
+
+  // ADOPTED-TREE ISSUES (GET /api/process/:upid/issues): the origin repo's
+  // open issues via the gh seam, 60s-cached per upid inside TreeIssuesCache.
+  // Local/self trees — and anything without a recorded origin — answer
+  // {issues: []}; so does every failure. Never a throw, never a 500.
+  async treeIssues(upid: string): Promise<{ issues: TreeIssue[] }> {
+    if (this.#treeGit === null || !this.#treeGit.isAdopted(upid)) {
+      return { issues: [] };
+    }
+    const origin = this.#treeGit.snapshot(upid)?.remoteUrl ?? null;
+    return { issues: await this.#treeIssues.issuesFor(upid, origin) };
   }
 
   // The tree's repo facts for menus/popups: the recorded origin, the branch

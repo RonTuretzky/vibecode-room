@@ -368,6 +368,32 @@ export class TreeGitSubstrate {
     return this.#chainBranchOp(state, () => this.#commitBranchOnce(state, branch, message));
   }
 
+  // commitBranch with a working-tree EDIT riding the SAME per-upid chain slot
+  // as the commit (the steer applier's fs writes): no other branch op — a PR
+  // route's commit, another slice — can interleave between the edit landing
+  // on disk and its commit, so a half-written file can never ride a stranger's
+  // commit. An edit failure returns {ok:false} with NO commit.
+  commitBranchWithEdit(
+    upid: string,
+    branch: string,
+    message: string,
+    edit: () => Promise<void>,
+  ): Promise<{ ok: true; branch: string; changed: boolean } | { ok: false; error: string }> {
+    const state = this.#trees.get(upid);
+    const refused = this.#branchOpRefusal(upid, state);
+    if (refused !== null || state === undefined) {
+      return Promise.resolve(refused ?? { ok: false, error: `no tree repo for ${upid}` });
+    }
+    return this.#chainBranchOp(state, async () => {
+      try {
+        await edit();
+      } catch (error) {
+        return { ok: false as const, error: `edit failed: ${error instanceof Error ? error.message : String(error)}` };
+      }
+      return this.#commitBranchOnce(state, branch, message);
+    });
+  }
+
   // Push ONLY refs/heads/room/<slug> — never --all, never main, never force.
   pushBranch(upid: string, branch: string): Promise<{ ok: true; branch: string } | { ok: false; error: string }> {
     const state = this.#trees.get(upid);

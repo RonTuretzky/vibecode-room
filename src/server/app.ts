@@ -341,12 +341,18 @@ export function createProjectorApp(runtime: ProjectorRuntime, options: Projector
   });
   // CLICK A PROJECT -> STEER IT. Set the steering target so subsequent FINAL
   // transcript lines route to that process's agent loop. Returns the snapshot.
-  app.post("/api/process/:upid/select", (context) => {
+  // Optional body {branch: "room/<slug>"} scopes the record toggle's
+  // spoken-change window to a specific room branch of an adopted tree — the
+  // scope rides the snapshot as steeringBranch and clears with the target.
+  // No/malformed body = the pre-existing unscoped select.
+  app.post("/api/process/:upid/select", async (context) => {
     if (isOfflineDemoRequest(context.req.header("referer"))) {
       return context.json(runtime.snapshot());
     }
     const upid = context.req.param("upid");
-    const snapshot = runtime.setSteeringTarget(upid);
+    const body = (await context.req.json().catch(() => null)) as { branch?: unknown } | null;
+    const branch = body !== null && typeof body.branch === "string" && body.branch.trim().length > 0 ? body.branch.trim() : null;
+    const snapshot = runtime.setSteeringTarget(upid, undefined, branch);
     return context.json(snapshot);
   });
   // Clear the steering target (both POST and DELETE) so transcript returns to
@@ -542,6 +548,13 @@ export function createProjectorApp(runtime: ProjectorRuntime, options: Projector
       return context.json({ ok: false, error: `No tree repo for UPID ${upid}.` }, 404);
     }
     return context.json(info);
+  });
+  // The ADOPTED tree's origin-repo open issues (the wall's issue fruit):
+  // {issues: [{number, title, labels}]} via the gh seam, 60s-cached per upid.
+  // Local/self trees answer {issues: []}; so does EVERY failure — never a 500.
+  app.get("/api/process/:upid/issues", async (context) => {
+    const payload = await runtime.treeIssues(context.req.param("upid")).catch(() => ({ issues: [] }));
+    return context.json(payload);
   });
   // SELF-HOSTING (VIBERSYN_SELF_MODE=1): the guarded internal reload trigger.
   // Only honored in self mode (404 otherwise — the endpoint effectively does
