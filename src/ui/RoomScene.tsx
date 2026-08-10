@@ -2987,7 +2987,9 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       }
       const slot = centeredSlot(index);
       const y = garden ? 0 : 3.1 + (Math.abs(slot) % 2) * 0.9;
-      return { pos: new THREE.Vector3(slot * 4.6, y, -3.2 - (Math.abs(slot) % 2) * 1.6), k: 1 };
+      // 8.5-unit slots (live-room request: space the trees out) with a deeper
+      // alternating z stagger so neighboring canopies never read as one mass.
+      return { pos: new THREE.Vector3(slot * 8.5, y, -3.2 - (Math.abs(slot) % 2) * 2.6), k: 1 };
     };
     const flowerPosition = (
       index: number,
