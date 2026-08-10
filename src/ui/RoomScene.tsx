@@ -2170,7 +2170,36 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         }
         updateLabelStatus(label, treeStatus(next));
       };
-      return { kind: "tree", treeSpec: spec, group, mats, baseEmissive: 0.55, head: null, headY: 0, cat: null, catBaseX: 0, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false, updateProgress };
+      // A low-poly horse head companion parked at the foot of every real
+      // garden tree (muzzle, head, two pricked ears) — rides the cat field so
+      // the frame loop sways it just like the dancing cat.
+      const horse = new THREE.Group();
+      const horseMat = new THREE.MeshPhongMaterial({ color: 0x8b6f47, emissive: 0x8b6f47, emissiveIntensity: 0.08 });
+      const horseHead = new THREE.Mesh(GEO.bud, horseMat);
+      horseHead.scale.set(0.9, 1.1, 0.8);
+      horseHead.position.y = 0.55;
+      horseHead.userData.ownMaterial = true;
+      horse.add(horseHead);
+      const horseMuzzle = new THREE.Mesh(GEO.bud, horseMat);
+      horseMuzzle.scale.set(0.55, 0.55, 0.9);
+      horseMuzzle.position.set(0, 0.42, 0.24);
+      horse.add(horseMuzzle);
+      for (const ex of [-0.08, 0.08]) {
+        const ear = new THREE.Mesh(GEO.crystal, horseMat);
+        ear.scale.set(0.1, 0.18, 0.06);
+        ear.position.set(ex, 0.76, -0.02);
+        horse.add(ear);
+      }
+      const horseNeck = new THREE.Mesh(GEO.stem, horseMat);
+      horseNeck.scale.set(0.35, 0.6, 0.35);
+      horseNeck.position.set(0, 0.2, -0.12);
+      horseNeck.rotation.x = 0.5;
+      horse.add(horseNeck);
+      const horseBase = commissioned ? 2.7 : 1.4;
+      horse.position.set(horseBase, 0, horseBase * 0.35);
+      horse.rotation.y = -Math.PI / 4;
+      group.add(horse);
+      return { kind: "tree", treeSpec: spec, group, mats, baseEmissive: 0.55, head: null, headY: 0, cat: horse, catBaseX: horseBase, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false, updateProgress };
     };
 
     const buildRealFlower = (spec: IdeaOrbSpec): Entry | null => {
@@ -2444,6 +2473,33 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       cat.position.set(catBase, 0, catBase * 0.35);
       cat.rotation.y = -Math.PI / 4;
       group.add(cat);
+      // A low-poly horse head companion parked opposite the cat at the tree's
+      // foot (muzzle, head, two pricked ears, neck) — same idiom as the cat.
+      const horse = new THREE.Group();
+      const horseMat = new THREE.MeshPhongMaterial({ color: 0x8b6f47, emissive: 0x8b6f47, emissiveIntensity: 0.08 });
+      const horseHead = new THREE.Mesh(GEO.bud, horseMat);
+      horseHead.scale.set(0.9, 1.1, 0.8);
+      horseHead.position.y = 0.55;
+      horseHead.userData.ownMaterial = true;
+      horse.add(horseHead);
+      const horseMuzzle = new THREE.Mesh(GEO.bud, horseMat);
+      horseMuzzle.scale.set(0.55, 0.55, 0.9);
+      horseMuzzle.position.set(0, 0.42, 0.24);
+      horse.add(horseMuzzle);
+      for (const ex of [-0.08, 0.08]) {
+        const ear = new THREE.Mesh(GEO.crystal, horseMat);
+        ear.scale.set(0.1, 0.18, 0.06);
+        ear.position.set(ex, 0.76, -0.02);
+        horse.add(ear);
+      }
+      const horseNeck = new THREE.Mesh(GEO.stem, horseMat);
+      horseNeck.scale.set(0.35, 0.6, 0.35);
+      horseNeck.position.set(0, 0.2, -0.12);
+      horseNeck.rotation.x = 0.5;
+      horse.add(horseNeck);
+      horse.position.set(-catBase, 0, catBase * 0.35);
+      horse.rotation.y = Math.PI / 4;
+      group.add(horse);
       return { kind: "tree", treeSpec: spec, group, mats: [foliageMat], baseEmissive: foliageMat.emissiveIntensity, head: null, headY: 0, cat, catBaseX: catBase, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false, updateProgress };
     };
 
