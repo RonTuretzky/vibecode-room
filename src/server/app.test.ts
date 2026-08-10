@@ -939,6 +939,197 @@ describe("POST /api/process/:upid/publish-repo", () => {
   });
 });
 
+// ADOPTED-TREE BRANCH RAILS (the PR engine for GitHub imports). Scripted
+// git/gh seams throughout — no real subprocess, no network, ever.
+describe("adopted-tree branch + PR routes", () => {
+  // Just enough git semantics for the branch rails AND the local-tree birth:
+  // refs move via update-ref, fetch stamps FETCH_HEAD, the staged tree is a
+  // constant (so a second commit attempt hits the no-change guard).
+  function branchRailGit(): { calls: string[][]; run: NonNullable<ProjectorRuntimeOptions["treeGitRunner"]> } {
+    const calls: string[][] = [];
+    const refs = new Map<string, string>();
+    const commitTrees = new Map<string, string>();
+    let seq = 0;
+    const run: NonNullable<ProjectorRuntimeOptions["treeGitRunner"]> = async (argv) => {
+      calls.push(argv);
+      const positional = argv.filter(
+        (arg, index) =>
+          !arg.startsWith("--git-dir=") && !arg.startsWith("--work-tree=") && arg !== "-c" && argv[index - 1] !== "-c",
+      );
+      switch (positional[0]) {
+        case "fetch":
+          refs.set("FETCH_HEAD", "origin-main-tip");
+          return { ok: true, stdout: "", stderr: "" };
+        case "write-tree":
+          return { ok: true, stdout: "tree-working", stderr: "" };
+        case "commit-tree": {
+          seq += 1;
+          const sha = `commit-${seq}`;
+          commitTrees.set(sha, positional[1]!);
+          return { ok: true, stdout: sha, stderr: "" };
+        }
+        case "update-ref":
+          refs.set(positional[1]!, positional[2]!);
+          return { ok: true, stdout: "", stderr: "" };
+        case "rev-parse": {
+          const target = positional[positional.length - 1]!;
+          if (target.endsWith("^{tree}")) {
+            const tree = commitTrees.get(target.slice(0, -"^{tree}".length));
+            return tree === undefined ? { ok: false, stdout: "", stderr: "" } : { ok: true, stdout: tree, stderr: "" };
+          }
+          const sha = refs.get(target);
+          return sha === undefined ? { ok: false, stdout: "", stderr: "" } : { ok: true, stdout: sha, stderr: "" };
+        }
+        default:
+          return { ok: true, stdout: "", stderr: "" };
+      }
+    };
+    return { calls, run };
+  }
+
+  function branchRailGh(): { calls: string[][]; run: NonNullable<ProjectorRuntimeOptions["treeGhRunner"]> } {
+    const calls: string[][] = [];
+    const run: NonNullable<ProjectorRuntimeOptions["treeGhRunner"]> = async (argv) => {
+      calls.push(argv);
+      if (argv[1] === "pr" && argv[2] === "create") {
+        return { ok: true, stdout: "https://github.com/acme/widget/pull/7\n", stderr: "" };
+      }
+      return { ok: true, stdout: "", stderr: "" };
+    };
+    return { calls, run };
+  }
+
+  async function importAdopted(app: ReturnType<typeof createProjectorApp>, runtime: ProjectorRuntime): Promise<string> {
+    const response = await postJson(app, "/api/projects/import", {
+      url: "https://github.com/acme/widget",
+      context: "give the widget a dark mode",
+    });
+    expect(response.status).toBe(200);
+    const { upid } = (await response.json()) as { upid: string };
+    // The fire-and-forget clone routine adopts after the (fake) clone lands;
+    // let the post-clone fan-out settle too so teardown never races it.
+    await waitFor(() => runtime.snapshot().processes.some((entry) => entry.upid === upid && entry.treeRepo?.remoteUrl != null));
+    await waitFor(() => runtime.registry.builds(upid).some((build) => build.status === "ready"));
+    return upid;
+  }
+
+  test("branch create fetches origin/main FIRST, cuts room/<slug> at the fetched tip, and the repo route shows it immediately", async () => {
+    const git = branchRailGit();
+    const gh = branchRailGh();
+    const { app, runtime } = await makeApp({
+      buildBackends: [new RouteFakeBackend()],
+      treeGitRunner: git.run,
+      treeGhRunner: gh.run,
+    });
+    const upid = await importAdopted(app, runtime);
+
+    const created = await postJson(app, `/api/process/${upid}/branch`, { name: "Add Dark Mode!" });
+    expect(created.status).toBe(200);
+    expect((await created.json()) as unknown).toEqual({ ok: true, branch: "room/add-dark-mode" });
+
+    // Argv shape: the authenticated deepened fetch runs BEFORE any base
+    // resolution, against the CLONE's gitdir (builds/<upid>/repo/.git).
+    const fetchIndex = git.calls.findIndex((argv) => argv.includes("fetch"));
+    expect(fetchIndex).toBeGreaterThanOrEqual(0);
+    const fetchArgv = git.calls[fetchIndex]!;
+    expect(fetchArgv.some((arg) => arg.startsWith("--git-dir=") && arg.endsWith(`${upid}/repo/.git`))).toBe(true);
+    expect(fetchArgv.join(" ")).toContain("-c credential.helper= -c credential.helper=!gh auth git-credential");
+    expect(fetchArgv.slice(-3)).toEqual(["--depth=50", "origin", "main"]);
+    const updateIndex = git.calls.findIndex((argv) => argv.includes("update-ref") && argv.includes("refs/heads/room/add-dark-mode"));
+    expect(updateIndex).toBeGreaterThan(fetchIndex);
+    expect(git.calls[updateIndex]).toContain("origin-main-tip");
+
+    // The branch registers in the snapshot/repo surface IMMEDIATELY (0 commits).
+    const repo = await app.request(`/api/process/${upid}/repo`);
+    expect(repo.status).toBe(200);
+    expect((await repo.json()) as unknown).toEqual({
+      origin: "https://github.com/acme/widget",
+      branches: [{ name: "room/add-dark-mode", commits: 0 }],
+    });
+  });
+
+  test("the PR route commits spoken changes, pushes ONLY the room branch, opens one PR to the ORIGIN — and is idempotent", async () => {
+    const git = branchRailGit();
+    const gh = branchRailGh();
+    const { app, runtime } = await makeApp({
+      buildBackends: [new RouteFakeBackend()],
+      treeGitRunner: git.run,
+      treeGhRunner: gh.run,
+    });
+    const upid = await importAdopted(app, runtime);
+    await postJson(app, `/api/process/${upid}/branch`, { name: "add dark mode" });
+
+    const opened = await postJson(app, `/api/process/${upid}/branch/add-dark-mode/pr`);
+    expect(opened.status).toBe(200);
+    expect((await opened.json()) as unknown).toEqual({ ok: true, url: "https://github.com/acme/widget/pull/7" });
+
+    // The working-tree commit landed on the room branch with the spoken-changes message.
+    const commit = git.calls.find((argv) => argv.includes("commit-tree"))!;
+    expect(commit[commit.indexOf("-m") + 1]).toBe("room: spoken changes");
+    // Push: exactly refs/heads/room/<slug>, never --all / main / force.
+    const push = git.calls.find((argv) => argv.includes("push"))!;
+    expect(push).toContain("refs/heads/room/add-dark-mode:refs/heads/room/add-dark-mode");
+    expect(push.join(" ")).toContain("credential.helper=!gh auth git-credential");
+    expect(push).not.toContain("--all");
+    expect(push).not.toContain("--force");
+    expect(push.join(" ")).not.toContain("refs/heads/main");
+    // The PR targets the ORIGIN recorded at adopt time — never a spoken name.
+    const pr = gh.calls.find((argv) => argv[1] === "pr" && argv[2] === "create")!;
+    expect(pr[pr.indexOf("--repo") + 1]).toBe("acme/widget");
+    expect(pr[pr.indexOf("--head") + 1]).toBe("room/add-dark-mode");
+    expect(pr[pr.indexOf("--base") + 1]).toBe("main");
+
+    // Idempotent: a second call returns the SAME URL with no second pr create
+    // (the unchanged working tree also produces no second commit).
+    const commitsBefore = git.calls.filter((argv) => argv.includes("commit-tree")).length;
+    const again = await postJson(app, `/api/process/${upid}/branch/add-dark-mode/pr`);
+    expect(again.status).toBe(200);
+    expect(((await again.json()) as { url: string }).url).toBe("https://github.com/acme/widget/pull/7");
+    expect(gh.calls.filter((argv) => argv[1] === "pr" && argv[2] === "create")).toHaveLength(1);
+    expect(git.calls.filter((argv) => argv.includes("commit-tree"))).toHaveLength(commitsBefore);
+    // The repo surface now carries the PR URL on the branch.
+    const repo = (await (await app.request(`/api/process/${upid}/repo`)).json()) as {
+      branches: Array<{ name: string; prUrl?: string }>;
+    };
+    expect(repo.branches[0]?.prUrl).toBe("https://github.com/acme/widget/pull/7");
+  });
+
+  test("local (non-adopted) trees are refused with a 400 — the rails are adopted-only", async () => {
+    const git = branchRailGit();
+    const { app, runtime } = await makeApp({
+      detector: new ScriptedDetector([ideaResult("a local dashboard", 0.9)]),
+      buildBackends: [new RouteFakeBackend()],
+      treeGitRunner: git.run,
+      treeGhRunner: branchRailGh().run,
+    });
+    const id = await surfaceIdea(runtime, "a local dashboard");
+    await postJson(app, `/api/idea/${id}/accept`);
+    const upid = runtime.snapshot().processes[0]!.upid;
+    await waitFor(() => runtime.registry.builds(upid).some((build) => build.status === "ready"));
+
+    const refused = await postJson(app, `/api/process/${upid}/branch`, { name: "add dark mode" });
+    expect(refused.status).toBe(400);
+    expect(((await refused.json()) as { error: string }).error).toContain("adopted");
+    expect(git.calls.some((argv) => argv.includes("fetch"))).toBe(false);
+  });
+
+  test("SELF is refused outright; a malformed branch body is a 400", async () => {
+    const { app } = await makeApp({ buildBackends: [new RouteFakeBackend()] });
+    const self = await postJson(app, "/api/process/self/branch", { name: "room/hack" });
+    expect(self.status).toBe(400);
+    const selfPr = await postJson(app, "/api/process/self/branch/main/pr");
+    expect(selfPr.status).toBe(400);
+    expect((await postJson(app, "/api/process/upid-1/branch", {})).status).toBe(400);
+    expect((await postJson(app, "/api/process/upid-1/branch", { name: "   " })).status).toBe(400);
+  });
+
+  test("GET /api/process/:upid/repo is a 404 for a UPID with no tree repo", async () => {
+    const { app } = await makeApp();
+    const response = await app.request("/api/process/upid-ghost/repo");
+    expect(response.status).toBe(404);
+  });
+});
+
 describe("POST /api/process/:upid lifecycle + steer routes", () => {
   test("halt/pause/resume/steer on an unknown upid are 404-free: 200 with the snapshot", async () => {
     const { app } = await makeApp({ buildBackends: [new RouteFakeBackend()] });

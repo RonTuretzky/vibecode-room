@@ -231,6 +231,25 @@ export interface ProjectorRuntime {
   // publish-repo route. {ok:false} when the substrate is disabled, the UPID
   // is unknown, or the tree was adopted from a GitHub import.
   publishTreeRepo(upid: string, correlationId?: string): Promise<{ ok: true; url: string } | { ok: false; error: string }>;
+  // ADOPTED-TREE BRANCH RAILS (the PR engine for GitHub imports). Create a
+  // real room/<slug> branch off the freshly fetched origin/main tip; ride
+  // spoken changes to a REAL PR against the import's own origin (commit the
+  // clone's working tree if dirty → push only room/<slug> → gh pr create).
+  // Honest {ok:false} for local trees — these rails are adopted-only.
+  createTreeBranch(upid: string, name: string, correlationId?: string): Promise<{ ok: true; branch: string } | { ok: false; error: string }>;
+  openTreeBranchPr(
+    upid: string,
+    branch: string,
+    input?: { title?: string; body?: string },
+    correlationId?: string,
+  ): Promise<{ ok: true; url: string } | { ok: false; error: string }>;
+  // The tree's repo facts for menus/popups (GET /api/process/:upid/repo):
+  // origin + branches (with per-branch prUrl once open) + optional deployUrl.
+  treeRepoInfo(upid: string): {
+    origin: string | null;
+    branches: Array<{ name: string; commits: number; prUrl?: string }>;
+    deployUrl?: string;
+  } | null;
   // ANSWER LEDGER (the deck's swipe-to-answer cards): record a chosen answer
   // for a process (latest answer per questionId wins) and read them back. The
   // /answer route records BEFORE steering; the slideshow hook passes the
@@ -1785,8 +1804,12 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       } else if (entry !== undefined) {
         // A failed clone keeps the link-only build AND no drafted questions —
         // with no checkout there is no repo to ask decisions about, and the
-        // deck stays honest about knowing nothing beyond the link.
+        // deck stays honest about knowing nothing beyond the link. LOUD by
+        // contract: the task line (the wall's display line for this tree)
+        // says the clone failed and why — the fallback mock must never
+        // impersonate a grounded import.
         entry.status = "clone-failed";
+        entry.task = `clone failed: ${result.ok ? "unknown" : result.error} — building from the link only`;
       }
       this.recordExternalTrace({
         event: "project.import.clone",
@@ -1818,6 +1841,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
         const entry = this.#imports.get(upid);
         if (entry !== undefined) {
           entry.status = "clone-failed";
+          entry.task = `clone failed: ${error instanceof Error ? error.message : String(error)} — building from the link only`;
         }
         this.recordExternalTrace({
           event: "project.import.clone",
@@ -3372,17 +3396,18 @@ class LiveProjectorRuntime implements ProjectorRuntime {
         // title is only null when the pitch had no content words to infer from.
         task: imported?.task ?? record.title ?? demo?.task ?? record.callsign,
         model: demo?.model ?? "runtime",
-        // Clone-routine labels only cover the pre-build window: once the
-        // (fallback) fan-out is live, the build lanes are the honest surface
-        // and a stale "clone failed" line must not shadow them for the card's
-        // whole life.
+        // Clone-routine labels: "cloning"/"imported" only cover the pre-build
+        // window, but a FAILED clone stays on the label for the card's whole
+        // life — the fallback fan-out builds from the link only, and a mock
+        // that silently impersonates a grounded import (no real repo, no PR
+        // rails) is a lie the wall must not tell.
         progressLabel:
           record.state === "dead"
             ? "halted"
             : imported?.status === "cloning"
               ? "cloning repository"
-              : imported?.status === "clone-failed" && builds.length === 0 && build === undefined
-                ? "clone failed — building from the link"
+              : imported?.status === "clone-failed"
+                ? "clone failed — building from the link only"
                 : imported !== undefined && builds.length === 0 && build === undefined
                   ? "imported"
                   : demo?.progressLabel ?? record.lastAction,
@@ -3616,15 +3641,29 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     // GIT SUBSTRATE publish: commission is the moment the tree's repo goes to
     // GitHub (private repo + one draft PR per concept branch). Fire-and-forget
     // — a publish failure degrades to a trace, never touches the commission.
-    // Only reachable when result.started === true, never at birth.
-    const record = this.registry.records().find((entry) => entry.upid === upid);
-    const seedPitch = this.#seedPitchFor(upid);
-    void this.#treeGit
-      ?.publish(upid, {
-        name: record?.title ?? record?.callsign ?? upid,
-        ...(seedPitch === null ? {} : { description: seedPitch }),
-      })
-      .catch(() => undefined);
+    // Only reachable when result.started === true, never at birth. ADOPTED
+    // trees are a deliberate no-op: their origin already IS the remote, and
+    // the branch-rails PR flow (room/<slug> → real PR to the origin) replaces
+    // the commission publish outright.
+    if (this.#treeGit?.isAdopted(upid) === true) {
+      this.recordExternalTrace({
+        event: "tree.git.publish",
+        level: "info",
+        sessionId: this.sessionId,
+        correlationId,
+        upid,
+        meta: { refused: "adopted", reason: "origin is the remote — the room/* PR flow replaces commission publish" },
+      });
+    } else {
+      const record = this.registry.records().find((entry) => entry.upid === upid);
+      const seedPitch = this.#seedPitchFor(upid);
+      void this.#treeGit
+        ?.publish(upid, {
+          name: record?.title ?? record?.callsign ?? upid,
+          ...(seedPitch === null ? {} : { description: seedPitch }),
+        })
+        .catch(() => undefined);
+    }
     this.publish();
     return { ok: true, execution: result.execution, snapshot: this.#snapshot };
   }
@@ -3662,6 +3701,89 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   // The pitch the tree's repo was seeded with (publish descriptions).
   #seedPitchFor(upid: string): string | null {
     return this.#treeGit?.seedPitch(upid) ?? null;
+  }
+
+  // ADOPTED-TREE BRANCH RAILS (the PR engine). createTreeBranch fetches the
+  // real origin/main tip first (inside the substrate) and cuts room/<slug> at
+  // it; openTreeBranchPr is the whole spoken-changes → PR ride: commit the
+  // clone's current working tree if dirty, push ONLY the room branch, open
+  // (or return the existing) PR against the origin adopt() recorded. Both are
+  // honest typed results for the routes — adopted trees only.
+  async createTreeBranch(
+    upid: string,
+    name: string,
+    correlationId = `corr-tree-branch-${upid}`,
+  ): Promise<{ ok: true; branch: string } | { ok: false; error: string }> {
+    if (this.#treeGit === null) {
+      return { ok: false, error: "tree git substrate is disabled" };
+    }
+    const result = await this.#treeGit.createBranch(upid, name);
+    this.recordExternalTrace({
+      event: "tree.git.branch.request",
+      level: result.ok ? "info" : "warn",
+      sessionId: this.sessionId,
+      correlationId,
+      upid,
+      meta: result.ok ? { branch: result.branch } : { name, error: result.error },
+    });
+    return result;
+  }
+
+  async openTreeBranchPr(
+    upid: string,
+    branch: string,
+    input: { title?: string; body?: string } = {},
+    correlationId = `corr-tree-pr-${upid}`,
+  ): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
+    if (this.#treeGit === null) {
+      return { ok: false, error: "tree git substrate is disabled" };
+    }
+    // Commit whatever the steered working tree holds right now; the no-change
+    // guard makes a clean tree a no-op ({changed:false}) instead of an error.
+    const committed = await this.#treeGit.commitBranch(upid, branch, "room: spoken changes");
+    if (!committed.ok) {
+      this.#traceTreePr(correlationId, upid, branch, { error: committed.error, stage: "commit" });
+      return committed;
+    }
+    const pushed = await this.#treeGit.pushBranch(upid, branch);
+    if (!pushed.ok) {
+      this.#traceTreePr(correlationId, upid, branch, { error: pushed.error, stage: "push" });
+      return pushed;
+    }
+    const pr = await this.#treeGit.openPrToOrigin(upid, branch, input.title, input.body);
+    this.#traceTreePr(correlationId, upid, branch, pr.ok ? { url: pr.url, committed: committed.changed } : { error: pr.error, stage: "pr" });
+    return pr;
+  }
+
+  #traceTreePr(correlationId: string, upid: string, branch: string, meta: Record<string, unknown>): void {
+    this.recordExternalTrace({
+      event: "tree.git.pr.request",
+      level: typeof meta.error === "string" ? "warn" : "info",
+      sessionId: this.sessionId,
+      correlationId,
+      upid,
+      meta: { branch, ...meta },
+    });
+  }
+
+  // The tree's repo facts for menus/popups: the recorded origin, the branch
+  // list (with per-branch prUrl once open), and the published deploy URL when
+  // the take-home publish confirmed one. Null when no tree repo exists.
+  treeRepoInfo(upid: string): {
+    origin: string | null;
+    branches: Array<{ name: string; commits: number; prUrl?: string }>;
+    deployUrl?: string;
+  } | null {
+    const snapshot = this.#treeGit?.snapshot(upid) ?? null;
+    if (snapshot === null) {
+      return null;
+    }
+    const deployUrl = this.#published.get(upid)?.url;
+    return {
+      origin: snapshot.remoteUrl,
+      branches: snapshot.branches,
+      ...(deployUrl === undefined ? {} : { deployUrl }),
+    };
   }
 
   get selfMode(): boolean {

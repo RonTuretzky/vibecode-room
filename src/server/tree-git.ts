@@ -17,6 +17,14 @@
 //     explicit publish route, never at birth;
 //   • never git-init inside an existing clone: GitHub imports (repo/.git on
 //     disk) flip the tree to ADOPTED — their origin already is the remote;
+//   • ADOPTED trees get the BRANCH RAILS instead (the PR engine): fetch the
+//     real origin/main tip, cut room/<slug> branches off it, commit the
+//     clone's CURRENT working tree via the same detached-index plumbing
+//     (HEAD/checkout untouched — the working tree keeps serving previews),
+//     push ONLY refs/heads/room/<slug>, and open a real PR against the
+//     origin recorded by adopt() (never a spoken repo name). These are
+//     user-initiated: HONEST {ok:false, error} results, not fire-and-forget,
+//     serialized per upid;
 //   • VIBERSYN_TREE_GIT=0 kill-switch; a missing git binary warns once and
 //     turns the substrate into a no-op;
 //   • the SELF/mirror process is excluded (belt-and-braces — SELF never fans
@@ -46,6 +54,14 @@ export type GitCommandRunner = (
 
 const GIT_TIMEOUT_MS = 15_000;
 const PUSH_TIMEOUT_MS = 60_000;
+// The deliberate credential chain for every network op (fetch/push): the
+// first -c CLEARS inherited helpers (no accidental osxkeychain), the second
+// routes lookups through gh — which reads GH_TOKEN from the child env (the
+// runner forwards VIBERSYN_GITHUB_PAT; the PAT never rides argv).
+const CREDENTIAL_ARGV = ["-c", "credential.helper=", "-c", "credential.helper=!gh auth git-credential"] as const;
+// Imports clone --depth 1 --single-branch; deepen the origin/main fetch so
+// the branch base is a USABLE tip (PRs need shared history, not a lone graft).
+const FETCH_DEPTH = 50;
 // Snapshot bloat guard: main + one concept/<backend> per lane is ≤4 today;
 // 8 leaves headroom without ever letting the WS payload grow unbounded.
 const SNAPSHOT_BRANCH_CAP = 8;
@@ -111,8 +127,10 @@ export interface TreeSeed {
 }
 
 // The pure in-memory snapshot fragment the wall's tree visuals consume.
+// `prUrl` appears on adopted trees' room/<slug> branches once a real PR to
+// the origin is open (openPrToOrigin stores it per branch).
 export interface TreeRepoSnapshot {
-  branches: Array<{ name: string; commits: number }>;
+  branches: Array<{ name: string; commits: number; prUrl?: string }>;
   remoteUrl: string | null;
 }
 
@@ -144,6 +162,16 @@ interface TreeState {
   // Settles when birth finished (ok or swallowed) — lane commits chain on it.
   ready: Promise<void>;
   publishing: Promise<{ ok: true; url: string } | { ok: false; error: string }> | null;
+  // ── adopted-tree branch rails (the PR engine) ──
+  // Per-upid in-flight guard: every fetch/branch/commit/push/PR op chains here
+  // so two spoken actions can never interleave their plumbing.
+  branchOps: Promise<unknown>;
+  // The origin/main tip recorded by the last successful fetchOriginMain —
+  // branch bases resolve from THIS, never a stale local ref.
+  originMainSha: string | null;
+  // branch name (room/<slug>) → its open PR URL; makes openPrToOrigin
+  // idempotent and rides into snapshot.treeRepo.branches[].prUrl.
+  prUrls: Map<string, string>;
 }
 
 export class TreeGitSubstrate {
@@ -210,6 +238,9 @@ export class TreeGitSubstrate {
           settleReady = resolveReady;
         }),
         publishing: null,
+        branchOps: Promise.resolve(),
+        originMainSha: null,
+        prUrls: new Map(),
       };
       this.#trees.set(upid, state);
       try {
@@ -291,6 +322,79 @@ export class TreeGitSubstrate {
     return inFlight;
   }
 
+  // ── adopted-tree branch rails (the PR engine) ─────────────────────────────
+  // User-initiated ops on an ADOPTED tree's clone (builds/<upid>/repo/):
+  // fetch → branch → commit → push → PR, all under the room/* namespace, all
+  // returning HONEST {ok:false, error} (never fire-and-forget), serialized
+  // per upid so two spoken actions cannot interleave their plumbing.
+
+  // Authenticated `git fetch origin main` (deepened — the clone is --depth 1
+  // --single-branch) recording the fetched tip. MUST run before any branch
+  // base resolution; createBranch does so itself.
+  fetchOriginMain(upid: string): Promise<{ ok: true; sha: string } | { ok: false; error: string }> {
+    const state = this.#trees.get(upid);
+    const refused = this.#branchOpRefusal(upid, state);
+    if (refused !== null || state === undefined) {
+      return Promise.resolve(refused ?? { ok: false, error: `no tree repo for ${upid}` });
+    }
+    return this.#chainBranchOp(state, () => this.#fetchOriginMainOnce(state));
+  }
+
+  // Cut room/<slug> at the FRESHLY FETCHED origin/main tip and register it in
+  // the snapshot immediately. Idempotent: an existing room/<slug> returns
+  // {ok, branch} without touching its ref (commits stay intact).
+  createBranch(upid: string, name: string): Promise<{ ok: true; branch: string } | { ok: false; error: string }> {
+    const state = this.#trees.get(upid);
+    const refused = this.#branchOpRefusal(upid, state);
+    if (refused !== null || state === undefined) {
+      return Promise.resolve(refused ?? { ok: false, error: `no tree repo for ${upid}` });
+    }
+    return this.#chainBranchOp(state, () => this.#createBranchOnce(state, name));
+  }
+
+  // Commit the clone's CURRENT WORKING TREE onto refs/heads/room/<branch> via
+  // the detached-index plumbing — HEAD/checkout untouched, the working tree
+  // keeps serving previews. No-change guard: {ok:true, changed:false}.
+  commitBranch(
+    upid: string,
+    branch: string,
+    message: string,
+  ): Promise<{ ok: true; branch: string; changed: boolean } | { ok: false; error: string }> {
+    const state = this.#trees.get(upid);
+    const refused = this.#branchOpRefusal(upid, state);
+    if (refused !== null || state === undefined) {
+      return Promise.resolve(refused ?? { ok: false, error: `no tree repo for ${upid}` });
+    }
+    return this.#chainBranchOp(state, () => this.#commitBranchOnce(state, branch, message));
+  }
+
+  // Push ONLY refs/heads/room/<slug> — never --all, never main, never force.
+  pushBranch(upid: string, branch: string): Promise<{ ok: true; branch: string } | { ok: false; error: string }> {
+    const state = this.#trees.get(upid);
+    const refused = this.#branchOpRefusal(upid, state);
+    if (refused !== null || state === undefined) {
+      return Promise.resolve(refused ?? { ok: false, error: `no tree repo for ${upid}` });
+    }
+    return this.#chainBranchOp(state, () => this.#pushBranchOnce(state, branch));
+  }
+
+  // Open a REAL PR against the origin adopt() recorded (NEVER a spoken repo
+  // name): head room/<slug>, base main. Idempotent — the stored prUrl is
+  // returned on every later call (and recovered from gh's "already exists").
+  openPrToOrigin(
+    upid: string,
+    branch: string,
+    title?: string,
+    body?: string,
+  ): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
+    const state = this.#trees.get(upid);
+    const refused = this.#branchOpRefusal(upid, state);
+    if (refused !== null || state === undefined) {
+      return Promise.resolve(refused ?? { ok: false, error: `no tree repo for ${upid}` });
+    }
+    return this.#chainBranchOp(state, () => this.#openPrOnce(state, branch, title, body));
+  }
+
   // Pure in-memory snapshot fragment — ZERO subprocesses per publish.
   snapshot(upid: string): TreeRepoSnapshot | null {
     const state = this.#trees.get(upid);
@@ -298,11 +402,18 @@ export class TreeGitSubstrate {
       return null;
     }
     return {
-      branches: [...state.branches.entries()]
-        .slice(0, SNAPSHOT_BRANCH_CAP)
-        .map(([name, commits]) => ({ name, commits })),
+      branches: [...state.branches.entries()].slice(0, SNAPSHOT_BRANCH_CAP).map(([name, commits]) => {
+        const prUrl = state.prUrls.get(name);
+        return prUrl === undefined ? { name, commits } : { name, commits, prUrl };
+      }),
       remoteUrl: state.remoteUrl,
     };
+  }
+
+  // True when this tree is an adopted GitHub-import clone — the branch rails
+  // below apply and the commission-time publish must NOT fire.
+  isAdopted(upid: string): boolean {
+    return this.#trees.get(upid)?.mode === "adopted";
   }
 
   // The seed pitch recorded at birth (publish descriptions / PR bodies).
@@ -331,18 +442,18 @@ export class TreeGitSubstrate {
         this.#markGitUnavailable(init.stderr || fallback.stderr);
         return;
       }
-      await this.#runGit([`--git-dir=${this.#gitDir(state.upid)}`, "symbolic-ref", "HEAD", "refs/heads/main"]);
+      await this.#runGit([`--git-dir=${this.#gitDirFor(state)}`, "symbolic-ref", "HEAD", "refs/heads/main"]);
     }
-    const sha = await this.#commitTree(state, {
+    const committed = await this.#commitTree(state, {
       workTree: treeDir,
       indexName: "index.seed",
       ref: "refs/heads/main",
       message: `seed: ${clampLine(seed.pitch, SEED_MESSAGE_MAX_CHARS)}`,
       allowEmptyParent: true,
     });
-    if (sha !== null) {
+    if ("sha" in committed) {
       state.branches.set("main", 1);
-      this.#trace("tree.git.commit", "info", state.upid, { branch: "main", message: "seed", sha });
+      this.#trace("tree.git.commit", "info", state.upid, { branch: "main", message: "seed", sha: committed.sha });
       await this.#traceLog(state.upid, "birth", true);
     } else {
       await this.#traceLog(state.upid, "birth", false);
@@ -353,7 +464,7 @@ export class TreeGitSubstrate {
   // truth — reseed the in-memory counters once (bounded), then re-commit the
   // seed files only when the pitch changed.
   async #rebirthFromDisk(state: TreeState, seed: TreeSeed): Promise<void> {
-    const gitDir = this.#gitDir(state.upid);
+    const gitDir = this.#gitDirFor(state);
     const refs = await this.#runGit([`--git-dir=${gitDir}`, "for-each-ref", "--format=%(refname:short)", "refs/heads"]);
     if (refs.ok) {
       const names = refs.stdout
@@ -379,15 +490,15 @@ export class TreeGitSubstrate {
       return;
     }
     await this.#writeSeedFiles(state.upid, seed);
-    const sha = await this.#commitTree(state, {
+    const committed = await this.#commitTree(state, {
       workTree: this.#treeDir(state.upid),
       indexName: "index.seed",
       ref: "refs/heads/main",
       message: `seed: re-accept — ${clampLine(seed.pitch, RESEED_MESSAGE_MAX_CHARS)}`,
     });
-    if (sha !== null) {
+    if ("sha" in committed) {
       state.branches.set("main", (state.branches.get("main") ?? 0) + 1);
-      this.#trace("tree.git.commit", "info", state.upid, { branch: "main", message: "seed: re-accept", sha });
+      this.#trace("tree.git.commit", "info", state.upid, { branch: "main", message: "seed: re-accept", sha: committed.sha });
       await this.#traceLog(state.upid, "reseed", true);
     }
   }
@@ -428,7 +539,7 @@ export class TreeGitSubstrate {
     }
     try {
       const ref = `refs/heads/concept/${lane}`;
-      const sha = await this.#commitTree(state, {
+      const committed = await this.#commitTree(state, {
         workTree: laneDir,
         indexName: `index.${lane}`,
         ref,
@@ -436,12 +547,12 @@ export class TreeGitSubstrate {
         fallbackParentRef: "refs/heads/main",
         message,
       });
-      if (sha === null) {
-        return;
+      if (!("sha" in committed)) {
+        return; // unchanged (no noise commit) or failed (traced in plumbing)
       }
       const branch = `concept/${lane}`;
       state.branches.set(branch, (state.branches.get(branch) ?? 0) + 1);
-      this.#trace("tree.git.commit", "info", state.upid, { branch, message, sha });
+      this.#trace("tree.git.commit", "info", state.upid, { branch, message, sha: committed.sha });
       await this.#traceLog(state.upid, `commit ${branch}`, true, message);
     } catch (error) {
       this.#trace("tree.git.error", "error", state.upid, { op: "commit", lane, message: messageOf(error) });
@@ -450,8 +561,10 @@ export class TreeGitSubstrate {
   }
 
   // add -A → write-tree → (skip when identical to parent's tree) →
-  // commit-tree → update-ref. Returns the new commit sha, or null when
-  // skipped/failed (failures are traced by the caller or here).
+  // commit-tree → update-ref. Discriminated result so callers can tell a
+  // no-change skip ({unchanged}) from a plumbing failure ({error} — traced
+  // here) — the branch rails' commit contract ({ok, changed}) needs the
+  // difference, the fire-and-forget lane path folds both into "no commit".
   async #commitTree(
     state: TreeState,
     input: {
@@ -462,8 +575,8 @@ export class TreeGitSubstrate {
       fallbackParentRef?: string;
       allowEmptyParent?: boolean;
     },
-  ): Promise<string | null> {
-    const gitDir = this.#gitDir(state.upid);
+  ): Promise<{ sha: string } | { unchanged: true } | { error: string }> {
+    const gitDir = this.#gitDirFor(state);
     const env = { GIT_INDEX_FILE: join(gitDir, input.indexName) };
     const add = await this.#runGit([`--git-dir=${gitDir}`, `--work-tree=${input.workTree}`, "add", "-A"], { env });
     if (!add.ok) {
@@ -491,7 +604,7 @@ export class TreeGitSubstrate {
       // No-change guard: an identical tree produces no noise commit.
       const parentTree = await this.#runGit([`--git-dir=${gitDir}`, "rev-parse", `${parentSha}^{tree}`]);
       if (parentTree.ok && parentTree.stdout.trim() === treeSha) {
-        return null;
+        return { unchanged: true };
       }
     }
     const commit = await this.#runGit([
@@ -510,13 +623,14 @@ export class TreeGitSubstrate {
     if (!updateRef.ok) {
       return this.#plumbingFailure(state.upid, "update-ref", updateRef);
     }
-    return commitSha;
+    return { sha: commitSha };
   }
 
-  #plumbingFailure(upid: string, op: string, result: GitCommandResult): null {
-    this.#trace("tree.git.error", "error", upid, { op, message: clampLine(result.stderr || result.stdout, 200) });
+  #plumbingFailure(upid: string, op: string, result: GitCommandResult): { error: string } {
+    const error = clampLine(result.stderr || result.stdout, 200) || `git ${op} failed`;
+    this.#trace("tree.git.error", "error", upid, { op, message: error });
     void this.#traceLog(upid, op, false, clampLine(result.stderr, 120));
-    return null;
+    return { error };
   }
 
   // ── publish internals ─────────────────────────────────────────────────────
@@ -558,7 +672,7 @@ export class TreeGitSubstrate {
       await this.#traceLog(upid, "publish", false, lastError);
       return { ok: false, error: lastError };
     }
-    const gitDir = this.#gitDir(upid);
+    const gitDir = this.#gitDirFor(state);
     const remoteAdd = await this.#runGit([`--git-dir=${gitDir}`, "remote", "add", "origin", `${url}.git`]);
     if (!remoteAdd.ok) {
       await this.#runGit([`--git-dir=${gitDir}`, "remote", "set-url", "origin", `${url}.git`]);
@@ -619,6 +733,209 @@ export class TreeGitSubstrate {
     return { ok: true, url };
   }
 
+  // ── branch-rail internals ─────────────────────────────────────────────────
+
+  // Common refusal for every branch op: rails exist ONLY for adopted trees
+  // (local trees publish whole via publish(); SELF never adopts).
+  #branchOpRefusal(upid: string, state: TreeState | undefined): { ok: false; error: string } | null {
+    if (this.#gitUnavailable) {
+      return { ok: false, error: "git unavailable" };
+    }
+    if (state === undefined) {
+      return { ok: false, error: `no tree repo for ${upid}` };
+    }
+    if (state.mode !== "adopted") {
+      return { ok: false, error: "branch rails are for adopted GitHub imports — local trees publish via publish-repo" };
+    }
+    return null;
+  }
+
+  // The per-upid in-flight guard: chain the op onto whatever branch op is
+  // already running for this tree; the chain never rejects (ops return
+  // {ok:false} instead of throwing, and a defensive catch seals the seam).
+  #chainBranchOp<T>(state: TreeState, op: () => Promise<T>): Promise<T> {
+    const run = state.branchOps.then(op, op);
+    state.branchOps = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  async #fetchOriginMainOnce(state: TreeState): Promise<{ ok: true; sha: string } | { ok: false; error: string }> {
+    const gitDir = this.#gitDirFor(state);
+    const fetch = await this.#runGit(
+      [`--git-dir=${gitDir}`, ...CREDENTIAL_ARGV, "fetch", `--depth=${FETCH_DEPTH}`, "origin", "main"],
+      { timeoutMs: PUSH_TIMEOUT_MS },
+    );
+    if (!fetch.ok) {
+      const error = clampLine(fetch.stderr || fetch.stdout, 200) || "git fetch origin main failed";
+      this.#trace("tree.git.error", "error", state.upid, { op: "fetch.origin.main", message: error });
+      await this.#traceLog(state.upid, "fetch origin main", false, error);
+      return { ok: false, error };
+    }
+    // FETCH_HEAD is written by every fetch regardless of the single-branch
+    // clone's refspec config — THE honest origin/main tip for branch bases.
+    const tip = await this.#runGit([`--git-dir=${gitDir}`, "rev-parse", "FETCH_HEAD"]);
+    const sha = tip.stdout.trim();
+    if (!tip.ok || sha.length === 0) {
+      const error = clampLine(tip.stderr, 200) || "FETCH_HEAD unresolvable after fetch";
+      this.#trace("tree.git.error", "error", state.upid, { op: "fetch.origin.main", message: error });
+      await this.#traceLog(state.upid, "fetch origin main", false, error);
+      return { ok: false, error };
+    }
+    state.originMainSha = sha;
+    await this.#traceLog(state.upid, "fetch origin main", true, sha);
+    return { ok: true, sha };
+  }
+
+  async #createBranchOnce(state: TreeState, name: string): Promise<{ ok: true; branch: string } | { ok: false; error: string }> {
+    const slug = roomSlug(name);
+    if (slug === null) {
+      return { ok: false, error: `"${clampLine(name, 60)}" leaves no usable branch name` };
+    }
+    const branch = `room/${slug}`;
+    if (state.branches.has(branch)) {
+      return { ok: true, branch };
+    }
+    const fetched = await this.#fetchOriginMainOnce(state);
+    if (!fetched.ok) {
+      return fetched;
+    }
+    const updateRef = await this.#runGit([`--git-dir=${this.#gitDirFor(state)}`, "update-ref", `refs/heads/${branch}`, fetched.sha]);
+    if (!updateRef.ok) {
+      const error = clampLine(updateRef.stderr || updateRef.stdout, 200) || "git update-ref failed";
+      this.#trace("tree.git.error", "error", state.upid, { op: "branch.create", branch, message: error });
+      await this.#traceLog(state.upid, `branch ${branch}`, false, error);
+      return { ok: false, error };
+    }
+    // Register IMMEDIATELY: the wall's snapshot.treeRepo must show the branch
+    // the moment the action lands, before any commit exists on it.
+    state.branches.set(branch, 0);
+    this.#trace("tree.git.branch", "info", state.upid, { branch, base: fetched.sha });
+    await this.#traceLog(state.upid, `branch ${branch}`, true, fetched.sha);
+    this.#onUpdate();
+    return { ok: true, branch };
+  }
+
+  async #commitBranchOnce(
+    state: TreeState,
+    branch: string,
+    message: string,
+  ): Promise<{ ok: true; branch: string; changed: boolean } | { ok: false; error: string }> {
+    const slug = roomSlug(branch);
+    if (slug === null) {
+      return { ok: false, error: `"${clampLine(branch, 60)}" names no room/* branch` };
+    }
+    const branchName = `room/${slug}`;
+    const ref = `refs/heads/${branchName}`;
+    const gitDir = this.#gitDirFor(state);
+    const head = await this.#runGit([`--git-dir=${gitDir}`, "rev-parse", "-q", "--verify", ref]);
+    if (!head.ok || head.stdout.trim().length === 0) {
+      return { ok: false, error: `no branch ${branchName} — create it first` };
+    }
+    // Parent = the current room/<slug> tip (resolved again inside #commitTree);
+    // per-op detached index; --work-tree = the clone itself. HEAD untouched.
+    const committed = await this.#commitTree(state, {
+      workTree: this.#repoDir(state.upid),
+      indexName: `index.room-${slug}`,
+      ref,
+      message,
+    });
+    if ("error" in committed) {
+      return { ok: false, error: committed.error };
+    }
+    if ("unchanged" in committed) {
+      return { ok: true, branch: branchName, changed: false };
+    }
+    state.branches.set(branchName, (state.branches.get(branchName) ?? 0) + 1);
+    this.#trace("tree.git.commit", "info", state.upid, { branch: branchName, message, sha: committed.sha });
+    await this.#traceLog(state.upid, `commit ${branchName}`, true, message);
+    this.#onUpdate();
+    return { ok: true, branch: branchName, changed: true };
+  }
+
+  async #pushBranchOnce(state: TreeState, branch: string): Promise<{ ok: true; branch: string } | { ok: false; error: string }> {
+    const slug = roomSlug(branch);
+    if (slug === null) {
+      return { ok: false, error: `"${clampLine(branch, 60)}" names no room/* branch` };
+    }
+    const branchName = `room/${slug}`;
+    const ref = `refs/heads/${branchName}`;
+    const push = await this.#runGit(
+      [`--git-dir=${this.#gitDirFor(state)}`, ...CREDENTIAL_ARGV, "push", "origin", `${ref}:${ref}`],
+      { timeoutMs: PUSH_TIMEOUT_MS },
+    );
+    if (!push.ok) {
+      const error = clampLine(push.stderr || push.stdout, 200) || "git push failed";
+      this.#trace("tree.git.error", "error", state.upid, { op: "branch.push", branch: branchName, message: error });
+      await this.#traceLog(state.upid, `push ${branchName}`, false, error);
+      return { ok: false, error };
+    }
+    await this.#traceLog(state.upid, `push ${branchName}`, true);
+    return { ok: true, branch: branchName };
+  }
+
+  async #openPrOnce(
+    state: TreeState,
+    branch: string,
+    title?: string,
+    body?: string,
+  ): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
+    const slug = roomSlug(branch);
+    if (slug === null) {
+      return { ok: false, error: `"${clampLine(branch, 60)}" names no room/* branch` };
+    }
+    const branchName = `room/${slug}`;
+    const stored = state.prUrls.get(branchName);
+    if (stored !== undefined) {
+      return { ok: true, url: stored };
+    }
+    const repoRef = state.remoteUrl === null ? null : ownerRepoFromUrl(state.remoteUrl);
+    if (repoRef === null) {
+      return { ok: false, error: "no recorded origin for this adopted tree" };
+    }
+    const pr = await this.#runGh([
+      "gh",
+      "pr",
+      "create",
+      "--repo",
+      repoRef,
+      "--head",
+      branchName,
+      "--base",
+      "main",
+      "--title",
+      clampLine(title !== undefined && title.length > 0 ? title : `room: ${slug}`, 120),
+      "--body",
+      body !== undefined && body.length > 0
+        ? body
+        : `Opened by vibecode-room: spoken changes committed live on ${branchName}.`,
+    ]);
+    const url = parsePrUrl(`${pr.stdout}\n${pr.stderr}`);
+    if (!pr.ok) {
+      // gh refuses a second PR for the same head — recover its URL when it
+      // echoes one, keeping the op idempotent across room restarts.
+      if (url !== null && /already exists/iu.test(`${pr.stderr}${pr.stdout}`)) {
+        state.prUrls.set(branchName, url);
+        this.#onUpdate();
+        return { ok: true, url };
+      }
+      const error = clampLine(pr.stderr || pr.stdout, 200) || "gh pr create failed";
+      this.#trace("tree.git.error", "error", state.upid, { op: "branch.pr", branch: branchName, message: error });
+      await this.#traceLog(state.upid, `pr ${branchName}`, false, error);
+      return { ok: false, error };
+    }
+    if (url === null) {
+      return { ok: false, error: "gh pr create returned no PR URL" };
+    }
+    state.prUrls.set(branchName, url);
+    this.#trace("tree.git.pr", "info", state.upid, { branch: branchName, url });
+    await this.#traceLog(state.upid, `pr ${branchName}`, true, url);
+    this.#onUpdate();
+    return { ok: true, url };
+  }
+
   // ── shared helpers ────────────────────────────────────────────────────────
 
   #adoptedState(upid: string, remoteUrl: string | null): TreeState {
@@ -631,6 +948,9 @@ export class TreeGitSubstrate {
       laneChains: new Map(),
       ready: Promise.resolve(),
       publishing: null,
+      branchOps: Promise.resolve(),
+      originMainSha: null,
+      prUrls: new Map(),
     };
   }
 
@@ -638,8 +958,19 @@ export class TreeGitSubstrate {
     return join(this.#buildsRoot, upid, ".tree");
   }
 
+  #repoDir(upid: string): string {
+    return join(this.#buildsRoot, upid, "repo");
+  }
+
   #gitDir(upid: string): string {
     return join(this.#treeDir(upid), ".git");
+  }
+
+  // THE gitdir for a tree's state: an adopted tree's repo IS the import clone
+  // at builds/<upid>/repo/ — every internal op must resolve through this, not
+  // the .tree/.git a local birth would own.
+  #gitDirFor(state: TreeState): string {
+    return state.mode === "adopted" ? join(this.#repoDir(state.upid), ".git") : this.#gitDir(state.upid);
   }
 
   #markGitUnavailable(detail: string): void {
@@ -662,8 +993,12 @@ export class TreeGitSubstrate {
 
   async #traceLog(upid: string, op: string, ok: boolean, detail?: string): Promise<void> {
     try {
+      // Adopted trees log inside their clone's gitdir (audit: #gitDir hardcoded
+      // .tree/.git and silently lost every adopted-tree line to a missing dir).
+      const state = this.#trees.get(upid);
+      const gitDir = state === undefined ? this.#gitDir(upid) : this.#gitDirFor(state);
       const line = `${new Date(this.#now()).toISOString()} ${op} ${ok ? "ok" : "error"}${detail === undefined ? "" : ` ${detail}`}\n`;
-      await appendFile(join(this.#gitDir(upid), "trace.log"), line, "utf8");
+      await appendFile(join(gitDir, "trace.log"), line, "utf8");
     } catch {
       // The trace log is best-effort — a read-only disk never breaks a commit.
     }
@@ -688,6 +1023,22 @@ function slugify(name: string): string {
     .replace(/^-+|-+$/gu, "")
     .slice(0, SLUG_MAX_CHARS)
     .replace(/-+$/gu, "");
+}
+
+// The room/* namespace rail: a spoken/typed branch name (or an echoed
+// "room/<slug>") normalizes to its bare slug, or null when nothing usable
+// remains. Every branch op resolves refs through THIS — nothing outside
+// refs/heads/room/* is ever written or pushed.
+function roomSlug(name: string): string | null {
+  const slug = slugify(name.replace(/^room\//u, ""));
+  return slug.length === 0 ? null : slug;
+}
+
+// First https://github.com/<owner>/<repo>/pull/<n> in gh's output — the PR
+// parse must keep the /pull/<n> tail (parseGitHubUrl deliberately strips it).
+function parsePrUrl(output: string): string | null {
+  const match = /https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/u.exec(output);
+  return match === null ? null : match[0];
 }
 
 // First https://github.com/<owner>/<repo> in gh's output, normalized (no

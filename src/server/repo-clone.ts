@@ -143,6 +143,41 @@ const STACK_BY_FILE: Array<[RegExp, string]> = [
 
 export type CloneRepoResult = { ok: true; dir: string } | { ok: false; error: string };
 
+// The exact clone argv, exported for tests. Auth is DELIBERATE, not whatever
+// helper the host git config happens to hold (osxkeychain by accident): the
+// first `-c credential.helper=` CLEARS inherited helpers, the second routes
+// every credential lookup through `gh auth git-credential` — which reads
+// GH_TOKEN from the child env (see cloneEnv). The PAT never appears in argv,
+// on-disk config, or the clone URL.
+export function cloneArgv(url: string, dir: string): string[] {
+  return [
+    "git",
+    "-c",
+    "credential.helper=",
+    "-c",
+    "credential.helper=!gh auth git-credential",
+    "clone",
+    "--depth",
+    "1",
+    "--single-branch",
+    url,
+    dir,
+  ];
+}
+
+// The clone child env, exported for tests. Mirrors tree-git's defaultGitRunner
+// pattern exactly: non-interactive (GIT_TERMINAL_PROMPT=0, GIT_ASKPASS=true so
+// a private repo fails fast instead of prompting) and VIBERSYN_GITHUB_PAT
+// forwarded as GH_TOKEN so the gh credential helper can authenticate — the PAT
+// only ever rides env, never argv.
+export function cloneEnv(base: Record<string, string | undefined>): Record<string, string | undefined> {
+  const env: Record<string, string | undefined> = { ...base, GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "true" };
+  if (env.GH_TOKEN === undefined && env.GITHUB_TOKEN === undefined && env.VIBERSYN_GITHUB_PAT !== undefined) {
+    env.GH_TOKEN = env.VIBERSYN_GITHUB_PAT;
+  }
+  return env;
+}
+
 export async function cloneRepo(options: {
   url: string; // clone URL built from parsed owner/repo upstream — never raw phone input
   dir: string; // absolute target directory (must not already exist)
@@ -165,11 +200,11 @@ export async function cloneRepo(options: {
     proc?.kill(9);
   };
   try {
-    proc = Bun.spawn(["git", "clone", "--depth", "1", "--single-branch", options.url, options.dir], {
+    proc = Bun.spawn(cloneArgv(options.url, options.dir), {
       stdout: "ignore",
       stderr: "pipe",
       stdin: "ignore",
-      env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "true" },
+      env: cloneEnv(process.env),
     });
     killTimer = setTimeout(() => {
       timedOut = true;

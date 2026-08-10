@@ -167,6 +167,12 @@ class FakeGit {
         this.remoteUrl = positional[positional.length - 1]!;
         return ok("");
       }
+      case "fetch": {
+        // Every fetch stamps FETCH_HEAD like real git — the branch rails
+        // resolve the origin/main tip from it.
+        this.refs.set("FETCH_HEAD", "origin-tip-1");
+        return ok("");
+      }
       case "push": {
         this.pushes.push({ argv, env: opts?.env, timeoutMs: opts?.timeoutMs });
         return ok("");
@@ -182,12 +188,18 @@ class FakeGit {
   }
 }
 
-// Stable content digest of a directory — the fake's "tree sha".
+// Stable content digest of a directory — the fake's "tree sha". Skips .git
+// like real `git add -A` does (the adopted rails' work tree IS the clone, and
+// its gitdir holds the substrate's own trace.log — staging it would defeat
+// the no-change guard).
 async function digestDir(dir: string): Promise<string> {
   const lines: string[] = [];
   async function walk(current: string, prefix: string): Promise<void> {
     const entries = (await readdir(current, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name));
     for (const entry of entries) {
+      if (entry.name === ".git") {
+        continue;
+      }
       const path = join(current, entry.name);
       if (entry.isDirectory()) {
         await walk(path, `${prefix}${entry.name}/`);
@@ -523,5 +535,115 @@ describe("TreeGitSubstrate — snapshot & forget", () => {
   test("snapshot is null for a tree that never birthed", () => {
     const { substrate } = makeSubstrate();
     expect(substrate.snapshot("upid-x")).toBeNull();
+  });
+});
+
+// ADOPTED-TREE BRANCH RAILS (the PR engine). The adopted clone's gitdir is
+// builds/<upid>/repo/.git — every op below must resolve through it, never
+// the .tree/.git a local birth would own.
+describe("TreeGitSubstrate — adopted branch rails", () => {
+  function adoptTree(root: string, substrate: TreeGitSubstrate, upid = "upid-20"): string {
+    mkdirSync(join(root, upid, "repo", ".git"), { recursive: true });
+    substrate.adopt(upid, "https://github.com/acme/widget");
+    return upid;
+  }
+
+  test("createBranch fetches origin/main FIRST (authenticated, deepened, against the clone's gitdir) and cuts room/<slug> at the fetched tip", async () => {
+    const { root, git, substrate } = makeSubstrate();
+    const upid = adoptTree(root, substrate);
+
+    const created = await substrate.createBranch(upid, "Add Dark Mode!");
+    expect(created).toEqual({ ok: true, branch: "room/add-dark-mode" });
+
+    const subcommands = git.calls.map((call) => subcommandOf(call.argv));
+    expect(subcommands.indexOf("fetch")).toBeGreaterThanOrEqual(0);
+    expect(subcommands.indexOf("fetch")).toBeLessThan(subcommands.indexOf("update-ref"));
+    const fetch = git.calls[subcommands.indexOf("fetch")]!;
+    expect(fetch.argv).toContain(`--git-dir=${join(root, upid, "repo", ".git")}`);
+    expect(fetch.argv.join(" ")).toContain("-c credential.helper= -c credential.helper=!gh auth git-credential");
+    expect(fetch.argv.slice(-3)).toEqual(["--depth=50", "origin", "main"]);
+    expect(git.refs.get("refs/heads/room/add-dark-mode")).toBe("origin-tip-1");
+    // Registered IMMEDIATELY — the snapshot shows the branch before any commit.
+    expect(substrate.snapshot(upid)!.branches).toEqual([{ name: "room/add-dark-mode", commits: 0 }]);
+    // Idempotent: a second create returns the branch without moving its ref.
+    const before = git.calls.length;
+    expect(await substrate.createBranch(upid, "add dark mode")).toEqual({ ok: true, branch: "room/add-dark-mode" });
+    expect(git.calls.length).toBe(before);
+    // The adopted tree's trace.log lives in the CLONE's gitdir (#gitDirFor).
+    const log = await readFile(join(root, upid, "repo", ".git", "trace.log"), "utf8");
+    expect(log).toContain("branch room/add-dark-mode ok");
+  });
+
+  test("commitBranch commits the clone's CURRENT working tree via a detached index (HEAD untouched); no-change guard returns changed:false", async () => {
+    const { root, git, substrate } = makeSubstrate();
+    const upid = adoptTree(root, substrate);
+    await substrate.createBranch(upid, "dark mode");
+    await Bun.write(join(root, upid, "repo", "index.html"), "<h1>darker</h1>");
+
+    const committed = await substrate.commitBranch(upid, "dark-mode", "room: spoken changes");
+    expect(committed).toEqual({ ok: true, branch: "room/dark-mode", changed: true });
+    const tip = git.refs.get("refs/heads/room/dark-mode")!;
+    expect(git.commits.get(tip)?.parent).toBe("origin-tip-1");
+    expect(git.commits.get(tip)?.message).toBe("room: spoken changes");
+    // The staging rode a per-op detached index INSIDE the clone's gitdir; the
+    // working tree itself keeps serving previews (no checkout/HEAD subcommand).
+    const add = git.calls.find((call) => subcommandOf(call.argv) === "add")!;
+    expect(add.argv).toContain(`--work-tree=${join(root, upid, "repo")}`);
+    expect(add.env?.GIT_INDEX_FILE).toBe(join(root, upid, "repo", ".git", "index.room-dark-mode"));
+    expect(git.calls.some((call) => ["checkout", "symbolic-ref", "reset"].includes(subcommandOf(call.argv)))).toBe(false);
+    expect(substrate.snapshot(upid)!.branches).toEqual([{ name: "room/dark-mode", commits: 1 }]);
+
+    // Unchanged working tree → no noise commit, honest changed:false.
+    const again = await substrate.commitBranch(upid, "dark-mode", "room: spoken changes");
+    expect(again).toEqual({ ok: true, branch: "room/dark-mode", changed: false });
+    expect(git.refs.get("refs/heads/room/dark-mode")).toBe(tip);
+  });
+
+  test("pushBranch pushes ONLY the room ref; openPrToOrigin targets the adopt() origin and is idempotent (prUrl in snapshot)", async () => {
+    const gh = makeGhFake();
+    const { root, git, substrate } = makeSubstrate({ gh: gh.run });
+    const upid = adoptTree(root, substrate);
+    await substrate.createBranch(upid, "dark mode");
+
+    const pushed = await substrate.pushBranch(upid, "dark-mode");
+    expect(pushed).toEqual({ ok: true, branch: "room/dark-mode" });
+    expect(git.pushes).toHaveLength(1);
+    expect(git.pushes[0]!.argv).toContain("refs/heads/room/dark-mode:refs/heads/room/dark-mode");
+    expect(git.pushes[0]!.argv).toContain("credential.helper=!gh auth git-credential");
+    expect(git.pushes[0]!.argv).not.toContain("--all");
+    expect(git.pushes[0]!.argv.join(" ")).not.toContain("refs/heads/main");
+
+    const opened = await substrate.openPrToOrigin(upid, "dark-mode", "Dark mode", "As spoken in the room.");
+    expect(opened).toEqual({ ok: true, url: "https://github.com/roomowner/x/pull/1" });
+    const pr = gh.calls.find((call) => call[1] === "pr" && call[2] === "create")!;
+    expect(pr[pr.indexOf("--repo") + 1]).toBe("acme/widget");
+    expect(pr[pr.indexOf("--head") + 1]).toBe("room/dark-mode");
+    expect(pr[pr.indexOf("--base") + 1]).toBe("main");
+    expect(pr).not.toContain("--draft");
+
+    // Idempotent: the stored URL comes back with zero new gh calls, and the
+    // snapshot's branch carries it for the wall.
+    const ghCallsBefore = gh.calls.length;
+    expect(await substrate.openPrToOrigin(upid, "dark-mode")).toEqual({ ok: true, url: "https://github.com/roomowner/x/pull/1" });
+    expect(gh.calls.length).toBe(ghCallsBefore);
+    expect(substrate.snapshot(upid)!.branches).toEqual([
+      { name: "room/dark-mode", commits: 0, prUrl: "https://github.com/roomowner/x/pull/1" },
+    ]);
+  });
+
+  test("the rails refuse local trees and unknown branches honestly", async () => {
+    const { git, substrate } = makeSubstrate();
+    await substrate.birth("upid-21", SEED);
+    const refused = await substrate.createBranch("upid-21", "dark mode");
+    expect(refused.ok).toBe(false);
+    if (!refused.ok) {
+      expect(refused.error).toContain("adopted");
+    }
+    expect(git.calls.some((call) => subcommandOf(call.argv) === "fetch")).toBe(false);
+
+    const { root: root2, substrate: substrate2 } = makeSubstrate();
+    const upid = adoptTree(root2, substrate2);
+    const noBranch = await substrate2.commitBranch(upid, "never-made", "room: spoken changes");
+    expect(noBranch).toEqual({ ok: false, error: "no branch room/never-made — create it first" });
   });
 });

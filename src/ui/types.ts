@@ -58,10 +58,12 @@ export interface ProjectorProcess {
   publishedUrl?: string | null;
   publishedQrSvg?: string | null;
   // GIT SUBSTRATE surface for tree visuals: the tree's real local repo.
-  // branches is tiny and bounded (<=8): main + one concept/<backend> per lane,
-  // each with its session commit count. remoteUrl is null until published on
-  // commission (private GitHub repo + draft PR per concept branch).
-  treeRepo?: { branches: Array<{ name: string; commits: number }>; remoteUrl: string | null } | null;
+  // branches is tiny and bounded (<=8): main + one concept/<backend> per lane
+  // (adopted GitHub imports grow room/<slug> branches instead, each carrying
+  // its PR URL once one is open against the origin), with session commit
+  // counts. remoteUrl is null until published on commission (private GitHub
+  // repo + draft PR per concept branch) — for adopted trees it is the origin.
+  treeRepo?: { branches: Array<{ name: string; commits: number; prUrl?: string }>; remoteUrl: string | null } | null;
 }
 
 // One candidate in the idea tray: the full ledger surfaced to the projector, not

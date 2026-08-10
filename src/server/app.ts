@@ -482,6 +482,62 @@ export function createProjectorApp(runtime: ProjectorRuntime, options: Projector
     }
     return context.json({ ok: true, url: result.url });
   });
+  // ADOPTED-TREE BRANCH RAILS (the PR engine for GitHub imports). Create a
+  // real room/<slug> branch off the FRESHLY FETCHED origin/main tip (the
+  // substrate fetches before resolving the base). Adopted trees only — local
+  // trees 400 honestly (they publish whole via publish-repo) — and the pinned
+  // SELF process is refused outright.
+  app.post("/api/process/:upid/branch", async (context) => {
+    if (isOfflineDemoRequest(context.req.header("referer"))) {
+      return context.json(runtime.snapshot());
+    }
+    const upid = context.req.param("upid");
+    if (upid === "self") {
+      return context.json({ ok: false, error: "the room does not branch itself" }, 400);
+    }
+    const body = (await context.req.json().catch(() => null)) as { name?: unknown } | null;
+    if (body === null || typeof body.name !== "string" || body.name.trim().length === 0) {
+      return context.json({ ok: false, error: "body must be {name: string}" }, 400);
+    }
+    const result = await runtime.createTreeBranch(upid, body.name.trim());
+    if (!result.ok) {
+      return context.json({ ok: false, error: result.error }, 400);
+    }
+    return context.json({ ok: true, branch: result.branch });
+  });
+  // Ride the branch's spoken changes to a REAL PR against the import's own
+  // origin: commit the clone's current working tree if dirty ("room: spoken
+  // changes"), push ONLY room/<slug>, gh pr create (idempotent — a second
+  // call returns the stored PR URL).
+  app.post("/api/process/:upid/branch/:branch/pr", async (context) => {
+    if (isOfflineDemoRequest(context.req.header("referer"))) {
+      return context.json(runtime.snapshot());
+    }
+    const upid = context.req.param("upid");
+    if (upid === "self") {
+      return context.json({ ok: false, error: "the room does not open PRs against itself here" }, 400);
+    }
+    const body = (await context.req.json().catch(() => null)) as { title?: unknown; body?: unknown } | null;
+    const result = await runtime.openTreeBranchPr(upid, context.req.param("branch"), {
+      ...(typeof body?.title === "string" && body.title.trim().length > 0 ? { title: body.title.trim() } : {}),
+      ...(typeof body?.body === "string" && body.body.trim().length > 0 ? { body: body.body.trim() } : {}),
+    });
+    if (!result.ok) {
+      return context.json({ ok: false, error: result.error }, 400);
+    }
+    return context.json({ ok: true, url: result.url });
+  });
+  // The tree's repo facts for menus/popups: recorded origin, branch list
+  // (per-branch prUrl once open), and the published deploy URL when one
+  // confirmed. 404 when this UPID has no tree repo at all.
+  app.get("/api/process/:upid/repo", (context) => {
+    const upid = context.req.param("upid");
+    const info = runtime.treeRepoInfo(upid);
+    if (info === null) {
+      return context.json({ ok: false, error: `No tree repo for UPID ${upid}.` }, 404);
+    }
+    return context.json(info);
+  });
   // SELF-HOSTING (VIBERSYN_SELF_MODE=1): the guarded internal reload trigger.
   // Only honored in self mode (404 otherwise — the endpoint effectively does
   // not exist). The runtime re-verifies the last self-run reported green and
