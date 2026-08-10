@@ -71,7 +71,10 @@ const noRaycast = (): void => {};
 // ── shared textures (page-lifetime singletons, like the flora cache) ────────
 
 let barkTexCache: THREE.CanvasTexture | null = null;
-function barkTexture(): THREE.CanvasTexture {
+// Exported for the scene's ADD-ON limb builder (branch limbs on adopted
+// garden trees reuse the engine's bark material family): the texture is a
+// page-lifetime singleton, so sharing it costs nothing.
+export function barkTexture(): THREE.CanvasTexture {
   if (barkTexCache !== null) {
     return barkTexCache;
   }
@@ -224,8 +227,10 @@ function budGeometry(): THREE.BufferGeometry {
 
 // ── tapered tube (the wood primitive) ───────────────────────────────────────
 // THREE.TubeGeometry is constant-radius; real wood tapers. Same construction
-// (Frenet frames along the curve) with a radius profile over t.
-function taperedTubeGeometry(
+// (Frenet frames along the curve) with a radius profile over t. Exported for
+// the scene's limb builder (adopted trees grow branch limbs from the same
+// wood primitive).
+export function taperedTubeGeometry(
   curve: THREE.Curve<THREE.Vector3>,
   tubularSegments: number,
   radialSegments: number,

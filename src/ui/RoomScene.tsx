@@ -12,15 +12,28 @@ import type { SelfTreeSpec } from "./self-repo";
 import {
   DIALOGUE_CENTER_X,
   DIALOGUE_CENTER_Z,
+  barkTexture,
   buildTreeLOD,
   dialogueBranchLength,
   dialogueBranches,
   dialogueLeafPosition,
   dialogueTreeSpec3D,
   dialogueTrunkHeight,
+  taperedTubeGeometry,
   treeSpecSignature,
   type BuiltTree,
 } from "./tree";
+import {
+  fruitSignature,
+  fruitSpecs,
+  holoArcPoints,
+  limbPoints,
+  limbSignature,
+  limbSpecs,
+  limbTipCard,
+  type IssueInfo,
+  type TreeRepoInfo,
+} from "./tree-limbs";
 
 // The pure conversation-tree layout maths now live in the reusable HD tree
 // module (src/ui/tree/dialogue-layout.ts) — re-exported here so every existing
@@ -101,6 +114,15 @@ export interface TreeSpec {
   // Count of failed build lanes / a failed run → a red failure pip. Also implied
   // by a halted/blocked state. Absent = 0.
   failedCount?: number;
+  // GIT SUBSTRATE (adopted GitHub imports): the tree's real repo surface —
+  // every room/* branch renders as a LIMB on the garden tree (length/
+  // thickness scale with its commit count, tip card reads name + commits +
+  // PR ✓). Absent/null = no limbs (local trees, legacy callers).
+  treeRepo?: TreeRepoInfo | null;
+  // ISSUE FRUIT (adopted imports): open GitHub issues (App polls
+  // /api/process/:upid/issues) — up to FRUIT_CAP hang as emissive fruit on
+  // ONE translucent holo branch off the mid-trunk. Absent = no fruit.
+  issues?: IssueInfo[];
 }
 
 // The ring style that marks a tree's stage on the ground/orb.
@@ -248,6 +270,15 @@ interface RoomSceneProps {
   // open tree menu. Mouse/touch only — dwell cursors have no "miss" gesture,
   // so the menu's ✕ button covers gesture mode.
   onPickMiss?: () => void;
+  // BRANCH LIMB pick (adopted trees): open the branch's contextual popup.
+  // `anchor` is the LIMB TIP's own projected rect (the SUB-OBJECT dwell
+  // rect, re-derived at pick time) — never the whole-tree bbox — so the
+  // glass opens beside the limb it belongs to. Optional: legacy callers/
+  // tests without the popups simply get no-op limb picks.
+  onPickBranch?: (callsign: string, branch: string, anchor: SceneDwellRect | null) => void;
+  // ISSUE FRUIT pick (adopted trees): open the issue's contextual popup,
+  // anchored to the FRUIT's own projected rect. Same optionality contract.
+  onPickIssue?: (callsign: string, issueNumber: number, anchor: SceneDwellRect | null) => void;
   // RESEARCH MODE (all optional so legacy callers/tests are untouched): the
   // dialogue window + research quests to grow the 3D dialogue tree from, and
   // the click handler for research crystals (proposed → accept and spawn the
@@ -449,6 +480,12 @@ export function treeSpecStructurallyChanged(a: TreeSpec, b: TreeSpec): boolean {
     (a.published ?? false) !== (b.published ?? false) ||
     (a.failedCount ?? 0) !== (b.failedCount ?? 0) ||
     buildsSummaryChanged(a.builds, b.builds) ||
+    // Limbs/fruit are part of the tree's BODY: a room/* branch appearing, a
+    // commit landing, a PR opening, or the issue set shifting regrows the
+    // entry — signature-gated exactly like every other structural change, so
+    // an unchanged snapshot tick stays a no-op.
+    limbSignature(a.treeRepo) !== limbSignature(b.treeRepo) ||
+    fruitSignature(a.issues) !== fruitSignature(b.issues) ||
     (treeIndicators(a).progressArc === null) !== (treeIndicators(b).progressArc === null)
   );
 }
@@ -869,7 +906,7 @@ interface Entry {
   disposeExtra?: () => void;
 }
 
-export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, focusUpid = null, pointerNav = true, cornerLock = false, flatLock = false, autoFit = false, onAcceptIdea, onSelectProcess, onPickMiss, dialogue = [], topics = [], research = [], onResearchNode, onDialogueNode, selfTree = null, park = false }: RoomSceneProps) {
+export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, focusUpid = null, pointerNav = true, cornerLock = false, flatLock = false, autoFit = false, onAcceptIdea, onSelectProcess, onPickMiss, onPickBranch, onPickIssue, dialogue = [], topics = [], research = [], onResearchNode, onDialogueNode, selfTree = null, park = false }: RoomSceneProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const ideasRef = useRef(ideas);
   ideasRef.current = ideas;
@@ -920,6 +957,10 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
   onSelectRef.current = onSelectProcess;
   const onPickMissRef = useRef(onPickMiss);
   onPickMissRef.current = onPickMiss;
+  const onPickBranchRef = useRef(onPickBranch);
+  onPickBranchRef.current = onPickBranch;
+  const onPickIssueRef = useRef(onPickIssue);
+  onPickIssueRef.current = onPickIssue;
   const tick = useRef(0);
 
   useEffect(() => {
@@ -1897,6 +1938,124 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
     let floraNodesDirty = false;
     const invisibleHitMat = new THREE.MeshBasicMaterial({ visible: false });
 
+    // ── GIT SUBSTRATE chrome: branch LIMBS + issue FRUIT (adopted trees) ────
+    // An ADD-ON group riding the existing garden tree bodies (photoscan
+    // jacaranda AND the primitive glyphs — the body is untouched tonight):
+    // each room/* branch of the snapshot's treeRepo grows a curved TAPERED
+    // limb from the HD engine's wood primitive + bark family, crowned by a
+    // glowing tip bud, a floating tip card (the self tree's PR-tip
+    // vocabulary: branch name / commits / PR ✓) and an invisible pick
+    // sphere; the fetched issue set hangs as emissive FRUIT on ONE
+    // translucent additive holo branch arcing off the mid-trunk. Sub-objects
+    // carry BOTH a pick payload (kind "branch"/"issue" routes to the popup
+    // callbacks below) and a subTargetId, so the dwell seam projects the
+    // SUB-OBJECT's own rect — never the whole-tree bbox. Everything is
+    // per-entry owned (ownGeometry/ownMaterial/ownMap) so disposeEntry's
+    // generic sweep frees it; limb/fruit changes regrow the entry through
+    // the limbSignature/fruitSignature structural gate.
+    const SCENE_BRANCH_PREFIX = "scene:branch:";
+    const SCENE_ISSUE_PREFIX = "scene:issue:";
+    const branchTargetId = (callsign: string, branch: string) => `${SCENE_BRANCH_PREFIX}${callsign}:${branch}`;
+    const issueTargetId = (callsign: string, issueNumber: number) => `${SCENE_ISSUE_PREFIX}${callsign}:${issueNumber}`;
+    const HOLO_BRANCH_COLOR = 0x67e8f9;
+    const LIMB_BUD_PR_COLOR = 0x46c66e; // the forest's CI-pass green
+    const LIMB_BUD_COLOR = 0x9ee2ff;
+    const addLimbsAndFruit = (group: THREE.Group, spec: TreeSpec, trunkTop: number, scale: number) => {
+      for (const limb of limbSpecs(spec.treeRepo)) {
+        const points = limbPoints(limb, trunkTop, scale).map((p) => new THREE.Vector3(p.x, p.y, p.z));
+        const curve = new THREE.CatmullRomCurve3(points);
+        const wood = new THREE.Mesh(
+          taperedTubeGeometry(curve, 10, 6, (t) => Math.max(0.02, limb.thickness * scale * (1 - 0.75 * t)), 1.4),
+          new THREE.MeshStandardMaterial({
+            map: barkTexture(),
+            roughness: 0.92,
+            metalness: 0,
+            emissive: new THREE.Color(0x3a2b1e),
+            emissiveIntensity: 0.08,
+          }),
+        );
+        wood.userData.ownGeometry = true;
+        wood.userData.ownMaterial = true;
+        // Picking goes through the tip sphere — the wood never raycasts,
+        // exactly like the HD engine's merged bark (module policy).
+        wood.raycast = () => {};
+        group.add(wood);
+        const tip = points[points.length - 1];
+        const card = limbTipCard(limb);
+        const budColor = limb.prUrl !== null ? LIMB_BUD_PR_COLOR : LIMB_BUD_COLOR;
+        // The SUB-OBJECT: bud + halo + tip card + hit sphere in one group —
+        // its projected box IS the popup anchor rect.
+        const tipGroup = new THREE.Group();
+        tipGroup.userData.subTargetId = branchTargetId(spec.callsign, limb.branch);
+        tipGroup.userData.pick = { kind: "branch", callsign: spec.callsign, branch: limb.branch };
+        const bud = new THREE.Mesh(
+          GEO.bud,
+          new THREE.MeshPhongMaterial({ color: budColor, emissive: budColor, emissiveIntensity: 0.9 }),
+        );
+        bud.userData.ownMaterial = true;
+        bud.position.copy(tip);
+        bud.scale.setScalar(0.9 + 0.7 * scale);
+        tipGroup.add(bud);
+        const budGlow = new THREE.Sprite(
+          new THREE.SpriteMaterial({ map: glowTexture, color: budColor, transparent: true, opacity: 0.35, blending: THREE.AdditiveBlending, depthWrite: false }),
+        );
+        budGlow.position.copy(tip);
+        budGlow.scale.setScalar(0.5 + 0.7 * scale);
+        tipGroup.add(budGlow);
+        const tipLabel = makeLabelSprite(card.title, card.sub, cssHex(budColor));
+        tipLabel.userData.ownMap = true;
+        tipLabel.position.set(tip.x, tip.y + 0.22, tip.z);
+        tipGroup.add(tipLabel);
+        const tipHit = new THREE.Mesh(new THREE.SphereGeometry(0.85, 8, 8), invisibleHitMat);
+        tipHit.userData.ownGeometry = true;
+        tipHit.position.copy(tip);
+        tipGroup.add(tipHit);
+        group.add(tipGroup);
+      }
+      const fruits = fruitSpecs(spec.issues);
+      if (fruits.length === 0) {
+        return;
+      }
+      // ONE ghostly holo bough for the whole issue set: additive cyan, semi-
+      // transparent, no depth write — reads as a hologram, never as wood.
+      const arcPoints = holoArcPoints(spec.upid, trunkTop, scale).map((p) => new THREE.Vector3(p.x, p.y, p.z));
+      const arcCurve = new THREE.CatmullRomCurve3(arcPoints);
+      const holo = new THREE.Mesh(
+        new THREE.TubeGeometry(arcCurve, 14, 0.02 + 0.05 * scale, 6, false),
+        new THREE.MeshBasicMaterial({ color: HOLO_BRANCH_COLOR, transparent: true, opacity: 0.32, blending: THREE.AdditiveBlending, depthWrite: false }),
+      );
+      holo.userData.ownGeometry = true;
+      holo.userData.ownMaterial = true;
+      holo.raycast = () => {};
+      group.add(holo);
+      for (const fruit of fruits) {
+        const at = arcCurve.getPoint(fruit.t);
+        at.y -= 0.14; // fruit hangs just under the bough
+        const fruitGroup = new THREE.Group();
+        fruitGroup.userData.subTargetId = issueTargetId(spec.callsign, fruit.number);
+        fruitGroup.userData.pick = { kind: "issue", callsign: spec.callsign, number: fruit.number };
+        const orb = new THREE.Mesh(
+          GEO.bud,
+          new THREE.MeshPhongMaterial({ color: fruit.color, emissive: fruit.color, emissiveIntensity: 0.85 }),
+        );
+        orb.userData.ownMaterial = true;
+        orb.position.copy(at);
+        orb.scale.setScalar(1.0 + 0.8 * scale);
+        fruitGroup.add(orb);
+        const halo = new THREE.Sprite(
+          new THREE.SpriteMaterial({ map: glowTexture, color: fruit.color, transparent: true, opacity: 0.3, blending: THREE.AdditiveBlending, depthWrite: false }),
+        );
+        halo.position.copy(at);
+        halo.scale.setScalar(0.55 + 0.6 * scale);
+        fruitGroup.add(halo);
+        const fruitHit = new THREE.Mesh(new THREE.SphereGeometry(0.7, 8, 8), invisibleHitMat);
+        fruitHit.userData.ownGeometry = true;
+        fruitHit.position.copy(at);
+        fruitGroup.add(fruitHit);
+        group.add(fruitGroup);
+      }
+    };
+
     const buildRealTree = (spec: TreeSpec): Entry | null => {
       const variants = floraLib?.get("jacaranda_tree");
       if (variants === undefined || variants.length === 0) {
@@ -1966,6 +2125,9 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       if (ind.failed) {
         addFailedPip(group, commissioned ? 1.4 : 0.8, commissioned ? 6.5 : 3.2, commissioned ? 0.9 : 0.65);
       }
+      // Adopted-tree git substrate: room/* branch limbs + issue fruit ride
+      // the photoscan body, sized to whichever growth stage stands.
+      addLimbsAndFruit(group, spec, commissioned ? 6.4 : 3.2, commissioned ? 1 : 0.55);
       const label = makeLabelSprite(treeTitle(spec), treeStatus(spec), cssHex(color));
       label.position.y = commissioned ? 10.2 : 5.1;
       group.add(label);
@@ -2209,6 +2371,9 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       if (ind.failed) {
         addFailedPip(group, commissioned ? 1.2 : 0.7, commissioned ? 4.9 : 2.5, commissioned ? 0.9 : 0.65);
       }
+      // Adopted-tree git substrate: room/* branch limbs + issue fruit ride
+      // the primitive body too (fallback trees keep the full grammar).
+      addLimbsAndFruit(group, spec, commissioned ? 3.4 : 2.0, commissioned ? 0.8 : 0.5);
       const label = makeLabelSprite(treeTitle(spec), treeStatus(spec), cssHex(color));
       label.position.y = commissioned ? 6.6 : 3.4;
       group.add(label);
@@ -3282,6 +3447,9 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
     let hoveredProc: string | null = null;
     let hoveredResearch: string | null = null;
     let hoveredTurn: string | null = null;
+    // Limb-tip / fruit hover (adopted trees): cursor affordance only — the
+    // glow chrome is built into the sub-objects themselves.
+    let hoveredSub = false;
     let dragging = false;
     let panning = false;
     let dragMoved = 0;
@@ -3306,7 +3474,10 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
     let lastAutoFitPollMs = 0;
     const autoFitCurrent = { targetX: 0, targetZ: 0, radius: 0 };
 
-    const pick = (clientX: number, clientY: number): { kind: string; key?: string; callsign?: string } | null => {
+    const pick = (
+      clientX: number,
+      clientY: number,
+    ): { kind: string; key?: string; callsign?: string; branch?: string; number?: number } | null => {
       const rect = renderer.domElement.getBoundingClientRect();
       if (rect.width === 0 || rect.height === 0) {
         return null;
@@ -3343,7 +3514,7 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
         let node: THREE.Object3D | null = hit.object;
         while (node !== null) {
           if (node.userData.pick !== undefined) {
-            return node.userData.pick as { kind: string; key?: string; callsign?: string };
+            return node.userData.pick as { kind: string; key?: string; callsign?: string; branch?: string; number?: number };
           }
           node = node.parent;
         }
@@ -3400,6 +3571,7 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
       hoveredProc = null;
       hoveredResearch = null;
       hoveredTurn = null;
+      hoveredSub = false;
       if (picked?.kind === "idea" && picked.key !== undefined && picked.key !== "__idle__") {
         const entry = ideaEntries.get(picked.key);
         if (entry?.ideaSpec?.status === "ready") {
@@ -3407,6 +3579,8 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
         }
       } else if (picked?.kind === "process" && picked.callsign !== undefined) {
         hoveredProc = picked.callsign;
+      } else if (picked?.kind === "branch" || picked?.kind === "issue") {
+        hoveredSub = true;
       } else if (picked?.kind === "research" && picked.key !== undefined) {
         const entry = researchEntries.get(picked.key);
         const status = entry?.researchSpec?.status;
@@ -3417,7 +3591,7 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
         hoveredTurn = picked.key;
       }
       renderer.domElement.style.cursor =
-        hoveredIdea !== null || hoveredProc !== null || hoveredResearch !== null || hoveredTurn !== null
+        hoveredIdea !== null || hoveredProc !== null || hoveredResearch !== null || hoveredTurn !== null || hoveredSub
           ? "pointer"
           : dragging
             ? "grabbing"
@@ -3440,6 +3614,13 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
         // The anchor is the tree's screen-projected rect (same projection the
         // dwell layer targets), so the App's menu can open beside the tree.
         onSelectRef.current(picked.callsign, dwellRectFor(`${SCENE_PROC_PREFIX}${picked.callsign}`));
+      } else if (picked?.kind === "branch" && picked.callsign !== undefined && picked.branch !== undefined) {
+        // Limb-tip pick: the anchor is the LIMB TIP's own projected rect (the
+        // sub-object), so the branch popup opens beside the limb.
+        onPickBranchRef.current?.(picked.callsign, picked.branch, dwellRectFor(branchTargetId(picked.callsign, picked.branch)));
+      } else if (picked?.kind === "issue" && picked.callsign !== undefined && picked.number !== undefined) {
+        // Fruit pick: same sub-object anchor contract for the issue popup.
+        onPickIssueRef.current?.(picked.callsign, picked.number, dwellRectFor(issueTargetId(picked.callsign, picked.number)));
       } else if (picked?.kind === "research" && picked.key !== undefined) {
         onResearchRef.current?.(picked.key);
       } else if (picked?.kind === "dialogue" && picked.key !== undefined) {
@@ -3456,6 +3637,7 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
       hoveredProc = null;
       hoveredResearch = null;
       hoveredTurn = null;
+      hoveredSub = false;
       renderer.domElement.style.cursor = "grab";
     };
     // WASD fly-through: W/S walk the orbit target along the camera's ground
@@ -3502,7 +3684,9 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
     const SCENE_RESEARCH_PREFIX = "scene:research:";
     const SCENE_TURN_PREFIX = "scene:turn:";
     let dwellHighlights: ReadonlySet<string> = new Set();
-    const sceneTargetIdOf = (picked: { kind: string; key?: string; callsign?: string } | null): string | null => {
+    const sceneTargetIdOf = (
+      picked: { kind: string; key?: string; callsign?: string; branch?: string; number?: number } | null,
+    ): string | null => {
       if (picked?.kind === "idea" && picked.key !== undefined && picked.key !== "__idle__") {
         const entry = ideaEntries.get(picked.key);
         if (entry?.ideaSpec?.status === "ready" && !entry.removing) {
@@ -3510,6 +3694,12 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
         }
       } else if (picked?.kind === "process" && picked.callsign !== undefined) {
         return `${SCENE_PROC_PREFIX}${picked.callsign}`;
+      } else if (picked?.kind === "branch" && picked.callsign !== undefined && picked.branch !== undefined) {
+        // Limb tips and fruit are first-class dwell targets: their target id
+        // resolves to the SUB-OBJECT's own projected rect below.
+        return branchTargetId(picked.callsign, picked.branch);
+      } else if (picked?.kind === "issue" && picked.callsign !== undefined && picked.number !== undefined) {
+        return issueTargetId(picked.callsign, picked.number);
       } else if (picked?.kind === "research" && picked.key !== undefined) {
         const entry = researchEntries.get(picked.key);
         const status = entry?.researchSpec?.status;
@@ -3546,16 +3736,44 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
     };
     const dwellBox = new THREE.Box3();
     const dwellCorner = new THREE.Vector3();
+    // Limb-tip/fruit SUB-OBJECT lookup: the tip/fruit groups carry their
+    // target id in userData.subTargetId — found by traversal at lookup time
+    // (bounded: only live tree entries, only on pick/rect queries).
+    const findSubTarget = (id: string): THREE.Object3D | null => {
+      for (const entry of treeEntries.values()) {
+        if (entry.removing) {
+          continue;
+        }
+        let found: THREE.Object3D | null = null;
+        entry.group.traverse((node) => {
+          if (found === null && node.userData.subTargetId === id) {
+            found = node;
+          }
+        });
+        if (found !== null) {
+          return found;
+        }
+      }
+      return null;
+    };
     const dwellRectFor = (id: string): SceneDwellRect | null => {
-      const entry = entryForTargetId(id);
-      if (entry === null || entry.removing) {
+      // Sub-object targets (limb tips, fruit) project THEIR OWN box — the
+      // popup anchors beside the limb/fruit, never the whole-tree bbox.
+      let target: THREE.Object3D | null;
+      if (id.startsWith(SCENE_BRANCH_PREFIX) || id.startsWith(SCENE_ISSUE_PREFIX)) {
+        target = findSubTarget(id);
+      } else {
+        const entry = entryForTargetId(id);
+        target = entry === null || entry.removing ? null : entry.group;
+      }
+      if (target === null) {
         return null;
       }
       const domRect = renderer.domElement.getBoundingClientRect();
       if (domRect.width === 0 || domRect.height === 0) {
         return null;
       }
-      dwellBox.setFromObject(entry.group);
+      dwellBox.setFromObject(target);
       if (dwellBox.isEmpty()) {
         return null;
       }
@@ -3589,6 +3807,24 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
       pick: (clientX, clientY) => sceneTargetIdOf(pick(clientX, clientY)),
       rectFor: dwellRectFor,
       activate: (id) => {
+        // Sub-object targets (limb tips, fruit) dispatch to the popup
+        // callbacks with the SUB-OBJECT's projected rect as anchor — the
+        // click path's exact contract.
+        if (id.startsWith(SCENE_BRANCH_PREFIX) || id.startsWith(SCENE_ISSUE_PREFIX)) {
+          const node = findSubTarget(id);
+          const payload = node?.userData.pick as
+            | { kind: string; callsign?: string; branch?: string; number?: number }
+            | undefined;
+          if (payload === undefined) {
+            return;
+          }
+          if (payload.kind === "branch" && payload.callsign !== undefined && payload.branch !== undefined) {
+            onPickBranchRef.current?.(payload.callsign, payload.branch, dwellRectFor(id));
+          } else if (payload.kind === "issue" && payload.callsign !== undefined && payload.number !== undefined) {
+            onPickIssueRef.current?.(payload.callsign, payload.number, dwellRectFor(id));
+          }
+          return;
+        }
         const entry = entryForTargetId(id);
         if (entry === null || entry.removing) {
           return;

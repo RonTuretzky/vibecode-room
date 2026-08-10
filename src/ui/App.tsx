@@ -11,6 +11,9 @@ import { RoomScene, type DialogueNodeSpec, type DialogueTopicSpec, type IdeaOrbS
 import { getSceneDwellSource, procDwellTargetId, type SceneDwellRect } from "./gesture/scene-source";
 import { Slideshow } from "./Slideshow";
 import { TreeMenu } from "./TreeMenu";
+import { BranchPopup } from "./BranchPopup";
+import { IssuePopup } from "./IssuePopup";
+import type { IssueInfo } from "./tree-limbs";
 import { HoloPanel } from "./HoloPanel";
 import { IdeaTray } from "./IdeaTray";
 import { ResearchTray } from "./ResearchTray";
@@ -58,6 +61,12 @@ interface ProjectorAppProps {
     // Opens the HOLO PANEL (the imported tree's live /salem app) on this upid
     // — the static renderer's stand-in for the tree menu's "Live app" press.
     holoUpid?: string;
+    // Opens the BRANCH POPUP (an adopted tree's limb-tip card) — the static
+    // renderer's stand-in for picking a limb tip in the scene.
+    branchPopup?: { upid: string; branch: string };
+    // Opens the ISSUE POPUP (an adopted tree's fruit card) with the full
+    // issue payload (the static renderer cannot poll /api/…/issues).
+    issuePopup?: { upid: string; issue: IssueInfo };
     // Boots the wall-bound auto-calibration overlay with a calibrator state
     // (the static renderer cannot poll /api/autocal/state).
     calibration?: AutocalState;
@@ -80,6 +89,10 @@ const IDEA_ID = "idea";
 // "Park it for later" shows its confirmation strip this long before the deck
 // window closes itself (the choice must visibly land at projector distance).
 const PARK_CONFIRM_MS = 2_000;
+
+// ISSUE FRUIT poll cadence: while an adopted tree stands, its open GitHub
+// issues refresh on this interval (GET /api/process/:upid/issues).
+export const ISSUE_POLL_MS = 60_000;
 
 declare global {
   interface Window {
@@ -169,6 +182,24 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
   );
   const holoPanelRef = useRef<{ upid: string; anchor: SceneDwellRect | null } | null>(null);
   holoPanelRef.current = holoPanel;
+  // BRANCH / ISSUE POPUPS (adopted trees): the contextual glass a limb-tip or
+  // fruit pick opens, anchored to the SUB-OBJECT's projected rect. At most
+  // one of the pair at a time; both sit ABOVE the tree menu in the
+  // closeTopPopup ordering (under the holo panel).
+  const [branchPopup, setBranchPopup] = useState<{ upid: string; branch: string; anchor: SceneDwellRect | null } | null>(
+    initialOverlay?.branchPopup !== undefined
+      ? { upid: initialOverlay.branchPopup.upid, branch: initialOverlay.branchPopup.branch, anchor: null }
+      : null,
+  );
+  const branchPopupRef = useRef<typeof branchPopup>(null);
+  branchPopupRef.current = branchPopup;
+  const [issuePopup, setIssuePopup] = useState<{ upid: string; issue: IssueInfo; anchor: SceneDwellRect | null } | null>(
+    initialOverlay?.issuePopup !== undefined
+      ? { upid: initialOverlay.issuePopup.upid, issue: initialOverlay.issuePopup.issue, anchor: null }
+      : null,
+  );
+  const issuePopupRef = useRef<typeof issuePopup>(null);
+  issuePopupRef.current = issuePopup;
   // GUEST HANDS overlay (the URL/QR other computers open to get hand controls).
   const [guestsOpen, setGuestsOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -1654,6 +1685,90 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
     return [];
   }, [ideas, snapshot.suggestion.pitch, snapshot.suggestion.confidence]);
 
+  // ISSUE FRUIT poller: for every ADOPTED tree (treeRepo.remoteUrl recorded,
+  // never the self process) fetch GET /api/process/:upid/issues once a
+  // minute while the tree exists. Degrades honestly: an absent route, a dead
+  // server or a malformed payload all resolve to NO fruit ([]) — never a
+  // crash, never stale beads. Results ride into the scene via treeSpecs
+  // below; RoomScene's fruitSignature gate regrows the entry only when the
+  // set actually changed.
+  const [issuesByUpid, setIssuesByUpid] = useState<Record<string, IssueInfo[]>>({});
+  const issuesByUpidRef = useRef(issuesByUpid);
+  issuesByUpidRef.current = issuesByUpid;
+  const adoptedKey = useMemo(
+    () =>
+      snapshot.processes
+        .filter(
+          (process) =>
+            process.upid !== "self" &&
+            typeof process.treeRepo?.remoteUrl === "string" &&
+            process.treeRepo.remoteUrl.length > 0,
+        )
+        .map((process) => process.upid)
+        .join("|"),
+    [snapshot.processes],
+  );
+  useEffect(() => {
+    if (typeof window === "undefined" || adoptedKey.length === 0) {
+      return;
+    }
+    const upids = adoptedKey.split("|");
+    let cancelled = false;
+    const poll = async (): Promise<void> => {
+      for (const upid of upids) {
+        let issues: IssueInfo[] = [];
+        try {
+          const response = await fetch(`/api/process/${encodeURIComponent(upid)}/issues`, {
+            headers: { accept: "application/json" },
+          });
+          if (response.ok) {
+            const payload = (await response.json().catch(() => null)) as { issues?: unknown } | null;
+            if (payload !== null && Array.isArray(payload.issues)) {
+              issues = payload.issues.flatMap((issue): IssueInfo[] => {
+                const candidate = issue as { number?: unknown; title?: unknown; labels?: unknown };
+                if (typeof candidate.number !== "number" || !Number.isFinite(candidate.number)) {
+                  return [];
+                }
+                return [
+                  {
+                    number: candidate.number,
+                    title: typeof candidate.title === "string" ? candidate.title : "",
+                    labels: Array.isArray(candidate.labels)
+                      ? candidate.labels.filter((label): label is string => typeof label === "string")
+                      : [],
+                  },
+                ];
+              });
+            }
+          }
+        } catch {
+          // Route absent / server down: this tree just bears no fruit.
+        }
+        if (cancelled) {
+          return;
+        }
+        setIssuesByUpid((current) => {
+          const previous = current[upid] ?? [];
+          const unchanged =
+            previous.length === issues.length &&
+            previous.every(
+              (issue, index) =>
+                issue.number === issues[index].number &&
+                issue.title === issues[index].title &&
+                issue.labels.join(",") === issues[index].labels.join(","),
+            );
+          return unchanged ? current : { ...current, [upid]: issues };
+        });
+      }
+    };
+    void poll();
+    const timer = setInterval(() => void poll(), ISSUE_POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [adoptedKey]);
+
   // Scene trees: one per process (minus anything hidden via the hide menu).
   // Each spec carries the INFERRED project title (process.task) for the node
   // label, the live steering flag so the scene can ring the current steering
@@ -1689,9 +1804,14 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
             builds: builds.length > 0 ? summary : undefined,
             published: typeof process.publishedUrl === "string" && process.publishedUrl.length > 0,
             failedCount: summary.failed + (execution?.status === "failed" ? 1 : 0),
+            // GIT SUBSTRATE limbs (room/* branches) + issue fruit ride the
+            // spec straight from the snapshot/poller — the scene re-derives
+            // limbs each reconcile, so a fresh branch appears within a tick.
+            treeRepo: process.treeRepo ?? null,
+            issues: issuesByUpid[process.upid],
           };
         }),
-    [snapshot.processes, hiddenTrees, steeringUpid],
+    [snapshot.processes, hiddenTrees, steeringUpid, issuesByUpid],
   );
 
   const visibleIdeaOrbs = useMemo<IdeaOrbSpec[]>(
@@ -1771,6 +1891,56 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
     [],
   );
 
+  // Picking a LIMB TIP on an adopted tree opens the branch's contextual
+  // popup at the limb's own projected rect. One of the branch/issue pair at
+  // a time — opening one closes the other.
+  const openBranchPopup = useCallback((callsign: string, branch: string, anchor: SceneDwellRect | null) => {
+    const process = snapshotRef.current.processes.find(
+      (candidate) => candidate.callsign === callsign || candidate.upid === callsign,
+    );
+    if (process === undefined) {
+      return;
+    }
+    setIssuePopup(null);
+    setBranchPopup({ upid: process.upid, branch, anchor });
+  }, []);
+
+  // Picking a FRUIT opens the issue's popup; the issue payload comes from
+  // the poller's latest list (falling back to the bare number when the list
+  // refreshed between render and pick).
+  const openIssuePopup = useCallback((callsign: string, issueNumber: number, anchor: SceneDwellRect | null) => {
+    const process = snapshotRef.current.processes.find(
+      (candidate) => candidate.callsign === callsign || candidate.upid === callsign,
+    );
+    if (process === undefined) {
+      return;
+    }
+    const issue =
+      issuesByUpidRef.current[process.upid]?.find((candidate) => candidate.number === issueNumber) ?? {
+        number: issueNumber,
+        title: "",
+        labels: [],
+      };
+    setBranchPopup(null);
+    setIssuePopup({ upid: process.upid, issue, anchor });
+  }, []);
+
+  // 🌱 GROW A BRANCH (tree menu, adopted trees): POST names a real room/*
+  // rail off the freshly fetched origin tip; the menu closes immediately and
+  // the LIMB appears via the next snapshot (limbs re-derive each reconcile).
+  const growBranch = useCallback(async (upid: string) => {
+    setSelected(null);
+    try {
+      await fetch(`/api/process/${encodeURIComponent(upid)}/branch`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: "spoken-changes" }),
+      });
+    } catch {
+      // No limb grows; the server logs the honest failure.
+    }
+  }, []);
+
   // ANCHOR CHASE (menu ↔ tree): while a menu is open, refresh its anchor from
   // the tree's LIVE projected dwell rect about once a second — slot re-shuffles
   // and settle easing move trees after pick time, and a menu pinned to a stale
@@ -1842,13 +2012,23 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
 
   // DWELL-MISS / WALKED-AWAY CLOSE (GestureLayer → popup-dismiss.ts): the
   // gesture wall's ground-click. Closes the TOP popup only — the holo panel
-  // first (it stacks over the menu that opened it), then the tree menu, else
-  // the idea action card. Deliberately narrow: the deck/QR/help overlays keep
-  // their explicit close buttons (auto-closing a deck mid-pitch because
-  // nobody pointed for 6s would be worse than stale glass).
+  // first (it stacks over the menu that opened it), then the branch/issue
+  // popups (they stack over the tree menu their limb/fruit belongs to), then
+  // the tree menu, else the idea action card. Deliberately narrow: the
+  // deck/QR/help overlays keep their explicit close buttons (auto-closing a
+  // deck mid-pitch because nobody pointed for 6s would be worse than stale
+  // glass).
   const closeTopPopup = useCallback(() => {
     if (holoPanelRef.current !== null) {
       setHoloPanel(null);
+      return;
+    }
+    if (branchPopupRef.current !== null) {
+      setBranchPopup(null);
+      return;
+    }
+    if (issuePopupRef.current !== null) {
+      setIssuePopup(null);
       return;
     }
     if (selectedRef.current !== null) {
@@ -1952,6 +2132,8 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
         onAcceptIdea={acceptOrb}
         onSelectProcess={selectSceneProcess}
         onPickMiss={closeMenu}
+        onPickBranch={openBranchPopup}
+        onPickIssue={openIssuePopup}
         dialogue={dialogueSpecs}
         topics={topicSpecs}
         research={researchSpecs}
@@ -2492,8 +2674,40 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
             setHoloPanel({ upid, anchor: menuAnchor });
             setSelected(null);
           }}
+          onGrowBranch={(upid) => void growBranch(upid)}
         />
       ) : null}
+
+      {/* BRANCH / ISSUE POPUPS (adopted trees): the limb-tip / fruit
+          contextual glass, anchored to the picked SUB-OBJECT's rect. Closed
+          by ✕, by opening the other, or by the dwell-miss ground-click
+          (closeTopPopup — above the tree menu, below the holo panel). */}
+      {branchPopup !== null
+        ? (() => {
+            const popupProcess = snapshot.processes.find((candidate) => candidate.upid === branchPopup.upid);
+            return popupProcess !== undefined ? (
+              <BranchPopup
+                process={popupProcess}
+                branch={branchPopup.branch}
+                anchor={branchPopup.anchor}
+                onClose={() => setBranchPopup(null)}
+              />
+            ) : null;
+          })()
+        : null}
+      {issuePopup !== null
+        ? (() => {
+            const popupProcess = snapshot.processes.find((candidate) => candidate.upid === issuePopup.upid);
+            return popupProcess !== undefined ? (
+              <IssuePopup
+                process={popupProcess}
+                issue={issuePopup.issue}
+                anchor={issuePopup.anchor}
+                onClose={() => setIssuePopup(null)}
+              />
+            ) : null;
+          })()
+        : null}
 
       {/* HOLO PANEL: the imported tree's LIVE deployment (via the same-origin
           /salem proxy) floating beside the tree. Mounted like the tree menu —

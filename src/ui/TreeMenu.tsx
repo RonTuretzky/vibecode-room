@@ -122,6 +122,10 @@ export interface TreeMenuModel {
   // LIVE DEPLOYMENT (imported trees): the deploy-resolver's confirmed URL —
   // present, the menu grows a "🌐 Live app ▸" row opening the holo panel.
   deployUrl: string | null;
+  // ADOPTED (GitHub import with its origin recorded, never the self tree):
+  // the menu grows the "🌱 Grow a branch ▸" row — POST /api/process/:upid/
+  // branch names a real room/* rail off the freshly fetched origin tip.
+  adopted: boolean;
 }
 
 // Pure: everything the menu renders, derived from the live snapshot (unit-
@@ -153,6 +157,8 @@ export function treeMenuModel(process: ProjectorProcess, snapshot: ProjectorSnap
         ? { url: process.publishedUrl, qrSvg: process.publishedQrSvg }
         : null,
     deployUrl: typeof process.deployUrl === "string" && process.deployUrl.length > 0 ? process.deployUrl : null,
+    adopted:
+      !isSelf && typeof process.treeRepo?.remoteUrl === "string" && process.treeRepo.remoteUrl.length > 0,
   };
 }
 
@@ -172,9 +178,13 @@ export interface TreeMenuProps {
   // beside the tree — the App closes this menu and mounts HoloPanel. Absent =
   // the row never renders (older mounts, tests exercising the menu alone).
   onOpenLiveApp?: (upid: string) => void;
+  // GROW A BRANCH (adopted trees only): POST /api/process/:upid/branch — the
+  // App fires it and closes the menu; the new limb appears via the snapshot.
+  // Absent = the row never renders.
+  onGrowBranch?: (upid: string) => void;
 }
 
-export function TreeMenu({ process, snapshot, anchor, onClose, onOpenDeck, onDismiss, onOpenLiveApp }: TreeMenuProps) {
+export function TreeMenu({ process, snapshot, anchor, onClose, onOpenDeck, onDismiss, onOpenLiveApp, onGrowBranch }: TreeMenuProps) {
   const model = treeMenuModel(process, snapshot);
   const execution = executionOf(process);
   // Re-derived per render — the anchor prop changes on a fresh pick and on the
@@ -320,6 +330,21 @@ export function TreeMenu({ process, snapshot, anchor, onClose, onOpenDeck, onDis
           onClick={() => onOpenLiveApp(process.upid)}
         >
           🌐 Live app ▸
+        </button>
+      ) : null}
+
+      {/* 🌱 GROW A BRANCH (adopted trees only): one press names a real room/*
+          rail off the freshly fetched origin tip; the menu closes and the new
+          LIMB grows on the tree within a snapshot tick. */}
+      {model.adopted && onGrowBranch !== undefined ? (
+        <button
+          type="button"
+          className="ctl-button tree-menu-grow"
+          data-testid="tree-menu-grow"
+          title="Grow a real branch (room/spoken-changes) on this import's repo — it appears as a limb on the tree."
+          onClick={() => onGrowBranch(process.upid)}
+        >
+          🌱 Grow a branch ▸
         </button>
       ) : null}
 

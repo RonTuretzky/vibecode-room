@@ -22,6 +22,9 @@ import type { BuildloopProcess, BuildloopSnapshot } from "./buildloop";
 import { PRACTICE_ORB_COUNT } from "./guided/machine";
 import { DISMISS_CONFIRM_MS, TREE_MENU_GESTURE_WIDTH, TREE_MENU_WIDTH, treeMenuModel, treeMenuPlacement } from "./TreeMenu";
 import { HOLO_PAGES, HOLO_TILT_DEG, holoPanelTilt, salemSrc } from "./HoloPanel";
+import { branchPopupModel } from "./BranchPopup";
+import { issuePopupModel } from "./IssuePopup";
+import { FRUIT_BUG_COLOR, FRUIT_DEFAULT_COLOR } from "./tree-limbs";
 import type { ProjectorProcess } from "./types";
 
 function countOccurrences(haystack: string, needle: string): number {
@@ -1810,5 +1813,144 @@ describe("holo panel: the live app beside its tree", () => {
     const withoutUrl = { ...demoProjectorSnapshot.processes[0]!, deployUrl: "" };
     expect(treeMenuModel(withoutUrl, demoProjectorSnapshot).deployUrl).toBeNull();
     expect(treeMenuModel(demoProjectorSnapshot.processes[0]!, demoProjectorSnapshot).deployUrl).toBeNull();
+  });
+});
+
+// BRANCH LIMBS + ISSUE FRUIT: an adopted tree's git substrate on the wall —
+// the tree menu grows "🌱 Grow a branch ▸" only for adopted imports, and the
+// limb-tip/fruit picks open dwell-shielded contextual glass (BranchPopup /
+// IssuePopup). The static renderer opens the popups via initialOverlay
+// .branchPopup / .issuePopup (the same seam idiom as selected/holoUpid).
+describe("adopted trees: grow-a-branch row + branch/issue popups", () => {
+  const REMOTE_URL = "https://github.com/acme/pr-triage";
+  const PR_URL = "https://github.com/acme/pr-triage/pull/7";
+  const TREE_REPO = {
+    branches: [
+      { name: "main", commits: 5 },
+      { name: "room/spoken-changes", commits: 3, prUrl: PR_URL },
+      { name: "room/issue-12", commits: 1 },
+    ],
+    remoteUrl: REMOTE_URL,
+  };
+  const adoptedSnapshot = () => ({
+    ...demoProjectorSnapshot,
+    processes: demoProjectorSnapshot.processes.map((process, index) =>
+      index === 0 ? { ...process, treeRepo: TREE_REPO } : process,
+    ),
+  });
+  const adoptedProcess = (): ProjectorProcess => adoptedSnapshot().processes[0]!;
+
+  test("an ADOPTED tree grows the menu's Grow-a-branch row", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={adoptedSnapshot()} initialOverlay={{ selected: "Atlas" }} />,
+    );
+    expect(html).toContain('data-testid="tree-menu-grow"');
+    expect(html).toContain("🌱 Grow a branch ▸");
+  });
+
+  test("no treeRepo (the demo fleet) → no Grow-a-branch row", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={demoProjectorSnapshot} initialOverlay={{ selected: "Atlas" }} />,
+    );
+    expect(html).not.toContain('data-testid="tree-menu-grow"');
+  });
+
+  test("treeMenuModel.adopted: remoteUrl gates it, and the SELF tree never adopts", () => {
+    expect(treeMenuModel(adoptedProcess(), demoProjectorSnapshot).adopted).toBe(true);
+    const unpublished = { ...adoptedProcess(), treeRepo: { branches: TREE_REPO.branches, remoteUrl: null } };
+    expect(treeMenuModel(unpublished, demoProjectorSnapshot).adopted).toBe(false);
+    expect(treeMenuModel(demoProjectorSnapshot.processes[0]!, demoProjectorSnapshot).adopted).toBe(false);
+    const selfish = { ...adoptedProcess(), stage: "self" } as unknown as ProjectorProcess;
+    expect(treeMenuModel(selfish, demoProjectorSnapshot).adopted).toBe(false);
+  });
+
+  test("the branch popup renders its chrome: title, commits + PR ✓, steer/PR/close buttons", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp
+        initialSnapshot={adoptedSnapshot()}
+        initialOverlay={{ branchPopup: { upid: "upid_atlas_7f3", branch: "room/spoken-changes" } }}
+      />,
+    );
+    expect(html).toContain('data-testid="branch-popup"');
+    expect(html).toContain('data-testid="branch-popup-title"');
+    expect(html).toContain("spoken-changes");
+    expect(html).toContain("3 commits · PR ✓");
+    // The already-open PR's URL rides in-room (plain text, no target=_blank).
+    expect(html).toContain('data-testid="branch-popup-pr-url"');
+    expect(html).toContain(PR_URL);
+    expect(html).not.toContain("target=");
+    expect(html).toContain('data-testid="branch-popup-steer"');
+    expect(html).toContain("🎙 Steer this branch");
+    expect(html).toContain('data-testid="branch-popup-pr"');
+    expect(html).toContain("⬆ Open PR ▸");
+    expect(html).toContain('data-testid="branch-popup-close"');
+  });
+
+  test("the branch popup root shields its WHOLE rect from the dwell-miss close", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp
+        initialSnapshot={adoptedSnapshot()}
+        initialOverlay={{ branchPopup: { upid: "upid_atlas_7f3", branch: "room/spoken-changes" } }}
+      />,
+    );
+    const idx = html.indexOf('data-testid="branch-popup"');
+    expect(idx).toBeGreaterThan(-1);
+    const openTag = html.slice(html.lastIndexOf("<", idx), html.indexOf(">", idx));
+    expect(openTag).toContain("data-dwell-shield");
+  });
+
+  test("a branch that left the snapshot renders NO popup (no dead glass)", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp
+        initialSnapshot={adoptedSnapshot()}
+        initialOverlay={{ branchPopup: { upid: "upid_atlas_7f3", branch: "room/ghost" } }}
+      />,
+    );
+    expect(html).not.toContain('data-testid="branch-popup"');
+  });
+
+  test("the issue popup renders heading, label chips, take + close — dwell-shielded", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp
+        initialSnapshot={adoptedSnapshot()}
+        initialOverlay={{
+          issuePopup: {
+            upid: "upid_atlas_7f3",
+            issue: { number: 12, title: "Fix the drip", labels: ["bug", "help wanted"] },
+          },
+        }}
+      />,
+    );
+    expect(html).toContain('data-testid="issue-popup"');
+    expect(html).toContain("#12 Fix the drip");
+    expect(countOccurrences(html, 'data-testid="issue-popup-chip"')).toBe(2);
+    expect(html).toContain('data-testid="issue-popup-take"');
+    expect(html).toContain("🌱 Take this issue");
+    expect(html).toContain('data-testid="issue-popup-close"');
+    const idx = html.indexOf('data-testid="issue-popup"');
+    const openTag = html.slice(html.lastIndexOf("<", idx), html.indexOf(">", idx));
+    expect(openTag).toContain("data-dwell-shield");
+  });
+
+  // ── pure derivations ──────────────────────────────────────────────────────
+
+  test("branchPopupModel resolves the live branch (commits, PR) and nulls a missing one", () => {
+    const model = branchPopupModel(adoptedProcess(), "room/spoken-changes");
+    expect(model).toEqual({ branch: "room/spoken-changes", short: "spoken-changes", commits: 3, prUrl: PR_URL });
+    const bare = branchPopupModel(adoptedProcess(), "room/issue-12");
+    expect(bare?.prUrl).toBeNull();
+    expect(branchPopupModel(adoptedProcess(), "room/ghost")).toBeNull();
+    expect(branchPopupModel(demoProjectorSnapshot.processes[0]!, "room/spoken-changes")).toBeNull();
+  });
+
+  test("issuePopupModel: heading + label chips in the fruit palette", () => {
+    const model = issuePopupModel({ number: 12, title: "Fix the drip", labels: ["bug", "docs"] });
+    expect(model.heading).toBe("#12 Fix the drip");
+    expect(model.chips).toEqual([
+      { label: "bug", color: FRUIT_BUG_COLOR },
+      { label: "docs", color: FRUIT_DEFAULT_COLOR },
+    ]);
+    // A title-less fallback (poller raced the pick) stays honest: bare number.
+    expect(issuePopupModel({ number: 7, title: "", labels: [] }).heading).toBe("#7");
   });
 });
