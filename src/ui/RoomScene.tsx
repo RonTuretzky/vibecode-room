@@ -1262,6 +1262,41 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       // Flower-top landing spots for the butterflies, filled in as the flora
       // scatter runs (async — no flowers loaded simply means no landings).
       const flowerSpots: { x: number; y: number; z: number }[] = [];
+      // A dancing cat parked at the foot of every tree in the meadow "sea" of
+      // scattered jacarandas — one low-poly companion per placed tree instance,
+      // swayed by the env update loop (same hop-and-tilt idiom as the garden
+      // build-tree cats). Filled in as the flora scatter lands the trees.
+      const catGeoBody = new THREE.SphereGeometry(0.16, 8, 8);
+      const catGeoEar = new THREE.OctahedronGeometry(0.55, 0);
+      const catGeoTail = new THREE.CylinderGeometry(0.03, 0.05, 1, 5);
+      const catMat = new THREE.MeshPhongMaterial({ color: 0x6b5b4a, emissive: 0x6b5b4a, emissiveIntensity: 0.08 });
+      const envCats: { group: THREE.Group; baseX: number; baseZ: number; phase: number }[] = [];
+      const spawnTreeCat = (x: number, z: number, scale: number) => {
+        const cat = new THREE.Group();
+        const body = new THREE.Mesh(catGeoBody, catMat);
+        body.scale.set(0.9, 1.2, 0.7);
+        body.position.y = 0.24;
+        cat.add(body);
+        const head = new THREE.Mesh(catGeoBody, catMat);
+        head.scale.setScalar(0.8);
+        head.position.set(0, 0.5, 0.05);
+        cat.add(head);
+        for (const side of [-1, 1]) {
+          const ear = new THREE.Mesh(catGeoEar, catMat);
+          ear.scale.setScalar(0.12);
+          ear.position.set(side * 0.12, 0.66, 0.05);
+          cat.add(ear);
+        }
+        const tail = new THREE.Mesh(catGeoTail, catMat);
+        tail.scale.set(0.25, 0.4, 0.25);
+        tail.position.set(0, 0.32, -0.28);
+        tail.rotation.x = -0.7;
+        cat.add(tail);
+        cat.scale.setScalar(scale);
+        cat.position.set(x, 0, z);
+        group.add(cat);
+        envCats.push({ group: cat, baseX: x, baseZ: z, phase: floraRng() * Math.PI * 2 });
+      };
       const scatterFlora = (flora: FloraLibrary) => {
         const dummy = new THREE.Object3D();
         for (const spec of FLORA_SCATTER) {
@@ -1272,6 +1307,9 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
           // Blossom height per variant (bounding boxes are precomputed by
           // garden-flora) so a landing butterfly sits ON the flower head.
           const isFlower = spec.name.startsWith("flower_");
+          // The scattered jacarandas ARE the meadow's "sea" of trees; each gets
+          // a dancing cat parked at its foot.
+          const isTree = spec.name === "jacaranda_tree";
           const variantTopY = variants.map((variant) =>
             variant.pieces.reduce((maxY, piece) => Math.max(maxY, piece.geometry.boundingBox?.max.y ?? 0), 0),
           );
@@ -1304,6 +1342,17 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
                 y: variantTopY[i % variants.length] * dummy.scale.x + 0.05,
                 z: dummy.position.z,
               });
+            }
+            if (isTree) {
+              // Nudge the cat just off the trunk toward the meadow centre so it
+              // reads at the tree's foot rather than buried in the canopy scan.
+              const offset = 2.4;
+              const inward = Math.hypot(dummy.position.x, dummy.position.z) || 1;
+              spawnTreeCat(
+                dummy.position.x - (dummy.position.x / inward) * offset,
+                dummy.position.z - (dummy.position.z / inward) * offset,
+                1.4,
+              );
             }
           }
           variants.forEach((variant, v) => {
@@ -1621,6 +1670,14 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
             );
             mote.sprite.material.opacity = 0.22 + Math.abs(Math.sin(t * 0.7 + mote.phase)) * 0.3;
           }
+          // The tree-foot cats dance: a bouncing hop with a wiggling side-step
+          // and tail-swaying tilt (same idiom as the garden build-tree cats).
+          for (const cat of envCats) {
+            cat.group.position.y = Math.abs(Math.sin(t * 3 + cat.phase)) * 0.42;
+            cat.group.position.x = cat.baseX + Math.sin(t * 2 + cat.phase) * 0.18;
+            cat.group.position.z = cat.baseZ + Math.cos(t * 2 + cat.phase) * 0.12;
+            cat.group.rotation.z = Math.sin(t * 6 + cat.phase) * 0.25;
+          }
         },
         dispose: () => {
           floraDisposed = true;
@@ -1636,6 +1693,12 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
           groundDiff.dispose();
           groundNor.dispose();
           butterflyWingMats.forEach((mat) => mat.map?.dispose());
+          // Tree-foot cat assets are shared across every cat instance, so drop
+          // them once here rather than per-mesh in the traverse below.
+          catGeoBody.dispose();
+          catGeoEar.dispose();
+          catGeoTail.dispose();
+          catMat.dispose();
           group.traverse((node) => {
             if (node instanceof THREE.InstancedMesh) {
               // Flora instances: release ONLY the instance buffers — the
@@ -2987,9 +3050,9 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       }
       const slot = centeredSlot(index);
       const y = garden ? 0 : 3.1 + (Math.abs(slot) % 2) * 0.9;
-      // 8.5-unit slots (live-room request: space the trees out) with a deeper
+      // 13-unit slots (live-room request, twice: space the trees out MORE) with a deeper
       // alternating z stagger so neighboring canopies never read as one mass.
-      return { pos: new THREE.Vector3(slot * 8.5, y, -3.2 - (Math.abs(slot) % 2) * 2.6), k: 1 };
+      return { pos: new THREE.Vector3(slot * 13, y, -3.2 - (Math.abs(slot) % 2) * 3.4), k: 1 };
     };
     const flowerPosition = (
       index: number,
