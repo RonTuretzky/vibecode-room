@@ -561,6 +561,24 @@ export function createProjectorApp(runtime: ProjectorRuntime, options: Projector
     }
     return context.json({ ok: true, url: result.url });
   });
+  // The last rail: squash-merge the branch's open PR (gh pr merge --squash).
+  // For an import whose host deploys latest main, merging IS the deploy — the
+  // popup asks twice before it posts here. Idempotent: a PR already merged
+  // upstream answers ok rather than erroring on the second press.
+  app.post("/api/process/:upid/branch/:branch/merge", async (context) => {
+    if (isOfflineDemoRequest(context.req.header("referer"))) {
+      return context.json(runtime.snapshot());
+    }
+    const upid = context.req.param("upid");
+    if (upid === "self") {
+      return context.json({ ok: false, error: "the room does not merge its own PRs here" }, 400);
+    }
+    const result = await runtime.mergeTreeBranch(upid, context.req.param("branch"));
+    if (!result.ok) {
+      return context.json({ ok: false, error: result.error }, 400);
+    }
+    return context.json({ ok: true, merged: true });
+  });
   // The tree's repo facts for menus/popups: recorded origin, branch list
   // (per-branch prUrl once open), and the published deploy URL when one
   // confirmed. 404 when this UPID has no tree repo at all.

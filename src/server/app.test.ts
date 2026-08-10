@@ -1101,6 +1101,38 @@ describe("adopted-tree branch + PR routes", () => {
     expect(repo.branches[0]?.prUrl).toBe("https://github.com/acme/widget/pull/7");
   });
 
+  test("merge squashes the branch's OPEN PR, is idempotent, and refuses a branch with no PR", async () => {
+    const git = branchRailGit();
+    const gh = branchRailGh();
+    const { app, runtime } = await makeApp({
+      buildBackends: [new RouteFakeBackend()],
+      treeGitRunner: git.run,
+      treeGhRunner: gh.run,
+    });
+    const upid = await importAdopted(app, runtime);
+    await postJson(app, `/api/process/${upid}/branch`, { name: "add dark mode" });
+
+    // No PR yet: merging is refused with the honest reason, and gh never runs.
+    const early = await postJson(app, `/api/process/${upid}/branch/add-dark-mode/merge`);
+    expect(early.status).toBe(400);
+    expect(((await early.json()) as { error: string }).error).toContain("PR");
+    expect(gh.calls.some((argv) => argv[2] === "merge")).toBe(false);
+
+    await postJson(app, `/api/process/${upid}/branch/add-dark-mode/pr`);
+    const merged = await postJson(app, `/api/process/${upid}/branch/add-dark-mode/merge`);
+    expect(merged.status).toBe(200);
+    expect((await merged.json()) as unknown).toEqual({ ok: true, merged: true });
+    // Squash-merge of the STORED PR url against the recorded origin.
+    const merge = gh.calls.find((argv) => argv[1] === "pr" && argv[2] === "merge")!;
+    expect(merge).toContain("--squash");
+    expect(merge).toContain("https://github.com/acme/widget/pull/7");
+    expect(merge[merge.indexOf("--repo") + 1]).toBe("acme/widget");
+
+    // Idempotent: pressing again stays ok (upstream reports already merged).
+    const again = await postJson(app, `/api/process/${upid}/branch/add-dark-mode/merge`);
+    expect(again.status).toBe(200);
+  });
+
   test("local (non-adopted) trees are refused with a 400 — the rails are adopted-only", async () => {
     const git = branchRailGit();
     const { app, runtime } = await makeApp({
@@ -1126,6 +1158,8 @@ describe("adopted-tree branch + PR routes", () => {
     expect(self.status).toBe(400);
     const selfPr = await postJson(app, "/api/process/self/branch/main/pr");
     expect(selfPr.status).toBe(400);
+    const selfMerge = await postJson(app, "/api/process/self/branch/main/merge");
+    expect(selfMerge.status).toBe(400);
     expect((await postJson(app, "/api/process/upid-1/branch", {})).status).toBe(400);
     expect((await postJson(app, "/api/process/upid-1/branch", { name: "   " })).status).toBe(400);
   });

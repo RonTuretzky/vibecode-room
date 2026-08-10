@@ -247,6 +247,11 @@ export interface ProjectorRuntime {
     input?: { title?: string; body?: string },
     correlationId?: string,
   ): Promise<{ ok: true; url: string } | { ok: false; error: string }>;
+  // The LAST rail of the ride (branch → commits → PR → merged): squash-merge
+  // the branch's open PR through the gh seam. Idempotent — an already-merged
+  // PR answers ok. For an import whose host deploys latest main, this IS the
+  // deploy, so the UI asks twice before it calls.
+  mergeTreeBranch(upid: string, branch: string, correlationId?: string): Promise<{ ok: true; merged: true } | { ok: false; error: string }>;
   // The tree's repo facts for menus/popups (GET /api/process/:upid/repo):
   // origin + branches (with per-branch prUrl once open) + optional deployUrl
   // (an import's resolved live deployment, else the take-home publish URL).
@@ -4243,6 +4248,19 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     const pr = await this.#treeGit.openPrToOrigin(upid, branch, input.title, input.body);
     this.#traceTreePr(correlationId, upid, branch, pr.ok ? { url: pr.url, committed: committed.changed } : { error: pr.error, stage: "pr" });
     return pr;
+  }
+
+  async mergeTreeBranch(
+    upid: string,
+    branch: string,
+    correlationId = `corr-tree-merge-${upid}`,
+  ): Promise<{ ok: true; merged: true } | { ok: false; error: string }> {
+    if (this.#treeGit === null) {
+      return { ok: false, error: "tree git substrate is disabled" };
+    }
+    const merged = await this.#treeGit.mergePr(upid, branch);
+    this.#traceTreePr(correlationId, upid, branch, merged.ok ? { merged: true } : { error: merged.error, stage: "merge" });
+    return merged;
   }
 
   #traceTreePr(correlationId: string, upid: string, branch: string, meta: Record<string, unknown>): void {
