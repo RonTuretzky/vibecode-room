@@ -76,6 +76,25 @@ loop. Dwell + talk only.
 import, holo bloom, branch+steer, PR, issue-fruit take. Regenerate:
 `bun scripts/capture-demo-gifs.ts` (Playwright frames → ffmpeg palette GIF).
 
+## Rehearsal findings (03:00–04:45, all fixed & shipped)
+
+- The FULL API arc ran clean against the real repo: import → deployUrl resolved
+  → issues #11/#12 served → `room/spoken-changes` created → edit committed →
+  **PR #14 opened and closed** on convent-profile. The rails are real.
+- The convent tree stands **left of the seam on WALL B** (self tree right edge
+  of wall A). Dwell the dock **Fit** to re-center the pair on the garden
+  (flat fit now recenters on the tree centroid); palm-walk to approach.
+- Imported trees now render FULL-GROWN (were saplings). Re-importing after a
+  server restart reuses the existing clone (fast, no more "path exists").
+- Headless probes show primitive fallback trees (no photoscan flora) whose
+  crown picks are flaky — REAL walls load flora; the HD/jacaranda picks are
+  verified good. If a pick feels dead on the wall, dwell slightly above the
+  visible crown center.
+- The panel/holo/branch/issue popups + steer applier all shipped verified;
+  the voice beat (record → speak → commit) needs a live-mic rehearsal at the
+  rig — the applier path is unit-proven and the API arc is proven, the mic
+  slice is the one untested link. Do one spoken rehearsal at T-30.
+
 ## The beats (compressed)
 
 1. (Optional) guided demo step 1 — orb dwell literacy, then Exit.
