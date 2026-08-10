@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import type { ProjectorProcess, TranscriptLine } from "./types";
+import { executionOf } from "./stage";
 
 /**
  * RECORD-A-CHANGE toggle — the one steering surface (live-room directive:
@@ -40,12 +41,60 @@ export function RecordSteerToggle({ process, kind, transcript }: RecordSteerTogg
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [recording]);
   const heard = recording && transcript !== undefined && armMark !== null ? transcript.slice(armMark) : [];
+  // STICKY DISPATCH PANEL (live-room directive: stopping must NOT collapse to
+  // idle — it read as the room losing the recording). On stop, the captured
+  // words freeze into a "got it" panel that stays until the operator presses
+  // Record again (or the popup closes); the live run label rides beneath it.
+  const [dispatched, setDispatched] = useState<string[] | null>(null);
+  useEffect(() => {
+    if (!recording && armMark !== null) {
+      // recording -> stopped: freeze what the window captured.
+      setDispatched(heard.map((line) => line.text).filter((text) => text.length > 0));
+    }
+    if (recording) {
+      setDispatched(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recording]);
+  const execution = executionOf(process);
+  const runLabel = execution !== null && execution.status === "executing" ? execution.progressLabel : null;
   const arm = () => {
     void fetch(`/api/process/${encodeURIComponent(process.upid)}/select`, { method: "POST" }).catch(() => undefined);
   };
   const stop = () => {
     void fetch("/api/process/select/clear", { method: "POST" }).catch(() => undefined);
   };
+  if (!recording && dispatched !== null) {
+    return (
+      <div className="record-steer-live" data-testid="record-steer-dispatched">
+        <div className="record-steer-heard" aria-live="polite">
+          <p className="record-steer-got">✓ got it — {kind === "room" ? "the room is building this change" : "shaping this build"}</p>
+          {dispatched.slice(-4).map((text, index) => (
+            <p key={`${index}-${text.slice(0, 12)}`} className="record-steer-heard-line">
+              {text}
+            </p>
+          ))}
+          {runLabel !== null ? (
+            <p className="record-steer-runlabel" data-testid="record-steer-runlabel">
+              {runLabel}
+            </p>
+          ) : null}
+        </div>
+        <button
+          type="button"
+          className="ctl-button record-steer"
+          data-testid="record-steer-start"
+          title="Press, then talk — everything you say goes into this until you press again."
+          onClick={() => {
+            setDispatched(null);
+            arm();
+          }}
+        >
+          🎙 Record another change
+        </button>
+      </div>
+    );
+  }
   return recording ? (
     <div className="record-steer-live" data-testid="record-steer-live">
       <button

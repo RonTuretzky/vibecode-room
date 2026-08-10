@@ -3940,3 +3940,7 @@ main.gesture-mode .record-steer { min-height: 72px; font-size: 1.15rem; }
 .record-steer-heard-line:last-child { color: #8fa4cc; font-style: italic; }
 .record-steer-heard-empty { margin: 0; color: #8fa4cc; font-style: italic; font-size: 0.95rem; }
 main.gesture-mode .record-steer-heard-line { font-size: 1.2rem; }
+
+/* post-stop dispatch confirmation (sticky until Record is pressed again) */
+.record-steer-got { margin: 0 0 0.3rem 0; color: #7ee2a8; font-weight: 600; }
+.record-steer-runlabel { margin: 0.3rem 0 0 0; color: #8fa4cc; font-size: 0.9rem; }
