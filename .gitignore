@@ -70,3 +70,4 @@ gesture-wall/.venv-hands/
 
 # forest loader disk cache (gh-derived, per-org JSON)
 artifacts/forest/
+artifacts/demo-gifs/
