@@ -907,6 +907,8 @@ interface Entry {
   // A little companion cat parked next to a garden tree — the frame loop sways
   // it so it "dances" (skips reduced-motion). Null on every non-tree entry.
   cat: THREE.Group | null;
+  // The cat's parked X so the dance sway pivots around it (0 when no cat).
+  catBaseX: number;
   label: THREE.Sprite | null;
   targetPos: THREE.Vector3;
   targetScale: number;
@@ -2162,7 +2164,7 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         }
         updateLabelStatus(label, treeStatus(next));
       };
-      return { kind: "tree", treeSpec: spec, group, mats, baseEmissive: 0.55, head: null, headY: 0, cat: null, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false, updateProgress };
+      return { kind: "tree", treeSpec: spec, group, mats, baseEmissive: 0.55, head: null, headY: 0, cat: null, catBaseX: 0, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false, updateProgress };
     };
 
     const buildRealFlower = (spec: IdeaOrbSpec): Entry | null => {
@@ -2226,7 +2228,7 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         label.position.y = 1.1 * size + 0.45;
         group.add(label);
       }
-      return { kind: "flower", ideaSpec: spec, group, mats, baseEmissive, head: null, headY: 0, cat: null, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false };
+      return { kind: "flower", ideaSpec: spec, group, mats, baseEmissive, head: null, headY: 0, cat: null, catBaseX: 0, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false };
     };
 
     const buildFlower = (spec: IdeaOrbSpec): Entry => {
@@ -2300,7 +2302,7 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         label.position.y = stemH + 0.32 * size + 0.1;
         group.add(label);
       }
-      return { kind: "flower", ideaSpec: spec, group, mats, baseEmissive, head, headY: stemH, cat: null, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false };
+      return { kind: "flower", ideaSpec: spec, group, mats, baseEmissive, head, headY: stemH, cat: null, catBaseX: 0, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false };
     };
 
     const buildTree = (spec: TreeSpec): Entry => {
@@ -2436,7 +2438,7 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       cat.position.set(catBase, 0, catBase * 0.35);
       cat.rotation.y = -Math.PI / 4;
       group.add(cat);
-      return { kind: "tree", treeSpec: spec, group, mats: [foliageMat], baseEmissive: foliageMat.emissiveIntensity, head: null, headY: 0, cat, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false, updateProgress };
+      return { kind: "tree", treeSpec: spec, group, mats: [foliageMat], baseEmissive: foliageMat.emissiveIntensity, head: null, headY: 0, cat, catBaseX: catBase, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false, updateProgress };
     };
 
     // ── the self-rebuild repo tree ──────────────────────────────────────────
@@ -2516,7 +2518,7 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       // empty — the module owns its materials — so the frame loop's
       // active-pulse (mats[0]) skips this entry even in "active" state.
       return {
-        kind: "tree", treeSpec: spec, group, mats: [], baseEmissive: 0, head: null, headY: 0, cat: null, label,
+        kind: "tree", treeSpec: spec, group, mats: [], baseEmissive: 0, head: null, headY: 0, cat: null, catBaseX: 0, label,
         targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false,
         disposeExtra: () => {
           built.dispose();
@@ -2564,7 +2566,7 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         label.position.y = radius + 0.25;
         group.add(label);
       }
-      return { kind: "orb-idea", ideaSpec: spec, group, mats: [orbMat], baseEmissive, head: null, headY: 0, cat: null, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false };
+      return { kind: "orb-idea", ideaSpec: spec, group, mats: [orbMat], baseEmissive, head: null, headY: 0, cat: null, catBaseX: 0, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false };
     };
 
     // Orb radius grows with a run's progress; kept in one place so the build
@@ -2632,7 +2634,7 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         }
         updateLabelStatus(label, treeStatus(next));
       };
-      return { kind: "orb-proc", treeSpec: spec, group, mats: [orbMat], baseEmissive: 0.5, head: null, headY: 0, cat: null, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false, updateProgress };
+      return { kind: "orb-proc", treeSpec: spec, group, mats: [orbMat], baseEmissive: 0.5, head: null, headY: 0, cat: null, catBaseX: 0, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false, updateProgress };
     };
 
     // ── layout ──────────────────────────────────────────────────────────────
@@ -2691,7 +2693,7 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         }
         updateLabelStatus(label, treeStatus(next));
       };
-      return { kind: "tree", treeSpec: spec, group, mats: [folMat], baseEmissive: 0.22, head: null, headY: 0, cat: null, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false, updateProgress };
+      return { kind: "tree", treeSpec: spec, group, mats: [folMat], baseEmissive: 0.22, head: null, headY: 0, cat: null, catBaseX: 0, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false, updateProgress };
     };
 
     const buildFloraIdea = (spec: IdeaOrbSpec): Entry => {
@@ -2751,7 +2753,7 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         label.position.y = 0.42 * size + 0.15;
         group.add(label);
       }
-      return { kind: "flower", ideaSpec: spec, group, mats, baseEmissive, head, headY: 0, cat: null, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false };
+      return { kind: "flower", ideaSpec: spec, group, mats, baseEmissive, head, headY: 0, cat: null, catBaseX: 0, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false };
     };
 
     // ── research-mode builders ──────────────────────────────────────────────
@@ -2791,7 +2793,7 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         label.position.y = 0.34;
         group.add(label);
       }
-      return { kind: "dialogue", dialogueSpec: spec, group, mats: [mat], baseEmissive: mat.emissiveIntensity, head: null, headY: 0, cat: null, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false };
+      return { kind: "dialogue", dialogueSpec: spec, group, mats: [mat], baseEmissive: mat.emissiveIntensity, head: null, headY: 0, cat: null, catBaseX: 0, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false };
     };
 
     // One research quest: a slowly-spinning crystal budding off its grounding
@@ -2852,7 +2854,7 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       const label = makeLabelSprite(spec.topic, statusLine, cssHex(color));
       label.position.y = size + 0.3;
       group.add(label);
-      return { kind: "research", researchSpec: spec, group, mats: [mat], baseEmissive, head: null, headY: 0, cat: null, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false };
+      return { kind: "research", researchSpec: spec, group, mats: [mat], baseEmissive, head: null, headY: 0, cat: null, catBaseX: 0, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false };
     };
 
     // Boundary/context cues per layout: the Poincaré ball's wireframe horizon,
@@ -4347,9 +4349,11 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
           } else if (!garden && radial) {
             entry.group.position.y = entry.targetPos.y + Math.sin(t * 0.55 + entry.phase) * 0.25;
           }
-          // The companion cat dances: a bouncing hop with a wiggling tilt.
+          // The companion cat dances: a bouncing hop with a wiggling tilt and
+          // a side-to-side sway so the little dancer sashays as it hops.
           if (entry.cat !== null) {
             entry.cat.position.y = Math.abs(Math.sin(t * 3 + entry.phase)) * 0.3;
+            entry.cat.position.x = entry.catBaseX + Math.sin(t * 2 + entry.phase) * 0.12;
             entry.cat.rotation.z = Math.sin(t * 6 + entry.phase) * 0.25;
           }
           // mats guard: the HD self tree adopts the LIVE mirror spec (often
