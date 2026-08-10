@@ -222,6 +222,29 @@ export function createProjectorApp(runtime: ProjectorRuntime, options: Projector
     }
     return context.json(runtime.setSelfRebuild(on));
   });
+  // SELF VERSION RAILS: the room's own branches (every record window cuts
+  // one) and click-a-branch-to-load. Loading checks the branch out and hands
+  // the process to the supervisor (exit 87 → rebuild → relaunch ON it).
+  app.get("/api/self/branches", async (context) => context.json(await runtime.selfBranches()));
+  app.post("/api/self/checkout", async (context) => {
+    if (isOfflineDemoRequest(context.req.header("referer"))) {
+      return context.json({ ok: false, error: "offline demo" }, 400);
+    }
+    let branch = "";
+    try {
+      const body = (await context.req.json()) as { branch?: unknown };
+      if (typeof body?.branch === "string") {
+        branch = body.branch;
+      }
+    } catch {
+      // fall through to the empty-name refusal
+    }
+    if (branch.length === 0) {
+      return context.json({ ok: false, error: "branch required" }, 400);
+    }
+    const result = await runtime.checkoutSelfBranch(branch);
+    return context.json(result, result.ok ? 200 : 400);
+  });
   // GUIDED-DEMO HOLD: the wall posts {on:true} entering the demo's "describe
   // your idea" step and {on:false} leaving it — while held, an armed auto-build
   // never fires on its own (Done is the only trigger). TTL'd server-side so a

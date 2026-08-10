@@ -227,3 +227,9 @@ main.gesture-mode .tree-menu-close {
   padding: 22px 34px;
   font-size: 30px;
 }
+
+/* versions (self tree): load the room to a branch */
+.tree-menu-versions { display: flex; flex-direction: column; gap: 0.4rem; }
+.tree-menu-versions-head { font-size: 0.8rem; color: #8fa4cc; letter-spacing: 0.04em; }
+.tree-menu-version { display: flex; flex-direction: column; align-items: flex-start; gap: 0.15rem; text-align: left; }
+.tree-menu-version-subject { font-size: 0.8rem; color: #8fa4cc; font-weight: 400; }

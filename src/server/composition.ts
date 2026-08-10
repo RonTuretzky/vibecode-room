@@ -323,6 +323,10 @@ export interface ProjectorRuntime {
   // accepted+built the instant it pops.
   setAutoAccept(on: boolean, correlationId?: string): ProjectorSnapshot;
   autoAccept(): boolean;
+  // SELF VERSION RAILS: the room's own branch list (record windows cut one
+  // per spoken change) and load-a-version (checkout + supervisor relaunch).
+  selfBranches(): Promise<{ current: string; branches: Array<{ name: string; subject: string }> }>;
+  checkoutSelfBranch(branch: string): Promise<{ ok: true } | { ok: false; error: string }>;
   // GUIDED-DEMO HOLD: suspends the armed auto-build's self-firing while the
   // demo's "describe your idea" step is up (Done is the only trigger). TTL'd
   // server-side; releasing re-checks an armed candidate immediately.
@@ -2138,6 +2142,33 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       }
       return;
     }
+    if (grace.upid === "self") {
+      // EVERY record window on the room = its OWN branch off the current one
+      // (live-room directive). The SERVER cuts it — deterministic, before the
+      // run exists — so the agent only ever commits where it stands.
+      void this.#cutSelfBranch(text)
+        .then((branch) => {
+          this.recordExternalTrace({
+            event: branch !== null ? "self.branch.cut" : "self.branch.cut.failed",
+            level: branch !== null ? "info" : "warn",
+            sessionId: this.sessionId,
+            correlationId: `${correlationId}-branch-cut`,
+            meta: { branch },
+          });
+          return this.registry.steer(grace.upid, { text, source: "live-transcript" }, `${correlationId}-window-dispatch`);
+        })
+        .catch((error) => {
+          this.recordExternalTrace({
+            event: "steering.route.error",
+            level: "error",
+            sessionId: this.sessionId,
+            correlationId: `${correlationId}-window-dispatch`,
+            upid: grace.upid,
+            meta: { message: error instanceof Error ? error.message : String(error), windowDispatch: true },
+          });
+        });
+      return;
+    }
     void this.registry
       .steer(grace.upid, { text, source: "live-transcript" }, `${correlationId}-window-dispatch`)
       .catch((error) => {
@@ -3723,6 +3754,97 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       lastSpoken: this.#lastSpoken ?? previous.audio.lastSpoken,
       earcon: this.#lastEarcon ?? previous.audio.earcon,
     };
+  }
+
+  // ── self BRANCH rails (branch-per-record + click-a-branch-to-load) ──────
+  async #selfGit(argv: string[]): Promise<{ code: number; out: string }> {
+    try {
+      const proc = Bun.spawn(["git", ...argv], { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" });
+      const out = await new Response(proc.stdout).text();
+      const err = await new Response(proc.stderr).text();
+      await proc.exited;
+      return { code: proc.exitCode ?? 1, out: (out + err).trim() };
+    } catch (error) {
+      return { code: 1, out: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  // Cut a fresh smart-named room/* branch off the CURRENT branch for a spoken
+  // window. Dedupe -2..-6 on collision; null (never a throw) when git refuses.
+  async #cutSelfBranch(text: string): Promise<string | null> {
+    const base = `room/${slugFromSpeech(text)}`;
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      const name = attempt === 0 ? base : `${base}-${attempt + 1}`;
+      const result = await this.#selfGit(["checkout", "-b", name]);
+      if (result.code === 0) {
+        return name;
+      }
+      if (!result.out.includes("already exists")) {
+        return null;
+      }
+    }
+    return null;
+  }
+
+  // The room's own branches (the wall's "load this version" rows): every
+  // room/* head plus the current branch, newest first, with subjects.
+  async selfBranches(): Promise<{ current: string; branches: Array<{ name: string; subject: string }> }> {
+    const current = (await this.#selfGit(["branch", "--show-current"])).out.trim();
+    const listed = await this.#selfGit([
+      "for-each-ref",
+      "--sort=-committerdate",
+      "--format=%(refname:short)\u0001%(subject)",
+      "refs/heads/room/",
+      `refs/heads/${current}`,
+    ]);
+    const seen = new Set<string>();
+    const branches: Array<{ name: string; subject: string }> = [];
+    for (const line of listed.out.split("\n")) {
+      const [name, subject] = line.split("\u0001");
+      if (name !== undefined && name.length > 0 && !seen.has(name)) {
+        seen.add(name);
+        branches.push({ name, subject: subject ?? "" });
+      }
+    }
+    return { current, branches };
+  }
+
+  // LOAD A VERSION: check out an existing local branch and hand the process to
+  // the supervisor (exit 87 -> rebuild -> relaunch ON that branch). Refuses
+  // honestly: unknown/unsafe names, src/ uncommitted work, or no supervisor.
+  async checkoutSelfBranch(branch: string): Promise<{ ok: true } | { ok: false; error: string }> {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._/-]*$/u.test(branch) || branch.includes("..")) {
+      return { ok: false, error: "unsafe branch name" };
+    }
+    if (!selfModeEnabled(this.#env)) {
+      return { ok: false, error: "no supervisor is wrapping this process (--self launch required)" };
+    }
+    const exists = await this.#selfGit(["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`]);
+    if (exists.code !== 0) {
+      return { ok: false, error: `no local branch named ${branch}` };
+    }
+    const dirty = (await this.#selfGit(["status", "--porcelain"])).out
+      .split("\n")
+      .map((line) => line.slice(3).trim())
+      .filter((path) => path.startsWith("src/"));
+    if (dirty.length > 0) {
+      return { ok: false, error: `uncommitted work in the tree (${dirty[0]}${dirty.length > 1 ? ` +${dirty.length - 1}` : ""}) — commit or stash first` };
+    }
+    const checkout = await this.#selfGit(["checkout", branch]);
+    if (checkout.code !== 0) {
+      return { ok: false, error: checkout.out.slice(0, 160) };
+    }
+    this.recordExternalTrace({
+      event: "self.version.load",
+      level: "info",
+      sessionId: this.sessionId,
+      correlationId: `corr-self-load-${crypto.randomUUID()}`,
+      meta: { branch },
+    });
+    // Respond first, exit after: the supervisor rebuilds the tree (now on the
+    // requested branch) and relaunches the room on it.
+    setTimeout(() => process.exit(87), 400);
+    return { ok: true };
   }
 
   // ── self-run ACTIVITY PROBE (live-room complaint: "run heartbeat · 95%"

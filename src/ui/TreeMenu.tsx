@@ -218,6 +218,37 @@ export function TreeMenu({ process, snapshot, anchor, onClose, onOpenDeck, onDis
   });
   const placement = treeMenuPlacement(anchor, viewport, measured ?? undefined);
 
+  // VERSIONS (self tree): every record window cuts a room/* branch — these
+  // rows load the room to any of them (checkout + supervisor relaunch).
+  const [versions, setVersions] = useState<{ current: string; branches: Array<{ name: string; subject: string }> } | null>(null);
+  const [loadingVersion, setLoadingVersion] = useState<string | null>(null);
+  useEffect(() => {
+    if (!model.isSelf || typeof window === "undefined") {
+      return;
+    }
+    let closed = false;
+    void fetch("/api/self/branches")
+      .then((response) => (response.ok ? response.json() : null))
+      .then((body) => {
+        if (!closed && body !== null) {
+          setVersions(body as { current: string; branches: Array<{ name: string; subject: string }> });
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      closed = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [model.isSelf, process.upid]);
+  const loadVersion = (branch: string) => {
+    setLoadingVersion(branch);
+    void fetch("/api/self/checkout", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ branch }),
+    }).catch(() => undefined);
+  };
+
   // TWO-STAGE remove: the first press arms "really remove?"; it disarms by
   // itself after DISMISS_CONFIRM_MS. Both stages reset when the menu moves to
   // another tree so a stale confirm can never delete the wrong build.
@@ -367,6 +398,31 @@ export function TreeMenu({ process, snapshot, anchor, onClose, onOpenDeck, onDis
       <div className="tree-menu-steer" data-testid="tree-menu-steer">
         <RecordSteerToggle process={process} kind={model.isSelf ? "room" : "build"} transcript={snapshot.transcript} />
       </div>
+
+      {/* VERSIONS (self tree only): one row per room/* branch — dwell to load
+          the room to that version (checkout → rebuild → relaunch). */}
+      {model.isSelf && versions !== null && versions.branches.length > 0 ? (
+        <div className="tree-menu-versions" data-testid="tree-menu-versions">
+          <span className="tree-menu-versions-head">versions · running {versions.current}</span>
+          {versions.branches
+            .filter((entry) => entry.name !== versions.current)
+            .slice(0, 6)
+            .map((entry) => (
+              <button
+                key={entry.name}
+                type="button"
+                className="ctl-button tree-menu-version"
+                data-testid="tree-menu-version"
+                title={`Load the room to ${entry.name} — rebuilds and relaunches on that branch.`}
+                onClick={() => loadVersion(entry.name)}
+                disabled={loadingVersion !== null}
+              >
+                {loadingVersion === entry.name ? "⤵ loading… (the room will reload)" : `⤵ ${entry.name.replace(/^room\//u, "")}`}
+                <span className="tree-menu-version-subject">{entry.subject.replace(/^self: /u, "")}</span>
+              </button>
+            ))}
+        </div>
+      ) : null}
 
       {/* Take-home QR (folded in from the old fleet card — the rail is gone). */}
       {model.published !== null ? (
