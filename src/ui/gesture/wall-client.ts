@@ -94,6 +94,11 @@ export interface FlatPoseFrame {
   yaw: number;
   height: number;
   dist: number;
+  // Roaming centre (free-roam walk). OPTIONAL on the wire — frames from a
+  // pre-roam window carry no cx/cz and parse to 0 (the fixed origin), so the
+  // pair never desyncs across a mixed-version refresh.
+  cx: number;
+  cz: number;
   t: number;
 }
 
@@ -120,6 +125,9 @@ export function parseFlatPoseFrame(raw: string): FlatPoseFrame | null {
     yaw: msg.yaw,
     height: msg.height,
     dist: msg.dist,
+    // Optional-with-default like t (never NaN — junk coerces to 0 too).
+    cx: typeof msg.cx === "number" && Number.isFinite(msg.cx) ? msg.cx : 0,
+    cz: typeof msg.cz === "number" && Number.isFinite(msg.cz) ? msg.cz : 0,
     t: typeof msg.t === "number" && Number.isFinite(msg.t) ? msg.t : 0,
   };
 }

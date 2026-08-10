@@ -1,9 +1,10 @@
 // Pure pinch → camera-intent interpreter for the TouchDesigner hands stream.
 // ONE latched hand = grab-the-world orbit with a flick on release (fed to the
-// rig's EXISTING inertia path) PLUS a depth dolly: the palm's apparent size is
-// the monocular depth proxy (hand toward the camera = palm grows = move
-// forward), telescoping by the same per-frame ratio math as the two-hand
-// spread. TWO latched hands = ratio-preserving zoom (radius *= d_prev/d_curr —
+// rig's EXISTING inertia path) PLUS a depth WALK: the palm's apparent size is
+// the monocular depth proxy, read as a JOYSTICK AXIS against its grab-time
+// seed — hand held toward the camera = a SUSTAINED forward glide, back at the
+// seed depth = stop (free roam anywhere on the map, not a bounded dolly).
+// TWO latched hands = ratio-preserving zoom (radius *= d_prev/d_curr —
 // spreading zooms IN, release stops dead) plus a gentle damped midpoint pan.
 // Pure logic — no DOM, no sockets, no three.js — so the whole state machine is
 // unit-testable with scripted HandsFrame feeds.
@@ -36,24 +37,45 @@ export const ZOOM_MIN_DIST = 0.02; // hands overlapping → ratio untrustworthy,
 export const DOLLY_DEADBAND = 0.015; // |d/d_seed - 1| must exceed this once before zoom engages (kills micro-zoom while holding)
 export const DOLLY_MAX_STEP = 1.25; // per-frame scale clamp to [1/1.25, 1.25] (teleport/filter-reset defense)
 export const PAN_GAIN = 0.6; // midpoint pan, fraction of mouse-pan feel (gentler so zoom doesn't drift)
-// One-hand depth dolly (palm size = monocular depth proxy; needs the bridge's
+// One-hand depth walk (palm size = monocular depth proxy; needs the bridge's
 // `lm` skeleton — hands_mediapipe.py sends it, the TD stream may not: no
-// skeleton simply means no dolly, rotate is unaffected).
+// skeleton simply means no walk, rotate is unaffected).
 export const DEPTH_DEADBAND = 0.08; // |span/span_seed - 1| must exceed this once — palm pitch wobbles size more than two-hand spread wobbles distance
 export const DEPTH_MIN_SPAN = 0.015; // palm smaller than this (too far from the camera) = size ratio untrustworthy, skip
 export const DEPTH_JUMP_RATIO = 1.5; // one-frame raw span jump beyond this factor = tracking glitch → reset the size filter (position-teleport analogue)
+// The span-vs-seed ratio maps POSITION → VELOCITY like a joystick axis:
+// speed = clamp(log(span/seed) * WALK_GAIN, ±WALK_MAX), emitted every live
+// frame while engaged — so a hand HELD forward is a constant glide, unlike the
+// old telescoping dolly that ran out of ratio. log() makes toward/away
+// symmetric (span 1.5x ≈ span 1/1.5x, mirrored).
+export const WALK_GAIN = 2.5; // speed per log-unit of span ratio — a comfortable arm push (~1.3–1.5× the seed span) ≈ a brisk full-speed glide
+export const WALK_MAX = 1.0; // normalized full-speed cap (the SCENE owns world units); also the teleport defense — a snapped span reads as at most full speed
+// Every walk intent carries the wall-clock dt (seconds) since the previous
+// frame, so integrated motion is CADENCE-INVARIANT: sources tick anywhere from
+// ~30 Hz (TD hands) through 60 Hz (hands_mediapipe.py --fps 60) to 120 Hz (a
+// guest phone's rAF-driven fly stream), and speed·dt walks the same distance
+// on all of them. The cap bounds what one intent may claim — a stall gap
+// (frames queued behind a hung socket) resumes with at most one WALK_MAX_DT
+// step, never a lurch; post-stall bursts carry dt ≈ 0 and so move ≈ nothing.
+export const WALK_MAX_DT = 0.1;
 // Input smoothing (we own it — TD is a new source; a Lag CHOP upstream is optional belt+braces).
 export const FILTER_MINCUTOFF = 1.0; // raise BETA if fast sweeps lag; lower it if jittery
 export const FILTER_BETA = 0.15;
 export const FILTER_DCUTOFF = 1.0;
 
 // What the pinch layer asks of the camera rig. All deltas are per-frame and
-// incremental; pan dx/dy are normalized viewport units, y-down.
+// incremental; pan dx/dy are normalized viewport units, y-down. walk.speed is
+// a SIGNED velocity factor in [-WALK_MAX, WALK_MAX] (positive = forward,
+// toward what's on screen) and walk.dt the wall-clock seconds the intent
+// covers (in [0, WALK_MAX_DT] — the consumer integrates speed·dt, so the
+// source cadence never scales the glide) — walking stops the moment intents
+// stop.
 export type CameraIntent =
   | { kind: "grab" }
   | { kind: "release"; yawVel: number; heightVel: number }
   | { kind: "orbit"; dYaw: number; dHeight: number }
   | { kind: "zoom"; scale: number }
+  | { kind: "walk"; speed: number; dt: number }
   | { kind: "pan"; dx: number; dy: number };
 
 interface HandTrack {
@@ -95,10 +117,10 @@ export class PinchCam {
   #lastMotionAt = -Infinity;
   // Zoom: seedDist anchors the deadband; prevDist/prevMid are per-frame baselines.
   #zoom = { seedDist: 0, prevDist: 0, prevMidX: 0, prevMidY: 0, engaged: false };
-  // One-hand depth dolly: seedSize anchors the deadband (null = unseeded — the
-  // anchor hand has not yet shown a usable palm span); prevSize is the
-  // per-frame ratio baseline. Reset on every rotate (re-)anchor.
-  #depth: { seedSize: number | null; prevSize: number; engaged: boolean } = { seedSize: null, prevSize: 0, engaged: false };
+  // One-hand depth walk: seedSize anchors the deadband AND the joystick zero
+  // (null = unseeded — the anchor hand has not yet shown a usable palm span).
+  // Reset on every rotate (re-)anchor.
+  #depth: { seedSize: number | null; engaged: boolean } = { seedSize: null, engaged: false };
   #aspect = 16 / 9; // last seen frame aspect — inter-hand distance is aspect-corrected
   #lastT: number | null = null;
 
@@ -150,7 +172,8 @@ export class PinchCam {
       [track.sx, track.sy] = track.filter.call(hand.x, hand.y, t);
       // Palm span (depth proxy): smoothed like position; a one-frame size jump
       // beyond DEPTH_JUMP_RATIO is a tracking glitch — snap the filter so the
-      // per-frame dolly clamp absorbs it once instead of chasing it.
+      // ±WALK_MAX speed cap absorbs it (at worst a brief full-speed glide)
+      // instead of the filter chasing it across many frames.
       const span = palmSpan(hand.lm, this.#aspect);
       if (span !== null) {
         if (track.rawSize !== null && (span > track.rawSize * DEPTH_JUMP_RATIO || span < track.rawSize / DEPTH_JUMP_RATIO)) {
@@ -260,7 +283,7 @@ export class PinchCam {
             // Teleport/slot-swap (filter reset at ingest snapped the smoothed
             // position): discard the step, re-anchor, leave the EMA untouched
             // — worst case is a one-frame pause, never a jump. Depth re-seeds
-            // for the same reason: the snapped span must not read as a dolly.
+            // for the same reason: the snapped span must not read as a walk.
             this.#anchor.x = track.sx;
             this.#anchor.y = track.sy;
             this.#seedDepth(track);
@@ -286,30 +309,33 @@ export class PinchCam {
             }
             this.#anchor.x = track.sx;
             this.#anchor.y = track.sy;
-            // DEPTH DOLLY: palm toward the camera = span grows = scale < 1 =
-            // move forward (the per-frame ratios telescope exactly like the
-            // two-hand spread). Deadband against the SEED span so holding a
-            // pinch still doesn't breathe the camera; the [1/DOLLY_MAX_STEP,
-            // DOLLY_MAX_STEP] clamp is the teleport/filter-reset defense. No
-            // dolly inertia on release — parity with the two-hand zoom.
+            // DEPTH WALK: the span-vs-SEED ratio is a joystick axis — palm
+            // toward the camera (span > seed) = walk FORWARD, and a hand HELD
+            // there keeps gliding (position → velocity, the free-roam property
+            // the old telescoping dolly lacked). Deadband against the seed so
+            // holding a pinch still doesn't creep the camera; once engaged the
+            // speed is emitted EVERY live frame (back at seed depth = speed 0
+            // = stop). The ±WALK_MAX clamp doubles as the teleport/filter-
+            // reset defense. Each intent carries rawDt (this frame's wall-
+            // clock interval, capped at WALK_MAX_DT) so the consumer's
+            // speed·dt integration is cadence-invariant — a 60 Hz source
+            // emits twice as many intents each covering half the time. No
+            // walk inertia on release — walking simply stops when the
+            // intents stop.
             const span = track.sSize;
             if (span !== null && span >= DEPTH_MIN_SPAN) {
               if (this.#depth.seedSize === null) {
                 // First usable span mid-grab (skeleton arrived late): baseline
-                // here — never dolly against a span from before the grab.
+                // here — never walk against a span from before the grab.
                 this.#depth.seedSize = span;
-                this.#depth.prevSize = span;
               } else {
                 if (!this.#depth.engaged && Math.abs(span / this.#depth.seedSize - 1) > DEPTH_DEADBAND) {
                   this.#depth.engaged = true;
                 }
-                if (this.#depth.engaged && this.#depth.prevSize > 0) {
-                  const scale = clamp(this.#depth.prevSize / span, 1 / DOLLY_MAX_STEP, DOLLY_MAX_STEP);
-                  if (scale !== 1) {
-                    intents.push({ kind: "zoom", scale });
-                  }
+                if (this.#depth.engaged) {
+                  const speed = clamp(Math.log(span / this.#depth.seedSize) * WALK_GAIN, -WALK_MAX, WALK_MAX);
+                  intents.push({ kind: "walk", speed, dt: clamp(rawDt, 0, WALK_MAX_DT) });
                 }
-                this.#depth.prevSize = span;
               }
             }
           }
@@ -395,12 +421,12 @@ export class PinchCam {
     this.#zoom = { seedDist: d, prevDist: d, prevMidX: (a.sx + b.sx) / 2, prevMidY: (a.sy + b.sy) / 2, engaged: false };
   }
 
-  // (Re-)baseline the depth dolly on the anchor hand's CURRENT smoothed span.
+  // (Re-)baseline the depth walk on the anchor hand's CURRENT smoothed span.
   // Null span (no skeleton yet) leaves it unseeded — the rotate loop seeds on
   // the first usable frame instead.
   #seedDepth(track: HandTrack): void {
     const span = track.sSize !== null && track.sSize >= DEPTH_MIN_SPAN ? track.sSize : null;
-    this.#depth = { seedSize: span, prevSize: span ?? 0, engaged: false };
+    this.#depth = { seedSize: span, engaged: false };
   }
 
   // Aspect-corrected inter-hand distance: x is a fraction of the camera frame

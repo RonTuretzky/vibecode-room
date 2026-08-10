@@ -205,8 +205,8 @@ export function GestureLayer({ wall, fusionUrl, remoteUrl = "", mouseTest = fals
     const keyHolds = new RemoteKeyHolds();
     // GUEST FLY MODE: one PinchCam per guest — the SAME interpreter the laptop
     // bridge runs, so guests get the identical grammar (pinch-drag orbit,
-    // palm push/pull depth dolly, two-pinch spread zoom) through the identical
-    // applyCameraIntents seam. Multiple flying guests interleave latest-writer-
+    // palm push/pull free-roam walk, two-pinch spread zoom) through the
+    // identical applyCameraIntents seam. Multiple flying guests interleave latest-writer-
     // wins on the rig, exactly like every other camera input source.
     const flyCams = new Map<number, { cam: PinchCam; lastAt: number }>();
     let remoteClient: GestureWallClient | null = null;

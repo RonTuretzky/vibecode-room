@@ -51,6 +51,9 @@ export const FLAT_POSE_HEIGHT_MIN = 1;
 export const FLAT_POSE_HEIGHT_MAX = 31;
 export const FLAT_POSE_DIST_MIN = 5;
 export const FLAT_POSE_DIST_MAX = 46;
+// Roaming centre (cx/cz — the free-roam walk): scene envelope is ±80, same
+// slightly-wider rule as above. Absent on old frames → 0 (see parse).
+export const FLAT_POSE_CENTER_LIMIT = 85;
 
 // One hand of a guest FLY-MODE frame: raw MediaPipe-derived data for the
 // pinch camera grammar (PinchCam on the wall does ALL smoothing/hysteresis —
@@ -68,7 +71,7 @@ export type GuestMessage =
   | { kind: "hello"; wall: string | null; name: string | null }
   | { kind: "cursors"; cursors: RemoteGuestCursor[] }
   | { kind: "keys"; held: GuestKey[] }
-  | { kind: "flatpose"; yaw: number; height: number; dist: number }
+  | { kind: "flatpose"; yaw: number; height: number; dist: number; cx: number; cz: number }
   | { kind: "flyhands"; t: number; aspect: number; hands: GuestFlyHand[] };
 
 // A guest's display name, made wall-safe: control chars stripped (a name is
@@ -128,6 +131,11 @@ export function parseGuestMessage(raw: string): GuestMessage | null {
       yaw: clampRange(msg.yaw, -FLAT_POSE_YAW_LIMIT, FLAT_POSE_YAW_LIMIT),
       height: clampRange(msg.height, FLAT_POSE_HEIGHT_MIN, FLAT_POSE_HEIGHT_MAX),
       dist: clampRange(msg.dist, FLAT_POSE_DIST_MIN, FLAT_POSE_DIST_MAX),
+      // Roaming centre: OPTIONAL for back-compat (a pre-roam window's pose
+      // has no cx/cz — that legitimately means the origin, never a drop, and
+      // junk coerces to 0 too so NaN can never enter the relay).
+      cx: isFiniteNumber(msg.cx) ? clampRange(msg.cx, -FLAT_POSE_CENTER_LIMIT, FLAT_POSE_CENTER_LIMIT) : 0,
+      cz: isFiniteNumber(msg.cz) ? clampRange(msg.cz, -FLAT_POSE_CENTER_LIMIT, FLAT_POSE_CENTER_LIMIT) : 0,
     };
   }
   if (msg.type === "flyhands") {
@@ -279,6 +287,8 @@ interface FlatPoseWire {
   yaw: number;
   height: number;
   dist: number;
+  cx: number;
+  cz: number;
   t: number;
 }
 
@@ -352,12 +362,14 @@ export class RemoteHandsHub {
   // window. Never back to the sender (its pose is already right, and echoes
   // would fight the very input that produced them) and never to guests (the
   // pose is projector-rig internals, not a guest-facing stream).
-  #relayFlatPose(sender: RoomPeer, pose: { yaw: number; height: number; dist: number }): void {
+  #relayFlatPose(sender: RoomPeer, pose: { yaw: number; height: number; dist: number; cx: number; cz: number }): void {
     const frame: FlatPoseWire = {
       type: "flatpose",
       yaw: pose.yaw,
       height: pose.height,
       dist: pose.dist,
+      cx: pose.cx,
+      cz: pose.cz,
       t: this.#now(),
     };
     this.#lastFlatPose = frame;

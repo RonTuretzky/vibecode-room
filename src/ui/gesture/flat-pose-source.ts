@@ -2,8 +2,8 @@
 // socket (GestureLayer's GestureWallClient on /api/hands/room).
 //
 // Mirrors the camera-source.ts seam, but BOTH ways: under ?flat=1 the two wall
-// windows share one panorama pose ({yaw, height, dist} — RoomScene's flatRig
-// targets), and "identical input streams" alone cannot keep two copies equal
+// windows share one panorama pose ({yaw, height, dist, cx, cz} — RoomScene's
+// flatRig targets), and "identical input streams" alone cannot keep two copies equal
 // forever (reconnects, refreshes, key-timing skew). So the scene PUBLISHES its
 // pose after local input (via the sender the layer registers) and ADOPTS poses
 // heard from the partner window (via the control the scene registers) — the
@@ -15,6 +15,11 @@ export interface FlatPose {
   yaw: number; // rad, RoomScene orbit convention
   height: number; // world units (scene clamps [1.4,30])
   dist: number; // world units (scene clamps [6,45])
+  // The panorama's roaming centre (the palm-depth free-roam walk translates
+  // it), world units on the ground plane (scene clamps ±80). Old frames on
+  // the wire may omit them — parsers default 0, the pre-roam origin.
+  cx: number;
+  cz: number;
 }
 
 export interface SceneFlatPoseControl {

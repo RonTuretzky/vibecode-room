@@ -11,6 +11,9 @@ import {
   PAN_GAIN,
   PinchCam,
   ROTATE_MAX_STEP,
+  WALK_GAIN,
+  WALK_MAX,
+  WALK_MAX_DT,
   YAW_PER_UNIT,
   type CameraIntent,
 } from "./pinch-cam";
@@ -474,7 +477,7 @@ describe("PinchCam — idleTick", () => {
   });
 });
 
-describe("PinchCam — one-hand depth dolly (palm span = depth proxy)", () => {
+describe("PinchCam — one-hand depth walk (palm span = velocity joystick)", () => {
   // A hand whose 21-point skeleton is degenerate except wrist (lm[0]) and
   // middle-MCP (lm[9]) stacked vertically `span` apart — knuckle span is zero,
   // so palmSpan(lm, 1) === span exactly.
@@ -490,81 +493,152 @@ describe("PinchCam — one-hand depth dolly (palm span = depth proxy)", () => {
     expect(palmSpan(h.lm, 1)).toBeCloseTo(0.12, 6);
   });
 
-  test("no skeleton on the stream → rotate works, zero zoom intents", () => {
+  test("no skeleton on the stream → rotate works, zero walk intents", () => {
     const cam = new PinchCam();
     const out = run(cam, (t) => frame([hand(1, sweep(t, 0, 1, 0.3, 0.6), 0.5)]), 0, 1);
     expect(ofKind(out, "orbit").length).toBeGreaterThan(0);
-    expect(ofKind(out, "zoom")).toHaveLength(0);
+    expect(ofKind(out, "walk")).toHaveLength(0);
   });
 
-  test("holding still (span wobble under the deadband) never breathes the camera", () => {
+  test("holding still (span wobble under the deadband) never creeps the camera", () => {
     const cam = new PinchCam();
     const wobble = (t: number) => 0.1 * (1 + 0.04 * Math.sin(t * 20)); // ±4% < DEPTH_DEADBAND
     const out = run(cam, (t) => frame([sized(1, 0.5, 0.5, wobble(t))]), 0, 2);
-    expect(ofKind(out, "zoom")).toHaveLength(0);
+    expect(ofKind(out, "walk")).toHaveLength(0);
   });
 
-  test("palm toward the camera (span grows) → zoom-in intents that telescope to the total ratio", () => {
+  test("palm toward the camera: positive speeds; a HELD forward span SUSTAINS the glide (free roam)", () => {
     const cam = new PinchCam();
-    // Stationary hand; span 0.10 → 0.20 over [0.5, 1.5].
-    const out = run(cam, (t) => frame([sized(1, 0.5, 0.5, sweep(t, 0.5, 1.5, 0.1, 0.2))]), 0, 2);
-    const zooms = ofKind(out, "zoom");
-    expect(zooms.length).toBeGreaterThan(0);
-    for (const z of zooms) {
-      expect(z.scale).toBeLessThan(1); // approach = forward, every frame
+    // Stationary hand; span 0.10 → 0.13 over [0.5, 1.0], then HELD at 0.13.
+    // The old telescoping dolly ran out of ratio here — the joystick mapping
+    // must keep emitting log(1.3)*WALK_GAIN every frame, forever.
+    const spanAt = (t: number) => sweep(t, 0.5, 1.0, 0.1, 0.13);
+    const out = run(cam, (t) => frame([sized(1, 0.5, 0.5, spanAt(t))]), 0, 3);
+    const walks = ofKind(out, "walk");
+    expect(walks.length).toBeGreaterThan(30);
+    for (const w of walks) {
+      expect(w.speed).toBeGreaterThan(0); // approach = forward, every frame
+      expect(w.speed).toBeLessThanOrEqual(WALK_MAX);
+      expect(w.dt).toBeCloseTo(DT, 6); // each intent claims exactly its frame interval
     }
-    // Per-frame ratios telescope ≈ span_at_engage / span_final: strictly inside
-    // (1/2, 1) — the deadband ate the first ~8%, smoothing lags the tail.
-    const product = zooms.reduce((acc, z) => acc * z.scale, 1);
-    expect(product).toBeGreaterThan(0.5);
-    expect(product).toBeLessThan(0.65);
+    // The KEY free-roam property: with the span steady (filter settled), the
+    // speed holds at log(0.13/0.10)*WALK_GAIN on EVERY frame of the hold.
+    const held = out.filter((e) => e.t > 1.5 && e.intent.kind === "walk");
+    expect(held.length).toBeGreaterThanOrEqual(Math.floor(1.5 / DT) - 1); // one walk per live frame
+    const steady = Math.log(0.13 / 0.1) * WALK_GAIN;
+    for (const e of held) {
+      expect((e.intent as { speed: number }).speed).toBeGreaterThan(steady * 0.9);
+      expect((e.intent as { speed: number }).speed).toBeLessThan(steady * 1.1);
+    }
   });
 
-  test("palm away from the camera (span shrinks) → zoom-out intents (scale > 1)", () => {
+  test("returning to the seed depth stops the glide (joystick zero)", () => {
     const cam = new PinchCam();
-    const out = run(cam, (t) => frame([sized(1, 0.5, 0.5, sweep(t, 0.5, 1.5, 0.2, 0.1))]), 0, 2);
-    const zooms = ofKind(out, "zoom");
-    expect(zooms.length).toBeGreaterThan(0);
-    for (const z of zooms) {
-      expect(z.scale).toBeGreaterThan(1);
+    // Push forward, hold, then pull BACK to the grab-time span and hold: the
+    // engaged axis keeps emitting, but at ≈ zero speed — a dead stop.
+    const spanAt = (t: number) => (t < 1.5 ? sweep(t, 0.5, 1.0, 0.1, 0.13) : sweep(t, 1.5, 2.0, 0.13, 0.1));
+    const out = run(cam, (t) => frame([sized(1, 0.5, 0.5, spanAt(t))]), 0, 3);
+    const settled = out.filter((e) => e.t > 2.5 && e.intent.kind === "walk");
+    expect(settled.length).toBeGreaterThan(10);
+    for (const e of settled) {
+      expect(Math.abs((e.intent as { speed: number }).speed)).toBeLessThan(0.1);
     }
   });
 
-  test("orbit and dolly compose in the same gesture", () => {
+  test("palm away from the camera: sustained NEGATIVE speeds (walk backward)", () => {
+    const cam = new PinchCam();
+    const spanAt = (t: number) => sweep(t, 0.5, 1.0, 0.2, 0.15);
+    const out = run(cam, (t) => frame([sized(1, 0.5, 0.5, spanAt(t))]), 0, 3);
+    const walks = ofKind(out, "walk");
+    expect(walks.length).toBeGreaterThan(30);
+    for (const w of walks) {
+      expect(w.speed).toBeLessThan(0);
+      expect(w.speed).toBeGreaterThanOrEqual(-WALK_MAX);
+    }
+    // Sustained during the hold, at log(0.15/0.20)*WALK_GAIN.
+    const held = ofKind(
+      out.filter((e) => e.t > 1.5),
+      "walk",
+    );
+    expect(held.length).toBeGreaterThanOrEqual(Math.floor(1.5 / DT) - 1);
+    const steady = Math.log(0.15 / 0.2) * WALK_GAIN;
+    for (const w of held) {
+      expect(w.speed).toBeGreaterThan(steady * 1.1); // steady is negative: ±10% band
+      expect(w.speed).toBeLessThan(steady * 0.9);
+    }
+  });
+
+  test("orbit and walk compose in the same gesture", () => {
     const cam = new PinchCam();
     const out = run(cam, (t) => frame([sized(1, sweep(t, 0.3, 1.7, 0.3, 0.6), 0.5, sweep(t, 0.3, 1.7, 0.1, 0.18))]), 0, 2);
     expect(ofKind(out, "orbit").length).toBeGreaterThan(0);
-    expect(ofKind(out, "zoom").length).toBeGreaterThan(0);
+    expect(ofKind(out, "walk").length).toBeGreaterThan(0);
   });
 
-  test("a one-frame span teleport is clamped to DOLLY_MAX_STEP, never a jump-cut", () => {
+  test("a one-frame span teleport is capped at ±WALK_MAX — at worst a full-speed glide, never a launch", () => {
     const cam = new PinchCam();
-    // Engage cleanly (0.10→0.13), then the span doubles in a single frame.
+    // Engage cleanly (0.10→0.13), then the span doubles in a single frame:
+    // the raw ratio would ask for log(2.6)*WALK_GAIN ≈ 2.4× full speed.
     const spanAt = (t: number) => (t < 1 ? sweep(t, 0.2, 1, 0.1, 0.13) : 0.26);
     const out = run(cam, (t) => frame([sized(1, 0.5, 0.5, spanAt(t))]), 0, 1.5);
-    for (const z of ofKind(out, "zoom")) {
-      expect(z.scale).toBeGreaterThanOrEqual(1 / DOLLY_MAX_STEP - 1e-9);
-      expect(z.scale).toBeLessThanOrEqual(DOLLY_MAX_STEP + 1e-9);
+    const walks = ofKind(out, "walk");
+    expect(walks.length).toBeGreaterThan(0);
+    for (const w of walks) {
+      expect(w.speed).toBeGreaterThanOrEqual(-WALK_MAX);
+      expect(w.speed).toBeLessThanOrEqual(WALK_MAX);
     }
   });
 
-  test("a span too small to trust (< DEPTH_MIN_SPAN) emits no dolly", () => {
-    const cam = new PinchCam();
-    const out = run(cam, (t) => frame([sized(1, 0.5, 0.5, sweep(t, 0.5, 1.5, 0.005, 0.012))]), 0, 2);
-    expect(ofKind(out, "zoom")).toHaveLength(0);
+  test("CADENCE INVARIANCE: the same gesture at 60 Hz walks the same distance as at 30 Hz", () => {
+    // The framerate-dependence bug: intents-per-second doubles at 60 Hz
+    // (hands_mediapipe.py --fps 60; a 120 Hz phone's rAF fly stream), so a
+    // fixed step per intent walked 2–4x too fast. With dt carried in the
+    // intent, the consumer integrates speed·dt — Σ speed·dt for an identical
+    // push-and-hold must match across cadences.
+    const spanAt = (t: number) => sweep(t, 0.5, 1.0, 0.1, 0.13);
+    const distanceAt = (dt: number) => {
+      const cam = new PinchCam();
+      const walks = ofKind(run(cam, (t) => frame([sized(1, 0.5, 0.5, spanAt(t))]), 0, 3, dt), "walk");
+      expect(walks.length).toBeGreaterThan(0);
+      return walks.reduce((acc, w) => acc + w.speed * w.dt, 0);
+    };
+    const at30 = distanceAt(1 / 30);
+    const at60 = distanceAt(1 / 60);
+    expect(at30).toBeGreaterThan(0);
+    // Identical up to filter-transient noise — nowhere near the 2x of the bug.
+    expect(at60).toBeGreaterThan(at30 * 0.9);
+    expect(at60).toBeLessThan(at30 * 1.1);
   });
 
-  test("2→1 handoff re-seeds the survivor's span — no dolly from the stale baseline", () => {
+  test("a stall gap claims at most WALK_MAX_DT — resuming frames never lurch the camera", () => {
+    const cam = new PinchCam();
+    // Engage and hold forward, then the stream stalls 0.2 s (inside
+    // HAND_STALE_SECONDS, so the grab survives) and resumes.
+    const spanAt = (t: number) => sweep(t, 0.5, 1.0, 0.1, 0.13);
+    run(cam, (t) => frame([sized(1, 0.5, 0.5, spanAt(t))]), 0, 1.5);
+    const resumed = cam.update(frame([sized(1, 0.5, 0.5, 0.13)]), 1.5 + 0.2);
+    const walks = resumed.filter((i): i is Extract<CameraIntent, { kind: "walk" }> => i.kind === "walk");
+    expect(walks).toHaveLength(1);
+    expect(walks[0].dt).toBeCloseTo(WALK_MAX_DT, 6); // 0.2 s gap, capped
+  });
+
+  test("a span too small to trust (< DEPTH_MIN_SPAN) emits no walk", () => {
+    const cam = new PinchCam();
+    const out = run(cam, (t) => frame([sized(1, 0.5, 0.5, sweep(t, 0.5, 1.5, 0.005, 0.012))]), 0, 2);
+    expect(ofKind(out, "walk")).toHaveLength(0);
+  });
+
+  test("2→1 handoff re-seeds the survivor's span — no walk from the stale baseline", () => {
     const cam = new PinchCam();
     // Two hands zoom (fixed spread), hand 2 releases at t=1; hand 1's span is
-    // LARGE the whole time — after the handoff that must be the new zero, so
-    // holding still emits nothing.
+    // LARGE the whole time — after the handoff that must be the new joystick
+    // zero, so holding still emits nothing.
     const feed = (t: number) =>
       t < 1
         ? frame([sized(1, 0.4, 0.5, 0.2), sized(2, 0.6, 0.5, 0.2)])
         : frame([sized(1, 0.4, 0.5, 0.2)]);
     const out = run(cam, feed, 0, 2);
     const afterHandoff = out.filter((e) => e.t > 1 + 2 * DT);
-    expect(afterHandoff.filter((e) => e.intent.kind === "zoom")).toHaveLength(0);
+    expect(afterHandoff.filter((e) => e.intent.kind === "walk")).toHaveLength(0);
   });
 });

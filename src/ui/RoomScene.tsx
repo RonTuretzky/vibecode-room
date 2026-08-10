@@ -1022,7 +1022,8 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
     // plane, so the pair tiles one continuous picture on the flat wall.
     //
     // SHARED ORBIT: unlike the corner pair, the flat rig is NOT frozen — the
-    // pinch camera may orbit/zoom the WHOLE panorama about the scene centre,
+    // pinch camera may orbit/zoom the WHOLE panorama about its roaming centre
+    // (which the palm-depth walk translates — free roam anywhere on the map),
     // and WASD holds dolly/turn it (see the frame loop). Both windows receive
     // near-identical input streams (hands fusion; guest key holds broadcast by
     // the relay hub), but "identical forever" is not a real invariant — socket
@@ -1038,7 +1039,19 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
     // values anyway. Mouse/fit/focus stay gated off — only these writers and
     // the sync may move it.
     const flatLocked = flatLockRef.current;
-    const flatRig = { yaw: FLAT_YAW, height: FLAT_EYE_HEIGHT, dist: FLAT_EYE_DISTANCE };
+    // cx/cz: the panorama's ROAMING CENTRE on the ground plane — the palm-
+    // depth walk translates it along the view direction, so the pair can
+    // free-roam anywhere on the map (orbit/zoom then act about this centre).
+    const flatRig = { yaw: FLAT_YAW, height: FLAT_EYE_HEIGHT, dist: FLAT_EYE_DISTANCE, cx: 0, cz: 0 };
+    // Roam envelope for the centre: generously past the meadow so nothing is
+    // out of reach, finite so nobody glides to infinity (the hub clamps its
+    // relay at the slightly-wider FLAT_POSE_CENTER_LIMIT, same rule as dist).
+    const FLAT_ROAM_LIMIT = 80;
+    // Full-speed walk rate for the roaming centre, world units per SECOND —
+    // the W/S dolly feel. Each walk intent carries the wall-clock dt it
+    // covers (see walkBy), so a 30 Hz TD stream, a 60 fps bridge and a
+    // 120 Hz phone fly stream all glide at this same rate.
+    const FLAT_WALK_UNITS_PER_SEC = 6;
     // Local input touched flatRig since the last publish (adoption clears it).
     let flatPoseDirty = false;
     let flatPoseLastPublishMs = 0;
@@ -1048,14 +1061,19 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
     // render. The drawn pose eases toward the targets each frame instead.
     // Lockstep survives because both windows ease toward IDENTICAL targets
     // with the same rate — any transient divergence decays within ~100 ms.
-    const flatView = { yaw: FLAT_YAW, height: FLAT_EYE_HEIGHT, dist: FLAT_EYE_DISTANCE };
+    const flatView = { yaw: FLAT_YAW, height: FLAT_EYE_HEIGHT, dist: FLAT_EYE_DISTANCE, cx: 0, cz: 0 };
     const applyFlatRig = (dt?: number) => {
       const k = dt === undefined ? 1 : 1 - Math.exp(-dt * 14);
       flatView.yaw += (flatRig.yaw - flatView.yaw) * k;
       flatView.height += (flatRig.height - flatView.height) * k;
       flatView.dist += (flatRig.dist - flatView.dist) * k;
-      const eyeX = Math.sin(flatView.yaw) * flatView.dist;
-      const eyeZ = Math.cos(flatView.yaw) * flatView.dist;
+      flatView.cx += (flatRig.cx - flatView.cx) * k;
+      flatView.cz += (flatRig.cz - flatView.cz) * k;
+      // Eye AND look point offset by the roaming centre together, so the
+      // whole shared frustum translates and both windows keep tiling one
+      // continuous picture — the seam still bisects (cx, cz).
+      const eyeX = flatView.cx + Math.sin(flatView.yaw) * flatView.dist;
+      const eyeZ = flatView.cz + Math.cos(flatView.yaw) * flatView.dist;
       camera.position.set(eyeX, flatView.height, eyeZ);
       camera.lookAt(eyeX - Math.sin(flatView.yaw), flatView.height, eyeZ - Math.cos(flatView.yaw));
     };
@@ -3641,6 +3659,43 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
         // Multiplicative dolly, re-clamped to the onWheel envelope [4,45].
         rig.dRadius = Math.max(4, Math.min(45, rig.dRadius * scale));
       },
+      // FREE-ROAM WALK (the one-hand palm-depth gesture): a signed normalized
+      // velocity factor plus the wall-clock seconds it covers — the source
+      // cadence varies (30 Hz TD, 60 fps bridge, 120 Hz phone rAF), so dt,
+      // never the intent count, scales the glide. Positive = toward what's
+      // on screen. The scene owns units and the roam envelope; the re-clamps
+      // (±1 speed, dt to pinch-cam's WALK_MAX_DT bound) mirror the flick
+      // verb's rogue-value rule — bad values can never NaN or teleport the
+      // rig. speed 0 (a pinch held at the joystick zero) is a no-op: no
+      // rig write, no flat-pose publish churn.
+      walkBy: (speed, dtSec) => {
+        if (!Number.isFinite(speed) || !Number.isFinite(dtSec)) {
+          return; // defensive: bad values must never NaN the rig
+        }
+        const s = Math.max(-1, Math.min(1, speed));
+        const dt = Math.max(0, Math.min(0.1, dtSec));
+        if (s === 0 || dt === 0) {
+          return;
+        }
+        lastCameraInputMs = performance.now();
+        if (flatLocked) {
+          // Translate the panorama's roaming centre along the shared view
+          // direction (forward = (-sin yaw, -cos yaw), the flatViewDir /
+          // W-key convention) — palm forward walks INTO the picture.
+          const step = s * dt * FLAT_WALK_UNITS_PER_SEC;
+          flatRig.cx = Math.max(-FLAT_ROAM_LIMIT, Math.min(FLAT_ROAM_LIMIT, flatRig.cx - Math.sin(flatRig.yaw) * step));
+          flatRig.cz = Math.max(-FLAT_ROAM_LIMIT, Math.min(FLAT_ROAM_LIMIT, flatRig.cz - Math.cos(flatRig.yaw) * step));
+          flatPoseDirty = true; // local input — publish to the partner window
+          return;
+        }
+        // Desk/orbit rig: translate the orbit TARGET along the horizontal
+        // view direction (the camera follows its target; radius unchanged).
+        // Exact mirror of the WASD W/S math — same forward vector, same
+        // radius-scaled units-per-second — integrated over this intent's dt.
+        const step = (3.2 + rig.radius * 0.45) * s * dt;
+        rig.dTargetX += -Math.sin(rig.angle) * step;
+        rig.dTargetZ += -Math.cos(rig.angle) * step;
+      },
       // Params deliberately NOT named angVel/heightVel — they must not shadow
       // the inertia vars this feeds.
       flick: (yawVel, hVel) => {
@@ -3673,6 +3728,10 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
             flatRig.yaw = pose.yaw;
             flatRig.height = Math.max(1.4, Math.min(30, pose.height));
             flatRig.dist = Math.max(6, Math.min(45, pose.dist));
+            // Roaming centre: absent on old frames parses to 0 upstream; the
+            // ?? 0 here is belt+braces so a stale partner can never NaN it.
+            flatRig.cx = Math.max(-FLAT_ROAM_LIMIT, Math.min(FLAT_ROAM_LIMIT, pose.cx ?? 0));
+            flatRig.cz = Math.max(-FLAT_ROAM_LIMIT, Math.min(FLAT_ROAM_LIMIT, pose.cz ?? 0));
             flatPoseDirty = false;
           },
         })
@@ -3828,7 +3887,7 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
         if (flatPoseDirty && now - flatPoseLastPublishMs >= FLAT_POSE_PUBLISH_MS) {
           flatPoseLastPublishMs = now;
           flatPoseDirty = false;
-          getFlatPoseSender()?.({ yaw: flatRig.yaw, height: flatRig.height, dist: flatRig.dist });
+          getFlatPoseSender()?.({ yaw: flatRig.yaw, height: flatRig.height, dist: flatRig.dist, cx: flatRig.cx, cz: flatRig.cz });
         }
         // Rigid flat pair: reassert the locked framing every frame so no
         // stray camera write can ever shear the seam between the halves —

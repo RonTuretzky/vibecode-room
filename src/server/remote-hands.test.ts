@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { GUEST_ID_BASE, GUEST_ID_STRIDE } from "../ui/gesture/remote";
 import {
+  FLAT_POSE_CENTER_LIMIT,
   FLAT_POSE_DIST_MAX,
   FLAT_POSE_DIST_MIN,
   FLAT_POSE_HEIGHT_MAX,
@@ -107,24 +108,61 @@ describe("parseGuestMessage", () => {
   });
 
   test("parses a flatpose, passing sane values through and clamping wild ones", () => {
-    expect(parseGuestMessage(JSON.stringify({ type: "flatpose", yaw: -0.4, height: 4.6, dist: 20, t: 3 }))).toEqual({
+    expect(parseGuestMessage(JSON.stringify({ type: "flatpose", yaw: -0.4, height: 4.6, dist: 20, cx: -12.5, cz: 30, t: 3 }))).toEqual({
       kind: "flatpose",
       yaw: -0.4,
       height: 4.6,
       dist: 20,
+      cx: -12.5,
+      cz: 30,
     });
     // Out-of-envelope values come back to sanity instead of flinging the pair.
-    expect(parseGuestMessage(JSON.stringify({ type: "flatpose", yaw: 1e6, height: -3, dist: 9000 }))).toEqual({
+    expect(parseGuestMessage(JSON.stringify({ type: "flatpose", yaw: 1e6, height: -3, dist: 9000, cx: 1e6, cz: -1e6 }))).toEqual({
       kind: "flatpose",
       yaw: FLAT_POSE_YAW_LIMIT,
       height: FLAT_POSE_HEIGHT_MIN,
       dist: FLAT_POSE_DIST_MAX,
+      cx: FLAT_POSE_CENTER_LIMIT,
+      cz: -FLAT_POSE_CENTER_LIMIT,
     });
     expect(parseGuestMessage(JSON.stringify({ type: "flatpose", yaw: -1e6, height: 99, dist: 0 }))).toEqual({
       kind: "flatpose",
       yaw: -FLAT_POSE_YAW_LIMIT,
       height: FLAT_POSE_HEIGHT_MAX,
       dist: FLAT_POSE_DIST_MIN,
+      cx: 0,
+      cz: 0,
+    });
+  });
+
+  test("flatpose cx/cz are BACK-COMPAT optional: absent or junk → 0 (the pre-roam origin), never NaN, never a drop", () => {
+    // A pre-roam window's pose carries no cx/cz — that legitimately means the
+    // fixed origin, so a mixed-version pair keeps syncing.
+    expect(parseGuestMessage(JSON.stringify({ type: "flatpose", yaw: 0.1, height: 4.6, dist: 20 }))).toEqual({
+      kind: "flatpose",
+      yaw: 0.1,
+      height: 4.6,
+      dist: 20,
+      cx: 0,
+      cz: 0,
+    });
+    // Junk coerces to 0 too (unlike the REQUIRED yaw/height/dist, whose junk
+    // drops the frame) — nothing non-finite may enter the relay.
+    expect(parseGuestMessage(JSON.stringify({ type: "flatpose", yaw: 0.1, height: 4.6, dist: 20, cx: "9", cz: null }))).toEqual({
+      kind: "flatpose",
+      yaw: 0.1,
+      height: 4.6,
+      dist: 20,
+      cx: 0,
+      cz: 0,
+    });
+    expect(parseGuestMessage('{"type":"flatpose","yaw":0,"height":4.6,"dist":20,"cx":1e999}')).toEqual({
+      kind: "flatpose",
+      yaw: 0,
+      height: 4.6,
+      dist: 20,
+      cx: 0,
+      cz: 0,
     });
   });
 
@@ -451,9 +489,10 @@ describe("RemoteHandsHub", () => {
 
     connA.message(flatPose(-0.7, 5.2, 18));
     // The partner adopts; the sender's pose is already right (an echo would
-    // fight the very input that produced it).
+    // fight the very input that produced it). A cx/cz-less publish (pre-roam
+    // window) relays the origin so a mixed-version pair stays in lockstep.
     expect(flatPosesOf(roomB)).toHaveLength(1);
-    expect(flatPosesOf(roomB)[0]).toMatchObject({ yaw: -0.7, height: 5.2, dist: 18 });
+    expect(flatPosesOf(roomB)[0]).toMatchObject({ yaw: -0.7, height: 5.2, dist: 18, cx: 0, cz: 0 });
     expect(typeof flatPosesOf(roomB)[0].t).toBe("number");
     expect(flatPosesOf(roomA)).toHaveLength(0);
     // The pose is projector-rig internals — guests never see it.
@@ -468,12 +507,14 @@ describe("RemoteHandsHub", () => {
     connA.message(hello("A"));
     hub.addRoom(roomB.send).message(hello("B"));
 
-    connA.message(flatPose(1e9, 0, 1e9));
+    connA.message(JSON.stringify({ type: "flatpose", yaw: 1e9, height: 0, dist: 1e9, cx: -1e9, cz: 1e9, t: 0.5 }));
     expect(flatPosesOf(roomB)).toHaveLength(1);
     expect(flatPosesOf(roomB)[0]).toMatchObject({
       yaw: FLAT_POSE_YAW_LIMIT,
       height: FLAT_POSE_HEIGHT_MIN,
       dist: FLAT_POSE_DIST_MAX,
+      cx: -FLAT_POSE_CENTER_LIMIT,
+      cz: FLAT_POSE_CENTER_LIMIT,
     });
 
     connA.message(JSON.stringify({ type: "flatpose", yaw: "spin", height: 5, dist: 20 }));

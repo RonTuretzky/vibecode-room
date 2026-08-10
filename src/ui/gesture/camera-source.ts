@@ -11,6 +11,13 @@ export interface SceneCameraControl {
   panBy(dxPx: number, dyPx: number): void;
   // dRadius *= scale, clamped [4,45] (wheel parity).
   zoomBy(scale: number): void;
+  // Free-roam glide along the horizontal view direction. speed is a signed
+  // NORMALIZED velocity factor (±1 = full speed); dtSec is the wall-clock
+  // seconds this intent covers, so integrated motion is cadence-invariant —
+  // a ~30 Hz TD hands stream, a 60 fps bridge (--fps 60) and a 120 Hz phone's
+  // rAF-driven fly stream all walk the same world distance per second. The
+  // scene owns world units and the roam envelope.
+  walkBy(speed: number, dtSec: number): void;
   // rad/s, units/s -> existing inertia decay (release coast).
   flick(yawVel: number, heightVel: number): void;
   // true: tight 16/s rig lerp + zero residual mouse inertia.
@@ -37,12 +44,14 @@ export function getSceneCameraControl(): SceneCameraControl | null {
 // layer and the guest fly-mode relay). Structural mirror of pinch-cam's
 // CameraIntent — declared here so this seam module stays import-light.
 export interface AppliedCameraIntent {
-  kind: "grab" | "release" | "orbit" | "zoom" | "pan";
+  kind: "grab" | "release" | "orbit" | "zoom" | "walk" | "pan";
   yawVel?: number;
   heightVel?: number;
   dYaw?: number;
   dHeight?: number;
   scale?: number;
+  speed?: number;
+  dt?: number;
   dx?: number;
   dy?: number;
 }
@@ -69,6 +78,11 @@ export function applyCameraIntents(intents: AppliedCameraIntent[], viewportHeigh
         break;
       case "zoom":
         control.zoomBy(it.scale ?? 1);
+        break;
+      case "walk":
+        // Absent fields default to a stop over a nominal 30 Hz frame — and
+        // the scene re-clamps both, so junk can never teleport the rig.
+        control.walkBy(it.speed ?? 0, it.dt ?? 1 / 30);
         break;
       case "pan":
         // Normalized → px via viewport HEIGHT for BOTH axes (the
