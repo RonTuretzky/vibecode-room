@@ -101,6 +101,62 @@ export function ForestScene({ forest, issuesVisible, onPick }: ForestSceneProps)
     ground.rotation.x = -Math.PI / 2;
     scene.add(ground);
 
+    // A little procedural cat that dances in the meadow — flat garden-palette
+    // primitives (no textures, matching this window's aesthetic). Its body/head
+    // sway and paws lift on the frame clock; nothing here reconciles with the
+    // grove, so it lives for the scene and disposes with it.
+    const cat = new THREE.Group();
+    cat.position.set(0, 0, 8);
+    const catMaterial = new THREE.MeshStandardMaterial({ color: 0x4a4a52, roughness: 0.9, metalness: 0 });
+    const catBodyGeometry = new THREE.CapsuleGeometry(0.5, 0.9, 4, 8);
+    const catHeadGeometry = new THREE.SphereGeometry(0.42, 12, 12);
+    const catEarGeometry = new THREE.ConeGeometry(0.16, 0.32, 4);
+    const catLegGeometry = new THREE.CapsuleGeometry(0.12, 0.5, 3, 6);
+    const catTailGeometry = new THREE.CapsuleGeometry(0.09, 1.0, 3, 6);
+    const catDisposables: THREE.BufferGeometry[] = [
+      catBodyGeometry,
+      catHeadGeometry,
+      catEarGeometry,
+      catLegGeometry,
+      catTailGeometry,
+    ];
+
+    const catBody = new THREE.Mesh(catBodyGeometry, catMaterial);
+    catBody.rotation.x = Math.PI / 2;
+    catBody.position.y = 1.15;
+    cat.add(catBody);
+
+    const catHead = new THREE.Group();
+    catHead.position.set(0, 1.75, 0.55);
+    const catHeadMesh = new THREE.Mesh(catHeadGeometry, catMaterial);
+    catHead.add(catHeadMesh);
+    for (const side of [-1, 1]) {
+      const ear = new THREE.Mesh(catEarGeometry, catMaterial);
+      ear.position.set(0.2 * side, 0.34, 0);
+      catHead.add(ear);
+    }
+    cat.add(catHead);
+
+    const catPaws: THREE.Mesh[] = [];
+    const pawSpots: [number, number][] = [
+      [-0.28, 0.4],
+      [0.28, 0.4],
+      [-0.28, -0.4],
+      [0.28, -0.4],
+    ];
+    for (const [x, z] of pawSpots) {
+      const leg = new THREE.Mesh(catLegGeometry, catMaterial);
+      leg.position.set(x, 0.4, z);
+      cat.add(leg);
+      catPaws.push(leg);
+    }
+
+    const catTail = new THREE.Mesh(catTailGeometry, catMaterial);
+    catTail.position.set(0, 1.2, -0.7);
+    catTail.rotation.x = -Math.PI / 4;
+    cat.add(catTail);
+    scene.add(cat);
+
     // Floating hover card (plain DOM over the canvas — crisp text at any zoom).
     const hoverLabel = document.createElement("div");
     hoverLabel.className = "forest-hover-label";
@@ -329,6 +385,18 @@ export function ForestScene({ forest, issuesVisible, onPick }: ForestSceneProps)
         for (const entry of trees.values()) {
           entry.built.update(t);
         }
+        // Dance: hop the whole cat, sway its body, bob the head, wag the tail,
+        // and lift alternate paws off the beat.
+        const beat = t * 4.2;
+        cat.position.y = Math.abs(Math.sin(beat)) * 0.35;
+        cat.rotation.y = Math.sin(beat * 0.5) * 0.4;
+        catBody.rotation.z = Math.sin(beat) * 0.12;
+        catHead.rotation.z = Math.sin(beat + 0.6) * 0.22;
+        catTail.rotation.z = Math.sin(beat * 1.5) * 0.5;
+        for (let i = 0; i < catPaws.length; i++) {
+          const phase = i % 2 === 0 ? beat : beat + Math.PI;
+          catPaws[i].position.y = 0.4 + Math.max(0, Math.sin(phase)) * 0.25;
+        }
       }
       renderer.render(scene, camera);
     };
@@ -372,6 +440,11 @@ export function ForestScene({ forest, issuesVisible, onPick }: ForestSceneProps)
       pickMaterial.dispose();
       groundGeometry.dispose();
       groundMaterial.dispose();
+      cat.removeFromParent();
+      catMaterial.dispose();
+      for (const geometry of catDisposables) {
+        geometry.dispose();
+      }
       renderer.dispose();
       renderer.domElement.remove();
       hoverLabel.remove();
