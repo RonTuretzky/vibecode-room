@@ -118,7 +118,9 @@ HARD RULES — all of them, no exceptions:
    Nothing else in the message — no attribution, no Co-Authored-By trailer.
    FINAL CHECK before you finish: \`git branch --show-current\` MUST print
    your room/<slug> branch — a commit on the base branch is a FAILED run.
-   Then MAKE THE BRANCH VISIBLE on the wall's tree (it renders from GitHub):
+   Then MAKE THE BRANCH VISIBLE on the wall's tree (it renders from GitHub).
+   Use PLAIN git/gh (the shell's keychain auth pushes this repo; do NOT set
+   GH_TOKEN — the room's PAT is scoped to other repos and 403s here):
        git push -u origin room/<slug>
        gh pr create --draft --base <the branch you started from> --head room/<slug> --title "self: <summary>" --body "spoken in the room"
    Push/PR failures are non-fatal (note them in "summary") — the commit and
