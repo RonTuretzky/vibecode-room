@@ -1331,6 +1331,34 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         group.add(dog);
         envCats.push({ group: dog, baseX: x, baseZ: z, phase: floraRng() * Math.PI * 2 });
       };
+      // A dancing porcupine parked under every meadow tree too — a low-poly
+      // companion (rounded body, snout, a fan of quills) that rides the same
+      // cat field so the frame loop hops it into a dance.
+      const porcMat = new THREE.MeshPhongMaterial({ color: 0x3f3428, emissive: 0x3f3428, emissiveIntensity: 0.08 });
+      const spawnTreePorcupine = (x: number, z: number, scale: number) => {
+        const porc = new THREE.Group();
+        const body = new THREE.Mesh(catGeoBody, porcMat);
+        body.scale.set(1.0, 0.8, 1.3);
+        body.position.y = 0.2;
+        porc.add(body);
+        const snout = new THREE.Mesh(catGeoBody, porcMat);
+        snout.scale.set(0.45, 0.4, 0.55);
+        snout.position.set(0, 0.24, 0.42);
+        porc.add(snout);
+        for (const qx of [-0.18, 0, 0.18]) {
+          for (const qz of [-0.2, 0.05]) {
+            const quill = new THREE.Mesh(catGeoTail, porcMat);
+            quill.scale.set(0.12, 0.5, 0.12);
+            quill.position.set(qx, 0.42, qz);
+            quill.rotation.x = -0.5;
+            porc.add(quill);
+          }
+        }
+        porc.scale.setScalar(scale);
+        porc.position.set(x, 0, z);
+        group.add(porc);
+        envCats.push({ group: porc, baseX: x, baseZ: z, phase: floraRng() * Math.PI * 2 });
+      };
       const scatterFlora = (flora: FloraLibrary) => {
         const dummy = new THREE.Object3D();
         for (const spec of FLORA_SCATTER) {
@@ -1394,6 +1422,13 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
               spawnTreeDog(
                 dummy.position.x - nx * offset - nz * 1.6,
                 dummy.position.z - nz * offset + nx * 1.6,
+                1.4,
+              );
+              // The porcupine sits on the far tangential flank of the trunk so
+              // cat, dog and porcupine all read at the tree's foot, not stacked.
+              spawnTreePorcupine(
+                dummy.position.x - nx * offset + nz * 1.6,
+                dummy.position.z - nz * offset - nx * 1.6,
                 1.4,
               );
             }
@@ -2338,6 +2373,33 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       dog.position.set(-1.9, 0, 0.4);
       dog.rotation.y = Math.PI / 3;
       cat.add(dog);
+      // A dancing porcupine parked under the tree beside the cat and dog —
+      // parented to the cat group so it rides the same frame-loop sway (its
+      // "dance"), shaped with a rounded body, snout and a fan of quills.
+      const porcMat = new THREE.MeshPhongMaterial({ color: 0x3f3428, emissive: 0x3f3428, emissiveIntensity: 0.08 });
+      const porcupine = new THREE.Group();
+      const porcBody = new THREE.Mesh(GEO.bud, porcMat);
+      porcBody.scale.set(1.0, 0.8, 1.3);
+      porcBody.position.y = 0.2;
+      porcBody.userData.ownMaterial = true;
+      porcupine.add(porcBody);
+      const porcSnout = new THREE.Mesh(GEO.bud, porcMat);
+      porcSnout.scale.set(0.45, 0.4, 0.55);
+      porcSnout.position.set(0, 0.24, 0.42);
+      porcupine.add(porcSnout);
+      // A fan of quills bristling up and back off the porcupine's spine.
+      for (const qx of [-0.18, 0, 0.18]) {
+        for (const qz of [-0.2, 0.05]) {
+          const quill = new THREE.Mesh(GEO.stem, porcMat);
+          quill.scale.set(0.12, 0.5, 0.12);
+          quill.position.set(qx, 0.42, qz);
+          quill.rotation.x = -0.5;
+          porcupine.add(quill);
+        }
+      }
+      porcupine.position.set(-0.6, 0, 1.8);
+      porcupine.rotation.y = -Math.PI / 5;
+      cat.add(porcupine);
       group.add(cat);
       return { kind: "tree", treeSpec: spec, group, mats, baseEmissive: 0.55, head: null, headY: 0, cat, catBaseX: catBase, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false, updateProgress };
     };
@@ -2644,6 +2706,32 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       dog.position.set(-1.9, 0, 0.4);
       dog.rotation.y = Math.PI / 3;
       cat.add(dog);
+      // A dancing porcupine parked under the tree beside the cat and dog —
+      // parented to the cat group so it rides the same frame-loop sway (its
+      // "dance"), shaped with a rounded body, snout and a fan of quills.
+      const porcMat = new THREE.MeshPhongMaterial({ color: 0x3f3428, emissive: 0x3f3428, emissiveIntensity: 0.08 });
+      const porcupine = new THREE.Group();
+      const porcBody = new THREE.Mesh(GEO.bud, porcMat);
+      porcBody.scale.set(1.0, 0.8, 1.3);
+      porcBody.position.y = 0.2;
+      porcBody.userData.ownMaterial = true;
+      porcupine.add(porcBody);
+      const porcSnout = new THREE.Mesh(GEO.bud, porcMat);
+      porcSnout.scale.set(0.45, 0.4, 0.55);
+      porcSnout.position.set(0, 0.24, 0.42);
+      porcupine.add(porcSnout);
+      for (const qx of [-0.18, 0, 0.18]) {
+        for (const qz of [-0.2, 0.05]) {
+          const quill = new THREE.Mesh(GEO.stem, porcMat);
+          quill.scale.set(0.12, 0.5, 0.12);
+          quill.position.set(qx, 0.42, qz);
+          quill.rotation.x = -0.5;
+          porcupine.add(quill);
+        }
+      }
+      porcupine.position.set(-0.6, 0, 1.8);
+      porcupine.rotation.y = -Math.PI / 5;
+      cat.add(porcupine);
       group.add(cat);
       // A low-poly horse head companion parked opposite the cat at the tree's
       // foot (muzzle, head, two pricked ears, neck) — same idiom as the cat.
