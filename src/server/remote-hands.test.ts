@@ -647,3 +647,60 @@ describe("resolveHandsInfo", () => {
     expect(info).toMatchObject({ url: "http://127.0.0.1:8788/hands", lanReachable: false });
   });
 });
+
+// ── guest FLY MODE (raw pinch-camera frames) ─────────────────────────────────
+
+describe("guest flyhands", () => {
+  const flyFrame = (hands: unknown[], extra: Record<string, unknown> = {}) =>
+    JSON.stringify({ type: "flyhands", t: 12.5, aspect: 1.5, hands, ...extra });
+
+  test("parseGuestMessage sanitizes flyhands: clamps, caps at 2, dedupes ids, voids bad skeletons", () => {
+    const lm = Array.from({ length: 21 }, () => [0.5, 0.5] as [number, number]);
+    const parsed = parseGuestMessage(
+      flyFrame([
+        { id: 0, x: -0.5, y: 1.7, pinch: 9, conf: 3, lm },
+        { id: 0, x: 0.1, y: 0.1 }, // duplicate id → dropped
+        { id: 1, x: 0.4, y: 0.6, pinch: 0.2, lm: [[0.1, 0.2]] }, // short lm → voided
+        { id: 2, x: 0.9, y: 0.9 }, // third hand → capped away? (only after 2 land)
+      ]),
+    );
+    expect(parsed).toEqual({
+      kind: "flyhands",
+      t: 12.5,
+      aspect: 1.5,
+      hands: [
+        { id: 0, x: 0, y: 1, pinch: 4, conf: 1, lm },
+        { id: 1, x: 0.4, y: 0.6, pinch: 0.2, conf: 1 },
+      ],
+    });
+  });
+
+  test("malformed flyhands (no hands array / bad ids) are dropped whole or per-hand", () => {
+    expect(parseGuestMessage(JSON.stringify({ type: "flyhands", t: 1 }))).toBeNull();
+    const parsed = parseGuestMessage(flyFrame([{ id: -1, x: 0.5, y: 0.5 }, { id: 1.5, x: 0.5, y: 0.5 }]));
+    expect(parsed).toEqual({ kind: "flyhands", t: 12.5, aspect: 1.5, hands: [] });
+  });
+
+  test("the hub relays flyhands RAW, wall-routed, tagged with the guest seq", () => {
+    const hub = makeHub();
+    const roomA = fakePeer();
+    const roomB = fakePeer();
+    hub.addRoom(roomA.send).message(hello("A"));
+    hub.addRoom(roomB.send).message(hello("B"));
+
+    const conn = hub.addGuest(fakePeer().send);
+    const lm = Array.from({ length: 21 }, () => [0.25, 0.75] as [number, number]);
+    conn.message(flyFrame([{ id: 0, x: 0.42, y: 0.31, pinch: 0.21, conf: 1, lm }]));
+
+    const frames = roomA.sent.filter((m) => (m as { type: string }).type === "flyhands");
+    expect(frames).toHaveLength(1);
+    const frame = frames[0] as { wall: string; guest: number; t: number; aspect: number; hands: unknown[] };
+    expect(frame.wall).toBe("A");
+    expect(typeof frame.guest).toBe("number");
+    expect(frame.t).toBe(12.5);
+    expect(frame.aspect).toBe(1.5);
+    // RAW pass-through — no One Euro on this path (PinchCam owns smoothing).
+    expect(frame.hands).toEqual([{ id: 0, x: 0.42, y: 0.31, pinch: 0.21, conf: 1, lm }]);
+    expect(roomB.sent.filter((m) => (m as { type: string }).type === "flyhands")).toHaveLength(0);
+  });
+});

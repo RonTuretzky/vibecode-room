@@ -52,11 +52,24 @@ export const FLAT_POSE_HEIGHT_MAX = 31;
 export const FLAT_POSE_DIST_MIN = 5;
 export const FLAT_POSE_DIST_MAX = 46;
 
+// One hand of a guest FLY-MODE frame: raw MediaPipe-derived data for the
+// pinch camera grammar (PinchCam on the wall does ALL smoothing/hysteresis —
+// the hub relays raw, unlike cursors, for parity with the laptop bridge).
+export interface GuestFlyHand {
+  id: number;
+  x: number;
+  y: number;
+  pinch: number | null;
+  conf: number;
+  lm?: ReadonlyArray<readonly [number, number]>;
+}
+
 export type GuestMessage =
   | { kind: "hello"; wall: string | null; name: string | null }
   | { kind: "cursors"; cursors: RemoteGuestCursor[] }
   | { kind: "keys"; held: GuestKey[] }
-  | { kind: "flatpose"; yaw: number; height: number; dist: number };
+  | { kind: "flatpose"; yaw: number; height: number; dist: number }
+  | { kind: "flyhands"; t: number; aspect: number; hands: GuestFlyHand[] };
 
 // A guest's display name, made wall-safe: control chars stripped (a name is
 // rendered verbatim on the room canvas — nothing may smuggle escapes into it),
@@ -117,6 +130,27 @@ export function parseGuestMessage(raw: string): GuestMessage | null {
       dist: clampRange(msg.dist, FLAT_POSE_DIST_MIN, FLAT_POSE_DIST_MAX),
     };
   }
+  if (msg.type === "flyhands") {
+    if (!Array.isArray(msg.hands)) {
+      return null;
+    }
+    const hands: GuestFlyHand[] = [];
+    for (const entry of msg.hands) {
+      if (hands.length === 2) {
+        break; // the pinch grammar is one/two-handed; extras are noise
+      }
+      const hand = coerceGuestFlyHand(entry);
+      if (hand !== null && !hands.some((existing) => existing.id === hand.id)) {
+        hands.push(hand);
+      }
+    }
+    return {
+      kind: "flyhands",
+      t: typeof msg.t === "number" && Number.isFinite(msg.t) ? msg.t : 0,
+      aspect: typeof msg.aspect === "number" && Number.isFinite(msg.aspect) && msg.aspect > 0 ? msg.aspect : 16 / 9,
+      hands,
+    };
+  }
   if (msg.type !== "cursors" || !Array.isArray(msg.cursors)) {
     return null;
   }
@@ -152,6 +186,41 @@ function coerceGuestCursor(entry: unknown): RemoteGuestCursor | null {
     x: clamp01(entry.x),
     y: clamp01(entry.y),
     engaged: entry.engaged === true,
+  };
+}
+
+function coerceGuestFlyHand(entry: unknown): GuestFlyHand | null {
+  if (
+    !isRecord(entry) ||
+    typeof entry.id !== "number" ||
+    !Number.isInteger(entry.id) ||
+    entry.id < 0 ||
+    entry.id >= GUEST_ID_STRIDE ||
+    typeof entry.x !== "number" ||
+    !Number.isFinite(entry.x) ||
+    typeof entry.y !== "number" ||
+    !Number.isFinite(entry.y)
+  ) {
+    return null;
+  }
+  let lm: Array<readonly [number, number]> | null = null;
+  if (Array.isArray(entry.lm) && entry.lm.length === 21) {
+    lm = [];
+    for (const p of entry.lm) {
+      if (!Array.isArray(p) || p.length < 2 || typeof p[0] !== "number" || !Number.isFinite(p[0]) || typeof p[1] !== "number" || !Number.isFinite(p[1])) {
+        lm = null;
+        break;
+      }
+      lm.push([clamp01(p[0]), clamp01(p[1])]);
+    }
+  }
+  return {
+    id: entry.id,
+    x: clamp01(entry.x),
+    y: clamp01(entry.y),
+    pinch: typeof entry.pinch === "number" && Number.isFinite(entry.pinch) ? Math.max(0, Math.min(4, entry.pinch)) : null,
+    conf: typeof entry.conf === "number" && Number.isFinite(entry.conf) ? Math.max(0, Math.min(1, entry.conf)) : 1,
+    ...(lm !== null ? { lm } : {}),
   };
 }
 
@@ -329,6 +398,10 @@ export class RemoteHandsHub {
           // pose — a guest-sent flatpose is dropped, not relayed.
           return;
         }
+        if (parsed.kind === "flyhands") {
+          this.#relayFly(peer, parsed);
+          return;
+        }
         this.#relay(peer, parsed.cursors);
       },
       close: () => {
@@ -421,6 +494,28 @@ export class RemoteHandsHub {
           ...(peer.name !== null ? { name: peer.name } : {}),
         };
       }),
+    };
+    for (const room of this.#rooms) {
+      if (room.wall === wall) {
+        safeSend(room.send, frame);
+      }
+    }
+  }
+
+  // FLY MODE relay: wall-routed like cursors (the camera belongs to ONE wall;
+  // the flat pair stays in lockstep through the flatpose seam, exactly as it
+  // does for the laptop bridge). RAW pass-through — no One Euro here: the
+  // wall-side PinchCam owns all smoothing/hysteresis, and double-filtering
+  // would soften the grammar's engage/teleport guards.
+  #relayFly(peer: GuestPeer, fly: Extract<GuestMessage, { kind: "flyhands" }>): void {
+    const wall = this.#resolveWall(peer);
+    const frame = {
+      type: "flyhands" as const,
+      wall,
+      guest: peer.seq,
+      t: fly.t,
+      aspect: fly.aspect,
+      hands: fly.hands,
     };
     for (const room of this.#rooms) {
       if (room.wall === wall) {

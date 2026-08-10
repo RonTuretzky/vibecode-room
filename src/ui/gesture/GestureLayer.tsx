@@ -7,6 +7,8 @@ import { getSceneDwellSource } from "./scene-source";
 import { getSceneFlatPoseControl, registerFlatPoseSender } from "./flat-pose-source";
 import { RemoteKeyHolds, guestDwellCaps, isGuestCursorId, shouldDrawNameTag, visibleCursorDots } from "./remote";
 import { GestureWallClient, type GestureCursor, type GestureWallStatus } from "./wall-client";
+import { applyCameraIntents } from "./camera-source";
+import { PinchCam } from "./pinch-cam";
 
 // Dwell/interaction tuning — matches the standalone wall client
 // (gesture-wall/web/wall.js): 0.8s dwell, 0.4s cooldown, 15% sticky
@@ -201,6 +203,12 @@ export function GestureLayer({ wall, fusionUrl, remoteUrl = "", mouseTest = fals
     // events the desk keyboard produces (RoomScene's fly-through binds
     // window-wide) — merged across guests, auto-released on silence.
     const keyHolds = new RemoteKeyHolds();
+    // GUEST FLY MODE: one PinchCam per guest — the SAME interpreter the laptop
+    // bridge runs, so guests get the identical grammar (pinch-drag orbit,
+    // palm push/pull depth dolly, two-pinch spread zoom) through the identical
+    // applyCameraIntents seam. Multiple flying guests interleave latest-writer-
+    // wins on the rig, exactly like every other camera input source.
+    const flyCams = new Map<number, { cam: PinchCam; lastAt: number }>();
     let remoteClient: GestureWallClient | null = null;
     let unregisterFlatPoseSender: (() => void) | null = null;
     if (remoteUrl.trim().length > 0) {
@@ -214,6 +222,15 @@ export function GestureLayer({ wall, fusionUrl, remoteUrl = "", mouseTest = fals
         // Only a flat-locked RoomScene registers one — everywhere else the
         // frame drops here, by design.
         onFlatPose: (pose) => getSceneFlatPoseControl()?.adopt(pose),
+        onFlyHands: (fly) => {
+          let entry = flyCams.get(fly.guest);
+          if (entry === undefined) {
+            entry = { cam: new PinchCam(), lastAt: 0 };
+            flyCams.set(fly.guest, entry);
+          }
+          entry.lastAt = nowSec();
+          applyCameraIntents(entry.cam.update(fly.frame, nowSec()), window.innerHeight);
+        },
       });
       remoteClient = client;
       client.start();
@@ -224,6 +241,18 @@ export function GestureLayer({ wall, fusionUrl, remoteUrl = "", mouseTest = fals
         client.send({ type: "flatpose", ...pose, t: nowSec() });
       });
     }
+    // Fly-cam watchdog (PinchCameraLayer parity): a guest whose fly stream
+    // stalls must release any held grab within HAND_STALE_SECONDS; a guest
+    // silent for a while is pruned entirely.
+    const flyWatchdog = setInterval(() => {
+      const t = nowSec();
+      for (const [guest, entry] of [...flyCams]) {
+        applyCameraIntents(entry.cam.idleTick(t), window.innerHeight);
+        if (t - entry.lastAt > 10) {
+          flyCams.delete(guest);
+        }
+      }
+    }, 250);
 
     const domIdFor = (el: Element): string => {
       let id = domIds.get(el);
@@ -403,6 +432,13 @@ export function GestureLayer({ wall, fusionUrl, remoteUrl = "", mouseTest = fals
       }
       unregisterFlatPoseSender?.();
       remoteClient?.stop();
+      clearInterval(flyWatchdog);
+      // Force-release every flying guest's grab (far-future idle tick =
+      // guaranteed staleness cancel) so the camera never stays "tracked".
+      for (const entry of flyCams.values()) {
+        applyCameraIntents(entry.cam.idleTick(nowSec() + 60), window.innerHeight);
+      }
+      flyCams.clear();
       // Never leave a remote guest's key held down past the layer's lifetime.
       for (const key of keyHolds.releaseAll()) {
         window.dispatchEvent(new KeyboardEvent("keyup", { key }));

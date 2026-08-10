@@ -86,6 +86,10 @@ export function handsPageHtml(): string {
   #cam-status { position: absolute; left: 0; right: 0; bottom: 0.4rem; text-align: center;
     color: #8b93a7; font-size: 0.8rem; pointer-events: none; text-shadow: 0 1px 3px #0b0e14; }
   #cam-status[hidden] { display: none; }
+  #fly-toggle { position: absolute; top: 0.5rem; right: 0.5rem; padding: 0.55rem 0.9rem; border-radius: 10px;
+    border: 1px solid #2a3350; background: #131a2c; color: #aab3c7; font: inherit; }
+  #fly-toggle[aria-pressed="true"] { color: #0b0e14; background: #7ee2a8; border-color: #7ee2a8; }
+  #fly-toggle[hidden] { display: none; }
   p.hint { color: #8b93a7; font-size: 0.85rem; line-height: 1.5; margin: 0.85rem 0 0; }
   .wasd-row { display: flex; align-items: center; justify-content: center; gap: 1.25rem; margin-top: 0.9rem; }
   .wasd { display: grid; grid-template-columns: repeat(3, 3.4rem); grid-template-rows: repeat(2, 3.4rem); gap: 0.4rem; }
@@ -139,6 +143,7 @@ export function handsPageHtml(): string {
     <canvas id="cam-canvas"></canvas>
     <div id="cam-note">starting camera…</div>
     <div id="cam-status" hidden>pinch to click — your cursor freezes while pinched</div>
+    <button type="button" id="fly-toggle" data-testid="guest-fly-toggle" aria-pressed="false" hidden>🛩 Fly the room</button>
   </div>
 
   <!-- Remote WASD: walk the wall's 3D camera (same fly-through the desk
@@ -212,6 +217,21 @@ export function handsPageHtml(): string {
   const wallsEl = el("walls"), noWallBanner = el("no-wall-banner");
   const pad = el("pad"), padDot = el("pad-dot"), cam = el("cam"), camNote = el("cam-note");
   const camStatus = el("cam-status");
+  // FLY MODE: instead of a cursor, this guest's raw hand frames feed the
+  // wall's pinch-camera interpreter — the SAME grammar as the operator's
+  // laptop bridge (pinch-drag orbit, palm push/pull depth dolly, two-pinch
+  // spread zoom). Cursor/click sending pauses while flying.
+  const flyToggle = el("fly-toggle");
+  let flying = false;
+  const POINT_STATUS = "pinch to click — your cursor freezes while pinched";
+  const FLY_STATUS = "pinch-hold + move = orbit · push toward / pull away = fly in-out · pinch BOTH hands, spread = zoom";
+  flyToggle.addEventListener("click", () => {
+    flying = !flying;
+    flyToggle.setAttribute("aria-pressed", String(flying));
+    flyToggle.textContent = flying ? "🛩 Flying (tap to point again)" : "🛩 Fly the room";
+    camStatus.textContent = flying ? FLY_STATUS : POINT_STATUS;
+    if (flying) sendCursors([]); // clear this guest's dot on the wall
+  });
   const camCanvas = el("cam-canvas"), ctx = camCanvas.getContext("2d");
   const modeHands = el("mode-hands"), modePad = el("mode-pad");
 
@@ -572,6 +592,7 @@ export function handsPageHtml(): string {
     }
     camNote.style.display = "none";
     camStatus.hidden = false;
+    flyToggle.hidden = false;
     camLoop();
   };
 
@@ -593,6 +614,7 @@ export function handsPageHtml(): string {
 
     const cursors = [];   // wire frames — {id,x,y,engaged} only, protocol unchanged
     const marks = [];     // local draw state (adds the pinch-ratio feedback ring)
+    const flyHands = [];  // fly mode — raw mirrored full-frame palm + skeleton for PinchCam
     const seen = new Set();
     const lists = result.landmarks || [];
     const tMs = performance.now(), tSec = tMs / 1000;
@@ -656,6 +678,16 @@ export function handsPageHtml(): string {
       const outY = st.frozen !== null ? st.frozen.y : y;
       cursors.push({ id, x: outX, y: outY, engaged: st.engaged });
       marks.push({ id, x: outX, y: outY, engaged: st.engaged, ratio, lm });
+      if (flying) {
+        // FULL camera-frame coords (not the inset interaction zone) and the
+        // mirrored skeleton — exactly the laptop bridge's wire convention;
+        // PinchCam on the wall owns all smoothing/hysteresis from here.
+        const r3 = (v) => Math.round(v * 1000) / 1000;
+        flyHands.push({
+          id, x: r3(1 - cx), y: r3(cy), pinch: r3(ratio), conf: 1,
+          lm: lm.map((p) => [r3(1 - p.x), r3(p.y)]),
+        });
+      }
     }
     prevFrameIds = [...seen];
     // Dropout tolerance (extends hands_mediapipe.py's retain()): a mid-pinch
@@ -667,7 +699,12 @@ export function handsPageHtml(): string {
       st.lost += 1;
       if (st.lost >= HAND_LOST_FRAMES) hands.delete(id);
     }
-    sendCursors(cursors);
+    if (flying) {
+      send({ type: "flyhands", t: tSec, aspect, hands: flyHands });
+      sendCursors([]); // keep the heartbeat re-sending an EMPTY cursor set
+    } else {
+      sendCursors(cursors);
+    }
     drawPreview(marks);
   };
 

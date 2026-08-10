@@ -7,6 +7,8 @@
 // Cursor (x,y) are normalized [0,1] over the wall and already server-side
 // 1-Euro smoothed, so consumers can use them directly.
 
+import type { HandsFrame, PinchHand } from "./hands-client";
+
 export interface GestureCursor {
   id: number;
   x: number;
@@ -122,6 +124,79 @@ export function parseFlatPoseFrame(raw: string): FlatPoseFrame | null {
   };
 }
 
+// Guest FLY MODE (guest-hands relay only): raw hand frames for the pinch
+// camera grammar — {"type":"flyhands","wall":"A","guest":3,"t":12.3,
+// "aspect":1.78,"hands":[{"id":0,"x":0.4,"y":0.3,"pinch":0.21,"conf":1,
+// "lm":[[x,y]×21]}]}. Wall-matched like cursors (the camera belongs to ONE
+// wall; the flat pair syncs through the flatpose seam exactly as it does for
+// the laptop bridge). Hands coerce into the PinchHand shape hands-client
+// defines, so a per-guest PinchCam consumes the frame unchanged.
+export interface FlyHandsFrame {
+  guest: number;
+  frame: HandsFrame;
+}
+
+export function parseFlyHandsFrame(raw: string, wall: string): FlyHandsFrame | null {
+  let msg: unknown;
+  try {
+    msg = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!isRecord(msg) || msg.type !== "flyhands" || msg.wall !== wall || typeof msg.guest !== "number" || !Array.isArray(msg.hands)) {
+    return null;
+  }
+  const hands: PinchHand[] = [];
+  for (const entry of msg.hands) {
+    const hand = coerceFlyHand(entry);
+    if (hand !== null) {
+      hands.push(hand);
+      if (hands.length === 2) {
+        break;
+      }
+    }
+  }
+  return {
+    guest: msg.guest,
+    frame: {
+      t: typeof msg.t === "number" ? msg.t : 0,
+      aspect: typeof msg.aspect === "number" && Number.isFinite(msg.aspect) && msg.aspect > 0 ? msg.aspect : 16 / 9,
+      hands,
+    },
+  };
+}
+
+function coerceFlyHand(entry: unknown): PinchHand | null {
+  if (!isRecord(entry) || typeof entry.id !== "number" || typeof entry.x !== "number" || typeof entry.y !== "number") {
+    return null;
+  }
+  const lm = coerceFlyLandmarks(entry.lm);
+  return {
+    id: entry.id,
+    hand: null,
+    x: clamp01(entry.x),
+    y: clamp01(entry.y),
+    pinch: typeof entry.pinch === "number" ? Math.max(0, Math.min(4, entry.pinch)) : null,
+    pinching: null,
+    conf: typeof entry.conf === "number" ? entry.conf : 1,
+    ...(lm !== null ? { lm } : {}),
+  };
+}
+
+function coerceFlyLandmarks(value: unknown): ReadonlyArray<readonly [number, number]> | null {
+  if (!Array.isArray(value) || value.length !== 21) {
+    return null;
+  }
+  const pts: Array<readonly [number, number]> = [];
+  for (const p of value) {
+    if (!Array.isArray(p) || p.length < 2 || typeof p[0] !== "number" || typeof p[1] !== "number") {
+      return null;
+    }
+    pts.push([clamp01(p[0]), clamp01(p[1])]);
+  }
+  return pts;
+}
+
 export type GestureWallStatus = "connecting" | "open" | "closed";
 
 export interface GestureWallClientOptions {
@@ -134,6 +209,9 @@ export interface GestureWallClientOptions {
   // Flat-pair pose frames relayed from the partner wall window (guest-hands
   // relay only — the fusion server never sends these).
   onFlatPose?: (frame: FlatPoseFrame) => void;
+  // Guest fly-mode hand frames (guest-hands relay only): feeds a per-guest
+  // PinchCam so guests get the full laptop-bridge camera grammar.
+  onFlyHands?: (frame: FlyHandsFrame) => void;
   onStatus?: (status: GestureWallStatus) => void;
   reconnectMs?: number;
   // Injectable for tests / non-browser envs.
@@ -149,6 +227,7 @@ export class GestureWallClient {
   readonly #onCursors: (cursors: GestureCursor[], t: number) => void;
   readonly #onKeys?: (frame: KeysFrame) => void;
   readonly #onFlatPose?: (frame: FlatPoseFrame) => void;
+  readonly #onFlyHands?: (frame: FlyHandsFrame) => void;
   readonly #onStatus?: (status: GestureWallStatus) => void;
   readonly #reconnectMs: number;
   readonly #WebSocketImpl: typeof WebSocket;
@@ -163,6 +242,7 @@ export class GestureWallClient {
     this.#onCursors = options.onCursors;
     this.#onKeys = options.onKeys;
     this.#onFlatPose = options.onFlatPose;
+    this.#onFlyHands = options.onFlyHands;
     this.#onStatus = options.onStatus;
     this.#reconnectMs = options.reconnectMs ?? 1500;
     const impl = options.WebSocketImpl ?? (typeof WebSocket !== "undefined" ? WebSocket : undefined);
@@ -260,6 +340,13 @@ export class GestureWallClient {
         const pose = parseFlatPoseFrame(event.data);
         if (pose !== null) {
           this.#onFlatPose(pose);
+          return;
+        }
+      }
+      if (this.#onFlyHands !== undefined) {
+        const fly = parseFlyHandsFrame(event.data, this.#wall);
+        if (fly !== null) {
+          this.#onFlyHands(fly);
         }
       }
     };

@@ -32,3 +32,50 @@ export function registerSceneCameraControl(control: SceneCameraControl): () => v
 export function getSceneCameraControl(): SceneCameraControl | null {
   return current;
 }
+
+// Camera-intent shape shared by every PinchCam consumer (the laptop-bridge
+// layer and the guest fly-mode relay). Structural mirror of pinch-cam's
+// CameraIntent — declared here so this seam module stays import-light.
+export interface AppliedCameraIntent {
+  kind: "grab" | "release" | "orbit" | "zoom" | "pan";
+  yawVel?: number;
+  heightVel?: number;
+  dYaw?: number;
+  dHeight?: number;
+  scale?: number;
+  dx?: number;
+  dy?: number;
+}
+
+// Apply interpreter intents to the registered scene control. ONE translation
+// for every pinch source, so the guest fly relay and the laptop bridge can
+// never drift apart on the pan px convention or the tracking lifecycle.
+export function applyCameraIntents(intents: AppliedCameraIntent[], viewportHeightPx: number): void {
+  const control = getSceneCameraControl();
+  if (control === null) {
+    return;
+  }
+  for (const it of intents) {
+    switch (it.kind) {
+      case "grab":
+        control.setTracking(true);
+        break;
+      case "release":
+        control.flick(it.yawVel ?? 0, it.heightVel ?? 0);
+        control.setTracking(false);
+        break;
+      case "orbit":
+        control.orbitBy(it.dYaw ?? 0, it.dHeight ?? 0);
+        break;
+      case "zoom":
+        control.zoomBy(it.scale ?? 1);
+        break;
+      case "pan":
+        // Normalized → px via viewport HEIGHT for BOTH axes (the
+        // OrbitControls convention); the rig's 0.0045*radius panSpeed
+        // then applies its own feel.
+        control.panBy((it.dx ?? 0) * viewportHeightPx, (it.dy ?? 0) * viewportHeightPx);
+        break;
+    }
+  }
+}

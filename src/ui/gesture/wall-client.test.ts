@@ -7,6 +7,7 @@ import {
   type FlatPoseFrame,
   type GestureCursor,
   type KeysFrame,
+  parseFlyHandsFrame,
 } from "./wall-client";
 
 describe("parseCursorsFrame", () => {
@@ -232,5 +233,47 @@ describe("GestureWallClient", () => {
     FakeWebSocket.instances[1].drop();
     await new Promise((r) => setTimeout(r, 15));
     expect(FakeWebSocket.instances.length).toBe(2); // no reconnect after stop
+  });
+});
+
+describe("parseFlyHandsFrame", () => {
+  const raw = (over: Record<string, unknown> = {}) =>
+    JSON.stringify({
+      type: "flyhands",
+      wall: "A",
+      guest: 3,
+      t: 12.5,
+      aspect: 1.5,
+      hands: [{ id: 0, x: 0.42, y: 0.31, pinch: 0.21, conf: 1, lm: Array.from({ length: 21 }, () => [0.25, 0.75]) }],
+      ...over,
+    });
+
+  test("parses a well-formed frame into PinchHand shape for the subscribed wall", () => {
+    const parsed = parseFlyHandsFrame(raw(), "A");
+    expect(parsed?.guest).toBe(3);
+    expect(parsed?.frame.t).toBe(12.5);
+    expect(parsed?.frame.aspect).toBe(1.5);
+    expect(parsed?.frame.hands[0]).toMatchObject({ id: 0, hand: null, x: 0.42, y: 0.31, pinch: 0.21, pinching: null, conf: 1 });
+    expect(parsed?.frame.hands[0]?.lm).toHaveLength(21);
+  });
+
+  test("wrong wall / wrong type / missing guest → null; extras capped at two hands", () => {
+    expect(parseFlyHandsFrame(raw(), "B")).toBeNull();
+    expect(parseFlyHandsFrame(raw({ type: "cursors" }), "A")).toBeNull();
+    expect(parseFlyHandsFrame(raw({ guest: undefined }), "A")).toBeNull();
+    const three = parseFlyHandsFrame(
+      raw({ hands: [{ id: 0, x: 0.1, y: 0.1 }, { id: 1, x: 0.2, y: 0.2 }, { id: 2, x: 0.3, y: 0.3 }] }),
+      "A",
+    );
+    expect(three?.frame.hands).toHaveLength(2);
+  });
+
+  test("clamps coords/pinch, defaults conf, voids malformed skeletons per-hand", () => {
+    const parsed = parseFlyHandsFrame(
+      raw({ hands: [{ id: 0, x: -2, y: 3, pinch: 11, lm: [[0.1, 0.2]] }] }),
+      "A",
+    );
+    expect(parsed?.frame.hands[0]).toMatchObject({ x: 0, y: 1, pinch: 4, conf: 1 });
+    expect(parsed?.frame.hands[0]?.lm).toBeUndefined();
   });
 });
