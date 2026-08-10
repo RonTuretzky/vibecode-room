@@ -1469,19 +1469,6 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         motes.push({ sprite, base, phase: rng() * Math.PI * 2 });
       }
 
-      // Three glowing golden fireflies drifting slowly above the meadow.
-      const fireflies: { sprite: THREE.Sprite; base: THREE.Vector3; phase: number }[] = [];
-      for (let i = 0; i < 3; i++) {
-        const sprite = new THREE.Sprite(
-          new THREE.SpriteMaterial({ map: glowTexture, color: 0xffd24a, transparent: true, opacity: 0.6, blending: THREE.AdditiveBlending, depthWrite: false }),
-        );
-        const base = new THREE.Vector3((rng() - 0.5) * 12, 1.6 + rng() * 1.2, (rng() - 0.5) * 10);
-        sprite.position.copy(base);
-        sprite.scale.setScalar(0.22 + rng() * 0.08);
-        group.add(sprite);
-        fireflies.push({ sprite, base, phase: rng() * Math.PI * 2 });
-      }
-
       // Flap waveform bounds: each side sweeps from just below horizontal up
       // to ~76° over the back; landed wings fold to ~79° and pump slowly.
       const FLAP_MIN = -0.22;
@@ -1625,14 +1612,6 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
               mote.base.z + Math.cos(t * 0.18 + mote.phase) * 1.8,
             );
             mote.sprite.material.opacity = 0.22 + Math.abs(Math.sin(t * 0.7 + mote.phase)) * 0.3;
-          }
-          for (const fly of fireflies) {
-            fly.sprite.position.set(
-              fly.base.x + Math.sin(t * 0.16 + fly.phase) * 2.4,
-              fly.base.y + Math.sin(t * 0.24 + fly.phase * 2) * 0.5,
-              fly.base.z + Math.cos(t * 0.13 + fly.phase) * 2.4,
-            );
-            fly.sprite.material.opacity = 0.35 + Math.abs(Math.sin(t * 1.6 + fly.phase)) * 0.45;
           }
         },
         dispose: () => {
