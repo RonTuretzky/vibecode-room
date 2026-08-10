@@ -4,7 +4,7 @@ import { mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createProjectorApp } from "./app";
-import { createProjectorRuntime, type ProjectorRuntime, type ProjectorRuntimeOptions } from "./composition";
+import { createProjectorRuntime, type ProjectorRuntime, type ProjectorRuntimeOptions, STEER_GRACE_MS } from "./composition";
 import type { GitCommandRunner } from "./tree-git";
 import type { ForestCommandRunner } from "./github-org";
 import type { BuildBackend, BuildRequest, BuildResult } from "../buildloop/types";
@@ -492,5 +492,92 @@ describe("GET /api/process/:upid/issues — the UI contract", () => {
     const response = await app.request(`/api/process/${upid}/issues`);
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ issues: [] });
+  });
+});
+
+// ── endpointing grace — finals that trail the toggle-off ─────────────────────
+// Live-room finding: ASR finals land 1-2s AFTER the speaker stops, so
+// "record → speak → tap stop" used to lose the whole window. For
+// STEER_GRACE_MS after clear, trailing finals still steer the released
+// target and join the adopted slice the delayed drain commits.
+
+describe("steering endpointing grace", () => {
+  test("a final arriving JUST after toggle-off still steers the released target and joins the commit", async () => {
+    let nowMs = 1_000_000;
+    const git = scriptedGit();
+    const { runtime, buildsRoot } = await makeRuntime({
+      buildBackends: [new FakeBackend()],
+      treeGitRunner: git.run,
+      cloneRepoFn: fakeClone,
+      repoDigestFn: async () => "digest: fake repo",
+      clock: () => nowMs,
+    });
+    const upid = await importAdopted(runtime);
+
+    runtime.setSteeringTarget(upid, "corr-grace-on");
+    runtime.clearSteeringTarget("corr-grace-off"); // stop tapped before the final lands
+    nowMs += 1_500; // within STEER_GRACE_MS
+    await drive(runtime, [final("add a welcome note for the residents", "utt-grace-1")]);
+    // The trailing final still reached the released target's agent loop…
+    await waitFor(() => runtime.trace.events().some((event) => event.event === "process.steer" && event.upid === upid));
+    // …and joins the applier commit once the (lazy or timed) drain runs: a
+    // later out-of-window final drains lazily and flows ambient.
+    nowMs += STEER_GRACE_MS + 1_000;
+    await drive(runtime, [final("unrelated ambient chatter", "utt-after")]);
+    const notesPath = join(buildsRoot, upid, "repo", "ROOM-NOTES.md");
+    await waitFor(() => existsSync(notesPath));
+    const notes = readFileSync(notesPath, "utf8");
+    expect(notes).toContain("add a welcome note for the residents");
+    expect(notes).not.toContain("unrelated ambient chatter");
+  });
+
+  test("a final AFTER the grace window flows ambient — nothing steers, nothing commits", async () => {
+    let nowMs = 2_000_000;
+    const git = scriptedGit();
+    const { runtime, buildsRoot } = await makeRuntime({
+      buildBackends: [new FakeBackend()],
+      treeGitRunner: git.run,
+      cloneRepoFn: fakeClone,
+      repoDigestFn: async () => "digest: fake repo",
+      clock: () => nowMs,
+    });
+    const upid = await importAdopted(runtime);
+
+    runtime.setSteeringTarget(upid, "corr-grace2-on");
+    runtime.clearSteeringTarget("corr-grace2-off");
+    nowMs += STEER_GRACE_MS + 500; // window lapsed
+    await drive(runtime, [final("too late to steer", "utt-late")]);
+    expect(runtime.trace.events().some((event) => event.event === "process.steer" && event.upid === upid)).toBe(false);
+    const notesPath = join(buildsRoot, upid, "repo", "ROOM-NOTES.md");
+    expect(existsSync(notesPath)).toBe(false);
+  });
+
+  test("re-arming a NEW target preempts the previous grace (windows never merge)", async () => {
+    let nowMs = 3_000_000;
+    const git = scriptedGit();
+    const { runtime, buildsRoot } = await makeRuntime({
+      buildBackends: [new FakeBackend()],
+      treeGitRunner: git.run,
+      cloneRepoFn: fakeClone,
+      repoDigestFn: async () => "digest: fake repo",
+      clock: () => nowMs,
+    });
+    const upid = await importAdopted(runtime);
+
+    runtime.setSteeringTarget(upid, "corr-grace3-on");
+    await drive(runtime, [final("first window words", "utt-w1")]);
+    await waitFor(() => runtime.trace.events().some((event) => event.event === "process.steer" && event.upid === upid));
+    runtime.clearSteeringTarget("corr-grace3-off");
+    nowMs += 500;
+    runtime.setSteeringTarget(upid, "corr-grace3-on2"); // re-arm preempts → first window drains NOW
+    const notesPath = join(buildsRoot, upid, "repo", "ROOM-NOTES.md");
+    await waitFor(() => existsSync(notesPath));
+    expect(readFileSync(notesPath, "utf8")).toContain("first window words");
+    // The fresh window is clean: a final now belongs to window two only.
+    await drive(runtime, [final("second window words", "utt-w2")]);
+    runtime.clearSteeringTarget("corr-grace3-off2");
+    nowMs += STEER_GRACE_MS + 1_000;
+    await drive(runtime, [final("flush tick", "utt-flush")]);
+    await waitFor(() => readFileSync(notesPath, "utf8").includes("second window words"));
   });
 });

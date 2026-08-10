@@ -630,6 +630,12 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   // applier (the toggle-on→toggle-off window exactly; joinedSliceText trims
   // it to the trailing 60s). Pure state; logic lives in transcript-slice.ts.
   #steerSlice: SteerSliceLine[] = [];
+  // ENDPOINTING GRACE (live-room finding): ASR finals land 1-2s AFTER the
+  // speaker stops, so "record → speak → tap stop" loses the final if the
+  // window closes hard. For STEER_GRACE_MS after clear, trailing finals still
+  // route to the just-cleared target (and join an adopted tree's slice, whose
+  // applier drain waits for them). Preempted by a new target; lazily drained.
+  #steerGrace: { upid: string; branch: string | null; slice: SteerSliceLine[]; untilMs: number; timer: ReturnType<typeof setTimeout> | null } | null = null;
   // AUTO-BUILD toggle. When true, every fired suggestion is accepted+built the
   // instant it pops — no click required. Operator flips it from the projector
   // (POST /api/auto-accept) or boots with VIBERSYN_AUTO_ACCEPT=1. A re-entrancy guard
@@ -2046,6 +2052,9 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       // return the current snapshot rather than steering into a dead process.
       return this.clearSteeringTarget(correlationId);
     }
+    // A fresh target preempts any endpointing grace from the previous window
+    // (its slice drains now — the two spoken windows never merge).
+    this.#drainSteerGrace(`${correlationId}-preempted-by-select`);
     this.#steeringUpid = upid;
     // Branch scope (the record toggle dwelled on a specific room/<slug>) rides
     // beside the target; setting a target (re)opens the spoken-change window,
@@ -2085,13 +2094,39 @@ class LiveProjectorRuntime implements ProjectorRuntime {
         upid: had,
         meta: { upid: had },
       });
-      const text = joinedSliceText(slice, this.#clock());
-      if (text.length > 0 && this.#treeGit?.isAdopted(had) === true && steerApplierEnabled(this.#env)) {
-        void this.#applySteerSlice(had, branch, text, correlationId).catch(() => undefined);
-      }
+      // Open the endpointing grace window: the slice moves INTO it (the
+      // adopted-tree applier drain now happens at grace end, so a final that
+      // lands moments after the toggle-off still joins the commit), and any
+      // pending previous grace drains first — windows never merge.
+      this.#drainSteerGrace(`${correlationId}-preempt`);
+      const timer = setTimeout(() => this.#drainSteerGrace(`${correlationId}-grace-timer`), STEER_GRACE_MS + 100);
+      (timer as { unref?: () => void }).unref?.();
+      this.#steerGrace = { upid: had, branch, slice, untilMs: this.#clock() + STEER_GRACE_MS, timer };
     }
     this.publish();
     return this.#snapshot;
+  }
+
+  // Close the grace window (idempotent): fire the adopted-tree applier on the
+  // accumulated slice. Callers: the wall-clock timer, a new steering target
+  // (preemption), and the lazy check in the FINAL path.
+  #drainSteerGrace(correlationId: string): void {
+    const grace = this.#steerGrace;
+    if (grace === null) {
+      return;
+    }
+    this.#steerGrace = null;
+    if (grace.timer !== null) {
+      clearTimeout(grace.timer);
+    }
+    // A halted/vanished target must not commit from beyond the grave.
+    if (!this.registry.activeRecords().some((record) => record.upid === grace.upid)) {
+      return;
+    }
+    const text = joinedSliceText(grace.slice, this.#clock());
+    if (text.length > 0 && this.#treeGit?.isAdopted(grace.upid) === true && steerApplierEnabled(this.#env)) {
+      void this.#applySteerSlice(grace.upid, grace.branch, text, correlationId).catch(() => undefined);
+    }
   }
 
   steeringTarget(): string | null {
@@ -2354,6 +2389,37 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       if (this.#steeringUpid !== null) {
         await this.routeSteering(observation, correlationId);
         return;
+      }
+
+      // ENDPOINTING GRACE: the record toggle was released moments ago — this
+      // FINAL carries words spoken DURING the window (ASR finals trail the
+      // speaker by 1-2s), so it still belongs to the released target. Adopted
+      // trees also append it to the grace slice the delayed drain will commit.
+      const steerGrace = this.#steerGrace;
+      if (steerGrace !== null) {
+        if (this.#clock() <= steerGrace.untilMs) {
+          if (this.#treeGit?.isAdopted(steerGrace.upid) === true) {
+            steerGrace.slice = appendSliceLine(steerGrace.slice, { text: observation.text, atMs: this.#clock() });
+          }
+          const graceCorrelationId = `${correlationId}-${observation.utteranceId}-grace`;
+          try {
+            await this.registry.steer(steerGrace.upid, { text: observation.text, source: "live-transcript" }, graceCorrelationId);
+          } catch (error) {
+            this.recordExternalTrace({
+              event: "steering.route.error",
+              level: "error",
+              sessionId: this.sessionId,
+              correlationId: graceCorrelationId,
+              upid: steerGrace.upid,
+              meta: { message: error instanceof Error ? error.message : String(error), grace: true },
+            });
+          }
+          this.publish();
+          return;
+        }
+        // The window lapsed with no timer fire yet — drain lazily and let this
+        // FINAL flow to the ambient path below.
+        this.#drainSteerGrace(`${correlationId}-grace-lapsed`);
       }
 
       // Expire a stale pending suggestion FIRST. Acceptance otherwise only times
@@ -4583,6 +4649,11 @@ export const DEFAULT_AUTOBUILD_SETTLE_MS = 8_000;
 // Guided-demo hold TTL: a wall that crashed/closed mid-"describe your idea"
 // must never wedge auto-build — the hold self-expires after this long.
 export const GUIDED_HOLD_TTL_MS = 10 * 60_000;
+
+// Endpointing grace after the record toggle releases: ASR finals trail the
+// speaker by 1-2s, so words spoken during the window arrive AFTER the clear.
+// Finals inside this budget still route/commit to the released target.
+export const STEER_GRACE_MS = 2_500;
 
 // VIBERSYN_AUTOBUILD_SETTLE_MS — quiet period (ms) required before an armed
 // auto-build fires. 0 restores the legacy immediate fire (fast tests).
