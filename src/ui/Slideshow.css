@@ -218,6 +218,16 @@
   z-index: 70;
 }
 
+/* Gesture mode: the per-wall safe-zone padding (styles.css pads .detail-overlay
+   by 33.5vw on the outer third) shoved the deck window off-center. The window
+   is bounded (min(1040px, 94vw)), so centered it still keeps its tabs and
+   decision bar out of the wall's worst pointing edges — recenter it. */
+main.gesture-mode[data-view="ideas"] .detail-overlay.slideshow-overlay,
+main.gesture-mode[data-view="builds"] .detail-overlay.slideshow-overlay {
+  padding-left: 40px;
+  padding-right: 40px;
+}
+
 .slideshow-window .slideshow-body {
   flex: 1 1 auto;
   min-height: 0;

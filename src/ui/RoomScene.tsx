@@ -612,13 +612,30 @@ function makeLabelSprite(title: string, statusLine: string, accentCss: string): 
 
   const measure = document.createElement("canvas").getContext("2d")!;
   measure.font = titleFont;
-  const words = title.split(/\s+/).filter(Boolean);
+  // Overflow guards: (1) clamp long titles to ~28 chars with an ellipsis —
+  // the full title lives in the tree menu / hover card; (2) a single unbroken
+  // word (repo names like "conductor-github-visualizer") can still measure
+  // wider than the card, so every drawn line is measure-trimmed to fit.
+  const titleMax = 28;
+  const clamped = title.length > titleMax ? `${title.slice(0, titleMax - 1).trimEnd()}…` : title;
+  const innerWidth = maxWidth - padX * 2;
+  const fitLine = (line: string): string => {
+    if (measure.measureText(line).width <= innerWidth) {
+      return line;
+    }
+    let cut = line;
+    while (cut.length > 1 && measure.measureText(`${cut}…`).width > innerWidth) {
+      cut = cut.slice(0, -1);
+    }
+    return `${cut.trimEnd()}…`;
+  };
+  const words = clamped.split(/\s+/).filter(Boolean);
   const lines: string[] = [];
   let current = "";
   for (const word of words) {
     const attempt = current.length > 0 ? `${current} ${word}` : word;
-    if (measure.measureText(attempt).width > maxWidth - padX * 2 && current.length > 0) {
-      lines.push(current);
+    if (measure.measureText(attempt).width > innerWidth && current.length > 0) {
+      lines.push(fitLine(current));
       current = word;
       if (lines.length === 3) {
         break;
@@ -628,9 +645,9 @@ function makeLabelSprite(title: string, statusLine: string, accentCss: string): 
     }
   }
   if (lines.length < 3 && current.length > 0) {
-    lines.push(current);
+    lines.push(fitLine(current));
   } else if (current.length > 0) {
-    lines[2] = `${lines[2].slice(0, 26)}…`;
+    lines[2] = fitLine(`${lines[2].slice(0, 26)}…`);
   }
   const widest = Math.max(...lines.map((line) => measure.measureText(line).width), measure.measureText(statusLine).width * 0.8);
   const width = Math.min(maxWidth, Math.ceil(widest) + padX * 2);

@@ -80,17 +80,27 @@ export function GuidedDemo({
     Array.from({ length: PRACTICE_ORB_COUNT }, () => false),
   );
   // Transient celebration when the spoken idea REALLY became a project.
+  // HONEST gate: 🎉 fires only once a focus process exists — a skipped-through
+  // run (no kickoff, focusUpid null) must not read as success. The adoption
+  // may lag the idea→race edge by a snapshot, so the focusUpid transition
+  // itself also triggers while the race/decide steps are up.
   const [celebrate, setCelebrate] = useState(false);
   const prevStepRef = useRef(state.step);
+  const prevFocusRef = useRef(state.focusUpid);
   useEffect(() => {
-    const prev = prevStepRef.current;
+    const prevStep = prevStepRef.current;
+    const prevFocus = prevFocusRef.current;
     prevStepRef.current = state.step;
-    if (prev === "idea" && (state.step === "race" || state.step === "decide")) {
+    prevFocusRef.current = state.focusUpid;
+    const raceOrDecide = state.step === "race" || state.step === "decide";
+    const enteredFromIdea = prevStep === "idea" && raceOrDecide;
+    const adoptedNow = raceOrDecide && prevFocus === null && state.focusUpid !== null;
+    if (state.focusUpid !== null && (enteredFromIdea || adoptedNow)) {
       setCelebrate(true);
       const timer = setTimeout(() => setCelebrate(false), 3_200);
       return () => clearTimeout(timer);
     }
-  }, [state.step]);
+  }, [state.step, state.focusUpid]);
 
   const notice = guidedNotice(state, snapshot);
   const step = state.step;
@@ -352,10 +362,12 @@ function RaceBody({ state, snapshot }: { state: GuidedState; snapshot: Projector
           <>Waiting for a project… say an idea (or skip back) — no kickoff has started yet.</>
         )}
       </p>
-      {lanes.length > 0 ? (
+      {process !== null && lanes.length > 0 ? (
         <div className="guided-lanes" data-testid="guided-lanes">
           {/* DE-THEMED lanes: real per-lane telemetry, labeled generically —
-              the room never presents its build backends as UI. */}
+              the room never presents its build backends as UI. No focus
+              process → no lanes: a skipped-through run must not show phantom
+              "queued…" rows for a kickoff that never happened. */}
           {lanes.map((lane, index) => (
             <div
               key={lane.id}
@@ -394,7 +406,21 @@ function RaceBody({ state, snapshot }: { state: GuidedState; snapshot: Projector
 
 function DecideBody({ state, snapshot }: { state: GuidedState; snapshot: ProjectorSnapshot }) {
   const process = focusProcess(state, snapshot);
-  const builds = process !== null ? buildsOf(process) : [];
+  // HONEST no-kickoff state: a skipped-through run never built anything, so
+  // there is no mock, no deck and nothing to decide — say so plainly instead
+  // of narrating a build that never happened.
+  if (process === null) {
+    return (
+      <div className="guided-body">
+        <p className="guided-lede" data-testid="guided-no-kickoff">
+          Nothing was kicked off this run — no idea was spoken and built, so
+          there is no deck to decide on. Finish below to end the demo, or exit
+          and try again with a spoken idea.
+        </p>
+      </div>
+    );
+  }
+  const builds = buildsOf(process);
   const hasDeck = builds.some((build) => build.slideshowUrl !== null);
   const readyPreview = builds.find((build) => build.status === "ready" && build.previewUrl !== null);
   return (
@@ -419,7 +445,7 @@ function DecideBody({ state, snapshot }: { state: GuidedState; snapshot: Project
               </a>
             </>
           ) : (
-            " and no preview is up — that is the honest state of this kickoff."
+            " and no preview is up — that is the honest state of this kickoff"
           )}
           . Finish below to complete the demo.
         </p>

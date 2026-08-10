@@ -95,7 +95,13 @@ button {
 
 .stage .rail-card,
 .stage .idea-tray,
-.stage .research-tray {
+.stage .research-tray,
+/* Bare controls in the stage (the rail's hands-toggle chip, the research
+   tray's reset chip) sit OUTSIDE the whitelisted cards' subtrees or need to
+   win over them: without an explicit re-enable the .stage umbrella above
+   swallows their clicks and elementFromPoint returns the scene canvas, so
+   they are neither clickable nor dwellable in desk mode. */
+.stage .ctl-button {
   pointer-events: auto;
 }
 
