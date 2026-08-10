@@ -31,7 +31,7 @@ import { generateSlideshow } from "../slideshow/generator";
 import { appendTakeHomeSlide } from "../slideshow/template";
 import { publishDeck, resolveGitHubPat, type PublishDeckFn } from "../publish/gh-pages";
 import { qrCodeSvg } from "../publish/qr";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, stat, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { selectSummarizer } from "../audio/summarizer";
 import type { HotLoopSummaryLLM } from "../audio/output-policy";
@@ -1068,6 +1068,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
           onTrace: (event) => this.recordExternalTrace(event),
           onOutput: (decision) => this.recordOutput(decision),
           onLaunched: (runId) => {
+            this.#startSelfActivityProbe();
             void this.runEventDriver.subscribe(SELF_UPID, runId).catch((error) => {
               this.recordExternalTrace({
                 event: "run.events.error",
@@ -3724,6 +3725,92 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     };
   }
 
+  // ── self-run ACTIVITY PROBE (live-room complaint: "run heartbeat · 95%"
+  // reads as a mock). The gateway's event stream carries no agent activity,
+  // but the run's REAL footprint is observable in the working tree: files it
+  // edits, the room/* branch it cuts, the build it runs, the self-verify
+  // screenshots it takes. Poll that footprint every few seconds while a self
+  // lane executes and surface an honest label + elapsed time.
+  #selfProbeTimer: ReturnType<typeof setInterval> | null = null;
+  #selfProbeStartMs = 0;
+  #selfProbeBusy = false;
+
+  #startSelfActivityProbe(): void {
+    if (this.#selfProbeTimer !== null) {
+      clearInterval(this.#selfProbeTimer);
+    }
+    this.#selfProbeStartMs = Date.now();
+    const timer = setInterval(() => {
+      const lane = this.#selfCommission?.lane() ?? null;
+      if (lane === null || lane.status !== "executing") {
+        if (this.#selfProbeTimer !== null) {
+          clearInterval(this.#selfProbeTimer);
+          this.#selfProbeTimer = null;
+        }
+        return;
+      }
+      if (this.#selfProbeBusy) {
+        return;
+      }
+      this.#selfProbeBusy = true;
+      void this.#probeSelfRunActivity()
+        .then((label) => {
+          if (label !== null) {
+            // Time-based percent against the typical verified run (~6 min):
+            // honest motion instead of the stream's instant fake 95.
+            const pct = Math.min(96, Math.round(((Date.now() - this.#selfProbeStartMs) / 360_000) * 100));
+            this.#selfCommission?.progress({ label, percent: pct });
+          }
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          this.#selfProbeBusy = false;
+        });
+    }, 3_000);
+    (timer as { unref?: () => void }).unref?.();
+    this.#selfProbeTimer = timer;
+  }
+
+  async #probeSelfRunActivity(): Promise<string | null> {
+    const run = async (argv: string[]): Promise<string> => {
+      try {
+        const proc = Bun.spawn(argv, { cwd: process.cwd(), stdout: "pipe", stderr: "ignore" });
+        const out = await new Response(proc.stdout).text();
+        await proc.exited;
+        return proc.exitCode === 0 ? out : "";
+      } catch {
+        return "";
+      }
+    };
+    const elapsedSec = Math.round((Date.now() - this.#selfProbeStartMs) / 1000);
+    const elapsed = elapsedSec >= 60 ? `${Math.floor(elapsedSec / 60)}m${String(elapsedSec % 60).padStart(2, "0")}s` : `${elapsedSec}s`;
+    const [branch, status] = await Promise.all([run(["git", "branch", "--show-current"]), run(["git", "status", "--porcelain"])]);
+    const branchName = branch.trim();
+    const srcEdits = status
+      .split("\n")
+      .map((line) => line.slice(3).trim())
+      .filter((path) => path.startsWith("src/"));
+    // Most-specific truth first: verify screenshots → building → editing →
+    // branch cut → reading. All derived from the run's REAL footprint.
+    try {
+      const distStat = await stat(resolve(process.cwd(), "dist", "index.html")).catch(() => null);
+      if (distStat !== null && distStat.mtimeMs > this.#selfProbeStartMs && Date.now() - distStat.mtimeMs < 9_000) {
+        return `built the change — verifying · ${elapsed}`;
+      }
+    } catch {
+      // stat unavailable — fall through to the working-tree signals
+    }
+    if (srcEdits.length > 0) {
+      const first = srcEdits[0].split("/").pop() ?? srcEdits[0];
+      const more = srcEdits.length > 1 ? ` +${srcEdits.length - 1} more` : "";
+      return `editing ${first}${more} · ${elapsed}`;
+    }
+    if (branchName.startsWith("room/")) {
+      return `on ${branchName} — working · ${elapsed}`;
+    }
+    return `reading the room's source · ${elapsed}`;
+  }
+
   private recordExternalTrace(event: LogEvent): void {
     // The mute heartbeat fires every ~1s for the life of the (long-running)
     // server while muted. It is liveness noise, not causal-chain data, and the
@@ -3832,7 +3919,11 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     // a completed stream frame hands off to the room-side green gate (which
     // decides built-vs-failed from git, never from the frame alone).
     if (this.#selfCommission !== null && upid === SELF_UPID) {
-      this.#selfCommission.progress({ percent: overlay.progress, label: overlay.lastOutput });
+      // The gateway's stream for self runs carries only "run heartbeat" — the
+      // ACTIVITY PROBE (#probeSelfRunActivity) owns the lane's label+percent
+      // with real working-tree signals; folding the heartbeat here would
+      // flicker the honest label back to a mock every frame. Only the
+      // completion edge matters from this stream.
       if (overlay.state === "completed") {
         void this.#selfCommission.completeFromRun("finished").catch(() => undefined);
       }
