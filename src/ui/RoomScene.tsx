@@ -155,7 +155,12 @@ function clampCount(value: number | undefined): number {
 // three.js so it is unit-tested directly and reused across all render styles.
 export function treeIndicators(spec: TreeSpec): TreeIndicators {
   const stage = spec.stage ?? "concept";
-  const grown = stage === "commissioned" || stage === "built";
+  // An ADOPTED tree (imported GitHub repo — treeRepo.remoteUrl set) is an
+  // EXISTING real project, not a concept being sketched: it stands full-grown
+  // from the moment it lands (dress-rehearsal finding: the convent tree
+  // rendered as a barely-visible sapling on the panorama).
+  const adopted = spec.treeRepo?.remoteUrl != null;
+  const grown = adopted || stage === "commissioned" || stage === "built";
   const ring: TreeRingStyle = stage === "built" ? "built" : stage === "commissioned" ? "commission" : "none";
   const lanes: TreeBuildSummary = {
     building: clampCount(spec.builds?.building),
@@ -4070,8 +4075,35 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
       }
       if (fitRef.current !== lastFit) {
         lastFit = fitRef.current;
-        if (!cornerLocked && !flatLocked) {
-          fitToContent(); // corner/flat lock: F is a camera no-op — the pair may not move
+        if (flatLocked) {
+          // FLAT-LOCK FIT = canonical pose, re-CENTERED on the fleet. The
+          // pair can't free-frame (rigid frustum), but the shared pose CAN
+          // drift (roam/walk/turn writers + hub replay), and the canonical
+          // origin doesn't necessarily face the occupied tree slots
+          // (dress-rehearsal finding: an imported tree invisible on BOTH
+          // walls). The roam centre exists for exactly this translation:
+          // aim yaw/height/dist at the boot framing and put the centre on
+          // the garden trees' centroid, then publish — Fit-dwell (dock) and
+          // the auto-fit-on-import pulse both bring the garden home on the
+          // pair, in lockstep.
+          let fitSx = 0;
+          let fitSz = 0;
+          let fitN = 0;
+          for (const entry of treeEntries.values()) {
+            if (!entry.removing) {
+              fitSx += entry.targetPos.x;
+              fitSz += entry.targetPos.z;
+              fitN += 1;
+            }
+          }
+          flatRig.yaw = FLAT_YAW;
+          flatRig.height = FLAT_EYE_HEIGHT;
+          flatRig.dist = FLAT_EYE_DISTANCE;
+          flatRig.cx = fitN > 0 ? Math.max(-80, Math.min(80, fitSx / fitN)) : 0;
+          flatRig.cz = fitN > 0 ? Math.max(-80, Math.min(80, fitSz / fitN)) : 0;
+          flatPoseDirty = true;
+        } else if (!cornerLocked) {
+          fitToContent(); // corner lock: F is a camera no-op — the pair may not move
         }
       }
       // Guided-demo focus: glide the rig to the requested process node

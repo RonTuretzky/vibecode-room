@@ -8,6 +8,7 @@
 //   - a failed clone removes the partial directory (never leave half a tree
 //     inside the preview-served builds/<upid>/).
 
+import { existsSync, rmSync } from "node:fs";
 import { readFile, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -178,15 +179,46 @@ export function cloneEnv(base: Record<string, string | undefined>): Record<strin
   return env;
 }
 
+// A pre-existing destination (upids restart at upid-1 every boot while
+// builds/ persists on disk — dress-rehearsal finding) is resolved BEFORE the
+// clone: a valid git dir whose origin matches the requested URL is REUSED
+// (fast re-import, keeps prior room/* work); anything else — another
+// project's leftovers, a half-clone from an interrupted boot — is removed so
+// the fresh clone can land. Probe + removal never throw.
+async function resolveExistingDir(url: string, dir: string): Promise<{ reuse: boolean }> {
+  if (!existsSync(dir)) {
+    return { reuse: false };
+  }
+  try {
+    const proc = Bun.spawn(["git", "-C", dir, "remote", "get-url", "origin"], { stdout: "pipe", stderr: "ignore" });
+    const out = (await new Response(proc.stdout).text()).trim();
+    await proc.exited;
+    if (proc.exitCode === 0 && (out === url || out === `${url}.git` || `${out}.git` === url)) {
+      return { reuse: true };
+    }
+  } catch {
+    // git missing / not a repo — fall through to removal
+  }
+  rmSync(dir, { recursive: true, force: true });
+  return { reuse: false };
+}
+
 export async function cloneRepo(options: {
   url: string; // clone URL built from parsed owner/repo upstream — never raw phone input
-  dir: string; // absolute target directory (must not already exist)
+  dir: string; // absolute target directory (a stale one is reused or replaced — see resolveExistingDir)
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<CloneRepoResult> {
   const timeoutMs = options.timeoutMs ?? DEFAULT_CLONE_TIMEOUT_MS;
   if (options.signal?.aborted === true) {
     return { ok: false, error: "Clone aborted." };
+  }
+  try {
+    if ((await resolveExistingDir(options.url, options.dir)).reuse) {
+      return { ok: true, dir: options.dir };
+    }
+  } catch {
+    // resolution is best-effort; a stubborn dir surfaces as the clone error
   }
   // NEVER throws: Bun.spawn throws synchronously when `git` is not on PATH
   // (minimal launchd/systemd envs), and the import routine relies on every
