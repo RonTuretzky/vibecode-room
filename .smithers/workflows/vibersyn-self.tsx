@@ -59,8 +59,13 @@ STEERING INSTRUCTION (spoken or clicked in the room — apply it now):
 ${instruction}
 
 HARD RULES — all of them, no exceptions:
-1. FIRST run \`git status --porcelain\` and record every path it lists. Those
-   are someone's uncommitted work: NEVER modify, stage, or commit any of them.
+1. FIRST run \`git status --porcelain\` and record every path it lists.
+   LEFTOVER HYGIENE: dirty paths under src/ are usually a DEAD previous
+   self-run's abandoned edits — quarantine them BEFORE you start:
+   \`git stash push -m "self-run leftovers" -- <those src/ paths>\` (list the
+   stash in "summary"). Everything else it lists (package.json, bun.lock,
+   park3d*, anything outside src/) is someone's live uncommitted work:
+   NEVER modify, stage, commit, or stash those.
 2. NEVER touch gesture-wall/, .smithers/, artifacts/, builds/, dist/,
    node_modules/, or smithers.db* — read them if you must, write them never.
    (\`bun run build\` regenerating dist/ is fine; committing dist/ is not.)
@@ -111,6 +116,13 @@ HARD RULES — all of them, no exceptions:
    the exact message shape:
        self: <one-line instruction summary>
    Nothing else in the message — no attribution, no Co-Authored-By trailer.
+   FINAL CHECK before you finish: \`git branch --show-current\` MUST print
+   your room/<slug> branch — a commit on the base branch is a FAILED run.
+   Then MAKE THE BRANCH VISIBLE on the wall's tree (it renders from GitHub):
+       git push -u origin room/<slug>
+       gh pr create --draft --base <the branch you started from> --head room/<slug> --title "self: <summary>" --body "spoken in the room"
+   Push/PR failures are non-fatal (note them in "summary") — the commit and
+   reload still stand.
 6. If the instruction cannot be satisfied under these rules, change nothing,
    commit nothing, and explain why in "summary".
 

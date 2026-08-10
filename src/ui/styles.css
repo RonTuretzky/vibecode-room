@@ -3925,3 +3925,18 @@ main.gesture-mode .idea-card-confidence { font-size: 15px; }
   50% { opacity: 0.45; transform: scale(0.8); }
 }
 main.gesture-mode .record-steer { min-height: 72px; font-size: 1.15rem; }
+
+/* live echo of the words spoken into the record window */
+.record-steer-live { display: flex; flex-direction: column; gap: 0.5rem; width: 100%; }
+.record-steer-heard {
+  background: rgba(10, 14, 24, 0.72);
+  border: 1px solid #2a3350;
+  border-radius: 10px;
+  padding: 0.55rem 0.8rem;
+  max-height: 9rem;
+  overflow: hidden;
+}
+.record-steer-heard-line { margin: 0.15rem 0; color: #dfe6f5; font-size: 1rem; line-height: 1.35; }
+.record-steer-heard-line:last-child { color: #8fa4cc; font-style: italic; }
+.record-steer-heard-empty { margin: 0; color: #8fa4cc; font-style: italic; font-size: 0.95rem; }
+main.gesture-mode .record-steer-heard-line { font-size: 1.2rem; }

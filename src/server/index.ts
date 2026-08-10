@@ -20,6 +20,20 @@ runtime.detection.start();
 // exactly once; export failures are swallowed and never touch the runtime.
 startOtelTraceExport(runtime);
 
+// PINNED IMPORTS (live-room request: the salem profile stands in the garden
+// beside the room's own tree at every boot). Comma-separated GitHub URLs;
+// fire-and-forget through the exact same import path the QR uses — clone
+// (reused when already on disk), adopt, deploy-resolve, tree.
+const pinnedImports = (process.env.VIBERSYN_PINNED_IMPORTS ?? "")
+  .split(",")
+  .map((entry) => entry.trim())
+  .filter((entry) => entry.length > 0);
+for (const pinnedUrl of pinnedImports) {
+  void runtime
+    .importProject({ url: pinnedUrl, context: "pinned resident of the garden" }, `corr-pinned-import-${Date.now().toString(36)}`)
+    .catch(() => undefined);
+}
+
 const host = process.env.HOST ?? "127.0.0.1";
 const port = parsePort(process.env.VIBERSYN_PORT ?? process.env.PORT ?? "8787");
 

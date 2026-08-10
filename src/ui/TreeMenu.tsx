@@ -365,7 +365,7 @@ export function TreeMenu({ process, snapshot, anchor, onClose, onOpenDeck, onDis
           lit state rides the snapshot's steering flag, so the button shows the
           honest truth about where spoken words are going. */}
       <div className="tree-menu-steer" data-testid="tree-menu-steer">
-        <RecordSteerToggle process={process} kind={model.isSelf ? "room" : "build"} />
+        <RecordSteerToggle process={process} kind={model.isSelf ? "room" : "build"} transcript={snapshot.transcript} />
       </div>
 
       {/* Take-home QR (folded in from the old fleet card — the rail is gone). */}
