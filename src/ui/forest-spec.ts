@@ -318,3 +318,20 @@ function branchSpine(start: TreeVec3, azimuth: number, length: number, lift: num
   }
   return points;
 }
+
+// Human word for a CI state (tip cards, issue/PR chips). Lived in the old
+// ForestScene canvas — that scene is DELETED (dead code was a trap for the
+// room's self-agent, which edited it invisibly), the helper lives on here.
+// Hover-card CI phrasing (also the contract test's hook).
+export function forestCiWord(ci: ForestCi): string {
+  switch (ci) {
+    case "pass":
+      return "CI passing";
+    case "fail":
+      return "CI failing";
+    case "pending":
+      return "CI pending";
+    default:
+      return "no CI";
+  }
+}

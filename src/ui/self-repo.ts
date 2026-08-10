@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { forestCiWord } from "./ForestScene";
+import { forestCiWord } from "./forest-spec";
 import { forestTreeSpec, type ForestState } from "./forest-spec";
 import type { TreeSpec3D } from "./tree/spec";
 
