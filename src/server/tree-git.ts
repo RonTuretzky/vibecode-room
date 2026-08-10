@@ -421,6 +421,46 @@ export class TreeGitSubstrate {
     return this.#chainBranchOp(state, () => this.#openPrOnce(state, branch, title, body));
   }
 
+  // MERGE FROM THE WALL: squash-merge the branch's OPEN PR on the origin.
+  // Requires the PR to exist (stored/recovered prUrl — the wall opens it via
+  // openPrToOrigin first); "already merged" recovers as success so a dwell
+  // double-fire or a room restart never errors a done merge. NOTE the stakes:
+  // for auto-deploying origins (labor.fun profiles track latest main), a merge
+  // IS a production deploy — the UI gates this behind a two-stage confirm.
+  mergePr(upid: string, branch: string): Promise<{ ok: true; merged: true } | { ok: false; error: string }> {
+    const state = this.#trees.get(upid);
+    const refused = this.#branchOpRefusal(upid, state);
+    if (refused !== null || state === undefined) {
+      return Promise.resolve(refused ?? { ok: false, error: `no tree repo for ${upid}` });
+    }
+    return this.#chainBranchOp(state, () => this.#mergePrOnce(state, branch));
+  }
+
+  async #mergePrOnce(state: TreeState, branch: string): Promise<{ ok: true; merged: true } | { ok: false; error: string }> {
+    const slug = roomSlug(branch);
+    if (slug === null) {
+      return { ok: false, error: `"${clampLine(branch, 60)}" names no room/* branch` };
+    }
+    const branchName = `room/${slug}`;
+    const prUrl = state.prUrls.get(branchName);
+    if (prUrl === undefined) {
+      return { ok: false, error: "no PR is open for this branch — open the PR first" };
+    }
+    const repoRef = state.remoteUrl === null ? null : ownerRepoFromUrl(state.remoteUrl);
+    if (repoRef === null) {
+      return { ok: false, error: "no recorded origin for this adopted tree" };
+    }
+    const merged = await this.#runGh(["gh", "pr", "merge", prUrl, "--repo", repoRef, "--squash"]);
+    if (!merged.ok) {
+      const echo = `${merged.stderr}${merged.stdout}`;
+      if (/already merged|merged the pull request/iu.test(echo)) {
+        return { ok: true, merged: true };
+      }
+      return { ok: false, error: clampLine(echo.trim().length > 0 ? echo.trim() : "gh pr merge failed", 160) };
+    }
+    return { ok: true, merged: true };
+  }
+
   // Pure in-memory snapshot fragment — ZERO subprocesses per publish.
   snapshot(upid: string): TreeRepoSnapshot | null {
     const state = this.#trees.get(upid);
