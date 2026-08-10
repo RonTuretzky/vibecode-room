@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { FormEvent } from "react";
 import type { ProjectorProcess } from "./types";
 import { buildsOf } from "./buildloop";
 import type { LifecycleAction, ProcessBuild } from "./buildloop";
 import { BuildChips, ExecutionChip, ProcessControls } from "./BuildChips";
+import { RecordSteerToggle } from "./RecordSteerToggle";
 import { TakeHomeQr } from "./TakeHomeQr";
 import { executionOf, stageOf } from "./stage";
 import type { DecisionChoice } from "./stage";
@@ -155,23 +155,6 @@ export function Slideshow({
   // demo's decide step opens the deck straight on its decision slide, and a
   // later prop flip (the demo completing) must not remount the iframe.
   const [decisionHash] = useState(openAtDecision);
-  // Inline steer input state (the iterate post-choice bar).
-  const [steerText, setSteerText] = useState("");
-  const [steerSent, setSteerSent] = useState(false);
-  const submitSteer = useCallback(
-    (event: FormEvent<HTMLFormElement>) => {
-      event.preventDefault();
-      const text = steerText.trim();
-      if (text.length === 0) {
-        return;
-      }
-      onSteer?.(text);
-      setSteerText("");
-      setSteerSent(true);
-    },
-    [steerText, onSteer],
-  );
-
   const prev = useCallback(() => setIndex((i) => Math.max(i - 1, 0)), []);
   const next = useCallback(() => setIndex((i) => Math.min(i + 1, slides.length - 1)), [slides.length]);
 
@@ -436,28 +419,9 @@ export function Slideshow({
           ) : decisionState === "iterate" ? (
             <div className="deck-decision deck-decision-steer" data-testid="decision-steer" role="group" aria-label="Keep shaping it">
               <span className="deck-decision-title">🔁 Keep shaping it</span>
-              <form className="deck-steer-form" onSubmit={submitSteer}>
-                <input
-                  className="deck-steer-input"
-                  data-testid="deck-steer-input"
-                  type="text"
-                  value={steerText}
-                  onChange={(changeEvent) => {
-                    setSteerText(changeEvent.target.value);
-                    setSteerSent(false);
-                  }}
-                  placeholder="type a change — or just say it out loud"
-                  aria-label="Type a change for the mocks"
-                />
-                <button type="submit" className="ctl-button deck-steer-send" data-testid="deck-steer-send">
-                  Send
-                </button>
-              </form>
-              {steerSent ? (
-                <span className="deck-steer-sent" data-testid="deck-steer-sent" role="status">
-                  Locked in — the mocks are rebuilding with this change
-                </span>
-              ) : null}
+              {/* No typing at projector distance (live-room directive): the
+                  record toggle routes EVERYTHING spoken into this build. */}
+              <RecordSteerToggle process={process} kind="build" />
             </div>
           ) : (
             <div className="deck-decision" data-testid="deck-decision" role="group" aria-label="How should we continue?">

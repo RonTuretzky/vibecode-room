@@ -2387,7 +2387,6 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
             setSlideshowBackend(backend ?? null);
             setSlideshowUpid(upid);
           }}
-          onSteer={(text) => void deckSteer(selectedProcess.upid, text)}
           onDismiss={(upid) => void dismissProcess(upid)}
         />
       ) : null}

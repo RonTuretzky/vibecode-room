@@ -277,10 +277,10 @@ describe("Slideshow post-choice decision states", () => {
       />,
     );
     expect(html).toContain('data-testid="decision-steer"');
-    expect(html).toContain('data-testid="deck-steer-input"');
-    expect(html).toContain('data-testid="deck-steer-send"');
-    // "…or say it out loud" — spoken steering stays advertised.
-    expect(html).toContain("say it out loud");
+    // The typed input is gone (live-room directive): the record toggle routes
+    // spoken words into this build instead.
+    expect(html).toContain('data-testid="record-steer-start"');
+    expect(html).not.toContain("type a change");
     expect(html).not.toContain('data-testid="deck-decision"');
   });
 

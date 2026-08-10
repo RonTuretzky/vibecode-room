@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useState } from "react";
-import type { FormEvent } from "react";
+import { useEffect, useState } from "react";
 import type { ProjectorProcess, ProjectorSnapshot } from "./types";
 import type { SceneDwellRect } from "./gesture/scene-source";
 import { laneStatusLabel, processLanes, type GuidedLane } from "./guided/machine";
 import { executionOf, stageOf, type ProcessStage } from "./stage";
 import { ExecutionChip } from "./BuildChips";
+import { RecordSteerToggle } from "./RecordSteerToggle";
 import { TakeHomeQr } from "./TakeHomeQr";
 import "./TreeMenu.css";
 
@@ -25,9 +25,8 @@ import "./TreeMenu.css";
  *   - concept lanes via the SHARED processLanes derivation (guided/machine.ts):
  *     a ready lane's row is a button opening that backend's deck; a building
  *     lane is an honest status row with the live percent — never a dead button.
- *   - steer: picking the tree already POSTed /api/process/:upid/select, so the
- *     menu SAYS the tree is steer-armed and offers the typed steer input (the
- *     same contract as the deck's iterate bar → POST /api/process/:upid/steer).
+ *   - steer: the RecordSteerToggle — press to route EVERYTHING spoken into
+ *     this process (select), press again to stop (select/clear). No typing.
  *   - 🗑 remove with a TWO-STAGE confirm (second dwell within ~4s) → POST
  *     /api/process/:upid/dismiss (stops builds + removes from the snapshot).
  *   - the SELF/mirror tree gets the same shape with "the room" flavor and NO
@@ -137,14 +136,12 @@ export interface TreeMenuProps {
   onClose: () => void;
   // The existing deck path: opens the slideshow overlay on this backend's tab.
   onOpenDeck: (upid: string, backend?: string) => void;
-  // The existing typed-steer path (same handler as the deck's iterate bar).
-  onSteer: (text: string) => void;
   // POST /api/process/:upid/dismiss — only reachable through the two-stage
   // confirm, and never rendered for the self tree.
   onDismiss: (upid: string) => void;
 }
 
-export function TreeMenu({ process, snapshot, anchor, onClose, onOpenDeck, onSteer, onDismiss }: TreeMenuProps) {
+export function TreeMenu({ process, snapshot, anchor, onClose, onOpenDeck, onDismiss }: TreeMenuProps) {
   const model = treeMenuModel(process, snapshot);
   const execution = executionOf(process);
   // Re-derived per render — the anchor prop only changes on a fresh pick, so
@@ -155,31 +152,12 @@ export function TreeMenu({ process, snapshot, anchor, onClose, onOpenDeck, onSte
       : { width: 1920, height: 1080 };
   const placement = treeMenuPlacement(anchor, viewport);
 
-  // Typed steer (mirrors the deck's iterate bar contract).
-  const [steerText, setSteerText] = useState("");
-  const [steerSent, setSteerSent] = useState(false);
-  const submitSteer = useCallback(
-    (event: FormEvent<HTMLFormElement>) => {
-      event.preventDefault();
-      const text = steerText.trim();
-      if (text.length === 0) {
-        return;
-      }
-      onSteer(text);
-      setSteerText("");
-      setSteerSent(true);
-    },
-    [steerText, onSteer],
-  );
-
   // TWO-STAGE remove: the first press arms "really remove?"; it disarms by
   // itself after DISMISS_CONFIRM_MS. Both stages reset when the menu moves to
   // another tree so a stale confirm can never delete the wrong build.
   const [dismissArmed, setDismissArmed] = useState(false);
   useEffect(() => {
     setDismissArmed(false);
-    setSteerText("");
-    setSteerSent(false);
   }, [process.upid]);
   useEffect(() => {
     if (!dismissArmed) {
@@ -282,34 +260,11 @@ export function TreeMenu({ process, snapshot, anchor, onClose, onOpenDeck, onSte
         </button>
       ) : null}
 
-      {/* STEER: picking the tree already POSTed the select, so this is honest —
-          the room routes speech here now; the input is the typed parallel. */}
+      {/* STEER = the record toggle, nothing typed (live-room directive). The
+          lit state rides the snapshot's steering flag, so the button shows the
+          honest truth about where spoken words are going. */}
       <div className="tree-menu-steer" data-testid="tree-menu-steer">
-        <span className="tree-menu-steer-note">
-          {model.isSelf ? "🎙 talking changes the room — this tree is steer-armed" : "🎙 talking steers this build now"}
-        </span>
-        <form className="tree-menu-steer-form" onSubmit={submitSteer}>
-          <input
-            className="tree-menu-steer-input"
-            data-testid="tree-menu-steer-input"
-            type="text"
-            value={steerText}
-            onChange={(changeEvent) => {
-              setSteerText(changeEvent.target.value);
-              setSteerSent(false);
-            }}
-            placeholder={model.isSelf ? "type a change for the room" : "type a change — or just say it out loud"}
-            aria-label={model.isSelf ? "Type a change for the room" : "Type a change for this build"}
-          />
-          <button type="submit" className="ctl-button tree-menu-steer-send" data-testid="tree-menu-steer-send">
-            Send
-          </button>
-        </form>
-        {steerSent ? (
-          <span className="tree-menu-steer-sent" data-testid="tree-menu-steer-sent" role="status">
-            Locked in — the build reshapes with this change
-          </span>
-        ) : null}
+        <RecordSteerToggle process={process} kind={model.isSelf ? "room" : "build"} />
       </div>
 
       {/* Take-home QR (folded in from the old fleet card — the rail is gone). */}

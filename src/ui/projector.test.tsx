@@ -347,14 +347,13 @@ describe("per-tree menu: the tree is the interface", () => {
     expect(html.slice(html.lastIndexOf("<", buildingIdx), buildingIdx)).not.toContain("button");
   });
 
-  test("steer: the menu says the pick armed steering and offers the typed input", () => {
+  test("steer: the menu offers the record toggle (no typed input anywhere)", () => {
     const html = renderToStaticMarkup(
       <ProjectorApp initialSnapshot={demoProjectorSnapshot} initialOverlay={{ selected: "Atlas" }} />,
     );
     expect(html).toContain('data-testid="tree-menu-steer"');
-    expect(html).toContain("talking steers this build");
-    expect(html).toContain('data-testid="tree-menu-steer-input"');
-    expect(html).toContain('data-testid="tree-menu-steer-send"');
+    expect(html).toContain('data-testid="record-steer-start"');
+    expect(html).not.toContain("type a change");
   });
 
   test("remove is TWO-STAGE: resting shows 🗑 remove, never the armed confirm", () => {
@@ -386,8 +385,8 @@ describe("per-tree menu: the tree is the interface", () => {
     );
     expect(html).toContain('data-self="true"');
     expect(html).toContain("the room");
-    expect(html).toContain("talking changes the room");
-    expect(html).toContain('data-testid="tree-menu-steer-input"');
+    expect(html).toContain("Record a change to the room");
+    expect(html).toContain('data-testid="record-steer-start"');
     // The room must not dismiss itself.
     expect(html).not.toContain('data-testid="tree-menu-remove"');
   });
@@ -885,7 +884,7 @@ describe("gesture dwell-select interaction", () => {
     );
     // GestureLayer.collectDomTargets targets "button:not(:disabled)" — every
     // menu control must therefore be a plain enabled <button>.
-    for (const id of ['data-testid="tree-menu-close"', 'data-testid="tree-menu-steer-send"', 'data-testid="tree-menu-remove"']) {
+    for (const id of ['data-testid="tree-menu-close"', 'data-testid="record-steer-start"', 'data-testid="tree-menu-remove"']) {
       const idx = html.indexOf(id);
       expect(idx).toBeGreaterThan(-1);
       // The <button …data-testid…> open tag carries no disabled attribute.
