@@ -813,7 +813,10 @@ function registerSalemSurface(
         signal: AbortSignal.timeout(SALEM_PROXY_TIMEOUT_MS),
       });
       const slice = (await response.text()).slice(0, SALEM_HEALTH_SLICE).toLowerCase();
-      const authed = response.status === 200 && !slice.includes("login");
+      // The login/expired pages carry the bot sign-in instructions; the real
+      // board never does. (The word "login" alone false-positived: the authed
+      // board mentions it in nav copy — live-room finding with a valid sid.)
+      const authed = response.status === 200 && !slice.includes("salemconventbot");
       return context.json({ ok: true, authed, status: response.status });
     } catch {
       return context.json({ ok: false, authed: false, status: 0 });

@@ -1769,7 +1769,10 @@ describe("/salem authenticated app proxy", () => {
 
     const loginApp = await makeApp({
       env: SID_ENV,
-      salemFetch: scriptedSalem(() => new Response("<form action='/login'>Login</form>")).fetchFn,
+      // The REAL login/expired page carries the bot sign-in instructions —
+      // that is the marker (the authed board mentions "login" in nav copy,
+      // which false-positived the old word check; live-room finding).
+      salemFetch: scriptedSalem(() => new Response("<p>message @SalemConventBot on telegram, send /dashboard</p>")).fetchFn,
     });
     expect(await (await loginApp.app.request("/salem/healthz")).json()).toEqual({ ok: true, authed: false, status: 200 });
 
