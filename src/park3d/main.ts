@@ -26,8 +26,11 @@ import {
 } from "3d-tiles-renderer/plugins";
 
 const params = new URLSearchParams(location.search);
+// ?src=open swaps Google's proprietary stream for public-domain USGS/NYS
+// data (open-terrain.ts) — the storable, strippable, offline-legal variant.
+const src = params.get("src") === "open" ? "open" : "tiles";
 const apiKey = params.get("key") ?? (import.meta.env.VITE_MAPTILES_KEY as string | undefined) ?? "";
-if (apiKey === "") {
+if (src === "tiles" && apiKey === "") {
   const err = document.getElementById("err")!;
   err.style.display = "block";
   err.textContent = "No Map Tiles API key — pass ?key=… or set VITE_MAPTILES_KEY in .env";
@@ -71,17 +74,48 @@ renderer.clippingPlanes = cropPlanes;
 // fallback for any non-unlit tile content.
 scene.add(new THREE.AmbientLight(0xffffff, 2.2));
 
-const dracoLoader = new DRACOLoader();
-dracoLoader.setDecoderPath("https://www.gstatic.com/draco/versioned/decoders/1.5.7/");
+let tiles: TilesRenderer | null = null;
+if (src === "tiles") {
+  const dracoLoader = new DRACOLoader();
+  dracoLoader.setDecoderPath("https://www.gstatic.com/draco/versioned/decoders/1.5.7/");
 
-const tiles = new TilesRenderer();
-tiles.registerPlugin(new GoogleCloudAuthPlugin({ apiToken: apiKey }));
-tiles.registerPlugin(new GLTFExtensionsPlugin({ dracoLoader }));
-tiles.registerPlugin(new TilesFadePlugin());
-tiles.registerPlugin(new ReorientationPlugin({ lat: CENTER_LAT * DEG, lon: CENTER_LON * DEG }));
-tiles.setCamera(camera);
-tiles.setResolutionFromRenderer(camera, renderer);
-scene.add(tiles.group);
+  tiles = new TilesRenderer();
+  tiles.registerPlugin(new GoogleCloudAuthPlugin({ apiToken: apiKey }));
+  tiles.registerPlugin(new GLTFExtensionsPlugin({ dracoLoader }));
+  tiles.registerPlugin(new TilesFadePlugin());
+  tiles.registerPlugin(new ReorientationPlugin({ lat: CENTER_LAT * DEG, lon: CENTER_LON * DEG }));
+  tiles.setCamera(camera);
+  tiles.setResolutionFromRenderer(camera, renderer);
+  scene.add(tiles.group);
+
+  // ?detail= overrides the screen-space error target (the auth plugin's
+  // recommended setting is a bandwidth-friendly 20; ~2 forces Google's finest
+  // available LOD at the cost of many more tile fetches).
+  const detailParam = Number.parseFloat(params.get("detail") ?? "");
+  if (Number.isFinite(detailParam) && detailParam > 0) {
+    const t = tiles;
+    // Applied after the plugin's tileset load hook so it wins over the
+    // recommended default.
+    t.addEventListener("load-tile-set", () => {
+      t.errorTarget = detailParam;
+    });
+    t.errorTarget = detailParam;
+  }
+} else {
+  // Open-data mode: USGS 3DEP elevation + government orthoimagery, no key,
+  // no proprietary content — the slab crop and presets work identically.
+  document.getElementById("attrib")!.textContent = "USGS 3DEP · NYS/USGS orthoimagery (public domain)";
+  import("./open-terrain")
+    .then(({ buildOpenTerrain }) =>
+      buildOpenTerrain({ centerLat: CENTER_LAT, centerLon: CENTER_LON, halfEast: 820, halfNorth: 950, stepM: 8 }),
+    )
+    .then((mesh) => scene.add(mesh))
+    .catch((error: unknown) => {
+      const err = document.getElementById("err")!;
+      err.style.display = "block";
+      err.textContent = `open terrain failed: ${String(error)}`;
+    });
+}
 
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
@@ -128,14 +162,14 @@ window.addEventListener("resize", () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
-  tiles.setResolutionFromRenderer(camera, renderer);
+  tiles?.setResolutionFromRenderer(camera, renderer);
 });
 
 const altEl = document.getElementById("alt")!;
 renderer.setAnimationLoop(() => {
   controls.update();
   camera.updateMatrixWorld();
-  tiles.update();
+  tiles?.update();
   renderer.render(scene, camera);
   altEl.textContent = `${Math.round(camera.position.y)} m · ${Math.round(camera.position.distanceTo(controls.target))} m from target`;
 });
