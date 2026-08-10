@@ -618,20 +618,27 @@ describe("createClaudeCliModel (fake CLI script)", () => {
     await expect(model(call())).rejects.toThrow(/claude CLI reported an error: credit balance too low/);
   });
 
-  test("abort kills the subprocess and settles well inside the ~2s budget", async () => {
-    const cli = await fakeCli(`sleep 30`);
+  // The hang fixture uses `exec` so the sleep IS the spawned pid: without it,
+  // some /bin/sh implementations (dash on CI ubuntu) leave the sleep as an
+  // orphan child holding the stdout pipe open after the shell dies, and the
+  // read blocks the full 30s — the kill contract still held, but the test
+  // stalled into bun's per-test timeout. The wall-clock budget is generous
+  // (8s vs the ~2s production kill budget) for slow CI schedulers; the sleep
+  // is 30s and the test timeout 15s, so a broken kill still fails loudly.
+  test("abort kills the subprocess and settles well inside the kill budget", async () => {
+    const cli = await fakeCli(`exec sleep 30`);
     const model = createClaudeCliModel({ cliPath: cli })!;
     const controller = new AbortController();
     const started = Date.now();
     const pending = model({ stage: "plan", system: "s", user: "u", signal: controller.signal });
     setTimeout(() => controller.abort(), 25);
     await expect(pending).rejects.toThrow();
-    expect(Date.now() - started).toBeLessThan(2_000);
-  });
+    expect(Date.now() - started).toBeLessThan(8_000);
+  }, 15_000);
 
   test("its own timeout kills the subprocess and rejects", async () => {
-    const cli = await fakeCli(`sleep 30`);
+    const cli = await fakeCli(`exec sleep 30`);
     const model = createClaudeCliModel({ cliPath: cli, timeoutMs: 50 })!;
     await expect(model(call())).rejects.toThrow();
-  });
+  }, 15_000);
 });

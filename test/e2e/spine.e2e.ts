@@ -9,7 +9,18 @@ import { MemoryCorrelationStore } from "../../src/seam/correlation-store";
 import { SeamDispatcher } from "../../src/seam/dispatcher";
 import { GatewaySmithersClient, InProcessGatewayTransport } from "../../src/seam/smithers-client";
 import { CueAdapter } from "../../src/cue/adapter";
-import { loadCueCore } from "../../src/cue/source";
+import { cueSourceBuildAvailable, loadCueCore } from "../../src/cue/source";
+
+// The recognition-latency slice drives the EXTERNAL Cue substrate (a built
+// checkout of jameslbarnes/cue via VIBERSYN_CUE_SOURCE_DIR or a cached tmp
+// build). Environments without it (CI, fresh worktrees) skip that test LOUDLY;
+// the Gateway spawn test needs no Cue and runs everywhere.
+const cueSubstrateMissing = process.env.VIBERSYN_CUE_SOURCE_DIR === undefined && !cueSourceBuildAvailable();
+if (cueSubstrateMissing) {
+  console.warn(
+    "[cue-substrate] skipping the spine recognition-latency slice: VIBERSYN_CUE_SOURCE_DIR is unset and no built Cue checkout was found",
+  );
+}
 
 const tempDirs: string[] = [];
 
@@ -20,7 +31,7 @@ afterEach(() => {
 });
 
 describe("seam slice spine e2e", () => {
-  test("recognition-latency slice emits the earcon within 300 ms after finalization while the LLM is delayed", async () => {
+  test.skipIf(cueSubstrateMissing)("recognition-latency slice emits the earcon within 300 ms after finalization while the LLM is delayed", async () => {
     const cue = await loadCueCore();
     const { TextCue, ConversationState, transcriptObservation } = cue as any;
     const finalTranscript = transcriptObservation("Viber status", {

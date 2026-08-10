@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createProjectorRuntime, type ProjectorRuntime } from "../../src/server/composition";
+import { createProjectorRuntime, type ProjectorRuntime, STEER_GRACE_MS } from "../../src/server/composition";
 import type { BuilderAgent } from "../../src/server/idea-builder";
 import type { TranscriptObservation } from "../../src/types";
 
@@ -18,9 +18,14 @@ const noopBuilder: BuilderAgent = async () => undefined;
 //    path. The spawned process gains buildStatus "ready" + a previewUrl whose GET
 //    serves the scaffolded page.
 //
-// 2) CLICK A PROJECT -> STEER IT: setting a steering target then feeding a FINAL
-//    transcript routes that line to the process's agent loop (registry.steer for
-//    that UPID) instead of seeding a fresh ambient suggestion.
+// 2) CLICK A PROJECT -> STEER IT (record-window contract): while a steering
+//    target is set, FINAL transcripts COLLECT into the window slice (a
+//    steering.window.collect trace per line, NO registry.steer) and never seed
+//    ambient suggestions. Clearing the target opens the endpointing grace
+//    (STEER_GRACE_MS); the drain then dispatches ONCE — a single registry.steer
+//    carrying the joined slice — and ambient behavior resumes only after the
+//    grace window lapses. Mirrors composition.steerslice.test.ts: injected
+//    clock + a flush final for the lazy drain.
 
 describe("click-control e2e — click idea to build, click project to steer", () => {
   const realFetch = globalThis.fetch;
@@ -131,10 +136,15 @@ describe("click-control e2e — click idea to build, click project to steer", ()
     expect(spawned).toBeDefined();
   });
 
-  test("selecting a process routes the next FINAL transcript to its steer, not a new suggestion", async () => {
+  test("selecting a process COLLECTS finals in the steering window; the clear drains ONE steer dispatch", async () => {
     // Phase 1: queue + accept a suggestion so a live process exists to steer.
+    let nowMs = 1_000_000;
     await writeReplay([final("let's build a status board to track the migration dry run", "utt-build")]);
-    runtime = await createProjectorRuntime(queueEnv(replayPath), { buildsRoot, builderAgent: noopBuilder });
+    runtime = await createProjectorRuntime(queueEnv(replayPath), {
+      buildsRoot,
+      builderAgent: noopBuilder,
+      clock: () => nowMs,
+    });
     await drive(runtime);
     expect(runtime.detection.primary()).not.toBeNull();
 
@@ -152,33 +162,57 @@ describe("click-control e2e — click idea to build, click project to steer", ()
     expect(selectedSnapshot.processes.find((p) => p.upid === targetUpid)?.steering).toBe(true);
     expect(runtime.steeringTarget()).toBe(targetUpid);
 
-    // Spy on the registry steer so we can prove the next FINAL line routed to it.
+    // Spy on the registry steer so we can prove the window COLLECTS (no
+    // per-final dispatch) and the clear drains exactly one dispatch.
     const steerSpy = spyOn(runtime.registry, "steer");
     // The candidate count before the steered line lets us prove detection was NOT
     // driven while steering (a steered line never seeds a fresh ambient idea).
     const candidatesBefore = runtime.detection.candidates().length;
 
-    // Phase 2: a FINAL transcript line while steering is active.
+    // Phase 2: a FINAL transcript line while the steering window is open.
     await writeReplay([final("make the table sortable by column header", "utt-steer")]);
     await drive(runtime);
 
-    // The registry received a steer for the target UPID carrying the transcript...
-    expect(steerSpy.mock.calls.length).toBeGreaterThanOrEqual(1);
-    const steerCall = steerSpy.mock.calls.find((call) => call[0] === targetUpid);
-    expect(steerCall).toBeDefined();
-    const payload = steerCall?.[1] as { text?: string } | undefined;
-    expect(payload?.text).toContain("make the table sortable");
+    // RECORD WINDOW = COLLECT ONLY: no registry.steer yet — the line joined the
+    // slice and left a steering.window.collect trace for the target UPID.
+    expect(steerSpy.mock.calls.length).toBe(0);
+    const collects = runtime.trace
+      .events()
+      .filter((event) => event.event === "steering.window.collect" && event.upid === targetUpid);
+    expect(collects.length).toBe(1);
+    expect((collects[0]?.meta as { text?: string } | undefined)?.text).toContain("make the table sortable");
 
     // ...and idea detection was NOT consulted (no new candidate, no new bubble).
     expect(runtime.detection.candidates().length).toBe(candidatesBefore);
     expect(runtime.detection.primary()).toBeNull();
 
+    // Phase 3: the clear opens the endpointing grace — still nothing dispatched.
+    runtime.clearSteeringTarget("corr-click-steer-off");
+    expect(steerSpy.mock.calls.length).toBe(0);
+
+    // Once the grace lapses, the next FINAL triggers the lazy drain: ONE
+    // registry.steer carrying the joined window slice.
+    nowMs += STEER_GRACE_MS + 1_000;
+    await writeReplay([final("unrelated room chatter drifting by", "utt-flush")]);
+    await drive(runtime);
+
+    expect(steerSpy.mock.calls.length).toBe(1);
+    const steerCall = steerSpy.mock.calls.find((call) => call[0] === targetUpid);
+    expect(steerCall).toBeDefined();
+    const payload = steerCall?.[1] as { text?: string } | undefined;
+    expect(payload?.text).toContain("make the table sortable");
+
     steerSpy.mockRestore();
   });
 
-  test("clearing the steering target restores ambient suggestion behavior", async () => {
+  test("clearing the steering target restores ambient behavior only AFTER the endpointing grace", async () => {
+    let nowMs = 2_000_000;
     await writeReplay([final("let's build a status board to track the migration dry run", "utt-build")]);
-    runtime = await createProjectorRuntime(queueEnv(replayPath), { buildsRoot, builderAgent: noopBuilder });
+    runtime = await createProjectorRuntime(queueEnv(replayPath), {
+      buildsRoot,
+      builderAgent: noopBuilder,
+      clock: () => nowMs,
+    });
     await drive(runtime);
     const upidsBefore = new Set(runtime.snapshot().processes.map((process) => process.upid));
     await runtime.acceptPendingSuggestion("corr-accept-clear");
@@ -194,11 +228,29 @@ describe("click-control e2e — click idea to build, click project to steer", ()
     expect(runtime.steeringTarget()).toBeNull();
     expect(cleared.processes.find((p) => p.upid === spawned.upid)?.steering).toBe(false);
 
-    // With steering cleared, the next FINAL line drives idea detection again: a
+    const steerSpy = spyOn(runtime.registry, "steer");
+
+    // WITHIN the endpointing grace a trailing FINAL still belongs to the
+    // released window: even a buildable line joins the grace slice instead of
+    // driving idea detection — no fresh bubble, no dispatch yet.
+    nowMs += 1_000; // < STEER_GRACE_MS
+    await writeReplay([final("let's build a poll widget to collect the room votes", "utt-trailing")]);
+    await drive(runtime);
+    expect(runtime.detection.primary()).toBeNull();
+    expect(steerSpy.mock.calls.length).toBe(0);
+
+    // AFTER the grace lapses, ambient behavior resumes: the lazy drain
+    // dispatches the collected slice ONCE to the released target, and the
     // fresh buildable utterance surfaces a new grounded idea bubble.
+    nowMs += STEER_GRACE_MS + 1_000;
     await writeReplay([final("let's create an automation platform to wrap the deploy prototype", "utt-ambient")]);
     await drive(runtime);
     expect(runtime.detection.primary()).not.toBeNull();
+    expect(steerSpy.mock.calls.length).toBe(1);
+    const payload = steerSpy.mock.calls[0]?.[1] as { text?: string } | undefined;
+    expect(payload?.text).toContain("poll widget");
+
+    steerSpy.mockRestore();
   });
 });
 
