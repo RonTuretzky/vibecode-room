@@ -124,6 +124,7 @@ import { SeamDispatcher } from "../seam/dispatcher";
 import { createCorrelationRecord, type CorrelationRecord, type CorrelationStore } from "../seam/correlation-store";
 import { callsignFromRepo, parseImportRequest } from "./project-import";
 import { cloneRepo, repoDigest } from "./repo-clone";
+import { resolveDeployUrl } from "./deploy-resolver";
 import { TreeGitSubstrate, treeGitEnabled, type GitCommandRunner } from "./tree-git";
 import type { ForestCommandRunner } from "./github-org";
 import { buildImportPlanPrompt, buildImportPlanQuestions } from "./import-plan";
@@ -244,7 +245,8 @@ export interface ProjectorRuntime {
     correlationId?: string,
   ): Promise<{ ok: true; url: string } | { ok: false; error: string }>;
   // The tree's repo facts for menus/popups (GET /api/process/:upid/repo):
-  // origin + branches (with per-branch prUrl once open) + optional deployUrl.
+  // origin + branches (with per-branch prUrl once open) + optional deployUrl
+  // (an import's resolved live deployment, else the take-home publish URL).
   treeRepoInfo(upid: string): {
     origin: string | null;
     branches: Array<{ name: string; commits: number; prUrl?: string }>;
@@ -436,6 +438,13 @@ export interface ProjectorRuntimeOptions {
   // network fetch ever runs from the suite.
   cloneRepoFn?: typeof cloneRepo;
   repoDigestFn?: typeof repoDigest;
+  // DEPLOYMENT RESOLVER seam (an imported tree FINDS its live app): the whole
+  // chain — VIBERSYN_DEPLOY_MAP override → clone scrape + HEAD probes → gh
+  // garnish — kicked fire-and-forget by the GitHub import routine once the
+  // clone settles. Undefined = the real resolver; NULL disables entirely —
+  // the test idiom (an import test that leaves this unset would HEAD-probe
+  // real hosts and spawn a real gh).
+  resolveDeployFn?: typeof resolveDeployUrl | null;
   // GIT SUBSTRATE ("tree = repo") seams. `treeGitRunner` undefined = the real
   // `git` subprocess runner; NULL = substrate disabled entirely — the test
   // idiom (any test that drives an accept with fake buildBackends but leaves
@@ -657,6 +666,11 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       callsign: string | null;
       task: string;
       status: "cloning" | "ready" | "clone-failed";
+      // The resolved LIVE deployment URL (deploy-resolver chain), set by the
+      // fire-and-forget resolveImportDeploy once a deployment is found. Feeds
+      // the snapshot's per-process deployUrl (the tree menu's "Live app" row)
+      // and the /api/process/:upid/repo surface.
+      deployUrl?: string;
     }
   >();
   // In-flight GitHub clone routines, keyed by UPID. Emergency stop and per-
@@ -668,6 +682,8 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   readonly #buildsRoot: string;
   readonly #cloneRepoFn: typeof cloneRepo;
   readonly #repoDigestFn: typeof repoDigest;
+  // Deployment resolver seam (null = disabled — the test idiom).
+  readonly #resolveDeployFn: typeof resolveDeployUrl | null;
   // GIT SUBSTRATE ("tree = repo"): every accepted idea's tree is a real local
   // repo under builds/<upid>/.tree/ with one concept/<backend> branch per
   // lane, published (private GitHub repo + draft PRs) on commission. Null =
@@ -859,6 +875,9 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     this.#buildsRoot = options.buildsRoot ?? resolve(process.cwd(), "builds");
     this.#cloneRepoFn = options.cloneRepoFn ?? cloneRepo;
     this.#repoDigestFn = options.repoDigestFn ?? repoDigest;
+    // Undefined = the real chain; explicit null = disabled (test idiom, like
+    // treeGitRunner: no unseamed test may ever HEAD-probe or spawn gh).
+    this.#resolveDeployFn = options.resolveDeployFn === undefined ? resolveDeployUrl : options.resolveDeployFn;
     // GIT SUBSTRATE construction: real runners by default, injected fakes in
     // tests, and OFF entirely for treeGitRunner:null / VIBERSYN_TREE_GIT=0.
     // Its traces get this runtime's sessionId stamped here (the substrate
@@ -1820,6 +1839,14 @@ class LiveProjectorRuntime implements ProjectorRuntime {
         latencyMs: this.#clock() - startedAtMs,
         meta: result.ok ? { url: parsed.url, dir: repoDir } : { url: parsed.url, error: result.error },
       });
+      // DEPLOYMENT RESOLVER (fire-and-forget, parallel with the build kick):
+      // find this repo's LIVE deployment — the VIBERSYN_DEPLOY_MAP override
+      // first (the demo guarantee, so it runs even when the clone failed and
+      // there is nothing to scrape), then the checkout scrape + HEAD probes,
+      // then the gh garnish. A found URL lands on the import entry: the
+      // snapshot's deployUrl → the tree menu's "🌐 Live app" row → the holo
+      // panel's /salem iframe.
+      this.resolveImportDeploy(upid, parsed, result.ok ? result.dir : null, correlationId);
       // Re-check right before the kick: the digest/pitch/question awaits above
       // are further windows in which a halt/emergency stop can land (startBuild
       // also refuses dead records — this is belt and braces).
@@ -1859,6 +1886,41 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       .finally(() => {
         this.#importClones.delete(upid);
       });
+  }
+
+  // The deployment-resolver kick (see runGitHubImportRoutine). Fire-and-forget
+  // by contract: the resolver chain is bounded (3s per HEAD probe, gh capped)
+  // and never throws, and a found URL republishes so the wall's tree menu
+  // grows its "Live app" row without waiting on the build fan-out.
+  private resolveImportDeploy(
+    upid: string,
+    parsed: { owner: string; repo: string },
+    repoDir: string | null,
+    correlationId: string,
+  ): void {
+    if (this.#resolveDeployFn === null) {
+      return;
+    }
+    const startedAtMs = this.#clock();
+    void this.#resolveDeployFn({ owner: parsed.owner, repo: parsed.repo, repoDir }, { env: this.#env })
+      .then((resolved) => {
+        const entry = this.#imports.get(upid);
+        if (resolved === null || entry === undefined || this.#emergencyTriggered) {
+          return;
+        }
+        entry.deployUrl = resolved.url;
+        this.recordExternalTrace({
+          event: "project.import.deploy",
+          level: "info",
+          sessionId: this.sessionId,
+          correlationId,
+          upid,
+          latencyMs: this.#clock() - startedAtMs,
+          meta: { url: resolved.url, source: resolved.source },
+        });
+        this.publish();
+      })
+      .catch(() => undefined); // resolver contract: never throws — belt and braces
   }
 
   // AUTO-BUILD toggle. Flip on => every fired idea is built without a click; flip
@@ -3417,6 +3479,10 @@ class LiveProjectorRuntime implements ProjectorRuntime {
         events: record.state === "dead" ? [...(demo?.events ?? []), "halted"] : demo?.events ?? [record.lastAction],
         publishedUrl: published?.url ?? null,
         publishedQrSvg: published?.qrSvg ?? null,
+        // LIVE DEPLOYMENT (imported trees): the deploy-resolver's confirmed
+        // URL. Like publishedUrl it survives halt — the deployment is an
+        // external fact, not a torn-down room-local server.
+        deployUrl: imported?.deployUrl ?? null,
         // GIT SUBSTRATE surface (tree visuals): branch → session commit
         // counts + the published remote. Pure in-memory (zero subprocesses
         // per snapshot) and — like publishedUrl above — deliberately survives
@@ -3778,7 +3844,9 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     if (snapshot === null) {
       return null;
     }
-    const deployUrl = this.#published.get(upid)?.url;
+    // An adopted import's RESOLVED live deployment (deploy-resolver) outranks
+    // the take-home Pages publish — the resolver confirmed the app itself.
+    const deployUrl = this.#imports.get(upid)?.deployUrl ?? this.#published.get(upid)?.url;
     return {
       origin: snapshot.remoteUrl,
       branches: snapshot.branches,

@@ -11,6 +11,7 @@ import { RoomScene, type DialogueNodeSpec, type DialogueTopicSpec, type IdeaOrbS
 import { getSceneDwellSource, procDwellTargetId, type SceneDwellRect } from "./gesture/scene-source";
 import { Slideshow } from "./Slideshow";
 import { TreeMenu } from "./TreeMenu";
+import { HoloPanel } from "./HoloPanel";
 import { IdeaTray } from "./IdeaTray";
 import { ResearchTray } from "./ResearchTray";
 import { ResearchDeckOverlay } from "./ResearchDeckOverlay";
@@ -54,6 +55,9 @@ interface ProjectorAppProps {
     slideshowUpid?: string;
     qrOpen?: boolean;
     ideaCard?: { id: string | null };
+    // Opens the HOLO PANEL (the imported tree's live /salem app) on this upid
+    // — the static renderer's stand-in for the tree menu's "Live app" press.
+    holoUpid?: string;
     // Boots the wall-bound auto-calibration overlay with a calibrator state
     // (the static renderer cannot poll /api/autocal/state).
     calibration?: AutocalState;
@@ -156,6 +160,15 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
   // down its own pipeline instead of committing it (see toggleMic).
   const micStartRef = useRef<Promise<void> | null>(null);
   const [qrOpen, setQrOpen] = useState(initialOverlay?.qrOpen ?? false);
+  // HOLO PANEL (the imported tree's LIVE deployment via the /salem proxy): at
+  // most ONE at a time — {upid, anchor} or null. Opened from the tree menu's
+  // "🌐 Live app ▸" row (which closes the menu, handing over its anchor);
+  // dwell-miss closes it FIRST (closeTopPopup — holo before tree menu).
+  const [holoPanel, setHoloPanel] = useState<{ upid: string; anchor: SceneDwellRect | null } | null>(
+    initialOverlay?.holoUpid !== undefined ? { upid: initialOverlay.holoUpid, anchor: null } : null,
+  );
+  const holoPanelRef = useRef<{ upid: string; anchor: SceneDwellRect | null } | null>(null);
+  holoPanelRef.current = holoPanel;
   // GUEST HANDS overlay (the URL/QR other computers open to get hand controls).
   const [guestsOpen, setGuestsOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -1828,11 +1841,16 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
   }, [snapshot.processes]);
 
   // DWELL-MISS / WALKED-AWAY CLOSE (GestureLayer → popup-dismiss.ts): the
-  // gesture wall's ground-click. Closes the TOP popup only — the tree menu
-  // first, else the idea action card. Deliberately narrow: the deck/QR/help
-  // overlays keep their explicit close buttons (auto-closing a deck mid-pitch
-  // because nobody pointed for 6s would be worse than stale glass).
+  // gesture wall's ground-click. Closes the TOP popup only — the holo panel
+  // first (it stacks over the menu that opened it), then the tree menu, else
+  // the idea action card. Deliberately narrow: the deck/QR/help overlays keep
+  // their explicit close buttons (auto-closing a deck mid-pitch because
+  // nobody pointed for 6s would be worse than stale glass).
   const closeTopPopup = useCallback(() => {
+    if (holoPanelRef.current !== null) {
+      setHoloPanel(null);
+      return;
+    }
     if (selectedRef.current !== null) {
       setSelected(null);
       return;
@@ -2468,8 +2486,27 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
             setSlideshowUpid(upid);
           }}
           onDismiss={(upid) => void dismissProcess(upid)}
+          onOpenLiveApp={(upid) => {
+            // The holo panel takes the menu's place beside the tree — it
+            // inherits the pick-time anchor, and only ONE panel ever exists.
+            setHoloPanel({ upid, anchor: menuAnchor });
+            setSelected(null);
+          }}
         />
       ) : null}
+
+      {/* HOLO PANEL: the imported tree's LIVE deployment (via the same-origin
+          /salem proxy) floating beside the tree. Mounted like the tree menu —
+          on whichever wall summoned it — and closed by ✕ or the dwell-miss
+          ground-click (closeTopPopup closes it BEFORE the tree menu). */}
+      {holoPanel !== null
+        ? (() => {
+            const holoProcess = snapshot.processes.find((candidate) => candidate.upid === holoPanel.upid);
+            return holoProcess !== undefined ? (
+              <HoloPanel process={holoProcess} anchor={holoPanel.anchor} onClose={() => setHoloPanel(null)} />
+            ) : null;
+          })()
+        : null}
 
       {slideshowUpid !== null
         ? (() => {

@@ -104,6 +104,11 @@ interface MakeAppArgs {
   // a real git; publish-repo tests inject scripted fakes.
   treeGitRunner?: ProjectorRuntimeOptions["treeGitRunner"];
   treeGhRunner?: ProjectorRuntimeOptions["treeGhRunner"];
+  // Deployment-resolver seam. Default NULL (resolver off) — no test may ever
+  // HEAD-probe a real host or spawn a real gh; deploy tests inject a fake.
+  resolveDeployFn?: ProjectorRuntimeOptions["resolveDeployFn"];
+  // /salem proxy upstream seam — no test may ever reach the real board.
+  salemFetch?: (input: string | URL, init?: RequestInit) => Promise<Response>;
 }
 
 async function makeApp(args: MakeAppArgs = {}): Promise<{ app: ReturnType<typeof createProjectorApp>; runtime: ProjectorRuntime }> {
@@ -128,6 +133,7 @@ async function makeApp(args: MakeAppArgs = {}): Promise<{ app: ReturnType<typeof
       repoDigestFn: async () => "digest: fake repo",
       treeGitRunner: args.treeGitRunner ?? null,
       treeGhRunner: args.treeGhRunner,
+      resolveDeployFn: args.resolveDeployFn ?? null,
     },
   );
   runtimes.push(runtime);
@@ -140,6 +146,7 @@ async function makeApp(args: MakeAppArgs = {}): Promise<{ app: ReturnType<typeof
     hands: args.hands,
     interfaces: args.interfaces,
     autocalFetch: args.autocalFetch,
+    salemFetch: args.salemFetch ?? (async () => Promise.reject(new Error("no salemFetch injected"))),
     distIndexStat: args.distIndexStat,
     forestLoader: args.forestLoader ?? { load: async () => undefined },
   });
@@ -1574,5 +1581,258 @@ describe("forest surface — POST /api/org/import + GET /api/forest", () => {
     // The process-wide loader starts empty; this test only asserts the route
     // exists — it must never POST an import (that would spawn a real gh).
     expect(((await response.json()) as { org: string | null }).org).toBeNull();
+  });
+});
+
+// ── /salem authenticated app proxy ───────────────────────────────────────────
+// A REAL reverse proxy (not the 8-line autocal idiom): cookie injection,
+// frame-blocker stripping, conservative HTML rewriting, asset passthrough,
+// Location rewrites, healthz, and the branded fallback. Upstream is ALWAYS the
+// injected fake — no test ever reaches the real board.
+describe("/salem authenticated app proxy", () => {
+  interface SalemCall {
+    url: string;
+    method: string | undefined;
+    headers: Record<string, string>;
+    body: string | null;
+  }
+
+  function scriptedSalem(respond: (url: string, init?: RequestInit) => Response | Promise<Response>): {
+    calls: SalemCall[];
+    fetchFn: (input: string | URL, init?: RequestInit) => Promise<Response>;
+  } {
+    const calls: SalemCall[] = [];
+    const fetchFn = async (input: string | URL, init?: RequestInit): Promise<Response> => {
+      const headers: Record<string, string> = {};
+      new Headers(init?.headers).forEach((value, key) => {
+        headers[key] = value;
+      });
+      calls.push({
+        url: String(input),
+        method: init?.method,
+        headers,
+        body: typeof init?.body === "string" ? init.body : init?.body instanceof ArrayBuffer ? new TextDecoder().decode(init.body) : null,
+      });
+      return respond(String(input), init);
+    };
+    return { calls, fetchFn };
+  }
+
+  const SID_ENV = { VIBERSYN_SALEM_SID: "sid-abc123" };
+
+  test("GET forwards path+query to the default upstream and injects the salem_session cookie", async () => {
+    const salem = scriptedSalem(() => new Response("ok", { headers: { "content-type": "text/plain" } }));
+    const { app } = await makeApp({ env: SID_ENV, salemFetch: salem.fetchFn });
+    const response = await app.request("/salem/chores?week=2");
+    expect(response.status).toBe(200);
+    expect(salem.calls).toHaveLength(1);
+    expect(salem.calls[0]!.url).toBe("https://residency.convent.fun/chores?week=2");
+    expect(salem.calls[0]!.method).toBe("GET");
+    expect(salem.calls[0]!.headers.cookie).toBe("salem_session=sid-abc123");
+  });
+
+  test("VIBERSYN_SALEM_UPSTREAM overrides the origin; /salem and /salem/ hit the upstream root", async () => {
+    const salem = scriptedSalem(() => new Response("ok"));
+    const { app } = await makeApp({
+      env: { ...SID_ENV, VIBERSYN_SALEM_UPSTREAM: "https://board.example.dev" },
+      salemFetch: salem.fetchFn,
+    });
+    await app.request("/salem");
+    await app.request("/salem/");
+    expect(salem.calls.map((call) => call.url)).toEqual(["https://board.example.dev/", "https://board.example.dev/"]);
+  });
+
+  test("sid UNSET degrades gracefully: no cookie header, the upstream login page rides through", async () => {
+    const salem = scriptedSalem(
+      () => new Response("<h1>Login</h1>", { headers: { "content-type": "text/html; charset=utf-8" } }),
+    );
+    const { app } = await makeApp({ env: {}, salemFetch: salem.fetchFn });
+    const response = await app.request("/salem/");
+    expect(response.status).toBe(200);
+    expect(await response.text()).toContain("Login");
+    expect(salem.calls[0]!.headers.cookie).toBeUndefined();
+  });
+
+  test("frame blockers are STRIPPED (xfo + both CSP flavors); benign headers pass", async () => {
+    const salem = scriptedSalem(
+      () =>
+        new Response("<p>board</p>", {
+          headers: {
+            "content-type": "text/html; charset=utf-8",
+            "x-frame-options": "DENY",
+            "content-security-policy": "frame-ancestors 'none'",
+            "content-security-policy-report-only": "frame-ancestors 'none'",
+            "cache-control": "no-store",
+          },
+        }),
+    );
+    const { app } = await makeApp({ env: SID_ENV, salemFetch: salem.fetchFn });
+    const response = await app.request("/salem/");
+    expect(response.headers.get("x-frame-options")).toBeNull();
+    expect(response.headers.get("content-security-policy")).toBeNull();
+    expect(response.headers.get("content-security-policy-report-only")).toBeNull();
+    expect(response.headers.get("cache-control")).toBe("no-store");
+  });
+
+  test("text/html gets ONE conservative rewrite pass: root-relative href/src/action/url( → /salem/", async () => {
+    const html = [
+      '<a href="/calendar">cal</a>',
+      "<img src='/img/logo.png'>",
+      '<form action="/login" method="post"></form>',
+      '<div style="background:url(/bg.png)"></div>',
+      '<a href="//cdn.example.dev/x">protocol-relative untouched</a>',
+      '<a href="https://elsewhere.example.dev/">absolute untouched</a>',
+      '<a href="/salem/already">already proxied untouched</a>',
+    ].join("");
+    const salem = scriptedSalem(() => new Response(html, { headers: { "content-type": "text/html; charset=utf-8" } }));
+    const { app } = await makeApp({ env: SID_ENV, salemFetch: salem.fetchFn });
+    const body = await (await app.request("/salem/")).text();
+    expect(body).toContain('href="/salem/calendar"');
+    expect(body).toContain("src='/salem/img/logo.png'");
+    expect(body).toContain('action="/salem/login"');
+    expect(body).toContain("url(/salem/bg.png)");
+    expect(body).toContain('href="//cdn.example.dev/x"');
+    expect(body).toContain('href="https://elsewhere.example.dev/"');
+    expect(body).toContain('href="/salem/already"');
+  });
+
+  test("binary/asset content-types pass through UNTOUCHED (bytes identical, even url(/-shaped)", async () => {
+    const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, ...new TextEncoder().encode('href="/x" url(/y)')]);
+    const salem = scriptedSalem(() => new Response(bytes, { headers: { "content-type": "image/png" } }));
+    const { app } = await makeApp({ env: SID_ENV, salemFetch: salem.fetchFn });
+    const response = await app.request("/salem/img/logo.png");
+    expect(response.headers.get("content-type")).toBe("image/png");
+    expect(new Uint8Array(await response.arrayBuffer())).toEqual(bytes);
+  });
+
+  test("3xx Location headers are rewritten under /salem (root-relative AND same-origin absolute)", async () => {
+    const salem = scriptedSalem((url) =>
+      url.endsWith("/a")
+        ? new Response(null, { status: 302, headers: { location: "/login?next=%2F" } })
+        : new Response(null, { status: 302, headers: { location: "https://residency.convent.fun/board?x=1" } }),
+    );
+    const { app } = await makeApp({ env: SID_ENV, salemFetch: salem.fetchFn });
+    const rootRelative = await app.request("/salem/a");
+    expect(rootRelative.status).toBe(302);
+    expect(rootRelative.headers.get("location")).toBe("/salem/login?next=%2F");
+    const absolute = await app.request("/salem/b");
+    expect(absolute.headers.get("location")).toBe("/salem/board?x=1");
+  });
+
+  test("foreign-origin Location passes through untouched", async () => {
+    const salem = scriptedSalem(
+      () => new Response(null, { status: 302, headers: { location: "https://elsewhere.example.dev/away" } }),
+    );
+    const { app } = await makeApp({ env: SID_ENV, salemFetch: salem.fetchFn });
+    expect((await app.request("/salem/x")).headers.get("location")).toBe("https://elsewhere.example.dev/away");
+  });
+
+  test("POST forwards body + content-type and spoofs Origin/Referer to the upstream origin", async () => {
+    const salem = scriptedSalem(() => new Response("posted", { headers: { "content-type": "text/plain" } }));
+    const { app } = await makeApp({ env: SID_ENV, salemFetch: salem.fetchFn });
+    const response = await app.request("/salem/chores/complete", {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: "chore=dishes&done=1",
+    });
+    expect(response.status).toBe(200);
+    const call = salem.calls[0]!;
+    expect(call.method).toBe("POST");
+    expect(call.headers.origin).toBe("https://residency.convent.fun");
+    expect(call.headers.referer).toBe("https://residency.convent.fun/");
+    expect(call.headers["content-type"]).toBe("application/x-www-form-urlencoded");
+    expect(call.headers.cookie).toBe("salem_session=sid-abc123");
+    expect(call.body).toBe("chore=dishes&done=1");
+  });
+
+  test("upstream failure → the branded fallback page, never a blank frame", async () => {
+    const { app } = await makeApp({
+      env: SID_ENV,
+      salemFetch: async () => {
+        throw new Error("upstream down");
+      },
+    });
+    const response = await app.request("/salem/");
+    expect(response.status).toBe(502);
+    expect(response.headers.get("content-type")).toContain("text/html");
+    const body = await response.text();
+    expect(body).toContain("the board is napping");
+    expect(body).toContain("the garden keeps growing");
+  });
+
+  test("GET /salem/healthz: authed when 200 without the login marker; unauthed on the login page or 401", async () => {
+    const authedApp = await makeApp({
+      env: SID_ENV,
+      salemFetch: scriptedSalem(() => new Response("<h1>House Board</h1><a>Logout</a>", { headers: { "content-type": "text/html" } })).fetchFn,
+    });
+    expect(await (await authedApp.app.request("/salem/healthz")).json()).toEqual({ ok: true, authed: true, status: 200 });
+
+    const loginApp = await makeApp({
+      env: SID_ENV,
+      salemFetch: scriptedSalem(() => new Response("<form action='/login'>Login</form>")).fetchFn,
+    });
+    expect(await (await loginApp.app.request("/salem/healthz")).json()).toEqual({ ok: true, authed: false, status: 200 });
+
+    const deniedApp = await makeApp({
+      env: SID_ENV,
+      salemFetch: scriptedSalem(() => new Response("denied", { status: 401 })).fetchFn,
+    });
+    expect(await (await deniedApp.app.request("/salem/healthz")).json()).toEqual({ ok: true, authed: false, status: 401 });
+  });
+
+  test("GET /salem/healthz: a dead upstream is {ok:false}, never a throw", async () => {
+    const { app } = await makeApp({
+      env: SID_ENV,
+      salemFetch: async () => {
+        throw new Error("nope");
+      },
+    });
+    expect(await (await app.request("/salem/healthz")).json()).toEqual({ ok: false, authed: false, status: 0 });
+  });
+});
+
+// ── deployment resolver riding the import routine ────────────────────────────
+describe("GitHub import → deploy resolver → deployUrl surfaces", () => {
+  test("a resolved deployment lands on the snapshot process AND the /repo route", async () => {
+    const resolverCalls: Array<{ owner: string; repo: string; repoDir: string | null }> = [];
+    const { app, runtime } = await makeApp({
+      buildBackends: [new RouteFakeBackend()],
+      resolveDeployFn: async (input) => {
+        resolverCalls.push({ owner: input.owner, repo: input.repo, repoDir: input.repoDir });
+        return { url: "https://residency.convent.fun", source: "map" };
+      },
+      // The adopt path needs a repo/.git like a real checkout.
+      cloneRepoFn: async ({ dir }) => {
+        await import("node:fs/promises").then((fs) => fs.mkdir(join(dir, ".git"), { recursive: true }));
+        return { ok: true, dir };
+      },
+      treeGitRunner: async () => ({ ok: true, stdout: "", stderr: "" }),
+    });
+    const response = await postJson(app, "/api/projects/import", { url: "https://github.com/RonTuretzky/convent-profile" });
+    expect(response.status).toBe(200);
+    const { upid } = (await response.json()) as { upid: string };
+
+    await waitFor(() => runtime.snapshot().processes.some((entry) => entry.upid === upid && entry.deployUrl != null));
+    const process = runtime.snapshot().processes.find((entry) => entry.upid === upid)!;
+    expect(process.deployUrl).toBe("https://residency.convent.fun");
+    // The resolver saw the parsed identity + the clone's checkout dir.
+    expect(resolverCalls[0]!.owner).toBe("RonTuretzky");
+    expect(resolverCalls[0]!.repo).toBe("convent-profile");
+    expect(resolverCalls[0]!.repoDir).toContain(`${upid}/repo`);
+
+    // The tree-repo facts route carries it too (the menu/popup surface).
+    await waitFor(() => runtime.treeRepoInfo(upid) !== null);
+    const repo = await app.request(`/api/process/${upid}/repo`);
+    expect(repo.status).toBe(200);
+    expect(((await repo.json()) as { deployUrl?: string }).deployUrl).toBe("https://residency.convent.fun");
+    await waitFor(() => runtime.registry.builds(upid).some((build) => build.status === "ready"));
+  });
+
+  test("no resolution (or the null test seam) → no deployUrl anywhere", async () => {
+    const { app, runtime } = await makeApp({ buildBackends: [new RouteFakeBackend()] });
+    const response = await postJson(app, "/api/projects/import", { url: "https://github.com/o/quiet" });
+    const { upid } = (await response.json()) as { upid: string };
+    await waitFor(() => runtime.registry.builds(upid).some((build) => build.status === "ready"));
+    expect(runtime.snapshot().processes.find((entry) => entry.upid === upid)!.deployUrl).toBeNull();
   });
 });

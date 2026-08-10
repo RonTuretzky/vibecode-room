@@ -154,7 +154,9 @@ async function makeRuntime(
       VIBERSYN_DETECT_TICK_MS: "0",
       ...env,
     },
-    { buildsRoot, executionArtifactsRoot: join(dir, "vibersyn-runs"), ...runtimeOptions },
+    // resolveDeployFn defaults NULL here (same idiom as treeGitRunner): a
+    // github import with the real resolver would HEAD-probe hosts / spawn gh.
+    { buildsRoot, executionArtifactsRoot: join(dir, "vibersyn-runs"), resolveDeployFn: null, ...runtimeOptions },
   );
   runtimes.push(runtime);
   runtimePaths.set(runtime, path);

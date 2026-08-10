@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import type { Context } from "hono";
 import { stat } from "node:fs/promises";
 import { resolve } from "node:path";
 import { withUnmuted } from "../ui/demo-data";
@@ -38,6 +39,10 @@ export interface ProjectorAppOptions {
   // calibrator on VIBERSYN_AUTOCAL_PORT). Tests inject a fake — no real
   // network ever.
   autocalFetch?: (input: string | URL, init?: RequestInit) => Promise<Response>;
+  // Test seam for the /salem authenticated app proxy's upstream fetch (the
+  // labor.fun house board behind Caddy). Tests inject a fake — no real
+  // network ever.
+  salemFetch?: (input: string | URL, init?: RequestInit) => Promise<Response>;
   // Test seam for the /api/build-stamp stat of the served dist/index.html.
   distIndexStat?: () => Promise<{ mtimeMs: number }>;
   // Test seam for the forest loader the self-rebuild toggle kicks (the repo
@@ -656,9 +661,189 @@ export function createProjectorApp(runtime: ProjectorRuntime, options: Projector
     return context.json({ stamp: buildStampCache.stamp });
   });
 
+  // /salem — AUTHENTICATED APP PROXY (the holo panel's window into the live
+  // labor.fun house board). The board sits behind Caddy with an HttpOnly
+  // SameSite=Lax salem_session cookie, so a cross-origin iframe would show the
+  // login page forever; this same-origin reverse proxy injects the session
+  // server-side, strips the frame-blocking headers, and rewrites root-relative
+  // HTML references so the app lives happily under /salem/.
+  registerSalemSurface(app, { env, salemFetch: options.salemFetch ?? fetch });
+
   app.get("*", async (context) => serveStatic(context.req.url));
 
   return app;
+}
+
+// ── /salem authenticated app proxy ───────────────────────────────────────────
+
+const SALEM_DEFAULT_UPSTREAM = "https://residency.convent.fun";
+// Upstream budget: the board is a small remote app — 8s covers a cold Caddy
+// hop, and the fallback page beats a spinner pinned to a dead upstream.
+const SALEM_PROXY_TIMEOUT_MS = 8_000;
+// Response headers that must never reach the wall's iframe: an upstream
+// X-Frame-Options / CSP (frame-ancestors) would blank our SAME-ORIGIN frame.
+// Encoding/length go too — fetch already decoded the body, and a stale
+// content-length over a rewritten HTML body would truncate it.
+const SALEM_STRIPPED_HEADERS = [
+  "x-frame-options",
+  "content-security-policy",
+  "content-security-policy-report-only",
+  "content-encoding",
+  "content-length",
+  "transfer-encoding",
+  // The room's sid is injected SERVER-side; an upstream session-refresh
+  // Set-Cookie must not land cookies under the room's own origin.
+  "set-cookie",
+];
+// healthz reads at most this much of the upstream body for the login marker.
+const SALEM_HEALTH_SLICE = 16_384;
+
+// One conservative pass over text/html ONLY: root-relative references
+// (href="/… src="/… action="/… and url(/… in inline styles) become /salem/…
+// so the board's own links/assets stay inside the proxy. Protocol-relative
+// (//cdn…) and already-rewritten (/salem/…) references are left alone.
+export function rewriteSalemHtml(html: string): string {
+  return html
+    .replace(/(href|src|action)=(["'])\/(?!\/|salem\/)/gi, "$1=$2/salem/")
+    .replace(/url\((['"]?)\/(?!\/|salem\/)/gi, "url($1/salem/");
+}
+
+// 3xx Location rewrite: a root-relative or same-upstream-origin redirect stays
+// under /salem (the login POST bounce must land back in the frame); foreign
+// origins pass through untouched.
+export function rewriteSalemLocation(location: string, upstreamOrigin: string): string {
+  if (location.startsWith("/") && !location.startsWith("//")) {
+    return location === "/salem" || location.startsWith("/salem/") ? location : `/salem${location}`;
+  }
+  try {
+    const url = new URL(location);
+    if (url.origin === upstreamOrigin) {
+      return `/salem${url.pathname}${url.search}`;
+    }
+  } catch {
+    // Relative/opaque Location — leave it for the browser to resolve in-frame.
+  }
+  return location;
+}
+
+// The branded 502: the room's dark palette, never a blank frame.
+function salemFallbackHtml(): string {
+  return [
+    "<!doctype html><html><head><meta charset=\"utf-8\"><title>the board is napping</title><style>",
+    "html,body{margin:0;height:100%;background:linear-gradient(180deg,#05070d,#070e16);color:#e8f2f5;",
+    "font-family:Inter,ui-sans-serif,system-ui,sans-serif;display:flex;align-items:center;justify-content:center}",
+    ".nap{text-align:center;padding:36px 44px;border:1px solid rgba(0,229,255,0.35);border-radius:18px;",
+    "background:rgba(16,30,40,0.42);box-shadow:0 0 32px rgba(0,229,255,0.12)}",
+    "h1{font-size:22px;margin:0 0 10px;color:#9ee2ff;font-weight:600}p{margin:0;color:#aebfc8}",
+    "</style></head><body><div class=\"nap\"><h1>the board is napping</h1>",
+    "<p>the garden keeps growing — try again in a moment.</p></div></body></html>",
+  ].join("");
+}
+
+// The /salem surface: GET/POST proxy + healthz. NOT the 8-line autocal idiom —
+// a real reverse proxy with cookie injection, header stripping and HTML
+// rewriting, degrading gracefully to the upstream login page when
+// VIBERSYN_SALEM_SID is unset and to the branded fallback when the upstream
+// is down. Never throws.
+function registerSalemSurface(
+  app: Hono,
+  options: {
+    env: Record<string, string | undefined>;
+    salemFetch: (input: string | URL, init?: RequestInit) => Promise<Response>;
+  },
+): void {
+  const upstreamOrigin = ((): string => {
+    try {
+      return new URL(options.env.VIBERSYN_SALEM_UPSTREAM ?? SALEM_DEFAULT_UPSTREAM).origin;
+    } catch {
+      return new URL(SALEM_DEFAULT_UPSTREAM).origin;
+    }
+  })();
+  // The salem_session cookie VALUE. May be unset tonight: every request then
+  // goes up cookie-less and the board honestly serves its login page.
+  const sid = (options.env.VIBERSYN_SALEM_SID ?? "").trim();
+  const salemFetch = options.salemFetch;
+
+  // Synthetic health check — MUST register before the /salem/* wildcard.
+  // authed uses the pragmatic marker: the board's 401 login HTML says "login"
+  // (form action, heading, title); a 200 without it on a bounded slice means
+  // the session cookie is doing its job.
+  app.get("/salem/healthz", async (context) => {
+    try {
+      const response = await salemFetch(`${upstreamOrigin}/`, {
+        method: "GET",
+        headers: sid.length > 0 ? { cookie: `salem_session=${sid}` } : {},
+        redirect: "manual",
+        signal: AbortSignal.timeout(SALEM_PROXY_TIMEOUT_MS),
+      });
+      const slice = (await response.text()).slice(0, SALEM_HEALTH_SLICE).toLowerCase();
+      const authed = response.status === 200 && !slice.includes("login");
+      return context.json({ ok: true, authed, status: response.status });
+    } catch {
+      return context.json({ ok: false, authed: false, status: 0 });
+    }
+  });
+
+  const proxy = async (context: Context): Promise<Response> => {
+    const requestUrl = new URL(context.req.url);
+    // /salem and /salem/ are the board's root; deeper paths map 1:1.
+    const upstreamPath = requestUrl.pathname === "/salem" ? "/" : requestUrl.pathname.slice("/salem".length) || "/";
+    const upstreamUrl = `${upstreamOrigin}${upstreamPath}${requestUrl.search}`;
+    const method = context.req.method === "POST" ? "POST" : "GET";
+    const headers: Record<string, string> = { accept: context.req.header("accept") ?? "*/*" };
+    if (sid.length > 0) {
+      headers.cookie = `salem_session=${sid}`;
+    }
+    let body: ArrayBuffer | undefined;
+    if (method === "POST") {
+      // The board's CSRF-ish checks see the UPSTREAM origin, not the room's.
+      headers.origin = upstreamOrigin;
+      headers.referer = `${upstreamOrigin}/`;
+      const contentType = context.req.header("content-type");
+      if (contentType !== undefined) {
+        headers["content-type"] = contentType;
+      }
+      body = await context.req.arrayBuffer();
+    }
+    let upstream: Response;
+    try {
+      upstream = await salemFetch(upstreamUrl, {
+        method,
+        headers,
+        redirect: "manual",
+        signal: AbortSignal.timeout(SALEM_PROXY_TIMEOUT_MS),
+        ...(body === undefined ? {} : { body }),
+      });
+    } catch {
+      // Down / timed out — the branded nap page, never a blank frame.
+      return new Response(salemFallbackHtml(), { status: 502, headers: { "content-type": "text/html; charset=utf-8" } });
+    }
+    const responseHeaders = new Headers(upstream.headers);
+    for (const name of SALEM_STRIPPED_HEADERS) {
+      responseHeaders.delete(name);
+    }
+    const location = responseHeaders.get("location");
+    if (location !== null) {
+      responseHeaders.set("location", rewriteSalemLocation(location, upstreamOrigin));
+    }
+    const contentType = (responseHeaders.get("content-type") ?? "").toLowerCase();
+    if (contentType.includes("text/html")) {
+      let html: string;
+      try {
+        html = await upstream.text();
+      } catch {
+        return new Response(salemFallbackHtml(), { status: 502, headers: { "content-type": "text/html; charset=utf-8" } });
+      }
+      return new Response(rewriteSalemHtml(html), { status: upstream.status, headers: responseHeaders });
+    }
+    // Binary/asset content-types stream through untouched.
+    return new Response(upstream.body, { status: upstream.status, headers: responseHeaders });
+  };
+
+  app.get("/salem", proxy);
+  app.post("/salem", proxy);
+  app.get("/salem/*", proxy);
+  app.post("/salem/*", proxy);
 }
 
 interface ImportSurfaceConfig {

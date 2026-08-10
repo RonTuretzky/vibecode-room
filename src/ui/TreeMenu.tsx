@@ -119,6 +119,9 @@ export interface TreeMenuModel {
   // menu offers the plain deck-open button instead of per-lane views.
   hasFixtureDeck: boolean;
   published: { url: string; qrSvg: string } | null;
+  // LIVE DEPLOYMENT (imported trees): the deploy-resolver's confirmed URL —
+  // present, the menu grows a "🌐 Live app ▸" row opening the holo panel.
+  deployUrl: string | null;
 }
 
 // Pure: everything the menu renders, derived from the live snapshot (unit-
@@ -149,6 +152,7 @@ export function treeMenuModel(process: ProjectorProcess, snapshot: ProjectorSnap
       typeof process.publishedQrSvg === "string"
         ? { url: process.publishedUrl, qrSvg: process.publishedQrSvg }
         : null,
+    deployUrl: typeof process.deployUrl === "string" && process.deployUrl.length > 0 ? process.deployUrl : null,
   };
 }
 
@@ -164,9 +168,13 @@ export interface TreeMenuProps {
   // POST /api/process/:upid/dismiss — only reachable through the two-stage
   // confirm, and never rendered for the self tree.
   onDismiss: (upid: string) => void;
+  // LIVE APP (imported trees with a resolved deployUrl): opens the holo panel
+  // beside the tree — the App closes this menu and mounts HoloPanel. Absent =
+  // the row never renders (older mounts, tests exercising the menu alone).
+  onOpenLiveApp?: (upid: string) => void;
 }
 
-export function TreeMenu({ process, snapshot, anchor, onClose, onOpenDeck, onDismiss }: TreeMenuProps) {
+export function TreeMenu({ process, snapshot, anchor, onClose, onOpenDeck, onDismiss, onOpenLiveApp }: TreeMenuProps) {
   const model = treeMenuModel(process, snapshot);
   const execution = executionOf(process);
   // Re-derived per render — the anchor prop changes on a fresh pick and on the
@@ -298,6 +306,21 @@ export function TreeMenu({ process, snapshot, anchor, onClose, onOpenDeck, onDis
             ),
           )}
         </div>
+      ) : null}
+
+      {/* 🌐 LIVE APP (imported trees only): the deploy-resolver confirmed a
+          running deployment, so one press opens the holo panel's same-origin
+          /salem window right beside the tree (the App swaps this menu out). */}
+      {model.deployUrl !== null && onOpenLiveApp !== undefined ? (
+        <button
+          type="button"
+          className="ctl-button tree-menu-live"
+          data-testid="tree-menu-live"
+          title={`Open the live deployment (${model.deployUrl}) on a holo panel beside this tree.`}
+          onClick={() => onOpenLiveApp(process.upid)}
+        >
+          🌐 Live app ▸
+        </button>
       ) : null}
 
       {/* Fixture decks (mock room) keep their one-press open. */}

@@ -1,0 +1,119 @@
+/* ============================================================================
+   Holo panel — the imported tree's LIVE deployment beside it (HoloPanel.tsx).
+   Position comes inline (left/top from the shared treeMenuPlacement math plus
+   the perspective/rotateY hologram lean); this file owns the cyan-glass look,
+   the scanline sheet, and the gesture-XL chrome sizing.
+   ============================================================================ */
+.holo-panel {
+  position: fixed;
+  z-index: 32; /* over the tree menu (30), under the deck/QR overlays (50+) */
+  width: min(960px, 94vw);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border-radius: 18px;
+  border: 1px solid rgba(0, 229, 255, 0.5);
+  padding: 14px 16px 16px;
+  background: linear-gradient(180deg, rgba(10, 26, 36, 0.94), rgba(6, 14, 22, 0.9));
+  box-shadow:
+    0 0 26px rgba(0, 229, 255, 0.22),
+    0 18px 60px rgba(0, 0, 0, 0.5),
+    inset 0 0 22px rgba(0, 229, 255, 0.07);
+  animation: fade-in 200ms ease;
+}
+
+.holo-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.holo-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #9ee2ff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-shadow: 0 0 12px rgba(0, 229, 255, 0.45);
+}
+
+.holo-pages {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.holo-page {
+  border: 1px solid rgba(0, 229, 255, 0.3);
+  border-radius: 10px;
+  padding: 8px 14px;
+  background: rgba(0, 40, 56, 0.4);
+  color: var(--ink, #e8f2f5);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.holo-page.is-current {
+  background: rgba(0, 229, 255, 0.18);
+  border-color: rgba(0, 229, 255, 0.7);
+  color: #cdf3ff;
+}
+
+.holo-frame-wrap {
+  position: relative;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid rgba(0, 229, 255, 0.22);
+  background: #06121a;
+}
+
+.holo-frame {
+  display: block;
+  width: 100%;
+  height: 470px;
+  border: 0;
+  background: #0a141c;
+}
+
+/* CSS-only scanlines: cheap (one repeating gradient, no animation) and enough
+   to sell the hologram at projector distance. pointer-events off so the sheet
+   never eats the iframe's own clicks. */
+.holo-scanlines {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(0, 229, 255, 0.045) 0px,
+    rgba(0, 229, 255, 0.045) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+  mix-blend-mode: screen;
+}
+
+.holo-controls {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+/* Gesture mode: every chrome control grows to comfortable dwell-target size
+   (the panel itself stays ~960 wide — the frame is the point). */
+main.gesture-mode .holo-page {
+  font-size: 19px;
+  padding: 14px 22px;
+  border-radius: 14px;
+}
+
+main.gesture-mode .holo-controls .ctl-button,
+main.gesture-mode .holo-close {
+  font-size: 22px;
+  padding: 12px 20px;
+}
+
+main.gesture-mode .holo-title {
+  font-size: 20px;
+}

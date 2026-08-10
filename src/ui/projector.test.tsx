@@ -21,6 +21,7 @@ import type { SelfTreeSeed } from "./self-repo";
 import type { BuildloopProcess, BuildloopSnapshot } from "./buildloop";
 import { PRACTICE_ORB_COUNT } from "./guided/machine";
 import { DISMISS_CONFIRM_MS, TREE_MENU_GESTURE_WIDTH, TREE_MENU_WIDTH, treeMenuModel, treeMenuPlacement } from "./TreeMenu";
+import { HOLO_PAGES, HOLO_TILT_DEG, holoPanelTilt, salemSrc } from "./HoloPanel";
 import type { ProjectorProcess } from "./types";
 
 function countOccurrences(haystack: string, needle: string): number {
@@ -1717,5 +1718,97 @@ describe("idea action card: contextual Done UX replaces the top-bar button", () 
     const idleHtml = renderToStaticMarkup(<GuidedDemo {...props} snapshot={demoProjectorSnapshot} />);
     expect(idleHtml).toContain('data-testid="guided-done-button"');
     expect(idleHtml).toContain('data-testid="guided-settle-waiting"');
+  });
+});
+
+// HOLO PANEL (the imported tree's LIVE deployment): the tree menu grows a
+// "🌐 Live app ▸" row only when the process carries a resolved deployUrl, and
+// the panel itself is a dwell-native /salem iframe with page-row + scroll +
+// reload + close chrome. The static renderer opens it via initialOverlay
+// .holoUpid (the same seam idiom as selected/slideshowUpid).
+describe("holo panel: the live app beside its tree", () => {
+  const DEPLOY_URL = "https://residency.convent.fun";
+  const deploySnapshot = () => ({
+    ...demoProjectorSnapshot,
+    processes: demoProjectorSnapshot.processes.map((process, index) =>
+      index === 0 ? { ...process, deployUrl: DEPLOY_URL } : process,
+    ),
+  });
+
+  test("a process WITH deployUrl grows the tree menu's Live app row", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={deploySnapshot()} initialOverlay={{ selected: "Atlas" }} />,
+    );
+    expect(html).toContain('data-testid="tree-menu-live"');
+    expect(html).toContain("🌐 Live app ▸");
+  });
+
+  test("no deployUrl → no Live app row (the demo fleet has none)", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={demoProjectorSnapshot} initialOverlay={{ selected: "Atlas" }} />,
+    );
+    expect(html).not.toContain('data-testid="tree-menu-live"');
+  });
+
+  test("the panel renders its chrome: /salem iframe (sandboxed), 5 page rows, scroll/reload/close", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={deploySnapshot()} initialOverlay={{ holoUpid: "upid_atlas_7f3" }} />,
+    );
+    expect(html).toContain('data-testid="holo-panel"');
+    expect(html).toContain('src="/salem/"');
+    expect(html).toContain('sandbox="allow-scripts allow-same-origin allow-forms"');
+    expect(countOccurrences(html, 'data-testid="holo-page"')).toBe(HOLO_PAGES.length);
+    for (const page of HOLO_PAGES) {
+      expect(html).toContain(`data-path="${page.path}"`);
+    }
+    expect(html).toContain('data-testid="holo-scroll-up"');
+    expect(html).toContain('data-testid="holo-scroll-down"');
+    expect(html).toContain('data-testid="holo-reload"');
+    expect(html).toContain('data-testid="holo-close"');
+    // The hologram dressing + the perspective/rotateY lean are CSS-borne.
+    expect(html).toContain("holo-scanlines");
+    expect(html).toContain("perspective(1600px)");
+  });
+
+  test("the panel root shields its WHOLE rect from the dwell-miss close", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={deploySnapshot()} initialOverlay={{ holoUpid: "upid_atlas_7f3" }} />,
+    );
+    const idx = html.indexOf('data-testid="holo-panel"');
+    expect(idx).toBeGreaterThan(-1);
+    const openTag = html.slice(html.lastIndexOf("<", idx), html.indexOf(">", idx));
+    expect(openTag).toContain("data-dwell-shield");
+  });
+
+  test("no holoUpid (or an unknown upid) → no panel", () => {
+    expect(renderToStaticMarkup(<ProjectorApp initialSnapshot={deploySnapshot()} />)).not.toContain(
+      'data-testid="holo-panel"',
+    );
+    expect(
+      renderToStaticMarkup(<ProjectorApp initialSnapshot={deploySnapshot()} initialOverlay={{ holoUpid: "upid_ghost" }} />),
+    ).not.toContain('data-testid="holo-panel"');
+  });
+
+  // ── pure derivations ───────────────────────────────────────────────────────
+
+  test("salemSrc: the board root is /salem/, deeper pages ride verbatim", () => {
+    expect(salemSrc("/")).toBe("/salem/");
+    expect(salemSrc("/calendar")).toBe("/salem/calendar");
+    expect(HOLO_PAGES.map((page) => page.path)).toEqual(["/", "/calendar", "/chores", "/points", "/hearts"]);
+  });
+
+  test("holoPanelTilt leans TOWARD screen center (right half +deg, left half -deg)", () => {
+    // Panel resting on the right half faces left (positive rotateY).
+    expect(holoPanelTilt(1200, 960, 1920)).toBe(HOLO_TILT_DEG);
+    // Panel on the left half faces right (negative rotateY).
+    expect(holoPanelTilt(16, 960, 1920)).toBe(-HOLO_TILT_DEG);
+  });
+
+  test("treeMenuModel surfaces deployUrl only when present and non-empty", () => {
+    const withUrl = { ...demoProjectorSnapshot.processes[0]!, deployUrl: DEPLOY_URL };
+    expect(treeMenuModel(withUrl, demoProjectorSnapshot).deployUrl).toBe(DEPLOY_URL);
+    const withoutUrl = { ...demoProjectorSnapshot.processes[0]!, deployUrl: "" };
+    expect(treeMenuModel(withoutUrl, demoProjectorSnapshot).deployUrl).toBeNull();
+    expect(treeMenuModel(demoProjectorSnapshot.processes[0]!, demoProjectorSnapshot).deployUrl).toBeNull();
   });
 });

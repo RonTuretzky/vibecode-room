@@ -57,6 +57,12 @@ export interface ProjectorProcess {
   // home") — no client-side QR dependency. Null/absent until published.
   publishedUrl?: string | null;
   publishedQrSvg?: string | null;
+  // LIVE DEPLOYMENT (GitHub imports): the deploy-resolver's confirmed URL for
+  // this repo's running app (VIBERSYN_DEPLOY_MAP override → clone scrape +
+  // HEAD probes → gh garnish). Feeds the tree menu's "🌐 Live app" row, which
+  // opens the holo panel's same-origin /salem proxy iframe. Null/absent when
+  // no deployment resolved (most trees).
+  deployUrl?: string | null;
   // GIT SUBSTRATE surface for tree visuals: the tree's real local repo.
   // branches is tiny and bounded (<=8): main + one concept/<backend> per lane
   // (adopted GitHub imports grow room/<slug> branches instead, each carrying
