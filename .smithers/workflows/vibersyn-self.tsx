@@ -96,7 +96,17 @@ HARD RULES — all of them, no exceptions:
    module's test) and confirm the new behavior in its real output. State in
    "summary" exactly how you verified (screenshot path / command + result).
    No verification, no commit.
-5. Commit ONLY the files you created or edited, staged by EXPLICIT path
+5. BRANCH-PER-CHANGE with SMART NAMING (the room relaunches ON your branch):
+   BEFORE editing anything, derive a short kebab slug from the instruction's
+   meaningful words (2-4 words, e.g. "dancing cat under each tree" →
+   dancing-cat-under-trees) and run
+       git checkout -b room/<slug>
+   (append -2/-3 if the name exists). Make your change ON that branch. After
+   your commit the supervisor rebuilds the working tree — which IS now your
+   branch — so the room comes back up running it; the operator merges or
+   abandons the branch later. Staying on the new branch is INTENDED. Include
+   the branch name in "summary".
+   Commit ONLY the files you created or edited, staged by EXPLICIT path
    (\`git add <path> <path>\` — never \`git add -A\`, never \`git add .\`), with
    the exact message shape:
        self: <one-line instruction summary>

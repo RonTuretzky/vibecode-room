@@ -2174,7 +2174,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       resolved = await this.#treeGit.createBranch(upid, explicitBranch);
     } else {
       const latest = this.#latestRoomBranch(upid);
-      resolved = latest !== null ? { ok: true, branch: latest } : await this.#treeGit.createBranch(upid, "spoken-changes");
+      resolved = latest !== null ? { ok: true, branch: latest } : await this.#treeGit.createBranch(upid, slugFromSpeech(text));
     }
     if (!resolved.ok) {
       this.recordExternalTrace({
@@ -2380,6 +2380,17 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       // active the suggester rounds kick in the BACKGROUND (never blocking the
       // idea/steering path below).
       this.research.ingestTurn({ speaker: observation.speaker, text, atMs: this.#clock() });
+
+      // RECORD WINDOW SEAL: while the record toggle is armed, EVERYTHING
+      // spoken belongs to the window — the fuzzy callsign matcher and the
+      // dispatch grammar below must not steal a sentence mid-recording (a
+      // sentence fuzzy-matching a callsign fired a commission BEFORE stop —
+      // live-room report, twice). The explicit wake word above stays live:
+      // "vibersyn, …" is the deliberate override/safety channel.
+      if (this.#steeringUpid !== null) {
+        await this.routeSteering(observation, correlationId);
+        return;
+      }
 
       // VOICE CALLSIGN STEERING: an utterance ADDRESSED to a live process by its
       // callsign ("atlas, make the header blue") sets that process as the
@@ -4662,6 +4673,21 @@ export const GUIDED_HOLD_TTL_MS = 10 * 60_000;
 // speaker by 1-2s, so words spoken during the window arrive AFTER the clear.
 // Finals inside this budget still route/commit to the released target.
 export const STEER_GRACE_MS = 2_500;
+
+// SMART BRANCH NAMING (live-room request): the spoken change names its own
+// branch — "make a dancing cat under each tree" → "dancing-cat-under-each" —
+// instead of a generic spoken-changes. First few meaningful words, kebab-cased,
+// bounded; the substrate slugifies/prefixes room/ and dedupes on collision.
+const SPEECH_SLUG_STOPWORDS = new Set(["the", "a", "an", "to", "of", "and", "or", "please", "can", "you", "i", "we", "want", "make", "add", "like", "just", "so", "that", "it", "for", "on", "in"]);
+export function slugFromSpeech(text: string): string {
+  const words = text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/gu, " ")
+    .split(/\s+/u)
+    .filter((word) => word.length > 1 && !SPEECH_SLUG_STOPWORDS.has(word));
+  const picked = words.slice(0, 4).join("-");
+  return picked.length > 0 ? picked.slice(0, 48) : "spoken-changes";
+}
 
 // VIBERSYN_AUTOBUILD_SETTLE_MS — quiet period (ms) required before an armed
 // auto-build fires. 0 restores the legacy immediate fire (fast tests).

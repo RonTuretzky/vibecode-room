@@ -4,7 +4,7 @@ import { mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createProjectorApp } from "./app";
-import { createProjectorRuntime, type ProjectorRuntime, type ProjectorRuntimeOptions, STEER_GRACE_MS } from "./composition";
+import { createProjectorRuntime, type ProjectorRuntime, type ProjectorRuntimeOptions, STEER_GRACE_MS, slugFromSpeech } from "./composition";
 import type { GitCommandRunner } from "./tree-git";
 import type { ForestCommandRunner } from "./github-org";
 import type { BuildBackend, BuildRequest, BuildResult } from "../buildloop/types";
@@ -264,7 +264,7 @@ describe("branch-scoped select — POST /api/process/:upid/select {branch}", () 
 });
 
 describe("steer slice → applier — the record-toggle commit", () => {
-  test("toggle on → speak → toggle off lands ROOM-NOTES.md + a commit on room/spoken-changes", async () => {
+  test("toggle on → speak → toggle off lands ROOM-NOTES.md + a commit on a SMART-NAMED room branch", async () => {
     const git = scriptedGit();
     const { runtime, buildsRoot } = await makeRuntime({
       buildBackends: [new FakeBackend()],
@@ -287,14 +287,15 @@ describe("steer slice → applier — the record-toggle commit", () => {
     expect(notes).toContain("make the header cobalt blue and round the corners");
 
     await waitFor(() => steerApplierEvents(runtime).includes("steer.applier.applied"));
-    // No explicit branch, no prior room/* branch → room/spoken-changes was cut
-    // off the fetched origin/main tip and carries the commit.
+    // No explicit branch, no prior room/* branch → a SMART-NAMED branch (slug
+    // from the spoken words) was cut off the fetched origin/main tip and
+    // carries the commit.
     await waitFor(
       () =>
         runtime
           .snapshot()
           .processes.find((entry) => entry.upid === upid)
-          ?.treeRepo?.branches.some((branch) => branch.name === "room/spoken-changes" && branch.commits === 1) === true,
+          ?.treeRepo?.branches.some((branch) => branch.name === "room/header-cobalt-blue-round" && branch.commits === 1) === true,
     );
     const commitMessage = git.calls.find((argv) => argv.includes("commit-tree"))!;
     expect(commitMessage[commitMessage.length - 1]).toBe("room: make the header cobalt blue and round the corners");
@@ -569,5 +570,14 @@ describe("steering endpointing grace", () => {
     nowMs += STEER_GRACE_MS + 1_000;
     await drive(runtime, [final("flush tick", "utt-flush")]);
     await waitFor(() => readFileSync(notesPath, "utf8").includes("second window words"));
+  });
+});
+
+describe("slugFromSpeech — smart branch naming", () => {
+  test("meaningful words, kebab-cased, stopwords dropped, bounded", () => {
+    expect(slugFromSpeech("make a dancing cat under each tree")).toBe("dancing-cat-under-each");
+    expect(slugFromSpeech("please add night mode to the board")).toBe("night-mode-board");
+    expect(slugFromSpeech("!!!")).toBe("spoken-changes");
+    expect(slugFromSpeech("the a to of and").length).toBeGreaterThan(0);
   });
 });
