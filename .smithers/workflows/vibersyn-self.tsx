@@ -77,9 +77,25 @@ HARD RULES — all of them, no exceptions:
    dead/unmounted/unreached code fails the instruction even when tests are
    green — a previous self-run added a feature to an unmounted scene file and
    the room rebuilt itself for nothing. If you cannot show (import/mount
-   chain) that your edit executes, pick the file where it does.
+   chain) that your edit executes, pick the file where it does. AND cover the
+   branch actually taken AT RUNTIME on the rig: garden trees render via
+   buildRealTree (photoscan flora) — the primitive buildTree is only the
+   no-flora fallback; a visual tree feature wired into just one of them is
+   invisible on the projector even though every test passes.
 4. GREEN GATE: run \`bunx tsc --noEmit && bun run build\` and keep fixing your
    own change until BOTH pass clean. Never commit red.
+4b. SEE IT BEFORE YOU COMMIT IT. Compiling is not working — two earlier
+   self-runs committed green changes that never appeared on the walls. After
+   the build passes: for a VISUAL change, run
+   \`bun scripts/self-verify.ts\` (and again with
+   \`--path "/?wall=B&flat=1"\` — the panorama is split across two walls),
+   then READ the screenshot files it prints and CONFIRM your change is
+   actually visible in them; if it is not, your code is not on the executed
+   path — fix and re-verify until you SEE it. For a NON-visual change,
+   exercise the changed surface directly (curl the endpoint, run that
+   module's test) and confirm the new behavior in its real output. State in
+   "summary" exactly how you verified (screenshot path / command + result).
+   No verification, no commit.
 5. Commit ONLY the files you created or edited, staged by EXPLICIT path
    (\`git add <path> <path>\` — never \`git add -A\`, never \`git add .\`), with
    the exact message shape:

@@ -2124,9 +2124,31 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       return;
     }
     const text = joinedSliceText(grace.slice, this.#clock());
-    if (text.length > 0 && this.#treeGit?.isAdopted(grace.upid) === true && steerApplierEnabled(this.#env)) {
-      void this.#applySteerSlice(grace.upid, grace.branch, text, correlationId).catch(() => undefined);
+    if (text.length === 0) {
+      return;
     }
+    // THE dispatch: everything the window collected acts NOW, once.
+    // Adopted trees → the steer applier's bounded commit; everything else —
+    // the mirror (one self-run for the whole description), kickoff trees (one
+    // coherent mock revision) — a single registry.steer with the joined text.
+    if (this.#treeGit?.isAdopted(grace.upid) === true) {
+      if (steerApplierEnabled(this.#env)) {
+        void this.#applySteerSlice(grace.upid, grace.branch, text, correlationId).catch(() => undefined);
+      }
+      return;
+    }
+    void this.registry
+      .steer(grace.upid, { text, source: "live-transcript" }, `${correlationId}-window-dispatch`)
+      .catch((error) => {
+        this.recordExternalTrace({
+          event: "steering.route.error",
+          level: "error",
+          sessionId: this.sessionId,
+          correlationId: `${correlationId}-window-dispatch`,
+          upid: grace.upid,
+          meta: { message: error instanceof Error ? error.message : String(error), windowDispatch: true },
+        });
+      });
   }
 
   steeringTarget(): string | null {
@@ -2398,22 +2420,10 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       const steerGrace = this.#steerGrace;
       if (steerGrace !== null) {
         if (this.#clock() <= steerGrace.untilMs) {
-          if (this.#treeGit?.isAdopted(steerGrace.upid) === true) {
-            steerGrace.slice = appendSliceLine(steerGrace.slice, { text: observation.text, atMs: this.#clock() });
-          }
-          const graceCorrelationId = `${correlationId}-${observation.utteranceId}-grace`;
-          try {
-            await this.registry.steer(steerGrace.upid, { text: observation.text, source: "live-transcript" }, graceCorrelationId);
-          } catch (error) {
-            this.recordExternalTrace({
-              event: "steering.route.error",
-              level: "error",
-              sessionId: this.sessionId,
-              correlationId: graceCorrelationId,
-              upid: steerGrace.upid,
-              meta: { message: error instanceof Error ? error.message : String(error), grace: true },
-            });
-          }
+          // Trailing final for the just-released window: joins the slice the
+          // drain will dispatch — still no per-final action (STOP is the
+          // trigger; the drain fires moments from now).
+          steerGrace.slice = appendSliceLine(steerGrace.slice, { text: observation.text, atMs: this.#clock() });
           this.publish();
           return;
         }
@@ -2506,26 +2516,24 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       }
       return;
     }
-    // STEER TRANSCRIPT SLICE: while the record toggle steers an ADOPTED tree,
-    // collect every FINAL in the window — the joined slice becomes the steer
-    // applier's commit on toggle-off (clearSteeringTarget). ADDITIVE: the
-    // per-final registry.steer routing below is untouched.
-    if (this.#treeGit?.isAdopted(upid) === true) {
-      this.#steerSlice = appendSliceLine(this.#steerSlice, { text: observation.text, atMs: this.#clock() });
-    }
-    const steerCorrelationId = `${correlationId}-${observation.utteranceId}`;
-    try {
-      await this.registry.steer(upid, { text: observation.text, source: "live-transcript" }, steerCorrelationId);
-    } catch (error) {
-      this.recordExternalTrace({
-        event: "steering.route.error",
-        level: "error",
-        sessionId: this.sessionId,
-        correlationId: steerCorrelationId,
-        upid,
-        meta: { message: error instanceof Error ? error.message : String(error) },
-      });
-    }
+    // RECORD WINDOW = COLLECT ONLY (live-room directive: NOTHING is
+    // commissioned/steered until the operator presses STOP). Every FINAL in
+    // the window joins the slice; the drain at toggle-off (+ endpointing
+    // grace) dispatches ONCE with the full spoken text — the mirror gets one
+    // self-run for the whole description instead of a run per sentence with
+    // the rest refused as busy, mock lanes get one coherent revision, adopted
+    // trees get one commit. (The spoken-address path — "mirror, <text>" /
+    // "<callsign>, <text>" — stays immediate by design: that grammar IS a
+    // complete command, not an open window.)
+    this.#steerSlice = appendSliceLine(this.#steerSlice, { text: observation.text, atMs: this.#clock() });
+    this.recordExternalTrace({
+      event: "steering.window.collect",
+      level: "info",
+      sessionId: this.sessionId,
+      correlationId: `${correlationId}-${observation.utteranceId}`,
+      upid,
+      meta: { text: observation.text },
+    });
     this.publish();
   }
 

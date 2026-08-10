@@ -276,8 +276,8 @@ describe("steer slice → applier — the record-toggle commit", () => {
 
     runtime.setSteeringTarget(upid, "corr-steerslice-on");
     await drive(runtime, [final("make the header cobalt blue", "utt-steer-1"), final("and round the corners", "utt-steer-2")]);
-    // The per-final steer routing to the agent loop stayed untouched (additive).
-    await waitFor(() => runtime.trace.events().some((event) => event.event === "process.steer" && event.upid === upid));
+    // RECORD WINDOW = COLLECT ONLY: nothing dispatches until STOP.
+    expect(runtime.trace.events().some((event) => event.event === "process.steer" && event.upid === upid)).toBe(false);
     runtime.clearSteeringTarget("corr-steerslice-off");
 
     const notesPath = join(buildsRoot, upid, "repo", "ROOM-NOTES.md");
@@ -312,7 +312,6 @@ describe("steer slice → applier — the record-toggle commit", () => {
 
     runtime.setSteeringTarget(upid, "corr-steerslice-on", "room/demo");
     await drive(runtime, [final("swap the hero image", "utt-steer-scope")]);
-    await waitFor(() => runtime.trace.events().some((event) => event.event === "process.steer" && event.upid === upid));
     runtime.clearSteeringTarget("corr-steerslice-off");
 
     await waitFor(() => existsSync(join(buildsRoot, upid, "repo", "ROOM-NOTES.md")));
@@ -338,7 +337,6 @@ describe("steer slice → applier — the record-toggle commit", () => {
 
     runtime.setSteeringTarget(upid, "corr-steerslice-on");
     await drive(runtime, [final("tune the copy on the landing page", "utt-steer-latest")]);
-    await waitFor(() => runtime.trace.events().some((event) => event.event === "process.steer" && event.upid === upid));
     runtime.clearSteeringTarget("corr-steerslice-off");
 
     await waitFor(
@@ -367,12 +365,8 @@ describe("steer slice → applier — the record-toggle commit", () => {
 
     runtime.setSteeringTarget(upid, "corr-steerslice-on");
     await drive(runtime, [final("this stale line must not commit", "utt-stale")]);
-    await waitFor(() => runtime.trace.events().some((event) => event.event === "process.steer" && event.upid === upid));
     nowMs += 70_000; // the toggle stayed on through a long demo segment
     await drive(runtime, [final("ship the fresh change", "utt-fresh")]);
-    await waitFor(
-      () => runtime.trace.events().filter((event) => event.event === "process.steer" && event.upid === upid).length >= 2,
-    );
     runtime.clearSteeringTarget("corr-steerslice-off");
 
     const notesPath = join(buildsRoot, upid, "repo", "ROOM-NOTES.md");
@@ -395,7 +389,6 @@ describe("steer slice → applier — the record-toggle commit", () => {
 
     runtime.setSteeringTarget(upid, "corr-steerslice-on");
     await drive(runtime, [final("make the header cobalt blue", "utt-steer-gated")]);
-    await waitFor(() => runtime.trace.events().some((event) => event.event === "process.steer" && event.upid === upid));
     runtime.clearSteeringTarget("corr-steerslice-off");
 
     await new Promise((resolve) => setTimeout(resolve, 100));
@@ -415,7 +408,6 @@ describe("steer slice → applier — the record-toggle commit", () => {
 
     runtime.setSteeringTarget(upid, "corr-steerslice-on");
     await drive(runtime, [final("make the header cobalt blue", "utt-steer-local")]);
-    await waitFor(() => runtime.trace.events().some((event) => event.event === "process.steer" && event.upid === upid));
     runtime.clearSteeringTarget("corr-steerslice-off");
 
     await new Promise((resolve) => setTimeout(resolve, 100));
@@ -519,7 +511,6 @@ describe("steering endpointing grace", () => {
     nowMs += 1_500; // within STEER_GRACE_MS
     await drive(runtime, [final("add a welcome note for the residents", "utt-grace-1")]);
     // The trailing final still reached the released target's agent loop…
-    await waitFor(() => runtime.trace.events().some((event) => event.event === "process.steer" && event.upid === upid));
     // …and joins the applier commit once the (lazy or timed) drain runs: a
     // later out-of-window final drains lazily and flows ambient.
     nowMs += STEER_GRACE_MS + 1_000;
@@ -566,7 +557,6 @@ describe("steering endpointing grace", () => {
 
     runtime.setSteeringTarget(upid, "corr-grace3-on");
     await drive(runtime, [final("first window words", "utt-w1")]);
-    await waitFor(() => runtime.trace.events().some((event) => event.event === "process.steer" && event.upid === upid));
     runtime.clearSteeringTarget("corr-grace3-off");
     nowMs += 500;
     runtime.setSteeringTarget(upid, "corr-grace3-on2"); // re-arm preempts → first window drains NOW
