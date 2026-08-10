@@ -1297,6 +1297,40 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         group.add(cat);
         envCats.push({ group: cat, baseX: x, baseZ: z, phase: floraRng() * Math.PI * 2 });
       };
+      // A dancing dog parked at the foot of every meadow tree too — a low-poly
+      // companion (longer body, droopy ears, snout, wagging tail) that rides
+      // the same cat field so the frame loop hops it into a dance.
+      const dogMat = new THREE.MeshPhongMaterial({ color: 0x8a6a44, emissive: 0x8a6a44, emissiveIntensity: 0.08 });
+      const spawnTreeDog = (x: number, z: number, scale: number) => {
+        const dog = new THREE.Group();
+        const body = new THREE.Mesh(catGeoBody, dogMat);
+        body.scale.set(1.0, 1.0, 1.3);
+        body.position.y = 0.22;
+        dog.add(body);
+        const head = new THREE.Mesh(catGeoBody, dogMat);
+        head.scale.setScalar(0.85);
+        head.position.set(0, 0.42, 0.22);
+        dog.add(head);
+        const snout = new THREE.Mesh(catGeoBody, dogMat);
+        snout.scale.set(0.4, 0.4, 0.6);
+        snout.position.set(0, 0.36, 0.4);
+        dog.add(snout);
+        for (const side of [-1, 1]) {
+          const ear = new THREE.Mesh(catGeoBody, dogMat);
+          ear.scale.set(0.16, 0.32, 0.1);
+          ear.position.set(side * 0.14, 0.5, 0.18);
+          dog.add(ear);
+        }
+        const tail = new THREE.Mesh(catGeoTail, dogMat);
+        tail.scale.set(0.28, 0.35, 0.28);
+        tail.position.set(0, 0.4, -0.32);
+        tail.rotation.x = -1.0;
+        dog.add(tail);
+        dog.scale.setScalar(scale);
+        dog.position.set(x, 0, z);
+        group.add(dog);
+        envCats.push({ group: dog, baseX: x, baseZ: z, phase: floraRng() * Math.PI * 2 });
+      };
       const scatterFlora = (flora: FloraLibrary) => {
         const dummy = new THREE.Object3D();
         for (const spec of FLORA_SCATTER) {
@@ -1348,9 +1382,18 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
               // reads at the tree's foot rather than buried in the canopy scan.
               const offset = 2.4;
               const inward = Math.hypot(dummy.position.x, dummy.position.z) || 1;
+              const nx = dummy.position.x / inward;
+              const nz = dummy.position.z / inward;
               spawnTreeCat(
-                dummy.position.x - (dummy.position.x / inward) * offset,
-                dummy.position.z - (dummy.position.z / inward) * offset,
+                dummy.position.x - nx * offset,
+                dummy.position.z - nz * offset,
+                1.4,
+              );
+              // The dog stands on the opposite flank of the trunk (a tangential
+              // nudge) so cat and dog both read at the tree's foot, not stacked.
+              spawnTreeDog(
+                dummy.position.x - nx * offset - nz * 1.6,
+                dummy.position.z - nz * offset + nx * 1.6,
                 1.4,
               );
             }
@@ -2261,6 +2304,40 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       const catBase = commissioned ? 2.7 : 1.4;
       cat.position.set(catBase, 0, catBase * 0.35);
       cat.rotation.y = -Math.PI / 4;
+      // A dancing dog parked at the foot of the tree beside the cat — parented
+      // to the cat group so it rides the same frame-loop sway (its "dance"),
+      // shaped with a longer body, snout, droopy ears and a wagging tail.
+      const dogMat = new THREE.MeshPhongMaterial({ color: 0x8a6a44, emissive: 0x8a6a44, emissiveIntensity: 0.08 });
+      const dog = new THREE.Group();
+      const dogBody = new THREE.Mesh(GEO.bud, dogMat);
+      dogBody.scale.set(1.0, 1.0, 1.3);
+      dogBody.position.y = 0.22;
+      dogBody.userData.ownMaterial = true;
+      dog.add(dogBody);
+      const dogHead = new THREE.Mesh(GEO.bud, dogMat);
+      dogHead.scale.setScalar(0.85);
+      dogHead.position.set(0, 0.42, 0.22);
+      dog.add(dogHead);
+      const dogSnout = new THREE.Mesh(GEO.bud, dogMat);
+      dogSnout.scale.set(0.4, 0.4, 0.6);
+      dogSnout.position.set(0, 0.36, 0.4);
+      dog.add(dogSnout);
+      for (const ex of [-0.14, 0.14]) {
+        const ear = new THREE.Mesh(GEO.bud, dogMat);
+        ear.scale.set(0.16, 0.32, 0.1);
+        ear.position.set(ex, 0.5, 0.18);
+        dog.add(ear);
+      }
+      const dogTail = new THREE.Mesh(GEO.stem, dogMat);
+      dogTail.scale.set(0.28, 0.35, 0.28);
+      dogTail.position.set(0, 0.4, -0.32);
+      dogTail.rotation.x = -1.0;
+      dog.add(dogTail);
+      // Sit the dog on the far side of the cat and counter-rotate it so both
+      // companions face outward at the trunk's foot rather than overlapping.
+      dog.position.set(-1.9, 0, 0.4);
+      dog.rotation.y = Math.PI / 3;
+      cat.add(dog);
       group.add(cat);
       return { kind: "tree", treeSpec: spec, group, mats, baseEmissive: 0.55, head: null, headY: 0, cat, catBaseX: catBase, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false, updateProgress };
     };
@@ -2535,6 +2612,38 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       const catBase = commissioned ? 2.7 : 1.4;
       cat.position.set(catBase, 0, catBase * 0.35);
       cat.rotation.y = -Math.PI / 4;
+      // A dancing dog parked at the foot of the tree beside the cat — parented
+      // to the cat group so it rides the same frame-loop sway (its "dance"),
+      // shaped with a longer body, snout, droopy ears and a wagging tail.
+      const dogMat = new THREE.MeshPhongMaterial({ color: 0x8a6a44, emissive: 0x8a6a44, emissiveIntensity: 0.08 });
+      const dog = new THREE.Group();
+      const dogBody = new THREE.Mesh(GEO.bud, dogMat);
+      dogBody.scale.set(1.0, 1.0, 1.3);
+      dogBody.position.y = 0.22;
+      dogBody.userData.ownMaterial = true;
+      dog.add(dogBody);
+      const dogHead = new THREE.Mesh(GEO.bud, dogMat);
+      dogHead.scale.setScalar(0.85);
+      dogHead.position.set(0, 0.42, 0.22);
+      dog.add(dogHead);
+      const dogSnout = new THREE.Mesh(GEO.bud, dogMat);
+      dogSnout.scale.set(0.4, 0.4, 0.6);
+      dogSnout.position.set(0, 0.36, 0.4);
+      dog.add(dogSnout);
+      for (const ex of [-0.14, 0.14]) {
+        const dogEar = new THREE.Mesh(GEO.bud, dogMat);
+        dogEar.scale.set(0.16, 0.32, 0.1);
+        dogEar.position.set(ex, 0.5, 0.18);
+        dog.add(dogEar);
+      }
+      const dogTail = new THREE.Mesh(GEO.stem, dogMat);
+      dogTail.scale.set(0.28, 0.35, 0.28);
+      dogTail.position.set(0, 0.4, -0.32);
+      dogTail.rotation.x = -1.0;
+      dog.add(dogTail);
+      dog.position.set(-1.9, 0, 0.4);
+      dog.rotation.y = Math.PI / 3;
+      cat.add(dog);
       group.add(cat);
       // A low-poly horse head companion parked opposite the cat at the tree's
       // foot (muzzle, head, two pricked ears, neck) — same idiom as the cat.
