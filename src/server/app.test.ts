@@ -100,6 +100,10 @@ interface MakeAppArgs {
   // Extra RUNTIME env (e.g. VIBERSYN_AUTOBUILD_SETTLE_MS for settle-gate
   // tests) — merged over makeApp's deterministic defaults.
   runtimeEnv?: Record<string, string>;
+  // Git-substrate seams. Default NULL (substrate off) — no test may ever spawn
+  // a real git; publish-repo tests inject scripted fakes.
+  treeGitRunner?: ProjectorRuntimeOptions["treeGitRunner"];
+  treeGhRunner?: ProjectorRuntimeOptions["treeGhRunner"];
 }
 
 async function makeApp(args: MakeAppArgs = {}): Promise<{ app: ReturnType<typeof createProjectorApp>; runtime: ProjectorRuntime }> {
@@ -122,6 +126,8 @@ async function makeApp(args: MakeAppArgs = {}): Promise<{ app: ReturnType<typeof
       executionArtifactsRoot: join(buildsRoot, "vibersyn-runs"),
       cloneRepoFn: args.cloneRepoFn ?? (async ({ dir }) => ({ ok: true, dir })),
       repoDigestFn: async () => "digest: fake repo",
+      treeGitRunner: args.treeGitRunner ?? null,
+      treeGhRunner: args.treeGhRunner,
     },
   );
   runtimes.push(runtime);
@@ -857,6 +863,79 @@ describe("POST /api/backends", () => {
     expect((await postJson(app, "/api/backends", { enabled: true })).status).toBe(400);
     expect((await postJson(app, "/api/backends", { id: "not-a-backend", enabled: true })).status).toBe(400);
     expect((await postJson(app, "/api/backends")).status).toBe(400);
+  });
+});
+
+// GIT SUBSTRATE explicit publish route. The runners are scripted seams — no
+// real git/gh subprocess ever runs from this suite.
+describe("POST /api/process/:upid/publish-repo", () => {
+  test("400 {ok:false} when the substrate is disabled (the default test seam)", async () => {
+    const { app } = await makeApp();
+    const response = await postJson(app, "/api/process/upid-1/publish-repo");
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { ok: boolean; error: string };
+    expect(body.ok).toBe(false);
+    expect(body.error).toContain("disabled");
+  });
+
+  test("publishes an accepted tree's repo through the injected git/gh seams: 200 {ok:true,url}", async () => {
+    const refs = new Map<string, string>();
+    let seq = 0;
+    const treeGitRunner: NonNullable<ProjectorRuntimeOptions["treeGitRunner"]> = async (argv) => {
+      const positional = argv.filter(
+        (arg, index) =>
+          !arg.startsWith("--git-dir=") && !arg.startsWith("--work-tree=") && arg !== "-c" && argv[index - 1] !== "-c",
+      );
+      switch (positional[0]) {
+        case "write-tree":
+        case "commit-tree":
+          seq += 1;
+          return { ok: true, stdout: `sha-${seq}`, stderr: "" };
+        case "update-ref":
+          refs.set(positional[1]!, positional[2]!);
+          return { ok: true, stdout: "", stderr: "" };
+        case "rev-parse": {
+          const target = positional[positional.length - 1]!;
+          if (target.endsWith("^{tree}")) {
+            return { ok: true, stdout: `tree-of-${target}`, stderr: "" };
+          }
+          const sha = refs.get(target);
+          return sha === undefined ? { ok: false, stdout: "", stderr: "" } : { ok: true, stdout: sha, stderr: "" };
+        }
+        default:
+          return { ok: true, stdout: "", stderr: "" };
+      }
+    };
+    const ghCalls: string[][] = [];
+    const treeGhRunner: NonNullable<ProjectorRuntimeOptions["treeGhRunner"]> = async (argv) => {
+      ghCalls.push(argv);
+      if (argv[1] === "repo" && argv[2] === "create") {
+        return { ok: true, stdout: `https://github.com/roomowner/${argv[3]}\n`, stderr: "" };
+      }
+      return { ok: true, stdout: "", stderr: "" };
+    };
+    const { app, runtime } = await makeApp({
+      detector: new ScriptedDetector([ideaResult("a publishable dashboard", 0.9)]),
+      buildBackends: [new RouteFakeBackend()],
+      treeGitRunner,
+      treeGhRunner,
+    });
+    const id = await surfaceIdea(runtime, "a publishable dashboard");
+    await postJson(app, `/api/idea/${id}/accept`);
+    const upid = runtime.snapshot().processes[0]!.upid;
+    await waitFor(() => runtime.registry.builds(upid).some((build) => build.status === "ready"));
+
+    const response = await postJson(app, `/api/process/${upid}/publish-repo`);
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { ok: boolean; url: string };
+    expect(body.ok).toBe(true);
+    expect(body.url).toMatch(/^https:\/\/github\.com\/roomowner\//u);
+    expect(ghCalls.some((argv) => argv[1] === "repo" && argv[2] === "create" && argv.includes("--private"))).toBe(true);
+    // Idempotent: publishing again returns the same URL without a second create.
+    const creates = ghCalls.filter((argv) => argv[1] === "repo" && argv[2] === "create").length;
+    const again = await postJson(app, `/api/process/${upid}/publish-repo`);
+    expect(((await again.json()) as { url: string }).url).toBe(body.url);
+    expect(ghCalls.filter((argv) => argv[1] === "repo" && argv[2] === "create").length).toBe(creates);
   });
 });
 

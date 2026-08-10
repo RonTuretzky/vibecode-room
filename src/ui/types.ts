@@ -57,6 +57,11 @@ export interface ProjectorProcess {
   // home") — no client-side QR dependency. Null/absent until published.
   publishedUrl?: string | null;
   publishedQrSvg?: string | null;
+  // GIT SUBSTRATE surface for tree visuals: the tree's real local repo.
+  // branches is tiny and bounded (<=8): main + one concept/<backend> per lane,
+  // each with its session commit count. remoteUrl is null until published on
+  // commission (private GitHub repo + draft PR per concept branch).
+  treeRepo?: { branches: Array<{ name: string; commits: number }>; remoteUrl: string | null } | null;
 }
 
 // One candidate in the idea tray: the full ledger surfaced to the projector, not

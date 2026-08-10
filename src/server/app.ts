@@ -467,6 +467,21 @@ export function createProjectorApp(runtime: ProjectorRuntime, options: Projector
     }
     return context.json(runtime.publishNow());
   });
+  // GIT SUBSTRATE explicit publish: push this tree's repo to GitHub NOW
+  // (private repo + one draft PR per concept branch) without waiting for a
+  // commission. Idempotent — a published tree returns its existing URL. 400
+  // when the substrate is disabled/unknown UPID/adopted GitHub import.
+  app.post("/api/process/:upid/publish-repo", async (context) => {
+    if (isOfflineDemoRequest(context.req.header("referer"))) {
+      return context.json(runtime.snapshot());
+    }
+    const upid = context.req.param("upid");
+    const result = await runtime.publishTreeRepo(upid);
+    if (!result.ok) {
+      return context.json({ ok: false, error: result.error }, 400);
+    }
+    return context.json({ ok: true, url: result.url });
+  });
   // SELF-HOSTING (VIBERSYN_SELF_MODE=1): the guarded internal reload trigger.
   // Only honored in self mode (404 otherwise — the endpoint effectively does
   // not exist). The runtime re-verifies the last self-run reported green and

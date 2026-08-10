@@ -116,6 +116,27 @@ export type SlideshowHook = (input: {
   suggestedQuestions?: readonly string[];
 }) => Promise<void>;
 
+// GIT SUBSTRATE hooks ("tree = repo", src/server/tree-git.ts) — a STRUCTURAL
+// seam, deliberately not an import of the substrate (mirrors the BuildBrief
+// no-cross-track convention). `birth` fires once per fan-out start;
+// `commitLane` after every landed stage/mock/correction. Both are strictly
+// fire-and-forget: a hook that throws/rejects must never fail, block, or slow
+// a build (see #fireTreeGit). Default null — every existing orchestrator
+// consumer/test stays spawn-free with zero edits.
+export interface TreeGitHooks {
+  birth(
+    upid: string,
+    seed: {
+      ideaId: string;
+      pitch: string;
+      callsign: string | null;
+      brief?: BuildBrief;
+      planQuestions?: readonly { id: string; prompt: string; answers: string[] }[];
+    },
+  ): void | Promise<void>;
+  commitLane(upid: string, lane: BuildBackendId, laneDir: string, message: string): void | Promise<void>;
+}
+
 export interface BuildOrchestratorOptions {
   selector: BackendSelector;
   // Root the per-UPID build directories live under. Defaults to <cwd>/builds.
@@ -125,6 +146,8 @@ export interface BuildOrchestratorOptions {
   // Preview-server seam (tests inject; default is the real idea-builder server).
   serve?: (dir: string, host?: string) => Promise<PreviewServer>;
   slideshow?: SlideshowHook | null;
+  // Git-substrate hooks (above). Default null = substrate off.
+  treeGit?: TreeGitHooks | null;
   // Republish hook: fired on every status/progress transition so the runtime
   // can push a fresh snapshot.
   onUpdate?: () => void;
@@ -193,6 +216,7 @@ export class BuildOrchestrator {
   readonly #host: string;
   readonly #serve: (dir: string, host?: string) => Promise<PreviewServer>;
   readonly #slideshow: SlideshowHook | null;
+  readonly #treeGit: TreeGitHooks | null;
   readonly #onUpdate: () => void;
   readonly #abortBudgetMs: number;
   readonly #processes = new Map<string, TrackedProcess>();
@@ -203,6 +227,7 @@ export class BuildOrchestrator {
     this.#host = options.host ?? DEFAULT_HOST;
     this.#serve = options.serve ?? servePreviewDirectory;
     this.#slideshow = options.slideshow ?? null;
+    this.#treeGit = options.treeGit ?? null;
     this.#onUpdate = options.onUpdate ?? (() => undefined);
     this.#abortBudgetMs = options.abortBudgetMs ?? DEFAULT_ABORT_BUDGET_MS;
   }
@@ -242,6 +267,18 @@ export class BuildOrchestrator {
     }
 
     await mkdir(state.dir, { recursive: true });
+    // GIT SUBSTRATE birth: the tree's repo seeds (README + seed.json on main)
+    // the moment the fan-out has a directory. Fire-and-forget — the substrate
+    // self-detects GitHub-import clones (repo/.git) and never inits over them.
+    this.#fireTreeGit(() =>
+      this.#treeGit?.birth(input.upid, {
+        ideaId: input.ideaId,
+        pitch: input.prompt,
+        callsign: input.callsign,
+        ...(input.brief === undefined ? {} : { brief: input.brief }),
+        ...(input.planQuestions === undefined ? {} : { planQuestions: input.planQuestions }),
+      }),
+    );
     // ONE preview server per UPID serving builds/<upid>/ — each backend's app is
     // a subdirectory, so each gets its own previewUrl off the same port.
     const server = await this.#serve(state.dir, this.#host);
@@ -481,9 +518,11 @@ export class BuildOrchestrator {
             build.phase = "enriching";
             this.#onUpdate();
             void queueHook();
+            this.#commitLane(state, backend.id, outDir, `${backend.id}: hero mock`);
           } else if (event.stage === "flows") {
             build.version += 1; // iframe cache-bust: the filled screens serve now
             this.#onUpdate();
+            this.#commitLane(state, backend.id, outDir, `${backend.id}: flow screens`);
           } else {
             build.version += 1;
             if (event.screens !== undefined) {
@@ -492,6 +531,7 @@ export class BuildOrchestrator {
             this.#onUpdate();
             // Re-fire the deck hook with the validated mock.json facts.
             void queueHook({ screens: event.screens, suggestedQuestions: event.suggestedQuestions });
+            this.#commitLane(state, backend.id, outDir, `${backend.id}: meta sidecar (mock.json)`);
           }
         },
       });
@@ -533,6 +573,18 @@ export class BuildOrchestrator {
             build.phase = result.completedStages.includes("meta") ? "complete" : "hero";
           }
           this.#onUpdate();
+          // Single-shot mock or a landed correction (ladder correction runs
+          // fire no stage events, so smithers revisions resolve here too; a
+          // ladder FRESH run already committed per stage and takes the
+          // heroSeen branch above — no double commit).
+          this.#commitLane(
+            state,
+            backend.id,
+            outDir,
+            revision === null
+              ? `${backend.id}: concept mock`
+              : `${backend.id}: revision ${revision.seq} — ${clampMessage(revision.text, 50)}`,
+          );
           void queueHook(
             result.screens === undefined && result.suggestedQuestions === undefined
               ? undefined
@@ -615,6 +667,26 @@ export class BuildOrchestrator {
     }
   }
 
+  // GIT SUBSTRATE stage commit: snapshot this lane's dir onto its
+  // concept/<lane> branch. Guarded on abort (a superseded run must not commit
+  // over the successor) and strictly fire-and-forget via #fireTreeGit.
+  #commitLane(state: TrackedProcess, id: BuildBackendId, outDir: string, message: string): void {
+    if (state.aborted || this.#treeGit === null) {
+      return;
+    }
+    this.#fireTreeGit(() => this.#treeGit?.commitLane(state.input.upid, id, outDir, message));
+  }
+
+  // Fire-and-forget even against a throwing injected fake: a git-substrate
+  // failure must NEVER fail, block, or slow a build.
+  #fireTreeGit(fn: () => void | Promise<void>): void {
+    try {
+      void Promise.resolve(fn()).catch(() => undefined);
+    } catch {
+      // Synchronous throw from the hook itself — swallowed by the same contract.
+    }
+  }
+
   #track(state: TrackedProcess, task: Promise<void>): Promise<void> {
     state.tasks.add(task);
     return task.finally(() => {
@@ -677,6 +749,13 @@ function normalizeRevision(state: TrackedProcess, input: string | OrchestratorRe
     ...(targetScreens.length > 0 ? { targetScreens } : {}),
     seq,
   };
+}
+
+// One-line clamp for git-substrate commit messages (whitespace collapsed so a
+// spoken multi-line correction never breaks the -m subject).
+function clampMessage(text: string, max: number): string {
+  const line = text.replace(/\s+/gu, " ").trim();
+  return line.length <= max ? line : line.slice(0, max);
 }
 
 function recordRevision(build: TrackedBuild, revision: BuildRevision): void {

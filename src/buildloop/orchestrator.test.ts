@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { BuildOrchestrator, mergeLegacyBuildState, type ProcessBuildSnapshot } from "./orchestrator";
+import { BuildOrchestrator, mergeLegacyBuildState, type ProcessBuildSnapshot, type TreeGitHooks } from "./orchestrator";
 import { BackendSelector } from "./selector";
 import type { BuildBackend, BuildBackendId, BuildRequest, BuildResult, BuildRevision } from "./types";
 
@@ -508,6 +508,126 @@ describe("BuildOrchestrator — emergency abort", () => {
     expect(orchestrator.builds("upid-a")).toEqual([]);
     expect(orchestrator.builds("upid-b")).toEqual([]);
     await expect(fetch(url)).rejects.toBeDefined(); // the preview server is gone
+  });
+});
+
+// GIT SUBSTRATE hooks: pure recorders — no orchestrator test may ever spawn a
+// real git; the hooks are the seam and default-null keeps every other test
+// here spawn-free with zero edits.
+function recordingTreeGit(): {
+  births: Array<{ upid: string; seed: Record<string, unknown> }>;
+  commits: Array<{ upid: string; lane: string; laneDir: string; message: string }>;
+  hooks: TreeGitHooks;
+} {
+  const births: Array<{ upid: string; seed: Record<string, unknown> }> = [];
+  const commits: Array<{ upid: string; lane: string; laneDir: string; message: string }> = [];
+  return {
+    births,
+    commits,
+    hooks: {
+      birth(upid, seed) {
+        births.push({ upid, seed: seed as unknown as Record<string, unknown> });
+      },
+      commitLane(upid, lane, laneDir, message) {
+        commits.push({ upid, lane, laneDir, message });
+      },
+    },
+  };
+}
+
+describe("BuildOrchestrator — git substrate hooks", () => {
+  test("start births once with pitch/brief/planQuestions; a single-shot lane commits `<id>: concept mock`", async () => {
+    const treeGit = recordingTreeGit();
+    const selector = new BackendSelector({ backends: [writingBackend("native")], env: {} });
+    const root = await tempRoot();
+    const orchestrator = track(new BuildOrchestrator({ selector, buildsRoot: root, treeGit: treeGit.hooks }));
+
+    const brief = { pitch: "a tiny app", sourceQuote: "as heard", rationale: "", qa: [], callsign: "atlas" };
+    const planQuestions = [{ id: "q1", prompt: "Who for?", answers: ["me", "you"] }];
+    await orchestrator.start({ ...startInput("upid-tg"), brief, planQuestions });
+
+    expect(treeGit.births).toEqual([
+      {
+        upid: "upid-tg",
+        seed: { ideaId: "idea-upid-tg", pitch: "a tiny app", callsign: "atlas", brief, planQuestions },
+      },
+    ]);
+    expect(treeGit.commits).toEqual([
+      { upid: "upid-tg", lane: "native", laneDir: join(root, "upid-tg", "native"), message: "native: concept mock" },
+    ]);
+  });
+
+  test("a scripted ladder fires hero/flows/meta commits with the exact stage messages (no extra on resolution)", async () => {
+    const treeGit = recordingTreeGit();
+    const ladder = writingBackend("smithers", {
+      build: async (req: BuildRequest): Promise<BuildResult> => {
+        await Bun.write(join(req.outDir, "index.html"), "<!doctype html><h1>hero</h1>");
+        req.onStage?.({ stage: "hero", entrypoint: "index.html", summary: "Hero line." });
+        await Bun.write(join(req.outDir, "detail.html"), "<!doctype html><h1>detail</h1>");
+        req.onStage?.({ stage: "flows", entrypoint: "index.html" });
+        req.onStage?.({ stage: "meta", entrypoint: "index.html", screens: [{ path: "detail.html", title: "Detail" }] });
+        return {
+          ok: true,
+          entrypoint: "index.html",
+          summary: "Hero line.",
+          completedStages: ["hero", "flows", "meta"],
+        };
+      },
+    });
+    const selector = new BackendSelector({ backends: [ladder], env: { VIBERSYN_BUILD_BACKENDS: "smithers" } });
+    const orchestrator = track(new BuildOrchestrator({ selector, buildsRoot: await tempRoot(), treeGit: treeGit.hooks }));
+
+    await orchestrator.start(startInput("upid-tg-ladder"));
+
+    expect(treeGit.commits.map((commit) => commit.message)).toEqual([
+      "smithers: hero mock",
+      "smithers: flow screens",
+      "smithers: meta sidecar (mock.json)",
+    ]);
+  });
+
+  test("a steer on a ready lane commits `<id>: revision <seq> — <clamped text>`", async () => {
+    const treeGit = recordingTreeGit();
+    const selector = new BackendSelector({ backends: [writingBackend("native")], env: {} });
+    const orchestrator = track(new BuildOrchestrator({ selector, buildsRoot: await tempRoot(), treeGit: treeGit.hooks }));
+
+    await orchestrator.start(startInput("upid-tg-steer"));
+    await orchestrator.steer("upid-tg-steer", "make it purple");
+
+    expect(treeGit.commits.map((commit) => commit.message)).toEqual([
+      "native: concept mock",
+      "native: revision 1 — make it purple",
+    ]);
+  });
+
+  test("a failed lane commits nothing; a throwing/rejecting hook never changes build status", async () => {
+    const failed = recordingTreeGit();
+    const failingSelector = new BackendSelector({
+      backends: [
+        writingBackend("native", { build: async () => ({ ok: false, entrypoint: null, summary: "", error: "boom" }) }),
+      ],
+      env: {},
+    });
+    const failingOrchestrator = track(
+      new BuildOrchestrator({ selector: failingSelector, buildsRoot: await tempRoot(), treeGit: failed.hooks }),
+    );
+    await failingOrchestrator.start(startInput("upid-tg-fail"));
+    expect(failed.commits).toEqual([]); // failure is never committed
+
+    // Hooks that throw synchronously AND reject asynchronously: the build is
+    // untouched — fire-and-forget by contract.
+    const hostile: TreeGitHooks = {
+      birth() {
+        throw new Error("birth exploded");
+      },
+      async commitLane() {
+        throw new Error("commit rejected");
+      },
+    };
+    const selector = new BackendSelector({ backends: [writingBackend("native")], env: {} });
+    const orchestrator = track(new BuildOrchestrator({ selector, buildsRoot: await tempRoot(), treeGit: hostile }));
+    await orchestrator.start(startInput("upid-tg-hostile"));
+    expect(orchestrator.builds("upid-tg-hostile")[0]!.status).toBe("ready");
   });
 });
 

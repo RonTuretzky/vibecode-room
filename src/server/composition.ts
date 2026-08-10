@@ -124,6 +124,8 @@ import { SeamDispatcher } from "../seam/dispatcher";
 import { createCorrelationRecord, type CorrelationRecord, type CorrelationStore } from "../seam/correlation-store";
 import { callsignFromRepo, parseImportRequest } from "./project-import";
 import { cloneRepo, repoDigest } from "./repo-clone";
+import { TreeGitSubstrate, treeGitEnabled, type GitCommandRunner } from "./tree-git";
+import type { ForestCommandRunner } from "./github-org";
 import { buildImportPlanPrompt, buildImportPlanQuestions } from "./import-plan";
 import { hasBuildableCue } from "../detect";
 import type { IdeaCandidate, IdeaDetector, PlanQuestion } from "../detect";
@@ -224,6 +226,11 @@ export interface ProjectorRuntime {
   // its live run-event telemetry. Idempotent per UPID; errors are typed so the
   // HTTP route can 400/404 honestly.
   executeProcess(upid: string, correlationId?: string): Promise<ExecuteProcessResult>;
+  // GIT SUBSTRATE explicit publish ("push this tree to GitHub now"): the same
+  // idempotent private-repo publish the commission fires, exposed for the
+  // publish-repo route. {ok:false} when the substrate is disabled, the UPID
+  // is unknown, or the tree was adopted from a GitHub import.
+  publishTreeRepo(upid: string, correlationId?: string): Promise<{ ok: true; url: string } | { ok: false; error: string }>;
   // ANSWER LEDGER (the deck's swipe-to-answer cards): record a chosen answer
   // for a process (latest answer per questionId wins) and read them back. The
   // /answer route records BEFORE steering; the slideshow hook passes the
@@ -410,6 +417,13 @@ export interface ProjectorRuntimeOptions {
   // network fetch ever runs from the suite.
   cloneRepoFn?: typeof cloneRepo;
   repoDigestFn?: typeof repoDigest;
+  // GIT SUBSTRATE ("tree = repo") seams. `treeGitRunner` undefined = the real
+  // `git` subprocess runner; NULL = substrate disabled entirely — the test
+  // idiom (any test that drives an accept with fake buildBackends but leaves
+  // this unset would spawn real git into its temp dir). `treeGhRunner` backs
+  // the commission-time publish (gh repo create / pr create).
+  treeGitRunner?: GitCommandRunner | null;
+  treeGhRunner?: ForestCommandRunner;
   // The real coding agent that turns an accepted idea's scaffold into a working
   // app (idea-builder). Defaults to the host `claude` CLI builder. Tests inject a
   // synthetic builder so no real `claude` spawn occurs.
@@ -635,6 +649,11 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   readonly #buildsRoot: string;
   readonly #cloneRepoFn: typeof cloneRepo;
   readonly #repoDigestFn: typeof repoDigest;
+  // GIT SUBSTRATE ("tree = repo"): every accepted idea's tree is a real local
+  // repo under builds/<upid>/.tree/ with one concept/<backend> branch per
+  // lane, published (private GitHub repo + draft PRs) on commission. Null =
+  // disabled (VIBERSYN_TREE_GIT=0 or the injected-null test seam).
+  readonly #treeGit: TreeGitSubstrate | null;
   // TAKE-HOME PUBLISHING (GitHub Pages). `#publishDeckFn` is the injected/real
   // publisher (null = disabled); `#publishKicked` guards ONE publish attempt
   // per kicked-off UPID; `#deckDirs` remembers every generated local deck dir
@@ -821,6 +840,21 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     this.#buildsRoot = options.buildsRoot ?? resolve(process.cwd(), "builds");
     this.#cloneRepoFn = options.cloneRepoFn ?? cloneRepo;
     this.#repoDigestFn = options.repoDigestFn ?? repoDigest;
+    // GIT SUBSTRATE construction: real runners by default, injected fakes in
+    // tests, and OFF entirely for treeGitRunner:null / VIBERSYN_TREE_GIT=0.
+    // Its traces get this runtime's sessionId stamped here (the substrate
+    // does not know it).
+    this.#treeGit =
+      options.treeGitRunner === null || !treeGitEnabled(env)
+        ? null
+        : new TreeGitSubstrate({
+            buildsRoot: this.#buildsRoot,
+            runGit: options.treeGitRunner,
+            runGh: options.treeGhRunner,
+            onTrace: (event) => this.recordExternalTrace({ ...event, sessionId: this.sessionId }),
+            onUpdate: () => this.publish(),
+            now: clock,
+          });
     this.ideaBuilds = new IdeaBuildRegistry({
       buildsRoot: options.buildsRoot,
       builderAgent: options.builderAgent,
@@ -841,6 +875,11 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     this.buildOrchestrator = new BuildOrchestrator({
       selector: this.buildSelector,
       buildsRoot: options.buildsRoot,
+      // GIT SUBSTRATE hooks: birth at fan-out start, one lane commit per
+      // landed stage/mock/correction. SELF exclusion is structural (SELF never
+      // kickoffs; selfRoutingOrchestrator routes SELF steers away) PLUS the
+      // substrate's own SELF_UPID guard.
+      treeGit: this.#treeGit,
       slideshow: async (input) => {
         // The accept's planning questions ride into the deck as INTERACTIVE
         // swipe-to-answer cards; each chosen answer POSTs to this process's
@@ -1718,6 +1757,10 @@ class LiveProjectorRuntime implements ProjectorRuntime {
         if (entry !== undefined) {
           entry.status = "ready";
         }
+        // GIT SUBSTRATE adopt: the checkout at builds/<upid>/repo/ IS this
+        // tree's repo — record its origin, never git-init over it (the later
+        // startBuild-driven birth() self-detects the clone and no-ops).
+        this.#treeGit?.adopt(upid, parsed.url);
         const digest = await this.#repoDigestFn(result.dir).catch(() => null);
         // INFER ADDITIONS, don't plan from scratch: frame the fleet prompt as
         // "add the smallest coherent slice that fits this existing repo" (or
@@ -3349,6 +3392,11 @@ class LiveProjectorRuntime implements ProjectorRuntime {
         events: record.state === "dead" ? [...(demo?.events ?? []), "halted"] : demo?.events ?? [record.lastAction],
         publishedUrl: published?.url ?? null,
         publishedQrSvg: published?.qrSvg ?? null,
+        // GIT SUBSTRATE surface (tree visuals): branch → session commit
+        // counts + the published remote. Pure in-memory (zero subprocesses
+        // per snapshot) and — like publishedUrl above — deliberately survives
+        // halt: the repo on disk / GitHub is a fact, not a torn-down server.
+        treeRepo: this.#treeGit?.snapshot(record.upid) ?? null,
         ...(imported === undefined
           ? {}
           : imported.kind === "github"
@@ -3565,8 +3613,55 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       };
     }
     this.subscribeRunEvents(upid, result.runId);
+    // GIT SUBSTRATE publish: commission is the moment the tree's repo goes to
+    // GitHub (private repo + one draft PR per concept branch). Fire-and-forget
+    // — a publish failure degrades to a trace, never touches the commission.
+    // Only reachable when result.started === true, never at birth.
+    const record = this.registry.records().find((entry) => entry.upid === upid);
+    const seedPitch = this.#seedPitchFor(upid);
+    void this.#treeGit
+      ?.publish(upid, {
+        name: record?.title ?? record?.callsign ?? upid,
+        ...(seedPitch === null ? {} : { description: seedPitch }),
+      })
+      .catch(() => undefined);
     this.publish();
     return { ok: true, execution: result.execution, snapshot: this.#snapshot };
+  }
+
+  // The explicit publish action ("push this tree to GitHub now") — the same
+  // idempotent substrate call the commission fires, surfaced for the
+  // publish-repo route. Typed result so the route can 200/400 honestly.
+  async publishTreeRepo(
+    upid: string,
+    correlationId = `corr-publish-repo-${upid}`,
+  ): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
+    if (this.#treeGit === null) {
+      return { ok: false, error: "tree git substrate is disabled" };
+    }
+    const record = this.registry.records().find((entry) => entry.upid === upid);
+    if (record === undefined) {
+      return { ok: false, error: `No process for UPID ${upid}.` };
+    }
+    const seedPitch = this.#seedPitchFor(upid);
+    const result = await this.#treeGit.publish(upid, {
+      name: record.title ?? record.callsign ?? upid,
+      ...(seedPitch === null ? {} : { description: seedPitch }),
+    });
+    this.recordExternalTrace({
+      event: "tree.git.publish.request",
+      level: result.ok ? "info" : "warn",
+      sessionId: this.sessionId,
+      correlationId,
+      upid,
+      meta: result.ok ? { url: result.url } : { error: result.error },
+    });
+    return result;
+  }
+
+  // The pitch the tree's repo was seeded with (publish descriptions).
+  #seedPitchFor(upid: string): string | null {
+    return this.#treeGit?.seedPitch(upid) ?? null;
   }
 
   get selfMode(): boolean {

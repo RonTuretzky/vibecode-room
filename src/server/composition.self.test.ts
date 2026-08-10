@@ -78,6 +78,8 @@ async function makeSelfRuntime(overrides: {
     smithersTransport: transport,
     buildBackends: [],
     publishDeck: null,
+    // No test may ever spawn real git — the substrate seam stays off.
+    treeGitRunner: null,
     selfGitHead: async () => head,
     exitProcess: (code) => {
       exits.push(code);

@@ -80,7 +80,14 @@ async function makeRuntime(
       VIBERSYN_DETECT_TICK_MS: "0",
       ...env,
     },
-    { buildsRoot: join(dir, "builds"), executionArtifactsRoot: join(dir, "vibersyn-runs"), ...runtimeOptions },
+    {
+      buildsRoot: join(dir, "builds"),
+      executionArtifactsRoot: join(dir, "vibersyn-runs"),
+      // Accepts fan out through the orchestrator here — the git substrate must
+      // stay OFF or every accept would spawn real git into the temp dir.
+      treeGitRunner: null,
+      ...runtimeOptions,
+    },
   );
   runtimes.push(runtime);
   runtimePaths.set(runtime, path);
