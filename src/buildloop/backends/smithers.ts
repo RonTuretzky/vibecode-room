@@ -250,6 +250,7 @@ export class SmithersBuildBackend implements BuildBackend {
     // --- Task 1: HERO — the lane's product. Waits for a semaphore slot. -----
     onProgress({ label: "mocking hero screen", percent: 10 });
     const heroStartedAt = Date.now();
+    const preRunEntrypointMtime = await fileMtimeMs(req.outDir, SMITHERS_ENTRYPOINT);
     const heroRun = await this.#invoke(runner, {
       cli,
       prompt: smithersBuildPrompt(req.prompt, req.brief),
@@ -262,11 +263,14 @@ export class SmithersBuildBackend implements BuildBackend {
       // The ceiling SIGKILL (exit 137) regularly lands AFTER the CLI already
       // wrote the mock: under fan-out contention the final reply turn is what
       // times out, not the artifact. If THIS run wrote the entrypoint, the
-      // hero is real — salvage it. A nonzero exit with no freshly-written
-      // entrypoint stays fatal, so a stale mock from an earlier boot is never
-      // passed off as this idea's.
+      // hero is real — salvage it. Freshness = the mtime CHANGED vs the
+      // pre-run snapshot (never a clock comparison: container filesystems
+      // truncate mtimes, and a write landing sub-ms after Date.now() stats
+      // BELOW it on CI — the wall-clock gate green locally, red on ubuntu).
+      // A nonzero exit with an untouched entrypoint stays fatal, so a stale
+      // mock from an earlier boot is never passed off as this idea's.
       const landedAt = await fileMtimeMs(req.outDir, SMITHERS_ENTRYPOINT);
-      if (landedAt === null || landedAt < heroStartedAt) {
+      if (landedAt === null || landedAt === preRunEntrypointMtime) {
         throw new Error(`claude builder exited ${heroRun.exitCode}`);
       }
     }
@@ -303,6 +307,8 @@ export class SmithersBuildBackend implements BuildBackend {
       }
       let flowsLanded = false;
       const flowsStartedAt = Date.now();
+      const preFlowsEntrypointMtime = await fileMtimeMs(req.outDir, SMITHERS_ENTRYPOINT);
+      const preFlowsSidecarMtime = await fileMtimeMs(req.outDir, SMITHERS_SIDECAR);
       try {
         const files = await readProjectFiles(req.outDir);
         const flowsRun = await runner({
@@ -317,8 +323,8 @@ export class SmithersBuildBackend implements BuildBackend {
         // was rewritten during the run still counts.
         flowsLanded =
           flowsRun.exitCode === 0 ||
-          ((await fileMtimeMs(req.outDir, SMITHERS_ENTRYPOINT)) ?? 0) >= flowsStartedAt ||
-          ((await fileMtimeMs(req.outDir, SMITHERS_SIDECAR)) ?? 0) >= flowsStartedAt;
+          (await fileMtimeMs(req.outDir, SMITHERS_ENTRYPOINT)) !== preFlowsEntrypointMtime ||
+          (await fileMtimeMs(req.outDir, SMITHERS_SIDECAR)) !== preFlowsSidecarMtime;
       } finally {
         flowsSlot();
       }
