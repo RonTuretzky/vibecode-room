@@ -23,7 +23,7 @@ import { GuestHands } from "./GuestHands";
 import { roomHandsSocketUrl } from "./gesture/remote";
 import { HelpOverlay } from "./HelpOverlay";
 import { ControlDock } from "./ControlDock";
-import { useSelfRepoTree, type SelfTreeSeed } from "./self-repo";
+import { useSelfRepoTree, type SelfBranchesPayload, type SelfTreeSeed } from "./self-repo";
 import { buildsOf, lifecycleActionsFor, looksLikeSnapshot } from "./buildloop";
 import type { LifecycleAction } from "./buildloop";
 import { executionOf, parseDeckDecisionMessage, sceneStageOf, stageOf } from "./stage";
@@ -75,6 +75,10 @@ interface ProjectorAppProps {
   // cannot fetch /api/self-repo + /api/forest), so armed-wall markup tests can
   // assert the garden receives the room's own tree.
   initialSelfTree?: SelfTreeSeed;
+  // Test seam: seeds the room's own version rails (/api/self/branches), so a
+  // static render of a SELF branch popup can assert the load / you-are-here /
+  // not-on-this-machine states.
+  initialSelfBranches?: SelfBranchesPayload;
 }
 
 // AUTO-RELOAD ON NEW BUILDS: every window polls /api/build-stamp on this
@@ -106,7 +110,7 @@ declare global {
   }
 }
 
-export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initialSelfTree }: ProjectorAppProps) {
+export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initialSelfTree, initialSelfBranches }: ProjectorAppProps) {
   // Window configuration from the URL, parsed FIRST — the guided-demo entry
   // and Mock-Room gates below depend on it: wall identity badge (?wall=A|B),
   // the view param (?view=ideas|builds — scopes the 2D surfaces + controls to
@@ -1891,9 +1895,11 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
     [],
   );
 
-  // Picking a LIMB TIP on an adopted tree opens the branch's contextual
-  // popup at the limb's own projected rect. One of the branch/issue pair at
-  // a time — opening one closes the other.
+  // Picking a LIMB — its tip or anywhere along the wood — opens the branch's
+  // contextual popup at the limb TIP's own projected rect, on adopted trees
+  // (a work rail) and on the room's own tree alike (a version of the room;
+  // its callsign is the mirror's, which resolves here to upid "self"). One of
+  // the branch/issue pair at a time — opening one closes the other.
   const openBranchPopup = useCallback((callsign: string, branch: string, anchor: SceneDwellRect | null) => {
     const process = snapshotRef.current.processes.find(
       (candidate) => candidate.callsign === callsign || candidate.upid === callsign,
@@ -2690,6 +2696,10 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
                 process={popupProcess}
                 branch={branchPopup.branch}
                 anchor={branchPopup.anchor}
+                // The SELF tree's limbs resolve out of the forest spec (the
+                // mirror carries no treeRepo); the local rails ride along so
+                // the static renderer can exercise the version buttons.
+                self={selfTree !== null ? { tree: selfTree, versions: initialSelfBranches ?? null } : null}
                 onClose={() => setBranchPopup(null)}
               />
             ) : null;

@@ -38,6 +38,9 @@ export interface TreeBranchSpec3D {
   // Stable id — seeds the branch's deterministic organic curvature, so
   // re-renders (and re-builds at other LOD qualities) are pixel-stable.
   id: string;
+  // Real VCS ref this branch stands for (a PR's head ref); specs with no git
+  // meaning (dialogue topics) omit it.
+  ref?: string;
   // Spine control points, attachment→tip. The first point should sit ON/IN the
   // trunk (the tapered tube starts inside the wood, hiding the joint); the
   // LAST point is the exact tip consumers hang labels/hits on.
@@ -115,7 +118,10 @@ export function treeSpecSignature(spec: TreeSpec3D): string {
   for (const branch of spec.branches) {
     const tip = branch.tip;
     const tipSig = tip === undefined ? "" : `${tip.kind}|${tip.color}|${tip.label ?? ""}|${tip.sub ?? ""}|${tip.pickId ?? ""}`;
-    parts.push(`b:${branch.id}:${f3(branch.thickness)}:${branch.points.map(v3).join(";")}:${tipSig}`);
+    // `ref` rides the signature too: a force-push that renames a PR's head ref
+    // leaves the number (and so the geometry) untouched — without it the scene
+    // would keep a stale branch pick payload on identical-looking wood.
+    parts.push(`b:${branch.id}:${branch.ref ?? ""}:${f3(branch.thickness)}:${branch.points.map(v3).join(";")}:${tipSig}`);
   }
   for (const adornment of spec.adornments ?? []) {
     parts.push(

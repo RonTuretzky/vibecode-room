@@ -226,6 +226,9 @@ export function forestTreeSpec(org: string, repo: ForestRepo, nowMs: number, iss
     const points = branchSpine(start, azimuth, length, lift, rng);
     branches.push({
       id: `pr-${pr.number}`,
+      // The branch's real git identity: picking this limb steers/loads THIS
+      // ref, not the PR number.
+      ref: pr.headRef,
       points,
       thickness,
       tip: {

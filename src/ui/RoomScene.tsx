@@ -12,28 +12,31 @@ import type { SelfTreeSpec } from "./self-repo";
 import {
   DIALOGUE_CENTER_X,
   DIALOGUE_CENTER_Z,
-  barkTexture,
   buildTreeLOD,
   dialogueBranchLength,
   dialogueBranches,
   dialogueLeafPosition,
   dialogueTreeSpec3D,
   dialogueTrunkHeight,
-  taperedTubeGeometry,
   treeSpecSignature,
   type BuiltTree,
+  type TreeBranchSpec3D,
+  type TreeSpec3D,
 } from "./tree";
 import {
+  SAPLING_LIMB_SCALE,
+  fleetTreeSpec3D,
   fruitSignature,
   fruitSpecs,
   holoArcPoints,
-  limbPoints,
   limbSignature,
-  limbSpecs,
-  limbTipCard,
+  resolveScenePick,
+  spineHitPoints,
   type IssueInfo,
+  type ScenePickPayload,
   type TreeRepoInfo,
 } from "./tree-limbs";
+import { processHitVolumes } from "./tree-hit-volumes";
 
 // The pure conversation-tree layout maths now live in the reusable HD tree
 // module (src/ui/tree/dialogue-layout.ts) — re-exported here so every existing
@@ -341,7 +344,6 @@ const LANE_FAILED_COLOR = 0xff3b30;
 const PUBLISHED_COLOR = 0x9ee2ff;
 const PROGRESS_ARC_COLOR = 0x9affc9;
 const FAILED_PIP_COLOR = 0xff3b30;
-const TRUNK_COLOR = 0x4a3527;
 const FLASH_MS = 1500;
 // SELF-REBUILD repo tree (the room's OWN repository standing in the garden):
 // the stable reconcile identity, the label accent, and the height adaptation
@@ -449,6 +451,19 @@ export function selfTreeProcessSpec(input: SelfTreeSpec, trees: TreeSpec[]): Tre
   );
 }
 
+// Pure: the pick payload one PR limb of the HD self tree carries. A branch
+// with a real git ref is a FIRST-CLASS branch target (the branch popup opens
+// beside it, exactly like an adopted tree's limb); a ref-less spec branch has
+// no git meaning, so picking it falls back to selecting the whole tree rather
+// than becoming a dead end.
+export function selfBranchPick(
+  branch: TreeBranchSpec3D,
+  callsign: string,
+): { kind: "branch"; callsign: string; branch: string } | { kind: "process"; callsign: string } {
+  const ref = typeof branch.ref === "string" && branch.ref.length > 0 ? branch.ref : null;
+  return ref !== null ? { kind: "branch", callsign, branch: ref } : { kind: "process", callsign };
+}
+
 // Pure label chrome for the HD self tree: the title reads the live mirror
 // process (inferred title, falling back to the callsign), the sub keeps the
 // repo-name + open-PR flavor and appends the live steering marker so the
@@ -485,6 +500,10 @@ export function treeSpecStructurallyChanged(a: TreeSpec, b: TreeSpec): boolean {
     (a.published ?? false) !== (b.published ?? false) ||
     (a.failedCount ?? 0) !== (b.failedCount ?? 0) ||
     buildsSummaryChanged(a.builds, b.builds) ||
+    // ADOPTION is structural: gaining/losing a remoteUrl flips the tree from
+    // sapling to full-grown (treeIndicators.grown) even when no room/* branch
+    // exists yet, so the HD body must regrow at its adult trunk family.
+    (a.treeRepo?.remoteUrl != null) !== (b.treeRepo?.remoteUrl != null) ||
     // Limbs/fruit are part of the tree's BODY: a room/* branch appearing, a
     // commit landing, a PR opening, or the issue set shifting regrows the
     // entry — signature-gated exactly like every other structural change, so
@@ -925,7 +944,11 @@ interface Entry {
   // The self-repo tree's spec signature (treeSpecSignature): reconcile only
   // rebuilds the entry when the forest payload actually changed shape.
   selfSig?: string;
-  // Module-owned GPU resources beyond the generic sweep (the self tree's
+  // HD-engine body sway (fleet trees grown by buildTreeLOD): the frame loop
+  // calls it so the instanced foliage sways; absent on non-HD entries and
+  // skipped whole under prefers-reduced-motion.
+  bodyUpdate?: (t: number) => void;
+  // Module-owned GPU resources beyond the generic sweep (an HD body's
   // BuiltTree): disposeEntry invokes it after the traverse.
   disposeExtra?: () => void;
 }
@@ -1331,34 +1354,6 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         group.add(dog);
         envCats.push({ group: dog, baseX: x, baseZ: z, phase: floraRng() * Math.PI * 2 });
       };
-      // A dancing porcupine parked under every meadow tree too — a low-poly
-      // companion (rounded body, snout, a fan of quills) that rides the same
-      // cat field so the frame loop hops it into a dance.
-      const porcMat = new THREE.MeshPhongMaterial({ color: 0x3f3428, emissive: 0x3f3428, emissiveIntensity: 0.08 });
-      const spawnTreePorcupine = (x: number, z: number, scale: number) => {
-        const porc = new THREE.Group();
-        const body = new THREE.Mesh(catGeoBody, porcMat);
-        body.scale.set(1.0, 0.8, 1.3);
-        body.position.y = 0.2;
-        porc.add(body);
-        const snout = new THREE.Mesh(catGeoBody, porcMat);
-        snout.scale.set(0.45, 0.4, 0.55);
-        snout.position.set(0, 0.24, 0.42);
-        porc.add(snout);
-        for (const qx of [-0.18, 0, 0.18]) {
-          for (const qz of [-0.2, 0.05]) {
-            const quill = new THREE.Mesh(catGeoTail, porcMat);
-            quill.scale.set(0.12, 0.5, 0.12);
-            quill.position.set(qx, 0.42, qz);
-            quill.rotation.x = -0.5;
-            porc.add(quill);
-          }
-        }
-        porc.scale.setScalar(scale);
-        porc.position.set(x, 0, z);
-        group.add(porc);
-        envCats.push({ group: porc, baseX: x, baseZ: z, phase: floraRng() * Math.PI * 2 });
-      };
       const scatterFlora = (flora: FloraLibrary) => {
         const dummy = new THREE.Object3D();
         for (const spec of FLORA_SCATTER) {
@@ -1422,13 +1417,6 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
               spawnTreeDog(
                 dummy.position.x - nx * offset - nz * 1.6,
                 dummy.position.z - nz * offset + nx * 1.6,
-                1.4,
-              );
-              // The porcupine sits on the far tangential flank of the trunk so
-              // cat, dog and porcupine all read at the tree's foot, not stacked.
-              spawnTreePorcupine(
-                dummy.position.x - nx * offset + nz * 1.6,
-                dummy.position.z - nz * offset - nx * 1.6,
                 1.4,
               );
             }
@@ -1875,11 +1863,6 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
 
     // ── shared geometries ───────────────────────────────────────────────────
     const GEO = {
-      trunkBase: new THREE.CylinderGeometry(0.3, 0.45, 1.2, 8),
-      trunkMid: new THREE.CylinderGeometry(0.22, 0.3, 1.2, 8),
-      trunkTop: new THREE.CylinderGeometry(0.15, 0.22, 0.8, 8),
-      foliageMain: new THREE.IcosahedronGeometry(1.3, 1),
-      foliageTop: new THREE.IcosahedronGeometry(0.85, 1),
       foliageSide: new THREE.IcosahedronGeometry(0.7, 1),
       petal: new THREE.SphereGeometry(0.13, 8, 8),
       flowerCenter: new THREE.SphereGeometry(0.14, 10, 10),
@@ -1891,8 +1874,11 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       crystal: new THREE.OctahedronGeometry(0.55, 0),
       // Small unit sphere reused for build-lane satellites and failure pips.
       pip: new THREE.SphereGeometry(0.12, 10, 10),
+      // Unit sphere reused (scaled per axis) for every coarse tree hit volume
+      // — pick() runs per pointermove AND per gesture cursor per frame, so the
+      // segment count stays low and the geometry is shared, never per-entry.
+      hitShell: new THREE.SphereGeometry(1, 10, 8),
     };
-    const trunkMat = new THREE.MeshPhongMaterial({ color: TRUNK_COLOR, emissive: TRUNK_COLOR, emissiveIntensity: 0.08 });
     const stemMat = new THREE.MeshPhongMaterial({ color: 0x1c6b4a, emissive: 0x1c6b4a, emissiveIntensity: 0.08 });
 
     const ideaEntries = new Map<string, Entry>();
@@ -2097,27 +2083,36 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
     };
 
     // ── garden builders ─────────────────────────────────────────────────────
-    // Once the photoscan library lands, the radial-garden DATA NODES are real
-    // models too: a build is an actual jacaranda (sapling while a concept,
-    // full-grown once commissioned) and an idea is an actual flower (gazania
-    // when ready, dandelion puffball while forming). The DATA channels ride
-    // ON TOP as overlays: the glass label, a state-colored glowing ground
-    // ring (also the active-pulse/flash target), the gold commission ring,
-    // the steering ring, and a maturity-colored glow at the flower's heart.
-    // Until flora arrives (or on software GL) the primitive glyphs render.
+    // ONE VISUAL LANGUAGE: every radial-garden BUILD TREE is grown by the HD
+    // tree engine (buildTreeLOD — the SELF tree's substrate) from the pure
+    // fleetTreeSpec3D mapping of its real data; the photoscan flora library
+    // now serves the IDEA FLOWERS (gazania when ready, dandelion puffball
+    // while forming) and the ambient meadow scatter only. The DATA channels
+    // ride ON TOP as overlays: the glass label, a state-colored glowing
+    // ground ring (also the active-pulse/flash target), the gold commission
+    // ring, the steering ring, and a maturity-colored glow at the flower's
+    // heart. Until flora arrives (or on software GL) the primitive flower
+    // glyphs render.
     let floraLib: FloraLibrary | null = null;
     let floraNodesDirty = false;
     const invisibleHitMat = new THREE.MeshBasicMaterial({ visible: false });
+    // The COARSE tree volumes use their own BACK-side material so the
+    // raycaster only ever reports their FAR face. Every sub-object volume they
+    // enclose (branch tips, issue fruit, and whatever per-limb spine volumes
+    // land next) is therefore hit FIRST and wins its own sub-pick, while a ray
+    // that touches no sub-object still falls through to {kind:"process"}.
+    // Without this the coarse hull's near face shadows the whole tree and
+    // every branch/issue pick inside it dies.
+    const invisibleShellMat = new THREE.MeshBasicMaterial({ visible: false, side: THREE.BackSide });
 
-    // ── GIT SUBSTRATE chrome: branch LIMBS + issue FRUIT (adopted trees) ────
-    // An ADD-ON group riding the existing garden tree bodies (photoscan
-    // jacaranda AND the primitive glyphs — the body is untouched tonight):
-    // each room/* branch of the snapshot's treeRepo grows a curved TAPERED
-    // limb from the HD engine's wood primitive + bark family, crowned by a
-    // glowing tip bud, a floating tip card (the self tree's PR-tip
-    // vocabulary: branch name / commits / PR ✓) and an invisible pick
-    // sphere; the fetched issue set hangs as emissive FRUIT on ONE
-    // translucent additive holo branch arcing off the mid-trunk. Sub-objects
+    // ── GIT SUBSTRATE chrome: branch-tip cards + issue FRUIT ────────────────
+    // The BODY (trunk + room/* branch limbs) is grown by the HD engine from
+    // fleetTreeSpec3D — this chrome layers the DATA channels on top. Each
+    // data branch's tip gets a glowing bud, a floating tip card (the self
+    // tree's PR-tip vocabulary: branch name / commits / PR ✓) and an
+    // invisible pick sphere; the fetched issue set hangs as emissive FRUIT on
+    // ONE translucent additive holo branch arcing off the mid-trunk (an
+    // ATTACHMENT by design — deliberately ghostly, never wood). Sub-objects
     // carry BOTH a pick payload (kind "branch"/"issue" routes to the popup
     // callbacks below) and a subTargetId, so the dwell seam projects the
     // SUB-OBJECT's own rect — never the whole-tree bbox. Everything is
@@ -2129,36 +2124,110 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
     const branchTargetId = (callsign: string, branch: string) => `${SCENE_BRANCH_PREFIX}${callsign}:${branch}`;
     const issueTargetId = (callsign: string, issueNumber: number) => `${SCENE_ISSUE_PREFIX}${callsign}:${issueNumber}`;
     const HOLO_BRANCH_COLOR = 0x67e8f9;
-    const LIMB_BUD_PR_COLOR = 0x46c66e; // the forest's CI-pass green
-    const LIMB_BUD_COLOR = 0x9ee2ff;
-    const addLimbsAndFruit = (group: THREE.Group, spec: TreeSpec, trunkTop: number, scale: number) => {
-      for (const limb of limbSpecs(spec.treeRepo)) {
-        const points = limbPoints(limb, trunkTop, scale).map((p) => new THREE.Vector3(p.x, p.y, p.z));
-        const curve = new THREE.CatmullRomCurve3(points);
-        const wood = new THREE.Mesh(
-          taperedTubeGeometry(curve, 10, 6, (t) => Math.max(0.02, limb.thickness * scale * (1 - 0.75 * t)), 1.4),
-          new THREE.MeshStandardMaterial({
-            map: barkTexture(),
-            roughness: 0.92,
-            metalness: 0,
-            emissive: new THREE.Color(0x3a2b1e),
-            emissiveIntensity: 0.08,
-          }),
-        );
-        wood.userData.ownGeometry = true;
-        wood.userData.ownMaterial = true;
-        // Picking goes through the tip sphere — the wood never raycasts,
-        // exactly like the HD engine's merged bark (module policy).
-        wood.raycast = () => {};
-        group.add(wood);
-        const tip = points[points.length - 1];
-        const card = limbTipCard(limb);
-        const budColor = limb.prUrl !== null ? LIMB_BUD_PR_COLOR : LIMB_BUD_COLOR;
+    // The whole-tree PICK SURFACE, shared by every HD-grown tree (fleet AND
+    // self): the engine's merged wood and instanced foliage never raycast, so
+    // these invisible volumes ARE the tree as far as the mouse and the dwell
+    // cursor are concerned. They are fitted to the body's REAL drawn bounds
+    // (tree-hit-volumes.ts plans them as pure data), which is what makes a
+    // click on the CROWN select the tree — a trunk-sized sphere leaves the
+    // canopy dead and the pointer path reads that as empty ground.
+    const addProcessHitVolumes = (
+      group: THREE.Group,
+      body: THREE.Object3D,
+      callsign: string,
+      trunk: { height: number; radius: number },
+    ) => {
+      // Measured in the entry group's local space: the body sits at the tree's
+      // origin and the volumes are its siblings, so they scale/move with it.
+      const box = new THREE.Box3().setFromObject(body);
+      const bounds = box.isEmpty()
+        ? { min: { x: -1.5, y: 0, z: -1.5 }, max: { x: 1.5, y: trunk.height, z: 1.5 } }
+        : { min: { x: box.min.x, y: box.min.y, z: box.min.z }, max: { x: box.max.x, y: box.max.y, z: box.max.z } };
+      for (const volume of processHitVolumes(bounds, trunk)) {
+        // The canopy is the shared unit sphere scaled to its semi-axes; the
+        // trunk is a per-entry truncated cone tapered like the drawn wood, so
+        // it shadows exactly what the wood shadows and no more.
+        const hit =
+          volume.shape === "column"
+            ? new THREE.Mesh(
+                new THREE.CylinderGeometry(volume.radiusTop, volume.radius.x, volume.radius.y * 2, 10, 1),
+                invisibleShellMat,
+              )
+            : new THREE.Mesh(GEO.hitShell, invisibleShellMat);
+        if (volume.shape === "column") {
+          hit.userData.ownGeometry = true;
+        } else {
+          hit.scale.set(volume.radius.x, volume.radius.y, volume.radius.z);
+        }
+        hit.position.set(volume.center.x, volume.center.y, volume.center.z);
+        // The payload carries WHICH volume this is, so the pure precedence
+        // rule (resolveScenePick, tree-limbs.ts) can weigh them without
+        // re-deriving the plan:
+        //   • CANOPY → `coarse`: a metres-wide stand-in for a body that never
+        //     raycasts. It spans every limb and fruit of this tree, so a
+        //     sub-target of the SAME tree overrules it.
+        //   • TRUNK → `trunk`: not coarse — the tapered column IS the drawn
+        //     wood, so a click on it opens the tree menu, and it is what a
+        //     fat spine volume crossing in front of it yields back to.
+        // Belt and braces with the BackSide material above: BackSide already
+        // makes the raycaster report these hulls AFTER everything they
+        // enclose, so the rule is a refinement here, not a prerequisite.
+        hit.userData.pick =
+          volume.id === "trunk"
+            ? { kind: "process", callsign, trunk: true }
+            : { kind: "process", callsign, coarse: true };
+        group.add(hit);
+      }
+    };
+    // THE WHOLE LIMB PICKS, not just its tip. The engine's merged bark never
+    // raycasts, so before this a 3-unit branch offered one 0.85-unit sphere at
+    // its very end and the room read as "one hitbox per tree". These invisible
+    // spheres thread the branch's own spine (spineHitPoints, pure) carrying the
+    // SAME payload as the tip.
+    // They ride their OWN group — deliberately no subTargetId — because the
+    // tipGroup's projected box is the popup anchor rect, and inflating it would
+    // drag the card down the branch. Flagged `alongLimb`: they are several
+    // times fatter than the wood they stand for, so they are the one sub-target
+    // that yields back to its own trunk (resolveScenePick).
+    const addLimbSpineHits = (
+      group: THREE.Group,
+      branchSpec: TreeBranchSpec3D,
+      pick: { kind: string; callsign: string; branch: string },
+    ) => {
+      const volumes = spineHitPoints(branchSpec.points, branchSpec.thickness);
+      if (volumes.length === 0) {
+        return;
+      }
+      const spineGroup = new THREE.Group();
+      spineGroup.userData.pick = { ...pick, alongLimb: true };
+      for (const volume of volumes) {
+        const spineHit = new THREE.Mesh(new THREE.SphereGeometry(volume.radius, 8, 8), invisibleHitMat);
+        spineHit.userData.ownGeometry = true;
+        spineHit.position.set(volume.at.x, volume.at.y, volume.at.z);
+        spineGroup.add(spineHit);
+      }
+      group.add(spineGroup);
+    };
+    // Tip chrome for every DATA branch of an HD fleet body (tips carrying a
+    // pickId — fleetTreeSpec3D stamps the full room/* branch ref there;
+    // decorative fill branches have no tip and get no chrome). The WHOLE limb
+    // picks: the tip owns the anchor group, and invisible spine volumes carry
+    // the same payload down the wood (addLimbSpineHits).
+    const addBranchTipChrome = (group: THREE.Group, spec: TreeSpec, spec3d: TreeSpec3D, scale: number) => {
+      for (const branchSpec of spec3d.branches) {
+        const tipSpec = branchSpec.tip;
+        if (tipSpec === undefined || tipSpec.pickId === undefined || tipSpec.pickId === null || branchSpec.points.length === 0) {
+          continue;
+        }
+        const at = branchSpec.points[branchSpec.points.length - 1];
+        const tip = new THREE.Vector3(at.x, at.y, at.z);
+        const budColor = tipSpec.color;
+        const limbPick = { kind: "branch", callsign: spec.callsign, branch: tipSpec.pickId };
         // The SUB-OBJECT: bud + halo + tip card + hit sphere in one group —
         // its projected box IS the popup anchor rect.
         const tipGroup = new THREE.Group();
-        tipGroup.userData.subTargetId = branchTargetId(spec.callsign, limb.branch);
-        tipGroup.userData.pick = { kind: "branch", callsign: spec.callsign, branch: limb.branch };
+        tipGroup.userData.subTargetId = branchTargetId(spec.callsign, tipSpec.pickId);
+        tipGroup.userData.pick = limbPick;
         const bud = new THREE.Mesh(
           GEO.bud,
           new THREE.MeshPhongMaterial({ color: budColor, emissive: budColor, emissiveIntensity: 0.9 }),
@@ -2173,7 +2242,7 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         budGlow.position.copy(tip);
         budGlow.scale.setScalar(0.5 + 0.7 * scale);
         tipGroup.add(budGlow);
-        const tipLabel = makeLabelSprite(card.title, card.sub, cssHex(budColor));
+        const tipLabel = makeLabelSprite(tipSpec.label ?? "", tipSpec.sub ?? "", cssHex(budColor));
         tipLabel.userData.ownMap = true;
         tipLabel.position.set(tip.x, tip.y + 0.22, tip.z);
         tipGroup.add(tipLabel);
@@ -2182,7 +2251,10 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         tipHit.position.copy(tip);
         tipGroup.add(tipHit);
         group.add(tipGroup);
+        addLimbSpineHits(group, branchSpec, limbPick);
       }
+    };
+    const addIssueFruit = (group: THREE.Group, spec: TreeSpec, trunkTop: number, scale: number) => {
       const fruits = fruitSpecs(spec.issues);
       if (fruits.length === 0) {
         return;
@@ -2227,121 +2299,12 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       }
     };
 
-    const buildRealTree = (spec: TreeSpec): Entry | null => {
-      const variants = floraLib?.get("jacaranda_tree");
-      if (variants === undefined || variants.length === 0) {
-        return null;
-      }
-      const color = STATE_COLOR[spec.state];
-      // "built" trees stay full-grown too — grown covers commissioned + built.
-      const ind = treeIndicators(spec);
-      const commissioned = ind.grown;
-      const group = new THREE.Group();
-      const mats: THREE.MeshStandardMaterial[] = [];
-      // The scan is ~19 units tall at scale 1; sapling vs full tree.
-      const treeScale = commissioned ? 0.5 : 0.24;
-      const tree = new THREE.Group();
-      for (const piece of variants[0].pieces) {
-        const mesh = new THREE.Mesh(piece.geometry, piece.material);
-        // Picking goes through the coarse invisible hit volume below — a
-        // 43k-tri raycast per pointer move would drag the frame loop.
-        mesh.raycast = () => {};
-        tree.add(mesh);
-      }
-      tree.scale.setScalar(treeScale);
-      group.add(tree);
-      const hit = new THREE.Mesh(
-        new THREE.SphereGeometry(commissioned ? 3.6 : 1.9, 10, 10),
-        invisibleHitMat,
-      );
-      hit.position.y = commissioned ? 6.2 : 3.0;
-      hit.userData.ownGeometry = true;
-      hit.userData.pick = { kind: "process", callsign: spec.callsign };
-      group.add(hit);
-      // State ring: the state-color channel (and the pulse/flash target).
-      const ringMat = new THREE.MeshStandardMaterial({
-        color,
-        emissive: color,
-        emissiveIntensity: 0.55,
-        transparent: true,
-        opacity: 0.85,
-        roughness: 0.5,
-      });
-      mats.push(ringMat);
-      const stateRing = new THREE.Mesh(new THREE.TorusGeometry(commissioned ? 2.9 : 1.9, 0.09, 10, 64), ringMat);
-      stateRing.userData.ownGeometry = true;
-      stateRing.rotation.x = Math.PI / 2;
-      stateRing.position.y = 0.1;
-      group.add(stateRing);
-      // Stage ring: the gold commission halo, or the brighter ring once built.
-      addStageRing(group, ind.ring, 2.4, 0.06, Math.PI / 2);
-      if (spec.steering) {
-        const steerRing = new THREE.Mesh(
-          new THREE.TorusGeometry(2.1, 0.05, 8, 64),
-          new THREE.MeshBasicMaterial({ color: STEERING_COLOR, transparent: true, opacity: 0.65 }),
-        );
-        steerRing.userData.ownGeometry = true;
-        steerRing.userData.ownMaterial = true;
-        steerRing.rotation.x = Math.PI / 2;
-        steerRing.position.y = 0.14;
-        group.add(steerRing);
-      }
-      // Live indicator overlays — progress arc, build-lane satellites, publish
-      // beacon, failure pip — ride the real tree just like the primitive glyphs.
-      const arcMesh = ind.progressArc !== null ? addProgressArc(group, ind.progressArc, 0.18, commissioned ? 2.6 : 1.6, 0.055) : null;
-      addLaneSatellites(group, ind.lanes, commissioned ? 5.4 : 2.6, commissioned ? 2.3 : 1.2, commissioned ? 0.95 : 0.65);
-      if (ind.published) {
-        addPublishedBeacon(group, commissioned ? 9.4 : 4.6, commissioned ? 1.5 : 0.95);
-      }
-      if (ind.failed) {
-        addFailedPip(group, commissioned ? 1.4 : 0.8, commissioned ? 6.5 : 3.2, commissioned ? 0.9 : 0.65);
-      }
-      // Adopted-tree git substrate: room/* branch limbs + issue fruit ride
-      // the photoscan body, sized to whichever growth stage stands.
-      addLimbsAndFruit(group, spec, commissioned ? 6.4 : 3.2, commissioned ? 1 : 0.55);
-      const label = makeLabelSprite(treeTitle(spec), treeStatus(spec), cssHex(color));
-      label.position.y = commissioned ? 10.2 : 5.1;
-      group.add(label);
-      // Progress-only tick: repaint the label % and regrow the arc sweep in
-      // place — no dispose, no rebuild (structural changes rebuild the entry).
-      const updateProgress = (next: TreeSpec) => {
-        const arc = treeIndicators(next).progressArc;
-        if (arcMesh !== null && arc !== null) {
-          setArcSweep(arcMesh, arc);
-        }
-        updateLabelStatus(label, treeStatus(next));
-      };
-      // A little dancing cat parked at the foot of every real garden tree — a
-      // low-poly companion (body, head, ears, tail) that rides the cat field so
-      // the frame loop sways it into a dance, same idiom as the fallback tree.
-      const cat = new THREE.Group();
-      const catMat = new THREE.MeshPhongMaterial({ color: 0x6b5b4a, emissive: 0x6b5b4a, emissiveIntensity: 0.08 });
-      const catBody = new THREE.Mesh(GEO.bud, catMat);
-      catBody.scale.set(0.9, 1.2, 0.7);
-      catBody.position.y = 0.24;
-      catBody.userData.ownMaterial = true;
-      cat.add(catBody);
-      const catHead = new THREE.Mesh(GEO.bud, catMat);
-      catHead.scale.setScalar(0.8);
-      catHead.position.set(0, 0.5, 0.05);
-      cat.add(catHead);
-      for (const ex of [-0.09, 0.09]) {
-        const ear = new THREE.Mesh(GEO.crystal, catMat);
-        ear.scale.set(0.12, 0.16, 0.06);
-        ear.position.set(ex, 0.62, 0.05);
-        cat.add(ear);
-      }
-      const catTail = new THREE.Mesh(GEO.stem, catMat);
-      catTail.scale.set(0.25, 0.4, 0.25);
-      catTail.position.set(0, 0.32, -0.28);
-      catTail.rotation.x = -0.7;
-      cat.add(catTail);
-      const catBase = commissioned ? 2.7 : 1.4;
-      cat.position.set(catBase, 0, catBase * 0.35);
-      cat.rotation.y = -Math.PI / 4;
-      // A dancing dog parked at the foot of the tree beside the cat — parented
-      // to the cat group so it rides the same frame-loop sway (its "dance"),
-      // shaped with a longer body, snout, droopy ears and a wagging tail.
+    // A dancing dog parked at the foot of the tree beside the cat — a longer
+    // body, snout, droopy ears and a wagging tail. It sits on the far side of
+    // the cat and counter-rotates so both companions face outward at the
+    // trunk's foot rather than overlapping; makeDancingCat parents it, so it
+    // rides the same frame-loop sway (its "dance").
+    const makeDancingDog = (): THREE.Group => {
       const dogMat = new THREE.MeshPhongMaterial({ color: 0x8a6a44, emissive: 0x8a6a44, emissiveIntensity: 0.08 });
       const dog = new THREE.Group();
       const dogBody = new THREE.Mesh(GEO.bud, dogMat);
@@ -2368,40 +2331,70 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       dogTail.position.set(0, 0.4, -0.32);
       dogTail.rotation.x = -1.0;
       dog.add(dogTail);
-      // Sit the dog on the far side of the cat and counter-rotate it so both
-      // companions face outward at the trunk's foot rather than overlapping.
       dog.position.set(-1.9, 0, 0.4);
       dog.rotation.y = Math.PI / 3;
-      cat.add(dog);
-      // A dancing porcupine parked under the tree beside the cat and dog —
-      // parented to the cat group so it rides the same frame-loop sway (its
-      // "dance"), shaped with a rounded body, snout and a fan of quills.
-      const porcMat = new THREE.MeshPhongMaterial({ color: 0x3f3428, emissive: 0x3f3428, emissiveIntensity: 0.08 });
-      const porcupine = new THREE.Group();
-      const porcBody = new THREE.Mesh(GEO.bud, porcMat);
-      porcBody.scale.set(1.0, 0.8, 1.3);
-      porcBody.position.y = 0.2;
-      porcBody.userData.ownMaterial = true;
-      porcupine.add(porcBody);
-      const porcSnout = new THREE.Mesh(GEO.bud, porcMat);
-      porcSnout.scale.set(0.45, 0.4, 0.55);
-      porcSnout.position.set(0, 0.24, 0.42);
-      porcupine.add(porcSnout);
-      // A fan of quills bristling up and back off the porcupine's spine.
-      for (const qx of [-0.18, 0, 0.18]) {
-        for (const qz of [-0.2, 0.05]) {
-          const quill = new THREE.Mesh(GEO.stem, porcMat);
-          quill.scale.set(0.12, 0.5, 0.12);
-          quill.position.set(qx, 0.42, qz);
-          quill.rotation.x = -0.5;
-          porcupine.add(quill);
-        }
+      return dog;
+    };
+
+    // The dancing-cat companion parked at every garden tree's foot — the
+    // spoken-feature low-poly build (body, head, ears, tail), extracted
+    // verbatim so the HD bodies attach the SAME cat the old bodies did. The
+    // caller parks/rotates it; the frame loop's cat field dances it.
+    const makeDancingCat = (): THREE.Group => {
+      const cat = new THREE.Group();
+      const catMat = new THREE.MeshPhongMaterial({ color: 0x6b5b4a, emissive: 0x6b5b4a, emissiveIntensity: 0.08 });
+      const catBody = new THREE.Mesh(GEO.bud, catMat);
+      catBody.scale.set(0.9, 1.2, 0.7);
+      catBody.position.y = 0.24;
+      catBody.userData.ownMaterial = true;
+      cat.add(catBody);
+      const catHead = new THREE.Mesh(GEO.bud, catMat);
+      catHead.scale.setScalar(0.8);
+      catHead.position.set(0, 0.5, 0.05);
+      cat.add(catHead);
+      for (const ex of [-0.09, 0.09]) {
+        const ear = new THREE.Mesh(GEO.crystal, catMat);
+        ear.scale.set(0.12, 0.16, 0.06);
+        ear.position.set(ex, 0.62, 0.05);
+        cat.add(ear);
       }
-      porcupine.position.set(-0.6, 0, 1.8);
-      porcupine.rotation.y = -Math.PI / 5;
-      cat.add(porcupine);
-      group.add(cat);
-      return { kind: "tree", treeSpec: spec, group, mats, baseEmissive: 0.55, head: null, headY: 0, cat, catBaseX: catBase, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false, updateProgress };
+      const catTail = new THREE.Mesh(GEO.stem, catMat);
+      catTail.scale.set(0.25, 0.4, 0.25);
+      catTail.position.set(0, 0.32, -0.28);
+      catTail.rotation.x = -0.7;
+      cat.add(catTail);
+      // The dancing dog rides WITH the cat: parented to the cat group so the
+      // frame loop's cat sway carries it into the same dance.
+      cat.add(makeDancingDog());
+      return cat;
+    };
+
+    // The low-poly horse head companion parked opposite the cat (muzzle,
+    // head, two pricked ears, neck) — same idiom, extracted verbatim.
+    const makeHorseHead = (): THREE.Group => {
+      const horse = new THREE.Group();
+      const horseMat = new THREE.MeshPhongMaterial({ color: 0x8b6f47, emissive: 0x8b6f47, emissiveIntensity: 0.08 });
+      const horseHead = new THREE.Mesh(GEO.bud, horseMat);
+      horseHead.scale.set(0.9, 1.1, 0.8);
+      horseHead.position.y = 0.55;
+      horseHead.userData.ownMaterial = true;
+      horse.add(horseHead);
+      const horseMuzzle = new THREE.Mesh(GEO.bud, horseMat);
+      horseMuzzle.scale.set(0.55, 0.55, 0.9);
+      horseMuzzle.position.set(0, 0.42, 0.24);
+      horse.add(horseMuzzle);
+      for (const ex of [-0.08, 0.08]) {
+        const ear = new THREE.Mesh(GEO.crystal, horseMat);
+        ear.scale.set(0.1, 0.18, 0.06);
+        ear.position.set(ex, 0.76, -0.02);
+        horse.add(ear);
+      }
+      const horseNeck = new THREE.Mesh(GEO.stem, horseMat);
+      horseNeck.scale.set(0.35, 0.6, 0.35);
+      horseNeck.position.set(0, 0.2, -0.12);
+      horseNeck.rotation.x = 0.5;
+      horse.add(horseNeck);
+      return horse;
     };
 
     const buildRealFlower = (spec: IdeaOrbSpec): Entry | null => {
@@ -2542,104 +2535,84 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       return { kind: "flower", ideaSpec: spec, group, mats, baseEmissive, head, headY: stemH, cat: null, catBaseX: 0, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false };
     };
 
+    // EVERY garden fleet tree — adopted imports (salem) AND local concept/
+    // commissioned trees — grows its BODY from the HD engine (buildTreeLOD),
+    // shaped by its real data through the pure fleetTreeSpec3D mapping:
+    // adopted trees stand full-grown in the self tree's trunk family with
+    // their room/* branches as REAL engine branches (tip cards + glowing
+    // buds via addBranchTipChrome), concepts stand as small young saplings,
+    // and id-seeded determinism makes every tree an individual. The DATA
+    // overlays (rings, arc, satellites, beacon, pip, glass label), the
+    // ghostly issue-fruit bough, the coarse invisible hit sphere (engine
+    // wood/foliage never raycasts — module policy) and the dancing-cat +
+    // horse-head companions all ride on top exactly as before.
     const buildTree = (spec: TreeSpec): Entry => {
-      const real = buildRealTree(spec);
-      if (real !== null) {
-        return real;
-      }
       const color = STATE_COLOR[spec.state];
       const ind = treeIndicators(spec);
-      const commissioned = ind.grown;
+      const grown = ind.grown;
+      const bodyScale = grown ? 1 : SAPLING_LIMB_SCALE;
+      const spec3d = fleetTreeSpec3D({ id: spec.upid, grown, treeRepo: spec.treeRepo });
+      const trunkH = spec3d.trunk.height;
       const group = new THREE.Group();
-      const foliageMat = new THREE.MeshPhongMaterial({
+      const built = buildTreeLOD(spec3d);
+      group.add(built.group);
+      const mats: THREE.MeshStandardMaterial[] = [];
+      // Coarse trunk+canopy pick surface, fitted to the body the engine just
+      // grew (the engine's merged wood/instanced foliage never raycast).
+      addProcessHitVolumes(group, built.group, spec.callsign, spec3d.trunk);
+      // State ring: the state-color channel (and the pulse/flash target).
+      const ringMat = new THREE.MeshStandardMaterial({
         color,
         emissive: color,
-        emissiveIntensity: spec.state === "halted" || spec.state === "blocked" ? 0.1 : 0.2,
+        emissiveIntensity: 0.55,
+        transparent: true,
+        opacity: 0.85,
+        roughness: 0.5,
       });
-      if (!commissioned) {
-        // CONCEPT = SAPLING: a short single-stem seedling with one modest
-        // crown — reads as "young / not yet real" from projector distance.
-        const stem = new THREE.Mesh(GEO.trunkBase, trunkMat);
-        stem.scale.set(0.55, 0.85, 0.55);
-        stem.position.y = 0.5;
-        group.add(stem);
-        const crown = new THREE.Mesh(GEO.foliageSide, foliageMat);
-        crown.scale.setScalar(1.5);
-        crown.position.y = 1.75;
-        crown.userData.pick = { kind: "process", callsign: spec.callsign };
-        group.add(crown);
-        const sprout = new THREE.Mesh(GEO.foliageTop, foliageMat);
-        sprout.scale.setScalar(0.55);
-        sprout.position.y = 2.6;
-        sprout.userData.pick = { kind: "process", callsign: spec.callsign };
-        group.add(sprout);
-      } else {
-        // COMMISSIONED = the full-grown tree.
-        const base = new THREE.Mesh(GEO.trunkBase, trunkMat);
-        base.position.y = 0.6;
-        group.add(base);
-        const mid = new THREE.Mesh(GEO.trunkMid, trunkMat);
-        mid.position.y = 1.8;
-        group.add(mid);
-        const top = new THREE.Mesh(GEO.trunkTop, trunkMat);
-        top.position.y = 2.8;
-        group.add(top);
-        const main = new THREE.Mesh(GEO.foliageMain, foliageMat);
-        main.position.y = 4.2;
-        main.userData.pick = { kind: "process", callsign: spec.callsign };
-        group.add(main);
-        const tuft = new THREE.Mesh(GEO.foliageTop, foliageMat);
-        tuft.position.y = 5.6;
-        tuft.userData.pick = { kind: "process", callsign: spec.callsign };
-        group.add(tuft);
-        for (const offset of [
-          { dx: 1, dy: 3.6, dz: 0.4 },
-          { dx: -0.9, dy: 3.8, dz: 0.6 },
-          { dx: 0.4, dy: 3.5, dz: -1 },
-          { dx: -0.6, dy: 4, dz: -0.7 },
-        ]) {
-          const side = new THREE.Mesh(GEO.foliageSide, foliageMat);
-          side.position.set(offset.dx, offset.dy, offset.dz);
-          side.userData.pick = { kind: "process", callsign: spec.callsign };
-          group.add(side);
-        }
-      }
-      // Stage ring: the gold ground halo that says "this one is real" (commission)
-      // or the brighter completion ring (built). Concepts get none.
+      mats.push(ringMat);
+      const stateRing = new THREE.Mesh(new THREE.TorusGeometry(grown ? 2.9 : 1.9, 0.09, 10, 64), ringMat);
+      stateRing.userData.ownGeometry = true;
+      stateRing.rotation.x = Math.PI / 2;
+      stateRing.position.y = 0.1;
+      group.add(stateRing);
+      // Stage ring: the gold commission halo, or the brighter ring once built.
       addStageRing(group, ind.ring, 2.4, 0.06, Math.PI / 2);
       if (spec.steering) {
         // Steering target ring: a glowing ground halo around the tree so the
         // room sees where live transcript is routing.
-        const ring = new THREE.Mesh(
+        const steerRing = new THREE.Mesh(
           new THREE.TorusGeometry(2.1, 0.05, 8, 64),
           new THREE.MeshBasicMaterial({ color: STEERING_COLOR, transparent: true, opacity: 0.65 }),
         );
-        ring.userData.ownGeometry = true;
-        ring.userData.ownMaterial = true;
-        ring.rotation.x = Math.PI / 2;
-        ring.position.y = 0.08;
-        group.add(ring);
+        steerRing.userData.ownGeometry = true;
+        steerRing.userData.ownMaterial = true;
+        steerRing.rotation.x = Math.PI / 2;
+        steerRing.position.y = 0.14;
+        group.add(steerRing);
       }
-      // Live progress arc (executing runs), build-lane satellites, take-home
-      // beacon and failure pip — all sized to whichever body was grown above.
-      const crownY = commissioned ? 4.4 : 1.9;
-      const laneR = commissioned ? 1.7 : 0.9;
-      const arcMesh = ind.progressArc !== null ? addProgressArc(group, ind.progressArc, 0.1, commissioned ? 1.9 : 1.05, 0.055) : null;
-      addLaneSatellites(group, ind.lanes, crownY, laneR, commissioned ? 0.95 : 0.65);
+      // Live indicator overlays — progress arc, build-lane satellites, publish
+      // beacon, failure pip — sized to the trunk the engine actually grew.
+      const arcMesh = ind.progressArc !== null ? addProgressArc(group, ind.progressArc, 0.18, grown ? 2.6 : 1.6, 0.055) : null;
+      addLaneSatellites(group, ind.lanes, trunkH * 0.72, grown ? 2.3 : 1.2, grown ? 0.95 : 0.65);
       if (ind.published) {
-        addPublishedBeacon(group, commissioned ? 6.1 : 3.0, commissioned ? 1.5 : 0.95);
+        addPublishedBeacon(group, trunkH + 0.9, grown ? 1.5 : 0.95);
       }
       if (ind.failed) {
-        addFailedPip(group, commissioned ? 1.2 : 0.7, commissioned ? 4.9 : 2.5, commissioned ? 0.9 : 0.65);
+        addFailedPip(group, grown ? 1.4 : 0.8, trunkH * 0.9, grown ? 0.9 : 0.65);
       }
-      // Adopted-tree git substrate: room/* branch limbs + issue fruit ride
-      // the primitive body too (fallback trees keep the full grammar).
-      addLimbsAndFruit(group, spec, commissioned ? 3.4 : 2.0, commissioned ? 0.8 : 0.5);
+      // Git substrate chrome: tip cards/buds on the engine-grown room/*
+      // limbs, and the issue fruit on its ghostly holo bough attachment.
+      addBranchTipChrome(group, spec, spec3d, bodyScale);
+      addIssueFruit(group, spec, trunkH, bodyScale);
       const label = makeLabelSprite(treeTitle(spec), treeStatus(spec), cssHex(color));
-      label.position.y = commissioned ? 6.6 : 3.4;
+      label.position.y = trunkH + 1.4;
+      // Sprites raycast, so the name plate was a large DEAD target floating
+      // over the canopy — clicking a tree's own name resolved to nothing and
+      // closed the menu. It carries the tree's payload now.
+      label.userData.pick = { kind: "process", callsign: spec.callsign };
       group.add(label);
       // Progress-only tick: repaint the label % and regrow the arc sweep in
-      // place (the tree's growth-with-progress rides targetScale in reconcile).
+      // place — no dispose, no rebuild (structural changes rebuild the entry).
       const updateProgress = (next: TreeSpec) => {
         const arc = treeIndicators(next).progressArc;
         if (arcMesh !== null && arc !== null) {
@@ -2647,120 +2620,25 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         }
         updateLabelStatus(label, treeStatus(next));
       };
-      // A little dancing cat parked at the foot of every garden tree — a
-      // low-poly companion (body, head, ears, tail) the frame loop sways.
-      const cat = new THREE.Group();
-      const catMat = new THREE.MeshPhongMaterial({ color: 0x6b5b4a, emissive: 0x6b5b4a, emissiveIntensity: 0.08 });
-      const catBody = new THREE.Mesh(GEO.bud, catMat);
-      catBody.scale.set(0.9, 1.2, 0.7);
-      catBody.position.y = 0.24;
-      catBody.userData.ownMaterial = true;
-      cat.add(catBody);
-      const catHead = new THREE.Mesh(GEO.bud, catMat);
-      catHead.scale.setScalar(0.8);
-      catHead.position.set(0, 0.5, 0.05);
-      cat.add(catHead);
-      for (const ex of [-0.09, 0.09]) {
-        const ear = new THREE.Mesh(GEO.crystal, catMat);
-        ear.scale.set(0.12, 0.16, 0.06);
-        ear.position.set(ex, 0.62, 0.05);
-        cat.add(ear);
-      }
-      const catTail = new THREE.Mesh(GEO.stem, catMat);
-      catTail.scale.set(0.25, 0.4, 0.25);
-      catTail.position.set(0, 0.32, -0.28);
-      catTail.rotation.x = -0.7;
-      cat.add(catTail);
-      const catBase = commissioned ? 2.7 : 1.4;
+      // The spoken-feature companions, unchanged: the dancing cat (frame loop
+      // dances it via entry.cat/catBaseX) and the horse head opposite it.
+      const catBase = grown ? 2.7 : 1.4;
+      const cat = makeDancingCat();
       cat.position.set(catBase, 0, catBase * 0.35);
       cat.rotation.y = -Math.PI / 4;
-      // A dancing dog parked at the foot of the tree beside the cat — parented
-      // to the cat group so it rides the same frame-loop sway (its "dance"),
-      // shaped with a longer body, snout, droopy ears and a wagging tail.
-      const dogMat = new THREE.MeshPhongMaterial({ color: 0x8a6a44, emissive: 0x8a6a44, emissiveIntensity: 0.08 });
-      const dog = new THREE.Group();
-      const dogBody = new THREE.Mesh(GEO.bud, dogMat);
-      dogBody.scale.set(1.0, 1.0, 1.3);
-      dogBody.position.y = 0.22;
-      dogBody.userData.ownMaterial = true;
-      dog.add(dogBody);
-      const dogHead = new THREE.Mesh(GEO.bud, dogMat);
-      dogHead.scale.setScalar(0.85);
-      dogHead.position.set(0, 0.42, 0.22);
-      dog.add(dogHead);
-      const dogSnout = new THREE.Mesh(GEO.bud, dogMat);
-      dogSnout.scale.set(0.4, 0.4, 0.6);
-      dogSnout.position.set(0, 0.36, 0.4);
-      dog.add(dogSnout);
-      for (const ex of [-0.14, 0.14]) {
-        const dogEar = new THREE.Mesh(GEO.bud, dogMat);
-        dogEar.scale.set(0.16, 0.32, 0.1);
-        dogEar.position.set(ex, 0.5, 0.18);
-        dog.add(dogEar);
-      }
-      const dogTail = new THREE.Mesh(GEO.stem, dogMat);
-      dogTail.scale.set(0.28, 0.35, 0.28);
-      dogTail.position.set(0, 0.4, -0.32);
-      dogTail.rotation.x = -1.0;
-      dog.add(dogTail);
-      dog.position.set(-1.9, 0, 0.4);
-      dog.rotation.y = Math.PI / 3;
-      cat.add(dog);
-      // A dancing porcupine parked under the tree beside the cat and dog —
-      // parented to the cat group so it rides the same frame-loop sway (its
-      // "dance"), shaped with a rounded body, snout and a fan of quills.
-      const porcMat = new THREE.MeshPhongMaterial({ color: 0x3f3428, emissive: 0x3f3428, emissiveIntensity: 0.08 });
-      const porcupine = new THREE.Group();
-      const porcBody = new THREE.Mesh(GEO.bud, porcMat);
-      porcBody.scale.set(1.0, 0.8, 1.3);
-      porcBody.position.y = 0.2;
-      porcBody.userData.ownMaterial = true;
-      porcupine.add(porcBody);
-      const porcSnout = new THREE.Mesh(GEO.bud, porcMat);
-      porcSnout.scale.set(0.45, 0.4, 0.55);
-      porcSnout.position.set(0, 0.24, 0.42);
-      porcupine.add(porcSnout);
-      for (const qx of [-0.18, 0, 0.18]) {
-        for (const qz of [-0.2, 0.05]) {
-          const quill = new THREE.Mesh(GEO.stem, porcMat);
-          quill.scale.set(0.12, 0.5, 0.12);
-          quill.position.set(qx, 0.42, qz);
-          quill.rotation.x = -0.5;
-          porcupine.add(quill);
-        }
-      }
-      porcupine.position.set(-0.6, 0, 1.8);
-      porcupine.rotation.y = -Math.PI / 5;
-      cat.add(porcupine);
       group.add(cat);
-      // A low-poly horse head companion parked opposite the cat at the tree's
-      // foot (muzzle, head, two pricked ears, neck) — same idiom as the cat.
-      const horse = new THREE.Group();
-      const horseMat = new THREE.MeshPhongMaterial({ color: 0x8b6f47, emissive: 0x8b6f47, emissiveIntensity: 0.08 });
-      const horseHead = new THREE.Mesh(GEO.bud, horseMat);
-      horseHead.scale.set(0.9, 1.1, 0.8);
-      horseHead.position.y = 0.55;
-      horseHead.userData.ownMaterial = true;
-      horse.add(horseHead);
-      const horseMuzzle = new THREE.Mesh(GEO.bud, horseMat);
-      horseMuzzle.scale.set(0.55, 0.55, 0.9);
-      horseMuzzle.position.set(0, 0.42, 0.24);
-      horse.add(horseMuzzle);
-      for (const ex of [-0.08, 0.08]) {
-        const ear = new THREE.Mesh(GEO.crystal, horseMat);
-        ear.scale.set(0.1, 0.18, 0.06);
-        ear.position.set(ex, 0.76, -0.02);
-        horse.add(ear);
-      }
-      const horseNeck = new THREE.Mesh(GEO.stem, horseMat);
-      horseNeck.scale.set(0.35, 0.6, 0.35);
-      horseNeck.position.set(0, 0.2, -0.12);
-      horseNeck.rotation.x = 0.5;
-      horse.add(horseNeck);
+      const horse = makeHorseHead();
       horse.position.set(-catBase, 0, catBase * 0.35);
       horse.rotation.y = Math.PI / 4;
       group.add(horse);
-      return { kind: "tree", treeSpec: spec, group, mats: [foliageMat], baseEmissive: foliageMat.emissiveIntensity, head: null, headY: 0, cat, catBaseX: catBase, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false, updateProgress };
+      return {
+        kind: "tree", treeSpec: spec, group, mats, baseEmissive: 0.55, head: null, headY: 0, cat, catBaseX: catBase, label,
+        targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false, updateProgress,
+        // The engine owns the body's GPU resources; foliage sway rides the
+        // shared frame loop through bodyUpdate.
+        bodyUpdate: built.update,
+        disposeExtra: () => built.dispose(),
+      };
     };
 
     // ── the self-rebuild repo tree ──────────────────────────────────────────
@@ -2782,43 +2660,56 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       group.add(built.group);
       selfTreeBuilt = built;
       const trunkH = input.spec.trunk.height;
-      // Coarse trunk+canopy hit volume: picking goes through this — the
-      // engine's merged wood/instanced foliage never raycast (module policy),
-      // exactly like the photoscan trees' invisible hit spheres.
-      const hit = new THREE.Mesh(new THREE.SphereGeometry(Math.max(2.2, trunkH * 0.34), 10, 10), invisibleHitMat);
-      hit.position.y = trunkH * 0.58;
-      hit.userData.ownGeometry = true;
-      hit.userData.pick = { kind: "process", callsign: spec.callsign };
-      group.add(hit);
+      // ONE pick surface for every HD tree: the same fitted trunk+canopy
+      // volumes the garden trees get, so clicking the self tree's crown
+      // selects it exactly like clicking any adopted tree's.
+      addProcessHitVolumes(group, built.group, spec.callsign, input.spec.trunk);
       for (const branchSpec of input.spec.branches) {
         const tipSpec = branchSpec.tip;
         if (tipSpec === undefined || branchSpec.points.length === 0) {
           continue;
         }
         const tip = branchSpec.points[branchSpec.points.length - 1];
+        // Every PR limb is its OWN pick target, keyed to the PR's real head
+        // ref — the SAME branch contract addBranchTipChrome gives an adopted
+        // tree's room/* limbs. A ref-less spec branch falls back to selecting
+        // the whole tree, so a pick is never a dead end.
+        const branchPick = selfBranchPick(branchSpec, spec.callsign);
+        // The SUB-OBJECT: halo + PR card + tip hit in one group — its
+        // projected box IS the popup anchor rect.
+        const tipGroup = new THREE.Group();
+        if (branchPick.kind === "branch") {
+          tipGroup.userData.subTargetId = branchTargetId(spec.callsign, branchPick.branch);
+        }
+        tipGroup.userData.pick = branchPick;
         const tipGlow = new THREE.Sprite(
           new THREE.SpriteMaterial({ map: glowTexture, color: tipSpec.color, transparent: true, opacity: 0.3, blending: THREE.AdditiveBlending, depthWrite: false }),
         );
         tipGlow.position.set(tip.x, tip.y + 0.15, tip.z);
         tipGlow.scale.setScalar(1.3);
-        group.add(tipGlow);
+        tipGroup.add(tipGlow);
         // The PR readout rides the branch tip: "#n title" over the CI word,
         // accented in the tip's CI color (per-tip canvas map → ownMap).
         const tipLabel = makeLabelSprite(tipSpec.label ?? "", tipSpec.sub ?? "", cssHex(tipSpec.color));
         tipLabel.userData.ownMap = true;
         tipLabel.position.set(tip.x, tip.y + 0.25, tip.z);
-        group.add(tipLabel);
+        tipGroup.add(tipLabel);
         const tipHit = new THREE.Mesh(new THREE.SphereGeometry(1.0, 8, 8), invisibleHitMat);
         tipHit.userData.ownGeometry = true;
-        // Tip picks carry the mirror too: PR cards stay info displays, but
-        // picking one is never a dead end — it selects the mirror process.
-        tipHit.userData.pick = { kind: "process", callsign: spec.callsign };
         tipHit.position.set(tip.x, tip.y + 0.3, tip.z);
-        group.add(tipHit);
+        tipGroup.add(tipHit);
+        group.add(tipGroup);
+        // …and the wood below it, same contract as the fleet trees'.
+        if (branchPick.kind === "branch") {
+          addLimbSpineHits(group, branchSpec, branchPick);
+        }
       }
       const chrome = selfTreeLabel(input, spec);
       const label = makeLabelSprite(chrome.title, chrome.sub, cssHex(SELF_TREE_ACCENT));
       label.position.y = trunkH + 1.3;
+      // Same rule as the garden trees: the name plate is a pick target, not a
+      // dead sprite that closes the menu.
+      label.userData.pick = { kind: "process", callsign: spec.callsign };
       group.add(label);
       // Live-process chrome from the ADOPTED mirror spec: the stage ring says
       // concept/commissioned/built like any fleet tree, and the steering ring
@@ -3822,10 +3713,11 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
     let lastAutoFitPollMs = 0;
     const autoFitCurrent = { targetX: 0, targetZ: 0, radius: 0 };
 
-    const pick = (
-      clientX: number,
-      clientY: number,
-    ): { kind: string; key?: string; callsign?: string; branch?: string; number?: number } | null => {
+    // How many payload-bearing intersections one pick considers before the
+    // precedence rule runs: deep enough to see a sub-target standing behind
+    // its own trunk volume, shallow enough to stay allocation-cheap.
+    const PICK_PAYLOAD_CAP = 32;
+    const pick = (clientX: number, clientY: number): ScenePickPayload | null => {
       const rect = renderer.domElement.getBoundingClientRect();
       if (rect.width === 0 || rect.height === 0) {
         return null;
@@ -3858,16 +3750,27 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
         // turn; the trunk/tubes carry no pick data, so they fall through.
         targets.push(dialogueTreeGroup);
       }
+      // A tree's coarse CANOPY volume encloses its own limbs and fruit, so
+      // "the first payload the ray crossed wins" made every sub-target
+      // unreachable (the live-room report: "the whole tree seems to have one
+      // hitbox"). Collect the payloads in distance order — bounded, so a
+      // canopy of hit volumes never walks the whole scene — and let the pure
+      // precedence rule decide (resolveScenePick, tree-limbs.ts).
+      const payloads: ScenePickPayload[] = [];
       for (const hit of raycaster.intersectObjects(targets, true)) {
         let node: THREE.Object3D | null = hit.object;
         while (node !== null) {
           if (node.userData.pick !== undefined) {
-            return node.userData.pick as { kind: string; key?: string; callsign?: string; branch?: string; number?: number };
+            payloads.push(node.userData.pick as ScenePickPayload);
+            break;
           }
           node = node.parent;
         }
+        if (payloads.length >= PICK_PAYLOAD_CAP) {
+          break;
+        }
       }
-      return null;
+      return resolveScenePick(payloads);
     };
 
     const onPointerDown = (event: PointerEvent) => {
@@ -4403,17 +4306,14 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
         reconcile();
       }
       if (floraNodesDirty) {
-        // The photoscan library just landed: regrow the data nodes as real
-        // models (they re-enter through the normal grow-in animation).
+        // The photoscan library just landed: regrow the IDEA nodes as real
+        // flowers (they re-enter through the normal grow-in animation). Tree
+        // bodies are HD-engine grown and never depend on the flora library.
         floraNodesDirty = false;
         for (const entry of ideaEntries.values()) {
           disposeEntry(entry);
         }
         ideaEntries.clear();
-        for (const entry of treeEntries.values()) {
-          disposeEntry(entry);
-        }
-        treeEntries.clear();
         reconcile();
       }
       if (fitRef.current !== lastFit) {
@@ -4673,6 +4573,10 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
           } else if (!garden && radial) {
             entry.group.position.y = entry.targetPos.y + Math.sin(t * 0.55 + entry.phase) * 0.25;
           }
+          // HD-engine bodies sway their instanced foliage (fleet trees grown
+          // by buildTreeLOD — the self tree's sway runs above via
+          // selfTreeBuilt; only the visible LOD level pays).
+          entry.bodyUpdate?.(t);
           // The companion cat dances: a bouncing hop with a wiggling tilt and
           // a side-to-side sway so the little dancer sashays as it hops.
           if (entry.cat !== null) {
@@ -4819,9 +4723,9 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
       clearLayoutDecor();
       env?.dispose();
       Object.values(GEO).forEach((geometry) => geometry.dispose());
-      trunkMat.dispose();
       stemMat.dispose();
       invisibleHitMat.dispose();
+      invisibleShellMat.dispose();
       glowTexture.dispose();
       scene.traverse((node) => {
         if (node instanceof THREE.Mesh && node.geometry !== undefined) {

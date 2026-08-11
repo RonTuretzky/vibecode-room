@@ -13,6 +13,7 @@ import {
   dialogueLeafPosition,
   dialogueLeafT,
   dialogueTrunkHeight,
+  selfBranchPick,
   selfTreeLabel,
   selfTreeProcessSpec,
   shouldAutoRefit,
@@ -193,8 +194,8 @@ const selfInput: SelfTreeSpec = {
     id: "repo:acme/vibecode-room",
     trunk: { height: 7, radius: 0.3 },
     branches: [
-      { id: "pr-7", points: [{ x: 0, y: 3, z: 0 }, { x: 2, y: 5, z: 0 }], thickness: 0.12, tip: { kind: "status", color: 0x00ff88, label: "#7 Grow the self tree", sub: "pass" } },
-      { id: "pr-9", points: [{ x: 0, y: 4, z: 0 }, { x: -2, y: 6, z: 1 }], thickness: 0.12, tip: { kind: "status", color: 0xff3b30, label: "#9 Fix CI", sub: "fail" } },
+      { id: "pr-7", ref: "feat/self-tree", points: [{ x: 0, y: 3, z: 0 }, { x: 2, y: 5, z: 0 }], thickness: 0.12, tip: { kind: "status", color: 0x00ff88, label: "#7 Grow the self tree", sub: "pass" } },
+      { id: "pr-9", ref: "fix/ci", points: [{ x: 0, y: 4, z: 0 }, { x: -2, y: 6, z: 1 }], thickness: 0.12, tip: { kind: "status", color: 0xff3b30, label: "#9 Fix CI", sub: "fail" } },
     ],
   },
 };
@@ -224,7 +225,7 @@ describe("selfTreeProcessSpec — the HD tree IS the mirror's live spec", () => 
   });
 
   test("pick payloads resolve to the MIRROR callsign — selecting the tree steers the room", () => {
-    // buildSelfTree stamps every trunk/tip hit volume with
+    // buildSelfTree stamps the coarse trunk hit volume with
     // { kind: "process", callsign: <this spec's callsign> }.
     expect(selfTreeProcessSpec(selfInput, [mirrorSpec()]).callsign).toBe("mirror");
   });
@@ -244,6 +245,31 @@ describe("selfTreeProcessSpec — the HD tree IS the mirror's live spec", () => 
     // The reconcile gate reuses treeSpecStructurallyChanged on the adopted
     // spec, so the steering ring appears/vanishes with the live target.
     expect(treeSpecStructurallyChanged(mirrorSpec(), mirrorSpec({ steering: true }))).toBe(true);
+  });
+});
+
+// Each PR limb on the self tree is its OWN pick target: before this the whole
+// HD tree stamped { kind: "process" } everywhere, so the room read as one
+// hitbox and no branch could be selected (the live-room report).
+describe("selfBranchPick — every PR limb carries its own git identity", () => {
+  test("a branch with a head ref picks as that BRANCH, keyed to the mirror callsign", () => {
+    expect(selfBranchPick(selfInput.spec.branches[0], "mirror")).toEqual({
+      kind: "branch",
+      callsign: "mirror",
+      branch: "feat/self-tree",
+    });
+    expect(selfBranchPick(selfInput.spec.branches[1], "mirror")).toEqual({
+      kind: "branch",
+      callsign: "mirror",
+      branch: "fix/ci",
+    });
+  });
+
+  test("a ref-less branch falls back to the whole tree — a pick is never a dead end", () => {
+    const refless = { ...selfInput.spec.branches[0], ref: undefined };
+    expect(selfBranchPick(refless, "mirror")).toEqual({ kind: "process", callsign: "mirror" });
+    const blank = { ...selfInput.spec.branches[0], ref: "" };
+    expect(selfBranchPick(blank, "mirror")).toEqual({ kind: "process", callsign: "mirror" });
   });
 });
 
@@ -542,6 +568,18 @@ describe("treeSpecSignature — reconcile skips identical regrowth", () => {
     expect(treeSpecSignature(dialogueTreeSpec3D(turns, renamed))).not.toBe(
       treeSpecSignature(dialogueTreeSpec3D(turns, topics)),
     );
+  });
+
+  test("two specs differing only in `ref` sign differently — a renamed head ref regrows", () => {
+    // A force-push that renames a PR's head ref keeps the number (so identical
+    // geometry AND identical tip chrome); without ref in the signature the
+    // scene would keep serving a stale branch pick payload.
+    const renamed = {
+      ...selfInput.spec,
+      branches: [{ ...selfInput.spec.branches[0], ref: "feat/self-tree-v2" }, selfInput.spec.branches[1]],
+    };
+    expect(treeSpecSignature(renamed)).not.toBe(treeSpecSignature(selfInput.spec));
+    expect(treeSpecSignature(selfInput.spec)).toBe(treeSpecSignature({ ...selfInput.spec }));
   });
 });
 

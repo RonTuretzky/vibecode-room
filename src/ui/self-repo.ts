@@ -138,3 +138,69 @@ export function useSelfRepoTree(armed: boolean, seed?: SelfTreeSeed): SelfTreeSp
     [armed, selfRepo, forest],
   );
 }
+
+// ── the room's own VERSION RAILS (/api/self/branches + /api/self/checkout) ──
+// Every record window cuts a room/* branch off the running checkout, so the
+// room's local rails are the versions it can actually be loaded to. This is
+// the data side of that: the tree menu's version rows AND the self tree's
+// branch popup read the SAME payload through the hook below.
+
+// GET /api/self/branches — the running branch plus every local rail with its
+// tip subject.
+export interface SelfBranchesPayload {
+  current: string;
+  branches: Array<{ name: string; subject: string }>;
+}
+
+// The data hook: fetch the rails once while `armed` (the surface that needs
+// them is open on the self tree), null until they land. Unarmed → null, so a
+// fleet tree's popup never asks the server about the room's own checkout.
+export function useSelfBranches(armed: boolean): SelfBranchesPayload | null {
+  const [payload, setPayload] = useState<SelfBranchesPayload | null>(null);
+  useEffect(() => {
+    if (!armed || typeof window === "undefined") {
+      return;
+    }
+    let closed = false;
+    void fetch("/api/self/branches")
+      .then((response) => (response.ok ? response.json() : null))
+      .then((body) => {
+        if (!closed && body !== null) {
+          setPayload(body as SelfBranchesPayload);
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      closed = true;
+    };
+  }, [armed]);
+  return payload;
+}
+
+// POST /api/self/checkout — load the room to a version (checkout, then the
+// supervisor rebuilds and relaunches ON it). The RESULT is parsed rather than
+// swallowed: checkoutSelfBranch's honest refusals ("no supervisor is wrapping
+// this process", a dirty src/, an unknown branch) are exactly what the
+// operator needs to read on the wall.
+export async function loadSelfVersion(branch: string): Promise<{ ok: boolean; error: string | null }> {
+  try {
+    const response = await fetch("/api/self/checkout", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ branch }),
+    });
+    const body = (await response.json().catch(() => null)) as { ok?: unknown; error?: unknown } | null;
+    if (response.ok && body?.ok !== false) {
+      return { ok: true, error: null };
+    }
+    return {
+      ok: false,
+      error:
+        typeof body?.error === "string" && body.error.length > 0
+          ? body.error
+          : `load failed (HTTP ${response.status})`,
+    };
+  } catch {
+    return { ok: false, error: "load request failed — is the room server up?" };
+  }
+}

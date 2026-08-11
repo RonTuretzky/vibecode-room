@@ -17,7 +17,7 @@ import { QrImport, qrPanelState } from "./QrImport";
 import { preferredGuestUrl } from "./GuestHands";
 import { Slideshow } from "./Slideshow";
 import { demoProjectorSnapshot, busyRoomSnapshot } from "./demo-data";
-import type { SelfTreeSeed } from "./self-repo";
+import { selfGardenTree, type SelfBranchesPayload, type SelfTreeSeed } from "./self-repo";
 import type { BuildloopProcess, BuildloopSnapshot } from "./buildloop";
 import { PRACTICE_ORB_COUNT } from "./guided/machine";
 import { DISMISS_CONFIRM_MS, TREE_MENU_GESTURE_WIDTH, TREE_MENU_WIDTH, treeMenuModel, treeMenuPlacement } from "./TreeMenu";
@@ -1936,11 +1936,160 @@ describe("adopted trees: grow-a-branch row + branch/issue popups", () => {
 
   test("branchPopupModel resolves the live branch (commits, PR) and nulls a missing one", () => {
     const model = branchPopupModel(adoptedProcess(), "room/spoken-changes");
-    expect(model).toEqual({ branch: "room/spoken-changes", short: "spoken-changes", commits: 3, prUrl: PR_URL });
+    expect(model).toEqual({
+      branch: "room/spoken-changes",
+      short: "spoken-changes",
+      commits: 3,
+      prUrl: PR_URL,
+      source: "tree",
+      subject: null,
+      prNumber: null,
+      isCurrent: false,
+      loadable: false,
+    });
     const bare = branchPopupModel(adoptedProcess(), "room/issue-12");
     expect(bare?.prUrl).toBeNull();
     expect(branchPopupModel(adoptedProcess(), "room/ghost")).toBeNull();
     expect(branchPopupModel(demoProjectorSnapshot.processes[0]!, "room/spoken-changes")).toBeNull();
+  });
+
+  // ── the SELF tree's branches ───────────────────────────────────────────────
+  // The room's own tree grows one limb per OPEN PR, and the mirror carries no
+  // treeRepo (live /api/state: {"upid":"self","stage":"self","treeRepo":null}),
+  // so the popup falls through to the forest spec + the room's local rails.
+  // The buttons are exactly what the server honors: load a version, record on
+  // the branch the room is running — never steer-a-branch (composition.ts
+  // ignores the scope on the self path) and never Open PR (app.ts 400s).
+  describe("the SELF tree's branch popup: versions, not work rails", () => {
+    const SELF_REPO = "acme/vibecode-room";
+    const CURRENT = "room/dancing-cat-under-trees";
+    const DOG = "room/dancing-dog-at-bottom";
+    const REMOTE_ONLY = "RonTuretzky/park3d-tiles";
+    const selfSeed: SelfTreeSeed = {
+      repo: SELF_REPO,
+      forest: {
+        org: "acme",
+        fetchedAtMs: Date.parse("2026-08-09T00:00:00Z"),
+        repos: [
+          {
+            name: "vibecode-room",
+            pushedAtMs: Date.parse("2026-08-08T00:00:00Z"),
+            prs: [
+              { number: 18, title: "Dancing dog at every tree", draft: false, ci: "pass", baseRef: "main", headRef: DOG },
+              { number: 15, title: "Park3d tiles", draft: false, ci: "pending", baseRef: "main", headRef: REMOTE_ONLY },
+            ],
+            issues: [],
+          },
+        ],
+      },
+    };
+    // The local rails: a PR head ref that was never fetched here (#15) is NOT
+    // among them — live /api/self/branches proves that gap is real.
+    const selfRails: SelfBranchesPayload = {
+      current: CURRENT,
+      branches: [
+        { name: CURRENT, subject: "self: dancing cat under trees" },
+        { name: DOG, subject: "self: dancing dog at the foot of every tree" },
+      ],
+    };
+    const selfSnapshot = () => ({
+      ...demoProjectorSnapshot,
+      selfRebuild: true,
+      processes: [
+        {
+          ...demoProjectorSnapshot.processes[0]!,
+          upid: "self",
+          callsign: "mirror",
+          task: "Vibersyn Room",
+          stage: "self",
+        } as ProjectorProcess,
+        ...demoProjectorSnapshot.processes.slice(1),
+      ],
+    });
+    const renderSelfBranch = (branch: string) =>
+      renderToStaticMarkup(
+        <ProjectorApp
+          initialSnapshot={selfSnapshot()}
+          urlSearch="?live=1&wall=A&view=ideas"
+          initialSelfTree={selfSeed}
+          initialSelfBranches={selfRails}
+          initialOverlay={{ branchPopup: { upid: "self", branch } }}
+        />,
+      );
+
+    test("a PR-backed local branch offers ⏱ Load this version + the PR URL inline", () => {
+      const html = renderSelfBranch(DOG);
+      expect(html).toContain('data-testid="branch-popup"');
+      expect(html).toContain("dancing-dog-at-bottom");
+      expect(html).toContain('data-testid="branch-popup-version"');
+      expect(html).toContain("Dancing dog at every tree");
+      expect(html).toContain("PR #18");
+      expect(html).toContain('data-testid="branch-popup-load"');
+      expect(html).toContain("⏱ Load this version");
+      // The PR rides in-room (the room never opens a PR against itself).
+      expect(html).toContain(`https://github.com/${SELF_REPO}/pull/18`);
+      expect(html).not.toContain("target=");
+      expect(html).not.toContain('data-testid="branch-popup-steer"');
+      expect(html).not.toContain('data-testid="branch-popup-pr"');
+    });
+
+    test("the branch the room is RUNNING says 'you are here' and carries the record toggle", () => {
+      const html = renderSelfBranch(CURRENT);
+      expect(html).toContain('data-testid="branch-popup-here"');
+      expect(html).toContain("⏱ you are here — the room is running this");
+      // #cutSelfBranch cuts off the CURRENT branch, so this is the one honest
+      // per-branch record affordance on the self tree.
+      expect(html).toContain('data-testid="record-steer-start"');
+      expect(html).not.toContain('data-testid="branch-popup-load"');
+      expect(html).not.toContain('data-testid="branch-popup-steer"');
+    });
+
+    test("a PR head ref that was never fetched here reads 'not on this machine'", () => {
+      const html = renderSelfBranch(REMOTE_ONLY);
+      expect(html).toContain('data-testid="branch-popup-absent"');
+      expect(html).toContain("⏱ not on this machine");
+      expect(html).not.toContain('data-testid="branch-popup-load"');
+      // The PR is still readable from the wall.
+      expect(html).toContain(`https://github.com/${SELF_REPO}/pull/15`);
+    });
+
+    test("a ref neither the forest nor the rails know renders NO popup (no dead glass)", () => {
+      expect(renderSelfBranch("feat/ghost")).not.toContain('data-testid="branch-popup"');
+    });
+
+    test("before the rails land the card says 'checking', never 'not on this machine'", () => {
+      const html = renderToStaticMarkup(
+        <ProjectorApp
+          initialSnapshot={selfSnapshot()}
+          urlSearch="?live=1&wall=A&view=ideas"
+          initialSelfTree={selfSeed}
+          initialOverlay={{ branchPopup: { upid: "self", branch: DOG } }}
+        />,
+      );
+      expect(html).toContain('data-testid="branch-popup-rails-pending"');
+      expect(html).not.toContain("not on this machine");
+      expect(html).not.toContain('data-testid="branch-popup-load"');
+    });
+
+    test("branchPopupModel: the self resolver only runs on a stage-'self' process", () => {
+      const selfProcess = selfSnapshot().processes[0]!;
+      const self = { tree: { repo: SELF_REPO, spec: selfGardenTree(selfSeed.forest, SELF_REPO)!.spec }, versions: selfRails };
+      expect(branchPopupModel(selfProcess, DOG, self)).toEqual({
+        branch: DOG,
+        short: "dancing-dog-at-bottom",
+        commits: 0,
+        prUrl: `https://github.com/${SELF_REPO}/pull/18`,
+        source: "self",
+        subject: "Dancing dog at every tree",
+        prNumber: 18,
+        isCurrent: false,
+        loadable: true,
+      });
+      // A fleet process never falls through to the room's own versions.
+      expect(branchPopupModel(demoProjectorSnapshot.processes[0]!, DOG, self)).toBeNull();
+      // No self context (the tree is unarmed) → the old contract, verbatim.
+      expect(branchPopupModel(selfProcess, DOG)).toBeNull();
+    });
   });
 
   test("issuePopupModel: heading + label chips in the fruit palette", () => {

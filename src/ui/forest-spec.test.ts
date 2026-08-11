@@ -84,6 +84,9 @@ describe("forestTreeSpec — PR branches", () => {
     expect(tips.map((tip) => tip?.label)).toEqual(["#12 Add the grove renderer", "#14 Fix flaky test"]);
     expect(tips.map((tip) => tip?.pickId)).toEqual(["widget#12", "widget#14"]);
     expect(tips.every((tip) => tip?.sub === "widget")).toBe(true);
+    // The branch's real GIT identity rides the spec: picking the limb has to
+    // name a ref, not a PR number (the pr() helper heads at feat/<number>).
+    expect(spec.branches.map((branch) => branch.ref)).toEqual(["feat/12", "feat/14"]);
     // Trunk attachment: the first spine point sits ON the trunk axis (buried).
     for (const branch of spec.branches) {
       expect(branch.points[0].x).toBe(0);
@@ -161,6 +164,13 @@ describe("forestTreeSpec — PR branches", () => {
     };
     expect(byId.get("pr-11")!.points[0]).toEqual(tipOf("pr-10"));
     expect(byId.get("pr-12")!.points[0]).toEqual(tipOf("pr-11"));
+    // A stacked child keeps its OWN head ref — the limb picks the child's
+    // branch, never its parent's.
+    expect(["pr-10", "pr-11", "pr-12"].map((id) => byId.get(id)!.ref)).toEqual([
+      "feat/base",
+      "feat/mid",
+      "feat/top",
+    ]);
     // Only the stack root attaches to the trunk axis.
     expect(byId.get("pr-10")!.points[0].x).toBe(0);
     expect(byId.get("pr-11")!.points[0].x).not.toBe(0);

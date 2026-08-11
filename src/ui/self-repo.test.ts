@@ -56,6 +56,11 @@ describe("selfGardenTree — payload → the ONE garden tree spec", () => {
     expect(tips.get("pr-9")?.sub).toBe("CI failing");
   });
 
+  test("the PR head refs survive the CI-word rewrite — every limb keeps its git identity", () => {
+    const tree = selfGardenTree(payload, "acme/vibecode-room");
+    expect(tree!.spec.branches.map((branch) => branch.ref).sort()).toEqual(["feat/self-tree", "fix/seam"]);
+  });
+
   test("issue markers stay OFF in the garden (issuesVisible=false)", () => {
     const tree = selfGardenTree(payload, "acme/vibecode-room");
     expect(tree!.spec.adornments).toEqual([]);

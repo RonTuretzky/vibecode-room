@@ -5,6 +5,7 @@ import { laneStatusLabel, processLanes, type GuidedLane } from "./guided/machine
 import { executionOf, stageOf, type ProcessStage } from "./stage";
 import { ExecutionChip } from "./BuildChips";
 import { RecordSteerToggle } from "./RecordSteerToggle";
+import { loadSelfVersion, useSelfBranches } from "./self-repo";
 import { TakeHomeQr } from "./TakeHomeQr";
 import "./TreeMenu.css";
 
@@ -219,34 +220,14 @@ export function TreeMenu({ process, snapshot, anchor, onClose, onOpenDeck, onDis
   const placement = treeMenuPlacement(anchor, viewport, measured ?? undefined);
 
   // VERSIONS (self tree): every record window cuts a room/* branch — these
-  // rows load the room to any of them (checkout + supervisor relaunch).
-  const [versions, setVersions] = useState<{ current: string; branches: Array<{ name: string; subject: string }> } | null>(null);
+  // rows load the room to any of them (checkout + supervisor relaunch). The
+  // rails and the load POST live in self-repo.ts, shared verbatim with the
+  // self tree's branch popup.
+  const versions = useSelfBranches(model.isSelf);
   const [loadingVersion, setLoadingVersion] = useState<string | null>(null);
-  useEffect(() => {
-    if (!model.isSelf || typeof window === "undefined") {
-      return;
-    }
-    let closed = false;
-    void fetch("/api/self/branches")
-      .then((response) => (response.ok ? response.json() : null))
-      .then((body) => {
-        if (!closed && body !== null) {
-          setVersions(body as { current: string; branches: Array<{ name: string; subject: string }> });
-        }
-      })
-      .catch(() => undefined);
-    return () => {
-      closed = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [model.isSelf, process.upid]);
   const loadVersion = (branch: string) => {
     setLoadingVersion(branch);
-    void fetch("/api/self/checkout", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ branch }),
-    }).catch(() => undefined);
+    void loadSelfVersion(branch);
   };
 
   // TWO-STAGE remove: the first press arms "really remove?"; it disarms by
