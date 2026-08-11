@@ -21,10 +21,11 @@ runtime.detection.start();
 startOtelTraceExport(runtime);
 
 // PINNED IMPORTS (live-room request: the salem profile stands in the garden
-// beside the room's own tree at every boot). Comma-separated GitHub URLs;
+// beside the room's own tree at every boot; khalildh/handstrudel joins it,
+// checked out from GitHub by voice in the room). Comma-separated GitHub URLs;
 // fire-and-forget through the exact same import path the QR uses — clone
 // (reused when already on disk), adopt, deploy-resolve, tree.
-const pinnedImports = (process.env.VIBERSYN_PINNED_IMPORTS ?? "")
+const pinnedImports = (process.env.VIBERSYN_PINNED_IMPORTS ?? "https://github.com/khalildh/handstrudel")
   .split(",")
   .map((entry) => entry.trim())
   .filter((entry) => entry.length > 0);
