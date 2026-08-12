@@ -3973,3 +3973,35 @@ main.gesture-mode .record-steer-heard-line { font-size: 1.2rem; }
   background: var(--c-paused, #f5a623);
   box-shadow: 0 2px 18px rgba(0, 0, 0, 0.45);
 }
+
+/* The record button acknowledges the press before the server answers — over a
+   slow link it used to sit inert for the whole round trip, which reads as a
+   dead button at projector distance. */
+.ctl-button.record-steer.is-pending {
+  opacity: 0.75;
+}
+
+.record-steer-error {
+  margin: 6px 0 0;
+  color: var(--c-failed, #ff3b30);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+/* STAND-INS: which legs of this room are stubbed. Small and out of the way,
+   but always present — a simulated room used to look exactly like a real one. */
+.stand-ins {
+  position: fixed;
+  bottom: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 55;
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: rgba(24, 24, 28, 0.82);
+  color: var(--c-paused, #f5a623);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  pointer-events: none;
+}
