@@ -179,7 +179,7 @@ describe("per-wall scoping: each wall renders ITS surface + ITS controls", () =>
     expect(sceneCounts(wallBHtml)).toEqual(full);
   });
 
-  test("?view=ideas (wall A): idea surface + idea-side controls, NO build surfaces", () => {
+  test("?view=ideas (wall A): idea surface + idea-side controls + the transcript", () => {
     // Idea surface: tray with every candidate.
     expect(wallAHtml).toContain('data-testid="idea-tray"');
     expect(countOccurrences(wallAHtml, 'data-testid="idea-item"')).toBe(
@@ -189,15 +189,19 @@ describe("per-wall scoping: each wall renders ITS surface + ITS controls", () =>
     expect(wallAHtml).toContain('data-testid="mic-capture-button"');
     expect(wallAHtml).toContain('data-testid="auto-build-button"');
     expect(wallAHtml).toContain('data-testid="guided-demo-button"');
-    // Build surfaces + build-side controls live on wall B only.
+    // Build surfaces live on wall B only.
     expect(wallAHtml).not.toContain('data-testid="fleet-panel"');
-    expect(wallAHtml).not.toContain('data-region="transcript"');
+    // …but NOT the transcript. It used to be wall-B-only, which left the wall
+    // carrying the capture cluster — the one people stand and talk at —
+    // showing none of their words however long they spoke. The room's proof
+    // that it heard you belongs on every wall.
+    expect(wallAHtml).toContain('data-region="transcript"');
     // QR Import is deliberately UN-scoped (live-room request): the overlay
     // opens on whichever wall summons it, so its button rides every view.
     expect(wallAHtml).toContain('data-testid="qr-import-button"');
   });
 
-  test("?view=builds (wall B): transcript rail + controls stay, the FLEET RAIL IS GONE", () => {
+  test("?view=builds (wall B): transcript rail + mic + controls stay, the FLEET RAIL IS GONE", () => {
     // Operator-directed redesign: no 2D fleet cards down the wall edge — the
     // per-tree menu (pick a tree in the garden) replaced them.
     expect(wallBHtml).not.toContain('data-testid="fleet-panel"');
@@ -205,11 +209,14 @@ describe("per-wall scoping: each wall renders ITS surface + ITS controls", () =>
     expect(wallBHtml).toContain('data-region="transcript"');
     // Build-side control.
     expect(wallBHtml).toContain('data-testid="qr-import-button"');
-    // Idea surfaces + idea-side controls live on wall A only.
+    // Idea surfaces live on wall A only.
     expect(wallBHtml).not.toContain('data-testid="idea-tray"');
-    expect(wallBHtml).not.toContain('data-testid="mic-capture-button"');
     expect(wallBHtml).not.toContain('data-testid="auto-build-button"');
     expect(wallBHtml).not.toContain('data-testid="guided-demo-button"');
+    // …but the MIC is not an idea surface. Scoped to wall A, this window had
+    // no mic control and no unmute, so whoever stood in front of it could not
+    // start the room listening at all. Every wall can arm the room.
+    expect(wallBHtml).toContain('data-testid="mic-capture-button"');
   });
 
   test("global chrome renders on BOTH walls (status readouts + scene controls)", () => {

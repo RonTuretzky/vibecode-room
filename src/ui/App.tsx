@@ -382,6 +382,21 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
   // ("Build it for real" says the commission fired; the demo never waits for
   // the full build). Cleared automatically a few seconds later.
   const [guidedEpilogue, setGuidedEpilogue] = useState<string | null>(null);
+
+  // A CONTROL THAT FAILS MUST SAY SO. These handlers applied the snapshot on
+  // response.ok and did nothing whatsoever otherwise — no error, no busy
+  // state, not even a repaint. Measured with each endpoint forced to 500: four
+  // of five high-stakes controls produced no change of any kind for 2.1-2.4s,
+  // so the person presses again, and again. The commission path already had
+  // this rule written beside it ("a dead button reads as a broken wall"); it
+  // was just never applied to the rest of them.
+  const reportControlFailure = useCallback((what: string, status?: number) => {
+    setGuidedEpilogue(
+      status === undefined
+        ? `${what} failed (no answer from the room) — nothing changed.`
+        : `${what} failed (${status}) — nothing changed.`,
+    );
+  }, []);
   useEffect(() => {
     if (guidedEpilogue === null) {
       return;
@@ -506,9 +521,15 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
         const response = await fetch(`/api/idea/${encodeURIComponent(id)}/${action}`, { method: "POST" });
         if (response.ok && response.headers.get("content-type")?.includes("application/json")) {
           setSnapshot((await response.json()) as ProjectorSnapshot);
+        } else {
+          // The most consequential button in the room. With the endpoint
+          // failing the wall was completely unchanged 2.4s later — no tree, no
+          // word about it — which is indistinguishable from "the build is
+          // thinking". Never leave that silent.
+          reportControlFailure(action === "accept" ? "Build it" : "Dismiss", response.status);
         }
       } catch {
-        // Non-authoritative projector: a failed POST must never block the UI.
+        reportControlFailure(action === "accept" ? "Build it" : "Dismiss");
       }
     },
     [liveMode],
@@ -541,8 +562,11 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
       });
       if (response.ok && response.headers.get("content-type")?.includes("application/json")) {
         setSnapshot((await response.json()) as ProjectorSnapshot);
+      } else {
+        reportControlFailure("Auto-build", response.status);
       }
     } catch {
+        reportControlFailure("Auto-build");
       // Non-authoritative projector: a failed toggle must never block the UI.
     }
   }, [liveMode]);
@@ -575,8 +599,11 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
       });
       if (response.ok && response.headers.get("content-type")?.includes("application/json")) {
         setSnapshot((await response.json()) as ProjectorSnapshot);
+      } else {
+        reportControlFailure("Self-rebuild", response.status);
       }
     } catch {
+        reportControlFailure("Self-rebuild");
       // Non-authoritative projector: a failed toggle must never block the UI.
     }
   }, [liveMode]);
@@ -629,8 +656,11 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
       });
       if (response.ok && response.headers.get("content-type")?.includes("application/json")) {
         setSnapshot((await response.json()) as ProjectorSnapshot);
+      } else {
+        reportControlFailure("Research mode", response.status);
       }
     } catch {
+        reportControlFailure("Research mode");
       // Non-authoritative projector: a failed toggle must never block the UI.
     }
   }, [liveMode]);
@@ -772,12 +802,16 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
           if (looksLikeSnapshot(body)) {
             setSnapshot(body);
           }
+        } else {
+          // The tree stays in the garden — say why, or the two-stage confirm
+          // reads as having silently worked.
+          reportControlFailure("Remove", response.status);
         }
       } catch {
-        // Non-authoritative projector: a failed dismiss must never block the UI.
+        reportControlFailure("Remove");
       }
     },
-    [liveMode],
+    [liveMode, reportControlFailure],
   );
 
   // NOTE: the BackendSelector UI is gone (the rooms run env-configured
@@ -2364,7 +2398,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
               the release right on the wall, so it stays OUTSIDE the control
               dock (like the emergency banner: alert-state chrome never folds
               behind a hover). Idea-side placement: wall A + full view. */}
-          {showIdeaSurfaces && snapshot.muted ? (
+          {snapshot.muted ? (
             <button
               type="button"
               className="ctl-button unmute"
@@ -2386,17 +2420,20 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
           {/* ONE control for mic + capture (live-room request): activating
               unmutes + starts the mic AND turns Idea Capture on; deactivating
               stops both. Replaces the separate Mic and Idea Capture buttons. */}
-          {showIdeaSurfaces ? (
-            <MicCaptureControl
-              active={captureMode || micState !== "off"}
-              micState={micState}
-              level={micLevel}
-              error={micError}
-              mode={snapshot.mic?.mode}
-              bytesReceived={snapshot.mic?.bytesReceived ?? 0}
-              onToggle={() => void toggleMicCapture()}
-            />
-          ) : null}
+          {/* NOT gated by ?view. This is the only way to arm the room's
+              microphone, and wall B (view=builds) had no mic control and no
+              unmute — that window could never start listening, so whoever
+              stood in front of it could not wake the room at all. Every wall
+              gets the mic. */}
+          <MicCaptureControl
+            active={captureMode || micState !== "off"}
+            micState={micState}
+            level={micLevel}
+            error={micError}
+            mode={snapshot.mic?.mode}
+            bytesReceived={snapshot.mic?.bytesReceived ?? 0}
+            onToggle={() => void toggleMicCapture()}
+          />
           {showIdeaSurfaces ? (
             <button
               type="button"
@@ -2536,7 +2573,11 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
             gesture mode the transcript card is lifted into wall B's right
             third by CSS (display-only content may use the pointing-forbidden
             zone); desk mode keeps it in-rail. */}
-        {!mockMode && showBuildSurfaces ? (
+        {/* The rail carries the TRANSCRIPT, which is the room's only proof it
+            heard anything. Gated to view=builds it left wall A — the wall with
+            the capture cluster, the one people talk at — showing no words at
+            all, however much they said. Both walls keep it now. */}
+        {!mockMode ? (
           <aside className="rail">
             {/* PINCH CAMERA toggle (hands): a compact chip docked in the rail
                 (live-room request — it was crowding the header). Seeded
