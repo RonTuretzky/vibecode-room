@@ -63,6 +63,15 @@ export interface PopupDismissSample {
   // raycast scene nodes both count — someone mid-aim must never lose their
   // popup to jitter across a gap.)
   anyOnTarget: boolean;
+  // Has a cursor EVER been tracked on this wall? "Walked away" means somebody
+  // was pointing and then left — with no hand source at all (the ordinary
+  // case: ?remote is on by default, so the dwell layer mounts on every wall
+  // whether or not any camera is feeding it) nobody ever arrived, so nobody
+  // can walk away. Without this the rule fired on a 6s cycle forever and every
+  // tree menu, branch popup and record window closed itself within seconds of
+  // opening, with nobody in the room. Defaults to true so the pure fold's own
+  // tests keep describing the walked-away rule directly.
+  cursorSeenEver?: boolean;
 }
 
 export function popupDismissStep(
@@ -73,6 +82,11 @@ export function popupDismissStep(
   absentSeconds: number = POPUP_ABSENT_SECONDS,
 ): { state: PopupDismissState; dismiss: boolean } {
   if (sample.cursorCount === 0) {
+    if (sample.cursorSeenEver === false) {
+      // No hand source has ever produced a cursor here: there is no absence to
+      // measure. Hold the popup — a mouse/desk operator owns this wall.
+      return { state: POPUP_DISMISS_IDLE, dismiss: false };
+    }
     const absentSince = state.absentSince ?? t;
     if (t - absentSince >= absentSeconds) {
       return { state: POPUP_DISMISS_IDLE, dismiss: true };

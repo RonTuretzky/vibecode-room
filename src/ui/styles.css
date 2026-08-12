@@ -3954,3 +3954,22 @@ main.gesture-mode .record-steer-heard-line { font-size: 1.2rem; }
 /* post-stop dispatch confirmation (sticky until Record is pressed again) */
 .record-steer-got { margin: 0 0 0.3rem 0; color: #7ee2a8; font-weight: 600; }
 .record-steer-runlabel { margin: 0.3rem 0 0 0; color: #8fa4cc; font-size: 0.9rem; }
+
+/* LOST THE ROOM: the push stream dropped and every reading on this wall is now
+   frozen at its last value. Loud, full-width, above all chrome — a stale wall
+   that looks healthy is indistinguishable from a working one. */
+.stream-stale {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 90;
+  padding: 10px 18px;
+  text-align: center;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: #1a1a1a;
+  background: var(--c-paused, #f5a623);
+  box-shadow: 0 2px 18px rgba(0, 0, 0, 0.45);
+}

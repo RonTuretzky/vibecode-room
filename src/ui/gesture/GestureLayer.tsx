@@ -172,6 +172,8 @@ export function GestureLayer({ wall, fusionUrl, remoteUrl = "", mouseTest = fals
     let raf = 0;
     // Dwell-miss / walked-away popup dismissal (pure fold, popup-dismiss.ts).
     let dismissState: PopupDismissState = POPUP_DISMISS_IDLE;
+  // Sticky per mount: once a hand has been tracked, absence means departure.
+  let cursorSeenEver = false;
 
     const nowSec = () => performance.now() / 1000;
 
@@ -418,7 +420,18 @@ export function GestureLayer({ wall, fusionUrl, remoteUrl = "", mouseTest = fals
           }
         }
       }
-      const dismissStep = popupDismissStep(dismissState, { cursorCount: cursors.size, anyOnTarget }, t);
+      // "Walked away" needs somebody to have arrived first. On a wall with no
+      // hand source feeding it (the default: ?remote is on, so this layer
+      // mounts everywhere) cursors.size is 0 forever, and the rule used to
+      // close every popup on a 6s cycle with nobody in the room.
+      if (cursors.size > 0) {
+        cursorSeenEver = true;
+      }
+      const dismissStep = popupDismissStep(
+        dismissState,
+        { cursorCount: cursors.size, anyOnTarget, cursorSeenEver },
+        t,
+      );
       dismissState = dismissStep.state;
       if (dismissStep.dismiss) {
         onDwellMissRef.current?.();

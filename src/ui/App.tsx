@@ -168,6 +168,10 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
   // Null = no projection (keyboard select / test seam): the menu edge-rests.
   const [menuAnchor, setMenuAnchor] = useState<SceneDwellRect | null>(null);
   const [isUnmuting, setIsUnmuting] = useState(false);
+  // Is the live push stream actually attached? Starts optimistic so a wall that
+  // has never connected (offline demo, static render) shows no alarm; the SSE
+  // error handler flips it and the next landing frame flips it back.
+  const [streamLive, setStreamLive] = useState(true);
   const [micState, setMicState] = useState<"off" | "connecting" | "live">("off");
   // Per-TAB marker (not localStorage): the one window holding the room's mic.
   // Survives the reload a self-rebuild forces; never leaks to the other walls.
@@ -1398,6 +1402,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
         }
         try {
           setSnapshot(JSON.parse((messageEvent as MessageEvent).data) as ProjectorSnapshot);
+          setStreamLive(true);
         } catch {
           // Ignore a malformed frame; the next push or a resync recovers.
         }
@@ -1424,6 +1429,12 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
         if (closed) {
           return;
         }
+        // SAY SO. Reconnecting silently meant a killed server left the wall
+        // projecting a confident, frozen room forever — same status chips, same
+        // last transcript line, still reading "listening". Nobody in the room
+        // could tell a quiet room from a dead one. The banner clears itself the
+        // moment a frame lands again.
+        setStreamLive(false);
         reconnectTimer = setTimeout(openStream, backoffMs);
         backoffMs = Math.min(backoffMs * 2, 15_000);
       });
@@ -2282,6 +2293,19 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
           ✨ {guidedEpilogue}
         </div>
       ) : null}
+
+      {/* THE ROOM DIED WHILE YOU WERE LOOKING AT IT. Every reading on this wall
+          is a snapshot; when the push stream drops, they all freeze at their
+          last value and keep looking authoritative. Measured: the server was
+          killed and 8.5s later the wall still read "READY / ambient listening /
+          ALL CLEAR" with the pre-death transcript. This banner is the only
+          thing that distinguishes a quiet room from a dead one, so it shows in
+          gesture mode too — it is not a debugging chip. */}
+      {streamLive ? null : (
+        <div className="stream-stale" data-testid="stream-stale" role="status">
+          ⚠ lost the room — this wall is frozen at its last update, reconnecting…
+        </div>
+      )}
 
       <header className="status-bar" data-region="status">
         {/* STATUS READOUTS (listening orb, session id/global state, active cue,

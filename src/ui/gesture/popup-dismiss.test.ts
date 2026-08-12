@@ -141,3 +141,45 @@ describe("popup dismiss: on-target geometry (cursorOverRect)", () => {
     expect(DWELL_SHIELD_SELECTOR).toBe("[data-dwell-shield]");
   });
 });
+
+// A WALL WITH NO HANDS MUST KEEP ITS POPUPS. ?remote is on by default, so the
+// dwell layer mounts on every wall whether or not a camera feeds it. With no
+// hand source the cursor count is 0 forever, and the walked-away rule closed
+// every tree menu, branch popup and record window on a 6s cycle with nobody in
+// the room — measured live: a tree menu gone in 2.5s, while the same wall with
+// ?remote=0 held it past 20s.
+describe("walked-away needs somebody to have arrived", () => {
+  test("no cursor has ever been seen: never dismisses, however long", () => {
+    let state = POPUP_DISMISS_IDLE;
+    for (let t = 0; t < 120; t += 0.5) {
+      const step = popupDismissStep(state, { cursorCount: 0, anyOnTarget: false, cursorSeenEver: false }, t);
+      expect(step.dismiss).toBe(false);
+      state = step.state;
+    }
+  });
+
+  test("once a cursor has been seen, absence still dismisses on schedule", () => {
+    let state = POPUP_DISMISS_IDLE;
+    // Someone points, then leaves at t=1.
+    state = popupDismissStep(state, { cursorCount: 1, anyOnTarget: true, cursorSeenEver: true }, 0).state;
+    let fired: number | null = null;
+    for (let t = 1; t <= 12; t += 0.5) {
+      const step = popupDismissStep(state, { cursorCount: 0, anyOnTarget: false, cursorSeenEver: true }, t);
+      state = step.state;
+      if (step.dismiss && fired === null) {
+        fired = t;
+      }
+    }
+    expect(fired).not.toBeNull();
+    expect(fired! - 1).toBeGreaterThanOrEqual(POPUP_ABSENT_SECONDS);
+  });
+
+  test("the dwell-miss rule is untouched by the hand-source gate", () => {
+    // A present cursor parked on empty ground still closes the popup even
+    // though no cursor was ever seen before this frame.
+    let state = POPUP_DISMISS_IDLE;
+    state = popupDismissStep(state, { cursorCount: 1, anyOnTarget: false, cursorSeenEver: true }, 0).state;
+    const step = popupDismissStep(state, { cursorCount: 1, anyOnTarget: false, cursorSeenEver: true }, POPUP_MISS_SECONDS);
+    expect(step.dismiss).toBe(true);
+  });
+});

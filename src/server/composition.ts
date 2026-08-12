@@ -2162,6 +2162,15 @@ class LiveProjectorRuntime implements ProjectorRuntime {
           });
           return this.registry.steer(grace.upid, { text, source: "live-transcript" }, `${correlationId}-window-dispatch`);
         })
+        .then(() => {
+          // PUBLISH, or the dispatch never reaches a wall. registry.steer
+          // mutates the record and writes a process.steer trace, but the
+          // cached snapshot behind GET /api/state and the SSE stream only
+          // learn when something else publishes. On a quiet room after Stop
+          // nothing else does, so the wall showed a change that had already
+          // been dispatched as if it had never happened.
+          this.publish();
+        })
         .catch((error) => {
           this.recordExternalTrace({
             event: "steering.route.error",
@@ -2176,6 +2185,11 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     }
     void this.registry
       .steer(grace.upid, { text, source: "live-transcript" }, `${correlationId}-window-dispatch`)
+      .then(() => {
+        // See the note above: without this the steer is invisible to every
+        // wall until unrelated speech happens to republish the snapshot.
+        this.publish();
+      })
       .catch((error) => {
         this.recordExternalTrace({
           event: "steering.route.error",
