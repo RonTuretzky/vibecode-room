@@ -93,6 +93,10 @@ const IDEA_ID = "idea";
 // "Park it for later" shows its confirmation strip this long before the deck
 // window closes itself (the choice must visibly land at projector distance).
 const PARK_CONFIRM_MS = 2_000;
+// The tab that holds the room's microphone. A self-rebuild restarts the server
+// and every wall reloads; without this the mic pipeline died with the old page
+// and the room sat deaf until a human noticed and pressed the button again.
+const MIC_OWNER_KEY = "vibersyn.mic.owner";
 
 // ISSUE FRUIT poll cadence: while an adopted tree stands, its open GitHub
 // issues refresh on this interval (GET /api/process/:upid/issues).
@@ -165,6 +169,8 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
   const [menuAnchor, setMenuAnchor] = useState<SceneDwellRect | null>(null);
   const [isUnmuting, setIsUnmuting] = useState(false);
   const [micState, setMicState] = useState<"off" | "connecting" | "live">("off");
+  // Per-TAB marker (not localStorage): the one window holding the room's mic.
+  // Survives the reload a self-rebuild forces; never leaks to the other walls.
   const [micLevel, setMicLevel] = useState(0);
   const [micError, setMicError] = useState<string | null>(null);
   const micHandleRef = useRef<MicCaptureHandle | null>(null);
@@ -980,6 +986,13 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
   }, []);
 
   const stopMic = useCallback(() => {
+    // A deliberate stop hands the mic back: this window must NOT grab it again
+    // on the next reload.
+    try {
+      window.sessionStorage.removeItem(MIC_OWNER_KEY);
+    } catch {
+      // See the setItem note in toggleMic.
+    }
     // Disowning any in-flight start (clearing the ownership token) is enough
     // to cover a stop that races getUserMedia: the start body re-checks the
     // token once the pipeline lands and stops it itself when disowned, so the
@@ -1054,6 +1067,16 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
           return;
         }
         micHandleRef.current = handle;
+        // Remember that THIS window carries the room's mic, so the reload a
+        // self-rebuild forces on it can take the mic back (see the re-arm
+        // effect). sessionStorage is per-tab by design: only the window that
+        // actually held the mic re-arms, never the other three walls.
+        try {
+          window.sessionStorage.setItem(MIC_OWNER_KEY, "1");
+        } catch {
+          // Private mode / storage disabled: re-arming is a convenience, never
+          // a requirement. The operator can still press the button.
+        }
       } catch (error) {
         setMicError(error instanceof Error ? error.message : "Could not start microphone");
         setMicState("off");
@@ -1179,6 +1202,36 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
       void toggleMic();
     }
   }, [liveMode, releaseMute, toggleMic]);
+
+  // RE-ARM THE MIC AFTER A REBOOT. The room's flagship move — speak a change,
+  // the agent edits the source, the server exits 87 and relaunches — reloads
+  // every wall. The mic lives in a browser pipeline, so it died with the old
+  // page and nothing ever restarted it: the room rebuilt itself into silence.
+  // The window that held the mic reclaims it on mount. getUserMedia needs no
+  // prompt here (the origin's permission is already granted), and the per-tab
+  // marker keeps the other walls out of it.
+  useEffect(() => {
+    if (!liveMode) {
+      return;
+    }
+    let owned = false;
+    try {
+      owned = window.sessionStorage.getItem(MIC_OWNER_KEY) === "1";
+    } catch {
+      owned = false;
+    }
+    if (!owned) {
+      return;
+    }
+    // Let the first snapshot land first: toggleMic reads snapshotRef to decide
+    // whether it must release the mute before streaming.
+    const timer = setTimeout(() => {
+      if (micStartRef.current === null && micHandleRef.current === null) {
+        void toggleMic();
+      }
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [liveMode, toggleMic]);
 
   // VOICE FEEDBACK: when the server recognizes a wake-word command the snapshot's
   // `voice` field changes; flash the command near the status bar so the room gets
@@ -1610,7 +1663,17 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
     clearHidden,
   ]);
 
-  const listeningState = snapshot.muted ? "muted" : "listening";
+  // The orb told the room "Listening" whenever the SERVER intended to listen —
+  // which stayed true with zero audio arriving. Every self-rebuild restarts the
+  // server and reloads the walls, the mic pipeline dies with the old page, and
+  // the room stood there deaf under a green light. `listening` is intent;
+  // `mic.active` (a live /api/mic socket) is the truth. When the two disagree
+  // the orb says DEAF, because a silent room that looks healthy is the worst
+  // failure this wall can show.
+  const micSession = snapshot.mic ?? null;
+  const roomIsDeaf = !snapshot.muted && snapshot.listening && micSession !== null && !micSession.active;
+  const listeningState = snapshot.muted ? "muted" : roomIsDeaf ? "deaf" : "listening";
+  const listeningLabel = snapshot.muted ? "Muted" : roomIsDeaf ? "No mic" : "Listening";
 
   // MOCK ROOM toggle: swap in the busy fixture (several projects at once) and
   // hold back the live stream; toggling off re-syncs the authoritative state
@@ -2233,7 +2296,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
             data-state={listeningState}
           >
             <span className="orb-core" aria-hidden="true" />
-            <span className="orb-label">{snapshot.muted ? "Muted" : "Listening"}</span>
+            <span className="orb-label">{listeningLabel}</span>
           </div>
           <div className="session-meta">
             <span className="session-id">{snapshot.sessionId}</span>

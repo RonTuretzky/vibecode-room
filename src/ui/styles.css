@@ -614,6 +614,16 @@ main.gesture-mode .status-bar .status-right {
   box-shadow: 0 0 14px 2px rgba(245, 166, 35, 0.6);
 }
 
+/* DEAF: the server intends to listen but no mic socket is feeding it. Red and
+   unpulsing — a still light reads as "nothing is arriving" at wall distance,
+   where a green pulse read as health while the room heard nothing. */
+.listening-orb.deaf .orb-core {
+  background: var(--c-failed, #ff3b30);
+  box-shadow: 0 0 14px 2px rgba(255, 59, 48, 0.65);
+}
+
+.listening-orb.deaf .orb-label { color: var(--c-failed, #ff3b30); }
+
 @keyframes orb-pulse {
   0%, 100% { transform: scale(1); box-shadow: 0 0 14px 2px rgba(0, 255, 136, 0.7), 0 0 30px 6px rgba(0, 255, 136, 0.22); }
   50% { transform: scale(1.18); box-shadow: 0 0 22px 5px rgba(0, 255, 136, 0.9), 0 0 52px 12px rgba(0, 255, 136, 0.36); }

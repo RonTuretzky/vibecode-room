@@ -2103,3 +2103,47 @@ describe("adopted trees: grow-a-branch row + branch/issue popups", () => {
     expect(issuePopupModel({ number: 7, title: "", labels: [] }).heading).toBe("#7");
   });
 });
+
+// THE ORB MUST NOT LIE. `listening` is the server's INTENT; `mic.active` is
+// whether a browser is actually feeding /api/mic. They came apart every time
+// the room rebuilt itself: exit 87 restarts the server, the walls reload, the
+// mic pipeline dies with the old page — and the orb kept pulsing green over a
+// room that heard nothing. A silent room that looks healthy is the worst thing
+// this wall can show, so the two disagreeing reads DEAF.
+describe("listening orb reports the mic, not the intent", () => {
+  const withMic = (mic: { mode: "deepgram"; active: boolean; bytesReceived: number } | undefined) =>
+    renderToStaticMarkup(
+      <ProjectorApp
+        initialSnapshot={{ ...demoProjectorSnapshot, muted: false, listening: true, ...(mic === undefined ? {} : { mic }) }}
+        urlSearch="?live=0"
+      />,
+    );
+
+  test("listening with a live mic socket stays green", () => {
+    const markup = withMic({ mode: "deepgram", active: true, bytesReceived: 4096 });
+    expect(markup).toContain('data-state="listening"');
+    expect(markup).toContain("Listening");
+  });
+
+  test("listening with NO mic socket reads deaf, not listening", () => {
+    const markup = withMic({ mode: "deepgram", active: false, bytesReceived: 0 });
+    expect(markup).toContain('data-state="deaf"');
+    expect(markup).toContain("No mic");
+    expect(markup).not.toContain(">Listening<");
+  });
+
+  test("a snapshot with no mic field at all keeps the old reading (static fixtures)", () => {
+    // Demo/static fixtures carry no `mic`; they must not all turn red.
+    expect(withMic(undefined)).toContain('data-state="listening"');
+  });
+
+  test("muted still wins over both", () => {
+    const markup = renderToStaticMarkup(
+      <ProjectorApp
+        initialSnapshot={{ ...demoProjectorSnapshot, muted: true, listening: false, mic: { mode: "deepgram", active: false, bytesReceived: 0 } }}
+        urlSearch="?live=0"
+      />,
+    );
+    expect(markup).toContain('data-state="muted"');
+  });
+});
