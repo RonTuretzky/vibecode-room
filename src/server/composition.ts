@@ -90,8 +90,10 @@ export function forcedBriefFromLines(lines: readonly string[]): IdeaBrief {
   };
 }
 import {
+  CloudGraph,
   ResearchLoop,
   readResearchSuggestIntervalMs,
+  readSkyIntervalMs,
   renderResearchDeckHtml,
   selectResearchAgent,
   selectResearchSuggester,
@@ -520,6 +522,10 @@ export interface ProjectorRuntimeOptions {
   // heuristic-only tree (model: null); production defaults to the loop's own
   // tree with the bounded Cerebras refiner.
   researchConceptTree?: ConceptTree;
+  // Conversation-sky seam (research/sky.ts). Tests inject a graph with a
+  // scripted relate runner (or runner: null for lexical-only); production
+  // defaults to the env-cadenced graph with the bounded Cerebras runner.
+  cloudGraph?: CloudGraph;
 }
 
 export async function createProjectorRuntime(
@@ -1265,6 +1271,24 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       suggester: options.researchSuggester ?? selectResearchSuggester(env).suggester,
       agent: options.researchAgent ?? selectResearchAgent(env).agent,
       conceptTree: options.researchConceptTree,
+      // The conversation SKY: topics folded into clouds beyond the rolling
+      // window, related by the recurrent Cerebras tick (lexical fallback with
+      // no key). Runs on its own cadence regardless of research mode.
+      cloudGraph:
+        options.cloudGraph ??
+        new CloudGraph({
+          intervalMs: readSkyIntervalMs(env),
+          clock,
+          onUpdate: () => this.publish(),
+          onTrace: (event) =>
+            this.recordExternalTrace({
+              event: event.event,
+              level: event.level,
+              sessionId,
+              correlationId: event.correlationId,
+              meta: event.meta,
+            }),
+        }),
       // While the mode is on, the loop's own timer re-reads the dialogue every
       // interval and buds at most one new sphere (0 disables).
       suggestIntervalMs: readResearchSuggestIntervalMs(env),
@@ -3405,6 +3429,10 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       // Concept clusters over the dialogue window — each topic a BRANCH of the
       // 3D conversation tree (turns point back via topicId).
       dialogueTopics: this.research.topics(),
+      // The conversation SKY: clouds that outlive the window + their relations,
+      // each link marked agent (model judged) vs lexical (deterministic
+      // fallback) — agentAtMs null means the relate model has never spoken.
+      sky: this.research.sky(),
       ideaSettle: this.ideaSettleSnapshot(),
       // Multi-backend build loop: the registered backend roster with enabled +
       // last-probed availability — the wall's toggle chips (POST /api/backends).

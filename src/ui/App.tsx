@@ -2283,6 +2283,9 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
         research={researchSpecs}
         onResearchNode={onResearchNode}
         onDialogueNode={(turnId) => void onDialogueNode(turnId)}
+        sky={showResearch ? snapshot.sky : undefined}
+        researchThinking={snapshot.researchThinking === true}
+        skyView={urlConfig.research}
         selfTree={selfTree}
         park={urlConfig.park}
       />
@@ -2314,7 +2317,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
       ) : null}
       <FullscreenButton />
       {/* Research-pinned displays (the ceiling) run zen — chrome-less — but
-          still need the one tree control: a corner chip, dimmed until a
+          still need the one sky control: a corner chip, dimmed until a
           cursor rests on it, dwellable like everything else. */}
       {urlConfig.research ? (
         <div className="ceiling-dock">
@@ -2323,10 +2326,10 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
               type="button"
               className="ctl-button ceiling-reset"
               data-testid="ceiling-reset-button"
-              title="Reset the conversation tree (vine + crystals + dossiers)"
+              title="Reset the conversation sky (clouds + research rain)"
               onClick={() => void resetResearchTree()}
             >
-              🧹 Reset tree
+              🧹 Reset sky
             </button>
             <button
               type="button"
@@ -2334,7 +2337,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
               data-testid="ceiling-research-button"
               data-state={researchEngineOn ? "on" : "off"}
               onClick={() => void toggleResearchMode()}
-              title="Research engine: while ON, the room reviews the talk (~1/min) and buds spheres onto this tree."
+              title="Research engine: while ON, the room reviews the talk (~1/min) and buds research rain onto this sky."
             >
               {researchEngineOn ? "🔍 Research: ON" : "🔍 Research: OFF"}
             </button>

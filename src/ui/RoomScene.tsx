@@ -10,19 +10,40 @@ import { loadGardenFlora, type FloraLibrary } from "./garden-flora";
 import { buildCentralPark, loadCentralParkLayout, type CentralParkBuild } from "./central-park";
 import type { SelfTreeSpec } from "./self-repo";
 import {
-  DIALOGUE_CENTER_X,
-  DIALOGUE_CENTER_Z,
   buildTreeLOD,
-  dialogueBranchLength,
-  dialogueBranches,
-  dialogueLeafPosition,
-  dialogueTreeSpec3D,
-  dialogueTrunkHeight,
+  hashSeed,
   treeSpecSignature,
   type BuiltTree,
   type TreeBranchSpec3D,
   type TreeSpec3D,
 } from "./tree";
+import {
+  ACTIVE_MS,
+  MAX_WISPS,
+  R_HORIZON,
+  SKY_ALT,
+  SKY_FAN_HALF,
+  cloudAge,
+  cloudAltitude,
+  cloudRadius,
+  fanAzimuth,
+  gravitatedAzimuth,
+  lifeFactor,
+  mergeTarget,
+  puffCount,
+  puffRadius,
+  questCloudId,
+  radiusNorm,
+  resolveClouds,
+  rimFactor,
+  rimFlatten,
+  selectWisps,
+  spreadAzimuths,
+  strongestPartner,
+  type ResolvedCloud,
+  type SkyCloudRef,
+  type SkyLinkRef,
+} from "./sky/cloud-layout";
 import {
   SAPLING_LIMB_SCALE,
   fleetTreeSpec3D,
@@ -288,17 +309,29 @@ interface RoomSceneProps {
   // anchored to the FRUIT's own projected rect. Same optionality contract.
   onPickIssue?: (callsign: string, issueNumber: number, anchor: SceneDwellRect | null) => void;
   // RESEARCH MODE (all optional so legacy callers/tests are untouched): the
-  // dialogue window + research quests to grow the 3D dialogue tree from, and
-  // the click handler for research crystals (proposed → accept and spawn the
+  // dialogue window + research quests to grow the conversation SKY from, and
+  // the click handler for research rain (proposed → accept and spawn the
   // research; complete → open the dossier deck — App decides by status).
   dialogue?: DialogueNodeSpec[];
-  // Concept clusters over the dialogue window: each topic grows a BRANCH of
-  // the conversation tree and its member turns hang from it as leaves.
+  // Concept clusters over the dialogue window: each topic condenses a CLOUD
+  // of the conversation sky (the offline fallback when `sky` is absent).
   topics?: DialogueTopicSpec[];
   research?: ResearchNodeSpec[];
   onResearchNode?: (id: string) => void;
-  // Click/dwell a dialogue TURN node: research that utterance directly.
+  // Click/dwell a CLOUD (it picks as its topic's freshest turn — the branch-
+  // tip precedent): research that utterance directly.
   onDialogueNode?: (turnId: string) => void;
+  // The server's conversation sky (ProjectorSnapshot.sky): clouds remembered
+  // BEYOND the rolling dialogue window + provenance-tagged relations. Absent
+  // → clouds derive from `topics` and no wisps render (degradation gate).
+  sky?: { clouds: SkyCloudRef[]; links: SkyLinkRef[]; agentAtMs: number | null };
+  // True while a research round's inference is in flight — the zenith core
+  // brightens (the sky visibly "considers"). Real snapshot data, never a timer.
+  researchThinking?: boolean;
+  // Research-pinned window (?research=1 — the ceiling projector): seeds the
+  // steep oblique boot pose over the cloud deck. Fixed per window like the
+  // locks.
+  skyView?: boolean;
   // SELF-REBUILD (armed walls): the room's OWN repository as ONE MORE garden
   // tree — the HD forest spec (open PRs as CI-tipped branches) fed by App's
   // useSelfRepoTree hook. Null/absent = no self tree (toggle off, ceiling
@@ -367,23 +400,60 @@ const RESEARCH_STATUS_COLOR: Record<ResearchNodeSpec["status"], number> = {
   complete: 0x9affc9,
   failed: 0xff3b30,
 };
-const RESEARCH_KIND_GLYPH: Record<ResearchNodeSpec["kind"], string> = {
-  "fact-check": "✓ fact-check",
-  "deep-dive": "◎ deep-dive",
-  "bias-scan": "⚖ bias-scan",
-};
 // Speaker identity palette (NOT status colors — cool identity tints, no
 // violet): deterministic per speaker name so a voice keeps its color.
 const SPEAKER_COLORS = [0x9ee2ff, 0x7fe0c3, 0xffd9a0, 0xa8c7ff, 0xffb3c7, 0xd6f0a0];
-// The conversation TREE. Research is a MODE SWITCH (the idea garden hides
-// while it is on), so the tree takes CENTER STAGE — a tapered trunk rises from
-// the meadow at the stage center, each concept TOPIC grows a BRANCH (azimuth
-// by golden angle, oldest topics attached lowest, curving outward and upward),
-// and each TURN hangs from its topic's branch as a speaker-colored LEAF
-// (newest nearest the tip). Crystals keep budding outward from their leaf.
-// Rendered turn cap + how many of the newest turns carry text labels.
-const DIALOGUE_MAX_NODES = 20;
-const DIALOGUE_LABELED = 6;
+// The conversation SKY. Research is a MODE SWITCH (the idea garden hides
+// while it is on), so looking up you see CLOUDS: one sculpted cumulus per
+// concept topic on a polar time disc (zenith = now, horizon = the past — the
+// pure laws live in sky/cloud-layout.ts), wisps between related clouds
+// (WARM = the agent thread said so, COOL = deterministic lexical fallback),
+// and research quests hanging under their cloud as status-colored RAIN.
+// Render caps for the preallocated one-draw-call buffers.
+const SKY_MAX_CLOUDS = 14;
+const SKY_MAX_PUFFS_PER_CLOUD = 16;
+const SKY_MAX_PUFFS = SKY_MAX_CLOUDS * SKY_MAX_PUFFS_PER_CLOUD;
+// Wisps render as soft additive RIBBONS (real width + a feathered edge — a
+// 1px hairline reads as a lens scratch at projector distance): per wisp,
+// SKY_WISP_SEGMENTS quads of 6 non-indexed vertices.
+const SKY_WISP_SEGMENTS = 12;
+const SKY_MAX_WISP_VERTS = 12 * SKY_WISP_SEGMENTS * 6;
+// Rain: slanted streak quads (6 verts each) — a real shower spread under the
+// cloud base with varied length/alpha (a few 1px ticks read as a glitch).
+const SKY_MAX_RAIN_QUESTS = 12;
+const SKY_MAX_RAIN_STREAKS = 10;
+const SKY_MAX_RAIN_VERTS = SKY_MAX_RAIN_QUESTS * SKY_MAX_RAIN_STREAKS * 6;
+// Wisp provenance colors — the sky's honesty surface: a link the agent thread
+// judged glows WARM amber; the deterministic lexical fallback stays COOL ice
+// (bright cores for projector legibility but kept r>b vs r<b, so a
+// background-subtracted pixel probe still separates the two provenances).
+const WISP_AGENT_COLOR = 0xffb27a;
+const WISP_LEXICAL_COLOR = 0x8fd0ff;
+// Cloud body ramp: dormant clouds sit lavender-grey; an ACTIVE cloud burns
+// near-white (the focal law: the newest cloud must be unmistakable at a
+// glance). Aged clouds additionally haze toward the dusk (aerial perspective).
+const CLOUD_ACTIVE_COLOR = 0xf4f7fa;
+const CLOUD_DORMANT_COLOR = 0x93a2bc;
+// Green NOW accent for the active cloud's card (matches the ready-state green
+// the room already speaks).
+const CLOUD_NOW_ACCENT = 0x6ee7a0;
+// Raw-sRGB working copies for the sky shaders (see rawColor below): the ramp
+// endpoints the frame loop lerps between and the ribbon provenance colors.
+const CLOUD_ACTIVE_RGB = rawColor(CLOUD_ACTIVE_COLOR);
+const CLOUD_DORMANT_RGB = rawColor(CLOUD_DORMANT_COLOR);
+const WISP_AGENT_RGB = rawColor(WISP_AGENT_COLOR);
+const WISP_LEXICAL_RGB = rawColor(WISP_LEXICAL_COLOR);
+// Rain: the status hue pulled WELL toward blue-grey so streaks read as
+// weather (the semantics stay — blue proposed / green researching / mint
+// complete / red failed — as a tint on the shower, not neon ticks; the
+// droplet glow at the head keeps the saturated status color for the read).
+const RAIN_GREY_RGB = rawColor(0x9db4cc);
+const RAIN_STATUS_RGB: Record<ResearchNodeSpec["status"], THREE.Color> = {
+  proposed: rawColor(RESEARCH_STATUS_COLOR.proposed).lerp(RAIN_GREY_RGB, 0.62),
+  researching: rawColor(RESEARCH_STATUS_COLOR.researching).lerp(RAIN_GREY_RGB, 0.55),
+  complete: rawColor(RESEARCH_STATUS_COLOR.complete).lerp(RAIN_GREY_RGB, 0.45),
+  failed: rawColor(RESEARCH_STATUS_COLOR.failed).lerp(RAIN_GREY_RGB, 0.65),
+};
 
 function speakerColor(speaker: string | null): number {
   if (speaker === null || speaker.length === 0) {
@@ -617,6 +687,16 @@ function wallYawSeed(wall: string | null | undefined): number {
 
 function cssHex(color: number): string {
   return `#${color.toString(16).padStart(6, "0")}`;
+}
+
+// Raw-sRGB color for the sky's hand-authored ShaderMaterials: THREE's color
+// management converts hex to the linear working space, but a raw shader
+// writes its output UNENCODED — authored hexes come out dark. Storing the raw
+// sRGB bytes makes the shader output match the intended hex on screen.
+function rawColor(hex: number): THREE.Color {
+  const color = new THREE.Color();
+  color.setRGB(((hex >> 16) & 0xff) / 255, ((hex >> 8) & 0xff) / 255, (hex & 0xff) / 255, THREE.LinearSRGBColorSpace);
+  return color;
 }
 
 // Canvas-texture label sprite: word-wrapped title over a rounded glass card,
@@ -855,13 +935,17 @@ function makeButterflyWingTexture(base: number): THREE.CanvasTexture {
 // NOTE: BackSide alone makes the sphere visible from inside — flipping the
 // geometry with scale(-1,1,1) on top of it double-inverts the winding and the
 // dome vanishes (the sky rendered as the black clear color for months).
-function makeSkyDome(bottom: number, mid: number, top: number): THREE.Mesh {
+// `rawSrgb` keeps the authored hexes as-is (see rawColor): the dome shader
+// writes unencoded output, so converted colors render darker than authored —
+// the orbit night wants that moody sink, the research dusk wants true color.
+function makeSkyDome(bottom: number, mid: number, top: number, rawSrgb = false): THREE.Mesh {
+  const toColor = rawSrgb ? rawColor : (hex: number) => new THREE.Color(hex);
   const geom = new THREE.SphereGeometry(160, 32, 32);
   const mat = new THREE.ShaderMaterial({
     uniforms: {
-      bottomColor: { value: new THREE.Color(bottom) },
-      midColor: { value: new THREE.Color(mid) },
-      topColor: { value: new THREE.Color(top) },
+      bottomColor: { value: toColor(bottom) },
+      midColor: { value: toColor(mid) },
+      topColor: { value: toColor(top) },
       offset: { value: 20 },
     },
     vertexShader: `
@@ -883,7 +967,10 @@ function makeSkyDome(bottom: number, mid: number, top: number): THREE.Mesh {
         vec3 color = h < 0.35
           ? mix(bottomColor, midColor, smoothstep(0.0, 0.35, h))
           : mix(midColor, topColor, smoothstep(0.35, 1.0, h));
-        gl_FragColor = vec4(color, 1.0);
+        // Screen-space dither: ±1 LSB of hash noise breaks the visible
+        // banding rings a smooth 8-bit gradient otherwise develops.
+        float dither = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) - 0.5;
+        gl_FragColor = vec4(color + dither * (1.5 / 255.0), 1.0);
       }
     `,
     side: THREE.BackSide,
@@ -906,11 +993,14 @@ function makeStars(rng: () => number, count: number, size: number, opacity: numb
 }
 
 interface SceneEnv {
+  // The env's root group — exposed so the research sky can hide the daylight
+  // environment wholesale (the ceiling is its own dusk world) and restore it.
+  group: THREE.Group;
   update: (t: number, dt: number) => void;
   dispose: () => void;
 }
 
-type EntryKind = "tree" | "flower" | "orb-proc" | "orb-idea" | "dialogue" | "research";
+type EntryKind = "tree" | "flower" | "orb-proc" | "orb-idea" | "cloud" | "research";
 
 interface Entry {
   kind: EntryKind;
@@ -918,6 +1008,29 @@ interface Entry {
   treeSpec?: TreeSpec;
   dialogueSpec?: DialogueNodeSpec;
   researchSpec?: ResearchNodeSpec;
+  // CONVERSATION-SKY cloud entries: the resolved cloud this entry renders,
+  // its deterministic puff lobes (packed [ox,oy,oz,size,shade] per lobe —
+  // written into the shared Points buffer each frame), its body tint, and the
+  // slow-refresh layout caches (age norm / life factor, updated on the 1s
+  // relayout tick so the frame loop never calls Date.now per cloud).
+  cloudSpec?: ResolvedCloud;
+  cloudPuffs?: Float32Array;
+  cloudPuffN?: number;
+  cloudColor?: THREE.Color;
+  cloudHit?: THREE.Mesh;
+  cloudNorm?: number;
+  cloudLife?: number;
+  cloudHasAgentLink?: boolean;
+  // Speaker tint folded into the body ramp (≤12% — composition, not carnival)
+  // and the hash altitude jitter, cached so relayout never re-derives them.
+  cloudTint?: THREE.Color;
+  cloudJitter?: number;
+  // Per-frame pass-1 product: the cloud's shared alpha for pass 2 (the depth-
+  // sorted lobe write) — computed once per cloud, consumed per lobe.
+  cloudAlphaBase?: number;
+  // Research-rain entries: lateral shower spread under the parent cloud's
+  // footprint (set at reconcile from the cloud's own radius).
+  rainSpread?: number;
   group: THREE.Group;
   mats: (THREE.MeshPhongMaterial | THREE.MeshStandardMaterial)[];
   baseEmissive: number;
@@ -953,7 +1066,7 @@ interface Entry {
   disposeExtra?: () => void;
 }
 
-export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, focusUpid = null, pointerNav = true, cornerLock = false, flatLock = false, autoFit = false, onAcceptIdea, onSelectProcess, onPickMiss, onPickBranch, onPickIssue, dialogue = [], topics = [], research = [], onResearchNode, onDialogueNode, selfTree = null, park = false }: RoomSceneProps) {
+export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, focusUpid = null, pointerNav = true, cornerLock = false, flatLock = false, autoFit = false, onAcceptIdea, onSelectProcess, onPickMiss, onPickBranch, onPickIssue, dialogue = [], topics = [], research = [], onResearchNode, onDialogueNode, sky, researchThinking = false, skyView = false, selfTree = null, park = false }: RoomSceneProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const ideasRef = useRef(ideas);
   ideasRef.current = ideas;
@@ -965,6 +1078,13 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
   topicsRef.current = topics;
   const researchRef = useRef(research);
   researchRef.current = research;
+  const skyRef = useRef(sky);
+  skyRef.current = sky;
+  const researchThinkingRef = useRef(researchThinking);
+  researchThinkingRef.current = researchThinking;
+  // Same deal as the locks: the sky view is URL-derived and fixed per window.
+  const skyViewRef = useRef(skyView);
+  skyViewRef.current = skyView;
   const selfTreeRef = useRef(selfTree);
   selfTreeRef.current = selfTree;
   const onResearchRef = useRef(onResearchNode);
@@ -1012,7 +1132,7 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
 
   useEffect(() => {
     tick.current += 1;
-  }, [ideas, trees, mode, layout, dialogue, topics, research, selfTree]);
+  }, [ideas, trees, mode, layout, dialogue, topics, research, sky, selfTree]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -1176,6 +1296,18 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       // (resetRig never touches the angle, so mode/layout switches keep it).
       rig.dAngle = wallYawSeed(wallRef.current);
       rig.angle = rig.dAngle;
+      if (skyViewRef.current) {
+        // Research ceiling boot pose: an UNDER-DECK vista — the eye sits low
+        // outside the disc and pitches up through the cloud layer, so the sky
+        // fills the upper two-thirds of the frame (fresh clouds ride high
+        // overhead, old ones sink toward the horizon line and haze out).
+        // This pose IS the composition: auto-fit is gated off in skyView
+        // below — re-framing the bounded disc from outside would pitch the
+        // camera back down into a horizon-band view.
+        rig.dHeight = 1.8;
+        rig.dRadius = 34;
+        rig.lookY = SKY_ALT - 3;
+      }
       rig.radius = rig.dRadius;
       rig.height = rig.dHeight;
       applyRig();
@@ -1599,6 +1731,7 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       const GLIDE_ANGLE = 0.42; // shallow dihedral V while gliding
       const WING_FOLD = 1.38;
       return {
+        group,
         update: (t, dt) => {
           if (reducedMotion) {
             return;
@@ -1835,6 +1968,7 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
 
       const starsMat = stars.material as THREE.PointsMaterial;
       return {
+        group,
         update: (t) => {
           if (reducedMotion) {
             return;
@@ -1883,64 +2017,579 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
 
     const ideaEntries = new Map<string, Entry>();
     const treeEntries = new Map<string, Entry>();
-    // RESEARCH MODE: dialogue turn nodes (leaves of the conversation tree) +
-    // research crystals, plus the turn→crystal branch filaments. The lines are
-    // rebuilt whole on reconcile (endpoints are target positions).
-    const dialogueEntries = new Map<string, Entry>();
+    // RESEARCH MODE — the conversation SKY: cloud entries (one per topic, the
+    // invisible hit ellipsoid + lazy label) and research rain entries (one per
+    // quest, invisible hit sphere + droplet glow). The cloud bodies, wisps and
+    // rain streaks live in the shared preallocated buffers below — a handful
+    // of draw calls total, rewritten in place every frame (zero allocation).
+    const cloudEntries = new Map<string, Entry>();
     const researchEntries = new Map<string, Entry>();
-    let dialogueLines: THREE.Line[] = [];
-    const clearDialogueLines = () => {
-      for (const line of dialogueLines) {
-        scene.remove(line);
-        line.geometry.dispose();
-        (Array.isArray(line.material) ? line.material : [line.material]).forEach((m) => m.dispose());
+    // freshest-turn-id → cloud id: picks/dwell arrive keyed by the cloud's
+    // freshest utterance ({kind:"dialogue"} — the branch-tip precedent), so
+    // hover/dwell/activation resolve through this index.
+    const freshTurnToCloud = new Map<string, string>();
+    // Reconcile-computed render sets the frame loop reads (never allocates).
+    let skyWisps: SkyLinkRef[] = [];
+    // The last live membership per cloud — mergeTarget's evidence when a
+    // cloud vanishes (its members' NEW topics say who absorbed it).
+    const prevCloudMembers = new Map<string, string[]>();
+    // Honesty flicker bookkeeping: agentAtMs advancing = a real applied agent
+    // tick; the sky answers with a brief internal lightning flicker on the
+    // clouds the agent linked. Derived from snapshot data, never a timer
+    // pretending to be progress.
+    let skyAgentAtMs: number | null = null;
+    let skyFlashUntil = 0;
+    // Hoisted scratch for the per-frame moon-rim uniform (no allocation).
+    const skyMoonScratch = new THREE.Vector3();
+    // The visible fan's center bearing: directly away from the boot camera,
+    // so every cloud (and all of history) stays inside the vista's frame.
+    const skyFanCenter = wallYawSeed(wallRef.current) + Math.PI;
+    // One wind for the whole sky's rain shear — lateral to the vista so the
+    // slant reads on screen (weather has a direction; ticks don't).
+    const skyRainWindX = Math.sin(skyFanCenter + Math.PI / 2) * 0.3;
+    const skyRainWindZ = Math.cos(skyFanCenter + Math.PI / 2) * 0.3;
+    // Back-to-front lobe draw order for the alpha-blended cumulus bodies
+    // (normal blending needs sorting or clouds read inside-out). Preallocated
+    // slots, re-sorted on the 1s relayout tick — never per frame.
+    const skyLobeOrder: { entry: Entry | null; lobe: number; depth: number }[] = Array.from(
+      { length: SKY_MAX_PUFFS },
+      () => ({ entry: null, lobe: 0, depth: -Infinity }),
+    );
+    let skyLobeCount = 0;
+    const rebuildSkyLobeOrder = (camPos: THREE.Vector3) => {
+      let filled = 0;
+      for (const entry of cloudEntries.values()) {
+        const puffs = entry.cloudPuffs;
+        const count = entry.cloudPuffN ?? 0;
+        if (puffs === undefined) {
+          continue;
+        }
+        for (let lobe = 0; lobe < count && filled < SKY_MAX_PUFFS; lobe += 1) {
+          const slot = skyLobeOrder[filled];
+          const j = lobe * 6;
+          const dx = entry.group.position.x + puffs[j] - camPos.x;
+          const dy = entry.group.position.y + puffs[j + 1] - camPos.y;
+          const dz = entry.group.position.z + puffs[j + 2] - camPos.z;
+          slot.entry = entry;
+          slot.lobe = lobe;
+          slot.depth = dx * dx + dy * dy + dz * dz;
+          filled += 1;
+        }
       }
-      dialogueLines = [];
+      for (let index = filled; index < SKY_MAX_PUFFS; index += 1) {
+        skyLobeOrder[index].entry = null;
+        skyLobeOrder[index].depth = -Infinity;
+      }
+      skyLobeCount = filled;
+      // Farthest first; empty slots (-Infinity) sink to the tail.
+      skyLobeOrder.sort((a, b) => b.depth - a.depth);
     };
-    // The conversation tree's STRUCTURE is the HD tree module's output (one
-    // merged bark mesh + instanced foliage/tip buds, LOD-wrapped) plus the
-    // scene-owned tip chrome (topic labels, tip glows, hit spheres). A cheap
-    // spec signature skips the rebuild when a snapshot tick didn't actually
-    // change the tree, so live rooms don't churn geometry. The module frees
-    // its own GPU resources via BuiltTree.dispose; the chrome carries the
-    // usual ownGeometry/ownMaterial flags (label sprites also own their canvas
-    // map; glow sprites share glowTexture, so only their material is freed).
-    let dialogueTreeGroup: THREE.Group | null = null;
-    let dialogueTreeBuilt: BuiltTree | null = null;
-    let dialogueTreeSig: string | null = null;
-    const clearDialogueTree = () => {
-      dialogueTreeSig = null;
-      if (dialogueTreeBuilt !== null) {
-        dialogueTreeBuilt.dispose();
-        dialogueTreeBuilt = null;
+
+    // Cumulus puff sprite: a soft base falloff overlaid with deterministic
+    // cauliflower billows, sampled by the one-draw-call Points shader below.
+    // The billow field is CENTERED (no directional bias): the shader rotates
+    // the sample per lobe to kill repeat-stamping, and does ALL of the
+    // lighting itself (crown/underside ramp + moon rim) in screen space.
+    const makeCloudPuffTexture = (): THREE.CanvasTexture => {
+      const size = 256;
+      const canvas = document.createElement("canvas");
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext("2d")!;
+      const c = size / 2;
+      const base = ctx.createRadialGradient(c, c, 0, c, c, c * 0.98);
+      base.addColorStop(0, "rgba(255,255,255,0.9)");
+      base.addColorStop(0.48, "rgba(255,255,255,0.55)");
+      base.addColorStop(0.8, "rgba(255,255,255,0.13)");
+      base.addColorStop(1, "rgba(255,255,255,0)");
+      ctx.fillStyle = base;
+      ctx.fillRect(0, 0, size, size);
+      const rng = mulberry32(hashSeed("sky:puff"));
+      ctx.globalCompositeOperation = "lighter";
+      for (let index = 0; index < 34; index += 1) {
+        const angle = rng() * Math.PI * 2;
+        const reach = rng() * size * 0.27;
+        const x = c + Math.cos(angle) * reach;
+        const y = c + Math.sin(angle) * reach;
+        const radius = size * (0.045 + rng() * 0.1);
+        const billow = ctx.createRadialGradient(x, y, 0, x, y, radius);
+        billow.addColorStop(0, "rgba(255,255,255,0.4)");
+        billow.addColorStop(1, "rgba(255,255,255,0)");
+        ctx.fillStyle = billow;
+        ctx.beginPath();
+        ctx.arc(x, y, radius, 0, Math.PI * 2);
+        ctx.fill();
       }
-      if (dialogueTreeGroup === null) {
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      return texture;
+    };
+
+    // The sky rig: every shared GPU resource of the research sky, built
+    // lazily on the first reconcile that resolves a cloud (zero cost when the
+    // research props are empty) and torn down whole. Preallocated buffers —
+    // the frame loop rewrites them in place.
+    interface SkyRig {
+      group: THREE.Group;
+      puffTexture: THREE.CanvasTexture;
+      puffGeom: THREE.BufferGeometry;
+      puffMat: THREE.ShaderMaterial;
+      puffPos: Float32Array;
+      puffSize: Float32Array;
+      puffColor: Float32Array;
+      puffAlpha: Float32Array;
+      puffShade: Float32Array;
+      puffHaze: Float32Array;
+      puffRot: Float32Array;
+      wispGeom: THREE.BufferGeometry;
+      wispPos: Float32Array;
+      wispColor: Float32Array;
+      wispEdge: Float32Array;
+      anchorGeom: THREE.BufferGeometry;
+      anchorPos: Float32Array;
+      anchorColor: Float32Array;
+      anchorMat: THREE.ShaderMaterial;
+      rainGeom: THREE.BufferGeometry;
+      rainPos: Float32Array;
+      rainColor: Float32Array;
+      rainEdge: Float32Array;
+      starMat: THREE.ShaderMaterial;
+      moonHalo: THREE.Sprite;
+      moonWorld: THREE.Vector3;
+      disposables: Array<{ dispose: () => void }>;
+    }
+    let skyRig: SkyRig | null = null;
+    const ensureSkyRig = (): SkyRig => {
+      if (skyRig !== null) {
+        return skyRig;
+      }
+      const group = new THREE.Group();
+      const disposables: Array<{ dispose: () => void }> = [];
+      // Dusk atmosphere: dithered gradient dome + varied stars — the backdrop
+      // the cumulus shading agrees with. The daylight garden is HIDDEN while
+      // the sky stands (reconcile toggles env.group) — the ceiling is its own
+      // dusk world, so no sunny meadow or butterflies fight the night.
+      const dome = makeSkyDome(0x5a5382, 0x252c52, 0x0a0f22, true);
+      dome.renderOrder = 2;
+      group.add(dome);
+      disposables.push(dome.geometry, dome.material as THREE.Material);
+      scene.fog = new THREE.Fog(0x232a44, 70, 230);
+      // A dark meadow-shadow floor grounds the bottom strip of the vista.
+      const ground = new THREE.Mesh(
+        new THREE.CircleGeometry(240, 48),
+        new THREE.MeshBasicMaterial({ color: 0x0c1424 }),
+      );
+      ground.rotation.x = -Math.PI / 2;
+      group.add(ground);
+      disposables.push(ground.geometry, ground.material as THREE.Material);
+      // A COMMITTED starfield (a dozen faint pixels reads as sensor noise):
+      // one Points draw, real size/brightness spread — a magnitude law with a
+      // handful of unmistakable heroes — plus warm/cool color temperature and
+      // shader twinkle off a uTime uniform (frozen under reduced motion).
+      const starCount = 380;
+      const starPos = new Float32Array(starCount * 3);
+      const starSize = new Float32Array(starCount);
+      const starTw = new Float32Array(starCount);
+      const starTint = new Float32Array(starCount);
+      const starRng = mulberry32(hashSeed("sky:stars"));
+      for (let index = 0; index < starCount; index += 1) {
+        const theta = starRng() * Math.PI * 2;
+        const phi = starRng() * Math.PI * 0.48 + 0.05;
+        starPos[index * 3] = 130 * Math.sin(phi) * Math.cos(theta);
+        starPos[index * 3 + 1] = 130 * Math.cos(phi);
+        starPos[index * 3 + 2] = 130 * Math.sin(phi) * Math.sin(theta);
+        const bright = starRng();
+        // Magnitude law: mostly modest stars, the top ~8% clearly brighter.
+        starSize[index] = 2.6 + bright * bright * 7 + (bright > 0.92 ? 5 : 0);
+        starTw[index] = starRng() * Math.PI * 2;
+        starTint[index] = starRng();
+      }
+      const starGeom = new THREE.BufferGeometry();
+      starGeom.setAttribute("position", new THREE.BufferAttribute(starPos, 3));
+      starGeom.setAttribute("aSize", new THREE.BufferAttribute(starSize, 1));
+      starGeom.setAttribute("aTw", new THREE.BufferAttribute(starTw, 1));
+      starGeom.setAttribute("aTint", new THREE.BufferAttribute(starTint, 1));
+      const starMat = new THREE.ShaderMaterial({
+        uniforms: { uMap: { value: glowTexture }, uTime: { value: 0 }, uPx: { value: renderer.getPixelRatio() } },
+        vertexShader: `
+          attribute float aSize;
+          attribute float aTw;
+          attribute float aTint;
+          uniform float uTime;
+          uniform float uPx;
+          varying float vA;
+          varying float vTint;
+          void main() {
+            float tw = 0.78 + 0.22 * sin(uTime * (0.5 + fract(aTw) * 0.9) + aTw * 7.0);
+            vA = tw * (0.42 + aSize * 0.07);
+            vTint = aTint;
+            gl_PointSize = aSize * uPx * (0.8 + 0.2 * tw);
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          }
+        `,
+        fragmentShader: `
+          uniform sampler2D uMap;
+          varying float vA;
+          varying float vTint;
+          void main() {
+            vec4 tex = texture2D(uMap, gl_PointCoord);
+            // Color temperature spread: icy blue-white through warm white.
+            vec3 col = mix(vec3(0.76, 0.85, 1.0), vec3(1.0, 0.93, 0.8), vTint);
+            gl_FragColor = vec4(col, tex.a * vA);
+          }
+        `,
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      });
+      const stars = new THREE.Points(starGeom, starMat);
+      stars.renderOrder = 3;
+      group.add(stars);
+      disposables.push(starGeom, starMat);
+      // Concentric TIME BANDS hung just under the deck: soft luminous rings at
+      // the 2-minute / 10-minute / horizon radii, so time-as-radius reads as
+      // designed sky structure (not a stray circle etched on the ground).
+      for (const spec of [
+        { mid: cloudRadius(120_000), alpha: 0.15 },
+        { mid: cloudRadius(600_000), alpha: 0.11 },
+        { mid: R_HORIZON, alpha: 0.09 },
+      ]) {
+        const half = 1.15;
+        const bandGeom = new THREE.RingGeometry(spec.mid - half, spec.mid + half, 96, 1);
+        const bandMat = new THREE.ShaderMaterial({
+          uniforms: { uMid: { value: spec.mid }, uHalf: { value: half }, uAlpha: { value: spec.alpha } },
+          vertexShader: `
+            varying float vR;
+            void main() {
+              vR = length(position.xy);
+              gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            }
+          `,
+          fragmentShader: `
+            uniform float uMid;
+            uniform float uHalf;
+            uniform float uAlpha;
+            varying float vR;
+            void main() {
+              float band = 1.0 - clamp(abs(vR - uMid) / uHalf, 0.0, 1.0);
+              gl_FragColor = vec4(vec3(0.56, 0.66, 0.86), uAlpha * band * band);
+            }
+          `,
+          transparent: true,
+          depthWrite: false,
+          blending: THREE.AdditiveBlending,
+          side: THREE.DoubleSide,
+        });
+        const band = new THREE.Mesh(bandGeom, bandMat);
+        band.rotation.x = -Math.PI / 2;
+        band.position.y = SKY_ALT - 1.1;
+        band.renderOrder = 4;
+        group.add(band);
+        disposables.push(bandGeom, bandMat);
+      }
+      // The MOON: the light source the cumulus modelling agrees with (warm
+      // crowns, moon-side rims), parked off-axis high in the vista. A CRISP
+      // DISC — limb-darkened circle with a couple of soft maria — inside a
+      // restrained halo (a bare radial glow reads as a bokeh artifact). The
+      // halo brightens while research inference is actually in flight
+      // (researchThinking — real snapshot data, never a timer).
+      const moonAz = skyFanCenter - 0.42;
+      const moonCanvas = document.createElement("canvas");
+      moonCanvas.width = 128;
+      moonCanvas.height = 128;
+      const moonCtx = moonCanvas.getContext("2d")!;
+      const moonR = 52;
+      const limb = moonCtx.createRadialGradient(58, 58, moonR * 0.25, 64, 64, moonR);
+      limb.addColorStop(0, "rgba(246, 241, 226, 1)");
+      limb.addColorStop(0.75, "rgba(232, 226, 208, 1)");
+      limb.addColorStop(1, "rgba(196, 194, 186, 1)");
+      moonCtx.fillStyle = limb;
+      moonCtx.beginPath();
+      moonCtx.arc(64, 64, moonR, 0, Math.PI * 2);
+      moonCtx.fill();
+      const moonRng = mulberry32(hashSeed("sky:moon"));
+      for (let index = 0; index < 7; index += 1) {
+        const angle = moonRng() * Math.PI * 2;
+        const reach = moonRng() * moonR * 0.55;
+        const mx = 64 + Math.cos(angle) * reach;
+        const my = 64 + Math.sin(angle) * reach;
+        const mr = moonR * (0.1 + moonRng() * 0.16);
+        const mare = moonCtx.createRadialGradient(mx, my, 0, mx, my, mr);
+        mare.addColorStop(0, "rgba(158, 158, 158, 0.32)");
+        mare.addColorStop(1, "rgba(158, 158, 158, 0)");
+        moonCtx.fillStyle = mare;
+        moonCtx.beginPath();
+        moonCtx.arc(mx, my, mr, 0, Math.PI * 2);
+        moonCtx.fill();
+      }
+      const moonTexture = new THREE.CanvasTexture(moonCanvas);
+      moonTexture.colorSpace = THREE.SRGBColorSpace;
+      const moonCore = new THREE.Sprite(
+        new THREE.SpriteMaterial({ map: moonTexture, transparent: true, opacity: 1, depthWrite: false, fog: false }),
+      );
+      moonCore.position.set(Math.sin(moonAz) * 30, SKY_ALT + 21, Math.cos(moonAz) * 30);
+      moonCore.scale.setScalar(3.4);
+      moonCore.renderOrder = 5;
+      group.add(moonCore);
+      disposables.push(moonCore.material, moonTexture);
+      const moonHalo = new THREE.Sprite(
+        new THREE.SpriteMaterial({ map: glowTexture, color: 0xcfd8f2, transparent: true, opacity: 0.08, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }),
+      );
+      moonHalo.position.copy(moonCore.position);
+      moonHalo.scale.setScalar(11);
+      moonHalo.renderOrder = 4;
+      group.add(moonHalo);
+      disposables.push(moonHalo.material);
+      // World-space light position for the puff shader's moon-side rim.
+      const moonWorld = moonCore.position.clone();
+      // ALL cloud lobes in ONE Points draw call: soft billboards sized in the
+      // shader (world size / distance), NORMAL-blended (additive reads as fog,
+      // not cumulus) and depth-sorted back-to-front by rebuildSkyLobeOrder.
+      // Modelling: per-lobe height shade (aShade) × an in-sprite vertical ramp
+      // = bright moonlit crowns over shadowed underbellies, plus a cool rim on
+      // the upper silhouette and aerial haze (aHaze) that sinks aged clouds
+      // into the dusk.
+      const puffTexture = makeCloudPuffTexture();
+      const puffGeom = new THREE.BufferGeometry();
+      const puffPos = new Float32Array(SKY_MAX_PUFFS * 3);
+      const puffSize = new Float32Array(SKY_MAX_PUFFS);
+      const puffColor = new Float32Array(SKY_MAX_PUFFS * 3);
+      const puffAlpha = new Float32Array(SKY_MAX_PUFFS);
+      const puffShade = new Float32Array(SKY_MAX_PUFFS);
+      const puffHaze = new Float32Array(SKY_MAX_PUFFS);
+      const puffRot = new Float32Array(SKY_MAX_PUFFS);
+      puffGeom.setAttribute("position", new THREE.BufferAttribute(puffPos, 3).setUsage(THREE.DynamicDrawUsage));
+      puffGeom.setAttribute("aSize", new THREE.BufferAttribute(puffSize, 1).setUsage(THREE.DynamicDrawUsage));
+      puffGeom.setAttribute("aColor", new THREE.BufferAttribute(puffColor, 3).setUsage(THREE.DynamicDrawUsage));
+      puffGeom.setAttribute("aAlpha", new THREE.BufferAttribute(puffAlpha, 1).setUsage(THREE.DynamicDrawUsage));
+      puffGeom.setAttribute("aShade", new THREE.BufferAttribute(puffShade, 1).setUsage(THREE.DynamicDrawUsage));
+      puffGeom.setAttribute("aHaze", new THREE.BufferAttribute(puffHaze, 1).setUsage(THREE.DynamicDrawUsage));
+      puffGeom.setAttribute("aRot", new THREE.BufferAttribute(puffRot, 1).setUsage(THREE.DynamicDrawUsage));
+      puffGeom.setDrawRange(0, 0);
+      const puffMat = new THREE.ShaderMaterial({
+        uniforms: { uMap: { value: puffTexture }, uScale: { value: 800 }, uMoonView: { value: new THREE.Vector3(0, 1, 0) } },
+        vertexShader: `
+          attribute float aSize;
+          attribute vec3 aColor;
+          attribute float aAlpha;
+          attribute float aShade;
+          attribute float aHaze;
+          attribute float aRot;
+          varying vec3 vColor;
+          varying float vAlpha;
+          varying float vShade;
+          varying float vHaze;
+          varying vec2 vRot;
+          varying vec2 vMoonDir;
+          uniform float uScale;
+          uniform vec3 uMoonView;
+          void main() {
+            vColor = aColor;
+            vAlpha = aAlpha;
+            vShade = aShade;
+            vHaze = aHaze;
+            vRot = vec2(cos(aRot), sin(aRot));
+            vec4 mv = modelViewMatrix * vec4(position, 1.0);
+            // Screen-space direction from this lobe toward the moon: the rim
+            // light hugs the moon-facing silhouette (view-space y is up, but
+            // gl_PointCoord.y runs down — flip when consumed).
+            vMoonDir = normalize(uMoonView.xy - mv.xy + vec2(1e-4));
+            gl_PointSize = min(aSize * uScale / max(-mv.z, 0.1), 640.0);
+            gl_Position = projectionMatrix * mv;
+          }
+        `,
+        fragmentShader: `
+          uniform sampler2D uMap;
+          varying vec3 vColor;
+          varying float vAlpha;
+          varying float vShade;
+          varying float vHaze;
+          varying vec2 vRot;
+          varying vec2 vMoonDir;
+          void main() {
+            vec2 off = gl_PointCoord - vec2(0.5);
+            // Per-lobe stamp rotation: same billow canvas, never the same curl
+            // twice. Lighting below stays in UNROTATED screen space.
+            vec2 ruv = vec2(vRot.x * off.x - vRot.y * off.y, vRot.y * off.x + vRot.x * off.y) + vec2(0.5);
+            vec4 tex = texture2D(uMap, ruv);
+            // Crown lobes take a HARDER edge (dense sunlit cauliflower);
+            // bases keep the soft feather (mist under the belly).
+            float shaped = mix(tex.a, smoothstep(0.1, 0.62, tex.a), vShade * 0.85);
+            // Value + hue modelling: warm-white crowns falling to blue-grey
+            // undersides — a real shading ramp, not one flat grey.
+            float shadeMix = clamp(vShade * 1.15 - (gl_PointCoord.y - 0.5) * 0.9, 0.0, 1.0);
+            vec3 lit = vColor * mix(vec3(0.5, 0.55, 0.7), vec3(1.12, 1.07, 0.98), shadeMix);
+            // Warm moon-keyed rim on the moon-facing silhouette edge.
+            float edge = smoothstep(0.22, 0.5, length(off));
+            float facing = clamp(dot(normalize(off + vec2(1e-4)), vec2(vMoonDir.x, -vMoonDir.y)), 0.0, 1.0);
+            lit += vec3(1.0, 0.95, 0.84) * edge * facing * facing * 0.55 * (0.35 + 0.65 * vShade);
+            // Aerial perspective: age hazes the body into the dusk sky —
+            // CAPPED so distant clouds keep a silhouette (never a smudge).
+            lit = mix(lit, vec3(0.2, 0.24, 0.38), vHaze);
+            gl_FragColor = vec4(lit, shaped * vAlpha);
+          }
+        `,
+        transparent: true,
+        depthWrite: false,
+      });
+      // Seed the pixel factor from the live viewport (resize keeps it fresh;
+      // the anchor glows below share it once built).
+      puffMat.uniforms.uScale!.value = Math.max(container.clientHeight, 1) / (2 * Math.tan((camera.fov * Math.PI) / 360));
+      const puffs = new THREE.Points(puffGeom, puffMat);
+      puffs.frustumCulled = false;
+      puffs.renderOrder = 6;
+      group.add(puffs);
+      disposables.push(puffGeom, puffMat, puffTexture);
+      // ALL wisps in ONE Mesh of soft-edged additive RIBBONS: quad strips
+      // along an arc that bows gently ABOVE the deck (an arch between clouds,
+      // never a hairline sagging into the ground). aEdge = (across −1..1,
+      // along 0..1) feathers the edge and fades the ends in the shader;
+      // provenance (warm agent / cool lexical) × strength lives in the color.
+      const wispGeom = new THREE.BufferGeometry();
+      const wispPos = new Float32Array(SKY_MAX_WISP_VERTS * 3);
+      const wispColor = new Float32Array(SKY_MAX_WISP_VERTS * 3);
+      const wispEdge = new Float32Array(SKY_MAX_WISP_VERTS * 2);
+      wispGeom.setAttribute("position", new THREE.BufferAttribute(wispPos, 3).setUsage(THREE.DynamicDrawUsage));
+      wispGeom.setAttribute("aColor", new THREE.BufferAttribute(wispColor, 3).setUsage(THREE.DynamicDrawUsage));
+      wispGeom.setAttribute("aEdge", new THREE.BufferAttribute(wispEdge, 2).setUsage(THREE.DynamicDrawUsage));
+      wispGeom.setDrawRange(0, 0);
+      const wispMat = new THREE.ShaderMaterial({
+        vertexShader: `
+          attribute vec3 aColor;
+          attribute vec2 aEdge;
+          varying vec3 vColor;
+          varying vec2 vEdge;
+          void main() {
+            vColor = aColor;
+            vEdge = aEdge;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          }
+        `,
+        fragmentShader: `
+          varying vec3 vColor;
+          varying vec2 vEdge;
+          void main() {
+            float across = 1.0 - abs(vEdge.x);
+            float ends = smoothstep(0.0, 0.14, vEdge.y) * smoothstep(1.0, 0.86, vEdge.y);
+            // Feathered body with a BRIGHT CORE line: the arc must survive
+            // projector distance, not wash out into the haze. The core scales
+            // the provenance color proportionally (channel ratios — the
+            // warm/cool honesty read — stay intact).
+            float core = smoothstep(0.5, 1.0, across);
+            gl_FragColor = vec4(vColor * (1.0 + core * 1.1), across * across * ends * (0.5 + 0.5 * core));
+          }
+        `,
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        side: THREE.DoubleSide,
+      });
+      const wispMesh = new THREE.Mesh(wispGeom, wispMat);
+      wispMesh.frustumCulled = false;
+      wispMesh.renderOrder = 5;
+      group.add(wispMesh);
+      disposables.push(wispGeom, wispMat);
+      // Wisp ENDPOINT ANCHORS: a provenance-colored glow sunk INSIDE each
+      // linked cloud, so an arc visibly BELONGS to its two clouds even when
+      // the ribbon crosses haze. One extra Points draw, ≤2 per wisp.
+      const anchorGeom = new THREE.BufferGeometry();
+      const anchorPos = new Float32Array(MAX_WISPS * 2 * 3);
+      const anchorColor = new Float32Array(MAX_WISPS * 2 * 3);
+      anchorGeom.setAttribute("position", new THREE.BufferAttribute(anchorPos, 3).setUsage(THREE.DynamicDrawUsage));
+      anchorGeom.setAttribute("aColor", new THREE.BufferAttribute(anchorColor, 3).setUsage(THREE.DynamicDrawUsage));
+      anchorGeom.setDrawRange(0, 0);
+      const anchorMat = new THREE.ShaderMaterial({
+        uniforms: { uMap: { value: glowTexture }, uScale: { value: 800 } },
+        vertexShader: `
+          attribute vec3 aColor;
+          varying vec3 vColor;
+          uniform float uScale;
+          void main() {
+            vColor = aColor;
+            vec4 mv = modelViewMatrix * vec4(position, 1.0);
+            gl_PointSize = min(2.4 * uScale / max(-mv.z, 0.1), 160.0);
+            gl_Position = projectionMatrix * mv;
+          }
+        `,
+        fragmentShader: `
+          uniform sampler2D uMap;
+          varying vec3 vColor;
+          void main() {
+            vec4 tex = texture2D(uMap, gl_PointCoord);
+            gl_FragColor = vec4(vColor, tex.a * 0.85);
+          }
+        `,
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      });
+      const anchorPoints = new THREE.Points(anchorGeom, anchorMat);
+      anchorPoints.frustumCulled = false;
+      anchorPoints.renderOrder = 7;
+      group.add(anchorPoints);
+      disposables.push(anchorGeom, anchorMat);
+      anchorMat.uniforms.uScale!.value = puffMat.uniforms.uScale!.value;
+      // ALL rain in ONE Mesh of tapered streak quads anchored to the cloud
+      // base: alpha thins to nothing at the tip and glints where the streak
+      // leaves the cloud. Status keeps the RESEARCH_STATUS_COLOR hue but
+      // desaturated toward rain-grey — finished weather, not debug ticks.
+      const rainGeom = new THREE.BufferGeometry();
+      const rainPos = new Float32Array(SKY_MAX_RAIN_VERTS * 3);
+      const rainColor = new Float32Array(SKY_MAX_RAIN_VERTS * 3);
+      const rainEdge = new Float32Array(SKY_MAX_RAIN_VERTS * 2);
+      rainGeom.setAttribute("position", new THREE.BufferAttribute(rainPos, 3).setUsage(THREE.DynamicDrawUsage));
+      rainGeom.setAttribute("aColor", new THREE.BufferAttribute(rainColor, 3).setUsage(THREE.DynamicDrawUsage));
+      rainGeom.setAttribute("aEdge", new THREE.BufferAttribute(rainEdge, 2).setUsage(THREE.DynamicDrawUsage));
+      rainGeom.setDrawRange(0, 0);
+      const rainMat = new THREE.ShaderMaterial({
+        vertexShader: `
+          attribute vec3 aColor;
+          attribute vec2 aEdge;
+          varying vec3 vColor;
+          varying vec2 vEdge;
+          void main() {
+            vColor = aColor;
+            vEdge = aEdge;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          }
+        `,
+        fragmentShader: `
+          varying vec3 vColor;
+          varying vec2 vEdge;
+          void main() {
+            float across = 1.0 - abs(vEdge.x);
+            float taper = 1.0 - vEdge.y;
+            float glint = smoothstep(0.12, 0.0, vEdge.y) * 0.4;
+            gl_FragColor = vec4(vColor, across * across * (taper * taper * 0.85 + glint));
+          }
+        `,
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        side: THREE.DoubleSide,
+      });
+      const rainMesh = new THREE.Mesh(rainGeom, rainMat);
+      rainMesh.frustumCulled = false;
+      rainMesh.renderOrder = 5;
+      group.add(rainMesh);
+      disposables.push(rainGeom, rainMat);
+      scene.add(group);
+      skyRig = { group, puffTexture, puffGeom, puffMat, puffPos, puffSize, puffColor, puffAlpha, puffShade, puffHaze, puffRot, wispGeom, wispPos, wispColor, wispEdge, anchorGeom, anchorPos, anchorColor, anchorMat, rainGeom, rainPos, rainColor, rainEdge, starMat, moonHalo, moonWorld, disposables };
+      return skyRig;
+    };
+    const clearSkyRig = () => {
+      if (skyRig === null) {
         return;
       }
-      scene.remove(dialogueTreeGroup);
-      dialogueTreeGroup.traverse((node) => {
-        if (node instanceof THREE.Sprite) {
-          if (node.userData.ownMap === true) {
-            node.material.map?.dispose();
-          }
-          node.material.dispose();
-          return;
-        }
-        if (node instanceof THREE.Line) {
-          node.geometry.dispose();
-          (Array.isArray(node.material) ? node.material : [node.material]).forEach((m) => m.dispose());
-          return;
-        }
-        if (node instanceof THREE.Mesh) {
-          if (node.userData.ownGeometry === true) {
-            node.geometry.dispose();
-          }
-          if (node.userData.ownMaterial === true) {
-            (Array.isArray(node.material) ? node.material : [node.material]).forEach((m) => m.dispose());
-          }
-        }
-      });
-      dialogueTreeGroup = null;
+      scene.remove(skyRig.group);
+      for (const resource of skyRig.disposables) {
+        resource.dispose();
+      }
+      skyRig = null;
+      // Hand the daylight world back (mode/layout switched away from the sky).
+      if (env !== null) {
+        env.group.visible = true;
+      }
     };
 
     // Dispose an entry's per-entry GPU resources. Registered materials live in
@@ -2969,105 +3618,144 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       return { kind: "flower", ideaSpec: spec, group, mats, baseEmissive, head, headY: 0, cat: null, catBaseX: 0, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false };
     };
 
-    // ── research-mode builders ──────────────────────────────────────────────
-    // One dialogue turn: a small speaker-tinted glass sphere hung as a LEAF on
-    // its topic's branch. Only the newest few turns carry a text label so the
-    // canopy stays calm.
-    const buildDialogueNode = (spec: DialogueNodeSpec, labeled: boolean): Entry => {
-      const color = speakerColor(spec.speaker);
-      const group = new THREE.Group();
-      const mat = new THREE.MeshStandardMaterial({ roughness: 0.35, metalness: 0.1, transparent: true, opacity: 0.85 });
-      mat.color.set(color).multiplyScalar(0.55);
-      mat.emissive.set(color);
-      mat.emissiveIntensity = labeled ? 0.45 : 0.2;
-      const node = new THREE.Mesh(GEO.turn, mat);
-      node.userData.pick = { kind: "dialogue", key: spec.id };
-      group.add(node);
-      const halo = new THREE.Sprite(
-        new THREE.SpriteMaterial({ map: glowTexture, color, transparent: true, opacity: labeled ? 0.35 : 0.15, blending: THREE.AdditiveBlending, depthWrite: false }),
-      );
-      halo.scale.setScalar(0.9);
-      group.add(halo);
-      // Turns are DIRECTLY researchable (click/dwell → spawn the quest), and
-      // the visible ball is tiny — a generous invisible hit sphere makes the
-      // turn pointable from projector distance, label included.
-      const hit = new THREE.Mesh(
-        new THREE.SphereGeometry(1.1, 8, 8),
-        new THREE.MeshBasicMaterial({ visible: false }),
-      );
-      hit.userData.ownGeometry = true;
-      hit.userData.ownMaterial = true;
-      hit.userData.pick = { kind: "dialogue", key: spec.id };
-      hit.position.y = 0.15;
-      group.add(hit);
-      let label: THREE.Sprite | null = null;
-      if (labeled && spec.text.length > 0) {
-        label = makeLabelSprite(spec.text, spec.speaker ?? "room", cssHex(color));
-        label.position.y = 0.34;
-        group.add(label);
+    // ── research-sky builders ───────────────────────────────────────────────
+    // Regrow a cloud entry's deterministic puff lobes (packed
+    // [ox,oy,oz,size,shade,rot] per lobe): a flat-ish BASE row of large lobes
+    // with smaller cauliflower lobes stacked above — the cumulus silhouette.
+    // Seeded by cloud id, so a cloud keeps its exact shape until more is said.
+    // rot varies the sprite stamp per lobe (no visible repeat-stamping).
+    const genCloudPuffs = (entry: Entry, cloud: ResolvedCloud) => {
+      const count = puffCount(cloud.turnCount);
+      const radius = puffRadius(cloud.turnCount);
+      const rng = mulberry32(hashSeed(`cloud:${cloud.id}`));
+      const data = entry.cloudPuffs ?? new Float32Array(SKY_MAX_PUFFS_PER_CLOUD * 6);
+      // Sculpted cumulus: one broad CORE mass, a flat BASE row of large lobes,
+      // then smaller cauliflower CROWN lobes tapering toward the top — a flat
+      // underside with billowed heights, recognizable in a still screenshot.
+      const baseLobes = Math.max(3, Math.round(count * 0.45));
+      for (let index = 0; index < count; index += 1) {
+        const j = index * 6;
+        if (index === 0) {
+          // The core mass everything else billows out of.
+          data[j] = 0;
+          data[j + 1] = 0.26 * radius;
+          data[j + 2] = 0;
+          data[j + 3] = 1.08 * radius;
+          data[j + 4] = 0.55;
+          data[j + 5] = rng() * Math.PI * 2;
+          continue;
+        }
+        const angle = rng() * Math.PI * 2;
+        if (index <= baseLobes) {
+          // Base row: wide, hugging y≈0 (the flat cloud bottom).
+          const reach = (0.3 + 0.48 * rng()) * radius;
+          data[j] = Math.cos(angle) * reach;
+          data[j + 1] = (0.02 + 0.08 * rng()) * radius;
+          data[j + 2] = Math.sin(angle) * reach * 0.62;
+          data[j + 3] = (0.66 + 0.24 * rng()) * radius;
+        } else {
+          // Crown: the higher a lobe sits, the nearer the centre and the
+          // smaller it billows (the cauliflower taper).
+          const heightN = 0.35 + 0.55 * rng();
+          const reach = (1.05 - heightN) * (0.55 + 0.3 * rng()) * radius;
+          data[j] = Math.cos(angle) * reach;
+          data[j + 1] = heightN * 0.95 * radius;
+          data[j + 2] = Math.sin(angle) * reach * 0.62;
+          data[j + 3] = (0.62 - 0.28 * heightN + 0.12 * rng()) * radius;
+        }
+        // Shade follows height: dark undersides, moonlit crowns.
+        data[j + 4] = Math.max(0, Math.min(1, data[j + 1] / (0.9 * radius) + 0.12));
+        // Stamp rotation: every lobe samples the billow canvas differently.
+        data[j + 5] = rng() * Math.PI * 2;
       }
-      return { kind: "dialogue", dialogueSpec: spec, group, mats: [mat], baseEmissive: mat.emissiveIntensity, head: null, headY: 0, cat: null, catBaseX: 0, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false };
+      entry.cloudPuffs = data;
+      entry.cloudPuffN = count;
+      // The body ramp is mixed per relayout tick (dormant → active white);
+      // the speaker tint stays a ≤12% nudge so the sky reads composed.
+      entry.cloudTint = rawColor(speakerColor(cloud.dominantSpeaker));
+      entry.cloudColor = entry.cloudColor ?? new THREE.Color();
+      entry.cloudColor.copy(CLOUD_DORMANT_RGB);
+      // The invisible hit ellipsoid tracks the cloud's grown size.
+      entry.cloudHit?.scale.set(radius * 1.25, radius * 0.75 + 0.5, radius * 1.25);
     };
 
-    // One research quest: a slowly-spinning crystal budding off its grounding
-    // turn. proposed=blue (click to spawn the research) · researching=green
-    // with a progress ring · complete=mint (click opens the dossier deck) ·
-    // failed=red, dimmed.
-    const buildResearchNode = (spec: ResearchNodeSpec): Entry => {
-      const color = RESEARCH_STATUS_COLOR[spec.status];
-      const size = 0.75 + spec.confidence * 0.55;
-      const baseEmissive =
-        spec.status === "failed" ? 0.12 : spec.status === "proposed" ? 0.35 + spec.confidence * 0.3 : 0.55;
+    // One cloud: an invisible hit ellipsoid (live clouds pick as their topic's
+    // FRESHEST utterance — the branch-tip precedent, so click/dwell researches
+    // the topic through the existing dialogue path) + a lazy label. The
+    // visible body is the shared puff Points buffer.
+    const buildCloudEntry = (cloud: ResolvedCloud): Entry => {
       const group = new THREE.Group();
-      const mat = new THREE.MeshStandardMaterial({
-        roughness: 0.25,
-        metalness: 0.2,
-        transparent: true,
-        opacity: spec.status === "failed" ? 0.55 : 0.95,
-      });
-      mat.color.set(color).multiplyScalar(0.55);
-      mat.emissive.set(color);
-      mat.emissiveIntensity = baseEmissive;
-      const crystal = new THREE.Mesh(GEO.crystal, mat);
-      crystal.scale.setScalar(size);
-      crystal.userData.pick = { kind: "research", key: spec.id };
-      group.add(crystal);
-      const halo = new THREE.Sprite(
-        new THREE.SpriteMaterial({ map: glowTexture, color, transparent: true, opacity: spec.status === "failed" ? 0.12 : 0.4, blending: THREE.AdditiveBlending, depthWrite: false }),
-      );
-      halo.scale.setScalar(size * 3);
-      group.add(halo);
-      if (spec.status === "researching" || spec.status === "complete") {
-        const ring = new THREE.Mesh(
-          new THREE.TorusGeometry(size * 1.3, 0.03, 8, 64),
-          new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.5 }),
-        );
-        ring.userData.ownGeometry = true;
-        ring.userData.ownMaterial = true;
-        ring.rotation.x = Math.PI * 0.42;
-        group.add(ring);
+      const hit = new THREE.Mesh(GEO.hitShell, invisibleHitMat);
+      if (cloud.freshestTurnId !== null) {
+        hit.userData.pick = { kind: "dialogue", key: cloud.freshestTurnId };
       }
-      // Generous invisible hit sphere: crystals are small, float mid-air, and
-      // get pointed at from projector distance — the pick target is ~2x the
-      // visual so dwell cursors and rough mouse aim both land.
+      group.add(hit);
+      const entry: Entry = { kind: "cloud", cloudSpec: cloud, group, mats: [], baseEmissive: 0, head: null, headY: 0, cat: null, catBaseX: 0, label: null, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: (hashSeed(cloud.id) % 628) / 100, flashStart: null, removing: false };
+      entry.cloudHit = hit;
+      genCloudPuffs(entry, cloud);
+      return entry;
+    };
+
+    // The cloud's name card (topic label / agent condensation). PERSISTENT —
+    // one chip per cloud, the glance-readability contract: which topics the
+    // room holds must survive a 2-second look from under the projector.
+    // EXACTLY ONE chip carries the green NOW accent (the single freshest
+    // active cloud); every other card stays cool cyan — no second hue fights
+    // for "current". Agent condensations mark the TITLE (✦) instead of
+    // stealing an accent; wisp warmth stays the provenance surface. Rebuilt
+    // only when the accent tier flips (status ticks repaint in place).
+    const ensureCloudLabel = (entry: Entry, cloud: ResolvedCloud, statusLine: string, active: boolean) => {
+      const accent = active ? CLOUD_NOW_ACCENT : 0x9ee2ff;
+      if (entry.label !== null && entry.label.userData.accent === accent) {
+        return;
+      }
+      if (entry.label !== null) {
+        entry.group.remove(entry.label);
+        entry.label.material.map?.dispose();
+        entry.label.material.dispose();
+        entry.label = null;
+      }
+      const title = cloud.labelSource === "agent" ? `✦ ${cloud.label}` : cloud.label;
+      const label = makeLabelSprite(title, statusLine, cssHex(accent));
+      // Cloud chips sit far (the under-deck vista is ~35-60 units out), so
+      // they scale up to the tree-card read size — and the frame loop
+      // distance-normalizes them so every card reads the SAME size on screen.
+      label.scale.multiplyScalar(2.2);
+      label.userData.baseSX = label.scale.x;
+      label.userData.baseSY = label.scale.y;
+      // The card OVERLAPS its own crown silhouette (bottom edge sunk into the
+      // upper body) — the pill visibly belongs to ITS cloud, never floats.
+      label.position.y = puffRadius(cloud.turnCount) * 0.55 + 0.3;
+      label.userData.accent = accent;
+      entry.label = label;
+      entry.group.add(label);
+    };
+
+    // One research quest: an invisible hit sphere riding under its cloud (the
+    // rain streaks render from the shared buffer) plus a droplet glow once the
+    // dossier is ready. Pick payload stays {kind:"research"} — the existing
+    // accept/deck plumbing is untouched.
+    const buildRainEntry = (spec: ResearchNodeSpec): Entry => {
+      const color = RESEARCH_STATUS_COLOR[spec.status];
+      const group = new THREE.Group();
       const hit = new THREE.Mesh(
-        new THREE.SphereGeometry(Math.max(2.0, size * 1.8), 8, 8),
+        new THREE.SphereGeometry(1.3, 8, 8),
         new THREE.MeshBasicMaterial({ visible: false }),
       );
       hit.userData.ownGeometry = true;
       hit.userData.ownMaterial = true;
       hit.userData.pick = { kind: "research", key: spec.id };
       group.add(hit);
-      const statusLine =
-        spec.status === "researching"
-          ? `${RESEARCH_KIND_GLYPH[spec.kind]} · ${Math.round(spec.progress)}%`
-          : spec.status === "complete"
-            ? `${RESEARCH_KIND_GLYPH[spec.kind]} · open dossier`
-            : `${RESEARCH_KIND_GLYPH[spec.kind]} · ${spec.status}`;
-      const label = makeLabelSprite(spec.topic, statusLine, cssHex(color));
-      label.position.y = size + 0.3;
-      group.add(label);
-      return { kind: "research", researchSpec: spec, group, mats: [mat], baseEmissive, head: null, headY: 0, cat: null, catBaseX: 0, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false };
+      // The droplet: a small glow at the streak head — bright mint when the
+      // dossier is open-able, dim red when the research failed.
+      if (spec.status === "complete" || spec.status === "failed") {
+        const droplet = new THREE.Sprite(
+          new THREE.SpriteMaterial({ map: glowTexture, color, transparent: true, opacity: spec.status === "complete" ? 0.7 : 0.25, blending: THREE.AdditiveBlending, depthWrite: false }),
+        );
+        droplet.scale.setScalar(spec.status === "complete" ? 1.6 : 1.0);
+        group.add(droplet);
+      }
+      return { kind: "research", researchSpec: spec, group, mats: [], baseEmissive: 0, head: null, headY: 0, cat: null, catBaseX: 0, label: null, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: (hashSeed(spec.id) % 628) / 100, flashStart: null, removing: false };
     };
 
     // Boundary/context cues per layout: the Poincaré ball's wireframe horizon,
@@ -3172,15 +3860,10 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
     const ideaSpecChanged = (a: IdeaOrbSpec, b: IdeaOrbSpec) =>
       a.status !== b.status || a.maturity !== b.maturity || a.verified !== b.verified ||
       a.pitch !== b.pitch || Math.abs(a.confidence - b.confidence) > 0.005;
-const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
-      a.status !== b.status || a.topic !== b.topic || a.kind !== b.kind ||
-      Math.round(a.progress) !== Math.round(b.progress) ||
-      Math.abs(a.confidence - b.confidence) > 0.005;
-    // Coalescing may GROW a turn's text in place under its stable id — a
-    // labeled leaf must rebuild so its card shows the grown utterance. topicId
-    // changes only move the leaf (targetPos glides), never rebuild it.
-    const dialogueSpecChanged = (a: DialogueNodeSpec, b: DialogueNodeSpec) =>
-      a.text !== b.text || a.speaker !== b.speaker;
+    // Rain rebuilds only on a STATUS/topic move (the droplet + hit chrome
+    // change); progress rides the streak animation, not a rebuild.
+    const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
+      a.status !== b.status || a.topic !== b.topic || a.kind !== b.kind;
 
     // Trees split changes in two: STRUCTURAL (treeSpecStructurallyChanged →
     // dispose+rebuild) vs a bare progress tick (→ the entry's in-place
@@ -3207,21 +3890,28 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
           disposeEntry(entry);
         }
         treeEntries.clear();
-        for (const entry of dialogueEntries.values()) {
+        for (const entry of cloudEntries.values()) {
           disposeEntry(entry);
         }
-        dialogueEntries.clear();
+        cloudEntries.clear();
+        freshTurnToCloud.clear();
         for (const entry of researchEntries.values()) {
           disposeEntry(entry);
         }
         researchEntries.clear();
-        clearDialogueLines();
-        clearDialogueTree();
+        clearSkyRig();
         buildLayoutDecor();
         builtMode = modeRef.current;
         builtKey = key;
         resetRig();
       }
+
+      // Resolve the conversation sky FIRST (used below, and it gates the idle
+      // placeholder): a window holding clouds is the research ceiling — no
+      // stray "forming" flower floating in its dusk.
+      const nowMs = Date.now();
+      const clouds = resolveClouds(topicsRef.current, skyRef.current, dialogueRef.current);
+      const skyActive = clouds.length > 0;
 
       // PER-WALL CONTRACT: the 3D scene reconciles the FULL data set — all
       // ideas AND all builds — on every window regardless of ?view=. Walls
@@ -3230,7 +3920,9 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
       const ideaSpecs: IdeaOrbSpec[] =
         ideasRef.current.length > 0
           ? ideasRef.current
-          : [{ id: "__idle__", pitch: "", confidence: 0.25, status: "forming", maturity: "forming", verified: false }];
+          : skyActive
+            ? []
+            : [{ id: "__idle__", pitch: "", confidence: 0.25, status: "forming", maturity: "forming", verified: false }];
       // The HD self-repo tree stands in the garden's radial layout only —
       // resolving it HERE (null everywhere else) lets visibleTreeSpecs skip
       // the mirror's fleet tree exactly when the HD tree replaces it, and
@@ -3417,133 +4109,200 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
         }
       }
 
-      // ── the 3D conversation tree ────────────────────────────────────────
-      // Trunk → topic branches → turn leaves: the newest DIALOGUE_MAX_NODES
-      // turns hang as leaves on their topic's branch (newest nearest the
-      // tip); research crystals bud off their grounding leaf. Zero cost when
-      // the props are empty — nothing mounts, the classic scene is untouched.
-      const dialogueSpecs = dialogueRef.current.slice(-DIALOGUE_MAX_NODES);
-      const branches = dialogueBranches(dialogueSpecs, topicsRef.current);
-      const trunkHeight = dialogueTrunkHeight(branches.length);
-      const turnPositions = new Map<string, THREE.Vector3>();
-      branches.forEach((branch, branchIndex) => {
-        const length = dialogueBranchLength(branch.turnIds.length);
-        branch.turnIds.forEach((turnId, memberIndex) => {
-          turnPositions.set(
-            turnId,
-            dialogueLeafPosition(branchIndex, branches.length, trunkHeight, length, memberIndex, branch.turnIds.length),
-          );
-        });
+      // ── the conversation SKY ────────────────────────────────────────────
+      // One cloud per concept topic on the polar time fan (overhead = now,
+      // horizon = the past), wisps between related clouds (provenance-
+      // colored), research quests as RAIN. Prefers the server's beyond-the-
+      // window `sky`; falls back to dialogueTopics when it is absent (no
+      // wisps then — the fallback invents no relations). Zero cost when the
+      // research props are empty — nothing mounts, the classic scene is
+      // untouched. (`clouds` resolved above, before the idea sweep.)
+      if (skyActive) {
+        ensureSkyRig();
+      }
+      // The ceiling is its own dusk world: the daylight garden (meadow,
+      // butterflies, sunny panorama) hides wholesale while the sky stands.
+      if (env !== null && skyRig !== null) {
+        env.group.visible = false;
+      }
+      const cloudIds = new Set(clouds.map((cloud) => cloud.id));
+      skyWisps = selectWisps(skyRef.current?.links ?? [], cloudIds);
+      const agentLinked = new Set<string>();
+      for (const link of skyWisps) {
+        if (link.source === "agent") {
+          agentLinked.add(link.a);
+          agentLinked.add(link.b);
+        }
+      }
+      // HONESTY FLICKER: agentAtMs ADVANCED = the relate thread actually
+      // applied an update — the agent-linked clouds answer with ~1.2s of
+      // internal lightning. The lexical fallback never stamps, so the sky
+      // never flickers on invented relations.
+      const agentAt = skyRef.current?.agentAtMs ?? null;
+      if (agentAt !== null && agentAt !== skyAgentAtMs && skyAgentAtMs !== null) {
+        skyFlashUntil = performance.now() + 1200;
+      }
+      skyAgentAtMs = agentAt;
+      freshTurnToCloud.clear();
+      // Bearings: hash-stable inside the visible fan, gravitated ≤25% toward
+      // the strongest partner, then relaxed apart (spreadAzimuths) so the
+      // vista reads balanced — clouds never clump into one corner of frame.
+      const rawBearings = clouds.map((cloud) => {
+        const partner = strongestPartner(cloud.id, skyWisps);
+        let az = fanAzimuth(cloud.id, skyFanCenter);
+        if (partner !== null) {
+          az = gravitatedAzimuth(az, fanAzimuth(partner.id, skyFanCenter), partner.strength);
+        }
+        return { id: cloud.id, az };
       });
-      const seenTurns = new Set<string>();
-      dialogueSpecs.forEach((spec, index) => {
-        seenTurns.add(spec.id);
-        const labeled = index >= dialogueSpecs.length - DIALOGUE_LABELED;
-        const placed =
-          turnPositions.get(spec.id) ?? new THREE.Vector3(DIALOGUE_CENTER_X, trunkHeight, DIALOGUE_CENTER_Z);
-        const existing = dialogueEntries.get(spec.id);
-        const wasLabeled = existing !== undefined && existing.label !== null;
-        const changed =
-          existing?.dialogueSpec !== undefined && dialogueSpecChanged(existing.dialogueSpec, spec);
-        if (existing === undefined || wasLabeled !== labeled || changed) {
-          if (existing !== undefined) {
-            disposeEntry(existing);
-          }
-          const entry = buildDialogueNode(spec, labeled);
-          entry.targetPos = placed;
-          entry.phase = index * 0.7;
-          entry.group.position.copy(existing?.group.position ?? placed);
-          entry.group.scale.setScalar(existing !== undefined ? Math.max(existing.group.scale.x, 0.01) : 0.01);
-          dialogueEntries.set(spec.id, entry);
+      // Near-uniform spread: bodies cap at puffRadius 6, so pushing bearings
+      // toward even spacing keeps every silhouette separate (label→cloud
+      // binding depends on it), while ≥14 clouds still honor ~10° minimum.
+      const minSep = Math.min(0.8, ((SKY_FAN_HALF * 2) / Math.max(clouds.length - 1, 1)) * 0.9);
+      const bearings = spreadAzimuths(rawBearings, skyFanCenter, minSep);
+      const seenClouds = new Set<string>();
+      for (const cloud of clouds) {
+        seenClouds.add(cloud.id);
+        // TIME IS THE LAYOUT: radius + altitude follow the age log law (fresh
+        // = lifted overhead near the core, old = sunk to the horizon rim);
+        // the bearing stays hash-anchored — clouds never orbit randomly.
+        const age = cloudAge(nowMs, cloud.freshAtMs);
+        const azimuth = bearings.get(cloud.id) ?? fanAzimuth(cloud.id, skyFanCenter);
+        const radius = cloudRadius(age);
+        const norm = radiusNorm(age);
+        const altJitter = ((hashSeed(`alt:${cloud.id}`) % 1000) / 1000 - 0.5) * 1.4;
+        let entry = cloudEntries.get(cloud.id);
+        if (entry === undefined) {
+          entry = buildCloudEntry(cloud);
+          entry.targetPos.set(Math.sin(azimuth) * radius, cloudAltitude(norm, altJitter), Math.cos(azimuth) * radius);
+          // Clouds CONDENSE: scale in from nothing at their own spot.
+          entry.group.position.copy(entry.targetPos);
+          entry.group.scale.setScalar(0.01);
+          cloudEntries.set(cloud.id, entry);
           scene.add(entry.group);
         } else {
-          existing.dialogueSpec = spec;
-          existing.targetPos = placed;
-          existing.removing = false;
-          existing.targetScale = 1;
+          const prior = entry.cloudSpec;
+          entry.targetPos.set(Math.sin(azimuth) * radius, cloudAltitude(norm, altJitter), Math.cos(azimuth) * radius);
+          entry.removing = false;
+          entry.targetScale = 1;
+          // More said → the cloud regrows its lobes; a rename (agent
+          // condensation or topic relabel) drops the card so the next show
+          // repaints it.
+          if (prior !== undefined && (prior.turnCount !== cloud.turnCount || prior.dominantSpeaker !== cloud.dominantSpeaker)) {
+            genCloudPuffs(entry, cloud);
+          }
+          if (prior !== undefined && prior.label !== cloud.label && entry.label !== null) {
+            entry.group.remove(entry.label);
+            entry.label.material.map?.dispose();
+            entry.label.material.dispose();
+            entry.label = null;
+          }
+          entry.cloudSpec = cloud;
+          // The pick identity follows the freshest utterance; a memory cloud
+          // (nothing live left) honestly exposes no pick at all.
+          if (entry.cloudHit !== undefined) {
+            entry.cloudHit.userData.pick =
+              cloud.freshestTurnId !== null ? { kind: "dialogue", key: cloud.freshestTurnId } : undefined;
+          }
         }
-      });
-      for (const [specId, entry] of dialogueEntries) {
-        if (!seenTurns.has(specId)) {
-          entry.removing = true;
-          entry.targetScale = 0;
+        entry.cloudNorm = norm;
+        entry.cloudLife = lifeFactor(age);
+        entry.cloudJitter = altJitter;
+        entry.cloudHasAgentLink = agentLinked.has(cloud.id);
+        if (cloud.freshestTurnId !== null) {
+          freshTurnToCloud.set(cloud.freshestTurnId, cloud.id);
+        }
+      }
+      for (const [cloudId, entry] of cloudEntries) {
+        if (seenClouds.has(cloudId) || entry.removing) {
+          continue;
+        }
+        // MERGE choreography: a vanished cloud glides into whichever cloud
+        // absorbed its members (mergeTarget — real re-assignments, never
+        // invented), else it fades where it stands. The survivor flashes.
+        const survivorId = mergeTarget(cloudId, prevCloudMembers.get(cloudId) ?? [], dialogueRef.current, clouds);
+        const survivor = survivorId !== null ? cloudEntries.get(survivorId) : undefined;
+        if (survivor !== undefined) {
+          entry.targetPos.copy(survivor.targetPos);
+          survivor.flashStart = performance.now();
+        }
+        entry.removing = true;
+        entry.targetScale = 0;
+      }
+      // Refresh the merge evidence for next time (live membership only).
+      prevCloudMembers.clear();
+      for (const cloud of clouds) {
+        if (cloud.liveTopicId === null) {
+          continue;
+        }
+        const topic = topicsRef.current.find((candidate) => candidate.id === cloud.liveTopicId);
+        if (topic !== undefined) {
+          prevCloudMembers.set(cloud.id, topic.turnIds);
         }
       }
 
+      // RAIN: one entry per research quest, hanging under its cloud (the
+      // zenith core when the grounding turn's cloud is unknown). Siblings fan
+      // out so every quest stays separately pointable.
       const researchSpecs = researchRef.current;
       const seenResearch = new Set<string>();
-      const crystalPositions = new Map<string, THREE.Vector3>();
-      // Same-turn quests would otherwise land on the IDENTICAL point (same
-      // anchor, same outward vector) — fan the k-th sibling around the trunk
-      // axis and stagger it out/up so every crystal is separately pointable.
-      const anchorSiblings = new Map<string, number>();
-      const yAxis = new THREE.Vector3(0, 1, 0);
-      let orphanIndex = 0;
-      researchSpecs.forEach((spec, index) => {
+      const rainSiblings = new Map<string, number>();
+      for (const spec of researchSpecs) {
         seenResearch.add(spec.id);
-        const anchor = spec.turnId !== null ? turnPositions.get(spec.turnId) : undefined;
-        let placed: THREE.Vector3;
-        if (anchor !== undefined) {
-          const sibling = anchorSiblings.get(spec.turnId!) ?? 0;
-          anchorSiblings.set(spec.turnId!, sibling + 1);
-          // Bud outward from the helix axis through the grounding turn.
-          const out = new THREE.Vector3(anchor.x - DIALOGUE_CENTER_X, 0, anchor.z - DIALOGUE_CENTER_Z);
-          if (out.lengthSq() < 1e-6) {
-            out.set(1, 0, 0);
-          }
-          out.normalize();
-          out.applyAxisAngle(yAxis, sibling * 0.85);
-          placed = anchor
-            .clone()
-            .addScaledVector(out, 3.4 + sibling * 0.6)
-            .add(new THREE.Vector3(0, 0.6 + sibling * 0.8, 0));
-        } else {
-          // No grounding turn in the window: crown the tree's canopy.
-          const angle = orphanIndex * 1.6;
-          placed = new THREE.Vector3(
-            DIALOGUE_CENTER_X + Math.cos(angle) * 5.4,
-            trunkHeight + 1.2 + orphanIndex * 0.5,
-            DIALOGUE_CENTER_Z + Math.sin(angle) * 5.4,
-          );
-          orphanIndex += 1;
-        }
-        crystalPositions.set(spec.id, placed);
+        const cloudId = questCloudId(spec.turnId, dialogueRef.current, clouds);
+        const anchor = cloudId !== null ? cloudEntries.get(cloudId) : undefined;
+        const sibling = rainSiblings.get(cloudId ?? "@zenith") ?? 0;
+        rainSiblings.set(cloudId ?? "@zenith", sibling + 1);
+        const fan = (hashSeed(`rain:${spec.id}`) % 628) / 100;
+        // Streaks stay CONFINED under their cloud's footprint (a detached
+        // tick reads as a glitch): lateral spread scales with the cloud's own
+        // radius. Orphans (turn gone, cloud unknown) hang at the inner deck.
+        const anchorSpread =
+          anchor?.cloudSpec !== undefined ? puffRadius(anchor.cloudSpec.turnCount) * (0.28 + 0.18 * sibling) : 0.8 + sibling * 0.5;
+        const placed =
+          anchor !== undefined
+            ? new THREE.Vector3(
+                anchor.targetPos.x + Math.cos(fan) * anchorSpread,
+                anchor.targetPos.y - 0.9,
+                anchor.targetPos.z + Math.sin(fan) * anchorSpread,
+              )
+            : new THREE.Vector3(
+                Math.sin(skyFanCenter) * 4 + Math.cos(fan) * 1.8,
+                SKY_ALT + 1.2 - sibling * 0.6,
+                Math.cos(skyFanCenter) * 4 + Math.sin(fan) * 1.8,
+              );
+        // Shower footprint: streaks spread under the parent cloud's own base
+        // (orphans get a tight zenith drizzle).
+        const spread =
+          anchor?.cloudSpec !== undefined ? Math.max(1.2, puffRadius(anchor.cloudSpec.turnCount) * 0.55) : 1.2;
         const existing = researchEntries.get(spec.id);
-        const create = () => {
-          const entry = buildResearchNode(spec);
-          entry.targetPos = placed;
-          entry.phase = index * 1.7;
-          entry.group.position.copy(placed);
-          entry.group.scale.setScalar(0.01);
+        if (existing === undefined || (existing.researchSpec !== undefined && researchSpecChanged(existing.researchSpec, spec))) {
+          // Completing is THE payoff moment: the finished rain flashes.
+          const finished =
+            existing?.researchSpec !== undefined && existing.researchSpec.status !== "complete" && spec.status === "complete";
+          const keepPos = existing?.group.position.clone();
+          const keepScale = existing?.group.scale.x;
+          if (existing !== undefined) {
+            disposeEntry(existing);
+          }
+          const entry = buildRainEntry(spec);
+          entry.targetPos.copy(placed);
+          entry.rainSpread = spread;
+          entry.group.position.copy(keepPos ?? placed);
+          entry.group.scale.setScalar(Math.max(keepScale ?? 0.01, 0.01));
           researchEntries.set(spec.id, entry);
           scene.add(entry.group);
-          return entry;
-        };
-        if (existing === undefined) {
-          const entry = create();
-          if (spec.status === "proposed") {
-            entry.flashStart = performance.now();
-          }
-        } else if (existing.researchSpec !== undefined && researchSpecChanged(existing.researchSpec, spec)) {
-          // Completing is THE payoff moment: flash the finished crystal.
-          const finished = existing.researchSpec.status !== "complete" && spec.status === "complete";
-          const keepPos = existing.group.position.clone();
-          const keepScale = existing.group.scale.x;
-          const keepPhase = existing.phase;
-          disposeEntry(existing);
-          const entry = create();
-          entry.phase = keepPhase;
-          entry.group.position.copy(keepPos);
-          entry.group.scale.setScalar(Math.max(keepScale, 0.01));
-          if (finished) {
+          if (finished || (existing === undefined && spec.status === "proposed")) {
             entry.flashStart = performance.now();
           }
         } else {
-          existing.targetPos = placed;
+          existing.researchSpec = spec;
+          existing.targetPos.copy(placed);
+          existing.rainSpread = spread;
           existing.removing = false;
           existing.targetScale = 1;
         }
-      });
+      }
       for (const [specId, entry] of researchEntries) {
         if (!seenResearch.has(specId)) {
           entry.removing = true;
@@ -3551,86 +4310,25 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
         }
       }
 
-      // Tree structure: the HD tree module grows the wood (tapered merged
-      // tubes along organic curves), the instanced canopy, the leaf-tuft
-      // petioles and the tip buds from the SAME tested layout (the pure
-      // dialogueTreeSpec3D mapping) — branch tips and leaf slots stay exactly
-      // where the raycast/dwell targeting expects them. The scene layers its
-      // tip chrome (topic label, glow, hit sphere) on top. Skipped whole when
-      // the spec signature is unchanged; crystal filaments below stay cheap
-      // lines rebuilt every reconcile (their endpoints track entries).
-      clearDialogueLines();
-      const treeSpec = branches.length > 0 ? dialogueTreeSpec3D(dialogueSpecs, topicsRef.current) : null;
-      const treeSig = treeSpec === null ? null : treeSpecSignature(treeSpec);
-      if (treeSig !== dialogueTreeSig) {
-        clearDialogueTree();
-        dialogueTreeSig = treeSig;
-        if (treeSpec !== null) {
-          dialogueTreeBuilt = buildTreeLOD(treeSpec);
-          const treeGroup = new THREE.Group();
-          treeGroup.add(dialogueTreeBuilt.group);
-          for (const branchSpec of treeSpec.branches) {
-            const tipSpec = branchSpec.tip;
-            if (tipSpec === undefined || branchSpec.points.length === 0) {
-              continue;
-            }
-            const tip = branchSpec.points[branchSpec.points.length - 1];
-            const tipGlow = new THREE.Sprite(
-              new THREE.SpriteMaterial({ map: glowTexture, color: tipSpec.color, transparent: true, opacity: 0.3, blending: THREE.AdditiveBlending, depthWrite: false }),
-            );
-            tipGlow.position.set(tip.x, tip.y + 0.2, tip.z);
-            tipGlow.scale.setScalar(1.7);
-            treeGroup.add(tipGlow);
-            // The concept readout: the topic label rides the branch tip, always
-            // visible (its canvas map is per-label — the clear pass frees it).
-            const label = makeLabelSprite(tipSpec.label ?? "", tipSpec.sub ?? "", cssHex(tipSpec.color));
-            label.userData.ownMap = true;
-            label.position.set(tip.x, tip.y + 0.3, tip.z);
-            treeGroup.add(label);
-            // Concept branches are research targets too: the tip cluster's hit
-            // sphere picks as the topic's FRESHEST utterance, so clicking or
-            // dwelling a branch label researches it through the existing
-            // dialogue path — zero new plumbing.
-            if (tipSpec.pickId !== null && tipSpec.pickId !== undefined) {
-              const hit = new THREE.Mesh(new THREE.SphereGeometry(1.3, 8, 8), invisibleHitMat);
-              hit.userData.ownGeometry = true;
-              hit.userData.pick = { kind: "dialogue", key: tipSpec.pickId };
-              hit.position.set(tip.x, tip.y + 0.55, tip.z);
-              treeGroup.add(hit);
-            }
-          }
-          scene.add(treeGroup);
-          dialogueTreeGroup = treeGroup;
-        }
-      }
-      for (const spec of researchSpecs) {
-        const anchor = spec.turnId !== null ? turnPositions.get(spec.turnId) : undefined;
-        const crystalPos = crystalPositions.get(spec.id);
-        if (anchor === undefined || crystalPos === undefined) {
-          continue;
-        }
-        const branchGeom = new THREE.BufferGeometry().setFromPoints([anchor, crystalPos]);
-        const branch = new THREE.Line(
-          branchGeom,
-          new THREE.LineBasicMaterial({
-            color: RESEARCH_STATUS_COLOR[spec.status],
-            transparent: true,
-            opacity: 0.45,
-          }),
-        );
-        scene.add(branch);
-        dialogueLines.push(branch);
-      }
+      // Fresh membership ⇒ fresh back-to-front lobe order for the normal-
+      // blended cumulus bodies (re-sorted again on the 1s relayout tick).
+      rebuildSkyLobeOrder(camera.position);
+
+      // Prober stamps: the sky's structural counts (data-labeled-clouds and
+      // data-draw-calls ride the 1s tick in the frame loop).
+      container.dataset.cloudCount = String(clouds.length);
+      container.dataset.wispCount = String(skyWisps.length);
+      container.dataset.rainCount = String(Math.min(researchSpecs.length, SKY_MAX_RAIN_QUESTS));
+
     };
 
     // ── fit to content (visualizer's fitToScreen, adapted to the orbit rig) ─
     // The one-shot F/fitSignal fit and the continuous auto-fit poll share ONE
     // framing computation over the same bounds: every live entry's target
-    // position — ideas, build trees, dialogue TURN leaves and research
-    // crystals alike (the dialogue trunk sits at the origin inside the leaves'
-    // hull, and branch tips/labels ride within the +7 radius margin, so the
-    // whole conversation tree stays framed). Scratch objects are hoisted and
-    // reused: the ~0.75s auto-fit poll must not allocate.
+    // position — ideas, build trees, sky CLOUDS and research rain alike (the
+    // cloud disc is bounded at R_HORIZON, so the auto-refit hysteresis
+    // converges instead of chasing an ever-growing hull). Scratch objects are
+    // hoisted and reused: the ~0.75s auto-fit poll must not allocate.
     const fitBox = new THREE.Box3();
     const fitCenter = new THREE.Vector3();
     const fitSize = new THREE.Vector3();
@@ -3650,7 +4348,7 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
       fitBox.makeEmpty();
       let hasContent = fitExpand(ideaEntries);
       hasContent = fitExpand(treeEntries) || hasContent;
-      hasContent = fitExpand(dialogueEntries) || hasContent;
+      hasContent = fitExpand(cloudEntries) || hasContent;
       hasContent = fitExpand(researchEntries) || hasContent;
       if (!hasContent) {
         return false;
@@ -3672,6 +4370,18 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
       rig.dHeight = fitIdeal.height;
     };
     const fitToContent = () => {
+      if (skyViewRef.current) {
+        // The sky vista IS the composition (an under-deck upward pitch over a
+        // bounded disc): any bbox re-frame would put the camera back outside
+        // and above, flattening the ceiling into a horizon band. A fit
+        // request simply restores the boot pose.
+        rig.dHeight = 1.8;
+        rig.dRadius = 34;
+        rig.lookY = SKY_ALT - 3;
+        rig.dTargetX = 0;
+        rig.dTargetZ = 0;
+        return;
+      }
       if (!computeFitTargets(fitIdeal)) {
         resetRig();
         return;
@@ -3708,10 +4418,15 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
     // AUTO_FIT_RESUME_MS after the last stamp. Seeded in the past so a fresh
     // window is eligible immediately; the current-framing scratch keeps the
     // poll allocation-free.
-    const autoFitOn = autoFitRef.current && !cornerLockRef.current && !flatLockRef.current;
+    // skyView windows opt OUT of continuous auto-framing: the under-deck
+    // vista is a fixed composition over a bounded disc (R_HORIZON), and the
+    // bbox framing would pitch the camera back down into a horizon band.
+    const autoFitOn = autoFitRef.current && !cornerLockRef.current && !flatLockRef.current && !skyViewRef.current;
     let lastCameraInputMs = -AUTO_FIT_RESUME_MS;
     let lastAutoFitPollMs = 0;
     const autoFitCurrent = { targetX: 0, targetZ: 0, radius: 0 };
+    // The sky's 1s relayout cadence (age drift + label arbitration + stamps).
+    let skyLastRelayoutMs = 0;
 
     // How many payload-bearing intersections one pick considers before the
     // precedence rule runs: deep enough to see a sub-target standing behind
@@ -3740,15 +4455,12 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
           targets.push(entry.group);
         }
       }
-      for (const entry of dialogueEntries.values()) {
+      for (const entry of cloudEntries.values()) {
+        // Cloud hit ellipsoids pick as their topic's freshest turn
+        // ({kind:"dialogue"}); memory clouds carry no payload and fall through.
         if (!entry.removing) {
           targets.push(entry.group);
         }
-      }
-      if (dialogueTreeGroup !== null) {
-        // Branch-tip topic labels carry hit spheres keyed to their freshest
-        // turn; the trunk/tubes carry no pick data, so they fall through.
-        targets.push(dialogueTreeGroup);
       }
       // A tree's coarse CANOPY volume encloses its own limbs and fruit, so
       // "the first payload the ray crossed wins" made every sub-target
@@ -3958,7 +4670,10 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
           return `${SCENE_RESEARCH_PREFIX}${picked.key}`;
         }
       } else if (picked?.kind === "dialogue" && picked.key !== undefined) {
-        const entry = dialogueEntries.get(picked.key);
+        // A turn pick is a CLOUD pick (the cloud's hit ellipsoid carries its
+        // topic's freshest turn id) — resolve through the fresh-turn index.
+        const cloudId = freshTurnToCloud.get(picked.key);
+        const entry = cloudId !== undefined ? cloudEntries.get(cloudId) : undefined;
         if (entry !== undefined && !entry.removing) {
           return `${SCENE_TURN_PREFIX}${picked.key}`;
         }
@@ -3973,7 +4688,8 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
         return researchEntries.get(id.slice(SCENE_RESEARCH_PREFIX.length)) ?? null;
       }
       if (id.startsWith(SCENE_TURN_PREFIX)) {
-        return dialogueEntries.get(id.slice(SCENE_TURN_PREFIX.length)) ?? null;
+        const cloudId = freshTurnToCloud.get(id.slice(SCENE_TURN_PREFIX.length));
+        return cloudId !== undefined ? cloudEntries.get(cloudId) ?? null : null;
       }
       if (id.startsWith(SCENE_PROC_PREFIX)) {
         const callsign = id.slice(SCENE_PROC_PREFIX.length);
@@ -4084,8 +4800,10 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
           onAcceptRef.current(entry.ideaSpec.id);
         } else if (id.startsWith(SCENE_RESEARCH_PREFIX) && entry.researchSpec !== undefined) {
           onResearchRef.current?.(entry.researchSpec.id);
-        } else if (id.startsWith(SCENE_TURN_PREFIX) && entry.dialogueSpec !== undefined) {
-          onDialogueRef.current?.(entry.dialogueSpec.id);
+        } else if (id.startsWith(SCENE_TURN_PREFIX) && entry.kind === "cloud") {
+          // The dwelled cloud researches its freshest utterance (the turn id
+          // IS the target id's key — same contract as the click path).
+          onDialogueRef.current?.(id.slice(SCENE_TURN_PREFIX.length));
         } else if (id.startsWith(SCENE_PROC_PREFIX) && entry.treeSpec !== undefined) {
           // Dwell activation: same anchor contract as the click path.
           onSelectRef.current(entry.treeSpec.callsign, dwellRectFor(id));
@@ -4254,6 +4972,13 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
       }
       renderer.setSize(width, height);
       camera.aspect = width / height;
+      // Puff sprites are sized in-shader (world size / distance): keep the
+      // pixel factor tied to the viewport height + vertical fov.
+      if (skyRig !== null) {
+        const pixelFactor = height / (2 * Math.tan((camera.fov * Math.PI) / 360));
+        skyRig.puffMat.uniforms.uScale!.value = pixelFactor;
+        skyRig.anchorMat.uniforms.uScale!.value = pixelFactor;
+      }
       if (flatLocked) {
         // This window renders ITS column of the pair's single wide frustum.
         // setViewOffset also sets camera.aspect to the FULL panorama's, and
@@ -4504,12 +5229,13 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
         applyRig();
       }
 
-      env?.update(t, dt);
-      // HD conversation tree: leaf-card wind sway (instance matrices only —
-      // the wood never moves, so pinned leaf entries/labels stay attached).
-      // The self-repo tree shares the engine, so its foliage sways too.
+      // The daylight env is hidden while the sky stands — don't animate
+      // invisible butterflies.
+      if (env !== null && env.group.visible) {
+        env.update(t, dt);
+      }
+      // HD self-repo tree: leaf-card wind sway (instance matrices only).
       if (!reducedMotion) {
-        dialogueTreeBuilt?.update(t);
         selfTreeBuilt?.update(t);
       }
 
@@ -4593,34 +5319,336 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
         }
       }
 
-      // Dialogue turns: glide to their leaf slot, gentle removal fade.
-      for (const [specId, entry] of dialogueEntries) {
-        entry.group.position.lerp(entry.targetPos, smoothing);
-        // Turns are researchable targets: hover/dwell reads back as the same
-        // grow-and-glow the crystals use, so pointing feels alive everywhere.
-        const turnHovered =
-          hoveredTurn === specId || dwellHighlights.has(`${SCENE_TURN_PREFIX}${specId}`);
-        const next = THREE.MathUtils.lerp(
-          entry.group.scale.x,
-          entry.targetScale * (entry.removing ? 0 : turnHovered ? 1.35 : 1),
-          smoothing,
-        );
-        entry.group.scale.setScalar(Math.max(next, 0.0001));
-        entry.mats[0].emissiveIntensity = entry.baseEmissive + (turnHovered ? 0.35 : 0);
-        if (entry.removing && entry.group.scale.x < 0.02) {
-          disposeEntry(entry);
-          dialogueEntries.delete(specId);
+      // ── the conversation sky, per frame ─────────────────────────────────
+      // Clouds DRIFT (slow τ≈3s lerp — recurrence made visible: a topic that
+      // comes back glides overhead instead of snapping). Pass 1 walks the
+      // cloud entries (motion, chips, per-cloud light); pass 2 walks the
+      // depth-sorted lobe order rewriting the shared Points buffers (normal
+      // blending needs back-to-front). Zero allocation in this whole block.
+      const skySmoothing = 1 - Math.exp(-dt * 0.35);
+      // 1s low-cadence relayout: ages advance through silence between
+      // snapshots (radius + altitude keep drifting toward the horizon), the
+      // body ramp re-mixes, the lobe order re-sorts, prober stamps refresh.
+      const relayoutDue = now - skyLastRelayoutMs >= 1000;
+      if (relayoutDue) {
+        skyLastRelayoutMs = now;
+      }
+      const hoveredCloudId = hoveredTurn !== null ? freshTurnToCloud.get(hoveredTurn) ?? null : null;
+      let activeCloudId: string | null = null;
+      let activeFresh = 0;
+      const nowEpoch = Date.now();
+      for (const [cloudId, entry] of cloudEntries) {
+        const cloud = entry.cloudSpec;
+        if (entry.removing || cloud === undefined) {
+          continue;
+        }
+        const age = cloudAge(nowEpoch, cloud.freshAtMs);
+        if (age < ACTIVE_MS && cloud.freshAtMs > activeFresh) {
+          activeCloudId = cloudId;
+          activeFresh = cloud.freshAtMs;
+        }
+        if (relayoutDue) {
+          // Write targets only (auto-fit-poll discipline): radius + altitude
+          // from the fresh age; the bearing stays whatever reconcile computed.
+          const norm = radiusNorm(age);
+          const radial = Math.hypot(entry.targetPos.x, entry.targetPos.z);
+          if (radial > 1e-6) {
+            const radius = cloudRadius(age);
+            entry.targetPos.x *= radius / radial;
+            entry.targetPos.z *= radius / radial;
+          }
+          entry.targetPos.y = cloudAltitude(norm, entry.cloudJitter ?? 0);
+          entry.cloudNorm = norm;
+          entry.cloudLife = lifeFactor(age);
+          // Body ramp: dormant lavender-grey → near-white while ACTIVE (the
+          // focal law), relaxing back over ~3min of silence; ≤12% speaker
+          // tint on top so the sky stays composed, not carnival.
+          const activeness = age < ACTIVE_MS ? 1 : Math.max(0, 1 - (age - ACTIVE_MS) / 180_000);
+          if (entry.cloudColor !== undefined) {
+            entry.cloudColor.copy(CLOUD_DORMANT_RGB).lerp(CLOUD_ACTIVE_RGB, activeness);
+            if (entry.cloudTint !== undefined) {
+              entry.cloudColor.lerp(entry.cloudTint, 0.12);
+            }
+          }
+        }
+      }
+      if (relayoutDue) {
+        rebuildSkyLobeOrder(camera.position);
+      }
+      const flashing = skyFlashUntil > now;
+      const rig2 = skyRig;
+      if (rig2 !== null) {
+        for (const [cloudId, entry] of cloudEntries) {
+          entry.group.position.lerp(entry.targetPos, entry.removing ? smoothing : skySmoothing);
+          const cloud = entry.cloudSpec;
+          const freshId = cloud?.freshestTurnId ?? null;
+          const hovered =
+            !entry.removing &&
+            (hoveredCloudId === cloudId || (freshId !== null && dwellHighlights.has(`${SCENE_TURN_PREFIX}${freshId}`)));
+          const scaleTarget = entry.targetScale * (hovered ? 1.12 : 1);
+          const nextScale = THREE.MathUtils.lerp(entry.group.scale.x, scaleTarget, smoothing);
+          entry.group.scale.setScalar(Math.max(nextScale, 0.0001));
+          if (entry.removing && entry.group.scale.x < 0.02) {
+            disposeEntry(entry);
+            cloudEntries.delete(cloudId);
+            continue;
+          }
+          // PERSISTENT name chips (the glance-readability contract): every
+          // live cloud keeps its card; ONLY the single freshest active cloud
+          // says the green "NOW" — a refreshed runner-up demotes to a cool
+          // "JUST NOW", so two cards never both claim the present. Status
+          // ticks repaint in place; accent flips rebuild.
+          const wantLabel = !entry.removing && cloud !== undefined;
+          if (wantLabel && cloud !== undefined) {
+            const age = cloudAge(nowEpoch, cloud.freshAtMs);
+            const minutes = Math.round(age / 60_000);
+            const active = cloudId === activeCloudId;
+            const when = active ? "NOW" : minutes < 1 ? "JUST NOW" : `${minutes} min ago`;
+            const status = `${cloud.turnCount} turn${cloud.turnCount === 1 ? "" : "s"} · ${when}`;
+            ensureCloudLabel(entry, cloud, status, active);
+            if (entry.label !== null && entry.label.userData.lastStatus !== status) {
+              entry.label.userData.lastStatus = status;
+              updateLabelStatus(entry.label, status);
+            }
+          }
+          if (entry.label !== null) {
+            entry.label.visible = wantLabel;
+            // TYPE SCALE: every card reads the SAME size on screen — undo the
+            // sprite's distance attenuation against a reference depth (far
+            // pills were rendering ~60% of the near ones, illegible past 4m).
+            const baseSX = entry.label.userData.baseSX as number | undefined;
+            const baseSY = entry.label.userData.baseSY as number | undefined;
+            if (baseSX !== undefined && baseSY !== undefined) {
+              const dist = camera.position.distanceTo(entry.group.position);
+              // Group-scale compensation is capped so a condensing/dissolving
+              // cloud still carries its card through the scale animation.
+              const k = Math.min(2.4, Math.max(0.8, dist / 42)) / Math.max(entry.group.scale.x, 0.5);
+              entry.label.scale.set(baseSX * k, baseSY * k, 1);
+            }
+          }
+          const norm = entry.cloudNorm ?? 0;
+          const life = entry.cloudLife ?? 1;
+          // Lightning: only agent-linked clouds, only while a real applied
+          // tick is fresh — a jittery two-tone flicker that decays fast.
+          const flicker =
+            flashing && entry.cloudHasAgentLink === true && !reducedMotion
+              ? (0.5 + 0.5 * Math.sin(t * 23 + entry.phase) * Math.sin(t * 31)) * ((skyFlashUntil - now) / 1200) * 0.6
+              : 0;
+          // Merge-survivor pulse (the shared flashStart path): the absorbing
+          // cloud brightens briefly, then settles.
+          let flashBoost = 0;
+          if (entry.flashStart !== null) {
+            const progress = (now - entry.flashStart) / FLASH_MS;
+            if (progress >= 1) {
+              entry.flashStart = null;
+            } else if (!reducedMotion) {
+              flashBoost = Math.abs(Math.sin(progress * Math.PI * 3)) * (1 - progress) * 0.8;
+            }
+          }
+          // FLOOR: every labeled topic keeps a visible body (~40% of active)
+          // — a card must never float over empty sky (the aged-out smudge).
+          entry.cloudAlphaBase = Math.max(
+            0.62 * life * rimFactor(norm) * (1 + flicker + flashBoost),
+            0.26,
+          ) * (hovered ? 1.3 : 1);
+        }
+        // Pass 2: rewrite the shared lobe buffer BACK-TO-FRONT (skyLobeOrder)
+        // so the normal-blended cumulus bodies layer like real clouds.
+        let puffIndex = 0;
+        for (let orderIndex = 0; orderIndex < SKY_MAX_PUFFS && puffIndex < SKY_MAX_PUFFS; orderIndex += 1) {
+          const slot = skyLobeOrder[orderIndex];
+          const entry = slot.entry;
+          if (entry === null || entry.group.parent === null) {
+            continue; // slot empty, or the entry was disposed since the sort
+          }
+          const puffs = entry.cloudPuffs;
+          const color = entry.cloudColor;
+          if (puffs === undefined || color === undefined || slot.lobe >= (entry.cloudPuffN ?? 0)) {
+            continue;
+          }
+          const norm = entry.cloudNorm ?? 0;
+          const life = entry.cloudLife ?? 1;
+          const active = life >= 1;
+          const flatten = rimFlatten(norm);
+          const grow = entry.group.scale.x;
+          const j = slot.lobe * 6;
+          // Lobe-level roil while the cloud is ACTIVE (calm breathe, never
+          // a blink — blink stays the emergency register).
+          const roil = active && !reducedMotion ? 1 + 0.07 * Math.sin(t * 1.1 + entry.phase + slot.lobe * 1.7) : 1;
+          const w = puffIndex * 3;
+          rig2.puffPos[w] = entry.group.position.x + puffs[j] * grow * roil;
+          rig2.puffPos[w + 1] = entry.group.position.y + puffs[j + 1] * grow * flatten * roil;
+          rig2.puffPos[w + 2] = entry.group.position.z + puffs[j + 2] * grow * roil;
+          rig2.puffSize[puffIndex] = puffs[j + 3] * grow * (active && !reducedMotion ? 1 + 0.05 * Math.sin(t * 0.9 + entry.phase + slot.lobe) : 1);
+          rig2.puffColor[w] = color.r;
+          rig2.puffColor[w + 1] = color.g;
+          rig2.puffColor[w + 2] = color.b;
+          rig2.puffAlpha[puffIndex] = (entry.cloudAlphaBase ?? 0) * (0.78 + 0.22 * puffs[j + 4]);
+          rig2.puffShade[puffIndex] = puffs[j + 4];
+          // Aerial perspective: the older (rim-normed) the cloud, the deeper
+          // its body sinks into the dusk — history reads as haze, CAPPED so
+          // a rim cloud is still a cloud shape, not a shapeless smudge.
+          rig2.puffHaze[puffIndex] = Math.min(0.45, norm * norm * 0.6);
+          rig2.puffRot[puffIndex] = puffs[j + 5];
+          puffIndex += 1;
+        }
+        rig2.puffGeom.setDrawRange(0, puffIndex);
+        rig2.puffGeom.getAttribute("position").needsUpdate = true;
+        rig2.puffGeom.getAttribute("aSize").needsUpdate = true;
+        rig2.puffGeom.getAttribute("aColor").needsUpdate = true;
+        rig2.puffGeom.getAttribute("aAlpha").needsUpdate = true;
+        rig2.puffGeom.getAttribute("aShade").needsUpdate = true;
+        rig2.puffGeom.getAttribute("aHaze").needsUpdate = true;
+        rig2.puffGeom.getAttribute("aRot").needsUpdate = true;
+        // The moon light direction for the shader's moon-side rim: the moon's
+        // fixed world spot expressed in THIS frame's view space (one scratch
+        // vector, no allocation).
+        skyMoonScratch.copy(rig2.moonWorld).applyMatrix4(camera.matrixWorldInverse);
+        (rig2.puffMat.uniforms.uMoonView!.value as THREE.Vector3).copy(skyMoonScratch);
+        // WISPS: glowing ribbons arched ABOVE the deck between the clouds'
+        // CURRENT positions — width + brightness from strength, color from
+        // provenance (warm agent / cool lexical — the honesty surface), and a
+        // provenance-colored ANCHOR glow sunk inside each linked cloud so the
+        // arc's ownership survives projector distance.
+        let wispVert = 0;
+        let anchorIndex = 0;
+        for (const link of skyWisps) {
+          const a = cloudEntries.get(link.a);
+          const b = cloudEntries.get(link.b);
+          if (a === undefined || b === undefined || wispVert + SKY_WISP_SEGMENTS * 6 > SKY_MAX_WISP_VERTS) {
+            continue;
+          }
+          const warm = link.source === "agent";
+          const src = warm ? WISP_AGENT_RGB : WISP_LEXICAL_RGB;
+          const tone = 0.45 + 0.5 * link.strength + (warm && flashing ? 0.25 : 0);
+          const cr = src.r * tone;
+          const cg = src.g * tone;
+          const cb = src.b * tone;
+          const halfW = 0.32 + 0.55 * link.strength;
+          // Endpoints START INSIDE the bodies; the arc bows over the deck.
+          const ax = a.group.position.x;
+          const ay = a.group.position.y + 0.5;
+          const az = a.group.position.z;
+          const bx = b.group.position.x;
+          const by = b.group.position.y + 0.5;
+          const bz = b.group.position.z;
+          if (anchorIndex + 2 <= MAX_WISPS * 2) {
+            const anchorTone = 0.5 + 0.5 * link.strength;
+            let ap = anchorIndex * 3;
+            rig2.anchorPos[ap] = ax;
+            rig2.anchorPos[ap + 1] = ay;
+            rig2.anchorPos[ap + 2] = az;
+            rig2.anchorColor[ap] = src.r * anchorTone;
+            rig2.anchorColor[ap + 1] = src.g * anchorTone;
+            rig2.anchorColor[ap + 2] = src.b * anchorTone;
+            ap += 3;
+            rig2.anchorPos[ap] = bx;
+            rig2.anchorPos[ap + 1] = by;
+            rig2.anchorPos[ap + 2] = bz;
+            rig2.anchorColor[ap] = src.r * anchorTone;
+            rig2.anchorColor[ap + 1] = src.g * anchorTone;
+            rig2.anchorColor[ap + 2] = src.b * anchorTone;
+            anchorIndex += 2;
+          }
+          const mx = (ax + bx) / 2;
+          const my = (ay + by) / 2 + 1.6;
+          const mz = (az + bz) / 2;
+          for (let seg = 0; seg < SKY_WISP_SEGMENTS; seg += 1) {
+            const t0 = seg / SKY_WISP_SEGMENTS;
+            const t1 = (seg + 1) / SKY_WISP_SEGMENTS;
+            const i0 = 1 - t0;
+            const i1 = 1 - t1;
+            const x0 = i0 * i0 * ax + 2 * i0 * t0 * mx + t0 * t0 * bx;
+            const y0 = i0 * i0 * ay + 2 * i0 * t0 * my + t0 * t0 * by;
+            const z0 = i0 * i0 * az + 2 * i0 * t0 * mz + t0 * t0 * bz;
+            const x1 = i1 * i1 * ax + 2 * i1 * t1 * mx + t1 * t1 * bx;
+            const y1 = i1 * i1 * ay + 2 * i1 * t1 * my + t1 * t1 * by;
+            const z1 = i1 * i1 * az + 2 * i1 * t1 * mz + t1 * t1 * bz;
+            // Ribbon width lies in the deck plane, perpendicular to the run.
+            const dx = x1 - x0;
+            const dz = z1 - z0;
+            const segLen = Math.hypot(dx, dz) || 1;
+            const px = (-dz / segLen) * halfW;
+            const pz = (dx / segLen) * halfW;
+            // Two triangles: (A0,A1,B1) + (A0,B1,B0); aEdge = (across, along).
+            const base = wispVert * 3;
+            const eBase = wispVert * 2;
+            rig2.wispPos[base] = x0 - px;
+            rig2.wispPos[base + 1] = y0;
+            rig2.wispPos[base + 2] = z0 - pz;
+            rig2.wispEdge[eBase] = -1;
+            rig2.wispEdge[eBase + 1] = t0;
+            rig2.wispPos[base + 3] = x0 + px;
+            rig2.wispPos[base + 4] = y0;
+            rig2.wispPos[base + 5] = z0 + pz;
+            rig2.wispEdge[eBase + 2] = 1;
+            rig2.wispEdge[eBase + 3] = t0;
+            rig2.wispPos[base + 6] = x1 + px;
+            rig2.wispPos[base + 7] = y1;
+            rig2.wispPos[base + 8] = z1 + pz;
+            rig2.wispEdge[eBase + 4] = 1;
+            rig2.wispEdge[eBase + 5] = t1;
+            rig2.wispPos[base + 9] = x0 - px;
+            rig2.wispPos[base + 10] = y0;
+            rig2.wispPos[base + 11] = z0 - pz;
+            rig2.wispEdge[eBase + 6] = -1;
+            rig2.wispEdge[eBase + 7] = t0;
+            rig2.wispPos[base + 12] = x1 + px;
+            rig2.wispPos[base + 13] = y1;
+            rig2.wispPos[base + 14] = z1 + pz;
+            rig2.wispEdge[eBase + 8] = 1;
+            rig2.wispEdge[eBase + 9] = t1;
+            rig2.wispPos[base + 15] = x1 - px;
+            rig2.wispPos[base + 16] = y1;
+            rig2.wispPos[base + 17] = z1 - pz;
+            rig2.wispEdge[eBase + 10] = -1;
+            rig2.wispEdge[eBase + 11] = t1;
+            for (let v = 0; v < 6; v += 1) {
+              const c = (wispVert + v) * 3;
+              rig2.wispColor[c] = cr;
+              rig2.wispColor[c + 1] = cg;
+              rig2.wispColor[c + 2] = cb;
+            }
+            wispVert += 6;
+          }
+        }
+        rig2.wispGeom.setDrawRange(0, wispVert);
+        rig2.wispGeom.getAttribute("position").needsUpdate = true;
+        rig2.wispGeom.getAttribute("aColor").needsUpdate = true;
+        rig2.wispGeom.getAttribute("aEdge").needsUpdate = true;
+        rig2.anchorGeom.setDrawRange(0, anchorIndex);
+        rig2.anchorGeom.getAttribute("position").needsUpdate = true;
+        rig2.anchorGeom.getAttribute("aColor").needsUpdate = true;
+        // The moon halo brightens while inference is really in flight; the
+        // stars twinkle off the real clock (parked under reduced motion).
+        const haloMat = rig2.moonHalo.material as THREE.SpriteMaterial;
+        // Halved bloom at rest (a hot halo reads as an active node); thinking
+        // still visibly brightens it — real inference state, never a timer.
+        const haloTarget = researchThinkingRef.current ? 0.26 : 0.08;
+        haloMat.opacity += (haloTarget - haloMat.opacity) * smoothing;
+        if (!reducedMotion) {
+          rig2.starMat.uniforms.uTime!.value = t;
         }
       }
 
-      // Research crystals: slow spin; researching pulses (calm breathe, never
-      // a blink — blink stays reserved for the emergency state); completion
-      // flash via the shared flashStart path.
+      // Research RAIN: a real SHOWER of slanted, varied streaks under each
+      // quest's cloud base (wind-sheared, per-streak deterministic length/
+      // alpha — never a row of ticks). proposed = sparse faint blue-grey ·
+      // researching = dense falling (rewritten in place, cycle-masked so the
+      // wrap never pops) · complete = bright mint-grey + droplet · failed =
+      // thin dim red-grey. The saturated status read lives in the droplet;
+      // the entries (hit spheres + droplets) glide and fade like everything.
+      let rainVert = 0;
+      // Camera-facing width axis for the vertical quads (no allocation).
+      const camE = camera.matrixWorld.elements;
+      const camRLen = Math.hypot(camE[0], camE[2]) || 1;
+      const camRX = camE[0] / camRLen;
+      const camRZ = camE[2] / camRLen;
       for (const [specId, entry] of researchEntries) {
         entry.group.position.lerp(entry.targetPos, smoothing);
         const hovered =
           hoveredResearch === specId || dwellHighlights.has(`${SCENE_RESEARCH_PREFIX}${specId}`);
-        const target = entry.targetScale * (hovered ? 1.15 : 1);
+        const target = entry.targetScale * (hovered ? 1.2 : 1);
         const next = THREE.MathUtils.lerp(entry.group.scale.x, target, smoothing);
         entry.group.scale.setScalar(Math.max(next, 0.0001));
         if (entry.removing && entry.group.scale.x < 0.02) {
@@ -4628,34 +5656,109 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
           researchEntries.delete(specId);
           continue;
         }
-        if (!reducedMotion) {
-          entry.group.rotation.y += dt * 0.4;
-          if (entry.researchSpec?.status === "researching") {
-            entry.mats[0].emissiveIntensity = entry.baseEmissive + Math.sin(t * 1.8 + entry.phase) * 0.12;
-          }
+        const status = entry.researchSpec?.status;
+        if (rig2 === null || status === undefined || entry.removing) {
+          continue;
         }
-        let boost = hovered ? 0.3 : 0;
-        if (entry.flashStart !== null && !reducedMotion) {
+        let flashBoost = 0;
+        if (entry.flashStart !== null) {
           const progress = (now - entry.flashStart) / FLASH_MS;
           if (progress >= 1) {
             entry.flashStart = null;
-            entry.mats.forEach((mat) => mat.emissive.copy(mat.color));
-          } else {
-            const pulse = Math.abs(Math.sin(progress * Math.PI * 3)) * (1 - progress);
-            boost += pulse * 1.6;
-            entry.mats.forEach((mat) => mat.emissive.copy(mat.color).lerp(new THREE.Color(0xffffff), pulse * 0.8));
+          } else if (!reducedMotion) {
+            flashBoost = Math.abs(Math.sin(progress * Math.PI * 3)) * (1 - progress);
           }
-          entry.mats.forEach((mat) => {
-            mat.emissiveIntensity = entry.baseEmissive + boost;
-          });
-        } else if (hovered) {
-          entry.mats.forEach((mat) => {
-            mat.emissiveIntensity = entry.baseEmissive + boost;
-          });
         }
+        const color = RAIN_STATUS_RGB[status];
+        const streaks = status === "researching" ? SKY_MAX_RAIN_STREAKS : status === "complete" ? 6 : status === "proposed" ? 4 : 3;
+        const tone = (status === "proposed" ? 0.5 : status === "failed" ? 0.3 : status === "complete" ? 0.85 : 0.7) + (hovered ? 0.25 : 0) + flashBoost;
+        const spread = entry.rainSpread ?? 1.4;
+        for (let k = 0; k < streaks && rainVert + 6 <= SKY_MAX_RAIN_VERTS; k += 1) {
+          // Deterministic per-streak variation (cheap sin hashes, no alloc):
+          // where in the footprint, how long, how bright.
+          const h1 = (Math.sin(entry.phase * 13.7 + k * 7.31) + 1) / 2;
+          const h2 = (Math.sin(entry.phase * 27.9 + k * 3.17) + 1) / 2;
+          const h3 = (Math.sin(entry.phase * 7.3 + k * 11.93) + 1) / 2;
+          const falling = status === "researching" && !reducedMotion;
+          const phase = falling ? (t * 0.55 + entry.phase + k * 0.61) % 1 : 0.3;
+          const cycleMask = falling ? Math.sin(phase * Math.PI) : 1;
+          const len = 1.1 + 1.6 * h3;
+          const topX = entry.group.position.x + (h1 - 0.5) * 2 * spread;
+          const topZ = entry.group.position.z + (h2 - 0.5) * 1.2 * spread;
+          const topY = entry.group.position.y + 0.5 - h2 * 0.5 - phase * 1.1;
+          const botY = topY - len;
+          // Wind shear: the whole sky's rain leans the same way (weather).
+          const botX = topX + skyRainWindX * len;
+          const botZ = topZ + skyRainWindZ * len;
+          const px = camRX * 0.1;
+          const pz = camRZ * 0.1;
+          const streakTone = tone * (0.45 + 0.55 * h1) * cycleMask;
+          const cr = color.r * streakTone;
+          const cg = color.g * streakTone;
+          const cb = color.b * streakTone;
+          const base = rainVert * 3;
+          const eBase = rainVert * 2;
+          // Quad (A0,A1,B1)+(A0,B1,B0); aEdge = (across, 0 top → 1 tip);
+          // bottom verts carry the wind shear (the slant).
+          rig2.rainPos[base] = topX - px;
+          rig2.rainPos[base + 1] = topY;
+          rig2.rainPos[base + 2] = topZ - pz;
+          rig2.rainEdge[eBase] = -1;
+          rig2.rainEdge[eBase + 1] = 0;
+          rig2.rainPos[base + 3] = topX + px;
+          rig2.rainPos[base + 4] = topY;
+          rig2.rainPos[base + 5] = topZ + pz;
+          rig2.rainEdge[eBase + 2] = 1;
+          rig2.rainEdge[eBase + 3] = 0;
+          rig2.rainPos[base + 6] = botX + px;
+          rig2.rainPos[base + 7] = botY;
+          rig2.rainPos[base + 8] = botZ + pz;
+          rig2.rainEdge[eBase + 4] = 1;
+          rig2.rainEdge[eBase + 5] = 1;
+          rig2.rainPos[base + 9] = topX - px;
+          rig2.rainPos[base + 10] = topY;
+          rig2.rainPos[base + 11] = topZ - pz;
+          rig2.rainEdge[eBase + 6] = -1;
+          rig2.rainEdge[eBase + 7] = 0;
+          rig2.rainPos[base + 12] = botX + px;
+          rig2.rainPos[base + 13] = botY;
+          rig2.rainPos[base + 14] = botZ + pz;
+          rig2.rainEdge[eBase + 8] = 1;
+          rig2.rainEdge[eBase + 9] = 1;
+          rig2.rainPos[base + 15] = botX - px;
+          rig2.rainPos[base + 16] = botY;
+          rig2.rainPos[base + 17] = botZ - pz;
+          rig2.rainEdge[eBase + 10] = -1;
+          rig2.rainEdge[eBase + 11] = 1;
+          for (let v = 0; v < 6; v += 1) {
+            const c = (rainVert + v) * 3;
+            rig2.rainColor[c] = cr;
+            rig2.rainColor[c + 1] = cg;
+            rig2.rainColor[c + 2] = cb;
+          }
+          rainVert += 6;
+        }
+      }
+      if (rig2 !== null) {
+        rig2.rainGeom.setDrawRange(0, rainVert);
+        rig2.rainGeom.getAttribute("position").needsUpdate = true;
+        rig2.rainGeom.getAttribute("aColor").needsUpdate = true;
+        rig2.rainGeom.getAttribute("aEdge").needsUpdate = true;
       }
 
       renderer.render(scene, camera);
+      if (relayoutDue) {
+        // Prober stamps that need live values: how many cards are showing and
+        // what the sky actually costs (read AFTER render so the count is real).
+        let labeled = 0;
+        for (const entry of cloudEntries.values()) {
+          if (entry.label !== null && entry.label.visible) {
+            labeled += 1;
+          }
+        }
+        container.dataset.labeledClouds = String(labeled);
+        container.dataset.drawCalls = String(renderer.info.render.calls);
+      }
     };
     // TWO-WALL PERF: the default room runs two simultaneous fullscreen WebGL
     // windows on one GPU. Park this window's frame loop entirely while the
@@ -4710,16 +5813,15 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
         disposeEntry(entry);
       }
       treeEntries.clear();
-      for (const entry of dialogueEntries.values()) {
+      for (const entry of cloudEntries.values()) {
         disposeEntry(entry);
       }
-      dialogueEntries.clear();
+      cloudEntries.clear();
       for (const entry of researchEntries.values()) {
         disposeEntry(entry);
       }
       researchEntries.clear();
-      clearDialogueLines();
-      clearDialogueTree();
+      clearSkyRig();
       clearLayoutDecor();
       env?.dispose();
       Object.values(GEO).forEach((geometry) => geometry.dispose());

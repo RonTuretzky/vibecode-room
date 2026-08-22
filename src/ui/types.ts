@@ -262,4 +262,27 @@ export interface ProjectorSnapshot {
   // Concept clusters over the dialogue window. Each topic is a BRANCH of the
   // 3D conversation tree; turns reference their topic via topicId.
   dialogueTopics?: Array<{ id: string; label: string; turnIds: string[]; freshAtMs: number }>;
+  // The conversation SKY over the ceiling: one cloud per concept topic,
+  // remembered BEYOND the rolling dialogue window (turnCount = retired + live
+  // members; liveTopicId null once the window killed the topic), plus
+  // cross-cloud relations. PROVENANCE IS PART OF THE CONTRACT: each link's
+  // source says whether the recurrent agent thread judged it ("agent") or the
+  // deterministic lexical fallback did ("lexical"), and agentAtMs is null
+  // until the agent has actually spoken. Shapes mirror research/sky.ts
+  // (declared inline like dialogueTopics — the ui never imports server code).
+  sky?: {
+    clouds: Array<{
+      id: string;
+      label: string;
+      labelSource: "agent" | "topic";
+      firstAtMs: number;
+      freshAtMs: number;
+      turnCount: number;
+      liveTopicId: string | null;
+      dominantSpeaker: string | null;
+    }>;
+    links: Array<{ a: string; b: string; strength: number; reason: string; source: "agent" | "lexical" }>;
+    updatedAtMs: number;
+    agentAtMs: number | null;
+  };
 }

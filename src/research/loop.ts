@@ -8,6 +8,7 @@
 // (tree.ts) keep the window utterance-shaped instead of ASR-fragment-shaped.
 
 import type { TranscriptTurn } from "../detect/types";
+import { CloudGraph, type SkySnapshot } from "./sky";
 import { ConceptTree, type ConceptTopic } from "./tree";
 import type {
   ResearchAgent,
@@ -52,6 +53,11 @@ export interface ResearchLoopOptions {
   // default tree runs the production Cerebras refiner (a clean no-op without
   // CEREBRAS_API_KEY) and republishes through this loop when a refinement lands.
   conceptTree?: ConceptTree;
+  // The conversation-sky accumulator (sky.ts): remembers topics beyond the
+  // rolling window and runs the recurrent relate tick. Injectable so the
+  // composition can wire env cadence + traces (and tests a scripted runner);
+  // the default graph is lexical-capable with the production Cerebras runner.
+  cloudGraph?: CloudGraph;
   // A same-speaker fragment arriving within this gap of the newest turn's last
   // growth merges into it instead of becoming a new turn.
   coalesceGapMs?: number;
@@ -113,6 +119,7 @@ export class ResearchLoop {
   readonly #staleMissedRounds: number;
   readonly #suppressMs: number;
   readonly #tree: ConceptTree;
+  readonly #clouds: CloudGraph;
   readonly #coalesceGapMs: number;
   readonly #coalesceMaxWords: number;
 
@@ -146,9 +153,16 @@ export class ResearchLoop {
     this.#newWordsThreshold = options.newWordsThreshold ?? DEFAULT_NEW_WORDS_THRESHOLD;
     this.#staleMissedRounds = options.staleMissedRounds ?? DEFAULT_STALE_MISSED_ROUNDS;
     this.#suppressMs = options.suppressMs ?? DEFAULT_SUPPRESS_MS;
-    // A model refinement changes the clustering asynchronously — republish so
-    // the wall's branches re-arrange without waiting for the next turn.
-    this.#tree = options.conceptTree ?? new ConceptTree({ onRefined: () => this.#emit() });
+    // A model refinement changes the clustering asynchronously — re-observe
+    // the sky (regroups/relabels reach the clouds without waiting for the next
+    // turn) and republish so the wall re-arranges.
+    this.#tree = options.conceptTree ?? new ConceptTree({
+      onRefined: () => {
+        this.#observeClouds();
+        this.#emit();
+      },
+    });
+    this.#clouds = options.cloudGraph ?? new CloudGraph({ clock: this.#clock, onUpdate: () => this.#emit() });
     this.#coalesceGapMs = options.coalesceGapMs ?? DEFAULT_COALESCE_GAP_MS;
     this.#coalesceMaxWords = options.coalesceMaxWords ?? DEFAULT_COALESCE_MAX_WORDS;
   }
@@ -217,6 +231,7 @@ export class ResearchLoop {
       // The suggester cadence counts SPOKEN words, merged or not.
       this.#wordsSinceRound += newWords;
       this.#tree.update(newest);
+      this.#observeClouds();
       if (this.#active) {
         void this.maybeSuggest();
       }
@@ -234,8 +249,10 @@ export class ResearchLoop {
     this.#newestFragmentAtMs = input.atMs;
     this.#wordsSinceRound += newWords;
     this.#tree.assign(turn);
-    // Turns the window just dropped must not haunt the topic branches.
+    // Turns the window just dropped must not haunt the topic branches — but
+    // the SKY remembers them: observe folds them into their cloud first.
     this.#tree.prune(this.#turns.map((entry) => entry.id));
+    this.#observeClouds();
     if (this.#active) {
       void this.maybeSuggest();
     }
@@ -251,6 +268,35 @@ export class ResearchLoop {
   // dialogueTopics (each topic a branch of the 3D conversation tree).
   topics(): ConceptTopic[] {
     return this.#tree.topics();
+  }
+
+  // The conversation sky (ProjectorSnapshot.sky): clouds that outlive the
+  // window plus their provenance-tagged relations.
+  sky(): SkySnapshot {
+    return this.#clouds.snapshot();
+  }
+
+  // The accumulator itself — tests drive relateNow/settle directly.
+  cloudGraph(): CloudGraph {
+    return this.#clouds;
+  }
+
+  // Feed the sky the current clustering + window + quest projection. Runs on
+  // every ingest (after assign/prune) and on async tree refinements; quest
+  // status changes ride along on the next ingest — links are decoration, not
+  // state the wall blocks on.
+  #observeClouds(): void {
+    this.#clouds.observe(
+      this.#tree.topics(),
+      this.#turns,
+      [...this.#quests.values()].map((quest) => ({
+        id: quest.id,
+        status: quest.status,
+        topic: quest.topic,
+        claim: quest.claim,
+        turnId: quest.contextSpan.endTurnId,
+      })),
+    );
   }
 
   // ── suggestion rounds ─────────────────────────────────────────────────────
@@ -830,6 +876,8 @@ export class ResearchLoop {
     this.#newestFragmentAtMs = Number.NEGATIVE_INFINITY;
     this.#wordsSinceRound = 0;
     this.#tree.reset();
+    // The sky's memory dies with the tree — the user asked for a clean slate.
+    this.#clouds.reset();
     this.#trace("research.tree.reset", "info", correlationId, { dropped });
     this.#emit();
   }
