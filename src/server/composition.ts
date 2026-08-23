@@ -133,6 +133,7 @@ import { TreeGitSubstrate, treeGitEnabled, type GitCommandRunner } from "./tree-
 import { ghCommandRunner, type ForestCommandRunner } from "./github-org";
 import { applySteerEdit, steerApplierEnabled } from "./steer-applier";
 import { appendSliceLine, joinedSliceText, type SteerSliceLine } from "./transcript-slice";
+import { TranscriptStore } from "./transcript-store";
 import { TreeIssuesCache, type TreeIssue } from "./tree-issues";
 import { buildImportPlanPrompt, buildImportPlanQuestions } from "./import-plan";
 import { hasBuildableCue } from "../detect";
@@ -830,6 +831,11 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   // SELF-REBUILD runtime toggle: the operator-flippable gate consulted by the
   // exit-87 trigger (requestSelfReload). Boots from VIBERSYN_SELF_MODE.
   #selfRebuild: boolean;
+  // The conversation's disk shadow: finals persist so a SELF reload resumes
+  // the same evening instead of a blank room (transcript-store.ts). Null off
+  // self mode — only the self-hosting loop reboots the room mid-conversation,
+  // and test runtimes must never read the live room's file.
+  readonly #transcriptStore: TranscriptStore | null;
   #selfCommission: SelfCommissioner | null = null;
   #selfReloadPending = false;
   readonly #exit: (code: number) => void;
@@ -855,6 +861,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     // starts armed, everything else starts off (and can only record intent
     // for a future --self launch — see setSelfRebuild).
     this.#selfRebuild = this.#selfMode;
+    this.#transcriptStore = this.#selfMode ? new TranscriptStore({ path: "builds/session-transcript.json" }) : null;
     this.#exit = options.exitProcess ?? ((code: number) => process.exit(code));
     this.#selfReloadDelayMs = resolveSelfReloadDelayMs(env);
     this.#selfGitRunner = options.selfGitRunner ?? null;
@@ -1367,6 +1374,16 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     // runs. VIBERSYN_RESEARCH=0 remains the escape hatch (tests, quiet rooms).
     if (this.#env.VIBERSYN_RESEARCH !== "0") {
       this.research.setActive(true);
+    }
+    // RESUME THE CONVERSATION across a self reload: restore fresh finals into
+    // the live window AND re-feed them (original atMs) through the research
+    // loop, so the ceiling's chronology/topics survive the reboot too. Stale
+    // files (previous session) restore nothing — an old evening never haunts
+    // a new room.
+    for (const stored of this.#transcriptStore?.restore() ?? []) {
+      const line: TranscriptLine = { time: stored.time, speaker: stored.speaker, text: stored.text, kind: stored.kind as TranscriptLine["kind"] };
+      this.#liveFinals = [...this.#liveFinals, line].slice(-MAX_LIVE_TRANSCRIPT_LINES);
+      this.research.ingestTurn({ speaker: stored.speaker, text: stored.text, atMs: stored.atMs });
     }
   }
 
@@ -2512,6 +2529,8 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     if (observation.isFinal) {
       this.#liveFinals = [...this.#liveFinals, line].slice(-MAX_LIVE_TRANSCRIPT_LINES);
       this.#interim = null;
+      // Shadow to disk (debounced, atomic): the self reload resumes from here.
+      this.#transcriptStore?.append({ ...line, atMs: Date.now() });
     } else {
       this.#interim = line;
     }
