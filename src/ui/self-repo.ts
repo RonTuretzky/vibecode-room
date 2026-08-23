@@ -326,6 +326,7 @@ export async function manageSelfVersion(
       branches: null,
       conflicts: [],
       reloading: false,
+      grafts: null,
     };
   } catch {
     return {
@@ -334,6 +335,7 @@ export async function manageSelfVersion(
       branches: null,
       conflicts: [],
       reloading: false,
+      grafts: null,
     };
   }
 }
