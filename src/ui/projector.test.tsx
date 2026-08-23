@@ -1569,20 +1569,23 @@ describe("control dock: one calm affordance replaces the button row", () => {
 // exporting VIBERSYN_SELF_MODE=1, surfaced as snapshot.selfSupervisor) can
 // actually rebuild-and-relaunch the server on a green self: commit.
 describe("self-rebuild dock toggle", () => {
-  test("renders inside the dock tray with the label reflecting snapshot state", () => {
+  test("renders inside the dock tray; state lives in data-state, not label text", () => {
+    // Live-room directive: no ": ON/OFF" suffix — the lit selected state IS
+    // the indicator. data-state/aria-pressed keep the truth machine-readable.
     const off = renderToStaticMarkup(<ProjectorApp initialSnapshot={demoProjectorSnapshot} />);
     const trayIdx = off.indexOf('data-testid="control-dock-tray"');
     const buttonIdx = off.indexOf('data-testid="self-rebuild-button"');
     expect(buttonIdx).toBeGreaterThan(trayIdx);
     expect(buttonIdx).toBeLessThan(off.indexOf("</header>"));
     expect(off).toContain('data-testid="self-rebuild-button" data-state="off"');
-    expect(off).toContain("🔁 Self-Rebuild: OFF");
+    expect(off).toContain("🔁 Self-Rebuild");
+    expect(off).not.toContain("Self-Rebuild: OFF");
 
     const on = renderToStaticMarkup(
       <ProjectorApp initialSnapshot={{ ...demoProjectorSnapshot, selfRebuild: true }} />,
     );
     expect(on).toContain('data-testid="self-rebuild-button" data-state="on"');
-    expect(on).toContain("🔁 Self-Rebuild: ON");
+    expect(on).not.toContain("Self-Rebuild: ON");
   });
 
   test("the title is honest about the supervisor: ARMED only when --self is live", () => {

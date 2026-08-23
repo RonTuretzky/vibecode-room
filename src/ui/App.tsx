@@ -2568,7 +2568,9 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
                   : "on (needs --self launch to take effect): no supervisor is wrapping this server, so a green self: commit cannot rebuild-and-relaunch it. Start the room with run-room.sh --self."
               }
             >
-              {selfRebuild ? "🔁 Self-Rebuild: ON" : "🔁 Self-Rebuild: OFF"}
+              {/* No ": ON/OFF" text (live-room directive): the lit selected
+                  state is the indicator. */}
+              🔁 Self-Rebuild
             </button>
           ) : null}
           {/* QR Import's button folded into the standing bottom-left badge

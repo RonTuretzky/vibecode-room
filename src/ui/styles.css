@@ -1144,27 +1144,33 @@ main.gesture-mode[data-view="builds"] .transcript-card {
 }
 
 .control-dock-tray {
+  /* THE TOP ROW (live-room directive): the tray extends LEFT of the ⚙ button
+     on the same line — capturing / guided demo / self-rebuild sit beside
+     Controls, top-aligned, same height. No window behind them. */
   position: absolute;
-  top: calc(100% + 12px);
-  right: 0;
+  top: 0;
+  right: calc(100% + 12px);
   z-index: 40;
   display: flex;
-  flex-wrap: wrap;
-  /* Top-aligned (live-room report): mixed-height chips hung centered and
-     looked scattered; rows now share a clean top edge. */
-  align-items: flex-start;
+  flex-wrap: nowrap;
+  align-items: stretch;
   justify-content: flex-end;
   gap: 12px;
   width: max-content;
-  max-width: min(92vw, 1080px);
-  /* NO WINDOW (live-room directive: "I don't want the unifying component all
-     the buttons sit inside"): the tray is pure layout — the buttons float
-     over the garden as individual chips, nothing dark behind them. */
   padding: 0;
   background: transparent;
   border: none;
   box-shadow: none;
   animation: pill-in 220ms ease;
+}
+
+/* Every top-row chip matches the ⚙ button's height; the mic control's meter
+   tucks under its own button without breaking the row line. */
+.control-dock-tray > .ctl-button,
+.control-dock-tray .mic-control > .ctl-button {
+  height: 100%;
+  display: inline-flex;
+  align-items: center;
 }
 
 .control-dock[data-expanded="false"] .control-dock-tray {
@@ -1175,9 +1181,8 @@ main.gesture-mode[data-view="builds"] .transcript-card {
    the GESTURE-XL section) and most of the wall's width to wrap in. The tray is
    transparent everywhere now — each button carries its own contrast. */
 main.gesture-mode .control-dock-tray {
-  gap: 34px;
+  gap: 24px;
   padding: 0;
-  max-width: min(94vw, 1720px);
 }
 
 /* Wall identity badge — a subtle corner label ("WALL A") so a two-wall room
