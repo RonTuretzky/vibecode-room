@@ -1427,6 +1427,7 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       const catGeoTail = new THREE.CylinderGeometry(0.03, 0.05, 1, 5);
       const catMat = new THREE.MeshPhongMaterial({ color: 0x6b5b4a, emissive: 0x6b5b4a, emissiveIntensity: 0.08 });
       const envCats: { group: THREE.Group; baseX: number; baseZ: number; phase: number }[] = [];
+      const envMana: { mesh: THREE.Mesh; baseY: number; phase: number }[] = [];
       const spawnTreeCat = (x: number, z: number, scale: number) => {
         const cat = new THREE.Group();
         const body = new THREE.Mesh(catGeoBody, catMat);
@@ -1518,6 +1519,31 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         ring.position.set(x, 0, z);
         group.add(ring);
       };
+      // Crystal mana floating around the base of every meadow tree — a few
+      // glowing cyan octahedron shards hovering at head height, shared
+      // geometry/material so a whole cluster is a handful of cheap meshes.
+      // Bobbing/spin is driven per-shard in the frame loop via envMana.
+      const manaGeo = new THREE.OctahedronGeometry(0.22, 0);
+      const manaMat = new THREE.MeshPhongMaterial({
+        color: 0x66e0ff,
+        emissive: 0x33bbff,
+        emissiveIntensity: 0.9,
+        transparent: true,
+        opacity: 0.82,
+      });
+      const spawnTreeMana = (x: number, z: number, scale: number) => {
+        const count = 5;
+        for (let i = 0; i < count; i++) {
+          const a = (i / count) * Math.PI * 2 + floraRng() * 0.6;
+          const r = (1.4 + floraRng() * 0.8) * scale;
+          const shard = new THREE.Mesh(manaGeo, manaMat);
+          const baseY = (1.6 + floraRng() * 1.2) * scale;
+          shard.position.set(x + Math.cos(a) * r, baseY, z + Math.sin(a) * r);
+          shard.scale.setScalar(scale);
+          envMana.push({ mesh: shard, baseY, phase: floraRng() * Math.PI * 2 });
+          group.add(shard);
+        }
+      };
       const scatterFlora = (flora: FloraLibrary) => {
         const dummy = new THREE.Object3D();
         for (const spec of FLORA_SCATTER) {
@@ -1585,6 +1611,8 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
               );
               // Ring of pink tulips planted around the trunk's base.
               spawnTreeTulips(dummy.position.x, dummy.position.z, 1.4);
+              // Crystal mana shards hovering around the tree.
+              spawnTreeMana(dummy.position.x, dummy.position.z, 1.4);
             }
           }
           variants.forEach((variant, v) => {
@@ -1911,6 +1939,12 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
             cat.group.position.z = cat.baseZ + Math.cos(t * 2 + cat.phase) * 0.12;
             cat.group.rotation.z = Math.sin(t * 6 + cat.phase) * 0.25;
           }
+          // Crystal mana shards bob gently and spin above the meadow trees.
+          for (const mana of envMana) {
+            mana.mesh.position.y = mana.baseY + Math.sin(t * 1.6 + mana.phase) * 0.28;
+            mana.mesh.rotation.y = t * 0.9 + mana.phase;
+            mana.mesh.rotation.x = Math.sin(t * 0.7 + mana.phase) * 0.4;
+          }
         },
         dispose: () => {
           floraDisposed = true;
@@ -1937,6 +1971,9 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
           tulipBloomGeo.dispose();
           tulipStemMat.dispose();
           tulipBloomMat.dispose();
+          // Tree-foot crystal-mana assets are shared across every shard too.
+          manaGeo.dispose();
+          manaMat.dispose();
           group.traverse((node) => {
             if (node instanceof THREE.InstancedMesh) {
               // Flora instances: release ONLY the instance buffers — the
@@ -3113,6 +3150,42 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       return ring;
     };
 
+    // "computing devices are being produced" — a cluster of freshly-built GPU
+    // server racks parked at the tree's foot, blinking green as they come off
+    // the line toward the theme's "one hundred times as many GPU factories".
+    const makeGpuRackCluster = (radius: number): THREE.Group => {
+      const cluster = new THREE.Group();
+      const chassisGeo = new THREE.BoxGeometry(0.6, 1.1, 0.42);
+      const ventGeo = new THREE.BoxGeometry(0.5, 0.07, 0.03);
+      const lightGeo = new THREE.BoxGeometry(0.07, 0.07, 0.03);
+      const chassisMat = new THREE.MeshPhongMaterial({ color: 0x2b3440, emissive: 0x0a0f14, emissiveIntensity: 0.15 });
+      const ventMat = new THREE.MeshPhongMaterial({ color: 0x11161c });
+      const lightMat = new THREE.MeshPhongMaterial({ color: 0x00ff88, emissive: 0x00ff88, emissiveIntensity: 0.8 });
+      const count = 4;
+      for (let i = 0; i < count; i++) {
+        const a = (i / count) * Math.PI * 2 + 0.35;
+        const rack = new THREE.Group();
+        const chassis = new THREE.Mesh(chassisGeo, chassisMat);
+        chassis.position.y = 0.55;
+        chassis.userData.ownMaterial = true;
+        rack.add(chassis);
+        for (let v = 0; v < 6; v++) {
+          const vent = new THREE.Mesh(ventGeo, ventMat);
+          vent.position.set(0, 0.25 + v * 0.15, 0.22);
+          vent.userData.ownMaterial = true;
+          rack.add(vent);
+        }
+        const light = new THREE.Mesh(lightGeo, lightMat);
+        light.position.set(0.22, 0.98, 0.22);
+        light.userData.ownMaterial = true;
+        rack.add(light);
+        rack.position.set(Math.cos(a) * radius, 0, Math.sin(a) * radius);
+        rack.rotation.y = -a;
+        cluster.add(rack);
+      }
+      return cluster;
+    };
+
     const buildRealFlower = (spec: IdeaOrbSpec): Entry | null => {
       const ready = spec.status === "ready";
       const variants = floraLib?.get(ready ? "flower_gazania" : "dandelion_01");
@@ -3350,6 +3423,8 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       // Pink tulips ringed around the trunk's base — planted just outside the
       // state ring so the blooms read at the tree's foot.
       group.add(makePinkTulipRing(grown ? 3.3 : 2.3));
+      // A cluster of freshly-manufactured GPU racks at the tree's foot.
+      group.add(makeGpuRackCluster(grown ? 4.6 : 3.4));
       return {
         kind: "tree", treeSpec: spec, group, mats, baseEmissive: 0.55, head: null, headY: 0, cat, catBaseX: catBase, label,
         targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false, updateProgress,
