@@ -1122,11 +1122,13 @@ main.gesture-mode[data-view="builds"] .transcript-card {
   align-items: center;
 }
 
-/* Calm neutral glass, same family as the QR-import chrome. */
+/* TRANSPARENT (live-room directive: "neither should the controls button be a
+   dark thing"): no fill, just ink and a whisper of an outline. */
 .ctl-button.dock-toggle {
   color: var(--ink-soft);
-  border-color: var(--glass-line);
-  background: rgba(20, 34, 44, 0.6);
+  border-color: rgba(180, 205, 230, 0.25);
+  background: transparent;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.6);
   white-space: nowrap;
 }
 
@@ -1153,13 +1155,13 @@ main.gesture-mode[data-view="builds"] .transcript-card {
   gap: 12px;
   width: max-content;
   max-width: min(92vw, 1080px);
-  padding: 14px;
-  border-radius: 14px;
-  background: rgba(6, 13, 20, 0.88);
-  border: 1px solid var(--glass-line);
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5);
+  /* NO WINDOW (live-room directive: "I don't want the unifying component all
+     the buttons sit inside"): the tray is pure layout — the buttons float
+     over the garden as individual chips, nothing dark behind them. */
+  padding: 0;
+  background: transparent;
+  border: none;
+  box-shadow: none;
   animation: pill-in 220ms ease;
 }
 
@@ -1168,14 +1170,12 @@ main.gesture-mode[data-view="builds"] .transcript-card {
 }
 
 /* Gesture mode: the XL dwell buttons need XL breathing room (24–36px gaps, see
-   the GESTURE-XL section) and most of the wall's width to wrap in. The tray
-   keeps its solid glass backing even though gesture mode strips the cluster
-   pills — a popover needs contrast to read as one surface. */
+   the GESTURE-XL section) and most of the wall's width to wrap in. The tray is
+   transparent everywhere now — each button carries its own contrast. */
 main.gesture-mode .control-dock-tray {
   gap: 34px;
-  padding: 28px;
+  padding: 0;
   max-width: min(94vw, 1720px);
-  border-radius: 26px;
 }
 
 /* Wall identity badge — a subtle corner label ("WALL A") so a two-wall room
