@@ -37,15 +37,16 @@ agents building them.
   legacy view badge.
 - **Vibersyn projector only:** `bun run start` (server on :8787), or `bun run dev`
   for the UI dev server. Open `/?live=1` for the live runtime.
-- **Central Park (optional):** add `?env=park` and the garden becomes a 1:4
-  diorama of the real park — the meadow is Sheep Meadow, and past it the real
-  map (NAIP photo on USGS terrain), mirror water from OpenStreetMap's outlines
-  (the Lake, the Pond, the Reservoir…), the landmarks where they stand
-  (Bethesda Fountain, Bow Bridge, the Obelisk, Gapstow Bridge, Belvedere),
-  the Mall's elm rows and sparse canopy as real tree scans, the schist
-  outcrops as real rock scans; no city blocks (`public/assets/park/ASSETS.md`).
-  Purely environmental: nodes, layouts, the `g` garden↔orbit toggle and every
-  control are unchanged.
+- **Central Park (optional):** add `?env=park` and the room stands in ONE
+  iconic place at true scale — the lawn north of **Gapstow Bridge over the
+  Pond**, the park's south-east corner. Around the stage: the real map (NAIP
+  photo on USGS terrain), the Pond as mirror water from OpenStreetMap's
+  outline, Gapstow's stone arch, real canopy trees and Pond-shore schist as
+  photoscans, and the actual skyline — the Plaza Hotel and Billionaires' Row
+  as real CC-BY models on their true footprints, the rest of Midtown as
+  window-textured footprint extrusions fading into the haze
+  (`public/assets/park/ASSETS.md`). Purely environmental: nodes, layouts, the
+  `g` garden↔orbit toggle and every control are unchanged.
   The standalone evaluation page `park3d.html` (dev server only) renders the
   whole park at 1:1 from Google's Photorealistic 3D Tiles (`VITE_MAPTILES_KEY`
   in `.env`) or, with `?src=open`, from the same baked data: keys `1–6` are

@@ -5,8 +5,8 @@ import { registerSceneDwellSource, type SceneDwellRect } from "./gesture/scene-s
 import { registerSceneCameraControl } from "./gesture/camera-source";
 import { cornerEye, cornerVerticalFovDeg, cornerYaw } from "./corner-lock";
 import { loadGardenFlora, type FloraLibrary } from "./garden-flora";
-import { SHEEP_MEADOW } from "../park3d/park-frame";
-import { OUTCROPS, mallElmPositions } from "../park3d/park-landmarks";
+import { POND_STAGE } from "../park3d/park-frame";
+import { GAPSTOW, OUTCROPS } from "../park3d/park-landmarks";
 import { loadParkWorldShared, type ParkWorld } from "../park3d/park-world";
 import { localFromLatLon } from "../park3d/park-frame";
 
@@ -859,28 +859,27 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
       const rng = mulberry32(0x47415244);
       const group = new THREE.Group();
       scene.add(group);
-      // CENTRAL PARK (?env=park): a 1:4 diorama of the real park around the
-      // room. The meadow disc is Sheep Meadow; past its edge the baked
-      // open-data world (park-world.ts) carries the real map — the NAIP
-      // photo on the real terrain, the Lake / the Pond / the Reservoir as
-      // mirror water from OpenStreetMap's polygons, the landmarks stood
-      // where they really are (Bethesda, Bow Bridge, the Obelisk, Gapstow,
-      // Belvedere), the Mall's elm rows and the sparse canopy as REAL tree
-      // scans, the schist outcrops as real rock scans. No extruded city
-      // and no raised relief: those read blocky at eye level and stay on
-      // the aerial page. At 1:4 everything is a stroll away (Bethesda ~100
-      // m, the Reservoir ~280 m) and the far north fades into the haze.
-      // Software rasterizers get the plain meadow (far heavier than the
-      // flora they already skip).
+      // CENTRAL PARK (?env=park): ONE iconic place at true 1:1 scale — the
+      // Pond at Gapstow Bridge, the park's south-east corner. The stage
+      // stands on the wooded rise north-east of the bridge looking south
+      // over the water, and around it the baked world (park-world.ts)
+      // carries the real scene: the NAIP photo on the real terrain, the
+      // Pond as mirror water from OpenStreetMap's outline, Gapstow's stone
+      // arch, real canopy trees and the Pond-shore schist as photoscans —
+      // and the actual skyline: the Plaza Hotel and Billionaires' Row as
+      // real CC-BY models on their true footprints (park-models.ts), with
+      // the rest of Midtown as window-textured footprint extrusions fading
+      // into the haze. Software rasterizers get the plain meadow (far
+      // heavier than the flora they already skip).
       const park = environmentRef.current === "park" && !softwareGL;
-      const PARK_SCALE = 0.25;
+      const PARK_SCALE = 1;
       // Aerial perspective: haze tinted to the sky horizon so meadow and hills
       // melt into the sky instead of ending at a hard disc edge.
       const meadowFog = () => new THREE.Fog(0xdcedf8, 80, 210);
-      scene.fog = park ? new THREE.Fog(0xdcedf8, 120, 1000) : meadowFog();
-      // The stage shrinks to Sheep Meadow's own size (240 m real at 1:4) so
-      // the park's features start just past the flora.
-      const meadowRadius = park ? 60 : 110;
+      scene.fog = park ? new THREE.Fog(0xdcedf8, 150, 2400) : meadowFog();
+      // The stage shrinks to the little rise it stands on; the Pond's shore
+      // begins just past the flora.
+      const meadowRadius = park ? 30 : 110;
       const defaultFar = camera.far;
       if (park) {
         camera.far = 12_000;
@@ -966,11 +965,17 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
         { name: "jacaranda_tree", count: 10, rMin: 34, rMax: 82, sMin: 0.45, sMax: 0.62 },
       ];
       if (park) {
-        // Keep the meadow's own scatter on the smaller stage.
+        // Keep the meadow's own scatter on the smaller stage — minus the
+        // garden's jacaranda band, which at this stage radius would stand
+        // inside the camera orbit (the real shore trees take its place).
         const k = meadowRadius / 110;
-        for (const spec of FLORA_SCATTER) {
-          spec.rMin *= k;
-          spec.rMax *= k;
+        for (let i = FLORA_SCATTER.length - 1; i >= 0; i--) {
+          if (FLORA_SCATTER[i].name === "jacaranda_tree") {
+            FLORA_SCATTER.splice(i, 1);
+            continue;
+          }
+          FLORA_SCATTER[i].rMin *= k;
+          FLORA_SCATTER[i].rMax *= k;
         }
       }
       let floraDisposed = false;
@@ -1056,23 +1061,21 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
         const parkOptions = {
           // Level the terrain under the stage, easing back to the real
           // ground beyond (park metres).
-          flatten: { x: SHEEP_MEADOW.x, z: SHEEP_MEADOW.z, radius: (meadowRadius + 6) / PARK_SCALE, feather: 110 },
-          orthoMaxWidth: 2048,
-          // The map, its water and its landmarks only: no extruded city, no
-          // raised canopy (the relief map still loads as the tree census).
-          buildings: false,
+          flatten: { x: POND_STAGE.x, z: POND_STAGE.z, radius: meadowRadius + 4, feather: 14 },
+          orthoMaxWidth: 3072,
+          // No raised canopy — real trees stand in for the mask instead.
           displace: false,
         };
-        // Sheep Meadow lands on the room origin, the world shrunk to 1:4 and
-        // turned half a circle so the boot framing (yaw 0 looks down −Z)
-        // faces SOUTH down the park toward the Mall and the Pond.
+        // The stage lands on the room origin, turned half a circle so the
+        // boot framing (yaw 0 looks down −Z) faces SOUTH across the Pond at
+        // Gapstow and the skyline.
         const parkToRoom = (x: number, z: number) => ({
-          x: (SHEEP_MEADOW.x - x) * PARK_SCALE,
-          z: (SHEEP_MEADOW.z - z) * PARK_SCALE,
+          x: (POND_STAGE.x - x) * PARK_SCALE,
+          z: (POND_STAGE.z - z) * PARK_SCALE,
         });
         const roomToPark = (x: number, z: number) => ({
-          x: SHEEP_MEADOW.x - x / PARK_SCALE,
-          z: SHEEP_MEADOW.z - z / PARK_SCALE,
+          x: POND_STAGE.x - x / PARK_SCALE,
+          z: POND_STAGE.z - z / PARK_SCALE,
         });
         // Real scans from the flora library, instanced: elms down the Mall,
         // sparse canopy where the map has trees (thinned hard so the park
@@ -1108,26 +1111,34 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
               }
             });
           };
-          // Trees: the scan is ~19 m; at 1:4 a park elm is 4–5 units.
+          // Trees at full size (the scan is ~19 m tall; shore trees run
+          // 10–15 m), kept sparse and off the bridge so the postcard's
+          // sightline over the water stays open.
           const trees: { x: number; z: number; scale: number; rot: number; px: number; pz: number }[] = [];
-          for (const p of mallElmPositions()) {
-            const r = parkToRoom(p.x, p.z);
-            trees.push({ ...r, px: p.x, pz: p.z, scale: 0.22 + rng() * 0.06, rot: rng() * Math.PI * 2 });
-          }
-          const TARGET = trees.length + 150;
+          const TARGET = 150;
           for (let attempt = 0; attempt < 9000 && trees.length < TARGET; attempt++) {
             const angle = rng() * Math.PI * 2;
-            const radius = meadowRadius + 4 + Math.sqrt(rng()) * 420;
+            const radius = meadowRadius + 14 + Math.sqrt(rng()) * 560;
             const rx = Math.cos(angle) * radius;
             const rz = Math.sin(angle) * radius;
+            // Keep the postcard's sightline: no trees inside the view cone
+            // from the stage south over the water toward the skyline (room
+            // −Z after the half turn), out to where the far shore's own
+            // trees belong in the frame.
+            if (radius < 240 && rz < 0 && Math.abs(Math.atan2(rx, -rz)) < 0.5) {
+              continue;
+            }
             const p = roomToPark(rx, rz);
-            if (world.canopyAt(p.x, p.z) < 9 || world.waterAt(p.x, p.z) > 0.5) {
+            if (world.canopyAt(p.x, p.z) < 8 || world.waterAt(p.x, p.z) > 0.5) {
               continue;
             }
-            if (trees.some((q) => (q.x - rx) ** 2 + (q.z - rz) ** 2 < 10 * 10)) {
+            if ((p.x - GAPSTOW.x) ** 2 + (p.z - GAPSTOW.z) ** 2 < 22 * 22) {
               continue;
             }
-            trees.push({ x: rx, z: rz, px: p.x, pz: p.z, scale: 0.2 + rng() * 0.12, rot: rng() * Math.PI * 2 });
+            if (trees.some((q) => (q.x - rx) ** 2 + (q.z - rz) ** 2 < 13 * 13)) {
+              continue;
+            }
+            trees.push({ x: rx, z: rz, px: p.x, pz: p.z, scale: 0.52 + rng() * 0.24, rot: rng() * Math.PI * 2 });
           }
           instance("jacaranda_tree", trees);
           // Outcrops: a handful of rock clumps scattered over each.
@@ -1139,7 +1150,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
               const d = Math.sqrt(rng()) * outcrop.radius;
               const px = c.x + Math.cos(a) * d;
               const pz = c.z + Math.sin(a) * d;
-              rocks.push({ ...parkToRoom(px, pz), px, pz, scale: 1.6 + rng() * 1.6, rot: rng() * Math.PI * 2 });
+              rocks.push({ ...parkToRoom(px, pz), px, pz, scale: 2.2 + rng() * 2.2, rot: rng() * Math.PI * 2 });
             }
           }
           instance("rock_moss_set_01", rocks);
@@ -1150,10 +1161,10 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
               return;
             }
             parkWorld = world;
-            const y = world.groundAt(SHEEP_MEADOW.x, SHEEP_MEADOW.z);
+            const y = world.groundAt(POND_STAGE.x, POND_STAGE.z);
             world.group.scale.setScalar(PARK_SCALE);
             world.group.rotation.y = Math.PI;
-            world.group.position.set(SHEEP_MEADOW.x * PARK_SCALE, -y * PARK_SCALE - 0.15, SHEEP_MEADOW.z * PARK_SCALE);
+            world.group.position.set(POND_STAGE.x * PARK_SCALE, -y * PARK_SCALE - 0.15, POND_STAGE.z * PARK_SCALE);
             // The Lake mirrors the sky: the same panorama as the dome, as a
             // reflection map (a fresh view per build; the dome's texture is
             // env-owned and disposed with it).

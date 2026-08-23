@@ -23,5 +23,24 @@ rectangle of ±2147 m east / ±2971 m north around the park centre
 | `buildings.json` | NYC Open Data, DOITT Building Footprints (dataset `5zhs-2jue`) | 17k footprints with roof height, ground elevation, construction year; rings in local decimetres, one building per line. |
 | `manifest.json` | — | The frame, per-file dimensions and anchors (Sheep Meadow's local position and ground height); `park-world.ts` validates it against `park-frame.ts` and the tests pin the two together. |
 
-Re-bake with `python3 scripts/fetch-park-data.py` (needs numpy + Pillow,
-~30 s, ~9 MB). The Google tiles page needs no bake.
+## Landmark models (`models/*.glb`)
+
+The room's `?env=park` scene is ONE iconic place — Gapstow Bridge over the
+Pond — and its skyline is real models on their true footprints (fetched and
+repacked by `scripts/fetch-park-models.py` via the Objaverse mirror,
+quantized + WebP, placement in `src/park3d/park-models.ts`). All are
+**CC Attribution 4.0** from Sketchfab:
+
+| File | Model | Author |
+| --- | --- | --- |
+| `plaza_hotel.glb` | [Plaza Hotel](https://sketchfab.com/3d-models/fd4b083aca0245379418564c9105b4a7) | mshukla |
+| `central_park_tower.glb` | [Central Park Tower](https://sketchfab.com/3d-models/53c2458a58104c708390149fc942b03a) | NanoRay |
+| `220_cps.glb` | [220 Central Park South](https://sketchfab.com/3d-models/84c23b63fdbe42c393fa4a96a68f4ada) | NanoRay |
+| `one57.glb` | [One57](https://sketchfab.com/3d-models/60327eb81d1147f6bc4d248c51813085) | NanoRay |
+| `steinway_tower.glb` | [111 West 57th Street — Steinway Tower](https://sketchfab.com/3d-models/94deba673b494217b76de75fd0d149fc) | NanoRay |
+| `432_park.glb` | [432 Park Avenue](https://sketchfab.com/3d-models/d1071ed9bd9549a5a03c83b72fbaffd1) | NanoRay |
+
+Re-bake the data with `python3 scripts/fetch-park-data.py` (needs numpy +
+Pillow, ~30 s, ~9 MB) and the models with
+`python3 scripts/fetch-park-models.py` (~10 MB). The Google tiles page needs
+no bake.

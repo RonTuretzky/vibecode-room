@@ -155,6 +155,11 @@ const segmentLadder = (alt: number, pitchDeg: number): ViewPreset => {
   };
 };
 
+// The room's stage for ?env=park: the lawn just north of Gapstow Bridge —
+// due south the view crosses ~200 m of the Pond's water with the skyline
+// behind (picked by scanning the baked water mask along candidate bearings).
+export const POND_STAGE = localFromLatLon(40.76765, -73.9738);
+
 // Sheep Meadow (66th–69th St, west of centre): THE ground-level postcard —
 // the Midtown wall rising over the tree line to the south.
 export const SHEEP_MEADOW = localFromLatLon(40.77156, -73.97442);

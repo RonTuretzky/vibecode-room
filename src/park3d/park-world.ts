@@ -14,6 +14,7 @@
 import * as THREE from "three";
 import { AXIS_BEARING, DEG, PARK_CENTER, PARK_HALF_LEN, PARK_HALF_WIDTH } from "./park-frame";
 import { buildLandmarks } from "./park-landmarks";
+import { loadSkylineModels, skylineSites } from "./park-models";
 
 export interface ParkManifest {
   center: { lat: number; lon: number; surfaceHeightM: number };
@@ -48,6 +49,12 @@ export interface ParkWorldOptions {
   // Stand the hand-built landmarks (park-landmarks.ts) on the ground
   // (default true).
   landmarks?: boolean;
+  // Load the real CC-BY skyline models (the Plaza, Billionaires' Row) and
+  // clear the extruded footprints under them (default true).
+  models?: boolean;
+  // Dress the extruded footprints in a window-grid facade texture instead
+  // of flat vertex colour (default true) — boxes read as buildings.
+  facades?: boolean;
   // Blend the surface to the anchor's ground height inside `radius`, easing
   // back to the real terrain over `feather` — the room parks its meadow disc
   // on Sheep Meadow and must not have the lawn poke through it.
@@ -347,11 +354,22 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
   }
 
   // ── buildings ───────────────────────────────────────────────────────────
+  const models = opts.models !== false;
   let buildings: THREE.Mesh | null = null;
   if (buildingsJson !== null) {
     await nextFrame();
-    buildings = buildBuildings(buildingsJson.buildings, manifest.buildings.unitM, groundAt);
+    buildings = buildBuildings(buildingsJson.buildings, manifest.buildings.unitM, groundAt, {
+      facades: opts.facades !== false,
+      exclude: models ? skylineSites() : [],
+    });
     group.add(buildings);
+  }
+  if (models) {
+    // Async on top of the resolved world: the scene stands while the six
+    // glbs stream in.
+    loadSkylineModels(groundAt)
+      .then((skyline) => group.add(skyline))
+      .catch((error: unknown) => console.warn("skyline models failed to load; extruded city only", error));
   }
 
   return {
@@ -370,8 +388,18 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
       orthoTexture.dispose();
       if (buildings !== null) {
         buildings.geometry.dispose();
-        (buildings.material as THREE.Material).dispose();
+        for (const m of Array.isArray(buildings.material) ? buildings.material : [buildings.material]) {
+          m.dispose();
+        }
       }
+      group.getObjectByName("park-skyline")?.traverse((node) => {
+        if (node instanceof THREE.Mesh) {
+          node.geometry.dispose();
+          for (const m of Array.isArray(node.material) ? node.material : [node.material]) {
+            m.dispose();
+          }
+        }
+      });
       if (water !== null) {
         water.geometry.dispose();
         (water.material as THREE.Material).dispose();
@@ -517,10 +545,16 @@ export function loadParkWorldShared(opts: ParkWorldOptions = {}): Promise<ParkWo
 // edge (own normals, so the facades shade as flat faces) and an ear-clipped
 // roof. Vertex colours carry the facade tone with a darker base (cheap
 // ambient occlusion from the street canyon).
+export interface BuildBuildingsOptions {
+  facades?: boolean;
+  exclude?: { x: number; z: number; r: number }[];
+}
+
 export function buildBuildings(
   rows: [number, number, number, number[]][],
   unit: number,
   groundAt: (x: number, z: number) => number,
+  opts: BuildBuildingsOptions = {},
 ): THREE.Mesh {
   let vertexCount = 0;
   let indexCount = 0;
@@ -532,13 +566,16 @@ export function buildBuildings(
   const positions = new Float32Array(vertexCount * 3);
   const normals = new Float32Array(vertexCount * 3);
   const colors = new Float32Array(vertexCount * 3);
-  const index = new Uint32Array(indexCount);
+  const uvs = new Float32Array(vertexCount * 2);
+  const wallIndex: number[] = [];
+  const roofIndex: number[] = [];
   let v = 0;
-  let ii = 0;
   const roofGrey = new THREE.Color(0x8c8c8c);
   const contour: THREE.Vector2[] = [];
+  const exclude = opts.exclude ?? [];
+  // One facade tile = FACADE_TILE_M metres of wall in both directions.
 
-  const put = (x: number, y: number, z: number, nx: number, ny: number, nz: number, c: THREE.Color, shade: number): number => {
+  const put = (x: number, y: number, z: number, nx: number, ny: number, nz: number, c: THREE.Color, shade: number, u: number, w: number): number => {
     positions[v * 3] = x;
     positions[v * 3 + 1] = y;
     positions[v * 3 + 2] = z;
@@ -548,6 +585,8 @@ export function buildBuildings(
     colors[v * 3] = c.r * shade;
     colors[v * 3 + 1] = c.g * shade;
     colors[v * 3 + 2] = c.b * shade;
+    uvs[v * 2] = u;
+    uvs[v * 2 + 1] = w;
     return v++;
   };
 
@@ -570,7 +609,28 @@ export function buildBuildings(
       xs.reverse();
       zs.reverse();
     }
+    let cx0 = 0;
+    let cz0 = 0;
+    for (let i = 0; i < n; i++) {
+      cx0 += xs[i] / n;
+      cz0 += zs[i] / n;
+    }
+    if (exclude.some((site) => (site.x - cx0) ** 2 + (site.z - cz0) ** 2 < site.r * site.r)) {
+      // A real model stands here — pad the reserved index slots with
+      // degenerate triangles so the preallocated buffers stay dense.
+      const a = put(0, -1000, 0, 0, 1, 0, roofGrey, 1, 0, 0);
+      for (let k = 0; k < 6 * n; k++) {
+        wallIndex.push(a);
+      }
+      for (let k = 0; k < 3 * (n - 2); k++) {
+        roofIndex.push(a);
+      }
+      return;
+    }
     const height = Math.max(3, hUnits * unit);
+    // With a facade texture the near-white tile multiplies the tone; undim
+    // it and sun-facing walls blow out to paper.
+    const toneScale = opts.facades !== false ? 0.78 : 1;
     let base = Infinity;
     for (let i = 0; i < n; i++) {
       base = Math.min(base, groundAt(xs[i], zs[i]));
@@ -578,9 +638,10 @@ export function buildBuildings(
     // Sink slightly so sloped lots never show a floating slab edge.
     base -= 0.4;
     const top = base + height;
-    const tone = facadeTone(year, height, b + 1);
-    const roof = tone.clone().lerp(roofGrey, 0.5).multiplyScalar(0.9);
+    const tone = facadeTone(year, height, b + 1).multiplyScalar(toneScale);
+    const roof = tone.clone().lerp(roofGrey, 0.5).multiplyScalar(0.9 / Math.max(toneScale, 0.01));
 
+    let run = 0;
     for (let i = 0; i < n; i++) {
       const j = (i + 1) % n;
       const dx = xs[j] - xs[i];
@@ -589,16 +650,17 @@ export function buildBuildings(
       // Counter-clockwise from above: outward is the right-hand side.
       const nx = -dz / len;
       const nz = dx / len;
-      const a = put(xs[i], base, zs[i], nx, 0, nz, tone, 0.78);
-      const c = put(xs[j], base, zs[j], nx, 0, nz, tone, 0.78);
-      const d = put(xs[j], top, zs[j], nx, 0, nz, tone, 1);
-      const e = put(xs[i], top, zs[i], nx, 0, nz, tone, 1);
-      index[ii++] = a;
-      index[ii++] = c;
-      index[ii++] = d;
-      index[ii++] = a;
-      index[ii++] = d;
-      index[ii++] = e;
+      // Facade UVs run in wall-metres (u along the ring so window columns
+      // never stretch, v vertically from the base).
+      const u0 = run / FACADE_TILE_M;
+      const u1 = (run + len) / FACADE_TILE_M;
+      const v1 = height / FACADE_TILE_M;
+      run += len;
+      const a = put(xs[i], base, zs[i], nx, 0, nz, tone, 0.78, u0, 0);
+      const c = put(xs[j], base, zs[j], nx, 0, nz, tone, 0.78, u1, 0);
+      const d = put(xs[j], top, zs[j], nx, 0, nz, tone, 1, u1, v1);
+      const e = put(xs[i], top, zs[i], nx, 0, nz, tone, 1, u0, v1);
+      wallIndex.push(a, c, d, a, d, e);
     }
 
     contour.length = 0;
@@ -609,22 +671,20 @@ export function buildBuildings(
     }
     const roofStart = v;
     for (let i = 0; i < n; i++) {
-      put(xs[i], top, zs[i], 0, 1, 0, roof, 1);
+      put(xs[i], top, zs[i], 0, 1, 0, roof, 1, 0, 0);
     }
     const tris = THREE.ShapeUtils.triangulateShape(contour, []);
     for (const [p, q, r] of tris) {
       // Earcut's output winding depends on its own conventions; orient each
       // roof triangle so its face normal points up (+Y).
       const ny = (zs[q] - zs[p]) * (xs[r] - xs[p]) - (xs[q] - xs[p]) * (zs[r] - zs[p]);
-      index[ii++] = roofStart + p;
-      index[ii++] = roofStart + (ny < 0 ? r : q);
-      index[ii++] = roofStart + (ny < 0 ? q : r);
+      roofIndex.push(roofStart + p, roofStart + (ny < 0 ? r : q), roofStart + (ny < 0 ? q : r));
     }
     // Degenerate rings (earcut dropping triangles) leave unused slots — pad
     // with a zero-area triangle so the index stays dense.
     const expected = 3 * (n - 2);
     for (let k = tris.length * 3; k < expected; k++) {
-      index[ii++] = roofStart;
+      roofIndex.push(roofStart);
     }
   });
 
@@ -632,9 +692,74 @@ export function buildBuildings(
   geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
   geometry.setAttribute("normal", new THREE.BufferAttribute(normals, 3));
   geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+  geometry.setAttribute("uv", new THREE.BufferAttribute(uvs, 2));
+  const index = new Uint32Array(wallIndex.length + roofIndex.length);
+  index.set(wallIndex, 0);
+  index.set(roofIndex, wallIndex.length);
   geometry.setIndex(new THREE.BufferAttribute(index, 1));
+  geometry.addGroup(0, wallIndex.length, 0);
+  geometry.addGroup(wallIndex.length, roofIndex.length, 1);
   geometry.computeBoundingSphere();
-  const mesh = new THREE.Mesh(geometry, new THREE.MeshLambertMaterial({ vertexColors: true }));
+  const wallMaterial = new THREE.MeshLambertMaterial({ vertexColors: true });
+  if (opts.facades !== false && typeof document !== "undefined") {
+    wallMaterial.map = facadeTexture();
+  }
+  const mesh = new THREE.Mesh(geometry, [wallMaterial, new THREE.MeshLambertMaterial({ vertexColors: true })]);
   mesh.name = "park-buildings";
   return mesh;
+}
+
+// One repeating facade tile: FACADE_TILE_M metres of wall — a 4×4 grid of
+// punched windows over a near-white ground the vertex tone colours. A few
+// windows glow warm, most sit dark blue-grey; drawn once per page.
+const FACADE_TILE_M = 13;
+let facadeCanvasTexture: THREE.CanvasTexture | null = null;
+
+function facadeTexture(): THREE.CanvasTexture {
+  if (facadeCanvasTexture !== null) {
+    return facadeCanvasTexture;
+  }
+  const size = 256;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d")!;
+  ctx.fillStyle = "#f3f1ec";
+  ctx.fillRect(0, 0, size, size);
+  let seed = 0x46414341;
+  const rand = () => {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    return seed / 4294967296;
+  };
+  const cells = 4;
+  const cell = size / cells;
+  for (let row = 0; row < cells; row++) {
+    for (let col = 0; col < cells; col++) {
+      // Window ~55% of the bay, sitting low (sill) and centred.
+      const w = cell * 0.52;
+      const h = cell * 0.58;
+      const x = col * cell + (cell - w) / 2;
+      const y = row * cell + cell * 0.24;
+      const r = rand();
+      if (r > 0.93) {
+        ctx.fillStyle = "#ffe9b8"; // lit
+      } else {
+        const glass = 46 + Math.floor(rand() * 34);
+        ctx.fillStyle = `rgb(${glass},${glass + 8},${glass + 18})`;
+      }
+      ctx.fillRect(x, y, w, h);
+      // Mullion.
+      ctx.fillStyle = "rgba(240,238,232,0.85)";
+      ctx.fillRect(x + w / 2 - 1, y, 2, h);
+    }
+    // Floor line.
+    ctx.fillStyle = "rgba(120,116,108,0.35)";
+    ctx.fillRect(0, row * cell, size, 2);
+  }
+  facadeCanvasTexture = new THREE.CanvasTexture(canvas);
+  facadeCanvasTexture.wrapS = THREE.RepeatWrapping;
+  facadeCanvasTexture.wrapT = THREE.RepeatWrapping;
+  facadeCanvasTexture.colorSpace = THREE.SRGBColorSpace;
+  facadeCanvasTexture.anisotropy = 4;
+  return facadeCanvasTexture;
 }

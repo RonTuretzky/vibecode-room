@@ -271,6 +271,9 @@ function buildBelvedere(): THREE.Object3D {
   return g;
 }
 
+// Gapstow's site, exported for the room's tree-clearing pass.
+export const GAPSTOW = localFromLatLon(40.76693, -73.97381);
+
 export const LANDMARKS: LandmarkSpec[] = [
   { name: "Cleopatra's Needle", lat: 40.77965, lon: -73.9654, bearing: 29, build: buildObelisk },
   // Bow Bridge's footway runs 148° (SSE) per OSM; the model's span is its X
@@ -321,6 +324,7 @@ export function mallElmPositions(): { x: number; z: number }[] {
 
 // Schist outcrops worth a few real rock scans: centre + spread radius (m).
 export const OUTCROPS: { name: string; lat: number; lon: number; radius: number }[] = [
+  { name: "Pond west shore", lat: 40.7664, lon: -73.97493, radius: 12 },
   { name: "Umpire Rock", lat: 40.76917, lon: -73.97775, radius: 28 },
   { name: "Vista Rock", lat: 40.77941, lon: -73.96907, radius: 22 },
   { name: "Rat Rock", lat: 40.7695, lon: -73.97585, radius: 14 },

@@ -1,0 +1,22 @@
+<!doctype html><html><body style="margin:0;background:#20262e">
+<script type="module">
+import * as THREE from "/node_modules/three/build/three.module.js";
+import { GLTFLoader } from "/node_modules/three/examples/jsm/loaders/GLTFLoader.js";
+import { OrbitControls } from "/node_modules/three/examples/jsm/controls/OrbitControls.js";
+const params=new URLSearchParams(location.search);
+const renderer=new THREE.WebGLRenderer({antialias:true});renderer.setSize(innerWidth,innerHeight);document.body.appendChild(renderer.domElement);
+const scene=new THREE.Scene();scene.background=new THREE.Color(0xdde6ee);
+scene.add(new THREE.HemisphereLight(0xcfe0f0,0x8b9478,1.2));
+const sun=new THREE.DirectionalLight(0xfff0da,1.8);sun.position.set(3,5,2);scene.add(sun);
+const camera=new THREE.PerspectiveCamera(45,innerWidth/innerHeight,0.1,50000);
+const controls=new OrbitControls(camera,renderer.domElement);
+new GLTFLoader().load(params.get("glb"),(g)=>{
+  const box=new THREE.Box3().setFromObject(g.scene);
+  const c=box.getCenter(new THREE.Vector3()),s=box.getSize(new THREE.Vector3());
+  const d=Math.max(s.x,s.y,s.z);
+  camera.position.set(c.x+d*0.9,c.y+d*0.55,c.z+d*0.9);controls.target.copy(c);controls.update();
+  scene.add(g.scene);
+  document.title="loaded "+JSON.stringify([s.x|0,s.y|0,s.z|0]);
+});
+renderer.setAnimationLoop(()=>{controls.update();renderer.render(scene,camera);});
+</script></body></html>

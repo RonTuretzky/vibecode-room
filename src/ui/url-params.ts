@@ -48,9 +48,9 @@ export interface ProjectorUrlConfig {
   // wall never offers canned content; run-room.sh appends it only when
   // VIBERSYN_MOCK_ROOM=1 is set in the environment.
   mock: boolean;
-  // ?env=park — the garden scene's horizon becomes the real Central Park:
-  // the meadow sits on Sheep Meadow, with the park's canopy and the Midtown /
-  // Fifth Ave / CPW skyline beyond it (baked open data, see
+  // ?env=park — the garden stands in Central Park at 1:1: the lawn north of
+  // Gapstow Bridge over the Pond, with the real skyline (the Plaza,
+  // Billionaires' Row) behind the water (baked open data + CC-BY models, see
   // public/assets/park). Opt-in only; the default "meadow" keeps the
   // pastoral hills. Purely environmental — nodes, layouts, modes, gestures
   // and the G garden↔orbit toggle behave identically.

@@ -76,6 +76,18 @@ describe("park buildings extrusion", () => {
     expect(box.max.z).toBeCloseTo(10);
   });
 
+  test("an excluded site collapses its building to degenerate padding", () => {
+    const mesh = buildBuildings([[300, 0, 1920, cw]], 0.1, groundAt, { exclude: [{ x: 10, z: 5, r: 30 }] });
+    mesh.geometry.computeBoundingBox();
+    // Only the sunken padding vertex remains above the buffers' zero-fill.
+    expect(mesh.geometry.boundingBox!.min.y).toBe(-1000);
+    expect(mesh.geometry.boundingBox!.max.y).toBe(0);
+    // A site elsewhere leaves the building alone.
+    const kept = buildBuildings([[300, 0, 1920, cw]], 0.1, groundAt, { exclude: [{ x: 500, z: 5, r: 30 }] });
+    kept.geometry.computeBoundingBox();
+    expect(kept.geometry.boundingBox!.max.y).toBeCloseTo(10 - 0.4 + 30);
+  });
+
   test("the base is darker than the top (street-canyon shading)", () => {
     const mesh = buildBuildings([[300, 0, 1920, cw]], 0.1, groundAt);
     const pos = mesh.geometry.getAttribute("position");

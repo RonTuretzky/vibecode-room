@@ -70,3 +70,6 @@ gesture-wall/.venv-hands/
 
 # Python bytecode from scripts/*.py
 __pycache__/
+
+# raw model cache (re-downloadable from the Objaverse mirror)
+public/assets/park/models/.raw/
