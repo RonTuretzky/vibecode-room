@@ -6,6 +6,17 @@ import {
   sanitizedSubscriptionCliEnv,
 } from "./llm-subscription-probe";
 
+// The live hot-loop probe needs a HOST SUBSCRIPTION binding: a `codex` or
+// `claude` CLI installed and logged in on this machine. CI has neither, so the
+// live-probe test skips LOUDLY; the pure provenance/sanitization test runs
+// everywhere.
+const subscriptionCliMissing = Bun.which("codex") === null && Bun.which("claude") === null;
+if (subscriptionCliMissing) {
+  console.warn(
+    "[llm-subscription] skipping the live hot-loop probe: no `codex` or `claude` CLI on PATH (host subscription binding unavailable)",
+  );
+}
+
 describe("A-LLM-SUB host subscription reachability probe", () => {
   test("model access records host subscription provenance and rejects raw-key routing", () => {
     expect(createModelCredentialSource({ provider: "openai-codex" })).toEqual({
@@ -35,7 +46,7 @@ describe("A-LLM-SUB host subscription reachability probe", () => {
     }
   });
 
-  test("subscription-routed hot-loop access is either green or surfaced as a binding PRD conflict", async () => {
+  test.skipIf(subscriptionCliMissing)("subscription-routed hot-loop access is either green or surfaced as a binding PRD conflict", async () => {
     const verdict = await runHotLoopSubscriptionProbe();
 
     expect(verdict.checks.noRawKeyRoute).toBe(true);

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Hono } from "hono";
@@ -683,7 +683,24 @@ describe("guest hands surface (GET /hands + /api/hands/info)", () => {
     expect(html).not.toContain("storage.googleapis.com");
   });
 
-  test("self-hosted tracker assets: bundle, wasm, and model all serve with sane types", async () => {
+  // The served assets resolve from the installed @mediapipe/tasks-vision
+  // package plus the DOWNLOADED (gitignored) hand model in gesture-wall/models
+  // — the same paths registerHandsSurface() serves. Environments without them
+  // (CI, a worktree that never ran the model fetch) skip LOUDLY.
+  const handsAssetFiles = [
+    new URL("../../node_modules/@mediapipe/tasks-vision/vision_bundle.mjs", import.meta.url).pathname,
+    new URL("../../node_modules/@mediapipe/tasks-vision/wasm/vision_wasm_internal.js", import.meta.url).pathname,
+    new URL("../../node_modules/@mediapipe/tasks-vision/wasm/vision_wasm_internal.wasm", import.meta.url).pathname,
+    new URL("../../gesture-wall/models/hand_landmarker.task", import.meta.url).pathname,
+  ];
+  const handsAssetsMissing = handsAssetFiles.filter((path) => !existsSync(path));
+  if (handsAssetsMissing.length > 0) {
+    console.warn(
+      `[hands-assets] skipping the self-hosted tracker asset test: missing ${handsAssetsMissing.join(", ")} (the hand model is downloaded, not committed)`,
+    );
+  }
+
+  test.skipIf(handsAssetsMissing.length > 0)("self-hosted tracker assets: bundle, wasm, and model all serve with sane types", async () => {
     const { app } = await makeApp();
     const cases: Array<[string, string]> = [
       ["/hands/assets/vision_bundle.mjs", "text/javascript"],
