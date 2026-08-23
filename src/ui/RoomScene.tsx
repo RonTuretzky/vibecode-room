@@ -5,7 +5,7 @@ import { registerSceneDwellSource, type SceneDwellRect } from "./gesture/scene-s
 import { registerSceneCameraControl } from "./gesture/camera-source";
 import { cornerEye, cornerVerticalFovDeg, cornerYaw } from "./corner-lock";
 import { loadGardenFlora, type FloraLibrary } from "./garden-flora";
-import { POND_STAGE } from "../park3d/park-frame";
+import { POND_STAGE, alongAcross as alongAcrossOf, localFromAlongAcross as parkLocalFromAlongAcross } from "../park3d/park-frame";
 import { GAPSTOW, OUTCROPS } from "../park3d/park-landmarks";
 import { loadParkWorldShared, type ParkWorld } from "../park3d/park-world";
 import { localFromLatLon } from "../park3d/park-frame";
@@ -1067,6 +1067,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
         }
       };
       let parkWorld: ParkWorld | null = null;
+      let parkWater: THREE.MeshStandardMaterial | null = null;
       let parkDisposed = false;
       if (park) {
         // Shared for the page (see park-world.ts): a garden↔orbit toggle
@@ -1136,32 +1137,46 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
           // Trees at full size (the scan is ~19 m tall; shore trees run
           // 10–15 m), kept sparse and off the bridge so the postcard's
           // sightline over the water stays open.
+          // Candidates are drawn in PARK coordinates over the park's own
+          // corner — a blind disc around the stage lands mostly in the city
+          // (zeroed masks) and starves every species long before its target.
+          const stageAA = alongAcrossOf(POND_STAGE.x, POND_STAGE.z);
+          const samplePark = (reach: number): { px: number; pz: number; rx: number; rz: number; radius: number } => {
+            const along = Math.max(-2034, Math.min(2034, stageAA.along - reach + rng() * 2 * reach));
+            const across = -418 + rng() * 836;
+            const p = parkLocalFromAlongAcross(along, across);
+            const r = parkToRoom(p.x, p.z);
+            return { px: p.x, pz: p.z, rx: r.x, rz: r.z, radius: Math.hypot(r.x, r.z) };
+          };
           const trees: { x: number; z: number; scale: number; rot: number; px: number; pz: number }[] = [];
-          const TARGET = 150;
-          for (let attempt = 0; attempt < 9000 && trees.length < TARGET; attempt++) {
-            const angle = rng() * Math.PI * 2;
-            const radius = meadowRadius + 14 + Math.sqrt(rng()) * 560;
-            const rx = Math.cos(angle) * radius;
-            const rz = Math.sin(angle) * radius;
+          const TARGET = 300;
+          for (let attempt = 0; attempt < 20000 && trees.length < TARGET; attempt++) {
+            const { px, pz, rx, rz, radius } = samplePark(700);
+            if (radius < meadowRadius + 14 || radius > 700) {
+              continue;
+            }
             // Keep the postcard's sightline: no trees inside the view cone
             // from the stage south over the water toward the skyline (room
             // −Z after the half turn), out to where the far shore's own
             // trees belong in the frame.
-            if (radius < 240 && rz < 0 && Math.abs(Math.atan2(rx, -rz)) < 0.5) {
+            if (radius < 170 && rz < 0 && Math.abs(Math.atan2(rx, -rz)) < 0.3) {
               continue;
             }
-            const p = roomToPark(rx, rz);
-            if (world.canopyAt(p.x, p.z) < 8 || world.waterAt(p.x, p.z) > 0.5) {
+            const p = { x: px, z: pz };
+            if (world.canopyAt(p.x, p.z) < 6 || world.waterAt(p.x, p.z) > 0.5) {
               continue;
             }
             if ((p.x - GAPSTOW.x) ** 2 + (p.z - GAPSTOW.z) ** 2 < 22 * 22) {
               continue;
             }
-            if (trees.some((q) => (q.x - rx) ** 2 + (q.z - rz) ** 2 < 13 * 13)) {
+            if (trees.some((q) => (q.x - rx) ** 2 + (q.z - rz) ** 2 < 9 * 9)) {
               continue;
             }
-            trees.push({ x: rx, z: rz, px: p.x, pz: p.z, scale: 0.52 + rng() * 0.24, rot: rng() * Math.PI * 2 });
+            // Mature park canopy: the scan is ~19 m, so 0.68–1.0 spans the
+            // 13–19 m elms and oaks in the photographs.
+            trees.push({ x: rx, z: rz, px: p.x, pz: p.z, scale: 0.68 + rng() * 0.32, rot: rng() * Math.PI * 2 });
           }
+          console.info(`[park-flora] jacaranda_tree: ${trees.length} placed`);
           instance("jacaranda_tree", trees);
           // Understorey from the imagery masks: shrubs where the canopy is
           // low (bush height, not crown height), grass tufts and wildflowers
@@ -1177,36 +1192,61 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
             keep: (px: number, pz: number) => boolean,
           ) => {
             const placed: { x: number; z: number; scale: number; rot: number; px: number; pz: number }[] = [];
-            for (let attempt = 0; attempt < count * 40 && placed.length < count; attempt++) {
-              const angle = rng() * Math.PI * 2;
-              const radius = meadowRadius + 3 + Math.sqrt(rng()) * rMax;
-              const rx = Math.cos(angle) * radius;
-              const rz = Math.sin(angle) * radius;
-              const p = roomToPark(rx, rz);
-              if (world.waterAt(p.x, p.z) > 0.4 || !keep(p.x, p.z)) {
+            for (let attempt = 0; attempt < count * 60 && placed.length < count; attempt++) {
+              const { px, pz, rx, rz, radius } = samplePark(rMax);
+              if (radius < meadowRadius + 3 || radius > rMax) {
                 continue;
               }
-              if ((p.x - GAPSTOW.x) ** 2 + (p.z - GAPSTOW.z) ** 2 < 16 * 16) {
+              if (world.waterAt(px, pz) > 0.4 || !keep(px, pz)) {
+                continue;
+              }
+              if ((px - GAPSTOW.x) ** 2 + (pz - GAPSTOW.z) ** 2 < 16 * 16) {
                 continue;
               }
               if (placed.some((q) => (q.x - rx) ** 2 + (q.z - rz) ** 2 < spacing * spacing)) {
                 continue;
               }
-              placed.push({ x: rx, z: rz, px: p.x, pz: p.z, scale: sMin + rng() * (sMax - sMin), rot: rng() * Math.PI * 2 });
+              placed.push({ x: rx, z: rz, px, pz, scale: sMin + rng() * (sMax - sMin), rot: rng() * Math.PI * 2 });
             }
+            console.info(`[park-flora] ${name}: ${placed.length} placed`);
             instance(name, placed);
           };
+          // Photographs of the Pond show a WOODED bowl: continuous shrub
+          // masses under and between the trees, brush overhanging the
+          // shoreline, rocks at the water's edge. The shrub scans are ~1-3k
+          // tris a clump, so mass them freely; the jacarandas stay the only
+          // expensive species.
+          const underwood = (px: number, pz: number) => world.canopyAt(px, pz) > 1.2;
           const lowVeg = (px: number, pz: number) => {
             const c = world.canopyAt(px, pz);
-            return c > 1.5 && c < 8;
+            return c > 1.2 && c < 9;
+          };
+          // "Near the water's edge": on land, with water within ~7 m — the
+          // mask ring itself is too thin at 2 m/px to sample directly.
+          const shore = (px: number, pz: number) => {
+            if (world.waterAt(px, pz) > 0.35) {
+              return false;
+            }
+            return (
+              world.waterAt(px + 7, pz) > 0.45 ||
+              world.waterAt(px - 7, pz) > 0.45 ||
+              world.waterAt(px, pz + 7) > 0.45 ||
+              world.waterAt(px, pz - 7) > 0.45
+            );
           };
           const lawn = (px: number, pz: number) => world.lawnAt(px, pz) > 0.45;
-          sprinkle("shrub_03", 70, 380, 9, 2.0, 3.5, lowVeg);
-          sprinkle("shrub_02", 50, 380, 9, 0.8, 1.2, lowVeg);
-          sprinkle("grass_medium_01", 240, 300, 4, 3.0, 4.5, lawn);
-          sprinkle("flower_gazania", 60, 280, 5, 2.8, 4.0, lawn);
-          sprinkle("flower_ursinia", 60, 280, 5, 2.5, 3.8, lawn);
-          sprinkle("dandelion_01", 50, 280, 5, 3.0, 4.5, lawn);
+          sprinkle("shrub_03", 420, 640, 5, 3.2, 6.0, underwood);
+          // Background thicket: the same ~1k-tri clumps blown up to small-
+          // tree size fill the wooded areas the 85k-tri scans can't afford
+          // to.
+          sprinkle("shrub_03", 400, 700, 7, 6.0, 9.5, (px, pz) => world.canopyAt(px, pz) > 7);
+          sprinkle("shrub_02", 220, 520, 5.5, 1.2, 1.9, lowVeg);
+          sprinkle("shrub_03", 120, 420, 4.5, 2.6, 4.5, shore);
+          sprinkle("rock_moss_set_01", 50, 420, 6, 1.6, 3.0, shore);
+          sprinkle("grass_medium_01", 340, 340, 4, 3.0, 4.5, lawn);
+          sprinkle("flower_gazania", 70, 300, 5, 2.8, 4.0, lawn);
+          sprinkle("flower_ursinia", 70, 300, 5, 2.5, 3.8, lawn);
+          sprinkle("dandelion_01", 60, 300, 5, 3.0, 4.5, lawn);
           // Street furniture along the real paths: the cast-iron luminaires
           // and slat benches that say "Central Park" at eye level. Lamps
           // march both sides of the walks near the stage; benches face the
@@ -1330,8 +1370,9 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
               reflection.mapping = THREE.EquirectangularReflectionMapping;
               const waterMat = world.water.material as THREE.MeshStandardMaterial;
               waterMat.envMap = reflection;
-              waterMat.envMapIntensity = 0.5;
+              waterMat.envMapIntensity = 0.55;
               waterMat.needsUpdate = true;
+              parkWater = waterMat;
             }
             group.add(world.group);
             return loadGardenFlora().then((flora) => {
@@ -1395,6 +1436,11 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
 
       return {
         update: (t) => {
+          // The Pond's ripples drift even when motion is reduced elsewhere —
+          // still water reads as a rendering bug, not calm.
+          if (parkWater?.normalMap != null) {
+            parkWater.normalMap.offset.set((t * 0.014) % 1, (t * 0.011) % 1);
+          }
           if (reducedMotion) {
             return;
           }

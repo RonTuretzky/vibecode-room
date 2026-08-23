@@ -607,6 +607,7 @@ export function buildWater(
     bodies++;
   }
   const positions: number[] = [];
+  const uvs: number[] = [];
   const index: number[] = [];
   for (let j = 0; j < rows; j++) {
     for (let i = 0; i < cols; i++) {
@@ -618,6 +619,9 @@ export function buildWater(
       const y = level[j * cols + i] + 0.1;
       const v = positions.length / 3;
       positions.push(x0, y, z0, x0 + cell, y, z0, x0 + cell, y, z0 + cell, x0, y, z0 + cell);
+      // World-space UVs (one ripple tile ≈ 7 m) for the normal map.
+      const T = 3.5;
+      uvs.push(x0 / T, z0 / T, (x0 + cell) / T, z0 / T, (x0 + cell) / T, (z0 + cell) / T, x0 / T, (z0 + cell) / T);
       // Counter-clockwise from above (+Y): (x0,z0) → (x0,z1) → (x1,z1) …
       index.push(v, v + 3, v + 2, v, v + 2, v + 1);
     }
@@ -627,6 +631,7 @@ export function buildWater(
   }
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
   const normals = new Float32Array(positions.length);
   for (let i = 1; i < normals.length; i += 3) {
     normals[i] = 1;
@@ -634,14 +639,54 @@ export function buildWater(
   geometry.setAttribute("normal", new THREE.BufferAttribute(normals, 3));
   geometry.setIndex(index);
   geometry.computeBoundingSphere();
-  // Pond water, not chrome: deep blue-green with a soft sheen — the host may
-  // still hand it a sky envMap, at modest intensity.
-  const mesh = new THREE.Mesh(
-    geometry,
-    new THREE.MeshStandardMaterial({ color: 0x26433f, roughness: 0.28, metalness: 0 }),
-  );
+  // The Pond in the photographs is dark glass: nearly black-green looked
+  // into, mirror-bright toward grazing angles (Fresnel does that once the
+  // base is dark and the surface is smooth), with fine ripples breaking the
+  // reflection. The host hands it a sky envMap and scrolls the ripples.
+  const material = new THREE.MeshStandardMaterial({ color: 0x0f1d1a, roughness: 0.12, metalness: 0 });
+  if (typeof document !== "undefined") {
+    material.normalMap = waterRippleNormals();
+    material.normalScale.set(0.22, 0.22);
+  }
+  const mesh = new THREE.Mesh(geometry, material);
   mesh.name = "park-water";
   return mesh;
+}
+
+// Tileable ripple normal map (sum of sines), generated once per page.
+let rippleTexture: THREE.CanvasTexture | null = null;
+
+export function waterRippleNormals(): THREE.CanvasTexture {
+  if (rippleTexture !== null) {
+    return rippleTexture;
+  }
+  const size = 256;
+  const canvas = document.createElement("canvas");
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext("2d")!;
+  const img = ctx.createImageData(size, size);
+  const TAU = Math.PI * 2;
+  const h = (x: number, y: number): number =>
+    Math.sin((x * 3 + y) * TAU / size) * 0.5 +
+    Math.sin((x * 7 - y * 4) * TAU / size + 1.7) * 0.3 +
+    Math.sin((x * 2 + y * 9) * TAU / size + 4.1) * 0.2;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const dx = h(x + 1, y) - h(x - 1, y);
+      const dy = h(x, y + 1) - h(x, y - 1);
+      const o = (y * size + x) * 4;
+      img.data[o] = 128 + dx * 90;
+      img.data[o + 1] = 128 + dy * 90;
+      img.data[o + 2] = 255;
+      img.data[o + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  rippleTexture = new THREE.CanvasTexture(canvas);
+  rippleTexture.wrapS = THREE.RepeatWrapping;
+  rippleTexture.wrapT = THREE.RepeatWrapping;
+  return rippleTexture;
 }
 
 // Path ribbons: each polyline becomes a flat triangle strip lying a hand
