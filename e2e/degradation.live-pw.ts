@@ -32,14 +32,12 @@ test("a degraded room admits it on the wall", async ({ room, wall }) => {
 
   const text = await wallText(wall.page);
   const named = degraded.filter((leg) => new RegExp(`\\b${leg.leg}\\b`, "iu").test(text));
-  const anyNotice = /degrad|stand-?in|simulat|fixture|not real|fake|mock/iu.test(text);
-  console.log(`[degradation] wall names ${named.length}/${degraded.length} degraded legs; generic notice=${anyNotice}`);
-
-  expect(
-    anyNotice || named.length > 0,
-    `the server knows ${degraded.length} leg(s) are stand-ins (${degraded
-      .map((leg) => `${leg.leg}:${leg.mode}`)
-      .join(", ")}) and the wall shows none of it — src/server/degradation-notice.ts feeds the boot log and ` +
-      "/api/health only, and no component in src/ui fetches /api/health",
-  ).toBe(true);
+  // CONTRACT REVERSED (live-room directive): the wall carries NO stand-ins
+  // chip — permanently naming intentionally-stubbed legs (tts, sink) read as
+  // noise to the operator. /api/health remains the full degradation truth for
+  // diagnostics and this harness; the wall stays clean.
+  const anyNotice = /stand-?in/iu.test(text);
+  console.log(`[degradation] health knows ${degraded.length} degraded legs; wall shows stand-ins chip=${anyNotice}`);
+  expect(degraded.length, "health must keep reporting the stubbed legs").toBeGreaterThan(0);
+  expect(anyNotice, "the wall must NOT render the stand-ins chip").toBe(false);
 });

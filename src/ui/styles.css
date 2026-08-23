@@ -4183,23 +4183,6 @@ main.gesture-mode .record-steer-heard-line { font-size: 1.2rem; }
   font-weight: 600;
 }
 
-/* STAND-INS: which legs of this room are stubbed. Small and out of the way,
-   but always present — a simulated room used to look exactly like a real one. */
-.stand-ins {
-  position: fixed;
-  bottom: 8px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 55;
-  padding: 4px 12px;
-  border-radius: 999px;
-  background: rgba(24, 24, 28, 0.82);
-  color: var(--c-paused, #f5a623);
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  pointer-events: none;
-}
 
 /* Which physical mic the room is hearing — a small honest chip under the
    capture meter ("Wireless GO RX" vs the laptop's builtin). */

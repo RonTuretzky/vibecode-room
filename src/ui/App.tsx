@@ -175,12 +175,6 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
   // has never connected (offline demo, static render) shows no alarm; the SSE
   // error handler flips it and the next landing frame flips it back.
   const [streamLive, setStreamLive] = useState(true);
-  // WHICH PARTS OF THIS ROOM ARE STAND-INS. The server knows exactly which
-  // legs are running stubbed backends and has always said so on /api/health —
-  // but nothing in the UI ever fetched it, so a room whose judge, build
-  // substrate and voice were all simulated looked identical on the wall to a
-  // fully real one. Nobody standing in the room could tell.
-  const [standIns, setStandIns] = useState<string[]>([]);
   const [micState, setMicState] = useState<"off" | "connecting" | "live">("off");
   // The physical microphone actually feeding the room ("Wireless GO RX" /
   // "MacBook Pro Microphone") — shown on the capture control so the operator
@@ -1538,30 +1532,6 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
     };
   }, []);
 
-  // Ask once per boot: the leg selection is fixed when the server starts.
-  useEffect(() => {
-    if (!liveMode) {
-      return;
-    }
-    let cancelled = false;
-    void fetch("/api/health")
-      .then((response) => (response.ok ? response.json() : null))
-      .then((body: unknown) => {
-        if (cancelled || body === null || typeof body !== "object") {
-          return;
-        }
-        const legs = (body as { degradation?: { degraded?: Array<{ leg?: unknown }> } }).degradation?.degraded ?? [];
-        setStandIns(legs.map((entry) => String(entry.leg)).filter((leg) => leg.length > 0));
-      })
-      .catch(() => {
-        // A wall that cannot reach /api/health has bigger problems; the stale
-        // banner covers that case.
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [liveMode]);
-
   // --- Window hook for e2e (SSR-guarded) ---
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -2421,15 +2391,10 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
           ⚠ lost the room — this wall is frozen at its last update, reconnecting…
         </div>
       )}
-
-      {/* Not a debugging chip: a room half-made of stand-ins that looks exactly
-          like a real one is the "weirdly mocked" feeling made visible. Names
-          the legs so it doubles as the list of what is left to make real. */}
-      {standIns.length > 0 ? (
-        <div className="stand-ins" data-testid="stand-ins" title="These subsystems are running stubbed backends — see /api/health for how to upgrade each.">
-          ⚠ stand-ins: {standIns.join(", ")}
-        </div>
-      ) : null}
+      {/* The stand-ins chip is GONE (live-room directive: it read as noise —
+          permanently naming intentionally-stubbed legs like tts/sink taught
+          nobody anything). /api/health keeps the full degradation truth for
+          diagnostics and the harness. */}
 
       <header className="status-bar" data-region="status">
         {/* STATUS READOUTS (listening orb, session id/global state, active cue,
