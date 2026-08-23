@@ -422,8 +422,8 @@ export function TreeMenu({ process, snapshot, anchor, onClose, onOpenDeck, onDis
           </span>
           <FleetScrollRail>
             {versions.branches
-              .filter((entry) => entry.name !== versions.current)
               .map((entry, index) => {
+                const isRunning = entry.name === versions.current;
                 // Each row is a LIMB: the header press opens its lifecycle
                 // actions in place (finalize/load, archive, delete) rather than
                 // loading immediately, so a stray dwell can't yank the room to
@@ -465,33 +465,39 @@ export function TreeMenu({ process, snapshot, anchor, onClose, onOpenDeck, onDis
                           ? "⤵ loading… (the room will reload)"
                           : isTending
                             ? "…tending this limb"
-                            : `🌿 ${entry.subject.replace(/^self: /u, "")}`}
+                            : `${isRunning ? "🟢" : "🌿"} ${entry.subject.replace(/^self: /u, "")}${isRunning ? " · running" : ""}`}
                       </span>
                     </button>
                     {/* LIFECYCLE ACTIONS: revealed once the limb is picked. */}
                     {isOpen ? (
                       <div className="tree-menu-version-actions" data-testid="tree-menu-version-actions">
-                        <button
-                          type="button"
-                          className="ctl-button tree-menu-version-load"
-                          data-testid="tree-menu-version-load"
-                          title={`Finalize this limb: load the room to ${entry.name} — rebuilds and relaunches on it.`}
-                          onClick={() => loadVersion(entry.name)}
-                          disabled={loadingVersion !== null || isTending}
-                        >
-                          ⤵ finalize · load
-                        </button>
+                        {isRunning ? null : (
+                          <button
+                            type="button"
+                            className="ctl-button tree-menu-version-load"
+                            data-testid="tree-menu-version-load"
+                            title={`Finalize this limb: load the room to ${entry.name} — rebuilds and relaunches on it.`}
+                            onClick={() => loadVersion(entry.name)}
+                            disabled={loadingVersion !== null || isTending}
+                          >
+                            ⤵ finalize · load
+                          </button>
+                        )}
                         <button
                           type="button"
                           className="ctl-button tree-menu-version-archive"
                           data-testid="tree-menu-version-archive"
-                          title={`Archive this limb: rename ${entry.name} → archive/… (leaves the load list, keeps the work).`}
+                          title={
+                            isRunning
+                              ? `Archive this running limb: step the room off ${entry.name} onto main, rename it → archive/…, and reload so it is no longer live.`
+                              : `Archive this limb: rename ${entry.name} → archive/… (leaves the load list, keeps the work).`
+                          }
                           onClick={() => tendVersion(entry.name, "archive")}
                           disabled={loadingVersion !== null || isTending}
                         >
-                          🗄 archive
+                          {isRunning ? "🗄 archive · reload" : "🗄 archive"}
                         </button>
-                        {isArmed ? (
+                        {isRunning ? null : isArmed ? (
                           <button
                             type="button"
                             className="ctl-button tree-menu-version-delete is-armed"

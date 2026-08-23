@@ -3946,7 +3946,8 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       return { ok: false, error: "only room/* branches can be tended" };
     }
     const current = (await this.#selfGit(["branch", "--show-current"])).out.trim();
-    if (branch === current) {
+    const archivingLive = branch === current;
+    if (branch === current && action === "delete") {
       return { ok: false, error: "cannot tend the running branch — load another version first" };
     }
     const exists = await this.#selfGit(["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`]);
@@ -3954,10 +3955,36 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       return { ok: false, error: `no local branch named ${branch}` };
     }
     if (action === "archive") {
+      // Archiving the LIVE branch: step off it onto main first so the running
+      // room no longer stands on the limb being archived, then rename and hand
+      // the process to the supervisor (exit 87 -> rebuild -> relaunch on main)
+      // so whatever is archived is no longer live on the room.
+      if (archivingLive) {
+        if (!selfModeEnabled(this.#env)) {
+          return { ok: false, error: "no supervisor is wrapping this process (--self launch required)" };
+        }
+        const stepOff = await this.#selfGit(["checkout", "main"]);
+        if (stepOff.code !== 0) {
+          return { ok: false, error: stepOff.out.slice(0, 160) };
+        }
+      }
       const archived = `archive/${branch.slice("room/".length)}`;
       const renamed = await this.#selfGit(["branch", "-m", branch, archived]);
       if (renamed.code !== 0) {
         return { ok: false, error: renamed.out.slice(0, 160) };
+      }
+      if (archivingLive) {
+        this.recordExternalTrace({
+          event: "self.version.tend",
+          level: "info",
+          sessionId: this.sessionId,
+          correlationId: `corr-self-tend-${crypto.randomUUID()}`,
+          meta: { branch, action, reload: true },
+        });
+        // Respond first, exit after: the supervisor rebuilds on main and
+        // relaunches — the archived change is gone from the live room.
+        setTimeout(() => process.exit(87), 400);
+        return { ok: true };
       }
     } else {
       const removed = await this.#selfGit(["branch", "-D", branch]);
