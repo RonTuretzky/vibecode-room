@@ -4145,3 +4145,36 @@ main.gesture-mode .record-steer-heard-line { font-size: 1.2rem; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* Standing guest invitation: a small always-on QR in the bottom-left corner.
+   Sits above the scene-controls row; pointer-events none so it can never
+   steal a dwell — the 🖐 Guests button remains the interactive path. */
+.guest-qr-badge {
+  position: fixed;
+  left: 12px;
+  bottom: 84px;
+  z-index: 24;
+  margin: 0;
+  padding: 6px 6px 3px;
+  border-radius: 10px;
+  background: rgba(18, 20, 28, 0.72);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.guest-qr-badge img {
+  width: 88px;
+  height: 88px;
+  border-radius: 6px;
+}
+
+.guest-qr-badge figcaption {
+  font-size: 11px;
+  font-weight: 700;
+  color: #8fa4cc;
+  letter-spacing: 0.04em;
+}

@@ -138,3 +138,54 @@ export function GuestHands({ onClose }: GuestHandsProps) {
     </div>
   );
 }
+
+// ALWAYS-ON GUEST BADGE (live-room request: "there should always be a qr code
+// for guests, a small one at the bottom left"). The full overlay above is
+// opt-in behind the 🖐 button; this is the standing invitation — a small QR in
+// the bottom-left corner of every wall, so joining never requires finding a
+// button first. Fetches the guest URL once (it is fixed per boot; one retry),
+// and stays honest: no LAN-reachable URL → no badge, never a dead QR.
+export function GuestQrBadge() {
+  const [dataUrl, setDataUrl] = useState<string | null>(null);
+  const [url, setUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async (attempt: number): Promise<void> => {
+      try {
+        const response = await fetch("/api/hands/info", { headers: { accept: "application/json" } });
+        if (!response.ok) {
+          throw new Error(String(response.status));
+        }
+        const info = (await response.json()) as HandsInfo;
+        if (cancelled || info.lanReachable === false) {
+          return;
+        }
+        const guestUrl = preferredGuestUrl(info);
+        const encoded = await toDataURL(guestUrl, { margin: 1, width: 104 });
+        if (!cancelled) {
+          setUrl(guestUrl);
+          setDataUrl(encoded);
+        }
+      } catch {
+        if (!cancelled && attempt < 1) {
+          setTimeout(() => void load(attempt + 1), 5_000);
+        }
+      }
+    };
+    void load(0);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (dataUrl === null) {
+    return null;
+  }
+  return (
+    <figure className="guest-qr-badge" data-testid="guest-qr-badge" title={`Guests: scan to point at the wall from your phone — ${url ?? ""}`}>
+      <img src={dataUrl} alt="QR code — join as a guest and point at the wall from your phone" />
+      <figcaption>🖐 join</figcaption>
+    </figure>
+  );
+}

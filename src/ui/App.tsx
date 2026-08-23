@@ -19,7 +19,7 @@ import { IdeaTray } from "./IdeaTray";
 import { ResearchTray } from "./ResearchTray";
 import { ResearchDeckOverlay } from "./ResearchDeckOverlay";
 import { QrImport } from "./QrImport";
-import { GuestHands } from "./GuestHands";
+import { GuestHands , GuestQrBadge } from "./GuestHands";
 import { roomHandsSocketUrl } from "./gesture/remote";
 import { HelpOverlay } from "./HelpOverlay";
 import { ControlDock } from "./ControlDock";
@@ -2936,6 +2936,10 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
       ) : null}
       {qrOpen ? <QrImport processes={snapshot.processes} onClose={() => setQrOpen(false)} /> : null}
       {guestsOpen ? <GuestHands onClose={() => setGuestsOpen(false)} /> : null}
+      {/* Standing guest invitation (live-room request): a small always-on QR,
+          bottom-left, on every live wall. The research-pinned ceiling is the
+          one exception — nobody scans a ceiling, and the sky stays clean. */}
+      {liveMode && !urlConfig.research ? <GuestQrBadge /> : null}
       {helpOpen ? <HelpOverlay onClose={() => setHelpOpen(false)} gestureMode={gestureMode} /> : null}
       {guided !== null ? (
         <GuidedDemo
