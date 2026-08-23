@@ -66,5 +66,10 @@
     "file": "buildings.json",
     "count": 17196,
     "unitM": 0.1
+  },
+  "paths": {
+    "file": "paths.json",
+    "count": 1842,
+    "unitM": 0.1
   }
 }

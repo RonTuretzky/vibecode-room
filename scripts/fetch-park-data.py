@@ -27,6 +27,8 @@ photogrammetry it may be stored, modified, and shipped offline:
                  variance classifier separates them. Displacing the terrain by
                  it gives the canopy real mass from the air (the same lumpy
                  look photogrammetry has) without any tree models.
+  paths.json     OSM path/drive polylines clipped to the park (© OpenStreetMap
+                 contributors) — ribbons + lamp/bench placement at runtime.
   buildings.json NYC DOITT building footprints with roof heights (NYC Open
                  Data, dataset 5zhs-2jue) in local decimetres — the skyline
                  that makes the rectangle read as Central Park and not as any
@@ -306,6 +308,68 @@ def rasterise_water(elements, half_east, half_north):
     return np.asarray(img).astype(np.float32) / 255.0
 
 
+# ── paths (OpenStreetMap) ───────────────────────────────────────────────────
+# The path network is what makes the map READ as Central Park at eye level —
+# the curling walks around the Pond, the drives, the Mall. Exported as
+# polylines (not a raster) so the runtime can lay crisp ribbons on the
+# terrain and stand lamps and benches along them.
+PATH_WIDTHS_DM = {
+    "footway": 35,
+    "path": 35,
+    "pedestrian": 50,
+    "cycleway": 45,
+    "bridleway": 45,
+    "track": 40,
+    "service": 60,
+    "residential": 90,
+    "unclassified": 90,
+    "tertiary": 110,
+}
+
+
+def fetch_osm_paths(half_east, half_north):
+    lon0, lat0 = merc_x_to_lon(CX - half_east / COS_LAT), merc_y_to_lat(CY - half_north / COS_LAT)
+    lon1, lat1 = merc_x_to_lon(CX + half_east / COS_LAT), merc_y_to_lat(CY + half_north / COS_LAT)
+    kinds = "|".join(PATH_WIDTHS_DM)
+    query = (
+        f'[out:json][timeout:90];way["highway"~"^({kinds})$"]({lat0},{lon0},{lat1},{lon1});out geom;'
+    )
+    req = urllib.request.Request(
+        OVERPASS,
+        data=("data=" + urllib.parse.quote(query)).encode(),
+        headers={"User-Agent": "vibersyn-park-fetch/1.0", "Content-Type": "application/x-www-form-urlencoded"},
+    )
+    with urllib.request.urlopen(req, timeout=120) as r:
+        return json.load(r)["elements"]
+
+
+def export_paths(elements):
+    """Clip each way to the park rectangle and simplify to ≥3 m steps.
+    Returns [[width_dm, [x_dm, z_dm, ...]], ...]."""
+    b = AXIS_BEARING_DEG * DEG
+    out = []
+    for way in elements:
+        width = PATH_WIDTHS_DM.get(way.get("tags", {}).get("highway"))
+        if width is None:
+            continue
+        run = []
+        for p in way.get("geometry", []):
+            x, z = lonlat_to_local(p["lon"], p["lat"])
+            along = x * math.sin(b) - z * math.cos(b)
+            across = x * math.cos(b) + z * math.sin(b)
+            inside = abs(along) <= PARK_HALF_LEN - 2 and abs(across) <= PARK_HALF_WIDTH - 2
+            if inside:
+                if not run or math.hypot(x - run[-1][0], z - run[-1][1]) >= 3.0:
+                    run.append((x, z))
+            else:
+                if len(run) >= 2:
+                    out.append([width, [int(round(v * 10)) for pt in run for v in pt]])
+                run = []
+        if len(run) >= 2:
+            out.append([width, [int(round(v * 10)) for pt in run for v in pt]])
+    return out
+
+
 # ── canopy relief ───────────────────────────────────────────────────────────
 def box_blur(a, r):
     """Mean over a (2r+1)² window via an integral image (edge-padded)."""
@@ -521,6 +585,12 @@ def main():
     relief, water, lawn = build_relief(leaf_on, half_east, half_north, osm_water)
     grid, h0 = fetch_dem(half_east, half_north, args.dem_step)
     dem = np.clip(np.round((grid - h0) * 10.0), -32768, 32767).astype("<i2")
+    try:
+        paths = export_paths(fetch_osm_paths(half_east, half_north))
+        print(f"[paths] {len(paths)} park path segments from OSM")
+    except (urllib.error.URLError, TimeoutError, OSError, KeyError, ValueError) as error:
+        print(f"[paths] Overpass failed ({error}); keeping no paths")
+        paths = []
     buildings_path = os.path.join(ROOT, "buildings.json")
     buildings = None
     if args.skip_buildings and os.path.exists(buildings_path):
@@ -559,6 +629,7 @@ def main():
         "water": {"file": "water.png", "width": water.width, "height": water.height},
         "lawn": {"file": "lawn.png", "width": lawn.width, "height": lawn.height},
         "buildings": {"file": "buildings.json", "count": count, "unitM": 0.1},
+        "paths": {"file": "paths.json", "count": len(paths), "unitM": 0.1},
     }
 
     # ── write ───────────────────────────────────────────────────────────────
@@ -574,6 +645,10 @@ def main():
             f.write('{"units":"decimetres","fields":["roofHeight","groundElevation","year","ring[x,z,...]"],"buildings":[\n')
             f.write(",\n".join(json.dumps(b, separators=(",", ":")) for b in buildings))
             f.write("\n]}\n")
+    with open(os.path.join(ROOT, "paths.json"), "w") as f:
+        f.write('{"units":"decimetres","fields":["width","line[x,z,...]"],"paths":[\n')
+        f.write(",\n".join(json.dumps(seg, separators=(",", ":")) for seg in paths))
+        f.write("\n]}\n")
     with open(os.path.join(ROOT, "manifest.json"), "w") as f:
         json.dump(manifest, f, indent=2)
         f.write("\n")

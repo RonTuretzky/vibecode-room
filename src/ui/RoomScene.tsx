@@ -1207,6 +1207,97 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
           sprinkle("flower_gazania", 60, 280, 5, 2.8, 4.0, lawn);
           sprinkle("flower_ursinia", 60, 280, 5, 2.5, 3.8, lawn);
           sprinkle("dandelion_01", 50, 280, 5, 3.0, 4.5, lawn);
+          // Street furniture along the real paths: the cast-iron luminaires
+          // and slat benches that say "Central Park" at eye level. Lamps
+          // march both sides of the walks near the stage; benches face the
+          // water on the Pond loop.
+          const furniture = () => {
+            const lampPole = new THREE.CylinderGeometry(0.045, 0.07, 3.4, 8);
+            lampPole.translate(0, 1.7, 0);
+            const lampGlobe = new THREE.SphereGeometry(0.17, 10, 8);
+            lampGlobe.translate(0, 3.55, 0);
+            const poleMat = new THREE.MeshLambertMaterial({ color: 0x27362b });
+            const globeMat = new THREE.MeshLambertMaterial({ color: 0xfff3d0, emissive: 0xffe9b0, emissiveIntensity: 0.55 });
+            const seat = new THREE.BoxGeometry(1.9, 0.08, 0.55);
+            seat.translate(0, 0.45, 0);
+            const back = new THREE.BoxGeometry(1.9, 0.5, 0.07);
+            back.translate(0, 0.82, -0.26);
+            const legs = new THREE.BoxGeometry(1.7, 0.45, 0.45);
+            legs.translate(0, 0.22, 0);
+            const benchWood = new THREE.MeshLambertMaterial({ color: 0x5e4a33 });
+            const benchFrame = new THREE.MeshLambertMaterial({ color: 0x2e2e2c });
+            const lamps: THREE.Matrix4[] = [];
+            const benches: THREE.Matrix4[] = [];
+            for (const line of world.pathLines) {
+              if (line.width > 5.5) {
+                continue; // drives keep their own furniture out of scope
+              }
+              let travelled = 0;
+              for (let i = 2; i < line.pts.length; i += 2) {
+                const x0 = line.pts[i - 2];
+                const z0 = line.pts[i - 1];
+                const x1 = line.pts[i];
+                const z1 = line.pts[i + 1];
+                const seg = Math.hypot(x1 - x0, z1 - z0);
+                travelled += seg;
+                if (travelled < 26) {
+                  continue;
+                }
+                travelled = 0;
+                const room = parkToRoom(x1, z1);
+                const dist = Math.hypot(room.x, room.z);
+                if (dist < meadowRadius + 2 || dist > 330) {
+                  continue;
+                }
+                const ux = (x1 - x0) / seg;
+                const uz = (z1 - z0) / seg;
+                const side = lamps.length % 2 === 0 ? 1 : -1;
+                const off = (line.width / 2 + 0.5) * side;
+                const px = x1 - uz * off;
+                const pz = z1 + ux * off;
+                if (world.waterAt(px, pz) > 0.4) {
+                  continue;
+                }
+                const at = parkToRoom(px, pz);
+                dummy.position.set(at.x, roomY(px, pz) + 0.12, at.z);
+                dummy.rotation.y = rng() * Math.PI * 2;
+                dummy.scale.setScalar(1);
+                dummy.updateMatrix();
+                lamps.push(dummy.matrix.clone());
+                // Every third lamp interval, a bench on the opposite side,
+                // backed against the path and facing away from it.
+                if (lamps.length % 3 === 0 && dist < 220) {
+                  const boff = (line.width / 2 + 0.7) * -side;
+                  const bx = x1 - uz * boff;
+                  const bz = z1 + ux * boff;
+                  if (world.waterAt(bx, bz) < 0.4) {
+                    const bat = parkToRoom(bx, bz);
+                    dummy.position.set(bat.x, roomY(bx, bz) + 0.05, bat.z);
+                    // Face the path (rotated π from the world-frame edge
+                    // normal, which the half-turn world transform absorbs).
+                    dummy.rotation.y = Math.atan2(-uz, -ux) + (side > 0 ? 0 : Math.PI);
+                    dummy.updateMatrix();
+                    benches.push(dummy.matrix.clone());
+                  }
+                }
+              }
+            }
+            const place = (geometry: THREE.BufferGeometry, material: THREE.Material, matrices: THREE.Matrix4[]) => {
+              if (matrices.length === 0) {
+                return;
+              }
+              const instanced = new THREE.InstancedMesh(geometry, material, matrices.length);
+              matrices.forEach((matrix, i) => instanced.setMatrixAt(i, matrix));
+              instanced.frustumCulled = false;
+              group.add(instanced);
+            };
+            place(lampPole, poleMat, lamps);
+            place(lampGlobe, globeMat, lamps);
+            place(seat, benchWood, benches);
+            place(back, benchWood, benches);
+            place(legs, benchFrame, benches);
+          };
+          furniture();
           // Outcrops: a handful of rock clumps scattered over each.
           const rocks: { x: number; z: number; scale: number; rot: number; px: number; pz: number }[] = [];
           for (const outcrop of OUTCROPS) {
@@ -1239,7 +1330,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
               reflection.mapping = THREE.EquirectangularReflectionMapping;
               const waterMat = world.water.material as THREE.MeshStandardMaterial;
               waterMat.envMap = reflection;
-              waterMat.envMapIntensity = 0.9;
+              waterMat.envMapIntensity = 0.5;
               waterMat.needsUpdate = true;
             }
             group.add(world.group);

@@ -274,6 +274,96 @@ function buildBelvedere(): THREE.Object3D {
 // Gapstow's site, exported for the room's tree-clearing pass.
 export const GAPSTOW = localFromLatLon(40.76693, -73.97381);
 
+// ── Inscope Arch ────────────────────────────────────────────────────────────
+// The little granite arch north-east of the Pond — Gapstow's quieter sibling.
+function buildInscope(): THREE.Object3D {
+  const g = new THREE.Group();
+  const length = 10.5;
+  const height = 4.2;
+  const width = 4.0;
+  const shape = new THREE.Shape();
+  shape.moveTo(-length / 2, 0);
+  shape.lineTo(length / 2, 0);
+  shape.lineTo(length / 2, height - 0.4);
+  shape.quadraticCurveTo(0, height + 0.5, -length / 2, height - 0.4);
+  shape.closePath();
+  const arch = new THREE.Path();
+  arch.absarc(0, 0.4, 2.4, Math.PI, 0, true);
+  arch.lineTo(-2.4, 0.4);
+  shape.holes.push(arch);
+  const body = new THREE.Mesh(new THREE.ExtrudeGeometry(shape, { depth: width, bevelEnabled: false }), mat(0x9a8a7c, 0.85));
+  body.position.z = -width / 2;
+  g.add(body);
+  return g;
+}
+
+// ── Cop Cot ─────────────────────────────────────────────────────────────────
+// The rustic wooden gazebo on the schist rise inside the 6th Ave entrance.
+function buildCopCot(): THREE.Object3D {
+  const g = new THREE.Group();
+  const wood = mat(0x6b5136, 0.9);
+  const r = 3.4;
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2;
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.11, 2.9, 6), wood);
+    post.position.set(Math.cos(a) * r, 1.45, Math.sin(a) * r);
+    g.add(post);
+    const railTo = ((i + 1) / 8) * Math.PI * 2;
+    const mx = (Math.cos(a) + Math.cos(railTo)) * 0.5 * r;
+    const mz = (Math.sin(a) + Math.sin(railTo)) * 0.5 * r;
+    const railLen = 2 * r * Math.sin(Math.PI / 8);
+    const rail = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, railLen, 5), wood);
+    rail.position.set(mx, 1.0, mz);
+    rail.rotation.z = Math.PI / 2;
+    rail.rotation.y = -((a + railTo) / 2) - Math.PI / 2;
+    g.add(rail);
+  }
+  const roof = new THREE.Mesh(new THREE.ConeGeometry(r + 0.9, 1.9, 8), mat(0x54432f, 0.95));
+  roof.position.y = 2.9 + 0.95;
+  g.add(roof);
+  return g;
+}
+
+// ── Pulitzer Fountain ───────────────────────────────────────────────────────
+// Grand Army Plaza's tiered fountain, right in front of the Plaza Hotel.
+function buildPulitzer(): THREE.Object3D {
+  const g = new THREE.Group();
+  const stone = mat(0xbfb6a4, 0.8);
+  const rim = new THREE.Mesh(new THREE.CylinderGeometry(9, 9, 0.6, 40, 1, true), stone);
+  rim.material.side = THREE.DoubleSide;
+  rim.position.y = 0.3;
+  g.add(rim);
+  const pool = new THREE.Mesh(
+    new THREE.CircleGeometry(8.7, 40),
+    new THREE.MeshStandardMaterial({ color: 0x3d5a55, roughness: 0.2, metalness: 0.1 }),
+  );
+  pool.rotation.x = -Math.PI / 2;
+  pool.position.y = 0.42;
+  g.add(pool);
+  const profile: THREE.Vector2[] = [
+    new THREE.Vector2(0, 0),
+    new THREE.Vector2(1.8, 0),
+    new THREE.Vector2(1.6, 0.9),
+    new THREE.Vector2(0.6, 1.0),
+    new THREE.Vector2(0.5, 2.2),
+    new THREE.Vector2(3.0, 2.6), // wide basin
+    new THREE.Vector2(2.8, 3.0),
+    new THREE.Vector2(0.8, 2.9),
+    new THREE.Vector2(0.45, 3.8),
+    new THREE.Vector2(1.6, 4.1), // upper basin
+    new THREE.Vector2(1.45, 4.4),
+    new THREE.Vector2(0.4, 4.3),
+    new THREE.Vector2(0.3, 5.2),
+    new THREE.Vector2(0, 5.2),
+  ];
+  g.add(new THREE.Mesh(new THREE.LatheGeometry(profile, 36), stone));
+  // Pomona, in silhouette.
+  const figure = new THREE.Mesh(new THREE.CapsuleGeometry(0.3, 1.2, 4, 8), mat(0x8f867a, 0.7));
+  figure.position.y = 5.2 + 0.9;
+  g.add(figure);
+  return g;
+}
+
 export const LANDMARKS: LandmarkSpec[] = [
   { name: "Cleopatra's Needle", lat: 40.77965, lon: -73.9654, bearing: 29, build: buildObelisk },
   // Bow Bridge's footway runs 148° (SSE) per OSM; the model's span is its X
@@ -282,6 +372,9 @@ export const LANDMARKS: LandmarkSpec[] = [
   { name: "Bethesda Fountain", lat: 40.77432, lon: -73.97083, bearing: 29, build: buildBethesda },
   { name: "Gapstow Bridge", lat: 40.76693, lon: -73.97381, bearing: 160, build: buildGapstow },
   { name: "Belvedere Castle", lat: 40.7793, lon: -73.96887, bearing: 29, build: buildBelvedere },
+  { name: "Inscope Arch", lat: 40.767, lon: -73.9709, bearing: 65, build: buildInscope },
+  { name: "Cop Cot", lat: 40.7662, lon: -73.97575, bearing: 29, build: buildCopCot },
+  { name: "Pulitzer Fountain", lat: 40.7641, lon: -73.97345, bearing: 29, build: buildPulitzer },
 ];
 
 // Build every landmark into one group in the park frame, each standing on

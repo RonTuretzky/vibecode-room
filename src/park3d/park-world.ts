@@ -27,6 +27,7 @@ export interface ParkManifest {
   relief: { file: string; width: number; height: number; unitM: number };
   water: { file: string; width: number; height: number };
   lawn: { file: string; width: number; height: number };
+  paths: { file: string; count: number; unitM: number };
   buildings: { file: string; count: number; unitM: number };
 }
 
@@ -47,6 +48,9 @@ export interface ParkWorldOptions {
   buildings?: boolean;
   // Lay reflective water over the mapped water bodies (default true).
   water?: boolean;
+  // Lay the OSM path/drive ribbons over the terrain (default true) — the
+  // curling walks are half of what makes the map read as Central Park.
+  paths?: boolean;
   // Stand the hand-built landmarks (park-landmarks.ts) on the ground
   // (default true).
   landmarks?: boolean;
@@ -86,6 +90,10 @@ export interface ParkWorld {
   terrain: THREE.Mesh;
   buildings: THREE.Mesh | null;
   water: THREE.Mesh | null;
+  paths: THREE.Mesh | null;
+  // Path centrelines in local metres (width, flat [x,z,...] runs) for the
+  // caller's street furniture — lamps and benches stand along these.
+  pathLines: { width: number; pts: number[] }[];
   // 1 where the map has water (the Lake, the Reservoir…), 0 elsewhere.
   waterAt: (x: number, z: number) => number;
   // Bare-earth height (flatten applied) at a local point.
@@ -236,7 +244,7 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
   }
   const { halfEast, halfNorth } = manifest.extent;
 
-  const [demBuffer, reliefImage, waterImage, lawnImage, orthoTexture, buildingsJson] = await Promise.all([
+  const [demBuffer, reliefImage, waterImage, lawnImage, orthoTexture, buildingsJson, pathsJson] = await Promise.all([
     fetchOk(`${base}/${manifest.dem.file}`).then((r) => r.arrayBuffer()),
     opts.relief === false ? null : loadImage(`${base}/${manifest.relief.file}`),
     opts.water === false ? null : loadImage(`${base}/${manifest.water.file}`),
@@ -245,6 +253,9 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
     opts.buildings === false
       ? null
       : fetchOk(`${base}/${manifest.buildings.file}`).then((r) => r.json() as Promise<{ buildings: [number, number, number, number[]][] }>),
+    opts.paths === false
+      ? null
+      : fetchOk(`${base}/${manifest.paths.file}`).then((r) => r.json() as Promise<{ paths: [number, number[]][] }>),
   ]);
 
   // ── samplers ────────────────────────────────────────────────────────────
@@ -428,9 +439,27 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
   let water: THREE.Mesh | null = null;
   if (waterImage !== null) {
     await nextFrame();
-    water = buildWater(sampleWater, groundAt, halfEast, halfNorth, 4);
+    water = buildWater(sampleWater, groundAt, halfEast, halfNorth, 2);
     if (water !== null) {
       group.add(water);
+    }
+  }
+
+  // ── paths ───────────────────────────────────────────────────────────────
+  const pathLines: { width: number; pts: number[] }[] = [];
+  let paths: THREE.Mesh | null = null;
+  if (pathsJson !== null) {
+    await nextFrame();
+    for (const [widthUnits, line] of pathsJson.paths) {
+      const pts: number[] = [];
+      for (let i = 0; i < line.length; i += 2) {
+        pts.push(line[i] * manifest.paths.unitM, line[i + 1] * manifest.paths.unitM);
+      }
+      pathLines.push({ width: widthUnits * manifest.paths.unitM, pts });
+    }
+    paths = buildPaths(pathLines, groundAt, sampleWater);
+    if (paths !== null) {
+      group.add(paths);
     }
   }
 
@@ -464,6 +493,8 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
     terrain,
     buildings,
     water,
+    paths,
+    pathLines,
     groundAt,
     heightAt,
     canopyAt: sampleRelief,
@@ -493,6 +524,10 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
       if (water !== null) {
         water.geometry.dispose();
         (water.material as THREE.Material).dispose();
+      }
+      if (paths !== null) {
+        paths.geometry.dispose();
+        (paths.material as THREE.Material).dispose();
       }
       group.getObjectByName("park-landmarks")?.traverse((node) => {
         if (node instanceof THREE.Mesh) {
@@ -580,7 +615,7 @@ export function buildWater(
       }
       const x0 = -halfEast + i * cell;
       const z0 = -halfNorth + j * cell;
-      const y = level[j * cols + i] + 0.25;
+      const y = level[j * cols + i] + 0.1;
       const v = positions.length / 3;
       positions.push(x0, y, z0, x0 + cell, y, z0, x0 + cell, y, z0 + cell, x0, y, z0 + cell);
       // Counter-clockwise from above (+Y): (x0,z0) → (x0,z1) → (x1,z1) …
@@ -599,11 +634,97 @@ export function buildWater(
   geometry.setAttribute("normal", new THREE.BufferAttribute(normals, 3));
   geometry.setIndex(index);
   geometry.computeBoundingSphere();
+  // Pond water, not chrome: deep blue-green with a soft sheen — the host may
+  // still hand it a sky envMap, at modest intensity.
   const mesh = new THREE.Mesh(
     geometry,
-    new THREE.MeshStandardMaterial({ color: 0x6d8f96, roughness: 0.12, metalness: 0.35 }),
+    new THREE.MeshStandardMaterial({ color: 0x26433f, roughness: 0.28, metalness: 0 }),
   );
   mesh.name = "park-water";
+  return mesh;
+}
+
+// Path ribbons: each polyline becomes a flat triangle strip lying a hand
+// above the terrain, broken where it crosses water (the bridges carry those
+// spans). Walks are gravel-tan, the drives asphalt-grey, with a light
+// per-vertex jitter so long runs don't read as vector art.
+export function buildPaths(
+  lines: { width: number; pts: number[] }[],
+  groundAt: (x: number, z: number) => number,
+  waterAt: (x: number, z: number) => number,
+): THREE.Mesh | null {
+  const positions: number[] = [];
+  const colors: number[] = [];
+  const index: number[] = [];
+  const walk = new THREE.Color(0xb3a58a);
+  const drive = new THREE.Color(0x83817b);
+  let seed = 0x50415448;
+  const rand = () => {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    return seed / 4294967296;
+  };
+  for (const line of lines) {
+    const base = line.width > 5.5 ? drive : walk;
+    const n = line.pts.length / 2;
+    let run: number[] = [];
+    const flush = () => {
+      if (run.length >= 4) {
+        emitRibbon(run, line.width / 2, base);
+      }
+      run = [];
+    };
+    for (let i = 0; i < n; i++) {
+      const x = line.pts[i * 2];
+      const z = line.pts[i * 2 + 1];
+      if (waterAt(x, z) > 0.45) {
+        flush();
+      } else {
+        run.push(x, z);
+      }
+    }
+    flush();
+  }
+  function emitRibbon(run: number[], half: number, base: THREE.Color): void {
+    const n = run.length / 2;
+    const start = positions.length / 3;
+    for (let i = 0; i < n; i++) {
+      const x = run[i * 2];
+      const z = run[i * 2 + 1];
+      const xPrev = run[Math.max(0, i - 1) * 2];
+      const zPrev = run[Math.max(0, i - 1) * 2 + 1];
+      const xNext = run[Math.min(n - 1, i + 1) * 2];
+      const zNext = run[Math.min(n - 1, i + 1) * 2 + 1];
+      const dx = xNext - xPrev;
+      const dz = zNext - zPrev;
+      const len = Math.hypot(dx, dz) || 1;
+      const px = -dz / len;
+      const pz = dx / len;
+      const y = groundAt(x, z) + 0.07;
+      positions.push(x + px * half, y, z + pz * half, x - px * half, y, z - pz * half);
+      const tone = 0.92 + rand() * 0.16;
+      colors.push(base.r * tone, base.g * tone, base.b * tone, base.r * tone, base.g * tone, base.b * tone);
+      if (i > 0) {
+        const a = start + (i - 1) * 2;
+        // Two triangles per quad, counter-clockwise from above.
+        index.push(a, a + 2, a + 3, a, a + 3, a + 1);
+      }
+    }
+  }
+  if (positions.length === 0) {
+    return null;
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+  const normals = new Float32Array(positions.length);
+  for (let i = 1; i < normals.length; i += 3) {
+    normals[i] = 1;
+  }
+  geometry.setAttribute("normal", new THREE.BufferAttribute(normals, 3));
+  geometry.setIndex(index);
+  geometry.computeBoundingSphere();
+  const mesh = new THREE.Mesh(geometry, new THREE.MeshLambertMaterial({ vertexColors: true }));
+  mesh.name = "park-paths";
   return mesh;
 }
 
