@@ -30,9 +30,12 @@ import type { ReactNode } from "react";
  * never folded behind a hover.
  */
 
-// STICKY TRAY (live-room request): once open, the tray stays open until the
-// toggle is clicked again — no idle timeout. Hover/dwell-hot still OPENS it
-// (walk-up discoverability); only an explicit click closes.
+// DELAYED AUTO-CLOSE (live-room request — "it's a little bit delayed, get out
+// of the control"): once the cursor leaves the dock, the tray folds itself
+// away after a short grace period instead of staying open forever. Hover/
+// dwell-hot re-OPENS it (walk-up discoverability) and cancels a pending close;
+// an explicit toggle click still closes immediately.
+const IDLE_CLOSE_MS = 1_500;
 
 // Is any cursor "on" the dock? Attribute first (needs no selector engine),
 // then :hover on the root (true while the mouse is over ANY descendant), then
@@ -83,6 +86,10 @@ export function ControlDock({ children, initialExpanded = false, collapseSignal 
     }
   }, [collapseSignal]);
 
+  // Pending idle-close timer: armed when the dock first goes cold, cleared the
+  // moment a cursor comes back so re-entering never triggers a late collapse.
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
     if (typeof window === "undefined") {
       return;
@@ -92,17 +99,34 @@ export function ControlDock({ children, initialExpanded = false, collapseSignal 
       const root = rootRef.current;
       if (root !== null) {
         if (dockIsHot(root)) {
+          if (closeTimer.current !== null) {
+            clearTimeout(closeTimer.current); // cursor back — cancel pending close
+            closeTimer.current = null;
+          }
           if (!holdClosed.current) {
             setExpanded(true); // bails when already true — no re-render churn
           }
         } else {
           holdClosed.current = false; // cursor left — hover may expand again
+          // Dock went cold: fold the tray away a little bit delayed.
+          if (closeTimer.current === null) {
+            closeTimer.current = setTimeout(() => {
+              closeTimer.current = null;
+              setExpanded(false);
+            }, IDLE_CLOSE_MS);
+          }
         }
       }
       raf = requestAnimationFrame(frame);
     };
     raf = requestAnimationFrame(frame);
-    return () => cancelAnimationFrame(raf);
+    return () => {
+      cancelAnimationFrame(raf);
+      if (closeTimer.current !== null) {
+        clearTimeout(closeTimer.current);
+        closeTimer.current = null;
+      }
+    };
   }, []);
 
   return (
