@@ -288,7 +288,7 @@ export class ResearchLoop {
       // The suggester cadence counts SPOKEN words, merged or not.
       this.#wordsSinceRound += newWords;
       if (candidate !== this.#turns[this.#turns.length - 1]) {
-        this.#trace("research.loop.lookback-merge", "debug", `corr-research-ingest-${candidate.id}`, {
+        this.#trace("research.loop.lookback.merge", "debug", `corr-research-ingest-${candidate.id}`, {
           id: candidate.id,
           behind: this.#turns.length - 1 - this.#turns.indexOf(candidate),
         });

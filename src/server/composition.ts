@@ -2849,7 +2849,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
         this.#voice = { lastCommand: "execute", at: new Date().toISOString() };
         if (target === null) {
           this.recordExternalTrace({
-            event: "voice.execute.no-target",
+            event: "voice.execute.no.target",
             level: "warn",
             sessionId: this.sessionId,
             correlationId: voiceCorrelationId,
