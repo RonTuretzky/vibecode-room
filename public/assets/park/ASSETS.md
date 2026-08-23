@@ -1,6 +1,6 @@
 # Central Park world assets
 
-Everything in this directory is **public domain / open government data**,
+Everything in this directory is **public domain / open government data** (plus OpenStreetMap water outlines under ODbL),
 baked by `scripts/fetch-park-data.py` and consumed by `src/park3d/park-world.ts`
 (the `park3d.html?src=open` evaluation page and the room's `?env=park`
 environment). Unlike Google's Photorealistic 3D Tiles (the page's default
@@ -19,6 +19,7 @@ rectangle of ±2147 m east / ±2971 m north around the park centre
 | `ortho.jpg` | USDA NAIP via the USGS National Map `USGSImageryOnly` export service | Leaf-on summer imagery (~0.93 m/px, 4638×6417) — the lush green of the postcard. The NYS 15 cm orthos are sharper but leaf-off; `--ortho nys` bakes them instead. |
 | `dem.bin` | USGS 3DEP via the National Map `3DEPElevation` image service | Bare-earth heights on an 8 m grid (538×744), Int16 little-endian decimetres relative to the park centre's surface (34.6 m), row 0 = north. |
 | `relief.png` | derived from the NAIP imagery (always leaf-on, even under `--ortho nys`) | Tree-canopy height field at 2 m/px, 8-bit in 0.1 m units (0–22 m). Leaf-on canopy is dark green, lawns bright green, water dark/smooth/blue-shifted — a colour classifier, restricted to the park rectangle, with noise for crown bumps. |
+| `water.png` | OpenStreetMap `natural=water` polygons (© OpenStreetMap contributors, ODbL), rasterised at 2 m/px | The Lake, the Pond, Turtle Pond, the Reservoir, Harlem Meer, the Pool, Conservatory Water, the fountains, the river edges. The photo classifier is only a fallback when Overpass is down. |
 | `buildings.json` | NYC Open Data, DOITT Building Footprints (dataset `5zhs-2jue`) | 17k footprints with roof height, ground elevation, construction year; rings in local decimetres, one building per line. |
 | `manifest.json` | — | The frame, per-file dimensions and anchors (Sheep Meadow's local position and ground height); `park-world.ts` validates it against `park-frame.ts` and the tests pin the two together. |
 

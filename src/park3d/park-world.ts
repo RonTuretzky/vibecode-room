@@ -13,6 +13,7 @@
 
 import * as THREE from "three";
 import { AXIS_BEARING, DEG, PARK_CENTER, PARK_HALF_LEN, PARK_HALF_WIDTH } from "./park-frame";
+import { buildLandmarks } from "./park-landmarks";
 
 export interface ParkManifest {
   center: { lat: number; lon: number; surfaceHeightM: number };
@@ -23,6 +24,7 @@ export interface ParkManifest {
   ortho: { file: string; width: number; height: number; source: string };
   dem: { file: string; cols: number; rows: number; stepM: number; unitM: number };
   relief: { file: string; width: number; height: number; unitM: number };
+  water: { file: string; width: number; height: number };
   buildings: { file: string; count: number; unitM: number };
 }
 
@@ -32,10 +34,20 @@ export interface ParkWorldOptions {
   // Terrain grid step in metres (default 8 — the DEM's own resolution; the
   // 2 m relief is sampled through it, so 6 sharpens crowns at ~2× the verts).
   stepM?: number;
-  // Raise the canopy (default true). Off gives the bare orthophoto drape.
+  // Load the canopy relief map (default true). Off gives the bare
+  // orthophoto drape and `canopyAt` reads 0 everywhere.
   relief?: boolean;
+  // Displace the terrain by the canopy (default true). Off keeps the map
+  // loaded for `canopyAt` — the room scatters real trees from it instead of
+  // raising lumpy mass.
+  displace?: boolean;
   // Extrude the city (default true).
   buildings?: boolean;
+  // Lay reflective water over the mapped water bodies (default true).
+  water?: boolean;
+  // Stand the hand-built landmarks (park-landmarks.ts) on the ground
+  // (default true).
+  landmarks?: boolean;
   // Blend the surface to the anchor's ground height inside `radius`, easing
   // back to the real terrain over `feather` — the room parks its meadow disc
   // on Sheep Meadow and must not have the lawn poke through it.
@@ -51,14 +63,21 @@ export interface ParkWorld {
   group: THREE.Group;
   terrain: THREE.Mesh;
   buildings: THREE.Mesh | null;
+  water: THREE.Mesh | null;
+  // 1 where the map has water (the Lake, the Reservoir…), 0 elsewhere.
+  waterAt: (x: number, z: number) => number;
   // Bare-earth height (flatten applied) at a local point.
   groundAt: (x: number, z: number) => number;
-  // Surface height including the canopy relief (flatten applied).
+  // Surface height including the canopy relief when displaced (flatten
+  // applied); equals groundAt when `displace` is off.
   heightAt: (x: number, z: number) => number;
+  // Canopy height from the relief map (metres above ground, 0 = no trees),
+  // independent of flatten/displace.
+  canopyAt: (x: number, z: number) => number;
   dispose: () => void;
 }
 
-export const PARK_ATTRIBUTION = "USDA NAIP · USGS 3DEP · NYC Open Data building footprints (public domain)";
+export const PARK_ATTRIBUTION = "USDA NAIP · USGS 3DEP · NYC Open Data footprints (public domain) · water © OpenStreetMap contributors";
 
 const loadImage = (url: string): Promise<HTMLImageElement> =>
   new Promise((resolve, reject) => {
@@ -193,9 +212,10 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
   }
   const { halfEast, halfNorth } = manifest.extent;
 
-  const [demBuffer, reliefImage, orthoTexture, buildingsJson] = await Promise.all([
+  const [demBuffer, reliefImage, waterImage, orthoTexture, buildingsJson] = await Promise.all([
     fetchOk(`${base}/${manifest.dem.file}`).then((r) => r.arrayBuffer()),
     opts.relief === false ? null : loadImage(`${base}/${manifest.relief.file}`),
+    opts.water === false ? null : loadImage(`${base}/${manifest.water.file}`),
     loadOrtho(`${base}/${manifest.ortho.file}`, manifest.ortho.width, manifest.ortho.height, opts.orthoMaxWidth),
     opts.buildings === false
       ? null
@@ -209,20 +229,25 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
   }
   const sampleDem = makeSampler(dem, manifest.dem.cols, manifest.dem.rows, halfEast, halfNorth, 0, manifest.dem.unitM);
 
-  let sampleRelief: (x: number, z: number) => number = () => 0;
-  if (reliefImage !== null) {
+  // 8-bit map → bilinear sampler over the frame (pixel-centred grid).
+  const maskSampler = (image: HTMLImageElement | null, unit: number): ((x: number, z: number) => number) => {
+    if (image === null) {
+      return () => 0;
+    }
     const canvas = document.createElement("canvas");
-    canvas.width = reliefImage.width;
-    canvas.height = reliefImage.height;
+    canvas.width = image.width;
+    canvas.height = image.height;
     const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
-    ctx.drawImage(reliefImage, 0, 0);
+    ctx.drawImage(image, 0, 0);
     const rgba = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
     const red = new Uint8Array(canvas.width * canvas.height);
     for (let i = 0; i < red.length; i++) {
       red[i] = rgba[i * 4];
     }
-    sampleRelief = makeSampler(red, canvas.width, canvas.height, halfEast, halfNorth, 0.5, manifest.relief.unitM);
-  }
+    return makeSampler(red, canvas.width, canvas.height, halfEast, halfNorth, 0.5, unit);
+  };
+  const sampleRelief = maskSampler(reliefImage, manifest.relief.unitM);
+  const sampleWater = maskSampler(waterImage, 1 / 255);
 
   const flatten = opts.flatten;
   const anchorGround = flatten === undefined ? 0 : sampleDem(flatten.x, flatten.z);
@@ -238,7 +263,11 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
     const w = terrainWeight(x, z);
     return w === 1 ? sampleDem(x, z) : anchorGround + (sampleDem(x, z) - anchorGround) * w;
   };
+  const displace = opts.displace !== false;
   const heightAt = (x: number, z: number): number => {
+    if (!displace) {
+      return groundAt(x, z);
+    }
     const w = terrainWeight(x, z);
     const h = sampleDem(x, z) + sampleRelief(x, z);
     return w === 1 ? h : anchorGround + (h - anchorGround) * w;
@@ -259,7 +288,7 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
     const x = pos.getX(i);
     const z = pos.getZ(i);
     const w = terrainWeight(x, z);
-    reliefAt[i] = sampleRelief(x, z) * w;
+    reliefAt[i] = displace ? sampleRelief(x, z) * w : 0;
     pos.setY(i, heightAt(x, z));
   }
   await nextFrame();
@@ -300,6 +329,23 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
   group.name = "park-world";
   group.add(terrain);
 
+  // ── water ───────────────────────────────────────────────────────────────
+  // Flat reflective sheets over the mapped water, a hand above the photo
+  // (the DEM already sits at the water surface over lakes). Built on its own
+  // 4 m grid so shorelines stay crisp whatever the terrain step.
+  let water: THREE.Mesh | null = null;
+  if (waterImage !== null) {
+    await nextFrame();
+    water = buildWater(sampleWater, groundAt, halfEast, halfNorth, 4);
+    if (water !== null) {
+      group.add(water);
+    }
+  }
+
+  if (opts.landmarks !== false) {
+    group.add(buildLandmarks(groundAt));
+  }
+
   // ── buildings ───────────────────────────────────────────────────────────
   let buildings: THREE.Mesh | null = null;
   if (buildingsJson !== null) {
@@ -313,8 +359,11 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
     group,
     terrain,
     buildings,
+    water,
     groundAt,
     heightAt,
+    canopyAt: sampleRelief,
+    waterAt: sampleWater,
     dispose: () => {
       geometry.dispose();
       (terrain.material as THREE.Material).dispose();
@@ -323,9 +372,121 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
         buildings.geometry.dispose();
         (buildings.material as THREE.Material).dispose();
       }
+      if (water !== null) {
+        water.geometry.dispose();
+        (water.material as THREE.Material).dispose();
+      }
+      group.getObjectByName("park-landmarks")?.traverse((node) => {
+        if (node instanceof THREE.Mesh) {
+          node.geometry.dispose();
+          (node.material as THREE.Material).dispose();
+        }
+      });
       group.removeFromParent();
     },
   };
+}
+
+// One quad per water cell, merged. Glossy standard material: the host scene
+// may hand it an envMap (the room gives it the sky panorama) so the Lake
+// mirrors the clouds; without one it still catches the sun.
+export function buildWater(
+  waterAt: (x: number, z: number) => number,
+  groundAt: (x: number, z: number) => number,
+  halfEast: number,
+  halfNorth: number,
+  cell: number,
+): THREE.Mesh | null {
+  const cols = Math.ceil((2 * halfEast) / cell);
+  const rows = Math.ceil((2 * halfNorth) / cell);
+  // Which cells are water, then one LEVEL per connected body: lidar DEMs
+  // slope and ripple over lakes, and a sheet that follows them reads as a
+  // staircase. Each body takes its 20th-percentile ground height (the
+  // true surface sits low in the noise).
+  const isWater = new Uint8Array(cols * rows);
+  for (let j = 0; j < rows; j++) {
+    for (let i = 0; i < cols; i++) {
+      if (waterAt(-halfEast + (i + 0.5) * cell, -halfNorth + (j + 0.5) * cell) >= 0.5) {
+        isWater[j * cols + i] = 1;
+      }
+    }
+  }
+  const level = new Float32Array(cols * rows);
+  const label = new Int32Array(cols * rows).fill(-1);
+  const stack: number[] = [];
+  let bodies = 0;
+  for (let seed = 0; seed < isWater.length; seed++) {
+    if (isWater[seed] === 0 || label[seed] !== -1) {
+      continue;
+    }
+    const cells: number[] = [];
+    stack.push(seed);
+    label[seed] = bodies;
+    while (stack.length > 0) {
+      const c = stack.pop()!;
+      cells.push(c);
+      const ci = c % cols;
+      const cj = (c - ci) / cols;
+      for (const [di, dj] of [
+        [1, 0],
+        [-1, 0],
+        [0, 1],
+        [0, -1],
+      ]) {
+        const ni = ci + di;
+        const nj = cj + dj;
+        if (ni < 0 || nj < 0 || ni >= cols || nj >= rows) {
+          continue;
+        }
+        const n = nj * cols + ni;
+        if (isWater[n] === 1 && label[n] === -1) {
+          label[n] = bodies;
+          stack.push(n);
+        }
+      }
+    }
+    const heights = cells.map((c) => groundAt(-halfEast + ((c % cols) + 0.5) * cell, -halfNorth + (Math.floor(c / cols) + 0.5) * cell));
+    heights.sort((a, b) => a - b);
+    const surface = heights[Math.floor(heights.length * 0.2)];
+    for (const c of cells) {
+      level[c] = surface;
+    }
+    bodies++;
+  }
+  const positions: number[] = [];
+  const index: number[] = [];
+  for (let j = 0; j < rows; j++) {
+    for (let i = 0; i < cols; i++) {
+      if (isWater[j * cols + i] === 0) {
+        continue;
+      }
+      const x0 = -halfEast + i * cell;
+      const z0 = -halfNorth + j * cell;
+      const y = level[j * cols + i] + 0.25;
+      const v = positions.length / 3;
+      positions.push(x0, y, z0, x0 + cell, y, z0, x0 + cell, y, z0 + cell, x0, y, z0 + cell);
+      // Counter-clockwise from above (+Y): (x0,z0) → (x0,z1) → (x1,z1) …
+      index.push(v, v + 3, v + 2, v, v + 2, v + 1);
+    }
+  }
+  if (positions.length === 0) {
+    return null;
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  const normals = new Float32Array(positions.length);
+  for (let i = 1; i < normals.length; i += 3) {
+    normals[i] = 1;
+  }
+  geometry.setAttribute("normal", new THREE.BufferAttribute(normals, 3));
+  geometry.setIndex(index);
+  geometry.computeBoundingSphere();
+  const mesh = new THREE.Mesh(
+    geometry,
+    new THREE.MeshStandardMaterial({ color: 0x6d8f96, roughness: 0.12, metalness: 0.35 }),
+  );
+  mesh.name = "park-water";
+  return mesh;
 }
 
 // Page-lifetime shared world (the garden-flora pattern): the room rebuilds

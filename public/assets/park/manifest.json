@@ -26,11 +26,11 @@
   },
   "anchors": {
     "sheepMeadow": {
-      "lat": 40.772,
-      "lon": -73.9748,
-      "x": -775.5,
-      "z": 1213.3,
-      "groundM": -11.6
+      "lat": 40.77156,
+      "lon": -73.97442,
+      "x": -743.4,
+      "z": 1262.3,
+      "groundM": -11.8
     }
   },
   "ortho": {
@@ -51,6 +51,11 @@
     "width": 2147,
     "height": 2971,
     "unitM": 0.1
+  },
+  "water": {
+    "file": "water.png",
+    "width": 2147,
+    "height": 2971
   },
   "buildings": {
     "file": "buildings.json",

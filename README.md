@@ -37,16 +37,22 @@ agents building them.
   legacy view badge.
 - **Vibersyn projector only:** `bun run start` (server on :8787), or `bun run dev`
   for the UI dev server. Open `/?live=1` for the live runtime.
-- **Central Park (optional):** add `?env=park` and the garden's horizon becomes
-  the real park — the meadow sits on Sheep Meadow with the canopy, the
-  Reservoir and the Midtown/Fifth Ave/CPW skyline beyond it, from baked
-  public-domain data (`public/assets/park/ASSETS.md`). Purely environmental:
-  nodes, layouts, the `g` garden↔orbit toggle and every control are unchanged.
+- **Central Park (optional):** add `?env=park` and the garden becomes a 1:4
+  diorama of the real park — the meadow is Sheep Meadow, and past it the real
+  map (NAIP photo on USGS terrain), mirror water from OpenStreetMap's outlines
+  (the Lake, the Pond, the Reservoir…), the landmarks where they stand
+  (Bethesda Fountain, Bow Bridge, the Obelisk, Gapstow Bridge, Belvedere),
+  the Mall's elm rows and sparse canopy as real tree scans, the schist
+  outcrops as real rock scans; no city blocks (`public/assets/park/ASSETS.md`).
+  Purely environmental: nodes, layouts, the `g` garden↔orbit toggle and every
+  control are unchanged.
   The standalone evaluation page `park3d.html` (dev server only) renders the
   whole park at 1:1 from Google's Photorealistic 3D Tiles (`VITE_MAPTILES_KEY`
   in `.env`) or, with `?src=open`, from the same baked data: keys `1–6` are
   the 110th→90th St altitude ladder, `7` the postcard aerial, `8` satellite,
-  `9` Sheep Meadow at eye level, `C` cycles the crop park → segment → city.
+  `9` Sheep Meadow at eye level, `C` cycles the crop park → segment → city;
+  `?at=lat,lon,height&see=lat,lon,height` (or `?eye=x,y,z&look=x,y,z` in
+  local metres) is a free camera for inspecting a spot.
 
 ## Control (desk mode — the default)
 

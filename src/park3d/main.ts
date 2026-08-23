@@ -38,6 +38,7 @@ import {
   TILES_SURFACE_Y,
   cropPlanes,
   defaultGroundAt,
+  localFromLatLon,
   nextCrop,
   presetEye,
   presetTarget,
@@ -211,6 +212,7 @@ if (src === "tiles") {
       if (PRESETS[currentPreset].groundRelative === true) {
         applyPreset(currentPreset);
       }
+      applyFreeCamera();
     })
     .catch((error: unknown) => {
       showError(`open world failed: ${String(error)}`);
@@ -236,6 +238,29 @@ const applyPreset = (i: number) => {
 };
 const presetParam = Number.parseInt(params.get("preset") ?? "", 10);
 applyPreset(presetParam >= 1 && presetParam <= PRESETS.length ? presetParam - 1 : 6);
+// Free camera for inspection: ?eye=x,y,z&look=x,y,z in local metres, or
+// ?at=lat,lon,height&see=lat,lon,height with heights above the ground.
+const vec = (value: string | null, geo: boolean): THREE.Vector3 | null => {
+  const parts = (value ?? "").split(",").map(Number);
+  if (parts.length !== 3 || parts.some((n) => !Number.isFinite(n))) {
+    return null;
+  }
+  if (geo) {
+    const p = localFromLatLon(parts[0], parts[1]);
+    return new THREE.Vector3(p.x, parts[2] + groundAt(p.x, p.z), p.z);
+  }
+  return new THREE.Vector3(parts[0], parts[1], parts[2]);
+};
+const applyFreeCamera = () => {
+  const eye = vec(params.get("eye"), false) ?? vec(params.get("at"), true);
+  const look = vec(params.get("look"), false) ?? vec(params.get("see"), true);
+  if (eye !== null && look !== null) {
+    camera.position.copy(eye);
+    controls.target.copy(look);
+    controls.update();
+  }
+};
+applyFreeCamera();
 
 const presetsEl = document.getElementById("presets")!;
 PRESETS.forEach((preset, i) => {

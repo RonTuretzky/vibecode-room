@@ -14,6 +14,10 @@ photogrammetry it may be stored, modified, and shipped offline:
   dem.bin        USGS 3DEP bare-earth elevation (National Map image
                  service), Int16 little-endian DECIMETRES relative to the park
                  centre's surface height, row 0 = north edge.
+  water.png      Water-body mask (8-bit, 2 m/px) rasterised from
+                 OpenStreetMap natural=water polygons (© OpenStreetMap
+                 contributors, ODbL) — the Lake, the Pond, the Reservoir…;
+                 falls back to a photo rule if Overpass is down.
   relief.png     Tree-canopy height field (8-bit, 0.1 m units) derived from
                  the ortho: leaf-on canopy is textured dark green, lawns are
                  smooth bright green, water is smooth and dark — a local-
@@ -45,7 +49,7 @@ import urllib.parse
 import urllib.request
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "public", "assets", "park")
 
@@ -227,6 +231,78 @@ def fetch_dem(half_east, half_north, step_m):
     return grid, h0
 
 
+# ── water (OpenStreetMap) ───────────────────────────────────────────────────
+# The NAIP colour rule finds the Reservoir but loses the Lake under canopy
+# shade and reflections, so water bodies come from OSM polygons instead
+# (© OpenStreetMap contributors, ODbL): the Lake, the Pond, Turtle Pond, the
+# Reservoir, Harlem Meer, the Pool, Conservatory Water, the fountains, and
+# the river edges inside the frame. Rasterised at 1 m/px in local metres.
+OVERPASS = "https://overpass-api.de/api/interpreter"
+
+
+def fetch_osm_water(half_east, half_north):
+    lon0, lat0 = merc_x_to_lon(CX - half_east / COS_LAT), merc_y_to_lat(CY - half_north / COS_LAT)
+    lon1, lat1 = merc_x_to_lon(CX + half_east / COS_LAT), merc_y_to_lat(CY + half_north / COS_LAT)
+    bbox = f"({lat0},{lon0},{lat1},{lon1})"
+    query = f'[out:json][timeout:90];(way["natural"="water"]{bbox};relation["natural"="water"]{bbox};);out geom;'
+    req = urllib.request.Request(
+        OVERPASS,
+        data=("data=" + urllib.parse.quote(query)).encode(),
+        headers={"User-Agent": "vibersyn-park-fetch/1.0", "Content-Type": "application/x-www-form-urlencoded"},
+    )
+    with urllib.request.urlopen(req, timeout=120) as r:
+        return json.load(r)["elements"]
+
+
+def chain_rings(segments, tol=1e-7):
+    """Join OSM way segments (lists of (lon, lat)) end-to-end into closed rings."""
+    segs = [list(seg) for seg in segments if len(seg) >= 2]
+    rings = []
+    while segs:
+        ring = segs.pop(0)
+        grew = True
+        while grew and (abs(ring[0][0] - ring[-1][0]) > tol or abs(ring[0][1] - ring[-1][1]) > tol):
+            grew = False
+            for i, seg in enumerate(segs):
+                if abs(seg[0][0] - ring[-1][0]) <= tol and abs(seg[0][1] - ring[-1][1]) <= tol:
+                    ring.extend(seg[1:])
+                elif abs(seg[-1][0] - ring[-1][0]) <= tol and abs(seg[-1][1] - ring[-1][1]) <= tol:
+                    ring.extend(reversed(seg[:-1]))
+                else:
+                    continue
+                segs.pop(i)
+                grew = True
+                break
+        if len(ring) >= 4:
+            rings.append(ring)
+    return rings
+
+
+def rasterise_water(elements, half_east, half_north):
+    w1, h1 = int(round(2 * half_east)), int(round(2 * half_north))
+    img = Image.new("L", (w1, h1), 0)
+    draw = ImageDraw.Draw(img)
+
+    def to_px(ring):
+        return [((lonlat_to_local(lon, lat)[0] + half_east), (lonlat_to_local(lon, lat)[1] + half_north)) for lon, lat in ring]
+
+    outers, inners = [], []
+    for e in elements:
+        if e["type"] == "way":
+            outers.append([(p["lon"], p["lat"]) for p in e.get("geometry", [])])
+        else:
+            for role, bucket in (("outer", outers), ("inner", inners)):
+                segs = [[(p["lon"], p["lat"]) for p in m.get("geometry", [])] for m in e.get("members", []) if m.get("role") == role]
+                bucket.extend(chain_rings(segs))
+    for ring in outers:
+        if len(ring) >= 3:
+            draw.polygon(to_px(ring), fill=255)
+    for ring in inners:
+        if len(ring) >= 3:
+            draw.polygon(to_px(ring), fill=0)
+    return np.asarray(img).astype(np.float32) / 255.0
+
+
 # ── canopy relief ───────────────────────────────────────────────────────────
 def box_blur(a, r):
     """Mean over a (2r+1)² window via an integral image (edge-padded)."""
@@ -253,7 +329,7 @@ def park_mask(half_east, half_north, px_per_m, pad=12.0):
     return ((np.abs(along) <= PARK_HALF_LEN + pad) & (np.abs(across) <= PARK_HALF_WIDTH + pad)).astype(np.float32)
 
 
-def build_relief(ortho, half_east, half_north, seed=0x5041524B):
+def build_relief(ortho, half_east, half_north, osm_water=None, seed=0x5041524B):
     """Canopy height field (metres) at 2 m/px from a LEAF-ON (NAIP) ortho —
     the classifier below keys on summer canopy colour, so the caller passes
     NAIP here even when the shipped ortho.jpg is the leaf-off NYS variant."""
@@ -287,10 +363,23 @@ def build_relief(ortho, half_east, half_north, seed=0x5041524B):
     noise = box_blur(rng.random((h1, w1), dtype=np.float32), 3) * 0.6 + box_blur(rng.random((h1, w1), dtype=np.float32), 8) * 0.4
     noise = (noise - noise.mean()) / (noise.std() + 1e-6)
     height = cover * np.clip(13.0 + 4.0 * noise, 6.0, 22.0)
-    print(f"[relief] canopy cover {100 * mask.mean():.1f}% of frame, water {100 * water.mean():.1f}%")
-    # Down to 2 m/px for the file.
+    # Water bodies inside the park (the Lake, the Pond, Turtle Pond, the
+    # Reservoir, Harlem Meer, Conservatory Water): the water rule above,
+    # restricted to the park rectangle (outside it, building shadows pass
+    # the same dark-and-smooth test) and de-specked so only real ponds
+    # survive — a 14 m closing kills shadow slivers and fills boat wakes.
+    if osm_water is not None:
+        wmask = osm_water
+        mask[wmask > 0.5] = 0
+    else:
+        wmask = water.astype(np.float32) * park_mask(half_east, half_north, 1.0, pad=0.0)
+        wmask = (box_blur(wmask, 7) > 0.5).astype(np.float32)
+        wmask = (box_blur(wmask, 7) > 0.45).astype(np.float32)
+    print(f"[relief] canopy cover {100 * mask.mean():.1f}% of frame, water {100 * wmask.mean():.1f}%")
+    # Down to 2 m/px for the files.
     rel = Image.fromarray(np.clip(height * 10.0, 0, 255).astype(np.uint8), "L").resize((w1 // 2, h1 // 2), Image.BILINEAR)
-    return rel
+    wat = Image.fromarray((wmask * 255).astype(np.uint8), "L").resize((w1 // 2, h1 // 2), Image.BILINEAR)
+    return rel, wat
 
 
 # ── buildings ───────────────────────────────────────────────────────────────
@@ -369,8 +458,8 @@ def sample_grid(grid, half_east, half_north, step_m, x, z):
 
 # Sheep Meadow (66th–69th St): the room's anchor and the ground-level preset.
 # Mirrored in src/park3d/park-frame.ts (SHEEP_MEADOW, SHEEP_MEADOW_GROUND_M).
-SHEEP_MEADOW_LAT = 40.772
-SHEEP_MEADOW_LON = -73.9748
+SHEEP_MEADOW_LAT = 40.77156
+SHEEP_MEADOW_LON = -73.97442
 
 
 def simplify_ring(pts, min_step=0.8, min_area=10.0):
@@ -412,7 +501,13 @@ def main():
     # newer than the manifest that describes them.
     ortho = fetch_ortho(half_east, half_north, args.ortho, args.px_per_m)
     leaf_on = ortho if args.ortho == "naip" else fetch_ortho(half_east, half_north, "naip", 1.0)
-    relief = build_relief(leaf_on, half_east, half_north)
+    try:
+        osm_water = rasterise_water(fetch_osm_water(half_east, half_north), half_east, half_north)
+        print(f"[water] OSM polygons rasterised ({100 * osm_water.mean():.1f}% of frame)")
+    except (urllib.error.URLError, TimeoutError, OSError, KeyError, ValueError) as error:
+        print(f"[water] Overpass failed ({error}); falling back to the photo classifier")
+        osm_water = None
+    relief, water = build_relief(leaf_on, half_east, half_north, osm_water)
     grid, h0 = fetch_dem(half_east, half_north, args.dem_step)
     dem = np.clip(np.round((grid - h0) * 10.0), -32768, 32767).astype("<i2")
     buildings_path = os.path.join(ROOT, "buildings.json")
@@ -450,6 +545,7 @@ def main():
         "ortho": {"file": "ortho.jpg", "width": ortho.width, "height": ortho.height, "source": args.ortho},
         "dem": {"file": "dem.bin", "cols": dem.shape[1], "rows": dem.shape[0], "stepM": args.dem_step, "unitM": 0.1},
         "relief": {"file": "relief.png", "width": relief.width, "height": relief.height, "unitM": 0.1},
+        "water": {"file": "water.png", "width": water.width, "height": water.height},
         "buildings": {"file": "buildings.json", "count": count, "unitM": 0.1},
     }
 
@@ -457,6 +553,7 @@ def main():
     os.makedirs(ROOT, exist_ok=True)
     ortho.save(os.path.join(ROOT, "ortho.jpg"), quality=82, optimize=True)
     relief.save(os.path.join(ROOT, "relief.png"), optimize=True)
+    water.save(os.path.join(ROOT, "water.png"), optimize=True)
     dem.tofile(os.path.join(ROOT, "dem.bin"))
     if buildings is not None:
         with open(buildings_path, "w") as f:

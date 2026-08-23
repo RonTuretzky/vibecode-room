@@ -6,7 +6,9 @@ import { registerSceneCameraControl } from "./gesture/camera-source";
 import { cornerEye, cornerVerticalFovDeg, cornerYaw } from "./corner-lock";
 import { loadGardenFlora, type FloraLibrary } from "./garden-flora";
 import { SHEEP_MEADOW } from "../park3d/park-frame";
+import { OUTCROPS, mallElmPositions } from "../park3d/park-landmarks";
 import { loadParkWorldShared, type ParkWorld } from "../park3d/park-world";
+import { localFromLatLon } from "../park3d/park-frame";
 
 // The full-viewport 3D stage (after conductor-github-visualizer): the scene IS
 // the app background and every panel floats over it. Two render modes share
@@ -857,19 +859,28 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
       const rng = mulberry32(0x47415244);
       const group = new THREE.Group();
       scene.add(group);
-      // CENTRAL PARK (?env=park): the meadow disc is Sheep Meadow and the
-      // horizon is the real park — canopy relief, the Reservoir, the Met, the
-      // Midtown wall over the tree line — from the baked open-data world
-      // (park-world.ts, 1 unit = 1 m, which is also this scene's scale). Only
-      // the far-field changes: the haze reaches kilometres instead of a few
-      // hundred metres, the sky dome and camera far plane grow to hold the
-      // skyline, and the pastoral hills stay out. Software rasterizers get
-      // the plain meadow (the world is far heavier than the flora they skip).
+      // CENTRAL PARK (?env=park): a 1:4 diorama of the real park around the
+      // room. The meadow disc is Sheep Meadow; past its edge the baked
+      // open-data world (park-world.ts) carries the real map — the NAIP
+      // photo on the real terrain, the Lake / the Pond / the Reservoir as
+      // mirror water from OpenStreetMap's polygons, the landmarks stood
+      // where they really are (Bethesda, Bow Bridge, the Obelisk, Gapstow,
+      // Belvedere), the Mall's elm rows and the sparse canopy as REAL tree
+      // scans, the schist outcrops as real rock scans. No extruded city
+      // and no raised relief: those read blocky at eye level and stay on
+      // the aerial page. At 1:4 everything is a stroll away (Bethesda ~100
+      // m, the Reservoir ~280 m) and the far north fades into the haze.
+      // Software rasterizers get the plain meadow (far heavier than the
+      // flora they already skip).
       const park = environmentRef.current === "park" && !softwareGL;
+      const PARK_SCALE = 0.25;
       // Aerial perspective: haze tinted to the sky horizon so meadow and hills
       // melt into the sky instead of ending at a hard disc edge.
       const meadowFog = () => new THREE.Fog(0xdcedf8, 80, 210);
-      scene.fog = park ? new THREE.Fog(0xdcedf8, 140, 2600) : meadowFog();
+      scene.fog = park ? new THREE.Fog(0xdcedf8, 120, 1000) : meadowFog();
+      // The stage shrinks to Sheep Meadow's own size (240 m real at 1:4) so
+      // the park's features start just past the flora.
+      const meadowRadius = park ? 60 : 110;
       const defaultFar = camera.far;
       if (park) {
         camera.far = 12_000;
@@ -922,7 +933,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
       groundNor.repeat.set(22, 22);
       groundNor.anisotropy = 8;
       const ground = new THREE.Mesh(
-        new THREE.CircleGeometry(110, 64),
+        new THREE.CircleGeometry(meadowRadius, 64),
         // Tint pushes the olive scan toward lush pasture green.
         new THREE.MeshStandardMaterial({ map: groundDiff, normalMap: groundNor, color: 0xaef29a, roughness: 1, metalness: 0 }),
       );
@@ -955,10 +966,12 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
         { name: "jacaranda_tree", count: 10, rMin: 34, rMax: 82, sMin: 0.45, sMax: 0.62 },
       ];
       if (park) {
-        // A second tree band past the meadow edge stands between the grass
-        // disc and the park's photo ground, so the seam reads as a tree line
-        // (the flattened terrain keeps this ring level).
-        FLORA_SCATTER.push({ name: "jacaranda_tree", count: 16, rMin: 96, rMax: 148, sMin: 0.55, sMax: 0.8 });
+        // Keep the meadow's own scatter on the smaller stage.
+        const k = meadowRadius / 110;
+        for (const spec of FLORA_SCATTER) {
+          spec.rMin *= k;
+          spec.rMax *= k;
+        }
       }
       let floraDisposed = false;
       const scatterFlora = (flora: FloraLibrary) => {
@@ -1040,25 +1053,124 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
       if (park) {
         // Shared for the page (see park-world.ts): a garden↔orbit toggle
         // re-attaches the same world instead of refetching and rebuilding.
-        loadParkWorldShared({
-          // Level the terrain under the meadow disc (r=110) and the outer
-          // tree band, easing back to the real ground beyond.
-          flatten: { x: SHEEP_MEADOW.x, z: SHEEP_MEADOW.z, radius: 150, feather: 80 },
+        const parkOptions = {
+          // Level the terrain under the stage, easing back to the real
+          // ground beyond (park metres).
+          flatten: { x: SHEEP_MEADOW.x, z: SHEEP_MEADOW.z, radius: (meadowRadius + 6) / PARK_SCALE, feather: 110 },
           orthoMaxWidth: 2048,
-        })
+          // The map, its water and its landmarks only: no extruded city, no
+          // raised canopy (the relief map still loads as the tree census).
+          buildings: false,
+          displace: false,
+        };
+        // Sheep Meadow lands on the room origin, the world shrunk to 1:4 and
+        // turned half a circle so the boot framing (yaw 0 looks down −Z)
+        // faces SOUTH down the park toward the Mall and the Pond.
+        const parkToRoom = (x: number, z: number) => ({
+          x: (SHEEP_MEADOW.x - x) * PARK_SCALE,
+          z: (SHEEP_MEADOW.z - z) * PARK_SCALE,
+        });
+        const roomToPark = (x: number, z: number) => ({
+          x: SHEEP_MEADOW.x - x / PARK_SCALE,
+          z: SHEEP_MEADOW.z - z / PARK_SCALE,
+        });
+        // Real scans from the flora library, instanced: elms down the Mall,
+        // sparse canopy where the map has trees (thinned hard so the park
+        // reads open), rock clumps on the named outcrops. Seeded so both
+        // walls grow the same park.
+        const scatterParkFlora = (flora: FloraLibrary, world: ParkWorld, yAnchor: number) => {
+          const rng = mulberry32(0x5041524b);
+          const dummy = new THREE.Object3D();
+          const roomY = (px: number, pz: number) => (world.groundAt(px, pz) - yAnchor) * PARK_SCALE - 0.15;
+          const instance = (name: string, placements: { x: number; z: number; scale: number; rot: number; px: number; pz: number }[]) => {
+            const variants = flora.get(name);
+            if (variants === undefined || variants.length === 0 || placements.length === 0) {
+              return;
+            }
+            const matrices: THREE.Matrix4[][] = variants.map(() => []);
+            placements.forEach((p, i) => {
+              dummy.position.set(p.x, roomY(p.px, p.pz), p.z);
+              dummy.rotation.y = p.rot;
+              dummy.scale.setScalar(p.scale);
+              dummy.updateMatrix();
+              matrices[i % variants.length].push(dummy.matrix.clone());
+            });
+            variants.forEach((variant, v) => {
+              if (matrices[v].length === 0) {
+                return;
+              }
+              for (const piece of variant.pieces) {
+                const instanced = new THREE.InstancedMesh(piece.geometry, piece.material, matrices[v].length);
+                matrices[v].forEach((matrix, i) => instanced.setMatrixAt(i, matrix));
+                instanced.userData.sharedAsset = true;
+                instanced.frustumCulled = false;
+                group.add(instanced);
+              }
+            });
+          };
+          // Trees: the scan is ~19 m; at 1:4 a park elm is 4–5 units.
+          const trees: { x: number; z: number; scale: number; rot: number; px: number; pz: number }[] = [];
+          for (const p of mallElmPositions()) {
+            const r = parkToRoom(p.x, p.z);
+            trees.push({ ...r, px: p.x, pz: p.z, scale: 0.22 + rng() * 0.06, rot: rng() * Math.PI * 2 });
+          }
+          const TARGET = trees.length + 150;
+          for (let attempt = 0; attempt < 9000 && trees.length < TARGET; attempt++) {
+            const angle = rng() * Math.PI * 2;
+            const radius = meadowRadius + 4 + Math.sqrt(rng()) * 420;
+            const rx = Math.cos(angle) * radius;
+            const rz = Math.sin(angle) * radius;
+            const p = roomToPark(rx, rz);
+            if (world.canopyAt(p.x, p.z) < 9 || world.waterAt(p.x, p.z) > 0.5) {
+              continue;
+            }
+            if (trees.some((q) => (q.x - rx) ** 2 + (q.z - rz) ** 2 < 10 * 10)) {
+              continue;
+            }
+            trees.push({ x: rx, z: rz, px: p.x, pz: p.z, scale: 0.2 + rng() * 0.12, rot: rng() * Math.PI * 2 });
+          }
+          instance("jacaranda_tree", trees);
+          // Outcrops: a handful of rock clumps scattered over each.
+          const rocks: { x: number; z: number; scale: number; rot: number; px: number; pz: number }[] = [];
+          for (const outcrop of OUTCROPS) {
+            const c = localFromLatLon(outcrop.lat, outcrop.lon);
+            for (let i = 0; i < 7; i++) {
+              const a = rng() * Math.PI * 2;
+              const d = Math.sqrt(rng()) * outcrop.radius;
+              const px = c.x + Math.cos(a) * d;
+              const pz = c.z + Math.sin(a) * d;
+              rocks.push({ ...parkToRoom(px, pz), px, pz, scale: 1.6 + rng() * 1.6, rot: rng() * Math.PI * 2 });
+            }
+          }
+          instance("rock_moss_set_01", rocks);
+        };
+        loadParkWorldShared(parkOptions)
           .then((world) => {
             if (parkDisposed) {
               return;
             }
             parkWorld = world;
-            // Sheep Meadow lands on the room origin with its ground a hair
-            // under the grass disc, turned half a circle so the boot framing
-            // (yaw 0 looks down −Z) faces SOUTH up the park: the Midtown wall
-            // over the tree line stands behind the data nodes.
             const y = world.groundAt(SHEEP_MEADOW.x, SHEEP_MEADOW.z);
+            world.group.scale.setScalar(PARK_SCALE);
             world.group.rotation.y = Math.PI;
-            world.group.position.set(SHEEP_MEADOW.x, -y - 0.15, SHEEP_MEADOW.z);
+            world.group.position.set(SHEEP_MEADOW.x * PARK_SCALE, -y * PARK_SCALE - 0.15, SHEEP_MEADOW.z * PARK_SCALE);
+            // The Lake mirrors the sky: the same panorama as the dome, as a
+            // reflection map (a fresh view per build; the dome's texture is
+            // env-owned and disposed with it).
+            if (world.water !== null) {
+              const reflection = skyTexture.clone();
+              reflection.mapping = THREE.EquirectangularReflectionMapping;
+              const waterMat = world.water.material as THREE.MeshStandardMaterial;
+              waterMat.envMap = reflection;
+              waterMat.envMapIntensity = 0.9;
+              waterMat.needsUpdate = true;
+            }
             group.add(world.group);
+            return loadGardenFlora().then((flora) => {
+              if (!parkDisposed) {
+                scatterParkFlora(flora, world, y);
+              }
+            });
           })
           .catch((error: unknown) => {
             // Fall back to the pastoral horizon rather than an empty one.

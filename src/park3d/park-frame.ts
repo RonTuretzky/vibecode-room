@@ -157,11 +157,11 @@ const segmentLadder = (alt: number, pitchDeg: number): ViewPreset => {
 
 // Sheep Meadow (66th–69th St, west of centre): THE ground-level postcard —
 // the Midtown wall rising over the tree line to the south.
-export const SHEEP_MEADOW = localFromLatLon(40.772, -73.9748);
-// Its lawn sits 11.6 m BELOW the park centre's surface (bake manifest
+export const SHEEP_MEADOW = localFromLatLon(40.77156, -73.97442);
+// Its lawn sits 11.8 m BELOW the park centre's surface (bake manifest
 // anchors.sheepMeadow.groundM — the centre is on a schist rise); the
 // ground-relative meadow preset needs this before any DEM has loaded.
-export const SHEEP_MEADOW_GROUND_M = -11.6;
+export const SHEEP_MEADOW_GROUND_M = -11.8;
 // In the Google-tiles frame y = 0 is the WGS84 ellipsoid at the centre, not
 // the surface: NAVD88 34.6 m with a −32.6 m geoid puts the centre's ground
 // at about +2 m there.
