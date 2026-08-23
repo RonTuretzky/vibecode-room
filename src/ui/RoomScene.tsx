@@ -26,6 +26,7 @@ import {
   cloudAge,
   cloudAltitude,
   cloudRadius,
+  staggeredRadius,
   fanAzimuth,
   gravitatedAzimuth,
   lifeFactor,
@@ -4168,7 +4169,7 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         // the bearing stays hash-anchored — clouds never orbit randomly.
         const age = cloudAge(nowMs, cloud.freshAtMs);
         const azimuth = bearings.get(cloud.id) ?? fanAzimuth(cloud.id, skyFanCenter);
-        const radius = cloudRadius(age);
+        const radius = staggeredRadius(cloud.id, age);
         const norm = radiusNorm(age);
         const altJitter = ((hashSeed(`alt:${cloud.id}`) % 1000) / 1000 - 0.5) * 1.4;
         let entry = cloudEntries.get(cloud.id);
@@ -5353,7 +5354,7 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
           const norm = radiusNorm(age);
           const radial = Math.hypot(entry.targetPos.x, entry.targetPos.z);
           if (radial > 1e-6) {
-            const radius = cloudRadius(age);
+            const radius = staggeredRadius(cloudId, age);
             entry.targetPos.x *= radius / radial;
             entry.targetPos.z *= radius / radial;
           }

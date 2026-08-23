@@ -18,8 +18,12 @@ export const SKY_ALT = 16;
 // Fresh clouds additionally LIFT above the deck (focal, overhead); the lift
 // decays with the same age norm, so sinking = aging even at one glance.
 export const FRESH_LIFT = 3.2;
-export const R_CORE = 3; // a cloud speaking NOW hovers here (zenith)
-export const R_HORIZON = 24; // ~30min of silence parks a cloud here
+export const R_CORE = 5; // a cloud speaking NOW hovers here (zenith)
+export const R_HORIZON = 34; // ~30min of silence parks a cloud here
+// Same-age clouds must not share a ring: a hash-stable radial stagger pushes
+// each cloud off its exact age radius (live-room directive: "way more spaced
+// out" — azimuth separation alone still let two fresh topics ride one arc).
+export const R_STAGGER = 3.4;
 export const AGE_KNEE = 60_000; // first minute spreads across the inner disc
 export const AGE_SPAN = 1_800_000; // 30min → the horizon
 // Render caps (the server may remember more — the ceiling shows the freshest).
@@ -49,6 +53,14 @@ export function cloudRadius(age: number): number {
   return R_CORE + (R_HORIZON - R_CORE) * radiusNorm(age);
 }
 
+// Age radius plus the per-cloud stagger — deterministic, so a cloud holds its
+// lane for the whole session. Clamped inside the band so the stagger can never
+// fake freshness (a NOW cloud stays nearer the core than any drifted one).
+export function staggeredRadius(id: string, age: number): number {
+  const offset = (((hashSeed(`ring:${id}`) % 1000) / 1000) - 0.5) * 2 * R_STAGGER;
+  return Math.min(R_HORIZON, Math.max(R_CORE * 0.7, cloudRadius(age) + offset));
+}
+
 // Hash-stable home azimuth: a cloud keeps its bearing for the whole session.
 export function azBase(id: string): number {
   return ((hashSeed(id) % 4096) / 4096) * Math.PI * 2;
@@ -59,9 +71,10 @@ export function azBase(id: string): number {
 // so a full-360° spread would park clouds behind the viewer where they read
 // as nothing. Every cloud instead keeps a hash-stable bearing INSIDE the fan
 // facing away from the camera: all of history is always in frame.
-// ±75° around the view direction: wide enough for a full history spread,
-// narrow enough that rim clouds stay inside the frame without keystone smear.
-export const SKY_FAN_HALF = Math.PI * 0.42;
+// ±90° around the view direction (was ±75°): the room asked for the clouds
+// to sit far apart, and the widened vista keeps even a full sky of topics
+// from crowding — the rim pair sits just inside the frame edges.
+export const SKY_FAN_HALF = Math.PI * 0.5;
 
 // Hash-stable bearing inside the visible fan (center = away-from-camera).
 export function fanAzimuth(id: string, center: number): number {

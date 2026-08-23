@@ -668,6 +668,11 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   #autoBuildArmedId: string | null = null;
   // Guided-demo hold deadline (0 = no hold). See setGuidedHold.
   #guidedHoldUntilMs = 0;
+  // Transcript boundary stamped when the guided "describe your idea" step is
+  // entered (HH:MM:SS, the transcript's own time format). The forced-accept
+  // pitch only reads lines at/after it — never re-cleared: it only ever
+  // NARROWS the sample, and the next demo overwrites it.
+  #guidedMarkAt: string | null = null;
   // While armed, republish once per second so every wall's settle countdown
   // (snapshot.ideaSettle.firesInMs) ticks live. Cleared on disarm/fire.
   #settleTickTimer: ReturnType<typeof setInterval> | null = null;
@@ -1451,6 +1456,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   private forcedSuggestionFromTranscript(correlationId: string): PendingSuggestion | null {
     const spoken = this.#snapshot.transcript
       .filter((line) => line.kind === "room")
+      .filter((line) => this.#guidedMarkAt === null || line.time >= this.#guidedMarkAt)
       .slice(-6)
       .map((line) => line.text.trim())
       .filter((text) => text.length > 0);
@@ -2022,6 +2028,18 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   // immediately so a post-demo room resumes normal settle behavior.
   setGuidedHold(on: boolean): ProjectorSnapshot {
     this.#guidedHoldUntilMs = on ? this.#clock() + GUIDED_HOLD_TTL_MS : 0;
+    if (on) {
+      // "DESCRIBE YOUR IDEA" STARTS HERE, not an hour ago. Without a boundary
+      // the deck described the visitor's idea out of the whole room's history:
+      // the forced pitch sampled the transcript tail (pre-step chatter and all)
+      // and a candidate ARMED by earlier conversation was the one Done built.
+      // Entering the step marks the transcript, drops the queued bubble, and
+      // disarms any pre-step candidate — everything the step produces is grown
+      // from what the visitor says AFTER this point.
+      this.#guidedMarkAt = new Date().toISOString().slice(11, 19);
+      this.suggestionEngine.clearPending();
+      this.#autoBuildArmedId = null;
+    }
     if (!on && this.#autoBuildArmedId !== null) {
       this.scheduleAutoBuildCheck();
     }

@@ -30,6 +30,8 @@ import {
   type ResolvedCloud,
   type SkyLinkRef,
   type SkyTurnRef,
+  staggeredRadius,
+  R_STAGGER,
 } from "./cloud-layout";
 
 // Pure sky layout maths — the ceiling's time→place, said→size, and
@@ -63,10 +65,10 @@ describe("time → place (the polar log law)", () => {
     expect(cloudRadius(Number.MAX_SAFE_INTEGER)).toBe(R_HORIZON);
   });
 
-  test("log-law checkpoints: 5s ≈ 3.5, 6min ≈ 14.9, 25min ≈ 22.9", () => {
-    expect(cloudRadius(5_000)).toBeCloseTo(3.5, 1);
-    expect(cloudRadius(360_000)).toBeCloseTo(14.9, 1);
-    expect(cloudRadius(1_500_000)).toBeCloseTo(22.9, 1);
+  test("log-law checkpoints on the widened band: 5s ≈ 5.7, 6min ≈ 21.4, 25min ≈ 32.5", () => {
+    expect(cloudRadius(5_000)).toBeCloseTo(5.7, 1);
+    expect(cloudRadius(360_000)).toBeCloseTo(21.4, 1);
+    expect(cloudRadius(1_500_000)).toBeCloseTo(32.5, 1);
   });
 
   test("age clamps clock skew to zero", () => {
@@ -284,5 +286,27 @@ describe("determinism", () => {
     const resolvedA = resolveClouds([], { clouds: [cloud({ id: "t" })] }, []);
     const resolvedB = resolveClouds([], { clouds: [cloud({ id: "t" })] }, []);
     expect(resolvedA).toEqual(resolvedB);
+  });
+});
+
+// "Way more spaced out" (live-room directive): same-age clouds must not share
+// a ring. The stagger is hash-stable per cloud, bounded, and can never fake
+// freshness — a NOW cloud stays inside any drifted cloud's lane.
+describe("staggeredRadius spreads same-age clouds across lanes", () => {
+  test("deterministic per id, and actually different between ids", () => {
+    expect(staggeredRadius("topic-1", 60_000)).toBe(staggeredRadius("topic-1", 60_000));
+    const lanes = new Set(["topic-1", "topic-2", "topic-3", "topic-4"].map((id) => staggeredRadius(id, 60_000)));
+    expect(lanes.size).toBeGreaterThanOrEqual(3);
+  });
+
+  test("bounded by the stagger around the age radius, clamped to the band", () => {
+    for (const id of ["a", "b", "c", "zz"]) {
+      for (const age of [0, 60_000, 1_800_000]) {
+        const r = staggeredRadius(id, age);
+        expect(Math.abs(r - cloudRadius(age))).toBeLessThanOrEqual(R_STAGGER + 1e-9);
+        expect(r).toBeGreaterThanOrEqual(R_CORE * 0.7);
+        expect(r).toBeLessThanOrEqual(R_HORIZON);
+      }
+    }
   });
 });
