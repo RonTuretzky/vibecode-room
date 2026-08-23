@@ -195,6 +195,9 @@ export class SelfCommissioner {
         previewUrl: null,
         startedAtMs: this.#now(),
         error: null,
+        // The SELF lane's honest progress comes from the activity probe
+        // (working-tree git signals), not the artifacts-dir footprint counter.
+        filesWritten: null,
         instruction: trimmed,
       };
       this.#lane = lane;

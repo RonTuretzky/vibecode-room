@@ -1048,7 +1048,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
         // answer route (app.ts /api/process/:upid/answer -> ledger + steer).
         // The answer ledger rides along so a steer-regenerated deck renders
         // already-answered cards pre-decided instead of re-asking them.
-        await generateSlideshow(
+        const artifact = await generateSlideshow(
           {
             ...input,
             questions: input.planQuestions,
@@ -1057,6 +1057,16 @@ class LiveProjectorRuntime implements ProjectorRuntime {
           },
           { signal: input.signal },
         );
+        // PROVENANCE (house rule): whether the deck's copy came from a model
+        // or degraded to template text is recorded — the deck footer says it
+        // to the room, this trace says it to the operator.
+        this.recordExternalTrace({
+          event: "process.deck.generated",
+          level: artifact.usedModel ? "info" : "warn",
+          sessionId: this.sessionId,
+          upid: input.upid,
+          meta: { backend: input.backend, usedModel: artifact.usedModel, slideCount: artifact.slideCount },
+        });
         // Take-home publishing rides the deck: the FIRST deck of a kickoff
         // fires the fire-and-forget GitHub Pages publish; every deck (incl.
         // steer regenerations) gets the QR slide once the publish confirmed.

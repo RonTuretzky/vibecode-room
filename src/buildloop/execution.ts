@@ -21,7 +21,7 @@
 // lane (registry.halt / emergency stop call it), so a halted commission never
 // leaves a reachable preview up.
 
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { servePreviewDirectory, type PreviewServer } from "../server/idea-builder";
@@ -42,10 +42,20 @@ export interface ExecutionSnapshot {
   previewUrl: string | null;
   startedAtMs: number;
   error: string | null;
+  // WORKING-TREE FOOTPRINT (the honest-indicator pattern): the number of real
+  // files currently on disk under artifacts/vibersyn-runs/<upid>/, probed on
+  // an interval while the lane executes. This is progress derived from what
+  // the run has ACTUALLY written — never a timer invention. null = the probe
+  // has not looked yet (or the lane settled before it ran).
+  filesWritten: number | null;
 }
 
 export const EXECUTION_ENTRYPOINT = "index.html";
 const DEFAULT_HOST = "127.0.0.1";
+// Footprint probe cadence: how often an executing lane counts the real files
+// its durable run has written so far. Cheap (one recursive readdir of a small
+// artifacts dir), and only while status === "executing".
+const DEFAULT_FOOTPRINT_POLL_MS = 1_500;
 
 export interface ExecutionRegistryOptions {
   // Root the durable runs write under. Defaults to <cwd>/artifacts/vibersyn-runs
@@ -58,6 +68,8 @@ export interface ExecutionRegistryOptions {
   // Republish hook: fired on every lane transition so the runtime can push a
   // fresh snapshot.
   onUpdate?: () => void;
+  // Footprint probe cadence (tests may shrink it); <= 0 disables the probe.
+  footprintPollMs?: number;
 }
 
 interface ExecutionLane {
@@ -72,6 +84,11 @@ interface ExecutionLane {
   // Guards complete() against double entry (a replayed completed frame must not
   // start a second preview server).
   completing: boolean;
+  // Latest working-tree footprint (real files under the artifacts dir); null
+  // until the first probe runs.
+  filesWritten: number | null;
+  // The footprint probe interval while executing; cleared on settle/stop.
+  probe: ReturnType<typeof setInterval> | null;
 }
 
 export class ExecutionRegistry {
@@ -80,6 +97,7 @@ export class ExecutionRegistry {
   readonly #serve: (dir: string, host?: string) => Promise<PreviewServer>;
   readonly #now: () => number;
   readonly #onUpdate: () => void;
+  readonly #footprintPollMs: number;
   readonly #lanes = new Map<string, ExecutionLane>();
 
   constructor(options: ExecutionRegistryOptions = {}) {
@@ -88,6 +106,7 @@ export class ExecutionRegistry {
     this.#serve = options.serve ?? servePreviewDirectory;
     this.#now = options.now ?? (() => Date.now());
     this.#onUpdate = options.onUpdate ?? (() => undefined);
+    this.#footprintPollMs = options.footprintPollMs ?? DEFAULT_FOOTPRINT_POLL_MS;
   }
 
   // The artifacts directory the durable run writes for one UPID.
@@ -108,22 +127,65 @@ export class ExecutionRegistry {
     await rm(this.artifactsDir(upid), { recursive: true, force: true });
   }
 
-  // Open the lane at commission time: the durable run has been launched.
+  // Open the lane at commission time: the durable run has been launched. The
+  // footprint probe starts here: while the lane executes, the number of REAL
+  // files under artifacts/vibersyn-runs/<upid>/ is re-counted on an interval,
+  // so the wall's "progress" includes what the run has actually written.
   start(upid: string, runId: string): ExecutionSnapshot {
+    const previous = this.#lanes.get(upid);
+    if (previous?.probe != null) {
+      clearInterval(previous.probe);
+    }
     const lane: ExecutionLane = {
       status: "executing",
       runId,
       percent: 0,
       label: "commissioned",
-      server: this.#lanes.get(upid)?.server ?? null,
-      version: this.#lanes.get(upid)?.version ?? 0,
+      server: previous?.server ?? null,
+      version: previous?.version ?? 0,
       startedAtMs: this.#now(),
       error: null,
       completing: false,
+      filesWritten: null,
+      probe: null,
     };
     this.#lanes.set(upid, lane);
+    this.#startFootprintProbe(upid, lane);
     this.#onUpdate();
     return this.snapshot(upid)!;
+  }
+
+  // The working-tree footprint probe: count real files under the artifacts dir
+  // while the lane executes; republish only when the count changes. The timer
+  // is unref'd so a forgotten lane can never hold the process open.
+  #startFootprintProbe(upid: string, lane: ExecutionLane): void {
+    if (this.#footprintPollMs <= 0) {
+      return;
+    }
+    const dir = this.artifactsDir(upid);
+    const probe = setInterval(() => {
+      if (this.#lanes.get(upid) !== lane || lane.status !== "executing") {
+        clearInterval(probe);
+        return;
+      }
+      const count = countFiles(dir);
+      if (count !== lane.filesWritten) {
+        lane.filesWritten = count;
+        this.#onUpdate();
+      }
+    }, this.#footprintPollMs);
+    (probe as { unref?: () => void }).unref?.();
+    lane.probe = probe;
+  }
+
+  // Stop a lane's footprint probe (settle/teardown) and take one FINAL count so
+  // the settled snapshot reports the run's true footprint, not a stale one.
+  #settleFootprint(lane: ExecutionLane, upid: string): void {
+    if (lane.probe !== null) {
+      clearInterval(lane.probe);
+      lane.probe = null;
+    }
+    lane.filesWritten = countFiles(this.artifactsDir(upid));
   }
 
   // Fold live run-event progress into an executing lane (the RunEventDriver
@@ -159,6 +221,7 @@ export class ExecutionRegistry {
         lane.status = "failed";
         lane.label = "no artifacts";
         lane.error = `the run completed but left no ${EXECUTION_ENTRYPOINT} under ${dir}`;
+        this.#settleFootprint(lane, upid);
         return this.snapshot(upid);
       }
       if (lane.server === null) {
@@ -174,6 +237,7 @@ export class ExecutionRegistry {
       lane.label = "built";
       lane.version += 1;
       lane.error = null;
+      this.#settleFootprint(lane, upid);
       return this.snapshot(upid);
     } finally {
       lane.completing = false;
@@ -190,6 +254,7 @@ export class ExecutionRegistry {
     lane.status = "failed";
     lane.label = "failed";
     lane.error = error;
+    this.#settleFootprint(lane, upid);
     this.#onUpdate();
   }
 
@@ -213,6 +278,7 @@ export class ExecutionRegistry {
           : null,
       startedAtMs: lane.startedAtMs,
       error: lane.error,
+      filesWritten: lane.filesWritten,
     };
   }
 
@@ -225,6 +291,10 @@ export class ExecutionRegistry {
       return;
     }
     this.#lanes.delete(upid);
+    if (lane.probe !== null) {
+      clearInterval(lane.probe);
+      lane.probe = null;
+    }
     await lane.server?.stop().catch(() => undefined);
     lane.server = null;
     this.#onUpdate();
@@ -238,4 +308,24 @@ export class ExecutionRegistry {
 function safeSegment(upid: string): string {
   const cleaned = upid.replace(/[^a-zA-Z0-9_-]/gu, "-");
   return cleaned.length > 0 ? cleaned : "run";
+}
+
+// Count the REAL regular files under a directory (recursive, sync — the
+// artifacts dirs are small). A directory that does not exist yet counts 0:
+// "the run has written nothing" is exactly what the wall should say then.
+export function countFiles(dir: string): number {
+  try {
+    const entries = readdirSync(dir, { withFileTypes: true });
+    let count = 0;
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        count += countFiles(join(dir, entry.name));
+      } else if (entry.isFile()) {
+        count += 1;
+      }
+    }
+    return count;
+  } catch {
+    return 0;
+  }
 }

@@ -60,6 +60,8 @@ describe("ExecutionRegistry", () => {
       previewUrl: null,
       startedAtMs: 1_000,
       error: null,
+      // The working-tree footprint probe has not looked yet at open time.
+      filesWritten: null,
     });
 
     registry.progress("upid-1", { percent: 36, label: "writing index.html" });
@@ -133,6 +135,33 @@ describe("ExecutionRegistry", () => {
     expect(registry.snapshot("upid-6")).toMatchObject({ status: "failed", error: "gateway stream died" });
     registry.progress("upid-6", { percent: 50 });
     expect(registry.snapshot("upid-6")?.percent).toBe(0);
+  });
+
+  test("the footprint probe reports the REAL files the run has written (honest-indicator)", async () => {
+    const root = await tempRoot();
+    const registry = new ExecutionRegistry({
+      artifactsRoot: root,
+      serve: fakeServe().serve,
+      footprintPollMs: 20,
+    });
+    registry.start("upid-7", "run-7");
+
+    // The run writes real files; the probe should see them within a few polls.
+    await mkdir(join(root, "upid-7", "assets"), { recursive: true });
+    await writeFile(join(root, "upid-7", "app.js"), "// real", "utf8");
+    await writeFile(join(root, "upid-7", "assets", "style.css"), "body{}", "utf8");
+    const deadline = Date.now() + 2_000;
+    while ((registry.snapshot("upid-7")?.filesWritten ?? 0) < 2 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(registry.snapshot("upid-7")?.filesWritten).toBe(2);
+
+    // Completion takes a final count (index.html joins) and stops the probe.
+    await writeFile(join(root, "upid-7", "index.html"), "<html>app</html>", "utf8");
+    const lane = await registry.complete("upid-7");
+    expect(lane?.status).toBe("built");
+    expect(lane?.filesWritten).toBe(3);
+    await registry.stopAll();
   });
 
   test("artifactsDir sanitizes the UPID into a safe path segment", async () => {

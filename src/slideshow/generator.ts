@@ -10,16 +10,23 @@
 //      Park it for later (POST /api/idea/:id/dismiss).
 //
 // Copy generation makes ONE Cerebras call (OpenAI-compatible chat/completions,
-// CEREBRAS_API_KEY, gemma-4-31b) bounded by a hard time budget, and merges the
-// result field-by-field over a DETERMINISTIC no-network fallback built purely
+// CEREBRAS_API_KEY, gemma-4-31b) bounded by a hard time budget, WITH a sticky
+// host-`claude` CLI failover (mirroring the native backend's createFailoverModel
+// BY CONVENTION): when Cerebras misses terminally (no key / 402 / garbage) and
+// a claude CLI resolves, the same copy request runs through `claude -p` — so
+// tagline/concept/questions stay idea-specific without Cerebras billing. The
+// merged result overlays a DETERMINISTIC no-network fallback built purely
 // from the inputs — so deck generation NEVER fails a kickoff for model reasons:
 // no key, network down, timeout, garbage output all degrade to the template
-// text. The model is injectable so tests run with fakes and zero network. The
-// only aborts that propagate are the caller's own AbortSignal (emergency stop)
-// — honored between phases and passed into fetch.
+// text (and the deck footer SAYS so — provenance is never silent). The model is
+// injectable so tests run with fakes and zero network. The only aborts that
+// propagate are the caller's own AbortSignal (emergency stop) — honored between
+// phases and passed into fetch.
 
+import { existsSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   renderSlideshowHtml,
   type Slide,
@@ -232,8 +239,13 @@ export async function generateSlideshow(
   signal?.throwIfAborted();
 
   // 1. Copy: one bounded model call merged over the deterministic fallback.
+  // Default model = Cerebras with the sticky claude-CLI failover; when the CLI
+  // leg is available the budget widens (a host `claude -p` needs more than the
+  // 8s a chat/completions call does — the fallback path is still instant).
   const fallback = fallbackCopy(input);
-  const model = options.model ?? cerebrasCopyModel;
+  const model = options.model ?? deckCopyModel;
+  const defaultTimeoutMs =
+    options.model === undefined && resolveDeckCopyCli() !== null ? CLI_COPY_TIMEOUT_MS : DEFAULT_TIMEOUT_MS;
   const brief = input.brief ?? null;
   const briefQuote = brief?.sourceQuote.trim() ?? "";
   const briefRationale = brief?.rationale.trim() ?? "";
@@ -248,7 +260,7 @@ export async function generateSlideshow(
     ...(briefRationale.length === 0 ? {} : { rationale: briefRationale }),
     ...(askedQuestions.length === 0 ? {} : { askedQuestions }),
   };
-  const raw = await callModelWithBudget(model, request, options.timeoutMs ?? DEFAULT_TIMEOUT_MS, signal);
+  const raw = await callModelWithBudget(model, request, options.timeoutMs ?? defaultTimeoutMs, signal);
   signal?.throwIfAborted();
   const merged = mergeCopy(raw, fallback);
   // Final clamp guard: bounds every field regardless of source (model OR
@@ -262,7 +274,7 @@ export async function generateSlideshow(
   const slides = buildSlides(input, copy);
   const html = renderSlideshowHtml({
     title: `${ideaTitle(input.prompt)} — pitch`,
-    footer: footerLine(input),
+    footer: footerLine(input, usedModel),
     slides,
     questions: deckQuestions(input, copy),
     answerEndpoint: input.answerEndpoint,
@@ -840,12 +852,16 @@ export function ideaTitle(prompt: string): string {
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
-function footerLine(input: GenerateSlideshowInput): string {
+// The persistent footer, ending in a PROVENANCE marker (house honesty rule:
+// agent-invented copy is labeled, and a deck that degraded to template text
+// says so instead of passing template prose off as model output).
+function footerLine(input: GenerateSlideshowInput, usedModel: boolean): string {
   const callsign = normalizeCallsign(input.callsign);
   const parts = [input.upid, input.backend];
   if (callsign !== null) {
     parts.push(callsign);
   }
+  parts.push(usedModel ? "model copy" : "template copy — no model");
   return parts.join(" · ");
 }
 
@@ -924,22 +940,9 @@ export const cerebrasCopyModel: SlideshowCopyModel = async (request, signal) => 
       max_completion_tokens: 700,
       messages: [
         { role: "system", content: COPY_SYSTEM_PROMPT },
-        {
-          role: "user",
-          content: JSON.stringify({
-            ideaSpokenInRoom: request.prompt,
-            pitchSummary: request.summary,
-            backend: request.backend,
-            callsign: request.callsign,
-            conceptMockLanes: request.mocks,
-            // IdeaBrief grounding (present only when the kickoff carried one).
-            ...(request.sourceQuote === undefined ? {} : { asHeardInTheRoomVerbatim: request.sourceQuote }),
-            ...(request.rationale === undefined ? {} : { whyItIsBuildable: request.rationale }),
-            // The judge's own decision questions — the model must top up with
-            // NEW forks, never repeats.
-            ...(request.askedQuestions === undefined ? {} : { questionsAlreadyAsked: request.askedQuestions }),
-          }),
-        },
+        // IdeaBrief grounding + the judge's already-asked questions ride the
+        // shared user content (copyUserContent) so both model legs agree.
+        { role: "user", content: copyUserContent(request) },
       ],
     }),
   };
@@ -950,6 +953,135 @@ export const cerebrasCopyModel: SlideshowCopyModel = async (request, signal) => 
   const payload = await response.json().catch(() => null);
   const content = payload === null ? null : chatContent(payload);
   return content === null ? null : (parseModelCopy(content) as Partial<SlideshowCopy> | null);
+};
+
+// The copy request as the user message both real models receive (one source so
+// the Cerebras leg and the claude-CLI failover ground on identical facts).
+function copyUserContent(request: SlideshowCopyRequest): string {
+  return JSON.stringify({
+    ideaSpokenInRoom: request.prompt,
+    pitchSummary: request.summary,
+    backend: request.backend,
+    callsign: request.callsign,
+    conceptMockLanes: request.mocks,
+    ...(request.sourceQuote === undefined ? {} : { asHeardInTheRoomVerbatim: request.sourceQuote }),
+    ...(request.rationale === undefined ? {} : { whyItIsBuildable: request.rationale }),
+    ...(request.askedQuestions === undefined ? {} : { questionsAlreadyAsked: request.askedQuestions }),
+  });
+}
+
+// --- claude-CLI failover (sticky, mirrors native.ts createFailoverModel) ----
+
+// The CLI leg is OPT-IN: VIBERSYN_DECK_COPY_CLI=1 (run-room.sh exports it for
+// the live room). Default OFF so every direct-construction test/harness room
+// keeps the instant deterministic fallback — a unit test must never spawn the
+// host `claude` for slide copy.
+export const DECK_COPY_CLI_ENV = "VIBERSYN_DECK_COPY_CLI";
+// A host `claude -p` round trip needs a real budget; the deterministic
+// fallback path is still instant when no CLI resolves.
+export const CLI_COPY_TIMEOUT_MS = 45_000;
+
+// Resolve the claude CLI for deck copy: explicit VIBERSYN_CLAUDE_CLI must
+// exist; otherwise the repo shim, then PATH. Mirrors the buildloop backends'
+// resolveClaudeCli BY CONVENTION (this track stands alone — no cross-track
+// imports). Null unless VIBERSYN_DECK_COPY_CLI=1.
+export function resolveDeckCopyCli(env: Record<string, string | undefined> = process.env): string | null {
+  if (env[DECK_COPY_CLI_ENV] !== "1") {
+    return null;
+  }
+  const explicit = env.VIBERSYN_CLAUDE_CLI;
+  if (explicit !== undefined && explicit.length > 0) {
+    return existsSync(explicit) ? explicit : null;
+  }
+  const shim = fileURLToPath(new URL("../../.context/claude-shim/claude", import.meta.url));
+  if (existsSync(shim)) {
+    return shim;
+  }
+  return Bun.which("claude");
+}
+
+// One print-mode claude CLI call for the copy request. Null on every miss
+// (no CLI, non-zero exit, error envelope, unparseable output); the subprocess
+// is SIGKILLed on abort so the budget wrapper's timeout stays enforceable.
+export const claudeCliCopyModel: SlideshowCopyModel = async (request, signal) => {
+  const cli = resolveDeckCopyCli();
+  if (cli === null) {
+    return null;
+  }
+  signal.throwIfAborted();
+  const proc = Bun.spawn(
+    [cli, "-p", `${COPY_SYSTEM_PROMPT}\n\n${copyUserContent(request)}`, "--output-format", "json", "--dangerously-skip-permissions"],
+    { stdout: "pipe", stderr: "ignore", stdin: "ignore" },
+  );
+  const kill = (): void => {
+    try {
+      proc.kill(9);
+    } catch {
+      // Already exited.
+    }
+  };
+  signal.addEventListener("abort", kill, { once: true });
+  try {
+    const stdout = await new Response(proc.stdout).text();
+    const exitCode = await proc.exited;
+    if (signal.aborted || exitCode !== 0) {
+      return null;
+    }
+    const reply = unwrapDeckClaudeEnvelope(stdout);
+    return reply === null ? null : (parseModelCopy(reply) as Partial<SlideshowCopy> | null);
+  } finally {
+    signal.removeEventListener("abort", kill);
+  }
+};
+
+// `claude -p --output-format json` wraps the reply in {result, is_error};
+// tolerate raw stdout from older/odd shims. Null on an error envelope.
+function unwrapDeckClaudeEnvelope(stdout: string): string | null {
+  const trimmed = stdout.trim();
+  if (trimmed.length === 0) {
+    return null;
+  }
+  try {
+    const envelope: unknown = JSON.parse(trimmed);
+    if (isRecord(envelope)) {
+      if (envelope.is_error === true) {
+        return null;
+      }
+      if (typeof envelope.result === "string" && envelope.result.trim().length > 0) {
+        return envelope.result;
+      }
+    }
+  } catch {
+    // Raw (non-envelope) output — hand it to parseModelCopy as-is.
+  }
+  return trimmed;
+}
+
+// STICKY failover state: once the CLI leg has answered (Cerebras terminally
+// missing), later decks skip straight to it instead of re-paying a doomed
+// Cerebras round trip per deck. Module-scoped like the native backend's
+// failure counter; resettable for tests.
+let deckCopyStickyClaude = false;
+export function resetDeckCopyFailover(): void {
+  deckCopyStickyClaude = false;
+}
+
+// DEFAULT production copy model: Cerebras first, claude CLI second, sticky.
+// Null only when both legs miss — the deterministic fallback then stands (and
+// the deck footer says "template copy — no model").
+export const deckCopyModel: SlideshowCopyModel = async (request, signal) => {
+  if (!deckCopyStickyClaude) {
+    const fromCerebras = await cerebrasCopyModel(request, signal);
+    if (fromCerebras !== null) {
+      return fromCerebras;
+    }
+    signal.throwIfAborted();
+  }
+  const fromClaude = await claudeCliCopyModel(request, signal);
+  if (fromClaude !== null) {
+    deckCopyStickyClaude = true;
+  }
+  return fromClaude;
 };
 
 export interface RetryFetchOptions {

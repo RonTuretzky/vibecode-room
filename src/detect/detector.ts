@@ -228,8 +228,13 @@ export class HeuristicIdeaDetector implements IdeaDetector {
       matchId,
       pitch: clampWords(start.text, MAX_PITCH_WORDS),
       confidence: assessment.confidence,
-      questions: ["Scope it as one task?", "Spawn an agent now?"],
-      answers: ["Yes, scope it", "Yes, spawn it"],
+      // REAL FORKS, "/"-packed per the plan-questions convention: each question
+      // carries >=2 option labels so the deck's swipe cards keep them (a
+      // single-answer "question" is not a fork and deckQuestions drops it —
+      // which used to leave every heuristic-judged deck asking only the two
+      // static fallbacks).
+      questions: ["What should the first cut nail?", "Where should it live first?"],
+      answers: ["The core flow, end to end / One polished screen", "On this room's wall / In any browser"],
       contextSpan: span,
       rationale: "heuristic: buildable cue detected",
       judgment: { rubric, assessment },

@@ -1,25 +1,32 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ProjectorProcess } from "./types";
 import type { SceneDwellRect } from "./gesture/scene-source";
+import { executionOf } from "./stage";
 import { treeMenuPlacement } from "./TreeMenu";
 import "./HoloPanel.css";
 
 /**
- * Holo panel — the imported tree's LIVE deployment, floating beside the tree.
+ * Holo panel — a tree's LIVE app, floating beside the tree. TWO sources:
+ *
+ *   • an imported tree's confirmed deployment (process.deployUrl) — shown via
+ *     the room server's OWN /salem reverse proxy (the authenticated labor.fun
+ *     board): same-origin by construction, so the page rows + scroll buttons
+ *     can drive it directly;
+ *   • a COMMISSIONED build that finished — the execution lane's served
+ *     full-app preview (executionOf(process).previewUrl, the real artifacts
+ *     under artifacts/vibersyn-runs/<upid>/). This is the loop's promised
+ *     ending on the wall: "Build it for real" ends in a browsable app here.
+ *     The preview is another loopback origin (cross-origin to the wall), so
+ *     the salem page rows are hidden and scrollBy degrades to a guarded no-op;
+ *     ⟳ and ✕ still work.
  *
  * Screen-anchored glass like TreeMenu (the same clamped placement math), NOT a
  * CSS3DRenderer object: the panel is a fixed-position card with perspective +
  * a slight rotateY tilt toward screen center, a cyan glow border and a cheap
  * CSS scanline overlay — it READS as a hologram without costing a render pass.
- *
- * Content is an iframe onto the room server's OWN /salem reverse proxy (the
- * authenticated labor.fun board): same-origin by construction, so the dwell
- * chrome can drive it directly — page-row buttons swap the iframe src, the
- * ⬆/⬇ buttons call contentWindow.scrollBy (no postMessage handshake needed),
- * ⟳ remounts the frame, ✕ closes. Every control is a plain enabled <button>
- * (GestureLayer's collectDomTargets makes them dwell targets automatically)
- * and the panel root carries data-dwell-shield so READING the board never
- * counts as a dwell-miss dismissal.
+ * Every control is a plain enabled <button> (GestureLayer's collectDomTargets
+ * makes them dwell targets automatically) and the panel root carries
+ * data-dwell-shield so READING the app never counts as a dwell-miss dismissal.
  */
 
 export const HOLO_PANEL_WIDTH = 960;
@@ -73,6 +80,13 @@ export function HoloPanel({ process, anchor, onClose }: HoloPanelProps) {
   const [src, setSrc] = useState(salemSrc("/"));
   // Remount key: ⟳ bumps it so an identical src still reloads the frame.
   const [reloadNonce, setReloadNonce] = useState(0);
+  // Content source (see the header): a confirmed deployment rides the /salem
+  // proxy; otherwise a BUILT commission's served preview is the live app.
+  const deployUrl = typeof process.deployUrl === "string" && process.deployUrl.length > 0 ? process.deployUrl : null;
+  const execution = executionOf(process);
+  const builtPreviewUrl =
+    deployUrl === null && execution?.status === "built" && execution.previewUrl !== null ? execution.previewUrl : null;
+  const frameSrc = builtPreviewUrl ?? src;
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const viewport =
     typeof window !== "undefined"
@@ -133,7 +147,7 @@ export function HoloPanel({ process, anchor, onClose }: HoloPanelProps) {
     >
       <header className="holo-head">
         <span className="holo-title" data-testid="holo-title">
-          🌐 {title} — live
+          🌐 {title} — {builtPreviewUrl !== null ? "built app, live" : "live"}
         </span>
         <button
           type="button"
@@ -145,29 +159,34 @@ export function HoloPanel({ process, anchor, onClose }: HoloPanelProps) {
           ✕
         </button>
       </header>
-      <nav className="holo-pages" data-testid="holo-pages">
-        {HOLO_PAGES.map((page) => (
-          <button
-            key={page.path}
-            type="button"
-            className={`holo-page${src === salemSrc(page.path) ? " is-current" : ""}`}
-            data-testid="holo-page"
-            data-path={page.path}
-            title={`Show the board's ${page.label} page`}
-            onClick={() => setSrc(salemSrc(page.path))}
-          >
-            {page.label}
-          </button>
-        ))}
-      </nav>
+      {/* The salem page rows only make sense for the proxied board — a built
+          commission preview is its own app with its own nav. */}
+      {builtPreviewUrl === null ? (
+        <nav className="holo-pages" data-testid="holo-pages">
+          {HOLO_PAGES.map((page) => (
+            <button
+              key={page.path}
+              type="button"
+              className={`holo-page${src === salemSrc(page.path) ? " is-current" : ""}`}
+              data-testid="holo-page"
+              data-path={page.path}
+              title={`Show the board's ${page.label} page`}
+              onClick={() => setSrc(salemSrc(page.path))}
+            >
+              {page.label}
+            </button>
+          ))}
+        </nav>
+      ) : null}
       <div className="holo-frame-wrap">
         <iframe
-          key={`${src}#${reloadNonce}`}
+          key={`${frameSrc}#${reloadNonce}`}
           ref={iframeRef}
           className="holo-frame"
           data-testid="holo-frame"
-          src={src}
-          title={`Live deployment for ${process.callsign}`}
+          data-holo-source={builtPreviewUrl !== null ? "execution" : "deploy"}
+          src={frameSrc}
+          title={`Live app for ${process.callsign}`}
           sandbox="allow-scripts allow-same-origin allow-forms"
         />
         {/* Cheap hologram dressing: a CSS repeating-gradient scanline sheet. */}

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ProjectorProcess } from "./types";
 import { buildsOf } from "./buildloop";
 import type { LifecycleAction, ProcessBuild } from "./buildloop";
@@ -105,12 +105,6 @@ export function deckWindowState(hasSlides: boolean, builds: ProcessBuild[]): Dec
   return "empty";
 }
 
-// The generated deck's controller opens on its "How should we continue?"
-// slide when the URL carries #decision (see src/slideshow/template.ts).
-function withDecisionHash(url: string): string {
-  return `${url.split("#")[0]}#decision`;
-}
-
 export function Slideshow({
   process,
   onLifecycle,
@@ -155,6 +149,48 @@ export function Slideshow({
   // demo's decide step opens the deck straight on its decision slide, and a
   // later prop flip (the demo completing) must not remount the iframe.
   const [decisionHash] = useState(openAtDecision);
+
+  // DECK SLIDE MEMORY: the generated deck posts {type:"vibersyn:slide", index}
+  // to the parent on every slide change (template.ts show()). When an answer/
+  // steer lands, the version-bumped slideshowUrl REMOUNTS the iframe (keyed by
+  // URL below) — carrying the last-reported slide index into the new src as a
+  // #N hash means the regenerated deck reopens WHERE THE READER WAS instead of
+  // resetting to slide 1 and discarding their place mid-answer.
+  const lastDeckSlideRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const onMessage = (messageEvent: MessageEvent) => {
+      const data = messageEvent.data as { type?: unknown; index?: unknown } | null;
+      if (
+        data !== null &&
+        typeof data === "object" &&
+        data.type === "vibersyn:slide" &&
+        typeof data.index === "number" &&
+        Number.isFinite(data.index) &&
+        data.index >= 1
+      ) {
+        lastDeckSlideRef.current = Math.floor(data.index);
+      }
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, []);
+  // Src frozen PER URL: the hash is decided once when a new deck URL appears
+  // (remount moment) and then held, so later re-renders (snapshot pushes,
+  // slide messages) never change the key and can never remount the frame.
+  const frozenSrcRef = useRef<{ url: string; src: string } | null>(null);
+  const liveFrameSrc = (url: string): string => {
+    if (frozenSrcRef.current !== null && frozenSrcRef.current.url === url) {
+      return frozenSrcRef.current.src;
+    }
+    const remembered = lastDeckSlideRef.current;
+    const hash = remembered !== null ? `#${remembered}` : decisionHash ? "#decision" : "";
+    const src = `${url.split("#")[0]}${hash}`;
+    frozenSrcRef.current = { url, src };
+    return src;
+  };
   const prev = useCallback(() => setIndex((i) => Math.max(i - 1, 0)), []);
   const next = useCallback(() => setIndex((i) => Math.min(i + 1, slides.length - 1)), [slides.length]);
 
@@ -320,14 +356,16 @@ export function Slideshow({
             ) : (
               <div className="slide-body slide-live" data-testid="slideshow-live">
                 <iframe
-                  /* keyed by URL: a tab switch REMOUNTS the frame, so the
-                     switch is visible instead of a silent src swap. The
-                     #decision hash (guided decide step) opens the generated
-                     deck straight on its decision slide. */
-                  key={decisionHash ? withDecisionHash(slide.url) : slide.url}
+                  /* keyed by URL: a tab switch or a version bump (answer/steer
+                     rebuild) REMOUNTS the frame, so the change is visible
+                     instead of a silent src swap. The hash carries the
+                     reader's place: the last slide the deck reported (slide
+                     memory above), else #decision for the guided decide step,
+                     else the deck's own slide 1. */
+                  key={liveFrameSrc(slide.url)}
                   className="slide-live-frame"
                   data-testid="slideshow-live-frame"
-                  src={decisionHash ? withDecisionHash(slide.url) : slide.url}
+                  src={liveFrameSrc(slide.url)}
                   title={slide.title}
                 />
                 <a

@@ -183,16 +183,28 @@ export default smithers((ctx) => {
     <Workflow name="vibersyn-process">
       <Sequence>
         <Task id="build" output={outputs.build} agent={[providers.claudeApp]}>
-          {`You are building a room-accepted idea${callsign ? ` (callsign ${callsign})` : ""}.
+          {`You are building a room-accepted idea${callsign ? ` (callsign ${callsign})` : ""} FOR REAL.
+This is the commission stage: the room already saw a concept mock and a pitch
+deck for this idea and explicitly chose "Build it for real" — deliver the app
+the deck pitched, not another sketch.
 
 IDEA: ${prompt}
 ${briefBlock === "" ? "" : `\n${briefBlock}\n`}
-Create a small, self-contained static web app for this idea in the directory
+Create a complete, self-contained static web app for this idea in the directory
 ${outputDirLine} — create it if needed, and write ONLY
 inside that directory; never modify any other path in this repository.
-index.html must work when opened directly: inline CSS/JS, no build step, no
-network dependencies. Keep it to a single focused page that demonstrates the
-idea well.
+
+Requirements:
+- index.html is the entry and must work when opened directly: no build step,
+  no network dependencies, no CDN. Additional files (extra pages, scripts,
+  styles, assets) are welcome INSIDE the directory, referenced relatively.
+- Build the MULTIPLE screens/views the idea calls for (hash routes or separate
+  pages), with working navigation between them — not a single teaser page.
+- The core interactions must actually WORK (state, persistence via
+  localStorage where it fits, real client-side logic) — this is the product,
+  not a mock.
+- Honor the DECISIONS ALREADY MADE above (they are the room's answers to the
+  deck's questions); use your judgment on the open ones.
 
 Report the ABSOLUTE output directory in "outputDir", the entry file path in
 "entrypoint", and a one-line description of what you built in "summary".`}

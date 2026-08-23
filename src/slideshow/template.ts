@@ -155,6 +155,12 @@ function renderMocks(mocks: readonly SlideMock[]): string {
   parts.push('        <div class="mock-panels">');
   parts.push(panels);
   parts.push("        </div>");
+  // Honest rebuild indicator: hidden until an answer/steer actually POSTs;
+  // the deck script reveals it so the gallery never silently shows a STALE
+  // mock while the room rebuilds — the fresh deck (remount) has it hidden.
+  parts.push(
+    '        <p class="mock-rebuilding" data-mock-rebuilding hidden>⟳ rebuilding the mocks with your answer — this deck refreshes in place when they land</p>',
+  );
   parts.push("      </div>");
   return parts.join("\n");
 }
@@ -419,6 +425,15 @@ const DECK_SCRIPT = `(function () {
     if (history.replaceState) {
       history.replaceState(null, "", "#" + (index + 1));
     }
+    // SLIDE MEMORY (parent half in src/ui/Slideshow.tsx): report where the
+    // reader is, so a rebuild-triggered remount reopens the SAME slide.
+    try {
+      if (window.parent && window.parent !== window) {
+        window.parent.postMessage({ type: "vibersyn:slide", index: index + 1 }, "*");
+      }
+    } catch (err) {
+      // Standalone/published copy — nobody to tell.
+    }
   }
   function closest(node, test) {
     while (node && node !== document.body) {
@@ -465,6 +480,13 @@ const DECK_SCRIPT = `(function () {
       all[i].classList.toggle("chosen", all[i] === terminalButton);
     }
   }
+  function unlockDecisions() {
+    var all = document.querySelectorAll("[data-decision]");
+    for (var i = 0; i < all.length; i++) {
+      all[i].disabled = false;
+      all[i].classList.remove("chosen");
+    }
+  }
   function send(endpoint, body, confirmation, terminalButton) {
     setStatus("Sending…", false);
     fetch(endpoint, {
@@ -501,6 +523,30 @@ const DECK_SCRIPT = `(function () {
       return false;
     }
   }
+  // BRIDGE RESULT (the reply leg): the room's App posts the real outcome of a
+  // bridged choice back into this deck. Success settles the slide on the
+  // button's own confirmation; failure says so loudly and re-enables the
+  // buttons — the slide must never keep claiming "the build is running" after
+  // a failed commission POST.
+  window.addEventListener("message", function (event) {
+    var data = event.data;
+    if (!data || data.type !== "vibersyn:decision-result" || typeof data.choice !== "string") {
+      return;
+    }
+    if (!/^[a-z][a-z-]*$/.test(data.choice)) {
+      return; // never build a selector from arbitrary window-message text
+    }
+    var button = document.querySelector('[data-decision][data-bridge="' + data.choice + '"]');
+    if (data.ok) {
+      setStatus(button ? button.getAttribute("data-confirmation") : "Done.", true);
+      if (button && button.getAttribute("data-terminal") === "1") {
+        lockDecisions(button);
+      }
+    } else {
+      unlockDecisions();
+      setStatus(data.message || "The room could not do that — try again.", false);
+    }
+  });
   function switchMockTab(tab) {
     var mockId = tab.getAttribute("data-mock-tab");
     var root = closest(tab, hasAttr("data-mocks"));
@@ -530,12 +576,14 @@ const DECK_SCRIPT = `(function () {
         }
       }
     } else if (bridged && decision.getAttribute("data-bridge-only") === "1") {
-      // The room heard the choice and fires the API call itself — mirror the
-      // confirmation locally so the in-deck slide visibly settles too.
-      setStatus(decision.getAttribute("data-confirmation"), true);
-      if (decision.getAttribute("data-terminal") === "1") {
-        lockDecisions(decision);
-      }
+      // The room heard the choice and fires the API call itself. HONESTY: the
+      // POST has not resolved yet, so say "sent", not "done" — the room posts
+      // {type:"vibersyn:decision-result"} back (listener below) with the real
+      // outcome: the confirmation on success, the failure line (buttons
+      // re-enabled) when the commission POST failed. Buttons lock provisionally
+      // so a slow round trip can never double-fire the choice.
+      setStatus("Choice sent — the room is on it…", false);
+      lockDecisions(decision);
     } else {
       send(
         decision.getAttribute("data-endpoint"),
@@ -573,6 +621,14 @@ const DECK_SCRIPT = `(function () {
     }
     postAnswer(endpoint, group.getAttribute("data-question-id"), group.getAttribute("data-question-prompt"), answer);
     if (endpoint) {
+      // HONESTY: the gallery still serves the PRE-ANSWER mock until the
+      // rebuild lands (the room then refreshes this whole deck in place, on
+      // the same slide — parent slide memory). Say so on the gallery itself
+      // instead of letting the stale mock pass as the rebuilt one.
+      var badges = document.querySelectorAll("[data-mock-rebuilding]");
+      for (var b = 0; b < badges.length; b++) {
+        badges[b].hidden = false;
+      }
       setTimeout(function () {
         var mockAt = mockSlideIndex();
         if (mockAt !== -1) {
@@ -874,6 +930,12 @@ body {
   font-size: 0.9rem;
   letter-spacing: 0.08em;
 }
+.mock-rebuilding {
+  margin: 0.4rem 0 0;
+  color: var(--accent);
+  font-size: clamp(1rem, 1.8vw, 1.3rem);
+}
+.mock-rebuilding[hidden] { display: none; }
 .decisions {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));

@@ -541,6 +541,7 @@ describe("process registry × commission (execute)", () => {
           previewUrl: null,
           startedAtMs: 0,
           error: null,
+          filesWritten: null,
         }),
         snapshot: () => null,
         isExecuting: () => true,

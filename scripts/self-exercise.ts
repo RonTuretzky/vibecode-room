@@ -14,6 +14,9 @@
 // Usage (against the LIVE server, like self-verify):
 //   bun scripts/self-exercise.ts --selector '[data-testid="tree-menu-version"]'
 //       [--select <callsignOrUpid>]   open that tree's menu first (window hook)
+//       [--open-deck <callsignOrUpid>] open that process's DECK window first
+//                                     (probes the decision bar:
+//                                     --selector '[data-testid="deck-decision"] button' --min 3)
 //       [--path "/?wall=A&flat=1"]    wall URL (default desk wall A)
 //       [--min 1]                     fail if fewer than N targets exist
 //   Exit 0 = every matched target reachable; exit 1 = any unreachable/missing,
@@ -44,6 +47,15 @@ await page.waitForTimeout(4_000);
 
 if (selectTarget.length > 0) {
   await page.evaluate((id) => (window as unknown as { __VIBERSYN__?: { select?: (id: string) => void } }).__VIBERSYN__?.select?.(id), selectTarget);
+  await page.waitForTimeout(1_500);
+}
+
+const openDeckTarget = argOf("--open-deck", "");
+if (openDeckTarget.length > 0) {
+  await page.evaluate(
+    (id) => (window as unknown as { __VIBERSYN__?: { openDeck?: (id: string) => void } }).__VIBERSYN__?.openDeck?.(id),
+    openDeckTarget,
+  );
   await page.waitForTimeout(1_500);
 }
 

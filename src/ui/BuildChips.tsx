@@ -109,6 +109,16 @@ function BuildChip({ build, mock, onOpenDeck }: { build: ProcessBuild; mock: boo
 // legible at projector distance.
 export function ExecutionChip({ execution }: { execution: ProcessExecution }) {
   const percent = execution.percent !== null ? Math.round(execution.percent) : null;
+  // WORKING-TREE FOOTPRINT (honest-indicator): what the run has ACTUALLY
+  // written so far + honest elapsed time — never a timer invention.
+  const elapsedS =
+    execution.startedAtMs !== null ? Math.max(0, Math.round((Date.now() - execution.startedAtMs) / 1000)) : null;
+  const footprint =
+    execution.status === "executing" && execution.filesWritten !== null
+      ? `${execution.filesWritten === 0 ? "no files yet" : `${execution.filesWritten} file${execution.filesWritten === 1 ? "" : "s"} on disk`}${
+          elapsedS === null ? "" : ` · ${elapsedS}s`
+        }`
+      : null;
   return (
     <div
       className={`execution-chip status-${execution.status}`}
@@ -124,6 +134,11 @@ export function ExecutionChip({ execution }: { execution: ProcessExecution }) {
             {execution.progressLabel ?? "running…"}
             {percent !== null ? ` · ${percent}%` : ""}
           </span>
+          {footprint !== null ? (
+            <span className="execution-chip-progress execution-chip-footprint" data-testid="execution-chip-footprint">
+              {footprint}
+            </span>
+          ) : null}
           {percent !== null ? (
             <span className="execution-chip-track" aria-hidden="true">
               <span className="execution-chip-fill" style={{ width: `${percent}%` }} />

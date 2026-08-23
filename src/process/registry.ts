@@ -226,6 +226,7 @@ export class ProcessRegistry {
       previewUrl: null,
       startedAtMs: launched.startedAtMs,
       error: null,
+      filesWritten: null,
     };
   }
 

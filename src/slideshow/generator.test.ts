@@ -6,7 +6,10 @@ import {
   buildSlides,
   cerebrasCopyModel,
   clampCopy,
+  claudeCliCopyModel,
+  DECK_COPY_CLI_ENV,
   decisionButtons,
+  deckCopyModel,
   deckQuestions,
   FALLBACK_DECK_QUESTIONS,
   fallbackCopy,
@@ -18,6 +21,8 @@ import {
   mergeCopy,
   parseModelCopy,
   pitchMocks,
+  resetDeckCopyFailover,
+  resolveDeckCopyCli,
   slideshowUrl,
   SLIDESHOW_ENTRYPOINT,
   type GenerateSlideshowInput,
@@ -777,6 +782,22 @@ describe("generateSlideshow", () => {
     expect(html).toContain("A countdown that shouts at you");
   });
 
+  test("the deck footer carries copy PROVENANCE: model copy vs template copy (house honesty rule)", async () => {
+    dir = await mkdtemp(join(tmpdir(), "slideshow-test-"));
+
+    const modelArtifact = await generateSlideshow(baseInput(dir), {
+      model: async () => ({ tagline: "Model-authored tagline" }),
+    });
+    const modelHtml = await readFile(modelArtifact.indexPath, "utf8");
+    expect(modelHtml).toContain("model copy");
+    expect(modelHtml).not.toContain("template copy — no model");
+
+    const fallbackArtifact = await generateSlideshow(baseInput(dir), { model: async () => null });
+    const fallbackHtml = await readFile(fallbackArtifact.indexPath, "utf8");
+    // A 402'd / offline deck SAYS its copy is template text.
+    expect(fallbackHtml).toContain("template copy — no model");
+  });
+
   test("a rejecting model still produces a deck via the deterministic fallback", async () => {
     dir = await mkdtemp(join(tmpdir(), "slideshow-test-"));
 
@@ -1050,5 +1071,80 @@ describe("cerebrasCopyModel", () => {
     }) as unknown as typeof fetch;
     expect(await cerebrasCopyModel(request, new AbortController().signal)).toBeNull();
     expect(calls).toBeGreaterThan(1); // it retried before giving up
+  });
+});
+
+// --- claude-CLI failover (deckCopyModel / resolveDeckCopyCli) ---------------
+
+describe("deck copy claude-CLI failover", () => {
+  const savedEnv = {
+    cliGate: process.env[DECK_COPY_CLI_ENV],
+    cliPath: process.env.VIBERSYN_CLAUDE_CLI,
+    cerebrasKey: process.env.CEREBRAS_API_KEY,
+  };
+  let cliDir: string | null = null;
+
+  afterEach(async () => {
+    if (savedEnv.cliGate === undefined) delete process.env[DECK_COPY_CLI_ENV];
+    else process.env[DECK_COPY_CLI_ENV] = savedEnv.cliGate;
+    if (savedEnv.cliPath === undefined) delete process.env.VIBERSYN_CLAUDE_CLI;
+    else process.env.VIBERSYN_CLAUDE_CLI = savedEnv.cliPath;
+    if (savedEnv.cerebrasKey === undefined) delete process.env.CEREBRAS_API_KEY;
+    else process.env.CEREBRAS_API_KEY = savedEnv.cerebrasKey;
+    resetDeckCopyFailover();
+    if (cliDir !== null) {
+      await rm(cliDir, { recursive: true, force: true });
+      cliDir = null;
+    }
+  });
+
+  const request = {
+    prompt: "an idea",
+    summary: "a summary",
+    backend: "smithers" as const,
+    callsign: null,
+    mocks: ["smithers"],
+  };
+
+  async function writeFakeCli(): Promise<string> {
+    const { mkdtemp: mkTmp } = await import("node:fs/promises");
+    const { writeFileSync, chmodSync } = await import("node:fs");
+    cliDir = await mkTmp(join(tmpdir(), "deck-cli-"));
+    const cli = join(cliDir, "claude");
+    writeFileSync(
+      cli,
+      `#!/usr/bin/env bun\nconsole.log(JSON.stringify({ result: JSON.stringify({ tagline: "From the CLI", concept: ["cli line"] }) }));\n`,
+    );
+    chmodSync(cli, 0o755);
+    return cli;
+  }
+
+  test("the CLI leg is OPT-IN: without VIBERSYN_DECK_COPY_CLI=1 no CLI ever resolves", () => {
+    delete process.env[DECK_COPY_CLI_ENV];
+    expect(resolveDeckCopyCli()).toBeNull();
+    process.env[DECK_COPY_CLI_ENV] = "0";
+    expect(resolveDeckCopyCli()).toBeNull();
+  });
+
+  test("an explicit VIBERSYN_CLAUDE_CLI must exist (opt-in on)", async () => {
+    process.env[DECK_COPY_CLI_ENV] = "1";
+    process.env.VIBERSYN_CLAUDE_CLI = "/definitely/not/a/real/claude";
+    expect(resolveDeckCopyCli()).toBeNull();
+    process.env.VIBERSYN_CLAUDE_CLI = await writeFakeCli();
+    expect(resolveDeckCopyCli()).not.toBeNull();
+  });
+
+  test("claudeCliCopyModel unwraps the -p envelope into copy; deckCopyModel fails over when Cerebras has no key", async () => {
+    process.env[DECK_COPY_CLI_ENV] = "1";
+    process.env.VIBERSYN_CLAUDE_CLI = await writeFakeCli();
+    delete process.env.CEREBRAS_API_KEY;
+    resetDeckCopyFailover();
+
+    const direct = await claudeCliCopyModel(request, new AbortController().signal);
+    expect(direct).toEqual({ tagline: "From the CLI", concept: ["cli line"] });
+
+    // The composed default: Cerebras (no key -> instant null) then the CLI.
+    const composed = await deckCopyModel(request, new AbortController().signal);
+    expect(composed).toEqual({ tagline: "From the CLI", concept: ["cli line"] });
   });
 });

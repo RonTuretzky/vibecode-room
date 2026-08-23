@@ -269,6 +269,30 @@ describe("renderSlideshowHtml — decision slide", () => {
     expect(html).toContain("lockDecisions(decision)");
   });
 
+  test("bridge-only choices ack HONESTLY ('sent', not 'done') and settle on the room's decision-result reply", () => {
+    const html = renderPitch();
+    // Step 1: the synchronous ack never claims the build is running before
+    // the room's POST resolved.
+    expect(html).toContain("Choice sent — the room is on it…");
+    // Step 2: the reply leg — the room posts the real outcome back; failure
+    // re-enables the buttons instead of leaving a locked lie.
+    expect(html).toContain('data.type !== "vibersyn:decision-result"');
+    expect(html).toContain("unlockDecisions()");
+    expect(html).toContain("The room could not do that — try again.");
+  });
+
+  test("the deck reports its slide position to the parent (slide memory across rebuild remounts)", () => {
+    const html = renderPitch();
+    expect(html).toContain('window.parent.postMessage({ type: "vibersyn:slide", index: index + 1 }, "*")');
+  });
+
+  test("answering with a live endpoint reveals the honest rebuilding badge on the mock gallery", () => {
+    const html = renderWithQuestions();
+    expect(html).toContain("data-mock-rebuilding");
+    expect(html).toContain("rebuilding the mocks with your answer");
+    expect(html).toContain('document.querySelectorAll("[data-mock-rebuilding]")');
+  });
+
   test("a #decision hash opens the deck straight on the decision slide (guided decide step)", () => {
     const html = renderPitch();
     expect(html).toContain('if (rawHash === "decision")');

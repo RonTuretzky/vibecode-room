@@ -113,6 +113,11 @@ declare global {
       applySnapshot: (snapshot: Partial<ProjectorSnapshot>) => void;
       select: (callsignOrUpid: string | null) => void;
       getSelected: () => string | null;
+      // e2e/probe hook: open the deck window on a process (optionally on one
+      // backend's tab) — the same path the tree-menu lane buttons drive. Lets
+      // scripts/self-exercise.ts probe the deck decision bar's dwell
+      // reachability without a scene pick.
+      openDeck: (callsignOrUpid: string, backend?: string) => void;
     };
   }
 }
@@ -894,6 +899,14 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
             setSnapshot(body);
           }
         } else if (!response.ok) {
+          // A SECOND press while the run already executes gets an honest 400
+          // from the server — that is CONFIRMATION, not failure. The probe
+          // caught the old branch reverting the "Commissioned" strip and
+          // telling the deck "the concept is untouched" while the build ran.
+          const body = await response.text().catch(() => "");
+          if (response.status === 400 && /already|executing/iu.test(body)) {
+            return true;
+          }
           // "Build it for real" must never be a perceived no-op: say the
           // commission failed instead of leaving the deck silently unchanged.
           setGuidedEpilogue(`Commission failed (${response.status}) — the concept is untouched; try again.`);
@@ -922,15 +935,22 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
   // If the guided demo is at its decide finale, ANY choice completes the demo
   // (with an epilogue note; commissioning is an epilogue, never waited on).
   const deckDecision = useCallback(
-    (upid: string, choice: DecisionChoice) => {
+    (upid: string, choice: DecisionChoice, onResult?: (result: { ok: boolean; message?: string }) => void) => {
       setDeckDecisionState(choice);
       if (choice === "commission") {
         // A failed commission re-opens the question (the strip must not lie);
-        // the epilogue toast explains what happened.
+        // the epilogue toast explains what happened. The result also flows
+        // back to the caller (the in-iframe deck slide via the bridge reply)
+        // so BOTH surfaces settle on the same truth.
         void commissionProcess(upid).then((landed) => {
           if (!landed) {
             setDeckDecisionState((current) => (current === "commission" ? null : current));
           }
+          onResult?.(
+            landed
+              ? { ok: true }
+              : { ok: false, message: "Commission failed — the concept is untouched; try again." },
+          );
         });
       } else if (choice === "done") {
         if (parkCloseTimerRef.current !== null) {
@@ -940,6 +960,9 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
           parkCloseTimerRef.current = null;
           setSlideshowUpid((current) => (current === upid ? null : current));
         }, PARK_CONFIRM_MS);
+        onResult?.({ ok: true });
+      } else {
+        onResult?.({ ok: true });
       }
       if (guidedRef.current !== null && guidedRef.current.step === "decide") {
         setGuided(null);
@@ -1003,7 +1026,32 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
       }
       const upid = slideshowRef.current;
       if (upid !== null) {
-        deckDecisionRef.current(upid, choice);
+        // Reply channel: the deck's decision slide showed a synchronous
+        // "choice sent" line; the RESULT of the room's own API call flows
+        // back so the in-iframe slide settles on the truth — confirmation on
+        // success, the loud failure line (buttons re-enabled) on failure.
+        // Without this the iframe slide would keep claiming "the real build
+        // is running" after a failed commission POST.
+        const rawChoice = (messageEvent.data as { choice?: unknown }).choice;
+        const source = messageEvent.source;
+        deckDecisionRef.current(upid, choice, (result) => {
+          if (typeof rawChoice !== "string" || source === null) {
+            return;
+          }
+          try {
+            (source as Window).postMessage(
+              {
+                type: "vibersyn:decision-result",
+                choice: rawChoice,
+                ok: result.ok,
+                ...(result.message === undefined ? {} : { message: result.message }),
+              },
+              "*",
+            );
+          } catch {
+            // The deck window navigated away mid-commission — nothing to tell.
+          }
+        });
       }
     };
     window.addEventListener("message", onMessage);
@@ -1553,6 +1601,17 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
         setSelected(resolveSelection(id));
       },
       getSelected: () => selected,
+      openDeck: (id, backend) => {
+        const match = snapshotRef.current.processes.find(
+          (process) => process.callsign === id || process.upid === id,
+        );
+        if (match === undefined) {
+          return;
+        }
+        setSelected(null);
+        setSlideshowBackend(backend ?? null);
+        setSlideshowUpid(match.upid);
+      },
     };
     return () => {
       delete window.__VIBERSYN__;

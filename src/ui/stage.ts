@@ -35,6 +35,12 @@ export interface ProcessExecution {
   progressLabel: string | null;
   percent: number | null;
   summary: string | null;
+  // WORKING-TREE FOOTPRINT (honest-indicator): how many real files the durable
+  // run has written under its artifacts dir so far. null against a server that
+  // does not publish it (or before the first probe).
+  filesWritten: number | null;
+  // Epoch ms the lane opened — lets the wall show honest elapsed time.
+  startedAtMs: number | null;
 }
 
 // The process as a two-stage server publishes it. types.ts stays untouched
@@ -79,7 +85,12 @@ function normalizeExecutionStatus(value: unknown): ExecutionStatus | null {
   }
 }
 
+function asFiniteNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
 function normalizeExecution(record: Record<string, unknown>, status: ExecutionStatus): ProcessExecution {
+  const files = asFiniteNumber(record.filesWritten);
   return {
     status,
     previewUrl: asNonEmptyString(record.previewUrl),
@@ -88,6 +99,8 @@ function normalizeExecution(record: Record<string, unknown>, status: ExecutionSt
     // The server's ExecutionSnapshot has no summary; its `error` carries the
     // failure reason, surfaced here so a failed lane can say why.
     summary: asNonEmptyString(record.summary) ?? asNonEmptyString(record.error),
+    filesWritten: files === null ? null : Math.max(0, Math.round(files)),
+    startedAtMs: asFiniteNumber(record.startedAtMs),
   };
 }
 

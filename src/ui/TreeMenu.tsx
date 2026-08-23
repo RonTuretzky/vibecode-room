@@ -959,15 +959,19 @@ export function TreeMenu({
             </div>
           ) : null}
 
-          {/* 🌐 LIVE APP (imported trees only): the deploy-resolver confirmed a
-              running deployment, so one press opens the holo panel's same-origin
-              /salem window right beside the tree (the App swaps this menu out). */}
-          {model.deployUrl !== null && onOpenLiveApp !== undefined ? (
+          {/* 🌐 LIVE APP: an imported tree's confirmed deployment (deployUrl)
+              OR a commissioned build that finished — the execution lane's
+              served full-app preview. Either way one press opens the holo
+              panel beside the tree (the App swaps this menu out). This is the
+              loop's promised ending, dwell-reachable — never a mouse-only
+              link. */}
+          {(model.deployUrl !== null || (execution?.status === "built" && execution.previewUrl !== null)) &&
+          onOpenLiveApp !== undefined ? (
             <button
               type="button"
               className="ctl-button tree-menu-live"
               data-testid="tree-menu-live"
-              title={`Open the live deployment (${model.deployUrl}) on a holo panel beside this tree.`}
+              title={`Open the live app (${model.deployUrl ?? execution?.previewUrl ?? ""}) on a holo panel beside this tree.`}
               onClick={() => onOpenLiveApp(process.upid)}
             >
               🌐 Live app ▸

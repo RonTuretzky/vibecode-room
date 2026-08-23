@@ -387,6 +387,10 @@ fi
 # ── 2) build + serve Vibersyn ────────────────────────────────────────────────
 echo "[room] building Vibersyn UI…"
 bun run build >/dev/null 2>&1 || { echo "[room] ERROR: UI build failed (run 'bun run build' to see why)." >&2; exit 1; }
+# Deck copy failover: the LIVE room may run the host `claude` CLI for slide
+# copy when Cerebras is down/402 (src/slideshow/generator.ts deckCopyModel).
+# Opt-in by design — tests/harness rooms leave it unset and stay deterministic.
+export VIBERSYN_DECK_COPY_CLI="${VIBERSYN_DECK_COPY_CLI:-1}"
 if [ "$SELF_MODE" = "1" ]; then
   # SELF-HOSTING: the supervisor loop owns the server — exit 87 (a green
   # "self:" commit landed) → bun run build → relaunch, same env; any other

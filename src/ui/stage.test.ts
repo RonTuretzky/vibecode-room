@@ -36,6 +36,9 @@ describe("two-stage seam — executionOf", () => {
       progressLabel: "run step 3/9",
       percent: 34.4,
       summary: null,
+      // Footprint fields absent on the wire -> null (tolerant reader).
+      filesWritten: null,
+      startedAtMs: null,
     });
   });
 
