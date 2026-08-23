@@ -268,13 +268,20 @@ export function createProjectorApp(runtime: ProjectorRuntime, options: Projector
     }
     let branch = "";
     let action: "archive" | "delete" | "merge" | "" = "";
+    // Delete's excise scope: "branch" (default — today's label-only prune) or
+    // "everywhere" (revert the graft on every branch carrying it). Anything
+    // else reads as the safe default so old clients stay valid.
+    let scope: "branch" | "everywhere" = "branch";
     try {
-      const body = (await context.req.json()) as { branch?: unknown; action?: unknown };
+      const body = (await context.req.json()) as { branch?: unknown; action?: unknown; scope?: unknown };
       if (typeof body?.branch === "string") {
         branch = body.branch;
       }
       if (body?.action === "archive" || body?.action === "delete" || body?.action === "merge") {
         action = body.action;
+      }
+      if (body?.scope === "branch" || body?.scope === "everywhere") {
+        scope = body.scope;
       }
     } catch {
       // fall through to the empty-field refusals
@@ -286,7 +293,7 @@ export function createProjectorApp(runtime: ProjectorRuntime, options: Projector
       return context.json({ ok: false, error: "action must be archive, delete, or merge" }, 400);
     }
     const result =
-      action === "merge" ? await runtime.mergeSelfBranch(branch) : await runtime.manageSelfBranch(branch, action);
+      action === "merge" ? await runtime.mergeSelfBranch(branch) : await runtime.manageSelfBranch(branch, action, scope);
     if (!result.ok) {
       return context.json(result, 400);
     }

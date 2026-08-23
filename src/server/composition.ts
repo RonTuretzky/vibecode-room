@@ -32,6 +32,8 @@ import { appendTakeHomeSlide } from "../slideshow/template";
 import { publishDeck, resolveGitHubPat, type PublishDeckFn } from "../publish/gh-pages";
 import { qrCodeSvg } from "../publish/qr";
 import { readFile, stat, writeFile } from "node:fs/promises";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { selectSummarizer } from "../audio/summarizer";
 import type { HotLoopSummaryLLM } from "../audio/output-policy";
@@ -336,11 +338,23 @@ export interface ProjectorRuntime {
   checkoutSelfBranch(branch: string): Promise<{ ok: true } | { ok: false; error: string }>;
   // TEND A LIMB: archive (room/x -> archive/x) or delete a room/* branch that
   // is not the running one. The wall's tree-menu lifecycle actions; the room
-  // must never delete or archive the branch it is standing on.
+  // must never delete or archive the branch it is standing on. Delete's
+  // optional `scope`: "branch" (default — today's label-only prune) or
+  // "everywhere" — first EXCISE the branch's own graft commits by reverting
+  // them on every OTHER branch that carries them (temp worktrees; the current
+  // branch reverts in place and the room rebuilds). `excised` names each
+  // branch that lost the graft, `conflicts` each branch the revert could NOT
+  // land on (left untouched, reported by name — partial success is honest,
+  // never silent), `reloading` says the current branch was excised and the
+  // exit-87 rebuild is scheduled.
   manageSelfBranch(
     branch: string,
     action: "archive" | "delete",
-  ): Promise<{ ok: true } | { ok: false; error: string }>;
+    scope?: "branch" | "everywhere",
+  ): Promise<
+    | { ok: true; excised?: Array<{ branch: string; reverted: number }>; conflicts?: string[]; reloading?: boolean }
+    | { ok: false; error: string }
+  >;
   // STOP GROWING (the wall's halt verb): abort the EXECUTING self-run —
   // cancels the durable run through the commissioner and settles the lane
   // failed·"aborted" — WITHOUT touching registry.halt (POST /api/process/
@@ -4077,6 +4091,103 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     return { ok: true, merged: true, via };
   }
 
+  // A pruned branch's OWN GRAFT COMMITS: commits reachable from X but not
+  // from X's NEAREST ancestor among {origin/main (fallback local main), every
+  // other room/* tip that is an ancestor of X, the current branch}. "Nearest"
+  // = the candidate with the FEWEST commits between it and X's tip (min
+  // `rev-list --count C..X` — the ancestor holding the most of X's history);
+  // in the room's stacked topology that is exactly the run's own commit(s) at
+  // X's tip. Returned newest-first — already the revert order. `others` is
+  // every OTHER tendable branch (room/* tips + current, minus X) the caller
+  // probes for containment.
+  async #selfOwnCommits(branch: string, current: string): Promise<{ own: string[]; others: string[] }> {
+    const listed = await this.#selfGit(["for-each-ref", "--format=%(refname:short)", "refs/heads/room/"]);
+    const names = new Set(
+      listed.out
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((name) => name.length > 0),
+    );
+    if (current.length > 0) {
+      names.add(current);
+    }
+    names.delete(branch);
+    const others = [...names];
+    const candidates = others.map((name) => `refs/heads/${name}`);
+    const originMain = await this.#selfGit(["rev-parse", "--verify", "--quiet", "refs/remotes/origin/main"]);
+    candidates.push(originMain.code === 0 ? "refs/remotes/origin/main" : "refs/heads/main");
+    let nearest: { ref: string; count: number } | null = null;
+    for (const ref of candidates) {
+      const ancestor = await this.#selfGit(["merge-base", "--is-ancestor", ref, `refs/heads/${branch}`]);
+      if (ancestor.code !== 0) {
+        continue;
+      }
+      const counted = await this.#selfGit(["rev-list", "--count", `${ref}..refs/heads/${branch}`]);
+      const count = Number.parseInt(counted.out, 10);
+      if (!Number.isFinite(count)) {
+        continue;
+      }
+      if (nearest === null || count < nearest.count) {
+        nearest = { ref, count };
+      }
+    }
+    if (nearest === null || nearest.count === 0) {
+      return { own: [], others };
+    }
+    const ownListed = await this.#selfGit(["rev-list", `${nearest.ref}..refs/heads/${branch}`]);
+    const own = ownListed.out
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+    return { own, others };
+  }
+
+  // EXCISE a pruned branch's graft from another (NON-current) branch: revert
+  // its commits (newest-first) in a TEMPORARY detached worktree — the live
+  // checkout can never switch branches (the room projects from it) — then
+  // move the branch ref with an old-value CAS (`update-ref <ref> <new> <old>`
+  // refuses if the tip moved under us) and push the single explicit refspec
+  // best-effort (the reverts sit ON TOP of the old tip, a plain fast-forward,
+  // keychain-plain). A conflicted revert aborts and leaves the branch exactly
+  // as it was: {ok:false} is the honest answer the caller reports by name —
+  // never a throw, never a half-revert. One temp worktree at a time, ALWAYS
+  // cleaned up (finally: remove --force + rmSync + worktree prune).
+  async #exciseFromBranch(branch: string, commits: string[]): Promise<{ ok: boolean }> {
+    const oldTip = (await this.#selfGit(["rev-parse", `refs/heads/${branch}`])).out.trim();
+    if (oldTip.length === 0) {
+      return { ok: false };
+    }
+    const tmp = mkdtempSync(join(tmpdir(), "vibersyn-excise-"));
+    try {
+      const added = await this.#selfGit(["worktree", "add", "--detach", tmp, oldTip]);
+      if (added.code !== 0) {
+        return { ok: false };
+      }
+      const reverted = await this.#selfGit(["-C", tmp, "revert", "--no-edit", ...commits]);
+      if (reverted.code !== 0) {
+        // Conflict (or any refusal): abort best-effort, the branch untouched.
+        await this.#selfGit(["-C", tmp, "revert", "--abort"]);
+        return { ok: false };
+      }
+      const newTip = (await this.#selfGit(["-C", tmp, "rev-parse", "HEAD"])).out.trim();
+      if (newTip.length === 0) {
+        return { ok: false };
+      }
+      const updated = await this.#selfGit(["update-ref", `refs/heads/${branch}`, newTip, oldTip]);
+      if (updated.code !== 0) {
+        return { ok: false };
+      }
+      // Best-effort: freshen origin so the branch's PR shows the excise; a
+      // push failure changes nothing locally and is not a conflict.
+      await this.#selfGit(["push", "origin", `refs/heads/${branch}:refs/heads/${branch}`]);
+      return { ok: true };
+    } finally {
+      await this.#selfGit(["worktree", "remove", "--force", tmp]);
+      rmSync(tmp, { recursive: true, force: true });
+      await this.#selfGit(["worktree", "prune"]);
+    }
+  }
+
   // TEND A LIMB: archive or delete one of the room's local branches — the
   // tree-menu's per-branch lifecycle actions. Neither ever touches the running
   // branch (the room must not saw off the limb it stands on), and both refuse
@@ -4085,10 +4196,18 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   // followed by a BEST-EFFORT remote prune (push origin --delete + closing
   // any open PR) — a remote failure is reported in the trace, never rolled
   // back (the local prune already happened; honesty = report, not rollback).
+  // Delete with scope "everywhere" FIRST excises the branch's own graft from
+  // every other branch carrying it (see #selfOwnCommits / #exciseFromBranch);
+  // the CURRENT branch reverts in place (the server owns that worktree) and
+  // schedules the exit-87 rebuild so the walls actually lose the feature.
   async manageSelfBranch(
     branch: string,
     action: "archive" | "delete",
-  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    scope: "branch" | "everywhere" = "branch",
+  ): Promise<
+    | { ok: true; excised?: Array<{ branch: string; reverted: number }>; conflicts?: string[]; reloading?: boolean }
+    | { ok: false; error: string }
+  > {
     if (!/^[A-Za-z0-9][A-Za-z0-9._/-]*$/u.test(branch) || branch.includes("..")) {
       return { ok: false, error: "unsafe branch name" };
     }
@@ -4113,6 +4232,12 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     // rollback): what happened to origin's copy + whether an open PR closed.
     let remote = "skipped";
     let prClosed = false;
+    // Excise bookkeeping (delete scope "everywhere" only): which branches
+    // lost the graft, which the revert could not land on, and whether the
+    // current branch was excised (=> the exit-87 rebuild is scheduled).
+    let excised: Array<{ branch: string; reverted: number }> | undefined;
+    let conflicts: string[] | undefined;
+    let reloading = false;
     if (action === "archive") {
       // Archiving the LIVE branch: step off it onto main first so the running
       // room no longer stands on the limb being archived, then rename and hand
@@ -4146,6 +4271,73 @@ class LiveProjectorRuntime implements ProjectorRuntime {
         return { ok: true };
       }
     } else {
+      // THE EXCISE (scope "everywhere"): before the label falls, revert X's
+      // own graft commits on every OTHER branch that carries any of them —
+      // per-commit containment, because a descendant may hold only part of
+      // the graft. Non-current branches go through the temp-worktree excise;
+      // the CURRENT branch (the live checkout) reverts in place — guarded by
+      // the supervisor gate and the dirty-src refusal (the leftover-hygiene
+      // contract) — and the room rebuilds. Every branch the revert could NOT
+      // land on is reported by name in `conflicts`, untouched: partial
+      // success is per-branch and spoken, never silent.
+      if (scope === "everywhere") {
+        excised = [];
+        conflicts = [];
+        const { own, others } = await this.#selfOwnCommits(branch, current);
+        const containedIn = async (name: string): Promise<string[]> => {
+          const contained: string[] = [];
+          for (const commit of own) {
+            const check = await this.#selfGit(["merge-base", "--is-ancestor", commit, `refs/heads/${name}`]);
+            if (check.code === 0) {
+              contained.push(commit);
+            }
+          }
+          return contained;
+        };
+        for (const other of others) {
+          if (other === current) {
+            continue;
+          }
+          const contained = await containedIn(other);
+          if (contained.length === 0) {
+            continue;
+          }
+          const result = await this.#exciseFromBranch(other, contained);
+          if (result.ok) {
+            excised.push({ branch: other, reverted: contained.length });
+          } else {
+            conflicts.push(other);
+          }
+        }
+        if (others.includes(current)) {
+          const contained = await containedIn(current);
+          if (contained.length > 0) {
+            if (!selfModeEnabled(this.#env)) {
+              // No supervisor to rebuild the room off the excised tip: refuse
+              // THIS branch only (reported, the rest of the excise stands).
+              conflicts.push(`${current} (no supervisor — --self launch required)`);
+            } else {
+              const dirty = (await this.#selfGit(["status", "--porcelain"])).out
+                .split("\n")
+                .map((line) => line.slice(3).trim())
+                .filter((path) => path.startsWith("src/"));
+              if (dirty.length > 0) {
+                conflicts.push(`${current} (uncommitted work)`);
+              } else {
+                const reverted = await this.#selfGit(["revert", "--no-edit", ...contained]);
+                if (reverted.code !== 0) {
+                  await this.#selfGit(["revert", "--abort"]);
+                  conflicts.push(current);
+                } else {
+                  await this.#selfGit(["push", "origin", `refs/heads/${current}:refs/heads/${current}`]);
+                  excised.push({ branch: current, reverted: contained.length });
+                  reloading = true;
+                }
+              }
+            }
+          }
+        }
+      }
       const removed = await this.#selfGit(["branch", "-D", branch]);
       if (removed.code !== 0) {
         return { ok: false, error: removed.out.slice(0, 160) };
@@ -4175,9 +4367,21 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       level: "info",
       sessionId: this.sessionId,
       correlationId: `corr-self-tend-${crypto.randomUUID()}`,
-      meta: { branch, action, ...(action === "delete" ? { remote, prClosed } : {}) },
+      meta: {
+        branch,
+        action,
+        ...(action === "delete" ? { remote, prClosed, scope } : {}),
+        ...(excised !== undefined ? { excised, conflicts, reload: reloading } : {}),
+      },
     });
-    return { ok: true };
+    if (reloading) {
+      // Respond first, exit after (the checkoutSelfBranch idiom): the current
+      // branch lost the graft, so the supervisor rebuilds the tree from the
+      // excised tip and relaunches — the walls actually lose the feature.
+      // Through the #exit seam so tests observe the 87 instead of dying.
+      setTimeout(() => this.#exit(87), 400);
+    }
+    return excised !== undefined ? { ok: true, excised, conflicts, reloading } : { ok: true };
   }
 
   // STOP GROWING: abort the executing self-run through the commissioner —

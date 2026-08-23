@@ -1201,23 +1201,57 @@ describe("adopted-tree branch + PR routes", () => {
 describe("self version rails over the seamed git/gh", () => {
   // Just enough git semantics for the self rails: a current branch, an ordered
   // (newest-first) branch list with subjects, fast-forward ancestry, and
-  // scriptable push failures. Argv arrives WITHOUT the leading "git".
+  // scriptable push failures. Argv arrives WITHOUT the leading "git". For the
+  // prune-excise rails each branch may carry a COMMIT MODEL (`commits`:
+  // newest-first ids, shared ids = shared history) — that turns on real
+  // containment answers for merge-base/rev-list, temp-worktree bookkeeping
+  // (`worktree add/remove`, leading `-C <path>` context), scriptable revert
+  // conflicts (`conflictOn`: branch names whose revert refuses), and the
+  // update-ref CAS. Branches WITHOUT commits keep the legacy ffAncestors
+  // behavior, so the older rails tests run unchanged.
   function selfRailGit(setup: {
     current: string;
-    branches: Array<{ name: string; subject?: string; date?: string }>;
+    branches: Array<{ name: string; subject?: string; date?: string; commits?: string[] }>;
     ffAncestors?: string[];
     dirtySrc?: boolean;
     failPushDelete?: boolean;
-  }): { calls: string[][]; run: NonNullable<ProjectorRuntimeOptions["selfGitRunner"]> } {
+    conflictOn?: string[];
+  }): {
+    calls: string[][];
+    state: { current: string; branches: Array<{ name: string; subject: string; date: string; commits?: string[] }> };
+    run: NonNullable<ProjectorRuntimeOptions["selfGitRunner"]>;
+  } {
     const calls: string[][] = [];
     const state = {
       current: setup.current,
-      branches: setup.branches.map((entry) => ({ subject: "", date: "1 hour ago", ...entry })),
+      branches: setup.branches.map((entry) => ({
+        subject: "",
+        date: "1 hour ago",
+        ...entry,
+        ...(entry.commits !== undefined ? { commits: [...entry.commits] } : {}),
+      })),
     };
+    // Temp worktrees the excise adds: path → the detached commit list plus
+    // the branch whose tip it detached at (conflict scripting keys on it).
+    const worktrees = new Map<string, { branch: string; commits: string[] }>();
+    const byName = (name: string) => state.branches.find((entry) => entry.name === name);
+    const refName = (ref: string) => ref.replace(/^refs\/(heads|remotes\/origin)\//u, "");
     const ok = (stdout = ""): { ok: true; stdout: string; stderr: string } => ({ ok: true, stdout, stderr: "" });
     const fail = (stderr: string): { ok: false; stdout: string; stderr: string } => ({ ok: false, stdout: "", stderr });
-    const run: NonNullable<ProjectorRuntimeOptions["selfGitRunner"]> = async (argv) => {
-      calls.push(argv);
+    const run: NonNullable<ProjectorRuntimeOptions["selfGitRunner"]> = async (rawArgv) => {
+      calls.push(rawArgv);
+      // Leading `-C <path>` = run inside a temp worktree (the excise's revert
+      // context); everything else runs "in the live checkout" (state.current).
+      let context: { branch: string; commits: string[] } | null = null;
+      let argv = rawArgv;
+      if (argv[0] === "-C") {
+        const tracked = worktrees.get(argv[1]!);
+        if (tracked === undefined) {
+          return fail(`fatal: cannot change to '${argv[1]}'`);
+        }
+        context = tracked;
+        argv = argv.slice(2);
+      }
       switch (argv[0]) {
         case "branch": {
           if (argv[1] === "--show-current") {
@@ -1242,7 +1276,15 @@ describe("self version rails over the seamed git/gh", () => {
           return ok();
         }
         case "for-each-ref": {
-          // room/* heads + the current branch, in stored (newest-first) order.
+          // The excise's bare candidate listing (room/* names only)…
+          if (argv.includes("--format=%(refname:short)")) {
+            const lines = state.branches
+              .filter((entry) => entry.name.startsWith("room/"))
+              .map((entry) => entry.name);
+            return ok(lines.join("\n"));
+          }
+          // …else the rails listing: room/* heads + the current branch, in
+          // stored (newest-first) order.
           const lines = state.branches
             .filter((entry) => entry.name.startsWith("room/") || entry.name === state.current)
             .map((entry) => `${entry.name}${entry.subject}${entry.date}`);
@@ -1250,8 +1292,22 @@ describe("self version rails over the seamed git/gh", () => {
         }
         case "rev-parse": {
           const ref = argv[argv.length - 1]!;
-          const name = ref.replace(/^refs\/heads\//u, "");
-          return state.branches.some((entry) => entry.name === name) ? ok(name) : fail("");
+          if (ref === "HEAD") {
+            return context !== null
+              ? ok(context.commits[0] ?? "")
+              : ok(byName(state.current)?.commits?.[0] ?? state.current);
+          }
+          const name = refName(ref);
+          const entry = byName(name);
+          return entry !== undefined ? ok(entry.commits?.[0] ?? name) : fail("");
+        }
+        case "rev-list": {
+          const range = argv[argv.length - 1]!;
+          const [fromRef, toRef] = range.split("..");
+          const from = new Set(byName(refName(fromRef ?? ""))?.commits ?? []);
+          const to = byName(refName(toRef ?? ""))?.commits ?? [];
+          const diff = to.filter((commit) => !from.has(commit));
+          return argv[1] === "--count" ? ok(String(diff.length)) : ok(diff.join("\n"));
         }
         case "status":
           // Porcelain: the runner's out-join trims the leading space off the
@@ -1261,10 +1317,66 @@ describe("self version rails over the seamed git/gh", () => {
         case "checkout":
           state.current = argv[argv.length - 1]!;
           return ok();
-        case "merge-base":
-          return (setup.ffAncestors ?? []).includes(argv[argv.length - 1]!.replace(/^refs\/heads\//u, ""))
-            ? ok()
-            : fail("");
+        case "merge-base": {
+          // --is-ancestor <probe> <target>: containment over the commit model
+          // when the target models commits (probe = a ref's tip or a bare
+          // commit id); legacy ffAncestors scripting otherwise.
+          const target = byName(refName(argv[argv.length - 1]!));
+          const probe = argv[argv.length - 2]!;
+          if (target?.commits !== undefined) {
+            const probeCommit = byName(refName(probe))?.commits?.[0] ?? probe;
+            return target.commits.includes(probeCommit) ? ok() : fail("");
+          }
+          return (setup.ffAncestors ?? []).includes(refName(argv[argv.length - 1]!)) ? ok() : fail("");
+        }
+        case "worktree": {
+          if (argv[1] === "add") {
+            const path = argv[argv.length - 2]!;
+            const tip = argv[argv.length - 1]!;
+            const source = state.branches.find((entry) => entry.commits?.[0] === tip);
+            if (source?.commits === undefined) {
+              return fail(`fatal: invalid reference: ${tip}`);
+            }
+            worktrees.set(path, { branch: source.name, commits: [...source.commits] });
+            return ok();
+          }
+          if (argv[1] === "remove") {
+            worktrees.delete(argv[argv.length - 1]!);
+            return ok();
+          }
+          return ok(); // prune
+        }
+        case "revert": {
+          if (argv[1] === "--abort") {
+            return ok();
+          }
+          const target = context ?? { branch: state.current, commits: byName(state.current)?.commits ?? [] };
+          if ((setup.conflictOn ?? []).includes(target.branch)) {
+            return fail("error: could not revert — conflict in f.txt");
+          }
+          for (const commit of argv.slice(2)) {
+            target.commits.unshift(`revert-of-${commit}`);
+          }
+          return ok();
+        }
+        case "update-ref": {
+          const entry = byName(refName(argv[1]!));
+          const newTip = argv[2]!;
+          const oldTip = argv[3];
+          if (entry === undefined) {
+            return fail("");
+          }
+          // The old-value CAS: refuse if the tip moved under the excise.
+          if (oldTip !== undefined && (entry.commits?.[0] ?? entry.name) !== oldTip) {
+            return fail(`cannot lock ref 'refs/heads/${entry.name}'`);
+          }
+          const source = [...worktrees.values()].find((tracked) => tracked.commits[0] === newTip);
+          if (source === undefined) {
+            return fail(`fatal: ${newTip}: not a valid SHA1`);
+          }
+          entry.commits = [...source.commits];
+          return ok();
+        }
         case "push":
           if (argv.includes("--delete") && setup.failPushDelete === true) {
             return fail("remote: permission denied");
@@ -1274,7 +1386,7 @@ describe("self version rails over the seamed git/gh", () => {
           return ok();
       }
     };
-    return { calls, run };
+    return { calls, state, run };
   }
 
   // gh seam (argv INCLUDES the leading "gh"): `pr list --state all` answers
@@ -1407,6 +1519,179 @@ describe("self version rails over the seamed git/gh", () => {
     expect(((await running.json()) as { error: string }).error).toContain("cannot tend the running branch");
     const trunk = await postJson(app, "/api/self/branch", { branch: "main", action: "delete" });
     expect(trunk.status).toBe(400);
+    expect(git.calls.some((argv) => argv[0] === "branch" && argv[1] === "-D")).toBe(false);
+  });
+
+  // ── THE EXCISE: delete scope "everywhere" — the room's branches STACK, so a
+  // pruned branch's own graft commits live on in descendants; "everywhere"
+  // reverts them on every branch carrying them. Commit model: room/graft's
+  // own commits are X2+X1 (newest-first — the revert order); the descendant
+  // and the current branch both carry them; main carries only the base.
+  const STACKED = [
+    { name: "room/graft", subject: "the graft under the knife", date: "3 hours ago", commits: ["X2", "X1", "base"] },
+    { name: "room/descendant", subject: "stacked on the graft", date: "2 hours ago", commits: ["D1", "X2", "X1", "base"] },
+    { name: "room/live", subject: "the running branch", date: "1 hour ago", commits: ["L1", "X2", "X1", "base"] },
+    { name: "main", subject: "trunk", date: "4 hours ago", commits: ["base"] },
+  ];
+
+  const excisedShape = (body: unknown) =>
+    body as {
+      ok: boolean;
+      excised: Array<{ branch: string; reverted: number }>;
+      conflicts: string[];
+      reloading: boolean;
+      current: string;
+      branches: Array<{ name: string }>;
+    };
+
+  test("scope 'everywhere': temp-worktree revert on the descendant, in-place revert + exit 87 on the current branch", async () => {
+    const git = selfRailGit({ current: "room/live", branches: STACKED });
+    const exits: number[] = [];
+    const { app } = await makeApp({
+      runtimeEnv: { VIBERSYN_SELF_MODE: "1" },
+      runtimeOptions: {
+        selfGitRunner: git.run,
+        selfGhRunner: selfRailGh().run,
+        selfGitHead: async () => ({ sha: "sha-0", subject: "prior" }),
+        exitProcess: (code) => {
+          exits.push(code);
+        },
+      },
+    });
+    const response = await postJson(app, "/api/self/branch", { branch: "room/graft", action: "delete", scope: "everywhere" });
+    expect(response.status).toBe(200);
+    const body = excisedShape(await response.json());
+    expect(body.ok).toBe(true);
+    expect(body.excised).toEqual([
+      { branch: "room/descendant", reverted: 2 },
+      { branch: "room/live", reverted: 2 },
+    ]);
+    expect(body.conflicts).toEqual([]);
+    expect(body.reloading).toBe(true);
+    // The tend refresh contract still holds: fresh rails ride the response,
+    // minus the pruned branch.
+    expect(body.current).toBe("room/live");
+    expect(body.branches.map((entry) => entry.name)).toEqual(["room/descendant", "room/live"]);
+    // ORDER on the descendant: worktree add → revert IN the worktree (newest
+    // first) → update-ref (CAS) → worktree remove — never the live checkout.
+    const addIndex = git.calls.findIndex((argv) => argv[0] === "worktree" && argv[1] === "add");
+    const revertIndex = git.calls.findIndex((argv) => argv[0] === "-C" && argv[2] === "revert" && argv[3] === "--no-edit");
+    const updateIndex = git.calls.findIndex((argv) => argv[0] === "update-ref" && argv[1] === "refs/heads/room/descendant");
+    const removeIndex = git.calls.findIndex((argv) => argv[0] === "worktree" && argv[1] === "remove");
+    expect(addIndex).toBeGreaterThanOrEqual(0);
+    expect(revertIndex).toBeGreaterThan(addIndex);
+    expect(updateIndex).toBeGreaterThan(revertIndex);
+    expect(removeIndex).toBeGreaterThan(updateIndex);
+    expect(git.calls[revertIndex]!.slice(4)).toEqual(["X2", "X1"]);
+    // The CURRENT branch reverts in the live checkout (no -C) and both
+    // updated branches push their single explicit refspec.
+    expect(git.calls.some((argv) => argv[0] === "revert" && argv[1] === "--no-edit" && argv[2] === "X2" && argv[3] === "X1")).toBe(true);
+    expect(git.calls.some((argv) => argv[0] === "push" && argv[2] === "refs/heads/room/descendant:refs/heads/room/descendant")).toBe(true);
+    expect(git.calls.some((argv) => argv[0] === "push" && argv[2] === "refs/heads/room/live:refs/heads/room/live")).toBe(true);
+    // Both carriers gained the reverts (newest revert on top) and the pruned
+    // label fell; the supervisor exit fires through the seam.
+    expect(git.state.branches.find((entry) => entry.name === "room/descendant")!.commits!.slice(0, 2)).toEqual(["revert-of-X1", "revert-of-X2"]);
+    expect(git.state.branches.find((entry) => entry.name === "room/live")!.commits!.slice(0, 2)).toEqual(["revert-of-X1", "revert-of-X2"]);
+    expect(git.calls.some((argv) => argv[0] === "branch" && argv[1] === "-D" && argv[2] === "room/graft")).toBe(true);
+    await waitFor(() => exits.length === 1, 2_000);
+    expect(exits).toEqual([87]);
+  });
+
+  test("a conflicted revert is named, its branch untouched, the rest still excised — 200, partial honesty", async () => {
+    const git = selfRailGit({ current: "room/live", branches: STACKED, conflictOn: ["room/descendant"] });
+    const exits: number[] = [];
+    const { app } = await makeApp({
+      runtimeEnv: { VIBERSYN_SELF_MODE: "1" },
+      runtimeOptions: {
+        selfGitRunner: git.run,
+        selfGhRunner: selfRailGh().run,
+        selfGitHead: async () => ({ sha: "sha-0", subject: "prior" }),
+        exitProcess: (code) => {
+          exits.push(code);
+        },
+      },
+    });
+    const response = await postJson(app, "/api/self/branch", { branch: "room/graft", action: "delete", scope: "everywhere" });
+    expect(response.status).toBe(200);
+    const body = excisedShape(await response.json());
+    expect(body.ok).toBe(true);
+    expect(body.conflicts).toEqual(["room/descendant"]);
+    expect(body.excised).toEqual([{ branch: "room/live", reverted: 2 }]);
+    // The conflicted branch's tip never moved: abort ran IN the worktree, no
+    // update-ref, and the temp worktree was still cleaned up.
+    expect(git.state.branches.find((entry) => entry.name === "room/descendant")!.commits).toEqual(["D1", "X2", "X1", "base"]);
+    expect(git.calls.some((argv) => argv[0] === "-C" && argv[2] === "revert" && argv[3] === "--abort")).toBe(true);
+    expect(git.calls.some((argv) => argv[0] === "update-ref" && argv[1] === "refs/heads/room/descendant")).toBe(false);
+    expect(git.calls.some((argv) => argv[0] === "worktree" && argv[1] === "remove")).toBe(true);
+    // The current branch still lost the graft — the rebuild fires.
+    await waitFor(() => exits.length === 1, 2_000);
+    expect(exits).toEqual([87]);
+  });
+
+  test("omitted scope stays today's delete exactly — no worktree, no revert, no rev-list, no update-ref", async () => {
+    const git = selfRailGit({ current: "room/live", branches: STACKED });
+    const { app } = await makeApp({ runtimeOptions: { selfGitRunner: git.run, selfGhRunner: selfRailGh().run } });
+    const response = await postJson(app, "/api/self/branch", { branch: "room/graft", action: "delete" });
+    expect(response.status).toBe(200);
+    expect(((await response.json()) as { ok: boolean }).ok).toBe(true);
+    for (const verb of ["worktree", "revert", "rev-list", "update-ref", "-C"]) {
+      expect(git.calls.some((argv) => argv[0] === verb)).toBe(false);
+    }
+    // The descendants keep the graft — the label alone fell.
+    expect(git.state.branches.find((entry) => entry.name === "room/descendant")!.commits).toEqual(["D1", "X2", "X1", "base"]);
+  });
+
+  test("dirty src/ blocks ONLY the current-branch revert — reported by name, the others still excised, no exit", async () => {
+    const git = selfRailGit({ current: "room/live", branches: STACKED, dirtySrc: true });
+    const exits: number[] = [];
+    const { app } = await makeApp({
+      runtimeEnv: { VIBERSYN_SELF_MODE: "1" },
+      runtimeOptions: {
+        selfGitRunner: git.run,
+        selfGhRunner: selfRailGh().run,
+        selfGitHead: async () => ({ sha: "sha-0", subject: "prior" }),
+        exitProcess: (code) => {
+          exits.push(code);
+        },
+      },
+    });
+    const response = await postJson(app, "/api/self/branch", { branch: "room/graft", action: "delete", scope: "everywhere" });
+    expect(response.status).toBe(200);
+    const body = excisedShape(await response.json());
+    expect(body.excised).toEqual([{ branch: "room/descendant", reverted: 2 }]);
+    expect(body.conflicts).toEqual(["room/live (uncommitted work)"]);
+    expect(body.reloading).toBe(false);
+    // The live checkout never reverted in place (a cwd revert has no -C).
+    expect(git.calls.some((argv) => argv[0] === "revert")).toBe(false);
+    // No rebuild fires (the 400ms exit window passes quietly).
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    expect(exits).toEqual([]);
+  });
+
+  test("no supervisor: the current branch's excise is refused by name — the others still land, no exit", async () => {
+    const git = selfRailGit({ current: "room/live", branches: STACKED });
+    const { app } = await makeApp({ runtimeOptions: { selfGitRunner: git.run, selfGhRunner: selfRailGh().run } });
+    const response = await postJson(app, "/api/self/branch", { branch: "room/graft", action: "delete", scope: "everywhere" });
+    expect(response.status).toBe(200);
+    const body = excisedShape(await response.json());
+    expect(body.excised).toEqual([{ branch: "room/descendant", reverted: 2 }]);
+    expect(body.conflicts).toEqual(["room/live (no supervisor — --self launch required)"]);
+    expect(body.reloading).toBe(false);
+    expect(git.calls.some((argv) => argv[0] === "revert")).toBe(false);
+  });
+
+  test("refusals hold with scope present: the trunk, the running branch, the unknown", async () => {
+    const git = selfRailGit({ current: "room/live", branches: STACKED });
+    const { app } = await makeApp({ runtimeOptions: { selfGitRunner: git.run, selfGhRunner: selfRailGh().run } });
+    const running = await postJson(app, "/api/self/branch", { branch: "room/live", action: "delete", scope: "everywhere" });
+    expect(running.status).toBe(400);
+    expect(((await running.json()) as { error: string }).error).toContain("cannot tend the running branch");
+    const trunk = await postJson(app, "/api/self/branch", { branch: "main", action: "delete", scope: "everywhere" });
+    expect(trunk.status).toBe(400);
+    const ghost = await postJson(app, "/api/self/branch", { branch: "room/ghost", action: "delete", scope: "everywhere" });
+    expect(ghost.status).toBe(400);
+    expect(((await ghost.json()) as { error: string }).error).toContain("no local branch");
+    expect(git.calls.some((argv) => argv[0] === "worktree" || argv[0] === "revert")).toBe(false);
     expect(git.calls.some((argv) => argv[0] === "branch" && argv[1] === "-D")).toBe(false);
   });
 });

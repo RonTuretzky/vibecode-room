@@ -501,6 +501,30 @@ main.gesture-mode .ctl-button.tree-menu-close {
   gap: 10px;
 }
 
+/* PRUNE third stage — the scope question. Spans the verb grid's full width
+   (it replaces the LAST cell, so climb/merge/press never move under a
+   mid-dwell cursor) and lays its two big stationary buttons side by side. */
+.tree-prune-scope {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tree-prune-scope-question {
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: #ffd9d6;
+  text-align: left;
+}
+
+.tree-prune-scope-verbs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
 /* Dwell pager: at-limit buttons stay enabled but dim (FleetScroll precedent —
    never hide a control under a mid-dwell cursor). */
 .tree-branch-pager {

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { FOREST_CI_COLORS, type ForestPayload } from "./forest-spec";
-import { SELF_REPO_POLL_MS, parseTendBranches, selfGardenTree, selfRepoState } from "./self-repo";
+import { SELF_REPO_POLL_MS, parseTendBranches, parseTendOutcome, selfGardenTree, selfRepoState } from "./self-repo";
 
 // The self-rebuild repo tree DATA path: /api/forest payload → the ONE garden
 // tree input RoomScene grows among the fleet. Pure functions only — the poll
@@ -119,5 +119,36 @@ describe("parseTendBranches — the tend refresh contract's parser", () => {
     expect(parseTendBranches({ current: "room/x" })).toBeNull(); // branches missing
     expect(parseTendBranches({ branches: [] })).toBeNull(); // current missing
     expect(parseTendBranches({ current: "room/x", branches: [{ subject: "nameless" }] })).toBeNull();
+  });
+});
+
+// The prune-excise outcome riding an ok delete (scope "everywhere"):
+// conflicts[] names every branch the graft-revert could not land on and
+// reloading says the current branch was excised (the room rebuilds). Parsed
+// STRICTLY — the wall's honest note must never render garbage.
+describe("parseTendOutcome — the excise outcome's strict parser", () => {
+  test("conflicts + reloading ride an ok body; non-string conflict entries are dropped", () => {
+    expect(
+      parseTendOutcome({
+        ok: true,
+        excised: [{ branch: "room/descendant", reverted: 2 }],
+        conflicts: ["room/b", 7, null, "room/live (uncommitted work)"],
+        reloading: true,
+      }),
+    ).toEqual({ conflicts: ["room/b", "room/live (uncommitted work)"], reloading: true });
+  });
+
+  test("absent fields read as no conflicts, no reload — an old server's delete stays valid", () => {
+    expect(parseTendOutcome({ ok: true, current: "room/x", branches: [] })).toEqual({ conflicts: [], reloading: false });
+    expect(parseTendOutcome(null)).toEqual({ conflicts: [], reloading: false });
+    expect(parseTendOutcome("ok")).toEqual({ conflicts: [], reloading: false });
+    // Wrong shapes read as the safe default, never a crash or a truthy lie.
+    expect(parseTendOutcome({ conflicts: "room/b", reloading: "yes" })).toEqual({ conflicts: [], reloading: false });
+  });
+
+  test("refusal bodies stay refusals upstream — the outcome parser never invents a conflict note", () => {
+    expect(parseTendOutcome({ ok: false, error: "cannot tend the running branch — load another version first" })).toEqual(
+      { conflicts: [], reloading: false },
+    );
   });
 });

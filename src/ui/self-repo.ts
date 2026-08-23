@@ -229,10 +229,33 @@ export async function loadSelfVersion(branch: string): Promise<{ ok: boolean; er
 // A tend verb's parsed outcome. `branches` is the fresh rails payload the
 // route returned alongside ok (the refresh contract) — null when the response
 // carried none (older server, refusal), in which case the caller refresh()es.
+// `conflicts`/`reloading` are the prune-excise honesty fields riding an ok
+// delete (scope "everywhere"): branches the graft-revert could NOT land on
+// (named for the wall's honest note) and whether the room is about to
+// rebuild (the current branch was excised). Absent → [] / false.
 export interface TendResult {
   ok: boolean;
   error: string | null;
   branches: SelfBranchesPayload | null;
+  conflicts: string[];
+  reloading: boolean;
+}
+
+// Pure: the excise outcome riding an ok tend response — STRICT (non-string
+// conflict entries are dropped, anything but `true` reads false): the wall's
+// honest note must never render garbage, and an old server's body simply
+// reads as "no conflicts, no reload".
+export function parseTendOutcome(body: unknown): { conflicts: string[]; reloading: boolean } {
+  if (typeof body !== "object" || body === null) {
+    return { conflicts: [], reloading: false };
+  }
+  const { conflicts, reloading } = body as { conflicts?: unknown; reloading?: unknown };
+  return {
+    conflicts: Array.isArray(conflicts)
+      ? conflicts.filter((entry): entry is string => typeof entry === "string")
+      : [],
+    reloading: reloading === true,
+  };
 }
 
 // Pure: pull the refreshed rails out of a tend response body ({current,
@@ -266,22 +289,27 @@ export function parseTendBranches(body: unknown): SelfBranchesPayload | null {
 
 // POST /api/self/branch — tend a limb: archive (room/x -> archive/x), delete
 // (prune — local branch -D + best-effort remote prune), or merge (finalize —
-// into the trunk via the PR or a fast-forward). The server's honest refusals
-// (running branch, unknown name, "no PR and not fast-forward…") surface to
-// the wall VERBATIM; ok responses carry the refreshed rails.
+// into the trunk via the PR or a fast-forward). Delete takes an optional
+// `scope`: "branch" (default — the label alone falls) or "everywhere" (the
+// graft is also reverted on every branch carrying it; the room rebuilds if
+// the current branch loses it). The server's honest refusals (running branch,
+// unknown name, "no PR and not fast-forward…") surface to the wall VERBATIM;
+// ok responses carry the refreshed rails plus the excise outcome
+// (conflicts[] / reloading).
 export async function manageSelfVersion(
   branch: string,
   action: "archive" | "delete" | "merge",
+  scope?: "branch" | "everywhere",
 ): Promise<TendResult> {
   try {
     const response = await fetch("/api/self/branch", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ branch, action }),
+      body: JSON.stringify({ branch, action, ...(scope !== undefined ? { scope } : {}) }),
     });
     const body = (await response.json().catch(() => null)) as { ok?: unknown; error?: unknown } | null;
     if (response.ok && body?.ok !== false) {
-      return { ok: true, error: null, branches: parseTendBranches(body) };
+      return { ok: true, error: null, branches: parseTendBranches(body), ...parseTendOutcome(body) };
     }
     return {
       ok: false,
@@ -290,9 +318,17 @@ export async function manageSelfVersion(
           ? body.error
           : `${action} failed (HTTP ${response.status})`,
       branches: null,
+      conflicts: [],
+      reloading: false,
     };
   } catch {
-    return { ok: false, error: `${action} request failed — is the room server up?`, branches: null };
+    return {
+      ok: false,
+      error: `${action} request failed — is the room server up?`,
+      branches: null,
+      conflicts: [],
+      reloading: false,
+    };
   }
 }
 

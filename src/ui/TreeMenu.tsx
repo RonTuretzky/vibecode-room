@@ -208,9 +208,12 @@ export function treeMenuModel(process: ProjectorProcess, snapshot: ProjectorSnap
 
 // A tend verb in flight: which verb and on which branch (null = the here-card
 // / the growing run). One at a time — every verb button disables while busy.
+// A prune carries its chosen `scope` so the busy line can say what the wait
+// actually is ("removing the graft everywhere…" is a longer cut).
 interface TendBusy {
   verb: "climb" | "merge" | "press" | "prune" | "stop";
   branch: string | null;
+  scope?: "branch" | "everywhere";
 }
 
 // A two-line dwell verb (strong line + honest sub-line). `armedSkin` recolors
@@ -265,8 +268,9 @@ export interface TreeMenuProps {
   selfBranches?: SelfBranchesPayload | null;
   // SSR/test seam for the tend surface's interaction states (the static
   // renderer cannot dwell): boots the body in a focus view / with a verb
-  // armed / on a later page. The live wall leaves this undefined.
-  tendSeed?: { focusBranch?: string; armed?: string; page?: number };
+  // armed / on a later page / mid-verb (busy). The live wall leaves this
+  // undefined.
+  tendSeed?: { focusBranch?: string; armed?: string; page?: number; busy?: TendBusy };
   // Failure toast seam (App.reportControlFailure): a verb whose POST failed
   // says so inline AND raises the room-wide "… failed — nothing changed."
   // epilogue. Absent = inline notes only (tests exercising the menu alone).
@@ -339,7 +343,7 @@ export function TreeMenu({
   const [page, setPage] = useState(tendSeed?.page ?? 0);
   const [focusBranch, setFocusBranch] = useState<string | null>(tendSeed?.focusBranch ?? null);
   const [armed, setArmed] = useState<string | null>(tendSeed?.armed ?? null);
-  const [busy, setBusy] = useState<TendBusy | null>(null);
+  const [busy, setBusy] = useState<TendBusy | null>(tendSeed?.busy ?? null);
   const [tendError, setTendError] = useState<string | null>(null);
   const [tendNote, setTendNote] = useState<string | null>(null);
   const [haltNote, setHaltNote] = useState<string | null>(null);
@@ -378,13 +382,16 @@ export function TreeMenu({
 
   // A tend verb (merge / press / prune) through the one endpoint. Success
   // adopts the refreshed rails from the response (or re-fetches when an older
-  // server sent none) and leaves the focus view for the re-clamped list.
-  const tendVerb = (branch: string, verb: "merge" | "press" | "prune"): void => {
+  // server sent none) and leaves the focus view for the re-clamped list. A
+  // prune carries its excise `scope`; the receipt keeps the one-note rule —
+  // conflicts (a branch the graft-revert could not land on, named) win over
+  // the rebuild receipt, which wins over the plain merge receipt.
+  const tendVerb = (branch: string, verb: "merge" | "press" | "prune", scope?: "branch" | "everywhere"): void => {
     const action = verb === "merge" ? "merge" : verb === "press" ? "archive" : "delete";
-    setBusy({ verb, branch });
+    setBusy({ verb, branch, ...(scope !== undefined ? { scope } : {}) });
     setTendError(null);
     setTendNote(null); // one receipt row at a time — a stale note under a fresh error would outgrow the list-view budget
-    void manageSelfVersion(branch, action).then((result) => {
+    void manageSelfVersion(branch, action, scope).then((result) => {
       setBusy(null);
       setArmed(null);
       if (result.ok) {
@@ -393,7 +400,11 @@ export function TreeMenu({
         } else {
           rails.refresh();
         }
-        if (verb === "merge") {
+        if (result.conflicts.length > 0) {
+          setTendNote(`couldn't cleanly remove from ${result.conflicts.join(", ")} (conflicts)`);
+        } else if (result.reloading) {
+          setTendNote("🍂 pruned — the room is rebuilding without it");
+        } else if (verb === "merge") {
           setTendNote("🪵 in the trunk — merged");
         }
         setFocusBranch(null);
@@ -738,18 +749,60 @@ export function TreeMenu({
                         />
                       )}
                       {busy?.verb === "prune" && busy.branch === focusEntry.name ? (
-                        <TendVerb testid="tree-menu-version-delete" className="verb-prune" line1="🍂 pruning…" line2="deleting this branch" disabled onPress={() => undefined} />
+                        <TendVerb
+                          testid="tree-menu-version-delete"
+                          className="verb-prune"
+                          line1="🍂 pruning…"
+                          line2={busy.scope === "everywhere" ? "removing the graft everywhere…" : "deleting this branch"}
+                          disabled
+                          onPress={() => undefined}
+                        />
+                      ) : armed === `prune2:${focusEntry.name}` ? (
+                        /* THIRD STAGE — the scope question: the room's branches
+                           STACK, so a pruned label's commits usually live on
+                           inside descendants. Two big STATIONARY dwell buttons
+                           (never a moving target); the shared auto-disarm
+                           window re-arms on the stage change. */
+                        <div className="tree-prune-scope" data-testid="tree-menu-version-delete-scope">
+                          <p className="tree-prune-scope-question">🍂 prune the branch — and the graft it carries?</p>
+                          <div className="tree-prune-scope-verbs">
+                            <TendVerb
+                              testid="tree-menu-version-delete-scope-branch"
+                              className="verb-prune"
+                              line1="just this branch"
+                              line2="the label falls — its commits live on downstream"
+                              title="Delete only this branch: every branch stacked on it keeps the commits it grafted."
+                              disabled={anyBusy}
+                              onPress={(event) => {
+                                stampPressed(event);
+                                tendVerb(focusEntry.name, "prune", "branch");
+                              }}
+                            />
+                            <TendVerb
+                              testid="tree-menu-version-delete-scope-everywhere"
+                              className="verb-prune is-armed-danger"
+                              line1="remove it everywhere"
+                              line2="reverts this graft on every branch that carries it — the room rebuilds if it's on this one"
+                              title="Delete the branch AND revert its graft on every branch carrying it — the room rebuilds if the current branch loses it."
+                              disabled={anyBusy}
+                              onPress={(event) => {
+                                stampPressed(event);
+                                tendVerb(focusEntry.name, "prune", "everywhere");
+                              }}
+                            />
+                          </div>
+                        </div>
                       ) : armed === `prune:${focusEntry.name}` ? (
                         <TendVerb
                           testid="tree-menu-version-delete-confirm"
                           className="verb-prune is-armed-danger"
                           line1="really prune?"
-                          line2="the branch falls — gone from this machine and origin"
-                          title="Second press deletes for real: the local branch AND its copy on origin."
+                          line2="the branch falls — one more choice: how far the cut goes"
+                          title="Second press asks the last question: just this branch, or its graft removed everywhere."
                           disabled={anyBusy}
                           onPress={(event) => {
                             stampPressed(event);
-                            tendVerb(focusEntry.name, "prune");
+                            setArmed(`prune2:${focusEntry.name}`);
                           }}
                         />
                       ) : (

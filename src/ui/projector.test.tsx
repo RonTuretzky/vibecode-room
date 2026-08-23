@@ -645,7 +645,16 @@ describe("tend the tree: the self tree's surface", () => {
   const renderTend = (overrides: {
     process?: ProjectorProcess;
     branches?: SelfBranchesPayload | null;
-    tendSeed?: { focusBranch?: string; armed?: string; page?: number };
+    tendSeed?: {
+      focusBranch?: string;
+      armed?: string;
+      page?: number;
+      busy?: {
+        verb: "climb" | "merge" | "press" | "prune" | "stop";
+        branch: string | null;
+        scope?: "branch" | "everywhere";
+      };
+    };
   } = {}) =>
     renderToStaticMarkup(
       <TreeMenu
@@ -708,7 +717,10 @@ describe("tend the tree: the self tree's surface", () => {
     });
     expect(pruneArmed).toContain('data-testid="tree-menu-version-delete-confirm"');
     expect(pruneArmed).toContain("really prune?");
-    expect(pruneArmed).toContain("the branch falls — gone from this machine and origin");
+    // Stage two no longer fires the delete — it hands off to the scope
+    // question, and its copy says so instead of claiming the branch fell.
+    expect(pruneArmed).toContain("one more choice: how far the cut goes");
+    expect(pruneArmed).not.toContain("gone from this machine and origin");
     expect(pruneArmed).toContain("is-armed-danger");
     const mergeArmed = renderTend({
       tendSeed: { focusBranch: "room/grown-change-1", armed: "merge:room/grown-change-1" },
@@ -721,6 +733,33 @@ describe("tend the tree: the self tree's surface", () => {
     const hereArmed = renderTend({ tendSeed: { armed: `merge:${CURRENT}` } });
     expect(hereArmed).toContain('data-testid="tree-menu-here-merge-confirm"');
     expect(hereArmed).toContain("make it permanent?");
+  });
+
+  test("prune third stage: the scope question with two stationary buttons — everywhere alone wears danger", () => {
+    const html = renderTend({
+      tendSeed: { focusBranch: "room/grown-change-1", armed: "prune2:room/grown-change-1" },
+    });
+    expect(html).toContain('data-testid="tree-menu-version-delete-scope"');
+    expect(html).toContain("🍂 prune the branch — and the graft it carries?");
+    expect(html).toContain('data-testid="tree-menu-version-delete-scope-branch"');
+    expect(html).toContain("just this branch");
+    expect(html).toContain("the label falls — its commits live on downstream");
+    expect(html).toContain('data-testid="tree-menu-version-delete-scope-everywhere"');
+    expect(html).toContain("remove it everywhere");
+    expect(html).toContain("reverts this graft on every branch that carries it");
+    // The danger skin marks ONLY the everywhere button (the branch-only cut
+    // is the safe default).
+    expect(countOccurrences(html, "is-armed-danger")).toBe(1);
+    // Neither earlier stage renders under the question.
+    expect(html).not.toContain('data-testid="tree-menu-version-delete-confirm"');
+    // The busy line for an everywhere cut names the longer wait.
+    const busyHtml = renderTend({
+      tendSeed: {
+        focusBranch: "room/grown-change-1",
+        busy: { verb: "prune", branch: "room/grown-change-1", scope: "everywhere" },
+      },
+    });
+    expect(busyHtml).toContain("removing the graft everywhere…");
   });
 
   test("growing card + ✂ stop growing appear ONLY while a self-run executes (and replace the chip)", () => {
