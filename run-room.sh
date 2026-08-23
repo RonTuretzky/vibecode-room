@@ -80,6 +80,7 @@ FAKE=0
 FLAT=0                                # --flat: flat-wall rig — wall windows tile ONE continuous picture
 SELF_MODE=0
 HANDS=0                               # TouchDesigner hand-pinch camera (--hands / --hands=URL / --fake-hands / --real-hands)
+CEILING=0                             # open the ceiling window too (--ceiling)
 FAKE_HANDS=0
 REAL_HANDS=0                          # --real-hands: launch the standalone MediaPipe bridge (real laptop camera, no TD)
 SINGLE=0
@@ -117,6 +118,7 @@ for arg in "$@"; do
     --gesture) GESTURE=1; GESTURE_EXPLICIT=1 ;;
     --fake) GESTURE=1; FAKE=1 ;;   # --fake implies gesture mode, minus the cameras
     --arcade) GESTURE=1; ARCADE=1 ;;   # joystick as THE fusion cursor source (gesture-mode XL UI, no cameras)
+    --ceiling) CEILING=1 ;;
     --hands) HANDS=1 ;;
     --hands=*) HANDS=1; HANDS_URL="${arg#*=}" ;;   # explicit TD source, e.g. ws://td-mac:9980
     --fake-hands) HANDS=1; FAKE_HANDS=1 ;;   # pinch camera minus TouchDesigner (synthetic hands)
@@ -465,6 +467,10 @@ fi
 URL_A="http://localhost:$VIBERSYN_PORT/?live=1&wall=A&view=ideas$GESTURE_QS$HANDS_QS$MOCK_QS$FLAT_QS"
 URL_B="http://localhost:$VIBERSYN_PORT/?live=1&wall=B&view=builds$GESTURE_QS$HANDS_QS_B$MOCK_QS$FLAT_QS"
 URL_SINGLE="http://localhost:$VIBERSYN_PORT/?live=1&view=$SINGLE_VIEW$GESTURE_QS$HANDS_QS$MOCK_QS"
+# The CEILING projector: the constellation sky, chrome-less, subscribed to the
+# fusion stream as wall C (the arcade stick's button 9 cycles A→B→C, so the
+# same joystick points at the ceiling). Printed always; opened with --ceiling.
+URL_CEILING="http://localhost:$VIBERSYN_PORT/?live=1&research=1&zen=1&wall=C$GESTURE_QS$HANDS_QS$MOCK_QS"
 
 open_wall() { # $1=window-position  $2=url
   if command -v open >/dev/null 2>&1; then
@@ -482,11 +488,13 @@ else
   echo "[room] Wall A  → $URL_A"
   echo "[room] Wall B  → $URL_B"
 fi
+echo "[room] Ceiling → $URL_CEILING"
 if [ "$HEALTHY" != "1" ]; then
   echo "[room] WARNING: Vibersyn never became healthy — not opening windows. Check the server log above." >&2
   echo "[room] (services are still running; open the URLs above manually once it's up.)" >&2
 elif [ "$SINGLE" = "1" ]; then
   open_wall "$WALL_A_POS" "$URL_SINGLE"
+  if [ "$CEILING" = "1" ]; then sleep 1; open_wall "$WALL_B_POS" "$URL_CEILING"; fi
 else
   open_wall "$WALL_A_POS" "$URL_A"; sleep 1
   open_wall "$WALL_B_POS" "$URL_B"
