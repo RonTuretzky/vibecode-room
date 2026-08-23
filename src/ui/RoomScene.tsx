@@ -1042,6 +1042,9 @@ interface Entry {
   cat: THREE.Group | null;
   // The cat's parked X so the dance sway pivots around it (0 when no cat).
   catBaseX: number;
+  // Floating crystal-mana shards ringing a garden tree — the frame loop spins
+  // and bobs each one. Absent on every non-tree entry.
+  mana?: THREE.Mesh[];
   label: THREE.Sprite | null;
   targetPos: THREE.Vector3;
   targetScale: number;
@@ -3186,6 +3189,34 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       return cluster;
     };
 
+    // "crystal mana" — a ring of glowing cyan crystal shards floating at head
+    // height around the tree's foot. Cheap octahedron meshes sharing one
+    // geometry/material (flagged own* so the garden dispose traverse frees
+    // them); the frame loop spins/bobs each shard via entry.mana.
+    const makeCrystalManaCluster = (radius: number): { group: THREE.Group; shards: THREE.Mesh[] } => {
+      const cluster = new THREE.Group();
+      const shardGeo = new THREE.OctahedronGeometry(0.3, 0);
+      const shardMat = new THREE.MeshPhongMaterial({
+        color: 0x66e0ff,
+        emissive: 0x33bbff,
+        emissiveIntensity: 0.9,
+        transparent: true,
+        opacity: 0.82,
+      });
+      const shards: THREE.Mesh[] = [];
+      const count = 6;
+      for (let i = 0; i < count; i++) {
+        const a = (i / count) * Math.PI * 2;
+        const shard = new THREE.Mesh(shardGeo, shardMat);
+        shard.userData.ownGeometry = i === 0;
+        shard.userData.ownMaterial = i === 0;
+        shard.position.set(Math.cos(a) * radius, 1.8 + (i % 2) * 0.6, Math.sin(a) * radius);
+        cluster.add(shard);
+        shards.push(shard);
+      }
+      return { group: cluster, shards };
+    };
+
     const buildRealFlower = (spec: IdeaOrbSpec): Entry | null => {
       const ready = spec.status === "ready";
       const variants = floraLib?.get(ready ? "flower_gazania" : "dandelion_01");
@@ -3425,8 +3456,12 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       group.add(makePinkTulipRing(grown ? 3.3 : 2.3));
       // A cluster of freshly-manufactured GPU racks at the tree's foot.
       group.add(makeGpuRackCluster(grown ? 4.6 : 3.4));
+      // Crystal mana floating around the tree — glowing cyan shards the frame
+      // loop spins and bobs.
+      const manaCluster = makeCrystalManaCluster(grown ? 3.6 : 2.6);
+      group.add(manaCluster.group);
       return {
-        kind: "tree", treeSpec: spec, group, mats, baseEmissive: 0.55, head: null, headY: 0, cat, catBaseX: catBase, label,
+        kind: "tree", treeSpec: spec, group, mats, baseEmissive: 0.55, head: null, headY: 0, cat, catBaseX: catBase, mana: manaCluster.shards, label,
         targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false, updateProgress,
         // The engine owns the body's GPU resources; foliage sway rides the
         // shared frame loop through bodyUpdate.
@@ -3520,12 +3555,15 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         ring.position.y = 0.08;
         group.add(ring);
       }
+      // Crystal mana floating around the self tree, same as the fleet trees.
+      const manaCluster = makeCrystalManaCluster(3.6);
+      group.add(manaCluster.group);
       // The adopted spec keys the shared machinery (hover on callsign, dwell
       // entryForTargetId, activation) to the MIRROR, first-class. mats stays
       // empty — the module owns its materials — so the frame loop's
       // active-pulse (mats[0]) skips this entry even in "active" state.
       return {
-        kind: "tree", treeSpec: spec, group, mats: [], baseEmissive: 0, head: null, headY: 0, cat: null, catBaseX: 0, label,
+        kind: "tree", treeSpec: spec, group, mats: [], baseEmissive: 0, head: null, headY: 0, cat: null, catBaseX: 0, mana: manaCluster.shards, label,
         targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false,
         disposeExtra: () => {
           built.dispose();
@@ -5454,6 +5492,15 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
             entry.cat.position.y = Math.abs(Math.sin(t * 3 + entry.phase)) * 0.3;
             entry.cat.position.x = entry.catBaseX + Math.sin(t * 2 + entry.phase) * 0.12;
             entry.cat.rotation.z = Math.sin(t * 6 + entry.phase) * 0.25;
+          }
+          // Crystal mana shards spin and bob around the tree's foot.
+          if (entry.mana !== undefined) {
+            for (let m = 0; m < entry.mana.length; m++) {
+              const shard = entry.mana[m];
+              shard.rotation.y = t * 0.9 + m;
+              shard.rotation.x = Math.sin(t * 0.7 + m) * 0.4;
+              shard.position.y = (1.8 + (m % 2) * 0.6) + Math.sin(t * 1.6 + m) * 0.22;
+            }
           }
           // mats guard: the HD self tree adopts the LIVE mirror spec (often
           // "active") but owns no overlay materials — the module renders its
