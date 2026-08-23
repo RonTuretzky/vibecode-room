@@ -59,20 +59,98 @@ STEERING INSTRUCTION (spoken or clicked in the room — apply it now):
 ${instruction}
 
 HARD RULES — all of them, no exceptions:
-1. FIRST run \`git status --porcelain\` and record every path it lists. Those
-   are someone's uncommitted work: NEVER modify, stage, or commit any of them.
+1. FIRST run \`git status --porcelain\` and record every path it lists.
+   LEFTOVER HYGIENE: dirty paths under src/ are usually a DEAD previous
+   self-run's abandoned edits — quarantine them BEFORE you start:
+   \`git stash push -m "self-run leftovers" -- <those src/ paths>\` (list the
+   stash in "summary"). Everything else it lists (package.json, bun.lock,
+   park3d*, anything outside src/) is someone's live uncommitted work:
+   NEVER modify, stage, commit, or stash those.
 2. NEVER touch gesture-wall/, .smithers/, artifacts/, builds/, dist/,
    node_modules/, or smithers.db* — read them if you must, write them never.
    (\`bun run build\` regenerating dist/ is fine; committing dist/ is not.)
 3. Make the SMALLEST change that satisfies the instruction, matching the
    codebase's existing seams and idioms. Do not refactor beyond it.
+3b. THE CHANGE MUST TAKE REAL EFFECT. ANY arbitrary change to the room is in
+   scope — visuals, server behavior, voice pipeline, gestures, endpoints —
+   but it only counts if the code you edit is ON THE LIVE PATH for the
+   instruction's domain. Trace that path FIRST (grep for who imports/mounts/
+   calls it): walls render src/ui/App.tsx (3D garden/meadow/trees/creatures =
+   src/ui/RoomScene.tsx; decks/menus/panels = Slideshow/TreeMenu/HoloPanel);
+   the server boots src/server/index.ts -> composition.ts (voice, ideas,
+   builds, endpoints live there); gestures flow src/ui/gesture/. Editing
+   dead/unmounted/unreached code fails the instruction even when tests are
+   green — a previous self-run added a feature to an unmounted scene file and
+   the room rebuilt itself for nothing. If you cannot show (import/mount
+   chain) that your edit executes, pick the file where it does. AND cover the
+   branch actually taken AT RUNTIME on the rig: garden trees render via
+   buildRealTree (photoscan flora) — the primitive buildTree is only the
+   no-flora fallback; a visual tree feature wired into just one of them is
+   invisible on the projector even though every test passes.
+3c. THE WALL'S INPUT GRAMMAR IS DWELL-ONLY — design inside it. On the
+   projected wall the only inputs are dwell cursors: the joystick lever MOVES
+   the cursor and a held button CLICKS; hand-pinch drives the CAMERA; guest
+   hands are the same dwell grammar. There is NO mouse wheel, NO drag, NO
+   hover-only state, NO keyboard. Consequences, learned the hard way (three
+   runs "fixed the scroll" with overflow-y CSS that no wall input can drive —
+   every one gated green and every one was unusable):
+     - NEVER reach for CSS scrolling (\`overflow: auto/scroll\`) to make a list
+       fit. Rows below the fold are unreachable by construction. The
+       dwell-native answers are PAGINATION (a "⌄ more (page/total)" row that
+       swaps the visible page on click) or dwellable ▲/▼ step buttons that
+       move the window one row at a time. When the instruction literally asks
+       for "scroll", implement pagination and say so in the summary — that IS
+       the scroll of this room.
+     - Every interactive affordance must be a fixed, generously-sized dwell
+       target that stays put while aimed at (the dwell needs ~0.8s of hold).
+     - Anything that only works with a wheel, a drag, a hover, or a keypress
+       fails the instruction even if it works on a desk.
 4. GREEN GATE: run \`bunx tsc --noEmit && bun run build\` and keep fixing your
    own change until BOTH pass clean. Never commit red.
-5. Commit ONLY the files you created or edited, staged by EXPLICIT path
+4b. SEE IT BEFORE YOU COMMIT IT. Compiling is not working — two earlier
+   self-runs committed green changes that never appeared on the walls. After
+   the build passes: for a VISUAL change, run
+   \`bun scripts/self-verify.ts\` (and again with
+   \`--path "/?wall=B&flat=1"\` — the panorama is split across two walls),
+   then READ the screenshot files it prints and CONFIRM your change is
+   actually visible in them; if it is not, your code is not on the executed
+   path — fix and re-verify until you SEE it. For a NON-visual change,
+   exercise the changed surface directly (curl the endpoint, run that
+   module's test) and confirm the new behavior in its real output. For an
+   INTERACTIVE change (anything a person clicks/dwells: menu rows, buttons,
+   list items, popups), screenshots are NOT enough — run the reachability
+   probe against every target you added or moved:
+       bun scripts/self-exercise.ts --selector '<css for your targets>' \
+           [--select <callsign>]   # opens that tree's menu first
+   It hit-tests each target's center the way the dwell selector does and
+   FAILS on anything scrolled out, clipped, occluded, or off-wall. Every
+   target must print REACHABLE; an unreachable target is an unshipped
+   feature no matter how the screenshot looks. State in "summary" exactly
+   how you verified (screenshot path / probe output / command + result).
+   No verification, no commit.
+5. BRANCH-PER-CHANGE (the room relaunches ON your branch): the SERVER has
+   ALREADY cut a fresh smart-named room/* branch for this exact spoken window
+   before your run started — run \`git branch --show-current\` FIRST and
+   confirm it prints a room/* name; commit WHERE YOU STAND and NEVER switch
+   branches. Fallback only if it does NOT print room/*: cut one yourself
+   (\`git checkout -b room/<2-4 word kebab slug of the instruction>\`).
+   After your commit the supervisor rebuilds the working tree — which IS the
+   branch — so the room comes back running it; the operator merges or
+   abandons it later. Include the branch name in "summary".
+   Commit ONLY the files you created or edited, staged by EXPLICIT path
    (\`git add <path> <path>\` — never \`git add -A\`, never \`git add .\`), with
    the exact message shape:
        self: <one-line instruction summary>
    Nothing else in the message — no attribution, no Co-Authored-By trailer.
+   FINAL CHECK before you finish: \`git branch --show-current\` MUST print
+   your room/<slug> branch — a commit on the base branch is a FAILED run.
+   Then MAKE THE BRANCH VISIBLE on the wall's tree (it renders from GitHub).
+   Use PLAIN git/gh (the shell's keychain auth pushes this repo; do NOT set
+   GH_TOKEN — the room's PAT is scoped to other repos and 403s here):
+       git push -u origin room/<slug>
+       gh pr create --draft --base <the branch you started from> --head room/<slug> --title "self: <summary>" --body "spoken in the room"
+   Push/PR failures are non-fatal (note them in "summary") — the commit and
+   reload still stand.
 6. If the instruction cannot be satisfied under these rules, change nothing,
    commit nothing, and explain why in "summary".
 

@@ -3,6 +3,7 @@ import type { ProjectorProcess } from "./types";
 import { buildsOf } from "./buildloop";
 import type { LifecycleAction, ProcessBuild } from "./buildloop";
 import { BuildChips, ExecutionChip, ProcessControls } from "./BuildChips";
+import { RecordSteerToggle } from "./RecordSteerToggle";
 import { TakeHomeQr } from "./TakeHomeQr";
 import { executionOf, stageOf } from "./stage";
 import type { DecisionChoice } from "./stage";
@@ -62,6 +63,20 @@ export interface SlideshowProps {
   // Fed by BOTH the mirrored room-native buttons below AND the in-iframe swipe
   // answers (App bridges those via postMessage → the same handler).
   onDecision?: (choice: DecisionChoice) => void;
+  // POST-CHOICE STATE (owned by the App): the choice this open deck already
+  // took. null/absent = still asking (the three buttons). "commission" → the
+  // bar collapses to a status strip while the execution lane spins up;
+  // "iterate" → the bar becomes an inline steer input (the deck stays open);
+  // "done" → a parked confirmation strip (the App closes the window ~2s later).
+  decisionState?: DecisionChoice | null;
+  // Inline steer sender for the iterate state (App POSTs
+  // /api/process/:upid/steer). Absent = the input renders but sends nowhere.
+  onSteer?: (text: string) => void;
+  // Open the live deck ON its decision slide (guided demo's decide step): the
+  // generated deck's controller honors a #decision hash. Captured at window
+  // open (initialBackend precedent) so a later prop flip never reloads the
+  // iframe mid-view.
+  openAtDecision?: boolean;
 }
 
 // What the pop-up window should show, decided purely from the deck surface:
@@ -90,7 +105,22 @@ export function deckWindowState(hasSlides: boolean, builds: ProcessBuild[]): Dec
   return "empty";
 }
 
-export function Slideshow({ process, onLifecycle, onClose, initialBackend = null, onDecision }: SlideshowProps) {
+// The generated deck's controller opens on its "How should we continue?"
+// slide when the URL carries #decision (see src/slideshow/template.ts).
+function withDecisionHash(url: string): string {
+  return `${url.split("#")[0]}#decision`;
+}
+
+export function Slideshow({
+  process,
+  onLifecycle,
+  onClose,
+  initialBackend = null,
+  onDecision,
+  decisionState = null,
+  onSteer,
+  openAtDecision = false,
+}: SlideshowProps) {
   const builds = useMemo(() => buildsOf(process), [process]);
   const stage = stageOf(process);
   const execution = executionOf(process);
@@ -121,7 +151,10 @@ export function Slideshow({ process, onLifecycle, onClose, initialBackend = null
     return 0;
   });
   const clamped = Math.min(index, Math.max(slides.length - 1, 0));
-
+  // Captured ONCE at window open (like the initial index above): the guided
+  // demo's decide step opens the deck straight on its decision slide, and a
+  // later prop flip (the demo completing) must not remount the iframe.
+  const [decisionHash] = useState(openAtDecision);
   const prev = useCallback(() => setIndex((i) => Math.max(i - 1, 0)), []);
   const next = useCallback(() => setIndex((i) => Math.min(i + 1, slides.length - 1)), [slides.length]);
 
@@ -274,6 +307,10 @@ export function Slideshow({ process, onLifecycle, onClose, initialBackend = null
         ) : null}
         <ProcessControls upid={process.upid} state={process.state} onLifecycle={onLifecycle} />
 
+        {/* Only THIS body scrolls — title bar, tabs, decision bar, and nav are
+            fixed window chrome, so the decision buttons can never paint over
+            the deck nor be pushed under other fixed chrome. */}
+        <div className="slideshow-body" data-testid="slideshow-body">
         {slide !== null ? (
           <section className="slide" data-testid="slideshow-slide" data-slide-index={clamped}>
             <h3 className="slide-title">{slide.title}</h3>
@@ -283,9 +320,14 @@ export function Slideshow({ process, onLifecycle, onClose, initialBackend = null
             ) : (
               <div className="slide-body slide-live" data-testid="slideshow-live">
                 <iframe
+                  /* keyed by URL: a tab switch REMOUNTS the frame, so the
+                     switch is visible instead of a silent src swap. The
+                     #decision hash (guided decide step) opens the generated
+                     deck straight on its decision slide. */
+                  key={decisionHash ? withDecisionHash(slide.url) : slide.url}
                   className="slide-live-frame"
                   data-testid="slideshow-live-frame"
-                  src={slide.url}
+                  src={decisionHash ? withDecisionHash(slide.url) : slide.url}
                   title={slide.title}
                 />
                 <a
@@ -294,8 +336,11 @@ export function Slideshow({ process, onLifecycle, onClose, initialBackend = null
                   href={slide.url}
                   target="_blank"
                   rel="noreferrer"
+                  // Dwell-exempt: synthesized clicks on _blank links are
+                  // popup-blocked — external open is a real-mouse nicety.
+                  data-dwell-exempt="true"
                 >
-                  Open in window ↗
+                  Open in window ↗ (mouse)
                 </a>
               </div>
             )}
@@ -344,48 +389,77 @@ export function Slideshow({ process, onLifecycle, onClose, initialBackend = null
             )}
           </section>
         )}
+        </div>
 
         {/* The room-native "How should we continue?" decision/answer bar
             (concept stage with real build lanes only) — see the DECK DWELL
             BRIDGE note at the top of this file. Every choice is a plain
             <button>, so the dwell layer targets each one automatically, and the
-            same choices arrive from the in-iframe swipe cards via postMessage. */}
-        {onDecision !== undefined && stage === "concept" && builds.length > 0 ? (
-          <div className="deck-decision" data-testid="deck-decision" role="group" aria-label="How should we continue?">
-            <span className="deck-decision-title">How should we continue?</span>
-            <div className="deck-decision-choices">
-              <button
-                type="button"
-                className="deck-decision-btn decision-commission"
-                data-testid="decision-commission"
-                data-decision="commission"
-                onClick={() => onDecision("commission")}
-                title="Commission the real subscription build — the wall keeps building after the demo."
-              >
-                🚀 Build it for real
-              </button>
-              <button
-                type="button"
-                className="deck-decision-btn decision-iterate"
-                data-testid="decision-iterate"
-                data-decision="iterate"
-                onClick={() => onDecision("iterate")}
-                title="Keep talking — steer and reshape the concept with more ideas."
-              >
-                🔁 Keep shaping it
-              </button>
-              <button
-                type="button"
-                className="deck-decision-btn decision-done"
-                data-testid="decision-done"
-                data-decision="done"
-                onClick={() => onDecision("done")}
-                title="Leave it as a concept on the wall."
-              >
-                ✓ Keep it as a concept
-              </button>
+            same choices arrive from the in-iframe swipe cards via postMessage.
+            ONE VOCABULARY with the generated deck's own decision slide (🚀/🔁/🅿,
+            src/slideshow/generator.ts decisionButtons), with the explanations
+            as VISIBLE sub-lines — tooltips don't exist at projector distance.
+            After a choice the region shows its POST-CHOICE state instead:
+            commissioned strip / inline steer input / parked strip. A taken
+            decision keeps its strip visible even after a commission flips the
+            stage off "concept" — the confirmation must not vanish mid-read. */}
+        {onDecision !== undefined && builds.length > 0 && (stage === "concept" || decisionState !== null) ? (
+          decisionState === "commission" ? (
+            <div
+              className="deck-decision deck-decision-strip strip-commissioned"
+              data-testid="decision-status-commissioned"
+              role="status"
+            >
+              🚀 Commissioned — the real build is running
             </div>
-          </div>
+          ) : decisionState === "done" ? (
+            <div className="deck-decision deck-decision-strip strip-parked" data-testid="decision-status-parked" role="status">
+              🅿 Parked — it&rsquo;s in the idea tray
+            </div>
+          ) : decisionState === "iterate" ? (
+            <div className="deck-decision deck-decision-steer" data-testid="decision-steer" role="group" aria-label="Keep shaping it">
+              <span className="deck-decision-title">🔁 Keep shaping it</span>
+              {/* No typing at projector distance (live-room directive): the
+                  record toggle routes EVERYTHING spoken into this build. */}
+              <RecordSteerToggle process={process} kind="build" />
+            </div>
+          ) : (
+            <div className="deck-decision" data-testid="deck-decision" role="group" aria-label="How should we continue?">
+              <span className="deck-decision-title">How should we continue?</span>
+              <div className="deck-decision-choices">
+                <button
+                  type="button"
+                  className="deck-decision-btn decision-commission"
+                  data-testid="decision-commission"
+                  data-decision="commission"
+                  onClick={() => onDecision("commission")}
+                >
+                  <span className="decision-choice">🚀 Build it for real</span>
+                  <span className="decision-detail">Commission the real build — the wall keeps building it live.</span>
+                </button>
+                <button
+                  type="button"
+                  className="deck-decision-btn decision-iterate"
+                  data-testid="decision-iterate"
+                  data-decision="iterate"
+                  onClick={() => onDecision("iterate")}
+                >
+                  <span className="decision-choice">🔁 Keep shaping it</span>
+                  <span className="decision-detail">Type a change — or just say it out loud — and the mocks reshape.</span>
+                </button>
+                <button
+                  type="button"
+                  className="deck-decision-btn decision-done"
+                  data-testid="decision-done"
+                  data-decision="done"
+                  onClick={() => onDecision("done")}
+                >
+                  <span className="decision-choice">🅿 Park it for later</span>
+                  <span className="decision-detail">Keeps the idea in the tray — nothing is lost.</span>
+                </button>
+              </div>
+            </div>
+          )
         ) : null}
 
         {hasSlides ? (

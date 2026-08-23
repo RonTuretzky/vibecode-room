@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import {
+  agentTickLegs,
   buildDegradationNotice,
   formatDegradationNotice,
+  healthPayload,
   type RuntimeLegSelections,
 } from "./degradation-notice";
 
@@ -90,5 +92,34 @@ describe("formatDegradationNotice", () => {
     expect(text).toContain("VIBERSYN_DECISION_LLM=claude");
     expect(text).toContain("VIBERSYN_SMITHERS_GATEWAY_URL");
     expect(text).toContain("VIBERSYN_SUMMARIZER=cerebras");
+  });
+});
+
+// ── dynamic agent-tick legs (the sky relate 402 that was silent for 77 ticks) ─
+
+describe("agentTickLegs + healthPayload dynamic degradation", () => {
+  const healthy = { missStreak: 0, lastMissReason: null };
+  const failing = { missStreak: 5, lastMissReason: "cerebras 402: payment_required" };
+
+  test("below the streak threshold no leg appears; at it, both agents report", () => {
+    expect(agentTickLegs({ skyRelate: healthy, topicRefiner: healthy })).toEqual([]);
+    expect(agentTickLegs({ skyRelate: { missStreak: 2, lastMissReason: "timeout" } })).toEqual([]);
+    const legs = agentTickLegs({ skyRelate: failing, topicRefiner: { missStreak: 3, lastMissReason: "timeout" } });
+    expect(legs.map((leg) => leg.leg)).toEqual(["sky-relate", "topic-refiner"]);
+    expect(legs[0]!.detail).toBe("sky relate: 5 consecutive misses (cerebras 402: payment_required)");
+    expect(legs[1]!.detail).toBe("topic refiner: 3 consecutive misses (timeout)");
+    expect(legs[0]!.upgrade).toContain("Cerebras billing");
+  });
+
+  test("healthPayload appends dynamic legs and flips allReal; healthy agents leave it untouched", () => {
+    const boot = buildDegradationNotice(ALL_REAL);
+    expect(boot.allReal).toBe(true);
+    const degradedHealth = healthPayload({ degradation: boot, skyAgent: failing, topicRefiner: healthy });
+    expect(degradedHealth.degradation.allReal).toBe(false);
+    expect(degradedHealth.degradation.degraded.map((leg) => leg.leg)).toEqual(["sky-relate"]);
+    // Healthy agents: the payload passes the boot notice through by REFERENCE
+    // (legacy callers and the composition self test rely on identity).
+    const healthyPayload = healthPayload({ degradation: boot, skyAgent: healthy, topicRefiner: healthy });
+    expect(healthyPayload.degradation).toBe(boot);
   });
 });

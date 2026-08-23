@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "test:e2e": "playwright test",
+    "test:live": "bun run build && playwright test --config playwright.live.config.ts",
     "test:all": "bun test && playwright test",
     "seed": "bun src/scripts/seed-demo.ts",
     "eval:detect": "bun src/detect/evals/run-live.ts"
@@ -30,6 +31,7 @@
   "dependencies": {
     "3d-tiles-renderer": "^0.5.1",
     "@elizaos/core": "1.7.2",
+    "@mediapipe/tasks-vision": "0.10.21",
     "@types/three": "^0.185.1",
     "hono": "^4.12.25",
     "qrcode": "^1.5.4",

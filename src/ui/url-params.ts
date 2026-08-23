@@ -26,6 +26,10 @@ export interface ProjectorUrlConfig {
   // point→highlight→dwell-select mechanic (no cameras needed). The OS cursor
   // stays visible; only pure gesture mode hides it.
   dwell: "mouse" | null;
+  // ?mic=<label substring> — pin the room's capture to a specific microphone
+  // (e.g. ?mic=wireless for a RØDE Wireless GO receiver). Absent → the
+  // capture's room-mic policy (external over builtin) decides.
+  mic: string | null;
   // TouchDesigner hand-pinch camera control, non-null ONLY on explicit opt-in.
   // ?hands=1 → default TD URL on the page's hostname (port 9980);
   // ?hands=ws://td-mac:9980 → explicit remote source; absent/"0"/"" → off.
@@ -53,8 +57,43 @@ export interface ProjectorUrlConfig {
   // Billionaires' Row) behind the water (baked open data + CC-BY models, see
   // public/assets/park). Opt-in only; the default "meadow" keeps the
   // pastoral hills. Purely environmental — nodes, layouts, modes, gestures
-  // and the G garden↔orbit toggle behave identically.
+  // and the G garden↔orbit toggle behave identically. Distinct from ?park=1
+  // (the stylized OSM diorama laid under the meadow).
   environment: "meadow" | "park";
+  // ?flat=1 — the two wall windows sit side by side on ONE flat wall (no 90°
+  // corner): lock them into the rigid split-frustum pair (see flat-lock.ts)
+  // so the projections tile one continuous picture. run-room.sh appends it
+  // via --flat. Needs ?wall= to pick this window's half; wins over the
+  // corner lock.
+  flat: boolean;
+  // ?dots — per-window cursor-dot override: true (?dots=1) / false (?dots=0) /
+  // the persisted hidden-by-default preference (GestureLayer). run-room.sh
+  // appends it in gesture mode so pointing always has visible feedback.
+  // null = unspecified (the stored preference — default visible — decides).
+  dots: boolean | null;
+  // ?stick=1 — the fusion cursor source is a JOYSTICK (run-room.sh --arcade,
+  // no cameras): the guided demo's coaching says lever+button instead of
+  // "point with your hand". Both sources speak the same ws protocol, so the
+  // wall cannot tell them apart on its own — the launcher says which it wired.
+  stick: boolean;
+  // ?research=1 — force THIS window into the research-mode scene (the 3D
+  // conversation tree + crystals) regardless of the room-wide toggle: a
+  // dedicated display (e.g. a ceiling projector) always shows the tree while
+  // the walls follow the shared mode. Local only — never writes the server.
+  research: boolean;
+  // ?zen=1 — boot with the zen (chrome-less) presentation on, same as the Z
+  // key: just the scene, no trays/status chrome. For dedicated displays.
+  zen: boolean;
+  // ?park=1 — lay the REAL Central Park under the garden as a stylized
+  // diorama (baked OSM data: water bodies, lawns, every footpath, and the
+  // surveyed trees at their true positions — see src/ui/central-park.ts).
+  park: boolean;
+  // ?autofit= — continuous auto-framing override (the camera re-fits itself
+  // to keep the whole scene in view as it grows): "1" forces it on for any
+  // unlocked window, "0" forces it off, absent/unknown → null so App applies
+  // the default (ON for research-pinned windows — the ceiling projector).
+  // Corner/flat-locked pairs ignore it entirely: rigid pairs may not move.
+  autoFit: boolean | null;
 }
 
 export function parseProjectorUrl(search: string, hostname: string): ProjectorUrlConfig {
@@ -85,6 +124,8 @@ export function parseProjectorUrl(search: string, hostname: string): ProjectorUr
   // Mouse-dwell fallback (?dwell=mouse): desk testing / accessibility path for
   // the gesture interaction — independent of gesture mode.
   const dwell = params.get("dwell") === "mouse" ? ("mouse" as const) : null;
+  const micParam = params.get("mic");
+  const mic = micParam !== null && micParam.trim().length > 0 ? micParam.trim() : null;
 
   // TouchDesigner pinch camera (?hands=): camera CONTROL only, independent of
   // the dwell/gesture layers; ?hands=1 defaults to the TD port on this host.
@@ -109,6 +150,32 @@ export function parseProjectorUrl(search: string, hostname: string): ProjectorUr
   const mock = params.get("mock") === "1";
   const environment = params.get("env") === "park" ? ("park" as const) : ("meadow" as const);
 
+  // Flat-wall rig (?flat=1): the wall pair renders one continuous picture as
+  // halves of a single wide frustum instead of the corner-locked yawed pair.
+  const flat = params.get("flat") === "1";
+
+  // Cursor dots: VISIBLE unless this window explicitly opts out with ?dots=0
+  // (?dots=1 still forces on over a stored "0"). The old hidden-default made a
+  // healthy joystick look dead — the default is never an invisible cursor.
+  const dotsParam = params.get("dots");
+  const dots = dotsParam === "0" ? false : dotsParam === "1" ? true : null;
+
+  // Joystick-as-cursor flag (?stick=1): copy-only — the gesture layer itself
+  // is source-agnostic; only the guided demo's wording keys on it.
+  const stick = params.get("stick") === "1";
+
+  // Dedicated-display extras: window-local research view + boot-into-zen.
+  const research = params.get("research") === "1";
+  const zen = params.get("zen") === "1";
+
+  // Central Park diorama layer under the garden (?park=1).
+  const park = params.get("park") === "1";
+
+  // Continuous auto-framing tri-state: explicit "1"/"0" override, anything
+  // else defers (null) to App's default (on for research-pinned windows).
+  const autoFitParam = params.get("autofit");
+  const autoFit = autoFitParam === "1" ? true : autoFitParam === "0" ? false : null;
+
   // Corner identity badge: shown whenever the window is wall- or view-scoped so
   // an operator glancing across the room knows which projection they're facing.
   // DE-THEMED: a wall badge is just "WALL A" — the walls are one continuous
@@ -120,5 +187,6 @@ export function parseProjectorUrl(search: string, hostname: string): ProjectorUr
         ? view.toUpperCase()
         : null;
 
-  return { view, wall, badge, gesture, dwell, hands, remote, demo, mock, environment };
+  return { view, wall, badge, gesture, dwell,
+    mic, hands, remote, demo, mock, flat, dots, stick, research, zen, park, autoFit, environment };
 }

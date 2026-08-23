@@ -1,20 +1,41 @@
 import { describe, expect, test } from "bun:test";
 import {
+  AUTO_FIT_CENTER_DRIFT,
+  AUTO_FIT_INTERVAL_MS,
+  AUTO_FIT_RADIUS_RATIO,
+  AUTO_FIT_RESUME_MS,
+  SELF_PROCESS_UPID,
+  SELF_TREE_UPID,
+  autoFitSuspended,
   dialogueBranchLength,
   dialogueBranchPoint,
   dialogueBranches,
   dialogueLeafPosition,
   dialogueLeafT,
   dialogueTrunkHeight,
+  selfBranchPick,
+  selfTreeLabel,
+  selfTreeProcessSpec,
+  shouldAutoRefit,
   stageWord,
   treeIndicators,
   treeSpecStructurallyChanged,
   treeStatus,
   treeTitle,
+  visibleTreeSpecs,
+  type AutoFitFraming,
   type DialogueNodeSpec,
   type DialogueTopicSpec,
   type TreeSpec,
 } from "./RoomScene";
+import type { SelfTreeSpec } from "./self-repo";
+import {
+  DIALOGUE_FALLBACK_BRANCH_ID,
+  DIALOGUE_LEAF_PALETTE,
+  DIALOGUE_TREE_ID,
+  dialogueTreeSpec3D,
+  treeSpecSignature,
+} from "./tree";
 
 // A minimal legacy TreeSpec: only the fields callers set before the richer
 // indicators existed. Every new field is left absent to prove back-compat.
@@ -155,6 +176,124 @@ describe("tree label helpers", () => {
   });
 });
 
+// ── the self-repo garden tree ↔ the mirror process ──────────────────────────
+// While self-rebuild is armed the HD repo tree REPLACES the mirror process's
+// generic fleet tree and ADOPTS its live spec, so selecting the tree selects
+// the mirror (→ click-steer arms → talking steers the room's own source).
+
+// The pinned SELF process as App's treeSpecs useMemo projects it: upid "self"
+// (src/self/commission.ts: SELF_UPID), callsign "mirror" (SELF_CALLSIGN).
+function mirrorSpec(overrides: Partial<TreeSpec> = {}): TreeSpec {
+  return baseSpec({ upid: SELF_PROCESS_UPID, callsign: "mirror", task: "Vibersyn Room", stage: "commissioned", ...overrides });
+}
+
+// A minimal forest-derived garden-tree input (two open PRs as branches).
+const selfInput: SelfTreeSpec = {
+  repo: "acme/vibecode-room",
+  spec: {
+    id: "repo:acme/vibecode-room",
+    trunk: { height: 7, radius: 0.3 },
+    branches: [
+      { id: "pr-7", ref: "feat/self-tree", points: [{ x: 0, y: 3, z: 0 }, { x: 2, y: 5, z: 0 }], thickness: 0.12, tip: { kind: "status", color: 0x00ff88, label: "#7 Grow the self tree", sub: "pass" } },
+      { id: "pr-9", ref: "fix/ci", points: [{ x: 0, y: 4, z: 0 }, { x: -2, y: 6, z: 1 }], thickness: 0.12, tip: { kind: "status", color: 0xff3b30, label: "#9 Fix CI", sub: "fail" } },
+    ],
+  },
+};
+
+describe("visibleTreeSpecs — the HD self tree replaces the mirror's fleet tree", () => {
+  const fleet = [baseSpec(), mirrorSpec(), baseSpec({ upid: "u2", callsign: "Nova" })];
+
+  test("skips the upid-'self' fleet spec while the self tree is present", () => {
+    expect(visibleTreeSpecs(fleet, true).map((spec) => spec.upid)).toEqual(["u1", "u2"]);
+  });
+
+  test("keeps the mirror's fleet tree when the self tree is absent — never zero representations", () => {
+    expect(visibleTreeSpecs(fleet, false)).toEqual(fleet);
+  });
+
+  test("a fleet without the pinned mirror passes through either way", () => {
+    const noMirror = [baseSpec(), baseSpec({ upid: "u2", callsign: "Nova" })];
+    expect(visibleTreeSpecs(noMirror, true)).toEqual(noMirror);
+    expect(visibleTreeSpecs(noMirror, false)).toEqual(noMirror);
+  });
+});
+
+describe("selfTreeProcessSpec — the HD tree IS the mirror's live spec", () => {
+  test("adopts the mirror's TreeSpec verbatim when the fleet carries it", () => {
+    const mirror = mirrorSpec({ state: "active", steering: true });
+    expect(selfTreeProcessSpec(selfInput, [baseSpec(), mirror])).toBe(mirror);
+  });
+
+  test("pick payloads resolve to the MIRROR callsign — selecting the tree steers the room", () => {
+    // buildSelfTree stamps the coarse trunk hit volume with
+    // { kind: "process", callsign: <this spec's callsign> }.
+    expect(selfTreeProcessSpec(selfInput, [mirrorSpec()]).callsign).toBe("mirror");
+  });
+
+  test("falls back to a sensible synthetic when the mirror spec is absent", () => {
+    const fallback = selfTreeProcessSpec(selfInput, [baseSpec()]);
+    expect(fallback).toMatchObject({
+      upid: SELF_TREE_UPID,
+      callsign: "acme/vibecode-room",
+      state: "completed",
+      stage: "built",
+      steering: false,
+    });
+  });
+
+  test("structural mirror changes (steering flip) rebuild the entry like any fleet tree", () => {
+    // The reconcile gate reuses treeSpecStructurallyChanged on the adopted
+    // spec, so the steering ring appears/vanishes with the live target.
+    expect(treeSpecStructurallyChanged(mirrorSpec(), mirrorSpec({ steering: true }))).toBe(true);
+  });
+});
+
+// Each PR limb on the self tree is its OWN pick target: before this the whole
+// HD tree stamped { kind: "process" } everywhere, so the room read as one
+// hitbox and no branch could be selected (the live-room report).
+describe("selfBranchPick — every PR limb carries its own git identity", () => {
+  test("a branch with a head ref picks as that BRANCH, keyed to the mirror callsign", () => {
+    expect(selfBranchPick(selfInput.spec.branches[0], "mirror")).toEqual({
+      kind: "branch",
+      callsign: "mirror",
+      branch: "feat/self-tree",
+    });
+    expect(selfBranchPick(selfInput.spec.branches[1], "mirror")).toEqual({
+      kind: "branch",
+      callsign: "mirror",
+      branch: "fix/ci",
+    });
+  });
+
+  test("a ref-less branch falls back to the whole tree — a pick is never a dead end", () => {
+    const refless = { ...selfInput.spec.branches[0], ref: undefined };
+    expect(selfBranchPick(refless, "mirror")).toEqual({ kind: "process", callsign: "mirror" });
+    const blank = { ...selfInput.spec.branches[0], ref: "" };
+    expect(selfBranchPick(blank, "mirror")).toEqual({ kind: "process", callsign: "mirror" });
+  });
+});
+
+describe("selfTreeLabel — mirror title over the repo + PR-count chrome", () => {
+  test("title reads the live mirror process; sub keeps repo + open-PR count", () => {
+    expect(selfTreeLabel(selfInput, mirrorSpec())).toEqual({
+      title: "Vibersyn Room",
+      sub: "acme/vibecode-room · 2 open PRs",
+    });
+  });
+
+  test("the live steering marker rides the sub line", () => {
+    expect(selfTreeLabel(selfInput, mirrorSpec({ steering: true })).sub).toContain("⟵ steering");
+  });
+
+  test("fallback (no mirror pinned) titles by the repo and counts singular PRs", () => {
+    const onePr = { ...selfInput, spec: { ...selfInput.spec, branches: selfInput.spec.branches.slice(0, 1) } };
+    expect(selfTreeLabel(onePr, selfTreeProcessSpec(onePr, []))).toEqual({
+      title: "acme/vibecode-room",
+      sub: "acme/vibecode-room · 1 open PR",
+    });
+  });
+});
+
 // ── the conversation tree layout ────────────────────────────────────────────
 
 function turn(id: string, topicId?: string | null): DialogueNodeSpec {
@@ -271,5 +410,239 @@ describe("conversation tree layout math", () => {
       const b = dialogueLeafPosition(0, 2, h, len, j + 1, 6);
       expect(a.distanceTo(b)).toBeGreaterThan(0.5);
     }
+  });
+});
+
+// ── the HD tree spec (dialogue layout → TreeSpec3D, pure) ───────────────────
+
+describe("dialogueTreeSpec3D — HD tree spec from the tested layout", () => {
+  const turns = [turn("t1", "a"), turn("t2", "b"), turn("t3", "a"), turn("t4", "b")];
+  const topics = [topic("a"), topic("b")];
+
+  test("trunk height matches dialogueTrunkHeight of the resolved branch count", () => {
+    const spec = dialogueTreeSpec3D(turns, topics);
+    expect(spec.id).toBe(DIALOGUE_TREE_ID);
+    expect(spec.trunk.height).toBe(dialogueTrunkHeight(2));
+    expect(spec.trunk.radius).toBeGreaterThan(0);
+  });
+
+  test("one branch per dialogueBranches entry, in order, with stable ids", () => {
+    const spec = dialogueTreeSpec3D([...turns, turn("t5", "ghost")], topics);
+    const branches = dialogueBranches([...turns, turn("t5", "ghost")], topics);
+    expect(spec.branches.map((branch) => branch.id)).toEqual(
+      branches.map((branch) => branch.topicId ?? DIALOGUE_FALLBACK_BRANCH_ID),
+    );
+  });
+
+  test("branch endpoints are EXACT layout points — the raycast/label contract", () => {
+    const spec = dialogueTreeSpec3D(turns, topics);
+    const branches = dialogueBranches(turns, topics);
+    const trunkHeight = dialogueTrunkHeight(branches.length);
+    spec.branches.forEach((branchSpec, index) => {
+      const length = dialogueBranchLength(branches[index].turnIds.length);
+      const root = dialogueBranchPoint(index, branches.length, trunkHeight, length, 0);
+      const tip = dialogueBranchPoint(index, branches.length, trunkHeight, length, 1);
+      const first = branchSpec.points[0];
+      const last = branchSpec.points[branchSpec.points.length - 1];
+      expect(Math.hypot(first.x - root.x, first.y - root.y, first.z - root.z)).toBeLessThan(1e-9);
+      expect(Math.hypot(last.x - tip.x, last.y - tip.y, last.z - tip.z)).toBeLessThan(1e-9);
+    });
+  });
+
+  test("interior points wobble organically but stay near the tested curve", () => {
+    const spec = dialogueTreeSpec3D(turns, topics);
+    const branches = dialogueBranches(turns, topics);
+    const trunkHeight = dialogueTrunkHeight(branches.length);
+    let wobbled = 0;
+    spec.branches.forEach((branchSpec, index) => {
+      const length = dialogueBranchLength(branches[index].turnIds.length);
+      const steps = branchSpec.points.length - 1;
+      branchSpec.points.forEach((point, step) => {
+        const base = dialogueBranchPoint(index, branches.length, trunkHeight, length, step / steps);
+        const drift = Math.hypot(point.x - base.x, point.y - base.y, point.z - base.z);
+        // Gentle: never further than ~12% of the branch length off the spine.
+        expect(drift).toBeLessThan(length * 0.12);
+        if (drift > 1e-6) {
+          wobbled += 1;
+        }
+      });
+    });
+    expect(wobbled).toBeGreaterThan(0);
+  });
+
+  test("deterministic: the same conversation regrows the identical spec", () => {
+    expect(dialogueTreeSpec3D(turns, topics)).toEqual(dialogueTreeSpec3D(turns, topics));
+  });
+
+  test("different branch ids grow different interior curves (seeded variation)", () => {
+    const spec = dialogueTreeSpec3D([turn("t1", "a"), turn("t2", "b")], [topic("a"), topic("b")]);
+    // Compare interior wobble OFFSETS (endpoint-relative drift differs even
+    // though the two branches share length/membership).
+    const branches = dialogueBranches([turn("t1", "a"), turn("t2", "b")], [topic("a"), topic("b")]);
+    const trunkHeight = dialogueTrunkHeight(branches.length);
+    const drifts = spec.branches.map((branchSpec, index) => {
+      const length = dialogueBranchLength(branches[index].turnIds.length);
+      const steps = branchSpec.points.length - 1;
+      return branchSpec.points.map((point, step) => {
+        const base = dialogueBranchPoint(index, branches.length, trunkHeight, length, step / steps);
+        return Math.hypot(point.x - base.x, point.y - base.y, point.z - base.z).toFixed(5);
+      });
+    });
+    expect(drifts[0]).not.toEqual(drifts[1]);
+  });
+
+  test("tips carry the topic label, member count and the freshest turn pickId", () => {
+    const spec = dialogueTreeSpec3D(turns, topics);
+    expect(spec.branches[0].tip).toMatchObject({ kind: "topic", label: "label a", sub: "2 turns", pickId: "t3" });
+    expect(spec.branches[1].tip).toMatchObject({ sub: "2 turns", pickId: "t4" });
+  });
+
+  test("no topics → the fallback branch holds every turn and stays pickable", () => {
+    const spec = dialogueTreeSpec3D([turn("t1"), turn("t2")], []);
+    expect(spec.branches).toHaveLength(1);
+    expect(spec.branches[0].id).toBe(DIALOGUE_FALLBACK_BRANCH_ID);
+    expect(spec.branches[0].tip?.pickId).toBe("t2");
+  });
+
+  test("a leaf tuft adornment per windowed turn at the EXACT leaf slot, stemmed on the wood", () => {
+    const spec = dialogueTreeSpec3D(turns, topics);
+    const branches = dialogueBranches(turns, topics);
+    const trunkHeight = dialogueTrunkHeight(branches.length);
+    const tufts = (spec.adornments ?? []).filter((adornment) => adornment.kind === "leaf");
+    expect(tufts.map((tuft) => tuft.id).sort()).toEqual(["tuft:t1", "tuft:t2", "tuft:t3", "tuft:t4"]);
+    branches.forEach((branch, branchIndex) => {
+      const length = dialogueBranchLength(branch.turnIds.length);
+      branch.turnIds.forEach((turnId, memberIndex) => {
+        const slot = dialogueLeafPosition(branchIndex, branches.length, trunkHeight, length, memberIndex, branch.turnIds.length);
+        const tuft = tufts.find((candidate) => candidate.id === `tuft:${turnId}`)!;
+        expect(Math.hypot(tuft.position.x - slot.x, tuft.position.y - slot.y, tuft.position.z - slot.z)).toBeLessThan(1e-9);
+        // The petiole stem attaches on the branch, close to (but off) the leaf.
+        expect(tuft.stem).toBeDefined();
+        const stemGap = Math.hypot(tuft.stem!.x - slot.x, tuft.stem!.y - slot.y, tuft.stem!.z - slot.z);
+        expect(stemGap).toBeGreaterThan(0.1);
+        expect(stemGap).toBeLessThan(1.5);
+        expect(DIALOGUE_LEAF_PALETTE).toContain(tuft.color);
+      });
+    });
+  });
+
+  test("empty conversation → empty spec (the tree costs nothing when research is off)", () => {
+    const spec = dialogueTreeSpec3D([], []);
+    expect(spec.branches).toEqual([]);
+    expect(spec.adornments).toEqual([]);
+  });
+
+  test("foliage density grows with conversation size and clamps at 1", () => {
+    const few = dialogueTreeSpec3D([turn("t1", "a")], [topic("a")]);
+    const many = dialogueTreeSpec3D(
+      Array.from({ length: 12 }, (_, i) => turn(`t${i}`, "a")),
+      [topic("a")],
+    );
+    expect(many.foliage!.density).toBeGreaterThan(few.foliage!.density);
+    const huge = dialogueTreeSpec3D(
+      Array.from({ length: 40 }, (_, i) => turn(`t${i}`, `topic${i % 6}`)),
+      Array.from({ length: 6 }, (_, i) => topic(`topic${i}`)),
+    );
+    expect(huge.foliage!.density).toBe(1);
+  });
+});
+
+describe("treeSpecSignature — reconcile skips identical regrowth", () => {
+  const turns = [turn("t1", "a"), turn("t2", "b")];
+  const topics = [topic("a"), topic("b")];
+
+  test("identical conversations sign identically", () => {
+    expect(treeSpecSignature(dialogueTreeSpec3D(turns, topics))).toBe(
+      treeSpecSignature(dialogueTreeSpec3D(turns, topics)),
+    );
+  });
+
+  test("a new turn changes the signature (leaves + tip counts move)", () => {
+    const before = treeSpecSignature(dialogueTreeSpec3D(turns, topics));
+    const after = treeSpecSignature(dialogueTreeSpec3D([...turns, turn("t3", "a")], topics));
+    expect(after).not.toBe(before);
+  });
+
+  test("a relabeled topic changes the signature (tip chrome must repaint)", () => {
+    const renamed = [{ ...topic("a"), label: "renamed" }, topic("b")];
+    expect(treeSpecSignature(dialogueTreeSpec3D(turns, renamed))).not.toBe(
+      treeSpecSignature(dialogueTreeSpec3D(turns, topics)),
+    );
+  });
+
+  test("two specs differing only in `ref` sign differently — a renamed head ref regrows", () => {
+    // A force-push that renames a PR's head ref keeps the number (so identical
+    // geometry AND identical tip chrome); without ref in the signature the
+    // scene would keep serving a stale branch pick payload.
+    const renamed = {
+      ...selfInput.spec,
+      branches: [{ ...selfInput.spec.branches[0], ref: "feat/self-tree-v2" }, selfInput.spec.branches[1]],
+    };
+    expect(treeSpecSignature(renamed)).not.toBe(treeSpecSignature(selfInput.spec));
+    expect(treeSpecSignature(selfInput.spec)).toBe(treeSpecSignature({ ...selfInput.spec }));
+  });
+});
+
+// ── continuous auto-framing (the ceiling projector's self-driving camera) ───
+
+function framing(targetX: number, targetZ: number, radius: number): AutoFitFraming {
+  return { targetX, targetZ, radius };
+}
+
+describe("shouldAutoRefit — hysteresis so idle scenes never twitch", () => {
+  test("tuning constants pin the contract: 0.75s poll, 4s resume, 6% / 0.3u bands", () => {
+    expect(AUTO_FIT_INTERVAL_MS).toBe(750);
+    expect(AUTO_FIT_RESUME_MS).toBe(4000);
+    expect(AUTO_FIT_RADIUS_RATIO).toBeCloseTo(0.06, 5);
+    expect(AUTO_FIT_CENTER_DRIFT).toBeCloseTo(0.3, 5);
+  });
+
+  test("identical framing never refits — a completed refit is a fixed point", () => {
+    const ideal = framing(4.2, -1.7, 23.4);
+    expect(shouldAutoRefit({ ...ideal }, ideal)).toBe(false);
+  });
+
+  test("radius drift beyond 10% refits, growing out AND zooming back in", () => {
+    expect(shouldAutoRefit(framing(0, 0, 10), framing(0, 0, 11.1))).toBe(true);
+    expect(shouldAutoRefit(framing(0, 0, 10), framing(0, 0, 8.9))).toBe(true);
+  });
+
+  test("radius drift within 6% stays put", () => {
+    expect(shouldAutoRefit(framing(0, 0, 10), framing(0, 0, 10.5))).toBe(false);
+    expect(shouldAutoRefit(framing(0, 0, 10), framing(0, 0, 9.5))).toBe(false);
+  });
+
+  test("the 6% band is relative to the CURRENT radius", () => {
+    // Same absolute +2 delta: negligible on a wide shot, decisive close in.
+    expect(shouldAutoRefit(framing(0, 0, 40), framing(0, 0, 42))).toBe(false);
+    expect(shouldAutoRefit(framing(0, 0, 8), framing(0, 0, 10))).toBe(true);
+  });
+
+  test("centre drift beyond 0.8 world units refits (euclidean — diagonals count)", () => {
+    expect(shouldAutoRefit(framing(0, 0, 15), framing(0.9, 0, 15))).toBe(true);
+    expect(shouldAutoRefit(framing(0, 0, 15), framing(0, -0.9, 15))).toBe(true);
+    // hypot(0.6, 0.6) ≈ 0.85 > 0.8 although neither axis alone crosses it.
+    expect(shouldAutoRefit(framing(0, 0, 15), framing(0.6, 0.6, 15))).toBe(true);
+  });
+
+  test("centre drift within 0.3 world units stays put (tight centering for the ceiling)", () => {
+    expect(shouldAutoRefit(framing(0, 0, 15), framing(0.2, 0.1, 15))).toBe(false); // hypot ≈ 0.22
+    expect(shouldAutoRefit(framing(3, -3, 15), framing(3.25, -3, 15))).toBe(false);
+  });
+});
+
+describe("autoFitSuspended — manual camera input pauses the auto-framing", () => {
+  test("a live drag or external pinch grab suspends regardless of timing", () => {
+    expect(autoFitSuspended(1_000_000, -AUTO_FIT_RESUME_MS, true)).toBe(true);
+  });
+
+  test("stays suspended within 4s of the last input, resumes right after", () => {
+    const lastInput = 10_000;
+    expect(autoFitSuspended(lastInput + AUTO_FIT_RESUME_MS - 1, lastInput, false)).toBe(true);
+    expect(autoFitSuspended(lastInput + AUTO_FIT_RESUME_MS, lastInput, false)).toBe(false);
+  });
+
+  test("a fresh window (input stamp seeded one resume-window in the past) is eligible at t=0", () => {
+    expect(autoFitSuspended(0, -AUTO_FIT_RESUME_MS, false)).toBe(false);
   });
 });

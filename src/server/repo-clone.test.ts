@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { cloneRepo, repoDigest } from "./repo-clone";
+import { cloneArgv, cloneEnv, cloneRepo, repoDigest } from "./repo-clone";
 
 // Real-git coverage against LOCAL fixture repos only (file:// paths built with
 // `git init` in a temp dir) — the suite never touches the network. The github
@@ -72,6 +72,42 @@ describe("cloneRepo", () => {
     const result = await cloneRepo({ url: fixture, dir: target, signal: controller.signal });
     expect(result.ok).toBe(false);
     expect(existsSync(target)).toBe(false);
+  });
+});
+
+describe("cloneArgv / cloneEnv — hardened auth (pure, no subprocess)", () => {
+  test("argv clears inherited credential helpers then routes through gh auth git-credential", () => {
+    const argv = cloneArgv("https://github.com/acme/widget.git", "/tmp/target");
+    expect(argv).toEqual([
+      "git",
+      "-c",
+      "credential.helper=",
+      "-c",
+      "credential.helper=!gh auth git-credential",
+      "clone",
+      "--depth",
+      "1",
+      "--single-branch",
+      "https://github.com/acme/widget.git",
+      "/tmp/target",
+    ]);
+    // The empty-helper reset comes FIRST so the gh helper is the only one left.
+    expect(argv.indexOf("credential.helper=")).toBeLessThan(argv.indexOf("credential.helper=!gh auth git-credential"));
+  });
+
+  test("the PAT rides env only: VIBERSYN_GITHUB_PAT forwards as GH_TOKEN, never argv", () => {
+    const env = cloneEnv({ VIBERSYN_GITHUB_PAT: "ghp_secret" });
+    expect(env.GH_TOKEN).toBe("ghp_secret");
+    expect(env.GIT_TERMINAL_PROMPT).toBe("0");
+    expect(env.GIT_ASKPASS).toBe("true");
+    expect(cloneArgv("https://github.com/acme/widget.git", "/tmp/target").join(" ")).not.toContain("ghp_");
+  });
+
+  test("an explicit GH_TOKEN or GITHUB_TOKEN is never overridden by the PAT", () => {
+    expect(cloneEnv({ GH_TOKEN: "gho_existing", VIBERSYN_GITHUB_PAT: "ghp_secret" }).GH_TOKEN).toBe("gho_existing");
+    const viaGithubToken = cloneEnv({ GITHUB_TOKEN: "gho_ci", VIBERSYN_GITHUB_PAT: "ghp_secret" });
+    expect(viaGithubToken.GH_TOKEN).toBeUndefined();
+    expect(viaGithubToken.GITHUB_TOKEN).toBe("gho_ci");
   });
 });
 

@@ -2,13 +2,14 @@ import { describe, expect, test } from "bun:test";
 import { ProcessRegistry } from "../process/registry";
 import { MemorySmithersClient } from "../process/test-helpers";
 import { runReplayObservations, type DecisionInput, type DecisionLLM } from "../replay/harness";
-import type { DispatchedAction, OutputDecision, PendingSuggestion, TranscriptObservation } from "../types";
+import type { DispatchedAction, IdeaBrief, OutputDecision, PendingSuggestion, TranscriptObservation } from "../types";
 import { AcceptanceClassifier } from "./classifier";
 import { PendingSuggestionOwner } from "./pending";
 import {
   AcceptanceController,
   AcceptanceSpawner,
   createProcessRegistryAcceptanceSeam,
+  seedFromSuggestion,
   type AcceptanceSpawnDispatchResult,
   type AcceptanceSpawnSeam,
 } from "./spawn";
@@ -101,6 +102,37 @@ describe("acceptance spawn flow", () => {
     expect(runtime.registry.records()).toEqual(before);
     expect(runtime.seam.actions).toEqual([]);
     expect(runtime.pending.pending()).toBeNull();
+  });
+
+  test("a suggestion's IdeaBrief rides the seed and the seam's spawn payload untouched", async () => {
+    // Context used to die exactly here: seedFromSuggestion kept only
+    // pitch+mcqs+answers. The brief must survive the seed AND the dispatched
+    // spawn payload (the seam spreads the seed onto registry.spawn's input).
+    const brief: IdeaBrief = {
+      pitch: "Build replay coverage",
+      sourceQuote: "we should build replay coverage for the acceptance flow",
+      rationale: "Concrete testing gap, named surface.",
+      qa: [{ id: "q-fixture", prompt: "Which fixture?", answers: ["Replay trace fixture", "Live mic"] }],
+      callsign: null,
+      maturity: "proposed",
+    };
+    const withBrief: PendingSuggestion = { ...suggestion(), brief };
+
+    const seed = seedFromSuggestion(withBrief);
+    expect(seed.brief).toEqual(brief);
+    // A brief-less suggestion omits the key entirely (legacy seed shape intact).
+    expect("brief" in seedFromSuggestion(suggestion())).toBe(false);
+
+    const runtime = createAcceptanceRuntime();
+    runtime.controller.acceptSuggestion(withBrief);
+    const accepted = await runtime.controller.observe({ observation: observation("yes", "utt-accept-brief"), correlationId: "corr-accept-brief" });
+    expect(accepted.kind).toBe("spawned");
+    expect(runtime.seam.actions).toEqual([
+      expect.objectContaining({
+        type: "spawn",
+        payload: expect.objectContaining({ pitch: "Build replay coverage", brief }),
+      }),
+    ]);
   });
 
   test("record-replay transcript deterministically accumulates MCQ answers before accept", async () => {

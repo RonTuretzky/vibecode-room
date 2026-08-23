@@ -83,7 +83,7 @@ describe("ExecutionRegistry", () => {
     const lane = await registry.complete("upid-2");
 
     expect(lane).toMatchObject({ status: "built", percent: 100, label: "built", error: null });
-    expect(lane?.previewUrl).toBe("http://127.0.0.1:4242/?v=1");
+    expect(lane?.previewUrl).toBe("http://127.0.0.1:4242/?v=run-2.1");
     expect(serving.served).toEqual([join(root, "upid-2")]);
     expect(registry.isExecuting("upid-2")).toBe(false);
 

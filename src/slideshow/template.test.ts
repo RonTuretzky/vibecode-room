@@ -245,6 +245,37 @@ describe("renderSlideshowHtml — decision slide", () => {
     expect(html).not.toContain('" onmouseover="');
     expect(html).not.toContain("<b>done</b>");
   });
+
+  test("bridged decisions carry data-bridge/-bridge-only and the script posts vibersyn:decision to the parent", () => {
+    const bridged: SlideDecision[] = [
+      { ...DECISIONS[0]!, bridgeChoice: "commission", bridgeOnly: true },
+      { ...DECISIONS[2]!, bridgeChoice: "park" },
+    ];
+    const html = renderSlideshowHtml({
+      title: "t",
+      footer: "f",
+      slides: [{ kicker: "k", title: "t", decisions: bridged }],
+    });
+    expect(html).toMatch(/data-decision="execute"[^>]*data-bridge="commission"/u);
+    expect(html).toMatch(/data-decision="execute"[^>]*data-bridge-only="1"/u);
+    expect(html).toMatch(/data-decision="dismiss"[^>]*data-bridge="park"/u);
+    expect(html).not.toMatch(/data-decision="dismiss"[^>]*data-bridge-only/u);
+    // Half 1 of the DECK DWELL BRIDGE: the in-deck choice reaches the room's
+    // parent window (src/ui/stage.ts parses it) — standalone copies no-op.
+    expect(html).toContain('window.parent.postMessage({ type: "vibersyn:decision", choice: choice }, "*")');
+    // A delivered bridge on a bridge-only button skips the direct POST but
+    // still settles the slide locally (confirmation + terminal lock).
+    expect(html).toContain('decision.getAttribute("data-bridge-only") === "1"');
+    expect(html).toContain("lockDecisions(decision)");
+  });
+
+  test("a #decision hash opens the deck straight on the decision slide (guided decide step)", () => {
+    const html = renderPitch();
+    expect(html).toContain('if (rawHash === "decision")');
+    expect(html).toContain("decisionSlideIndex()");
+    // Numeric hashes keep working as 1-based slide numbers.
+    expect(html).toContain("parseInt(rawHash, 10)");
+  });
 });
 
 const QUESTIONS: SlideQuestion[] = [
@@ -276,10 +307,12 @@ describe("renderSlideshowHtml — swipe-to-answer question cards", () => {
     expect(firstQuestionAt).toBeLessThan(decisionsAt);
   });
 
-  test("each answer is a plain <button> carrying its label, questionId group + dwell hook", () => {
+  test("each answer is a plain <button> carrying its label, questionId+prompt group + dwell hook", () => {
     const html = renderWithQuestions();
+    // The group carries the question PROMPT alongside the id so the answer
+    // POST can frame the steer as the actual question, not an opaque hash.
     expect(html).toContain(
-      'data-answers data-question-id="q-repo" data-answer-endpoint="/api/process/upid-3/answer"',
+      'data-answers data-question-id="q-repo" data-question-prompt="Which repo?" data-answer-endpoint="/api/process/upid-3/answer"',
     );
     expect(html).toContain('data-answer="Slack bot" data-dwell="answer-q-repo-0"');
     expect(html).toContain('data-answer="Notes doc" data-dwell="answer-q-repo-1"');
@@ -299,13 +332,27 @@ describe("renderSlideshowHtml — swipe-to-answer question cards", () => {
     expect(sections).toHaveLength(6);
   });
 
-  test("selecting an answer POSTs {questionId, answer} as JSON to the group endpoint", () => {
+  test("selecting an answer POSTs {questionId, prompt, answer} as JSON to the group endpoint", () => {
     const html = renderWithQuestions();
-    expect(html).toContain("questionId: questionId, answer: answer");
+    // The question prompt rides the POST so the room can frame the steer as
+    // the actual question asked.
+    expect(html).toContain("questionId: questionId, prompt: prompt, answer: answer");
     expect(html).toContain('"content-type": "application/json"');
     // The endpoint the fetch targets is the per-group data-answer-endpoint.
     expect(html).toContain('group.getAttribute("data-answer-endpoint")');
     expect(html).toContain('group.getAttribute("data-question-id")');
+    expect(html).toContain('group.getAttribute("data-question-prompt")');
+  });
+
+  test("with a live endpoint the card locks in and the deck auto-navigates to the mock slide", () => {
+    const html = renderWithQuestions();
+    // Post-answer status: the choice visibly reshapes the build.
+    expect(html).toContain("Locked in — the mocks are rebuilding with this choice");
+    // ~1.5s later the deck shows the mock gallery so the rebuild is watched.
+    expect(html).toContain("mockSlideIndex()");
+    expect(html).toContain("}, 1500)");
+    // Without an endpoint the status stays the plain local echo.
+    expect(html).toContain('"You picked: " + answer');
   });
 
   test("question prompts and answer labels are HTML-escaped", () => {
@@ -337,9 +384,32 @@ describe("renderSlideshowHtml — swipe-to-answer question cards", () => {
     const html = renderSlideshowHtml({ title: "t", footer: "f", slides: [], questions: QUESTIONS });
     expect(html).toContain('<section class="slide question');
     // The group renders WITHOUT a data-answer-endpoint attribute.
-    expect(html).toContain('<div class="answers" data-answers data-question-id="q-repo">');
+    expect(html).toContain('<div class="answers" data-answers data-question-id="q-repo" data-question-prompt="Which repo?">');
     // Missing endpoint short-circuits before any fetch (graceful standalone copy).
     expect(html).toContain("if (!endpoint)");
+  });
+
+  test("a pre-decided card (answer ledger) renders locked with the chosen answer highlighted", () => {
+    const decided: SlideQuestion[] = [
+      { id: "q-repo", prompt: "Which repo?", answers: ["Slack bot", "Notes doc"], chosen: "Slack bot" },
+    ];
+    const html = renderSlideshowHtml({
+      title: "t",
+      footer: "f",
+      slides: PITCH_SLIDES,
+      questions: decided,
+      answerEndpoint: "/api/process/upid-3/answer",
+    });
+    // The group is marked decided (the deck script refuses re-answers on it).
+    expect(html).toContain('data-decided="1"');
+    expect(html).toContain('data-decided-slide="1"');
+    expect(html).toContain('group.getAttribute("data-decided") === "1"');
+    // Every option locks; the chosen one is highlighted.
+    expect(html).toContain('<button class="answer chosen" type="button" data-answer="Slack bot"');
+    expect(html).toMatch(/data-answer="Notes doc"[^>]*disabled /u);
+    // The status pre-fills the made call and the kicker says it is answered.
+    expect(html).toContain("You chose: Slack bot");
+    expect(html).toContain("· answered");
   });
 });
 

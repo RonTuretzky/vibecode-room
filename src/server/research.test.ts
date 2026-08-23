@@ -204,6 +204,21 @@ describe("snapshot research/dialogue fields", () => {
     expect(snapshot.research?.[0]?.evidence).toBe("a claim worth checking");
   });
 
+  test("the conversation sky rides the snapshot: one cloud per topic, honesty stamp null offline", async () => {
+    const { app, runtime } = await makeApp();
+    // Turns are live data — no research mode needed for the sky to fill.
+    runtime.research.ingestTurn({ speaker: "s1", text: "solar panel inverter efficiency readings", atMs: 1_000 });
+    runtime.research.ingestTurn({ speaker: "s2", text: "opera rehearsal moved to thursday", atMs: 11_000 });
+
+    const state = await app.request("/api/state");
+    const snapshot = (await state.json()) as ProjectorSnapshot;
+    expect(snapshot.sky?.clouds.length).toBe(2);
+    expect(snapshot.sky?.clouds.map((cloud) => cloud.liveTopicId)).toEqual(["topic-0001", "topic-0002"]);
+    expect(snapshot.sky?.clouds[0]?.turnCount).toBe(1);
+    // No relate model has spoken — the provenance stamp says so.
+    expect(snapshot.sky?.agentAtMs).toBeNull();
+  });
+
   test("emergency stop fails in-flight research and clears proposals from the snapshot", async () => {
     const { runtime } = await makeApp([[researchSuggestion()], [researchSuggestion({ topic: "Other", claim: "other claim" })]]);
     runtime.setResearchMode(true);

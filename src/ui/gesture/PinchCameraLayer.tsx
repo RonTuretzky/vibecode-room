@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { getSceneCameraControl } from "./camera-source";
+import { applyCameraIntents, getSceneCameraControl } from "./camera-source";
 import { HandsClient, type HandsStatus } from "./hands-client";
 import { PinchCam, type CameraIntent } from "./pinch-cam";
 
@@ -34,35 +34,9 @@ export function PinchCameraLayer({ url, wall, onStatus }: PinchCameraLayerProps)
     const nowSec = () => performance.now() / 1000;
     const pinchCam = new PinchCam();
 
-    const apply = (intents: CameraIntent[]) => {
-      const control = getSceneCameraControl();
-      if (control === null) {
-        return;
-      }
-      for (const it of intents) {
-        switch (it.kind) {
-          case "grab":
-            control.setTracking(true);
-            break;
-          case "release":
-            control.flick(it.yawVel, it.heightVel);
-            control.setTracking(false);
-            break;
-          case "orbit":
-            control.orbitBy(it.dYaw, it.dHeight);
-            break;
-          case "zoom":
-            control.zoomBy(it.scale);
-            break;
-          case "pan":
-            // Normalized → px via viewport HEIGHT for BOTH axes (the
-            // OrbitControls convention); the rig's 0.0045*radius panSpeed
-            // then applies its own feel.
-            control.panBy(it.dx * window.innerHeight, it.dy * window.innerHeight);
-            break;
-        }
-      }
-    };
+    // Shared translation (camera-source.applyCameraIntents) — the guest fly
+    // relay uses the identical path, so the two sources can never drift.
+    const apply = (intents: CameraIntent[]) => applyCameraIntents(intents, window.innerHeight);
 
     // The interpreter is driven PER WS FRAME (~30 Hz), never per rAF, so
     // zero-delta repeats can't dilute the flick EMA; the rig's own lerp does

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { IdeaCandidate } from "../detect";
-import { ideaTrayFromCandidates, ideaTrayItemFromCandidate } from "./idea-suggestion";
+import { pendingSuggestionSchema } from "../types";
+import { briefFromCandidate, ideaTrayFromCandidates, ideaTrayItemFromCandidate, pendingSuggestionFromCandidate } from "./idea-suggestion";
 
 // The idea TRAY projection: ledger candidates → IdeaTrayItem, ready first, then
 // confidence descending — the ordering the projector renders verbatim.
@@ -68,6 +69,59 @@ describe("ideaTrayItemFromCandidate", () => {
     const item = ideaTrayItemFromCandidate(candidate({ status: "forming", confidence: 1.7 }));
     expect(item.status).toBe("forming");
     expect(item.confidence).toBe(1);
+  });
+});
+
+describe("briefFromCandidate — the ONE place the idea's context brief is constructed", () => {
+  test("maps pitch, grounding quote, rationale, deck-normalized Q&A, and maturity from the candidate", () => {
+    const brief = briefFromCandidate(
+      candidate({
+        questions: ["Which sound set?"],
+        answers: ["Wood / Electronic"],
+      }),
+    );
+    expect(brief.pitch).toBe("Build a dashboard");
+    expect(brief.sourceQuote).toBe("context quote");
+    expect(brief.rationale).toBe("grounded proposal");
+    expect(brief.qa).toHaveLength(1);
+    expect(brief.qa[0]?.id).toMatch(/^q-/u);
+    expect(brief.qa[0]?.prompt).toBe("Which sound set?");
+    expect(brief.qa[0]?.answers).toEqual(["Wood", "Electronic"]);
+    expect(brief.qa[0]?.chosen).toBeUndefined();
+    expect(brief.callsign).toBeNull();
+    expect(brief.maturity).toBe("proposed");
+  });
+
+  test("clamps the source quote at 300 chars and the rationale at 200 (prompt-growth contract)", () => {
+    const brief = briefFromCandidate(
+      candidate({
+        contextSpan: { startTurnId: "turn-0001", endTurnId: "turn-0009", quote: "q".repeat(500) },
+        rationale: "r".repeat(500),
+      }),
+    );
+    expect(brief.sourceQuote).toHaveLength(300);
+    expect(brief.sourceQuote.endsWith("…")).toBe(true);
+    expect(brief.rationale).toHaveLength(200);
+    expect(brief.rationale.endsWith("…")).toBe(true);
+  });
+
+  test("a question-less candidate yields an empty qa list, never a fabricated card", () => {
+    expect(briefFromCandidate(candidate()).qa).toEqual([]);
+  });
+
+  test("pendingSuggestionFromCandidate carries the brief AND survives the strict schema re-parse", () => {
+    // The acceptance path re-parses the suggestion through the .strict()
+    // pendingSuggestionSchema (pending.ts) — the brief must ride through
+    // WITHOUT being stripped or rejected, or context dies at acceptance.
+    const suggestion = pendingSuggestionFromCandidate(
+      candidate({ questions: ["Which sound set?"], answers: ["Wood / Electronic"] }),
+      "corr-brief",
+      99_000,
+    );
+    expect(suggestion.brief).toEqual(briefFromCandidate(candidate({ questions: ["Which sound set?"], answers: ["Wood / Electronic"] })));
+    const reparsed = pendingSuggestionSchema.parse(suggestion);
+    expect(reparsed).toEqual(suggestion);
+    expect(reparsed.brief?.sourceQuote).toBe("context quote");
   });
 });
 

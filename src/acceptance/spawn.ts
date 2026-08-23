@@ -1,6 +1,6 @@
 import { checkPreSpawnResources, type HostHeadroom, type SpawnRefusalReason } from "../process/resource-check";
 import { ProcessRegistry, type RegistryProcess } from "../process/registry";
-import type { DispatchedAction, LogEvent, OutputDecision, PendingSuggestion } from "../types";
+import { ideaBriefSchema, type DispatchedAction, type IdeaBrief, type LogEvent, type OutputDecision, type PendingSuggestion } from "../types";
 import { AcceptanceClassifier, type AcceptanceClassification } from "./classifier";
 import { ACCEPTANCE_STATE_SUGGESTION_DELIVERY, PendingSuggestionOwner, type PendingExpiryResult } from "./pending";
 
@@ -10,6 +10,10 @@ export interface AcceptanceSpawnSeed {
   pitch: string;
   mcqs: string[];
   answers: string[];
+  // The idea's context brief (IdeaBrief, ../types) when the accepted suggestion
+  // carried one. The seam spreads the whole seed onto the spawn input, so the
+  // brief rides into the registry/orchestrator/backends untouched.
+  brief?: IdeaBrief;
 }
 
 export type AcceptanceSpawnDispatchResult =
@@ -272,6 +276,7 @@ export function seedFromSuggestion(suggestion: PendingSuggestion): AcceptanceSpa
     pitch: suggestion.pitch,
     mcqs: [...suggestion.mcqs],
     answers: [...suggestion.answers],
+    ...(suggestion.brief === undefined ? {} : { brief: suggestion.brief }),
   };
 }
 
@@ -279,10 +284,14 @@ function seedFromPayload(payload: unknown): AcceptanceSpawnSeed {
   if (!isRecord(payload)) {
     return { pitch: "", mcqs: [], answers: [] };
   }
+  // Tolerant brief recovery: a well-formed brief rides along; anything else is
+  // simply omitted (the pipeline treats the brief as optional everywhere).
+  const brief = ideaBriefSchema.safeParse(payload.brief);
   return {
     pitch: typeof payload.pitch === "string" ? payload.pitch : "",
     mcqs: stringArray(payload.mcqs),
     answers: stringArray(payload.answers),
+    ...(brief.success ? { brief: brief.data } : {}),
   };
 }
 

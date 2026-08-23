@@ -16,8 +16,8 @@ import type { ProcessExecution, ProcessStage } from "./stage";
  *
  * Each backend mocking this process gets one chip: BUILDING pulses (the race
  * must visibly read as alive) and carries the live progress label/percent;
- * READY turns green ("mock ready") and exposes Preview/Slides links that open
- * in new windows; FAILED turns red. Everything renders inside the clickable
+ * READY turns green ("mock ready") and exposes ONE in-room View button that
+ * opens the deck window on that lane; FAILED turns red. Everything renders inside the clickable
  * fleet panel (whose click steers/selects), so every interactive element here
  * stops propagation.
  */
@@ -29,24 +29,31 @@ function stopClick(clickEvent: MouseEvent) {
 export interface BuildChipsProps {
   builds: ProcessBuild[];
   // The process's stage. "concept" labels ready lanes as MOCK READY (the
-  // two-stage language); omitted = legacy rendering (plain ready links).
+  // two-stage language); omitted = legacy rendering.
   stage?: ProcessStage;
+  // Opens the deck window ON this lane's tab. ONE in-room affordance per
+  // lane replaces the old Preview/Slides target="_blank" anchors: a dwell-
+  // synthesized click on a _blank link is popup-blocked (untrusted event),
+  // so those links were dead for every cursor except a real mouse. Absent
+  // (the deck window's own header) no per-lane button renders — the deck
+  // tabs already switch lanes there.
+  onOpenDeck?: (backend: string) => void;
 }
 
-export function BuildChips({ builds, stage }: BuildChipsProps) {
+export function BuildChips({ builds, stage, onOpenDeck }: BuildChipsProps) {
   if (builds.length === 0) {
     return null;
   }
   return (
     <div className="build-chips" data-testid="build-chips">
       {builds.map((build) => (
-        <BuildChip key={build.backend} build={build} mock={stage === "concept"} />
+        <BuildChip key={build.backend} build={build} mock={stage === "concept"} onOpenDeck={onOpenDeck} />
       ))}
     </div>
   );
 }
 
-function BuildChip({ build, mock }: { build: ProcessBuild; mock: boolean }) {
+function BuildChip({ build, mock, onOpenDeck }: { build: ProcessBuild; mock: boolean; onOpenDeck?: (backend: string) => void }) {
   const percent = typeof build.percent === "number" ? Math.round(build.percent) : null;
   return (
     <div
@@ -75,32 +82,20 @@ function BuildChip({ build, mock }: { build: ProcessBuild; mock: boolean }) {
         </span>
       ) : null}
       {build.status === "failed" ? <span className="build-chip-failed">failed</span> : null}
-      {build.status === "ready" ? (
+      {build.status === "ready" && onOpenDeck !== undefined ? (
         <span className="build-chip-links">
-          {build.previewUrl !== null ? (
-            <a
-              className="build-chip-link"
-              data-testid="build-preview-link"
-              href={build.previewUrl}
-              target="_blank"
-              rel="noreferrer"
-              onClick={stopClick}
-            >
-              Preview ↗
-            </a>
-          ) : null}
-          {build.slideshowUrl !== null ? (
-            <a
-              className="build-chip-link"
-              data-testid="build-slides-link"
-              href={build.slideshowUrl}
-              target="_blank"
-              rel="noreferrer"
-              onClick={stopClick}
-            >
-              Slides ↗
-            </a>
-          ) : null}
+          <button
+            type="button"
+            className="build-chip-link build-view-button"
+            data-testid="build-view-button"
+            title={`Open the deck window on the ${build.label} result.`}
+            onClick={(clickEvent) => {
+              clickEvent.stopPropagation();
+              onOpenDeck(build.backend);
+            }}
+          >
+            View ▸
+          </button>
         </span>
       ) : null}
     </div>
@@ -145,9 +140,12 @@ export function ExecutionChip({ execution }: { execution: ProcessExecution }) {
               href={execution.previewUrl}
               target="_blank"
               rel="noreferrer"
+              // Dwell-exempt: a synthesized click on a _blank link is popup-
+              // blocked — this link is for a real mouse.
+              data-dwell-exempt="true"
               onClick={stopClick}
             >
-              Open the app ↗
+              Open the app ↗ (mouse)
             </a>
           ) : null}
         </>

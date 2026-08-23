@@ -125,6 +125,30 @@ describe("ElizaBuildBackend — build()", () => {
     expect(progress.at(-1)).toMatchObject({ label: "mock ready", percent: 100 });
   });
 
+  test("the request's IdeaBrief context block rides the compose state into the plan AND implement prompts", async () => {
+    const brief = {
+      pitch: "Build a tiny kaleidoscope toy",
+      sourceQuote: "give the kids something trippy to spin on the wall",
+      rationale: "One canvas, one button, pure delight.",
+      qa: [{ id: "q-palette", prompt: "Which palette?", answers: ["Neon", "Pastel"], chosen: "Neon" }],
+      callsign: null,
+    };
+    const model = queueModel([
+      toJson({ pitch: "Spin your day into color.", spec: "hero canvas" }),
+      toJson({ files: { "index.html": "<!doctype html><body>KALEIDO</body>" } }),
+    ]);
+    const result = await makeBackend(model).build(makeRequest({ outDir: await tempOutDir(), brief }));
+
+    expect(result.ok).toBe(true);
+    expect(model.calls).toHaveLength(2);
+    for (const call of model.calls) {
+      expect(call.prompt).toContain('AS HEARD IN THE ROOM (verbatim): "give the kids something trippy to spin on the wall"');
+      expect(call.prompt).toContain("WHY IT IS BUILDABLE: One canvas, one button, pure delight.");
+      expect(call.prompt).toContain("DECISIONS ALREADY MADE:\n- Which palette? → Neon");
+      expect(call.prompt).not.toContain("{{");
+    }
+  });
+
   test("a junk plan never fails the mock — falls back to a pitch-line plan and still implements", async () => {
     const model = queueModel(["prose, not json", toJson({ files: { "index.html": "<html>fallback mock</html>" } })]);
     const outDir = await tempOutDir();

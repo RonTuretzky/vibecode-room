@@ -1,6 +1,6 @@
-import type { LogEvent, OutputDecision } from "../types";
+import { ideaBriefSchema, type IdeaBrief, type LogEvent, type OutputDecision } from "../types";
 import { questionsFromAssessment, type PlanQuestion } from "../detect";
-import type { ProcessBuildSnapshot } from "../buildloop/orchestrator";
+import type { OrchestratorRevisionInput, ProcessBuildSnapshot } from "../buildloop/orchestrator";
 import type { ExecutionRegistry, ExecutionSnapshot } from "../buildloop/execution";
 import { CallsignAllocator, type CallsignAssignment } from "../routing/callsigns";
 import { inferProjectName, llmProjectName, type InferredProjectName } from "./project-name";
@@ -47,8 +47,14 @@ export interface BuildLoopOrchestrator {
     prompt: string;
     callsign: string | null;
     planQuestions?: readonly PlanQuestion[];
+    // The idea's context brief (IdeaBrief, src/types.ts) — structurally
+    // identical to the orchestrator's own BuildBrief mirror.
+    brief?: IdeaBrief;
   }): Promise<void>;
-  steer(upid: string, text: string): Promise<void>;
+  // Accepts the legacy bare correction string OR a structured revision
+  // ({kind, text, questionId, answer, targetScreens} — the orchestrator
+  // normalizes either into a full Revision).
+  steer(upid: string, revision: string | OrchestratorRevisionInput): Promise<void>;
   abortAll(upid: string): Promise<void>;
   builds(upid: string): ProcessBuildSnapshot[];
 }
@@ -372,7 +378,10 @@ export class ProcessRegistry {
   // each other's builds/<upid>/ directory. Returns false (no build started)
   // for unknown or dead processes — a halt/emergency stop between spawn and a
   // deferred build must win.
-  startBuild(upid: string, options: { correlationId: string; prompt?: string; planQuestions?: readonly PlanQuestion[] }): boolean {
+  startBuild(
+    upid: string,
+    options: { correlationId: string; prompt?: string; planQuestions?: readonly PlanQuestion[]; brief?: IdeaBrief },
+  ): boolean {
     const record = this.#processes.get(upid);
     const stored = this.#seeds.get(upid);
     if (record === undefined || record.state === "dead" || stored === undefined) {
@@ -394,6 +403,10 @@ export class ProcessRegistry {
         options.planQuestions !== undefined && options.planQuestions.length > 0
           ? options.planQuestions
           : planQuestionsFromInput(stored.input);
+      // The idea's context brief: explicit override first (deferred callers),
+      // else the acceptance seed's brief riding the spawn input. Absent for
+      // inputs without one (repo imports, demo seeds) — omitted entirely.
+      const brief = options.brief ?? briefFromInput(stored.input);
       void orchestrator
         .start({
           upid,
@@ -401,6 +414,7 @@ export class ProcessRegistry {
           prompt: pitch,
           callsign: record.callsign,
           ...(planQuestions.length === 0 ? {} : { planQuestions }),
+          ...(brief === null ? {} : { brief }),
         })
         .then(
           () => {
@@ -496,9 +510,12 @@ export class ProcessRegistry {
     }
     // REAL steering of the built artifacts: forward the spoken correction to the
     // multi-backend orchestrator, which re-runs every ready build with it (in
-    // place, version-bumped). Fire-and-forget — a correction re-run takes
-    // minutes and must never stall the live transcript path awaiting steer().
-    const correction = steerText(payload);
+    // place, version-bumped). Structured revision fields on the payload (kind/
+    // questionId/answer/targetScreens — the deck's answer route) pass through
+    // tolerantly; a plain {text} payload stays the legacy bare string. Fire-and-
+    // forget — a correction re-run takes minutes and must never stall the live
+    // transcript path awaiting steer().
+    const correction = steerRevision(payload);
     if (this.#orchestrator !== null && correction !== null) {
       const orchestrator = this.#orchestrator;
       void orchestrator.steer(upid, correction).then(
@@ -586,6 +603,23 @@ export class ProcessRegistry {
       this.#selectedUPID = null;
     }
     this.trace("process.halt", correlationId, upid, { trigger });
+  }
+
+  // PER-PROCESS DISMISS (the tree menu's 🗑 remove): stop this process's
+  // builds and take it OFF the wall entirely. A live process goes through the
+  // full halt teardown first (durable-run cancel, preview stop, orchestrator
+  // abort — the same emergency-budget machinery); then the record is deleted
+  // so the next published snapshot simply has no such tree (halt alone keeps a
+  // dead card for visibility). Builds bookkeeping only: nothing here touches
+  // GitHub or files beyond what halt's own registries already stop. Throws for
+  // an unknown UPID (the HTTP route maps that to the 404-free no-op idiom).
+  async dismiss(upid: string, correlationId: string): Promise<void> {
+    const record = this.require(upid);
+    if (record.state !== "dead") {
+      await this.halt(upid, correlationId, "dismiss");
+    }
+    this.#processes.delete(upid);
+    this.trace("process.dismiss", correlationId, upid, {});
   }
 
   select(upid: string, correlationId: string): void {
@@ -734,6 +768,43 @@ export function steerText(payload: unknown): string | null {
   return null;
 }
 
+// TOLERANT structured-revision passthrough for the orchestrator seam: a payload
+// carrying any revision field (kind/questionId/answer/targetScreens/seq) next
+// to its text forwards as a structured revision (the orchestrator normalizes
+// and validates); anything else degrades to steerText's bare string. Never
+// throws, never rejects a payload steerText would have accepted.
+export function steerRevision(payload: unknown): string | OrchestratorRevisionInput | null {
+  const text = steerText(payload);
+  if (text === null) {
+    return null;
+  }
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    return text;
+  }
+  const record = payload as Record<string, unknown>;
+  const structured =
+    record.kind !== undefined ||
+    record.questionId !== undefined ||
+    record.answer !== undefined ||
+    record.targetScreens !== undefined ||
+    record.seq !== undefined;
+  if (!structured) {
+    return text;
+  }
+  return {
+    text,
+    ...(record.kind === "steer" || record.kind === "answer" ? { kind: record.kind } : {}),
+    ...(typeof record.questionId === "string" && record.questionId.trim().length > 0
+      ? { questionId: record.questionId.trim() }
+      : {}),
+    ...(typeof record.answer === "string" && record.answer.trim().length > 0 ? { answer: record.answer.trim() } : {}),
+    ...(Array.isArray(record.targetScreens)
+      ? { targetScreens: record.targetScreens.filter((screen): screen is string => typeof screen === "string") }
+      : {}),
+    ...(typeof record.seq === "number" && Number.isFinite(record.seq) ? { seq: record.seq } : {}),
+  };
+}
+
 // Deck-ready planning questions recovered from the spawn input: the acceptance
 // seam spreads the accepted seed onto `input`, so the judge's parallel
 // `mcqs`/`answers` arrays ride along (see acceptance/spawn.ts), and
@@ -749,6 +820,18 @@ function planQuestionsFromInput(input: unknown): PlanQuestion[] {
 
 function onlyStrings(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
+}
+
+// The idea's context brief recovered from the spawn input: the acceptance seam
+// spreads the accepted seed onto `input`, so a judged idea's brief (IdeaBrief,
+// ../types) rides along. Tolerant — a malformed or absent brief is simply null
+// (repo imports, demo seeds), never a spawn failure.
+function briefFromInput(input: unknown): IdeaBrief | null {
+  if (input === null || typeof input !== "object" || Array.isArray(input)) {
+    return null;
+  }
+  const parsed = ideaBriefSchema.safeParse((input as Record<string, unknown>).brief);
+  return parsed.success ? parsed.data : null;
 }
 
 // The originating idea id when the accept path carried one on the spawn input;

@@ -1,5 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { GestureWallClient, parseCursorsFrame, parseKeysFrame, type GestureCursor, type KeysFrame } from "./wall-client";
+import {
+  GestureWallClient,
+  parseCursorsFrame,
+  parseFlatPoseFrame,
+  parseKeysFrame,
+  type FlatPoseFrame,
+  type GestureCursor,
+  type KeysFrame,
+  parseFlyHandsFrame,
+} from "./wall-client";
 
 describe("parseCursorsFrame", () => {
   const frame = (over: object = {}) =>
@@ -50,6 +59,51 @@ describe("parseKeysFrame", () => {
     expect(parseKeysFrame(JSON.stringify({ type: "cursors", wall: "A", cursors: [] }), "A")).toBeNull();
     expect(parseKeysFrame(JSON.stringify({ type: "keys", wall: "A", held: ["w"] }), "A")).toBeNull();
     expect(parseKeysFrame("not json", "A")).toBeNull();
+  });
+});
+
+describe("parseFlatPoseFrame", () => {
+  test("parses a well-formed flatpose (no wall filter — the pose is pair-global)", () => {
+    const raw = JSON.stringify({ type: "flatpose", yaw: -0.4, height: 5.1, dist: 19, cx: -12.5, cz: 30, t: 7.5 });
+    expect(parseFlatPoseFrame(raw)).toEqual({ yaw: -0.4, height: 5.1, dist: 19, cx: -12.5, cz: 30, t: 7.5 });
+    // Missing t defaults to 0 (cursors-frame parity).
+    expect(parseFlatPoseFrame(JSON.stringify({ type: "flatpose", yaw: 0, height: 4.6, dist: 20, cx: 1, cz: 2 }))).toEqual({
+      yaw: 0,
+      height: 4.6,
+      dist: 20,
+      cx: 1,
+      cz: 2,
+      t: 0,
+    });
+  });
+
+  test("cx/cz default to 0 — OLD frames without a roam centre stay valid (mixed-version pair)", () => {
+    expect(parseFlatPoseFrame(JSON.stringify({ type: "flatpose", yaw: -0.4, height: 5.1, dist: 19, t: 7.5 }))).toEqual({
+      yaw: -0.4,
+      height: 5.1,
+      dist: 19,
+      cx: 0,
+      cz: 0,
+      t: 7.5,
+    });
+    // Junk cx/cz coerces to 0 like a junk t — optional fields never sink the
+    // frame and never let NaN through.
+    expect(parseFlatPoseFrame(JSON.stringify({ type: "flatpose", yaw: 0, height: 4.6, dist: 20, cx: "9", cz: null }))).toEqual({
+      yaw: 0,
+      height: 4.6,
+      dist: 20,
+      cx: 0,
+      cz: 0,
+      t: 0,
+    });
+  });
+
+  test("rejects wrong type, missing/non-finite fields, and malformed JSON", () => {
+    expect(parseFlatPoseFrame(JSON.stringify({ type: "cursors", wall: "A", cursors: [] }))).toBeNull();
+    expect(parseFlatPoseFrame(JSON.stringify({ type: "flatpose", yaw: 0, height: 4.6 }))).toBeNull(); // no dist
+    expect(parseFlatPoseFrame(JSON.stringify({ type: "flatpose", yaw: "0", height: 4.6, dist: 20 }))).toBeNull();
+    expect(parseFlatPoseFrame('{"type":"flatpose","yaw":1e999,"height":4.6,"dist":20}')).toBeNull(); // Infinity
+    expect(parseFlatPoseFrame("not json")).toBeNull();
   });
 });
 
@@ -135,6 +189,56 @@ describe("GestureWallClient", () => {
     client.stop();
   });
 
+  test("routes flatpose frames to onFlatPose; cursors/keys paths undisturbed", () => {
+    FakeWebSocket.instances = [];
+    const cursorsSeen: GestureCursor[][] = [];
+    const posesSeen: FlatPoseFrame[] = [];
+    const client = new GestureWallClient({
+      url: "ws://localhost:8788/api/hands/room",
+      wall: "A",
+      onCursors: (cursors) => cursorsSeen.push(cursors),
+      onKeys: () => {},
+      onFlatPose: (pose) => posesSeen.push(pose),
+      WebSocketImpl: FakeWebSocket as unknown as typeof WebSocket,
+    });
+    client.start();
+    const ws = FakeWebSocket.instances[0];
+    ws.open();
+    ws.message(JSON.stringify({ type: "flatpose", yaw: 0.2, height: 4.6, dist: 20, cx: 3, cz: -4, t: 1 }));
+    ws.message(JSON.stringify({ type: "cursors", wall: "A", t: 2, cursors: [{ id: 5, x: 0.1, y: 0.2 }] }));
+    ws.message(JSON.stringify({ type: "flatpose", yaw: "bad", height: 4.6, dist: 20 })); // malformed → dropped
+    expect(posesSeen).toEqual([{ yaw: 0.2, height: 4.6, dist: 20, cx: 3, cz: -4, t: 1 }]);
+    expect(cursorsSeen).toHaveLength(1);
+    client.stop();
+  });
+
+  test("send() pushes a frame only while the socket is open, silently dropping otherwise", () => {
+    FakeWebSocket.instances = [];
+    const client = new GestureWallClient({
+      url: "ws://localhost:8788/api/hands/room",
+      wall: "A",
+      onCursors: () => {},
+      reconnectMs: 60_000, // park the reconnect far away — this test drives states by hand
+      WebSocketImpl: FakeWebSocket as unknown as typeof WebSocket,
+    });
+    client.start();
+    const ws = FakeWebSocket.instances[0];
+    // Still connecting: the publish drops (pose sync repeats on input, and the
+    // hub replays on subscribe, so a lost frame costs nothing).
+    client.send({ type: "flatpose", yaw: 1, height: 5, dist: 20, t: 0 });
+    expect(ws.sent).toHaveLength(0);
+
+    ws.open(); // hello goes out
+    client.send({ type: "flatpose", yaw: 1, height: 5, dist: 20, t: 0 });
+    expect(ws.sent).toHaveLength(2);
+    expect(JSON.parse(ws.sent[1])).toEqual({ type: "flatpose", yaw: 1, height: 5, dist: 20, t: 0 });
+
+    ws.drop(); // closed → sends drop again (until the reconnect reopens)
+    client.send({ type: "flatpose", yaw: 2, height: 5, dist: 20, t: 1 });
+    expect(ws.sent).toHaveLength(2);
+    client.stop();
+  });
+
   test("reconnects after a drop, and stop() cancels reconnection", async () => {
     FakeWebSocket.instances = [];
     const client = new GestureWallClient({
@@ -152,5 +256,47 @@ describe("GestureWallClient", () => {
     FakeWebSocket.instances[1].drop();
     await new Promise((r) => setTimeout(r, 15));
     expect(FakeWebSocket.instances.length).toBe(2); // no reconnect after stop
+  });
+});
+
+describe("parseFlyHandsFrame", () => {
+  const raw = (over: Record<string, unknown> = {}) =>
+    JSON.stringify({
+      type: "flyhands",
+      wall: "A",
+      guest: 3,
+      t: 12.5,
+      aspect: 1.5,
+      hands: [{ id: 0, x: 0.42, y: 0.31, pinch: 0.21, conf: 1, lm: Array.from({ length: 21 }, () => [0.25, 0.75]) }],
+      ...over,
+    });
+
+  test("parses a well-formed frame into PinchHand shape for the subscribed wall", () => {
+    const parsed = parseFlyHandsFrame(raw(), "A");
+    expect(parsed?.guest).toBe(3);
+    expect(parsed?.frame.t).toBe(12.5);
+    expect(parsed?.frame.aspect).toBe(1.5);
+    expect(parsed?.frame.hands[0]).toMatchObject({ id: 0, hand: null, x: 0.42, y: 0.31, pinch: 0.21, pinching: null, conf: 1 });
+    expect(parsed?.frame.hands[0]?.lm).toHaveLength(21);
+  });
+
+  test("wrong wall / wrong type / missing guest → null; extras capped at two hands", () => {
+    expect(parseFlyHandsFrame(raw(), "B")).toBeNull();
+    expect(parseFlyHandsFrame(raw({ type: "cursors" }), "A")).toBeNull();
+    expect(parseFlyHandsFrame(raw({ guest: undefined }), "A")).toBeNull();
+    const three = parseFlyHandsFrame(
+      raw({ hands: [{ id: 0, x: 0.1, y: 0.1 }, { id: 1, x: 0.2, y: 0.2 }, { id: 2, x: 0.3, y: 0.3 }] }),
+      "A",
+    );
+    expect(three?.frame.hands).toHaveLength(2);
+  });
+
+  test("clamps coords/pinch, defaults conf, voids malformed skeletons per-hand", () => {
+    const parsed = parseFlyHandsFrame(
+      raw({ hands: [{ id: 0, x: -2, y: 3, pinch: 11, lm: [[0.1, 0.2]] }] }),
+      "A",
+    );
+    expect(parsed?.frame.hands[0]).toMatchObject({ x: 0, y: 1, pinch: 4, conf: 1 });
+    expect(parsed?.frame.hands[0]?.lm).toBeUndefined();
   });
 });

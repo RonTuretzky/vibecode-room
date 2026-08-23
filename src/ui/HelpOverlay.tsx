@@ -128,6 +128,10 @@ export function HelpOverlay({ onClose, gestureMode = false }: HelpOverlayProps) 
             </dl>
           </section>
         </div>
+
+        <footer className="help-footer" data-testid="help-signoff">
+          <span className="help-signoff-text">Okay — see you. The room rests when you do.</span>
+        </footer>
       </div>
     </div>
   );

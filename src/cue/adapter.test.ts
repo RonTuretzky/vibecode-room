@@ -9,7 +9,19 @@ import { createVibersynCueHarness } from "./harness";
 import { createSemanticIntentDecisionInput } from "./intent-gate";
 import { DEFAULT_TEXT_CUE_WORDS, assertPrematcherParity, createCuePolicies } from "./policies";
 import { assertTwoProgramIsolation } from "./programs";
-import { loadCueCore } from "./source";
+import { cueSourceBuildAvailable, loadCueCore } from "./source";
+
+// The Cue-core tests need the EXTERNAL substrate: a built checkout of
+// jameslbarnes/cue, either pointed at via VIBERSYN_CUE_SOURCE_DIR or already
+// cached in tmp by a prior auto-build. Environments without it (CI, fresh
+// worktrees) skip those tests LOUDLY; the pure adapter tests run everywhere.
+const cueSubstrateMissing = process.env.VIBERSYN_CUE_SOURCE_DIR === undefined && !cueSourceBuildAvailable();
+if (cueSubstrateMissing) {
+  console.warn(
+    "[cue-substrate] skipping Cue-core adapter/policy tests: VIBERSYN_CUE_SOURCE_DIR is unset and no built Cue checkout was found",
+  );
+}
+const cueTest = test.skipIf(cueSubstrateMissing);
 
 describe("Cue adapter and policies", () => {
   test("adapter-normalization maps Cue frames to the exact TranscriptObservation shape", () => {
@@ -46,7 +58,7 @@ describe("Cue adapter and policies", () => {
     ]);
   });
 
-  test("pass-logging turns every observe.pass into a route.pass line with the same correlation id", async () => {
+  cueTest("pass-logging turns every observe.pass into a route.pass line with the same correlation id", async () => {
     const cue = await loadCueCore();
     const { CueHarness, TextCue, Triggers, transcriptObservation } = cue;
     const adapter = new CueAdapter({
@@ -104,7 +116,7 @@ describe("Cue adapter and policies", () => {
     expect((routePasses[0].meta as Record<string, unknown>).observeEvent).toBe("observe.pass");
   });
 
-  test("two independent Programs keep ambient C2 out of steering C3 and steering C3 out of ambient C2", async () => {
+  cueTest("two independent Programs keep ambient C2 out of steering C3 and steering C3 out of ambient C2", async () => {
     const cue = await loadCueCore();
     const { CueHarness, TextCue, Triggers, MappedActionTool, transcriptObservation } = cue;
     const adapter = new CueAdapter({
@@ -194,7 +206,7 @@ describe("Cue adapter and policies", () => {
     expect(steering.actions.map((action) => action.type)).toEqual(["steer"]);
   });
 
-  test("recognition-source feeds earcons from Cue TextCue decisions or a byte-equal adapter pre-matcher mirror", async () => {
+  cueTest("recognition-source feeds earcons from Cue TextCue decisions or a byte-equal adapter pre-matcher mirror", async () => {
     const cue = await loadCueCore();
     const policies = createCuePolicies(cue, { textCueWords: ["viber"], cooldownSeconds: 1 });
     const adapter = new CueAdapter({
@@ -260,7 +272,7 @@ describe("Cue adapter and policies", () => {
     ]);
   });
 
-  test("semantic gate accepts a short standalone TextCue command without calling the DecisionLLM", async () => {
+  cueTest("semantic gate accepts a short standalone TextCue command without calling the DecisionLLM", async () => {
     const cue = await loadCueCore();
     const { TextCue, Triggers, MappedActionTool, transcriptObservation } = cue;
     const llm = new ReplayDecisionLLM([]);
@@ -301,7 +313,7 @@ describe("Cue adapter and policies", () => {
     );
   });
 
-  test("semantic gate blocks contextual yes-but false positives through replayed DecisionLLM", async () => {
+  cueTest("semantic gate blocks contextual yes-but false positives through replayed DecisionLLM", async () => {
     const cue = await loadCueCore();
     const { TextCue, Triggers, MappedActionTool, transcriptObservation } = cue;
     const observation = transcriptObservationForGate("Yes, but I'm not sure we should do that.", "utt-yes-but");
@@ -357,7 +369,7 @@ describe("Cue adapter and policies", () => {
     );
   });
 
-  test("semantic gate sends natural conversational affirmative mentions to replay before accepting", async () => {
+  cueTest("semantic gate sends natural conversational affirmative mentions to replay before accepting", async () => {
     const cue = await loadCueCore();
     const { TextCue, Triggers, MappedActionTool, transcriptObservation } = cue;
     const observation = transcriptObservationForGate("I said yes earlier because the context was different.", "utt-natural-yes");
@@ -407,7 +419,7 @@ describe("Cue adapter and policies", () => {
     );
   });
 
-  test("harness wires transcription, decision LLM, and output provider slots without constructing concrete providers", async () => {
+  cueTest("harness wires transcription, decision LLM, and output provider slots without constructing concrete providers", async () => {
     const providers = {
       transcription: new ReplayASRProvider([]),
       llm: new ReplayDecisionLLM([]),

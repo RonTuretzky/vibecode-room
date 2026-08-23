@@ -3,21 +3,27 @@ import type { CSSProperties } from "react";
 import { demoProjectorSnapshot, busyRoomSnapshot, emptyProjectorSnapshot, withUnmuted } from "./demo-data";
 import type { ProjectorProcess, ProjectorSnapshot, ResearchTrayItem, TranscriptLine } from "./types";
 import { GestureLayer } from "./gesture/GestureLayer";
+import { CalibrationOverlay, type AutocalState } from "./CalibrationOverlay";
 import { PinchCameraLayer } from "./gesture/PinchCameraLayer";
 import { HandSkeletonHud } from "./gesture/HandSkeletonHud";
 import type { HandsStatus } from "./gesture/hands-client";
 import { RoomScene, type DialogueNodeSpec, type DialogueTopicSpec, type IdeaOrbSpec, type ResearchNodeSpec, type SceneLayout, type SceneMode, type TreeSpec } from "./RoomScene";
+import { getSceneDwellSource, procDwellTargetId, type SceneDwellRect } from "./gesture/scene-source";
 import { Slideshow } from "./Slideshow";
-import { BuildDetail } from "./BuildDetail";
+import { TreeMenu } from "./TreeMenu";
+import { BranchPopup } from "./BranchPopup";
+import { IssuePopup } from "./IssuePopup";
+import type { IssueInfo } from "./tree-limbs";
+import { HoloPanel } from "./HoloPanel";
 import { IdeaTray } from "./IdeaTray";
 import { ResearchTray } from "./ResearchTray";
 import { ResearchDeckOverlay } from "./ResearchDeckOverlay";
 import { QrImport } from "./QrImport";
-import { GuestHands } from "./GuestHands";
+import { GuestHands , GuestQrBadge } from "./GuestHands";
 import { roomHandsSocketUrl } from "./gesture/remote";
 import { HelpOverlay } from "./HelpOverlay";
-import { BuildChips, CommissionButton, ExecutionChip, ProcessControls } from "./BuildChips";
-import { TakeHomeQr } from "./TakeHomeQr";
+import { ControlDock } from "./ControlDock";
+import { useSelfRepoTree, type SelfBranchesPayload, type SelfTreeSeed } from "./self-repo";
 import { buildsOf, lifecycleActionsFor, looksLikeSnapshot } from "./buildloop";
 import type { LifecycleAction } from "./buildloop";
 import { executionOf, parseDeckDecisionMessage, sceneStageOf, stageOf } from "./stage";
@@ -25,13 +31,12 @@ import type { DecisionChoice, StagedProcess } from "./stage";
 import { selfOf, trackBootId } from "./self-reload";
 import { parseProjectorUrl } from "./url-params";
 import { GuidedDemo } from "./guided/GuidedDemo";
-import { advanceOnSnapshot, popPracticeOrb, skipStep, startGuided, type GuidedState } from "./guided/machine";
+import { advanceOnSnapshot, popPracticeOrb, restartIdea, setHandsLive, skipStep, startGuided, type GuidedState, type PointerRig } from "./guided/machine";
 import "./buildloop.css";
 import { startMicCapture, type MicCaptureHandle } from "./mic";
 
 export const REQUIRED_PROJECTOR_REGIONS = [
   "status",
-  "suggestion",
   "fleet",
   "transcript",
 ] as const;
@@ -43,19 +48,62 @@ interface ProjectorAppProps {
   urlSearch?: string;
   // Test seam: boot with an on-demand overlay already open so the (static,
   // effect-free) test renderer can assert the de-themed overlay contract —
-  // detail/deck/QR overlays open on WHICHEVER wall summons them, never only
-  // on view=builds. `selected` takes a callsign/upid, `slideshowUpid` a upid,
-  // `ideaCard` an idea-action-card target (id null = the primary suggestion).
+  // menu/deck/QR overlays open on WHICHEVER wall summons them, never only
+  // on view=builds. `selected` takes a callsign/upid and opens the per-tree
+  // MENU (the static renderer's stand-in for a scene pick), `slideshowUpid`
+  // a upid, `ideaCard` an idea-action-card target (id null = the primary
+  // suggestion).
   initialOverlay?: {
     selected?: string;
+    // Seeds the selected tree's screen-projected anchor rect (the static
+    // renderer has no scene to project) — the halo/lock markup tests need one.
+    menuAnchor?: SceneDwellRect;
     slideshowUpid?: string;
     qrOpen?: boolean;
     ideaCard?: { id: string | null };
+    // Opens the HOLO PANEL (the imported tree's live /salem app) on this upid
+    // — the static renderer's stand-in for the tree menu's "Live app" press.
+    holoUpid?: string;
+    // Opens the BRANCH POPUP (an adopted tree's limb-tip card) — the static
+    // renderer's stand-in for picking a limb tip in the scene.
+    branchPopup?: { upid: string; branch: string };
+    // Opens the ISSUE POPUP (an adopted tree's fruit card) with the full
+    // issue payload (the static renderer cannot poll /api/…/issues).
+    issuePopup?: { upid: string; issue: IssueInfo };
+    // Boots the wall-bound auto-calibration overlay with a calibrator state
+    // (the static renderer cannot poll /api/autocal/state).
+    calibration?: AutocalState;
   };
+  // Test seam: seeds the self-repo tree data (the effect-free static renderer
+  // cannot fetch /api/self-repo + /api/forest), so armed-wall markup tests can
+  // assert the garden receives the room's own tree.
+  initialSelfTree?: SelfTreeSeed;
+  // Test seam: seeds the room's own version rails (/api/self/branches), so a
+  // static render of a SELF branch popup can assert the load / you-are-here /
+  // not-on-this-machine states.
+  initialSelfBranches?: SelfBranchesPayload;
 }
+
+// AUTO-RELOAD ON NEW BUILDS: every window polls /api/build-stamp on this
+// cadence, and a changed stamp reloads after a random 0–{jitter} delay so the
+// projector windows never hammer the freshly-restarted server simultaneously.
+const BUILD_STAMP_POLL_MS = 20_000;
+const BUILD_RELOAD_JITTER_MS = 2_000;
 
 // The synthetic id used for the (single) idea/suggestion bubble.
 const IDEA_ID = "idea";
+
+// "Park it for later" shows its confirmation strip this long before the deck
+// window closes itself (the choice must visibly land at projector distance).
+const PARK_CONFIRM_MS = 2_000;
+// The tab that holds the room's microphone. A self-rebuild restarts the server
+// and every wall reloads; without this the mic pipeline died with the old page
+// and the room sat deaf until a human noticed and pressed the button again.
+const MIC_OWNER_KEY = "vibersyn.mic.owner";
+
+// ISSUE FRUIT poll cadence: while an adopted tree stands, its open GitHub
+// issues refresh on this interval (GET /api/process/:upid/issues).
+export const ISSUE_POLL_MS = 60_000;
 
 declare global {
   interface Window {
@@ -69,7 +117,7 @@ declare global {
   }
 }
 
-export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: ProjectorAppProps) {
+export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initialSelfTree, initialSelfBranches }: ProjectorAppProps) {
   // Window configuration from the URL, parsed FIRST — the guided-demo entry
   // and Mock-Room gates below depend on it: wall identity badge (?wall=A|B),
   // the view param (?view=ideas|builds — scopes the 2D surfaces + controls to
@@ -118,8 +166,22 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
   // interactive demo fixture in an effect below.
   const [snapshot, setSnapshot] = useState(initialSnapshot ?? emptyProjectorSnapshot);
   const [selected, setSelected] = useState<string | null>(initialOverlay?.selected ?? null);
+  // Where the selected tree stood ON SCREEN at pick time (RoomScene projects
+  // its dwell rect through onSelectProcess) — the tree menu anchors beside it.
+  // Null = no projection (keyboard select / test seam): the menu edge-rests.
+  const [menuAnchor, setMenuAnchor] = useState<SceneDwellRect | null>(initialOverlay?.menuAnchor ?? null);
   const [isUnmuting, setIsUnmuting] = useState(false);
+  // Is the live push stream actually attached? Starts optimistic so a wall that
+  // has never connected (offline demo, static render) shows no alarm; the SSE
+  // error handler flips it and the next landing frame flips it back.
+  const [streamLive, setStreamLive] = useState(true);
   const [micState, setMicState] = useState<"off" | "connecting" | "live">("off");
+  // The physical microphone actually feeding the room ("Wireless GO RX" /
+  // "MacBook Pro Microphone") — shown on the capture control so the operator
+  // never has to guess which mic the room is hearing.
+  const [micDeviceLabel, setMicDeviceLabel] = useState<string | null>(null);
+  // Per-TAB marker (not localStorage): the one window holding the room's mic.
+  // Survives the reload a self-rebuild forces; never leaks to the other walls.
   const [micLevel, setMicLevel] = useState(0);
   const [micError, setMicError] = useState<string | null>(null);
   const micHandleRef = useRef<MicCaptureHandle | null>(null);
@@ -132,6 +194,33 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
   // down its own pipeline instead of committing it (see toggleMic).
   const micStartRef = useRef<Promise<void> | null>(null);
   const [qrOpen, setQrOpen] = useState(initialOverlay?.qrOpen ?? false);
+  // HOLO PANEL (the imported tree's LIVE deployment via the /salem proxy): at
+  // most ONE at a time — {upid, anchor} or null. Opened from the tree menu's
+  // "🌐 Live app ▸" row (which closes the menu, handing over its anchor);
+  // dwell-miss closes it FIRST (closeTopPopup — holo before tree menu).
+  const [holoPanel, setHoloPanel] = useState<{ upid: string; anchor: SceneDwellRect | null } | null>(
+    initialOverlay?.holoUpid !== undefined ? { upid: initialOverlay.holoUpid, anchor: null } : null,
+  );
+  const holoPanelRef = useRef<{ upid: string; anchor: SceneDwellRect | null } | null>(null);
+  holoPanelRef.current = holoPanel;
+  // BRANCH / ISSUE POPUPS (adopted trees): the contextual glass a limb-tip or
+  // fruit pick opens, anchored to the SUB-OBJECT's projected rect. At most
+  // one of the pair at a time; both sit ABOVE the tree menu in the
+  // closeTopPopup ordering (under the holo panel).
+  const [branchPopup, setBranchPopup] = useState<{ upid: string; branch: string; anchor: SceneDwellRect | null } | null>(
+    initialOverlay?.branchPopup !== undefined
+      ? { upid: initialOverlay.branchPopup.upid, branch: initialOverlay.branchPopup.branch, anchor: null }
+      : null,
+  );
+  const branchPopupRef = useRef<typeof branchPopup>(null);
+  branchPopupRef.current = branchPopup;
+  const [issuePopup, setIssuePopup] = useState<{ upid: string; issue: IssueInfo; anchor: SceneDwellRect | null } | null>(
+    initialOverlay?.issuePopup !== undefined
+      ? { upid: initialOverlay.issuePopup.upid, issue: initialOverlay.issuePopup.issue, anchor: null }
+      : null,
+  );
+  const issuePopupRef = useRef<typeof issuePopup>(null);
+  issuePopupRef.current = issuePopup;
   // GUEST HANDS overlay (the URL/QR other computers open to get hand controls).
   const [guestsOpen, setGuestsOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -149,8 +238,25 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
   const [sceneLayout, setSceneLayout] = useState<SceneLayout>("radial");
   // Project explainer deck: the upid whose slideshow is open, or null.
   const [slideshowUpid, setSlideshowUpid] = useState<string | null>(initialOverlay?.slideshowUpid ?? null);
+  // Which backend tab the deck window opens on (a lane's View button targets
+  // its own lane; null = the window's default).
+  const [slideshowBackend, setSlideshowBackend] = useState<string | null>(null);
   const slideshowRef = useRef<string | null>(null);
   slideshowRef.current = slideshowUpid;
+  // POST-CHOICE deck decision state for the OPEN deck window (Phase 2 decide
+  // redesign): null = still asking; "commission" collapses the bar to a
+  // status strip, "iterate" swaps it for the inline steer input (deck stays
+  // open), "done" shows the parked confirmation for ~2s and then closes.
+  // Reset whenever the deck target changes (each open deck asks fresh).
+  const [deckDecisionState, setDeckDecisionState] = useState<DecisionChoice | null>(null);
+  const parkCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    setDeckDecisionState(null);
+    if (parkCloseTimerRef.current !== null) {
+      clearTimeout(parkCloseTimerRef.current);
+      parkCloseTimerRef.current = null;
+    }
+  }, [slideshowUpid]);
   // Research dossier overlay: the quest id whose deck is open, or null.
   const [researchDeckId, setResearchDeckId] = useState<string | null>(null);
   const researchDeckRef = useRef<string | null>(null);
@@ -162,7 +268,8 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
   const [ideaCard, setIdeaCard] = useState<{ id: string | null } | null>(initialOverlay?.ideaCard ?? null);
   const ideaCardRef = useRef<{ id: string | null } | null>(null);
   ideaCardRef.current = ideaCard;
-  const [zenMode, setZenMode] = useState(false);
+  // ?zen=1 boots a dedicated display straight into the chrome-less scene.
+  const [zenMode, setZenMode] = useState(urlConfig.zen);
   const zenModeRef = useRef(false);
   zenModeRef.current = zenMode;
   const [hideMenuOpen, setHideMenuOpen] = useState(false);
@@ -250,6 +357,16 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
     setGuided((current) => (current === null ? current : advanceOnSnapshot(current, snapshot, Date.now())));
   }, [snapshot]);
 
+  // HANDS-LIVE slides into the run while orientation runs (setHandsLive is a
+  // no-op past it — the watermark-sliding doctrine): the ?demo=guided
+  // auto-entry boots with handsStatus "closed", so the hands coaching step
+  // enlists itself the moment the pinch-camera socket truly opens — and a
+  // camera dying mid-run never renumbers the steps under the visitor.
+  const handsLiveNow = handsOn && handsStatus === "open";
+  useEffect(() => {
+    setGuided((current) => (current === null ? current : setHandsLive(current, handsLiveNow)));
+  }, [handsLiveNow]);
+
   // The race step's minimum dwell can elapse with no snapshot arriving (the
   // mocks already finished), so tick the machine while the race is on screen.
   const guidedStep = guided?.step ?? null;
@@ -282,6 +399,21 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
   // ("Build it for real" says the commission fired; the demo never waits for
   // the full build). Cleared automatically a few seconds later.
   const [guidedEpilogue, setGuidedEpilogue] = useState<string | null>(null);
+
+  // A CONTROL THAT FAILS MUST SAY SO. These handlers applied the snapshot on
+  // response.ok and did nothing whatsoever otherwise — no error, no busy
+  // state, not even a repaint. Measured with each endpoint forced to 500: four
+  // of five high-stakes controls produced no change of any kind for 2.1-2.4s,
+  // so the person presses again, and again. The commission path already had
+  // this rule written beside it ("a dead button reads as a broken wall"); it
+  // was just never applied to the rest of them.
+  const reportControlFailure = useCallback((what: string, status?: number) => {
+    setGuidedEpilogue(
+      status === undefined
+        ? `${what} failed (no answer from the room) — nothing changed.`
+        : `${what} failed (${status}) — nothing changed.`,
+    );
+  }, []);
   useEffect(() => {
     if (guidedEpilogue === null) {
       return;
@@ -330,6 +462,12 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
     );
   }, [selected, snapshot.processes]);
 
+  // TEND LOCK (the self tree's surface): while the tending menu is open the
+  // desk/orbit rooms feed the EXISTING focus glide the self upid (RoomScene
+  // clears it on close; flat/corner rigs no-op the prop by design — the DOM
+  // halo below is the lock mechanism on the flat wall, never the camera).
+  const tendingSelfUpid = selectedProcess !== null && stageOf(selectedProcess) === "self" ? selectedProcess.upid : null;
+
   const ideaSelected = selected === IDEA_ID;
 
   // Normalize any incoming selection id to its canonical callsign / IDEA_ID, or
@@ -350,16 +488,18 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
     [],
   );
 
-  // Toggle selection: selecting the already-open bubble closes it.
+  // Toggle selection: selecting the already-open bubble closes it. Keyboard/
+  // programmatic selects carry no screen anchor — the menu edge-rests.
   const selectBubble = useCallback(
     (id: string) => {
       const next = resolveSelection(id);
+      setMenuAnchor(null);
       setSelected((current) => (current !== null && current === next ? null : next));
     },
     [resolveSelection],
   );
 
-  const closeDetail = useCallback(() => setSelected(null), []);
+  const closeMenu = useCallback(() => setSelected(null), []);
 
   // The current steering target UPID (CLICK A PROJECT -> STEER IT). Surfaced on the
   // live snapshot; null in the static demo.
@@ -404,9 +544,15 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
         const response = await fetch(`/api/idea/${encodeURIComponent(id)}/${action}`, { method: "POST" });
         if (response.ok && response.headers.get("content-type")?.includes("application/json")) {
           setSnapshot((await response.json()) as ProjectorSnapshot);
+        } else {
+          // The most consequential button in the room. With the endpoint
+          // failing the wall was completely unchanged 2.4s later — no tree, no
+          // word about it — which is indistinguishable from "the build is
+          // thinking". Never leave that silent.
+          reportControlFailure(action === "accept" ? "Build it" : "Dismiss", response.status);
         }
       } catch {
-        // Non-authoritative projector: a failed POST must never block the UI.
+        reportControlFailure(action === "accept" ? "Build it" : "Dismiss");
       }
     },
     [liveMode],
@@ -439,11 +585,31 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
       });
       if (response.ok && response.headers.get("content-type")?.includes("application/json")) {
         setSnapshot((await response.json()) as ProjectorSnapshot);
+      } else {
+        reportControlFailure("Auto-build", response.status);
       }
     } catch {
+        reportControlFailure("Auto-build");
       // Non-authoritative projector: a failed toggle must never block the UI.
     }
   }, [liveMode]);
+
+  // SELF-REBUILD toggle ("the room rebuilds itself"). Flips the server-side
+  // runtime flag gating the green-self-commit → rebuild-and-relaunch (exit 87)
+  // trigger. The supervisor wrapper is boot-time (run-room.sh --self), so the
+  // button's title says honestly whether flipping ON arms a live supervisor
+  // (snapshot.selfSupervisor) or only records intent for a future --self launch.
+  const selfRebuild = snapshot.selfRebuild ?? false;
+  const selfSupervisor = snapshot.selfSupervisor ?? false;
+  // SELF-REBUILD REPO TREE: while the toggle is armed on a WALL window (never
+  // the research-pinned ceiling), poll the forest payload and grow the room's
+  // OWN repo as ONE MORE tree inside the RoomScene garden — not a panel. The
+  // hook returns null while unarmed/warming, and RoomScene simply omits the
+  // tree then.
+  // The room's own tree ALWAYS grows on wall windows (live-room directive:
+  // the Self-Rebuild toggle is gone — self-hosting is what this room IS; the
+  // server boots armed under --self, and hiding the tree was never a feature).
+  const selfTree = useSelfRepoTree(urlConfig.wall !== null && !urlConfig.research, initialSelfTree);
 
   // IDEA CAPTURE toggle (alternative to passive auto-detect). Flips the server-side
   // capture flag: when on, detection runs eagerly on every final utterance — but
@@ -471,7 +637,15 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
   // conversation is watched for researchable material (fact-checks, deep-dives,
   // bias scans). Offline demo flips the flag locally so the static fixtures
   // stay interactive.
-  const researchActive = snapshot.researchMode ?? false;
+  // Room-wide mode, OR-ed with the window-local ?research=1 pin: a dedicated
+  // display (ceiling projector) always shows the conversation tree while the
+  // walls keep following the shared toggle. Local only — no server writes.
+  // DISPLAY is window-local ONLY (?research=1 — the ceiling projector): on
+  // this rig the tree has a dedicated display, so the walls never flip
+  // scenes. The room-wide researchMode is purely the ENGINE switch (dialogue
+  // review + sphere suggestions run server-side while it is on).
+  const researchActive = urlConfig.research;
+  const researchEngineOn = snapshot.researchMode ?? false;
   const toggleResearchMode = useCallback(async () => {
     if (!liveMode || mockModeRef.current) {
       setSnapshot((current) => ({ ...current, researchMode: !(current.researchMode ?? false) }));
@@ -485,8 +659,11 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
       });
       if (response.ok && response.headers.get("content-type")?.includes("application/json")) {
         setSnapshot((await response.json()) as ProjectorSnapshot);
+      } else {
+        reportControlFailure("Research mode", response.status);
       }
     } catch {
+        reportControlFailure("Research mode");
       // Non-authoritative projector: a failed toggle must never block the UI.
     }
   }, [liveMode]);
@@ -598,31 +775,46 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
     [liveMode],
   );
 
-  // CLICK A PROJECT -> STEER IT. In live mode, clicking a process bubble/panel sets
-  // it as the steering target (so subsequent transcript routes to it); clicking the
-  // current target again clears steering. In offline demo it falls back to opening
-  // the process detail.
-  const steerProcess = useCallback(
-    async (id: string) => {
-      const match = snapshotRef.current.processes.find(
-        (process) => process.callsign === id || process.upid === id,
-      );
-      if (!liveMode || mockModeRef.current || match === undefined) {
-        selectBubble(id);
+  // CLICK/DWELL A TREE -> ITS MENU, NOTHING MORE. Picking a garden tree opens
+  // that instance's anchored control menu right there (the fleet rail is gone
+  // from the walls — the tree IS the interface). Picking deliberately does
+  // NOT touch voice steering: it used to POST /api/process/:upid/select as a
+  // side effect, which meant any dwell that landed on a tree silently routed
+  // the operator's narration into that build (live-room P0). The
+  // RecordSteerToggle inside the menu is the ONLY armer — it POSTs
+  // select/select-clear itself and lights from the snapshot's steering flag.
+
+  // 🗑 REMOVE (the tree menu's two-stage delete): stop this project's builds
+  // and remove it from the snapshot entirely — POST /api/process/:upid/dismiss.
+  // Offline demo drops the process locally so the static garden stays
+  // interactive. The menu closes immediately either way (its tree is going).
+  const dismissProcess = useCallback(
+    async (upid: string) => {
+      setSelected(null);
+      if (!liveMode || mockModeRef.current) {
+        setSnapshot((current) => ({
+          ...current,
+          processes: current.processes.filter((process) => process.upid !== upid),
+        }));
         return;
       }
-      const clearing = snapshotRef.current.steeringUpid === match.upid;
-      const url = clearing ? "/api/process/select/clear" : `/api/process/${encodeURIComponent(match.upid)}/select`;
       try {
-        const response = await fetch(url, { method: "POST" });
+        const response = await fetch(`/api/process/${encodeURIComponent(upid)}/dismiss`, { method: "POST" });
         if (response.ok && response.headers.get("content-type")?.includes("application/json")) {
-          setSnapshot((await response.json()) as ProjectorSnapshot);
+          const body: unknown = await response.json();
+          if (looksLikeSnapshot(body)) {
+            setSnapshot(body);
+          }
+        } else {
+          // The tree stays in the garden — say why, or the two-stage confirm
+          // reads as having silently worked.
+          reportControlFailure("Remove", response.status);
         }
       } catch {
-        // Non-authoritative projector: a failed select must never block the UI.
+        reportControlFailure("Remove");
       }
     },
-    [liveMode, selectBubble],
+    [liveMode, reportControlFailure],
   );
 
   // NOTE: the BackendSelector UI is gone (the rooms run env-configured
@@ -668,8 +860,10 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
   // returned snapshot when it is one (guarded, so a thin {"ok":true} ack can
   // never wipe the wall); offline demo writes local execution telemetry so
   // the concept→commissioned transformation stays demonstrable end-to-end.
+  // Returns whether the commission LANDED — the deck's post-choice strip must
+  // not keep claiming "the real build is running" after a failed POST.
   const commissionProcess = useCallback(
-    async (upid: string) => {
+    async (upid: string): Promise<boolean> => {
       if (!liveMode || mockModeRef.current) {
         setSnapshot((current) => ({
           ...current,
@@ -688,7 +882,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
               : process,
           ),
         }));
-        return;
+        return true;
       }
       try {
         const response = await fetch(`/api/process/${encodeURIComponent(upid)}/execute`, {
@@ -699,11 +893,17 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
           if (looksLikeSnapshot(body)) {
             setSnapshot(body);
           }
+        } else if (!response.ok) {
+          // "Build it for real" must never be a perceived no-op: say the
+          // commission failed instead of leaving the deck silently unchanged.
+          setGuidedEpilogue(`Commission failed (${response.status}) — the concept is untouched; try again.`);
+          return false;
         }
+        return true;
       } catch {
-        // Non-authoritative projector: a failed commission POST must never
-        // block the UI; the chip simply stays on concept until the SSE stream
-        // reports otherwise.
+        // Network failure: same rule — a dead button reads as a broken wall.
+        setGuidedEpilogue("Commission failed (network) — the concept is untouched; try again.");
+        return false;
       }
     },
     [liveMode],
@@ -712,17 +912,34 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
   // DECK DECISION ("How should we continue?") — fired by the deck overlay's
   // room-native decision bar (dwell/click) or by a postMessage from the
   // generated deck's in-iframe decision slide (see the bridge effect below).
-  //   commission → fire the REAL commission for the deck's process; the deck
-  //                stays open so the executing chip is immediately visible.
-  //   iterate/done → close the deck.
+  // Every choice leaves a VISIBLE post-choice state (Slideshow.decisionState):
+  //   commission → fire the REAL commission; the bar collapses to the
+  //                "Commissioned" status strip and the deck stays open so the
+  //                executing chip is immediately visible.
+  //   iterate    → the bar becomes the inline steer input; the deck stays open.
+  //   done       → the "Parked" confirmation strip for ~2s, then the deck
+  //                closes (timer guarded by upid; reset on deck change).
   // If the guided demo is at its decide finale, ANY choice completes the demo
   // (with an epilogue note; commissioning is an epilogue, never waited on).
   const deckDecision = useCallback(
     (upid: string, choice: DecisionChoice) => {
+      setDeckDecisionState(choice);
       if (choice === "commission") {
-        void commissionProcess(upid);
-      } else {
-        setSlideshowUpid(null);
+        // A failed commission re-opens the question (the strip must not lie);
+        // the epilogue toast explains what happened.
+        void commissionProcess(upid).then((landed) => {
+          if (!landed) {
+            setDeckDecisionState((current) => (current === "commission" ? null : current));
+          }
+        });
+      } else if (choice === "done") {
+        if (parkCloseTimerRef.current !== null) {
+          clearTimeout(parkCloseTimerRef.current);
+        }
+        parkCloseTimerRef.current = setTimeout(() => {
+          parkCloseTimerRef.current = null;
+          setSlideshowUpid((current) => (current === upid ? null : current));
+        }, PARK_CONFIRM_MS);
       }
       if (guidedRef.current !== null && guidedRef.current.step === "decide") {
         setGuided(null);
@@ -730,12 +947,39 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
           choice === "commission"
             ? "Commissioned! The real build is now executing — watch this concept's tree grow."
             : choice === "iterate"
-              ? "Demo complete — keep talking to reshape the concept."
-              : "Demo complete — the concept stays on the wall.",
+              ? "Demo complete — keep talking (or type below) to reshape the concept."
+              : "Demo complete — the idea is parked in the tray.",
         );
       }
     },
     [commissionProcess],
+  );
+  // Inline steer sender for the iterate post-choice state: the SAME endpoint
+  // the spoken "steer <callsign> …" path and the in-deck typed form use. Live
+  // mode applies the returned snapshot when it is one; offline demo is a
+  // visual no-op (the input still confirms locally).
+  const deckSteer = useCallback(
+    async (upid: string, text: string) => {
+      if (!liveMode || mockModeRef.current) {
+        return;
+      }
+      try {
+        const response = await fetch(`/api/process/${encodeURIComponent(upid)}/steer`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ text }),
+        });
+        if (response.ok && response.headers.get("content-type")?.includes("application/json")) {
+          const body: unknown = await response.json();
+          if (looksLikeSnapshot(body)) {
+            setSnapshot(body);
+          }
+        }
+      } catch {
+        // Non-authoritative projector: a failed steer POST must never block the UI.
+      }
+    },
+    [liveMode],
   );
   const deckDecisionRef = useRef(deckDecision);
   deckDecisionRef.current = deckDecision;
@@ -783,6 +1027,13 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
   }, []);
 
   const stopMic = useCallback(() => {
+    // A deliberate stop hands the mic back: this window must NOT grab it again
+    // on the next reload.
+    try {
+      window.sessionStorage.removeItem(MIC_OWNER_KEY);
+    } catch {
+      // See the setItem note in toggleMic.
+    }
     // Disowning any in-flight start (clearing the ownership token) is enough
     // to cover a stop that races getUserMedia: the start body re-checks the
     // token once the pipeline lands and stops it itself when disowned, so the
@@ -847,6 +1098,11 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
             }
           },
           onError: (message) => setMicError(message),
+          // ?mic=<label substring> pins the device; absent, the capture's
+          // room-mic policy prefers an external mic (RØDE receiver, USB puck)
+          // over the laptop's builtin.
+          ...(urlConfig.mic !== null ? { deviceLabel: urlConfig.mic } : {}),
+          onDevice: (label) => setMicDeviceLabel(label),
         });
         // While getUserMedia was pending a stop (or emergency/unmount) may
         // have disowned this start; committing now would resurrect — or, if a
@@ -857,6 +1113,16 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
           return;
         }
         micHandleRef.current = handle;
+        // Remember that THIS window carries the room's mic, so the reload a
+        // self-rebuild forces on it can take the mic back (see the re-arm
+        // effect). sessionStorage is per-tab by design: only the window that
+        // actually held the mic re-arms, never the other three walls.
+        try {
+          window.sessionStorage.setItem(MIC_OWNER_KEY, "1");
+        } catch {
+          // Private mode / storage disabled: re-arming is a convenience, never
+          // a requirement. The operator can still press the button.
+        }
       } catch (error) {
         setMicError(error instanceof Error ? error.message : "Could not start microphone");
         setMicState("off");
@@ -911,19 +1177,67 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
   }, []);
 
   // ── guided demo actions ────────────────────────────────────────────────────
+  // The record-step entries key on the REAL mic state too: the snapshot never
+  // carries the browser mic, so a ref threads micState === "live" into the
+  // machine calls without re-binding them (item: no "start the room
+  // recording" step when the mic already streams into an unmuted room).
+  const micLiveRef = useRef(false);
+  micLiveRef.current = micState === "live";
   // (Re-)enter: always a FRESH run — step 1, zero orbs, baseline = the fleet
-  // as it stands right now. Any open deck closes so step 1 owns the wall.
+  // as it stands right now, hands step enlisted only when the rig is truly
+  // live. Any open deck closes so step 1 owns the wall.
   const enterGuidedDemo = useCallback(() => {
     setSlideshowUpid(null);
-    setGuided(startGuided(snapshotRef.current));
-  }, []);
+    setGuided(startGuided(snapshotRef.current, { handsLive: handsOn && handsStatus === "open" }));
+  }, [handsOn, handsStatus]);
   const exitGuidedDemo = useCallback(() => setGuided(null), []);
   const guidedPopOrb = useCallback(() => {
-    setGuided((current) => (current === null ? current : popPracticeOrb(current)));
+    // Snapshot-aware: a room already unmuted+capturing (or with the browser
+    // mic streaming) skips the record step — its button would be a no-op —
+    // and lands straight on "describe your idea".
+    setGuided((current) => (current === null ? current : popPracticeOrb(current, snapshotRef.current, Date.now(), micLiveRef.current)));
   }, []);
   const guidedSkip = useCallback(() => {
-    setGuided((current) => (current === null ? current : skipStep(current, snapshotRef.current, Date.now())));
+    setGuided((current) => (current === null ? current : skipStep(current, snapshotRef.current, Date.now(), micLiveRef.current)));
   }, []);
+  // START OVER (idea step): the press acks synchronously — restartIdea
+  // re-watermarks the machine so the guided view forgets the words so far —
+  // while the server's half posts in the background: re-POSTing
+  // /api/guided/hold {on:true} re-stamps the transcript boundary, drops the
+  // queued bubble and disarms pre-step candidates (composition.setGuidedHold).
+  // guidedHoldRef stays true, so the boundary effect below never double-fires;
+  // a failed POST is SAID (reportControlFailure), never swallowed.
+  const guidedStartOver = useCallback(() => {
+    setGuided((current) => (current === null ? current : restartIdea(current, snapshotRef.current, Date.now())));
+    void fetch("/api/guided/hold", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ on: true }),
+    })
+      .then((response) => {
+        if (!response.ok) {
+          reportControlFailure("Start over", response.status);
+        }
+      })
+      .catch(() => reportControlFailure("Start over"));
+  }, [reportControlFailure]);
+  // GUIDED HOLD: while the demo sits on "describe your idea", the room must
+  // not auto-build mid-description — the Done button is the only trigger.
+  // Posted on the step's boundary transitions only; the server TTLs the hold
+  // so a wall that dies here can never wedge auto-build.
+  const guidedHoldRef = useRef(false);
+  useEffect(() => {
+    const on = guided !== null && guided.step === "idea";
+    if (on === guidedHoldRef.current) {
+      return;
+    }
+    guidedHoldRef.current = on;
+    void fetch("/api/guided/hold", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ on }),
+    }).catch(() => undefined);
+  }, [guided]);
 
   // GUIDED RECORD (step 2's big button): REALLY unmute (/api/unmute), turn on
   // Idea Capture (/api/capture {on:true}) and Auto-Build (/api/auto-accept
@@ -963,6 +1277,36 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
       void toggleMic();
     }
   }, [liveMode, releaseMute, toggleMic]);
+
+  // RE-ARM THE MIC AFTER A REBOOT. The room's flagship move — speak a change,
+  // the agent edits the source, the server exits 87 and relaunches — reloads
+  // every wall. The mic lives in a browser pipeline, so it died with the old
+  // page and nothing ever restarted it: the room rebuilt itself into silence.
+  // The window that held the mic reclaims it on mount. getUserMedia needs no
+  // prompt here (the origin's permission is already granted), and the per-tab
+  // marker keeps the other walls out of it.
+  useEffect(() => {
+    if (!liveMode) {
+      return;
+    }
+    let owned = false;
+    try {
+      owned = window.sessionStorage.getItem(MIC_OWNER_KEY) === "1";
+    } catch {
+      owned = false;
+    }
+    if (!owned) {
+      return;
+    }
+    // Let the first snapshot land first: toggleMic reads snapshotRef to decide
+    // whether it must release the mute before streaming.
+    const timer = setTimeout(() => {
+      if (micStartRef.current === null && micHandleRef.current === null) {
+        void toggleMic();
+      }
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [liveMode, toggleMic]);
 
   // VOICE FEEDBACK: when the server recognizes a wake-word command the snapshot's
   // `voice` field changes; flash the command near the status bar so the room gets
@@ -1004,6 +1348,67 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
       window.location.reload();
     }
   }, [snapshot]);
+
+  // AUTO-CALIBRATION overlay activity, mirrored into a ref so the build-stamp
+  // auto-reload below can skip reloading mid-sweep without re-binding.
+  const calibrationActiveRef = useRef(initialOverlay?.calibration != null);
+  const onCalibrationActive = useCallback((calibrating: boolean) => {
+    calibrationActiveRef.current = calibrating;
+  }, []);
+
+  // AUTO-RELOAD ON NEW BUILDS: the server stamps the served dist build
+  // (/api/build-stamp = dist/index.html's mtime). Every window — wall-bound
+  // or not — remembers the first stamp it observes and, when it changes,
+  // reloads after a small random jitter (0–2s) so the operator never cmd-R's
+  // the projector windows after `bun run build` again. Guard: a window whose
+  // calibration overlay is up skips the reload (the camera is measuring this
+  // screen); the next 20s poll retries once the calibrator is gone.
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    let closed = false;
+    let baseline: string | null | undefined; // undefined = no successful read yet
+    let reloadTimer: ReturnType<typeof setTimeout> | undefined;
+    const check = async () => {
+      try {
+        const response = await fetch("/api/build-stamp", { headers: { accept: "application/json" } });
+        if (!response.ok || !response.headers.get("content-type")?.includes("application/json")) {
+          return;
+        }
+        const body = (await response.json()) as { stamp?: unknown };
+        const stamp = typeof body.stamp === "string" ? body.stamp : null;
+        if (closed) {
+          return;
+        }
+        if (baseline === undefined) {
+          baseline = stamp; // first observation — the build this page came from
+          return;
+        }
+        if (stamp === null || stamp === baseline || reloadTimer !== undefined) {
+          return;
+        }
+        reloadTimer = setTimeout(() => {
+          reloadTimer = undefined;
+          if (closed || calibrationActiveRef.current) {
+            return; // never blank a mid-sweep wall; the next poll retries
+          }
+          window.location.reload();
+        }, Math.random() * BUILD_RELOAD_JITTER_MS);
+      } catch {
+        // Server restarting/unreachable — keep the current page; retry next tick.
+      }
+    };
+    void check(); // capture the boot build's stamp immediately
+    const timer = setInterval(() => void check(), BUILD_STAMP_POLL_MS);
+    return () => {
+      closed = true;
+      clearInterval(timer);
+      if (reloadTimer !== undefined) {
+        clearTimeout(reloadTimer);
+      }
+    };
+  }, []);
 
   // --- Live data: fetch /api/state + subscribe to /api/events (SSR-guarded) ---
   useEffect(() => {
@@ -1068,6 +1473,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
         }
         try {
           setSnapshot(JSON.parse((messageEvent as MessageEvent).data) as ProjectorSnapshot);
+          setStreamLive(true);
         } catch {
           // Ignore a malformed frame; the next push or a resync recovers.
         }
@@ -1094,6 +1500,12 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
         if (closed) {
           return;
         }
+        // SAY SO. Reconnecting silently meant a killed server left the wall
+        // projecting a confident, frozen room forever — same status chips, same
+        // last transcript line, still reading "listening". Nobody in the room
+        // could tell a quiet room from a dead one. The banner clears itself the
+        // moment a frame lands again.
+        setStreamLive(false);
         reconnectTimer = setTimeout(openStream, backoffMs);
         backoffMs = Math.min(backoffMs * 2, 15_000);
       });
@@ -1333,8 +1745,17 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
     clearHidden,
   ]);
 
-  const detailOpen = selectedProcess !== null;
-  const listeningState = snapshot.muted ? "muted" : "listening";
+  // The orb told the room "Listening" whenever the SERVER intended to listen —
+  // which stayed true with zero audio arriving. Every self-rebuild restarts the
+  // server and reloads the walls, the mic pipeline dies with the old page, and
+  // the room stood there deaf under a green light. `listening` is intent;
+  // `mic.active` (a live /api/mic socket) is the truth. When the two disagree
+  // the orb says DEAF, because a silent room that looks healthy is the worst
+  // failure this wall can show.
+  const micSession = snapshot.mic ?? null;
+  const roomIsDeaf = !snapshot.muted && snapshot.listening && micSession !== null && !micSession.active;
+  const listeningState = snapshot.muted ? "muted" : roomIsDeaf ? "deaf" : "listening";
+  const listeningLabel = snapshot.muted ? "Muted" : roomIsDeaf ? "No mic" : "Listening";
 
   // MOCK ROOM toggle: swap in the busy fixture (several projects at once) and
   // hold back the live stream; toggling off re-syncs the authoritative state
@@ -1369,13 +1790,15 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
 
   // PER-WALL CONTRACT (DE-THEMED): the two walls are ONE continuous room —
   // neither is "the idea wall" or "the build wall". The 3D room scene renders
-  // in FULL on every window, and ON-DEMAND overlays (build detail, deck, QR
+  // in FULL on every window, and ON-DEMAND overlays (tree menu, deck, QR
   // import, guided demo) open on WHICHEVER wall summons them. ?view only
   // places the single-instance PERSISTENT panels pragmatically so the two
   // projections don't duplicate them: view=ideas (wall A) carries the idea
   // tray + suggestion + capture/auto-build/mic/guided-demo cluster,
-  // view=builds (wall B) the fleet rail + transcript + QR-import button, and
-  // the default full view (single-window desk mode) carries everything.
+  // view=builds (wall B) the transcript rail + QR-import button, and the
+  // default full view (single-window desk mode) carries everything. Per-
+  // process controls are NOT a rail anymore: pick a tree in the garden and
+  // its anchored menu expands right there (TreeMenu.tsx).
   // Genuinely global chrome (status bar, scene controls, help) stays on both
   // walls. Only Mock Room hides the 2D rail/tray entirely (a pure 3D showcase).
   const showIdeaSurfaces = view !== "builds";
@@ -1410,6 +1833,90 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
     }
     return [];
   }, [ideas, snapshot.suggestion.pitch, snapshot.suggestion.confidence]);
+
+  // ISSUE FRUIT poller: for every ADOPTED tree (treeRepo.remoteUrl recorded,
+  // never the self process) fetch GET /api/process/:upid/issues once a
+  // minute while the tree exists. Degrades honestly: an absent route, a dead
+  // server or a malformed payload all resolve to NO fruit ([]) — never a
+  // crash, never stale beads. Results ride into the scene via treeSpecs
+  // below; RoomScene's fruitSignature gate regrows the entry only when the
+  // set actually changed.
+  const [issuesByUpid, setIssuesByUpid] = useState<Record<string, IssueInfo[]>>({});
+  const issuesByUpidRef = useRef(issuesByUpid);
+  issuesByUpidRef.current = issuesByUpid;
+  const adoptedKey = useMemo(
+    () =>
+      snapshot.processes
+        .filter(
+          (process) =>
+            process.upid !== "self" &&
+            typeof process.treeRepo?.remoteUrl === "string" &&
+            process.treeRepo.remoteUrl.length > 0,
+        )
+        .map((process) => process.upid)
+        .join("|"),
+    [snapshot.processes],
+  );
+  useEffect(() => {
+    if (typeof window === "undefined" || adoptedKey.length === 0) {
+      return;
+    }
+    const upids = adoptedKey.split("|");
+    let cancelled = false;
+    const poll = async (): Promise<void> => {
+      for (const upid of upids) {
+        let issues: IssueInfo[] = [];
+        try {
+          const response = await fetch(`/api/process/${encodeURIComponent(upid)}/issues`, {
+            headers: { accept: "application/json" },
+          });
+          if (response.ok) {
+            const payload = (await response.json().catch(() => null)) as { issues?: unknown } | null;
+            if (payload !== null && Array.isArray(payload.issues)) {
+              issues = payload.issues.flatMap((issue): IssueInfo[] => {
+                const candidate = issue as { number?: unknown; title?: unknown; labels?: unknown };
+                if (typeof candidate.number !== "number" || !Number.isFinite(candidate.number)) {
+                  return [];
+                }
+                return [
+                  {
+                    number: candidate.number,
+                    title: typeof candidate.title === "string" ? candidate.title : "",
+                    labels: Array.isArray(candidate.labels)
+                      ? candidate.labels.filter((label): label is string => typeof label === "string")
+                      : [],
+                  },
+                ];
+              });
+            }
+          }
+        } catch {
+          // Route absent / server down: this tree just bears no fruit.
+        }
+        if (cancelled) {
+          return;
+        }
+        setIssuesByUpid((current) => {
+          const previous = current[upid] ?? [];
+          const unchanged =
+            previous.length === issues.length &&
+            previous.every(
+              (issue, index) =>
+                issue.number === issues[index].number &&
+                issue.title === issues[index].title &&
+                issue.labels.join(",") === issues[index].labels.join(","),
+            );
+          return unchanged ? current : { ...current, [upid]: issues };
+        });
+      }
+    };
+    void poll();
+    const timer = setInterval(() => void poll(), ISSUE_POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [adoptedKey]);
 
   // Scene trees: one per process (minus anything hidden via the hide menu).
   // Each spec carries the INFERRED project title (process.task) for the node
@@ -1446,9 +1953,14 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
             builds: builds.length > 0 ? summary : undefined,
             published: typeof process.publishedUrl === "string" && process.publishedUrl.length > 0,
             failedCount: summary.failed + (execution?.status === "failed" ? 1 : 0),
+            // GIT SUBSTRATE limbs (room/* branches) + issue fruit ride the
+            // spec straight from the snapshot/poller — the scene re-derives
+            // limbs each reconcile, so a fresh branch appears within a tick.
+            treeRepo: process.treeRepo ?? null,
+            issues: issuesByUpid[process.upid],
           };
         }),
-    [snapshot.processes, hiddenTrees, steeringUpid],
+    [snapshot.processes, hiddenTrees, steeringUpid, issuesByUpid],
   );
 
   const visibleIdeaOrbs = useMemo<IdeaOrbSpec[]>(
@@ -1508,24 +2020,187 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
     }
   }, [ideaCard, ideaCardOrb]);
 
-  // Clicking a project in the scene: mock/demo processes with a FIXTURE deck
-  // open their slideshow (mock room has no rail, so the scene click is the only
-  // deck path there); every live process steers — click-to-steer stays the
-  // primary live semantic, and real generated decks open from the fleet card's
-  // "Deck ▸" button instead.
+  // Picking a tree in the scene (click or dwell): open ITS anchored menu at
+  // the pick-time screen rect — and ONLY that (steering stays with the menu's
+  // RecordSteerToggle; see the steer-arm note above). Picking another tree
+  // MOVES the menu (selected changes, anchor re-derives); the deck, previews,
+  // steer toggle and remove all live inside the menu now — including fixture
+  // decks (mock room), which get the menu's "Deck ▸" button.
   const selectSceneProcess = useCallback(
-    (callsign: string) => {
+    (callsign: string, anchor?: SceneDwellRect | null) => {
       const process = snapshotRef.current.processes.find(
         (candidate) => candidate.callsign === callsign || candidate.upid === callsign,
       );
-      if (process !== undefined && (process.slides?.length ?? 0) > 0) {
-        setSlideshowUpid(process.upid);
+      if (process === undefined) {
+        return; // e.g. the synthetic self tree before the mirror is pinned
+      }
+      setMenuAnchor(anchor ?? null);
+      setSelected(process.callsign);
+    },
+    [],
+  );
+
+  // Picking a LIMB — its tip or anywhere along the wood — opens the branch's
+  // contextual popup at the limb TIP's own projected rect, on adopted trees
+  // (a work rail) and on the room's own tree alike (a version of the room;
+  // its callsign is the mirror's, which resolves here to upid "self"). One of
+  // the branch/issue pair at a time — opening one closes the other.
+  const openBranchPopup = useCallback((callsign: string, branch: string, anchor: SceneDwellRect | null) => {
+    const process = snapshotRef.current.processes.find(
+      (candidate) => candidate.callsign === callsign || candidate.upid === callsign,
+    );
+    if (process === undefined) {
+      return;
+    }
+    setIssuePopup(null);
+    setBranchPopup({ upid: process.upid, branch, anchor });
+  }, []);
+
+  // Picking a FRUIT opens the issue's popup; the issue payload comes from
+  // the poller's latest list (falling back to the bare number when the list
+  // refreshed between render and pick).
+  const openIssuePopup = useCallback((callsign: string, issueNumber: number, anchor: SceneDwellRect | null) => {
+    const process = snapshotRef.current.processes.find(
+      (candidate) => candidate.callsign === callsign || candidate.upid === callsign,
+    );
+    if (process === undefined) {
+      return;
+    }
+    const issue =
+      issuesByUpidRef.current[process.upid]?.find((candidate) => candidate.number === issueNumber) ?? {
+        number: issueNumber,
+        title: "",
+        labels: [],
+      };
+    setBranchPopup(null);
+    setIssuePopup({ upid: process.upid, issue, anchor });
+  }, []);
+
+  // 🌱 GROW A BRANCH (tree menu, adopted trees): POST names a real room/*
+  // rail off the freshly fetched origin tip; the menu closes immediately and
+  // the LIMB appears via the next snapshot (limbs re-derive each reconcile).
+  const growBranch = useCallback(async (upid: string) => {
+    setSelected(null);
+    try {
+      await fetch(`/api/process/${encodeURIComponent(upid)}/branch`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: "spoken-changes" }),
+      });
+    } catch {
+      // No limb grows; the server logs the honest failure.
+    }
+  }, []);
+
+  // ANCHOR CHASE (menu ↔ tree): while a menu is open, refresh its anchor from
+  // the tree's LIVE projected dwell rect about once a second — slot re-shuffles
+  // and settle easing move trees after pick time, and a menu pinned to a stale
+  // rect reads as orphaned glass. Lightweight by design: 1 Hz (never
+  // per-frame), one projected-box query through the existing scene-source
+  // seam, and the guarded set keeps identical rects from re-rendering. A null
+  // rect (tree gone / degenerate projection this beat) keeps the last anchor.
+  // Side benefit: a keyboard/hook select (anchor null → edge-rest) adopts the
+  // real anchor within a second.
+  const selectedMenuCallsign = selectedProcess?.callsign ?? null;
+  useEffect(() => {
+    if (selectedMenuCallsign === null || typeof window === "undefined") {
+      return;
+    }
+    const timer = setInterval(() => {
+      const rect = getSceneDwellSource()?.rectFor(procDwellTargetId(selectedMenuCallsign)) ?? null;
+      if (rect === null) {
         return;
       }
-      void steerProcess(callsign);
-    },
-    [steerProcess],
-  );
+      setMenuAnchor((current) =>
+        current !== null &&
+        Math.abs(current.left - rect.left) < 1 &&
+        Math.abs(current.top - rect.top) < 1 &&
+        Math.abs(current.width - rect.width) < 1 &&
+        Math.abs(current.height - rect.height) < 1
+          ? current
+          : rect,
+      );
+    }, 1_000);
+    return () => clearInterval(timer);
+  }, [selectedMenuCallsign]);
+
+  // TWO GLASS PANELS NEVER OVERLAP (projector legibility): an opening tree
+  // menu folds the control dock's tray via its collapse seam; hover/dwell on
+  // the dock re-opens it as usual afterwards.
+  const [dockCollapseSignal, setDockCollapseSignal] = useState(0);
+  const treeMenuOpen = selectedProcess !== null;
+  useEffect(() => {
+    if (treeMenuOpen) {
+      setDockCollapseSignal((n) => n + 1);
+    }
+  }, [treeMenuOpen]);
+  // The guided demo owns the wall the moment it starts: fold the dock tray too
+  // (its launch button lives INSIDE the tray, so the tray sat open over step 1
+  // after every launch). Covers the HUD button, ?demo=guided auto-entry and
+  // re-entry alike; ControlDock's holdClosed latch keeps it folded while the
+  // launching cursor still rests on the dock — hover later re-opens as usual.
+  const guidedOpen = guided !== null;
+  useEffect(() => {
+    if (guidedOpen) {
+      setDockCollapseSignal((n) => n + 1);
+    }
+  }, [guidedOpen]);
+
+  // AUTO-FIT ON IMPORT: when a upid never seen before appears in the snapshot
+  // (QR import, voice build, mock toggle), pulse the EXISTING one-shot fit
+  // (fitSignal → RoomScene's fitToContent) once so the garden reframes with
+  // every tree mid-frame instead of the new one clipping the bottom edge.
+  // Baseline = the mount snapshot, so the first live /api/state sync frames
+  // the standing garden too. RoomScene keeps its own guards: rigid corner/
+  // flat pairs ignore the pulse (their cameras may not move).
+  const seenUpidsRef = useRef<Set<string> | null>(null);
+  useEffect(() => {
+    const seen = seenUpidsRef.current;
+    if (seen === null) {
+      seenUpidsRef.current = new Set(snapshot.processes.map((process) => process.upid));
+      return;
+    }
+    let grewNewTree = false;
+    for (const process of snapshot.processes) {
+      if (!seen.has(process.upid)) {
+        seen.add(process.upid);
+        grewNewTree = true;
+      }
+    }
+    if (grewNewTree) {
+      setFitSignal((n) => n + 1);
+    }
+  }, [snapshot.processes]);
+
+  // DWELL-MISS / WALKED-AWAY CLOSE (GestureLayer → popup-dismiss.ts): the
+  // gesture wall's ground-click. Closes the TOP popup only — the holo panel
+  // first (it stacks over the menu that opened it), then the branch/issue
+  // popups (they stack over the tree menu their limb/fruit belongs to), then
+  // the tree menu, else the idea action card. Deliberately narrow: the
+  // deck/QR/help overlays keep their explicit close buttons (auto-closing a
+  // deck mid-pitch because nobody pointed for 6s would be worse than stale
+  // glass).
+  const closeTopPopup = useCallback(() => {
+    if (holoPanelRef.current !== null) {
+      setHoloPanel(null);
+      return;
+    }
+    if (branchPopupRef.current !== null) {
+      setBranchPopup(null);
+      return;
+    }
+    if (issuePopupRef.current !== null) {
+      setIssuePopup(null);
+      return;
+    }
+    if (selectedRef.current !== null) {
+      setSelected(null);
+      return;
+    }
+    if (ideaCardRef.current !== null) {
+      setIdeaCard(null);
+    }
+  }, []);
 
   // Clicking an idea orb OPENS its contextual action card — building is the
   // card's explicit "✓ Done — build it" press, never the orb click itself.
@@ -1567,7 +2242,27 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
   // mutually exclusive, so an explicit pinch-camera opt-in wins (single-wall
   // Kinect + hands must be able to orbit). Without hands, corner-lock stays as
   // the two-wall gesture pair intends.
-  const cornerLock = gestureMode && urlConfig.wall !== null && urlConfig.hands === null;
+  // FLAT LOCK: on the flat rig (?flat=1 — one wall, two side-by-side
+  // projections, docs/FLAT-WALL.md) the pair is rigid too, but coplanar:
+  // shared eye, ONE shared view direction, each window rendering its HALF of
+  // a single wide frustum (see flat-lock.ts). It applies in desk AND gesture
+  // mode — the physical wall is flat either way — so it wins over the corner
+  // lock. Unlike the corner pair, ?hands= does NOT defeat it: the pinch
+  // camera orbits the SHARED panorama (every window applies the identical
+  // stream-fed deltas, so the pair stays continuous while it spins —
+  // RoomScene's flat rig).
+  const flatLock = urlConfig.flat && urlConfig.wall !== null;
+  // A research-pinned window (?research=1 — the ceiling projector) is a
+  // dedicated aux display, never one half of the corner pair: corner-locking
+  // it would aim its camera at the pair's OTHER quadrant, away from the tree.
+  const cornerLock =
+    !flatLock && !urlConfig.research && gestureMode && urlConfig.wall !== null && urlConfig.hands === null;
+  // CONTINUOUS AUTO-FRAMING: a research-pinned dedicated display (the ceiling
+  // projector) must keep the WHOLE conversation tree in view as it grows, so
+  // auto-fit defaults ON there; ?autofit=0 opts out, ?autofit=1 forces it on
+  // any other window. Never under the corner/flat lock — rigid pairs may not
+  // move (RoomScene gates it again defensively).
+  const autoFit = !cornerLock && !flatLock && (urlConfig.autoFit ?? urlConfig.research);
   const dwellLayerOn = gestureMode || urlConfig.dwell === "mouse" || remoteHandsUrl.length > 0;
   // AUDIT (no-mocks): the Mock Room toggle renders ONLY behind ?mock=1.
   const mockRoomEnabled = urlConfig.mock;
@@ -1588,20 +2283,30 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
         environment={urlConfig.environment}
         wall={urlConfig.wall}
         cornerLock={cornerLock}
+        flatLock={flatLock}
+        autoFit={autoFit}
         fitSignal={fitSignal}
         focusUpid={
           guided !== null && (guided.step === "race" || guided.step === "decide")
             ? guided.focusUpid
-            : null
+            : tendingSelfUpid
         }
-        pointerNav={!gestureMode}
+        pointerNav={!gestureMode && !flatLock}
         onAcceptIdea={acceptOrb}
         onSelectProcess={selectSceneProcess}
+        onPickMiss={closeMenu}
+        onPickBranch={openBranchPopup}
+        onPickIssue={openIssuePopup}
         dialogue={dialogueSpecs}
         topics={topicSpecs}
         research={researchSpecs}
         onResearchNode={onResearchNode}
         onDialogueNode={(turnId) => void onDialogueNode(turnId)}
+        sky={showResearch ? snapshot.sky : undefined}
+        researchThinking={snapshot.researchThinking === true}
+        skyView={urlConfig.research}
+        selfTree={selfTree}
+        park={urlConfig.park}
       />
       {dwellLayerOn ? (
         <GestureLayer
@@ -1609,6 +2314,8 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
           fusionUrl={urlConfig.gesture?.fusionUrl ?? ""}
           remoteUrl={remoteHandsUrl}
           mouseTest={urlConfig.dwell === "mouse"}
+          initialCursorDots={urlConfig.dots ?? undefined}
+          onDwellMiss={closeTopPopup}
         />
       ) : null}
       {/* PINCH CAMERA (hands): runtime-toggleable (HUD button) and seeded from
@@ -1628,6 +2335,34 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
         </div>
       ) : null}
       <FullscreenButton />
+      {/* Research-pinned displays (the ceiling) run zen — chrome-less — but
+          still need the one sky control: a corner chip, dimmed until a
+          cursor rests on it, dwellable like everything else. */}
+      {urlConfig.research ? (
+        <div className="ceiling-dock">
+          <ControlDock>
+            <button
+              type="button"
+              className="ctl-button ceiling-reset"
+              data-testid="ceiling-reset-button"
+              title="Reset the conversation sky (clouds + research rain)"
+              onClick={() => void resetResearchTree()}
+            >
+              🧹 Reset sky
+            </button>
+            <button
+              type="button"
+              className={`ctl-button research-toggle${researchEngineOn ? " on" : ""}`}
+              data-testid="ceiling-research-button"
+              data-state={researchEngineOn ? "on" : "off"}
+              onClick={() => void toggleResearchMode()}
+              title="Research engine: while ON, the room reviews the talk (~1/min) and buds research rain onto this sky."
+            >
+              {researchEngineOn ? "🔍 Research: ON" : "🔍 Research: OFF"}
+            </button>
+          </ControlDock>
+        </div>
+      ) : null}
       {voiceFlash !== null ? (
         <div className="voice-flash" data-testid="voice-flash" role="status">
           🎤 vibersyn → {voiceFlash}
@@ -1645,6 +2380,23 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
         </div>
       ) : null}
 
+      {/* THE ROOM DIED WHILE YOU WERE LOOKING AT IT. Every reading on this wall
+          is a snapshot; when the push stream drops, they all freeze at their
+          last value and keep looking authoritative. Measured: the server was
+          killed and 8.5s later the wall still read "READY / ambient listening /
+          ALL CLEAR" with the pre-death transcript. This banner is the only
+          thing that distinguishes a quiet room from a dead one, so it shows in
+          gesture mode too — it is not a debugging chip. */}
+      {streamLive ? null : (
+        <div className="stream-stale" data-testid="stream-stale" role="status">
+          ⚠ lost the room — this wall is frozen at its last update, reconnecting…
+        </div>
+      )}
+      {/* The stand-ins chip is GONE (live-room directive: it read as noise —
+          permanently naming intentionally-stubbed legs like tts/sink taught
+          nobody anything). /api/health keeps the full degradation truth for
+          diagnostics and the harness. */}
+
       <header className="status-bar" data-region="status">
         {/* STATUS READOUTS (listening orb, session id/global state, active cue,
             read-only tag, gate %): DESK-ONLY debugging chips. In gesture mode
@@ -1658,7 +2410,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
             data-state={listeningState}
           >
             <span className="orb-core" aria-hidden="true" />
-            <span className="orb-label">{snapshot.muted ? "Muted" : "Listening"}</span>
+            <span className="orb-label">{listeningLabel}</span>
           </div>
           <div className="session-meta">
             <span className="session-id">{snapshot.sessionId}</span>
@@ -1698,8 +2450,11 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
               {snapshot.emergencyStopTriggered ? "EMERGENCY STOP" : "ALL CLEAR"}
             </div>
           ) : null}
-          {/* Idea-side controls (voice → idea pipeline): wall A + full view. */}
-          {showIdeaSurfaces && snapshot.muted ? (
+          {/* UNMUTE — the SAFETY control. A muted room must SAY so and offer
+              the release right on the wall, so it stays OUTSIDE the control
+              dock (like the emergency banner: alert-state chrome never folds
+              behind a hover). Idea-side placement: wall A + full view. */}
+          {snapshot.muted ? (
             <button
               type="button"
               className="ctl-button unmute"
@@ -1710,72 +2465,40 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
               {isUnmuting ? "Unmuting" : "Unmute"}
             </button>
           ) : null}
+          {/* CONTROL DOCK (calm wall): every routine control folds behind ONE
+              "⚙ Controls" affordance — hover/dwell/focus expands the popover
+              tray, and it collapses ~4s after every cursor leaves (see
+              ControlDock.tsx). The per-wall ?view gating of each button is
+              unchanged; only its resting visibility moved. An opening tree
+              menu folds the tray (collapseSignal) so two glass panels never
+              overlap on the projector. */}
+          <ControlDock collapseSignal={dockCollapseSignal}>
           {/* ONE control for mic + capture (live-room request): activating
               unmutes + starts the mic AND turns Idea Capture on; deactivating
               stops both. Replaces the separate Mic and Idea Capture buttons. */}
-          {showIdeaSurfaces ? (
-            <MicCaptureControl
-              active={captureMode || micState !== "off"}
-              micState={micState}
-              level={micLevel}
-              error={micError}
-              mode={snapshot.mic?.mode}
-              bytesReceived={snapshot.mic?.bytesReceived ?? 0}
-              onToggle={() => void toggleMicCapture()}
-            />
-          ) : null}
-          {showIdeaSurfaces ? (
-            <button
-              type="button"
-              className={`ctl-button auto-build${autoAccept ? " on" : ""}`}
-              data-testid="auto-build-button"
-              data-state={autoAccept ? "on" : "off"}
-              aria-pressed={autoAccept}
-              onClick={() => void toggleAutoAccept()}
-              title="When on, every detected idea builds itself — no click required."
-            >
-              {autoAccept ? "Auto-Build: ON" : "Auto-Build: OFF"}
-            </button>
-          ) : null}
-          {showIdeaSurfaces ? (
-            <button
-              type="button"
-              className={`ctl-button research-toggle${researchActive ? " on" : ""}`}
-              data-testid="research-mode-button"
-              data-state={researchActive ? "on" : "off"}
-              aria-pressed={researchActive}
-              onClick={() => void toggleResearchMode()}
-              title="Research mode (R): the room's talk grows a 3D dialogue tree, and agents suggest what to fact-check, deep-dive, or bias-scan. Click a suggestion to spawn the research."
-            >
-              {researchActive ? "🔍 Research: ON" : "🔍 Research: OFF"}
-            </button>
-          ) : null}
-          {/* Build-side control (phone-imports a project to BUILD): wall B + full view. */}
-          {showBuildSurfaces ? (
-            <button
-              type="button"
-              className="ctl-button qr-import"
-              data-testid="qr-import-button"
-              onClick={() => setQrOpen(true)}
-              title="Show a QR code — scan it on a phone to add a project (context + optional link) to the wall."
-            >
-              QR Import
-            </button>
-          ) : null}
-          {/* GUEST HANDS: only rendered when this wall actually listens for
-              guests (?remote=1 / --guests) — a URL that connects to nothing is
-              worse than no button. */}
-          {urlConfig.remote !== null ? (
-            <button
-              type="button"
-              className="ctl-button guest-hands"
-              data-testid="guest-hands-button"
-              onClick={() => setGuestsOpen(true)}
-              title="Show the URL other computers on this network open to get hand controls for this wall (webcam hand-tracking or trackpad)."
-            >
-              🖐 Guests
-            </button>
-          ) : null}
+          {/* NOT gated by ?view. This is the only way to arm the room's
+              microphone, and wall B (view=builds) had no mic control and no
+              unmute — that window could never start listening, so whoever
+              stood in front of it could not wake the room at all. Every wall
+              gets the mic. */}
+          <MicCaptureControl
+            active={captureMode || micState !== "off"}
+            deviceLabel={micDeviceLabel}
+            micState={micState}
+            level={micLevel}
+            error={micError}
+            mode={snapshot.mic?.mode}
+            bytesReceived={snapshot.mic?.bytesReceived ?? 0}
+            onToggle={() => void toggleMicCapture()}
+          />
+          {/* Auto-Build and Research left the dock (live-room directive): the
+              room curates its controls — auto-build stays reachable by voice,
+              and research is ALWAYS ON, living exclusively on the ceiling. */}
+          {/* Self-Rebuild's toggle is GONE (live-room directive): the room is
+              self-hosting, full stop — the server boots armed under --self.
+              VIBERSYN route /api/self-rebuild remains as the escape hatch. */}
+          {/* QR Import's button folded into the standing bottom-left badge
+              (live-room directive) — the overlay stays reachable there. */}
           {showIdeaSurfaces ? (
             <button
               type="button"
@@ -1805,12 +2528,12 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
               {mockMode ? "● Mock Room" : "Mock Room"}
             </button>
           ) : null}
+          </ControlDock>
         </div>
       </header>
 
-      {!mockMode && showIdeaSurfaces && !researchActive ? <SuggestionRegion pitch={snapshot.suggestion.pitch} /> : null}
 
-      <div className={`stage${detailOpen ? " stage-dimmed" : ""}`}>
+      <div className="stage">
         <div className="stage-main">
           {showIdeaTray && !mockMode && !researchActive ? (
             <IdeaTray
@@ -1833,40 +2556,21 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
         </div>
 
         {/* Mock room is a pure 3D showcase — the 2D rail/tray stay hidden.
-            The rail (fleet / transcript) is the persistent panel cluster that
-            wall B carries (single-instance placement, not a wall theme). In
+            THE FLEET RAIL IS GONE (operator-directed redesign): per-process
+            controls live in the anchored per-tree menu now (pick a tree →
+            TreeMenu opens beside it). The rail keeps only the transcript
+            card + the hands toggle — wall B's single-instance placement. In
             gesture mode the transcript card is lifted into wall B's right
             third by CSS (display-only content may use the pointing-forbidden
             zone); desk mode keeps it in-rail. */}
-        {!mockMode && showBuildSurfaces ? (
+        {/* The rail carries the TRANSCRIPT, which is the room's only proof it
+            heard anything. Gated to view=builds it left wall A — the wall with
+            the capture cluster, the one people talk at — showing no words at
+            all, however much they said. Both walls keep it now. */}
+        {!mockMode ? (
           <aside className="rail">
-            {/* PINCH CAMERA toggle (hands): a compact chip docked above the
-                fleet (live-room request — it was crowding the header). Seeded
-                from ?hands=; the label mirrors PinchCameraLayer's socket state. */}
-            <button
-              type="button"
-              className={`ctl-button hands-toggle${handsOn ? " on" : ""}`}
-              data-testid="hands-toggle-button"
-              data-state={handsOn ? (handsStatus === "open" ? "live" : "connecting") : "off"}
-              aria-pressed={handsOn}
-              onClick={toggleHands}
-              title="Pinch-camera control: point with your hands (TouchDesigner/MediaPipe) to orbit, zoom and pan the room. Toggle to arm the hand tracker."
-            >
-              {!handsOn
-                ? "✋ Hands: OFF"
-                : handsStatus === "open"
-                  ? "✋ Hands: LIVE"
-                  : "✋ Hands: connecting"}
-            </button>
-            <FleetPanel
-              processes={snapshot.processes}
-              selected={selected}
-              steeringUpid={steeringUpid}
-              onSelect={(id) => void steerProcess(id)}
-              onLifecycle={(upid, action) => void processLifecycle(upid, action)}
-              onOpenDeck={(upid) => setSlideshowUpid(upid)}
-              onCommission={(upid) => void commissionProcess(upid)}
-            />
+            {/* The ✋ Hands chip left the rail (live-room directive) — the
+                pinch camera still arms via ?hands= and guest hands. */}
             <TranscriptStream lines={snapshot.transcript} />
           </aside>
         ) : null}
@@ -1938,7 +2642,15 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
           the old instant-accept behavior (primary → /api/suggestion/accept,
           ledger idea → per-idea accept), close (✕ / Esc) just dismisses. */}
       {ideaCard !== null && ideaCardOrb !== null && !researchActive ? (
-        <div className="idea-action-card" data-testid="idea-action-card" role="dialog" aria-label="Build this idea?">
+        <div
+          className="idea-action-card"
+          data-testid="idea-action-card"
+          // Dwell-miss dismissal shield (popup-dismiss.ts): a cursor reading
+          // the pitch/confidence copy must not close the card under it.
+          data-dwell-shield="1"
+          role="dialog"
+          aria-label="Build this idea?"
+        >
           <div className="idea-card-copy">
             <span className="idea-card-pitch">{ideaCardOrb.pitch}</span>
             {ideaCardOrb.confidence > 0 ? (
@@ -2043,15 +2755,109 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
         </div>
       ) : null}
 
-      {/* ON-DEMAND overlays (detail / deck / QR) open on WHICHEVER wall
+      {/* ON-DEMAND overlays (tree menu / deck / QR) open on WHICHEVER wall
           summons them — the walls are one continuous room, so a person
-          dwelling a build tree on wall A gets the detail overlay right there
-          (per-wall safe-zone CSS repositions each card). */}
-      {detailOpen && selectedProcess ? (
-        <div className="detail-overlay" onClick={closeDetail}>
-          <BuildDetail process={selectedProcess} trace={snapshot.trace} onClose={closeDetail} />
+          dwelling a build tree on wall A gets the anchored menu right there.
+          The TREE MENU replaces the old modal BuildDetail: it expands beside
+          the picked tree (RoomScene passes the pick-time screen rect) and
+          closes on ✕, on picking empty ground (onPickMiss), or moves when
+          another tree is picked. Its plain enabled <button>s are dwell
+          targets automatically (GestureLayer collectDomTargets). */}
+      {/* LOCK HALO (self tree only): a pure-decor ring hugging the tree's
+          live projected rect — the visible "locked around it". It rides the
+          SAME 1 Hz anchor chase as the menu (one source of truth, no new
+          interval); the 240ms CSS glide smooths the 1 Hz steps. Never a dwell
+          target (pointer-events:none, no buttons), hidden when no projection
+          exists this beat. */}
+      {tendingSelfUpid !== null && menuAnchor !== null ? (
+        <div
+          className="tree-halo"
+          data-testid="tree-menu-halo"
+          aria-hidden="true"
+          style={{
+            left: `${Math.round(menuAnchor.left - 14)}px`,
+            top: `${Math.round(menuAnchor.top - 14)}px`,
+            width: `${Math.round(menuAnchor.width + 28)}px`,
+            height: `${Math.round(menuAnchor.height + 28)}px`,
+          }}
+        >
+          <span className="tree-halo-lock" data-testid="tree-menu-lock">
+            🔒 tending this tree
+          </span>
         </div>
       ) : null}
+      {selectedProcess !== null ? (
+        <TreeMenu
+          process={selectedProcess}
+          snapshot={snapshot}
+          anchor={menuAnchor}
+          selfBranches={initialSelfBranches ?? null}
+          onControlFailure={reportControlFailure}
+          onClose={closeMenu}
+          onOpenDeck={(upid, backend) => {
+            // The deck window takes over — one overlay at a time.
+            setSelected(null);
+            setSlideshowBackend(backend ?? null);
+            setSlideshowUpid(upid);
+          }}
+          onDismiss={(upid) => void dismissProcess(upid)}
+          onOpenLiveApp={(upid) => {
+            // The holo panel takes the menu's place beside the tree — it
+            // inherits the pick-time anchor, and only ONE panel ever exists.
+            setHoloPanel({ upid, anchor: menuAnchor });
+            setSelected(null);
+          }}
+          onGrowBranch={(upid) => void growBranch(upid)}
+        />
+      ) : null}
+
+      {/* BRANCH / ISSUE POPUPS (adopted trees): the limb-tip / fruit
+          contextual glass, anchored to the picked SUB-OBJECT's rect. Closed
+          by ✕, by opening the other, or by the dwell-miss ground-click
+          (closeTopPopup — above the tree menu, below the holo panel). */}
+      {branchPopup !== null
+        ? (() => {
+            const popupProcess = snapshot.processes.find((candidate) => candidate.upid === branchPopup.upid);
+            return popupProcess !== undefined ? (
+              <BranchPopup
+                process={popupProcess}
+                branch={branchPopup.branch}
+                anchor={branchPopup.anchor}
+                // The SELF tree's limbs resolve out of the forest spec (the
+                // mirror carries no treeRepo); the local rails ride along so
+                // the static renderer can exercise the version buttons.
+                self={selfTree !== null ? { tree: selfTree, versions: initialSelfBranches ?? null } : null}
+                onClose={() => setBranchPopup(null)}
+              />
+            ) : null;
+          })()
+        : null}
+      {issuePopup !== null
+        ? (() => {
+            const popupProcess = snapshot.processes.find((candidate) => candidate.upid === issuePopup.upid);
+            return popupProcess !== undefined ? (
+              <IssuePopup
+                process={popupProcess}
+                issue={issuePopup.issue}
+                anchor={issuePopup.anchor}
+                onClose={() => setIssuePopup(null)}
+              />
+            ) : null;
+          })()
+        : null}
+
+      {/* HOLO PANEL: the imported tree's LIVE deployment (via the same-origin
+          /salem proxy) floating beside the tree. Mounted like the tree menu —
+          on whichever wall summoned it — and closed by ✕ or the dwell-miss
+          ground-click (closeTopPopup closes it BEFORE the tree menu). */}
+      {holoPanel !== null
+        ? (() => {
+            const holoProcess = snapshot.processes.find((candidate) => candidate.upid === holoPanel.upid);
+            return holoProcess !== undefined ? (
+              <HoloPanel process={holoProcess} anchor={holoPanel.anchor} onClose={() => setHoloPanel(null)} />
+            ) : null;
+          })()
+        : null}
 
       {slideshowUpid !== null
         ? (() => {
@@ -2061,8 +2867,13 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
                 process={deckProcess}
                 onLifecycle={(upid, action) => void processLifecycle(upid, action)}
                 onClose={() => setSlideshowUpid(null)}
-                initialBackend={guided?.step === "decide" ? guided.readyBackend : null}
+                initialBackend={guided?.step === "decide" ? guided.readyBackend : slideshowBackend}
                 onDecision={(choice) => deckDecision(deckProcess.upid, choice)}
+                decisionState={deckDecisionState}
+                onSteer={(text) => void deckSteer(deckProcess.upid, text)}
+                /* The guided demo's decide finale opens the generated deck
+                   STRAIGHT on its decision slide (#decision hash nav). */
+                openAtDecision={guided?.step === "decide"}
               />
             ) : null;
           })()
@@ -2072,6 +2883,10 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
       ) : null}
       {qrOpen ? <QrImport processes={snapshot.processes} onClose={() => setQrOpen(false)} /> : null}
       {guestsOpen ? <GuestHands onClose={() => setGuestsOpen(false)} /> : null}
+      {/* Standing guest invitation (live-room request): a small always-on QR,
+          bottom-left, on every live wall. The research-pinned ceiling is the
+          one exception — nobody scans a ceiling, and the sky stays clean. */}
+      {liveMode && !urlConfig.research ? <GuestQrBadge /> : null}
       {helpOpen ? <HelpOverlay onClose={() => setHelpOpen(false)} gestureMode={gestureMode} /> : null}
       {guided !== null ? (
         <GuidedDemo
@@ -2079,20 +2894,38 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
           snapshot={snapshot}
           micState={micState}
           micError={micError}
+          /* Rig-true coaching: no gesture layer → desk mouse; a gesture wall
+             whose cursor source is the --arcade joystick announces itself via
+             &stick=1 (run-room.sh) — cameras otherwise. */
+          pointer={(urlConfig.gesture === null ? "mouse" : urlConfig.stick ? "stick" : "hand") satisfies PointerRig}
           onPopOrb={guidedPopOrb}
           onRecord={() => void guidedRecord()}
           onSkip={guidedSkip}
           onExit={exitGuidedDemo}
           onFinish={exitGuidedDemo}
+          onStartOver={guidedStartOver}
           onDone={() => {
-            // Done is the ONLY way forward from the idea step: accept builds
-            // from the surfaced idea (or the raw transcript, server-side),
-            // then the demo advances — the race adopts the newborn process,
-            // and a silent Done still moves the visitor along.
+            // Planting is the ONLY way forward from the idea step: accept
+            // builds from the surfaced idea (or the raw transcript,
+            // server-side), then the demo advances — the race adopts the
+            // newborn process, and a silent plant still moves the visitor
+            // along.
             void acceptIdea().then(() => {
               guidedSkip();
             });
           }}
+        />
+      ) : null}
+      {/* AUTO-CALIBRATION: wall-bound windows watch for a running projector
+          calibrator (gesturewall.autocal via the /api/autocal proxy) and flip
+          into the fullscreen calibration surface by themselves — rendered
+          LAST + at the top z-index so the opaque surface suppresses every
+          other overlay while the cameras measure this screen. */}
+      {urlConfig.wall !== null ? (
+        <CalibrationOverlay
+          wall={urlConfig.wall}
+          initialState={initialOverlay?.calibration ?? null}
+          onActiveChange={onCalibrationActive}
         />
       ) : null}
     </main>
@@ -2148,6 +2981,10 @@ function FullscreenButton() {
       type="button"
       className="ctl-button fullscreen-button"
       data-testid="fullscreen-button"
+      // Dwell-exempt: requestFullscreen only works from a TRUSTED gesture
+      // (real mouse/keyboard). A dwell cursor "clicking" this would silently
+      // no-op — use the keyboard F, or a real mouse click.
+      data-dwell-exempt="true"
       title="Fullscreen this wall on its projector (or press F)"
       onClick={() => {
         void document.documentElement.requestFullscreen?.();
@@ -2184,6 +3021,7 @@ function MicCaptureControl({
   mode,
   bytesReceived,
   onToggle,
+  deviceLabel = null,
 }: {
   active: boolean;
   micState: "off" | "connecting" | "live";
@@ -2192,6 +3030,8 @@ function MicCaptureControl({
   mode?: "deepgram" | "voxterm" | "replay";
   bytesReceived: number;
   onToggle: () => void;
+  // The physical device feeding the capture, once known ("Wireless GO RX").
+  deviceLabel?: string | null;
 }) {
   // Map RMS (~0–0.3 for speech) onto a 0–100% bar with mild gain.
   const levelPercent = Math.min(100, Math.round(level * 320));
@@ -2199,7 +3039,7 @@ function MicCaptureControl({
   const hint = active
     ? mode === "replay"
       ? "Capturing. Audio streams to the server, but transcription needs DEEPGRAM_API_KEY."
-      : "Capturing: live mic → server ASR → ideas. Click to stop the mic and Idea Capture together."
+      : `Capturing${deviceLabel !== null ? ` via ${deviceLabel}` : ""}: live mic → server ASR → ideas. Click to stop the mic and Idea Capture together.`
     : "One button: unmute + mic on + Idea Capture on. Click again to stop both.";
 
   return (
@@ -2219,6 +3059,11 @@ function MicCaptureControl({
       </button>
       {micState === "live" ? (
         <>
+          {deviceLabel !== null ? (
+            <span className="mic-device" data-testid="mic-device-label" title="The physical microphone the room is hearing.">
+              {deviceLabel}
+            </span>
+          ) : null}
           <span className="mic-meter" aria-label="Microphone input level">
             <span className="mic-meter-fill" data-testid="mic-meter-fill" style={{ width: `${levelPercent}%` }} />
           </span>
@@ -2243,144 +3088,10 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-// A region carrying the suggestion pitch text + data-region="suggestion".
-// Kept lightweight so the headline idea reads from across the room and the
-// projector contract (the pitch string) renders even before interaction.
-function SuggestionRegion({ pitch }: { pitch: string }) {
-  return (
-    <div className="suggestion-banner" data-region="suggestion">
-      <span className="suggestion-eyebrow">queued idea</span>
-      <span className="suggestion-pitch">{pitch}</span>
-    </div>
-  );
-}
-
-// Always-visible per-process panels (spec §9): callsign / state / last spoken
-// output / last action / UPID + the recent action log — so a passive room viewer
-// reads "how each build is going" without interacting. V0 caps the operable fleet
-// at 2; when fewer than 2 run, an explicit "No second process running" slot shows.
-function FleetPanel({
-  processes,
-  selected,
-  steeringUpid,
-  onSelect,
-  onLifecycle,
-  onOpenDeck,
-  onCommission,
-}: {
-  processes: ProjectorProcess[];
-  selected: string | null;
-  steeringUpid: string | null;
-  onSelect: (id: string) => void;
-  onLifecycle: (upid: string, action: LifecycleAction) => void;
-  onOpenDeck: (upid: string) => void;
-  onCommission: (upid: string) => void;
-}) {
-  return (
-    <section className="rail-card fleet-card">
-      <div className="rail-title-row">
-        <h3 className="rail-title">Fleet</h3>
-        <span className="trace-count">{processes.length}/2</span>
-      </div>
-      <div className="fleet-panels">
-        {processes.map((process) => {
-          const steering = process.upid === steeringUpid;
-          const builds = buildsOf(process);
-          // TWO-STAGE surfaces: a project with mock lanes is a CONCEPT until
-          // an explicit commission starts the execution lane (COMMISSIONED).
-          // Legacy processes with no build surfaces at all get no badge.
-          const stage = stageOf(process);
-          const execution = executionOf(process);
-          // The SELF (mirror) project always shows its stage badge — its whole
-          // identity is the stage — even before any self-run opens a lane.
-          const hasBuildSurface =
-            builds.length > 0 || execution !== null || typeof process.buildStatus === "string" || stage === "self";
-          // Commission is offered once ANY mock lane is ready (there is a
-          // concept worth executing) and only while still a concept.
-          const commissionable =
-            stage === "concept" && builds.some((build) => build.status === "ready");
-          // A deck exists when the process carries fixture slides (mock room) or
-          // any backend build published a REAL generated slideshow.
-          const hasDeck =
-            (process.slides?.length ?? 0) > 0 || builds.some((build) => build.slideshowUrl !== null);
-          return (
-          <article
-            key={process.upid}
-            className={`fleet-panel state-${process.state}${process.callsign === selected ? " selected" : ""}${steering ? " steering" : ""} stage-${stage}`}
-            data-testid="fleet-panel"
-            data-dwell="steer"
-            data-callsign={process.callsign}
-            data-state={process.state}
-            data-steering={steering ? "true" : "false"}
-            data-stage={stage}
-            onClick={() => onSelect(process.callsign)}
-          >
-            <div className="fleet-panel-head">
-              <strong className="fleet-callsign">{process.callsign}</strong>
-              <span className={`fleet-state badge state-${process.state}`}>{process.state}</span>
-              {hasBuildSurface ? (
-                <span
-                  className={`stage-badge stage-${stage}`}
-                  data-testid="process-stage"
-                  data-stage={stage}
-                >
-                  {stage === "self" ? "🪞 SELF" : stage === "concept" ? "🌱 concept" : "🌳 commissioned"}
-                </span>
-              ) : null}
-              {steering ? <span className="fleet-steering" data-testid="fleet-steering">steering →</span> : null}
-            </div>
-            {process.task.length > 0 ? (
-              <p className="fleet-task" data-testid="fleet-task">{process.task}</p>
-            ) : null}
-            <p className="fleet-output">{process.lastOutput || "—"}</p>
-            <p className="fleet-action">↳ {process.lastAction}</p>
-            <BuildChips builds={builds} stage={stage} />
-            {execution !== null ? <ExecutionChip execution={execution} /> : null}
-            {/* Take-home QR: the published deck's Pages URL, scannable from a
-                phone at projector distance. */}
-            {typeof process.publishedUrl === "string" && typeof process.publishedQrSvg === "string" ? (
-              <TakeHomeQr url={process.publishedUrl} qrSvg={process.publishedQrSvg} size="card" />
-            ) : null}
-            <div className="fleet-actions-row">
-              <ProcessControls upid={process.upid} state={process.state} onLifecycle={onLifecycle} />
-              {commissionable ? (
-                <CommissionButton upid={process.upid} onCommission={onCommission} />
-              ) : null}
-              {hasDeck ? (
-                <button
-                  type="button"
-                  className="fleet-ctl fleet-ctl-deck"
-                  data-testid="process-deck-button"
-                  title="Open this project's slideshow deck."
-                  onClick={(clickEvent) => {
-                    clickEvent.stopPropagation();
-                    onOpenDeck(process.upid);
-                  }}
-                >
-                  Deck ▸
-                </button>
-              ) : null}
-            </div>
-            {process.events.length > 0 ? (
-              <ol className="fleet-log">
-                {process.events.slice(-5).map((entry, index) => (
-                  <li key={`${entry}-${index}`}>{entry}</li>
-                ))}
-              </ol>
-            ) : null}
-            <code className="fleet-upid">{process.upid}</code>
-          </article>
-          );
-        })}
-        {processes.length < 2 ? (
-          <article className="fleet-panel empty" data-testid="fleet-empty">
-            No second process running
-          </article>
-        ) : null}
-      </div>
-    </section>
-  );
-}
+// NOTE: the FleetPanel rail is GONE (operator-directed redesign): its
+// per-process controls now live in the anchored per-tree menu (TreeMenu.tsx),
+// opened by picking a tree in the garden. FleetScroll.tsx / BuildChips.tsx
+// stay as components — the deck HUD still composes BuildChips/ProcessControls.
 
 function TranscriptStream({ lines }: { lines: TranscriptLine[] }) {
   // Newest line FIRST: this is a passive wall display with no scroll

@@ -188,13 +188,16 @@ const CHOICE_ALIASES: Record<string, DecisionChoice> = {
   remix: "iterate",
   steer: "iterate",
   refine: "iterate",
-  // keep it as a concept / stop here
+  // park it for later / keep it as a concept / stop here
   done: "done",
   concept: "done",
   keep: "done",
   dismiss: "done",
   stop: "done",
   later: "done",
+  park: "done",
+  "park-it": "done",
+  parked: "done",
 };
 
 // DECK DWELL BRIDGE, half 2 (see Slideshow.tsx for half 1, the room-native

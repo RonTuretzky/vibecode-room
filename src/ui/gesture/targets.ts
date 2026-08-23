@@ -98,3 +98,34 @@ export class GestureTargets {
     return this.#zones.has(zoneId);
   }
 }
+
+
+// ── live cursor presence (shared, render-free) ──────────────────────────────
+// The GestureLayer publishes every tracked cursor's viewport position here
+// each frame. DOM chrome that opens-on-presence (the ⚙ Controls dock) reads
+// it to answer "is any cursor over my rect?" — CSS :hover only sees the OS
+// mouse, and dwell-hot only marks ACQUIRED targets, so a merely-hovering
+// joystick/hands cursor was invisible to hover-open logic (live-room bug:
+// the dock could not dwell-open and idle-folded under a parked cursor).
+export interface LiveCursorPoint {
+  x: number;
+  y: number;
+}
+
+const liveCursors: LiveCursorPoint[] = [];
+
+export function publishLiveCursors(points: readonly LiveCursorPoint[]): void {
+  liveCursors.length = 0;
+  for (const point of points) {
+    liveCursors.push({ x: point.x, y: point.y });
+  }
+}
+
+export function anyLiveCursorOver(rect: { left: number; top: number; right: number; bottom: number }, marginPx = 8): boolean {
+  for (const point of liveCursors) {
+    if (point.x >= rect.left - marginPx && point.x <= rect.right + marginPx && point.y >= rect.top - marginPx && point.y <= rect.bottom + marginPx) {
+      return true;
+    }
+  }
+  return false;
+}

@@ -1,15 +1,43 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ProjectorApp, REQUIRED_PROJECTOR_REGIONS } from "./App";
-import { cursorDotsFromStored } from "./gesture/GestureLayer";
+import {
+  AUTOCAL_POLL_ABSENT_MS,
+  AUTOCAL_POLL_ACTIVE_MS,
+  discGeometry,
+  parseAutocalState,
+} from "./CalibrationOverlay";
+import { ControlDock } from "./ControlDock";
+import { cursorDotsFromStored, fusionSources } from "./gesture/GestureLayer";
+import { FLEET_SCROLL_PX_PER_SECOND, FleetScrollRail, hoverScrollDelta, railOverflows } from "./FleetScroll";
 import { IdeaTray } from "./IdeaTray";
 import { HelpOverlay } from "./HelpOverlay";
 import { QrImport, qrPanelState } from "./QrImport";
 import { preferredGuestUrl } from "./GuestHands";
 import { Slideshow } from "./Slideshow";
 import { demoProjectorSnapshot, busyRoomSnapshot } from "./demo-data";
+import { selfGardenTree, type SelfBranchesPayload, type SelfTreeSeed } from "./self-repo";
 import type { BuildloopProcess, BuildloopSnapshot } from "./buildloop";
 import { PRACTICE_ORB_COUNT } from "./guided/machine";
+import {
+  DISMISS_CONFIRM_MS,
+  TREE_MENU_GESTURE_WIDTH,
+  TREE_MENU_SELF_GESTURE_WIDTH,
+  TREE_MENU_SELF_WIDTH,
+  TREE_MENU_WIDTH,
+  TREE_TEND_PAGE_SIZE,
+  TreeMenu,
+  deslugBranch,
+  pageSlice,
+  treeMenuModel,
+  treeMenuPlacement,
+} from "./TreeMenu";
+import { HOLO_PAGES, HOLO_TILT_DEG, holoPanelTilt, salemSrc } from "./HoloPanel";
+import { branchPopupModel } from "./BranchPopup";
+import { issuePopupModel } from "./IssuePopup";
+import { FRUIT_BUG_COLOR, FRUIT_DEFAULT_COLOR } from "./tree-limbs";
+import type { ProjectorProcess } from "./types";
 
 function countOccurrences(haystack: string, needle: string): number {
   return haystack.split(needle).length - 1;
@@ -23,8 +51,10 @@ describe("projector UI contract", () => {
       expect(html).toContain(`data-region="${region}"`);
     }
 
+    // The fleet region IS the 3D garden now (one tree per process; the rail
+    // of 2D fleet cards is gone) — the transcript still names the fleet.
+    expect(html).toContain(`data-tree-count="${demoProjectorSnapshot.processes.length}"`);
     expect(html).toContain("Atlas");
-    expect(html).toContain("Cobalt");
     expect(html).toContain("Turn the meeting notes into a blocker announcer.");
   });
 
@@ -36,10 +66,13 @@ describe("projector UI contract", () => {
     expect(listeningHtml).not.toContain("Unmute");
   });
 
-  test("status bar carries the QR Import control", () => {
+  test("QR Import has no dock button — it folded into the bottom-left badge", () => {
+    // Live-room directive: the dock curates down to mic / self-rebuild /
+    // guided demo; both QR invitations (guests + import) live in the standing
+    // corner badge (effect-driven, so the SSR renderer shows no badge img).
     const html = renderToStaticMarkup(<ProjectorApp initialSnapshot={demoProjectorSnapshot} />);
-    expect(html).toContain('data-testid="qr-import-button"');
-    expect(html).toContain("QR Import");
+    expect(html).not.toContain('data-testid="qr-import-button"');
+    expect(html).not.toContain(">QR Import<");
   });
 
   test("no URL params (SSR/full view): no wall badge, no gesture overlay", () => {
@@ -110,8 +143,65 @@ describe("guided demo overlay", () => {
     expect(html).toContain(`0 / ${PRACTICE_ORB_COUNT} popped`);
     expect(html).toContain('data-testid="guided-skip-button"');
     expect(html).toContain('data-testid="guided-exit-button"');
-    // Step 1 explains the mechanic in plain words.
-    expect(html).toContain("point at the wall");
+    // Step 1 explains the mechanic in plain words — RIG-TRUE: this window has
+    // no gesture layer, so the coaching speaks mouse, never "your hand".
+    expect(html).toContain("Move the mouse to aim");
+    expect(html).toContain("Point and hold");
+    expect(html).not.toContain("point at the wall");
+    // The leave verb says its truth on the surface (honest dismissal copy).
+    expect(html).toContain("Leave the guide");
+    expect(html).toContain("nothing running is stopped");
+  });
+
+  test("?demo=guided on a gesture wall coaches the HAND; &stick=1 coaches the JOYSTICK", () => {
+    const handHtml = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch="?live=0&demo=guided&gesture=1" />,
+    );
+    expect(handHtml).toContain("Point with your hand");
+    expect(handHtml).toContain("point at the wall");
+    expect(handHtml).not.toContain("joystick");
+
+    const stickHtml = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch="?live=0&demo=guided&gesture=1&stick=1" />,
+    );
+    expect(stickHtml).toContain("Steer with the joystick");
+    expect(stickHtml).toContain("hold a button");
+    expect(stickHtml).not.toContain("point at the wall");
+  });
+
+  test("the record step's big button is ABSENT when the mic is live and the room unmuted", async () => {
+    const { GuidedDemo } = await import("./guided/GuidedDemo");
+    const { startGuided } = await import("./guided/machine");
+    const recordState = { ...startGuided(demoProjectorSnapshot), step: "record" as const };
+    const noop = () => undefined;
+    const props = {
+      state: recordState,
+      snapshot: demoProjectorSnapshot,
+      micError: null,
+      pointer: "hand" as const,
+      onPopOrb: noop,
+      onRecord: noop,
+      onSkip: noop,
+      onExit: noop,
+      onFinish: noop,
+      onDone: noop,
+      onStartOver: noop,
+    };
+    // Mic off → the big Start Recording button renders (real work to do).
+    const offHtml = renderToStaticMarkup(<GuidedDemo {...props} micState="off" />);
+    expect(offHtml).toContain('data-testid="guided-record-button"');
+    expect(offHtml).not.toContain('data-testid="guided-record-live"');
+    // Mic LIVE into an unmuted room → the button's whole job is done, so it
+    // never renders; the overlay SAYS the room is already listening instead.
+    const liveHtml = renderToStaticMarkup(<GuidedDemo {...props} micState="live" />);
+    expect(liveHtml).not.toContain('data-testid="guided-record-button"');
+    expect(liveHtml).toContain('data-testid="guided-record-live"');
+    expect(liveHtml).toContain("already listening");
+    // Mic live over a MUTED room still offers the button (unmuting is real work).
+    const mutedHtml = renderToStaticMarkup(
+      <GuidedDemo {...props} snapshot={{ ...demoProjectorSnapshot, muted: true }} micState="live" />,
+    );
+    expect(mutedHtml).toContain('data-testid="guided-record-button"');
   });
 
   test("an emergency-stopped room is SAID, not wedged (resilience notice)", () => {
@@ -157,39 +247,44 @@ describe("per-wall scoping: each wall renders ITS surface + ITS controls", () =>
     expect(sceneCounts(wallBHtml)).toEqual(full);
   });
 
-  test("?view=ideas (wall A): idea surface + idea-side controls, NO build surfaces", () => {
-    // Idea surface: tray with every candidate + the suggestion banner.
+  test("?view=ideas (wall A): idea surface + idea-side controls + the transcript", () => {
+    // Idea surface: tray with every candidate.
     expect(wallAHtml).toContain('data-testid="idea-tray"');
     expect(countOccurrences(wallAHtml, 'data-testid="idea-item"')).toBe(
       demoProjectorSnapshot.ideas?.length ?? -1,
     );
-    expect(wallAHtml).toContain('data-region="suggestion"');
     // Idea-side controls (voice → idea pipeline).
     expect(wallAHtml).toContain('data-testid="mic-capture-button"');
-    expect(wallAHtml).toContain('data-testid="auto-build-button"');
+    expect(wallAHtml).not.toContain('data-testid="auto-build-button"'); // left the dock (voice keeps it)
     expect(wallAHtml).toContain('data-testid="guided-demo-button"');
-    // Build surfaces + build-side controls live on wall B only.
+    // Build surfaces live on wall B only.
     expect(wallAHtml).not.toContain('data-testid="fleet-panel"');
-    expect(wallAHtml).not.toContain('data-region="transcript"');
-    expect(wallAHtml).not.toContain('data-testid="qr-import-button"');
+    // …but NOT the transcript. It used to be wall-B-only, which left the wall
+    // carrying the capture cluster — the one people stand and talk at —
+    // showing none of their words however long they spoke. The room's proof
+    // that it heard you belongs on every wall.
+    expect(wallAHtml).toContain('data-region="transcript"');
+    // QR Import is deliberately UN-scoped (live-room request): the overlay
+    // opens on whichever wall summons it, so its button rides every view.
+    expect(wallAHtml).not.toContain('data-testid="qr-import-button"'); // folded into the badge
   });
 
-  test("?view=builds (wall B): build surface + build-side controls, NO idea surfaces", () => {
-    // Build surface: the whole fleet + transcript rail.
-    expect(countOccurrences(wallBHtml, 'data-testid="fleet-panel"')).toBe(
-      demoProjectorSnapshot.processes.length,
-    );
-    expect(wallBHtml).toContain("Atlas");
-    expect(wallBHtml).toContain("Cobalt");
+  test("?view=builds (wall B): transcript rail + mic + controls stay, the FLEET RAIL IS GONE", () => {
+    // Operator-directed redesign: no 2D fleet cards down the wall edge — the
+    // per-tree menu (pick a tree in the garden) replaced them.
+    expect(wallBHtml).not.toContain('data-testid="fleet-panel"');
+    expect(wallBHtml).not.toContain('data-testid="fleet-scroll-rail"');
     expect(wallBHtml).toContain('data-region="transcript"');
     // Build-side control.
-    expect(wallBHtml).toContain('data-testid="qr-import-button"');
-    // Idea surfaces + idea-side controls live on wall A only.
+    expect(wallBHtml).not.toContain('data-testid="qr-import-button"'); // folded into the badge
+    // Idea surfaces live on wall A only.
     expect(wallBHtml).not.toContain('data-testid="idea-tray"');
-    expect(wallBHtml).not.toContain('data-region="suggestion"');
-    expect(wallBHtml).not.toContain('data-testid="mic-capture-button"');
     expect(wallBHtml).not.toContain('data-testid="auto-build-button"');
     expect(wallBHtml).not.toContain('data-testid="guided-demo-button"');
+    // …but the MIC is not an idea surface. Scoped to wall A, this window had
+    // no mic control and no unmute, so whoever stood in front of it could not
+    // start the room listening at all. Every wall can arm the room.
+    expect(wallBHtml).toContain('data-testid="mic-capture-button"');
   });
 
   test("global chrome renders on BOTH walls (status readouts + scene controls)", () => {
@@ -200,12 +295,11 @@ describe("per-wall scoping: each wall renders ITS surface + ITS controls", () =>
     }
   });
 
-  test("the default full view (desk mode) still renders everything", () => {
+  test("the default full view (desk mode) still renders everything (minus the dead rail)", () => {
     expect(fullHtml).toContain('data-testid="idea-tray"');
-    expect(countOccurrences(fullHtml, 'data-testid="fleet-panel"')).toBe(
-      demoProjectorSnapshot.processes.length,
-    );
-    expect(fullHtml).toContain('data-testid="qr-import-button"');
+    // The fleet rail is deprecated on EVERY view — desk mode included.
+    expect(fullHtml).not.toContain('data-testid="fleet-panel"');
+    expect(fullHtml).not.toContain('data-testid="qr-import-button"'); // folded into the badge
     expect(fullHtml).toContain('data-testid="mic-capture-button"');
     for (const region of REQUIRED_PROJECTOR_REGIONS) {
       expect(fullHtml).toContain(`data-region="${region}"`);
@@ -222,12 +316,13 @@ describe("per-wall scoping: each wall renders ITS surface + ITS controls", () =>
 });
 
 // DE-THEMED WALLS: the two walls are ONE continuous room. On-demand overlays
-// (build detail, project deck, QR import, guided demo) open on WHICHEVER wall
-// summons them — a person dwelling a build tree on wall A gets the detail
-// overlay right there. Only the PERSISTENT single-instance panels stay placed
-// per wall (tray/capture cluster on A, fleet rail + QR button on B).
+// (per-tree menu, project deck, QR import, guided demo) open on WHICHEVER
+// wall summons them — a person dwelling a build tree on wall A gets the
+// anchored tree menu right there. Only the PERSISTENT single-instance panels
+// stay placed per wall (tray/capture cluster on A, transcript + QR button
+// on B).
 describe("de-themed walls: on-demand overlays are available on BOTH walls", () => {
-  test("the build-detail overlay opens on wall A (view=ideas)", () => {
+  test("a picked tree's menu opens on wall A (view=ideas) — the simulated-select seam", () => {
     const html = renderToStaticMarkup(
       <ProjectorApp
         initialSnapshot={demoProjectorSnapshot}
@@ -235,7 +330,9 @@ describe("de-themed walls: on-demand overlays are available on BOTH walls", () =
         initialOverlay={{ selected: "Atlas" }}
       />,
     );
-    expect(html).toContain('data-testid="build-detail"');
+    expect(html).toContain('data-testid="tree-menu"');
+    // The old modal BuildDetail is gone — one per-tree surface, not two.
+    expect(html).not.toContain('data-testid="build-detail"');
   });
 
   test("the project deck overlay opens on wall A (view=ideas)", () => {
@@ -250,7 +347,7 @@ describe("de-themed walls: on-demand overlays are available on BOTH walls", () =
     expect(html).toContain('data-testid="slideshow-overlay"');
   });
 
-  test("the QR-import overlay opens on wall A (view=ideas) — only its launch button stays wall-B", () => {
+  test("the QR-import overlay AND its launch button are available on wall A (view=ideas)", () => {
     const html = renderToStaticMarkup(
       <ProjectorApp
         initialSnapshot={demoProjectorSnapshot}
@@ -259,6 +356,8 @@ describe("de-themed walls: on-demand overlays are available on BOTH walls", () =
       />,
     );
     expect(html).toContain('data-testid="qr-overlay"');
+    // The launch button folded into the corner badge; the overlay itself
+    // still mounts on any wall that summons it.
     expect(html).not.toContain('data-testid="qr-import-button"');
   });
 
@@ -278,8 +377,558 @@ describe("de-themed walls: on-demand overlays are available on BOTH walls", () =
         initialOverlay={{ selected: "Atlas", qrOpen: true }}
       />,
     );
-    expect(html).toContain('data-testid="build-detail"');
+    expect(html).toContain('data-testid="tree-menu"');
     expect(html).toContain('data-testid="qr-overlay"');
+  });
+});
+
+// PER-TREE MENU (operator-directed redesign): the fleet rail is gone — pick a
+// tree in the garden and THAT instance's controls expand in a panel anchored
+// beside it. The static renderer cannot raycast the WebGL tree, so the
+// initialOverlay.selected seam stands in for the pick (same pattern as
+// slideshowUpid/qrOpen); anchored placement is covered by the pure
+// treeMenuPlacement tests below.
+describe("per-tree menu: the tree is the interface", () => {
+  const conceptBuilds: BuildloopProcess["builds"] = [
+    { backend: "smithers", label: "Smithers", status: "building", previewUrl: null, summary: null, slideshowUrl: null, progressLabel: "mocking", percent: 40 },
+    { backend: "native", label: "Native", status: "ready", previewUrl: "http://127.0.0.1:4100/", summary: null, slideshowUrl: "http://127.0.0.1:4100/slides.html" },
+    { backend: "eliza", label: "ElizaOS", status: "failed", previewUrl: null, summary: "boom", slideshowUrl: null },
+  ];
+  const conceptSnapshot = (): BuildloopSnapshot => ({
+    ...demoProjectorSnapshot,
+    processes: demoProjectorSnapshot.processes.map((process, index) =>
+      index === 0 ? ({ ...process, builds: conceptBuilds } as BuildloopProcess) : process,
+    ),
+  });
+
+  test("header: title/callsign/state-progress line + the ✕ close button", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={demoProjectorSnapshot} initialOverlay={{ selected: "Atlas" }} />,
+    );
+    expect(html).toContain('data-testid="tree-menu"');
+    expect(html).toContain('data-testid="tree-menu-title"');
+    expect(html).toContain("Blocker announcer"); // the inferred project title
+    expect(html).toContain('data-testid="tree-menu-callsign"');
+    expect(html).toContain("Atlas");
+    expect(html).toContain('data-testid="tree-menu-status"');
+    expect(html).toContain("active · 68%");
+    expect(html).toContain('data-testid="tree-menu-close"');
+  });
+
+  test("concept lanes: ready = View button, building = honest percent row, failed = FAILED", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={conceptSnapshot()} initialOverlay={{ selected: "Atlas" }} />,
+    );
+    expect(countOccurrences(html, 'data-testid="tree-menu-lane"')).toBe(3);
+    expect(html).toContain("mocking · 40%");
+    expect(html).toContain("MOCK READY ✓");
+    expect(html).toContain("View ▸");
+    expect(html).toContain("FAILED");
+    // The building/failed rows are NOT buttons — no dead controls, just truth.
+    const buildingIdx = html.indexOf('data-status="building"');
+    expect(html.slice(html.lastIndexOf("<", buildingIdx), buildingIdx)).not.toContain("button");
+  });
+
+  test("the panel shields its WHOLE rect from the dwell-miss close (data-dwell-shield)", () => {
+    // A cursor reading the menu's non-button regions (title/status, building-
+    // lane rows, QR, ExecutionChip) must not count as empty ground: the
+    // GestureLayer's dismiss check treats [data-dwell-shield] rects as
+    // on-target, so the panel opts in on its own root element.
+    const html = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={demoProjectorSnapshot} initialOverlay={{ selected: "Atlas" }} />,
+    );
+    const idx = html.indexOf('data-testid="tree-menu"');
+    expect(idx).toBeGreaterThan(-1);
+    const openTag = html.slice(html.lastIndexOf("<", idx), html.indexOf(">", idx));
+    expect(openTag).toContain("data-dwell-shield");
+  });
+
+  test("steer: the menu offers the record toggle (no typed input anywhere)", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={demoProjectorSnapshot} initialOverlay={{ selected: "Atlas" }} />,
+    );
+    expect(html).toContain('data-testid="tree-menu-steer"');
+    expect(html).toContain('data-testid="record-steer-start"');
+    expect(html).not.toContain("type a change");
+  });
+
+  test("remove is TWO-STAGE: resting shows 🗑 remove, never the armed confirm", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={demoProjectorSnapshot} initialOverlay={{ selected: "Atlas" }} />,
+    );
+    expect(html).toContain('data-testid="tree-menu-remove"');
+    expect(html).toContain("🗑 remove");
+    // The confirm stage only appears after the first press (and it disarms
+    // itself after DISMISS_CONFIRM_MS — a wandering dwell must not delete).
+    expect(html).not.toContain('data-testid="tree-menu-remove-confirm"');
+    expect(DISMISS_CONFIRM_MS).toBeGreaterThanOrEqual(2_000);
+    expect(DISMISS_CONFIRM_MS).toBeLessThanOrEqual(8_000);
+  });
+
+  test("the SELF/mirror tree: 'the room' flavor, graft toggle, NO remove button", () => {
+    const selfProcess = {
+      ...demoProjectorSnapshot.processes[0]!,
+      upid: "self",
+      callsign: "mirror",
+      task: "Vibersyn Room",
+      stage: "self",
+    } as ProjectorProcess;
+    const html = renderToStaticMarkup(
+      <ProjectorApp
+        initialSnapshot={{ ...demoProjectorSnapshot, processes: [selfProcess, ...demoProjectorSnapshot.processes.slice(1)] }}
+        initialOverlay={{ selected: "mirror" }}
+      />,
+    );
+    expect(html).toContain('data-self="true"');
+    expect(html).toContain("the room");
+    // renderToStaticMarkup escapes the apostrophe in "the room's tree".
+    expect(html).toContain("🌳 the room&#x27;s tree");
+    expect(html).toContain("🌱 Graft a change");
+    expect(html).toContain('data-testid="record-steer-start"');
+    // The room must not dismiss itself.
+    expect(html).not.toContain('data-testid="tree-menu-remove"');
+  });
+
+  test("no selection → no menu anywhere", () => {
+    const html = renderToStaticMarkup(<ProjectorApp initialSnapshot={demoProjectorSnapshot} />);
+    expect(html).not.toContain('data-testid="tree-menu"');
+  });
+
+  // ── pure derivations ───────────────────────────────────────────────────────
+
+  test("treeMenuModel: lanes ride the shared guided derivation (roster queued lanes included)", () => {
+    const snapshot: BuildloopSnapshot = {
+      ...conceptSnapshot(),
+      backends: [
+        { id: "smithers", label: "Smithers", enabled: true, available: true },
+        { id: "eliza", label: "ElizaOS", enabled: true, available: true },
+        { id: "native", label: "Native", enabled: false, available: false },
+      ],
+    };
+    const model = treeMenuModel(snapshot.processes[0]!, snapshot);
+    // Enabled roster first (smithers/eliza), then the un-rostered native lane
+    // that still carries a real build — never hide a real build.
+    expect(model.lanes.map((lane) => lane.id)).toEqual(["smithers", "eliza", "native"]);
+    expect(model.lanes[0]).toMatchObject({ status: "building", percent: 40 });
+    expect(model.lanes[2]).toMatchObject({ status: "ready", hasDeck: true, previewUrl: "http://127.0.0.1:4100/" });
+    expect(model.isSelf).toBe(false);
+    expect(model.title).toBe("Blocker announcer");
+  });
+
+  test("treeMenuModel: the SELF/mirror tree gets NO concept lanes (roster 'queued…' rows on the room's own tree read as dead deck buttons — live-room report)", () => {
+    const snapshot: BuildloopSnapshot = {
+      ...conceptSnapshot(),
+      backends: [
+        { id: "smithers", label: "Smithers", enabled: true, available: true },
+        { id: "native", label: "Native", enabled: true, available: true },
+      ],
+    };
+    const mirror = { ...snapshot.processes[0]!, upid: "self", callsign: "mirror", stage: "self" as const, builds: [] };
+    const model = treeMenuModel(mirror, snapshot);
+    expect(model.isSelf).toBe(true);
+    expect(model.lanes).toEqual([]);
+    expect(model.title).toBe("the room");
+  });
+
+  test("treeMenuPlacement: opens beside the anchor rect, never over it, clamped to the viewport", () => {
+    const viewport = { width: 1920, height: 1080 };
+    const menu = { width: TREE_MENU_WIDTH, height: 560 };
+    // Room on the right → the panel sits right of the tree's rect.
+    const right = treeMenuPlacement({ left: 200, top: 300, width: 100, height: 200 }, viewport, menu);
+    expect(right.left).toBeGreaterThanOrEqual(200 + 100); // clear of the tree
+    // Tree near the right edge → the panel flips to the left side.
+    const flipped = treeMenuPlacement({ left: 1700, top: 300, width: 150, height: 200 }, viewport, menu);
+    expect(flipped.left + menu.width).toBeLessThanOrEqual(1700);
+    // Every placement stays inside the viewport.
+    for (const placement of [right, flipped, treeMenuPlacement({ left: 100, top: 0, width: 600, height: 600 }, { width: 800, height: 600 }, menu)]) {
+      expect(placement.left).toBeGreaterThanOrEqual(0);
+      expect(placement.top).toBeGreaterThanOrEqual(0);
+      expect(placement.left + menu.width).toBeLessThanOrEqual(1920);
+    }
+    // No anchor (keyboard select / degenerate projection) → edge resting spot.
+    const rest = treeMenuPlacement(null, viewport, menu);
+    expect(rest.left + menu.width).toBeLessThanOrEqual(viewport.width);
+    expect(rest.top).toBeGreaterThanOrEqual(0);
+  });
+
+  // P0 REGRESSION (live-room, reproduced twice): gesture mode widens the panel
+  // to 620px via CSS while placement math assumed 440px — the ✕ close button
+  // landed past x=1920, the occlusion check dropped it as a dwell target, and
+  // the wall had NO way to dismiss the menu. TreeMenu now measures its REAL
+  // rendered footprint and re-places from it; this pins the pure math at the
+  // gesture width so the panel (and the ✕ at its top-right) always fits.
+  test("gesture-width placement: the panel (and its ✕) stays fully on-screen at 1920×1080", () => {
+    const viewport = { width: 1920, height: 1080 };
+    expect(TREE_MENU_GESTURE_WIDTH).toBeGreaterThan(TREE_MENU_WIDTH); // the failure mode existed
+    const menu = { width: TREE_MENU_GESTURE_WIDTH, height: 900 }; // widest content, gesture XL
+    const anchors = [
+      { left: 200, top: 300, width: 100, height: 200 }, // room on the right
+      { left: 1700, top: 300, width: 150, height: 200 }, // near the right edge → flips left
+      { left: 1500, top: 100, width: 400, height: 800 }, // wide tree crowding the right edge
+      { left: 100, top: 0, width: 1800, height: 1000 }, // tree fills the frame
+      null, // keyboard/hook select → edge rest
+    ];
+    for (const anchor of anchors) {
+      const placement = treeMenuPlacement(anchor, viewport, menu);
+      expect(placement.left).toBeGreaterThanOrEqual(0);
+      expect(placement.top).toBeGreaterThanOrEqual(0);
+      // The whole panel fits horizontally — the ✕ lives at its top-right, so
+      // this is exactly "the close button is reachable/dwellable".
+      expect(placement.left + menu.width).toBeLessThanOrEqual(viewport.width);
+      expect(placement.top + Math.min(menu.height, viewport.height)).toBeLessThanOrEqual(viewport.height + menu.height);
+    }
+  });
+
+  // P1 REGRESSION (anchor chase × moving cameras): the ~1 Hz chase adopts the
+  // tree's LIVE projected rect while a menu is open, and cameras move under it
+  // (WASD, guest fly, pinch cam, palm-depth walk, the auto-fit pulse) — so
+  // placement must survive anchors partially or ENTIRELY off-screen. Before
+  // the unconditional horizontal clamp, the right-of branch let an off-left
+  // anchor yield a negative left, and the left-of branch let an off-right
+  // anchor push the panel past the viewport (anchor {left:2200,width:200} at
+  // 1920×1080 with the 620×900 gesture menu → left 1562, right edge 2182: the
+  // ✕ off-screen, dropped as a dwell target — the original P0 mode returns).
+  test("off-screen anchors (chased mid-camera-move): the panel and its ✕ stay inside the margins", () => {
+    const viewport = { width: 1920, height: 1080 };
+    const menu = { width: TREE_MENU_GESTURE_WIDTH, height: 900 };
+    const margin = 16; // treeMenuPlacement's VIEWPORT_MARGIN
+    const anchors = [
+      { left: 2200, top: 300, width: 200, height: 200 }, // straddles the right edge
+      { left: 3000, top: 300, width: 200, height: 200 }, // entirely off right
+      { left: -900, top: 300, width: 200, height: 200 }, // entirely off left
+      { left: -150, top: -300, width: 200, height: 200 }, // off the top-left corner
+      { left: 900, top: 2000, width: 200, height: 200 }, // off the bottom
+    ];
+    for (const anchor of anchors) {
+      const placement = treeMenuPlacement(anchor, viewport, menu);
+      expect(placement.left).toBeGreaterThanOrEqual(margin);
+      expect(placement.left + menu.width).toBeLessThanOrEqual(viewport.width - margin);
+      expect(placement.top).toBeGreaterThanOrEqual(margin);
+    }
+  });
+});
+
+// ── TEND THE TREE: the SELF tree's redesigned two-column surface ────────────
+// One plant vocabulary (branch/trunk/graft/climb/press/prune), the current
+// branch hoisted into an always-visible here-card, the grown branches dwell-
+// PAGINATED four at a time (never CSS-scrolled), and a per-branch FOCUS view
+// carrying the 2×2 verb grid. Static renders throughout — the tendSeed /
+// selfBranches props are the SSR seams for interaction states.
+describe("tend the tree: the self tree's surface", () => {
+  const CURRENT = "room/hp-at-hp-four";
+  const selfProcess = (extra: Record<string, unknown> = {}): ProjectorProcess =>
+    ({
+      ...demoProjectorSnapshot.processes[0]!,
+      upid: "self",
+      callsign: "mirror",
+      task: "Vibersyn Room",
+      stage: "self",
+      ...extra,
+    }) as ProjectorProcess;
+  // 23 rails — the live room's real count: the current branch + 22 grown,
+  // newest first, with the fixture's real duplicate-subject cluster (only the
+  // slug line tells those apart on the wall).
+  const rails: SelfBranchesPayload = {
+    current: CURRENT,
+    branches: [
+      { name: CURRENT, subject: "the default is never an invisible cursor", date: "2 minutes ago" },
+      ...Array.from({ length: 22 }, (_, index) => ({
+        name: `room/grown-change-${index + 1}`,
+        subject:
+          index < 3
+            ? "self: manufacture GPU server racks at the tree's foot"
+            : `self: grown change number ${index + 1}`,
+        date: `${index + 1} hours ago`,
+      })),
+    ],
+  };
+  const renderTend = (overrides: {
+    process?: ProjectorProcess;
+    branches?: SelfBranchesPayload | null;
+    tendSeed?: {
+      focusBranch?: string;
+      armed?: string;
+      page?: number;
+      busy?: {
+        verb: "climb" | "merge" | "press" | "prune" | "stop";
+        branch: string | null;
+        scope?: "branch" | "everywhere";
+      };
+    };
+  } = {}) =>
+    renderToStaticMarkup(
+      <TreeMenu
+        process={overrides.process ?? selfProcess()}
+        snapshot={demoProjectorSnapshot}
+        anchor={null}
+        onClose={() => {}}
+        onOpenDeck={() => {}}
+        onDismiss={() => {}}
+        selfBranches={overrides.branches === undefined ? rails : overrides.branches}
+        tendSeed={overrides.tendSeed}
+      />,
+    );
+
+  test("list view: here-card + exactly 4 branch cards + 'page 1/6' — climb exists only in the focus view", () => {
+    const html = renderTend();
+    // The you-are-here card with its two inline verbs.
+    expect(html).toContain('data-testid="tree-menu-here"');
+    expect(html).toContain('data-testid="tree-menu-here-merge"');
+    expect(html).toContain('data-testid="tree-menu-here-archive"');
+    expect(html).toContain("🌳 you are here");
+    expect(html).toContain("the room lives on this branch");
+    expect(html).toContain(deslugBranch(CURRENT)); // "hp at hp four"
+    // Four stationary cards, PAGE_SIZE=4, and the honest pager arithmetic.
+    expect(countOccurrences(html, 'data-testid="tree-menu-version"')).toBe(TREE_TEND_PAGE_SIZE);
+    expect(html).toContain('data-testid="tree-menu-branch-pager"');
+    expect(html).toContain("page 1/6");
+    expect(html).toContain('data-testid="tree-menu-page-newer"');
+    expect(html).toContain('data-testid="tree-menu-page-older"');
+    expect(html).toContain("🌿 branches · 22 grown");
+    // The current branch is HOISTED — never among the paginated cards.
+    expect(html).not.toContain(`data-branch="${CURRENT}"`);
+    // No climb verb outside the focus view (focus entry is stage one).
+    expect(html).not.toContain('data-testid="tree-menu-version-load"');
+    // The slug line disambiguates the duplicate subjects.
+    expect(html).toContain("#1 · grown change 1");
+  });
+
+  test("focus view: ◂ back + the one open card + all four verbs (list + pager unmount)", () => {
+    const html = renderTend({ tendSeed: { focusBranch: "room/grown-change-1" } });
+    expect(html).toContain('data-testid="tree-menu-version-back"');
+    expect(html).toContain("◂ back to branches");
+    expect(countOccurrences(html, 'data-testid="tree-menu-version"')).toBe(1);
+    expect(html).toContain('data-open="true"');
+    expect(html).not.toContain('data-testid="tree-menu-branch-pager"');
+    expect(html).toContain('data-testid="tree-menu-version-actions"');
+    expect(html).toContain('data-testid="tree-menu-version-load"');
+    expect(html).toContain("⤴ climb here");
+    expect(html).toContain('data-testid="tree-menu-version-merge"');
+    expect(html).toContain("🪵 into the trunk");
+    expect(html).toContain('data-testid="tree-menu-version-archive"');
+    expect(html).toContain("🍁 press");
+    expect(html).toContain('data-testid="tree-menu-version-delete"');
+    expect(html).toContain("🍂 prune");
+  });
+
+  test("armed prune (danger) and armed merge (caution) render their confirm stages", () => {
+    const pruneArmed = renderTend({
+      tendSeed: { focusBranch: "room/grown-change-1", armed: "prune:room/grown-change-1" },
+    });
+    expect(pruneArmed).toContain('data-testid="tree-menu-version-delete-confirm"');
+    expect(pruneArmed).toContain("really prune?");
+    // Stage two no longer fires the delete — it hands off to the scope
+    // question, and its copy says so instead of claiming the branch fell.
+    expect(pruneArmed).toContain("one more choice: how far the cut goes");
+    expect(pruneArmed).not.toContain("gone from this machine and origin");
+    expect(pruneArmed).toContain("is-armed-danger");
+    const mergeArmed = renderTend({
+      tendSeed: { focusBranch: "room/grown-change-1", armed: "merge:room/grown-change-1" },
+    });
+    expect(mergeArmed).toContain('data-testid="tree-menu-version-merge-confirm"');
+    expect(mergeArmed).toContain("make it permanent?");
+    expect(mergeArmed).toContain("needs its PR or fast-forward");
+    expect(mergeArmed).toContain("is-armed-caution");
+    // The here-card merge shares strings and skin.
+    const hereArmed = renderTend({ tendSeed: { armed: `merge:${CURRENT}` } });
+    expect(hereArmed).toContain('data-testid="tree-menu-here-merge-confirm"');
+    expect(hereArmed).toContain("make it permanent?");
+  });
+
+  test("prune third stage: the scope question with two stationary buttons — everywhere alone wears danger", () => {
+    const html = renderTend({
+      tendSeed: { focusBranch: "room/grown-change-1", armed: "prune2:room/grown-change-1" },
+    });
+    expect(html).toContain('data-testid="tree-menu-version-delete-scope"');
+    expect(html).toContain("🍂 prune the branch — and the graft it carries?");
+    expect(html).toContain('data-testid="tree-menu-version-delete-scope-branch"');
+    expect(html).toContain("just this branch");
+    expect(html).toContain("the label falls — its commits live on downstream");
+    expect(html).toContain('data-testid="tree-menu-version-delete-scope-everywhere"');
+    expect(html).toContain("remove it everywhere");
+    expect(html).toContain("reverts this graft on every branch that carries it");
+    // The danger skin marks ONLY the everywhere button (the branch-only cut
+    // is the safe default).
+    expect(countOccurrences(html, "is-armed-danger")).toBe(1);
+    // Neither earlier stage renders under the question.
+    expect(html).not.toContain('data-testid="tree-menu-version-delete-confirm"');
+    // The busy line for an everywhere cut names the longer wait.
+    const busyHtml = renderTend({
+      tendSeed: {
+        focusBranch: "room/grown-change-1",
+        busy: { verb: "prune", branch: "room/grown-change-1", scope: "everywhere" },
+      },
+    });
+    expect(busyHtml).toContain("removing the graft everywhere…");
+  });
+
+  test("growing card + ✂ stop growing appear ONLY while a self-run executes (and replace the chip)", () => {
+    const executing = renderTend({
+      process: selfProcess({ execution: { status: "executing", progressLabel: "growing the header", percent: 40 } }),
+    });
+    expect(executing).toContain('data-testid="tree-menu-growing"');
+    expect(executing).toContain("🌿 growing now");
+    expect(executing).toContain("growing the header · 40%");
+    expect(executing).toContain('data-testid="tree-menu-halt"');
+    expect(executing).toContain("✂ stop growing");
+    // Same lane data, no duplication: the ExecutionChip stands down.
+    expect(executing).not.toContain('data-testid="execution-chip"');
+    // Two-stage: the armed confirm names what stays behind.
+    const armed = renderTend({
+      process: selfProcess({ execution: { status: "executing", progressLabel: "growing the header", percent: 40 } }),
+      tendSeed: { armed: "stop" },
+    });
+    expect(armed).toContain('data-testid="tree-menu-halt-confirm"');
+    expect(armed).toContain("✂ really stop?");
+    // Static markup escapes the quotes around the run label.
+    expect(armed).toContain("&#x27;growing the header&#x27; stays half-grown on its branch");
+    // Nothing executing → no growing card, no halt verb.
+    const resting = renderTend();
+    expect(resting).not.toContain('data-testid="tree-menu-growing"');
+    expect(resting).not.toContain('data-testid="tree-menu-halt"');
+  });
+
+  test("pre-fetch and empty states stay honest", () => {
+    expect(renderTend({ branches: null })).toContain("reading the tree…");
+    const empty = renderTend({
+      branches: { current: CURRENT, branches: [{ name: CURRENT, subject: "self: only me", date: "now" }] },
+    });
+    expect(empty).toContain("🌿 branches · 0 grown");
+    expect(empty).toContain("no other branches — graft a change to grow one");
+    expect(empty).not.toContain('data-testid="tree-menu-branch-pager"');
+  });
+
+  test("the legacy vocabulary is gone from the self markup", () => {
+    for (const html of [
+      renderTend(),
+      renderTend({ tendSeed: { focusBranch: "room/grown-change-1" } }),
+      renderTend({ process: selfProcess({ execution: { status: "executing", progressLabel: "x", percent: 1 } }) }),
+    ]) {
+      expect(html).not.toContain("finalize · load");
+      expect(html).not.toContain("versions");
+      // The word "limb" is gone (the lookbehind spares "climb"/"climbing" —
+      // the sanctioned plant verb that happens to contain it).
+      expect(html).not.toMatch(/(?<!c)limbs?/iu);
+      expect(html).not.toContain("Record a change to the room");
+    }
+  });
+
+  test("pageSlice: clamps a stale page back into range when the list shrinks", () => {
+    const list = Array.from({ length: 22 }, (_, index) => index);
+    expect(pageSlice(list, 0).slice).toEqual([0, 1, 2, 3]);
+    expect(pageSlice(list, 5).slice).toEqual([20, 21]);
+    expect(pageSlice(list, 5).pages).toBe(6);
+    // Pruned down to 5 entries: the stored page 5 clamps to the last page.
+    const pruned = pageSlice(list.slice(0, 5), 5);
+    expect(pruned.page).toBe(1);
+    expect(pruned.slice).toEqual([4]);
+    expect(pageSlice([], 3)).toEqual({ slice: [], page: 0, pages: 1 });
+  });
+
+  test("deslugBranch: room/hp-at-hp-four → 'hp at hp four'", () => {
+    expect(deslugBranch("room/hp-at-hp-four")).toBe("hp at hp four");
+    expect(deslugBranch("room/one")).toBe("one");
+  });
+
+  test("the tend widths export the same contract as the gesture pair (placement stays on-screen)", () => {
+    expect(TREE_MENU_SELF_WIDTH).toBeGreaterThan(TREE_MENU_WIDTH);
+    expect(TREE_MENU_SELF_GESTURE_WIDTH).toBeGreaterThan(TREE_MENU_GESTURE_WIDTH);
+    const viewport = { width: 1920, height: 1080 };
+    const menu = { width: TREE_MENU_SELF_GESTURE_WIDTH, height: 928 };
+    for (const anchor of [
+      { left: 200, top: 300, width: 100, height: 200 },
+      { left: 1700, top: 300, width: 150, height: 200 },
+      { left: 2200, top: 300, width: 200, height: 200 },
+      null,
+    ]) {
+      const placement = treeMenuPlacement(anchor, viewport, menu);
+      expect(placement.left).toBeGreaterThanOrEqual(16);
+      expect(placement.left + menu.width).toBeLessThanOrEqual(viewport.width - 16);
+    }
+  });
+
+  // The LOCK HALO: rendered by the App beside (never inside) the menu, glued
+  // to the tree's live anchor rect — pure decor, never a dwell target.
+  test("the halo + lock chip render for the tended self tree with an anchor — and never as dwell targets", () => {
+    const snapshot = {
+      ...demoProjectorSnapshot,
+      processes: [selfProcess(), ...demoProjectorSnapshot.processes.slice(1)],
+    };
+    const anchored = renderToStaticMarkup(
+      <ProjectorApp
+        initialSnapshot={snapshot}
+        initialOverlay={{ selected: "mirror", menuAnchor: { left: 600, top: 300, width: 220, height: 420 } }}
+      />,
+    );
+    expect(anchored).toContain('data-testid="tree-menu-halo"');
+    expect(anchored).toContain('data-testid="tree-menu-lock"');
+    expect(anchored).toContain("🔒 tending this tree");
+    expect(anchored).toContain("aria-hidden");
+    // 14px/side inflation around the anchor rect.
+    expect(anchored).toContain("left:586px");
+    expect(anchored).toContain("width:248px");
+    // The halo subtree carries NO buttons and no dwell attributes.
+    const haloIndex = anchored.indexOf('data-testid="tree-menu-halo"');
+    const haloChunk = anchored.slice(haloIndex, anchored.indexOf("</div>", haloIndex));
+    expect(haloChunk).not.toContain("<button");
+    expect(haloChunk).not.toContain("data-dwell");
+    // No anchor this beat → no halo (the menu edge-rests alone).
+    const bare = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={snapshot} initialOverlay={{ selected: "mirror" }} />,
+    );
+    expect(bare).not.toContain('data-testid="tree-menu-halo"');
+    // A fleet tree never grows the halo.
+    const fleet = renderToStaticMarkup(
+      <ProjectorApp
+        initialSnapshot={demoProjectorSnapshot}
+        initialOverlay={{ selected: "Atlas", menuAnchor: { left: 600, top: 300, width: 220, height: 420 } }}
+      />,
+    );
+    expect(fleet).not.toContain('data-testid="tree-menu-halo"');
+  });
+});
+
+// STEER-ARM DECOUPLED FROM PICK (P0: any dwell that landed on a tree used to
+// POST /api/process/:upid/select as a side effect, silently routing operator
+// narration into that build). Picking opens the MENU only; the menu's
+// RecordSteerToggle is the ONLY armer.
+describe("picking a tree never arms voice steering", () => {
+  test("a picked tree's menu shows the UNARMED record toggle when nothing is steering", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp
+        initialSnapshot={{ ...demoProjectorSnapshot, steeringUpid: null }}
+        initialOverlay={{ selected: "Atlas" }}
+      />,
+    );
+    // The pick opened the menu…
+    expect(html).toContain('data-testid="tree-menu"');
+    // …but steering is NOT claimed: the toggle invites, it does not report.
+    expect(html).toContain('data-testid="record-steer-start"');
+    expect(html).not.toContain('data-testid="record-steer-stop"');
+  });
+
+  test("the armed state comes from the snapshot's steering flag (the toggle's POST), not the pick", () => {
+    const processes = demoProjectorSnapshot.processes.map((process, index) =>
+      index === 0 ? { ...process, steering: true } : process,
+    );
+    const html = renderToStaticMarkup(
+      <ProjectorApp
+        initialSnapshot={{ ...demoProjectorSnapshot, processes, steeringUpid: processes[0]!.upid }}
+        initialOverlay={{ selected: "Atlas" }}
+      />,
+    );
+    expect(html).toContain('data-testid="record-steer-stop"');
+  });
+
+  test("source contract: the App has NO select POST left — RecordSteerToggle is the only armer", () => {
+    // SSR tests cannot click a WebGL tree, so this pins the regression at the
+    // source seam: the pick path must never regrow a select-endpoint fetch.
+    // (The endpoint only ever appears as a template literal ending "/select`".)
+    const appSource = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+    expect(appSource).not.toMatch(/\/select`/);
+    const togglerSource = readFileSync(new URL("./RecordSteerToggle.tsx", import.meta.url), "utf8");
+    expect(togglerSource).toMatch(/\/select`/);
+    expect(togglerSource).toContain("/api/process/select/clear");
   });
 });
 
@@ -349,7 +998,7 @@ describe("build loop surfaces (backward compatible)", () => {
     expect(html).not.toContain("still booting");
   });
 
-  test("process.builds[] renders a chip per backend build with status-driven affordances", () => {
+  test("process.builds[] surfaces as the picked tree's MENU LANES (the fleet-card chips are gone)", () => {
     const processes: BuildloopProcess[] = demoProjectorSnapshot.processes.map((process, index) =>
       index === 0
         ? {
@@ -361,29 +1010,33 @@ describe("build loop surfaces (backward compatible)", () => {
           }
         : process,
     );
-    const html = renderToStaticMarkup(
+    const closed = renderToStaticMarkup(
       <ProjectorApp initialSnapshot={{ ...demoProjectorSnapshot, processes }} />,
     );
-    expect(countOccurrences(html, 'data-testid="build-chip"')).toBe(2);
+    // No menu open → no lane surfaces anywhere (the rail no longer leaks them).
+    expect(closed).not.toContain('data-testid="build-chip"');
+    expect(closed).not.toContain('data-testid="tree-menu-lane"');
+
+    const html = renderToStaticMarkup(
+      <ProjectorApp
+        initialSnapshot={{ ...demoProjectorSnapshot, processes }}
+        initialOverlay={{ selected: "Atlas" }}
+      />,
+    );
+    expect(countOccurrences(html, 'data-testid="tree-menu-lane"')).toBe(2);
+    // A building lane is an HONEST status row (live label + percent), never a
+    // silent dead button; a ready lane is the in-room View ▸ button.
     expect(html).toContain('data-status="building"');
-    expect(html).toContain("scaffolding");
+    expect(html).toContain("scaffolding · 40%");
     expect(html).toContain('data-status="ready"');
-    expect(html).toContain('data-testid="build-preview-link"');
-    expect(html).toContain('data-testid="build-slides-link"');
+    expect(html).toContain("MOCK READY ✓");
+    expect(html).toContain("View ▸");
+    expect(html).not.toContain('data-testid="build-preview-link"');
   });
 
-  test("per-card lifecycle buttons match the process state (halted offers none)", () => {
-    const processes = demoProjectorSnapshot.processes.map((process) =>
-      process.callsign === "Atlas" ? { ...process, state: "halted" as const } : process,
-    );
-    const html = renderToStaticMarkup(
-      <ProjectorApp initialSnapshot={{ ...demoProjectorSnapshot, processes }} />,
-    );
-    // Atlas (halted): no lifecycle buttons. Cobalt (planning): pause + halt.
-    expect(countOccurrences(html, 'data-testid="process-pause-button"')).toBe(1);
-    expect(countOccurrences(html, 'data-testid="process-halt-button"')).toBe(1);
-    expect(html).not.toContain('data-testid="process-resume-button"');
-  });
+  // Per-process lifecycle (pause/resume/halt) now lives in the deck window's
+  // HUD (Slideshow renders ProcessControls — covered in the deck describe);
+  // the menu's 🗑 remove covers stop+remove, and 'k' still halts the selected.
 });
 
 describe("project deck (slideshow)", () => {
@@ -468,7 +1121,7 @@ describe("project deck (slideshow)", () => {
     expect(html).toBe("");
   });
 
-  test("the fleet card offers Deck ▸ only when a deck exists", () => {
+  test("the tree menu offers a deck path only when a deck exists (ready lane View ▸ / fixture Deck ▸)", () => {
     const processes: BuildloopProcess[] = demoProjectorSnapshot.processes.map((process, index) =>
       index === 0
         ? {
@@ -487,12 +1140,28 @@ describe("project deck (slideshow)", () => {
         : process,
     );
     const withDeck = renderToStaticMarkup(
-      <ProjectorApp initialSnapshot={{ ...demoProjectorSnapshot, processes }} />,
+      <ProjectorApp
+        initialSnapshot={{ ...demoProjectorSnapshot, processes }}
+        initialOverlay={{ selected: "Atlas" }}
+      />,
     );
-    expect(countOccurrences(withDeck, 'data-testid="process-deck-button"')).toBe(1);
+    // The ready lane's row is the deck button (View ▸ opens that backend's tab).
+    expect(withDeck).toContain('data-testid="tree-menu-lane"');
+    expect(withDeck).toContain("View ▸");
 
-    const without = renderToStaticMarkup(<ProjectorApp initialSnapshot={demoProjectorSnapshot} />);
-    expect(without).not.toContain('data-testid="process-deck-button"');
+    // Fixture decks (mock room) get the plain Deck ▸ button instead.
+    const busy = busyRoomSnapshot();
+    const fixture = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={busy} initialOverlay={{ selected: busy.processes[0]!.callsign }} />,
+    );
+    expect(fixture).toContain('data-testid="tree-menu-deck"');
+
+    // A deck-less legacy process offers neither.
+    const without = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={demoProjectorSnapshot} initialOverlay={{ selected: "Atlas" }} />,
+    );
+    expect(without).not.toContain('data-testid="tree-menu-deck"');
+    expect(without).not.toContain("View ▸");
   });
 });
 
@@ -512,36 +1181,43 @@ describe("two-stage kickoff/commission surfaces", () => {
     execution: { status: "executing", progressLabel: "run step 2/9", percent: 22 },
   });
 
-  test("a concept fleet card: 🌱 badge, MOCK READY chip tag, and the commission button", () => {
+  test("a concept tree's menu: 🌱 stage, honest building percent, MOCK READY ✓ View lane", () => {
     const processes = demoProjectorSnapshot.processes.map((process, index) =>
       index === 0 ? conceptProcess() : process,
     );
     const html = renderToStaticMarkup(
-      <ProjectorApp initialSnapshot={{ ...demoProjectorSnapshot, processes }} />,
+      <ProjectorApp
+        initialSnapshot={{ ...demoProjectorSnapshot, processes }}
+        initialOverlay={{ selected: "Atlas" }}
+      />,
     );
-    expect(html).toContain('data-testid="process-stage"');
+    expect(html).toContain('data-testid="tree-menu"');
     expect(html).toContain('data-stage="concept"');
-    expect(html).toContain('data-testid="build-chip-mock"');
-    expect(html).toContain("mock ready");
-    expect(html).toContain('data-testid="commission-button"');
+    expect(html).toContain("🌱 concept");
+    expect(html).toContain("mocking · 40%");
+    expect(html).toContain("MOCK READY ✓");
+    expect(html).toContain("View ▸");
     expect(html).not.toContain('data-testid="execution-chip"');
   });
 
-  test("a commissioned card: 🌳 badge + pulsing execution chip, commission button gone", () => {
+  test("a commissioned tree's menu: 🌳 stage + the pulsing execution chip", () => {
     const processes = demoProjectorSnapshot.processes.map((process, index) =>
       index === 0 ? commissionedProcess() : process,
     );
     const html = renderToStaticMarkup(
-      <ProjectorApp initialSnapshot={{ ...demoProjectorSnapshot, processes }} />,
+      <ProjectorApp
+        initialSnapshot={{ ...demoProjectorSnapshot, processes }}
+        initialOverlay={{ selected: "Atlas" }}
+      />,
     );
     expect(html).toContain('data-stage="commissioned"');
+    expect(html).toContain("🌳 commissioned");
     expect(html).toContain('data-testid="execution-chip"');
     expect(html).toContain('data-status="executing"');
     expect(html).toContain("run step 2/9");
-    expect(html).not.toContain('data-testid="commission-button"');
   });
 
-  test("a BUILT execution links the full-app preview", () => {
+  test("a BUILT execution links the full-app preview from the menu", () => {
     const built = {
       ...conceptProcess(),
       execution: { status: "built", previewUrl: "http://127.0.0.1:4300/", summary: "The full app." },
@@ -550,17 +1226,22 @@ describe("two-stage kickoff/commission surfaces", () => {
       index === 0 ? (built as BuildloopProcess) : process,
     );
     const html = renderToStaticMarkup(
-      <ProjectorApp initialSnapshot={{ ...demoProjectorSnapshot, processes }} />,
+      <ProjectorApp
+        initialSnapshot={{ ...demoProjectorSnapshot, processes }}
+        initialOverlay={{ selected: "Atlas" }}
+      />,
     );
     expect(html).toContain('data-testid="execution-preview-link"');
     expect(html).toContain("http://127.0.0.1:4300/");
     expect(html).toContain("BUILT ✓");
   });
 
-  test("legacy processes with no build surfaces get no stage badge (fixtures stay clean)", () => {
-    const html = renderToStaticMarkup(<ProjectorApp initialSnapshot={demoProjectorSnapshot} />);
-    expect(html).not.toContain('data-testid="process-stage"');
-    expect(html).not.toContain('data-testid="commission-button"');
+  test("legacy processes with no build surfaces get a lane-less menu (fixtures stay clean)", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={demoProjectorSnapshot} initialOverlay={{ selected: "Atlas" }} />,
+    );
+    expect(html).toContain('data-testid="tree-menu"');
+    expect(html).not.toContain('data-testid="tree-menu-lanes"');
     expect(html).not.toContain('data-testid="execution-chip"');
   });
 
@@ -644,15 +1325,13 @@ describe("gesture dwell-select interaction", () => {
     expect(html).toContain('data-gesture="false"');
   });
 
-  test("guest hands is default-on: the Guests button renders on a bare URL; ?remote=0 removes it", () => {
-    const bare = renderToStaticMarkup(<ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch="?live=0" />);
-    expect(bare).toContain('data-testid="guest-hands-button"');
-    // A Guests button on a wall that is NOT listening would show a URL that
-    // connects to nothing — opting out must remove it.
-    const optedOut = renderToStaticMarkup(
-      <ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch="?live=0&remote=0" />,
-    );
-    expect(optedOut).not.toContain('data-testid="guest-hands-button"');
+  test("the Guests dock button is gone — the standing corner badge is the invitation", () => {
+    // Live-room directive: no 🖐 Guests button on any wall; the always-on
+    // bottom-left QR badge (live mode, effect-driven) carries the invitation.
+    for (const search of ["?live=0", "?live=0&remote=0"]) {
+      const html = renderToStaticMarkup(<ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch={search} />);
+      expect(html).not.toContain('data-testid="guest-hands-button"');
+    }
   });
 
   test("?remote=ws://… mounts the dwell layer subscribing as THIS window's wall (desk stays desk)", () => {
@@ -675,9 +1354,18 @@ describe("gesture dwell-select interaction", () => {
     expect(preferredGuestUrl({ url: "http://10.0.0.2:8788/hands", httpsUrl: null })).toBe("http://10.0.0.2:8788/hands");
   });
 
-  test("fleet panels opt into dwell targeting via data-dwell", () => {
-    const html = renderToStaticMarkup(<ProjectorApp initialSnapshot={demoProjectorSnapshot} />);
-    expect(html).toContain('data-dwell="steer"');
+  test("the tree menu's controls are plain enabled <button>s (automatic dwell targets)", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={demoProjectorSnapshot} initialOverlay={{ selected: "Atlas" }} />,
+    );
+    // GestureLayer.collectDomTargets targets "button:not(:disabled)" — every
+    // menu control must therefore be a plain enabled <button>.
+    for (const id of ['data-testid="tree-menu-close"', 'data-testid="record-steer-start"', 'data-testid="tree-menu-remove"']) {
+      const idx = html.indexOf(id);
+      expect(idx).toBeGreaterThan(-1);
+      // The <button …data-testid…> open tag carries no disabled attribute.
+      expect(html.slice(html.lastIndexOf("<button", idx), html.indexOf(">", idx))).not.toContain("disabled");
+    }
   });
 
   test("help overlay documents the gesture dwell mechanic and the camera lock", () => {
@@ -685,6 +1373,58 @@ describe("gesture dwell-select interaction", () => {
     expect(html).toContain('data-testid="help-gesture"');
     expect(html).toContain("point, hold, select");
     expect(html).toContain("LOCKED in gesture mode");
+  });
+});
+
+// FLEET HOVER-SCROLL (FleetScroll.tsx): DEPRECATED from the walls — the App
+// renders no fleet rail anywhere (the per-tree menu replaced it); the
+// component itself stays compiling + covered for any remaining consumer.
+describe("fleet rail hover-scroll (component only — the App rail is gone)", () => {
+  test("the App renders NO fleet rail on any view (per-tree menus replaced it)", () => {
+    for (const search of [undefined, "?live=1&wall=B&view=builds", "?live=1&wall=A&view=ideas"]) {
+      const html = renderToStaticMarkup(
+        <ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch={search} />,
+      );
+      expect(html).not.toContain('data-testid="fleet-scroll-rail"');
+      expect(html).not.toContain('data-testid="fleet-panel"');
+    }
+  });
+
+  test("once the list overflows, both strips render as ENABLED plain <button>s (dwell-targetable)", () => {
+    const html = renderToStaticMarkup(
+      <FleetScrollRail initialOverflowing>
+        <div data-testid="fleet-panel" />
+      </FleetScrollRail>,
+    );
+    expect(html).toContain('data-testid="fleet-scroll-up"');
+    expect(html).toContain('data-testid="fleet-scroll-down"');
+    // The dwell selector is "button:not(:disabled), [data-dwell]" — the strips
+    // must be enabled buttons so GestureLayer targets them (and decorates the
+    // pointed-at one with data-dwell-hot, which is what drives the scroll).
+    expect(countOccurrences(html, "<button")).toBe(2);
+    expect(html).not.toContain("disabled");
+    // The scrolling list itself still renders the panels between the strips.
+    expect(html).toContain('class="fleet-panels"');
+    expect(html).toContain('data-testid="fleet-panel"');
+  });
+
+  test("hoverScrollDelta: a few hundred px/s, signed by direction", () => {
+    // A 60fps frame moves rate/60 px; twenty of them ≈ a third of a second.
+    expect(hoverScrollDelta(1, 1 / 60)).toBeCloseTo(FLEET_SCROLL_PX_PER_SECOND / 60);
+    expect(hoverScrollDelta(-1, 1 / 60)).toBeCloseTo(-FLEET_SCROLL_PX_PER_SECOND / 60);
+    expect(FLEET_SCROLL_PX_PER_SECOND).toBeGreaterThanOrEqual(200);
+    expect(FLEET_SCROLL_PX_PER_SECOND).toBeLessThanOrEqual(500);
+  });
+
+  test("hoverScrollDelta clamps runaway frame deltas (a resumed background tab must not teleport the list)", () => {
+    expect(hoverScrollDelta(1, 5)).toBe(hoverScrollDelta(1, 0.1));
+    expect(hoverScrollDelta(1, -0.02)).toBe(0); // clock skew: never scroll backwards
+  });
+
+  test("railOverflows: true only past the sub-pixel tolerance", () => {
+    expect(railOverflows(900, 300)).toBe(true);
+    expect(railOverflows(300, 300)).toBe(false);
+    expect(railOverflows(303, 300)).toBe(false); // rounding jitter must not flicker the strips in
   });
 });
 
@@ -732,10 +1472,13 @@ describe("gesture-mode status bar keeps only actionable controls", () => {
     expect(gestureA).not.toContain('data-testid="emergency-status"');
   });
 
-  test("actionable controls stay (mic+capture / auto-build / guided demo)", () => {
+  test("actionable controls stay (mic+capture / guided demo); auto-build left the dock", () => {
     expect(gestureA).toContain('data-testid="mic-capture-button"');
-    expect(gestureA).toContain('data-testid="auto-build-button"');
     expect(gestureA).toContain('data-testid="guided-demo-button"');
+    // Auto-Build and Research left the dock (live-room directive): voice
+    // keeps auto-build reachable; research is always on, ceiling-only.
+    expect(gestureA).not.toContain('data-testid="auto-build-button"');
+    expect(gestureA).not.toContain('data-testid="research-mode-button"');
   });
 
   test("a LIVE emergency still shows its banner in gesture mode", () => {
@@ -755,6 +1498,85 @@ describe("gesture-mode status bar keeps only actionable controls", () => {
     expect(desk).toContain('data-testid="active-cue"');
     expect(desk).toContain("READ-ONLY · NON-AUTHORITATIVE");
     expect(desk).toContain('data-testid="emergency-status"');
+  });
+});
+
+// CONTROL DOCK (calm wall): the always-visible control row folded behind ONE
+// "⚙ Controls" affordance (ControlDock.tsx). Hover — mouse :hover or a dwell
+// cursor's data-dwell-hot, FleetScroll-style — expands the popover tray, and
+// ~4s after every cursor leaves it collapses again. SSR renders the tray
+// MARKUP with the dock collapsed (data-expanded="false"; CSS hides it), so
+// the moved buttons stay assertable by testid.
+describe("control dock: one calm affordance replaces the button row", () => {
+  const html = renderToStaticMarkup(<ProjectorApp initialSnapshot={demoProjectorSnapshot} />);
+  const trayIdx = html.indexOf('data-testid="control-dock-tray"');
+  // The dock is the header's last element; everything between the tray marker
+  // and the header's closing tag is INSIDE it.
+  const headerEndIdx = html.indexOf("</header>");
+
+
+  test("the routine controls render INSIDE the dock tray", () => {
+    for (const id of [
+      'data-testid="mic-capture-button"',
+      'data-testid="guided-demo-button"',
+    ]) {
+      const idx = html.indexOf(id);
+      expect(idx).toBeGreaterThan(trayIdx);
+      expect(idx).toBeLessThan(headerEndIdx);
+    }
+  });
+
+  test("alert-state chrome stays OUTSIDE the dock: emergency banner + the muted room's Unmute", () => {
+    // The emergency banner precedes (is outside) the dock.
+    expect(html.indexOf('data-testid="emergency-status"')).toBeLessThan(trayIdx);
+    // The muted room's Unmute SAFETY control never folds behind the hover.
+    const muted = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={{ ...demoProjectorSnapshot, muted: true, listening: false }} />,
+    );
+    const unmuteIdx = muted.indexOf('data-testid="unmute-button"');
+    expect(unmuteIdx).toBeGreaterThan(-1);
+    expect(unmuteIdx).toBeLessThan(muted.indexOf('data-testid="control-dock-tray"'));
+  });
+
+  test("gesture mode carries the same single dock (the toggle is a .ctl-button → XL dwell target)", () => {
+    const gesture = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch="?live=0&wall=A&view=ideas&gesture=1" />,
+    );
+    expect(gesture).toContain('data-testid="control-dock-button"');
+    expect(gesture).toContain('data-testid="control-dock" data-expanded="false"');
+  });
+
+  test("expanded (test seam): tray buttons stay plain enabled <button>s for dwell targeting", () => {
+    const open = renderToStaticMarkup(
+      <ControlDock initialExpanded>
+        <button type="button" data-testid="docked-button">
+          Auto-Build
+        </button>
+      </ControlDock>,
+    );
+    expect(open).toContain('data-testid="control-dock" data-expanded="true"');
+    expect(open).toContain('data-testid="docked-button"');
+    expect(open).not.toContain("disabled");
+  });
+
+});
+
+// SELF-REBUILD dock toggle ("the room rebuilds itself"): follows the
+// Auto-Build button contract — snapshot-driven ON/OFF label + data-state,
+// rendered inside the control dock tray — plus an HONEST title: the rebuild
+// trigger is runtime-toggleable, but only a --self launch (the supervisor
+// exporting VIBERSYN_SELF_MODE=1, surfaced as snapshot.selfSupervisor) can
+// actually rebuild-and-relaunch the server on a green self: commit.
+describe("self-rebuild: no toggle — the room is self-hosting, full stop", () => {
+  test("no Self-Rebuild button renders on any view", () => {
+    // Live-room directive: the server boots armed under --self (composition
+    // seeds #selfRebuild from selfMode); a UI brake that also hid the room's
+    // own tree was a trap, not a control. /api/self-rebuild remains the
+    // escape hatch for tests and emergencies.
+    for (const search of ["", "?live=1&wall=A", "?live=0&wall=B&gesture=1"]) {
+      const html = renderToStaticMarkup(<ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch={search} />);
+      expect(html).not.toContain('data-testid="self-rebuild-button"');
+    }
   });
 });
 
@@ -812,6 +1634,146 @@ describe("corner-locked two-wall gesture mode", () => {
   });
 });
 
+// FLAT-LOCKED two-wall pair (?flat=1&wall=A|B): the flat-rig sibling of the
+// corner lock — two side-by-side projections on ONE wall render halves of a
+// single wide frustum (flat-lock.ts / flat-lock.test.ts), surfaced on the
+// scene container as data-flat-lock. It applies in desk AND gesture mode
+// (the physical wall is flat either way) and wins over the corner lock.
+describe("flat-locked two-wall pair", () => {
+  test("?flat=1&wall=A|B: the scene is flat-locked (desk mode) and content stays FULL on both walls", () => {
+    for (const wall of ["A", "B"]) {
+      const html = renderToStaticMarkup(
+        <ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch={`?live=1&wall=${wall}&flat=1`} />,
+      );
+      expect(html).toContain('data-flat-lock="true"');
+      // No scene-content filtering: every idea and every build, both windows.
+      expect(html).toContain(`data-idea-count="${demoProjectorSnapshot.ideas?.length ?? -1}"`);
+      expect(html).toContain(`data-tree-count="${demoProjectorSnapshot.processes.length}"`);
+    }
+  });
+
+  test("?flat=1 in gesture mode replaces the corner lock (one rigid rig at a time)", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch="?live=0&wall=A&gesture=1&flat=1" />,
+    );
+    expect(html).toContain('data-flat-lock="true"');
+    expect(html).toContain('data-corner-lock="false"');
+  });
+
+  test("flat lock needs a wall identity; the pinch camera COMPOSES with it (shared orbit)", () => {
+    // No ?wall=: a single window has no half to render — stays unlocked.
+    const noWall = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch="?live=1&flat=1" />,
+    );
+    expect(noWall).toContain('data-flat-lock="false"');
+    // ?hands= does NOT defeat the flat pair (unlike corner lock): the pinch
+    // camera orbits the SHARED panorama — every window applies the identical
+    // stream-fed deltas, so the pair stays continuous while it spins.
+    const hands = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch="?live=1&wall=A&flat=1&hands=1" />,
+    );
+    expect(hands).toContain('data-flat-lock="true"');
+    // And plain desk walls without ?flat=1 keep their independent vantages.
+    const plain = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch="?live=1&wall=A&view=ideas" />,
+    );
+    expect(plain).toContain('data-flat-lock="false"');
+  });
+});
+
+// SELF-REBUILD REPO TREE: while the toggle is armed, wall windows grow the
+// room's own repo as ONE MORE TREE inside the RoomScene garden (no corner
+// panel, no second canvas); unarmed walls and the research-pinned ceiling
+// never receive it. The seed prop stands in for the /api/self-repo +
+// /api/forest polls the static renderer cannot make.
+describe("self-repo garden tree on every wall window", () => {
+  const selfTreeSeed: SelfTreeSeed = {
+    repo: "acme/vibecode-room",
+    forest: {
+      org: "acme",
+      fetchedAtMs: Date.parse("2026-08-09T00:00:00Z"),
+      repos: [
+        {
+          name: "vibecode-room",
+          pushedAtMs: Date.parse("2026-08-08T00:00:00Z"),
+          prs: [
+            { number: 7, title: "Grow the self tree", draft: false, ci: "pass", baseRef: "main", headRef: "feat/self-tree" },
+          ],
+          issues: [],
+        },
+      ],
+    },
+  };
+
+  test("every wall window feeds RoomScene the self tree; the ceiling does not", () => {
+    const wall = renderToStaticMarkup(
+      <ProjectorApp
+        initialSnapshot={demoProjectorSnapshot}
+        urlSearch="?live=1&wall=A&view=ideas"
+        initialSelfTree={selfTreeSeed}
+      />,
+    );
+    expect(wall).toContain('data-self-tree="true"');
+    // The old corner panel is GONE — the tree lives inside the garden scene.
+    expect(wall).not.toContain('data-testid="self-repo-tree"');
+    // No toggle gates it anymore: a plain wall URL with no snapshot flag
+    // still grows the room's own tree (self-hosting is what the room IS).
+    const ceiling = renderToStaticMarkup(
+      <ProjectorApp
+        initialSnapshot={{ ...demoProjectorSnapshot, }}
+        urlSearch="?live=1&wall=C&research=1&zen=1"
+        initialSelfTree={selfTreeSeed}
+      />,
+    );
+    expect(ceiling).toContain('data-self-tree="false"');
+  });
+
+  test("armed but wall-less windows (no ?wall=) also go without the self tree", () => {
+    const noWall = renderToStaticMarkup(
+      <ProjectorApp
+        initialSnapshot={{ ...demoProjectorSnapshot, }}
+        urlSearch="?live=1"
+        initialSelfTree={selfTreeSeed}
+      />,
+    );
+    expect(noWall).toContain('data-self-tree="false"');
+  });
+});
+
+// CEILING RESET CHIP: research-pinned displays are zen (chrome-less) but keep
+// exactly one control — the corner tree-reset chip.
+describe("ceiling reset chip on research-pinned windows", () => {
+  test("?research=1 renders the reset chip; plain windows do not", () => {
+    const ceiling = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch="?live=1&wall=C&research=1&zen=1" />,
+    );
+    expect(ceiling).toContain('data-testid="ceiling-reset-button"');
+    const wallA = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch="?live=1&wall=A&view=ideas" />,
+    );
+    expect(wallA).not.toContain('data-testid="ceiling-reset-button"');
+  });
+});
+
+// MULTI-SOURCE FUSION: &fusion= may list several cursor servers (camera
+// fusion + the arcade joystick bridge); the gesture layer opens one client
+// per source and merges every stream into the same dwell pipeline.
+describe("fusionSources: the &fusion= param as a source list", () => {
+  test("a single URL stays a single source; a comma-separated list splits", () => {
+    expect(fusionSources("ws://localhost:8770")).toEqual(["ws://localhost:8770"]);
+    expect(fusionSources("ws://localhost:8770,ws://localhost:8771")).toEqual([
+      "ws://localhost:8770",
+      "ws://localhost:8771",
+    ]);
+  });
+
+  test("blanks are dropped: empty string, padding, trailing/doubled commas", () => {
+    expect(fusionSources("")).toEqual([]);
+    expect(fusionSources(" ws://a:1 , ws://b:2 ")).toEqual(["ws://a:1", "ws://b:2"]);
+    expect(fusionSources("ws://a:1,,")).toEqual(["ws://a:1"]);
+  });
+});
+
 // MERGED MIC+CAPTURE (live-room request): "mic on" and "capturing" are ONE
 // button — activating unmutes + starts the browser mic AND turns Idea Capture
 // on; deactivating stops both. The two separate controls are gone; 'm' and 'c'
@@ -856,10 +1818,140 @@ describe("gesture cursor dots (hidden default, no toggle)", () => {
     expect(mouseDwell).not.toContain('data-testid="cursor-toggle-button"');
   });
 
-  test("the stored preference parses: only an explicit '1' shows the dots", () => {
-    expect(cursorDotsFromStored(null)).toBe(false); // first visit → hidden
+  test("the stored preference parses: only an explicit '0' hides the dots", () => {
+    // Live-room reversal: the hidden-default cost a session diagnosing a
+    // healthy joystick nobody could see. First visit → VISIBLE.
+    expect(cursorDotsFromStored(null)).toBe(true);
     expect(cursorDotsFromStored("1")).toBe(true);
     expect(cursorDotsFromStored("0")).toBe(false);
+  });
+});
+
+// AUTO-CALIBRATION OVERLAY: wall-bound windows watch the /api/autocal proxy
+// and flip into a fullscreen calibration surface whenever the python
+// calibrator (gesturewall.autocal) is running. The static renderer cannot
+// poll, so the `initialOverlay.calibration` seam boots the overlay with a
+// calibrator state (same pattern as selected/slideshowUpid/qrOpen).
+describe("auto-calibration overlay: walls flip into calibration mode", () => {
+  test("hidden by default: a wall window with no calibrator state renders the room", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch="?live=1&wall=A&view=ideas" />,
+    );
+    expect(html).not.toContain('data-testid="calibration-overlay"');
+  });
+
+  test("non-wall (desk) windows never mount the overlay, even with a state seam", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp
+        initialSnapshot={demoProjectorSnapshot}
+        initialOverlay={{ calibration: { phase: "idle", marker: null, msg: "waiting" } }}
+      />,
+    );
+    expect(html).not.toContain('data-testid="calibration-overlay"');
+  });
+
+  test("idle: near-black surface with the big wall letter, ready text, and the dwellable Start sweep button", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp
+        initialSnapshot={demoProjectorSnapshot}
+        urlSearch="?live=1&wall=A&view=ideas"
+        initialOverlay={{ calibration: { phase: "idle", marker: null, msg: "waiting" } }}
+      />,
+    );
+    expect(html).toContain('data-testid="calibration-overlay"');
+    expect(html).toContain('data-phase="idle"');
+    expect(html).toContain('data-testid="calibration-letter"');
+    expect(html).toContain("calibration ready");
+    // Dwellable: a plain <button> (the dwell selector targets enabled buttons).
+    expect(html).toContain('data-testid="calibration-start-button"');
+    expect(html).toContain("Start sweep");
+  });
+
+  test("running: the white disc renders ONLY for this window's wall, carrying the marker geometry", () => {
+    const running = {
+      phase: "running" as const,
+      marker: { wall: "A", u: 0.5, v: 0.25, r: 0.11 },
+      msg: "sweeping",
+    };
+    const wallA = renderToStaticMarkup(
+      <ProjectorApp
+        initialSnapshot={demoProjectorSnapshot}
+        urlSearch="?live=1&wall=A&view=ideas"
+        initialOverlay={{ calibration: running }}
+      />,
+    );
+    expect(wallA).toContain('data-phase="running"');
+    expect(wallA).toContain('data-testid="calibration-disc"');
+    expect(wallA).toContain('data-u="0.5"');
+    expect(wallA).toContain('data-v="0.25"');
+    expect(wallA).toContain('data-r="0.11"');
+    // Measurement fidelity: no idle chrome pollutes the running surface.
+    expect(wallA).not.toContain('data-testid="calibration-start-button"');
+    expect(wallA).not.toContain('data-testid="calibration-letter"');
+
+    // The OTHER wall shows the pure-black surface with NO disc while A's
+    // marker is up (each projector sweeps its own marker sequence).
+    const wallB = renderToStaticMarkup(
+      <ProjectorApp
+        initialSnapshot={demoProjectorSnapshot}
+        urlSearch="?live=1&wall=B&view=builds"
+        initialOverlay={{ calibration: running }}
+      />,
+    );
+    expect(wallB).toContain('data-testid="calibration-overlay"');
+    expect(wallB).toContain('data-phase="running"');
+    expect(wallB).not.toContain('data-testid="calibration-disc"');
+  });
+
+  test("done shows the checkmark; error shows the calibrator's message", () => {
+    const done = renderToStaticMarkup(
+      <ProjectorApp
+        initialSnapshot={demoProjectorSnapshot}
+        urlSearch="?live=1&wall=A&view=ideas"
+        initialOverlay={{ calibration: { phase: "done", marker: null, msg: "ok" } }}
+      />,
+    );
+    expect(done).toContain('data-testid="calibration-done"');
+    expect(done).toContain("✓");
+
+    const error = renderToStaticMarkup(
+      <ProjectorApp
+        initialSnapshot={demoProjectorSnapshot}
+        urlSearch="?live=1&wall=A&view=ideas"
+        initialOverlay={{ calibration: { phase: "error", marker: null, msg: "camera 1 saw nothing" } }}
+      />,
+    );
+    expect(error).toContain('data-testid="calibration-error"');
+    expect(error).toContain("camera 1 saw nothing");
+  });
+
+  test("discGeometry: exact showDot parity — fraction radius, 46px floor, disc centered on (u*W, v*H)", () => {
+    const g = discGeometry({ wall: "A", u: 0.5, v: 0.25, r: 0.11 }, 1920, 1080);
+    expect(g.radius).toBeCloseTo(1080 * 0.11);
+    expect(g.left).toBeCloseTo(0.5 * 1920 - g.radius);
+    expect(g.top).toBeCloseTo(0.25 * 1080 - g.radius);
+    // The 46px floor survives tiny fractions; a null r falls back to 0.11.
+    expect(discGeometry({ wall: "A", u: 0, v: 0, r: 0.01 }, 800, 600).radius).toBe(46);
+    expect(discGeometry({ wall: "A", u: 0, v: 0, r: null }, 1920, 1080).radius).toBeCloseTo(1080 * 0.11);
+  });
+
+  test("parseAutocalState: {up:false} and junk mean 'no calibrator' (overlay stays down)", () => {
+    expect(parseAutocalState({ up: false })).toBeNull();
+    expect(parseAutocalState(null)).toBeNull();
+    expect(parseAutocalState({ phase: "warming" })).toBeNull();
+    expect(parseAutocalState({ phase: "idle", marker: null, msg: "waiting" })).toEqual({
+      phase: "idle",
+      marker: null,
+      msg: "waiting",
+    });
+    expect(
+      parseAutocalState({ phase: "running", marker: { wall: "B", u: 0.1, v: 0.9, r: 0.16 }, msg: "sweeping" }),
+    ).toEqual({ phase: "running", marker: { wall: "B", u: 0.1, v: 0.9, r: 0.16 }, msg: "sweeping" });
+  });
+
+  test("poll cadences: a cheap resting probe, tight tracking while a calibrator runs", () => {
+    expect(AUTOCAL_POLL_ABSENT_MS).toBe(3_000);
+    expect(AUTOCAL_POLL_ACTIVE_MS).toBe(150);
   });
 });
 
@@ -904,6 +1996,16 @@ describe("idea action card: contextual Done UX replaces the top-bar button", () 
     expect(html).not.toContain("(5s)");
   });
 
+  test("the card shields itself from the dwell-miss close (reading the pitch is not a dismissal)", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={armedSnapshot} initialOverlay={{ ideaCard: { id: null } }} />,
+    );
+    const idx = html.indexOf('data-testid="idea-action-card"');
+    expect(idx).toBeGreaterThan(-1);
+    const openTag = html.slice(html.lastIndexOf("<", idx), html.indexOf(">", idx));
+    expect(openTag).toContain("data-dwell-shield");
+  });
+
   test("a card whose idea is gone from the snapshot never renders (auto-close contract)", () => {
     const html = renderToStaticMarkup(
       <ProjectorApp initialSnapshot={demoProjectorSnapshot} initialOverlay={{ ideaCard: { id: "idea_vanished" } }} />,
@@ -912,7 +2014,7 @@ describe("idea action card: contextual Done UX replaces the top-bar button", () 
     expect(html).not.toContain('data-testid="idea-done-button"');
   });
 
-  test("guided idea step shows heard title + countdown + Done when armed, listening hint otherwise", async () => {
+  test("guided idea step shows heard title + plant-is-the-trigger copy when armed, listening hint otherwise", async () => {
     const { GuidedDemo } = await import("./guided/GuidedDemo");
     const { startGuided } = await import("./guided/machine");
     const ideaState = { ...startGuided(demoProjectorSnapshot), step: "idea" as const };
@@ -921,23 +2023,463 @@ describe("idea action card: contextual Done UX replaces the top-bar button", () 
       state: ideaState,
       micState: "live" as const,
       micError: null,
+      pointer: "hand" as const,
       onPopOrb: noop,
       onRecord: noop,
       onSkip: noop,
       onExit: noop,
       onFinish: noop,
       onDone: noop,
+      onStartOver: noop,
     };
 
     const armedHtml = renderToStaticMarkup(<GuidedDemo {...props} snapshot={armedSnapshot} />);
     expect(armedHtml).toContain('data-testid="guided-done-button"');
     expect(armedHtml).toContain("a dashboard tool");
-    expect(armedHtml).toContain("Building in 5s");
+    // Deferred build: no countdown — planting is the only trigger, and the
+    // copy says so in plant language (the accepted idea grows a real tree).
+    expect(armedHtml).not.toContain("Building in");
+    expect(armedHtml).toContain("starts the concept race");
+    expect(armedHtml).toContain("Plant this idea");
+    expect(armedHtml).toContain("a real tree grows");
+    // The exit verb carries the idea step's leave-truth on the surface.
+    expect(armedHtml).toContain("Leave the guide");
+    expect(armedHtml).toContain("Leaving re-enables auto-build and the room keeps listening.");
 
-    // Done is ALWAYS pressable during the idea step — it builds from the
+    // Planting is ALWAYS pressable during the idea step — it builds from the
     // transcript (or advances the step) even before anything is armed.
     const idleHtml = renderToStaticMarkup(<GuidedDemo {...props} snapshot={demoProjectorSnapshot} />);
     expect(idleHtml).toContain('data-testid="guided-done-button"');
     expect(idleHtml).toContain('data-testid="guided-settle-waiting"');
+    // Start over renders DISARMED — the two-stage confirm needs a second
+    // press before onStartOver ever fires (behavior locked in the e2e spec;
+    // static markup locks the disarmed boot state).
+    expect(idleHtml).toContain('data-testid="guided-restart-button"');
+    expect(idleHtml).toContain('data-armed="false"');
+    expect(idleHtml).not.toContain("Really start over");
+  });
+});
+
+// HOLO PANEL (the imported tree's LIVE deployment): the tree menu grows a
+// "🌐 Live app ▸" row only when the process carries a resolved deployUrl, and
+// the panel itself is a dwell-native /salem iframe with page-row + scroll +
+// reload + close chrome. The static renderer opens it via initialOverlay
+// .holoUpid (the same seam idiom as selected/slideshowUpid).
+describe("holo panel: the live app beside its tree", () => {
+  const DEPLOY_URL = "https://residency.convent.fun";
+  const deploySnapshot = () => ({
+    ...demoProjectorSnapshot,
+    processes: demoProjectorSnapshot.processes.map((process, index) =>
+      index === 0 ? { ...process, deployUrl: DEPLOY_URL } : process,
+    ),
+  });
+
+  test("a process WITH deployUrl grows the tree menu's Live app row", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={deploySnapshot()} initialOverlay={{ selected: "Atlas" }} />,
+    );
+    expect(html).toContain('data-testid="tree-menu-live"');
+    expect(html).toContain("🌐 Live app ▸");
+  });
+
+  test("no deployUrl → no Live app row (the demo fleet has none)", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={demoProjectorSnapshot} initialOverlay={{ selected: "Atlas" }} />,
+    );
+    expect(html).not.toContain('data-testid="tree-menu-live"');
+  });
+
+  test("the panel renders its chrome: /salem iframe (sandboxed), 5 page rows, scroll/reload/close", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={deploySnapshot()} initialOverlay={{ holoUpid: "upid_atlas_7f3" }} />,
+    );
+    expect(html).toContain('data-testid="holo-panel"');
+    expect(html).toContain('src="/salem/"');
+    expect(html).toContain('sandbox="allow-scripts allow-same-origin allow-forms"');
+    expect(countOccurrences(html, 'data-testid="holo-page"')).toBe(HOLO_PAGES.length);
+    for (const page of HOLO_PAGES) {
+      expect(html).toContain(`data-path="${page.path}"`);
+    }
+    expect(html).toContain('data-testid="holo-scroll-up"');
+    expect(html).toContain('data-testid="holo-scroll-down"');
+    expect(html).toContain('data-testid="holo-reload"');
+    expect(html).toContain('data-testid="holo-close"');
+    // The hologram dressing + the perspective/rotateY lean are CSS-borne.
+    expect(html).toContain("holo-scanlines");
+    expect(html).toContain("perspective(1600px)");
+  });
+
+  test("the panel root shields its WHOLE rect from the dwell-miss close", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={deploySnapshot()} initialOverlay={{ holoUpid: "upid_atlas_7f3" }} />,
+    );
+    const idx = html.indexOf('data-testid="holo-panel"');
+    expect(idx).toBeGreaterThan(-1);
+    const openTag = html.slice(html.lastIndexOf("<", idx), html.indexOf(">", idx));
+    expect(openTag).toContain("data-dwell-shield");
+  });
+
+  test("no holoUpid (or an unknown upid) → no panel", () => {
+    expect(renderToStaticMarkup(<ProjectorApp initialSnapshot={deploySnapshot()} />)).not.toContain(
+      'data-testid="holo-panel"',
+    );
+    expect(
+      renderToStaticMarkup(<ProjectorApp initialSnapshot={deploySnapshot()} initialOverlay={{ holoUpid: "upid_ghost" }} />),
+    ).not.toContain('data-testid="holo-panel"');
+  });
+
+  // ── pure derivations ───────────────────────────────────────────────────────
+
+  test("salemSrc: the board root is /salem/, deeper pages ride verbatim", () => {
+    expect(salemSrc("/")).toBe("/salem/");
+    expect(salemSrc("/calendar")).toBe("/salem/calendar");
+    expect(HOLO_PAGES.map((page) => page.path)).toEqual(["/", "/calendar", "/chores", "/points", "/hearts"]);
+  });
+
+  test("holoPanelTilt leans TOWARD screen center (right half +deg, left half -deg)", () => {
+    // Panel resting on the right half faces left (positive rotateY).
+    expect(holoPanelTilt(1200, 960, 1920)).toBe(HOLO_TILT_DEG);
+    // Panel on the left half faces right (negative rotateY).
+    expect(holoPanelTilt(16, 960, 1920)).toBe(-HOLO_TILT_DEG);
+  });
+
+  test("treeMenuModel surfaces deployUrl only when present and non-empty", () => {
+    const withUrl = { ...demoProjectorSnapshot.processes[0]!, deployUrl: DEPLOY_URL };
+    expect(treeMenuModel(withUrl, demoProjectorSnapshot).deployUrl).toBe(DEPLOY_URL);
+    const withoutUrl = { ...demoProjectorSnapshot.processes[0]!, deployUrl: "" };
+    expect(treeMenuModel(withoutUrl, demoProjectorSnapshot).deployUrl).toBeNull();
+    expect(treeMenuModel(demoProjectorSnapshot.processes[0]!, demoProjectorSnapshot).deployUrl).toBeNull();
+  });
+});
+
+// BRANCH LIMBS + ISSUE FRUIT: an adopted tree's git substrate on the wall —
+// the tree menu grows "🌱 Grow a branch ▸" only for adopted imports, and the
+// limb-tip/fruit picks open dwell-shielded contextual glass (BranchPopup /
+// IssuePopup). The static renderer opens the popups via initialOverlay
+// .branchPopup / .issuePopup (the same seam idiom as selected/holoUpid).
+describe("adopted trees: grow-a-branch row + branch/issue popups", () => {
+  const REMOTE_URL = "https://github.com/acme/pr-triage";
+  const PR_URL = "https://github.com/acme/pr-triage/pull/7";
+  const TREE_REPO = {
+    branches: [
+      { name: "main", commits: 5 },
+      { name: "room/spoken-changes", commits: 3, prUrl: PR_URL },
+      { name: "room/issue-12", commits: 1 },
+    ],
+    remoteUrl: REMOTE_URL,
+  };
+  const adoptedSnapshot = () => ({
+    ...demoProjectorSnapshot,
+    processes: demoProjectorSnapshot.processes.map((process, index) =>
+      index === 0 ? { ...process, treeRepo: TREE_REPO } : process,
+    ),
+  });
+  const adoptedProcess = (): ProjectorProcess => adoptedSnapshot().processes[0]!;
+
+  test("an ADOPTED tree grows the menu's Grow-a-branch row", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={adoptedSnapshot()} initialOverlay={{ selected: "Atlas" }} />,
+    );
+    expect(html).toContain('data-testid="tree-menu-grow"');
+    expect(html).toContain("🌱 Grow a branch ▸");
+  });
+
+  test("no treeRepo (the demo fleet) → no Grow-a-branch row", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={demoProjectorSnapshot} initialOverlay={{ selected: "Atlas" }} />,
+    );
+    expect(html).not.toContain('data-testid="tree-menu-grow"');
+  });
+
+  test("treeMenuModel.adopted: remoteUrl gates it, and the SELF tree never adopts", () => {
+    expect(treeMenuModel(adoptedProcess(), demoProjectorSnapshot).adopted).toBe(true);
+    const unpublished = { ...adoptedProcess(), treeRepo: { branches: TREE_REPO.branches, remoteUrl: null } };
+    expect(treeMenuModel(unpublished, demoProjectorSnapshot).adopted).toBe(false);
+    expect(treeMenuModel(demoProjectorSnapshot.processes[0]!, demoProjectorSnapshot).adopted).toBe(false);
+    const selfish = { ...adoptedProcess(), stage: "self" } as unknown as ProjectorProcess;
+    expect(treeMenuModel(selfish, demoProjectorSnapshot).adopted).toBe(false);
+  });
+
+  test("the branch popup renders its chrome: title, commits + PR ✓, steer/PR/close buttons", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp
+        initialSnapshot={adoptedSnapshot()}
+        initialOverlay={{ branchPopup: { upid: "upid_atlas_7f3", branch: "room/spoken-changes" } }}
+      />,
+    );
+    expect(html).toContain('data-testid="branch-popup"');
+    expect(html).toContain('data-testid="branch-popup-title"');
+    expect(html).toContain("spoken-changes");
+    expect(html).toContain("3 commits · PR ✓");
+    // The already-open PR's URL rides in-room (plain text, no target=_blank).
+    expect(html).toContain('data-testid="branch-popup-pr-url"');
+    expect(html).toContain(PR_URL);
+    expect(html).not.toContain("target=");
+    expect(html).toContain('data-testid="branch-popup-steer"');
+    expect(html).toContain("🎙 Steer this branch");
+    expect(html).toContain('data-testid="branch-popup-pr"');
+    expect(html).toContain("⬆ Open PR ▸");
+    expect(html).toContain('data-testid="branch-popup-close"');
+  });
+
+  test("the branch popup root shields its WHOLE rect from the dwell-miss close", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp
+        initialSnapshot={adoptedSnapshot()}
+        initialOverlay={{ branchPopup: { upid: "upid_atlas_7f3", branch: "room/spoken-changes" } }}
+      />,
+    );
+    const idx = html.indexOf('data-testid="branch-popup"');
+    expect(idx).toBeGreaterThan(-1);
+    const openTag = html.slice(html.lastIndexOf("<", idx), html.indexOf(">", idx));
+    expect(openTag).toContain("data-dwell-shield");
+  });
+
+  test("a branch that left the snapshot renders NO popup (no dead glass)", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp
+        initialSnapshot={adoptedSnapshot()}
+        initialOverlay={{ branchPopup: { upid: "upid_atlas_7f3", branch: "room/ghost" } }}
+      />,
+    );
+    expect(html).not.toContain('data-testid="branch-popup"');
+  });
+
+  test("the issue popup renders heading, label chips, take + close — dwell-shielded", () => {
+    const html = renderToStaticMarkup(
+      <ProjectorApp
+        initialSnapshot={adoptedSnapshot()}
+        initialOverlay={{
+          issuePopup: {
+            upid: "upid_atlas_7f3",
+            issue: { number: 12, title: "Fix the drip", labels: ["bug", "help wanted"] },
+          },
+        }}
+      />,
+    );
+    expect(html).toContain('data-testid="issue-popup"');
+    expect(html).toContain("#12 Fix the drip");
+    expect(countOccurrences(html, 'data-testid="issue-popup-chip"')).toBe(2);
+    expect(html).toContain('data-testid="issue-popup-take"');
+    expect(html).toContain("🌱 Take this issue");
+    expect(html).toContain('data-testid="issue-popup-close"');
+    const idx = html.indexOf('data-testid="issue-popup"');
+    const openTag = html.slice(html.lastIndexOf("<", idx), html.indexOf(">", idx));
+    expect(openTag).toContain("data-dwell-shield");
+  });
+
+  // ── pure derivations ──────────────────────────────────────────────────────
+
+  test("branchPopupModel resolves the live branch (commits, PR) and nulls a missing one", () => {
+    const model = branchPopupModel(adoptedProcess(), "room/spoken-changes");
+    expect(model).toEqual({
+      branch: "room/spoken-changes",
+      short: "spoken-changes",
+      commits: 3,
+      prUrl: PR_URL,
+      source: "tree",
+      subject: null,
+      prNumber: null,
+      isCurrent: false,
+      loadable: false,
+    });
+    const bare = branchPopupModel(adoptedProcess(), "room/issue-12");
+    expect(bare?.prUrl).toBeNull();
+    expect(branchPopupModel(adoptedProcess(), "room/ghost")).toBeNull();
+    expect(branchPopupModel(demoProjectorSnapshot.processes[0]!, "room/spoken-changes")).toBeNull();
+  });
+
+  // ── the SELF tree's branches ───────────────────────────────────────────────
+  // The room's own tree grows one limb per OPEN PR, and the mirror carries no
+  // treeRepo (live /api/state: {"upid":"self","stage":"self","treeRepo":null}),
+  // so the popup falls through to the forest spec + the room's local rails.
+  // The buttons are exactly what the server honors: load a version, record on
+  // the branch the room is running — never steer-a-branch (composition.ts
+  // ignores the scope on the self path) and never Open PR (app.ts 400s).
+  describe("the SELF tree's branch popup: versions, not work rails", () => {
+    const SELF_REPO = "acme/vibecode-room";
+    const CURRENT = "room/dancing-cat-under-trees";
+    const DOG = "room/dancing-dog-at-bottom";
+    const REMOTE_ONLY = "RonTuretzky/park3d-tiles";
+    const selfSeed: SelfTreeSeed = {
+      repo: SELF_REPO,
+      forest: {
+        org: "acme",
+        fetchedAtMs: Date.parse("2026-08-09T00:00:00Z"),
+        repos: [
+          {
+            name: "vibecode-room",
+            pushedAtMs: Date.parse("2026-08-08T00:00:00Z"),
+            prs: [
+              { number: 18, title: "Dancing dog at every tree", draft: false, ci: "pass", baseRef: "main", headRef: DOG },
+              { number: 15, title: "Park3d tiles", draft: false, ci: "pending", baseRef: "main", headRef: REMOTE_ONLY },
+            ],
+            issues: [],
+          },
+        ],
+      },
+    };
+    // The local rails: a PR head ref that was never fetched here (#15) is NOT
+    // among them — live /api/self/branches proves that gap is real.
+    const selfRails: SelfBranchesPayload = {
+      current: CURRENT,
+      branches: [
+        { name: CURRENT, subject: "self: dancing cat under trees" },
+        { name: DOG, subject: "self: dancing dog at the foot of every tree" },
+      ],
+    };
+    const selfSnapshot = () => ({
+      ...demoProjectorSnapshot,
+      selfRebuild: true,
+      processes: [
+        {
+          ...demoProjectorSnapshot.processes[0]!,
+          upid: "self",
+          callsign: "mirror",
+          task: "Vibersyn Room",
+          stage: "self",
+        } as ProjectorProcess,
+        ...demoProjectorSnapshot.processes.slice(1),
+      ],
+    });
+    const renderSelfBranch = (branch: string) =>
+      renderToStaticMarkup(
+        <ProjectorApp
+          initialSnapshot={selfSnapshot()}
+          urlSearch="?live=1&wall=A&view=ideas"
+          initialSelfTree={selfSeed}
+          initialSelfBranches={selfRails}
+          initialOverlay={{ branchPopup: { upid: "self", branch } }}
+        />,
+      );
+
+    test("a PR-backed local branch offers ⤴ climb here + the PR URL inline", () => {
+      const html = renderSelfBranch(DOG);
+      expect(html).toContain('data-testid="branch-popup"');
+      expect(html).toContain("dancing-dog-at-bottom");
+      expect(html).toContain('data-testid="branch-popup-version"');
+      expect(html).toContain("Dancing dog at every tree");
+      expect(html).toContain("PR #18");
+      expect(html).toContain('data-testid="branch-popup-load"');
+      expect(html).toContain("⤴ climb here · load");
+      // The PR rides in-room (the room never opens a PR against itself).
+      expect(html).toContain(`https://github.com/${SELF_REPO}/pull/18`);
+      expect(html).not.toContain("target=");
+      expect(html).not.toContain('data-testid="branch-popup-steer"');
+      expect(html).not.toContain('data-testid="branch-popup-pr"');
+    });
+
+    test("the branch the room is RUNNING says 'you are here' and carries the record toggle", () => {
+      const html = renderSelfBranch(CURRENT);
+      expect(html).toContain('data-testid="branch-popup-here"');
+      expect(html).toContain("🌳 you are here — the room lives on this branch");
+      // #cutSelfBranch cuts off the CURRENT branch, so this is the one honest
+      // per-branch record affordance on the self tree.
+      expect(html).toContain('data-testid="record-steer-start"');
+      expect(html).not.toContain('data-testid="branch-popup-load"');
+      expect(html).not.toContain('data-testid="branch-popup-steer"');
+    });
+
+    test("a PR head ref that was never fetched here reads 'not grown on this machine'", () => {
+      const html = renderSelfBranch(REMOTE_ONLY);
+      expect(html).toContain('data-testid="branch-popup-absent"');
+      expect(html).toContain("🍂 not grown on this machine");
+      expect(html).not.toContain('data-testid="branch-popup-load"');
+      // The PR is still readable from the wall.
+      expect(html).toContain(`https://github.com/${SELF_REPO}/pull/15`);
+    });
+
+    test("a ref neither the forest nor the rails know renders NO popup (no dead glass)", () => {
+      expect(renderSelfBranch("feat/ghost")).not.toContain('data-testid="branch-popup"');
+    });
+
+    test("before the rails land the card says 'checking', never 'not on this machine'", () => {
+      const html = renderToStaticMarkup(
+        <ProjectorApp
+          initialSnapshot={selfSnapshot()}
+          urlSearch="?live=1&wall=A&view=ideas"
+          initialSelfTree={selfSeed}
+          initialOverlay={{ branchPopup: { upid: "self", branch: DOG } }}
+        />,
+      );
+      expect(html).toContain('data-testid="branch-popup-rails-pending"');
+      expect(html).not.toContain("not on this machine");
+      expect(html).not.toContain('data-testid="branch-popup-load"');
+    });
+
+    test("branchPopupModel: the self resolver only runs on a stage-'self' process", () => {
+      const selfProcess = selfSnapshot().processes[0]!;
+      const self = { tree: { repo: SELF_REPO, spec: selfGardenTree(selfSeed.forest, SELF_REPO)!.spec }, versions: selfRails };
+      expect(branchPopupModel(selfProcess, DOG, self)).toEqual({
+        branch: DOG,
+        short: "dancing-dog-at-bottom",
+        commits: 0,
+        prUrl: `https://github.com/${SELF_REPO}/pull/18`,
+        source: "self",
+        subject: "Dancing dog at every tree",
+        prNumber: 18,
+        isCurrent: false,
+        loadable: true,
+      });
+      // A fleet process never falls through to the room's own versions.
+      expect(branchPopupModel(demoProjectorSnapshot.processes[0]!, DOG, self)).toBeNull();
+      // No self context (the tree is unarmed) → the old contract, verbatim.
+      expect(branchPopupModel(selfProcess, DOG)).toBeNull();
+    });
+  });
+
+  test("issuePopupModel: heading + label chips in the fruit palette", () => {
+    const model = issuePopupModel({ number: 12, title: "Fix the drip", labels: ["bug", "docs"] });
+    expect(model.heading).toBe("#12 Fix the drip");
+    expect(model.chips).toEqual([
+      { label: "bug", color: FRUIT_BUG_COLOR },
+      { label: "docs", color: FRUIT_DEFAULT_COLOR },
+    ]);
+    // A title-less fallback (poller raced the pick) stays honest: bare number.
+    expect(issuePopupModel({ number: 7, title: "", labels: [] }).heading).toBe("#7");
+  });
+});
+
+// THE ORB MUST NOT LIE. `listening` is the server's INTENT; `mic.active` is
+// whether a browser is actually feeding /api/mic. They came apart every time
+// the room rebuilt itself: exit 87 restarts the server, the walls reload, the
+// mic pipeline dies with the old page — and the orb kept pulsing green over a
+// room that heard nothing. A silent room that looks healthy is the worst thing
+// this wall can show, so the two disagreeing reads DEAF.
+describe("listening orb reports the mic, not the intent", () => {
+  const withMic = (mic: { mode: "deepgram"; active: boolean; bytesReceived: number } | undefined) =>
+    renderToStaticMarkup(
+      <ProjectorApp
+        initialSnapshot={{ ...demoProjectorSnapshot, muted: false, listening: true, ...(mic === undefined ? {} : { mic }) }}
+        urlSearch="?live=0"
+      />,
+    );
+
+  test("listening with a live mic socket stays green", () => {
+    const markup = withMic({ mode: "deepgram", active: true, bytesReceived: 4096 });
+    expect(markup).toContain('data-state="listening"');
+    expect(markup).toContain("Listening");
+  });
+
+  test("listening with NO mic socket reads deaf, not listening", () => {
+    const markup = withMic({ mode: "deepgram", active: false, bytesReceived: 0 });
+    expect(markup).toContain('data-state="deaf"');
+    expect(markup).toContain("No mic");
+    expect(markup).not.toContain(">Listening<");
+  });
+
+  test("a snapshot with no mic field at all keeps the old reading (static fixtures)", () => {
+    // Demo/static fixtures carry no `mic`; they must not all turn red.
+    expect(withMic(undefined)).toContain('data-state="listening"');
+  });
+
+  test("muted still wins over both", () => {
+    const markup = renderToStaticMarkup(
+      <ProjectorApp
+        initialSnapshot={{ ...demoProjectorSnapshot, muted: true, listening: false, mic: { mode: "deepgram", active: false, bytesReceived: 0 } }}
+        urlSearch="?live=0"
+      />,
+    );
+    expect(markup).toContain('data-state="muted"');
   });
 });

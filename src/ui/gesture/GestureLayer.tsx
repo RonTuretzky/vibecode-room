@@ -1,11 +1,22 @@
 import { useEffect, useRef, useState } from "react";
 import type { Zone } from "./core";
 import { idToHue } from "./core";
-import { GestureTargets, HITBOX_INFLATE_PX, inflateRect, type TargetDescriptor } from "./targets";
+import { GestureTargets, HITBOX_INFLATE_PX, inflateRect, publishLiveCursors, type TargetDescriptor } from "./targets";
 import { MultiDwell } from "./multi";
 import { getSceneDwellSource } from "./scene-source";
-import { RemoteKeyHolds, visibleCursorDots } from "./remote";
+import { getSceneFlatPoseControl, registerFlatPoseSender } from "./flat-pose-source";
+import { RemoteKeyHolds, guestDwellCaps, isGuestCursorId, shouldDrawNameTag, visibleCursorDots } from "./remote";
 import { GestureWallClient, type GestureCursor, type GestureWallStatus } from "./wall-client";
+import { applyCameraIntents } from "./camera-source";
+import { PinchCam } from "./pinch-cam";
+import {
+  DWELL_SHIELD_SELECTOR,
+  POPUP_DISMISS_IDLE,
+  cursorOverRect,
+  popupDismissStep,
+  type DismissRect,
+  type PopupDismissState,
+} from "./popup-dismiss";
 
 // Dwell/interaction tuning — matches the standalone wall client
 // (gesture-wall/web/wall.js): 0.8s dwell, 0.4s cooldown, 15% sticky
@@ -27,7 +38,11 @@ const FIRE_FLASH_SECONDS = 0.45;
 // buttons plus anything opting in with data-dwell (non-button clickables like
 // the fleet panels). No per-control registry to maintain — new UI is dwellable
 // the moment it renders a <button>.
-const DWELL_DOM_SELECTOR = "button:not(:disabled), [data-dwell]";
+// data-dwell-exempt opts a button OUT of dwell targeting: browsers only honor
+// some APIs (requestFullscreen) from TRUSTED input events, and a dwell-
+// synthesized .click() is untrusted — such buttons would take the dwell and
+// then silently do nothing, which reads as "the wall is broken".
+const DWELL_DOM_SELECTOR = "button:not(:disabled):not([data-dwell-exempt]), [data-dwell]";
 
 interface CursorState {
   x: number;
@@ -35,37 +50,57 @@ interface CursorState {
   engaged: boolean;
   lastSeen: number; // seconds
   isMouse: boolean;
+  // Guest display name (hub-sanitized, guest cursors only) — rendered as a
+  // small tag beside the dot so the room knows whose dot is whose.
+  name?: string;
 }
 
 // CURSOR DOTS (live-room request): a persistent colored dot per tracked person
 // — like the standalone wall client (gesture-wall/web/wall.js) — so people SEE
-// where they are pointing between targets. HIDDEN by default (live-room
-// request); localStorage "1" opts back in. Dwell rings render regardless.
+// where they are pointing between targets. VISIBLE by default (live-room
+// reversal: an invisible pointer reads as "the joystick died" — the operator
+// asked that the default is NEVER an invisible cursor). localStorage "0" or
+// ?dots=0 opts a window out. Dwell rings render regardless.
 export const CURSOR_DOTS_STORAGE_KEY = "vibersyn.cursor-dots";
 
-// Pure: parse the persisted preference. Hidden is THE default (live-room
-// request: the dots read as clutter) — only an explicit "1" opts back in,
-// and only via localStorage; the on-wall toggle button is gone.
+// Pure: parse the persisted preference. VISIBLE is the default — only an
+// explicit "0" hides (the old hidden-default cost a session to diagnosing a
+// healthy stick because nobody could see its cursor).
 export function cursorDotsFromStored(stored: string | null): boolean {
-  return stored === "1";
+  return stored !== "0";
 }
 
 function readCursorDotsPref(): boolean {
   if (typeof window === "undefined") {
-    return false;
+    return true;
   }
   try {
     return cursorDotsFromStored(window.localStorage.getItem(CURSOR_DOTS_STORAGE_KEY));
   } catch {
-    return false; // storage unavailable (kiosk/private mode) — default hidden
+    return true; // storage unavailable (kiosk/private mode) — stay visible
   }
+}
+
+// The &fusion= param as a source list: one WS URL, or several comma-separated
+// (camera server + arcade joystick bridge). Pure so it is testable without a
+// DOM; blanks are dropped so trailing/doubled commas can't produce a client
+// that reconnect-loops against an empty URL.
+export function fusionSources(fusionUrl: string): string[] {
+  return fusionUrl
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
 }
 
 export interface GestureLayerProps {
   // The wall id to subscribe to on the fusion server (e.g. "A").
   wall: string;
-  // Fusion server WS URL (e.g. ws://localhost:8770). Empty disables the camera
-  // stream (mouse-dwell testing mode uses only the local mouse cursor).
+  // Fusion server WS URL (e.g. ws://localhost:8770), or a comma-separated
+  // LIST of them (e.g. "ws://localhost:8770,ws://localhost:8771") when extra
+  // cursor sources run beside the camera server — the arcade joystick bridge
+  // being the canonical second source. All sources merge into the same dwell
+  // pipeline by cursor id (sources own disjoint id blocks). Empty disables
+  // the camera stream (mouse-dwell testing mode uses only the local mouse).
   fusionUrl: string;
   // Guest-hands WS URL (the projector server's /api/hands/room — speaks the
   // same fusion cursors protocol, carrying LAN guests' cursors with ids in the
@@ -80,6 +115,11 @@ export interface GestureLayerProps {
   // Test seam: overrides the persisted cursor-dot preference (the SSR test
   // renderer has no localStorage). Default: read localStorage, ON when unset.
   initialCursorDots?: boolean;
+  // DWELL-MISS CLOSE (popup-dismiss.ts): fired when a present cursor parks on
+  // EMPTY ground for ~1.5s, or when NO cursor exists for ~6s — the App closes
+  // its topmost popup (tree menu / idea card). The gesture wall's equivalent
+  // of the mouse's ground-click close.
+  onDwellMiss?: () => void;
 }
 
 // A full-viewport, pointer-events:none overlay that turns the gesture-wall
@@ -90,12 +130,16 @@ export interface GestureLayerProps {
 // synthesizes the activation. A per-person cursor dot — hued per cursor id
 // like the standalone wall client — can be opted in via localStorage, but the
 // wall defaults to dwell rings only (the dots read as clutter at room scale).
-export function GestureLayer({ wall, fusionUrl, remoteUrl = "", mouseTest = false, initialCursorDots }: GestureLayerProps) {
+export function GestureLayer({ wall, fusionUrl, remoteUrl = "", mouseTest = false, initialCursorDots, onDwellMiss }: GestureLayerProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const statusRef = useRef<GestureWallStatus>("closed");
   const [cursorDots] = useState<boolean>(() => initialCursorDots ?? readCursorDotsPref());
   const cursorDotsRef = useRef(cursorDots);
   cursorDotsRef.current = cursorDots;
+  // Ref-carried so a changing callback identity never tears down the sockets
+  // (the main effect keys on connection config only).
+  const onDwellMissRef = useRef(onDwellMiss);
+  onDwellMissRef.current = onDwellMiss;
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -110,6 +154,9 @@ export function GestureLayer({ wall, fusionUrl, remoteUrl = "", mouseTest = fals
       cooldownSeconds: COOLDOWN_SECONDS,
       hysteresis: HYSTERESIS,
       lockSeconds: LOCK_SECONDS,
+      // LAN guest cursors (the reserved negative id block) hover-dwell and
+      // pinch/press-to-fire; camera/fusion cursors keep the engaged gate.
+      capabilities: guestDwellCaps,
     });
     const targets = new GestureTargets();
     // Stable per-element ids: identity-keyed so a target keeps its zone (and any
@@ -125,6 +172,10 @@ export function GestureLayer({ wall, fusionUrl, remoteUrl = "", mouseTest = fals
     let sceneHighlights = new Set<string>();
     const fireFlashes: { x: number; y: number; r: number; hue: number; at: number }[] = [];
     let raf = 0;
+    // Dwell-miss / walked-away popup dismissal (pure fold, popup-dismiss.ts).
+    let dismissState: PopupDismissState = POPUP_DISMISS_IDLE;
+  // Sticky per mount: once a hand has been tracked, absence means departure.
+  let cursorSeenEver = false;
 
     const nowSec = () => performance.now() / 1000;
 
@@ -143,19 +194,28 @@ export function GestureLayer({ wall, fusionUrl, remoteUrl = "", mouseTest = fals
     const mergeCursors = (incoming: GestureCursor[]) => {
       const t = nowSec();
       for (const c of incoming) {
-        cursors.set(c.id, { x: c.x, y: c.y, engaged: c.engaged, lastSeen: t, isMouse: false });
+        cursors.set(c.id, { x: c.x, y: c.y, engaged: c.engaged, lastSeen: t, isMouse: false, name: c.name });
       }
     };
-    let client: GestureWallClient | null = null;
-    if (fusionUrl.trim().length > 0) {
-      client = new GestureWallClient({
-        url: fusionUrl,
-        wall,
-        onStatus: (s) => {
-          statusRef.current = s;
-        },
-        onCursors: mergeCursors,
-      });
+    const clients: GestureWallClient[] = fusionSources(fusionUrl).map(
+      (url, i) =>
+        new GestureWallClient({
+          url,
+          wall,
+          // Only the FIRST source (the camera fusion server) drives the status
+          // badge; extra sources (e.g. the arcade joystick bridge on :8771)
+          // merge cursors silently so an unplugged stick never reads as the
+          // wall being offline.
+          onStatus:
+            i === 0
+              ? (s) => {
+                  statusRef.current = s;
+                }
+              : undefined,
+          onCursors: mergeCursors,
+        }),
+    );
+    for (const client of clients) {
       client.start();
     }
 
@@ -166,16 +226,56 @@ export function GestureLayer({ wall, fusionUrl, remoteUrl = "", mouseTest = fals
     // events the desk keyboard produces (RoomScene's fly-through binds
     // window-wide) — merged across guests, auto-released on silence.
     const keyHolds = new RemoteKeyHolds();
+    // GUEST FLY MODE: one PinchCam per guest — the SAME interpreter the laptop
+    // bridge runs, so guests get the identical grammar (pinch-drag orbit,
+    // palm push/pull free-roam walk, two-pinch spread zoom) through the
+    // identical applyCameraIntents seam. Multiple flying guests interleave latest-writer-
+    // wins on the rig, exactly like every other camera input source.
+    const flyCams = new Map<number, { cam: PinchCam; lastAt: number }>();
     let remoteClient: GestureWallClient | null = null;
+    let unregisterFlatPoseSender: (() => void) | null = null;
     if (remoteUrl.trim().length > 0) {
-      remoteClient = new GestureWallClient({
+      const client = new GestureWallClient({
         url: remoteUrl,
         wall,
         onCursors: mergeCursors,
         onKeys: (keysFrame) => keyHolds.update(keysFrame.guest, keysFrame.held, nowSec()),
+        // Flat-pair pose sync (the partner window published its shared
+        // panorama pose through the hub): hand it to the scene's adopter.
+        // Only a flat-locked RoomScene registers one — everywhere else the
+        // frame drops here, by design.
+        onFlatPose: (pose) => getSceneFlatPoseControl()?.adopt(pose),
+        onFlyHands: (fly) => {
+          let entry = flyCams.get(fly.guest);
+          if (entry === undefined) {
+            entry = { cam: new PinchCam(), lastAt: 0 };
+            flyCams.set(fly.guest, entry);
+          }
+          entry.lastAt = nowSec();
+          applyCameraIntents(entry.cam.update(fly.frame, nowSec()), window.innerHeight);
+        },
       });
-      remoteClient.start();
+      remoteClient = client;
+      client.start();
+      // The upward half of the same seam: the flat-locked scene publishes its
+      // pose after local input; this bridges it onto the room socket (dropped
+      // silently while the socket is down — the hub replays on resubscribe).
+      unregisterFlatPoseSender = registerFlatPoseSender((pose) => {
+        client.send({ type: "flatpose", ...pose, t: nowSec() });
+      });
     }
+    // Fly-cam watchdog (PinchCameraLayer parity): a guest whose fly stream
+    // stalls must release any held grab within HAND_STALE_SECONDS; a guest
+    // silent for a while is pruned entirely.
+    const flyWatchdog = setInterval(() => {
+      const t = nowSec();
+      for (const [guest, entry] of [...flyCams]) {
+        applyCameraIntents(entry.cam.idleTick(t), window.innerHeight);
+        if (t - entry.lastAt > 10) {
+          flyCams.delete(guest);
+        }
+      }
+    }, 250);
 
     const domIdFor = (el: Element): string => {
       let id = domIds.get(el);
@@ -247,17 +347,24 @@ export function GestureLayer({ wall, fusionUrl, remoteUrl = "", mouseTest = fals
       // can walk the camera without pointing.
       const descriptors = cursors.size > 0 ? collectDomTargets(vpW, vpH) : [];
 
-      // Scene nodes: raycast each engaged cursor into the 3D room; a hit node
-      // becomes (or stays) a dwell target whose zone rect is the node's live
-      // projected bounding box.
+      // Scene nodes: raycast each cursor into the 3D room; a hit node becomes
+      // (or stays) a dwell target whose zone rect is the node's live projected
+      // bounding box. Every cursor is picked (the dwell-miss close below must
+      // know a roaming open hand is still OVER a tree — that is not "empty
+      // ground"), but only engaged/guest cursors SPAWN targets: an open
+      // roaming hand should not light nodes up.
+      let cursorOverScene = false;
       const scene = cursors.size > 0 ? getSceneDwellSource() : null;
       if (scene !== null) {
-        for (const c of cursors.values()) {
-          if (!c.engaged) {
+        for (const [cursorId, c] of cursors) {
+          const id = scene.pick(c.x * vpW, c.y * vpH);
+          if (id === null) {
             continue;
           }
-          const id = scene.pick(c.x * vpW, c.y * vpH);
-          if (id !== null) {
+          cursorOverScene = true;
+          // Guest cursors hover-dwell (guestDwellCaps), so their hover must
+          // acquire scene targets too; camera cursors keep the engaged gate.
+          if (c.engaged || isGuestCursorId(cursorId)) {
             sceneSeen.set(id, t);
           }
         }
@@ -276,6 +383,60 @@ export function GestureLayer({ wall, fusionUrl, remoteUrl = "", mouseTest = fals
       const zones: Zone[] = targets.sync(descriptors, vpW, vpH);
       for (const zone of zones) {
         rectsById.set(zone.id, { left: zone.x * vpW, top: zone.y * vpH, width: zone.w * vpW, height: zone.h * vpH });
+      }
+
+      // DWELL-MISS CLOSE: is any cursor over ANY target (scene node above, or
+      // a zone rect — the inflated DOM hitboxes, so aiming jitter around a
+      // button never reads as empty ground)? Feed the pure fold; a sustained
+      // all-miss (~1.5s) or a cursorless stretch (~6s) closes the App's top
+      // popup — the gesture wall's equivalent of the mouse ground-click.
+      // Zone rects are tested with the SAME sticky halo the dwell selector
+      // uses (HYSTERESIS): a cursor the selector still holds in the halo —
+      // or one parked there right after firing a menu button — must not read
+      // as empty ground and close the popup out from under the user. Open
+      // popups additionally shield their WHOLE panel (DWELL_SHIELD_SELECTOR):
+      // reading a menu's title/status/QR is not a dismissal.
+      let anyOnTarget = cursorOverScene;
+      if (!anyOnTarget && cursors.size > 0) {
+        const shields: DismissRect[] = [];
+        document.querySelectorAll(DWELL_SHIELD_SELECTOR).forEach((el) => {
+          const r = el.getBoundingClientRect();
+          if (r.width > 0 && r.height > 0) {
+            shields.push({ left: r.left, top: r.top, width: r.width, height: r.height });
+          }
+        });
+        outer: for (const c of cursors.values()) {
+          const px = c.x * vpW;
+          const py = c.y * vpH;
+          for (const r of rectsById.values()) {
+            if (cursorOverRect(px, py, r, HYSTERESIS)) {
+              anyOnTarget = true;
+              break outer;
+            }
+          }
+          for (const r of shields) {
+            if (cursorOverRect(px, py, r)) {
+              anyOnTarget = true;
+              break outer;
+            }
+          }
+        }
+      }
+      // "Walked away" needs somebody to have arrived first. On a wall with no
+      // hand source feeding it (the default: ?remote is on, so this layer
+      // mounts everywhere) cursors.size is 0 forever, and the rule used to
+      // close every popup on a 6s cycle with nobody in the room.
+      if (cursors.size > 0) {
+        cursorSeenEver = true;
+      }
+      const dismissStep = popupDismissStep(
+        dismissState,
+        { cursorCount: cursors.size, anyOnTarget, cursorSeenEver },
+        t,
+      );
+      dismissState = dismissStep.state;
+      if (dismissStep.dismiss) {
+        onDwellMissRef.current?.();
       }
 
       // Remote WASD: apply this frame's press/release diff as synthetic window
@@ -333,6 +494,11 @@ export function GestureLayer({ wall, fusionUrl, remoteUrl = "", mouseTest = fals
       }
       sceneHighlights = nextScene;
 
+      // Presence, not acquisition: chrome that opens while a cursor RESTS on
+      // it (the ⚙ dock) reads this — dwell-hot only marks acquired targets,
+      // and a hovering joystick/hands cursor acquired nothing, so the dock
+      // idle-folded under a parked cursor (live-room bug).
+      publishLiveCursors([...cursors.values()].map((cursor) => ({ x: cursor.x * vpW, y: cursor.y * vpH })));
       draw(ctx, canvas, result.active, rectsById, fireFlashes, t, vpW, vpH, cursors, cursorDotsRef.current);
       raf = requestAnimationFrame(frame);
     };
@@ -347,8 +513,18 @@ export function GestureLayer({ wall, fusionUrl, remoteUrl = "", mouseTest = fals
         el.removeAttribute("data-dwell-hot");
       }
       getSceneDwellSource()?.setHighlights(new Set());
-      client?.stop();
+      for (const client of clients) {
+        client.stop();
+      }
+      unregisterFlatPoseSender?.();
       remoteClient?.stop();
+      clearInterval(flyWatchdog);
+      // Force-release every flying guest's grab (far-future idle tick =
+      // guaranteed staleness cancel) so the camera never stays "tracked".
+      for (const entry of flyCams.values()) {
+        applyCameraIntents(entry.cam.idleTick(nowSec() + 60), window.innerHeight);
+      }
+      flyCams.clear();
       // Never leave a remote guest's key held down past the layer's lifetime.
       for (const key of keyHolds.releaseAll()) {
         window.dispatchEvent(new KeyboardEvent("keyup", { key }));
@@ -477,5 +653,38 @@ function draw(
     ctx.beginPath();
     ctx.arc(x, y, 3.5, 0, Math.PI * 2);
     ctx.fill();
+  }
+
+  // Guest name tags — a second pass over the SAME visible-dot list (the tag
+  // rides the dot's visibility), drawn AFTER every dot so a crowd of cursors
+  // can never occlude a name. Only guest cursors that set one get a tag
+  // (shouldDrawNameTag, unit-tested); camera/fusion dots stay anonymous.
+  ctx.font = '13px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+  ctx.textBaseline = "middle";
+  for (const [id, cursor] of visibleCursorDots(cursors, showCursorDots)) {
+    const name = cursor.name;
+    if (!shouldDrawNameTag(id, name)) {
+      continue;
+    }
+    const x = cursor.x * vpW;
+    const y = cursor.y * vpH;
+    const hue = idToHue(id);
+    const alpha = cursor.engaged ? 0.95 : 0.7;
+    const padX = 7;
+    const tagH = 20;
+    const tagW = ctx.measureText(name).width + padX * 2;
+    // Below-right of the dot, nudged back on-screen at the wall's edges so the
+    // tag never renders off-canvas.
+    const tx = Math.max(2, Math.min(x + 13, vpW - tagW - 2));
+    const ty = Math.max(2, Math.min(y + 13, vpH - tagH - 2));
+    ctx.fillStyle = `rgba(11, 14, 20, ${0.82 * alpha})`;
+    ctx.beginPath();
+    ctx.roundRect(tx, ty, tagW, tagH, 7);
+    ctx.fill();
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = `hsla(${hue}, 90%, 62%, ${0.55 * alpha})`;
+    ctx.stroke();
+    ctx.fillStyle = `hsla(${hue}, 90%, 72%, ${alpha})`;
+    ctx.fillText(name, tx + padX, ty + tagH / 2 + 0.5);
   }
 }

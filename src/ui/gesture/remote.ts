@@ -15,6 +15,8 @@
 // a stable id per physical hand, which is what keeps its dwell state and hue
 // steady across frames.
 
+import type { DwellCaps } from "./core";
+
 export const GUEST_ID_BASE = -1000;
 export const GUEST_ID_STRIDE = 8;
 
@@ -27,6 +29,17 @@ export function guestCursorId(guestSeq: number, localId: number): number {
 
 export function isGuestCursorId(id: number): boolean {
   return id <= GUEST_ID_BASE;
+}
+
+// The wall-side dwell capabilities for a cursor id (fed to MultiDwell). A
+// guest steering a dot from their own laptop is ALWAYS deliberately aiming —
+// there is no "open roaming hand" state to guard against — so hover alone
+// accumulates dwell (no pinch/press marathon required to click), and a pinch
+// or pad press landing on a target clicks it immediately (the fast path).
+// Camera/fusion cursors (and the -1 mouse-test cursor) get no caps: their
+// dwell keeps requiring `engaged`, exactly as before guests existed.
+export function guestDwellCaps(id: number): DwellCaps {
+  return isGuestCursorId(id) ? { hoverDwells: true, instantFire: true } : {};
 }
 
 // Guests aiming from their own laptop NEED to see their dot on the wall (they
@@ -46,6 +59,16 @@ export function visibleCursorDots<T>(
   dotsPreference: boolean,
 ): Array<[number, T]> {
   return [...cursors].filter(([id]) => shouldDrawCursorDot(id, dotsPreference));
+}
+
+// Name tags: only a GUEST cursor that set a display name gets one — camera/
+// fusion cursors never do, even if a name field somehow leaked onto their
+// frames (guests are the only peers whose hub attaches names). Pure for the
+// same reason as visibleCursorDots: GestureLayer.draw() must gate on THIS,
+// so the rule stays unit-tested even though the canvas renderer is not. The
+// tag rides the dot's visibility (guests' dots always draw).
+export function shouldDrawNameTag(id: number, name: string | null | undefined): name is string {
+  return isGuestCursorId(id) && typeof name === "string" && name.length > 0;
 }
 
 // The wall's same-origin subscription socket for merged guest cursors. The

@@ -1,0 +1,119 @@
+/* ============================================================================
+   Branch + issue popups — the contextual glass that opens when a limb tip or
+   a fruit is picked (BranchPopup.tsx / IssuePopup.tsx). Position comes inline
+   (left/top from treeMenuPlacement); this file owns the glass-card family
+   look (TreeMenu's vocabulary at a smaller footprint) + gesture-XL sizing.
+   ============================================================================ */
+.tree-popup {
+  position: fixed;
+  z-index: 32; /* over the tree menu (30), under the deck/QR overlays (50+) */
+  width: min(380px, 90vw);
+  max-height: 80vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border-radius: 18px;
+  border: 1px solid var(--glass-border);
+  padding: 18px 20px;
+  background: linear-gradient(180deg, var(--glass-panel-top), var(--glass-panel-bottom));
+  box-shadow: 0 16px 52px rgba(0, 0, 0, 0.45);
+  animation: fade-in 180ms ease;
+}
+
+.tree-popup-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.tree-popup-eyebrow {
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+}
+
+.tree-popup-title {
+  margin: 0;
+  font-size: 19px;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.tree-popup-sub {
+  font-size: 13px;
+  color: var(--ink-dim);
+}
+
+.tree-popup-close {
+  flex-shrink: 0;
+}
+
+/* Label chips (issue popup): small tinted pills, color inline per label. */
+.tree-popup-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tree-popup-chip {
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(160, 210, 230, 0.3);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+/* The PR link row: in-room text, never a target=_blank jump. */
+.tree-popup-link {
+  font-size: 13px;
+  overflow-wrap: anywhere;
+  color: rgba(158, 226, 255, 0.92);
+}
+
+.tree-popup-error {
+  font-size: 13px;
+  color: #ffb4ad;
+}
+
+.tree-popup-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* ── GESTURE-XL (main.gesture-mode): dwell-comfortable targets. ─────────── */
+main.gesture-mode .tree-popup {
+  width: min(560px, 44vw);
+  gap: 24px;
+  padding: 28px 30px;
+}
+
+main.gesture-mode .tree-popup-title {
+  font-size: 30px;
+}
+
+main.gesture-mode .tree-popup-sub,
+main.gesture-mode .tree-popup-eyebrow,
+main.gesture-mode .tree-popup-link,
+main.gesture-mode .tree-popup-error {
+  font-size: 20px;
+}
+
+main.gesture-mode .tree-popup-chip {
+  font-size: 18px;
+  padding: 8px 18px;
+}
+
+main.gesture-mode .tree-popup-actions {
+  gap: 22px;
+}
+
+main.gesture-mode .tree-popup-close {
+  min-height: 96px;
+  padding: 20px 30px;
+  font-size: 28px;
+}

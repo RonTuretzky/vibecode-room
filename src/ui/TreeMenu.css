@@ -1,0 +1,723 @@
+/* ============================================================================
+   Tree menu — the per-tree control panel anchored beside the picked tree
+   (TreeMenu.tsx). Position comes inline (left/top from treeMenuPlacement);
+   this file owns the glass card look + the gesture-XL sizing so every button
+   is a comfortable dwell target.
+   ============================================================================ */
+.tree-menu {
+  position: fixed;
+  z-index: 30; /* over the scene + rails, under the deck/QR overlays (50+) */
+  width: min(440px, 92vw);
+  max-height: 86vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  border-radius: 20px;
+  border: 1px solid var(--glass-border);
+  padding: 20px 22px;
+  background: linear-gradient(180deg, var(--glass-panel-top), var(--glass-panel-bottom));
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.45);
+  animation: fade-in 200ms ease;
+}
+
+.tree-menu-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.tree-menu-identity {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.tree-menu-eyebrow {
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+}
+
+.tree-menu-title {
+  margin: 0;
+  font-size: 21px;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.tree-menu-callsign {
+  font-size: 14px;
+  font-weight: 700;
+  color: rgba(158, 226, 255, 0.9);
+}
+
+.tree-menu-status {
+  font-size: 13px;
+  color: var(--ink-dim);
+}
+
+.tree-menu-close {
+  flex-shrink: 0;
+}
+
+/* Concept lanes: one row per backend. Ready rows are BUTTONS (dwell targets);
+   building/queued/failed rows are honest status readouts. */
+.tree-menu-lanes {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.tree-menu-lane {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px 16px;
+  border-radius: 14px;
+  border: 1px solid rgba(160, 210, 230, 0.16);
+  background: rgba(20, 34, 46, 0.6);
+  color: inherit;
+  font: inherit;
+  font-size: 14.5px;
+  text-align: left;
+}
+
+button.tree-menu-lane.lane-ready {
+  border-color: rgba(0, 255, 136, 0.4);
+  cursor: pointer;
+}
+
+button.tree-menu-lane.lane-ready:hover {
+  background: rgba(0, 255, 136, 0.1);
+}
+
+.tree-menu-lane.lane-failed {
+  border-color: rgba(255, 59, 48, 0.4);
+}
+
+.tree-lane-label {
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.tree-lane-status {
+  flex: 1;
+  min-width: 0;
+  color: var(--ink-dim);
+}
+
+.tree-menu-lane.lane-ready .tree-lane-status {
+  color: rgba(0, 255, 136, 0.85);
+}
+
+.tree-lane-open {
+  flex-shrink: 0;
+  font-weight: 800;
+  color: rgba(158, 226, 255, 0.95);
+}
+
+/* Steer: the armed note + the typed input (deck iterate-bar contract). */
+.tree-menu-steer {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.tree-menu-steer-note {
+  font-size: 13.5px;
+  color: rgba(158, 226, 255, 0.85);
+}
+
+.tree-menu-steer-form {
+  display: flex;
+  gap: 10px;
+}
+
+.tree-menu-steer-input {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(160, 210, 230, 0.25);
+  background: rgba(6, 12, 18, 0.8);
+  color: inherit;
+  font: inherit;
+  font-size: 14.5px;
+}
+
+.tree-menu-steer-sent {
+  font-size: 13px;
+  color: rgba(0, 255, 136, 0.85);
+}
+
+/* Two-stage remove: resting is calm; armed goes red and asks again. */
+.tree-menu-remove {
+  align-self: flex-start;
+  border-color: rgba(255, 120, 110, 0.4);
+}
+
+.tree-menu-remove.is-armed {
+  background: rgba(255, 59, 48, 0.18);
+  border-color: rgba(255, 59, 48, 0.75);
+  color: #ffb4ad;
+  font-weight: 800;
+}
+
+/* ── GESTURE-XL (main.gesture-mode — mirrors styles.css conventions): the
+   menu is THE wall control surface, so rows/buttons take the secondary
+   104px/88px hit heights and the inter-target gaps exceed the 48px dwell-
+   hitbox inflation budget. ────────────────────────────────────────────── */
+main.gesture-mode .tree-menu {
+  width: min(620px, 46vw);
+  gap: 28px;
+  padding: 30px 32px;
+}
+
+main.gesture-mode .tree-menu-title {
+  font-size: 34px;
+}
+
+main.gesture-mode .tree-menu-callsign {
+  font-size: 22px;
+}
+
+main.gesture-mode .tree-menu-status,
+main.gesture-mode .tree-menu-eyebrow {
+  font-size: 19px;
+}
+
+main.gesture-mode .tree-menu-lanes {
+  gap: 26px;
+}
+
+main.gesture-mode .tree-menu-lane {
+  min-height: 104px;
+  padding: 22px 28px;
+  font-size: 24px;
+  border-radius: 18px;
+}
+
+main.gesture-mode .tree-menu-steer {
+  gap: 24px;
+}
+
+main.gesture-mode .tree-menu-steer-note {
+  font-size: 22px;
+}
+
+main.gesture-mode .tree-menu-steer-form {
+  gap: 26px;
+}
+
+main.gesture-mode .tree-menu-steer-input {
+  min-height: 88px;
+  font-size: 24px;
+}
+
+/* The close/deck/send/remove buttons already inherit the gesture .ctl-button
+   XL sizing from styles.css; the close chip alone drops to the secondary
+   size so the header keeps room for the title. */
+main.gesture-mode .ctl-button.tree-menu-close {
+  min-height: 104px;
+  padding: 22px 34px;
+  font-size: 30px;
+}
+
+/* ============================================================================
+   TEND THE TREE — the SELF tree's two-column surface. One plant vocabulary,
+   glass tokens throughout, and every verb a generous stationary dwell target.
+   Column order is FIXED (never mirrored by placement side): a mid-open flip
+   would move targets under a dwelling cursor.
+   ============================================================================ */
+.tree-menu.tree-tend {
+  width: min(760px, 92vw);
+  /* The tending body is the one panel that must hold a here-card + four
+     branch cards + pager with ZERO internal scrolling at wall sizes; 86vh
+     cannot hold that at 1080p gesture scale, so the tend panel alone gets a
+     taller ceiling — 96vh keeps ~20px of honest headroom for an inline tend
+     note/error above the list (overflow-y stays as the safety valve on tiny
+     windows). */
+  max-height: 96vh;
+}
+
+.tree-tend-columns {
+  display: grid;
+  grid-template-columns: 44% 1fr;
+  gap: 24px;
+  align-items: start;
+}
+
+.tree-tend-col {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+/* Card eyebrows ("🌿 growing now" / "🌳 you are here"). */
+.tree-card-eyebrow {
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+}
+
+/* YOU ARE HERE — the current branch, hoisted out of the list, --c-active
+   edge glow: the one card that always tells the truth about where the room
+   stands. */
+.tree-here-card,
+.tree-growing-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  border: 1px solid rgba(0, 255, 136, 0.35);
+  border-left: 4px solid var(--c-active);
+  background: rgba(0, 255, 136, 0.05);
+}
+
+/* Head row: eyebrow + "the room lives on this branch" share one line (D2's
+   whole phrase) — a stacked sub row is a full row the 1080p list-view budget
+   cannot afford. On narrow rigs the sub wraps under the eyebrow (safety valve
+   scroll covers the loss). */
+.tree-here-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  column-gap: 10px;
+  row-gap: 2px;
+}
+
+.tree-here-subject {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: #dfe9f2;
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+/* Single line like the subject: a long branch name must ellipsize, never grow
+   the card (the list-view budget is fixed). */
+.tree-here-slug {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--ink-dim);
+  line-height: 1.3;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.tree-here-sub {
+  margin: 0;
+  font-size: 13px;
+  color: rgba(154, 255, 201, 0.85);
+}
+
+.tree-here-verbs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+/* GROWING NOW — the executing self-run (replaces the ExecutionChip on the
+   tending surface; same lane data). A soft honest pulse, frozen under
+   reduced-motion with every other animation. */
+.tree-growing-card {
+  animation: tend-growing-pulse 2.6s ease-in-out infinite;
+}
+
+@keyframes tend-growing-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.82; }
+}
+
+.tree-growing-label {
+  margin: 0;
+  font-size: 13.5px;
+  color: #dfe9f2;
+  overflow-wrap: anywhere;
+}
+
+/* A TEND VERB: two-line button (strong verb + honest sub-line) on the glass
+   ctl-button base — accent-tinted border over glass, never a solid fill
+   (colorless-controls rule). Verb colors ride FIXED semantics: climb cyan
+   (--c-selected), merge green (--c-completed) arming amber (--c-paused),
+   press neutral glass, prune/halt the --c-halted family. */
+.ctl-button.tend-verb {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  white-space: normal;
+  text-align: left;
+  padding: 10px 14px;
+  border-radius: 12px;
+  min-height: 56px;
+}
+
+.ctl-button.tend-verb .tend-line {
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.ctl-button.tend-verb .tend-sub {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink-dim);
+  line-height: 1.3;
+}
+
+.ctl-button.tend-verb.verb-climb { border-color: rgba(0, 188, 212, 0.5); color: #bfeefc; }
+.ctl-button.tend-verb.verb-merge { border-color: rgba(154, 255, 201, 0.45); color: #cfeede; }
+.ctl-button.tend-verb.verb-press { border-color: var(--glass-border); }
+.ctl-button.tend-verb.verb-prune,
+.ctl-button.tend-verb.verb-halt { border-color: rgba(255, 120, 110, 0.45); color: #ffd9d6; }
+
+/* Armed stages: danger (prune / stop growing) goes the --c-halted red family;
+   caution (merge — permanent but not destructive) goes --c-paused amber. */
+.ctl-button.tend-verb.is-armed-danger {
+  background: rgba(255, 59, 48, 0.18);
+  border-color: rgba(255, 59, 48, 0.75);
+  color: #ffb4ad;
+  font-weight: 800;
+}
+
+.ctl-button.tend-verb.is-armed-danger .tend-sub { color: #ffb4ad; }
+
+.ctl-button.tend-verb.is-armed-caution {
+  background: rgba(245, 166, 35, 0.16);
+  border-color: rgba(245, 166, 35, 0.8);
+  color: #ffd166;
+  font-weight: 800;
+}
+
+.ctl-button.tend-verb.is-armed-caution .tend-sub { color: #ffd166; }
+
+/* Honest receipts + the "reading the tree…" resting line. */
+.tree-tend-note {
+  margin: 0;
+  font-size: 13px;
+  color: #7ee2a8;
+  font-weight: 600;
+}
+
+.tree-tend-reading {
+  margin: 0;
+  font-size: 13.5px;
+  color: var(--ink-dim);
+  font-style: italic;
+}
+
+/* BRANCHES — the grown list: heading, four stationary cards, dwell pager. */
+.tree-branches-head {
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  color: var(--ink-dim);
+}
+
+.tree-branch-card {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  border-radius: 12px;
+  border: 1px solid rgba(120, 160, 220, 0.2);
+}
+
+.tree-branch-card.is-open {
+  border-color: rgba(0, 188, 212, 0.5);
+  background: rgba(0, 188, 212, 0.08);
+  padding: 12px 14px;
+}
+
+.tree-branch-head {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  text-align: left;
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  padding: 12px 14px;
+  width: 100%;
+}
+
+.tree-branch-subject {
+  font-size: 15px;
+  color: #dfe9f2;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+/* Collapsed rows clamp to one line (title attr + focus view carry the whole
+   sentence); the OPEN focus card lets it wrap. */
+.tree-branch-head .tree-branch-subject,
+.tree-branch-head .tree-branch-slug {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.tree-branch-slug {
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--ink-dim);
+  overflow-wrap: anywhere;
+}
+
+/* FOCUS VIEW: ◂ back + the one open card + the 2×2 verb grid. */
+.tree-branch-focus {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.tree-branch-back {
+  align-self: stretch;
+  text-align: left;
+}
+
+.tree-branch-verbs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+/* PRUNE third stage — the scope question. Spans the verb grid's full width
+   (it replaces the LAST cell, so climb/merge/press never move under a
+   mid-dwell cursor) and lays its two big stationary buttons side by side. */
+.tree-prune-scope {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tree-prune-scope-question {
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: #ffd9d6;
+  text-align: left;
+}
+
+.tree-prune-scope-verbs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+/* Dwell pager: at-limit buttons stay enabled but dim (FleetScroll precedent —
+   never hide a control under a mid-dwell cursor). */
+.tree-branch-pager {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.tree-branch-page-btn[data-at-limit] {
+  opacity: 0.35;
+}
+
+.tree-branch-page-status {
+  font-size: 13px;
+  color: var(--ink-dim);
+  white-space: nowrap;
+}
+
+.tree-menu-version-error { font-size: 13px; color: #ffb4ad; overflow-wrap: anywhere; }
+
+/* ── LOCK HALO (rendered by the App, beside — never inside — the panel):
+   pure decor hugging the tree's live projected rect on the SAME 1 Hz anchor
+   chase as the menu; the 240ms glide smooths the steps. pointer-events:none
+   and no buttons — it must never become a dwell target. ────────────────── */
+.tree-halo {
+  position: fixed;
+  z-index: 29; /* one under the tree menu's 30 */
+  pointer-events: none;
+  border: 2px solid var(--c-selected);
+  border-radius: 24px;
+  box-shadow: 0 0 28px rgba(0, 188, 212, 0.3);
+  transition: left 240ms ease, top 240ms ease, width 240ms ease, height 240ms ease;
+  animation: fade-in 200ms ease;
+}
+
+.tree-halo-lock {
+  position: absolute;
+  top: -18px;
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--glass-border);
+  background: linear-gradient(180deg, var(--glass-panel-top), var(--glass-panel-bottom));
+  color: var(--c-selected);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tree-halo { transition: none; animation: none; }
+  .tree-growing-card { animation: none; }
+}
+
+/* ── TEND gesture-XL (main.gesture-mode): the tending panel is THE wall
+   surface — 960px glass, ≥96px cards/verbs, ≥88px pager/back, ≥128px graft.
+   The vertical budget is the hard constraint (here-card + 4 cards + pager
+   with ZERO internal scroll), so the header/meta type rides slightly under
+   the generic menu scale and card gaps sit at 16px — the cards themselves
+   are ~470×96 targets, far past any straddle risk; the destructive verb
+   grids keep the full 24px separation. ─────────────────────────────────── */
+main.gesture-mode .tree-menu.tree-tend {
+  width: min(960px, 72vw);
+  padding: 24px 32px;
+  gap: 16px;
+}
+
+/* Header on the tend panel: a notch under the generic menu scale — the
+   vertical budget goes to the verb targets, not the title. */
+main.gesture-mode .tree-tend .tree-menu-title {
+  font-size: 28px;
+}
+
+main.gesture-mode .tree-tend .tree-menu-eyebrow,
+main.gesture-mode .tree-tend .tree-menu-status {
+  font-size: 16px;
+}
+
+main.gesture-mode .tree-tend .tree-menu-callsign {
+  font-size: 18px;
+}
+
+main.gesture-mode .tree-tend-columns {
+  gap: 32px;
+  /* Column A only holds the graft button (+ a settled chip / growing card);
+     column B carries the whole vertical budget. 38% hands column B the width
+     that keeps the 2-up verb labels ("🍁 press & step off") on ONE line —
+     wrapped labels grew the here-card verbs to 129px and pushed the pager off
+     the 1080p glass. */
+  grid-template-columns: 38% 1fr;
+}
+
+main.gesture-mode .tree-tend-col {
+  gap: 24px;
+}
+
+main.gesture-mode .tree-tend-col-b {
+  gap: 16px;
+}
+
+main.gesture-mode .tree-card-eyebrow {
+  font-size: 15px;
+}
+
+main.gesture-mode .tree-here-card,
+main.gesture-mode .tree-growing-card {
+  padding: 10px 16px;
+  gap: 5px;
+}
+
+main.gesture-mode .tree-here-subject,
+main.gesture-mode .tree-branch-subject {
+  font-size: 21px;
+}
+
+main.gesture-mode .tree-here-slug,
+main.gesture-mode .tree-branch-slug,
+main.gesture-mode .tree-here-sub,
+main.gesture-mode .tree-branches-head,
+main.gesture-mode .tree-tend-note,
+main.gesture-mode .tree-tend-reading,
+main.gesture-mode .tree-menu-version-error,
+main.gesture-mode .tree-branch-page-status {
+  font-size: 16px;
+}
+
+main.gesture-mode .tree-growing-label {
+  font-size: 19px;
+}
+
+main.gesture-mode .tree-here-verbs,
+main.gesture-mode .tree-branch-verbs {
+  gap: 24px;
+}
+
+main.gesture-mode .ctl-button.tend-verb {
+  min-height: 96px;
+  padding: 14px 16px;
+  border-radius: 16px;
+}
+
+main.gesture-mode .ctl-button.tend-verb .tend-line {
+  font-size: 22px;
+}
+
+main.gesture-mode .ctl-button.tend-verb .tend-sub {
+  font-size: 17px;
+}
+
+/* The 2-up grids run ~220px per verb — their two-line labels step down a
+   size (and the padding a notch) so a verb rests AT its 96px floor: a verb
+   that outgrows the floor eats the pager's room at the panel's bottom. */
+main.gesture-mode .tree-here-verbs .ctl-button.tend-verb,
+main.gesture-mode .tree-branch-verbs .ctl-button.tend-verb {
+  padding: 12px 14px;
+}
+
+main.gesture-mode .tree-here-verbs .ctl-button.tend-verb .tend-line,
+main.gesture-mode .tree-branch-verbs .ctl-button.tend-verb .tend-line {
+  font-size: 19px;
+}
+
+main.gesture-mode .tree-here-verbs .ctl-button.tend-verb .tend-sub,
+main.gesture-mode .tree-branch-verbs .ctl-button.tend-verb .tend-sub {
+  font-size: 14px;
+}
+
+main.gesture-mode .tree-branch-card {
+  min-height: 96px;
+}
+
+main.gesture-mode .tree-branch-head {
+  min-height: 96px;
+  padding: 14px 16px;
+  gap: 5px;
+}
+
+main.gesture-mode .tree-branch-pager {
+  gap: 24px;
+}
+
+main.gesture-mode .ctl-button.tree-branch-page-btn,
+main.gesture-mode .ctl-button.tree-branch-back {
+  min-height: 88px;
+  padding: 18px 30px;
+  font-size: 22px;
+}
+
+main.gesture-mode .tree-halo-lock {
+  font-size: 20px;
+  padding: 10px 22px;
+  top: -26px;
+}

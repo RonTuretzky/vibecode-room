@@ -143,9 +143,73 @@ describe("parseProjectorUrl", () => {
     expect(parseProjectorUrl("?env=park", "localhost").environment).toBe("park");
     expect(parseProjectorUrl("?env=forest", "localhost").environment).toBe("meadow");
     // Purely environmental: nothing else in the config moves.
-    const park = parseProjectorUrl("?env=park&wall=A", "localhost");
-    expect(park.gesture).toBeNull();
-    expect(park.wall).toBe("A");
+    const pond = parseProjectorUrl("?env=park&wall=A", "localhost");
+    expect(pond.gesture).toBeNull();
+    expect(pond.wall).toBe("A");
+  });
+
+
+  // FLAT RIG (?flat=1): the wall pair renders halves of one wide view so two
+  // side-by-side projections on ONE flat wall tile a continuous picture.
+  test("?flat=1 opts into the flat-wall pair; anything else stays off", () => {
+    expect(parseProjectorUrl("?flat=1", "h").flat).toBe(true);
+    expect(parseProjectorUrl("?flat=0", "h").flat).toBe(false);
+    expect(parseProjectorUrl("?flat=yes", "h").flat).toBe(false);
+    expect(parseProjectorUrl("", "h").flat).toBe(false);
+  });
+
+  test("?flat=1 composes with the wall identity and gesture params untouched", () => {
+    const config = parseProjectorUrl("?live=1&wall=B&view=builds&gesture=1&flat=1", "h");
+    expect(config.flat).toBe(true);
+    expect(config.wall).toBe("B");
+    expect(config.gesture?.wall).toBe("B");
+  });
+
+  // Cursor dots default VISIBLE (live-room reversal: an invisible pointer
+  // reads as a dead joystick). The URL is a tri-state override; absent means
+  // the stored preference — itself default-visible — decides.
+  test("?dots is a tri-state override and absent never means hidden", () => {
+    expect(parseProjectorUrl("?dots=1", "h").dots).toBe(true);
+    expect(parseProjectorUrl("?dots=0", "h").dots).toBe(false);
+    expect(parseProjectorUrl("", "h").dots).toBeNull();
+  });
+
+  // JOYSTICK CURSOR SOURCE (?stick=1, appended by run-room.sh --arcade): both
+  // fusion sources speak the same ws protocol, so only the launcher knows —
+  // the flag makes the guided demo coach lever+button instead of hand.
+  test("?stick=1 marks the joystick rig; default and junk stay false", () => {
+    expect(parseProjectorUrl("?stick=1", "h").stick).toBe(true);
+    expect(parseProjectorUrl("?stick=0", "h").stick).toBe(false);
+    expect(parseProjectorUrl("?stick=yes", "h").stick).toBe(false);
+    expect(parseProjectorUrl("", "h").stick).toBe(false);
+  });
+
+  test("?stick=1 composes with the gesture layer + dots (the run-room arcade URL shape)", () => {
+    const config = parseProjectorUrl("?live=1&wall=A&gesture=1&dots=1&stick=1", "h");
+    expect(config.stick).toBe(true);
+    expect(config.gesture).not.toBeNull();
+    expect(config.dots).toBe(true);
+  });
+
+  // CONTINUOUS AUTO-FRAMING (?autofit=): tri-state override for the
+  // self-driving camera. App defaults it ON for research-pinned windows
+  // (?research=1 — the ceiling projector); the URL param forces either way.
+  test("?autofit=1 forces auto-framing on; ?autofit=0 forces it off", () => {
+    expect(parseProjectorUrl("?autofit=1", "h").autoFit).toBe(true);
+    expect(parseProjectorUrl("?autofit=0", "h").autoFit).toBe(false);
+  });
+
+  test("absent/unknown ?autofit defers to the default (null tri-state)", () => {
+    expect(parseProjectorUrl("", "h").autoFit).toBeNull();
+    expect(parseProjectorUrl("?research=1", "h").autoFit).toBeNull();
+    expect(parseProjectorUrl("?autofit=yes", "h").autoFit).toBeNull();
+    expect(parseProjectorUrl("?autofit=", "h").autoFit).toBeNull();
+  });
+
+  test("?autofit composes with the research pin untouched (ceiling projector opt-out)", () => {
+    const config = parseProjectorUrl("?research=1&autofit=0", "h");
+    expect(config.research).toBe(true);
+    expect(config.autoFit).toBe(false);
   });
 });
 

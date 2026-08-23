@@ -8,6 +8,7 @@
 // (tree.ts) keep the window utterance-shaped instead of ASR-fragment-shaped.
 
 import type { TranscriptTurn } from "../detect/types";
+import { CloudGraph, type SkySnapshot } from "./sky";
 import { ConceptTree, type ConceptTopic } from "./tree";
 import type {
   ResearchAgent,
@@ -38,6 +39,10 @@ export interface ResearchLoopOptions {
   maxProposed?: number;
   // Minimum gap between suggestion rounds (model inference).
   minRoundIntervalMs?: number;
+  // Periodic review timer: while the mode is active, re-read the dialogue
+  // every this many ms and bud at most ONE new sphere. 0 disables the timer
+  // (tests drive periodicSuggest manually). VIBERSYN_RESEARCH_SUGGEST_INTERVAL_MS.
+  suggestIntervalMs?: number;
   // New words accumulated before a passive round is worth running.
   newWordsThreshold?: number;
   // Proposed quests missing this many consecutive rounds are pruned.
@@ -48,6 +53,11 @@ export interface ResearchLoopOptions {
   // default tree runs the production Cerebras refiner (a clean no-op without
   // CEREBRAS_API_KEY) and republishes through this loop when a refinement lands.
   conceptTree?: ConceptTree;
+  // The conversation-sky accumulator (sky.ts): remembers topics beyond the
+  // rolling window and runs the recurrent relate tick. Injectable so the
+  // composition can wire env cadence + traces (and tests a scripted runner);
+  // the default graph is lexical-capable with the production Cerebras runner.
+  cloudGraph?: CloudGraph;
   // A same-speaker fragment arriving within this gap of the newest turn's last
   // growth merges into it instead of becoming a new turn.
   coalesceGapMs?: number;
@@ -58,16 +68,43 @@ export interface ResearchLoopOptions {
 const DEFAULT_WINDOW_TURNS = 40;
 const DEFAULT_MAX_PROPOSED = 6;
 const DEFAULT_MIN_ROUND_INTERVAL_MS = 6_000;
+// Periodic review cadence: ingest-driven rounds need newWordsThreshold fresh
+// words, so a trickle below the threshold (then silence) would never get a
+// round — the timer catches that tail. Once a minute keeps the wall alive
+// without burning inference on a quiet room (the unchanged-dialogue gate
+// skips the tick entirely).
+export const DEFAULT_SUGGEST_INTERVAL_MS = 60_000;
+// A timer round buds at most ONE new sphere — a periodic tick must never dump
+// a batch of crystals on a room that was barely talking.
+const PERIODIC_MAX_NEW_QUESTS = 1;
 // One spoken sentence is enough to be worth a round — 18 forced the room to
 // keep talking before ANY crystal could appear, which read as "broken".
 const DEFAULT_NEW_WORDS_THRESHOLD = 8;
 const DEFAULT_STALE_MISSED_ROUNDS = 6;
 const DEFAULT_SUPPRESS_MS = 5 * 60_000;
 // Deepgram finalizes every few words; a same-speaker follow-up inside this gap
-// is the SAME utterance still being spoken, not a new one.
-const DEFAULT_COALESCE_GAP_MS = 6_000;
+// is the SAME utterance still being spoken, not a new one. The gap is measured
+// between final ARRIVALS (atMs = server ingest clock), and live-room evidence
+// shows continuous monologue finals landing 8-12s apart — 6s split real
+// sentences ("part of a sentence inputted, the rest never merged"). NOTE this
+// ASR stream is caseless and punctuation-free, so gap + speaker + overlap
+// carry ALL the continuation signal — no punctuation heuristic can help.
+const DEFAULT_COALESCE_GAP_MS = 15_000;
+// A fragment that OPENS with a continuation word is mid-sentence by
+// construction — it gets a longer leash.
+const CONTINUATION_GAP_MS = 20_000;
+const CONTINUATION_WORDS = new Set(["and", "but", "so", "on", "to", "because", "which", "then"]);
 // Past this a "turn" stops being one clickable thought — cap the merge.
 const DEFAULT_COALESCE_MAX_WORDS = 50;
+// CROSS-MIC DEDUPE + LOOKBACK MERGE scan depth: the rig's two mics each
+// transcribe the room (every utterance arrives twice, interleaved, with
+// independent diarization labels), so a speaker's own previous fragment is
+// usually NOT the newest turn — scan a few back.
+const COALESCE_LOOKBACK_TURNS = 4;
+// An echo of an already-ingested final: near-identical word set within this
+// arrival window (the two mics land 20-200ms apart on the same utterance).
+const DEDUPE_WINDOW_MS = 2_000;
+const DEDUPE_MIN_OVERLAP = 0.8;
 // PRECISION GUARDS (reconcile): proposals below this confidence never surface…
 const MIN_SURFACING_CONFIDENCE = 0.45;
 // …claims this token-Jaccard-similar to an existing quest merge instead of
@@ -95,18 +132,21 @@ export class ResearchLoop {
   readonly #windowTurns: number;
   readonly #maxProposed: number;
   readonly #minRoundIntervalMs: number;
+  readonly #suggestIntervalMs: number;
   readonly #newWordsThreshold: number;
   readonly #staleMissedRounds: number;
   readonly #suppressMs: number;
   readonly #tree: ConceptTree;
+  readonly #clouds: CloudGraph;
   readonly #coalesceGapMs: number;
   readonly #coalesceMaxWords: number;
 
   #turns: TranscriptTurn[] = [];
   #turnSeq = 0;
-  // When the newest turn last grew (its atMs stays at the FIRST fragment, so
-  // continuous speech needs its own freshness marker for the coalesce gap).
-  #newestFragmentAtMs = Number.NEGATIVE_INFINITY;
+  // When each windowed turn last grew (its atMs stays at the FIRST fragment,
+  // so continuous speech needs per-turn freshness for the coalesce gap — the
+  // lookback merge means ANY of the last few turns can still be growing).
+  readonly #lastGrowthAtMs = new Map<string, number>();
   readonly #quests = new Map<string, ResearchQuest>();
   readonly #running = new Map<string, RunningQuest>();
   readonly #suppressed = new Map<string, number>();
@@ -115,6 +155,7 @@ export class ResearchLoop {
   #lastRoundAtMs: number | null = null;
   #wordsSinceRound = 0;
   #round = 0;
+  #suggestTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(options: ResearchLoopOptions) {
     this.#sessionId = options.sessionId;
@@ -127,12 +168,20 @@ export class ResearchLoop {
     this.#windowTurns = options.windowTurns ?? DEFAULT_WINDOW_TURNS;
     this.#maxProposed = options.maxProposed ?? DEFAULT_MAX_PROPOSED;
     this.#minRoundIntervalMs = options.minRoundIntervalMs ?? DEFAULT_MIN_ROUND_INTERVAL_MS;
+    this.#suggestIntervalMs = options.suggestIntervalMs ?? DEFAULT_SUGGEST_INTERVAL_MS;
     this.#newWordsThreshold = options.newWordsThreshold ?? DEFAULT_NEW_WORDS_THRESHOLD;
     this.#staleMissedRounds = options.staleMissedRounds ?? DEFAULT_STALE_MISSED_ROUNDS;
     this.#suppressMs = options.suppressMs ?? DEFAULT_SUPPRESS_MS;
-    // A model refinement changes the clustering asynchronously — republish so
-    // the wall's branches re-arrange without waiting for the next turn.
-    this.#tree = options.conceptTree ?? new ConceptTree({ onRefined: () => this.#emit() });
+    // A model refinement changes the clustering asynchronously — re-observe
+    // the sky (regroups/relabels reach the clouds without waiting for the next
+    // turn) and republish so the wall re-arranges.
+    this.#tree = options.conceptTree ?? new ConceptTree({
+      onRefined: () => {
+        this.#observeClouds();
+        this.#emit();
+      },
+    });
+    this.#clouds = options.cloudGraph ?? new CloudGraph({ clock: this.#clock, onUpdate: () => this.#emit() });
     this.#coalesceGapMs = options.coalesceGapMs ?? DEFAULT_COALESCE_GAP_MS;
     this.#coalesceMaxWords = options.coalesceMaxWords ?? DEFAULT_COALESCE_MAX_WORDS;
   }
@@ -151,8 +200,29 @@ export class ResearchLoop {
     if (on) {
       // Entering research mode reviews the conversation so far immediately.
       void this.maybeSuggest(true);
+      this.#startPeriodic();
+    } else {
+      // The timer's lifetime IS the mode's lifetime — an off room ticks nothing.
+      this.#stopPeriodic();
     }
     this.#emit();
+  }
+
+  #startPeriodic(): void {
+    if (this.#suggestTimer !== null || this.#suggestIntervalMs <= 0) {
+      return;
+    }
+    const timer = setInterval(() => void this.periodicSuggest(), this.#suggestIntervalMs);
+    // The periodic review must never keep the process alive on its own.
+    (timer as { unref?: () => void }).unref?.();
+    this.#suggestTimer = timer;
+  }
+
+  #stopPeriodic(): void {
+    if (this.#suggestTimer !== null) {
+      clearInterval(this.#suggestTimer);
+      this.#suggestTimer = null;
+    }
   }
 
   // ── dialogue window ───────────────────────────────────────────────────────
@@ -168,24 +238,70 @@ export class ResearchLoop {
   ingestTurn(input: { speaker: string | null; text: string; atMs: number }): TranscriptTurn {
     const text = input.text.trim();
     const newWords = countWords(text);
-    const newest = this.#turns[this.#turns.length - 1];
-    if (
-      newest !== undefined &&
-      newest.speaker === input.speaker &&
-      input.atMs - this.#newestFragmentAtMs <= this.#coalesceGapMs &&
-      countWords(newest.text) < this.#coalesceMaxWords
-    ) {
-      newest.text = `${newest.text} ${text}`;
-      this.#newestFragmentAtMs = input.atMs;
+    const recent = this.#turns.slice(-COALESCE_LOOKBACK_TURNS);
+    // 1. CROSS-MIC DEDUPE: the rig's two mics each transcribe the room, so
+    //    every utterance arrives twice within ~2s under DIFFERENT diarization
+    //    labels. A near-identical word set hot on the heels of a kept turn is
+    //    the echo, not new speech — drop it (keeping the longer transcription
+    //    in place: the mics disagree on a word sometimes). Without this, the
+    //    interleaved echo always sat between a speaker's fragments and
+    //    defeated every same-speaker merge.
+    for (let index = recent.length - 1; index >= 0; index -= 1) {
+      const kept = recent[index]!;
+      if (Math.abs(input.atMs - kept.atMs) > DEDUPE_WINDOW_MS) {
+        continue;
+      }
+      if (wordOverlap(kept.text, text) < DEDUPE_MIN_OVERLAP) {
+        continue;
+      }
+      if (text.length > kept.text.length) {
+        kept.text = text;
+        this.#tree.update(kept);
+        this.#observeClouds();
+      }
+      this.#trace("research.loop.dedupe", "debug", `corr-research-ingest-${kept.id}`, {
+        keptId: kept.id,
+        droppedSpeaker: input.speaker,
+      });
+      this.#emit();
+      return kept;
+    }
+    // 2. LOOKBACK COALESCE: the same speaker still mid-utterance GROWS their
+    //    turn in place — same id, same atMs (the growth-only contract quest
+    //    anchors and wall click paths depend on). Scanned over the last few
+    //    turns because the other mic's echoes interleave between a speaker's
+    //    own fragments; gap measured from the turn's LAST growth.
+    const gapMs = CONTINUATION_WORDS.has(firstWordOf(text)) ? Math.max(this.#coalesceGapMs, CONTINUATION_GAP_MS) : this.#coalesceGapMs;
+    for (let index = recent.length - 1; index >= 0; index -= 1) {
+      const candidate = recent[index]!;
+      if (candidate.speaker !== input.speaker) {
+        continue;
+      }
+      if (input.atMs - (this.#lastGrowthAtMs.get(candidate.id) ?? candidate.atMs) > gapMs) {
+        continue;
+      }
+      if (countWords(candidate.text) >= this.#coalesceMaxWords) {
+        continue;
+      }
+      candidate.text = `${candidate.text} ${text}`;
+      this.#lastGrowthAtMs.set(candidate.id, input.atMs);
       // The suggester cadence counts SPOKEN words, merged or not.
       this.#wordsSinceRound += newWords;
-      this.#tree.update(newest);
+      if (candidate !== this.#turns[this.#turns.length - 1]) {
+        this.#trace("research.loop.lookback-merge", "debug", `corr-research-ingest-${candidate.id}`, {
+          id: candidate.id,
+          behind: this.#turns.length - 1 - this.#turns.indexOf(candidate),
+        });
+      }
+      this.#tree.update(candidate);
+      this.#observeClouds();
       if (this.#active) {
         void this.maybeSuggest();
       }
       this.#emit();
-      return newest;
+      return candidate;
     }
+    // 3. A genuinely new turn.
     this.#turnSeq += 1;
     const turn: TranscriptTurn = {
       id: `rturn-${String(this.#turnSeq).padStart(4, "0")}`,
@@ -194,11 +310,21 @@ export class ResearchLoop {
       atMs: input.atMs,
     };
     this.#turns = [...this.#turns, turn].slice(-this.#windowTurns);
-    this.#newestFragmentAtMs = input.atMs;
+    this.#lastGrowthAtMs.set(turn.id, input.atMs);
+    if (this.#lastGrowthAtMs.size > this.#windowTurns * 2) {
+      const live = new Set(this.#turns.map((entry) => entry.id));
+      for (const id of [...this.#lastGrowthAtMs.keys()]) {
+        if (!live.has(id)) {
+          this.#lastGrowthAtMs.delete(id);
+        }
+      }
+    }
     this.#wordsSinceRound += newWords;
     this.#tree.assign(turn);
-    // Turns the window just dropped must not haunt the topic branches.
+    // Turns the window just dropped must not haunt the topic branches — but
+    // the SKY remembers them: observe folds them into their cloud first.
     this.#tree.prune(this.#turns.map((entry) => entry.id));
+    this.#observeClouds();
     if (this.#active) {
       void this.maybeSuggest();
     }
@@ -214,6 +340,43 @@ export class ResearchLoop {
   // dialogueTopics (each topic a branch of the 3D conversation tree).
   topics(): ConceptTopic[] {
     return this.#tree.topics();
+  }
+
+  // The conversation sky (ProjectorSnapshot.sky): clouds that outlive the
+  // window plus their provenance-tagged relations.
+  sky(): SkySnapshot {
+    return this.#clouds.snapshot();
+  }
+
+  // The accumulator itself — tests drive relateNow/settle directly.
+  cloudGraph(): CloudGraph {
+    return this.#clouds;
+  }
+
+  // The topic refiner's failure surface (/api/health's topic-refiner leg).
+  refinerHealth(): { missStreak: number; lastMissReason: string | null } {
+    return this.#tree.agentHealth();
+  }
+
+  // Feed the sky the current clustering + window + quest projection. Runs on
+  // every ingest (after assign/prune) and on async tree refinements; quest
+  // status changes ride along on the next ingest — links are decoration, not
+  // state the wall blocks on.
+  #observeClouds(): void {
+    this.#clouds.observe(
+      this.#tree.topics(),
+      this.#turns,
+      [...this.#quests.values()].map((quest) => ({
+        id: quest.id,
+        status: quest.status,
+        topic: quest.topic,
+        claim: quest.claim,
+        turnId: quest.contextSpan.endTurnId,
+      })),
+      // Babble turns (the tree's dust pool): their retirements fold into the
+      // sky's dust ledger, never a cloud.
+      this.#tree.dustTurnIds(),
+    );
   }
 
   // ── suggestion rounds ─────────────────────────────────────────────────────
@@ -239,16 +402,46 @@ export class ResearchLoop {
     if (this.#turns.length === 0) {
       return Promise.resolve();
     }
+    return this.#launchRound(nowMs, {});
+  }
+
+  // TIMER tick (suggestIntervalMs): review the dialogue so far and bud at most
+  // ONE new sphere. Bypasses newWordsThreshold — this is how a sub-threshold
+  // trickle eventually gets its round — but an unchanged dialogue (zero new
+  // words since the last round) burns no inference at all.
+  periodicSuggest(): Promise<void> {
+    if (!this.#active) {
+      return Promise.resolve();
+    }
+    if (this.#inFlight !== null) {
+      return this.#inFlight; // never overlap — the running round covers this material
+    }
+    if (this.#turns.length === 0 || this.#wordsSinceRound === 0) {
+      return Promise.resolve();
+    }
+    const nowMs = this.#clock();
+    if (this.#lastRoundAtMs !== null && nowMs - this.#lastRoundAtMs < this.#minRoundIntervalMs) {
+      return Promise.resolve();
+    }
+    return this.#launchRound(nowMs, { trigger: "periodic", maxNew: PERIODIC_MAX_NEW_QUESTS });
+  }
+
+  // Launch one suggestion round NOW (callers own the gates). `maxNew` caps how
+  // many NEW quests the round may surface — refinements of existing quests are
+  // never capped.
+  #launchRound(nowMs: number, options: { trigger?: "periodic"; maxNew?: number }): Promise<void> {
     this.#lastRoundAtMs = nowMs;
     this.#wordsSinceRound = 0;
     this.#round += 1;
     const correlationId = `corr-research-round-${this.#round}`;
+    const maxNew = options.maxNew ?? Number.POSITIVE_INFINITY;
     // Round visibility: the start + result (even an EMPTY one) are traced and
     // the ledger republishes so the wall can show "scanning…" — an inference
     // round that finds nothing must read as a shrug, never as a dead feature.
     this.#trace("research.suggest.round", "info", correlationId, {
       round: this.#round,
       turns: this.#turns.length,
+      ...(options.trigger !== undefined ? { trigger: options.trigger } : {}),
     });
     const run = this.#suggester
       .suggest({
@@ -265,7 +458,11 @@ export class ResearchLoop {
         if (suggestions.length === 0) {
           this.#trace("research.suggest.empty", "info", correlationId, { round: this.#round });
         }
-        this.#reconcile(suggestions, this.#clock(), correlationId);
+        // A capped round spends its new-sphere budget on the strongest material.
+        const ordered = Number.isFinite(maxNew)
+          ? [...suggestions].sort((a, b) => b.confidence - a.confidence)
+          : suggestions;
+        this.#reconcile(ordered, this.#clock(), correlationId, maxNew);
       })
       .catch((error) => {
         this.#trace("research.suggest.error", "error", correlationId, {
@@ -298,9 +495,15 @@ export class ResearchLoop {
     }
   }
 
-  #reconcile(suggestions: ResearchSuggestion[], nowMs: number, correlationId: string): void {
+  #reconcile(
+    suggestions: ResearchSuggestion[],
+    nowMs: number,
+    correlationId: string,
+    maxNew = Number.POSITIVE_INFINITY,
+  ): void {
     const seen = new Set<string>();
     let changed = false;
+    let created = 0;
     for (const suggestion of suggestions) {
       const matched = suggestion.matchId !== null ? this.#quests.get(suggestion.matchId) : undefined;
       if (matched !== undefined && matched.status === "proposed") {
@@ -361,6 +564,11 @@ export class ResearchLoop {
       if (this.#proposedCount() >= this.#maxProposed) {
         continue;
       }
+      // 4. Round budget: past maxNew (periodic rounds: one) a fresh proposal
+      //    waits for a future round instead of surfacing now.
+      if (created >= maxNew) {
+        continue;
+      }
       const grounding = this.#contextForTurn(suggestion.contextSpan.endTurnId);
       const quest: ResearchQuest = {
         id: `rq-${this.#idFactory()}`,
@@ -384,6 +592,7 @@ export class ResearchLoop {
       };
       this.#quests.set(quest.id, quest);
       seen.add(quest.id);
+      created += 1;
       changed = true;
       this.#trace("research.suggest.new", "info", correlationId, {
         id: quest.id,
@@ -744,9 +953,11 @@ export class ResearchLoop {
     this.#quests.clear();
     this.#suppressed.clear();
     this.#turns = [];
-    this.#newestFragmentAtMs = Number.NEGATIVE_INFINITY;
+    this.#lastGrowthAtMs.clear();
     this.#wordsSinceRound = 0;
     this.#tree.reset();
+    // The sky's memory dies with the tree — the user asked for a clean slate.
+    this.#clouds.reset();
     this.#trace("research.tree.reset", "info", correlationId, { dropped });
     this.#emit();
   }
@@ -800,8 +1011,48 @@ export class ResearchLoop {
   }
 }
 
+// VIBERSYN_RESEARCH_SUGGEST_INTERVAL_MS — the periodic dialogue-review
+// cadence while research mode is on, default 60000; 0 disables the timer
+// (rounds then fire only on ingest/force). A LOOP cadence knob, so it is read
+// here rather than in the suggester's env table.
+export function readResearchSuggestIntervalMs(
+  env: Record<string, string | undefined> = process.env,
+): number {
+  const raw = env.VIBERSYN_RESEARCH_SUGGEST_INTERVAL_MS?.trim();
+  if (raw === undefined || raw === "") {
+    return DEFAULT_SUGGEST_INTERVAL_MS;
+  }
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < 0) {
+    throw new Error("VIBERSYN_RESEARCH_SUGGEST_INTERVAL_MS must be a non-negative number.");
+  }
+  return value;
+}
+
 function countWords(text: string): number {
   return text.split(/\s+/u).filter((word) => word.length > 0).length;
+}
+
+function firstWordOf(text: string): string {
+  return text.trim().split(/\s+/u)[0]?.toLowerCase() ?? "";
+}
+
+// Word-set overlap on the SMALLER side (a fragment echo is usually a subset
+// of the kept turn once that turn has grown): 1 = every word of the smaller
+// utterance appears in the other.
+function wordOverlap(a: string, b: string): number {
+  const wordsA = new Set(a.toLowerCase().split(/\s+/u).filter((word) => word.length > 0));
+  const wordsB = new Set(b.toLowerCase().split(/\s+/u).filter((word) => word.length > 0));
+  if (wordsA.size === 0 || wordsB.size === 0) {
+    return 0;
+  }
+  let shared = 0;
+  for (const word of wordsB) {
+    if (wordsA.has(word)) {
+      shared += 1;
+    }
+  }
+  return shared / Math.min(wordsA.size, wordsB.size);
 }
 
 function suppressKey(topic: string, claim: string): string {

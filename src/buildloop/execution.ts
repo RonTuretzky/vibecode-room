@@ -209,7 +209,7 @@ export class ExecutionRegistry {
       label: lane.label,
       previewUrl:
         lane.status === "built" && lane.server !== null
-          ? `http://${this.#host}:${lane.server.port}/?v=${lane.version}`
+          ? `http://${this.#host}:${lane.server.port}/?v=${lane.runId}.${lane.version}`
           : null,
       startedAtMs: lane.startedAtMs,
       error: lane.error,

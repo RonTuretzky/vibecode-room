@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createProjectorRuntime, type ProjectorRuntime } from "./composition";
+import { createProjectorRuntime, forcedBriefFromLines, forcedPitchFromLines, type ProjectorRuntime } from "./composition";
 import type { BuilderAgent } from "./idea-builder";
 import type { TranscriptObservation } from "../types";
 
@@ -214,6 +214,44 @@ describe("composition accept path — real build + preview on the snapshot", () 
     expect(spawned).toBeDefined();
     if (spawned === undefined) return;
     await runtime.ideaBuilds.settle(spawned.upid);
+  });
+
+  test("forcedPitchFromLines starts at the last buildable-cue line, not five lines of chatter", () => {
+    expect(
+      forcedPitchFromLines([
+        "states",
+        "i love waffles",
+        "i love pancakes",
+        "how much would it cost to make a thousand pancakes",
+        "i want an app that shows me all the citi bikes",
+        "in brooklyn",
+      ]),
+    ).toBe("i want an app that shows me all the citi bikes. in brooklyn");
+    // No cue anywhere: the last two lines are the best guess.
+    expect(forcedPitchFromLines(["one", "two", "three"])).toBe("two. three");
+    // Rambling tails are word-capped.
+    const rant = Array.from({ length: 30 }, (_, i) => `word${i}`).join(" ");
+    expect(forcedPitchFromLines([`build an app ${rant} ${rant}`]).split(/\s+/).length).toBeLessThanOrEqual(40);
+  });
+
+  test("forcedBriefFromLines synthesizes a DEGENERATE brief whose sourceQuote is the spoken tail", () => {
+    const lines = ["i love pancakes", "i want an app that shows me all the citi bikes", "in brooklyn"];
+    const brief = forcedBriefFromLines(lines);
+    // Honest by construction: the quote is the raw spoken tail, verbatim —
+    // while the pitch is the cue-anchored synthesis (they differ on purpose).
+    expect(brief.sourceQuote).toBe("i love pancakes. i want an app that shows me all the citi bikes. in brooklyn");
+    expect(brief.pitch).toBe(forcedPitchFromLines(lines));
+    // Degenerate: no judge ran, so no rationale, no Q&A, no maturity.
+    expect(brief.rationale).toBe("");
+    expect(brief.qa).toEqual([]);
+    expect(brief.callsign).toBeNull();
+    expect(brief.maturity).toBeUndefined();
+    // An over-long tail keeps the END (recency is where the idea lives) and
+    // stays inside the schema's 300-char quote cap.
+    const long = forcedBriefFromLines([Array.from({ length: 100 }, (_, i) => `word${i}`).join(" ")]);
+    expect(long.sourceQuote).toHaveLength(300);
+    expect(long.sourceQuote.startsWith("…")).toBe(true);
+    expect(long.sourceQuote.endsWith("word99")).toBe(true);
   });
 
   test("Done with an empty transcript stays a no-op (nothing spoken, nothing to build)", async () => {

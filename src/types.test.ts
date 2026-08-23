@@ -5,6 +5,7 @@ import {
   cueDecisionSchema,
   dispatchedActionSchema,
   earconIdSchema,
+  ideaBriefSchema,
   logEventSchema,
   muteReleaseTriggerSchema,
   outputDecisionSchema,
@@ -15,6 +16,7 @@ import {
   type CueDecision,
   type DispatchedAction,
   type EarconId,
+  type IdeaBrief,
   type LogEvent,
   type MuteReleaseTrigger,
   type OutputDecision,
@@ -207,6 +209,43 @@ describe("ENG-T-01 shared type contract", () => {
       expect(outputDecisionSchema.parse(output)).toEqual(output);
     }
     expect(outputDecisionSchema.safeParse({ channel: "ack", id: "E3" }).success).toBe(false);
+  });
+
+  test("PendingSuggestion carries an IdeaBrief through a strict re-parse WITHOUT stripping it", () => {
+    // The acceptance path re-parses suggestions repeatedly (pending.ts); the
+    // schema is .strict(), so the brief MUST be declared or the whole idea
+    // context dies right at acceptance. This round-trip is the plumb-through
+    // assertion: every brief field survives parse byte-for-byte.
+    const brief: IdeaBrief = {
+      pitch: "Add the settings page",
+      sourceQuote: "we keep saying we need a settings page for the theme stuff",
+      rationale: "Named concept with a concrete first screen.",
+      qa: [
+        { id: "q-route", prompt: "Which route?", answers: ["Settings", "Profile"] },
+        { id: "q-theme", prompt: "Which theme?", answers: ["System", "Dark"], chosen: "System" },
+      ],
+      callsign: null,
+      maturity: "elaborated",
+    };
+    const suggestion: PendingSuggestion = {
+      suggestionId: "suggestion-brief",
+      pitch: "Add the settings page",
+      mcqs: ["Which route?"],
+      answers: [],
+      correlationId: "corr-brief",
+      expiresAt: 1781416030,
+      brief,
+    };
+
+    const parsed = pendingSuggestionSchema.parse(suggestion);
+    expect(parsed).toEqual(suggestion);
+    expect(parsed.brief).toEqual(brief);
+    // The brief itself round-trips standalone, and the caps are enforced.
+    expect(ideaBriefSchema.parse(brief)).toEqual(brief);
+    expect(ideaBriefSchema.safeParse({ ...brief, sourceQuote: "q".repeat(301) }).success).toBe(false);
+    expect(ideaBriefSchema.safeParse({ ...brief, rationale: "r".repeat(201) }).success).toBe(false);
+    // Unknown keys on the brief stay rejected (strict), never silently kept.
+    expect(ideaBriefSchema.safeParse({ ...brief, extra: "nope" }).success).toBe(false);
   });
 
   test("EarconId and AckId unions are disjoint and include the timeout ack", () => {

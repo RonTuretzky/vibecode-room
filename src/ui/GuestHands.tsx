@@ -138,3 +138,58 @@ export function GuestHands({ onClose }: GuestHandsProps) {
     </div>
   );
 }
+
+// ALWAYS-ON GUEST BADGE (live-room request: "there should always be a qr code
+// for guests, a small one at the bottom left"). The full overlay above is
+// opt-in behind the 🖐 button; this is the standing invitation — a small QR in
+// the bottom-left corner of every wall, so joining never requires finding a
+// button first. Fetches the guest URL once (it is fixed per boot; one retry),
+// and stays honest: no LAN-reachable URL → no badge, never a dead QR.
+export function GuestQrBadge() {
+  const [guestQr, setGuestQr] = useState<{ img: string; url: string } | null>(null);
+
+  // Both standing invitations load once per boot (their URLs are fixed), one
+  // retry each; either failing simply leaves its half off — never a dead QR.
+  useEffect(() => {
+    let cancelled = false;
+    const loadGuest = async (attempt: number): Promise<void> => {
+      try {
+        const response = await fetch("/api/hands/info", { headers: { accept: "application/json" } });
+        if (!response.ok) {
+          throw new Error(String(response.status));
+        }
+        const info = (await response.json()) as HandsInfo;
+        if (cancelled || info.lanReachable === false) {
+          return;
+        }
+        const guestUrl = preferredGuestUrl(info);
+        const encoded = await toDataURL(guestUrl, { margin: 1, width: 104 });
+        if (!cancelled) {
+          setGuestQr({ img: encoded, url: guestUrl });
+        }
+      } catch {
+        if (!cancelled && attempt < 1) {
+          setTimeout(() => void loadGuest(attempt + 1), 5_000);
+        }
+      }
+    };
+    void loadGuest(0);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (guestQr === null) {
+    return null;
+  }
+  return (
+    <div className="guest-qr-badge" data-testid="guest-qr-badge">
+      {guestQr !== null ? (
+        <figure title={`Scan on your phone: point at the wall with your hands AND plant a project (the add-a-project fold on the same page) — ${guestQr.url}`}>
+          <img src={guestQr.img} alt="QR code — join as a guest and point at the wall from your phone" />
+          <figcaption>🖐 join · ➕ import</figcaption>
+        </figure>
+      ) : null}
+    </div>
+  );
+}

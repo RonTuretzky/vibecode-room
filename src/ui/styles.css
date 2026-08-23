@@ -29,6 +29,14 @@
   /* Glass */
   --glass-line: rgba(150, 200, 220, 0.14);
   --glass-fill: rgba(16, 30, 40, 0.42);
+  /* Glass PANEL tokens (tree menu / tree popups): previously hard-coded per
+     file — and --ink-dim was referenced but never defined, so every
+     var(--ink-dim, …) fallback fired. Values match the old literals exactly:
+     no visual change intended. */
+  --ink-dim: rgba(190, 214, 228, 0.7);
+  --glass-border: rgba(160, 210, 230, 0.22);
+  --glass-panel-top: rgba(16, 28, 38, 0.92);
+  --glass-panel-bottom: rgba(9, 16, 24, 0.88);
 
   --display: "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --mono: "SFMono-Regular", "JetBrains Mono", Consolas, "Liberation Mono", monospace;
@@ -95,7 +103,13 @@ button {
 
 .stage .rail-card,
 .stage .idea-tray,
-.stage .research-tray {
+.stage .research-tray,
+/* Bare controls in the stage (the rail's hands-toggle chip, the research
+   tray's reset chip) sit OUTSIDE the whitelisted cards' subtrees or need to
+   win over them: without an explicit re-enable the .stage umbrella above
+   swallows their clicks and elementFromPoint returns the scene canvas, so
+   they are neither clickable nor dwellable in desk mode. */
+.stage .ctl-button {
   pointer-events: auto;
 }
 
@@ -247,7 +261,6 @@ button {
 .deep .status-bar,
 .deep .stage,
 .deep .scene-controls,
-.deep .suggestion-banner,
 .deep .wall-badge {
   transition: opacity 0.4s ease;
 }
@@ -256,7 +269,6 @@ button {
 .deep.zen .stage,
 .deep.zen .scene-controls,
 .deep.zen .hide-menu,
-.deep.zen .suggestion-banner,
 .deep.zen .wall-badge,
 .deep.zen .voice-flash {
   opacity: 0;
@@ -610,6 +622,16 @@ main.gesture-mode .status-bar .status-right {
   box-shadow: 0 0 14px 2px rgba(245, 166, 35, 0.6);
 }
 
+/* DEAF: the server intends to listen but no mic socket is feeding it. Red and
+   unpulsing — a still light reads as "nothing is arriving" at wall distance,
+   where a green pulse read as health while the room heard nothing. */
+.listening-orb.deaf .orb-core {
+  background: var(--c-failed, #ff3b30);
+  box-shadow: 0 0 14px 2px rgba(255, 59, 48, 0.65);
+}
+
+.listening-orb.deaf .orb-label { color: var(--c-failed, #ff3b30); }
+
 @keyframes orb-pulse {
   0%, 100% { transform: scale(1); box-shadow: 0 0 14px 2px rgba(0, 255, 136, 0.7), 0 0 30px 6px rgba(0, 255, 136, 0.22); }
   50% { transform: scale(1.18); box-shadow: 0 0 22px 5px rgba(0, 255, 136, 0.9), 0 0 52px 12px rgba(0, 255, 136, 0.36); }
@@ -915,6 +937,22 @@ main.gesture-mode .fleet-ctl {
   border-radius: 18px;
 }
 
+/* Fleet hover-scroll strips: full-width secondary-size targets. A dwell
+   cursor PARKS on these (hover = scroll), so they get the full 88px+ hit
+   height even though a single glance-click is never the interaction. */
+main.gesture-mode .fleet-scroll-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 88px;
+  font-size: 30px;
+  border-radius: 16px;
+}
+
+main.gesture-mode .fleet-scroll-rail {
+  gap: 18px;
+}
+
 main.gesture-mode .deck-decision-btn {
   display: inline-flex;
   align-items: center;
@@ -1068,6 +1106,83 @@ main.gesture-mode[data-view="builds"] .transcript-card {
   background: #f5b042;
   border-color: rgba(245, 176, 66, 0.9);
   box-shadow: 0 0 20px rgba(245, 176, 66, 0.45);
+}
+
+/* ============================================================================
+   CONTROL DOCK — ONE calm "⚙ Controls" affordance where the button row lived
+   (ControlDock.tsx). Hover — mouse :hover or a dwell cursor's data-dwell-hot —
+   expands the tray; it folds shut ~4s after every cursor leaves. The tray is a
+   POPOVER (absolutely positioned under the dock button), so expanding never
+   reflows the status bar or the wall behind it; collapsed it is display:none,
+   which also removes its buttons from dwell targeting (zero-size rects).
+   ============================================================================ */
+.control-dock {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+/* TRANSPARENT (live-room directive: "neither should the controls button be a
+   dark thing"): no fill, just ink and a whisper of an outline. */
+.ctl-button.dock-toggle {
+  color: var(--ink-soft);
+  border-color: rgba(180, 205, 230, 0.25);
+  background: transparent;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.6);
+  white-space: nowrap;
+}
+
+.ctl-button.dock-toggle:hover {
+  background: rgba(0, 188, 212, 0.14);
+  color: var(--c-selected);
+}
+
+.control-dock[data-expanded="true"] .dock-toggle {
+  color: var(--c-selected);
+  border-color: rgba(0, 188, 212, 0.6);
+  background: rgba(0, 188, 212, 0.12);
+}
+
+.control-dock-tray {
+  /* THE TOP ROW (live-room directive): the tray extends LEFT of the ⚙ button
+     on the same line — capturing / guided demo / self-rebuild sit beside
+     Controls, top-aligned, same height. No window behind them. */
+  position: absolute;
+  top: 0;
+  right: calc(100% + 12px);
+  z-index: 40;
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  justify-content: flex-end;
+  gap: 12px;
+  width: max-content;
+  padding: 0;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  animation: pill-in 220ms ease;
+}
+
+/* Every top-row chip matches the ⚙ button's height; the mic control's meter
+   tucks under its own button without breaking the row line. */
+.control-dock-tray > .ctl-button,
+.control-dock-tray .mic-control > .ctl-button {
+  height: 100%;
+  display: inline-flex;
+  align-items: center;
+}
+
+.control-dock[data-expanded="false"] .control-dock-tray {
+  display: none;
+}
+
+/* Gesture mode: the XL dwell buttons need XL breathing room (24–36px gaps, see
+   the GESTURE-XL section) and most of the wall's width to wrap in. The tray is
+   transparent everywhere now — each button carries its own contrast. */
+main.gesture-mode .control-dock-tray {
+  gap: 24px;
+  padding: 0;
 }
 
 /* Wall identity badge — a subtle corner label ("WALL A") so a two-wall room
@@ -1262,40 +1377,6 @@ main.gesture-mode[data-view="builds"] .transcript-card {
   border-radius: 20px;
   overflow: hidden;
   min-height: 0;
-}
-
-.suggestion-banner {
-  position: fixed;
-  /* Clears the floating center pill (bottom ≈114px), not the old solid band. */
-  top: 124px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 6;
-  pointer-events: none; /* non-interactive text; don't shadow the 3D canvas */
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
-  max-width: min(640px, 80%);
-  text-align: center;
-  pointer-events: none;
-}
-
-.suggestion-eyebrow {
-  font-size: 11px;
-  letter-spacing: 0.24em;
-  text-transform: uppercase;
-  color: var(--c-planning);
-}
-
-.suggestion-pitch {
-  font-size: 15px;
-  color: var(--ink-soft);
-  font-style: italic;
-  overflow: hidden;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
 }
 
 /* The 3D scene IS the app background — every panel floats over it. */
@@ -1589,7 +1670,7 @@ main.gesture-mode[data-view="builds"] .transcript-card {
    ============================================================================ */
 .rail {
   display: grid;
-  /* Two cards since the backend-selector card was removed: fleet + transcript. */
+  /* Rows: hands chip · transcript · astrology feed (takes the remaining space). */
   grid-template-rows: auto auto minmax(0, 1fr);
   gap: 16px;
   min-height: 0;
@@ -1642,6 +1723,47 @@ main.gesture-mode[data-view="builds"] .transcript-card {
   overflow: auto;
   max-height: 32vh;
   min-height: 0;
+}
+
+/* Fleet HOVER-SCROLL (FleetScroll.tsx): ▲/▼ strips pinned above/below the
+   overflowing panel list. They scroll WHILE hovered — css :hover for the desk
+   mouse, [data-dwell-hot] for gesture/joystick/guest cursors, which cannot
+   wheel-scroll. Rendered only while the list actually overflows. */
+.fleet-scroll-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+}
+
+.fleet-scroll-btn {
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.24em;
+  line-height: 1;
+  border-radius: 8px;
+  border: 1px solid var(--glass-line);
+  background: rgba(10, 18, 26, 0.5);
+  color: var(--ink-soft);
+  padding: 5px 10px;
+  cursor: pointer;
+  transition: border-color 160ms ease, color 160ms ease, background 160ms ease, opacity 160ms ease;
+}
+
+/* The held state — either hover source — reads as the cyan "live" accent the
+   steering ring already uses, so "this is doing something" is unambiguous. */
+.fleet-scroll-btn:hover,
+.fleet-scroll-btn[data-dwell-hot] {
+  color: var(--c-selected);
+  border-color: var(--c-selected);
+  background: rgba(0, 188, 212, 0.14);
+}
+
+/* Nowhere left to scroll in this direction: dim, but stay a live target so a
+   mid-dwell cursor is never orphaned. */
+.fleet-scroll-btn[data-at-limit="1"] {
+  opacity: 0.35;
 }
 
 .fleet-panel {
@@ -1782,6 +1904,134 @@ main.gesture-mode[data-view="builds"] .transcript-card {
 /* Transcript */
 .transcript-card {
   max-height: 240px;
+}
+
+/* Live Astrology feed (spoken in the room). Reuses the .rail-card glass; the
+   card scrolls when the season's readout runs longer than the rail. */
+.astro-card {
+  overflow-y: auto;
+  gap: 10px;
+}
+
+.astro-live {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--ink, #dfe9f2);
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+
+.astro-live-glyph {
+  font-size: 18px;
+  color: #ffd27a;
+  flex: 0 0 auto;
+}
+
+.astro-retro {
+  margin: 0;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: #ff9db0;
+}
+
+.astro-chart {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  max-width: 200px;
+  margin: 6px auto;
+  border-radius: 50%;
+  border: 1px solid var(--glass-line, rgba(255, 255, 255, 0.14));
+  background: radial-gradient(circle at 50% 45%, rgba(120, 90, 200, 0.22), rgba(10, 14, 24, 0.55));
+}
+
+.astro-chart-hub {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 26px;
+  color: #cbb6ff;
+}
+
+.astro-node {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  font-size: 18px;
+  color: #bcd3e6;
+  text-shadow: 0 0 6px rgba(0, 0, 0, 0.6);
+}
+
+.astro-node.retro {
+  color: #ff9db0;
+}
+
+.astro-node.active {
+  color: #ffd27a;
+  font-size: 22px;
+  text-shadow: 0 0 12px rgba(255, 210, 122, 0.8);
+}
+
+.astro-key,
+.astro-virgo {
+  font-size: 11px;
+  color: var(--ink-faint, #9fb2c4);
+}
+
+.astro-key-title {
+  margin: 4px 0 6px;
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-faint, #9fb2c4);
+  font-weight: 700;
+}
+
+.astro-key ul,
+.astro-virgo ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.astro-key li {
+  display: grid;
+  grid-template-columns: 22px 74px 1fr;
+  gap: 6px;
+  align-items: baseline;
+}
+
+.astro-key-glyph {
+  font-size: 15px;
+  color: #cbb6ff;
+  text-align: center;
+}
+
+.astro-key-name {
+  color: var(--ink, #dfe9f2);
+  font-weight: 600;
+}
+
+.astro-virgo li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.astro-virgo-name {
+  color: #ffd27a;
+  font-weight: 600;
+}
+
+.astro-key-foot {
+  margin: 6px 0 0;
+  font-size: 10px;
+  color: var(--ink-faint, #9fb2c4);
 }
 
 .transcript-scroll {
@@ -2865,16 +3115,7 @@ main.gesture-mode .ctl-button.research-reset {
     min-height: auto;
   }
 
-  .suggestion-banner {
-    position: relative;
-    top: auto;
-    left: auto;
-    transform: none;
-    max-width: 100%;
-    margin: 0 auto 14px;
-  }
-
-  .field-inner {
+    .field-inner {
     position: relative;
     inset: auto;
     gap: 18px 16px;
@@ -2934,6 +3175,34 @@ main.gesture-mode .ctl-button.research-reset {
   inset: 0;
   z-index: 50;
   pointer-events: none;
+}
+
+/* STAGE CLEARING — while the coach overlay runs, the wall chrome the card is
+   docked over steps aside (it all returns the moment the demo exits; :has()
+   keys off the overlay, no JS involved):
+   · the idea tray sat directly BEHIND the
+     bottom-docked card (orientation/record/race) — half-covered Build/Dismiss
+     buttons read as clipped and are un-dwellable anyway;
+   · scene-controls / hide-menu grazed the card's bottom-left corner, and a
+     mid-demo Zen or Hide dwell would wreck the walkthrough;
+   · the desk-only status readouts (listening orb, active cue) collided with
+     the TOP-docked idea/decide cards — gesture mode already drops them as
+     projector noise, and the coach card carries its own muted/capture chips. */
+main:has(.guided-demo) .idea-tray,
+main:has(.guided-demo) .scene-controls,
+main:has(.guided-demo) .hide-menu,
+main:has(.guided-demo) .status-bar .status-left,
+main:has(.guided-demo) .status-bar .status-center {
+  display: none;
+}
+
+/* With the readout cells gone the status bar collapses to the single control
+   cluster pinned top-right — the same collapse gesture mode always applies
+   (otherwise the grid re-flows .status-right into the FIRST column, dropping
+   the controls into the top-docked coach card). */
+main:has(.guided-demo) .status-bar {
+  display: flex;
+  justify-content: flex-end;
 }
 
 .guided-card {
@@ -3030,6 +3299,56 @@ main.gesture-mode .ctl-button.research-reset {
 .guided-actions .ctl-button {
   font-size: 15px;
   padding: 9px 18px;
+}
+
+/* The leave verb's truth, always visible under the footer (honest dismissal
+   copy — never a hover-only title on a projector wall). */
+.guided-exit-note {
+  margin: 6px 0 0;
+  text-align: right;
+  font-size: 13px;
+  opacity: 0.62;
+}
+
+/* Race step while mocks genuinely build: no skip exists — this line says why
+   and what would (not) happen on leaving. */
+.guided-race-locked {
+  margin: 8px 0 0;
+  text-align: right;
+  font-size: 14px;
+  color: #f6dca6;
+  opacity: 0.85;
+}
+
+/* Idea step action pair: 🌱 Plant (primary) beside ↺ Start over (two-stage). */
+.guided-idea-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.ctl-button.guided-restart {
+  color: var(--ink-soft);
+}
+
+.ctl-button.guided-restart.is-armed {
+  color: #ffd7c9;
+  border-color: rgba(255, 122, 89, 0.7);
+  background: rgba(255, 122, 89, 0.14);
+}
+
+.guided-plant-sub {
+  margin: 6px 0 0;
+  font-size: 13px;
+  opacity: 0.62;
+}
+
+/* Hands coaching step: the explicit Continue is the only advance. */
+.ctl-button.guided-hands-continue {
+  margin-top: 10px;
+  background: rgba(64, 200, 120, 0.2);
+  border-color: rgba(64, 200, 120, 0.6);
 }
 
 .ctl-button.guided-finish {
@@ -3654,3 +3973,265 @@ main.gesture-mode .idea-action-card {
 }
 main.gesture-mode .idea-card-pitch { font-size: 24px; }
 main.gesture-mode .idea-card-confidence { font-size: 15px; }
+
+/* ============================================================================
+   PROJECTOR AUTO-CALIBRATION overlay (CalibrationOverlay.tsx): whenever the
+   python calibrator (gesturewall.autocal) is running, every wall-bound window
+   flips into this fullscreen calibration surface. MEASUREMENT FIDELITY:
+   while running the surface is pure #000 with a single flat #fff disc — no
+   shadow, no animation, no other chrome (the Kinects difference OFF/ON frames
+   of exactly this disc). Opaque + top z-index (gesture canvas is 2000) so
+   every room surface beneath is fully suppressed. */
+.calibration-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 4000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  background: #050508; /* idle / done / error: near-black */
+  color: #e8e8f0;
+  text-align: center;
+}
+
+.calibration-overlay[data-phase="running"] {
+  background: #000; /* pure black behind the measured disc */
+}
+
+.calibration-letter {
+  font-size: 38vh;
+  font-weight: 900;
+  line-height: 1;
+  color: #3cc8dc;
+}
+
+.calibration-ready {
+  margin: 0;
+  font-size: 2.6vh;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #9a9aa8;
+}
+
+.calibration-overlay .ctl-button.calibration-start {
+  font-size: 2.4vh;
+  padding: 0.6em 1.4em;
+}
+
+.calibration-disc {
+  position: fixed;
+  border-radius: 50%;
+  background: #fff;
+  /* The camera measures this disc: no glow, no fade, no motion smoothing. */
+  box-shadow: none;
+  transition: none;
+  animation: none;
+}
+
+.calibration-done {
+  font-size: 22vh;
+  line-height: 1;
+  color: #46c66e;
+}
+
+.calibration-error {
+  margin: 0;
+  max-width: 70ch;
+  font-size: 2.4vh;
+  color: #e2685f;
+}
+
+/* Ceiling reset chip: parked bottom-right on research-pinned displays, nearly
+   invisible until a cursor (mouse or dwell-hot) rests on it. Deliberately NOT
+   in the zen hide lists — it is the ceiling's one control. */
+.ceiling-dock {
+  position: fixed;
+  right: 18px;
+  bottom: 16px;
+  z-index: 60;
+}
+/* Bottom-parked dock: the tray opens UPWARD instead of the status-bar
+   default (downward popover). */
+.ceiling-dock .control-dock-tray {
+  top: auto;
+  bottom: calc(100% + 12px);
+}
+
+/* ── GitHub forest (org import, ?forest=1) ──────────────────────────────────
+   The grove window: ForestScene fills its mount, the canvas underneath and a
+   floating hover card (plain DOM — crisp at projector distance) on top. */
+.forest-scene {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+.forest-scene canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* Branch-tip hover card: PR title + "CI word · repo". Pointer-events off so
+   it never occludes the raycast that is showing it. */
+.forest-hover-label {
+  position: absolute;
+  z-index: 5;
+  max-width: 34ch;
+  padding: 8px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 10px;
+  background: rgba(10, 14, 20, 0.82);
+  backdrop-filter: blur(6px);
+  color: #e8ecf2;
+  font-size: 14px;
+  line-height: 1.35;
+  pointer-events: none;
+  white-space: normal;
+}
+
+.forest-hover-title {
+  font-weight: 600;
+}
+
+.forest-hover-sub {
+  margin-top: 2px;
+  font-size: 12px;
+  color: #9a9aa8;
+}
+
+/* ── record-a-change toggle (replaces every typed steer input) ─────────── */
+.record-steer {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  width: 100%;
+  justify-content: center;
+  font-weight: 600;
+}
+.record-steer.is-recording {
+  background: #3d1220;
+  border-color: #ff5c7a;
+  color: #ffd7de;
+}
+.record-steer-dot {
+  width: 0.85rem;
+  height: 0.85rem;
+  border-radius: 50%;
+  background: #ff5c7a;
+  animation: record-steer-pulse 1.2s ease-in-out infinite;
+}
+@keyframes record-steer-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(0.8); }
+}
+/* The graft/record toggle is the PRIMARY verb on the wall's tend surface —
+   full 128px primary hit height (was a 72px floor). */
+main.gesture-mode .record-steer { min-height: 128px; font-size: 1.15rem; }
+
+/* live echo of the words spoken into the record window */
+.record-steer-live { display: flex; flex-direction: column; gap: 0.5rem; width: 100%; }
+.record-steer-heard {
+  background: rgba(10, 14, 24, 0.72);
+  border: 1px solid #2a3350;
+  border-radius: 10px;
+  padding: 0.55rem 0.8rem;
+  max-height: 9rem;
+  overflow: hidden;
+}
+.record-steer-heard-line { margin: 0.15rem 0; color: #dfe6f5; font-size: 1rem; line-height: 1.35; }
+.record-steer-heard-line:last-child { color: #8fa4cc; font-style: italic; }
+.record-steer-heard-empty { margin: 0; color: #8fa4cc; font-style: italic; font-size: 0.95rem; }
+main.gesture-mode .record-steer-heard-line { font-size: 1.2rem; }
+
+/* post-stop dispatch confirmation (sticky until Record is pressed again) */
+.record-steer-got { margin: 0 0 0.3rem 0; color: #7ee2a8; font-weight: 600; }
+.record-steer-runlabel { margin: 0.3rem 0 0 0; color: #8fa4cc; font-size: 0.9rem; }
+
+/* LOST THE ROOM: the push stream dropped and every reading on this wall is now
+   frozen at its last value. Loud, full-width, above all chrome — a stale wall
+   that looks healthy is indistinguishable from a working one. */
+.stream-stale {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 90;
+  padding: 10px 18px;
+  text-align: center;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: #1a1a1a;
+  background: var(--c-paused, #f5a623);
+  box-shadow: 0 2px 18px rgba(0, 0, 0, 0.45);
+}
+
+/* The record button acknowledges the press before the server answers — over a
+   slow link it used to sit inert for the whole round trip, which reads as a
+   dead button at projector distance. */
+.ctl-button.record-steer.is-pending {
+  opacity: 0.75;
+}
+
+.record-steer-error {
+  margin: 6px 0 0;
+  color: var(--c-failed, #ff3b30);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+
+/* Which physical mic the room is hearing — a small honest chip under the
+   capture meter ("Wireless GO RX" vs the laptop's builtin). */
+.mic-device {
+  font-size: 11px;
+  color: #8fa4cc;
+  letter-spacing: 0.03em;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Standing guest invitation: a small always-on QR in the bottom-left corner.
+   Sits above the scene-controls row; pointer-events none so it can never
+   steal a dwell — the 🖐 Guests button remains the interactive path. */
+.guest-qr-badge {
+  position: fixed;
+  left: 12px;
+  bottom: 84px;
+  z-index: 24;
+  margin: 0;
+  pointer-events: none;
+  display: flex;
+  flex-direction: row;
+  gap: 8px;
+}
+
+.guest-qr-badge figure {
+  margin: 0;
+  padding: 6px 6px 3px;
+  border-radius: 10px;
+  background: rgba(18, 20, 28, 0.72);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.guest-qr-badge img {
+  width: 88px;
+  height: 88px;
+  border-radius: 6px;
+}
+
+.guest-qr-badge figcaption {
+  font-size: 11px;
+  font-weight: 700;
+  color: #8fa4cc;
+  letter-spacing: 0.04em;
+}

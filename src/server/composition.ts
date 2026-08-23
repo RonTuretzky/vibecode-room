@@ -31,7 +31,9 @@ import { generateSlideshow } from "../slideshow/generator";
 import { appendTakeHomeSlide } from "../slideshow/template";
 import { publishDeck, resolveGitHubPat, type PublishDeckFn } from "../publish/gh-pages";
 import { qrCodeSvg } from "../publish/qr";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, stat, writeFile } from "node:fs/promises";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { selectSummarizer } from "../audio/summarizer";
 import type { HotLoopSummaryLLM } from "../audio/output-policy";
@@ -46,8 +48,54 @@ import {
 } from "../suggest/engine";
 import { DetectionRunner, selectDetectionRunner, type DetectionSnapshot } from "./detection-runner";
 import { DETECTION_BUBBLE_TTL_MS, ideaTrayFromCandidates, pendingSuggestionFromCandidate, projectorSuggestionFromCandidate } from "./idea-suggestion";
+
+// Forced-suggestion pitch cap: enough words for a spoken idea, too few for a
+// transcript dump to reach the deck's verbatim slide.
+const FORCED_PITCH_MAX_WORDS = 40;
+
+// Pure: the pitch for a forced (nothing-surfaced) accept. STARTS at the last
+// spoken line with a buildable cue — joining every collected line shipped
+// unrelated chatter straight onto the deck's "verbatim idea" slide ("i love
+// waffles. i love pancakes. i want an app…"). No cue anywhere → the last two
+// lines are the best guess. Word-capped against rambling tails.
+export function forcedPitchFromLines(lines: readonly string[]): string {
+  let start = -1;
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    if (hasBuildableCue(lines[i])) {
+      start = i;
+      break;
+    }
+  }
+  const tail = start >= 0 ? lines.slice(start) : lines.slice(-2);
+  const words = tail.join(". ").split(/\s+/);
+  return words.slice(0, FORCED_PITCH_MAX_WORDS).join(" ");
+}
+
+// Pure: the DEGENERATE IdeaBrief for a forced (nothing-surfaced) accept. No
+// judge ran, so the sourceQuote IS the spoken tail — honest by construction:
+// the deck's "as heard in the room" slide quotes what the room actually said.
+// When the joined tail exceeds the brief's quote cap the END is kept (recency
+// is where the idea lives), marked with a leading ellipsis. No rationale, no
+// Q&A, no maturity — those only exist when the detection judge produced them.
+export function forcedBriefFromLines(lines: readonly string[]): IdeaBrief {
+  const joined = lines
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .join(". ");
+  return {
+    pitch: forcedPitchFromLines(lines),
+    sourceQuote:
+      joined.length <= IDEA_BRIEF_QUOTE_MAX_CHARS ? joined : `…${joined.slice(-(IDEA_BRIEF_QUOTE_MAX_CHARS - 1))}`,
+    rationale: "",
+    qa: [],
+    callsign: null,
+  };
+}
 import {
+  CloudGraph,
   ResearchLoop,
+  readResearchSuggestIntervalMs,
+  readSkyIntervalMs,
   renderResearchDeckHtml,
   selectResearchAgent,
   selectResearchSuggester,
@@ -80,10 +128,18 @@ import { SeamDispatcher } from "../seam/dispatcher";
 import { createCorrelationRecord, type CorrelationRecord, type CorrelationStore } from "../seam/correlation-store";
 import { callsignFromRepo, parseImportRequest } from "./project-import";
 import { cloneRepo, repoDigest } from "./repo-clone";
+import { resolveDeployUrl } from "./deploy-resolver";
+import { TreeGitSubstrate, treeGitEnabled, type GitCommandRunner } from "./tree-git";
+import { ghCommandRunner, type ForestCommandRunner } from "./github-org";
+import { applySteerEdit, steerApplierEnabled } from "./steer-applier";
+import { appendSliceLine, joinedSliceText, type SteerSliceLine } from "./transcript-slice";
+import { TranscriptStore } from "./transcript-store";
+import { TreeIssuesCache, type TreeIssue } from "./tree-issues";
 import { buildImportPlanPrompt, buildImportPlanQuestions } from "./import-plan";
+import { hasBuildableCue } from "../detect";
 import type { IdeaCandidate, IdeaDetector, PlanQuestion } from "../detect";
 import { StageSequencer, type CanonicalStage } from "../spine/stage-sequencer";
-import type { DispatchedAction, LogEvent, OutputDecision, PendingSuggestion } from "../types";
+import { IDEA_BRIEF_QUOTE_MAX_CHARS, type DispatchedAction, type IdeaBrief, type LogEvent, type OutputDecision, type PendingSuggestion } from "../types";
 import { demoProjectorSnapshot, emptyProjectorSnapshot, withUnmuted } from "../ui/demo-data";
 import type { DialogueTurn, IdeaTrayItem, ProjectorProcess, ProjectorProcessState, ProjectorSnapshot, ProjectorSuggestion, ResearchTrayItem, TranscriptLine } from "../ui/types";
 import type { TranscriptObservation } from "../types";
@@ -179,6 +235,43 @@ export interface ProjectorRuntime {
   // its live run-event telemetry. Idempotent per UPID; errors are typed so the
   // HTTP route can 400/404 honestly.
   executeProcess(upid: string, correlationId?: string): Promise<ExecuteProcessResult>;
+  // GIT SUBSTRATE explicit publish ("push this tree to GitHub now"): the same
+  // idempotent private-repo publish the commission fires, exposed for the
+  // publish-repo route. {ok:false} when the substrate is disabled, the UPID
+  // is unknown, or the tree was adopted from a GitHub import.
+  publishTreeRepo(upid: string, correlationId?: string): Promise<{ ok: true; url: string } | { ok: false; error: string }>;
+  // ADOPTED-TREE BRANCH RAILS (the PR engine for GitHub imports). Create a
+  // real room/<slug> branch off the freshly fetched origin/main tip; ride
+  // spoken changes to a REAL PR against the import's own origin (commit the
+  // clone's working tree if dirty → push only room/<slug> → gh pr create).
+  // Honest {ok:false} for local trees — these rails are adopted-only.
+  createTreeBranch(upid: string, name: string, correlationId?: string): Promise<{ ok: true; branch: string } | { ok: false; error: string }>;
+  openTreeBranchPr(
+    upid: string,
+    branch: string,
+    input?: { title?: string; body?: string },
+    correlationId?: string,
+  ): Promise<{ ok: true; url: string } | { ok: false; error: string }>;
+  // The LAST rail of the ride (branch → commits → PR → merged): squash-merge
+  // the branch's open PR through the gh seam. Idempotent — an already-merged
+  // PR answers ok. For an import whose host deploys latest main, this IS the
+  // deploy, so the UI asks twice before it calls.
+  mergeTreeBranch(upid: string, branch: string, correlationId?: string): Promise<{ ok: true; merged: true } | { ok: false; error: string }>;
+  // The tree's repo facts for menus/popups (GET /api/process/:upid/repo):
+  // origin + branches (with per-branch prUrl once open) + optional deployUrl
+  // (an import's resolved live deployment, else the take-home publish URL).
+  treeRepoInfo(upid: string): {
+    origin: string | null;
+    branches: Array<{ name: string; commits: number; prUrl?: string }>;
+    deployUrl?: string;
+  } | null;
+  // ANSWER LEDGER (the deck's swipe-to-answer cards): record a chosen answer
+  // for a process (latest answer per questionId wins) and read them back. The
+  // /answer route records BEFORE steering; the slideshow hook passes the
+  // ledger into every deck regeneration so answered cards render pre-decided
+  // — an answer survives the steer → rebuild → deck-regen loop.
+  recordAnswer(upid: string, entry: DeckAnswer): void;
+  answeredQuestions(upid: string): DeckAnswer[];
   // SELF-HOSTING MODE (VIBERSYN_SELF_MODE=1). `bootId` is this process's
   // stable per-boot id — surfaced on /api/health and the snapshot so a wall
   // can detect that the server it reconnected to is a NEW build and reload
@@ -190,6 +283,14 @@ export interface ProjectorRuntime {
   readonly bootId: string;
   readonly selfMode: boolean;
   requestSelfReload(correlationId?: string): { ok: true } | { ok: false; reason: string };
+  // SELF-REBUILD runtime toggle ("the room rebuilds itself", POST
+  // /api/self-rebuild): gates the green-self-commit → exit-87 trigger at
+  // RUNTIME, independent of the boot env. Boot default is VIBERSYN_SELF_MODE
+  // (on under the --self supervisor). Flipping it cannot summon a supervisor
+  // that isn't there — off VETOES the rebuild-and-relaunch trigger, on arms
+  // it for the next verified green self-run.
+  setSelfRebuild(on: boolean, correlationId?: string): ProjectorSnapshot;
+  selfRebuild(): boolean;
   pendingSuggestion(): PendingQueuedSuggestion | null;
   snapshot(): ProjectorSnapshot;
   // Rebuild + broadcast the snapshot NOW and return it. The HTTP control routes
@@ -212,16 +313,68 @@ export interface ProjectorRuntime {
   acceptPendingSuggestion(correlationId?: string): Promise<ProjectorSnapshot>;
   // Click-to-steer (CLICK A PROJECT -> STEER IT): set the steering target UPID so
   // subsequent live FINAL transcript lines route to THAT process's agent loop
-  // (registry.steer) instead of seeding a fresh ambient suggestion.
-  setSteeringTarget(upid: string, correlationId?: string): ProjectorSnapshot;
+  // (registry.steer) instead of seeding a fresh ambient suggestion. `branch`
+  // (a room/<slug> name) scopes the record toggle's spoken-change window to a
+  // specific room branch of an adopted tree — stored beside the target and
+  // cleared with it.
+  setSteeringTarget(upid: string, correlationId?: string, branch?: string | null): ProjectorSnapshot;
   // Clear the steering target; live transcript returns to ambient suggestion +
-  // click-to-build behavior.
+  // click-to-build behavior. For an ADOPTED tree with a non-empty spoken slice,
+  // the clear ALSO fires the steer applier (steer-applier.ts): the joined
+  // slice becomes a real, bounded commit on the tree's room/<slug> branch.
   clearSteeringTarget(correlationId?: string): ProjectorSnapshot;
   steeringTarget(): string | null;
+  steeringBranch(): string | null;
+  // ADOPTED-TREE ISSUES (GET /api/process/:upid/issues): the origin repo's
+  // open issues via the gh seam ({issues: [{number, title, labels}]}),
+  // 60s-cached per upid, {issues: []} for local/self trees or ANY failure.
+  treeIssues(upid: string): Promise<{ issues: TreeIssue[] }>;
   // AUTO-BUILD toggle (no click required): when on, every fired suggestion is
   // accepted+built the instant it pops.
   setAutoAccept(on: boolean, correlationId?: string): ProjectorSnapshot;
   autoAccept(): boolean;
+  // SELF VERSION RAILS: the room's own branch list (record windows cut one
+  // per spoken change) and load-a-version (checkout + supervisor relaunch).
+  selfBranches(): Promise<{ current: string; branches: Array<{ name: string; subject: string; date: string }> }>;
+  checkoutSelfBranch(branch: string): Promise<{ ok: true } | { ok: false; error: string }>;
+  // TEND A LIMB: archive (room/x -> archive/x) or delete a room/* branch that
+  // is not the running one. The wall's tree-menu lifecycle actions; the room
+  // must never delete or archive the branch it is standing on. Delete's
+  // optional `scope`: "branch" (default — today's label-only prune) or
+  // "everywhere" — first EXCISE the branch's own graft commits by reverting
+  // them on every OTHER branch that carries them (temp worktrees; the current
+  // branch reverts in place and the room rebuilds). `excised` names each
+  // branch that lost the graft, `conflicts` each branch the revert could NOT
+  // land on (left untouched, reported by name — partial success is honest,
+  // never silent), `reloading` says the current branch was excised and the
+  // exit-87 rebuild is scheduled.
+  manageSelfBranch(
+    branch: string,
+    action: "archive" | "delete",
+    scope?: "branch" | "everywhere",
+  ): Promise<
+    | { ok: true; excised?: Array<{ branch: string; reverted: number }>; conflicts?: string[]; reloading?: boolean; grafts?: number }
+    | { ok: false; error: string }
+  >;
+  // STOP GROWING (the wall's halt verb): abort the EXECUTING self-run —
+  // cancels the durable run through the commissioner and settles the lane
+  // failed·"aborted" — WITHOUT touching registry.halt (POST /api/process/
+  // self/halt marks the pinned record dead and orphans the mirror until
+  // reboot; that stays the emergency path). Idempotent: nothing executing is
+  // {halted:false}, never an error.
+  haltSelfRun(correlationId?: string): Promise<{ ok: true; halted: boolean } | { ok: false; error: string }>;
+  // INTO THE TRUNK (finalize): merge a room/* branch to main — via its PR
+  // (draft → ready, base retargeted to main, merge commit) or a plain
+  // fast-forward push when no PR exists. Merging the CURRENT branch is
+  // allowed: the room keeps standing on it; main simply gains its commits
+  // (the operator loads main later via /api/self/checkout).
+  mergeSelfBranch(
+    branch: string,
+  ): Promise<{ ok: true; merged: true; via: "pr" | "fast-forward" } | { ok: false; error: string }>;
+  // GUIDED-DEMO HOLD: suspends the armed auto-build's self-firing while the
+  // demo's "describe your idea" step is up (Done is the only trigger). TTL'd
+  // server-side; releasing re-checks an armed candidate immediately.
+  setGuidedHold(on: boolean): ProjectorSnapshot;
   // IDEA CAPTURE mode toggle: when on, detection runs EAGERLY (a rate-limited
   // force-detect per final) so ideas surface fast. Capture no longer implies
   // building — auto-building happens ONLY when autoAccept is on; otherwise the
@@ -277,6 +430,18 @@ export interface ProjectorRuntime {
 export type ImportProjectResult =
   | { ok: true; snapshot: ProjectorSnapshot; upid: string; callsign: string; title: string | null }
   | { ok: false; error: string };
+
+// One recorded swipe-deck answer (the deck's question cards). The slideshow
+// track consumes this shape as AnsweredDeckQuestion (structural mirror).
+export interface DeckAnswer {
+  questionId: string;
+  prompt: string;
+  answer: string;
+}
+
+// Answer-ledger bound per process: the deck asks ≤3 questions per generation,
+// but regenerations can introduce new ones — cap generously, evict oldest.
+const MAX_DECK_ANSWERS_PER_UPID = 24;
 
 // COMMISSION result for the HTTP/voice surfaces. `status` maps directly onto
 // the /api/process/:upid/execute response code: 404 unknown/dead UPID, 400
@@ -334,6 +499,28 @@ export interface ProjectorRuntimeOptions {
   // network fetch ever runs from the suite.
   cloneRepoFn?: typeof cloneRepo;
   repoDigestFn?: typeof repoDigest;
+  // DEPLOYMENT RESOLVER seam (an imported tree FINDS its live app): the whole
+  // chain — VIBERSYN_DEPLOY_MAP override → clone scrape + HEAD probes → gh
+  // garnish — kicked fire-and-forget by the GitHub import routine once the
+  // clone settles. Undefined = the real resolver; NULL disables entirely —
+  // the test idiom (an import test that leaves this unset would HEAD-probe
+  // real hosts and spawn a real gh).
+  resolveDeployFn?: typeof resolveDeployUrl | null;
+  // GIT SUBSTRATE ("tree = repo") seams. `treeGitRunner` undefined = the real
+  // `git` subprocess runner; NULL = substrate disabled entirely — the test
+  // idiom (any test that drives an accept with fake buildBackends but leaves
+  // this unset would spawn real git into its temp dir). `treeGhRunner` backs
+  // the commission-time publish (gh repo create / pr create).
+  treeGitRunner?: GitCommandRunner | null;
+  treeGhRunner?: ForestCommandRunner;
+  // SELF VERSION-RAIL seams (the room's OWN checkout, not a build's clone):
+  // `selfGitRunner` undefined = the real `git` subprocess in process.cwd();
+  // injected = every self rail (branches/checkout/archive/delete/merge) is
+  // testable with no subprocess. `selfGhRunner` backs the finalize (merge)
+  // and remote-prune gh calls the same way — plain keychain gh, never the
+  // tree-git credential chain.
+  selfGitRunner?: GitCommandRunner;
+  selfGhRunner?: ForestCommandRunner;
   // The real coding agent that turns an accepted idea's scaffold into a working
   // app (idea-builder). Defaults to the host `claude` CLI builder. Tests inject a
   // synthetic builder so no real `claude` spawn occurs.
@@ -363,6 +550,10 @@ export interface ProjectorRuntimeOptions {
   // observe the 87 without killing the test process.
   selfGitHead?: () => Promise<GitHeadFact | null>;
   exitProcess?: (code: number) => void;
+  // Where the conversation's disk shadow lives (transcript survives the self
+  // reload). Absent → the env marker VIBERSYN_TRANSCRIPT_STORE decides; null
+  // and no marker → no persistence (every test runtime).
+  transcriptStorePath?: string | null;
   // GitHub Pages deck publisher seam (src/publish/gh-pages). Fired once per
   // kicked-off idea, fire-and-forget, after its FIRST pitch deck lands; the
   // resolved public URL becomes the process's publishedUrl + take-home QR.
@@ -380,6 +571,10 @@ export interface ProjectorRuntimeOptions {
   // heuristic-only tree (model: null); production defaults to the loop's own
   // tree with the bounded Cerebras refiner.
   researchConceptTree?: ConceptTree;
+  // Conversation-sky seam (research/sky.ts). Tests inject a graph with a
+  // scripted relate runner (or runner: null for lexical-only); production
+  // defaults to the env-cadenced graph with the bounded Cerebras runner.
+  cloudGraph?: CloudGraph;
 }
 
 export async function createProjectorRuntime(
@@ -480,6 +675,10 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   #interim: TranscriptLine | null = null;
   #micActive = false;
   #micBytes = 0;
+  // Mic PCM frames dropped because the ASR backlog was full — the symptom of a
+  // saturated uplink (wifi congestion or a twitch playback stream hogging the
+  // pipe). Surfaced on the mic tick so a stalled transcript has a visible cause.
+  #micDroppedFrames = 0;
   #micLastPublishMs = 0;
   #acceptanceWatchdog: ReturnType<typeof setInterval> | null = null;
   // Time of the most recent FINAL observation (null before any speech); lets the
@@ -490,6 +689,21 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   // instead of seeding a fresh ambient suggestion. Set/cleared by the projector
   // click endpoints; cleared automatically if the target stops being live.
   #steeringUpid: string | null = null;
+  // Branch scope for the steering target (the record toggle dwelled on a
+  // specific room/<slug> of an adopted tree). Lives and dies with
+  // #steeringUpid; rides the snapshot as steeringBranch.
+  #steeringBranch: string | null = null;
+  // STEER TRANSCRIPT SLICE: the FINAL lines that arrived while steering an
+  // ADOPTED tree — reset on target set, drained on clear into the steer
+  // applier (the toggle-on→toggle-off window exactly; joinedSliceText trims
+  // it to the trailing 60s). Pure state; logic lives in transcript-slice.ts.
+  #steerSlice: SteerSliceLine[] = [];
+  // ENDPOINTING GRACE (live-room finding): ASR finals land 1-2s AFTER the
+  // speaker stops, so "record → speak → tap stop" loses the final if the
+  // window closes hard. For STEER_GRACE_MS after clear, trailing finals still
+  // route to the just-cleared target (and join an adopted tree's slice, whose
+  // applier drain waits for them). Preempted by a new target; lazily drained.
+  #steerGrace: { upid: string; branch: string | null; slice: SteerSliceLine[]; untilMs: number; timer: ReturnType<typeof setTimeout> | null } | null = null;
   // AUTO-BUILD toggle. When true, every fired suggestion is accepted+built the
   // instant it pops — no click required. Operator flips it from the projector
   // (POST /api/auto-accept) or boots with VIBERSYN_AUTO_ACCEPT=1. A re-entrancy guard
@@ -505,6 +719,13 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   readonly #autoBuildSettleMs: number;
   #autoBuildTimer: ReturnType<typeof setTimeout> | null = null;
   #autoBuildArmedId: string | null = null;
+  // Guided-demo hold deadline (0 = no hold). See setGuidedHold.
+  #guidedHoldUntilMs = 0;
+  // Transcript boundary stamped when the guided "describe your idea" step is
+  // entered (HH:MM:SS, the transcript's own time format). The forced-accept
+  // pitch only reads lines at/after it — never re-cleared: it only ever
+  // NARROWS the sample, and the next demo overwrites it.
+  #guidedMarkAt: string | null = null;
   // While armed, republish once per second so every wall's settle countdown
   // (snapshot.ideaSettle.firesInMs) ticks live. Cleared on disarm/fire.
   #settleTickTimer: ReturnType<typeof setInterval> | null = null;
@@ -546,6 +767,11 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       callsign: string | null;
       task: string;
       status: "cloning" | "ready" | "clone-failed";
+      // The resolved LIVE deployment URL (deploy-resolver chain), set by the
+      // fire-and-forget resolveImportDeploy once a deployment is found. Feeds
+      // the snapshot's per-process deployUrl (the tree menu's "Live app" row)
+      // and the /api/process/:upid/repo surface.
+      deployUrl?: string;
     }
   >();
   // In-flight GitHub clone routines, keyed by UPID. Emergency stop and per-
@@ -557,6 +783,16 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   readonly #buildsRoot: string;
   readonly #cloneRepoFn: typeof cloneRepo;
   readonly #repoDigestFn: typeof repoDigest;
+  // Deployment resolver seam (null = disabled — the test idiom).
+  readonly #resolveDeployFn: typeof resolveDeployUrl | null;
+  // GIT SUBSTRATE ("tree = repo"): every accepted idea's tree is a real local
+  // repo under builds/<upid>/.tree/ with one concept/<backend> branch per
+  // lane, published (private GitHub repo + draft PRs) on commission. Null =
+  // disabled (VIBERSYN_TREE_GIT=0 or the injected-null test seam).
+  readonly #treeGit: TreeGitSubstrate | null;
+  // ADOPTED-TREE ISSUES cache (tree-issues.ts): the origin repo's open issues
+  // via the same gh seam (options.treeGhRunner), 60s per upid.
+  readonly #treeIssues: TreeIssuesCache;
   // TAKE-HOME PUBLISHING (GitHub Pages). `#publishDeckFn` is the injected/real
   // publisher (null = disabled); `#publishKicked` guards ONE publish attempt
   // per kicked-off UPID; `#deckDirs` remembers every generated local deck dir
@@ -567,6 +803,10 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   readonly #publishKicked = new Set<string>();
   readonly #deckDirs = new Map<string, Map<string, string>>();
   readonly #published = new Map<string, { url: string; qrSvg: string; repo: string }>();
+  // ANSWER LEDGER: upid -> questionId -> the latest chosen answer. Insertion
+  // order is answer order (a re-answer moves to the back), so regenerated
+  // decks replay decisions in the order the room made them.
+  readonly #deckAnswers = new Map<string, Map<string, DeckAnswer>>();
   // Idea detection wiring. `#detectionMode` records which backend was selected
   // (host-claude | heuristic | smithers | injected) for the degradation notice;
   // `#detectionPrimaryId` is the candidate currently surfaced as the bubble (so a
@@ -592,10 +832,22 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   // `#exit` is the injectable exit-87 seam the supervisor loop watches for.
   readonly bootId: string = crypto.randomUUID();
   readonly #selfMode: boolean;
+  // SELF-REBUILD runtime toggle: the operator-flippable gate consulted by the
+  // exit-87 trigger (requestSelfReload). Boots from VIBERSYN_SELF_MODE.
+  #selfRebuild: boolean;
+  // The conversation's disk shadow: finals persist so a SELF reload resumes
+  // the same evening instead of a blank room (transcript-store.ts). Null off
+  // self mode — only the self-hosting loop reboots the room mid-conversation,
+  // and test runtimes must never read the live room's file.
+  readonly #transcriptStore: TranscriptStore | null;
   #selfCommission: SelfCommissioner | null = null;
   #selfReloadPending = false;
   readonly #exit: (code: number) => void;
   readonly #selfReloadDelayMs: number;
+  // SELF VERSION-RAIL seams: injected runners make every self git/gh rail
+  // testable without a subprocess; null = the real spawns below.
+  readonly #selfGitRunner: GitCommandRunner | null;
+  readonly #selfGhRunner: ForestCommandRunner | null;
 
   constructor(
     readonly sessionId: string,
@@ -609,8 +861,20 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     // reserved "mirror" word), the registry's orchestrator seam (self steers
     // route to the commission), and the reload trigger below.
     this.#selfMode = selfModeEnabled(env);
+    // The runtime rebuild toggle boots FROM the env flag: a --self launch
+    // starts armed, everything else starts off (and can only record intent
+    // for a future --self launch — see setSelfRebuild).
+    this.#selfRebuild = this.#selfMode;
+    // The path comes from the supervisor's env (self-supervisor.sh exports
+    // VIBERSYN_TRANSCRIPT_STORE): the LIVE self-hosted room persists; test
+    // runtimes — even self-mode ones — have no marker, so they can neither
+    // read the live room's conversation nor pollute it (one did, in review).
+    const transcriptStorePath = options.transcriptStorePath ?? this.#env.VIBERSYN_TRANSCRIPT_STORE ?? null;
+    this.#transcriptStore = this.#selfMode && transcriptStorePath !== null ? new TranscriptStore({ path: transcriptStorePath }) : null;
     this.#exit = options.exitProcess ?? ((code: number) => process.exit(code));
     this.#selfReloadDelayMs = resolveSelfReloadDelayMs(env);
+    this.#selfGitRunner = options.selfGitRunner ?? null;
+    this.#selfGhRunner = options.selfGhRunner ?? null;
     // Single audible-output sink seam (ISSUE-0026): an injected sink wins, else
     // selectAudioSink(env) (no-op unless VIBERSYN_AUDIO_SINK=device). The one sink
     // backs both the earcon playPcm path and the TTS drain so a fired suggestion's
@@ -732,6 +996,27 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     this.#buildsRoot = options.buildsRoot ?? resolve(process.cwd(), "builds");
     this.#cloneRepoFn = options.cloneRepoFn ?? cloneRepo;
     this.#repoDigestFn = options.repoDigestFn ?? repoDigest;
+    // Undefined = the real chain; explicit null = disabled (test idiom, like
+    // treeGitRunner: no unseamed test may ever HEAD-probe or spawn gh).
+    this.#resolveDeployFn = options.resolveDeployFn === undefined ? resolveDeployUrl : options.resolveDeployFn;
+    // GIT SUBSTRATE construction: real runners by default, injected fakes in
+    // tests, and OFF entirely for treeGitRunner:null / VIBERSYN_TREE_GIT=0.
+    // Its traces get this runtime's sessionId stamped here (the substrate
+    // does not know it).
+    this.#treeGit =
+      options.treeGitRunner === null || !treeGitEnabled(env)
+        ? null
+        : new TreeGitSubstrate({
+            buildsRoot: this.#buildsRoot,
+            runGit: options.treeGitRunner,
+            runGh: options.treeGhRunner,
+            onTrace: (event) => this.recordExternalTrace({ ...event, sessionId: this.sessionId }),
+            onUpdate: () => this.publish(),
+            now: clock,
+          });
+    // Issues ride the SAME gh seam as the substrate's PR engine — an injected
+    // fake covers both; only adopted trees with a recorded origin ever fetch.
+    this.#treeIssues = new TreeIssuesCache({ runGh: options.treeGhRunner, now: clock });
     this.ideaBuilds = new IdeaBuildRegistry({
       buildsRoot: options.buildsRoot,
       builderAgent: options.builderAgent,
@@ -752,14 +1037,22 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     this.buildOrchestrator = new BuildOrchestrator({
       selector: this.buildSelector,
       buildsRoot: options.buildsRoot,
+      // GIT SUBSTRATE hooks: birth at fan-out start, one lane commit per
+      // landed stage/mock/correction. SELF exclusion is structural (SELF never
+      // kickoffs; selfRoutingOrchestrator routes SELF steers away) PLUS the
+      // substrate's own SELF_UPID guard.
+      treeGit: this.#treeGit,
       slideshow: async (input) => {
         // The accept's planning questions ride into the deck as INTERACTIVE
         // swipe-to-answer cards; each chosen answer POSTs to this process's
-        // answer route (app.ts /api/process/:upid/answer -> registry.steer).
+        // answer route (app.ts /api/process/:upid/answer -> ledger + steer).
+        // The answer ledger rides along so a steer-regenerated deck renders
+        // already-answered cards pre-decided instead of re-asking them.
         await generateSlideshow(
           {
             ...input,
             questions: input.planQuestions,
+            answeredQuestions: this.answeredQuestions(input.upid),
             answerEndpoint: `/api/process/${encodeURIComponent(input.upid)}/answer`,
           },
           { signal: input.signal },
@@ -823,7 +1116,10 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       // routing into a dead process and returns to ambient handling.
       onHalt: (upid) => {
         if (this.#steeringUpid === upid) {
+          // Silent drop (no applier): a halted target's slice must not commit.
           this.#steeringUpid = null;
+          this.#steeringBranch = null;
+          this.#steerSlice = [];
         }
         // A process halted mid-clone kills its git subprocess too; the clone
         // routine's post-clone build kick then sees the abort and stands down.
@@ -862,6 +1158,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
           onTrace: (event) => this.recordExternalTrace(event),
           onOutput: (decision) => this.recordOutput(decision),
           onLaunched: (runId) => {
+            this.#startSelfActivityProbe();
             void this.runEventDriver.subscribe(SELF_UPID, runId).catch((error) => {
               this.recordExternalTrace({
                 event: "run.events.error",
@@ -1049,6 +1346,27 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       suggester: options.researchSuggester ?? selectResearchSuggester(env).suggester,
       agent: options.researchAgent ?? selectResearchAgent(env).agent,
       conceptTree: options.researchConceptTree,
+      // The conversation SKY: topics folded into clouds beyond the rolling
+      // window, related by the recurrent Cerebras tick (lexical fallback with
+      // no key). Runs on its own cadence regardless of research mode.
+      cloudGraph:
+        options.cloudGraph ??
+        new CloudGraph({
+          intervalMs: readSkyIntervalMs(env),
+          clock,
+          onUpdate: () => this.publish(),
+          onTrace: (event) =>
+            this.recordExternalTrace({
+              event: event.event,
+              level: event.level,
+              sessionId,
+              correlationId: event.correlationId,
+              meta: event.meta,
+            }),
+        }),
+      // While the mode is on, the loop's own timer re-reads the dialogue every
+      // interval and buds at most one new sphere (0 disables).
+      suggestIntervalMs: readResearchSuggestIntervalMs(env),
       clock,
       onUpdate: () => this.publish(),
       onTrace: (event) =>
@@ -1060,6 +1378,22 @@ class LiveProjectorRuntime implements ProjectorRuntime {
           meta: event.meta,
         }),
     });
+    // RESEARCH IS ALWAYS ON (live-room directive): the dock toggle is gone and
+    // the research scene lives exclusively on the ceiling — the engine simply
+    // runs. VIBERSYN_RESEARCH=0 remains the escape hatch (tests, quiet rooms).
+    if (this.#env.VIBERSYN_RESEARCH !== "0") {
+      this.research.setActive(true);
+    }
+    // RESUME THE CONVERSATION across a self reload: restore fresh finals into
+    // the live window AND re-feed them (original atMs) through the research
+    // loop, so the ceiling's chronology/topics survive the reboot too. Stale
+    // files (previous session) restore nothing — an old evening never haunts
+    // a new room.
+    for (const stored of this.#transcriptStore?.restore() ?? []) {
+      const line: TranscriptLine = { time: stored.time, speaker: stored.speaker, text: stored.text, kind: stored.kind as TranscriptLine["kind"] };
+      this.#liveFinals = [...this.#liveFinals, line].slice(-MAX_LIVE_TRANSCRIPT_LINES);
+      this.research.ingestTurn({ speaker: stored.speaker, text: stored.text, atMs: stored.atMs });
+    }
   }
 
   readonly research: ResearchLoop;
@@ -1122,7 +1456,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     if (this.#micSubscribers.size === 0) {
       return;
     }
-    const serialized = JSON.stringify({ mode: this.micMode, active: this.#micActive, bytesReceived: this.#micBytes });
+    const serialized = JSON.stringify({ mode: this.micMode, active: this.#micActive, bytesReceived: this.#micBytes, droppedFrames: this.#micDroppedFrames });
     for (const subscriber of this.#micSubscribers) {
       try {
         subscriber(serialized);
@@ -1208,19 +1542,25 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   private forcedSuggestionFromTranscript(correlationId: string): PendingSuggestion | null {
     const spoken = this.#snapshot.transcript
       .filter((line) => line.kind === "room")
+      .filter((line) => this.#guidedMarkAt === null || line.time >= this.#guidedMarkAt)
       .slice(-6)
       .map((line) => line.text.trim())
       .filter((text) => text.length > 0);
     if (spoken.length === 0) {
       return null;
     }
+    // The degenerate brief keeps the forced path honest downstream: the deck
+    // and backend prompts quote the spoken tail verbatim instead of passing
+    // the synthesized pitch off as the room's words.
+    const brief = forcedBriefFromLines(spoken);
     return {
       suggestionId: `sug-forced-${crypto.randomUUID()}`,
-      pitch: spoken.join(". "),
+      pitch: brief.pitch,
       mcqs: ["Proceed?"],
       answers: ["Yes, build it"],
       correlationId,
       expiresAt: this.#clock() + DETECTION_BUBBLE_TTL_MS,
+      brief,
     };
   }
 
@@ -1618,6 +1958,10 @@ class LiveProjectorRuntime implements ProjectorRuntime {
         if (entry !== undefined) {
           entry.status = "ready";
         }
+        // GIT SUBSTRATE adopt: the checkout at builds/<upid>/repo/ IS this
+        // tree's repo — record its origin, never git-init over it (the later
+        // startBuild-driven birth() self-detects the clone and no-ops).
+        this.#treeGit?.adopt(upid, parsed.url);
         const digest = await this.#repoDigestFn(result.dir).catch(() => null);
         // INFER ADDITIONS, don't plan from scratch: frame the fleet prompt as
         // "add the smallest coherent slice that fits this existing repo" (or
@@ -1642,8 +1986,12 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       } else if (entry !== undefined) {
         // A failed clone keeps the link-only build AND no drafted questions —
         // with no checkout there is no repo to ask decisions about, and the
-        // deck stays honest about knowing nothing beyond the link.
+        // deck stays honest about knowing nothing beyond the link. LOUD by
+        // contract: the task line (the wall's display line for this tree)
+        // says the clone failed and why — the fallback mock must never
+        // impersonate a grounded import.
         entry.status = "clone-failed";
+        entry.task = `clone failed: ${result.ok ? "unknown" : result.error} — building from the link only`;
       }
       this.recordExternalTrace({
         event: "project.import.clone",
@@ -1654,6 +2002,14 @@ class LiveProjectorRuntime implements ProjectorRuntime {
         latencyMs: this.#clock() - startedAtMs,
         meta: result.ok ? { url: parsed.url, dir: repoDir } : { url: parsed.url, error: result.error },
       });
+      // DEPLOYMENT RESOLVER (fire-and-forget, parallel with the build kick):
+      // find this repo's LIVE deployment — the VIBERSYN_DEPLOY_MAP override
+      // first (the demo guarantee, so it runs even when the clone failed and
+      // there is nothing to scrape), then the checkout scrape + HEAD probes,
+      // then the gh garnish. A found URL lands on the import entry: the
+      // snapshot's deployUrl → the tree menu's "🌐 Live app" row → the holo
+      // panel's /salem iframe.
+      this.resolveImportDeploy(upid, parsed, result.ok ? result.dir : null, correlationId);
       // Re-check right before the kick: the digest/pitch/question awaits above
       // are further windows in which a halt/emergency stop can land (startBuild
       // also refuses dead records — this is belt and braces).
@@ -1675,6 +2031,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
         const entry = this.#imports.get(upid);
         if (entry !== undefined) {
           entry.status = "clone-failed";
+          entry.task = `clone failed: ${error instanceof Error ? error.message : String(error)} — building from the link only`;
         }
         this.recordExternalTrace({
           event: "project.import.clone",
@@ -1694,6 +2051,41 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       });
   }
 
+  // The deployment-resolver kick (see runGitHubImportRoutine). Fire-and-forget
+  // by contract: the resolver chain is bounded (3s per HEAD probe, gh capped)
+  // and never throws, and a found URL republishes so the wall's tree menu
+  // grows its "Live app" row without waiting on the build fan-out.
+  private resolveImportDeploy(
+    upid: string,
+    parsed: { owner: string; repo: string },
+    repoDir: string | null,
+    correlationId: string,
+  ): void {
+    if (this.#resolveDeployFn === null) {
+      return;
+    }
+    const startedAtMs = this.#clock();
+    void this.#resolveDeployFn({ owner: parsed.owner, repo: parsed.repo, repoDir }, { env: this.#env })
+      .then((resolved) => {
+        const entry = this.#imports.get(upid);
+        if (resolved === null || entry === undefined || this.#emergencyTriggered) {
+          return;
+        }
+        entry.deployUrl = resolved.url;
+        this.recordExternalTrace({
+          event: "project.import.deploy",
+          level: "info",
+          sessionId: this.sessionId,
+          correlationId,
+          upid,
+          latencyMs: this.#clock() - startedAtMs,
+          meta: { url: resolved.url, source: resolved.source },
+        });
+        this.publish();
+      })
+      .catch(() => undefined); // resolver contract: never throws — belt and braces
+  }
+
   // AUTO-BUILD toggle. Flip on => every fired idea is built without a click; flip
   // off => back to click-to-build. Returns the fresh snapshot so the UI reflects
   // the new state immediately.
@@ -1711,6 +2103,32 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       correlationId,
       meta: { on },
     });
+    this.publish();
+    return this.#snapshot;
+  }
+
+  // GUIDED-DEMO HOLD: while a visitor is on the demo's "describe your idea"
+  // step, the armed auto-build must not fire on its own — the Done button is
+  // the only trigger. The hold is TTL'd (a crashed/closed wall can never wedge
+  // the room's auto-build forever); releasing it re-checks an armed candidate
+  // immediately so a post-demo room resumes normal settle behavior.
+  setGuidedHold(on: boolean): ProjectorSnapshot {
+    this.#guidedHoldUntilMs = on ? this.#clock() + GUIDED_HOLD_TTL_MS : 0;
+    if (on) {
+      // "DESCRIBE YOUR IDEA" STARTS HERE, not an hour ago. Without a boundary
+      // the deck described the visitor's idea out of the whole room's history:
+      // the forced pitch sampled the transcript tail (pre-step chatter and all)
+      // and a candidate ARMED by earlier conversation was the one Done built.
+      // Entering the step marks the transcript, drops the queued bubble, and
+      // disarms any pre-step candidate — everything the step produces is grown
+      // from what the visitor says AFTER this point.
+      this.#guidedMarkAt = new Date().toISOString().slice(11, 19);
+      this.suggestionEngine.clearPending();
+      this.#autoBuildArmedId = null;
+    }
+    if (!on && this.#autoBuildArmedId !== null) {
+      this.scheduleAutoBuildCheck();
+    }
     this.publish();
     return this.#snapshot;
   }
@@ -1758,7 +2176,11 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   // FINAL transcript lines route to that process's agent loop (registry.steer)
   // instead of seeding a fresh ambient suggestion. The steered bubble is surfaced
   // via the snapshot's `steeringUpid` + per-process `steering` flag.
-  setSteeringTarget(upid: string, correlationId = `corr-steer-select-${crypto.randomUUID()}`): ProjectorSnapshot {
+  setSteeringTarget(
+    upid: string,
+    correlationId = `corr-steer-select-${crypto.randomUUID()}`,
+    branch: string | null = null,
+  ): ProjectorSnapshot {
     if (this.#emergencyTriggered) {
       return this.#snapshot;
     }
@@ -1768,24 +2190,39 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       // return the current snapshot rather than steering into a dead process.
       return this.clearSteeringTarget(correlationId);
     }
+    // A fresh target preempts any endpointing grace from the previous window
+    // (its slice drains now — the two spoken windows never merge).
+    this.#drainSteerGrace(`${correlationId}-preempted-by-select`);
     this.#steeringUpid = upid;
+    // Branch scope (the record toggle dwelled on a specific room/<slug>) rides
+    // beside the target; setting a target (re)opens the spoken-change window,
+    // so the slice resets — stage narration before toggle-on never leaks in.
+    this.#steeringBranch = branch;
+    this.#steerSlice = [];
     this.recordExternalTrace({
       event: "steering.target.set",
       level: "info",
       sessionId: this.sessionId,
       correlationId,
       upid,
-      meta: { upid },
+      meta: { upid, branch },
     });
     this.publish();
     return this.#snapshot;
   }
 
   // Clear the steering target; live transcript returns to ambient suggestion +
-  // click-to-build behavior.
+  // click-to-build behavior. For an ADOPTED tree that collected spoken FINALs
+  // in the toggle window, the clear fires the STEER APPLIER (fire-and-forget):
+  // the joined slice becomes a real, bounded commit on the room/<slug> branch
+  // — the stage guarantee that the one-dwell PR is never empty.
   clearSteeringTarget(correlationId = `corr-steer-clear-${crypto.randomUUID()}`): ProjectorSnapshot {
     const had = this.#steeringUpid;
+    const branch = this.#steeringBranch;
+    const slice = this.#steerSlice;
     this.#steeringUpid = null;
+    this.#steeringBranch = null;
+    this.#steerSlice = [];
     if (had !== null) {
       this.recordExternalTrace({
         event: "steering.target.cleared",
@@ -1795,13 +2232,173 @@ class LiveProjectorRuntime implements ProjectorRuntime {
         upid: had,
         meta: { upid: had },
       });
+      // Open the endpointing grace window: the slice moves INTO it (the
+      // adopted-tree applier drain now happens at grace end, so a final that
+      // lands moments after the toggle-off still joins the commit), and any
+      // pending previous grace drains first — windows never merge.
+      this.#drainSteerGrace(`${correlationId}-preempt`);
+      const timer = setTimeout(() => this.#drainSteerGrace(`${correlationId}-grace-timer`), STEER_GRACE_MS + 100);
+      (timer as { unref?: () => void }).unref?.();
+      this.#steerGrace = { upid: had, branch, slice, untilMs: this.#clock() + STEER_GRACE_MS, timer };
     }
     this.publish();
     return this.#snapshot;
   }
 
+  // Close the grace window (idempotent): fire the adopted-tree applier on the
+  // accumulated slice. Callers: the wall-clock timer, a new steering target
+  // (preemption), and the lazy check in the FINAL path.
+  #drainSteerGrace(correlationId: string): void {
+    const grace = this.#steerGrace;
+    if (grace === null) {
+      return;
+    }
+    this.#steerGrace = null;
+    if (grace.timer !== null) {
+      clearTimeout(grace.timer);
+    }
+    // A halted/vanished target must not commit from beyond the grave.
+    if (!this.registry.activeRecords().some((record) => record.upid === grace.upid)) {
+      return;
+    }
+    const text = joinedSliceText(grace.slice, this.#clock());
+    if (text.length === 0) {
+      return;
+    }
+    // THE dispatch: everything the window collected acts NOW, once.
+    // Adopted trees → the steer applier's bounded commit; everything else —
+    // the mirror (one self-run for the whole description), kickoff trees (one
+    // coherent mock revision) — a single registry.steer with the joined text.
+    if (this.#treeGit?.isAdopted(grace.upid) === true) {
+      if (steerApplierEnabled(this.#env)) {
+        void this.#applySteerSlice(grace.upid, grace.branch, text, correlationId).catch(() => undefined);
+      }
+      return;
+    }
+    if (grace.upid === "self") {
+      // EVERY record window on the room = its OWN branch off the current one
+      // (live-room directive). The SERVER cuts it — deterministic, before the
+      // run exists — so the agent only ever commits where it stands.
+      void this.#cutSelfBranch(text)
+        .then((branch) => {
+          this.recordExternalTrace({
+            event: branch !== null ? "self.branch.cut" : "self.branch.cut.failed",
+            level: branch !== null ? "info" : "warn",
+            sessionId: this.sessionId,
+            correlationId: `${correlationId}-branch-cut`,
+            meta: { branch },
+          });
+          return this.registry.steer(grace.upid, { text, source: "live-transcript" }, `${correlationId}-window-dispatch`);
+        })
+        .then(() => {
+          // PUBLISH, or the dispatch never reaches a wall. registry.steer
+          // mutates the record and writes a process.steer trace, but the
+          // cached snapshot behind GET /api/state and the SSE stream only
+          // learn when something else publishes. On a quiet room after Stop
+          // nothing else does, so the wall showed a change that had already
+          // been dispatched as if it had never happened.
+          this.publish();
+        })
+        .catch((error) => {
+          this.recordExternalTrace({
+            event: "steering.route.error",
+            level: "error",
+            sessionId: this.sessionId,
+            correlationId: `${correlationId}-window-dispatch`,
+            upid: grace.upid,
+            meta: { message: error instanceof Error ? error.message : String(error), windowDispatch: true },
+          });
+        });
+      return;
+    }
+    void this.registry
+      .steer(grace.upid, { text, source: "live-transcript" }, `${correlationId}-window-dispatch`)
+      .then(() => {
+        // See the note above: without this the steer is invisible to every
+        // wall until unrelated speech happens to republish the snapshot.
+        this.publish();
+      })
+      .catch((error) => {
+        this.recordExternalTrace({
+          event: "steering.route.error",
+          level: "error",
+          sessionId: this.sessionId,
+          correlationId: `${correlationId}-window-dispatch`,
+          upid: grace.upid,
+          meta: { message: error instanceof Error ? error.message : String(error), windowDispatch: true },
+        });
+      });
+  }
+
   steeringTarget(): string | null {
     return this.#steeringUpid;
+  }
+
+  steeringBranch(): string | null {
+    return this.#steeringBranch;
+  }
+
+  // STEER APPLIER wiring (steer-applier.ts). Resolve the room branch the
+  // spoken slice lands on — the explicit steeringBranch when the toggle was
+  // branch-scoped (created off origin/main if it does not exist yet; the
+  // substrate's createBranch is idempotent), else the tree's most recently
+  // created room/* branch, else a fresh room/spoken-changes — then apply the
+  // bounded edit + commit and republish so the branch's commit count ticks.
+  async #applySteerSlice(upid: string, explicitBranch: string | null, text: string, correlationId: string): Promise<void> {
+    if (this.#treeGit === null) {
+      return;
+    }
+    let resolved: { ok: true; branch: string } | { ok: false; error: string };
+    if (explicitBranch !== null) {
+      resolved = await this.#treeGit.createBranch(upid, explicitBranch);
+    } else {
+      const latest = this.#latestRoomBranch(upid);
+      resolved = latest !== null ? { ok: true, branch: latest } : await this.#treeGit.createBranch(upid, slugFromSpeech(text));
+    }
+    if (!resolved.ok) {
+      this.recordExternalTrace({
+        event: "steer.applier.error",
+        level: "warn",
+        sessionId: this.sessionId,
+        correlationId,
+        upid,
+        meta: { stage: "branch", error: resolved.error },
+      });
+      return;
+    }
+    const result = await applySteerEdit({
+      repoDir: join(this.#buildsRoot, upid, "repo"),
+      branch: resolved.branch,
+      text,
+      upid,
+      treeGit: this.#treeGit,
+      now: this.#clock,
+      env: this.#env,
+    });
+    this.recordExternalTrace({
+      event: result.ok ? "steer.applier.applied" : "steer.applier.error",
+      level: result.ok ? "info" : "warn",
+      sessionId: this.sessionId,
+      correlationId,
+      upid,
+      meta: result.ok ? { branch: result.branch, unchanged: result.unchanged, text } : { stage: "apply", error: result.error },
+    });
+    // The substrate's onUpdate republished on a landed commit; republishing
+    // here too covers the unchanged/no-commit path so the wall settles honest.
+    this.publish();
+  }
+
+  // The most recently created room/* branch in tree-git state (branch order is
+  // insertion order — creation order within the session).
+  #latestRoomBranch(upid: string): string | null {
+    const branches = this.#treeGit?.snapshot(upid)?.branches ?? [];
+    for (let index = branches.length - 1; index >= 0; index -= 1) {
+      const name = branches[index]!.name;
+      if (name.startsWith("room/")) {
+        return name;
+      }
+    }
+    return null;
   }
 
   startMicSession(correlationId = `corr-mic-${crypto.randomUUID()}`): MicSession {
@@ -1824,6 +2421,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
 
     this.#micActive = true;
     this.#micBytes = 0;
+    this.#micDroppedFrames = 0;
     this.#micLastPublishMs = 0;
     this.#interim = null;
     this.recordExternalTrace({
@@ -1878,6 +2476,11 @@ class LiveProjectorRuntime implements ProjectorRuntime {
           } catch {
             // The stream was already closed/cancelled; drop the late frame.
           }
+        } else {
+          // Backlog full: the uplink can't keep up (wifi congestion or a twitch
+          // playback stream stealing bandwidth). Count the drop so the stall is
+          // attributable instead of silent.
+          this.#micDroppedFrames += 1;
         }
         // Byte-counter ticks ride the lightweight mic channel at 1 Hz; full
         // snapshot publishes happen only when real content changes (transcript
@@ -1935,6 +2538,8 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     if (observation.isFinal) {
       this.#liveFinals = [...this.#liveFinals, line].slice(-MAX_LIVE_TRANSCRIPT_LINES);
       this.#interim = null;
+      // Shadow to disk (debounced, atomic): the self reload resumes from here.
+      this.#transcriptStore?.append({ ...line, atMs: Date.now() });
     } else {
       this.#interim = line;
     }
@@ -1962,6 +2567,17 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       // active the suggester rounds kick in the BACKGROUND (never blocking the
       // idea/steering path below).
       this.research.ingestTurn({ speaker: observation.speaker, text, atMs: this.#clock() });
+
+      // RECORD WINDOW SEAL: while the record toggle is armed, EVERYTHING
+      // spoken belongs to the window — the fuzzy callsign matcher and the
+      // dispatch grammar below must not steal a sentence mid-recording (a
+      // sentence fuzzy-matching a callsign fired a commission BEFORE stop —
+      // live-room report, twice). The explicit wake word above stays live:
+      // "vibersyn, …" is the deliberate override/safety channel.
+      if (this.#steeringUpid !== null) {
+        await this.routeSteering(observation, correlationId);
+        return;
+      }
 
       // VOICE CALLSIGN STEERING: an utterance ADDRESSED to a live process by its
       // callsign ("atlas, make the header blue") sets that process as the
@@ -1993,6 +2609,25 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       if (this.#steeringUpid !== null) {
         await this.routeSteering(observation, correlationId);
         return;
+      }
+
+      // ENDPOINTING GRACE: the record toggle was released moments ago — this
+      // FINAL carries words spoken DURING the window (ASR finals trail the
+      // speaker by 1-2s), so it still belongs to the released target. Adopted
+      // trees also append it to the grace slice the delayed drain will commit.
+      const steerGrace = this.#steerGrace;
+      if (steerGrace !== null) {
+        if (this.#clock() <= steerGrace.untilMs) {
+          // Trailing final for the just-released window: joins the slice the
+          // drain will dispatch — still no per-final action (STOP is the
+          // trigger; the drain fires moments from now).
+          steerGrace.slice = appendSliceLine(steerGrace.slice, { text: observation.text, atMs: this.#clock() });
+          this.publish();
+          return;
+        }
+        // The window lapsed with no timer fire yet — drain lazily and let this
+        // FINAL flow to the ambient path below.
+        this.#drainSteerGrace(`${correlationId}-grace-lapsed`);
       }
 
       // Expire a stale pending suggestion FIRST. Acceptance otherwise only times
@@ -2079,19 +2714,24 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       }
       return;
     }
-    const steerCorrelationId = `${correlationId}-${observation.utteranceId}`;
-    try {
-      await this.registry.steer(upid, { text: observation.text, source: "live-transcript" }, steerCorrelationId);
-    } catch (error) {
-      this.recordExternalTrace({
-        event: "steering.route.error",
-        level: "error",
-        sessionId: this.sessionId,
-        correlationId: steerCorrelationId,
-        upid,
-        meta: { message: error instanceof Error ? error.message : String(error) },
-      });
-    }
+    // RECORD WINDOW = COLLECT ONLY (live-room directive: NOTHING is
+    // commissioned/steered until the operator presses STOP). Every FINAL in
+    // the window joins the slice; the drain at toggle-off (+ endpointing
+    // grace) dispatches ONCE with the full spoken text — the mirror gets one
+    // self-run for the whole description instead of a run per sentence with
+    // the rest refused as busy, mock lanes get one coherent revision, adopted
+    // trees get one commit. (The spoken-address path — "mirror, <text>" /
+    // "<callsign>, <text>" — stays immediate by design: that grammar IS a
+    // complete command, not an open window.)
+    this.#steerSlice = appendSliceLine(this.#steerSlice, { text: observation.text, atMs: this.#clock() });
+    this.recordExternalTrace({
+      event: "steering.window.collect",
+      level: "info",
+      sessionId: this.sessionId,
+      correlationId: `${correlationId}-${observation.utteranceId}`,
+      upid,
+      meta: { text: observation.text },
+    });
     this.publish();
   }
 
@@ -2689,6 +3329,23 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   }
 
   private fireArmedAutoBuild(): void {
+    const holdRemainingMs = this.#guidedHoldUntilMs - this.#clock();
+    if (holdRemainingMs > 0 && this.#autoBuildArmedId !== null) {
+      // Guided-demo hold: the visitor is mid-"describe your idea". Keep the
+      // candidate ARMED (the Done button accepts exactly this candidate) and
+      // re-check when the hold lapses — releasing the hold early re-checks
+      // immediately via setGuidedHold's scheduleAutoBuildCheck.
+      if (this.#autoBuildTimer !== null) {
+        clearTimeout(this.#autoBuildTimer);
+      }
+      const timer = setTimeout(() => {
+        this.#autoBuildTimer = null;
+        this.fireArmedAutoBuild();
+      }, holdRemainingMs + 50);
+      (timer as { unref?: () => void }).unref?.();
+      this.#autoBuildTimer = timer;
+      return;
+    }
     const candidateId = this.#autoBuildArmedId;
     this.#autoBuildArmedId = null;
     this.clearSettleTick();
@@ -2732,9 +3389,13 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     const primary = this.detection.primary();
     const title = primary !== null && primary.id === this.#autoBuildArmedId ? primary.pitch : null;
     const nowMs = this.#clock();
-    const firesInMs = this.#autoBuildSettleMs > 0
-      ? Math.max(0, (this.#lastFinalAtMs ?? nowMs) + this.#autoBuildSettleMs - nowMs)
-      : 0;
+    // Under a guided hold there IS no countdown — the Done button is the only
+    // trigger, so the wall must not show a timer that will never fire.
+    const firesInMs = nowMs < this.#guidedHoldUntilMs
+      ? null
+      : this.#autoBuildSettleMs > 0
+        ? Math.max(0, (this.#lastFinalAtMs ?? nowMs) + this.#autoBuildSettleMs - nowMs)
+        : 0;
     return { armed: true, title, firesInMs };
   }
 
@@ -2870,6 +3531,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       updatedAt: new Date().toISOString(),
       mic: { mode: this.micMode, active: this.#micActive, bytesReceived: this.#micBytes },
       steeringUpid: this.#steeringUpid,
+      steeringBranch: this.#steeringBranch,
       autoAccept: this.#autoAccept,
       captureMode: this.#captureMode,
       researchMode: this.research.active(),
@@ -2879,6 +3541,10 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       // Concept clusters over the dialogue window — each topic a BRANCH of the
       // 3D conversation tree (turns point back via topicId).
       dialogueTopics: this.research.topics(),
+      // The conversation SKY: clouds that outlive the window + their relations,
+      // each link marked agent (model judged) vs lexical (deterministic
+      // fallback) — agentAtMs null means the relate model has never spoken.
+      sky: this.research.sky(),
       ideaSettle: this.ideaSettleSnapshot(),
       // Multi-backend build loop: the registered backend roster with enabled +
       // last-probed availability — the wall's toggle chips (POST /api/backends).
@@ -2888,6 +3554,11 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       // the self surface driving the mirror label + reload overlay.
       bootId: this.bootId,
       self: this.selfSurface(),
+      // SELF-REBUILD toggle state + whether the --self supervisor is actually
+      // wrapping this process (VIBERSYN_SELF_MODE=1 is the supervisor's
+      // marker), so the wall can title the toggle honestly.
+      selfRebuild: this.#selfRebuild,
+      selfSupervisor: this.#selfMode,
     };
   }
 
@@ -2960,6 +3631,36 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       return [];
     }
     return ideaTrayFromCandidates(this.detection.candidates());
+  }
+
+  // --- Deck answer ledger (swipe-to-answer question cards) ------------------
+
+  // Record a chosen answer for a process. Latest answer per questionId wins
+  // (a re-answer replaces and moves to the back); the per-UPID map is capped
+  // so a hot deck can never grow the runtime unbounded. Called by the /answer
+  // route BEFORE it steers, so the steer-triggered deck regeneration already
+  // sees the decision.
+  recordAnswer(upid: string, entry: DeckAnswer): void {
+    let forUpid = this.#deckAnswers.get(upid);
+    if (forUpid === undefined) {
+      forUpid = new Map();
+      this.#deckAnswers.set(upid, forUpid);
+    }
+    forUpid.delete(entry.questionId);
+    forUpid.set(entry.questionId, entry);
+    while (forUpid.size > MAX_DECK_ANSWERS_PER_UPID) {
+      const oldest = forUpid.keys().next().value;
+      if (oldest === undefined) {
+        break;
+      }
+      forUpid.delete(oldest);
+    }
+  }
+
+  // The recorded answers for a process, in answer order. Passed through the
+  // slideshow hook so regenerated decks render answered cards pre-decided.
+  answeredQuestions(upid: string): DeckAnswer[] {
+    return [...(this.#deckAnswers.get(upid)?.values() ?? [])];
   }
 
   // --- Take-home publishing (GitHub Pages + QR) -----------------------------
@@ -3159,17 +3860,18 @@ class LiveProjectorRuntime implements ProjectorRuntime {
         // title is only null when the pitch had no content words to infer from.
         task: imported?.task ?? record.title ?? demo?.task ?? record.callsign,
         model: demo?.model ?? "runtime",
-        // Clone-routine labels only cover the pre-build window: once the
-        // (fallback) fan-out is live, the build lanes are the honest surface
-        // and a stale "clone failed" line must not shadow them for the card's
-        // whole life.
+        // Clone-routine labels: "cloning"/"imported" only cover the pre-build
+        // window, but a FAILED clone stays on the label for the card's whole
+        // life — the fallback fan-out builds from the link only, and a mock
+        // that silently impersonates a grounded import (no real repo, no PR
+        // rails) is a lie the wall must not tell.
         progressLabel:
           record.state === "dead"
             ? "halted"
             : imported?.status === "cloning"
               ? "cloning repository"
-              : imported?.status === "clone-failed" && builds.length === 0 && build === undefined
-                ? "clone failed — building from the link"
+              : imported?.status === "clone-failed"
+                ? "clone failed — building from the link only"
                 : imported !== undefined && builds.length === 0 && build === undefined
                   ? "imported"
                   : demo?.progressLabel ?? record.lastAction,
@@ -3179,6 +3881,15 @@ class LiveProjectorRuntime implements ProjectorRuntime {
         events: record.state === "dead" ? [...(demo?.events ?? []), "halted"] : demo?.events ?? [record.lastAction],
         publishedUrl: published?.url ?? null,
         publishedQrSvg: published?.qrSvg ?? null,
+        // LIVE DEPLOYMENT (imported trees): the deploy-resolver's confirmed
+        // URL. Like publishedUrl it survives halt — the deployment is an
+        // external fact, not a torn-down room-local server.
+        deployUrl: imported?.deployUrl ?? null,
+        // GIT SUBSTRATE surface (tree visuals): branch → session commit
+        // counts + the published remote. Pure in-memory (zero subprocesses
+        // per snapshot) and — like publishedUrl above — deliberately survives
+        // halt: the repo on disk / GitHub is a fact, not a torn-down server.
+        treeRepo: this.#treeGit?.snapshot(record.upid) ?? null,
         ...(imported === undefined
           ? {}
           : imported.kind === "github"
@@ -3202,6 +3913,623 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       lastSpoken: this.#lastSpoken ?? previous.audio.lastSpoken,
       earcon: this.#lastEarcon ?? previous.audio.earcon,
     };
+  }
+
+  // ── self BRANCH rails (branch-per-record + click-a-branch-to-load) ──────
+  // Delegates to the injected seam when one exists (tests script every rail
+  // without a subprocess); production stays the plain git spawn in the room's
+  // own working directory — deliberately keychain-plain, never the tree-git
+  // credential chain (this is the operator's checkout, not a build's clone).
+  async #selfGit(argv: string[]): Promise<{ code: number; out: string }> {
+    if (this.#selfGitRunner !== null) {
+      const result = await this.#selfGitRunner(argv);
+      return { code: result.ok ? 0 : 1, out: (result.stdout + result.stderr).trim() };
+    }
+    try {
+      const proc = Bun.spawn(["git", ...argv], { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" });
+      const out = await new Response(proc.stdout).text();
+      const err = await new Response(proc.stderr).text();
+      await proc.exited;
+      return { code: proc.exitCode ?? 1, out: (out + err).trim() };
+    } catch (error) {
+      return { code: 1, out: error instanceof Error ? error.message : String(error) };
+    }
+  }
+
+  // The gh sibling (finalize + remote prune): argv INCLUDES the leading "gh"
+  // (ForestCommandRunner contract). Plain keychain gh — GH_TOKEN handling and
+  // timeouts live in the default runner.
+  async #selfGh(argv: string[]): Promise<{ code: number; out: string }> {
+    const run = this.#selfGhRunner ?? ghCommandRunner;
+    const result = await run(argv);
+    return { code: result.ok ? 0 : 1, out: (result.stdout + result.stderr).trim() };
+  }
+
+  // Cut a fresh smart-named room/* branch off the CURRENT branch for a spoken
+  // window. Dedupe -2..-6 on collision; null (never a throw) when git refuses.
+  async #cutSelfBranch(text: string): Promise<string | null> {
+    const base = `room/${slugFromSpeech(text)}`;
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      const name = attempt === 0 ? base : `${base}-${attempt + 1}`;
+      const result = await this.#selfGit(["checkout", "-b", name]);
+      if (result.code === 0) {
+        return name;
+      }
+      if (!result.out.includes("already exists")) {
+        return null;
+      }
+    }
+    return null;
+  }
+
+  // The room's own branches (the wall's "load this version" rows): every
+  // room/* head plus the current branch, newest first, with subjects.
+  async selfBranches(): Promise<{ current: string; branches: Array<{ name: string; subject: string; date: string }> }> {
+    const current = (await this.#selfGit(["branch", "--show-current"])).out.trim();
+    const listed = await this.#selfGit([
+      "for-each-ref",
+      "--sort=-committerdate",
+      "--format=%(refname:short)\u0001%(subject)\u0001%(committerdate:relative)",
+      "refs/heads/room/",
+      `refs/heads/${current}`,
+    ]);
+    const seen = new Set<string>();
+    const branches: Array<{ name: string; subject: string; date: string }> = [];
+    for (const line of listed.out.split("\n")) {
+      const [name, subject, date] = line.split("\u0001");
+      if (name !== undefined && name.length > 0 && !seen.has(name)) {
+        seen.add(name);
+        branches.push({ name, subject: subject ?? "", date: date ?? "" });
+      }
+    }
+    return { current, branches };
+  }
+
+  // LOAD A VERSION: check out an existing local branch and hand the process to
+  // the supervisor (exit 87 -> rebuild -> relaunch ON that branch). Refuses
+  // honestly: unknown/unsafe names, src/ uncommitted work, or no supervisor.
+  async checkoutSelfBranch(branch: string): Promise<{ ok: true } | { ok: false; error: string }> {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._/-]*$/u.test(branch) || branch.includes("..")) {
+      return { ok: false, error: "unsafe branch name" };
+    }
+    if (!selfModeEnabled(this.#env)) {
+      return { ok: false, error: "no supervisor is wrapping this process (--self launch required)" };
+    }
+    const exists = await this.#selfGit(["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`]);
+    if (exists.code !== 0) {
+      return { ok: false, error: `no local branch named ${branch}` };
+    }
+    const dirty = (await this.#selfGit(["status", "--porcelain"])).out
+      .split("\n")
+      .map((line) => line.slice(3).trim())
+      .filter((path) => path.startsWith("src/"));
+    if (dirty.length > 0) {
+      return { ok: false, error: `uncommitted work in the tree (${dirty[0]}${dirty.length > 1 ? ` +${dirty.length - 1}` : ""}) — commit or stash first` };
+    }
+    const checkout = await this.#selfGit(["checkout", branch]);
+    if (checkout.code !== 0) {
+      return { ok: false, error: checkout.out.slice(0, 160) };
+    }
+    this.recordExternalTrace({
+      event: "self.version.load",
+      level: "info",
+      sessionId: this.sessionId,
+      correlationId: `corr-self-load-${crypto.randomUUID()}`,
+      meta: { branch },
+    });
+    // Respond first, exit after: the supervisor rebuilds the tree (now on the
+    // requested branch) and relaunches the room on it. Through the #exit seam
+    // so tests observe the 87 instead of dying with it.
+    setTimeout(() => this.#exit(87), 400);
+    return { ok: true };
+  }
+
+  // INTO THE TRUNK (finalize): merge a room/* branch into main. The gh path
+  // drives the branch's PR — ready it if draft, retarget its base to main
+  // (vibersyn-self drafts PRs against the branch it started FROM, often
+  // another room/*), then a plain merge commit (--merge, never --squash: self
+  // commits are the room's history). No PR at all falls back to a fast-
+  // forward push when main is an ancestor. Merging the CURRENT branch is
+  // ALLOWED — the room keeps standing on it; main simply gains its commits
+  // (the operator loads main later via /api/self/checkout). Every gh/git
+  // refusal surfaces verbatim (sliced) — the wall renders it inline.
+  async mergeSelfBranch(
+    branch: string,
+  ): Promise<{ ok: true; merged: true; via: "pr" | "fast-forward" } | { ok: false; error: string }> {
+    const correlationId = `corr-self-finalize-${crypto.randomUUID()}`;
+    const refuse = (error: string): { ok: false; error: string } => {
+      this.recordExternalTrace({
+        event: "self.version.finalize",
+        level: "warn",
+        sessionId: this.sessionId,
+        correlationId,
+        meta: { branch, error },
+      });
+      return { ok: false, error };
+    };
+    if (!/^[A-Za-z0-9][A-Za-z0-9._/-]*$/u.test(branch) || branch.includes("..")) {
+      return refuse("unsafe branch name");
+    }
+    if (!branch.startsWith("room/")) {
+      return refuse("only room/* limbs can be finalized");
+    }
+    const exists = await this.#selfGit(["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`]);
+    if (exists.code !== 0) {
+      return refuse(`no local branch named ${branch}`);
+    }
+    const slug = this.#env.VIBERSYN_SELF_REPO ?? "RonTuretzky/vibecode-room";
+    const listed = await this.#selfGh([
+      "gh", "pr", "list", "-R", slug, "--head", branch,
+      "--state", "all", "--json", "number,state,isDraft,baseRefName", "--limit", "1",
+    ]);
+    if (listed.code !== 0) {
+      return refuse(listed.out.slice(0, 160));
+    }
+    let prs: Array<{ number?: unknown; state?: unknown; isDraft?: unknown; baseRefName?: unknown }> = [];
+    try {
+      const parsed = JSON.parse(listed.out) as unknown;
+      prs = Array.isArray(parsed) ? parsed : [];
+    } catch {
+      prs = [];
+    }
+    const pr = prs[0];
+    let via: "pr" | "fast-forward";
+    if (pr === undefined || typeof pr.number !== "number") {
+      // No PR: a plain fast-forward push is the only honest merge left.
+      via = "fast-forward";
+      const ancestor = await this.#selfGit(["merge-base", "--is-ancestor", "refs/heads/main", `refs/heads/${branch}`]);
+      if (ancestor.code !== 0) {
+        return refuse("no PR and not fast-forward from main — needs a PR");
+      }
+      const pushed = await this.#selfGit(["push", "origin", `refs/heads/${branch}:refs/heads/main`]);
+      if (pushed.code !== 0) {
+        return refuse(pushed.out.slice(0, 160));
+      }
+    } else {
+      via = "pr";
+      if (pr.state !== "MERGED") {
+        if (pr.isDraft === true) {
+          const readied = await this.#selfGh(["gh", "pr", "ready", String(pr.number), "-R", slug]);
+          if (readied.code !== 0) {
+            return refuse(readied.out.slice(0, 160));
+          }
+        }
+        if (typeof pr.baseRefName === "string" && pr.baseRefName !== "main") {
+          const retargeted = await this.#selfGh(["gh", "pr", "edit", String(pr.number), "-R", slug, "--base", "main"]);
+          if (retargeted.code !== 0) {
+            return refuse(retargeted.out.slice(0, 160));
+          }
+        }
+        const merged = await this.#selfGh(["gh", "pr", "merge", String(pr.number), "-R", slug, "--merge"]);
+        if (merged.code !== 0) {
+          return refuse(merged.out.slice(0, 160));
+        }
+      }
+      // Best-effort: freshen the local main ref so a later fast-forward /
+      // checkout sees the merge; a failure here changes nothing upstream.
+      await this.#selfGit(["fetch", "origin", "main:main"]).catch(() => undefined);
+    }
+    this.recordExternalTrace({
+      event: "self.version.finalize",
+      level: "info",
+      sessionId: this.sessionId,
+      correlationId,
+      meta: { branch, via },
+    });
+    return { ok: true, merged: true, via };
+  }
+
+  // A pruned branch's OWN GRAFT COMMITS: commits reachable from X but not
+  // from X's NEAREST ancestor among {origin/main (fallback local main), every
+  // other room/* tip that is an ancestor of X, the current branch}. "Nearest"
+  // = the candidate with the FEWEST commits between it and X's tip (min
+  // `rev-list --count C..X` — the ancestor holding the most of X's history);
+  // in the room's stacked topology that is exactly the run's own commit(s) at
+  // X's tip. Returned newest-first — already the revert order. `others` is
+  // every OTHER tendable branch (room/* tips + current, minus X) the caller
+  // probes for containment.
+  async #selfOwnCommits(branch: string, current: string): Promise<{ own: string[]; others: string[] }> {
+    const listed = await this.#selfGit(["for-each-ref", "--format=%(refname:short)", "refs/heads/room/"]);
+    const names = new Set(
+      listed.out
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((name) => name.length > 0),
+    );
+    if (current.length > 0) {
+      names.add(current);
+    }
+    names.delete(branch);
+    const others = [...names];
+    const candidates = others.map((name) => `refs/heads/${name}`);
+    const originMain = await this.#selfGit(["rev-parse", "--verify", "--quiet", "refs/remotes/origin/main"]);
+    candidates.push(originMain.code === 0 ? "refs/remotes/origin/main" : "refs/heads/main");
+    let nearest: { ref: string; count: number } | null = null;
+    for (const ref of candidates) {
+      const ancestor = await this.#selfGit(["merge-base", "--is-ancestor", ref, `refs/heads/${branch}`]);
+      if (ancestor.code !== 0) {
+        continue;
+      }
+      const counted = await this.#selfGit(["rev-list", "--count", `${ref}..refs/heads/${branch}`]);
+      const count = Number.parseInt(counted.out, 10);
+      if (!Number.isFinite(count)) {
+        continue;
+      }
+      if (nearest === null || count < nearest.count) {
+        nearest = { ref, count };
+      }
+    }
+    if (nearest === null || nearest.count === 0) {
+      return { own: [], others };
+    }
+    const ownListed = await this.#selfGit(["rev-list", `${nearest.ref}..refs/heads/${branch}`]);
+    const own = ownListed.out
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+    return { own, others };
+  }
+
+  // EXCISE a pruned branch's graft from another (NON-current) branch: revert
+  // its commits (newest-first) in a TEMPORARY detached worktree — the live
+  // checkout can never switch branches (the room projects from it) — then
+  // move the branch ref with an old-value CAS (`update-ref <ref> <new> <old>`
+  // refuses if the tip moved under us) and push the single explicit refspec
+  // best-effort (the reverts sit ON TOP of the old tip, a plain fast-forward,
+  // keychain-plain). A conflicted revert aborts and leaves the branch exactly
+  // as it was: {ok:false} is the honest answer the caller reports by name —
+  // never a throw, never a half-revert. One temp worktree at a time, ALWAYS
+  // cleaned up (finally: remove --force + rmSync + worktree prune).
+  async #exciseFromBranch(branch: string, commits: string[]): Promise<{ ok: boolean }> {
+    const oldTip = (await this.#selfGit(["rev-parse", `refs/heads/${branch}`])).out.trim();
+    if (oldTip.length === 0) {
+      return { ok: false };
+    }
+    const tmp = mkdtempSync(join(tmpdir(), "vibersyn-excise-"));
+    try {
+      const added = await this.#selfGit(["worktree", "add", "--detach", tmp, oldTip]);
+      if (added.code !== 0) {
+        return { ok: false };
+      }
+      const reverted = await this.#selfGit(["-C", tmp, "revert", "--no-edit", ...commits]);
+      if (reverted.code !== 0) {
+        // Conflict (or any refusal): abort best-effort, the branch untouched.
+        await this.#selfGit(["-C", tmp, "revert", "--abort"]);
+        return { ok: false };
+      }
+      const newTip = (await this.#selfGit(["-C", tmp, "rev-parse", "HEAD"])).out.trim();
+      if (newTip.length === 0) {
+        return { ok: false };
+      }
+      const updated = await this.#selfGit(["update-ref", `refs/heads/${branch}`, newTip, oldTip]);
+      if (updated.code !== 0) {
+        return { ok: false };
+      }
+      // Best-effort: freshen origin so the branch's PR shows the excise; a
+      // push failure changes nothing locally and is not a conflict.
+      await this.#selfGit(["push", "origin", `refs/heads/${branch}:refs/heads/${branch}`]);
+      return { ok: true };
+    } finally {
+      await this.#selfGit(["worktree", "remove", "--force", tmp]);
+      rmSync(tmp, { recursive: true, force: true });
+      await this.#selfGit(["worktree", "prune"]);
+    }
+  }
+
+  // TEND A LIMB: archive or delete one of the room's local branches — the
+  // tree-menu's per-branch lifecycle actions. Neither ever touches the running
+  // branch (the room must not saw off the limb it stands on), and both refuse
+  // unsafe names. Archiving RENAMES room/<x> -> archive/<x> (the limb leaves
+  // the load list but the work survives); deleting is a local `branch -D`
+  // followed by a BEST-EFFORT remote prune (push origin --delete + closing
+  // any open PR) — a remote failure is reported in the trace, never rolled
+  // back (the local prune already happened; honesty = report, not rollback).
+  // Delete with scope "everywhere" FIRST excises the branch's own graft from
+  // every other branch carrying it (see #selfOwnCommits / #exciseFromBranch);
+  // the CURRENT branch reverts in place (the server owns that worktree) and
+  // schedules the exit-87 rebuild so the walls actually lose the feature.
+  async manageSelfBranch(
+    branch: string,
+    action: "archive" | "delete",
+    scope: "branch" | "everywhere" = "branch",
+  ): Promise<
+    | { ok: true; excised?: Array<{ branch: string; reverted: number }>; conflicts?: string[]; reloading?: boolean; grafts?: number }
+    | { ok: false; error: string }
+  > {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._/-]*$/u.test(branch) || branch.includes("..")) {
+      return { ok: false, error: "unsafe branch name" };
+    }
+    // Belt-and-braces: the room/* gate below already excludes the trunk, but
+    // the trunk must never be tendable even if that gate ever loosens.
+    if (branch === "main") {
+      return { ok: false, error: "the trunk (main) is never tended" };
+    }
+    if (!branch.startsWith("room/")) {
+      return { ok: false, error: "only room/* branches can be tended" };
+    }
+    const current = (await this.#selfGit(["branch", "--show-current"])).out.trim();
+    const archivingLive = branch === current;
+    if (branch === current && action === "delete") {
+      return { ok: false, error: "cannot tend the running branch — load another version first" };
+    }
+    const exists = await this.#selfGit(["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`]);
+    if (exists.code !== 0) {
+      return { ok: false, error: `no local branch named ${branch}` };
+    }
+    // Remote-prune bookkeeping for the delete path's trace (report, never
+    // rollback): what happened to origin's copy + whether an open PR closed.
+    let remote = "skipped";
+    let prClosed = false;
+    // Excise bookkeeping (delete scope "everywhere" only): which branches
+    // lost the graft, which the revert could not land on, and whether the
+    // current branch was excised (=> the exit-87 rebuild is scheduled).
+    let excised: Array<{ branch: string; reverted: number }> | undefined;
+    let grafts: number | undefined;
+    let conflicts: string[] | undefined;
+    let reloading = false;
+    if (action === "archive") {
+      // Archiving the LIVE branch: step off it onto main first so the running
+      // room no longer stands on the limb being archived, then rename and hand
+      // the process to the supervisor (exit 87 -> rebuild -> relaunch on main)
+      // so whatever is archived is no longer live on the room.
+      if (archivingLive) {
+        if (!selfModeEnabled(this.#env)) {
+          return { ok: false, error: "no supervisor is wrapping this process (--self launch required)" };
+        }
+        const stepOff = await this.#selfGit(["checkout", "main"]);
+        if (stepOff.code !== 0) {
+          return { ok: false, error: stepOff.out.slice(0, 160) };
+        }
+      }
+      const archived = `archive/${branch.slice("room/".length)}`;
+      const renamed = await this.#selfGit(["branch", "-m", branch, archived]);
+      if (renamed.code !== 0) {
+        return { ok: false, error: renamed.out.slice(0, 160) };
+      }
+      if (archivingLive) {
+        this.recordExternalTrace({
+          event: "self.version.tend",
+          level: "info",
+          sessionId: this.sessionId,
+          correlationId: `corr-self-tend-${crypto.randomUUID()}`,
+          meta: { branch, action, reload: true },
+        });
+        // Respond first, exit after: the supervisor rebuilds on main and
+        // relaunches — the archived change is gone from the live room.
+        setTimeout(() => this.#exit(87), 400);
+        return { ok: true };
+      }
+    } else {
+      // THE EXCISE (scope "everywhere"): before the label falls, revert X's
+      // own graft commits on every OTHER branch that carries any of them —
+      // per-commit containment, because a descendant may hold only part of
+      // the graft. Non-current branches go through the temp-worktree excise;
+      // the CURRENT branch (the live checkout) reverts in place — guarded by
+      // the supervisor gate and the dirty-src refusal (the leftover-hygiene
+      // contract) — and the room rebuilds. Every branch the revert could NOT
+      // land on is reported by name in `conflicts`, untouched: partial
+      // success is per-branch and spoken, never silent.
+      if (scope === "everywhere") {
+        excised = [];
+        grafts = 0;
+        conflicts = [];
+        const { own, others } = await this.#selfOwnCommits(branch, current);
+        grafts = own.length;
+        const containedIn = async (name: string): Promise<string[]> => {
+          const contained: string[] = [];
+          for (const commit of own) {
+            const check = await this.#selfGit(["merge-base", "--is-ancestor", commit, `refs/heads/${name}`]);
+            if (check.code === 0) {
+              contained.push(commit);
+            }
+          }
+          return contained;
+        };
+        for (const other of others) {
+          if (other === current) {
+            continue;
+          }
+          const contained = await containedIn(other);
+          if (contained.length === 0) {
+            continue;
+          }
+          const result = await this.#exciseFromBranch(other, contained);
+          if (result.ok) {
+            excised.push({ branch: other, reverted: contained.length });
+          } else {
+            conflicts.push(other);
+          }
+        }
+        if (others.includes(current)) {
+          const contained = await containedIn(current);
+          if (contained.length > 0) {
+            if (!selfModeEnabled(this.#env)) {
+              // No supervisor to rebuild the room off the excised tip: refuse
+              // THIS branch only (reported, the rest of the excise stands).
+              conflicts.push(`${current} (no supervisor — --self launch required)`);
+            } else {
+              const dirty = (await this.#selfGit(["status", "--porcelain"])).out
+                .split("\n")
+                .map((line) => line.slice(3).trim())
+                .filter((path) => path.startsWith("src/"));
+              if (dirty.length > 0) {
+                conflicts.push(`${current} (uncommitted work)`);
+              } else {
+                const reverted = await this.#selfGit(["revert", "--no-edit", ...contained]);
+                if (reverted.code !== 0) {
+                  await this.#selfGit(["revert", "--abort"]);
+                  conflicts.push(current);
+                } else {
+                  await this.#selfGit(["push", "origin", `refs/heads/${current}:refs/heads/${current}`]);
+                  excised.push({ branch: current, reverted: contained.length });
+                  reloading = true;
+                }
+              }
+            }
+          }
+        }
+      }
+      const removed = await this.#selfGit(["branch", "-D", branch]);
+      if (removed.code !== 0) {
+        return { ok: false, error: removed.out.slice(0, 160) };
+      }
+      // BEST-EFFORT remote prune: the local branch is already gone, so a
+      // remote failure is reported (trace meta), never rolled back — the
+      // pruned limb must not resurrect as an error.
+      const pushed = await this.#selfGit(["push", "origin", "--delete", branch]);
+      remote = pushed.code === 0 ? "deleted" : `failed: ${pushed.out.slice(0, 120)}`;
+      const slug = this.#env.VIBERSYN_SELF_REPO ?? "RonTuretzky/vibecode-room";
+      const listed = await this.#selfGh([
+        "gh", "pr", "list", "-R", slug, "--head", branch, "--state", "open", "--json", "number", "--limit", "1",
+      ]);
+      try {
+        const openPrs = listed.code === 0 ? (JSON.parse(listed.out) as Array<{ number?: unknown }>) : [];
+        const openPr = Array.isArray(openPrs) ? openPrs[0] : undefined;
+        if (openPr !== undefined && typeof openPr.number === "number") {
+          const closed = await this.#selfGh(["gh", "pr", "close", String(openPr.number), "-R", slug]);
+          prClosed = closed.code === 0;
+        }
+      } catch {
+        // Unparseable gh output = no PR found; the prune already succeeded.
+      }
+    }
+    this.recordExternalTrace({
+      event: "self.version.tend",
+      level: "info",
+      sessionId: this.sessionId,
+      correlationId: `corr-self-tend-${crypto.randomUUID()}`,
+      meta: {
+        branch,
+        action,
+        ...(action === "delete" ? { remote, prClosed, scope } : {}),
+        ...(grafts !== undefined ? { grafts } : {}),
+      ...(excised !== undefined ? { excised, conflicts, reload: reloading } : {}),
+      },
+    });
+    if (reloading) {
+      // Respond first, exit after (the checkoutSelfBranch idiom): the current
+      // branch lost the graft, so the supervisor rebuilds the tree from the
+      // excised tip and relaunches — the walls actually lose the feature.
+      // Through the #exit seam so tests observe the 87 instead of dying.
+      setTimeout(() => this.#exit(87), 400);
+    }
+    return excised !== undefined ? { ok: true, excised, conflicts, reloading } : { ok: true };
+  }
+
+  // STOP GROWING: abort the executing self-run through the commissioner —
+  // cancelRun on the durable run, lane settled failed·"aborted" (a reload can
+  // never fire from it). NEVER registry.halt("self"): that marks the pinned
+  // record dead and orphans the mirror until reboot. The run's uncommitted
+  // edits stay on the room/* branch it cut; the next run's hygiene step
+  // stashes them as "self-run leftovers" (vibersyn-self.tsx), so there is no
+  // server-side cleanup here. Idempotent: nothing executing → {halted:false}.
+  async haltSelfRun(
+    correlationId = `corr-self-halt-${crypto.randomUUID()}`,
+  ): Promise<{ ok: true; halted: boolean } | { ok: false; error: string }> {
+    if (this.#selfCommission === null) {
+      return { ok: false, error: "self mode is off" };
+    }
+    const lane = this.#selfCommission.lane();
+    if (lane === null || lane.status !== "executing") {
+      return { ok: true, halted: false };
+    }
+    await this.#selfCommission.abort();
+    this.publish();
+    this.recordExternalTrace({
+      event: "self.run.halt",
+      level: "info",
+      sessionId: this.sessionId,
+      correlationId,
+      upid: SELF_UPID,
+      meta: { runId: lane.runId },
+    });
+    return { ok: true, halted: true };
+  }
+
+  // ── self-run ACTIVITY PROBE (live-room complaint: "run heartbeat · 95%"
+  // reads as a mock). The gateway's event stream carries no agent activity,
+  // but the run's REAL footprint is observable in the working tree: files it
+  // edits, the room/* branch it cuts, the build it runs, the self-verify
+  // screenshots it takes. Poll that footprint every few seconds while a self
+  // lane executes and surface an honest label + elapsed time.
+  #selfProbeTimer: ReturnType<typeof setInterval> | null = null;
+  #selfProbeStartMs = 0;
+  #selfProbeBusy = false;
+
+  #startSelfActivityProbe(): void {
+    if (this.#selfProbeTimer !== null) {
+      clearInterval(this.#selfProbeTimer);
+    }
+    this.#selfProbeStartMs = Date.now();
+    const timer = setInterval(() => {
+      const lane = this.#selfCommission?.lane() ?? null;
+      if (lane === null || lane.status !== "executing") {
+        if (this.#selfProbeTimer !== null) {
+          clearInterval(this.#selfProbeTimer);
+          this.#selfProbeTimer = null;
+        }
+        return;
+      }
+      if (this.#selfProbeBusy) {
+        return;
+      }
+      this.#selfProbeBusy = true;
+      void this.#probeSelfRunActivity()
+        .then((label) => {
+          if (label !== null) {
+            // Time-based percent against the typical verified run (~6 min):
+            // honest motion instead of the stream's instant fake 95.
+            const pct = Math.min(96, Math.round(((Date.now() - this.#selfProbeStartMs) / 360_000) * 100));
+            this.#selfCommission?.progress({ label, percent: pct });
+          }
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          this.#selfProbeBusy = false;
+        });
+    }, 3_000);
+    (timer as { unref?: () => void }).unref?.();
+    this.#selfProbeTimer = timer;
+  }
+
+  async #probeSelfRunActivity(): Promise<string | null> {
+    const run = async (argv: string[]): Promise<string> => {
+      try {
+        const proc = Bun.spawn(argv, { cwd: process.cwd(), stdout: "pipe", stderr: "ignore" });
+        const out = await new Response(proc.stdout).text();
+        await proc.exited;
+        return proc.exitCode === 0 ? out : "";
+      } catch {
+        return "";
+      }
+    };
+    const elapsedSec = Math.round((Date.now() - this.#selfProbeStartMs) / 1000);
+    const elapsed = elapsedSec >= 60 ? `${Math.floor(elapsedSec / 60)}m${String(elapsedSec % 60).padStart(2, "0")}s` : `${elapsedSec}s`;
+    const [branch, status] = await Promise.all([run(["git", "branch", "--show-current"]), run(["git", "status", "--porcelain"])]);
+    const branchName = branch.trim();
+    const srcEdits = status
+      .split("\n")
+      .map((line) => line.slice(3).trim())
+      .filter((path) => path.startsWith("src/"));
+    // Most-specific truth first: verify screenshots → building → editing →
+    // branch cut → reading. All derived from the run's REAL footprint.
+    try {
+      const distStat = await stat(resolve(process.cwd(), "dist", "index.html")).catch(() => null);
+      if (distStat !== null && distStat.mtimeMs > this.#selfProbeStartMs && Date.now() - distStat.mtimeMs < 9_000) {
+        return `built the change — verifying · ${elapsed}`;
+      }
+    } catch {
+      // stat unavailable — fall through to the working-tree signals
+    }
+    if (srcEdits.length > 0) {
+      const first = srcEdits[0].split("/").pop() ?? srcEdits[0];
+      const more = srcEdits.length > 1 ? ` +${srcEdits.length - 1} more` : "";
+      return `editing ${first}${more} · ${elapsed}`;
+    }
+    if (branchName.startsWith("room/")) {
+      return `on ${branchName} — working · ${elapsed}`;
+    }
+    return `reading the room's source · ${elapsed}`;
   }
 
   private recordExternalTrace(event: LogEvent): void {
@@ -3312,7 +4640,11 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     // a completed stream frame hands off to the room-side green gate (which
     // decides built-vs-failed from git, never from the frame alone).
     if (this.#selfCommission !== null && upid === SELF_UPID) {
-      this.#selfCommission.progress({ percent: overlay.progress, label: overlay.lastOutput });
+      // The gateway's stream for self runs carries only "run heartbeat" — the
+      // ACTIVITY PROBE (#probeSelfRunActivity) owns the lane's label+percent
+      // with real working-tree signals; folding the heartbeat here would
+      // flicker the honest label back to a mock every frame. Only the
+      // completion edge matters from this stream.
       if (overlay.state === "completed") {
         void this.#selfCommission.completeFromRun("finished").catch(() => undefined);
       }
@@ -3395,12 +4727,208 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       };
     }
     this.subscribeRunEvents(upid, result.runId);
+    // GIT SUBSTRATE publish: commission is the moment the tree's repo goes to
+    // GitHub (private repo + one draft PR per concept branch). Fire-and-forget
+    // — a publish failure degrades to a trace, never touches the commission.
+    // Only reachable when result.started === true, never at birth. ADOPTED
+    // trees are a deliberate no-op: their origin already IS the remote, and
+    // the branch-rails PR flow (room/<slug> → real PR to the origin) replaces
+    // the commission publish outright.
+    if (this.#treeGit?.isAdopted(upid) === true) {
+      this.recordExternalTrace({
+        event: "tree.git.publish",
+        level: "info",
+        sessionId: this.sessionId,
+        correlationId,
+        upid,
+        meta: { refused: "adopted", reason: "origin is the remote — the room/* PR flow replaces commission publish" },
+      });
+    } else {
+      const record = this.registry.records().find((entry) => entry.upid === upid);
+      const seedPitch = this.#seedPitchFor(upid);
+      void this.#treeGit
+        ?.publish(upid, {
+          name: record?.title ?? record?.callsign ?? upid,
+          ...(seedPitch === null ? {} : { description: seedPitch }),
+        })
+        .catch(() => undefined);
+    }
     this.publish();
     return { ok: true, execution: result.execution, snapshot: this.#snapshot };
   }
 
+  // The explicit publish action ("push this tree to GitHub now") — the same
+  // idempotent substrate call the commission fires, surfaced for the
+  // publish-repo route. Typed result so the route can 200/400 honestly.
+  async publishTreeRepo(
+    upid: string,
+    correlationId = `corr-publish-repo-${upid}`,
+  ): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
+    if (this.#treeGit === null) {
+      return { ok: false, error: "tree git substrate is disabled" };
+    }
+    const record = this.registry.records().find((entry) => entry.upid === upid);
+    if (record === undefined) {
+      return { ok: false, error: `No process for UPID ${upid}.` };
+    }
+    const seedPitch = this.#seedPitchFor(upid);
+    const result = await this.#treeGit.publish(upid, {
+      name: record.title ?? record.callsign ?? upid,
+      ...(seedPitch === null ? {} : { description: seedPitch }),
+    });
+    this.recordExternalTrace({
+      event: "tree.git.publish.request",
+      level: result.ok ? "info" : "warn",
+      sessionId: this.sessionId,
+      correlationId,
+      upid,
+      meta: result.ok ? { url: result.url } : { error: result.error },
+    });
+    return result;
+  }
+
+  // The pitch the tree's repo was seeded with (publish descriptions).
+  #seedPitchFor(upid: string): string | null {
+    return this.#treeGit?.seedPitch(upid) ?? null;
+  }
+
+  // ADOPTED-TREE BRANCH RAILS (the PR engine). createTreeBranch fetches the
+  // real origin/main tip first (inside the substrate) and cuts room/<slug> at
+  // it; openTreeBranchPr is the whole spoken-changes → PR ride: commit the
+  // clone's current working tree if dirty, push ONLY the room branch, open
+  // (or return the existing) PR against the origin adopt() recorded. Both are
+  // honest typed results for the routes — adopted trees only.
+  async createTreeBranch(
+    upid: string,
+    name: string,
+    correlationId = `corr-tree-branch-${upid}`,
+  ): Promise<{ ok: true; branch: string } | { ok: false; error: string }> {
+    if (this.#treeGit === null) {
+      return { ok: false, error: "tree git substrate is disabled" };
+    }
+    const result = await this.#treeGit.createBranch(upid, name);
+    this.recordExternalTrace({
+      event: "tree.git.branch.request",
+      level: result.ok ? "info" : "warn",
+      sessionId: this.sessionId,
+      correlationId,
+      upid,
+      meta: result.ok ? { branch: result.branch } : { name, error: result.error },
+    });
+    return result;
+  }
+
+  async openTreeBranchPr(
+    upid: string,
+    branch: string,
+    input: { title?: string; body?: string } = {},
+    correlationId = `corr-tree-pr-${upid}`,
+  ): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
+    if (this.#treeGit === null) {
+      return { ok: false, error: "tree git substrate is disabled" };
+    }
+    // Commit whatever the steered working tree holds right now; the no-change
+    // guard makes a clean tree a no-op ({changed:false}) instead of an error.
+    const committed = await this.#treeGit.commitBranch(upid, branch, "room: spoken changes");
+    if (!committed.ok) {
+      this.#traceTreePr(correlationId, upid, branch, { error: committed.error, stage: "commit" });
+      return committed;
+    }
+    const pushed = await this.#treeGit.pushBranch(upid, branch);
+    if (!pushed.ok) {
+      this.#traceTreePr(correlationId, upid, branch, { error: pushed.error, stage: "push" });
+      return pushed;
+    }
+    const pr = await this.#treeGit.openPrToOrigin(upid, branch, input.title, input.body);
+    this.#traceTreePr(correlationId, upid, branch, pr.ok ? { url: pr.url, committed: committed.changed } : { error: pr.error, stage: "pr" });
+    return pr;
+  }
+
+  async mergeTreeBranch(
+    upid: string,
+    branch: string,
+    correlationId = `corr-tree-merge-${upid}`,
+  ): Promise<{ ok: true; merged: true } | { ok: false; error: string }> {
+    if (this.#treeGit === null) {
+      return { ok: false, error: "tree git substrate is disabled" };
+    }
+    const merged = await this.#treeGit.mergePr(upid, branch);
+    this.#traceTreePr(correlationId, upid, branch, merged.ok ? { merged: true } : { error: merged.error, stage: "merge" });
+    return merged;
+  }
+
+  #traceTreePr(correlationId: string, upid: string, branch: string, meta: Record<string, unknown>): void {
+    this.recordExternalTrace({
+      event: "tree.git.pr.request",
+      level: typeof meta.error === "string" ? "warn" : "info",
+      sessionId: this.sessionId,
+      correlationId,
+      upid,
+      meta: { branch, ...meta },
+    });
+  }
+
+  // ADOPTED-TREE ISSUES (GET /api/process/:upid/issues): the origin repo's
+  // open issues via the gh seam, 60s-cached per upid inside TreeIssuesCache.
+  // Local/self trees — and anything without a recorded origin — answer
+  // {issues: []}; so does every failure. Never a throw, never a 500.
+  async treeIssues(upid: string): Promise<{ issues: TreeIssue[] }> {
+    if (this.#treeGit === null || !this.#treeGit.isAdopted(upid)) {
+      return { issues: [] };
+    }
+    const origin = this.#treeGit.snapshot(upid)?.remoteUrl ?? null;
+    return { issues: await this.#treeIssues.issuesFor(upid, origin) };
+  }
+
+  // The tree's repo facts for menus/popups: the recorded origin, the branch
+  // list (with per-branch prUrl once open), and the published deploy URL when
+  // the take-home publish confirmed one. Null when no tree repo exists.
+  treeRepoInfo(upid: string): {
+    origin: string | null;
+    branches: Array<{ name: string; commits: number; prUrl?: string }>;
+    deployUrl?: string;
+  } | null {
+    const snapshot = this.#treeGit?.snapshot(upid) ?? null;
+    if (snapshot === null) {
+      return null;
+    }
+    // An adopted import's RESOLVED live deployment (deploy-resolver) outranks
+    // the take-home Pages publish — the resolver confirmed the app itself.
+    const deployUrl = this.#imports.get(upid)?.deployUrl ?? this.#published.get(upid)?.url;
+    return {
+      origin: snapshot.remoteUrl,
+      branches: snapshot.branches,
+      ...(deployUrl === undefined ? {} : { deployUrl }),
+    };
+  }
+
   get selfMode(): boolean {
     return this.#selfMode;
+  }
+
+  // SELF-REBUILD runtime toggle. Flip off => a verified green self-run no
+  // longer exits 87 (the commit stays on disk; the running build keeps serving
+  // the walls); flip on => the trigger is armed again — a still-pending green
+  // run can be fired via requestSelfReload / POST /api/self/reload. Purely a
+  // runtime gate: the supervisor wrapper (run-room --self) is boot-time, so
+  // outside self mode the flag only records intent for a future --self launch
+  // (surfaced honestly as snapshot.selfSupervisor).
+  setSelfRebuild(on: boolean, correlationId = `corr-self-rebuild-toggle-${crypto.randomUUID()}`): ProjectorSnapshot {
+    this.#selfRebuild = on;
+    this.recordExternalTrace({
+      event: "self.rebuild.set",
+      level: "info",
+      sessionId: this.sessionId,
+      correlationId,
+      upid: SELF_UPID,
+      meta: { on, supervisorPresent: this.#selfMode },
+    });
+    this.publish();
+    return this.#snapshot;
+  }
+
+  selfRebuild(): boolean {
+    return this.#selfRebuild;
   }
 
   // SELF-HOSTING: pin the standing "Vibersyn Room" project at boot. A normal
@@ -3467,6 +4995,12 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     };
     if (!this.#selfMode || this.#selfCommission === null) {
       return refuse("self mode is off");
+    }
+    // RUNTIME gate: the wall's Self-Rebuild toggle. Every trigger path — the
+    // commissioner's onGreen and POST /api/self/reload — lands here, so
+    // flipping the toggle off vetoes the exit-87 rebuild even mid-session.
+    if (!this.#selfRebuild) {
+      return refuse("self-rebuild is toggled off");
     }
     if (this.#emergencyTriggered) {
       return refuse("emergency stop is active");
@@ -3955,6 +5489,30 @@ function resolveSelfReloadDelayMs(env: Record<string, string | undefined>): numb
 export const MIC_ENDPOINTING_BASE_MS = 900;
 
 export const DEFAULT_AUTOBUILD_SETTLE_MS = 8_000;
+
+// Guided-demo hold TTL: a wall that crashed/closed mid-"describe your idea"
+// must never wedge auto-build — the hold self-expires after this long.
+export const GUIDED_HOLD_TTL_MS = 10 * 60_000;
+
+// Endpointing grace after the record toggle releases: ASR finals trail the
+// speaker by 1-2s, so words spoken during the window arrive AFTER the clear.
+// Finals inside this budget still route/commit to the released target.
+export const STEER_GRACE_MS = 2_500;
+
+// SMART BRANCH NAMING (live-room request): the spoken change names its own
+// branch — "make a dancing cat under each tree" → "dancing-cat-under-each" —
+// instead of a generic spoken-changes. First few meaningful words, kebab-cased,
+// bounded; the substrate slugifies/prefixes room/ and dedupes on collision.
+const SPEECH_SLUG_STOPWORDS = new Set(["the", "a", "an", "to", "of", "and", "or", "please", "can", "you", "i", "we", "want", "make", "add", "like", "just", "so", "that", "it", "for", "on", "in"]);
+export function slugFromSpeech(text: string): string {
+  const words = text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/gu, " ")
+    .split(/\s+/u)
+    .filter((word) => word.length > 1 && !SPEECH_SLUG_STOPWORDS.has(word));
+  const picked = words.slice(0, 4).join("-");
+  return picked.length > 0 ? picked.slice(0, 48) : "spoken-changes";
+}
 
 // VIBERSYN_AUTOBUILD_SETTLE_MS — quiet period (ms) required before an armed
 // auto-build fires. 0 restores the legacy immediate fire (fast tests).

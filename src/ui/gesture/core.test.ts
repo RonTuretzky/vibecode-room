@@ -133,6 +133,71 @@ describe("DwellSelector", () => {
   });
 });
 
+// The LAN-guest capability set (remote.ts guestDwellCaps returns exactly this
+// shape for guest-block ids); camera cursors pass no caps.
+describe("DwellSelector — guest caps (hoverDwells / instantFire)", () => {
+  const zones = () => [new Zone("a", "", 0, 0, 0.5, 1), new Zone("b", "", 0.5, 0, 0.5, 1)];
+  const GUEST = { hoverDwells: true, instantFire: true } as const;
+  const pt: [number, number] = [0.25, 0.5]; // in zone a's core
+
+  test("hoverDwells: dwell accumulates and fires with engaged=false the whole way", () => {
+    const zs = zones();
+    const d = new DwellSelector(0.8, 0.4, 0.15, true);
+    expect(d.update(zs, pt, 0.0, false, GUEST)).toBeNull(); // hover enter
+    expect(d.update(zs, pt, 0.4, false, GUEST)).toBeNull(); // mid-dwell
+    expect(d.progress).toBeCloseTo(0.5, 2);
+    expect(d.update(zs, pt, 0.85, false, GUEST)).toEqual({ zoneId: "a", selected: true });
+  });
+
+  test("without caps, a disengaged cursor still resets (camera contract unchanged)", () => {
+    const zs = zones();
+    const d = new DwellSelector(0.8, 0.4, 0.15, true);
+    d.update(zs, pt, 0.0, false);
+    expect(d.activeZone).toBeNull();
+    expect(d.update(zs, pt, 2.0, false)).toBeNull(); // parked for 2s: nothing
+  });
+
+  test("instantFire: engage edge mid-hover fires NOW; the held pinch never re-fires", () => {
+    const zs = zones();
+    const d = new DwellSelector(0.8, 0.4, 0.15, true);
+    d.update(zs, pt, 0.0, false, GUEST); // hovering…
+    d.update(zs, pt, 0.3, false, GUEST); // …partial dwell (0.375)
+    // Pinch closes: fire immediately, not 0.5s from now.
+    expect(d.update(zs, pt, 0.35, true, GUEST)).toEqual({ zoneId: "a", selected: true });
+    // Held pinch parked on the target: cooldown, then the consumed latch — silent.
+    expect(d.update(zs, pt, 0.5, true, GUEST)).toBeNull();
+    expect(d.update(zs, pt, 1.5, true, GUEST)).toBeNull();
+    expect(d.update(zs, pt, 3.0, true, GUEST)).toBeNull();
+    // Release but keep hovering: still one click per approach — no dwell re-fire.
+    expect(d.update(zs, pt, 3.5, false, GUEST)).toBeNull();
+    expect(d.update(zs, pt, 4.5, false, GUEST)).toBeNull();
+    // Leave, come back, pinch: a fresh approach instant-fires again.
+    d.update(zs, [0.75, 0.5], 4.6, false, GUEST); // over to zone b
+    d.update(zs, pt, 5.0, false, GUEST); // re-enter a
+    expect(d.update(zs, pt, 5.1, true, GUEST)).toEqual({ zoneId: "a", selected: false });
+  });
+
+  test("instantFire is edge-triggered: press off-target then drag on = no click on crossing", () => {
+    const zs = [new Zone("a", "", 0.3, 0.3, 0.4, 0.4)];
+    const d = new DwellSelector(0.8, 0.4, 0.15, true);
+    expect(d.update(zs, [0.1, 0.1], 0.0, true, GUEST)).toBeNull(); // press lands on dead space
+    expect(d.update(zs, [0.5, 0.5], 0.2, true, GUEST)).toBeNull(); // drag onto the target: NO instant fire
+    expect(d.update(zs, [0.5, 0.5], 0.6, true, GUEST)).toBeNull();
+    // …but the (hover)dwell still runs from entry: fires a full dwell later.
+    expect(d.update(zs, [0.5, 0.5], 1.05, true, GUEST)).toEqual({ zoneId: "a", selected: true });
+  });
+
+  test("instantFire respects the cooldown: a pinch inside it cannot fire", () => {
+    const zs = zones();
+    const d = new DwellSelector(0.8, 0.4, 0.15, true);
+    d.update(zs, pt, 0.0, false, GUEST);
+    expect(d.update(zs, pt, 0.85, false, GUEST)?.zoneId).toBe("a"); // hover-fired; cooldown until 1.25
+    expect(d.update(zs, pt, 1.0, true, GUEST)).toBeNull(); // pinch edge during cooldown: swallowed
+    expect(d.update(zs, pt, 1.5, true, GUEST)).toBeNull(); // held past cooldown: no edge, latch holds
+    expect(d.update(zs, pt, 3.0, true, GUEST)).toBeNull();
+  });
+});
+
 describe("idToHue", () => {
   test("stable, spread, fixed mouse hue", () => {
     expect(idToHue(-1)).toBe(200);

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { Zone } from "./core";
 import { MultiDwell, type DwellCursor, type DwellFire } from "./multi";
+import { guestCursorId, guestDwellCaps } from "./remote";
 
 // Two side-by-side zones filling the viewport halves (normalized coords).
 function twoZones(): Zone[] {
@@ -138,5 +139,75 @@ describe("MultiDwell — multi-cursor priority (one primary per target)", () => 
     // Cursor 1's hand drops out of the stream entirely.
     const fires = run(multi, zones, () => [cursor(2, IN_LEFT)], 0.45, 1.4);
     expect(fires).toEqual([{ zoneId: "left", cursorId: 2 }]);
+  });
+});
+
+// The wall-side guest pipeline: MultiDwell wired with remote.ts's per-cursor
+// capability map (exactly how GestureLayer constructs it). Guest cursors —
+// ids in the reserved negative block — hover-dwell and pinch-to-fire; every
+// other id keeps the pre-guest engaged-gated contract.
+describe("MultiDwell — LAN guest cursors (hover-dwell + instant pinch fire)", () => {
+  const GUEST = guestCursorId(0, 0); // -1000, the first guest's first hand
+  const guestMulti = () => new MultiDwell({ capabilities: guestDwellCaps });
+
+  test("guest hover alone accumulates dwell and fires (no pinch/press required)", () => {
+    const multi = guestMulti();
+    const fires = run(multi, twoZones(), () => [cursor(GUEST, IN_LEFT, false)], 0, 1.0);
+    expect(fires).toEqual([{ zoneId: "left", cursorId: GUEST }]);
+  });
+
+  test("non-guest cursors still require engaged: a disengaged camera hand never fires", () => {
+    const multi = guestMulti();
+    const fires = run(multi, twoZones(), () => [cursor(1, IN_LEFT, false)], 0, 3);
+    expect(fires).toEqual([]);
+  });
+
+  test("guest pinch while hovering fires immediately — exactly once while held", () => {
+    const multi = guestMulti();
+    const zones = twoZones();
+    const events: { t: number; fire: DwellFire }[] = [];
+    for (let t = 0; t <= 3.0 + 1e-9; t += 0.05) {
+      const engaged = t >= 0.3 - 1e-9; // hover 0.3s, then pinch and HOLD
+      for (const fire of multi.update(zones, [cursor(GUEST, IN_LEFT, engaged)], t).fired) {
+        events.push({ t, fire });
+      }
+    }
+    expect(events).toHaveLength(1);
+    expect(events[0].fire).toEqual({ zoneId: "left", cursorId: GUEST });
+    expect(events[0].t).toBeCloseTo(0.3, 5); // the pinch frame — not 0.8s of dwell later
+  });
+
+  test("after a pinch-click, releasing but staying parked does not re-fire (one click per approach)", () => {
+    const multi = guestMulti();
+    const zones = twoZones();
+    // First engaged frame over the target = engage edge = instant click.
+    let fires = run(multi, zones, () => [cursor(GUEST, IN_LEFT, true)], 0, 0.1);
+    expect(fires).toEqual([{ zoneId: "left", cursorId: GUEST }]);
+    // Release the pinch but keep hovering the same spot for 3s: latched, silent.
+    fires = run(multi, zones, () => [cursor(GUEST, IN_LEFT, false)], 0.15, 3);
+    expect(fires).toEqual([]);
+    // Leave, then hover back in: a fresh approach hover-dwells to a new click.
+    run(multi, zones, () => [cursor(GUEST, IN_RIGHT, false)], 3.05, 3.15);
+    fires = run(multi, zones, () => [cursor(GUEST, IN_LEFT, false)], 3.2, 4.1);
+    expect(fires).toEqual([{ zoneId: "left", cursorId: GUEST }]);
+  });
+
+  test("guest press-drag across a control does not click it on crossing (fast path is edge-only)", () => {
+    const multi = guestMulti();
+    const zones = twoZonesGap();
+    const offZones: readonly [number, number] = [0.5, 0.5];
+    const inLeft: readonly [number, number] = [0.05, 0.5];
+    const events: { t: number; fire: DwellFire }[] = [];
+    for (let t = 0; t <= 1.2 + 1e-9; t += 0.05) {
+      // Press lands on dead space, drags onto the left zone at 0.2 while held.
+      const at = t < 0.2 ? offZones : inLeft;
+      for (const fire of multi.update(zones, [cursor(GUEST, at, true)], t).fired) {
+        events.push({ t, fire });
+      }
+    }
+    // No click at the crossing — only the full dwell from entry (0.2 + 0.8).
+    expect(events).toHaveLength(1);
+    expect(events[0].fire).toEqual({ zoneId: "left", cursorId: GUEST });
+    expect(events[0].t).toBeGreaterThanOrEqual(0.95);
   });
 });

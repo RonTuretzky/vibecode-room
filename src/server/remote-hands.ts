@@ -11,11 +11,13 @@
 //
 // Wall routing: each wall window subscribes with a {"type":"hello","wall":"A"}
 // (GestureWallClient's existing handshake) and each guest picks a wall the same
-// way (defaulting to the first subscribed wall). A guest's frames go ONLY to
-// matching-wall subscribers — both wall windows render the same full room, so
-// mirroring one guest onto both would double-fire every dwell.
+// way (defaulting to the first subscribed wall). A guest's CURSOR frames go
+// ONLY to matching-wall subscribers — both wall windows render the same full
+// room, so mirroring one guest onto both would double-fire every dwell. Key
+// HOLDS are the exception: they broadcast to every window (see #relayKeys).
 
 import { GUEST_ID_STRIDE, guestCursorId } from "../ui/gesture/remote";
+import { Point2DFilter } from "../ui/gesture/core";
 import { networkInterfaces } from "node:os";
 import { preferredLanIPv4, type InterfaceAddresses } from "./project-import";
 
@@ -23,6 +25,8 @@ import { preferredLanIPv4, type InterfaceAddresses } from "./project-import";
 export const MAX_GUEST_MESSAGE_CHARS = 8_192;
 // numHands=2 everywhere upstream — a guest has at most two hands on camera.
 export const MAX_CURSORS_PER_FRAME = 2;
+// A guest display name is a small tag beside a cursor dot, not a banner.
+export const MAX_GUEST_NAME_CHARS = 24;
 
 export interface RemoteGuestCursor {
   id: number; // guest-local hand id, 0..GUEST_ID_STRIDE-1
@@ -36,10 +40,52 @@ export interface RemoteGuestCursor {
 export const GUEST_KEYS = ["w", "a", "s", "d"] as const;
 export type GuestKey = (typeof GUEST_KEYS)[number];
 
+// Flat-pair pose sync bounds. The scene's own envelopes are yaw unbounded,
+// height [1.4,30], dist [6,45] — these are slightly WIDER so a legitimate
+// edge-of-envelope pose survives the relay bit-exact-ish while anything wild
+// (or a float that walked off) still comes back to sanity. Yaw is clamped too:
+// it is unbounded locally, but an unbounded relay would let one bad frame
+// spin the pair forever.
+export const FLAT_POSE_YAW_LIMIT = 50; // rad
+export const FLAT_POSE_HEIGHT_MIN = 1;
+export const FLAT_POSE_HEIGHT_MAX = 31;
+export const FLAT_POSE_DIST_MIN = 5;
+export const FLAT_POSE_DIST_MAX = 46;
+// Roaming centre (cx/cz — the free-roam walk): scene envelope is ±80, same
+// slightly-wider rule as above. Absent on old frames → 0 (see parse).
+export const FLAT_POSE_CENTER_LIMIT = 85;
+
+// One hand of a guest FLY-MODE frame: raw MediaPipe-derived data for the
+// pinch camera grammar (PinchCam on the wall does ALL smoothing/hysteresis —
+// the hub relays raw, unlike cursors, for parity with the laptop bridge).
+export interface GuestFlyHand {
+  id: number;
+  x: number;
+  y: number;
+  pinch: number | null;
+  conf: number;
+  lm?: ReadonlyArray<readonly [number, number]>;
+}
+
 export type GuestMessage =
-  | { kind: "hello"; wall: string | null }
+  | { kind: "hello"; wall: string | null; name: string | null }
   | { kind: "cursors"; cursors: RemoteGuestCursor[] }
-  | { kind: "keys"; held: GuestKey[] };
+  | { kind: "keys"; held: GuestKey[] }
+  | { kind: "flatpose"; yaw: number; height: number; dist: number; cx: number; cz: number }
+  | { kind: "flyhands"; t: number; aspect: number; hands: GuestFlyHand[] };
+
+// A guest's display name, made wall-safe: control chars stripped (a name is
+// rendered verbatim on the room canvas — nothing may smuggle escapes into it),
+// trimmed, capped at MAX_GUEST_NAME_CHARS. Anything non-string or emptied by
+// the scrub is "no name" (null) — the wall then draws no tag.
+export function sanitizeGuestName(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+  // eslint-disable-next-line no-control-regex
+  const scrubbed = value.replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, MAX_GUEST_NAME_CHARS).trim();
+  return scrubbed.length > 0 ? scrubbed : null;
+}
 
 // Pure parser for guest → hub frames. Returns null for anything malformed —
 // unauthenticated LAN input never throws, it just gets dropped.
@@ -58,7 +104,7 @@ export function parseGuestMessage(raw: string): GuestMessage | null {
   }
   if (msg.type === "hello") {
     const wall = typeof msg.wall === "string" && msg.wall.trim().length > 0 ? msg.wall.trim() : null;
-    return { kind: "hello", wall };
+    return { kind: "hello", wall, name: sanitizeGuestName(msg.name) };
   }
   if (msg.type === "keys") {
     if (!Array.isArray(msg.held)) {
@@ -71,6 +117,47 @@ export function parseGuestMessage(raw: string): GuestMessage | null {
       }
     }
     return { kind: "keys", held };
+  }
+  if (msg.type === "flatpose") {
+    // The flat pair's shared panorama pose (sent by WALL windows on the room
+    // socket — see RemoteHandsHub.addRoom). Finite-or-drop, then clamped into
+    // the sane envelope: unauthenticated LAN input never throws AND never
+    // relays a pose that could fling the pair.
+    if (!isFiniteNumber(msg.yaw) || !isFiniteNumber(msg.height) || !isFiniteNumber(msg.dist)) {
+      return null;
+    }
+    return {
+      kind: "flatpose",
+      yaw: clampRange(msg.yaw, -FLAT_POSE_YAW_LIMIT, FLAT_POSE_YAW_LIMIT),
+      height: clampRange(msg.height, FLAT_POSE_HEIGHT_MIN, FLAT_POSE_HEIGHT_MAX),
+      dist: clampRange(msg.dist, FLAT_POSE_DIST_MIN, FLAT_POSE_DIST_MAX),
+      // Roaming centre: OPTIONAL for back-compat (a pre-roam window's pose
+      // has no cx/cz — that legitimately means the origin, never a drop, and
+      // junk coerces to 0 too so NaN can never enter the relay).
+      cx: isFiniteNumber(msg.cx) ? clampRange(msg.cx, -FLAT_POSE_CENTER_LIMIT, FLAT_POSE_CENTER_LIMIT) : 0,
+      cz: isFiniteNumber(msg.cz) ? clampRange(msg.cz, -FLAT_POSE_CENTER_LIMIT, FLAT_POSE_CENTER_LIMIT) : 0,
+    };
+  }
+  if (msg.type === "flyhands") {
+    if (!Array.isArray(msg.hands)) {
+      return null;
+    }
+    const hands: GuestFlyHand[] = [];
+    for (const entry of msg.hands) {
+      if (hands.length === 2) {
+        break; // the pinch grammar is one/two-handed; extras are noise
+      }
+      const hand = coerceGuestFlyHand(entry);
+      if (hand !== null && !hands.some((existing) => existing.id === hand.id)) {
+        hands.push(hand);
+      }
+    }
+    return {
+      kind: "flyhands",
+      t: typeof msg.t === "number" && Number.isFinite(msg.t) ? msg.t : 0,
+      aspect: typeof msg.aspect === "number" && Number.isFinite(msg.aspect) && msg.aspect > 0 ? msg.aspect : 16 / 9,
+      hands,
+    };
   }
   if (msg.type !== "cursors" || !Array.isArray(msg.cursors)) {
     return null;
@@ -110,6 +197,41 @@ function coerceGuestCursor(entry: unknown): RemoteGuestCursor | null {
   };
 }
 
+function coerceGuestFlyHand(entry: unknown): GuestFlyHand | null {
+  if (
+    !isRecord(entry) ||
+    typeof entry.id !== "number" ||
+    !Number.isInteger(entry.id) ||
+    entry.id < 0 ||
+    entry.id >= GUEST_ID_STRIDE ||
+    typeof entry.x !== "number" ||
+    !Number.isFinite(entry.x) ||
+    typeof entry.y !== "number" ||
+    !Number.isFinite(entry.y)
+  ) {
+    return null;
+  }
+  let lm: Array<readonly [number, number]> | null = null;
+  if (Array.isArray(entry.lm) && entry.lm.length === 21) {
+    lm = [];
+    for (const p of entry.lm) {
+      if (!Array.isArray(p) || p.length < 2 || typeof p[0] !== "number" || !Number.isFinite(p[0]) || typeof p[1] !== "number" || !Number.isFinite(p[1])) {
+        lm = null;
+        break;
+      }
+      lm.push([clamp01(p[0]), clamp01(p[1])]);
+    }
+  }
+  return {
+    id: entry.id,
+    x: clamp01(entry.x),
+    y: clamp01(entry.y),
+    pinch: typeof entry.pinch === "number" && Number.isFinite(entry.pinch) ? Math.max(0, Math.min(4, entry.pinch)) : null,
+    conf: typeof entry.conf === "number" && Number.isFinite(entry.conf) ? Math.max(0, Math.min(1, entry.conf)) : 1,
+    ...(lm !== null ? { lm } : {}),
+  };
+}
+
 // A connected peer as the hub sees it: just a way to push text frames.
 export type PeerSend = (raw: string) => void;
 
@@ -125,10 +247,19 @@ interface RoomPeer {
   wall: string | null; // set by the GestureWallClient hello
 }
 
+// Guest-cursor One Euro tuning: mincutoff low enough to kill hand tremor on a
+// still cursor, beta high enough that deliberate sweeps stay responsive —
+// the same tradeoff the Kinect path ships (gesturewall server.py CursorSmoother).
+const GUEST_SMOOTH_MINCUTOFF = 1.0;
+const GUEST_SMOOTH_BETA = 0.02;
+
 interface GuestPeer {
   send: PeerSend;
   seq: number;
   wall: string | null; // chosen by the guest page; null = follow the room
+  // Sanitized display name from the guest's latest hello (the page re-hellos
+  // when its name field changes); null = anonymous, and the wall draws no tag.
+  name: string | null;
   // The last frame relayed for this guest — replayed DISENGAGED on disconnect
   // so a dwell in progress cancels immediately instead of ghost-firing during
   // the wall's 0.5s stale-cursor grace window.
@@ -136,6 +267,12 @@ interface GuestPeer {
   // The wall-camera keys this guest currently holds (WASD buttons on the guest
   // page) — released explicitly on disconnect so the camera never keeps walking.
   lastHeld: GuestKey[];
+  // Per-hand One Euro smoothing (same filter family as the Kinect cursor path
+  // — gesturewall's CursorSmoother): the guest page ships raw palm centroids,
+  // and unsmoothed cursors shiver at wall scale, resetting dwell on small
+  // targets. Keyed by the guest-local hand id; dropped when the hand vanishes
+  // so a re-appearing hand starts fresh instead of gliding from stale state.
+  filters: Map<number, Point2DFilter>;
 }
 
 export interface RemoteHandsHubOptions {
@@ -144,11 +281,27 @@ export interface RemoteHandsHubOptions {
   now?: () => number;
 }
 
+// The relayed shape of a flat-pair pose (see #relayFlatPose).
+interface FlatPoseWire {
+  type: "flatpose";
+  yaw: number;
+  height: number;
+  dist: number;
+  cx: number;
+  cz: number;
+  t: number;
+}
+
 export class RemoteHandsHub {
   readonly #now: () => number;
   readonly #rooms = new Set<RoomPeer>();
   readonly #guests = new Set<GuestPeer>();
   #nextSeq = 0;
+  // The last flat-pair pose any wall published (hub-global — the flat rig has
+  // exactly one shared pose). Replayed to every freshly subscribing wall so a
+  // refreshed window snaps to its partner's pose immediately instead of
+  // waiting for the partner's next input.
+  #lastFlatPose: FlatPoseWire | null = null;
 
   constructor(options: RemoteHandsHubOptions = {}) {
     this.#now = options.now ?? (() => performance.now() / 1000);
@@ -171,7 +324,9 @@ export class RemoteHandsHub {
   }
 
   // A wall window subscribed (WS /api/hands/room). It speaks GestureWallClient's
-  // protocol: a {"type":"hello","wall":…} first, then it only listens.
+  // protocol: a {"type":"hello","wall":…} first, then it listens — and under
+  // the flat lock it may also publish {"type":"flatpose",…} pose frames, which
+  // relay to every OTHER wall window (see #relayFlatPose).
   addRoom(send: PeerSend): HubConnection {
     const peer: RoomPeer = { send, wall: null };
     this.#rooms.add(peer);
@@ -181,6 +336,17 @@ export class RemoteHandsHub {
         if (parsed?.kind === "hello") {
           peer.wall = parsed.wall;
           this.#broadcastWallsToGuests();
+          // Replay the pair's last shared pose to the fresh subscriber so a
+          // refreshed window snaps into lockstep without waiting for the
+          // partner's next input. Harmless elsewhere: non-flat windows never
+          // register a flatpose consumer, so the frame just drops client-side.
+          if (this.#lastFlatPose !== null) {
+            safeSend(peer.send, this.#lastFlatPose);
+          }
+          return;
+        }
+        if (parsed?.kind === "flatpose") {
+          this.#relayFlatPose(peer, parsed);
         }
       },
       close: () => {
@@ -191,9 +357,32 @@ export class RemoteHandsHub {
     };
   }
 
+  // Flat-pair pose sync: one wall window published its shared-panorama pose —
+  // store it (for replay-on-subscribe) and relay it to every OTHER wall
+  // window. Never back to the sender (its pose is already right, and echoes
+  // would fight the very input that produced them) and never to guests (the
+  // pose is projector-rig internals, not a guest-facing stream).
+  #relayFlatPose(sender: RoomPeer, pose: { yaw: number; height: number; dist: number; cx: number; cz: number }): void {
+    const frame: FlatPoseWire = {
+      type: "flatpose",
+      yaw: pose.yaw,
+      height: pose.height,
+      dist: pose.dist,
+      cx: pose.cx,
+      cz: pose.cz,
+      t: this.#now(),
+    };
+    this.#lastFlatPose = frame;
+    for (const room of this.#rooms) {
+      if (room !== sender) {
+        safeSend(room.send, frame);
+      }
+    }
+  }
+
   // A guest connected (WS /hands/ws from their own computer).
   addGuest(send: PeerSend): HubConnection {
-    const peer: GuestPeer = { send, seq: this.#nextSeq, wall: null, lastCursors: [], lastHeld: [] };
+    const peer: GuestPeer = { send, seq: this.#nextSeq, wall: null, name: null, lastCursors: [], lastHeld: [], filters: new Map() };
     this.#nextSeq += 1;
     this.#guests.add(peer);
     this.#sendWelcome(peer);
@@ -205,11 +394,24 @@ export class RemoteHandsHub {
         }
         if (parsed.kind === "hello") {
           peer.wall = parsed.wall;
+          // Every hello carries the CURRENT name (the page includes it on
+          // connect, wall picks, and name edits alike) — so a nameless hello
+          // legitimately clears a previously set name.
+          peer.name = parsed.name;
           this.#sendWelcome(peer);
           return;
         }
         if (parsed.kind === "keys") {
           this.#relayKeys(peer, parsed.held);
+          return;
+        }
+        if (parsed.kind === "flatpose") {
+          // Only wall windows (addRoom) may steer the flat pair's shared
+          // pose — a guest-sent flatpose is dropped, not relayed.
+          return;
+        }
+        if (parsed.kind === "flyhands") {
+          this.#relayFly(peer, parsed);
           return;
         }
         this.#relay(peer, parsed.cursors);
@@ -271,17 +473,39 @@ export class RemoteHandsHub {
   #relay(peer: GuestPeer, cursors: RemoteGuestCursor[]): void {
     peer.lastCursors = cursors;
     const wall = this.#resolveWall(peer);
+    const t = this.#now();
+    // Smooth here, not on the page: one fix covers every guest device, and the
+    // filter sees real arrival times (heartbeats re-send identical positions,
+    // which a One Euro simply converges on). Filters for hands absent from
+    // this frame are dropped so a re-tracked hand starts clean.
+    for (const key of peer.filters.keys()) {
+      if (!cursors.some((cursor) => cursor.id === key)) {
+        peer.filters.delete(key);
+      }
+    }
     const frame = {
       type: "cursors" as const,
       wall,
-      t: this.#now(),
-      cursors: cursors.map((cursor) => ({
-        id: guestCursorId(peer.seq, cursor.id),
-        x: cursor.x,
-        y: cursor.y,
-        engaged: cursor.engaged,
-        conf: 1,
-      })),
+      t,
+      cursors: cursors.map((cursor) => {
+        let filter = peer.filters.get(cursor.id);
+        if (filter === undefined) {
+          filter = new Point2DFilter(30, GUEST_SMOOTH_MINCUTOFF, GUEST_SMOOTH_BETA);
+          peer.filters.set(cursor.id, filter);
+        }
+        const [x, y] = filter.call(cursor.x, cursor.y, t);
+        return {
+          id: guestCursorId(peer.seq, cursor.id),
+          x,
+          y,
+          engaged: cursor.engaged,
+          conf: 1,
+          // Name tag beside the guest's dot on the wall — only when set, so
+          // the wire shape for anonymous guests (and the whole camera/fusion
+          // path, which never passes through here) is byte-identical to before.
+          ...(peer.name !== null ? { name: peer.name } : {}),
+        };
+      }),
     };
     for (const room of this.#rooms) {
       if (room.wall === wall) {
@@ -290,17 +514,46 @@ export class RemoteHandsHub {
     }
   }
 
-  // Remote WASD: relay a guest's held camera keys to its wall, tagged with the
-  // guest seq so the wall can merge holds across guests and time out a silent
-  // one. Same wall routing as cursors — keys must not drive both windows.
-  #relayKeys(peer: GuestPeer, held: GuestKey[]): void {
-    peer.lastHeld = held;
+  // FLY MODE relay: wall-routed like cursors (the camera belongs to ONE wall;
+  // the flat pair stays in lockstep through the flatpose seam, exactly as it
+  // does for the laptop bridge). RAW pass-through — no One Euro here: the
+  // wall-side PinchCam owns all smoothing/hysteresis, and double-filtering
+  // would soften the grammar's engage/teleport guards.
+  #relayFly(peer: GuestPeer, fly: Extract<GuestMessage, { kind: "flyhands" }>): void {
     const wall = this.#resolveWall(peer);
-    const frame = { type: "keys" as const, wall, guest: peer.seq, held, t: this.#now() };
+    const frame = {
+      type: "flyhands" as const,
+      wall,
+      guest: peer.seq,
+      t: fly.t,
+      aspect: fly.aspect,
+      hands: fly.hands,
+    };
     for (const room of this.#rooms) {
       if (room.wall === wall) {
         safeSend(room.send, frame);
       }
+    }
+  }
+
+  // Remote WASD: relay a guest's held camera keys to EVERY subscribed window,
+  // tagged with the guest seq so each wall can merge holds across guests and
+  // time out a silent one. UNLIKE cursors (wall-routed — mirroring a guest's
+  // dot onto both windows would double-fire every dwell), key HOLDS must reach
+  // every window: the flat pair shares ONE camera rig that only stays in
+  // lockstep if both windows integrate the identical hold timeline, and on the
+  // desk rig each window owns an independent camera, so both of them walking
+  // is acceptable — expected, even. Each frame is stamped with the RECEIVING
+  // room's wall because the wall client's parser drops frames stamped for
+  // another wall.
+  #relayKeys(peer: GuestPeer, held: GuestKey[]): void {
+    peer.lastHeld = held;
+    const t = this.#now();
+    for (const room of this.#rooms) {
+      if (room.wall === null) {
+        continue; // not helloed yet — its client has no wall to match on
+      }
+      safeSend(room.send, { type: "keys" as const, wall: room.wall, guest: peer.seq, held, t });
     }
   }
 }
@@ -376,6 +629,14 @@ export function resolveHandsInfo(options: {
 
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value));
+}
+
+function clampRange(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -15,8 +15,14 @@ permission: joysticks are plain HID). Reuses ArcadeStickSource for the lever
 math (velocity-integrated cursor, deadzone, engage buttons).
 
 Usage:
-    .venv/bin/python tools/arcade_fusion.py --port 8771 --wall A
+    .venv/bin/python tools/arcade_fusion.py --port 8771 --walls A,B,C
     # then open the room with &fusion=ws://localhost:8771 (or merge port)
+
+Wall windows subscribe with a wall id and drop frames whose wall doesn't
+match, so re-tagging frames retargets the cursor: pressing the cycle button
+(--cycle-button, default 9; edge-triggered) steps through --walls and
+recenters the cursor on the new display. The cycle button is carved OUT of
+the 'any button engages' set so cycling never starts a dwell.
 
 Default port 8771 so it can run ALONGSIDE a camera fusion server on 8770;
 pass --port 8770 to be the only cursor source.
@@ -38,18 +44,28 @@ CURSOR_ID = 900  # distinct from camera cursor ids (small ints per person)
 
 async def run(args: argparse.Namespace) -> int:
     from websockets.asyncio.server import serve as ws_serve
-    from gesturewall.arcade import ArcadeStickSource
+    import pygame
+    from gesturewall.arcade import ArcadeStickSource, lever_direction
 
-    try:
-        source = ArcadeStickSource(
+    def open_stick():
+        return ArcadeStickSource(
             index=args.stick_index,
             speed=args.stick_speed,
             deadzone=args.stick_deadzone,
             engage_button=args.stick_engage,
         )
+
+    # HOT-REPLUG TOLERANCE: Bluetooth pads (Switch Pro et al.) auto-sleep and
+    # vanish from pygame mid-session, leaving a dead-but-silent handle — the
+    # classic frozen cursor. So a missing stick is never fatal: start (and
+    # keep running) without one, and re-acquire whenever it comes back.
+    try:
+        source = open_stick()
     except RuntimeError as e:
         print(f"[arcade-fusion] {e}", file=sys.stderr, flush=True)
-        return 2
+        print("[arcade-fusion] no stick yet — serving anyway; will grab it "
+              "the moment it connects (wake the controller).", flush=True)
+        source = None
 
     clients: set = set()
     start = time.monotonic()
@@ -100,11 +116,130 @@ async def run(args: argparse.Namespace) -> int:
         finally:
             clients.discard(ws)
 
+    walls: list[str] = args.walls_list
+
     async def broadcast() -> None:
+        nonlocal source
         period = 1.0 / args.fps
+        last_xy = (0.5, 0.5)
+        recheck = 0.0
+        wall_idx = args.wall_index
+        cycle_was_down = True  # require a fresh press (ignore held-at-start)
+        last_cycle = 0.0
+        prev_down: set = set()  # for the button-press discovery log
         while not stop.is_set():
             tick = time.monotonic()
-            _, (x, y), engaged, _info = source.read()
+            x, y = last_xy
+            engaged = False
+            if source is not None:
+                try:
+                    _, (x, y), engaged, _info = source.read()
+                    # WALL CYCLING: one dedicated button (state read right
+                    # after the pump inside source.read()) re-tags frames at
+                    # the next wall in --walls. In 'any button engages' mode
+                    # the source counts the cycle button too, so engage is
+                    # recomputed here WITHOUT it — cycling never dwells.
+                    # SPATIAL WALL CROSSING — the room layout: walls[0]
+                    # LEFT of walls[1], walls[2] (ceiling) ABOVE both. The
+                    # cursor crosses an edge when its position is PINNED at
+                    # the clamp while the lever still pushes outward — a
+                    # resting cursor at an edge never crosses on its own.
+                    js = source._js  # noqa: SLF001 — fresh from the pump
+                    dirx, diry = lever_direction(
+                        js, args.stick_deadzone, source._dpad_buttons)  # noqa: SLF001
+                    EDGE, PUSH = 0.995, 0.3
+                    wall_now = walls[wall_idx]
+                    cross = None
+                    if len(walls) >= 2:
+                        left_w, right_w = walls[0], walls[1]
+                        ceil_w = walls[2] if len(walls) >= 3 else None
+                        if wall_now == left_w and x >= EDGE and dirx > PUSH:
+                            cross = (right_w, 0.03, y)
+                        elif wall_now == right_w and x <= 1 - EDGE and dirx < -PUSH:
+                            cross = (left_w, 0.97, y)
+                        elif (ceil_w is not None and wall_now in (left_w, right_w)
+                                and y <= 1 - EDGE and diry < -PUSH):
+                            # Up off a wall top → the ceiling's near (bottom)
+                            # edge; the two walls tile the ceiling's width.
+                            cx = x / 2 if wall_now == left_w else 0.5 + x / 2
+                            cross = (ceil_w, cx, 0.97)
+                        elif (ceil_w is not None and wall_now == ceil_w
+                                and y >= EDGE and diry > PUSH):
+                            if x < 0.5:
+                                cross = (left_w, x * 2, 0.03)
+                            else:
+                                cross = (right_w, (x - 0.5) * 2, 0.03)
+                    if cross is not None:
+                        nw, nx, ny = cross
+                        wall_idx = walls.index(nw)
+                        x = min(max(nx, 0.0), 1.0)
+                        y = min(max(ny, 0.0), 1.0)
+                        source._cursor = (x, y)  # noqa: SLF001
+                        print(f"[arcade-fusion] crossed -> wall {nw}",
+                              flush=True)
+                    if args.cycle_button >= 0:
+                        n = js.get_numbuttons()
+                        # DISCOVERY AID: pad button numbering varies wildly
+                        # across pads/SDL versions, so log every fresh press
+                        # by index — the operator presses their preferred
+                        # button, reads the number, and pins --cycle-button.
+                        down_now = {i for i in range(n) if js.get_button(i)}
+                        for b in sorted(down_now - prev_down):
+                            print(f"[arcade-fusion] button {b} pressed"
+                                  + (" (cycle)" if b == args.cycle_button
+                                     else ""), flush=True)
+                        prev_down = down_now
+                        cycle_down = (args.cycle_button < n and
+                                      bool(js.get_button(args.cycle_button)))
+                        if cycle_down and args.stick_engage < 0:
+                            skip = {b for b in source._dpad_buttons  # noqa: SLF001
+                                    if b is not None}
+                            skip.add(args.cycle_button)
+                            engaged = any(js.get_button(i) for i in range(n)
+                                          if i not in skip)
+                        # Edge-triggered + debounced: fire once per press.
+                        if (cycle_down and not cycle_was_down
+                                and tick - last_cycle >= 0.25):
+                            last_cycle = tick
+                            wall_idx = (wall_idx + 1) % len(walls)
+                            x, y = 0.5, 0.5
+                            source._cursor = (x, y)  # noqa: SLF001 — recenter
+                            print(f"[arcade-fusion] cycle -> wall "
+                                  f"{walls[wall_idx]} (cursor centered)",
+                                  flush=True)
+                        cycle_was_down = cycle_down
+                    last_xy = (x, y)
+                    # Cheap once-a-second liveness check: a slept pad reads as
+                    # frozen-but-fine, so the count is the real signal.
+                    if tick >= recheck:
+                        recheck = tick + 1.0
+                        if pygame.joystick.get_count() == 0:
+                            raise RuntimeError("joystick disconnected")
+                except Exception:  # noqa: BLE001 — device vanished mid-read
+                    print("[arcade-fusion] joystick lost — waiting for it to "
+                          "reconnect (wake the controller)…", flush=True)
+                    try:
+                        source.close()
+                    except Exception:  # noqa: BLE001
+                        pass
+                    source = None
+                    x, y = last_xy
+                    engaged = False
+            else:
+                if tick >= recheck:
+                    recheck = tick + 1.0
+                    # Re-scan the bus: quit/init refreshes pygame's device
+                    # list (stale handles are already dropped above).
+                    try:
+                        pygame.joystick.quit()
+                        pygame.joystick.init()
+                        if pygame.joystick.get_count() > 0:
+                            source = open_stick()
+                            cycle_was_down = True  # ignore a held cycle button
+                            print("[arcade-fusion] joystick re-acquired: "
+                                  f"'{source._name}'", flush=True)  # noqa: SLF001
+                    except Exception:  # noqa: BLE001 — not back yet
+                        source = None
             cursors = [{
                 "id": CURSOR_ID,
                 "x": round(x, 4),
@@ -117,7 +252,7 @@ async def run(args: argparse.Namespace) -> int:
                 cursors.extend(upstream_cursors)
             payload = json.dumps({
                 "type": "cursors",
-                "wall": args.wall,
+                "wall": walls[wall_idx],
                 "t": round(tick - start, 3),
                 "cursors": cursors,
             }, separators=(",", ":"))
@@ -131,12 +266,18 @@ async def run(args: argparse.Namespace) -> int:
                 await asyncio.sleep(rest)
 
     async with ws_serve(handler, args.host or None, args.port):
-        print(f"[arcade-fusion] joystick '{source._name}' -> "  # noqa: SLF001
-              f"ws://localhost:{args.port} wall={args.wall} "
+        stick_name = source._name if source is not None else "(waiting for stick)"  # noqa: SLF001
+        print(f"[arcade-fusion] joystick '{stick_name}' -> "
+              f"ws://localhost:{args.port} wall={walls[args.wall_index]} "
+              f"of [{','.join(walls)}] "
               f"(speed={args.stick_speed}/s deadzone={args.stick_deadzone})",
               flush=True)
         print("[arcade-fusion] lever moves the cursor; hold any button to "
               "engage (dwell fills while held or hovering).", flush=True)
+        if args.cycle_button >= 0 and len(walls) > 1:
+            print(f"[arcade-fusion] button {args.cycle_button} cycles the "
+                  f"target wall ({' -> '.join(walls)} -> ...) and recenters "
+                  "the cursor; it never engages.", flush=True)
         upstream_task = asyncio.create_task(follow_upstream())
         try:
             await broadcast()
@@ -154,7 +295,13 @@ def main(argv=None) -> int:
     )
     p.add_argument("--port", type=int, default=8771, help="websocket port")
     p.add_argument("--host", default="", help="bind address ('' = all)")
-    p.add_argument("--wall", default="A", help="wall id tagged on frames")
+    p.add_argument("--wall", default=None,
+                   help="starting wall id (default: first entry of --walls)")
+    p.add_argument("--walls", default="A,B,C",
+                   help="comma list of wall ids the cycle button steps through")
+    p.add_argument("--cycle-button", type=int, dest="cycle_button", default=9,
+                   help="joystick button that cycles the target wall on press "
+                        "(excluded from 'any button engages'); -1 disables")
     p.add_argument("--fps", type=int, default=60, help="broadcast rate")
     p.add_argument("--stick-index", type=int, dest="stick_index", default=None,
                    help="joystick index; default auto-selects")
@@ -168,6 +315,17 @@ def main(argv=None) -> int:
                    help="upstream camera fusion WS to merge cursors from "
                         "(e.g. ws://localhost:8770); empty = joystick only")
     args = p.parse_args(argv)
+    walls = [w.strip() for w in args.walls.split(",") if w.strip()]
+    if not walls:
+        p.error("--walls needs at least one wall id")
+    if args.wall and args.wall not in walls:
+        walls.insert(0, args.wall)
+    args.walls_list = walls
+    args.wall_index = walls.index(args.wall) if args.wall else 0
+    args.wall = walls[args.wall_index]  # upstream hello + legacy readers
+    if args.cycle_button >= 0 and args.cycle_button == args.stick_engage:
+        p.error("--cycle-button must differ from --stick-engage (the cycle "
+                "button is excluded from engaging)")
     try:
         return asyncio.run(run(args))
     except KeyboardInterrupt:

@@ -8,6 +8,7 @@
 //   - a failed clone removes the partial directory (never leave half a tree
 //     inside the preview-served builds/<upid>/).
 
+import { existsSync, rmSync } from "node:fs";
 import { readFile, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -143,15 +144,81 @@ const STACK_BY_FILE: Array<[RegExp, string]> = [
 
 export type CloneRepoResult = { ok: true; dir: string } | { ok: false; error: string };
 
+// The exact clone argv, exported for tests. Auth is DELIBERATE, not whatever
+// helper the host git config happens to hold (osxkeychain by accident): the
+// first `-c credential.helper=` CLEARS inherited helpers, the second routes
+// every credential lookup through `gh auth git-credential` — which reads
+// GH_TOKEN from the child env (see cloneEnv). The PAT never appears in argv,
+// on-disk config, or the clone URL.
+export function cloneArgv(url: string, dir: string): string[] {
+  return [
+    "git",
+    "-c",
+    "credential.helper=",
+    "-c",
+    "credential.helper=!gh auth git-credential",
+    "clone",
+    "--depth",
+    "1",
+    "--single-branch",
+    url,
+    dir,
+  ];
+}
+
+// The clone child env, exported for tests. Mirrors tree-git's defaultGitRunner
+// pattern exactly: non-interactive (GIT_TERMINAL_PROMPT=0, GIT_ASKPASS=true so
+// a private repo fails fast instead of prompting) and VIBERSYN_GITHUB_PAT
+// forwarded as GH_TOKEN so the gh credential helper can authenticate — the PAT
+// only ever rides env, never argv.
+export function cloneEnv(base: Record<string, string | undefined>): Record<string, string | undefined> {
+  const env: Record<string, string | undefined> = { ...base, GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "true" };
+  if (env.GH_TOKEN === undefined && env.GITHUB_TOKEN === undefined && env.VIBERSYN_GITHUB_PAT !== undefined) {
+    env.GH_TOKEN = env.VIBERSYN_GITHUB_PAT;
+  }
+  return env;
+}
+
+// A pre-existing destination (upids restart at upid-1 every boot while
+// builds/ persists on disk — dress-rehearsal finding) is resolved BEFORE the
+// clone: a valid git dir whose origin matches the requested URL is REUSED
+// (fast re-import, keeps prior room/* work); anything else — another
+// project's leftovers, a half-clone from an interrupted boot — is removed so
+// the fresh clone can land. Probe + removal never throw.
+async function resolveExistingDir(url: string, dir: string): Promise<{ reuse: boolean }> {
+  if (!existsSync(dir)) {
+    return { reuse: false };
+  }
+  try {
+    const proc = Bun.spawn(["git", "-C", dir, "remote", "get-url", "origin"], { stdout: "pipe", stderr: "ignore" });
+    const out = (await new Response(proc.stdout).text()).trim();
+    await proc.exited;
+    if (proc.exitCode === 0 && (out === url || out === `${url}.git` || `${out}.git` === url)) {
+      return { reuse: true };
+    }
+  } catch {
+    // git missing / not a repo — fall through to removal
+  }
+  rmSync(dir, { recursive: true, force: true });
+  return { reuse: false };
+}
+
 export async function cloneRepo(options: {
   url: string; // clone URL built from parsed owner/repo upstream — never raw phone input
-  dir: string; // absolute target directory (must not already exist)
+  dir: string; // absolute target directory (a stale one is reused or replaced — see resolveExistingDir)
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<CloneRepoResult> {
   const timeoutMs = options.timeoutMs ?? DEFAULT_CLONE_TIMEOUT_MS;
   if (options.signal?.aborted === true) {
     return { ok: false, error: "Clone aborted." };
+  }
+  try {
+    if ((await resolveExistingDir(options.url, options.dir)).reuse) {
+      return { ok: true, dir: options.dir };
+    }
+  } catch {
+    // resolution is best-effort; a stubborn dir surfaces as the clone error
   }
   // NEVER throws: Bun.spawn throws synchronously when `git` is not on PATH
   // (minimal launchd/systemd envs), and the import routine relies on every
@@ -165,11 +232,11 @@ export async function cloneRepo(options: {
     proc?.kill(9);
   };
   try {
-    proc = Bun.spawn(["git", "clone", "--depth", "1", "--single-branch", options.url, options.dir], {
+    proc = Bun.spawn(cloneArgv(options.url, options.dir), {
       stdout: "ignore",
       stderr: "pipe",
       stdin: "ignore",
-      env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "true" },
+      env: cloneEnv(process.env),
     });
     killTimer = setTimeout(() => {
       timedOut = true;

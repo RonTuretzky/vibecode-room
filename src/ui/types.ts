@@ -57,6 +57,19 @@ export interface ProjectorProcess {
   // home") — no client-side QR dependency. Null/absent until published.
   publishedUrl?: string | null;
   publishedQrSvg?: string | null;
+  // LIVE DEPLOYMENT (GitHub imports): the deploy-resolver's confirmed URL for
+  // this repo's running app (VIBERSYN_DEPLOY_MAP override → clone scrape +
+  // HEAD probes → gh garnish). Feeds the tree menu's "🌐 Live app" row, which
+  // opens the holo panel's same-origin /salem proxy iframe. Null/absent when
+  // no deployment resolved (most trees).
+  deployUrl?: string | null;
+  // GIT SUBSTRATE surface for tree visuals: the tree's real local repo.
+  // branches is tiny and bounded (<=8): main + one concept/<backend> per lane
+  // (adopted GitHub imports grow room/<slug> branches instead, each carrying
+  // its PR URL once one is open against the origin), with session commit
+  // counts. remoteUrl is null until published on commission (private GitHub
+  // repo + draft PR per concept branch) — for adopted trees it is the origin.
+  treeRepo?: { branches: Array<{ name: string; commits: number; prUrl?: string }>; remoteUrl: string | null } | null;
 }
 
 // One candidate in the idea tray: the full ledger surfaced to the projector, not
@@ -183,6 +196,10 @@ export interface ProjectorSnapshot {
   // instead of seeding a new ambient suggestion. Surfaced so the projector can
   // highlight the steered bubble and show a "steering ->" indicator.
   steeringUpid?: string | null;
+  // The room/<slug> branch the steering target is scoped to (the record toggle
+  // dwelled on a specific branch of an adopted tree), or null when the select
+  // was unscoped. Lives and dies with steeringUpid.
+  steeringBranch?: string | null;
   // AUTO-BUILD: when true, every fired idea is accepted+built without a click. The
   // projector shows the toggle as ON.
   autoAccept?: boolean;
@@ -222,6 +239,16 @@ export interface ProjectorSnapshot {
   // and proposes quests (fact-checks, deep-dives, bias scans) alongside idea
   // detection. Toggled via POST /api/research-mode or voice "research on".
   researchMode?: boolean;
+  // SELF-REBUILD ("the room rebuilds itself"): the RUNTIME toggle gating the
+  // green-self-commit → exit-87 rebuild trigger. Boots on when
+  // VIBERSYN_SELF_MODE=1 (the --self supervisor exports it); flipped from the
+  // wall via POST /api/self-rebuild.
+  selfRebuild?: boolean;
+  // True when this server was launched with VIBERSYN_SELF_MODE=1 — i.e. under
+  // the run-room --self supervisor loop, the only launch where an exit 87
+  // actually rebuilds and relaunches the process. Lets the wall title the
+  // Self-Rebuild toggle honestly (ARMED vs needs a --self launch).
+  selfSupervisor?: boolean;
   // True while a suggestion round's model inference is in flight — the wall's
   // "scanning the conversation" indicator (a crystal might be forming).
   researchThinking?: boolean;
@@ -235,4 +262,43 @@ export interface ProjectorSnapshot {
   // Concept clusters over the dialogue window. Each topic is a BRANCH of the
   // 3D conversation tree; turns reference their topic via topicId.
   dialogueTopics?: Array<{ id: string; label: string; turnIds: string[]; freshAtMs: number }>;
+  // The conversation SKY over the ceiling: one cloud per concept topic,
+  // remembered BEYOND the rolling dialogue window (turnCount = retired + live
+  // members; liveTopicId null once the window killed the topic), plus
+  // cross-cloud relations. PROVENANCE IS PART OF THE CONTRACT: each link's
+  // source says whether the recurrent agent thread judged it ("agent") or the
+  // deterministic lexical fallback did ("lexical"), and agentAtMs is null
+  // until the agent has actually spoken. Shapes mirror research/sky.ts
+  // (declared inline like dialogueTopics — the ui never imports server code).
+  sky?: {
+    clouds: Array<{
+      id: string;
+      label: string;
+      labelSource: "agent" | "topic";
+      firstAtMs: number;
+      freshAtMs: number;
+      turnCount: number;
+      liveTopicId: string | null;
+      dominantSpeaker: string | null;
+      // NAMING GATE: false = too thin (or agent-dusted) to earn a label — the
+      // ceiling renders this accumulation as dust, never a named constellation.
+      // Optional for legacy fixtures (absent = named).
+      named?: boolean;
+      // RETIRED member turns kept as STARS (constellation asterism points).
+      // Only the freshest clouds carry them; elidedCount admits evicted
+      // history. Live stars are joined client-side from `dialogue` by topicId.
+      stars?: Array<{ id: string; atMs: number; speaker: string | null; gist: string }>;
+      elidedCount?: number;
+    }>;
+    links: Array<{ a: string; b: string; strength: number; reason: string; source: "agent" | "lexical" }>;
+    updatedAtMs: number;
+    agentAtMs: number | null;
+    // LOUDNESS: the relate agent's live miss streak + last reason (mirrors
+    // /api/health's sky-relate leg). `agent` = which transport landed the last
+    // applied tick ("cerebras" | "host-claude" stand-in | null before any).
+    // Optional for legacy fixtures.
+    relate?: { missStreak: number; lastMissReason: string | null; agent?: string | null };
+    // Retired babble: chronological dust, faint and nameless on the ceiling.
+    dust?: Array<{ atMs: number }>;
+  };
 }

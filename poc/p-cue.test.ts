@@ -6,8 +6,18 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { WebSocket } from "ws";
-import { ensureCueSourceBuild } from "../src/cue/source";
+import { cueSourceBuildAvailable, ensureCueSourceBuild } from "../src/cue/source";
 import { runProbe, type ProbeAssertion } from "./harness";
+
+// This probe needs the EXTERNAL Cue substrate: a built checkout of
+// jameslbarnes/cue via VIBERSYN_CUE_SOURCE_DIR or a cached tmp build.
+// Environments without either (CI, fresh worktrees) skip it LOUDLY.
+const cueSubstrateMissing = process.env.VIBERSYN_CUE_SOURCE_DIR === undefined && !cueSourceBuildAvailable();
+if (cueSubstrateMissing) {
+  console.warn(
+    "[cue-substrate] skipping P-CUE substrate probe: VIBERSYN_CUE_SOURCE_DIR is unset and no built Cue checkout was found",
+  );
+}
 
 const PROBE_ID = "probe-cue-substrate";
 const REPORT_ROOT = "artifacts/smithering/reports";
@@ -22,7 +32,7 @@ const LATENCY_PROVIDER_DELAY_MS = 65;
 type CueCore = Record<string, any>;
 type CueServer = Record<string, any>;
 
-describe("P-CUE real Cue substrate probe", () => {
+describe.skipIf(cueSubstrateMissing)("P-CUE real Cue substrate probe", () => {
   test("real Cue source exposes Vibersyn's required substrate or records owned extensions", async () => {
     const cue = await loadCue();
     const assertions: ProbeAssertion[] = [

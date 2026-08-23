@@ -15,6 +15,7 @@
 // simply stands.
 
 import type { TranscriptTurn } from "../detect/types";
+import { composeAgentRunner, unwrapAgentReply } from "./standin";
 
 // The snapshot-facing topic shape (ProjectorSnapshot.dialogueTopics).
 export interface ConceptTopic {
@@ -54,10 +55,17 @@ export interface ConceptTreeOptions {
 }
 
 const DEFAULT_DEBOUNCE_MS = 4_000;
-const DEFAULT_TIMEOUT_MS = 8_000;
-// A third of the turn's vocabulary already in the topic → same concept. Below
+// Covers a fast-failing Cerebras call plus the host-claude stand-in's cold CLI
+// boot (~14s measured; standin.ts STANDIN_TIMEOUT_MS 25s). Refinements never
+// overlap (#inFlight) and re-debounce, so a slow rescue only delays, never
+// stacks.
+const DEFAULT_TIMEOUT_MS = 30_000;
+// ~A third of the turn's vocabulary already in the topic → same concept. Below
 // that, a new branch is honest — the refinement pass can always re-merge.
-const DEFAULT_JOIN_THRESHOLD = 0.34;
+// 0.30, NOT 0.34: a 3-distinct-token related sentence sharing 1 token scores
+// 0.3333 and missed the old bar by 0.007 (live-room evidence — "instruction
+// manual" class fragments founding orphan topics).
+const DEFAULT_JOIN_THRESHOLD = 0.3;
 const DEFAULT_MAX_LABEL_WORDS = 4;
 const MAX_LABEL_CHARS = 60;
 const RECENT_TURNS_FOR_MODEL = 12;
@@ -76,7 +84,10 @@ interface TurnInfo {
   tokens: string[];
   text: string;
   atMs: number;
-  topicId: string;
+  // Null = the DUST POOL: a babble turn (contentWorthiness "dust") that never
+  // founds or joins a topic. Re-evaluated on coalesce growth — a fragment
+  // whose sentence completes promotes to a real branch.
+  topicId: string | null;
 }
 
 export class ConceptTree {
@@ -93,9 +104,13 @@ export class ConceptTree {
   #refineTimer: ReturnType<typeof setTimeout> | null = null;
   #inFlight: Promise<void> | null = null;
   #pendingRefine = false;
+  // LOUDNESS: consecutive refiner misses + the last reason (reset the moment a
+  // refinement's model reply actually arrives).
+  #missStreak = 0;
+  #lastMissReason: string | null = null;
 
   constructor(options: ConceptTreeOptions = {}) {
-    this.#model = options.model === undefined ? cerebrasTopicRefiner : options.model;
+    this.#model = options.model === undefined ? defaultTopicModel : options.model;
     this.#onRefined = options.onRefined;
     this.#debounceMs = options.debounceMs ?? DEFAULT_DEBOUNCE_MS;
     this.#timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -105,28 +120,44 @@ export class ConceptTree {
 
   // ── heuristic clustering ──────────────────────────────────────────────────
 
-  // Place a NEW turn on a branch synchronously. Returns the topic id.
-  assign(turn: TranscriptTurn): string {
+  // Place a NEW turn on a branch synchronously. Returns the topic id, or null
+  // when the turn is babble (the dust pool — never a branch of its own).
+  assign(turn: TranscriptTurn): string | null {
     if (this.#turnInfo.has(turn.id)) {
       return this.update(turn);
     }
     const target = this.#place(turn.id, turn.text, turn.atMs);
     this.#scheduleRefine();
-    return target.id;
+    return target?.id ?? null;
   }
 
   // A turn's text GREW in place (fragment coalescing) — re-score it. The turn
   // is scored WITHOUT its own old contribution to its topic's bag, otherwise a
   // turn would stick to the topic it founded no matter what it grew into. When
   // nothing clears the bar it STAYS put: topic ids must not churn on every
-  // coalesced fragment.
-  update(turn: TranscriptTurn): string {
+  // coalesced fragment. A DUST turn re-runs the worthiness gate on its grown
+  // text: completing the sentence promotes it onto a real branch.
+  update(turn: TranscriptTurn): string | null {
     const info = this.#turnInfo.get(turn.id);
     if (info === undefined) {
       return this.assign(turn);
     }
+    if (info.topicId === null) {
+      // Dust so far. Judge the WHOLE merged utterance: still dust → stay in
+      // the pool (updated text); content now → place like a fresh arrival.
+      if (contentWorthiness(turn.text) === "dust") {
+        info.tokens = matchTokens(turn.text);
+        info.text = turn.text;
+        info.atMs = turn.atMs;
+        return null;
+      }
+      this.#turnInfo.delete(turn.id);
+      const target = this.#place(turn.id, turn.text, turn.atMs);
+      this.#scheduleRefine();
+      return target?.id ?? null;
+    }
     const oldTopic = this.#topics.get(info.topicId);
-    const tokens = contentTokens(turn.text);
+    const tokens = matchTokens(turn.text);
     if (oldTopic !== undefined) {
       subtractBag(oldTopic.bag, info.tokens);
     }
@@ -174,7 +205,7 @@ export class ConceptTree {
       if (keep.has(turnId)) {
         continue;
       }
-      const topic = this.#topics.get(info.topicId);
+      const topic = info.topicId !== null ? this.#topics.get(info.topicId) : undefined;
       if (topic !== undefined) {
         subtractBag(topic.bag, info.tokens);
         topic.members = topic.members.filter((member) => member !== turnId);
@@ -211,6 +242,26 @@ export class ConceptTree {
 
   topicOf(turnId: string): string | null {
     return this.#turnInfo.get(turnId)?.topicId ?? null;
+  }
+
+  // The DUST POOL: windowed babble turns that belong to no topic. They stay in
+  // the transcript/window (never deleted) — they just never found or name a
+  // branch. The sky folds their retirements into its dust ledger.
+  dustTurnIds(): string[] {
+    const ids: string[] = [];
+    for (const [turnId, info] of this.#turnInfo) {
+      if (info.topicId === null) {
+        ids.push(turnId);
+      }
+    }
+    return ids;
+  }
+
+  // The refiner's failure surface (mirrors CloudGraph.agentHealth): /api/health
+  // degrades on a persistent miss streak — the 402 can never be silent here
+  // either.
+  agentHealth(): { missStreak: number; lastMissReason: string | null } {
+    return { missStreak: this.#missStreak, lastMissReason: this.#lastMissReason };
   }
 
   // ── model refinement ──────────────────────────────────────────────────────
@@ -255,12 +306,17 @@ export class ConceptTree {
 
   // ── internals ─────────────────────────────────────────────────────────────
 
-  #place(turnId: string, text: string, atMs: number): TopicState {
-    const tokens = contentTokens(text);
-    // A turn with no content words at all ("yeah okay") is conversational
-    // filler — it follows the current thread (freshest topic) rather than
-    // founding a meaningless branch of its own.
-    const target = this.#bestTopic(tokens) ?? (tokens.length === 0 ? this.#freshestTopic() : null) ?? this.#createTopic(text);
+  #place(turnId: string, text: string, atMs: number): TopicState | null {
+    const tokens = matchTokens(text);
+    // THE BABBLE GATE: backchannel/filler ("yep", "like twelve percent
+    // battery", lone fragments) goes to the DUST POOL — present in the window,
+    // never founding or joining a topic, never named. It is re-judged whole if
+    // coalesce growth completes the sentence (update() promotes it).
+    if (contentWorthiness(text) === "dust") {
+      this.#turnInfo.set(turnId, { tokens, text, atMs, topicId: null });
+      return null;
+    }
+    const target = this.#bestTopic(tokens) ?? this.#createTopic(text);
     target.members.push(turnId);
     addBag(target.bag, tokens);
     this.#turnInfo.set(turnId, { tokens, text, atMs, topicId: target.id });
@@ -370,29 +426,57 @@ export class ConceptTree {
       .sort((a, b) => a[1].atMs - b[1].atMs)
       .slice(-RECENT_TURNS_FOR_MODEL)
       .map(([id, info]) => ({ id, text: info.text }));
-    const raw = await this.#boundedCall(model, { topics: snapshot, recentTurns });
-    if (raw === null || raw === undefined) {
-      return; // model miss — the heuristic clustering stands
+    const outcome = await this.#boundedCall(model, { topics: snapshot, recentTurns });
+    if ("miss" in outcome) {
+      // Model miss — the heuristic clustering stands, and the REASON is kept:
+      // /api/health degrades on a persistent streak (the refiner hits the
+      // same Cerebras account as the sky relate).
+      this.#missStreak += 1;
+      this.#lastMissReason = outcome.miss;
+      // RETRY (bounded): a REAL failure re-debounces so a quiet room still
+      // crosses the health threshold instead of stalling below it forever.
+      // Capped at twice the degraded streak — past that the leg is already
+      // loud and new material is the only honest reason to call again.
+      // "no-key" never retries: the deliberate no-agent config must not churn.
+      if (outcome.miss !== "no-key" && this.#missStreak < 6) {
+        this.#scheduleRefine();
+      }
+      return;
     }
-    if (this.#applyModelClustering(raw, snapshotIds)) {
+    this.#missStreak = 0;
+    this.#lastMissReason = null;
+    // Unwrap transport provenance (standin.ts) — the reply may have come from
+    // the host-claude stand-in when the Cerebras account is failing; the
+    // clustering parse below only ever sees the model's raw reply.
+    if (this.#applyModelClustering(unwrapAgentReply(outcome.value).reply, snapshotIds)) {
       this.#onRefined?.();
     }
   }
 
   // Race the model against the budget; any rejection, timeout, or abort
-  // resolves to null so the heuristic clustering stands (import-plan pattern —
-  // a model that ignores its signal still loses to the timeout).
-  async #boundedCall(model: TopicModelRunner, request: TopicRefineRequest): Promise<unknown> {
+  // resolves to a miss sentinel CARRYING ITS REASON so the heuristic
+  // clustering stands and the failure is never indistinguishable from "fine".
+  async #boundedCall(
+    model: TopicModelRunner,
+    request: TopicRefineRequest,
+  ): Promise<{ value: unknown } | { miss: string }> {
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | null = null;
-    const timeout = new Promise<null>((resolve) => {
+    const timeout = new Promise<{ miss: string }>((resolve) => {
       timer = setTimeout(() => {
         controller.abort();
-        resolve(null);
+        resolve({ miss: "timeout" });
       }, this.#timeoutMs);
     });
     try {
-      return await Promise.race([model(request, controller.signal).catch(() => null), timeout]);
+      return await Promise.race([
+        model(request, controller.signal).then(
+          (value): { value: unknown } | { miss: string } =>
+            value === null || value === undefined ? { miss: "no-key" } : { value },
+          (error): { miss: string } => ({ miss: error instanceof Error ? error.message : String(error) }),
+        ),
+        timeout,
+      ]);
     } finally {
       if (timer !== null) {
         clearTimeout(timer);
@@ -551,6 +635,8 @@ const STOPWORDS = new Set([
 
 // Normalized content words: lowercase, punctuation stripped (apostrophes
 // removed so "don't" folds into the stopword list), stopwords dropped.
+// UNSTEMMED — labels are built from these, so they stay real words. Topic
+// JOIN comparisons use matchTokens (stemmed) instead.
 export function contentTokens(text: string): string[] {
   return text
     .toLowerCase()
@@ -558,6 +644,54 @@ export function contentTokens(text: string): string[] {
     .replace(/[^a-z0-9\s]/gu, " ")
     .split(/\s+/u)
     .filter((word) => word.length >= 2 && !STOPWORDS.has(word));
+}
+
+// Minimal deterministic suffix stemmer for JOIN comparisons only: this ASR
+// stream is caseless and punctuation-free, so token identity carries ALL the
+// continuation signal — review/reviewed, pack/packs, figure/figured must not
+// score zero overlap. Strip ing/ed/es/s, then a trailing e so "figured"
+// (→figur) meets "figure" (→figur). Both sides of every comparison pass
+// through the same stemmer, so truncated stems are consistent.
+export function stemToken(token: string): string {
+  let stem = token;
+  if (stem.length >= 6 && stem.endsWith("ing")) {
+    stem = stem.slice(0, -3);
+  } else if (stem.length >= 5 && (stem.endsWith("ed") || stem.endsWith("es"))) {
+    stem = stem.slice(0, -2);
+  } else if (stem.length >= 4 && stem.endsWith("s") && !stem.endsWith("ss")) {
+    stem = stem.slice(0, -1);
+  }
+  if (stem.length >= 5 && stem.endsWith("e")) {
+    stem = stem.slice(0, -1);
+  }
+  return stem;
+}
+
+// Content tokens normalized for MATCHING (topic bags + join scores).
+export function matchTokens(text: string): string[] {
+  return contentTokens(text).map(stemToken);
+}
+
+// THE BABBLE GATE (deterministic, measured on real room data: flags 26/40 of
+// a live window and 115/218 of a wall recording while keeping every
+// substantive sentence). Dust = no content tokens at all, a lone content
+// token in a short utterance ("yep", "teddy"), or a long utterance that is
+// almost all filler ("like twelve percent battery" class). Runs on the WHOLE
+// (post-coalesce) utterance — never deletes, only withholds topic founding.
+export function contentWorthiness(text: string): "content" | "dust" {
+  const words = text.trim().split(/\s+/u).filter((word) => word.length > 0);
+  const tokens = contentTokens(text);
+  const distinct = new Set(tokens);
+  if (distinct.size === 0) {
+    return "dust";
+  }
+  if (distinct.size === 1 && words.length <= 6) {
+    return "dust";
+  }
+  if (words.length >= 6 && tokens.length / words.length < 0.2) {
+    return "dust";
+  }
+  return "content";
 }
 
 function addBag(bag: Map<string, number>, tokens: readonly string[]): void {
@@ -633,9 +767,11 @@ const TOPIC_SYSTEM_PROMPT =
   'words. Reply with STRICT JSON only — {"topics":[{"id":"topic-0001 or null","label":"...","turnIds":["..."]}]} ' +
   "— no markdown, no prose.";
 
-// Default production refiner: ONE Cerebras chat/completions call. Null on any
-// miss (no key, HTTP error, unparseable payload). Errors reject and are
-// converted to null by the tree's bounded-call wrapper.
+// Default production refiner: ONE Cerebras chat/completions call. Null ONLY
+// when no key is configured; every real failure THROWS with its cause (HTTP
+// status + body, payload shape) so the tree's bounded-call wrapper records the
+// reason — the refiner hits the same account as the sky relate, so a 402 here
+// must be just as loud.
 export const cerebrasTopicRefiner: TopicModelRunner = async (request, signal) => {
   const apiKey = process.env.CEREBRAS_API_KEY;
   if (apiKey === undefined || apiKey.trim().length === 0) {
@@ -656,15 +792,27 @@ export const cerebrasTopicRefiner: TopicModelRunner = async (request, signal) =>
     signal,
   });
   if (!response.ok) {
-    return null;
+    const body = await response.text().catch(() => "");
+    throw new Error(`cerebras ${response.status}: ${body.slice(0, 120)}`);
   }
   const payload: unknown = await response.json();
   if (!isRecord(payload) || !Array.isArray(payload.choices)) {
-    return null;
+    throw new Error("cerebras payload: no choices array");
   }
   const first: unknown = payload.choices[0];
-  if (!isRecord(first) || !isRecord(first.message)) {
-    return null;
+  if (!isRecord(first) || !isRecord(first.message) || typeof first.message.content !== "string") {
+    throw new Error("cerebras payload: no message content");
   }
-  return typeof first.message.content === "string" ? first.message.content : null;
+  return first.message.content;
 };
+
+// The PRODUCTION refiner (ROUND 2 root-cause fix, defaultCloudRelate twin):
+// Cerebras first, the host's logged-in `claude` CLI standing in when the
+// account fails — the refiner hits the same quota-dead account as the sky
+// relate, so it gets the same rescue. No key stays a clean heuristic-only
+// no-op. Mode rules: standin.ts (VIBERSYN_RESEARCH_LLM).
+export const defaultTopicModel: TopicModelRunner = composeAgentRunner({
+  primary: cerebrasTopicRefiner,
+  promptFor: (request: TopicRefineRequest) =>
+    `${TOPIC_SYSTEM_PROMPT}\n\n${JSON.stringify({ topics: request.topics, recentTurns: request.recentTurns })}`,
+});

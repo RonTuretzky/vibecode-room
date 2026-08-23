@@ -33,12 +33,17 @@
 #   ./run-room.sh --gesture       # legacy: real cameras (needs gesture-wall deps + room.json)
 #   ./run-room.sh --fake          # legacy: gesture mode with synthetic cursors
 #   ./run-room.sh --arcade        # joystick drives the dwell cursors (gesture-mode
-#                                 # XL UI, no cameras); combine: --single --arcade --real-hands
+#                                 # XL UI, no cameras); ADD --gesture to run the stick
+#                                 # BESIDE the cameras (both cursor streams merge)
 #   ./run-room.sh --fake-hands    # pinch camera with synthetic hands (no TD, no cameras)
 #   ./run-room.sh --real-hands    # pinch camera from the REAL laptop camera via the
 #                                 # standalone MediaPipe bridge — the NO-TOUCHDESIGNER
 #                                 # path (needs macOS Camera permission on the Terminal/IDE)
 #   ./run-room.sh --hands=ws://td-mac:9980   # pinch camera fed by a TouchDesigner rig
+#   ./run-room.sh --flat          # FLAT rig: the two projections sit side by side
+#                                 # on ONE wall — lock the windows into halves of a
+#                                 # single wide view so they tile one continuous
+#                                 # picture (docs/FLAT-WALL.md)
 #   ./run-room.sh --gesture --config=my.json
 #
 # GUEST HANDS is always on: anyone on the room LAN opens
@@ -70,7 +75,9 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
 
 GESTURE=0
+GESTURE_EXPLICIT=0                    # an explicit --gesture (vs implied by --arcade/--fake): --arcade + --gesture = stick BESIDE cameras
 FAKE=0
+FLAT=0                                # --flat: flat-wall rig — wall windows tile ONE continuous picture
 SELF_MODE=0
 HANDS=0                               # TouchDesigner hand-pinch camera (--hands / --hands=URL / --fake-hands / --real-hands)
 FAKE_HANDS=0
@@ -82,6 +89,7 @@ CONFIG="${ROOM_CONFIG:-gesture-wall/room.json}"
 VIBERSYN_PORT="${VIBERSYN_PORT:-8788}"
 HOST="${HOST:-0.0.0.0}"               # bind all interfaces so phones reach /submit (QR import)
 WS_PORT="${WS_PORT:-8770}"
+ARCADE_PORT="${ARCADE_PORT:-8771}"    # joystick bridge port when it runs BESIDE the camera fusion server
 HANDS_PORT="${HANDS_PORT:-9980}"      # hands WS (TD or fake-hands); the default --hands URL uses it
 HANDS_URL="${HANDS_URL:-}"            # explicit hands source; empty = ws://localhost:$HANDS_PORT
 HANDS_WALLS="${HANDS_WALLS:-A}"       # walls that get &hands= — one stream driving BOTH cameras is opt-in (A,B)
@@ -106,7 +114,7 @@ fi
 
 for arg in "$@"; do
   case "$arg" in
-    --gesture) GESTURE=1 ;;
+    --gesture) GESTURE=1; GESTURE_EXPLICIT=1 ;;
     --fake) GESTURE=1; FAKE=1 ;;   # --fake implies gesture mode, minus the cameras
     --arcade) GESTURE=1; ARCADE=1 ;;   # joystick as THE fusion cursor source (gesture-mode XL UI, no cameras)
     --hands) HANDS=1 ;;
@@ -114,13 +122,14 @@ for arg in "$@"; do
     --fake-hands) HANDS=1; FAKE_HANDS=1 ;;   # pinch camera minus TouchDesigner (synthetic hands)
     --real-hands) HANDS=1; REAL_HANDS=1 ;;   # pinch camera from the REAL laptop camera via the standalone MediaPipe bridge (no TD)
     --guests) ;;   # guest hands is always on now — accepted as a no-op for old muscle memory
+    --flat) FLAT=1 ;;   # flat rig: append &flat=1 so the wall pair renders one continuous view
     --single) SINGLE=1 ;;
     --single=*) SINGLE=1; SINGLE_VIEW="${arg#*=}" ;;
     --self) SELF_MODE=1 ;;   # self-hosting: VIBERSYN_SELF_MODE=1 + supervisor loop
     --calibrate) CALIBRATE=1 ;;
     --config=*) CONFIG="${arg#*=}" ;;
     -h|--help)
-      sed -n '2,55p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,71p' "$0" | sed 's/^# \{0,1\}//'
       exit 0 ;;
     *) echo "[room] unknown arg: $arg" >&2; exit 2 ;;
   esac
@@ -265,7 +274,7 @@ fi
 
 # ── 1) gesture fusion source (legacy; cursors over ws://…:WS_PORT) ───────────
 if [ "$GESTURE" = "1" ]; then
-  if [ "${ARCADE:-0}" = "1" ]; then
+  if [ "${ARCADE:-0}" = "1" ] && [ "$GESTURE_EXPLICIT" != "1" ]; then
     # Physical joystick (8BitDo/any pygame stick) as the ONLY cursor source,
     # serving the fusion protocol on WS_PORT so the standard &gesture=1 wall
     # URL picks it up — this is what turns on the gesture-mode XL button UI
@@ -312,6 +321,19 @@ if [ "$GESTURE" = "1" ]; then
     ( cd gesture-wall && exec $SUDO "$PYTHON" -m gesturewall.server --config "$CONFIG_ABS" --ws-port "$WS_PORT" --http-port "$GW_HTTP_PORT" ) &
     PIDS+=($!)
     if [ -n "$SUDO" ]; then SUDO_PID=$!; fi
+  fi
+  # --arcade WITH an explicit --gesture: the joystick bridge runs BESIDE the
+  # camera (or --fake) fusion source on its own port; the wall's gesture layer
+  # merges both cursor streams (&fusion= carries a comma-separated list).
+  if [ "${ARCADE:-0}" = "1" ] && [ "$GESTURE_EXPLICIT" = "1" ]; then
+    if ! "$PYTHON" -c "import pygame" >/dev/null 2>&1; then
+      echo "[room] ERROR: pygame not importable by $PYTHON (the joystick bridge needs it):" >&2
+      echo "         $PYTHON -m pip install -r gesture-wall/requirements.txt" >&2
+      exit 1
+    fi
+    echo "[room] fusion: arcade joystick bridge (beside cameras) on ws://localhost:$ARCADE_PORT"
+    "$PYTHON" gesture-wall/tools/arcade_fusion.py --port "$ARCADE_PORT" --wall A &
+    PIDS+=($!)
   fi
 fi
 
@@ -390,7 +412,22 @@ done
 # ── 4) open the wall windows ─────────────────────────────────────────────────
 GESTURE_QS=""
 if [ "$GESTURE" = "1" ]; then
-  GESTURE_QS="&gesture=1&fusion=ws://localhost:$WS_PORT"
+  FUSION_LIST="ws://localhost:$WS_PORT"
+  if [ "${ARCADE:-0}" = "1" ] && [ "$GESTURE_EXPLICIT" = "1" ]; then
+    # Joystick beside cameras: the gesture layer merges every listed source.
+    FUSION_LIST="$FUSION_LIST,ws://localhost:$ARCADE_PORT"
+  fi
+  # dots=1: force the per-person cursor dots visible — pointing with no dot
+  # reads as "gestures are broken" (the stored preference hides them).
+  # stick=1: the cursor source is the JOYSTICK bridge (arcade-only path — the
+  # exact guard that launched it above), so the guided demo coaches
+  # lever+button instead of "point with your hand". --arcade beside an
+  # explicit --gesture keeps the camera wording (hands are still primary).
+  STICK_QS=""
+  if [ "${ARCADE:-0}" = "1" ] && [ "$GESTURE_EXPLICIT" != "1" ]; then
+    STICK_QS="&stick=1"
+  fi
+  GESTURE_QS="&gesture=1&dots=1$STICK_QS&fusion=$FUSION_LIST"
 fi
 # Hand-pinch camera stream: wall A (and --single) always; wall B only when
 # HANDS_WALLS opts in — one hands stream driving two cameras at once is deliberate.
@@ -418,8 +455,15 @@ if [ "${VIBERSYN_MOCK_ROOM:-}" = "1" ]; then
 fi
 # Guest hands is default-on in the app itself (no query param needed; &remote=0
 # would opt a window out).
-URL_A="http://localhost:$VIBERSYN_PORT/?live=1&wall=A&view=ideas$GESTURE_QS$HANDS_QS$MOCK_QS"
-URL_B="http://localhost:$VIBERSYN_PORT/?live=1&wall=B&view=builds$GESTURE_QS$HANDS_QS_B$MOCK_QS"
+# Flat rig (--flat): both wall windows become halves of ONE wide view so the
+# side-by-side projections tile a continuous picture (needs &wall=, so the
+# --single window — no wall param — is deliberately left alone).
+FLAT_QS=""
+if [ "$FLAT" = "1" ]; then
+  FLAT_QS="&flat=1"
+fi
+URL_A="http://localhost:$VIBERSYN_PORT/?live=1&wall=A&view=ideas$GESTURE_QS$HANDS_QS$MOCK_QS$FLAT_QS"
+URL_B="http://localhost:$VIBERSYN_PORT/?live=1&wall=B&view=builds$GESTURE_QS$HANDS_QS_B$MOCK_QS$FLAT_QS"
 URL_SINGLE="http://localhost:$VIBERSYN_PORT/?live=1&view=$SINGLE_VIEW$GESTURE_QS$HANDS_QS$MOCK_QS"
 
 open_wall() { # $1=window-position  $2=url

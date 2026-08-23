@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { TranscriptTurn } from "../detect/types";
-import { ConceptTree, contentTokens, type TopicModelRunner, type TopicRefineRequest } from "./tree";
+import { ConceptTree, contentTokens, contentWorthiness, stemToken, type TopicModelRunner, type TopicRefineRequest } from "./tree";
 
 function turn(id: string, text: string, atMs: number): TranscriptTurn {
   return { id, speaker: "s1", text, atMs };
@@ -46,26 +46,31 @@ describe("ConceptTree heuristic clustering", () => {
     expect(topics[1]!.freshAtMs).toBe(2_000);
   });
 
-  test("a turn with no content words follows the freshest topic instead of founding a branch", () => {
+  test("a turn with no content words goes to the DUST POOL, never a branch", () => {
     const tree = heuristicTree();
     tree.assign(turn("t1", "solar panels on the roof", 1_000));
-    tree.assign(turn("t2", "yeah okay right", 2_000));
+    expect(tree.assign(turn("t2", "yeah okay right", 2_000))).toBeNull();
     const topics = tree.topics();
     expect(topics).toHaveLength(1);
-    expect(topics[0]!.turnIds).toEqual(["t1", "t2"]);
+    expect(topics[0]!.turnIds).toEqual(["t1"]);
+    expect(tree.topicOf("t2")).toBeNull();
+    expect(tree.dustTurnIds()).toEqual(["t2"]);
   });
 
-  test("update() re-scores a grown turn and can move it between branches", () => {
+  test("update() re-scores a grown turn and promotes dust onto a real branch", () => {
     const tree = heuristicTree();
     tree.assign(turn("t1", "solar panels power the roof", 1_000));
     tree.assign(turn("t2", "cats", 2_000));
-    expect(tree.topics()).toHaveLength(2);
-    // Coalescing grew the turn into solar-panel territory.
+    // "cats" alone is babble — dust, not a branch.
+    expect(tree.topics()).toHaveLength(1);
+    expect(tree.dustTurnIds()).toEqual(["t2"]);
+    // Coalescing grew the turn into a real sentence in solar-panel territory.
     tree.update(turn("t2", "cats sleep on warm solar panels", 2_000));
     const topics = tree.topics();
     expect(topics).toHaveLength(1);
     expect(topics[0]!.turnIds).toEqual(["t1", "t2"]);
     expect(tree.topicOf("t2")).toBe(topics[0]!.id);
+    expect(tree.dustTurnIds()).toEqual([]);
   });
 
   test("update() keeps a turn in place when nothing clears the bar (no id churn)", () => {
@@ -264,5 +269,137 @@ describe("contentTokens", () => {
       "accept",
       "crypto",
     ]);
+  });
+});
+
+// ── the babble gate + join repairs (live-room evidence, 2026-08) ─────────────
+
+describe("contentWorthiness (the babble gate)", () => {
+  test("table-driven from the real room inventory: dust vs content", () => {
+    const dust = [
+      "yep",
+      "we",
+      "teddy",
+      "bears",
+      "sorry",
+      "oh my god",
+      "thats fine",
+      "not funny but funny",
+      "enough enough enough",
+      "yeah okay right",
+    ];
+    const content = [
+      "check out the repo on github dot com under khalil d h",
+      "we started getting smart boards when i was in middle school",
+      "five hundred k a year in event space they were telling us",
+      "the overlay is now in and rendering in the off air preview",
+    ];
+    for (const text of dust) {
+      expect(contentWorthiness(text)).toBe("dust");
+    }
+    for (const text of content) {
+      expect(contentWorthiness(text)).toBe("content");
+    }
+  });
+
+  test("the measured split on the 218-line wall recording holds (115 dust)", async () => {
+    const lines = (await import("../../fixtures/research/wall-recording-2026-08-10.json"))
+      .default as Array<{ speaker: string; text: string }>;
+    expect(lines).toHaveLength(218);
+    const dust = lines.filter((line) => contentWorthiness(line.text) === "dust");
+    expect(dust).toHaveLength(115);
+  });
+});
+
+describe("stemmed topic joins (caseless ASR carries no other signal)", () => {
+  test("stemToken folds inflections review/reviewed, pack/packs, figure/figured", () => {
+    expect(stemToken("reviewed")).toBe(stemToken("review"));
+    expect(stemToken("packs")).toBe(stemToken("pack"));
+    expect(stemToken("figured")).toBe(stemToken("figure"));
+    expect(stemToken("checking")).toBe(stemToken("checks"));
+  });
+
+  test("'reviewed the packs' joins a review/pack topic post-stemming", () => {
+    const tree = heuristicTree();
+    tree.assign(turn("t1", "review the multiplayer packs before tonight", 1_000));
+    tree.assign(turn("t2", "reviewed the packs already", 2_000));
+    const topics = tree.topics();
+    expect(topics).toHaveLength(1);
+    expect(topics[0]!.turnIds).toEqual(["t1", "t2"]);
+  });
+
+  test("a later related sentence sharing 1 of its 3 tokens joins (0.333 ≥ 0.30)", () => {
+    const tree = heuristicTree();
+    tree.assign(turn("t1", "today i see telegram and shanti has a full setup", 1_000));
+    // distinct tokens: telegram, instruction, manual — 1 shared / 3 = 0.333,
+    // which the old 0.34 bar missed by 0.007 (the operator's exact wound).
+    tree.assign(turn("t2", "the telegram instruction manual", 2_000));
+    const topics = tree.topics();
+    expect(topics).toHaveLength(1);
+    expect(topics[0]!.turnIds).toEqual(["t1", "t2"]);
+  });
+});
+
+describe("ConceptTree refiner loudness", () => {
+  test("a throwing model builds a miss streak with its reason; a reply resets it", async () => {
+    let mode: "throw" | "ok" = "throw";
+    const tree = modelTree(async () => {
+      if (mode === "throw") {
+        throw new Error("cerebras 402: payment_required");
+      }
+      return JSON.stringify({ topics: [{ id: "topic-0001", label: "Solar roof", turnIds: ["t1"] }] });
+    });
+    tree.assign(turn("t1", "solar panels power the roof", 1_000));
+    await tree.refineNow();
+    await tree.refineNow();
+    await tree.refineNow();
+    expect(tree.agentHealth()).toEqual({ missStreak: 3, lastMissReason: "cerebras 402: payment_required" });
+    mode = "ok";
+    await tree.refineNow();
+    expect(tree.agentHealth()).toEqual({ missStreak: 0, lastMissReason: null });
+  });
+
+  test("a miss re-debounces a bounded retry — capped so a dead account never churns forever", async () => {
+    const tree = new ConceptTree({
+      debounceMs: 1,
+      model: async () => {
+        throw new Error("cerebras 402: payment_required");
+      },
+    });
+    tree.assign(turn("t1", "solar panels power the roof", 1_000));
+    await tree.refineNow();
+    expect(tree.agentHealth().missStreak).toBeGreaterThanOrEqual(1);
+    // Retries self-schedule (1ms debounce here) with NO new material…
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    await tree.settle();
+    // …and stop at the cap: loud enough for the health leg (≥3), no infinite churn.
+    expect(tree.agentHealth().missStreak).toBe(6);
+    expect(tree.agentHealth().lastMissReason).toBe("cerebras 402: payment_required");
+    tree.dispose();
+  });
+
+  test("a stand-in wrapped reply (host-claude rescue) applies clustering and resets the streak", async () => {
+    // The production model seam (standin.ts composeAgentRunner) wraps replies
+    // with transport provenance when the host CLI rescues a failing Cerebras
+    // account — the tree must unwrap and apply it like any landed refinement.
+    let mode: "throw" | "wrapped" = "throw";
+    const tree = modelTree(async () => {
+      if (mode === "throw") {
+        throw new Error("cerebras 402: payment_required");
+      }
+      return {
+        kind: "agent-reply",
+        agent: "host-claude",
+        standinFor: "cerebras 402: payment_required",
+        reply: JSON.stringify({ topics: [{ id: null, label: "solar roof power", turnIds: ["t1"] }] }),
+      };
+    });
+    tree.assign(turn("t1", "solar panels power the roof", 1_000));
+    await tree.refineNow();
+    expect(tree.agentHealth().missStreak).toBe(1);
+    mode = "wrapped";
+    await tree.refineNow();
+    expect(tree.agentHealth()).toEqual({ missStreak: 0, lastMissReason: null });
+    expect(tree.topics()[0]!.label).toBe("Solar roof power");
   });
 });

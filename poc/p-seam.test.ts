@@ -8,7 +8,17 @@ import { pathToFileURL } from "node:url";
 import React from "react";
 import { Gateway, createSmithers } from "smithers-orchestrator";
 import { z } from "zod";
-import { ensureCueSourceBuild } from "../src/cue/source";
+import { cueSourceBuildAvailable, ensureCueSourceBuild } from "../src/cue/source";
+
+// This probe needs the EXTERNAL Cue substrate: a built checkout of
+// jameslbarnes/cue via VIBERSYN_CUE_SOURCE_DIR or a cached tmp build.
+// Environments without either (CI, fresh worktrees) skip it LOUDLY.
+const cueSubstrateMissing = process.env.VIBERSYN_CUE_SOURCE_DIR === undefined && !cueSourceBuildAvailable();
+if (cueSubstrateMissing) {
+  console.warn(
+    "[cue-substrate] skipping P-SEAM gateway probe: VIBERSYN_CUE_SOURCE_DIR is unset and no built Cue checkout was found",
+  );
+}
 
 const PROBE_ID = "probe-cue-smithers-seam";
 const BUILD_DIR = `artifacts/smithering/build/${PROBE_ID}`;
@@ -81,7 +91,7 @@ afterEach(() => {
   }
 });
 
-describe("P-SEAM Cue to Smithers gateway integration", () => {
+describe.skipIf(cueSubstrateMissing)("P-SEAM Cue to Smithers gateway integration", () => {
   test("MappedActionTool dispatch is bidirectional, async, reconnectable, and restart-correlated", async () => {
     await assertDependencyVerdicts();
     const cue = await loadCue();
