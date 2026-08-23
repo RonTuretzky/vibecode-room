@@ -20,7 +20,13 @@ import { backendsOf, buildsOf } from "../buildloop";
  * THE STEP CONTRACT (what advances each step):
  *   orientation — 3 practice orbs; `popPracticeOrb` per pop (a local UI event —
  *                 the orbs are practice targets, not room state); all popped →
- *                 "record".
+ *                 "hands" when the pinch-camera rig is live, else "record".
+ *   hands       — (enlists ONLY when the hands rig was LIVE during
+ *                 orientation — see setHandsLive) coaching for the real
+ *                 camera grammar: pinch-hold-drag orbits, both-hands pinch
+ *                 zooms, palm toward/away flies. Advances ONLY on its
+ *                 explicit Continue button (routed through skipStep) — a
+ *                 coaching step, never a fake state gate.
  *   record      — advances when the snapshot shows muted === false AND
  *                 captureMode === true (however achieved: the overlay's big
  *                 Record button POSTs the real /api/unmute + /api/capture +
@@ -41,17 +47,21 @@ import { backendsOf, buildsOf } from "../buildloop";
  *                 Advances when the focus process's real builds[] carry any
  *                 entry with status "ready" — i.e. the first MOCK is ready and
  *                 its pitch deck can open (legacy fallback: buildStatus ===
- *                 "ready" when builds[] is absent). Failed lanes NEVER advance
- *                 and never wedge — the overlay shows them failed and the skip
- *                 affordance always works.
+ *                 "ready" when builds[] is absent). While mocks genuinely
+ *                 build the step CANNOT be skipped (operator rule) — the only
+ *                 forward path is the first mock turning ready. Failed lanes
+ *                 NEVER advance and never wedge: when every lane failed (or no
+ *                 kickoff exists at all) the skip escape returns — see
+ *                 raceSkippable.
  *   decide      — terminal step: the pitch deck is auto-opened and the visitor
  *                 dwell-picks a "How should we continue?" choice (rendered by
  *                 the deck overlay's room-native decision bar). ANY choice
  *                 completes the demo (the App exits on decision); `skipStep`
  *                 (the Finish button) returns null = demo complete too.
  *
- * Skip is available at every step; re-entering (startGuided) always begins a
- * fresh run with a fresh baseline.
+ * Skip is available at every step EXCEPT a genuinely-building race (see
+ * raceSkippable); re-entering (startGuided) always begins a fresh run with a
+ * fresh baseline.
  *
  * WATERMARKS (feeds vs. session history): the room accumulates transcript
  * turns, detected ideas and processes for as long as it runs — the demo must
@@ -78,15 +88,16 @@ export const PRACTICE_ORB_COUNT = 3;
 // The demo is a guided tour; each auto-advanced step must be watchable.
 export const RACE_MIN_DWELL_MS = 10_000;
 
-export type GuidedStep = "orientation" | "record" | "idea" | "race" | "decide";
+export type GuidedStep = "orientation" | "hands" | "record" | "idea" | "race" | "decide";
 
-export const GUIDED_STEP_ORDER: readonly GuidedStep[] = [
-  "orientation",
-  "record",
-  "idea",
-  "race",
-  "decide",
-];
+// The per-run step order: the hands coaching step enlists ONLY when the
+// pinch-camera rig is actually live (App: handsOn && handsStatus === "open") —
+// a step teaching a camera that is not running would be a lie on the wall.
+export function guidedStepOrder(handsLive: boolean): readonly GuidedStep[] {
+  return handsLive
+    ? ["orientation", "hands", "record", "idea", "race", "decide"]
+    : ["orientation", "record", "idea", "race", "decide"];
+}
 
 export interface GuidedState {
   step: GuidedStep;
@@ -115,6 +126,11 @@ export interface GuidedState {
   // Optional: callers that never pass nowMs (older tests) get the legacy
   // no-dwell behavior.
   enteredAtMs?: number;
+  // Whether the pinch-camera hands rig was LIVE for this run (decides the step
+  // list: the "hands" coaching step enlists only when true). Optional so older
+  // raw-literal states keep working; absent reads as false. Slid during
+  // orientation only — see setHandsLive.
+  handsLive?: boolean;
 }
 
 function upidsOf(snapshot: ProjectorSnapshot): string[] {
@@ -143,7 +159,7 @@ function sameStrings(a: readonly string[], b: readonly string[]): boolean {
   return a.length === b.length && a.every((value, index) => value === b[index]);
 }
 
-export function startGuided(snapshot: ProjectorSnapshot): GuidedState {
+export function startGuided(snapshot: ProjectorSnapshot, opts?: { handsLive?: boolean }): GuidedState {
   return {
     step: "orientation",
     orbsPopped: 0,
@@ -151,7 +167,20 @@ export function startGuided(snapshot: ProjectorSnapshot): GuidedState {
     ...watermarksOf(snapshot),
     focusUpid: null,
     readyBackend: null,
+    handsLive: opts?.handsLive === true,
   };
+}
+
+// Hands liveness may reshape the run WHILE ORIENTATION RUNS only (the
+// ?demo=guided auto-entry boots before the hands socket opens — the same
+// healing doctrine as the watermark sliding in advanceOnSnapshot). Past
+// orientation the step list is settled: a camera dying mid-run must not
+// renumber the steps under the visitor. Identity-stable for setState callers.
+export function setHandsLive(state: GuidedState, live: boolean): GuidedState {
+  if (state.step !== "orientation" || (state.handsLive === true) === live) {
+    return state;
+  }
+  return { ...state, handsLive: live };
 }
 
 // ── post-watermark feed views (what the demo may react to / showcase) ────────
@@ -198,34 +227,59 @@ export function guidedSettle(
   return settle;
 }
 
-export function stepNumber(step: GuidedStep): number {
-  return GUIDED_STEP_ORDER.indexOf(step) + 1;
+// Step numbering renders against the run's OWN order (5 or 6 steps depending
+// on the hands rig). A "hands" step can only exist in a hands-live run, so its
+// number resolves against that order even if the caller forgot the flag.
+export function stepNumber(step: GuidedStep, handsLive = false): number {
+  return guidedStepOrder(handsLive || step === "hands").indexOf(step) + 1;
 }
 
-// The room is already live-listening: unmuted AND capturing. Entering the
-// record step then would offer a button whose whole job is already done, so
-// both entries into record (orb completion, orientation skip) test this and
-// jump straight to the idea step instead — freezing the watermarks and the
-// process baseline at the jump, exactly as the record step's own exit would.
-export function alreadyRecording(snapshot: ProjectorSnapshot): boolean {
-  return snapshot.muted === false && snapshot.captureMode === true;
+export function stepCount(handsLive = false): number {
+  return guidedStepOrder(handsLive).length;
 }
 
-// One practice orb popped (dwell-fired or clicked). All popped → record step —
-// or straight past it when the room is already recording (snapshot provided).
-export function popPracticeOrb(state: GuidedState, snapshot?: ProjectorSnapshot, nowMs?: number): GuidedState {
+// The room is already live-listening: unmuted AND (capturing OR the browser
+// mic is actually streaming — micState "live" in the App, which the snapshot
+// does not carry, so callers thread it in). Entering the record step then
+// would offer a button whose whole job is already done, so every entry into
+// record (orb completion, orientation/hands skip) tests this and jumps
+// straight to the idea step instead — freezing the watermarks and the process
+// baseline at the jump, exactly as the record step's own exit would.
+export function alreadyRecording(snapshot: ProjectorSnapshot, micLive = false): boolean {
+  return snapshot.muted === false && (snapshot.captureMode === true || micLive);
+}
+
+// The shared edge INTO the recording phase (orientation/hands exits): freeze
+// the speech/idea watermarks at this exact moment — everything beyond them is
+// this visitor's own session. A room already recording skips the record step
+// entirely (its button would be a no-op) and lands on "describe your idea".
+function enterRecordOrIdea(state: GuidedState, snapshot: ProjectorSnapshot, nowMs?: number, micLive = false): GuidedState {
+  if (alreadyRecording(snapshot, micLive)) {
+    return { ...state, ...watermarksOf(snapshot), step: "idea", baselineUpids: upidsOf(snapshot), enteredAtMs: nowMs };
+  }
+  return { ...state, ...watermarksOf(snapshot), step: "record", enteredAtMs: nowMs };
+}
+
+// One practice orb popped (dwell-fired or clicked). All popped → the hands
+// coaching step when the rig is live, else record — or straight past record
+// when the room is already recording (snapshot provided / mic live).
+export function popPracticeOrb(state: GuidedState, snapshot?: ProjectorSnapshot, nowMs?: number, micLive = false): GuidedState {
   if (state.step !== "orientation") {
     return state;
   }
   const orbsPopped = Math.min(state.orbsPopped + 1, PRACTICE_ORB_COUNT);
-  if (orbsPopped >= PRACTICE_ORB_COUNT && snapshot !== undefined && alreadyRecording(snapshot)) {
-    return { ...state, orbsPopped, ...watermarksOf(snapshot), step: "idea", baselineUpids: upidsOf(snapshot), enteredAtMs: nowMs };
+  if (orbsPopped < PRACTICE_ORB_COUNT) {
+    return { ...state, orbsPopped };
   }
-  return {
-    ...state,
-    orbsPopped,
-    step: orbsPopped >= PRACTICE_ORB_COUNT ? "record" : "orientation",
-  };
+  // Live hands take the detour: camera coaching comes before recording, even
+  // over a room already recording (the jump happens on the hands exit).
+  if (state.handsLive === true) {
+    return { ...state, orbsPopped, step: "hands", enteredAtMs: nowMs };
+  }
+  if (snapshot !== undefined) {
+    return enterRecordOrIdea({ ...state, orbsPopped }, snapshot, nowMs, micLive);
+  }
+  return { ...state, orbsPopped, step: "record" };
 }
 
 export function focusProcess(state: GuidedState, snapshot: ProjectorSnapshot): ProjectorProcess | null {
@@ -256,12 +310,14 @@ function firstReadyBackend(process: ProjectorProcess | null): string | null {
 // nothing advances, so React setState bails without re-rendering.
 export function advanceOnSnapshot(state: GuidedState, snapshot: ProjectorSnapshot, nowMs?: number): GuidedState {
   switch (state.step) {
-    case "orientation": {
-      // Slide the speech/idea watermarks while the visitor practices: the
-      // record step must measure freshness from ITS OWN entry, but the
-      // orientation→record edge (popPracticeOrb) never sees a snapshot — so
-      // the marks ride every feed forward until orientation ends. This also
-      // heals the ?demo=guided auto-entry, which may have baselined an empty
+    case "orientation":
+    case "hands": {
+      // Slide the speech/idea watermarks while the visitor practices (orbs OR
+      // camera coaching): the record step must measure freshness from ITS OWN
+      // entry, but the edges into it (popPracticeOrb, the hands Continue)
+      // never see a fresh snapshot mid-flight — so the marks ride every feed
+      // forward until the recording phase actually begins. This also heals
+      // the ?demo=guided auto-entry, which may have baselined an empty
       // placeholder snapshot before the first live one (with the session's
       // whole history) arrived.
       const marks = watermarksOf(snapshot);
@@ -312,18 +368,24 @@ export function advanceOnSnapshot(state: GuidedState, snapshot: ProjectorSnapsho
   }
 }
 
-// Force-advance past the current step (the per-step "Skip ▸" button, always
-// available). Returns null when skipping past the final step = demo complete.
-export function skipStep(state: GuidedState, snapshot: ProjectorSnapshot, nowMs?: number): GuidedState | null {
+// Force-advance past the current step (the per-step skip button; the hands
+// step's Continue routes here too). Returns null when skipping past the final
+// step = demo complete. NOT always available: a race with mocks genuinely
+// building refuses (identity return) — see raceSkippable.
+export function skipStep(state: GuidedState, snapshot: ProjectorSnapshot, nowMs?: number, micLive = false): GuidedState | null {
   switch (state.step) {
     case "orientation":
-      // Freeze the speech/idea watermarks at this exact moment: everything
-      // beyond them is this visitor's own recording session. A room already
-      // recording skips the record step entirely (its button would be a no-op).
-      if (alreadyRecording(snapshot)) {
-        return { ...state, ...watermarksOf(snapshot), step: "idea", baselineUpids: upidsOf(snapshot), enteredAtMs: nowMs };
+      // Live hands take the camera-coaching detour first; otherwise fall
+      // through to the recording phase (watermarks frozen at the jump — see
+      // enterRecordOrIdea).
+      if (state.handsLive === true) {
+        return { ...state, step: "hands", enteredAtMs: nowMs };
       }
-      return { ...state, ...watermarksOf(snapshot), step: "record", enteredAtMs: nowMs };
+      return enterRecordOrIdea(state, snapshot, nowMs, micLive);
+    case "hands":
+      // The Continue button and Skip are the SAME transition — coaching is
+      // done either way, nothing underneath changes (hands stay live).
+      return enterRecordOrIdea(state, snapshot, nowMs, micLive);
     case "record":
       // Same baseline reset the natural advance performs, so a process that
       // appears later still registers as the demo's newcomer.
@@ -333,7 +395,14 @@ export function skipStep(state: GuidedState, snapshot: ProjectorSnapshot, nowMs?
       // let an already-ready mock cascade straight to the deck.
       return advanceOnSnapshot({ ...state, step: "race", enteredAtMs: nowMs }, snapshot, nowMs);
     case "race":
-      // Skipping FROM the race is explicit — it bypasses the dwell.
+      // MOCKS BUILDING ARE NOT SKIPPABLE (operator rule: "I should also not
+      // be able to skip the mocks"): while a real kickoff races, the only way
+      // forward is the first mock turning ready. Identity return = refused.
+      // The never-wedge escapes (no focus process / every lane failed) pass
+      // through and bypass the dwell explicitly.
+      if (!raceSkippable(state, snapshot)) {
+        return state;
+      }
       return {
         ...state,
         step: "decide",
@@ -343,6 +412,16 @@ export function skipStep(state: GuidedState, snapshot: ProjectorSnapshot, nowMs?
     case "decide":
       return null;
   }
+}
+
+// May the race step be force-advanced? ONLY when nothing real would be
+// abandoned: no focus process (a skipped-through run — the race would
+// otherwise wedge forever on a kickoff that never happened) or every lane
+// failed (nothing will ever turn ready). While mocks genuinely build the
+// answer is no — the overlay hides its skip affordance and the machine
+// enforces the refusal (skipStep returns the state unchanged).
+export function raceSkippable(state: GuidedState, snapshot: ProjectorSnapshot): boolean {
+  return focusProcess(state, snapshot) === null || lanesAllFailed(guidedLanes(state, snapshot));
 }
 
 // ── mock lanes (step 4, the concept race) ────────────────────────────────────
@@ -477,4 +556,157 @@ export function guidedNotice(state: GuidedState, snapshot: ProjectorSnapshot): s
     return "Audio is reaching the server but ASR is in replay mode (no DEEPGRAM_API_KEY) — speech will not transcribe. Fix the key or skip ahead.";
   }
   return null;
+}
+
+// ── rig-aware + honest-verb copy (locked verbatim by machine.test.ts) ────────
+
+// Which physical thing moves the cursor. run-room.sh says which it wired:
+// &stick=1 (the --arcade joystick path) → "stick"; any other gesture wall →
+// "hand" (cameras); no gesture layer at all → "mouse" (desk). Both fusion
+// sources speak the same ws protocol, so only the launcher knows — and the
+// coaching must describe the input actually in the visitor's hand.
+export type PointerRig = "hand" | "stick" | "mouse";
+
+export function stepTitle(step: GuidedStep, rig: PointerRig): string {
+  if (step === "orientation") {
+    return rig === "hand" ? "Point with your hand" : rig === "stick" ? "Steer with the joystick" : "Point and hold";
+  }
+  switch (step) {
+    case "hands":
+      return "Fly the camera with your hands";
+    case "record":
+      return "Start the room recording";
+    case "idea":
+      return "Describe your idea";
+    case "race":
+      return "Watch the concepts race";
+    case "decide":
+      return "How should we continue?";
+  }
+}
+
+export interface OrientationCopy {
+  lede: string;
+  practice: string;
+  // Per-orb aria hint, rendered as "Practice orb N — {orbHint}".
+  orbHint: string;
+}
+
+export function orientationCopy(rig: PointerRig): OrientationCopy {
+  switch (rig) {
+    case "hand":
+      return {
+        lede: "Open your hand and point at the wall. Whatever you aim at grows and glows — hold still and a ring fills around it. When the ring completes, that's your click.",
+        practice: `Practice: pop the ${PRACTICE_ORB_COUNT} floating orbs. Point at one, hold until the ring closes.`,
+        orbHint: "point and hold to pop",
+      };
+    case "stick":
+      return {
+        lede: "Steer with the joystick lever to move the cursor. Whatever it rests on grows and glows — hold a button and a ring fills around it. When the ring completes, that's your click.",
+        practice: `Practice: pop the ${PRACTICE_ORB_COUNT} floating orbs. Steer onto one, hold a button until the ring closes.`,
+        orbHint: "steer onto it and hold a button to pop",
+      };
+    case "mouse":
+      return {
+        lede: "Move the mouse to aim. Whatever the cursor rests on grows and glows — hold still (or click) and a ring fills around it. When the ring completes, that's your click.",
+        practice: `Practice: pop the ${PRACTICE_ORB_COUNT} floating orbs. Rest the cursor on one until the ring closes, or just click.`,
+        orbHint: "rest the cursor on it (or click) to pop",
+      };
+  }
+}
+
+// The record step's lede: the imperative names the real input.
+export function recordCopy(rig: PointerRig): string {
+  const action =
+    rig === "hand"
+      ? "Point at the big Start Recording button and hold."
+      : rig === "stick"
+        ? "Steer onto the big Start Recording button and hold a button."
+        : "Press the big Start Recording button.";
+  return `${action} It really unmutes the room, turns on Idea Capture and Auto-Build, and starts the microphone — from here on, the room is listening.`;
+}
+
+// EVERY dismissal verb says what happens underneath (operator: "if it's
+// building the mocks and I click exit, is it going to stop building the mocks
+// or not?"). The race entry exists ONLY for its never-wedge escapes (see
+// raceSkippable) — while mocks build, the overlay offers no skip at all.
+export function skipCopy(step: GuidedStep, handsLive = false): { label: string; title: string } {
+  switch (step) {
+    case "orientation":
+      return {
+        label: "Skip practice ▸",
+        title: handsLive
+          ? "Skips the pointing practice and moves to the hand-camera step — the room itself is untouched."
+          : "Skips the pointing practice and moves toward recording — the room itself is untouched.",
+      };
+    case "hands":
+      return {
+        label: "Skip ▸ — hands stay live",
+        title: "Skips the camera coaching — your hands keep flying the camera exactly as before.",
+      };
+    case "record":
+      return {
+        label: "Skip ▸ — mic stays as it is",
+        title: "Moves on without starting the recording — the mic and capture are left exactly as they are.",
+      };
+    case "idea":
+      return {
+        label: "Skip ▸ — nothing builds",
+        title: "Moves on without planting — nothing new starts building.",
+      };
+    case "race":
+      return {
+        label: "Continue without a mock ▸",
+        title: "No mock is coming from this kickoff — continuing abandons nothing that is still running.",
+      };
+    case "decide":
+      return {
+        label: "✓ Finish",
+        title: "Ends the guided demo. The room keeps working; nothing running is stopped.",
+      };
+  }
+}
+
+// The leave verb, with the build truth SAID on the surface: leaving the guide
+// never stops anything the room is doing — the subtitle states exactly what
+// keeps going at this step.
+export function exitCopy(step: GuidedStep): { label: string; subtitle: string } {
+  switch (step) {
+    case "race":
+      return {
+        label: "✕ Leave the guide",
+        subtitle: "Leaving never stops the mocks — they keep building and the tree stays in the garden.",
+      };
+    case "idea":
+      return {
+        label: "✕ Leave the guide",
+        subtitle: "Leaving re-enables auto-build and the room keeps listening.",
+      };
+    default:
+      return {
+        label: "✕ Leave the guide",
+        subtitle: "The room keeps working; nothing running is stopped.",
+      };
+  }
+}
+
+// The idea step's finalize verb speaks the room's own metaphor: planting the
+// accepted idea literally grows a tree in the garden while its concept mocks
+// race. The subtitle is the honest mechanics of the press.
+export const PLANT_COPY = {
+  label: "🌱 Plant this idea",
+  subtitle: "Plants what you described in the garden — the concept mocks start racing and a real tree grows.",
+} as const;
+
+// START OVER (idea step only): drop everything said so far and listen fresh —
+// the same watermark freeze the step's entry performed, re-stamped NOW, plus
+// the process re-baseline. The caller re-POSTs /api/guided/hold {on:true} so
+// the server mirrors it (composition.setGuidedHold re-stamps the transcript
+// boundary, drops the queued bubble and disarms pre-step candidates); this is
+// the pure local half. Identity no-op on any other step.
+export function restartIdea(state: GuidedState, snapshot: ProjectorSnapshot, nowMs?: number): GuidedState {
+  if (state.step !== "idea") {
+    return state;
+  }
+  return { ...state, ...watermarksOf(snapshot), baselineUpids: upidsOf(snapshot), enteredAtMs: nowMs };
 }

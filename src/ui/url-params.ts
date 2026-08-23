@@ -63,6 +63,11 @@ export interface ProjectorUrlConfig {
   // appends it in gesture mode so pointing always has visible feedback.
   // null = unspecified (the stored preference — default visible — decides).
   dots: boolean | null;
+  // ?stick=1 — the fusion cursor source is a JOYSTICK (run-room.sh --arcade,
+  // no cameras): the guided demo's coaching says lever+button instead of
+  // "point with your hand". Both sources speak the same ws protocol, so the
+  // wall cannot tell them apart on its own — the launcher says which it wired.
+  stick: boolean;
   // ?research=1 — force THIS window into the research-mode scene (the 3D
   // conversation tree + crystals) regardless of the room-wide toggle: a
   // dedicated display (e.g. a ceiling projector) always shows the tree while
@@ -146,6 +151,10 @@ export function parseProjectorUrl(search: string, hostname: string): ProjectorUr
   const dotsParam = params.get("dots");
   const dots = dotsParam === "0" ? false : dotsParam === "1" ? true : null;
 
+  // Joystick-as-cursor flag (?stick=1): copy-only — the gesture layer itself
+  // is source-agnostic; only the guided demo's wording keys on it.
+  const stick = params.get("stick") === "1";
+
   // Dedicated-display extras: window-local research view + boot-into-zen.
   const research = params.get("research") === "1";
   const zen = params.get("zen") === "1";
@@ -170,5 +179,5 @@ export function parseProjectorUrl(search: string, hostname: string): ProjectorUr
         : null;
 
   return { view, wall, badge, gesture, dwell,
-    mic, hands, remote, demo, mock, flat, dots, research, zen, park, autoFit };
+    mic, hands, remote, demo, mock, flat, dots, stick, research, zen, park, autoFit };
 }

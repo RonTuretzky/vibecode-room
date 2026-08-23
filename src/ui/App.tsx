@@ -31,7 +31,7 @@ import type { DecisionChoice, StagedProcess } from "./stage";
 import { selfOf, trackBootId } from "./self-reload";
 import { parseProjectorUrl } from "./url-params";
 import { GuidedDemo } from "./guided/GuidedDemo";
-import { advanceOnSnapshot, popPracticeOrb, skipStep, startGuided, type GuidedState } from "./guided/machine";
+import { advanceOnSnapshot, popPracticeOrb, restartIdea, setHandsLive, skipStep, startGuided, type GuidedState, type PointerRig } from "./guided/machine";
 import "./buildloop.css";
 import { startMicCapture, type MicCaptureHandle } from "./mic";
 
@@ -359,6 +359,16 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
   useEffect(() => {
     setGuided((current) => (current === null ? current : advanceOnSnapshot(current, snapshot, Date.now())));
   }, [snapshot]);
+
+  // HANDS-LIVE slides into the run while orientation runs (setHandsLive is a
+  // no-op past it — the watermark-sliding doctrine): the ?demo=guided
+  // auto-entry boots with handsStatus "closed", so the hands coaching step
+  // enlists itself the moment the pinch-camera socket truly opens — and a
+  // camera dying mid-run never renumbers the steps under the visitor.
+  const handsLiveNow = handsOn && handsStatus === "open";
+  useEffect(() => {
+    setGuided((current) => (current === null ? current : setHandsLive(current, handsLiveNow)));
+  }, [handsLiveNow]);
 
   // The race step's minimum dwell can elapse with no snapshot arriving (the
   // mocks already finished), so tick the machine while the race is on screen.
@@ -1184,21 +1194,50 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
   }, []);
 
   // ── guided demo actions ────────────────────────────────────────────────────
+  // The record-step entries key on the REAL mic state too: the snapshot never
+  // carries the browser mic, so a ref threads micState === "live" into the
+  // machine calls without re-binding them (item: no "start the room
+  // recording" step when the mic already streams into an unmuted room).
+  const micLiveRef = useRef(false);
+  micLiveRef.current = micState === "live";
   // (Re-)enter: always a FRESH run — step 1, zero orbs, baseline = the fleet
-  // as it stands right now. Any open deck closes so step 1 owns the wall.
+  // as it stands right now, hands step enlisted only when the rig is truly
+  // live. Any open deck closes so step 1 owns the wall.
   const enterGuidedDemo = useCallback(() => {
     setSlideshowUpid(null);
-    setGuided(startGuided(snapshotRef.current));
-  }, []);
+    setGuided(startGuided(snapshotRef.current, { handsLive: handsOn && handsStatus === "open" }));
+  }, [handsOn, handsStatus]);
   const exitGuidedDemo = useCallback(() => setGuided(null), []);
   const guidedPopOrb = useCallback(() => {
-    // Snapshot-aware: a room already unmuted+capturing skips the record step
-    // (its button would be a no-op) and lands straight on "describe your idea".
-    setGuided((current) => (current === null ? current : popPracticeOrb(current, snapshotRef.current, Date.now())));
+    // Snapshot-aware: a room already unmuted+capturing (or with the browser
+    // mic streaming) skips the record step — its button would be a no-op —
+    // and lands straight on "describe your idea".
+    setGuided((current) => (current === null ? current : popPracticeOrb(current, snapshotRef.current, Date.now(), micLiveRef.current)));
   }, []);
   const guidedSkip = useCallback(() => {
-    setGuided((current) => (current === null ? current : skipStep(current, snapshotRef.current, Date.now())));
+    setGuided((current) => (current === null ? current : skipStep(current, snapshotRef.current, Date.now(), micLiveRef.current)));
   }, []);
+  // START OVER (idea step): the press acks synchronously — restartIdea
+  // re-watermarks the machine so the guided view forgets the words so far —
+  // while the server's half posts in the background: re-POSTing
+  // /api/guided/hold {on:true} re-stamps the transcript boundary, drops the
+  // queued bubble and disarms pre-step candidates (composition.setGuidedHold).
+  // guidedHoldRef stays true, so the boundary effect below never double-fires;
+  // a failed POST is SAID (reportControlFailure), never swallowed.
+  const guidedStartOver = useCallback(() => {
+    setGuided((current) => (current === null ? current : restartIdea(current, snapshotRef.current, Date.now())));
+    void fetch("/api/guided/hold", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ on: true }),
+    })
+      .then((response) => {
+        if (!response.ok) {
+          reportControlFailure("Start over", response.status);
+        }
+      })
+      .catch(() => reportControlFailure("Start over"));
+  }, [reportControlFailure]);
   // GUIDED HOLD: while the demo sits on "describe your idea", the room must
   // not auto-build mid-description — the Done button is the only trigger.
   // Posted on the step's boundary transitions only; the server TTLs the hold
@@ -2136,6 +2175,17 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
       setDockCollapseSignal((n) => n + 1);
     }
   }, [treeMenuOpen]);
+  // The guided demo owns the wall the moment it starts: fold the dock tray too
+  // (its launch button lives INSIDE the tray, so the tray sat open over step 1
+  // after every launch). Covers the HUD button, ?demo=guided auto-entry and
+  // re-entry alike; ControlDock's holdClosed latch keeps it folded while the
+  // launching cursor still rests on the dock — hover later re-opens as usual.
+  const guidedOpen = guided !== null;
+  useEffect(() => {
+    if (guidedOpen) {
+      setDockCollapseSignal((n) => n + 1);
+    }
+  }, [guidedOpen]);
 
   // AUTO-FIT ON IMPORT: when a upid never seen before appears in the snapshot
   // (QR import, voice build, mock toggle), pulse the EXISTING one-shot fit
@@ -2947,16 +2997,22 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
           snapshot={snapshot}
           micState={micState}
           micError={micError}
+          /* Rig-true coaching: no gesture layer → desk mouse; a gesture wall
+             whose cursor source is the --arcade joystick announces itself via
+             &stick=1 (run-room.sh) — cameras otherwise. */
+          pointer={(urlConfig.gesture === null ? "mouse" : urlConfig.stick ? "stick" : "hand") satisfies PointerRig}
           onPopOrb={guidedPopOrb}
           onRecord={() => void guidedRecord()}
           onSkip={guidedSkip}
           onExit={exitGuidedDemo}
           onFinish={exitGuidedDemo}
+          onStartOver={guidedStartOver}
           onDone={() => {
-            // Done is the ONLY way forward from the idea step: accept builds
-            // from the surfaced idea (or the raw transcript, server-side),
-            // then the demo advances — the race adopts the newborn process,
-            // and a silent Done still moves the visitor along.
+            // Planting is the ONLY way forward from the idea step: accept
+            // builds from the surfaced idea (or the raw transcript,
+            // server-side), then the demo advances — the race adopts the
+            // newborn process, and a silent plant still moves the visitor
+            // along.
             void acceptIdea().then(() => {
               guidedSkip();
             });

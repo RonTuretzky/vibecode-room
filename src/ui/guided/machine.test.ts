@@ -3,18 +3,29 @@ import type { IdeaTrayItem, ProjectorProcess, ProjectorSnapshot, TranscriptLine 
 import type { BuildloopProcess, BuildloopSnapshot, ProcessBuild } from "../buildloop";
 import { emptyProjectorSnapshot } from "../demo-data";
 import {
+  PLANT_COPY,
   PRACTICE_ORB_COUNT,
   advanceOnSnapshot,
+  exitCopy,
   freshIdeas,
   freshTranscript,
   guidedLanes,
   guidedNotice,
   guidedSettle,
+  guidedStepOrder,
   lanesAllFailed,
+  orientationCopy,
   popPracticeOrb,
+  raceSkippable,
+  recordCopy,
+  restartIdea,
+  setHandsLive,
+  skipCopy,
   skipStep,
   startGuided,
+  stepCount,
   stepNumber,
+  stepTitle,
   RACE_MIN_DWELL_MS,
 } from "./machine";
 
@@ -471,6 +482,9 @@ describe("guided demo — lanes derivation", () => {
 
 describe("guided demo — skip, finish, re-enter", () => {
   test("skip walks every step in order and finishing decide returns null (demo done)", () => {
+    // The walk crosses the race via its never-wedge escape: a skipped-through
+    // run has NO focus process (nothing is building), so raceSkippable stays
+    // true — a race with real mocks building refuses the skip (locked below).
     const snapshot = makeSnapshot();
     let state: ReturnType<typeof startGuided> | null = startGuided(snapshot);
     const walked: string[] = [state.step];
@@ -481,6 +495,19 @@ describe("guided demo — skip, finish, re-enter", () => {
       }
     }
     expect(walked).toEqual(["orientation", "record", "idea", "race", "decide"]);
+  });
+
+  test("a hands-live run walks SIX steps: the camera coaching slots before record", () => {
+    const snapshot = makeSnapshot();
+    let state: ReturnType<typeof startGuided> | null = startGuided(snapshot, { handsLive: true });
+    const walked: string[] = [state.step];
+    while (state !== null) {
+      state = skipStep(state, snapshot);
+      if (state !== null) {
+        walked.push(state.step);
+      }
+    }
+    expect(walked).toEqual(["orientation", "hands", "record", "idea", "race", "decide"]);
   });
 
   test("skipping record still re-baselines so a later spawn is detected", () => {
@@ -601,16 +628,20 @@ describe("guided demo — race minimum dwell (steps must not fly by)", () => {
     expect(decided.readyBackend).toBe("native");
   });
 
-  test("skipping FROM the race is explicit and bypasses the dwell", () => {
+  test("skipping FROM the race is REFUSED while a mock is coming — the dwell releases it", () => {
     const t0 = 2_000_000;
     const readySnap = recordingRoom({
       processes: [makeProcess("upid_fast", { builds: [build("native", "ready")] })],
     });
     const entered = skipStep(atIdeaNow(t0), readySnap, t0)!;
     expect(entered.step).toBe("race");
-    const skipped = skipStep(entered, readySnap, t0 + 1);
-    expect(skipped?.step).toBe("decide");
-    expect(skipped?.readyBackend).toBe("native");
+    // A real kickoff with a mock on the way (here: already ready, held by the
+    // min dwell) cannot be skipped — identity return, the machine enforces it.
+    expect(skipStep(entered, readySnap, t0 + 1)).toBe(entered);
+    // The step's only forward path is its own release once the dwell elapses.
+    const decided = advanceOnSnapshot(entered, readySnap, t0 + RACE_MIN_DWELL_MS);
+    expect(decided.step).toBe("decide");
+    expect(decided.readyBackend).toBe("native");
   });
 
   test("legacy no-clock callers keep the immediate cascade (no dwell enforced)", () => {
@@ -657,5 +688,306 @@ describe("guided demo — the record step is skipped when the room already recor
       state = popPracticeOrb(state);
     }
     expect(state.step).toBe("record");
+  });
+});
+
+describe("guided demo — the race refuses skips while mocks build (raceSkippable)", () => {
+  const raceState = (focusUpid: string | null) => ({
+    step: "race" as const,
+    orbsPopped: PRACTICE_ORB_COUNT,
+    baselineUpids: [] as string[],
+    baselineTurnKeys: [] as string[],
+    baselineIdeaIds: [] as string[],
+    baselineSettleTitle: null,
+    focusUpid,
+    readyBackend: null,
+  });
+
+  test("building lanes → NOT skippable; skipStep is an identity refusal", () => {
+    const building = recordingRoom({
+      processes: [
+        makeProcess("upid_demo", {
+          builds: [build("smithers", "building", { percent: 40 }), build("eliza", "building")],
+        }),
+      ],
+    });
+    const state = raceState("upid_demo");
+    expect(raceSkippable(state, building)).toBe(false);
+    expect(skipStep(state, building)).toBe(state);
+  });
+
+  test("a mix with one lane still building is NOT skippable (a mock is coming)", () => {
+    const mixed = recordingRoom({
+      processes: [
+        makeProcess("upid_demo", { builds: [build("smithers", "failed"), build("eliza", "building")] }),
+      ],
+    });
+    expect(raceSkippable(raceState("upid_demo"), mixed)).toBe(false);
+  });
+
+  test("EVERY lane failed → skippable (nothing will ever turn ready; never wedge)", () => {
+    const allFailed = recordingRoom({
+      processes: [
+        makeProcess("upid_demo", { builds: [build("smithers", "failed"), build("eliza", "failed")] }),
+      ],
+    });
+    const state = raceState("upid_demo");
+    expect(raceSkippable(state, allFailed)).toBe(true);
+    expect(skipStep(state, allFailed)?.step).toBe("decide");
+  });
+
+  test("no focus process (skipped-through run) → skippable (never wedge)", () => {
+    const state = raceState(null);
+    expect(raceSkippable(state, recordingRoom())).toBe(true);
+    expect(skipStep(state, recordingRoom())?.step).toBe("decide");
+  });
+});
+
+describe("guided demo — hands step (enlists only when the rig is live)", () => {
+  test("the step order and count key on handsLive", () => {
+    expect(guidedStepOrder(false)).toEqual(["orientation", "record", "idea", "race", "decide"]);
+    expect(guidedStepOrder(true)).toEqual(["orientation", "hands", "record", "idea", "race", "decide"]);
+    expect(stepCount(false)).toBe(5);
+    expect(stepCount(true)).toBe(6);
+    expect(stepNumber("record", false)).toBe(2);
+    expect(stepNumber("record", true)).toBe(3);
+    // A "hands" step can only exist in a hands-live run — it numbers against
+    // that order even if a caller forgets the flag.
+    expect(stepNumber("hands")).toBe(2);
+  });
+
+  test("orb completion routes orientation → hands when live, and hands → record on Continue", () => {
+    let state = startGuided(makeSnapshot(), { handsLive: true });
+    for (let i = 0; i < PRACTICE_ORB_COUNT; i += 1) {
+      state = popPracticeOrb(state, makeSnapshot(), 5);
+    }
+    expect(state.step).toBe("hands");
+    // The Continue button routes through skipStep: coaching done, on to record.
+    const atRecord = skipStep(state, makeSnapshot(), 6)!;
+    expect(atRecord.step).toBe("record");
+  });
+
+  test("hands takes priority over an already-recording room; the jump happens on its exit", () => {
+    const recording = recordingRoom({
+      processes: [makeProcess("upid_pre")],
+      transcript: [turn("00:00:01", "earlier chatter")],
+    });
+    let state = startGuided(makeSnapshot(), { handsLive: true });
+    for (let i = 0; i < PRACTICE_ORB_COUNT; i += 1) {
+      state = popPracticeOrb(state, recording, 5);
+    }
+    expect(state.step).toBe("hands");
+    // Continue over the recording room: record's button would be a no-op, so
+    // the hands exit jumps straight to idea — watermarked + re-baselined.
+    const atIdea = skipStep(state, recording, 6)!;
+    expect(atIdea.step).toBe("idea");
+    expect(atIdea.baselineUpids).toEqual(["upid_pre"]);
+    expect(freshTranscript(atIdea, recording)).toHaveLength(0);
+  });
+
+  test("speech during the hands step keeps sliding the watermarks (record measures from ITS entry)", () => {
+    let state = startGuided(makeSnapshot(), { handsLive: true });
+    for (let i = 0; i < PRACTICE_ORB_COUNT; i += 1) {
+      state = popPracticeOrb(state, makeSnapshot(), 5);
+    }
+    expect(state.step).toBe("hands");
+    const chatter = recordingRoom({ transcript: [turn("00:01", "chatter while flying the camera")] });
+    state = advanceOnSnapshot(state, chatter);
+    expect(state.step).toBe("hands");
+    const atRecord = skipStep(state, makeSnapshot({ transcript: chatter.transcript, muted: true }), 6)!;
+    expect(atRecord.step).toBe("record");
+    // The camera-coaching chatter sits behind the watermark…
+    expect(advanceOnSnapshot(atRecord, chatter)).toBe(atRecord);
+    // …and only NEW speech advances record.
+    const fresh = recordingRoom({ transcript: [...chatter.transcript, turn("00:02", "now recording")] });
+    expect(advanceOnSnapshot(atRecord, fresh).step).toBe("idea");
+  });
+
+  test("orientation skip detours to hands when live", () => {
+    const state = startGuided(makeSnapshot(), { handsLive: true });
+    expect(skipStep(state, makeSnapshot(), 5)?.step).toBe("hands");
+  });
+
+  test("setHandsLive slides ONLY during orientation and is identity-stable", () => {
+    const start = startGuided(makeSnapshot());
+    expect(start.handsLive).toBe(false);
+    // No change → the same object (React setState bails).
+    expect(setHandsLive(start, false)).toBe(start);
+    const live = setHandsLive(start, true);
+    expect(live.handsLive).toBe(true);
+    expect(setHandsLive(live, true)).toBe(live);
+    // Past orientation the run's shape is settled — no renumbering mid-run.
+    const atRecord = skipStep(start, makeSnapshot({ muted: true }), 5)!;
+    expect(atRecord.step).toBe("record");
+    expect(setHandsLive(atRecord, true)).toBe(atRecord);
+  });
+});
+
+describe("guided demo — mic-aware record entries (micState is App truth, not snapshot)", () => {
+  // muted=false + captureMode OFF + the browser mic streaming: the record
+  // button's job is done — both entries into record jump straight to idea.
+  const micOnlyRoom = (overrides: Partial<BuildloopSnapshot> = {}) =>
+    makeSnapshot({ muted: false, captureMode: false, ...overrides });
+
+  test("orb completion with micLive lands on idea (watermarked + re-baselined)", () => {
+    const room = micOnlyRoom({
+      processes: [makeProcess("upid_pre")],
+      transcript: [turn("00:00:01", "earlier chatter")],
+    });
+    let state = startGuided(makeSnapshot());
+    for (let i = 0; i < PRACTICE_ORB_COUNT; i += 1) {
+      state = popPracticeOrb(state, room, 5, true);
+    }
+    expect(state.step).toBe("idea");
+    expect(state.baselineUpids).toEqual(["upid_pre"]);
+    expect(freshTranscript(state, room)).toHaveLength(0);
+  });
+
+  test("orientation skip with micLive lands on idea too", () => {
+    const state = startGuided(makeSnapshot());
+    const skipped = skipStep(state, micOnlyRoom({ processes: [makeProcess("upid_pre")] }), 5, true)!;
+    expect(skipped.step).toBe("idea");
+    expect(skipped.baselineUpids).toEqual(["upid_pre"]);
+  });
+
+  test("micLive over a MUTED room still lands on the record step (unmute is real work)", () => {
+    let state = startGuided(makeSnapshot());
+    for (let i = 0; i < PRACTICE_ORB_COUNT; i += 1) {
+      state = popPracticeOrb(state, makeSnapshot({ muted: true }), 5, true);
+    }
+    expect(state.step).toBe("record");
+    expect(skipStep(startGuided(makeSnapshot()), makeSnapshot({ muted: true }), 5, true)?.step).toBe("record");
+  });
+
+  test("micLive=false keeps today's behavior byte-identical (captureMode decides)", () => {
+    let state = startGuided(makeSnapshot());
+    for (let i = 0; i < PRACTICE_ORB_COUNT; i += 1) {
+      state = popPracticeOrb(state, micOnlyRoom(), 5, false);
+    }
+    expect(state.step).toBe("record");
+  });
+});
+
+describe("guided demo — start over (restartIdea re-watermarks the idea step)", () => {
+  const feed = () =>
+    recordingRoom({
+      processes: [makeProcess("upid_pre")],
+      transcript: [turn("00:00:01", "hello room, new idea"), turn("00:00:05", "and some more of it")],
+      ideas: [idea("idea_mid", "the half-described idea")],
+      ideaSettle: { armed: true, title: "the half-described idea", firesInMs: 5_000 },
+    });
+  const atIdeaMidDescription = () => {
+    let state = startGuided(makeSnapshot());
+    for (let i = 0; i < PRACTICE_ORB_COUNT; i += 1) {
+      state = popPracticeOrb(state);
+    }
+    state = advanceOnSnapshot(state, spokenRoom());
+    expect(state.step).toBe("idea");
+    return state;
+  };
+
+  test("after restart the SAME feed reads empty: no fresh transcript/ideas, no settle", () => {
+    const state = atIdeaMidDescription();
+    const room = feed();
+    // Mid-description the visitor's words and the armed countdown are visible…
+    expect(freshTranscript(state, room).length).toBeGreaterThan(0);
+    expect(guidedSettle(state, room)).not.toBeNull();
+
+    const restarted = restartIdea(state, room, 9_000);
+    expect(restarted.step).toBe("idea");
+    expect(restarted.enteredAtMs).toBe(9_000);
+    // …and after Start over the exact same feed is history, not the visitor's.
+    expect(freshTranscript(restarted, room)).toEqual([]);
+    expect(freshIdeas(restarted, room)).toEqual([]);
+    expect(guidedSettle(restarted, room)).toBeNull();
+    // The process baseline re-captures too: upid_pre is no longer a newcomer.
+    expect(restarted.baselineUpids).toEqual(["upid_pre"]);
+    // NEW speech after the restart counts again.
+    const later = recordingRoom({ ...feed(), transcript: [...room.transcript, turn("00:01:00", "a fresh take")] });
+    expect(freshTranscript(restarted, later).map((line) => line.text)).toEqual(["a fresh take"]);
+  });
+
+  test("restartIdea is an identity no-op on every other step", () => {
+    const orientation = startGuided(makeSnapshot());
+    expect(restartIdea(orientation, feed())).toBe(orientation);
+    const race = { ...orientation, step: "race" as const };
+    expect(restartIdea(race, feed())).toBe(race);
+  });
+});
+
+describe("guided demo — rig-true + honest-verb copy contracts", () => {
+  test("stepTitle keys the orientation on the REAL pointer rig", () => {
+    expect(stepTitle("orientation", "hand")).toBe("Point with your hand");
+    expect(stepTitle("orientation", "stick")).toBe("Steer with the joystick");
+    expect(stepTitle("orientation", "mouse")).toBe("Point and hold");
+    expect(stepTitle("hands", "hand")).toBe("Fly the camera with your hands");
+    expect(stepTitle("record", "stick")).toBe("Start the room recording");
+    expect(stepTitle("idea", "mouse")).toBe("Describe your idea");
+    expect(stepTitle("race", "hand")).toBe("Watch the concepts race");
+    expect(stepTitle("decide", "hand")).toBe("How should we continue?");
+  });
+
+  test("orientationCopy speaks the input actually in the visitor's hand", () => {
+    expect(orientationCopy("hand").lede).toBe(
+      "Open your hand and point at the wall. Whatever you aim at grows and glows — hold still and a ring fills around it. When the ring completes, that's your click.",
+    );
+    expect(orientationCopy("hand").practice).toBe(
+      "Practice: pop the 3 floating orbs. Point at one, hold until the ring closes.",
+    );
+    expect(orientationCopy("stick").lede).toBe(
+      "Steer with the joystick lever to move the cursor. Whatever it rests on grows and glows — hold a button and a ring fills around it. When the ring completes, that's your click.",
+    );
+    expect(orientationCopy("stick").practice).toBe(
+      "Practice: pop the 3 floating orbs. Steer onto one, hold a button until the ring closes.",
+    );
+    expect(orientationCopy("mouse").lede).toBe(
+      "Move the mouse to aim. Whatever the cursor rests on grows and glows — hold still (or click) and a ring fills around it. When the ring completes, that's your click.",
+    );
+    expect(orientationCopy("mouse").practice).toBe(
+      "Practice: pop the 3 floating orbs. Rest the cursor on one until the ring closes, or just click.",
+    );
+  });
+
+  test("recordCopy rewrites the imperative per rig, mechanics identical", () => {
+    expect(recordCopy("hand")).toStartWith("Point at the big Start Recording button and hold.");
+    expect(recordCopy("stick")).toStartWith("Steer onto the big Start Recording button and hold a button.");
+    expect(recordCopy("mouse")).toStartWith("Press the big Start Recording button.");
+    for (const rig of ["hand", "stick", "mouse"] as const) {
+      expect(recordCopy(rig)).toEndWith(
+        "It really unmutes the room, turns on Idea Capture and Auto-Build, and starts the microphone — from here on, the room is listening.",
+      );
+    }
+  });
+
+  test("skipCopy says what skipping does at every step (nothing underneath changes)", () => {
+    expect(skipCopy("orientation").label).toBe("Skip practice ▸");
+    expect(skipCopy("orientation").title).toContain("moves toward recording");
+    expect(skipCopy("orientation", true).title).toContain("hand-camera step");
+    expect(skipCopy("hands").label).toBe("Skip ▸ — hands stay live");
+    expect(skipCopy("record").label).toBe("Skip ▸ — mic stays as it is");
+    expect(skipCopy("record").title).toContain("left exactly as they are");
+    expect(skipCopy("idea").label).toBe("Skip ▸ — nothing builds");
+    expect(skipCopy("idea").title).toContain("nothing new starts building");
+    // The race's skip exists only for the never-wedge escapes.
+    expect(skipCopy("race").label).toBe("Continue without a mock ▸");
+    expect(skipCopy("race").title).toContain("abandons nothing");
+  });
+
+  test("exitCopy SAYS the build truth: leaving never stops anything", () => {
+    expect(exitCopy("race").label).toBe("✕ Leave the guide");
+    expect(exitCopy("race").subtitle).toBe(
+      "Leaving never stops the mocks — they keep building and the tree stays in the garden.",
+    );
+    expect(exitCopy("idea").subtitle).toBe("Leaving re-enables auto-build and the room keeps listening.");
+    for (const step of ["orientation", "hands", "record", "decide"] as const) {
+      expect(exitCopy(step).subtitle).toBe("The room keeps working; nothing running is stopped.");
+    }
+  });
+
+  test("the finalize verb is plant language with honest mechanics", () => {
+    expect(PLANT_COPY.label).toBe("🌱 Plant this idea");
+    expect(PLANT_COPY.subtitle).toBe(
+      "Plants what you described in the garden — the concept mocks start racing and a real tree grows.",
+    );
   });
 });

@@ -60,9 +60,25 @@ test.describe("guided demo — coached flow with mouse-dwell", () => {
     await expect(demo).toHaveAttribute("data-step", "record", { timeout: 4_000 });
 
     // STEP 2: dwell the big Record button → the room really flips to
-    // unmuted + capturing (offline demo applies it locally) → step 3.
+    // unmuted + capturing (offline demo applies it locally). The step then
+    // completes only once the room has HEARD the visitor — a browser mic
+    // cannot start under Playwright, so feed one fresh spoken line through
+    // the same snapshot hook the real ASR path publishes on.
     await parkMouse(page);
     await dwell(page, "guided-record-button");
+    await page.waitForFunction(() => {
+      const snap = (window as any).__VIBERSYN__.getSnapshot();
+      return snap.muted === false && snap.captureMode === true;
+    });
+    await page.evaluate(() => {
+      const snap = (window as any).__VIBERSYN__.getSnapshot();
+      (window as any).__VIBERSYN__.applySnapshot({
+        transcript: [
+          ...snap.transcript,
+          { time: "00:00:01", speaker: "Room", text: "let us build a garden kiosk", kind: "room" },
+        ],
+      });
+    });
     await expect(demo).toHaveAttribute("data-step", "idea", { timeout: 6_000 });
     const flags = await page.evaluate(() => {
       const snap = (window as any).__VIBERSYN__.getSnapshot();
@@ -72,9 +88,24 @@ test.describe("guided demo — coached flow with mouse-dwell", () => {
     expect(flags.captureMode).toBe(true);
     expect(flags.autoAccept).toBe(true);
 
-    // STEP 3: the live transcript renders; a NEW process (vs the baseline)
-    // advances to the mock race and becomes the camera focus.
+    // STEP 3: the live transcript renders; the coach is DELIBERATELY inert —
+    // even a process born in the background never yanks the visitor forward.
+    // Only their own 🌱 Plant press advances, and the race then adopts the
+    // newborn process as the camera focus.
     await expect(page.getByTestId("guided-transcript")).toBeVisible();
+
+    // The finalize verb is PLANT language, and START OVER is two-stage: the
+    // first press only ARMS the confirm, the second really fires — and the
+    // demo stays on the idea step either way (a reset, not an advance).
+    await expect(page.getByTestId("guided-done-button")).toContainText("Plant this idea");
+    const restart = page.getByTestId("guided-restart-button");
+    await expect(restart).toHaveAttribute("data-armed", "false");
+    await restart.click();
+    await expect(restart).toHaveAttribute("data-armed", "true");
+    await restart.click();
+    await expect(restart).toHaveAttribute("data-armed", "false");
+    await expect(demo).toHaveAttribute("data-step", "idea");
+    await parkMouse(page);
     const baseline = await page.evaluate(() =>
       (window as any).__VIBERSYN__.getSnapshot().processes.map((p: any) => p.upid),
     );
@@ -106,6 +137,11 @@ test.describe("guided demo — coached flow with mouse-dwell", () => {
       });
       return upids;
     }, baseline);
+    // The background spawn did NOT move the coach — the idea step waits for
+    // the visitor's own press.
+    await expect(demo).toHaveAttribute("data-step", "idea");
+    await page.getByTestId("guided-done-button").click();
+    await parkMouse(page);
     await expect(demo).toHaveAttribute("data-step", "race", { timeout: 4_000 });
     await expect(page.getByTestId("guided-celebrate")).toBeVisible();
 
@@ -158,7 +194,9 @@ test.describe("guided demo — coached flow with mouse-dwell", () => {
         processes: snap.processes.map((p: any) => (p.upid === "upid_guided_e2e" ? proc : p)),
       });
     }, withStatus("building", "ready", "failed", true));
-    await expect(demo).toHaveAttribute("data-step", "decide", { timeout: 4_000 });
+    // The race HOLDS for its minimum on-screen dwell (RACE_MIN_DWELL_MS, 10s)
+    // even with a mock already ready — each auto-advanced step is watchable.
+    await expect(demo).toHaveAttribute("data-step", "decide", { timeout: 15_000 });
     await expect(page.getByTestId("slideshow-overlay")).toBeVisible();
     await expect(page.getByTestId("deck-backend-tab")).toHaveCount(3);
     await expect(page.locator('[data-testid="deck-backend-tab"][data-backend="eliza"]')).toHaveAttribute("aria-selected", "true");
@@ -178,15 +216,27 @@ test.describe("guided demo — coached flow with mouse-dwell", () => {
     await expect(page.getByTestId("deck-stage")).toContainText("COMMISSIONED");
   });
 
-  test("skip at every step, Esc exits, HUD button re-enters fresh", async ({ page }) => {
+  test("skip at every step, Esc exits, HUD button re-enters fresh (dock folds on entry)", async ({ page }) => {
     await page.goto("/?live=0");
     await waitForHook(page);
 
-    // Enter via the HUD button.
+    // Enter via the HUD button (it lives INSIDE the ⚙ Controls tray — hover
+    // the dock toggle so the popover unfolds first).
+    await page.getByTestId("control-dock-button").hover();
+    await expect(page.getByTestId("control-dock")).toHaveAttribute("data-expanded", "true");
     await page.getByTestId("guided-demo-button").click();
     const demo = page.getByTestId("guided-demo");
     await expect(demo).toHaveAttribute("data-step", "orientation");
+    // Starting the guide FOLDS the dock (two glass panels never overlap over
+    // the projection) and it stays folded on its own — only a fresh hover on
+    // the dock re-opens it.
+    await expect(page.getByTestId("control-dock")).toHaveAttribute("data-expanded", "false");
+    await parkMouse(page);
+    await page.waitForTimeout(400);
+    await expect(page.getByTestId("control-dock")).toHaveAttribute("data-expanded", "false");
 
+    // The walk crosses the race via its never-wedge escape (nothing was
+    // built — no focus process); a race with mocks building refuses the skip.
     for (const next of ["record", "idea", "race", "decide"]) {
       await page.getByTestId("guided-skip-button").click();
       await expect(demo).toHaveAttribute("data-step", next);
@@ -195,10 +245,12 @@ test.describe("guided demo — coached flow with mouse-dwell", () => {
     await page.keyboard.press("Escape");
     await expect(page.getByTestId("guided-demo")).toHaveCount(0);
 
-    // Re-enter: a FRESH run back at step 1.
+    // Re-enter: a FRESH run back at step 1 (dock folds again on re-entry).
+    await page.getByTestId("control-dock-button").hover();
     await page.getByTestId("guided-demo-button").click();
     await expect(page.getByTestId("guided-demo")).toHaveAttribute("data-step", "orientation");
     await expect(page.getByTestId("guided-orb-progress")).toContainText("0 / 3");
+    await expect(page.getByTestId("control-dock")).toHaveAttribute("data-expanded", "false");
   });
 
   test("an emergency-stopped room says so instead of wedging", async ({ page }) => {

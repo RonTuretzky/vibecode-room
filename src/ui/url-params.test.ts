@@ -164,6 +164,23 @@ describe("parseProjectorUrl", () => {
     expect(parseProjectorUrl("", "h").dots).toBeNull();
   });
 
+  // JOYSTICK CURSOR SOURCE (?stick=1, appended by run-room.sh --arcade): both
+  // fusion sources speak the same ws protocol, so only the launcher knows —
+  // the flag makes the guided demo coach lever+button instead of hand.
+  test("?stick=1 marks the joystick rig; default and junk stay false", () => {
+    expect(parseProjectorUrl("?stick=1", "h").stick).toBe(true);
+    expect(parseProjectorUrl("?stick=0", "h").stick).toBe(false);
+    expect(parseProjectorUrl("?stick=yes", "h").stick).toBe(false);
+    expect(parseProjectorUrl("", "h").stick).toBe(false);
+  });
+
+  test("?stick=1 composes with the gesture layer + dots (the run-room arcade URL shape)", () => {
+    const config = parseProjectorUrl("?live=1&wall=A&gesture=1&dots=1&stick=1", "h");
+    expect(config.stick).toBe(true);
+    expect(config.gesture).not.toBeNull();
+    expect(config.dots).toBe(true);
+  });
+
   // CONTINUOUS AUTO-FRAMING (?autofit=): tri-state override for the
   // self-driving camera. App defaults it ON for research-pinned windows
   // (?research=1 — the ceiling projector); the URL param forces either way.

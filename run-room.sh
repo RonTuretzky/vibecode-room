@@ -419,7 +419,15 @@ if [ "$GESTURE" = "1" ]; then
   fi
   # dots=1: force the per-person cursor dots visible — pointing with no dot
   # reads as "gestures are broken" (the stored preference hides them).
-  GESTURE_QS="&gesture=1&dots=1&fusion=$FUSION_LIST"
+  # stick=1: the cursor source is the JOYSTICK bridge (arcade-only path — the
+  # exact guard that launched it above), so the guided demo coaches
+  # lever+button instead of "point with your hand". --arcade beside an
+  # explicit --gesture keeps the camera wording (hands are still primary).
+  STICK_QS=""
+  if [ "${ARCADE:-0}" = "1" ] && [ "$GESTURE_EXPLICIT" != "1" ]; then
+    STICK_QS="&stick=1"
+  fi
+  GESTURE_QS="&gesture=1&dots=1$STICK_QS&fusion=$FUSION_LIST"
 fi
 # Hand-pinch camera stream: wall A (and --single) always; wall B only when
 # HANDS_WALLS opts in — one hands stream driving two cameras at once is deliberate.

@@ -3286,6 +3286,56 @@ main:has(.guided-demo) .status-bar {
   padding: 9px 18px;
 }
 
+/* The leave verb's truth, always visible under the footer (honest dismissal
+   copy — never a hover-only title on a projector wall). */
+.guided-exit-note {
+  margin: 6px 0 0;
+  text-align: right;
+  font-size: 13px;
+  opacity: 0.62;
+}
+
+/* Race step while mocks genuinely build: no skip exists — this line says why
+   and what would (not) happen on leaving. */
+.guided-race-locked {
+  margin: 8px 0 0;
+  text-align: right;
+  font-size: 14px;
+  color: #f6dca6;
+  opacity: 0.85;
+}
+
+/* Idea step action pair: 🌱 Plant (primary) beside ↺ Start over (two-stage). */
+.guided-idea-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.ctl-button.guided-restart {
+  color: var(--ink-soft);
+}
+
+.ctl-button.guided-restart.is-armed {
+  color: #ffd7c9;
+  border-color: rgba(255, 122, 89, 0.7);
+  background: rgba(255, 122, 89, 0.14);
+}
+
+.guided-plant-sub {
+  margin: 6px 0 0;
+  font-size: 13px;
+  opacity: 0.62;
+}
+
+/* Hands coaching step: the explicit Continue is the only advance. */
+.ctl-button.guided-hands-continue {
+  margin-top: 10px;
+  background: rgba(64, 200, 120, 0.2);
+  border-color: rgba(64, 200, 120, 0.6);
+}
+
 .ctl-button.guided-finish {
   color: #06130c;
   background: var(--c-active);

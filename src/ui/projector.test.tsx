@@ -132,8 +132,65 @@ describe("guided demo overlay", () => {
     expect(html).toContain(`0 / ${PRACTICE_ORB_COUNT} popped`);
     expect(html).toContain('data-testid="guided-skip-button"');
     expect(html).toContain('data-testid="guided-exit-button"');
-    // Step 1 explains the mechanic in plain words.
-    expect(html).toContain("point at the wall");
+    // Step 1 explains the mechanic in plain words — RIG-TRUE: this window has
+    // no gesture layer, so the coaching speaks mouse, never "your hand".
+    expect(html).toContain("Move the mouse to aim");
+    expect(html).toContain("Point and hold");
+    expect(html).not.toContain("point at the wall");
+    // The leave verb says its truth on the surface (honest dismissal copy).
+    expect(html).toContain("Leave the guide");
+    expect(html).toContain("nothing running is stopped");
+  });
+
+  test("?demo=guided on a gesture wall coaches the HAND; &stick=1 coaches the JOYSTICK", () => {
+    const handHtml = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch="?live=0&demo=guided&gesture=1" />,
+    );
+    expect(handHtml).toContain("Point with your hand");
+    expect(handHtml).toContain("point at the wall");
+    expect(handHtml).not.toContain("joystick");
+
+    const stickHtml = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch="?live=0&demo=guided&gesture=1&stick=1" />,
+    );
+    expect(stickHtml).toContain("Steer with the joystick");
+    expect(stickHtml).toContain("hold a button");
+    expect(stickHtml).not.toContain("point at the wall");
+  });
+
+  test("the record step's big button is ABSENT when the mic is live and the room unmuted", async () => {
+    const { GuidedDemo } = await import("./guided/GuidedDemo");
+    const { startGuided } = await import("./guided/machine");
+    const recordState = { ...startGuided(demoProjectorSnapshot), step: "record" as const };
+    const noop = () => undefined;
+    const props = {
+      state: recordState,
+      snapshot: demoProjectorSnapshot,
+      micError: null,
+      pointer: "hand" as const,
+      onPopOrb: noop,
+      onRecord: noop,
+      onSkip: noop,
+      onExit: noop,
+      onFinish: noop,
+      onDone: noop,
+      onStartOver: noop,
+    };
+    // Mic off → the big Start Recording button renders (real work to do).
+    const offHtml = renderToStaticMarkup(<GuidedDemo {...props} micState="off" />);
+    expect(offHtml).toContain('data-testid="guided-record-button"');
+    expect(offHtml).not.toContain('data-testid="guided-record-live"');
+    // Mic LIVE into an unmuted room → the button's whole job is done, so it
+    // never renders; the overlay SAYS the room is already listening instead.
+    const liveHtml = renderToStaticMarkup(<GuidedDemo {...props} micState="live" />);
+    expect(liveHtml).not.toContain('data-testid="guided-record-button"');
+    expect(liveHtml).toContain('data-testid="guided-record-live"');
+    expect(liveHtml).toContain("already listening");
+    // Mic live over a MUTED room still offers the button (unmuting is real work).
+    const mutedHtml = renderToStaticMarkup(
+      <GuidedDemo {...props} snapshot={{ ...demoProjectorSnapshot, muted: true }} micState="live" />,
+    );
+    expect(mutedHtml).toContain('data-testid="guided-record-button"');
   });
 
   test("an emergency-stopped room is SAID, not wedged (resilience notice)", () => {
@@ -1700,7 +1757,7 @@ describe("idea action card: contextual Done UX replaces the top-bar button", () 
     expect(html).not.toContain('data-testid="idea-done-button"');
   });
 
-  test("guided idea step shows heard title + Done-is-the-trigger copy when armed, listening hint otherwise", async () => {
+  test("guided idea step shows heard title + plant-is-the-trigger copy when armed, listening hint otherwise", async () => {
     const { GuidedDemo } = await import("./guided/GuidedDemo");
     const { startGuided } = await import("./guided/machine");
     const ideaState = { ...startGuided(demoProjectorSnapshot), step: "idea" as const };
@@ -1709,27 +1766,40 @@ describe("idea action card: contextual Done UX replaces the top-bar button", () 
       state: ideaState,
       micState: "live" as const,
       micError: null,
+      pointer: "hand" as const,
       onPopOrb: noop,
       onRecord: noop,
       onSkip: noop,
       onExit: noop,
       onFinish: noop,
       onDone: noop,
+      onStartOver: noop,
     };
 
     const armedHtml = renderToStaticMarkup(<GuidedDemo {...props} snapshot={armedSnapshot} />);
     expect(armedHtml).toContain('data-testid="guided-done-button"');
     expect(armedHtml).toContain("a dashboard tool");
-    // Deferred build: no countdown — Done is the only trigger, and the copy
-    // says so.
+    // Deferred build: no countdown — planting is the only trigger, and the
+    // copy says so in plant language (the accepted idea grows a real tree).
     expect(armedHtml).not.toContain("Building in");
     expect(armedHtml).toContain("starts the concept race");
+    expect(armedHtml).toContain("Plant this idea");
+    expect(armedHtml).toContain("a real tree grows");
+    // The exit verb carries the idea step's leave-truth on the surface.
+    expect(armedHtml).toContain("Leave the guide");
+    expect(armedHtml).toContain("Leaving re-enables auto-build and the room keeps listening.");
 
-    // Done is ALWAYS pressable during the idea step — it builds from the
+    // Planting is ALWAYS pressable during the idea step — it builds from the
     // transcript (or advances the step) even before anything is armed.
     const idleHtml = renderToStaticMarkup(<GuidedDemo {...props} snapshot={demoProjectorSnapshot} />);
     expect(idleHtml).toContain('data-testid="guided-done-button"');
     expect(idleHtml).toContain('data-testid="guided-settle-waiting"');
+    // Start over renders DISARMED — the two-stage confirm needs a second
+    // press before onStartOver ever fires (behavior locked in the e2e spec;
+    // static markup locks the disarmed boot state).
+    expect(idleHtml).toContain('data-testid="guided-restart-button"');
+    expect(idleHtml).toContain('data-armed="false"');
+    expect(idleHtml).not.toContain("Really start over");
   });
 });
 
