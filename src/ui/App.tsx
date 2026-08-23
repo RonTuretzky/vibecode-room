@@ -1103,6 +1103,10 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
           // over the laptop's builtin.
           ...(urlConfig.mic !== null ? { deviceLabel: urlConfig.mic } : {}),
           onDevice: (label) => setMicDeviceLabel(label),
+          // A dead mic switches, and the wall SAYS so — "the RØDE went down
+          // and the room kept the dead stream" must never happen silently
+          // again (live-room report).
+          onSwitch: (notice) => setGuidedEpilogue(`🎤 ${notice}`),
         });
         // While getUserMedia was pending a stop (or emergency/unmount) may
         // have disowned this start; committing now would resurrect — or, if a

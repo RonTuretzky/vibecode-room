@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { pickMicDevice } from "./mic";
+import { FLATLINE_MS, foldFlatline, pickFallbackDevice, pickMicDevice, type FlatlineState } from "./mic";
 
 
 // DEVICE POLICY: the room must hear the ROOM's mic, not whichever input macOS
@@ -34,5 +34,34 @@ describe("pickMicDevice prefers the room mic", () => {
     expect(pickMicDevice([builtin, speaker])?.deviceId).toBe("builtin");
     expect(pickMicDevice([speaker])).toBeNull();
     expect(pickMicDevice([])).toBeNull();
+  });
+});
+
+// DEAD-MIC DETECTION: a powered receiver with no transmitter link keeps its
+// device alive and feeds exact digital zeros — the room must read that as a
+// dead DEVICE (real rooms always have a noise floor) and switch, visibly.
+describe("flatline detection + fallback pick", () => {
+  test("zeros alone are not enough — the run must span FLATLINE_MS", () => {
+    let state: FlatlineState = { lastLiveAtMs: 0 };
+    let out = foldFlatline(state, 0, FLATLINE_MS - 1);
+    expect(out.flatlined).toBe(false);
+    out = foldFlatline(out.state, 0, FLATLINE_MS);
+    expect(out.flatlined).toBe(true);
+  });
+
+  test("any nonzero sample resets the run — a quiet room never trips it", () => {
+    let state: FlatlineState = { lastLiveAtMs: 0 };
+    state = foldFlatline(state, 0, 5_000).state;
+    state = foldFlatline(state, 0.0004, 6_000).state; // ambient noise floor
+    const out = foldFlatline(state, 0, 6_000 + FLATLINE_MS - 1);
+    expect(out.flatlined).toBe(false);
+  });
+
+  test("fallback excludes the dead device and re-runs the room-mic policy", () => {
+    const rode = { kind: "audioinput", label: "Wireless GO RX", deviceId: "usb-rode" };
+    const builtin = { kind: "audioinput", label: "MacBook Pro Microphone", deviceId: "builtin" };
+    expect(pickFallbackDevice([rode, builtin], "Wireless GO RX")?.deviceId).toBe("builtin");
+    // Dead device is the only input: nothing to switch to — report, not loop.
+    expect(pickFallbackDevice([rode], "Wireless GO RX")).toBeNull();
   });
 });

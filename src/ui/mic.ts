@@ -19,6 +19,10 @@ export interface MicCaptureOptions {
   // Surfaced once the stream is open, so the wall can SAY which physical mic
   // is feeding the room instead of leaving it to faith.
   onDevice?: (label: string) => void;
+  // Fired when the capture SWITCHES devices mid-session (dead mic → fallback,
+  // or the preferred mic coming back): the wall shows the reason, never a
+  // silent swap.
+  onSwitch?: (notice: string, label: string) => void;
 }
 
 export interface MicCaptureHandle {
@@ -59,6 +63,40 @@ export function pickMicDevice(
     inputs.find((device) => device.deviceId === "default") ??
     inputs[0]!;
   return { deviceId: chosen.deviceId, label: chosen.label };
+}
+
+// ── dead-mic detection (pure, unit-tested) ──────────────────────────────────
+// A powered interface with no RF link (a RØDE receiver whose transmitters are
+// off) keeps its device alive and delivers PURE DIGITAL SILENCE — the track
+// looks healthy while feeding exact zeros. Real rooms always have a noise
+// floor, so a sustained run of all-zero frames means the DEVICE is dead, not
+// the room quiet. Live finding: the RØDE went down and the room sat deaf on a
+// healthy-looking stream instead of switching to the laptop mic.
+export const FLATLINE_MS = 8_000;
+
+export interface FlatlineState {
+  lastLiveAtMs: number;
+}
+
+// Fold one audio frame: returns the new state and whether the flatline
+// threshold has been crossed. A frame with ANY nonzero sample resets the run.
+export function foldFlatline(state: FlatlineState, maxAbsSample: number, nowMs: number): { state: FlatlineState; flatlined: boolean } {
+  if (maxAbsSample > 1e-7) {
+    return { state: { lastLiveAtMs: nowMs }, flatlined: false };
+  }
+  return { state, flatlined: nowMs - state.lastLiveAtMs >= FLATLINE_MS };
+}
+
+// The device to switch TO when the current one dies: re-run the room-mic
+// policy over the remaining devices with the dead one excluded. Null when the
+// dead device is the only input — nothing to switch to, only to report.
+export function pickFallbackDevice(
+  devices: ReadonlyArray<{ kind: string; label: string; deviceId: string }>,
+  deadLabel: string,
+): { deviceId: string; label: string } | null {
+  const alive = devices.filter((device) => device.label !== deadLabel);
+  const picked = pickMicDevice(alive);
+  return picked !== null && picked.label !== deadLabel ? picked : null;
 }
 
 export async function startMicCapture(options: MicCaptureOptions = {}): Promise<MicCaptureHandle> {
@@ -113,7 +151,6 @@ export async function startMicCapture(options: MicCaptureOptions = {}): Promise<
     await context.resume();
   }
 
-  const source = context.createMediaStreamSource(mediaStream);
   const processor = context.createScriptProcessor(FRAME_SIZE, 1, 1);
   // Route through a muted gain node so ScriptProcessor keeps firing without
   // echoing the mic back out of the speakers.
@@ -148,14 +185,91 @@ export async function startMicCapture(options: MicCaptureOptions = {}): Promise<
     options.onError?.("Mic WebSocket error");
   });
 
+  // ── DEAD-MIC FAILOVER ─────────────────────────────────────────────────────
+  // Two failure shapes, both switch to the next-best device with a visible
+  // notice (never a silent swap): the device VANISHING (track "ended" /
+  // devicechange) and the device FLATLINING (alive but feeding digital
+  // silence — a receiver with no transmitter link). The socket and audio
+  // context survive a switch; only the stream + source rebuild.
+  let source = context.createMediaStreamSource(mediaStream);
+  let flatline: FlatlineState = { lastLiveAtMs: Date.now() };
+  let switching = false;
+
+  const currentLabel = () => mediaStream.getAudioTracks()[0]?.label ?? "unknown microphone";
+
+  const switchDevice = async (reason: string): Promise<void> => {
+    if (switching || stopped) {
+      return;
+    }
+    switching = true;
+    const deadLabel = currentLabel();
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const fallback = pickFallbackDevice(devices, deadLabel);
+      if (fallback === null) {
+        options.onError?.(`${deadLabel} ${reason} — and no other microphone exists to switch to`);
+        return;
+      }
+      const next = await navigator.mediaDevices.getUserMedia({
+        audio: { deviceId: { exact: fallback.deviceId }, channelCount: 1, echoCancellation: true, noiseSuppression: true },
+      });
+      for (const track of mediaStream.getTracks()) {
+        track.stop();
+      }
+      try {
+        source.disconnect();
+      } catch {
+        // already disconnected
+      }
+      mediaStream = next;
+      source = context.createMediaStreamSource(mediaStream);
+      source.connect(processor);
+      watchTrackEnd();
+      flatline = { lastLiveAtMs: Date.now() };
+      options.onDevice?.(fallback.label);
+      options.onSwitch?.(`${deadLabel} ${reason} — switched to ${fallback.label}`, fallback.label);
+    } catch (error) {
+      options.onError?.(`mic switch failed: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      switching = false;
+    }
+  };
+
+  const watchTrackEnd = () => {
+    const track = mediaStream.getAudioTracks()[0];
+    if (track !== undefined) {
+      track.onended = () => void switchDevice("disconnected");
+    }
+  };
+  watchTrackEnd();
+  const onDeviceChange = () => {
+    // The current track may die without an "ended" (some drivers) — re-check.
+    const track = mediaStream.getAudioTracks()[0];
+    if (track === undefined || track.readyState === "ended") {
+      void switchDevice("disconnected");
+    }
+  };
+  navigator.mediaDevices.addEventListener?.("devicechange", onDeviceChange);
+
   processor.onaudioprocess = (event: AudioProcessingEvent) => {
     const input = event.inputBuffer.getChannelData(0);
 
     let sumSquares = 0;
+    let maxAbs = 0;
     for (let i = 0; i < input.length; i += 1) {
       sumSquares += input[i] * input[i];
+      const magnitude = Math.abs(input[i]);
+      if (magnitude > maxAbs) {
+        maxAbs = magnitude;
+      }
     }
     options.onLevel?.(Math.sqrt(sumSquares / input.length));
+    const fold = foldFlatline(flatline, maxAbs, Date.now());
+    flatline = fold.state;
+    if (fold.flatlined && !switching) {
+      flatline = { lastLiveAtMs: Date.now() }; // re-arm so a failed switch retries after another window
+      void switchDevice("went silent (dead device — digital flatline)");
+    }
 
     if (socket.readyState !== WebSocket.OPEN) {
       return;
@@ -175,6 +289,7 @@ export async function startMicCapture(options: MicCaptureOptions = {}): Promise<
       return;
     }
     stopped = true;
+    navigator.mediaDevices.removeEventListener?.("devicechange", onDeviceChange);
     processor.onaudioprocess = null;
     try {
       source.disconnect();
