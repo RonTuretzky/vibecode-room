@@ -204,3 +204,32 @@ export async function loadSelfVersion(branch: string): Promise<{ ok: boolean; er
     return { ok: false, error: "load request failed — is the room server up?" };
   }
 }
+
+// POST /api/self/branch — tend a limb: archive (room/x -> archive/x) or delete
+// a room/* branch that is not the running one. Local git bookkeeping only; the
+// server's honest refusals (running branch, unknown name) surface to the wall.
+export async function manageSelfVersion(
+  branch: string,
+  action: "archive" | "delete",
+): Promise<{ ok: boolean; error: string | null }> {
+  try {
+    const response = await fetch("/api/self/branch", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ branch, action }),
+    });
+    const body = (await response.json().catch(() => null)) as { ok?: unknown; error?: unknown } | null;
+    if (response.ok && body?.ok !== false) {
+      return { ok: true, error: null };
+    }
+    return {
+      ok: false,
+      error:
+        typeof body?.error === "string" && body.error.length > 0
+          ? body.error
+          : `${action} failed (HTTP ${response.status})`,
+    };
+  } catch {
+    return { ok: false, error: `${action} request failed — is the room server up?` };
+  }
+}

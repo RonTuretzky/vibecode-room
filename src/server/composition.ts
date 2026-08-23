@@ -334,6 +334,13 @@ export interface ProjectorRuntime {
   // per spoken change) and load-a-version (checkout + supervisor relaunch).
   selfBranches(): Promise<{ current: string; branches: Array<{ name: string; subject: string; date: string }> }>;
   checkoutSelfBranch(branch: string): Promise<{ ok: true } | { ok: false; error: string }>;
+  // TEND A LIMB: archive (room/x -> archive/x) or delete a room/* branch that
+  // is not the running one. The wall's tree-menu lifecycle actions; the room
+  // must never delete or archive the branch it is standing on.
+  manageSelfBranch(
+    branch: string,
+    action: "archive" | "delete",
+  ): Promise<{ ok: true } | { ok: false; error: string }>;
   // GUIDED-DEMO HOLD: suspends the armed auto-build's self-firing while the
   // demo's "describe your idea" step is up (Done is the only trigger). TTL'd
   // server-side; releasing re-checks an armed candidate immediately.
@@ -3919,6 +3926,52 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     // Respond first, exit after: the supervisor rebuilds the tree (now on the
     // requested branch) and relaunches the room on it.
     setTimeout(() => process.exit(87), 400);
+    return { ok: true };
+  }
+
+  // TEND A LIMB: archive or delete one of the room's local branches — the
+  // tree-menu's per-branch lifecycle actions. Neither ever touches the running
+  // branch (the room must not saw off the limb it stands on), and both refuse
+  // unsafe names. Archiving RENAMES room/<x> -> archive/<x> (the limb leaves
+  // the load list but the work survives); deleting is a local `branch -D`.
+  // Purely local bookkeeping — GitHub is untouched.
+  async manageSelfBranch(
+    branch: string,
+    action: "archive" | "delete",
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._/-]*$/u.test(branch) || branch.includes("..")) {
+      return { ok: false, error: "unsafe branch name" };
+    }
+    if (!branch.startsWith("room/")) {
+      return { ok: false, error: "only room/* branches can be tended" };
+    }
+    const current = (await this.#selfGit(["branch", "--show-current"])).out.trim();
+    if (branch === current) {
+      return { ok: false, error: "cannot tend the running branch — load another version first" };
+    }
+    const exists = await this.#selfGit(["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`]);
+    if (exists.code !== 0) {
+      return { ok: false, error: `no local branch named ${branch}` };
+    }
+    if (action === "archive") {
+      const archived = `archive/${branch.slice("room/".length)}`;
+      const renamed = await this.#selfGit(["branch", "-m", branch, archived]);
+      if (renamed.code !== 0) {
+        return { ok: false, error: renamed.out.slice(0, 160) };
+      }
+    } else {
+      const removed = await this.#selfGit(["branch", "-D", branch]);
+      if (removed.code !== 0) {
+        return { ok: false, error: removed.out.slice(0, 160) };
+      }
+    }
+    this.recordExternalTrace({
+      event: "self.version.tend",
+      level: "info",
+      sessionId: this.sessionId,
+      correlationId: `corr-self-tend-${crypto.randomUUID()}`,
+      meta: { branch, action },
+    });
     return { ok: true };
   }
 

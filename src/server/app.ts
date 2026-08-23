@@ -245,6 +245,35 @@ export function createProjectorApp(runtime: ProjectorRuntime, options: Projector
     const result = await runtime.checkoutSelfBranch(branch);
     return context.json(result, result.ok ? 200 : 400);
   });
+  // TEND A LIMB: archive or delete one of the room's own branches (never the
+  // running one). Local git bookkeeping only — the tree-menu's per-branch
+  // lifecycle actions POST here.
+  app.post("/api/self/branch", async (context) => {
+    if (isOfflineDemoRequest(context.req.header("referer"))) {
+      return context.json({ ok: false, error: "offline demo" }, 400);
+    }
+    let branch = "";
+    let action: "archive" | "delete" | "" = "";
+    try {
+      const body = (await context.req.json()) as { branch?: unknown; action?: unknown };
+      if (typeof body?.branch === "string") {
+        branch = body.branch;
+      }
+      if (body?.action === "archive" || body?.action === "delete") {
+        action = body.action;
+      }
+    } catch {
+      // fall through to the empty-field refusals
+    }
+    if (branch.length === 0) {
+      return context.json({ ok: false, error: "branch required" }, 400);
+    }
+    if (action === "") {
+      return context.json({ ok: false, error: "action must be archive or delete" }, 400);
+    }
+    const result = await runtime.manageSelfBranch(branch, action);
+    return context.json(result, result.ok ? 200 : 400);
+  });
   // GUIDED-DEMO HOLD: the wall posts {on:true} entering the demo's "describe
   // your idea" step and {on:false} leaving it — while held, an armed auto-build
   // never fires on its own (Done is the only trigger). TTL'd server-side so a

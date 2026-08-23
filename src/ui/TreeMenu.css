@@ -233,6 +233,41 @@ main.gesture-mode .tree-menu-close {
    cursor that can only dwell (no wheel) can page through every branch. */
 .tree-menu-versions { display: flex; flex-direction: column; gap: 0.35rem; }
 .tree-menu-versions-head { font-size: 0.72rem; color: #8fa4cc; letter-spacing: 0.04em; }
-.tree-menu-version { display: flex; flex-direction: column; align-items: flex-start; gap: 0.15rem; text-align: left; font-size: 0.82rem; }
+/* A LIMB CARD: the header button toggles the lifecycle actions open in place. */
+.tree-menu-version {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.25rem;
+  padding: 0.3rem 0.35rem;
+  border-radius: 0.5rem;
+  border: 1px solid rgba(120, 160, 220, 0.16);
+}
+.tree-menu-version.is-open { border-color: rgba(120, 160, 220, 0.4); background: rgba(60, 90, 140, 0.14); }
+.tree-menu-version-head {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.15rem;
+  text-align: left;
+  font-size: 0.82rem;
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  padding: 0;
+}
 .tree-menu-version-when { font-size: 0.66rem; color: #6f83a8; letter-spacing: 0.03em; font-weight: 600; }
 .tree-menu-version-subject { font-size: 0.82rem; color: #cdd8ef; font-weight: 500; }
+/* Lifecycle row: finalize/load · archive · delete, wrapping under the label. */
+.tree-menu-version-actions { display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center; }
+.tree-menu-version-load { border-color: rgba(0, 255, 136, 0.35); }
+.tree-menu-version-archive { border-color: rgba(190, 170, 110, 0.4); }
+.tree-menu-version-delete { border-color: rgba(255, 120, 110, 0.4); }
+.tree-menu-version-delete.is-armed {
+  background: rgba(255, 59, 48, 0.18);
+  border-color: rgba(255, 59, 48, 0.75);
+  color: #ffb4ad;
+  font-weight: 800;
+}
+.tree-menu-version-error { font-size: 0.68rem; color: #ffb4ad; }

@@ -6,7 +6,7 @@ import { executionOf, stageOf, type ProcessStage } from "./stage";
 import { ExecutionChip } from "./BuildChips";
 import { FleetScrollRail } from "./FleetScroll";
 import { RecordSteerToggle } from "./RecordSteerToggle";
-import { loadSelfVersion, useSelfBranches } from "./self-repo";
+import { loadSelfVersion, manageSelfVersion, useSelfBranches } from "./self-repo";
 import { TakeHomeQr } from "./TakeHomeQr";
 import "./TreeMenu.css";
 
@@ -231,6 +231,35 @@ export function TreeMenu({ process, snapshot, anchor, onClose, onOpenDeck, onDis
     void loadSelfVersion(branch);
   };
 
+  // LIMB LIFECYCLE (self tree): a branch row expands to its finalize/archive/
+  // delete actions on the first press, so a wandering dwell cursor never
+  // stumbles straight onto a destructive verb. `tending` is the busy branch
+  // (archive/delete in flight); `tendError` surfaces the server's honest
+  // refusal (e.g. tending the running limb). Both reset when the menu moves.
+  const [expandedVersion, setExpandedVersion] = useState<string | null>(null);
+  const [deleteArmed, setDeleteArmed] = useState<string | null>(null);
+  const [tending, setTending] = useState<string | null>(null);
+  const [tendError, setTendError] = useState<string | null>(null);
+  useEffect(() => {
+    setExpandedVersion(null);
+    setDeleteArmed(null);
+    setTending(null);
+    setTendError(null);
+  }, [process.upid]);
+  const tendVersion = (branch: string, action: "archive" | "delete") => {
+    setTending(branch);
+    setTendError(null);
+    void manageSelfVersion(branch, action).then((result) => {
+      setTending(null);
+      if (result.ok) {
+        setExpandedVersion(null);
+        setDeleteArmed(null);
+      } else {
+        setTendError(result.error);
+      }
+    });
+  };
+
   // TWO-STAGE remove: the first press arms "really remove?"; it disarms by
   // itself after DISMISS_CONFIRM_MS. Both stages reset when the menu moves to
   // another tree so a stale confirm can never delete the wrong build.
@@ -394,31 +423,107 @@ export function TreeMenu({ process, snapshot, anchor, onClose, onOpenDeck, onDis
           <FleetScrollRail>
             {versions.branches
               .filter((entry) => entry.name !== versions.current)
-              .map((entry, index) => (
-                <button
-                  key={entry.name}
-                  type="button"
-                  className="ctl-button tree-menu-version"
-                  data-testid="tree-menu-version"
-                  title={`Load the room to ${entry.name} — rebuilds and relaunches on that branch.`}
-                  onClick={() => loadVersion(entry.name)}
-                  disabled={loadingVersion !== null}
-                >
-                  {/* Chronological indicator: rows arrive newest-first, so #1 is
-                      the latest version; the relative commit date sits beside it. */}
-                  <span className="tree-menu-version-when">
-                    #{index + 1}
-                    {entry.date !== undefined && entry.date.length > 0 ? ` · ${entry.date}` : ""}
-                  </span>
-                  {/* One label only — the branch slug just echoed the subject, so
-                      drop it and show the spoken change (or the load state). */}
-                  <span className="tree-menu-version-subject">
-                    {loadingVersion === entry.name
-                      ? "⤵ loading… (the room will reload)"
-                      : `⤵ ${entry.subject.replace(/^self: /u, "")}`}
-                  </span>
-                </button>
-              ))}
+              .map((entry, index) => {
+                // Each row is a LIMB: the header press opens its lifecycle
+                // actions in place (finalize/load, archive, delete) rather than
+                // loading immediately, so a stray dwell can't yank the room to
+                // another version — and never onto a delete without a second,
+                // armed press.
+                const isOpen = expandedVersion === entry.name;
+                const isTending = tending === entry.name;
+                const isArmed = deleteArmed === entry.name;
+                return (
+                  <div
+                    key={entry.name}
+                    className={`tree-menu-version${isOpen ? " is-open" : ""}`}
+                    data-testid="tree-menu-version"
+                    data-branch={entry.name}
+                    data-open={isOpen ? "true" : "false"}
+                  >
+                    <button
+                      type="button"
+                      className="tree-menu-version-head"
+                      data-testid="tree-menu-version-head"
+                      title={`Tend the ${entry.name} limb — finalize (load), archive, or delete it.`}
+                      onClick={() => {
+                        setExpandedVersion(isOpen ? null : entry.name);
+                        setDeleteArmed(null);
+                        setTendError(null);
+                      }}
+                    >
+                      {/* Chronological indicator: rows arrive newest-first, so #1
+                          is the latest version; the relative commit date sits
+                          beside it. */}
+                      <span className="tree-menu-version-when">
+                        #{index + 1}
+                        {entry.date !== undefined && entry.date.length > 0 ? ` · ${entry.date}` : ""}
+                      </span>
+                      {/* One label only — the branch slug just echoed the subject,
+                          so drop it and show the spoken change (or the busy state). */}
+                      <span className="tree-menu-version-subject">
+                        {loadingVersion === entry.name
+                          ? "⤵ loading… (the room will reload)"
+                          : isTending
+                            ? "…tending this limb"
+                            : `🌿 ${entry.subject.replace(/^self: /u, "")}`}
+                      </span>
+                    </button>
+                    {/* LIFECYCLE ACTIONS: revealed once the limb is picked. */}
+                    {isOpen ? (
+                      <div className="tree-menu-version-actions" data-testid="tree-menu-version-actions">
+                        <button
+                          type="button"
+                          className="ctl-button tree-menu-version-load"
+                          data-testid="tree-menu-version-load"
+                          title={`Finalize this limb: load the room to ${entry.name} — rebuilds and relaunches on it.`}
+                          onClick={() => loadVersion(entry.name)}
+                          disabled={loadingVersion !== null || isTending}
+                        >
+                          ⤵ finalize · load
+                        </button>
+                        <button
+                          type="button"
+                          className="ctl-button tree-menu-version-archive"
+                          data-testid="tree-menu-version-archive"
+                          title={`Archive this limb: rename ${entry.name} → archive/… (leaves the load list, keeps the work).`}
+                          onClick={() => tendVersion(entry.name, "archive")}
+                          disabled={loadingVersion !== null || isTending}
+                        >
+                          🗄 archive
+                        </button>
+                        {isArmed ? (
+                          <button
+                            type="button"
+                            className="ctl-button tree-menu-version-delete is-armed"
+                            data-testid="tree-menu-version-delete-confirm"
+                            title={`Really delete the ${entry.name} limb (local branch -D).`}
+                            onClick={() => tendVersion(entry.name, "delete")}
+                            disabled={isTending}
+                          >
+                            really delete?
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            className="ctl-button tree-menu-version-delete"
+                            data-testid="tree-menu-version-delete"
+                            title={`Delete this limb (asks once more): removes the local ${entry.name} branch. Never touches GitHub.`}
+                            onClick={() => setDeleteArmed(entry.name)}
+                            disabled={loadingVersion !== null || isTending}
+                          >
+                            🗑 delete
+                          </button>
+                        )}
+                        {tendError !== null && (isArmed || isTending) ? (
+                          <span className="tree-menu-version-error" data-testid="tree-menu-version-error">
+                            {tendError}
+                          </span>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
           </FleetScrollRail>
         </div>
       ) : null}
