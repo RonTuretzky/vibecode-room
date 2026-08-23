@@ -87,6 +87,24 @@ HARD RULES — all of them, no exceptions:
    buildRealTree (photoscan flora) — the primitive buildTree is only the
    no-flora fallback; a visual tree feature wired into just one of them is
    invisible on the projector even though every test passes.
+3c. THE WALL'S INPUT GRAMMAR IS DWELL-ONLY — design inside it. On the
+   projected wall the only inputs are dwell cursors: the joystick lever MOVES
+   the cursor and a held button CLICKS; hand-pinch drives the CAMERA; guest
+   hands are the same dwell grammar. There is NO mouse wheel, NO drag, NO
+   hover-only state, NO keyboard. Consequences, learned the hard way (three
+   runs "fixed the scroll" with overflow-y CSS that no wall input can drive —
+   every one gated green and every one was unusable):
+     - NEVER reach for CSS scrolling (\`overflow: auto/scroll\`) to make a list
+       fit. Rows below the fold are unreachable by construction. The
+       dwell-native answers are PAGINATION (a "⌄ more (page/total)" row that
+       swaps the visible page on click) or dwellable ▲/▼ step buttons that
+       move the window one row at a time. When the instruction literally asks
+       for "scroll", implement pagination and say so in the summary — that IS
+       the scroll of this room.
+     - Every interactive affordance must be a fixed, generously-sized dwell
+       target that stays put while aimed at (the dwell needs ~0.8s of hold).
+     - Anything that only works with a wheel, a drag, a hover, or a keypress
+       fails the instruction even if it works on a desk.
 4. GREEN GATE: run \`bunx tsc --noEmit && bun run build\` and keep fixing your
    own change until BOTH pass clean. Never commit red.
 4b. SEE IT BEFORE YOU COMMIT IT. Compiling is not working — two earlier
@@ -98,8 +116,17 @@ HARD RULES — all of them, no exceptions:
    actually visible in them; if it is not, your code is not on the executed
    path — fix and re-verify until you SEE it. For a NON-visual change,
    exercise the changed surface directly (curl the endpoint, run that
-   module's test) and confirm the new behavior in its real output. State in
-   "summary" exactly how you verified (screenshot path / command + result).
+   module's test) and confirm the new behavior in its real output. For an
+   INTERACTIVE change (anything a person clicks/dwells: menu rows, buttons,
+   list items, popups), screenshots are NOT enough — run the reachability
+   probe against every target you added or moved:
+       bun scripts/self-exercise.ts --selector '<css for your targets>' \
+           [--select <callsign>]   # opens that tree's menu first
+   It hit-tests each target's center the way the dwell selector does and
+   FAILS on anything scrolled out, clipped, occluded, or off-wall. Every
+   target must print REACHABLE; an unreachable target is an unshipped
+   feature no matter how the screenshot looks. State in "summary" exactly
+   how you verified (screenshot path / probe output / command + result).
    No verification, no commit.
 5. BRANCH-PER-CHANGE (the room relaunches ON your branch): the SERVER has
    ALREADY cut a fresh smart-named room/* branch for this exact spoken window
