@@ -12,7 +12,7 @@
 // Lambert so the host scene's light rig owns their look.
 
 import * as THREE from "three";
-import { AXIS_BEARING, DEG, PARK_CENTER, PARK_HALF_LEN, PARK_HALF_WIDTH } from "./park-frame";
+import { AXIS_BEARING, DEG, PARK_CENTER, PARK_HALF_LEN, PARK_HALF_WIDTH, insidePark } from "./park-frame";
 import { buildLandmarks } from "./park-landmarks";
 import { loadSkylineModels, skylineSites } from "./park-models";
 
@@ -59,6 +59,12 @@ export interface ParkWorldOptions {
   // Additional footprint-clearing discs (local metres) on top of the model
   // sites — the room clears the blocks pressing on its stage.
   clearFootprints?: { x: number; z: number; r: number }[];
+  // Drop every extruded footprint INSIDE the park rectangle (default false).
+  // The footprints dataset includes the park's own structures — Wollman
+  // Rink, the Arsenal, the Zoo — and city-style window boxes standing in
+  // the greenery read as a massive building in the middle of the park; at
+  // eye level the hand-built landmarks and trees carry the park instead.
+  clearParkInterior?: boolean;
   // Ground parity with the garden: drape the terrain in the garden's tiled
   // photoscan grass (crisp underfoot), tinted per-vertex by the orthophoto
   // so paths, woodland floor and lawns keep their large-scale colour. The
@@ -440,6 +446,7 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
     buildings = buildBuildings(buildingsJson.buildings, manifest.buildings.unitM, groundAt, {
       facades: opts.facades !== false,
       exclude: [...(models ? skylineSites() : []), ...(opts.clearFootprints ?? [])],
+      excludeInsidePark: opts.clearParkInterior === true,
     });
     group.add(buildings);
   }
@@ -631,6 +638,7 @@ export function loadParkWorldShared(opts: ParkWorldOptions = {}): Promise<ParkWo
 export interface BuildBuildingsOptions {
   facades?: boolean;
   exclude?: { x: number; z: number; r: number }[];
+  excludeInsidePark?: boolean;
 }
 
 export function buildBuildings(
@@ -698,7 +706,10 @@ export function buildBuildings(
       cx0 += xs[i] / n;
       cz0 += zs[i] / n;
     }
-    if (exclude.some((site) => (site.x - cx0) ** 2 + (site.z - cz0) ** 2 < site.r * site.r)) {
+    if (
+      (opts.excludeInsidePark === true && insidePark(cx0, cz0, -6)) ||
+      exclude.some((site) => (site.x - cx0) ** 2 + (site.z - cz0) ** 2 < site.r * site.r)
+    ) {
       // A real model stands here — pad the reserved index slots with
       // degenerate triangles so the preallocated buffers stay dense.
       const a = put(0, -1000, 0, 0, 1, 0, roofGrey, 1, 0, 0);

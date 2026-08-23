@@ -1084,6 +1084,9 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
           // clear the extrusions near the room so only the skyline across
           // the water remains (the real models all stand farther out).
           clearFootprints: [{ x: POND_STAGE.x, z: POND_STAGE.z, r: 190 }],
+          // No window-boxes standing in the greenery (Wollman Rink, the
+          // Zoo…): inside the wall the park is landmarks, trees and rock.
+          clearParkInterior: true,
         };
         // The stage lands on the room origin, turned half a circle so the
         // boot framing (yaw 0 looks down −Z) faces SOUTH across the Pond at

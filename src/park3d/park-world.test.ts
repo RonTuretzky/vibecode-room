@@ -88,6 +88,17 @@ describe("park buildings extrusion", () => {
     expect(kept.geometry.boundingBox!.max.y).toBeCloseTo(10 - 0.4 + 30);
   });
 
+  test("excludeInsidePark drops park-interior footprints, keeps the city", () => {
+    // A ring at the park centre (local origin) vs the same ring 3 km east.
+    const at = (ox: number) => cw.map((v, i) => (i % 2 === 0 ? v + ox * 10 : v));
+    const inside = buildBuildings([[300, 0, 1980, at(0)]], 0.1, groundAt, { excludeInsidePark: true });
+    inside.geometry.computeBoundingBox();
+    expect(inside.geometry.boundingBox!.min.y).toBe(-1000); // degenerate padding only
+    const outside = buildBuildings([[300, 0, 1980, at(3000)]], 0.1, groundAt, { excludeInsidePark: true });
+    outside.geometry.computeBoundingBox();
+    expect(outside.geometry.boundingBox!.max.y).toBeCloseTo(10 - 0.4 + 30);
+  });
+
   test("the base is darker than the top (street-canyon shading)", () => {
     const mesh = buildBuildings([[300, 0, 1920, cw]], 0.1, groundAt);
     const pos = mesh.geometry.getAttribute("position");
