@@ -1511,35 +1511,10 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         group.add(dog);
         envCats.push({ group: dog, baseX: x, baseZ: z, phase: floraRng() * Math.PI * 2 });
       };
-      // Pink tulips ringed around the base of every meadow tree — a low-poly
       // green stem topped by a pink blossom cup, shared geometry/material so a
       // whole ring is a handful of cheap meshes. Static planting (no dance);
       // the ring sits just outside the trunk scan so the blooms read at the
       // tree's foot from the projector.
-      const tulipStemGeo = new THREE.CylinderGeometry(0.03, 0.05, 0.7, 5);
-      const tulipBloomGeo = new THREE.ConeGeometry(0.14, 0.32, 6);
-      const tulipStemMat = new THREE.MeshPhongMaterial({ color: 0x2f7d32, emissive: 0x123d14, emissiveIntensity: 0.1 });
-      const tulipBloomMat = new THREE.MeshPhongMaterial({ color: 0xff69b4, emissive: 0xff69b4, emissiveIntensity: 0.18 });
-      const spawnTreeTulips = (x: number, z: number, scale: number) => {
-        const ring = new THREE.Group();
-        const count = 8;
-        for (let i = 0; i < count; i++) {
-          const a = (i / count) * Math.PI * 2 + floraRng() * 0.4;
-          const r = 1.8 + floraRng() * 0.6;
-          const tulip = new THREE.Group();
-          const stem = new THREE.Mesh(tulipStemGeo, tulipStemMat);
-          stem.position.y = 0.35;
-          tulip.add(stem);
-          const bloom = new THREE.Mesh(tulipBloomGeo, tulipBloomMat);
-          bloom.position.y = 0.82;
-          tulip.add(bloom);
-          tulip.position.set(Math.cos(a) * r, 0, Math.sin(a) * r);
-          ring.add(tulip);
-        }
-        ring.scale.setScalar(scale);
-        ring.position.set(x, 0, z);
-        group.add(ring);
-      };
       // Crystal mana floating around the base of every meadow tree — a few
       // glowing cyan octahedron shards hovering at head height, shared
       // geometry/material so a whole cluster is a handful of cheap meshes.
@@ -1630,8 +1605,6 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
                 dummy.position.z - nz * offset + nx * 1.6,
                 1.4,
               );
-              // Ring of pink tulips planted around the trunk's base.
-              spawnTreeTulips(dummy.position.x, dummy.position.z, 1.4);
               // Crystal mana shards hovering around the tree.
               spawnTreeMana(dummy.position.x, dummy.position.z, 1.4);
             }
@@ -1987,11 +1960,6 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
           catGeoEar.dispose();
           catGeoTail.dispose();
           catMat.dispose();
-          // Tree-foot tulip assets are shared across every ring instance too.
-          tulipStemGeo.dispose();
-          tulipBloomGeo.dispose();
-          tulipStemMat.dispose();
-          tulipBloomMat.dispose();
           // Tree-foot crystal-mana assets are shared across every shard too.
           manaGeo.dispose();
           manaMat.dispose();
@@ -3098,33 +3066,6 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       return horse;
     };
 
-    // A ring of pink tulips planted around the base of every garden tree —
-    // same GEO.* + own-material idiom as the cat/horse companions: a green
-    // stem (GEO.stem) topped by a pink blossom cup (GEO.bud), evenly ringed
-    // around the trunk foot at the given radius.
-    const makePinkTulipRing = (radius: number): THREE.Group => {
-      const ring = new THREE.Group();
-      const stemMat = new THREE.MeshPhongMaterial({ color: 0x2f7d32, emissive: 0x123d14, emissiveIntensity: 0.1 });
-      const bloomMat = new THREE.MeshPhongMaterial({ color: 0xff69b4, emissive: 0xff69b4, emissiveIntensity: 0.2 });
-      const count = 10;
-      for (let i = 0; i < count; i++) {
-        const a = (i / count) * Math.PI * 2;
-        const tulip = new THREE.Group();
-        const stem = new THREE.Mesh(GEO.stem, stemMat);
-        stem.scale.set(0.7, 0.7, 0.7);
-        stem.position.y = 0.35;
-        stem.userData.ownMaterial = true;
-        tulip.add(stem);
-        const bloom = new THREE.Mesh(GEO.bud, bloomMat);
-        bloom.scale.set(0.7, 1.1, 0.7);
-        bloom.position.y = 0.78;
-        bloom.userData.ownMaterial = true;
-        tulip.add(bloom);
-        tulip.position.set(Math.cos(a) * radius, 0, Math.sin(a) * radius);
-        ring.add(tulip);
-      }
-      return ring;
-    };
 
     // "computing devices are being produced" — a cluster of freshly-built GPU
     // server racks parked at the tree's foot, blinking green as they come off
@@ -3424,9 +3365,7 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       horse.position.set(-catBase, 0, catBase * 0.35);
       horse.rotation.y = Math.PI / 4;
       group.add(horse);
-      // Pink tulips ringed around the trunk's base — planted just outside the
       // state ring so the blooms read at the tree's foot.
-      group.add(makePinkTulipRing(grown ? 3.3 : 2.3));
       // A cluster of freshly-manufactured GPU racks at the tree's foot.
       group.add(makeGpuRackCluster(grown ? 4.6 : 3.4));
       // Crystal mana floating around the tree — glowing cyan shards the frame
