@@ -146,12 +146,14 @@ export function GuestHands({ onClose }: GuestHandsProps) {
 // button first. Fetches the guest URL once (it is fixed per boot; one retry),
 // and stays honest: no LAN-reachable URL → no badge, never a dead QR.
 export function GuestQrBadge() {
-  const [dataUrl, setDataUrl] = useState<string | null>(null);
-  const [url, setUrl] = useState<string | null>(null);
+  const [guestQr, setGuestQr] = useState<{ img: string; url: string } | null>(null);
+  const [importQr, setImportQr] = useState<{ img: string; url: string } | null>(null);
 
+  // Both standing invitations load once per boot (their URLs are fixed), one
+  // retry each; either failing simply leaves its half off — never a dead QR.
   useEffect(() => {
     let cancelled = false;
-    const load = async (attempt: number): Promise<void> => {
+    const loadGuest = async (attempt: number): Promise<void> => {
       try {
         const response = await fetch("/api/hands/info", { headers: { accept: "application/json" } });
         if (!response.ok) {
@@ -164,28 +166,60 @@ export function GuestQrBadge() {
         const guestUrl = preferredGuestUrl(info);
         const encoded = await toDataURL(guestUrl, { margin: 1, width: 104 });
         if (!cancelled) {
-          setUrl(guestUrl);
-          setDataUrl(encoded);
+          setGuestQr({ img: encoded, url: guestUrl });
         }
       } catch {
         if (!cancelled && attempt < 1) {
-          setTimeout(() => void load(attempt + 1), 5_000);
+          setTimeout(() => void loadGuest(attempt + 1), 5_000);
         }
       }
     };
-    void load(0);
+    // The QR-import button left the dock (live-room directive): its code lives
+    // here now, beside the guest one — one corner, both invitations.
+    const loadImport = async (attempt: number): Promise<void> => {
+      try {
+        const response = await fetch("/api/import/info", { headers: { accept: "application/json" } });
+        if (!response.ok) {
+          throw new Error(String(response.status));
+        }
+        const info = (await response.json()) as { submitUrl?: string; lanReachable?: boolean };
+        if (cancelled || typeof info.submitUrl !== "string" || info.lanReachable === false) {
+          return;
+        }
+        const encoded = await toDataURL(info.submitUrl, { margin: 1, width: 104 });
+        if (!cancelled) {
+          setImportQr({ img: encoded, url: info.submitUrl });
+        }
+      } catch {
+        if (!cancelled && attempt < 1) {
+          setTimeout(() => void loadImport(attempt + 1), 5_000);
+        }
+      }
+    };
+    void loadGuest(0);
+    void loadImport(0);
     return () => {
       cancelled = true;
     };
   }, []);
 
-  if (dataUrl === null) {
+  if (guestQr === null && importQr === null) {
     return null;
   }
   return (
-    <figure className="guest-qr-badge" data-testid="guest-qr-badge" title={`Guests: scan to point at the wall from your phone — ${url ?? ""}`}>
-      <img src={dataUrl} alt="QR code — join as a guest and point at the wall from your phone" />
-      <figcaption>🖐 join</figcaption>
-    </figure>
+    <div className="guest-qr-badge" data-testid="guest-qr-badge">
+      {guestQr !== null ? (
+        <figure title={`Guests: scan to point at the wall from your phone — ${guestQr.url}`}>
+          <img src={guestQr.img} alt="QR code — join as a guest and point at the wall from your phone" />
+          <figcaption>🖐 join</figcaption>
+        </figure>
+      ) : null}
+      {importQr !== null ? (
+        <figure data-testid="import-qr-mini" title={`Import: scan to add a project (context + optional link) from your phone — ${importQr.url}`}>
+          <img src={importQr.img} alt="QR code — add a project to the wall from your phone" />
+          <figcaption>📥 import</figcaption>
+        </figure>
+      ) : null}
+    </div>
   );
 }

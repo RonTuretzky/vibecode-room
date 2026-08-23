@@ -1348,6 +1348,12 @@ class LiveProjectorRuntime implements ProjectorRuntime {
           meta: event.meta,
         }),
     });
+    // RESEARCH IS ALWAYS ON (live-room directive): the dock toggle is gone and
+    // the research scene lives exclusively on the ceiling — the engine simply
+    // runs. VIBERSYN_RESEARCH=0 remains the escape hatch (tests, quiet rooms).
+    if (this.#env.VIBERSYN_RESEARCH !== "0") {
+      this.research.setActive(true);
+    }
   }
 
   readonly research: ResearchLoop;

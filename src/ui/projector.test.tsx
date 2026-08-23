@@ -66,14 +66,13 @@ describe("projector UI contract", () => {
     expect(listeningHtml).not.toContain("Unmute");
   });
 
-  test("the status bar's QR Import control now lives inside the control dock", () => {
+  test("QR Import has no dock button — it folded into the bottom-left badge", () => {
+    // Live-room directive: the dock curates down to mic / self-rebuild /
+    // guided demo; both QR invitations (guests + import) live in the standing
+    // corner badge (effect-driven, so the SSR renderer shows no badge img).
     const html = renderToStaticMarkup(<ProjectorApp initialSnapshot={demoProjectorSnapshot} />);
-    expect(html).toContain('data-testid="qr-import-button"');
-    expect(html).toContain("QR Import");
-    // Same control, calmer resting state: it renders within the dock tray.
-    expect(html.indexOf('data-testid="qr-import-button"')).toBeGreaterThan(
-      html.indexOf('data-testid="control-dock-tray"'),
-    );
+    expect(html).not.toContain('data-testid="qr-import-button"');
+    expect(html).not.toContain(">QR Import<");
   });
 
   test("no URL params (SSR/full view): no wall badge, no gesture overlay", () => {
@@ -256,7 +255,7 @@ describe("per-wall scoping: each wall renders ITS surface + ITS controls", () =>
     );
     // Idea-side controls (voice → idea pipeline).
     expect(wallAHtml).toContain('data-testid="mic-capture-button"');
-    expect(wallAHtml).toContain('data-testid="auto-build-button"');
+    expect(wallAHtml).not.toContain('data-testid="auto-build-button"'); // left the dock (voice keeps it)
     expect(wallAHtml).toContain('data-testid="guided-demo-button"');
     // Build surfaces live on wall B only.
     expect(wallAHtml).not.toContain('data-testid="fleet-panel"');
@@ -267,7 +266,7 @@ describe("per-wall scoping: each wall renders ITS surface + ITS controls", () =>
     expect(wallAHtml).toContain('data-region="transcript"');
     // QR Import is deliberately UN-scoped (live-room request): the overlay
     // opens on whichever wall summons it, so its button rides every view.
-    expect(wallAHtml).toContain('data-testid="qr-import-button"');
+    expect(wallAHtml).not.toContain('data-testid="qr-import-button"'); // folded into the badge
   });
 
   test("?view=builds (wall B): transcript rail + mic + controls stay, the FLEET RAIL IS GONE", () => {
@@ -277,7 +276,7 @@ describe("per-wall scoping: each wall renders ITS surface + ITS controls", () =>
     expect(wallBHtml).not.toContain('data-testid="fleet-scroll-rail"');
     expect(wallBHtml).toContain('data-region="transcript"');
     // Build-side control.
-    expect(wallBHtml).toContain('data-testid="qr-import-button"');
+    expect(wallBHtml).not.toContain('data-testid="qr-import-button"'); // folded into the badge
     // Idea surfaces live on wall A only.
     expect(wallBHtml).not.toContain('data-testid="idea-tray"');
     expect(wallBHtml).not.toContain('data-testid="auto-build-button"');
@@ -300,7 +299,7 @@ describe("per-wall scoping: each wall renders ITS surface + ITS controls", () =>
     expect(fullHtml).toContain('data-testid="idea-tray"');
     // The fleet rail is deprecated on EVERY view — desk mode included.
     expect(fullHtml).not.toContain('data-testid="fleet-panel"');
-    expect(fullHtml).toContain('data-testid="qr-import-button"');
+    expect(fullHtml).not.toContain('data-testid="qr-import-button"'); // folded into the badge
     expect(fullHtml).toContain('data-testid="mic-capture-button"');
     for (const region of REQUIRED_PROJECTOR_REGIONS) {
       expect(fullHtml).toContain(`data-region="${region}"`);
@@ -357,7 +356,9 @@ describe("de-themed walls: on-demand overlays are available on BOTH walls", () =
       />,
     );
     expect(html).toContain('data-testid="qr-overlay"');
-    expect(html).toContain('data-testid="qr-import-button"');
+    // The launch button folded into the corner badge; the overlay itself
+    // still mounts on any wall that summons it.
+    expect(html).not.toContain('data-testid="qr-import-button"');
   });
 
   test("the guided demo runs on wall B (view=builds) — only its launch button stays wall-A", () => {
@@ -1285,15 +1286,13 @@ describe("gesture dwell-select interaction", () => {
     expect(html).toContain('data-gesture="false"');
   });
 
-  test("guest hands is default-on: the Guests button renders on a bare URL; ?remote=0 removes it", () => {
-    const bare = renderToStaticMarkup(<ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch="?live=0" />);
-    expect(bare).toContain('data-testid="guest-hands-button"');
-    // A Guests button on a wall that is NOT listening would show a URL that
-    // connects to nothing — opting out must remove it.
-    const optedOut = renderToStaticMarkup(
-      <ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch="?live=0&remote=0" />,
-    );
-    expect(optedOut).not.toContain('data-testid="guest-hands-button"');
+  test("the Guests dock button is gone — the standing corner badge is the invitation", () => {
+    // Live-room directive: no 🖐 Guests button on any wall; the always-on
+    // bottom-left QR badge (live mode, effect-driven) carries the invitation.
+    for (const search of ["?live=0", "?live=0&remote=0"]) {
+      const html = renderToStaticMarkup(<ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch={search} />);
+      expect(html).not.toContain('data-testid="guest-hands-button"');
+    }
   });
 
   test("?remote=ws://… mounts the dwell layer subscribing as THIS window's wall (desk stays desk)", () => {
@@ -1434,10 +1433,13 @@ describe("gesture-mode status bar keeps only actionable controls", () => {
     expect(gestureA).not.toContain('data-testid="emergency-status"');
   });
 
-  test("actionable controls stay (mic+capture / auto-build / guided demo)", () => {
+  test("actionable controls stay (mic+capture / guided demo); auto-build left the dock", () => {
     expect(gestureA).toContain('data-testid="mic-capture-button"');
-    expect(gestureA).toContain('data-testid="auto-build-button"');
     expect(gestureA).toContain('data-testid="guided-demo-button"');
+    // Auto-Build and Research left the dock (live-room directive): voice
+    // keeps auto-build reachable; research is always on, ceiling-only.
+    expect(gestureA).not.toContain('data-testid="auto-build-button"');
+    expect(gestureA).not.toContain('data-testid="research-mode-button"');
   });
 
   test("a LIVE emergency still shows its banner in gesture mode", () => {
@@ -1477,11 +1479,7 @@ describe("control dock: one calm affordance replaces the button row", () => {
   test("the routine controls render INSIDE the dock tray", () => {
     for (const id of [
       'data-testid="mic-capture-button"',
-      'data-testid="auto-build-button"',
       'data-testid="self-rebuild-button"',
-      'data-testid="research-mode-button"',
-      'data-testid="qr-import-button"',
-      'data-testid="guest-hands-button"',
       'data-testid="guided-demo-button"',
     ]) {
       const idx = html.indexOf(id);

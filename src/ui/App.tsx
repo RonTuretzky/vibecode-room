@@ -2545,19 +2545,9 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
             bytesReceived={snapshot.mic?.bytesReceived ?? 0}
             onToggle={() => void toggleMicCapture()}
           />
-          {showIdeaSurfaces ? (
-            <button
-              type="button"
-              className={`ctl-button auto-build${autoAccept ? " on" : ""}`}
-              data-testid="auto-build-button"
-              data-state={autoAccept ? "on" : "off"}
-              aria-pressed={autoAccept}
-              onClick={() => void toggleAutoAccept()}
-              title="When on, every detected idea builds itself — no click required."
-            >
-              {autoAccept ? "Auto-Build: ON" : "Auto-Build: OFF"}
-            </button>
-          ) : null}
+          {/* Auto-Build and Research left the dock (live-room directive): the
+              room curates its controls — auto-build stays reachable by voice,
+              and research is ALWAYS ON, living exclusively on the ceiling. */}
           {/* SELF-REBUILD ("the room rebuilds itself"): runtime gate on the
               green-self-commit → rebuild-and-relaunch trigger. The title is
               HONEST about the boot-time part: without the --self supervisor
@@ -2581,45 +2571,8 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
               {selfRebuild ? "🔁 Self-Rebuild: ON" : "🔁 Self-Rebuild: OFF"}
             </button>
           ) : null}
-          {showIdeaSurfaces ? (
-            <button
-              type="button"
-              className={`ctl-button research-toggle${researchActive ? " on" : ""}`}
-              data-testid="research-mode-button"
-              data-state={researchEngineOn ? "on" : "off"}
-              aria-pressed={researchEngineOn}
-              onClick={() => void toggleResearchMode()}
-              title="Research engine (R): while ON, the room reviews the conversation (~1/min) and buds research spheres onto the dialogue tree — shown on the dedicated ?research=1 display (the ceiling). Wall scenes stay put."
-            >
-              {researchEngineOn ? "🔍 Research: ON" : "🔍 Research: OFF"}
-            </button>
-          ) : null}
-          {/* QR Import lives in the dock on EVERY view (live-room request):
-              the overlay opens on whichever wall summons it, so scoping the
-              button to the build view just made it look missing on wall A. */}
-          <button
-            type="button"
-            className="ctl-button qr-import"
-            data-testid="qr-import-button"
-            onClick={() => setQrOpen(true)}
-            title="Show a QR code — scan it on a phone to add a project (context + optional link) to the wall."
-          >
-            QR Import
-          </button>
-          {/* GUEST HANDS: only rendered when this wall actually listens for
-              guests (?remote=1 / --guests) — a URL that connects to nothing is
-              worse than no button. */}
-          {urlConfig.remote !== null ? (
-            <button
-              type="button"
-              className="ctl-button guest-hands"
-              data-testid="guest-hands-button"
-              onClick={() => setGuestsOpen(true)}
-              title="Show the URL other computers on this network open to get hand controls for this wall (webcam hand-tracking or trackpad)."
-            >
-              🖐 Guests
-            </button>
-          ) : null}
+          {/* QR Import's button folded into the standing bottom-left badge
+              (live-room directive) — the overlay stays reachable there. */}
           {showIdeaSurfaces ? (
             <button
               type="button"
@@ -2690,24 +2643,8 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
             all, however much they said. Both walls keep it now. */}
         {!mockMode ? (
           <aside className="rail">
-            {/* PINCH CAMERA toggle (hands): a compact chip docked in the rail
-                (live-room request — it was crowding the header). Seeded
-                from ?hands=; the label mirrors PinchCameraLayer's socket state. */}
-            <button
-              type="button"
-              className={`ctl-button hands-toggle${handsOn ? " on" : ""}`}
-              data-testid="hands-toggle-button"
-              data-state={handsOn ? (handsStatus === "open" ? "live" : "connecting") : "off"}
-              aria-pressed={handsOn}
-              onClick={toggleHands}
-              title="Pinch-camera control: point with your hands (TouchDesigner/MediaPipe) to orbit, zoom and pan the room. Toggle to arm the hand tracker."
-            >
-              {!handsOn
-                ? "✋ Hands: OFF"
-                : handsStatus === "open"
-                  ? "✋ Hands: LIVE"
-                  : "✋ Hands: connecting"}
-            </button>
+            {/* The ✋ Hands chip left the rail (live-room directive) — the
+                pinch camera still arms via ?hands= and guest hands. */}
             <TranscriptStream lines={snapshot.transcript} />
           </aside>
         ) : null}

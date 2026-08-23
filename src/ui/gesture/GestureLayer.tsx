@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Zone } from "./core";
 import { idToHue } from "./core";
-import { GestureTargets, HITBOX_INFLATE_PX, inflateRect, type TargetDescriptor } from "./targets";
+import { GestureTargets, HITBOX_INFLATE_PX, inflateRect, publishLiveCursors, type TargetDescriptor } from "./targets";
 import { MultiDwell } from "./multi";
 import { getSceneDwellSource } from "./scene-source";
 import { getSceneFlatPoseControl, registerFlatPoseSender } from "./flat-pose-source";
@@ -494,6 +494,11 @@ export function GestureLayer({ wall, fusionUrl, remoteUrl = "", mouseTest = fals
       }
       sceneHighlights = nextScene;
 
+      // Presence, not acquisition: chrome that opens while a cursor RESTS on
+      // it (the ⚙ dock) reads this — dwell-hot only marks acquired targets,
+      // and a hovering joystick/hands cursor acquired nothing, so the dock
+      // idle-folded under a parked cursor (live-room bug).
+      publishLiveCursors([...cursors.values()].map((cursor) => ({ x: cursor.x * vpW, y: cursor.y * vpH })));
       draw(ctx, canvas, result.active, rectsById, fireFlashes, t, vpW, vpH, cursors, cursorDotsRef.current);
       raf = requestAnimationFrame(frame);
     };

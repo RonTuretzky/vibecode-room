@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { anyLiveCursorOver } from "./gesture/targets";
 import type { ReactNode } from "react";
 
 /**
@@ -43,6 +44,11 @@ const IDLE_CLOSE_MS = 1_500;
 // match it, so a stray click can never pin the tray open forever).
 function dockIsHot(root: HTMLElement): boolean {
   if (root.hasAttribute("data-dwell-hot") || root.querySelector("[data-dwell-hot]") !== null) {
+    return true;
+  }
+  // A joystick/hands cursor RESTING here counts — it never sets :hover and
+  // only sets dwell-hot once acquired, so presence must be checked directly.
+  if (anyLiveCursorOver(root.getBoundingClientRect())) {
     return true;
   }
   try {
