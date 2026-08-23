@@ -364,6 +364,136 @@ function buildPulitzer(): THREE.Object3D {
   return g;
 }
 
+// ── Sherman (Grand Army Plaza) ──────────────────────────────────────────────
+// Saint-Gaudens' gilded equestrian — the gold flash in front of the Plaza.
+function buildSherman(): THREE.Object3D {
+  const g = new THREE.Group();
+  const gold = new THREE.MeshStandardMaterial({ color: 0xd8b34a, metalness: 0.7, roughness: 0.35 });
+  const plinth = new THREE.Mesh(new THREE.BoxGeometry(5.2, 3.4, 2.6), mat(0xb5aa97, 0.8));
+  plinth.position.y = 1.7;
+  g.add(plinth);
+  const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.55, 2.0, 4, 10), gold);
+  body.rotation.z = Math.PI / 2;
+  body.position.set(0.1, 4.9, 0);
+  g.add(body);
+  for (const [lx, lz] of [
+    [-0.9, 0.3],
+    [-0.9, -0.3],
+    [1.0, 0.3],
+    [1.0, -0.3],
+  ]) {
+    const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.09, 1.5, 6), gold);
+    leg.position.set(lx, 3.85, lz);
+    g.add(leg);
+  }
+  const neck = new THREE.Mesh(new THREE.CapsuleGeometry(0.3, 0.9, 4, 8), gold);
+  neck.rotation.z = -0.7;
+  neck.position.set(1.5, 5.6, 0);
+  g.add(neck);
+  const head = new THREE.Mesh(new THREE.CapsuleGeometry(0.18, 0.55, 4, 8), gold);
+  head.rotation.z = Math.PI / 2 - 0.25;
+  head.position.set(2.1, 6.0, 0);
+  g.add(head);
+  const rider = new THREE.Mesh(new THREE.CapsuleGeometry(0.32, 1.3, 4, 8), gold);
+  rider.position.set(-0.1, 6.2, 0);
+  g.add(rider);
+  return g;
+}
+
+// ── USS Maine Monument (Merchants' Gate, Columbus Circle) ───────────────────
+function buildMaineMonument(): THREE.Object3D {
+  const g = new THREE.Group();
+  const stone = mat(0xcfc8b8, 0.8);
+  const gold = new THREE.MeshStandardMaterial({ color: 0xd8b34a, metalness: 0.7, roughness: 0.35 });
+  const base = new THREE.Mesh(new THREE.BoxGeometry(11, 2.2, 8), stone);
+  base.position.y = 1.1;
+  g.add(base);
+  const pylon = new THREE.Mesh(new THREE.BoxGeometry(5.2, 12, 3.4), stone);
+  pylon.position.y = 2.2 + 6;
+  g.add(pylon);
+  // Gilded Columbia Triumphant in her seashell chariot, abstracted.
+  const shell = new THREE.Mesh(new THREE.SphereGeometry(1.1, 10, 8, 0, Math.PI * 2, 0, Math.PI / 2), gold);
+  shell.position.y = 14.6;
+  g.add(shell);
+  const figure = new THREE.Mesh(new THREE.CapsuleGeometry(0.35, 1.4, 4, 8), gold);
+  figure.position.y = 15.9;
+  g.add(figure);
+  for (const off of [-1.2, 0, 1.2]) {
+    const horse = new THREE.Mesh(new THREE.CapsuleGeometry(0.3, 1.1, 4, 8), gold);
+    horse.rotation.z = Math.PI / 2;
+    horse.position.set(1.9, 14.7, off);
+    g.add(horse);
+  }
+  return g;
+}
+
+// ── The Dairy ───────────────────────────────────────────────────────────────
+// The Victorian gothic cottage north of Wollman: granite below, painted
+// board-and-batten above, a steep slate gable.
+function buildDairy(): THREE.Object3D {
+  const g = new THREE.Group();
+  const lower = new THREE.Mesh(new THREE.BoxGeometry(16, 3.2, 8), mat(0x9d968a, 0.85));
+  lower.position.y = 1.6;
+  g.add(lower);
+  const upper = new THREE.Mesh(new THREE.BoxGeometry(15.2, 2.2, 7.4), mat(0xd8cfb4, 0.8));
+  upper.position.y = 3.2 + 1.1;
+  g.add(upper);
+  const gable = new THREE.Shape();
+  gable.moveTo(-4.2, 0);
+  gable.lineTo(4.2, 0);
+  gable.lineTo(0, 3.6);
+  gable.closePath();
+  const roof = new THREE.Mesh(new THREE.ExtrudeGeometry(gable, { depth: 15.6, bevelEnabled: false }), mat(0x5a6066, 0.9));
+  roof.rotation.y = Math.PI / 2;
+  roof.position.set(-7.8, 5.4, 4.2);
+  g.add(roof);
+  // The loggia posts along the south face.
+  for (let i = -3; i <= 3; i++) {
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 3.0, 6), mat(0x7a5b43, 0.9));
+    post.position.set(i * 2.2, 1.5, 4.6);
+    g.add(post);
+  }
+  return g;
+}
+
+// ── Chess & Checkers House ──────────────────────────────────────────────────
+// The octagonal brick pavilion on the Kinderberg outcrop.
+function buildChessHouse(): THREE.Object3D {
+  const g = new THREE.Group();
+  const brick = mat(0x9c5a44, 0.9);
+  const walls = new THREE.Mesh(new THREE.CylinderGeometry(5.4, 5.4, 3.6, 8), brick);
+  walls.position.y = 1.8;
+  g.add(walls);
+  const roof = new THREE.Mesh(new THREE.ConeGeometry(6.4, 2.6, 8), mat(0x6c6f72, 0.9));
+  roof.position.y = 3.6 + 1.3;
+  g.add(roof);
+  const finial = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 1.4, 6), mat(0x4a4a48, 0.8));
+  finial.position.y = 6.6;
+  g.add(finial);
+  return g;
+}
+
+// ── The Carousel ────────────────────────────────────────────────────────────
+function buildCarousel(): THREE.Object3D {
+  const g = new THREE.Group();
+  const base = new THREE.Mesh(new THREE.CylinderGeometry(8.2, 8.2, 1.0, 12), mat(0x8f8578, 0.85));
+  base.position.y = 0.5;
+  g.add(base);
+  for (let i = 0; i < 12; i++) {
+    const a = (i / 12) * Math.PI * 2;
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 3.4, 6), mat(0x8a3d32, 0.8));
+    post.position.set(Math.cos(a) * 7.6, 1.0 + 1.7, Math.sin(a) * 7.6);
+    g.add(post);
+  }
+  const roof = new THREE.Mesh(new THREE.ConeGeometry(9.4, 3.2, 12), mat(0x7d4a3a, 0.85));
+  roof.position.y = 4.4 + 1.6;
+  g.add(roof);
+  const cap = new THREE.Mesh(new THREE.SphereGeometry(0.5, 10, 8), mat(0xd8b34a, 0.5));
+  cap.position.y = 7.7;
+  g.add(cap);
+  return g;
+}
+
 export const LANDMARKS: LandmarkSpec[] = [
   { name: "Cleopatra's Needle", lat: 40.77965, lon: -73.9654, bearing: 29, build: buildObelisk },
   // Bow Bridge's footway runs 148° (SSE) per OSM; the model's span is its X
@@ -375,6 +505,11 @@ export const LANDMARKS: LandmarkSpec[] = [
   { name: "Inscope Arch", lat: 40.767, lon: -73.9709, bearing: 65, build: buildInscope },
   { name: "Cop Cot", lat: 40.7662, lon: -73.97575, bearing: 29, build: buildCopCot },
   { name: "Pulitzer Fountain", lat: 40.7641, lon: -73.97345, bearing: 29, build: buildPulitzer },
+  { name: "Sherman Monument", lat: 40.76401, lon: -73.97327, bearing: 209, build: buildSherman },
+  { name: "USS Maine Monument", lat: 40.76856, lon: -73.98166, bearing: 119, build: buildMaineMonument },
+  { name: "The Dairy", lat: 40.76674, lon: -73.97453, bearing: 209, build: buildDairy },
+  { name: "Chess & Checkers House", lat: 40.7665, lon: -73.9753, bearing: 29, build: buildChessHouse },
+  { name: "The Carousel", lat: 40.76702, lon: -73.97663, bearing: 29, build: buildCarousel },
 ];
 
 // Build every landmark into one group in the park frame, each standing on
