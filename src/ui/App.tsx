@@ -612,30 +612,10 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
   // OWN repo as ONE MORE tree inside the RoomScene garden — not a panel. The
   // hook returns null while unarmed/warming, and RoomScene simply omits the
   // tree then.
-  const selfTree = useSelfRepoTree(
-    selfRebuild && urlConfig.wall !== null && !urlConfig.research,
-    initialSelfTree,
-  );
-  const toggleSelfRebuild = useCallback(async () => {
-    if (!liveMode || mockModeRef.current) {
-      return;
-    }
-    try {
-      const response = await fetch("/api/self-rebuild", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ on: !snapshotRef.current.selfRebuild }),
-      });
-      if (response.ok && response.headers.get("content-type")?.includes("application/json")) {
-        setSnapshot((await response.json()) as ProjectorSnapshot);
-      } else {
-        reportControlFailure("Self-rebuild", response.status);
-      }
-    } catch {
-        reportControlFailure("Self-rebuild");
-      // Non-authoritative projector: a failed toggle must never block the UI.
-    }
-  }, [liveMode]);
+  // The room's own tree ALWAYS grows on wall windows (live-room directive:
+  // the Self-Rebuild toggle is gone — self-hosting is what this room IS; the
+  // server boots armed under --self, and hiding the tree was never a feature).
+  const selfTree = useSelfRepoTree(urlConfig.wall !== null && !urlConfig.research, initialSelfTree);
 
   // IDEA CAPTURE toggle (alternative to passive auto-detect). Flips the server-side
   // capture flag: when on, detection runs eagerly on every final utterance — but
@@ -2548,31 +2528,9 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
           {/* Auto-Build and Research left the dock (live-room directive): the
               room curates its controls — auto-build stays reachable by voice,
               and research is ALWAYS ON, living exclusively on the ceiling. */}
-          {/* SELF-REBUILD ("the room rebuilds itself"): runtime gate on the
-              green-self-commit → rebuild-and-relaunch trigger. The title is
-              HONEST about the boot-time part: without the --self supervisor
-              wrapping this server, an exit 87 cannot rebuild anything. */}
-          {showIdeaSurfaces ? (
-            <button
-              type="button"
-              className={`ctl-button self-rebuild${selfRebuild ? " on" : ""}`}
-              data-testid="self-rebuild-button"
-              data-state={selfRebuild ? "on" : "off"}
-              aria-pressed={selfRebuild}
-              onClick={() => void toggleSelfRebuild()}
-              title={
-                selfSupervisor
-                  ? selfRebuild
-                    ? "ARMED (supervisor live): when the mirror lands a green self: commit, the server rebuilds and relaunches itself — walls reload on the new build."
-                    : "Supervisor live but the trigger is OFF: a green self: commit will NOT rebuild the room until this is switched on."
-                  : "on (needs --self launch to take effect): no supervisor is wrapping this server, so a green self: commit cannot rebuild-and-relaunch it. Start the room with run-room.sh --self."
-              }
-            >
-              {/* No ": ON/OFF" text (live-room directive): the lit selected
-                  state is the indicator. */}
-              🔁 Self-Rebuild
-            </button>
-          ) : null}
+          {/* Self-Rebuild's toggle is GONE (live-room directive): the room is
+              self-hosting, full stop — the server boots armed under --self.
+              VIBERSYN route /api/self-rebuild remains as the escape hatch. */}
           {/* QR Import's button folded into the standing bottom-left badge
               (live-room directive) — the overlay stays reachable there. */}
           {showIdeaSurfaces ? (

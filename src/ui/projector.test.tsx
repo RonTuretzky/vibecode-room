@@ -1518,7 +1518,6 @@ describe("control dock: one calm affordance replaces the button row", () => {
   test("the routine controls render INSIDE the dock tray", () => {
     for (const id of [
       'data-testid="mic-capture-button"',
-      'data-testid="self-rebuild-button"',
       'data-testid="guided-demo-button"',
     ]) {
       const idx = html.indexOf(id);
@@ -1568,47 +1567,16 @@ describe("control dock: one calm affordance replaces the button row", () => {
 // trigger is runtime-toggleable, but only a --self launch (the supervisor
 // exporting VIBERSYN_SELF_MODE=1, surfaced as snapshot.selfSupervisor) can
 // actually rebuild-and-relaunch the server on a green self: commit.
-describe("self-rebuild dock toggle", () => {
-  test("renders inside the dock tray; state lives in data-state, not label text", () => {
-    // Live-room directive: no ": ON/OFF" suffix — the lit selected state IS
-    // the indicator. data-state/aria-pressed keep the truth machine-readable.
-    const off = renderToStaticMarkup(<ProjectorApp initialSnapshot={demoProjectorSnapshot} />);
-    const trayIdx = off.indexOf('data-testid="control-dock-tray"');
-    const buttonIdx = off.indexOf('data-testid="self-rebuild-button"');
-    expect(buttonIdx).toBeGreaterThan(trayIdx);
-    expect(buttonIdx).toBeLessThan(off.indexOf("</header>"));
-    expect(off).toContain('data-testid="self-rebuild-button" data-state="off"');
-    expect(off).toContain("🔁 Self-Rebuild");
-    expect(off).not.toContain("Self-Rebuild: OFF");
-
-    const on = renderToStaticMarkup(
-      <ProjectorApp initialSnapshot={{ ...demoProjectorSnapshot, selfRebuild: true }} />,
-    );
-    expect(on).toContain('data-testid="self-rebuild-button" data-state="on"');
-    expect(on).not.toContain("Self-Rebuild: ON");
-  });
-
-  test("the title is honest about the supervisor: ARMED only when --self is live", () => {
-    // No supervisor (snapshot.selfSupervisor absent/false): flipping ON only
-    // records intent — the title says a --self launch is needed.
-    const unsupervised = renderToStaticMarkup(
-      <ProjectorApp initialSnapshot={{ ...demoProjectorSnapshot, selfRebuild: true }} />,
-    );
-    expect(unsupervised).toContain("needs --self launch to take effect");
-    expect(unsupervised).not.toContain("ARMED (supervisor live)");
-
-    // Supervisor live + toggle on: ARMED.
-    const armed = renderToStaticMarkup(
-      <ProjectorApp initialSnapshot={{ ...demoProjectorSnapshot, selfRebuild: true, selfSupervisor: true }} />,
-    );
-    expect(armed).toContain("ARMED (supervisor live)");
-
-    // Supervisor live + toggle off: says the trigger is off, not ARMED.
-    const disarmed = renderToStaticMarkup(
-      <ProjectorApp initialSnapshot={{ ...demoProjectorSnapshot, selfRebuild: false, selfSupervisor: true }} />,
-    );
-    expect(disarmed).not.toContain("ARMED (supervisor live)");
-    expect(disarmed).toContain("will NOT rebuild the room");
+describe("self-rebuild: no toggle — the room is self-hosting, full stop", () => {
+  test("no Self-Rebuild button renders on any view", () => {
+    // Live-room directive: the server boots armed under --self (composition
+    // seeds #selfRebuild from selfMode); a UI brake that also hid the room's
+    // own tree was a trap, not a control. /api/self-rebuild remains the
+    // escape hatch for tests and emergencies.
+    for (const search of ["", "?live=1&wall=A", "?live=0&wall=B&gesture=1"]) {
+      const html = renderToStaticMarkup(<ProjectorApp initialSnapshot={demoProjectorSnapshot} urlSearch={search} />);
+      expect(html).not.toContain('data-testid="self-rebuild-button"');
+    }
   });
 });
 
@@ -1718,7 +1686,7 @@ describe("flat-locked two-wall pair", () => {
 // panel, no second canvas); unarmed walls and the research-pinned ceiling
 // never receive it. The seed prop stands in for the /api/self-repo +
 // /api/forest polls the static renderer cannot make.
-describe("self-repo garden tree while self-rebuild is armed", () => {
+describe("self-repo garden tree on every wall window", () => {
   const selfTreeSeed: SelfTreeSeed = {
     repo: "acme/vibecode-room",
     forest: {
@@ -1737,28 +1705,22 @@ describe("self-repo garden tree while self-rebuild is armed", () => {
     },
   };
 
-  test("armed wall feeds RoomScene the self tree; unarmed wall and the ceiling do not", () => {
-    const armed = renderToStaticMarkup(
-      <ProjectorApp
-        initialSnapshot={{ ...demoProjectorSnapshot, selfRebuild: true }}
-        urlSearch="?live=1&wall=A&view=ideas"
-        initialSelfTree={selfTreeSeed}
-      />,
-    );
-    expect(armed).toContain('data-self-tree="true"');
-    // The old corner panel is GONE — the tree lives inside the garden scene.
-    expect(armed).not.toContain('data-testid="self-repo-tree"');
-    const unarmed = renderToStaticMarkup(
+  test("every wall window feeds RoomScene the self tree; the ceiling does not", () => {
+    const wall = renderToStaticMarkup(
       <ProjectorApp
         initialSnapshot={demoProjectorSnapshot}
         urlSearch="?live=1&wall=A&view=ideas"
         initialSelfTree={selfTreeSeed}
       />,
     );
-    expect(unarmed).toContain('data-self-tree="false"');
+    expect(wall).toContain('data-self-tree="true"');
+    // The old corner panel is GONE — the tree lives inside the garden scene.
+    expect(wall).not.toContain('data-testid="self-repo-tree"');
+    // No toggle gates it anymore: a plain wall URL with no snapshot flag
+    // still grows the room's own tree (self-hosting is what the room IS).
     const ceiling = renderToStaticMarkup(
       <ProjectorApp
-        initialSnapshot={{ ...demoProjectorSnapshot, selfRebuild: true }}
+        initialSnapshot={{ ...demoProjectorSnapshot, }}
         urlSearch="?live=1&wall=C&research=1&zen=1"
         initialSelfTree={selfTreeSeed}
       />,
@@ -1769,7 +1731,7 @@ describe("self-repo garden tree while self-rebuild is armed", () => {
   test("armed but wall-less windows (no ?wall=) also go without the self tree", () => {
     const noWall = renderToStaticMarkup(
       <ProjectorApp
-        initialSnapshot={{ ...demoProjectorSnapshot, selfRebuild: true }}
+        initialSnapshot={{ ...demoProjectorSnapshot, }}
         urlSearch="?live=1"
         initialSelfTree={selfTreeSeed}
       />,
