@@ -147,7 +147,6 @@ export function GuestHands({ onClose }: GuestHandsProps) {
 // and stays honest: no LAN-reachable URL → no badge, never a dead QR.
 export function GuestQrBadge() {
   const [guestQr, setGuestQr] = useState<{ img: string; url: string } | null>(null);
-  const [importQr, setImportQr] = useState<{ img: string; url: string } | null>(null);
 
   // Both standing invitations load once per boot (their URLs are fixed), one
   // retry each; either failing simply leaves its half off — never a dead QR.
@@ -174,50 +173,21 @@ export function GuestQrBadge() {
         }
       }
     };
-    // The QR-import button left the dock (live-room directive): its code lives
-    // here now, beside the guest one — one corner, both invitations.
-    const loadImport = async (attempt: number): Promise<void> => {
-      try {
-        const response = await fetch("/api/import/info", { headers: { accept: "application/json" } });
-        if (!response.ok) {
-          throw new Error(String(response.status));
-        }
-        const info = (await response.json()) as { submitUrl?: string; lanReachable?: boolean };
-        if (cancelled || typeof info.submitUrl !== "string" || info.lanReachable === false) {
-          return;
-        }
-        const encoded = await toDataURL(info.submitUrl, { margin: 1, width: 104 });
-        if (!cancelled) {
-          setImportQr({ img: encoded, url: info.submitUrl });
-        }
-      } catch {
-        if (!cancelled && attempt < 1) {
-          setTimeout(() => void loadImport(attempt + 1), 5_000);
-        }
-      }
-    };
     void loadGuest(0);
-    void loadImport(0);
     return () => {
       cancelled = true;
     };
   }, []);
 
-  if (guestQr === null && importQr === null) {
+  if (guestQr === null) {
     return null;
   }
   return (
     <div className="guest-qr-badge" data-testid="guest-qr-badge">
       {guestQr !== null ? (
-        <figure title={`Guests: scan to point at the wall from your phone — ${guestQr.url}`}>
+        <figure title={`Scan on your phone: point at the wall with your hands AND plant a project (the add-a-project fold on the same page) — ${guestQr.url}`}>
           <img src={guestQr.img} alt="QR code — join as a guest and point at the wall from your phone" />
-          <figcaption>🖐 join</figcaption>
-        </figure>
-      ) : null}
-      {importQr !== null ? (
-        <figure data-testid="import-qr-mini" title={`Import: scan to add a project (context + optional link) from your phone — ${importQr.url}`}>
-          <img src={importQr.img} alt="QR code — add a project to the wall from your phone" />
-          <figcaption>📥 import</figcaption>
+          <figcaption>🖐 join · ➕ import</figcaption>
         </figure>
       ) : null}
     </div>

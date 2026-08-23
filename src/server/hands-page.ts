@@ -108,6 +108,14 @@ export function handsPageHtml(): string {
     main { padding-top: 0.75rem; }
     .wasd { grid-template-columns: repeat(3, 3rem); grid-template-rows: repeat(2, 3rem); }
   }
+
+  .import-fold { margin: 0.6rem 0; padding: 0.55rem 0.7rem; border: 1px solid #2a3346; border-radius: 10px; }
+  .import-fold summary { cursor: pointer; font-weight: 700; }
+  .import-fold label { display: block; margin: 0.5rem 0 0.2rem; font-size: 0.85rem; color: #9fb0d0; }
+  .import-fold textarea, .import-fold input[type="url"] { width: 100%; box-sizing: border-box; }
+  .import-fold textarea { resize: vertical; min-height: 4.5rem; }
+  .import-fold button { margin-top: 0.55rem; font-weight: 700; }
+  .import-note { display: block; margin-top: 0.4rem; font-size: 0.85rem; color: #9fb0d0; }
 </style>
 </head>
 <body>
@@ -122,6 +130,22 @@ export function handsPageHtml(): string {
       aria-label="your name, shown beside your dot on the wall" />
     <span class="you" id="you" hidden><span class="dot" id="you-dot"></span>your dot on the wall</span>
   </header>
+
+  <!-- ADD A PROJECT (folded in from the standalone /submit page, live-room
+       directive): guests' one external screen carries BOTH powers — point at
+       the wall, and plant a project on it. Same-origin POST; the wall grows
+       a tree on success. -->
+  <details class="import-fold" data-testid="guest-import-fold">
+    <summary>➕ add a project to the wall</summary>
+    <label for="import-context">what should the room build?</label>
+    <textarea id="import-context" data-testid="guest-import-context" autocomplete="off"
+      autocapitalize="sentences" placeholder="A synthwave dashboard for our ticket queue…"></textarea>
+    <label for="import-url">GitHub link (optional)</label>
+    <input id="import-url" data-testid="guest-import-url" type="url" inputmode="url"
+      autocomplete="off" autocapitalize="off" placeholder="https://github.com/org/repo" />
+    <button type="button" id="import-send" data-testid="guest-import-send">🌱 plant it</button>
+    <span class="import-note" id="import-note" data-testid="guest-import-note" hidden></span>
+  </details>
 
   <div class="banner" id="no-wall-banner" hidden data-testid="guest-no-wall">
     No wall is listening for guests right now — open the room wall (run-room.sh; guest
@@ -814,6 +838,46 @@ export function handsPageHtml(): string {
       stopped = false;
       connect();
       setMode(localStorage.getItem("vibersyn.guest-mode") === "hands" ? "hands" : "pad");
+    }
+  });
+})();
+
+// ── add-a-project fold: same-origin import POST with an honest note ─────────
+(() => {
+  const send = document.getElementById("import-send");
+  const context = document.getElementById("import-context");
+  const url = document.getElementById("import-url");
+  const note = document.getElementById("import-note");
+  if (!send || !context || !url || !note) return;
+  send.addEventListener("click", async () => {
+    const text = context.value.trim();
+    if (text.length === 0) {
+      note.textContent = "say what the room should build first";
+      note.hidden = false;
+      return;
+    }
+    send.disabled = true;
+    note.textContent = "planting…";
+    note.hidden = false;
+    try {
+      const body = { context: text };
+      if (url.value.trim().length > 0) body.url = url.value.trim();
+      const response = await fetch("/api/projects/import", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const parsed = await response.json().catch(() => null);
+      if (response.ok && parsed && (parsed.upid || parsed.callsign)) {
+        note.textContent = "🌱 planted — watch the wall: " + (parsed.callsign ?? parsed.upid);
+        context.value = ""; url.value = "";
+      } else {
+        note.textContent = "could not plant it (" + response.status + ") — try again";
+      }
+    } catch {
+      note.textContent = "could not reach the room — still on the wifi?";
+    } finally {
+      send.disabled = false;
     }
   });
 })();

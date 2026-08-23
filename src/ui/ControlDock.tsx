@@ -77,17 +77,10 @@ export interface ControlDockProps {
 export function ControlDock({ children, initialExpanded = false, collapseSignal = 0 }: ControlDockProps) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [expanded, setExpanded] = useState(initialExpanded);
-  // Click-to-close latch: after an explicit collapse click, hover must not
-  // instantly re-expand (the clicking cursor is still ON the button). Held
-  // until the dock goes cold once; then hover-expand works again.
-  const holdClosed = useRef(false);
-
-  // A bumped collapseSignal folds the tray (see the prop doc). The latch stops
-  // the hover loop from reopening it under a cursor still resting on the dock;
-  // it releases the moment the dock goes cold, like the click path.
+  // A bumped collapseSignal folds the tray (see the prop doc). Presence never
+  // auto-opens (opening is click/dwell only), so no reopen latch is needed.
   useEffect(() => {
     if (collapseSignal > 0) {
-      holdClosed.current = true;
       setExpanded(false);
     }
   }, [collapseSignal]);
@@ -105,15 +98,16 @@ export function ControlDock({ children, initialExpanded = false, collapseSignal 
       const root = rootRef.current;
       if (root !== null) {
         if (dockIsHot(root)) {
+          // Presence HOLDS an open tray (cancels the idle fold) but never
+          // OPENS it — opening is the standard dwell interaction (the dwell
+          // ring on ⚙ fires a click) or a real click. Hover-open made the
+          // tray spring out at anyone walking a cursor across the corner
+          // (live-room report).
           if (closeTimer.current !== null) {
             clearTimeout(closeTimer.current); // cursor back — cancel pending close
             closeTimer.current = null;
           }
-          if (!holdClosed.current) {
-            setExpanded(true); // bails when already true — no re-render churn
-          }
         } else {
-          holdClosed.current = false; // cursor left — hover may expand again
           // Dock went cold: fold the tray away a little bit delayed.
           if (closeTimer.current === null) {
             closeTimer.current = setTimeout(() => {
@@ -150,18 +144,15 @@ export function ControlDock({ children, initialExpanded = false, collapseSignal 
         className="ctl-button dock-toggle"
         data-testid="control-dock-button"
         aria-expanded={expanded}
-        aria-label="Room controls — rest the cursor here to unfold them"
-        title="Room controls: rest the cursor (or hover) here to unfold the full button cluster. It folds away by itself."
+        aria-label="Room controls — dwell (or click) to unfold them"
+        title="Room controls: dwell on this (or click) to unfold the full button cluster. It folds away by itself once you leave."
         // OPEN-ONLY. The toggle used to close an open tray — but the hover
         // loop expands the tray the moment a cursor rests on this button, so
         // every joystick tap and every dwell landed on an ALREADY-open tray
         // and read as "close": one tap opened-then-shut it, live-room bug.
         // A click can only ever mean "open"; closing is walking away (the
         // idle fold below) — the dock folds by itself, as its label says.
-        onClick={() => {
-          holdClosed.current = false;
-          setExpanded(true);
-        }}
+        onClick={() => setExpanded(true)}
       >
         ⚙ Controls
       </button>

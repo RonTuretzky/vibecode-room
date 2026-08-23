@@ -1150,7 +1150,9 @@ main.gesture-mode[data-view="builds"] .transcript-card {
   z-index: 40;
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  /* Top-aligned (live-room report): mixed-height chips hung centered and
+     looked scattered; rows now share a clean top edge. */
+  align-items: flex-start;
   justify-content: flex-end;
   gap: 12px;
   width: max-content;
