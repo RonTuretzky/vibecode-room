@@ -5,6 +5,8 @@ import { registerSceneDwellSource, type SceneDwellRect } from "./gesture/scene-s
 import { registerSceneCameraControl } from "./gesture/camera-source";
 import { cornerEye, cornerVerticalFovDeg, cornerYaw } from "./corner-lock";
 import { loadGardenFlora, type FloraLibrary } from "./garden-flora";
+import { SHEEP_MEADOW } from "../park3d/park-frame";
+import { loadParkWorldShared, type ParkWorld } from "../park3d/park-world";
 
 // The full-viewport 3D stage (after conductor-github-visualizer): the scene IS
 // the app background and every panel floats over it. Two render modes share
@@ -121,6 +123,9 @@ export function treeIndicators(spec: TreeSpec): TreeIndicators {
 }
 
 export type SceneMode = "garden" | "orbit";
+// Garden horizon: pastoral hills (default) or the real Central Park far-field
+// around Sheep Meadow (?env=park). Orbit mode ignores it.
+export type SceneEnvironment = "meadow" | "park";
 // Spatial layout strategies (visualizer parity: standard radial, H3 Poincaré
 // ball after Munzner 1997, and the Lamping/Rao/Pirolli Poincaré disk).
 export type SceneLayout = "radial" | "ball" | "disk";
@@ -169,6 +174,9 @@ interface RoomSceneProps {
   trees: TreeSpec[];
   mode: SceneMode;
   layout: SceneLayout;
+  // Garden far-field (URL-derived, fixed per window): "meadow" hills or the
+  // real Central Park ("park"). Only the garden env's horizon changes.
+  environment?: SceneEnvironment;
   // Wall identity ("A" | "B" | …) or null. Seeds the default camera yaw (desk
   // mode) or selects this window's side of the corner-locked pair (gesture
   // mode) — it NEVER filters content.
@@ -689,7 +697,7 @@ interface Entry {
   updateProgress?: (spec: TreeSpec) => void;
 }
 
-export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, focusUpid = null, pointerNav = true, cornerLock = false, onAcceptIdea, onSelectProcess, dialogue = [], topics = [], research = [], onResearchNode, onDialogueNode }: RoomSceneProps) {
+export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", wall = null, fitSignal, focusUpid = null, pointerNav = true, cornerLock = false, onAcceptIdea, onSelectProcess, dialogue = [], topics = [], research = [], onResearchNode, onDialogueNode }: RoomSceneProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const ideasRef = useRef(ideas);
   ideasRef.current = ideas;
@@ -709,6 +717,9 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
   modeRef.current = mode;
   const layoutRef = useRef(layout);
   layoutRef.current = layout;
+  // URL-derived and fixed for the window's life (like wall/cornerLock).
+  const environmentRef = useRef(environment);
+  environmentRef.current = environment;
   // Wall identity is fixed per window (parsed from the URL once); a ref keeps
   // the mount-once scene effect honest about never re-running for it.
   const wallRef = useRef(wall);
@@ -846,9 +857,24 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       const rng = mulberry32(0x47415244);
       const group = new THREE.Group();
       scene.add(group);
+      // CENTRAL PARK (?env=park): the meadow disc is Sheep Meadow and the
+      // horizon is the real park — canopy relief, the Reservoir, the Met, the
+      // Midtown wall over the tree line — from the baked open-data world
+      // (park-world.ts, 1 unit = 1 m, which is also this scene's scale). Only
+      // the far-field changes: the haze reaches kilometres instead of a few
+      // hundred metres, the sky dome and camera far plane grow to hold the
+      // skyline, and the pastoral hills stay out. Software rasterizers get
+      // the plain meadow (the world is far heavier than the flora they skip).
+      const park = environmentRef.current === "park" && !softwareGL;
       // Aerial perspective: haze tinted to the sky horizon so meadow and hills
       // melt into the sky instead of ending at a hard disc edge.
-      scene.fog = new THREE.Fog(0xdcedf8, 80, 210);
+      const meadowFog = () => new THREE.Fog(0xdcedf8, 80, 210);
+      scene.fog = park ? new THREE.Fog(0xdcedf8, 140, 2600) : meadowFog();
+      const defaultFar = camera.far;
+      if (park) {
+        camera.far = 12_000;
+        camera.updateProjectionMatrix();
+      }
 
       // Daylight rig (env-local): warm sun key matching the panorama's sun,
       // blue-sky/grass hemisphere bounce, and a soft cool fill so shaded
@@ -872,10 +898,13 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       );
       skyTexture.colorSpace = THREE.SRGBColorSpace;
       const skyDome = new THREE.Mesh(
-        new THREE.SphereGeometry(340, 48, 32),
+        new THREE.SphereGeometry(park ? 9000 : 340, 48, 32),
         new THREE.MeshBasicMaterial({ map: skyTexture, side: THREE.BackSide, fog: false, depthWrite: false }),
       );
       skyDome.scale.y = 0.32;
+      // Drawn first: the dome writes no depth, so anything rendered after it
+      // must not be overdrawn by its nearer-than-the-skyline surface.
+      skyDome.renderOrder = -1;
       group.add(skyDome);
 
       // Ground: tiled photoscan grass (1k diff+normal over ~10-unit tiles;
@@ -925,6 +954,12 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         { name: "tree_stump_01", count: 4, rMin: 15, rMax: 55, sMin: 0.9, sMax: 1.2 },
         { name: "jacaranda_tree", count: 10, rMin: 34, rMax: 82, sMin: 0.45, sMax: 0.62 },
       ];
+      if (park) {
+        // A second tree band past the meadow edge stands between the grass
+        // disc and the park's photo ground, so the seam reads as a tree line
+        // (the flattened terrain keeps this ring level).
+        FLORA_SCATTER.push({ name: "jacaranda_tree", count: 16, rMin: 96, rMax: 148, sMin: 0.55, sMax: 0.8 });
+      }
       let floraDisposed = false;
       const scatterFlora = (flora: FloraLibrary) => {
         const dummy = new THREE.Object3D();
@@ -985,18 +1020,56 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       // tinted toward the horizon pale) — kept FLAT and far so the fog reads
       // them as aerial perspective, with the real jacaranda band in front.
       const hillTones = [0xc2d8b2, 0xcfe2c0, 0xb8cfae];
-      for (let i = 0; i < 5; i++) {
-        const angle = (i / 5) * Math.PI * 2 + rng() * 0.7;
-        const dist = 98 + rng() * 12;
-        const rx = 30 + rng() * 22;
-        const ry = 2.2 + rng() * 2.2;
-        const hill = new THREE.Mesh(
-          new THREE.SphereGeometry(1, 24, 16),
-          new THREE.MeshStandardMaterial({ map: groundDiff, color: hillTones[i % hillTones.length], roughness: 1 }),
-        );
-        hill.scale.set(rx, ry, 16 + rng() * 8);
-        hill.position.set(Math.cos(angle) * dist, -ry * 0.35, Math.sin(angle) * dist);
-        group.add(hill);
+      const buildHills = () => {
+        for (let i = 0; i < 5; i++) {
+          const angle = (i / 5) * Math.PI * 2 + rng() * 0.7;
+          const dist = 98 + rng() * 12;
+          const rx = 30 + rng() * 22;
+          const ry = 2.2 + rng() * 2.2;
+          const hill = new THREE.Mesh(
+            new THREE.SphereGeometry(1, 24, 16),
+            new THREE.MeshStandardMaterial({ map: groundDiff, color: hillTones[i % hillTones.length], roughness: 1 }),
+          );
+          hill.scale.set(rx, ry, 16 + rng() * 8);
+          hill.position.set(Math.cos(angle) * dist, -ry * 0.35, Math.sin(angle) * dist);
+          group.add(hill);
+        }
+      };
+      let parkWorld: ParkWorld | null = null;
+      let parkDisposed = false;
+      if (park) {
+        // Shared for the page (see park-world.ts): a garden↔orbit toggle
+        // re-attaches the same world instead of refetching and rebuilding.
+        loadParkWorldShared({
+          // Level the terrain under the meadow disc (r=110) and the outer
+          // tree band, easing back to the real ground beyond.
+          flatten: { x: SHEEP_MEADOW.x, z: SHEEP_MEADOW.z, radius: 150, feather: 80 },
+          orthoMaxWidth: 2048,
+        })
+          .then((world) => {
+            if (parkDisposed) {
+              return;
+            }
+            parkWorld = world;
+            // Sheep Meadow lands on the room origin with its ground a hair
+            // under the grass disc, turned half a circle so the boot framing
+            // (yaw 0 looks down −Z) faces SOUTH up the park: the Midtown wall
+            // over the tree line stands behind the data nodes.
+            const y = world.groundAt(SHEEP_MEADOW.x, SHEEP_MEADOW.z);
+            world.group.rotation.y = Math.PI;
+            world.group.position.set(SHEEP_MEADOW.x, -y - 0.15, SHEEP_MEADOW.z);
+            group.add(world.group);
+          })
+          .catch((error: unknown) => {
+            // Fall back to the pastoral horizon rather than an empty one.
+            console.warn("park world failed to load; falling back to the meadow hills", error);
+            if (!parkDisposed) {
+              buildHills();
+              scene.fog = meadowFog();
+            }
+          });
+      } else {
+        buildHills();
       }
 
       // Butterflies: two wings hinged on the body line, flapping while they
@@ -1072,6 +1145,13 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         },
         dispose: () => {
           floraDisposed = true;
+          parkDisposed = true;
+          parkWorld?.dispose();
+          parkWorld = null;
+          if (park) {
+            camera.far = defaultFar;
+            camera.updateProjectionMatrix();
+          }
           scene.remove(group);
           scene.fog = null;
           scene.background = null;

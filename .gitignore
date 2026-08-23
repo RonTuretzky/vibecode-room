@@ -67,3 +67,6 @@ artifacts/smithering/server-logs/
 **/.venv/
 **/.venv-*/
 gesture-wall/.venv-hands/
+
+# Python bytecode from scripts/*.py
+__pycache__/

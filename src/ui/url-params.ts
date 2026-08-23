@@ -48,6 +48,13 @@ export interface ProjectorUrlConfig {
   // wall never offers canned content; run-room.sh appends it only when
   // VIBERSYN_MOCK_ROOM=1 is set in the environment.
   mock: boolean;
+  // ?env=park — the garden scene's horizon becomes the real Central Park:
+  // the meadow sits on Sheep Meadow, with the park's canopy and the Midtown /
+  // Fifth Ave / CPW skyline beyond it (baked open data, see
+  // public/assets/park). Opt-in only; the default "meadow" keeps the
+  // pastoral hills. Purely environmental — nodes, layouts, modes, gestures
+  // and the G garden↔orbit toggle behave identically.
+  environment: "meadow" | "park";
 }
 
 export function parseProjectorUrl(search: string, hostname: string): ProjectorUrlConfig {
@@ -100,6 +107,7 @@ export function parseProjectorUrl(search: string, hostname: string): ProjectorUr
   // Guided demo auto-entry + the env-gated Mock Room toggle.
   const demo = params.get("demo") === "guided" ? ("guided" as const) : null;
   const mock = params.get("mock") === "1";
+  const environment = params.get("env") === "park" ? ("park" as const) : ("meadow" as const);
 
   // Corner identity badge: shown whenever the window is wall- or view-scoped so
   // an operator glancing across the room knows which projection they're facing.
@@ -112,5 +120,5 @@ export function parseProjectorUrl(search: string, hostname: string): ProjectorUr
         ? view.toUpperCase()
         : null;
 
-  return { view, wall, badge, gesture, dwell, hands, remote, demo, mock };
+  return { view, wall, badge, gesture, dwell, hands, remote, demo, mock, environment };
 }

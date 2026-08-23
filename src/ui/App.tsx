@@ -1585,6 +1585,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay }: Pro
         trees={researchActive ? [] : treeSpecs}
         mode={sceneMode}
         layout={sceneLayout}
+        environment={urlConfig.environment}
         wall={urlConfig.wall}
         cornerLock={cornerLock}
         fitSignal={fitSignal}

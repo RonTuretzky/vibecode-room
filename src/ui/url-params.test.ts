@@ -138,4 +138,14 @@ describe("parseProjectorUrl", () => {
     expect(config.dwell).toBe("mouse");
     expect(config.remote).toEqual({ url: null });
   });
+  test("?env=park opts the garden into the Central Park far-field; default stays the meadow", () => {
+    expect(parseProjectorUrl("", "localhost").environment).toBe("meadow");
+    expect(parseProjectorUrl("?env=park", "localhost").environment).toBe("park");
+    expect(parseProjectorUrl("?env=forest", "localhost").environment).toBe("meadow");
+    // Purely environmental: nothing else in the config moves.
+    const park = parseProjectorUrl("?env=park&wall=A", "localhost");
+    expect(park.gesture).toBeNull();
+    expect(park.wall).toBe("A");
+  });
 });
+
