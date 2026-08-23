@@ -145,14 +145,14 @@ export function ControlDock({ children, initialExpanded = false, collapseSignal 
         data-testid="control-dock-button"
         aria-expanded={expanded}
         aria-label="Room controls — dwell (or click) to unfold them"
-        title="Room controls: dwell on this (or click) to unfold the full button cluster. It folds away by itself once you leave."
-        // OPEN-ONLY. The toggle used to close an open tray — but the hover
-        // loop expands the tray the moment a cursor rests on this button, so
-        // every joystick tap and every dwell landed on an ALREADY-open tray
-        // and read as "close": one tap opened-then-shut it, live-room bug.
-        // A click can only ever mean "open"; closing is walking away (the
-        // idle fold below) — the dock folds by itself, as its label says.
-        onClick={() => setExpanded(true)}
+        title="Room controls: dwell (or click) to unfold — dwell again to fold. It also folds by itself once you leave."
+        // TOGGLE, safely this time. The historical open-then-instant-close
+        // bug was hover-open colliding with a toggle click; hover-open is
+        // gone (presence only HOLDS, never opens), so a dwell/click on ⚙ now
+        // honestly alternates: closed → open, open → closed (live-room ask:
+        // dwelling the button again must close the tray). Walking away still
+        // idle-folds it.
+        onClick={() => setExpanded((open) => !open)}
       >
         ⚙ Controls
       </button>
