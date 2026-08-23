@@ -4,6 +4,7 @@ import type { SceneDwellRect } from "./gesture/scene-source";
 import { laneStatusLabel, processLanes, type GuidedLane } from "./guided/machine";
 import { executionOf, stageOf, type ProcessStage } from "./stage";
 import { ExecutionChip } from "./BuildChips";
+import { FleetScrollRail } from "./FleetScroll";
 import { RecordSteerToggle } from "./RecordSteerToggle";
 import { loadSelfVersion, useSelfBranches } from "./self-repo";
 import { TakeHomeQr } from "./TakeHomeQr";
@@ -380,14 +381,17 @@ export function TreeMenu({ process, snapshot, anchor, onClose, onOpenDeck, onDis
         <RecordSteerToggle process={process} kind={model.isSelf ? "room" : "build"} transcript={snapshot.transcript} />
       </div>
 
-      {/* VERSIONS (self tree only): one row per room/* branch — dwell to load
-          the room to that version (checkout → rebuild → relaunch). */}
+      {/* VERSIONS (self tree only): every row is a BRANCH on this tree — dwell
+          one to load the room to that limb (checkout → rebuild → relaunch). The
+          heading names the UX honestly (this screen grows/switches branches),
+          and FleetScrollRail supplies the dwell-compatible ▲/▼ so a cursor that
+          can only dwell (no wheel) can still page past the fold. */}
       {model.isSelf && versions !== null && versions.branches.length > 0 ? (
         <div className="tree-menu-versions" data-testid="tree-menu-versions">
-          <span className="tree-menu-versions-head">versions · running {versions.current}</span>
-          {/* Scroll through every version (not just the first few): the list
-              scrolls inside a capped viewport. */}
-          <div className="tree-menu-versions-scroll">
+          <span className="tree-menu-versions-head">
+            branches on this tree · running {versions.current}
+          </span>
+          <FleetScrollRail>
             {versions.branches
               .filter((entry) => entry.name !== versions.current)
               .map((entry, index) => (
@@ -415,7 +419,7 @@ export function TreeMenu({ process, snapshot, anchor, onClose, onOpenDeck, onDis
                   </span>
                 </button>
               ))}
-          </div>
+          </FleetScrollRail>
         </div>
       ) : null}
 

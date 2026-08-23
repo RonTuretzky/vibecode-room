@@ -228,17 +228,11 @@ main.gesture-mode .tree-menu-close {
   font-size: 30px;
 }
 
-/* versions (self tree): load the room to a branch — a little smaller text, and
-   the list scrolls so you can page through every version, not just the first few. */
+/* versions (self tree): each row is a branch on this tree — a little smaller
+   text; FleetScrollRail wraps the list with dwell-compatible ▲/▼ scroll so a
+   cursor that can only dwell (no wheel) can page through every branch. */
 .tree-menu-versions { display: flex; flex-direction: column; gap: 0.35rem; }
 .tree-menu-versions-head { font-size: 0.72rem; color: #8fa4cc; letter-spacing: 0.04em; }
-.tree-menu-versions-scroll {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-  max-height: 16rem;
-  overflow-y: auto;
-}
 .tree-menu-version { display: flex; flex-direction: column; align-items: flex-start; gap: 0.15rem; text-align: left; font-size: 0.82rem; }
 .tree-menu-version-when { font-size: 0.66rem; color: #6f83a8; letter-spacing: 0.03em; font-weight: 600; }
 .tree-menu-version-subject { font-size: 0.82rem; color: #cdd8ef; font-weight: 500; }
