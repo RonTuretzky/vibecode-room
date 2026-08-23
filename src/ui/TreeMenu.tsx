@@ -404,6 +404,11 @@ export function TreeMenu({
           setTendNote(`couldn't cleanly remove from ${result.conflicts.join(", ")} (conflicts)`);
         } else if (result.reloading) {
           setTendNote("🍂 pruned — the room is rebuilding without it");
+        } else if (verb === "prune" && result.grafts === 0) {
+          // "Remove it everywhere" on a branch that never grew anything: the
+          // honest receipt, so nobody stands waiting for a reload that has no
+          // reason to happen (live-room report: an empty record-window branch).
+          setTendNote("🍂 pruned — this branch carried no graft of its own; nothing to remove elsewhere");
         } else if (verb === "merge") {
           setTendNote("🪵 in the trunk — merged");
         }

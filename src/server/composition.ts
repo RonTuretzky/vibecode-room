@@ -353,7 +353,7 @@ export interface ProjectorRuntime {
     action: "archive" | "delete",
     scope?: "branch" | "everywhere",
   ): Promise<
-    | { ok: true; excised?: Array<{ branch: string; reverted: number }>; conflicts?: string[]; reloading?: boolean }
+    | { ok: true; excised?: Array<{ branch: string; reverted: number }>; conflicts?: string[]; reloading?: boolean; grafts?: number }
     | { ok: false; error: string }
   >;
   // STOP GROWING (the wall's halt verb): abort the EXECUTING self-run —
@@ -4233,7 +4233,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     action: "archive" | "delete",
     scope: "branch" | "everywhere" = "branch",
   ): Promise<
-    | { ok: true; excised?: Array<{ branch: string; reverted: number }>; conflicts?: string[]; reloading?: boolean }
+    | { ok: true; excised?: Array<{ branch: string; reverted: number }>; conflicts?: string[]; reloading?: boolean; grafts?: number }
     | { ok: false; error: string }
   > {
     if (!/^[A-Za-z0-9][A-Za-z0-9._/-]*$/u.test(branch) || branch.includes("..")) {
@@ -4264,6 +4264,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     // lost the graft, which the revert could not land on, and whether the
     // current branch was excised (=> the exit-87 rebuild is scheduled).
     let excised: Array<{ branch: string; reverted: number }> | undefined;
+    let grafts: number | undefined;
     let conflicts: string[] | undefined;
     let reloading = false;
     if (action === "archive") {
@@ -4310,8 +4311,10 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       // success is per-branch and spoken, never silent.
       if (scope === "everywhere") {
         excised = [];
+        grafts = 0;
         conflicts = [];
         const { own, others } = await this.#selfOwnCommits(branch, current);
+        grafts = own.length;
         const containedIn = async (name: string): Promise<string[]> => {
           const contained: string[] = [];
           for (const commit of own) {
@@ -4399,7 +4402,8 @@ class LiveProjectorRuntime implements ProjectorRuntime {
         branch,
         action,
         ...(action === "delete" ? { remote, prClosed, scope } : {}),
-        ...(excised !== undefined ? { excised, conflicts, reload: reloading } : {}),
+        ...(grafts !== undefined ? { grafts } : {}),
+      ...(excised !== undefined ? { excised, conflicts, reload: reloading } : {}),
       },
     });
     if (reloading) {

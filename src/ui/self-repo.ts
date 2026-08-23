@@ -239,22 +239,28 @@ export interface TendResult {
   branches: SelfBranchesPayload | null;
   conflicts: string[];
   reloading: boolean;
+  grafts: number | null;
 }
 
 // Pure: the excise outcome riding an ok tend response — STRICT (non-string
 // conflict entries are dropped, anything but `true` reads false): the wall's
 // honest note must never render garbage, and an old server's body simply
 // reads as "no conflicts, no reload".
-export function parseTendOutcome(body: unknown): { conflicts: string[]; reloading: boolean } {
+export function parseTendOutcome(body: unknown): { conflicts: string[]; reloading: boolean; grafts: number | null } {
   if (typeof body !== "object" || body === null) {
-    return { conflicts: [], reloading: false };
+    return { conflicts: [], reloading: false, grafts: null };
   }
-  const { conflicts, reloading } = body as { conflicts?: unknown; reloading?: unknown };
+  const { conflicts, reloading, grafts } = body as { conflicts?: unknown; reloading?: unknown; grafts?: unknown };
   return {
     conflicts: Array.isArray(conflicts)
       ? conflicts.filter((entry): entry is string => typeof entry === "string")
       : [],
     reloading: reloading === true,
+    // How many own graft commits the pruned branch carried (everywhere scope);
+    // null on old servers / non-excise responses. 0 is the honest "there was
+    // nothing to remove elsewhere" the wall must SAY (live-room report: an
+    // empty record-window branch pruned everywhere, and no reload followed).
+    grafts: typeof grafts === "number" ? grafts : null,
   };
 }
 

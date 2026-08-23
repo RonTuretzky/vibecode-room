@@ -135,20 +135,28 @@ describe("parseTendOutcome — the excise outcome's strict parser", () => {
         conflicts: ["room/b", 7, null, "room/live (uncommitted work)"],
         reloading: true,
       }),
-    ).toEqual({ conflicts: ["room/b", "room/live (uncommitted work)"], reloading: true });
+    ).toEqual({ conflicts: ["room/b", "room/live (uncommitted work)"], reloading: true, grafts: null });
   });
 
   test("absent fields read as no conflicts, no reload — an old server's delete stays valid", () => {
-    expect(parseTendOutcome({ ok: true, current: "room/x", branches: [] })).toEqual({ conflicts: [], reloading: false });
-    expect(parseTendOutcome(null)).toEqual({ conflicts: [], reloading: false });
-    expect(parseTendOutcome("ok")).toEqual({ conflicts: [], reloading: false });
+    expect(parseTendOutcome({ ok: true, current: "room/x", branches: [] })).toEqual({ conflicts: [], reloading: false, grafts: null });
+    expect(parseTendOutcome(null)).toEqual({ conflicts: [], reloading: false, grafts: null });
+    expect(parseTendOutcome("ok")).toEqual({ conflicts: [], reloading: false, grafts: null });
     // Wrong shapes read as the safe default, never a crash or a truthy lie.
-    expect(parseTendOutcome({ conflicts: "room/b", reloading: "yes" })).toEqual({ conflicts: [], reloading: false });
+    expect(parseTendOutcome({ conflicts: "room/b", reloading: "yes", grafts: "three" })).toEqual({ conflicts: [], reloading: false, grafts: null });
   });
 
   test("refusal bodies stay refusals upstream — the outcome parser never invents a conflict note", () => {
     expect(parseTendOutcome({ ok: false, error: "cannot tend the running branch — load another version first" })).toEqual(
-      { conflicts: [], reloading: false },
+      { conflicts: [], reloading: false, grafts: null },
     );
+  });
+
+  test("grafts: 0 is the honest empty-branch signal; a real count passes through", () => {
+    // Live-room report: an EMPTY record-window branch pruned "everywhere"
+    // reverted nothing and the room rightly did not reload — but the wall
+    // said nothing. grafts: 0 is what lets it say so.
+    expect(parseTendOutcome({ ok: true, grafts: 0, excised: [], conflicts: [], reloading: false }).grafts).toBe(0);
+    expect(parseTendOutcome({ ok: true, grafts: 2, reloading: true }).grafts).toBe(2);
   });
 });
