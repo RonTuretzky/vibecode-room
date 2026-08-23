@@ -30,19 +30,36 @@ export VIBERSYN_SELF_MODE=1
 # Only the supervisor sets this — test runtimes must never touch it.
 export VIBERSYN_TRANSCRIPT_STORE="builds/session-transcript.json"
 
+# Deliberate-stop marker: `touch /tmp/vibersyn-stop` (or Ctrl-C, which kills
+# THIS script) ends the loop. A bare SIGTERM to the SERVER alone does not —
+# twice now a stray broad pkill from tooling took the projection down and the
+# room stayed dark until a human noticed. The walls deserve better.
+STOP_MARKER="/tmp/vibersyn-stop"
+rm -f "$STOP_MARKER"
+
 code=0
 while true; do
   bash -c "$SERVER_CMD"
   code=$?
-  if [ "$code" -ne 87 ]; then
+  if [ "$code" -eq 87 ]; then
+    echo "[self] server exited 87 (green self-change committed) — rebuilding…"
+    if bash -c "$BUILD_CMD"; then
+      echo "[self] rebuilt — relaunching the server."
+    else
+      echo "[self] WARNING: rebuild FAILED — relaunching on the previous build." >&2
+    fi
+    continue
+  fi
+  if [ -f "$STOP_MARKER" ]; then
+    echo "[self] stop marker present — shutting down (code $code)."
     break
   fi
-  echo "[self] server exited 87 (green self-change committed) — rebuilding…"
-  if bash -c "$BUILD_CMD"; then
-    echo "[self] rebuilt — relaunching the server."
-  else
-    echo "[self] WARNING: rebuild FAILED — relaunching on the previous build." >&2
+  if [ "$code" -eq 143 ] || [ "$code" -eq 137 ]; then
+    echo "[self] WARNING: server was killed (exit $code) with no stop marker — resurrecting in 2s. (touch /tmp/vibersyn-stop to stop for real)" >&2
+    sleep 2
+    continue
   fi
+  break
 done
 
 exit "$code"
