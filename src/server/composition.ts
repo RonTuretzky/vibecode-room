@@ -626,6 +626,10 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   #interim: TranscriptLine | null = null;
   #micActive = false;
   #micBytes = 0;
+  // Mic PCM frames dropped because the ASR backlog was full — the symptom of a
+  // saturated uplink (wifi congestion or a twitch playback stream hogging the
+  // pipe). Surfaced on the mic tick so a stalled transcript has a visible cause.
+  #micDroppedFrames = 0;
   #micLastPublishMs = 0;
   #acceptanceWatchdog: ReturnType<typeof setInterval> | null = null;
   // Time of the most recent FINAL observation (null before any speech); lets the
@@ -1370,7 +1374,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     if (this.#micSubscribers.size === 0) {
       return;
     }
-    const serialized = JSON.stringify({ mode: this.micMode, active: this.#micActive, bytesReceived: this.#micBytes });
+    const serialized = JSON.stringify({ mode: this.micMode, active: this.#micActive, bytesReceived: this.#micBytes, droppedFrames: this.#micDroppedFrames });
     for (const subscriber of this.#micSubscribers) {
       try {
         subscriber(serialized);
@@ -2335,6 +2339,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
 
     this.#micActive = true;
     this.#micBytes = 0;
+    this.#micDroppedFrames = 0;
     this.#micLastPublishMs = 0;
     this.#interim = null;
     this.recordExternalTrace({
@@ -2389,6 +2394,11 @@ class LiveProjectorRuntime implements ProjectorRuntime {
           } catch {
             // The stream was already closed/cancelled; drop the late frame.
           }
+        } else {
+          // Backlog full: the uplink can't keep up (wifi congestion or a twitch
+          // playback stream stealing bandwidth). Count the drop so the stall is
+          // attributable instead of silent.
+          this.#micDroppedFrames += 1;
         }
         // Byte-counter ticks ride the lightweight mic channel at 1 Hz; full
         // snapshot publishes happen only when real content changes (transcript
