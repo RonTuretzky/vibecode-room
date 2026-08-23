@@ -21,6 +21,7 @@
 // sky never passes fallback guesses off as model judgement.
 
 import type { TranscriptTurn } from "../detect/types";
+import { composeAgentRunner, unwrapAgentReply } from "./standin";
 import { contentTokens, type ConceptTopic } from "./tree";
 
 // ── snapshot shapes (the additive ProjectorSnapshot.sky field) ───────────────
@@ -46,6 +47,17 @@ export interface CloudSnapshotEntry {
   // killed it (a memory cloud: still visible, nothing left to research).
   liveTopicId: string | null;
   dominantSpeaker: string | null;
+  // NAMING GATE: false = this accumulation surfaces UNNAMED (too thin to be a
+  // real thread, or the agent dusted it) — the ceiling renders it as dust,
+  // never as a labeled constellation. Deterministic thinness OR the agent's
+  // reversible dust verb; provenance rides the traces.
+  named: boolean;
+  // RETIRED member turns kept as STARS (id, spoken time, speaker, gist ≤80
+  // chars) — the proof of memory beyond the window, renderable as an asterism.
+  // Capped per cloud; `elidedCount` counts evicted history honestly. Only the
+  // freshest clouds carry stars in the snapshot (SSE budget); others get [].
+  stars: Array<{ id: string; atMs: number; speaker: string | null; gist: string }>;
+  elidedCount: number;
 }
 
 export interface SkySnapshot {
@@ -55,6 +67,24 @@ export interface SkySnapshot {
   // HONESTY STAMP: the last time the agent tick actually landed. Null = the
   // agent has never spoken — every relation shown is deterministic fallback.
   agentAtMs: number | null;
+  // LOUDNESS: how the relate agent has been failing, if it has. A permanent
+  // silent miss (the 402 the operator never saw) is impossible now — the
+  // streak + reason surface here and in /api/health once it persists.
+  // `agent` = which transport landed the last applied tick ("cerebras" |
+  // "host-claude" stand-in | null before any tick / unlabeled scripted runner).
+  relate: { missStreak: number; lastMissReason: string | null; agent: string | null };
+  // Retired DUST (babble that scrolled out of the window): present, faint,
+  // never named, never connected. ~15B each — trivial SSE.
+  dust: Array<{ atMs: number }>;
+}
+
+// The relate/refiner agent's failure surface (also the /api/health input).
+export interface SkyAgentHealth {
+  missStreak: number;
+  lastMissReason: string | null;
+  agentAtMs: number | null;
+  // Which transport landed the last applied tick (provenance; null = none yet).
+  agent: string | null;
 }
 
 // ── agent seam ───────────────────────────────────────────────────────────────
@@ -117,7 +147,10 @@ export interface CloudGraphOptions {
 }
 
 const DEFAULT_SKY_INTERVAL_MS = 60_000;
-const DEFAULT_RELATE_TIMEOUT_MS = 8_000;
+// The budget covers a fast-failing Cerebras call (~200ms on a 402) PLUS the
+// host-claude stand-in's cold CLI boot (~14s measured; STANDIN_TIMEOUT_MS 25s)
+// — and stays well inside the 60s tick with the in-flight guard on top.
+const DEFAULT_RELATE_TIMEOUT_MS = 30_000;
 // Snapshot caps — the sky field must stay glanceable and SSE-cheap.
 const MAX_CLOUDS = 24;
 const MAX_SNAPSHOT_LINKS = 12;
@@ -137,6 +170,22 @@ const MAX_LEXICAL_LINKS_PER_CLOUD = 2;
 const BRIDGE_MATCH_FLOOR = 0.3;
 const MAX_REASON_WORDS = 12;
 const MAX_NAME_WORDS = 4;
+// LOUDNESS: at this many consecutive relate misses the trace escalates
+// debug→warn and /api/health grows a degraded leg (degradation-notice.ts).
+export const SKY_MISS_STREAK_WARN = 3;
+// STAR RETENTION: gists kept per cloud (evict-oldest past it, counted in
+// elidedCount) and how many freshest clouds carry stars in the snapshot (10,
+// not the full render cap: measured worst case is ~1.7KB per carrier and the
+// whole snapshot must stay under ~25KB on the SSE pipe — older constellations
+// still render from live window stars / the elided ring).
+const MAX_STARS_PER_CLOUD = 12;
+const MAX_STAR_CLOUDS_IN_SNAPSHOT = 10;
+const MAX_GIST_CHARS = 80;
+// Retired dust ledger cap (evict oldest — dust is atmosphere, not archive).
+const MAX_DUST = 48;
+// NAMING GATE: a cloud whose whole vocabulary is thinner than this many
+// distinct content tokens surfaces unnamed (dust-class accumulation).
+const MIN_NAMED_DISTINCT_TOKENS = 6;
 
 interface CloudState {
   id: string;
@@ -150,6 +199,15 @@ interface CloudState {
   bag: Map<string, number>; // RETIRED members' content tokens
   speakerCounts: Map<string, number>; // retired members' speakers
   samples: Array<{ id: string; speaker: string | null; text: string }>; // freshest live, ≤4
+  // Retired member gists — the asterism's memory (cap MAX_STARS_PER_CLOUD,
+  // evict-oldest, every eviction counted in elidedCount).
+  stars: Array<{ id: string; atMs: number; speaker: string | null; gist: string }>;
+  elidedCount: number;
+  // Agent dust verb overlay: true = the relate agent judged this cloud babble.
+  // REVERSIBLE — cleared as soon as the cloud grows past the turn count it was
+  // dusted at (new material re-earns the name). Deterministic structure is
+  // never silently overridden: the demotion is traced (research.sky.dust).
+  dustedAtTurnCount: number | null;
 }
 
 interface LiveTurnState {
@@ -158,6 +216,9 @@ interface LiveTurnState {
   atMs: number;
   textLength: number; // re-tokenize only when coalesce growth changed the text
   tokens: string[];
+  // Captured while the text is still in hand — the turn's text is
+  // unrecoverable at retirement, so the star gist is snapshotted at upsert.
+  gist: string;
 }
 
 export class CloudGraph {
@@ -178,6 +239,17 @@ export class CloudGraph {
   #agentLinks: CloudLink[] = [];
   #agentAtMs: number | null = null;
   #updatedAtMs = 0;
+  // LOUDNESS: consecutive relate misses + the last reason. Reset the moment a
+  // tick actually lands (#applyRelate, beside the agentAtMs stamp).
+  #missStreak = 0;
+  #lastMissReason: string | null = null;
+  // PROVENANCE: which transport landed the last applied tick ("cerebras",
+  // "host-claude" when the stand-in rescued a dead account, null before any).
+  #lastAgent: string | null = null;
+  // DUST: live babble turns (window turns the tree pooled with no topic) and
+  // the retired ledger the snapshot surfaces (cap MAX_DUST, evict oldest).
+  readonly #liveDust = new Map<string, number>(); // turn id → atMs
+  #dust: Array<{ atMs: number }> = [];
 
   // Dirty gates: lexical link memo + "is there anything new to tell the agent".
   #lexicalMemo: CloudLink[] | null = null;
@@ -188,7 +260,7 @@ export class CloudGraph {
   #timer: ReturnType<typeof setInterval> | null = null;
 
   constructor(options: CloudGraphOptions = {}) {
-    this.#runner = options.runner === undefined ? cerebrasCloudRelate : options.runner;
+    this.#runner = options.runner === undefined ? defaultCloudRelate : options.runner;
     this.#clock = options.clock ?? (() => Date.now());
     this.#timeoutMs = options.timeoutMs ?? DEFAULT_RELATE_TIMEOUT_MS;
     this.#onUpdate = options.onUpdate;
@@ -218,11 +290,40 @@ export class CloudGraph {
   // Order matters: retirement first (against the OLD membership), then the
   // live-topic upsert, so a turn dropped this very ingest still folds into the
   // cloud it last belonged to.
-  observe(topics: ConceptTopic[], turns: readonly TranscriptTurn[], quests: CloudQuestRef[] = []): void {
+  observe(
+    topics: ConceptTopic[],
+    turns: readonly TranscriptTurn[],
+    quests: CloudQuestRef[] = [],
+    dustTurnIds: readonly string[] = [],
+  ): void {
     const nowMs = this.#clock();
     const windowIds = new Set(turns.map((turn) => turn.id));
+    // 0. DUST: babble turns (no topic — the tree's dust pool) are tracked so
+    //    their RETIREMENT folds into the graph-level dust ledger, never a
+    //    cloud. A dust turn that PROMOTED to content (coalesce completed its
+    //    sentence) shows up in a topic below and leaves the dust set here.
+    const dustNow = new Set(dustTurnIds);
+    const byId = new Map(turns.map((turn) => [turn.id, turn]));
+    for (const [turnId, atMs] of [...this.#liveDust]) {
+      if (!dustNow.has(turnId)) {
+        this.#liveDust.delete(turnId);
+        if (!windowIds.has(turnId)) {
+          this.#dust.push({ atMs });
+          if (this.#dust.length > MAX_DUST) {
+            this.#dust = this.#dust.slice(this.#dust.length - MAX_DUST);
+          }
+        }
+      }
+    }
+    for (const turnId of dustNow) {
+      const turn = byId.get(turnId);
+      if (turn !== undefined) {
+        this.#liveDust.set(turnId, turn.atMs);
+      }
+    }
     // 1. RETIRE: window-dropped turns fold into their last-known cloud — turn
-    //    count, tokens, speaker — before their text is gone forever.
+    //    count, tokens, speaker, and a STAR gist — before their text is gone
+    //    forever.
     for (const [turnId, live] of [...this.#liveTurns]) {
       if (windowIds.has(turnId)) {
         continue;
@@ -236,12 +337,13 @@ export class CloudGraph {
           cloud.speakerCounts.set(live.speaker, (cloud.speakerCounts.get(live.speaker) ?? 0) + 1);
         }
         cloud.liveTurnIds.delete(turnId);
+        cloud.stars.push({ id: turnId, atMs: live.atMs, speaker: live.speaker, gist: live.gist });
+        capStars(cloud);
       }
       this.#liveTurns.delete(turnId);
     }
     // 2. UPSERT a cloud per live topic (cloud id = founding topic id — the
     //    tree's #topicSeq is session-monotonic, so ids are stable + unique).
-    const byId = new Map(turns.map((turn) => [turn.id, turn]));
     const liveTopicIds = new Set<string>();
     for (const topic of topics) {
       liveTopicIds.add(topic.id);
@@ -259,6 +361,9 @@ export class CloudGraph {
           bag: new Map(),
           speakerCounts: new Map(),
           samples: [],
+          stars: [],
+          elidedCount: 0,
+          dustedAtTurnCount: null,
         };
         this.#clouds.set(topic.id, cloud);
       }
@@ -284,6 +389,9 @@ export class CloudGraph {
             atMs: turn.atMs,
             textLength: turn.text.length,
             tokens: contentTokens(turn.text),
+            // The star gist is captured HERE, while the text exists — at
+            // retirement only this survives.
+            gist: turn.text.slice(0, MAX_GIST_CHARS),
           });
         } else {
           prior.cloudId = topic.id;
@@ -296,6 +404,11 @@ export class CloudGraph {
       cloud.samples = members
         .slice(-MAX_SAMPLES_PER_CLOUD)
         .map((turn) => ({ id: turn.id, speaker: turn.speaker, text: turn.text.slice(0, MAX_SAMPLE_CHARS) }));
+      // AGENT DUST REVERSIBILITY: growth past the dusted-at turn count means
+      // the room kept talking about it — the demotion clears itself.
+      if (cloud.dustedAtTurnCount !== null && cloud.retiredTurnCount + cloud.liveTurnIds.size > cloud.dustedAtTurnCount) {
+        cloud.dustedAtTurnCount = null;
+      }
     }
     // 3. TOPIC DIED: the cloud keeps everything it accumulated, it just has no
     //    live branch anymore. A cloud that never retired a turn (every member
@@ -364,10 +477,26 @@ export class CloudGraph {
     this.#recentTurns = [];
     this.#agentLinks = [];
     this.#agentAtMs = null;
+    this.#missStreak = 0;
+    this.#lastMissReason = null;
+    this.#lastAgent = null;
+    this.#liveDust.clear();
+    this.#dust = [];
     this.#lexicalMemo = null;
     this.#snapshotMemo = null;
     this.#agentDirty = false;
     this.#updatedAtMs = this.#clock();
+  }
+
+  // The relate agent's failure surface: /api/health degrades on a persistent
+  // miss streak so a silent permanent failure is impossible.
+  agentHealth(): SkyAgentHealth {
+    return {
+      missStreak: this.#missStreak,
+      lastMissReason: this.#lastMissReason,
+      agentAtMs: this.#agentAtMs,
+      agent: this.#lastAgent,
+    };
   }
 
   // ── reads ─────────────────────────────────────────────────────────────────
@@ -377,10 +506,11 @@ export class CloudGraph {
       return this.#snapshotMemo;
     }
     // Freshest MAX_CLOUDS surface (the accumulator itself holds ≤ the same
-    // cap), presented oldest-first to mirror topics().
-    const clouds = [...this.#clouds.values()]
-      .sort((a, b) => b.freshAtMs - a.freshAtMs)
-      .slice(0, MAX_CLOUDS)
+    // cap), presented oldest-first to mirror topics(). Stars ride only on the
+    // freshest MAX_STAR_CLOUDS_IN_SNAPSHOT clouds — SSE budget.
+    const byFreshness = [...this.#clouds.values()].sort((a, b) => b.freshAtMs - a.freshAtMs).slice(0, MAX_CLOUDS);
+    const starCarriers = new Set(byFreshness.slice(0, MAX_STAR_CLOUDS_IN_SNAPSHOT).map((cloud) => cloud.id));
+    const clouds = byFreshness
       .sort((a, b) => a.firstAtMs - b.firstAtMs)
       .map((cloud) => ({
         id: cloud.id,
@@ -391,6 +521,9 @@ export class CloudGraph {
         turnCount: cloud.retiredTurnCount + cloud.liveTurnIds.size,
         liveTopicId: cloud.liveTopicId,
         dominantSpeaker: this.#dominantSpeaker(cloud),
+        named: this.#isNamed(cloud),
+        stars: starCarriers.has(cloud.id) ? cloud.stars.map((star) => ({ ...star })) : [],
+        elidedCount: cloud.elidedCount,
       }));
     const shown = new Set(clouds.map((cloud) => cloud.id));
     // Agent links first (they carry a model's reason), lexical beside them;
@@ -408,8 +541,30 @@ export class CloudGraph {
       seenPairs.add(key);
       links.push(link);
     }
-    this.#snapshotMemo = { clouds, links, updatedAtMs: this.#updatedAtMs, agentAtMs: this.#agentAtMs };
+    this.#snapshotMemo = {
+      clouds,
+      links,
+      updatedAtMs: this.#updatedAtMs,
+      agentAtMs: this.#agentAtMs,
+      relate: { missStreak: this.#missStreak, lastMissReason: this.#lastMissReason, agent: this.#lastAgent },
+      dust: this.#dust.map((entry) => ({ ...entry })),
+    };
     return this.#snapshotMemo;
+  }
+
+  // NAMING GATE: an accumulation earns a label only when its whole vocabulary
+  // is thicker than dust AND the agent hasn't (reversibly) dusted it.
+  #isNamed(cloud: CloudState): boolean {
+    if (cloud.dustedAtTurnCount !== null) {
+      return false;
+    }
+    const distinct = new Set(cloud.bag.keys());
+    for (const turnId of cloud.liveTurnIds) {
+      for (const token of this.#liveTurns.get(turnId)?.tokens ?? []) {
+        distinct.add(token);
+      }
+    }
+    return distinct.size >= MIN_NAMED_DISTINCT_TOKENS;
   }
 
   // ── the recurrent agent tick ──────────────────────────────────────────────
@@ -476,29 +631,73 @@ export class CloudGraph {
       })),
       recentTurns: this.#recentTurns,
     };
-    const raw = await this.#boundedCall(runner, request);
-    if (raw === null || raw === undefined) {
-      // No key, HTTP error, timeout, runner rejection — the lexical sky
-      // stands, and the miss is visible in the rail.
-      this.#trace("research.sky.miss", "debug", correlationId, { tick: this.#tick });
+    const outcome = await this.#boundedCall(runner, request);
+    if ("miss" in outcome) {
+      // No key, HTTP error (the 402!), timeout, runner rejection — the
+      // lexical sky stands, the REASON is traced, and a persistent streak
+      // escalates to warn + an /api/health degraded leg. Never silent.
+      this.#recordMiss(outcome.miss, correlationId);
       return;
     }
-    this.#applyRelate(raw, correlationId);
+    // Unwrap transport provenance (standin.ts): which agent spoke, and — when
+    // the host-claude stand-in rescued a failing Cerebras account — WHY. The
+    // rescue itself is loud (warn): the operator must know billing is broken
+    // even while the sky keeps reorganizing.
+    const { agent, standinFor, reply } = unwrapAgentReply(outcome.value);
+    if (standinFor !== null) {
+      this.#trace("research.sky.standin", "warn", correlationId, {
+        tick: this.#tick,
+        agent: agent ?? "?",
+        for: standinFor,
+      });
+    }
+    this.#applyRelate(reply, correlationId, agent);
   }
 
-  // Race the model against the budget (tree.ts #boundedCall clone): any
-  // rejection, timeout, or abort resolves null so the lexical sky stands.
-  async #boundedCall(runner: CloudRelateRunner, request: CloudRelateRequest): Promise<unknown> {
+  #recordMiss(reason: string, correlationId: string): void {
+    this.#missStreak += 1;
+    this.#lastMissReason = reason;
+    this.#snapshotMemo = null; // the relate surface changed
+    // RETRY: a REAL failure re-arms the dirty gate so the next interval tick
+    // tries again even in a quiet room. Without this a room that stops
+    // talking after 2 misses stalls below the health threshold forever — the
+    // exact silent-permanent-failure loudness forbids. Paced by the interval.
+    // "no-key" stays un-armed: the deliberate no-agent config never churns.
+    if (reason !== "no-key") {
+      this.#agentDirty = true;
+    }
+    this.#trace(
+      "research.sky.miss",
+      this.#missStreak >= SKY_MISS_STREAK_WARN ? "warn" : "debug",
+      correlationId,
+      { tick: this.#tick, reason, streak: this.#missStreak },
+    );
+  }
+
+  // Race the model against the budget (tree.ts #boundedCall clone) — but keep
+  // the FAILURE REASON: a rejection's message, "timeout", or "no-key" resolves
+  // as a miss sentinel instead of an indistinguishable bare null.
+  async #boundedCall(
+    runner: CloudRelateRunner,
+    request: CloudRelateRequest,
+  ): Promise<{ value: unknown } | { miss: string }> {
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | null = null;
-    const timeout = new Promise<null>((resolve) => {
+    const timeout = new Promise<{ miss: string }>((resolve) => {
       timer = setTimeout(() => {
         controller.abort();
-        resolve(null);
+        resolve({ miss: "timeout" });
       }, this.#timeoutMs);
     });
     try {
-      return await Promise.race([runner(request, controller.signal).catch(() => null), timeout]);
+      return await Promise.race([
+        runner(request, controller.signal).then(
+          (value): { value: unknown } | { miss: string } =>
+            value === null || value === undefined ? { miss: "no-key" } : { value },
+          (error): { miss: string } => ({ miss: error instanceof Error ? error.message : String(error) }),
+        ),
+        timeout,
+      ]);
     } finally {
       if (timer !== null) {
         clearTimeout(timer);
@@ -509,11 +708,14 @@ export class CloudGraph {
   // Apply the model's reply with PER-ENTRY validation — links/names/merges are
   // decoration over the deterministic graph, not a partition (unlike the
   // tree's wholesale drop), so one bad entry never sinks its valid siblings.
-  #applyRelate(raw: unknown, correlationId: string): void {
+  #applyRelate(raw: unknown, correlationId: string, agent: string | null = null): void {
     const value = typeof raw === "string" ? parseLooseJson(raw) : raw;
     if (!isRecord(value)) {
       this.#trace("research.sky.reject", "warn", correlationId, { reason: "unparseable" });
-      return; // agentAtMs stays put — garbage is not the agent speaking
+      // agentAtMs stays put — garbage is not the agent speaking. It IS a
+      // miss, though: the streak keeps counting toward the health leg.
+      this.#recordMiss("bad-payload", correlationId);
+      return;
     }
     let rejected = 0;
     // MERGES first (links may reference the survivors). Only DEAD clouds fold:
@@ -545,6 +747,11 @@ export class CloudGraph {
         }
         into.firstAtMs = Math.min(into.firstAtMs, from.firstAtMs);
         into.freshAtMs = Math.max(into.freshAtMs, from.freshAtMs);
+        // Stars concatenate through the merge (chronological), same cap —
+        // overflow and the absorbed cloud's own elisions stay counted.
+        into.stars = [...into.stars, ...from.stars].sort((a, b) => a.atMs - b.atMs);
+        into.elidedCount += from.elidedCount;
+        capStars(into);
         this.#clouds.delete(from.id);
         // Re-point everything that referenced the absorbed cloud.
         this.#agentLinks = this.#agentLinks
@@ -601,6 +808,25 @@ export class CloudGraph {
       cloud.agentName = name;
       names += 1;
     }
+    // DUST verb: the agent judged a cloud babble — it drops its name and
+    // renders as dust. REVERSIBLE (cleared when the cloud grows past the turn
+    // count it was dusted at) and never silent: every demotion is traced.
+    let dusted = 0;
+    for (const entry of asArray(value.dust)) {
+      const id = isRecord(entry) && typeof entry.id === "string" ? entry.id : null;
+      const cloud = id !== null ? this.#clouds.get(id) : undefined;
+      if (cloud === undefined) {
+        rejected += 1;
+        this.#trace("research.sky.reject", "debug", correlationId, { kind: "dust", id: id ?? "?" });
+        continue;
+      }
+      cloud.dustedAtTurnCount = cloud.retiredTurnCount + cloud.liveTurnIds.size;
+      dusted += 1;
+      this.#trace("research.sky.dust", "info", correlationId, {
+        id: cloud.id,
+        reason: clampWordCount(isRecord(entry) && typeof entry.reason === "string" ? entry.reason : "", MAX_REASON_WORDS),
+      });
+    }
     // RESEARCH HOOKS: validated + traced only — no quest spawning from here
     // yet (the suggester cadence owns quest creation; this is honest future
     // wiring, not a silent dead end).
@@ -616,14 +842,20 @@ export class CloudGraph {
     this.#agentLinks = links;
     // The agent SPOKE (a parsed reply, even a sparse one) — stamp it. This is
     // the snapshot's provenance surface: null means lexical-only, forever.
+    // A landed tick also clears the miss streak (the health leg drops).
     this.#agentAtMs = this.#clock();
     this.#updatedAtMs = this.#agentAtMs;
+    this.#missStreak = 0;
+    this.#lastMissReason = null;
+    this.#lastAgent = agent;
     this.#snapshotMemo = null;
     this.#trace("research.sky.applied", "info", correlationId, {
       links: links.length,
       names,
       merges,
+      dusted,
       rejected,
+      agent: agent ?? "unlabeled",
     });
     this.#onUpdate?.();
   }
@@ -789,18 +1021,22 @@ export function readSkyIntervalMs(env: Record<string, string | undefined> = proc
 // ── default model (one bounded Cerebras call — tree.ts refiner clone) ────────
 
 const SKY_SYSTEM_PROMPT =
-  "You relate the topic clouds of a live room conversation for a projected ceiling sky. Given the cloud graph " +
-  "(each cloud one concept topic with sample turns; live=false means the topic scrolled out of the dialogue " +
-  "window), current links, research quests, and recent turns: propose cross-topic LINKS with a short reason, " +
-  "optional MERGES of clouds that are really one concept (only merge ids you were given), a condensed NAME " +
-  "(max 4 words) per cloud where the label is weak, and optional researchHooks (a question worth researching " +
-  'for a topicId). Reply with STRICT JSON only — {"merges":[{"into":"topic-0001","from":["topic-0002"],' +
-  '"reason":"..."}],"links":[{"a":"topic-0001","b":"topic-0003","strength":0.7,"reason":"..."}],' +
-  '"names":[{"id":"topic-0001","name":"..."}],"researchHooks":[{"topicId":"topic-0001","question":"..."}]} ' +
-  "— no markdown, no prose. Omit empty arrays.";
+  "You relate the topic constellations of a live room conversation for a projected ceiling star chart. Given " +
+  "the constellation graph (each one concept topic with sample turns; live=false means the topic scrolled out " +
+  "of the dialogue window), current links, research quests, and recent turns: propose cross-topic LINKS " +
+  "(rendered as arcs between constellations) with a short reason, optional MERGES of constellations that are " +
+  "really one concept (only merge ids you were given), a condensed NAME (max 4 words) per constellation where " +
+  "the label is weak, DUST for a constellation that is pure conversational babble not worth a name (it fades " +
+  "to background dust; reversible), and optional researchHooks (a question worth researching for a topicId). " +
+  'Reply with STRICT JSON only — {"merges":[{"into":"topic-0001","from":["topic-0002"],"reason":"..."}],' +
+  '"links":[{"a":"topic-0001","b":"topic-0003","strength":0.7,"reason":"..."}],' +
+  '"names":[{"id":"topic-0001","name":"..."}],"dust":[{"id":"topic-0001","reason":"..."}],' +
+  '"researchHooks":[{"topicId":"topic-0001","question":"..."}]} — no markdown, no prose. Omit empty arrays.';
 
-// Null on any miss (no key, HTTP error, unparseable payload) — the graph's
-// bounded-call wrapper converts rejections to null too.
+// Null ONLY when no key is configured (a clean, deliberate no-op). Every real
+// failure THROWS with its cause — HTTP status + body (the 402 the operator
+// never saw), or the payload shape — so the graph's bounded-call wrapper can
+// surface the reason instead of an indistinguishable bare null.
 export const cerebrasCloudRelate: CloudRelateRunner = async (request, signal) => {
   const apiKey = process.env.CEREBRAS_API_KEY;
   if (apiKey === undefined || apiKey.trim().length === 0) {
@@ -821,18 +1057,30 @@ export const cerebrasCloudRelate: CloudRelateRunner = async (request, signal) =>
     signal,
   });
   if (!response.ok) {
-    return null;
+    const body = await response.text().catch(() => "");
+    throw new Error(`cerebras ${response.status}: ${body.slice(0, 120)}`);
   }
   const payload: unknown = await response.json();
   if (!isRecord(payload) || !Array.isArray(payload.choices)) {
-    return null;
+    throw new Error("cerebras payload: no choices array");
   }
   const first: unknown = payload.choices[0];
-  if (!isRecord(first) || !isRecord(first.message)) {
-    return null;
+  if (!isRecord(first) || !isRecord(first.message) || typeof first.message.content !== "string") {
+    throw new Error("cerebras payload: no message content");
   }
-  return typeof first.message.content === "string" ? first.message.content : null;
+  return first.message.content;
 };
+
+// The PRODUCTION runner (ROUND 2 root-cause fix): Cerebras first, the host's
+// logged-in `claude` CLI standing in when the account fails (the live room's
+// 402 — quota-dead with a valid key). No key at all stays a clean no-agent
+// no-op; the stand-in rescue carries provenance + the primary's failure reason
+// so #runRelate traces it loudly. See standin.ts for the mode rules
+// (VIBERSYN_RESEARCH_LLM = auto | cerebras | claude-cli).
+export const defaultCloudRelate: CloudRelateRunner = composeAgentRunner({
+  primary: cerebrasCloudRelate,
+  promptFor: (request: CloudRelateRequest) => `${SKY_SYSTEM_PROMPT}\n\n${JSON.stringify(request)}`,
+});
 
 // ── helpers (module-local copies per the tree.ts convention) ─────────────────
 
@@ -859,6 +1107,18 @@ function trimBag(bag: Map<string, number>): void {
   for (const [token, count] of kept) {
     bag.set(token, count);
   }
+}
+
+// Enforce the per-cloud star cap: evict oldest, count every eviction — elided
+// history is honest ("more turns before this sky remembers"), never silent.
+function capStars(cloud: { stars: Array<{ atMs: number }>; elidedCount: number }): void {
+  if (cloud.stars.length <= MAX_STARS_PER_CLOUD) {
+    return;
+  }
+  cloud.stars.sort((a, b) => a.atMs - b.atMs);
+  const overflow = cloud.stars.length - MAX_STARS_PER_CLOUD;
+  cloud.stars.splice(0, overflow);
+  cloud.elidedCount += overflow;
 }
 
 function pairKey(a: string, b: string): string {

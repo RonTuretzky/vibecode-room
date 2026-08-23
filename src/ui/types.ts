@@ -280,9 +280,25 @@ export interface ProjectorSnapshot {
       turnCount: number;
       liveTopicId: string | null;
       dominantSpeaker: string | null;
+      // NAMING GATE: false = too thin (or agent-dusted) to earn a label — the
+      // ceiling renders this accumulation as dust, never a named constellation.
+      // Optional for legacy fixtures (absent = named).
+      named?: boolean;
+      // RETIRED member turns kept as STARS (constellation asterism points).
+      // Only the freshest clouds carry them; elidedCount admits evicted
+      // history. Live stars are joined client-side from `dialogue` by topicId.
+      stars?: Array<{ id: string; atMs: number; speaker: string | null; gist: string }>;
+      elidedCount?: number;
     }>;
     links: Array<{ a: string; b: string; strength: number; reason: string; source: "agent" | "lexical" }>;
     updatedAtMs: number;
     agentAtMs: number | null;
+    // LOUDNESS: the relate agent's live miss streak + last reason (mirrors
+    // /api/health's sky-relate leg). `agent` = which transport landed the last
+    // applied tick ("cerebras" | "host-claude" stand-in | null before any).
+    // Optional for legacy fixtures.
+    relate?: { missStreak: number; lastMissReason: string | null; agent?: string | null };
+    // Retired babble: chronological dust, faint and nameless on the ceiling.
+    dust?: Array<{ atMs: number }>;
   };
 }

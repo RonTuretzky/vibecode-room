@@ -323,3 +323,289 @@ class NoopAgent implements ResearchAgent {
     return { summary: "", confidence: "low", findings: [], biasNotes: [], sources: [], followUps: [] };
   }
 }
+
+// ── relate loudness: the 402 can never be silent again ───────────────────────
+
+describe("CloudGraph relate loudness", () => {
+  test("a throwing runner (the 402) builds a streak with its reason; warn at 3; a landed tick resets", async () => {
+    const traces: SkyTraceEvent[] = [];
+    let mode: "throw" | "ok" = "throw";
+    const graph = new CloudGraph({
+      intervalMs: 0,
+      clock: () => 10_000,
+      onTrace: (event) => traces.push(event),
+      runner: async () => {
+        if (mode === "throw") {
+          throw new Error("cerebras 402: payment_required");
+        }
+        return "{}";
+      },
+    });
+    for (let tick = 1; tick <= 3; tick += 1) {
+      observeStandardSky(graph); // re-arm the dirty gate
+      await graph.relateNow();
+      const miss = traces.filter((event) => event.event === "research.sky.miss").at(-1)!;
+      expect(miss.meta.reason).toBe("cerebras 402: payment_required");
+      expect(graph.agentHealth().missStreak).toBe(tick);
+      // debug below the streak threshold, warn at it — silent forever is
+      // impossible, log-spam on tick one is avoided.
+      expect(miss.level).toBe(tick >= 3 ? "warn" : "debug");
+    }
+    const snapshot = graph.snapshot();
+    expect(snapshot.relate).toEqual({ missStreak: 3, lastMissReason: "cerebras 402: payment_required", agent: null });
+    expect(snapshot.agentAtMs).toBeNull();
+    // The tick lands → streak clears, agentAtMs stamps. A scripted runner
+    // carries no transport provenance — agent stays honestly null.
+    mode = "ok";
+    observeStandardSky(graph);
+    await graph.relateNow();
+    expect(graph.agentHealth()).toEqual({ missStreak: 0, lastMissReason: null, agentAtMs: 10_000, agent: null });
+    expect(graph.snapshot().relate).toEqual({ missStreak: 0, lastMissReason: null, agent: null });
+  });
+
+  test("a stand-in rescue lands the tick with provenance and a loud trace", async () => {
+    // The production composite (standin.ts) rescues a failing Cerebras account
+    // via the host claude CLI and wraps the reply with WHO answered and WHY
+    // the primary could not — the graph must stamp the agent, trace the rescue
+    // at warn, and apply the reply like any landed tick.
+    const traces: SkyTraceEvent[] = [];
+    const graph = new CloudGraph({
+      intervalMs: 0,
+      clock: () => 55_000,
+      onTrace: (event) => traces.push(event),
+      runner: async () => ({
+        kind: "agent-reply",
+        agent: "host-claude",
+        standinFor: "cerebras 402: payment_required",
+        reply: '{"links":[{"a":"topic-0001","b":"topic-0003","strength":0.8,"reason":"same evening"}]}',
+      }),
+    });
+    observeStandardSky(graph);
+    await graph.relateNow();
+    const standin = traces.find((event) => event.event === "research.sky.standin");
+    expect(standin?.level).toBe("warn");
+    expect(standin?.meta.for).toBe("cerebras 402: payment_required");
+    expect(standin?.meta.agent).toBe("host-claude");
+    expect(graph.agentHealth()).toEqual({
+      missStreak: 0,
+      lastMissReason: null,
+      agentAtMs: 55_000,
+      agent: "host-claude",
+    });
+    expect(graph.snapshot().relate).toEqual({ missStreak: 0, lastMissReason: null, agent: "host-claude" });
+    // The wrapped reply itself landed: an agent-source link exists.
+    const agentLink = graph.snapshot().links.find((link) => link.source === "agent");
+    expect(agentLink?.a).toBe("topic-0001");
+    expect(agentLink?.b).toBe("topic-0003");
+  });
+
+  test("a miss re-arms the tick — a quiet room still crosses the health threshold", async () => {
+    // Without re-arm, a room that stops talking after 2 misses would stall
+    // below the degraded streak forever (and never retry into recovery).
+    const graph = new CloudGraph({
+      intervalMs: 0,
+      clock: () => 10_000,
+      runner: async () => {
+        throw new Error("cerebras 402: payment_required");
+      },
+    });
+    observeStandardSky(graph); // arm ONCE — no new material after this
+    await graph.relateNow();
+    await graph.relateNow();
+    await graph.relateNow();
+    expect(graph.agentHealth().missStreak).toBe(3);
+  });
+
+  test("timeout and garbage replies carry their own reasons", async () => {
+    const hangingGraph = new CloudGraph({
+      intervalMs: 0,
+      clock: () => 10_000,
+      timeoutMs: 5,
+      runner: () => new Promise(() => undefined), // never resolves
+    });
+    observeStandardSky(hangingGraph);
+    await hangingGraph.relateNow();
+    expect(hangingGraph.agentHealth().lastMissReason).toBe("timeout");
+    const garbageGraph = new CloudGraph({
+      intervalMs: 0,
+      clock: () => 10_000,
+      runner: async () => "no json here at all",
+    });
+    observeStandardSky(garbageGraph);
+    await garbageGraph.relateNow();
+    expect(garbageGraph.agentHealth().lastMissReason).toBe("bad-payload");
+  });
+});
+
+// ── star retention: turns survive retirement as gists ────────────────────────
+
+describe("CloudGraph star retention", () => {
+  function loopWithWindow(windowTurns: number): ResearchLoop {
+    return new ResearchLoop({
+      sessionId: "star-test",
+      suggester: new NoopSuggester(),
+      agent: new NoopAgent(),
+      suggestIntervalMs: 0,
+      conceptTree: new ConceptTree({ model: null }),
+      cloudGraph: new CloudGraph({ runner: null, intervalMs: 0 }),
+      windowTurns,
+    });
+  }
+
+  test("retiring >12 turns through one cloud keeps the 12 freshest gists and counts the elided", () => {
+    const loop = loopWithWindow(4);
+    let atMs = 0;
+    for (let index = 0; index < 20; index += 1) {
+      atMs += 30_000;
+      loop.ingestTurn({
+        speaker: index % 2 === 0 ? "s1" : "s2",
+        text: `rocket engine thrust chamber test number ${index} looked strong`,
+        atMs,
+      });
+    }
+    const cloud = loop.sky().clouds.find((entry) => entry.label.toLowerCase().includes("rocket"))!;
+    // 20 ingested, 4 still live → 16 retired; cap 12, 4 elided.
+    expect(cloud.stars).toHaveLength(12);
+    expect(cloud.elidedCount).toBe(4);
+    // Newest-kept, chronological, with REAL text.
+    const numbers = cloud.stars.map((star) => Number(/number (\d+)/.exec(star.gist)![1]));
+    expect(numbers).toEqual([4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
+    for (const star of cloud.stars) {
+      expect(star.gist.length).toBeLessThanOrEqual(80);
+      expect(star.gist).toContain("rocket engine");
+      expect(star.speaker).not.toBeNull();
+      expect(star.atMs).toBeGreaterThan(0);
+    }
+  });
+
+  test("agent merges concatenate stars chronologically, cap enforced, elided sums", async () => {
+    const graph = new CloudGraph({
+      intervalMs: 0,
+      clock: () => 99_000,
+      runner: async () => JSON.stringify({ merges: [{ into: "topic-0002", from: ["topic-0001"], reason: "same" }] }),
+    });
+    observeStandardSky(graph);
+    // Retire the solar turns by observing without their topic or turns.
+    graph.observe(
+      [
+        topic("topic-0002", "battery storage", ["t3", "t4"], 31_000),
+        topic("topic-0003", "opera rehearsal", ["t5"], 41_000),
+      ],
+      [...BATTERY_TURNS, ...OPERA_TURNS],
+    );
+    // Then retire a battery turn too so the survivor has its own star.
+    graph.observe(
+      [
+        topic("topic-0002", "battery storage", ["t4"], 31_000),
+        topic("topic-0003", "opera rehearsal", ["t5"], 41_000),
+      ],
+      [BATTERY_TURNS[1]!, ...OPERA_TURNS],
+    );
+    await graph.relateNow();
+    const survivor = graph.snapshot().clouds.find((cloud) => cloud.id === "topic-0002")!;
+    expect(survivor.stars.map((star) => star.id)).toEqual(["t1", "t2", "t3"]);
+    expect(survivor.stars.map((star) => star.atMs)).toEqual([1_000, 11_000, 21_000]);
+    expect(survivor.elidedCount).toBe(0);
+  });
+
+  test("a full 24-cloud snapshot stays under the SSE budget (<25KB)", () => {
+    const graph = new CloudGraph({ runner: null, intervalMs: 0, clock: () => 10_000_000 });
+    // 24 topics × 14 turns each, all retired through a shrinking window.
+    const allTopics: ConceptTopic[] = [];
+    const allTurns: TranscriptTurn[] = [];
+    for (let index = 0; index < 24; index += 1) {
+      const ids: string[] = [];
+      for (let member = 0; member < 14; member += 1) {
+        const id = `t-${index}-${member}`;
+        ids.push(id);
+        allTurns.push(
+          turn(id, `subject ${index} item ${member} with a long enough sentence to fill a gist to the eighty char cap x`, index * 10_000 + member * 100, `speaker_${member % 6}`),
+        );
+      }
+      allTopics.push(topic(`topic-${String(index + 1).padStart(4, "0")}`, `Subject thread ${index} alpha beta gamma delta`, ids, index * 10_000 + 1_400));
+    }
+    graph.observe(allTopics, allTurns);
+    graph.observe(allTopics, []); // retire everything
+    const size = JSON.stringify(graph.snapshot()).length;
+    expect(graph.snapshot().clouds).toHaveLength(24);
+    expect(size).toBeLessThan(25_000);
+  });
+});
+
+// ── dust: babble never earns a cloud, agent dusting is loud + reversible ─────
+
+describe("CloudGraph dust", () => {
+  test("retired dust turns fold into the graph-level ledger, never a cloud", () => {
+    const loop = new ResearchLoop({
+      sessionId: "dust-test",
+      suggester: new NoopSuggester(),
+      agent: new NoopAgent(),
+      suggestIntervalMs: 0,
+      conceptTree: new ConceptTree({ model: null }),
+      cloudGraph: new CloudGraph({ runner: null, intervalMs: 0 }),
+      windowTurns: 3,
+    });
+    let atMs = 0;
+    const speak = (speaker: string, text: string) => {
+      atMs += 30_000;
+      loop.ingestTurn({ speaker, text, atMs });
+    };
+    speak("s1", "solar panel inverter efficiency dropped again today");
+    speak("s2", "yep");
+    speak("s1", "battery storage smooths the inverter output curve nicely");
+    speak("s2", "oh my god");
+    speak("s1", "the rehearsal moved to thursday evening at the opera house");
+    speak("s2", "sure sure");
+    const sky = loop.sky();
+    // Babble formed no cloud at all…
+    for (const cloud of sky.clouds) {
+      expect(cloud.turnCount).toBeGreaterThan(0);
+      expect(cloud.label.toLowerCase()).not.toContain("yep");
+    }
+    // …and the retired babble is in the dust ledger (window 3 dropped the
+    // first two dust turns by now).
+    expect(sky.dust!.length).toBeGreaterThanOrEqual(1);
+  });
+
+  test("the agent dust verb un-names a cloud (traced) and growth reverses it", async () => {
+    const traces: SkyTraceEvent[] = [];
+    const graph = new CloudGraph({
+      intervalMs: 0,
+      clock: () => 50_000,
+      onTrace: (event) => traces.push(event),
+      runner: async () => JSON.stringify({ dust: [{ id: "topic-0001", reason: "pure backchannel" }] }),
+    });
+    observeStandardSky(graph);
+    expect(graph.snapshot().clouds.find((cloud) => cloud.id === "topic-0001")!.named).toBe(true);
+    await graph.relateNow();
+    const dusted = graph.snapshot().clouds.find((cloud) => cloud.id === "topic-0001")!;
+    expect(dusted.named).toBe(false);
+    expect(graph.snapshot().agentAtMs).toBe(50_000); // dusting IS the agent speaking
+    expect(traces.some((event) => event.event === "research.sky.dust")).toBe(true);
+    // Growth past the dusted-at count restores the name (reversible).
+    graph.observe(
+      [
+        topic("topic-0001", "solar panel efficiency", ["t1", "t2", "t6"], 45_000),
+        topic("topic-0002", "battery storage", ["t3", "t4"], 31_000),
+        topic("topic-0003", "opera rehearsal", ["t5"], 41_000),
+      ],
+      [
+        ...SOLAR_TURNS,
+        ...BATTERY_TURNS,
+        ...OPERA_TURNS,
+        turn("t6", "solar panel inverter efficiency recovered fully", 45_000),
+      ],
+    );
+    expect(graph.snapshot().clouds.find((cloud) => cloud.id === "topic-0001")!.named).toBe(true);
+  });
+
+  test("a thin accumulation surfaces unnamed even without the agent", () => {
+    const graph = new CloudGraph({ runner: null, intervalMs: 0, clock: () => 50_000 });
+    observeStandardSky(graph);
+    const opera = graph.snapshot().clouds.find((cloud) => cloud.id === "topic-0003")!;
+    // 5 distinct content tokens < the 6-token naming bar.
+    expect(opera.named).toBe(false);
+    const solar = graph.snapshot().clouds.find((cloud) => cloud.id === "topic-0001")!;
+    expect(solar.named).toBe(true);
+  });
+});

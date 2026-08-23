@@ -190,6 +190,13 @@ export interface SkyCloudRef {
   turnCount: number;
   liveTopicId: string | null;
   dominantSpeaker: string | null;
+  // CONSTELLATION-ERA additive fields (absent on legacy snapshots): the
+  // naming gate (false = render as unnamed dust-class accumulation), retired
+  // member gists (the asterism's memory), and how many older members were
+  // evicted past the retention cap.
+  named?: boolean;
+  stars?: Array<{ id: string; atMs: number; speaker: string | null; gist: string }>;
+  elidedCount?: number;
 }
 
 export interface SkyLinkRef {

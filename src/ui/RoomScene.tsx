@@ -19,32 +19,36 @@ import {
 } from "./tree";
 import {
   ACTIVE_MS,
+  MAX_DUST,
+  MAX_SKY_CONSTELLATIONS,
+  MAX_STARS_PER_CONST,
   MAX_WISPS,
   R_HORIZON,
   SKY_ALT,
-  SKY_FAN_HALF,
+  CONST_LIFT,
+  asterismPositions,
+  bandAzimuths,
   cloudAge,
-  cloudAltitude,
   cloudRadius,
-  staggeredRadius,
-  fanAzimuth,
-  gravitatedAzimuth,
-  lifeFactor,
+  constellationAnchor,
+  constellationBrightness,
+  constellationStars,
+  dustPosition,
   mergeTarget,
-  puffCount,
-  puffRadius,
+  nowStarId,
   questCloudId,
   radiusNorm,
-  resolveClouds,
-  rimFactor,
-  rimFlatten,
+  resolveConstellations,
+  segmentAlphaFactor,
+  staggeredRadius,
   selectWisps,
-  spreadAzimuths,
+  starSize,
   strongestPartner,
+  type ConstellationStar,
   type ResolvedCloud,
   type SkyCloudRef,
   type SkyLinkRef,
-} from "./sky/cloud-layout";
+} from "./sky/constellation-layout";
 import {
   SAPLING_LIMB_SCALE,
   fleetTreeSpec3D,
@@ -325,7 +329,7 @@ interface RoomSceneProps {
   // The server's conversation sky (ProjectorSnapshot.sky): clouds remembered
   // BEYOND the rolling dialogue window + provenance-tagged relations. Absent
   // → clouds derive from `topics` and no wisps render (degradation gate).
-  sky?: { clouds: SkyCloudRef[]; links: SkyLinkRef[]; agentAtMs: number | null };
+  sky?: { clouds: SkyCloudRef[]; links: SkyLinkRef[]; agentAtMs: number | null; dust?: Array<{ atMs: number }> };
   // True while a research round's inference is in flight — the zenith core
   // brightens (the sky visibly "considers"). Real snapshot data, never a timer.
   researchThinking?: boolean;
@@ -401,29 +405,40 @@ const RESEARCH_STATUS_COLOR: Record<ResearchNodeSpec["status"], number> = {
   complete: 0x9affc9,
   failed: 0xff3b30,
 };
+// Planet label kind glyphs — recovered from the crystal builder the rain era
+// dropped (the operator missed them).
+const RESEARCH_KIND_GLYPH: Record<ResearchNodeSpec["kind"], string> = {
+  "fact-check": "✓",
+  "deep-dive": "◎",
+  "bias-scan": "⚖",
+};
 // Speaker identity palette (NOT status colors — cool identity tints, no
 // violet): deterministic per speaker name so a voice keeps its color.
 const SPEAKER_COLORS = [0x9ee2ff, 0x7fe0c3, 0xffd9a0, 0xa8c7ff, 0xffb3c7, 0xd6f0a0];
 // The conversation SKY. Research is a MODE SWITCH (the idea garden hides
-// while it is on), so looking up you see CLOUDS: one sculpted cumulus per
-// concept topic on a polar time disc (zenith = now, horizon = the past — the
-// pure laws live in sky/cloud-layout.ts), wisps between related clouds
+// while it is on), so looking up you see a STAR CHART: one CONSTELLATION per
+// concept topic on the chronological band (west = session start, east = now;
+// the pure laws live in sky/constellation-layout.ts), asterism LINES tracing
+// each topic's turns in spoken order, relation ARCS between constellations
 // (WARM = the agent thread said so, COOL = deterministic lexical fallback),
-// and research quests hanging under their cloud as status-colored RAIN.
-// Render caps for the preallocated one-draw-call buffers.
-const SKY_MAX_CLOUDS = 14;
-const SKY_MAX_PUFFS_PER_CLOUD = 16;
-const SKY_MAX_PUFFS = SKY_MAX_CLOUDS * SKY_MAX_PUFFS_PER_CLOUD;
-// Wisps render as soft additive RIBBONS (real width + a feathered edge — a
-// 1px hairline reads as a lens scratch at projector distance): per wisp,
-// SKY_WISP_SEGMENTS quads of 6 non-indexed vertices.
+// research quests as limb-lit PLANETS hung from their grounding star, and
+// babble as nameless DUST below the band.
+// Render caps for the preallocated few-draw-call buffers.
+// Data stars + dust + elided rings share ONE Points draw.
+const SKY_MAX_DATA_STARS = 384;
+// Asterism segments (≤12×23) + elided stubs (12) + planet filaments (12) +
+// researching progress arcs (12×24) share ONE LineSegments draw (2 verts per
+// segment).
+const SKY_MAX_LINE_VERTS = 1_800;
+// Relation arcs render as soft additive RIBBONS (real width + a feathered
+// edge — a 1px hairline reads as a lens scratch at projector distance): per
+// arc, SKY_WISP_SEGMENTS quads of 6 non-indexed vertices.
 const SKY_WISP_SEGMENTS = 12;
 const SKY_MAX_WISP_VERTS = 12 * SKY_WISP_SEGMENTS * 6;
-// Rain: slanted streak quads (6 verts each) — a real shower spread under the
-// cloud base with varied length/alpha (a few 1px ticks read as a glitch).
-const SKY_MAX_RAIN_QUESTS = 12;
-const SKY_MAX_RAIN_STREAKS = 10;
-const SKY_MAX_RAIN_VERTS = SKY_MAX_RAIN_QUESTS * SKY_MAX_RAIN_STREAKS * 6;
+// Planets: ONE InstancedMesh sphere, per-instance status color + confidence
+// scale; researching progress renders as a line arc around the planet.
+const SKY_MAX_PLANETS = 12;
+const SKY_PROGRESS_ARC_SEGMENTS = 24;
 // Wisp provenance colors — the sky's honesty surface: a link the agent thread
 // judged glows WARM amber; the deterministic lexical fallback stays COOL ice
 // (bright cores for projector legibility but kept r>b vs r<b, so a
@@ -444,16 +459,18 @@ const CLOUD_ACTIVE_RGB = rawColor(CLOUD_ACTIVE_COLOR);
 const CLOUD_DORMANT_RGB = rawColor(CLOUD_DORMANT_COLOR);
 const WISP_AGENT_RGB = rawColor(WISP_AGENT_COLOR);
 const WISP_LEXICAL_RGB = rawColor(WISP_LEXICAL_COLOR);
-// Rain: the status hue pulled WELL toward blue-grey so streaks read as
-// weather (the semantics stay — blue proposed / green researching / mint
-// complete / red failed — as a tint on the shower, not neon ticks; the
-// droplet glow at the head keeps the saturated status color for the read).
-const RAIN_GREY_RGB = rawColor(0x9db4cc);
-const RAIN_STATUS_RGB: Record<ResearchNodeSpec["status"], THREE.Color> = {
-  proposed: rawColor(RESEARCH_STATUS_COLOR.proposed).lerp(RAIN_GREY_RGB, 0.62),
-  researching: rawColor(RESEARCH_STATUS_COLOR.researching).lerp(RAIN_GREY_RGB, 0.55),
-  complete: rawColor(RESEARCH_STATUS_COLOR.complete).lerp(RAIN_GREY_RGB, 0.45),
-  failed: rawColor(RESEARCH_STATUS_COLOR.failed).lerp(RAIN_GREY_RGB, 0.65),
+// Asterism chronology lines and DUST (nameless babble): fixed quiet colors —
+// structure and atmosphere, never status.
+const STAR_LINE_RGB = rawColor(0xbfd4e8);
+const SKY_DUST_RGB = rawColor(0x5a6a7a);
+const NOW_ACCENT_RGB = rawColor(CLOUD_NOW_ACCENT);
+// Planet status colors (raw copies of the fixed status semantics; failed is
+// additionally desaturated dark in the instance write).
+const PLANET_STATUS_RGB: Record<ResearchNodeSpec["status"], THREE.Color> = {
+  proposed: rawColor(RESEARCH_STATUS_COLOR.proposed),
+  researching: rawColor(RESEARCH_STATUS_COLOR.researching),
+  complete: rawColor(RESEARCH_STATUS_COLOR.complete),
+  failed: rawColor(RESEARCH_STATUS_COLOR.failed).lerp(rawColor(0x3a4150), 0.7),
 };
 
 function speakerColor(speaker: string | null): number {
@@ -1009,29 +1026,30 @@ interface Entry {
   treeSpec?: TreeSpec;
   dialogueSpec?: DialogueNodeSpec;
   researchSpec?: ResearchNodeSpec;
-  // CONVERSATION-SKY cloud entries: the resolved cloud this entry renders,
-  // its deterministic puff lobes (packed [ox,oy,oz,size,shade] per lobe —
-  // written into the shared Points buffer each frame), its body tint, and the
-  // slow-refresh layout caches (age norm / life factor, updated on the 1s
-  // relayout tick so the frame loop never calls Date.now per cloud).
+  // CONSTELLATION entries: the resolved cloud (server schema keys stay
+  // "cloud") this entry renders as an asterism, its resolved stars (retired
+  // gists + live window members, chronological), their precomputed local
+  // offsets/sizes/colors (packed at reconcile — the frame loop writes the
+  // shared buffers allocation-free), and slow-refresh caches (age norm /
+  // brightness, updated on the 1s relayout tick so the frame loop never calls
+  // Date.now per constellation).
   cloudSpec?: ResolvedCloud;
-  cloudPuffs?: Float32Array;
-  cloudPuffN?: number;
-  cloudColor?: THREE.Color;
   cloudHit?: THREE.Mesh;
   cloudNorm?: number;
   cloudLife?: number;
   cloudHasAgentLink?: boolean;
-  // Speaker tint folded into the body ramp (≤12% — composition, not carnival)
-  // and the hash altitude jitter, cached so relayout never re-derives them.
-  cloudTint?: THREE.Color;
-  cloudJitter?: number;
-  // Per-frame pass-1 product: the cloud's shared alpha for pass 2 (the depth-
-  // sorted lobe write) — computed once per cloud, consumed per lobe.
-  cloudAlphaBase?: number;
-  // Research-rain entries: lateral shower spread under the parent cloud's
-  // footprint (set at reconcile from the cloud's own radius).
-  rainSpread?: number;
+  skyStars?: ConstellationStar[];
+  // Packed [ox,oy,oz] local offsets per star (asterism walk, anchor-relative).
+  skyStarOffsets?: Float32Array;
+  // Packed per-star size (shader px) and raw-sRGB speaker color triplets.
+  skyStarSizes?: Float32Array;
+  skyStarColors?: Float32Array;
+  skyElided?: number;
+  skyAz?: number;
+  // Star membership signature — per-star hit volumes rebuild only on change.
+  skyStarSig?: string;
+  // PLANET entries (research quests): the assigned instanced-mesh slot.
+  planetSlot?: number;
   group: THREE.Group;
   mats: (THREE.MeshPhongMaterial | THREE.MeshStandardMaterial)[];
   baseEmissive: number;
@@ -2121,88 +2139,28 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
     // Hoisted scratch for the per-frame moon-rim uniform (no allocation).
     const skyMoonScratch = new THREE.Vector3();
     // The visible fan's center bearing: directly away from the boot camera,
-    // so every cloud (and all of history) stays inside the vista's frame.
+    // so every constellation (and all of history) stays inside the vista's
+    // frame.
     const skyFanCenter = wallYawSeed(wallRef.current) + Math.PI;
-    // One wind for the whole sky's rain shear — lateral to the vista so the
-    // slant reads on screen (weather has a direction; ticks don't).
-    const skyRainWindX = Math.sin(skyFanCenter + Math.PI / 2) * 0.3;
-    const skyRainWindZ = Math.cos(skyFanCenter + Math.PI / 2) * 0.3;
-    // Back-to-front lobe draw order for the alpha-blended cumulus bodies
-    // (normal blending needs sorting or clouds read inside-out). Preallocated
-    // slots, re-sorted on the 1s relayout tick — never per frame.
-    const skyLobeOrder: { entry: Entry | null; lobe: number; depth: number }[] = Array.from(
-      { length: SKY_MAX_PUFFS },
-      () => ({ entry: null, lobe: 0, depth: -Infinity }),
-    );
-    let skyLobeCount = 0;
-    const rebuildSkyLobeOrder = (camPos: THREE.Vector3) => {
-      let filled = 0;
-      for (const entry of cloudEntries.values()) {
-        const puffs = entry.cloudPuffs;
-        const count = entry.cloudPuffN ?? 0;
-        if (puffs === undefined) {
-          continue;
-        }
-        for (let lobe = 0; lobe < count && filled < SKY_MAX_PUFFS; lobe += 1) {
-          const slot = skyLobeOrder[filled];
-          const j = lobe * 6;
-          const dx = entry.group.position.x + puffs[j] - camPos.x;
-          const dy = entry.group.position.y + puffs[j + 1] - camPos.y;
-          const dz = entry.group.position.z + puffs[j + 2] - camPos.z;
-          slot.entry = entry;
-          slot.lobe = lobe;
-          slot.depth = dx * dx + dy * dy + dz * dz;
-          filled += 1;
-        }
-      }
-      for (let index = filled; index < SKY_MAX_PUFFS; index += 1) {
-        skyLobeOrder[index].entry = null;
-        skyLobeOrder[index].depth = -Infinity;
-      }
-      skyLobeCount = filled;
-      // Farthest first; empty slots (-Infinity) sink to the tail.
-      skyLobeOrder.sort((a, b) => b.depth - a.depth);
-    };
-
-    // Cumulus puff sprite: a soft base falloff overlaid with deterministic
-    // cauliflower billows, sampled by the one-draw-call Points shader below.
-    // The billow field is CENTERED (no directional bias): the shader rotates
-    // the sample per lobe to kill repeat-stamping, and does ALL of the
-    // lighting itself (crown/underside ramp + moon rim) in screen space.
-    const makeCloudPuffTexture = (): THREE.CanvasTexture => {
-      const size = 256;
-      const canvas = document.createElement("canvas");
-      canvas.width = size;
-      canvas.height = size;
-      const ctx = canvas.getContext("2d")!;
-      const c = size / 2;
-      const base = ctx.createRadialGradient(c, c, 0, c, c, c * 0.98);
-      base.addColorStop(0, "rgba(255,255,255,0.9)");
-      base.addColorStop(0.48, "rgba(255,255,255,0.55)");
-      base.addColorStop(0.8, "rgba(255,255,255,0.13)");
-      base.addColorStop(1, "rgba(255,255,255,0)");
-      ctx.fillStyle = base;
-      ctx.fillRect(0, 0, size, size);
-      const rng = mulberry32(hashSeed("sky:puff"));
-      ctx.globalCompositeOperation = "lighter";
-      for (let index = 0; index < 34; index += 1) {
-        const angle = rng() * Math.PI * 2;
-        const reach = rng() * size * 0.27;
-        const x = c + Math.cos(angle) * reach;
-        const y = c + Math.sin(angle) * reach;
-        const radius = size * (0.045 + rng() * 0.1);
-        const billow = ctx.createRadialGradient(x, y, 0, x, y, radius);
-        billow.addColorStop(0, "rgba(255,255,255,0.4)");
-        billow.addColorStop(1, "rgba(255,255,255,0)");
-        ctx.fillStyle = billow;
-        ctx.beginPath();
-        ctx.arc(x, y, radius, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      const texture = new THREE.CanvasTexture(canvas);
-      texture.colorSpace = THREE.SRGBColorSpace;
-      return texture;
-    };
+    // The session's first known moment — dust chronology's western edge
+    // (refreshed at reconcile from the oldest cloud/dust the snapshot holds).
+    let skySessionStartMs = 0;
+    // Precomputed dust placements (reconcile cadence; the frame loop only
+    // copies them into the shared data-star buffer).
+    const skyDustPos = new Float32Array(MAX_DUST * 3);
+    let skyDustCount = 0;
+    // The single NOW star (constellation id + world position target), owned by
+    // reconcile/relayout; the frame loop only moves the halo. Exactly one or
+    // none — the single-NOW law.
+    let skyNowConstId: string | null = null;
+    let skyNowStarId: string | null = null;
+    // Hoisted scratch for planet instance writes (allocation-free frame loop).
+    const planetMatScratch = new THREE.Matrix4();
+    const planetQuatScratch = new THREE.Quaternion();
+    const planetPosScratch = new THREE.Vector3();
+    const planetScaleScratch = new THREE.Vector3();
+    const planetColorScratch = new THREE.Color();
+    const planetAxisY = new THREE.Vector3(0, 1, 0);
 
     // The sky rig: every shared GPU resource of the research sky, built
     // lazily on the first reconcile that resolves a cloud (zero cost when the
@@ -2210,16 +2168,21 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
     // the frame loop rewrites them in place.
     interface SkyRig {
       group: THREE.Group;
-      puffTexture: THREE.CanvasTexture;
-      puffGeom: THREE.BufferGeometry;
-      puffMat: THREE.ShaderMaterial;
-      puffPos: Float32Array;
-      puffSize: Float32Array;
-      puffColor: Float32Array;
-      puffAlpha: Float32Array;
-      puffShade: Float32Array;
-      puffHaze: Float32Array;
-      puffRot: Float32Array;
+      // DATA STARS (turns) + dust + elided rings: one shader Points draw.
+      dataStarGeom: THREE.BufferGeometry;
+      dataStarMat: THREE.ShaderMaterial;
+      dataStarPos: Float32Array;
+      dataStarSize: Float32Array;
+      dataStarColor: Float32Array;
+      dataStarAlpha: Float32Array;
+      dataStarRing: Float32Array;
+      // CHRONOLOGY LINES (asterism polylines + elided stubs + planet
+      // filaments + progress arcs): one LineSegments draw, alpha encoded in
+      // additive color magnitude.
+      lineGeom: THREE.BufferGeometry;
+      linePos: Float32Array;
+      lineColor: Float32Array;
+      // Relation arcs between constellations (the reborn wisp ribbon).
       wispGeom: THREE.BufferGeometry;
       wispPos: Float32Array;
       wispColor: Float32Array;
@@ -2228,10 +2191,11 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       anchorPos: Float32Array;
       anchorColor: Float32Array;
       anchorMat: THREE.ShaderMaterial;
-      rainGeom: THREE.BufferGeometry;
-      rainPos: Float32Array;
-      rainColor: Float32Array;
-      rainEdge: Float32Array;
+      // PLANETS (research quests): one InstancedMesh, limb-lit.
+      planetMesh: THREE.InstancedMesh;
+      planetMat: THREE.ShaderMaterial;
+      // The single pulsing NOW halo sprite.
+      nowHalo: THREE.Sprite;
       starMat: THREE.ShaderMaterial;
       moonHalo: THREE.Sprite;
       moonWorld: THREE.Vector3;
@@ -2300,7 +2264,9 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
           varying float vTint;
           void main() {
             float tw = 0.78 + 0.22 * sin(uTime * (0.5 + fract(aTw) * 0.9) + aTw * 7.0);
-            vA = tw * (0.42 + aSize * 0.07);
+            // DIMMED to 0.45: ambient stars are backdrop — DATA stars (speaker
+            // colored, steady, larger) must be unmistakably the signal.
+            vA = tw * (0.42 + aSize * 0.07) * 0.45;
             vTint = aTint;
             gl_PointSize = aSize * uPx * (0.8 + 0.2 * tw);
             gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
@@ -2419,106 +2385,156 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       moonHalo.renderOrder = 4;
       group.add(moonHalo);
       disposables.push(moonHalo.material);
-      // World-space light position for the puff shader's moon-side rim.
+      // World-space light position for the planet shader's limb light.
       const moonWorld = moonCore.position.clone();
-      // ALL cloud lobes in ONE Points draw call: soft billboards sized in the
-      // shader (world size / distance), NORMAL-blended (additive reads as fog,
-      // not cumulus) and depth-sorted back-to-front by rebuildSkyLobeOrder.
-      // Modelling: per-lobe height shade (aShade) × an in-sprite vertical ramp
-      // = bright moonlit crowns over shadowed underbellies, plus a cool rim on
-      // the upper silhouette and aerial haze (aHaze) that sinks aged clouds
-      // into the dusk.
-      const puffTexture = makeCloudPuffTexture();
-      const puffGeom = new THREE.BufferGeometry();
-      const puffPos = new Float32Array(SKY_MAX_PUFFS * 3);
-      const puffSize = new Float32Array(SKY_MAX_PUFFS);
-      const puffColor = new Float32Array(SKY_MAX_PUFFS * 3);
-      const puffAlpha = new Float32Array(SKY_MAX_PUFFS);
-      const puffShade = new Float32Array(SKY_MAX_PUFFS);
-      const puffHaze = new Float32Array(SKY_MAX_PUFFS);
-      const puffRot = new Float32Array(SKY_MAX_PUFFS);
-      puffGeom.setAttribute("position", new THREE.BufferAttribute(puffPos, 3).setUsage(THREE.DynamicDrawUsage));
-      puffGeom.setAttribute("aSize", new THREE.BufferAttribute(puffSize, 1).setUsage(THREE.DynamicDrawUsage));
-      puffGeom.setAttribute("aColor", new THREE.BufferAttribute(puffColor, 3).setUsage(THREE.DynamicDrawUsage));
-      puffGeom.setAttribute("aAlpha", new THREE.BufferAttribute(puffAlpha, 1).setUsage(THREE.DynamicDrawUsage));
-      puffGeom.setAttribute("aShade", new THREE.BufferAttribute(puffShade, 1).setUsage(THREE.DynamicDrawUsage));
-      puffGeom.setAttribute("aHaze", new THREE.BufferAttribute(puffHaze, 1).setUsage(THREE.DynamicDrawUsage));
-      puffGeom.setAttribute("aRot", new THREE.BufferAttribute(puffRot, 1).setUsage(THREE.DynamicDrawUsage));
-      puffGeom.setDrawRange(0, 0);
-      const puffMat = new THREE.ShaderMaterial({
-        uniforms: { uMap: { value: puffTexture }, uScale: { value: 800 }, uMoonView: { value: new THREE.Vector3(0, 1, 0) } },
+      // ALL DATA STARS (turns) + DUST + ELIDED RINGS in ONE shader Points
+      // draw. Steady (no twinkle — the ambient field twinkles, data never
+      // lies), speaker-colored, word-count-sized, procedurally shaped in the
+      // fragment (soft disc, or a hollow ring when aRing=1 — the honest
+      // "more turns before this sky remembers" marker).
+      const dataStarGeom = new THREE.BufferGeometry();
+      const dataStarPos = new Float32Array(SKY_MAX_DATA_STARS * 3);
+      const dataStarSize = new Float32Array(SKY_MAX_DATA_STARS);
+      const dataStarColor = new Float32Array(SKY_MAX_DATA_STARS * 3);
+      const dataStarAlpha = new Float32Array(SKY_MAX_DATA_STARS);
+      const dataStarRing = new Float32Array(SKY_MAX_DATA_STARS);
+      dataStarGeom.setAttribute("position", new THREE.BufferAttribute(dataStarPos, 3).setUsage(THREE.DynamicDrawUsage));
+      dataStarGeom.setAttribute("aSize", new THREE.BufferAttribute(dataStarSize, 1).setUsage(THREE.DynamicDrawUsage));
+      dataStarGeom.setAttribute("aColor", new THREE.BufferAttribute(dataStarColor, 3).setUsage(THREE.DynamicDrawUsage));
+      dataStarGeom.setAttribute("aAlpha", new THREE.BufferAttribute(dataStarAlpha, 1).setUsage(THREE.DynamicDrawUsage));
+      dataStarGeom.setAttribute("aRing", new THREE.BufferAttribute(dataStarRing, 1).setUsage(THREE.DynamicDrawUsage));
+      dataStarGeom.setDrawRange(0, 0);
+      const dataStarMat = new THREE.ShaderMaterial({
+        uniforms: { uPx: { value: renderer.getPixelRatio() } },
         vertexShader: `
           attribute float aSize;
           attribute vec3 aColor;
           attribute float aAlpha;
-          attribute float aShade;
-          attribute float aHaze;
-          attribute float aRot;
+          attribute float aRing;
           varying vec3 vColor;
           varying float vAlpha;
-          varying float vShade;
-          varying float vHaze;
-          varying vec2 vRot;
-          varying vec2 vMoonDir;
-          uniform float uScale;
-          uniform vec3 uMoonView;
+          varying float vRing;
+          uniform float uPx;
           void main() {
             vColor = aColor;
             vAlpha = aAlpha;
-            vShade = aShade;
-            vHaze = aHaze;
-            vRot = vec2(cos(aRot), sin(aRot));
-            vec4 mv = modelViewMatrix * vec4(position, 1.0);
-            // Screen-space direction from this lobe toward the moon: the rim
-            // light hugs the moon-facing silhouette (view-space y is up, but
-            // gl_PointCoord.y runs down — flip when consumed).
-            vMoonDir = normalize(uMoonView.xy - mv.xy + vec2(1e-4));
-            gl_PointSize = min(aSize * uScale / max(-mv.z, 0.1), 640.0);
-            gl_Position = projectionMatrix * mv;
+            vRing = aRing;
+            // Constant SCREEN size (a chart, not fog): the size law already
+            // encodes word count; 2.2× keeps data stars ≥2× the ambient max.
+            gl_PointSize = aSize * 2.2 * uPx;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
           }
         `,
         fragmentShader: `
-          uniform sampler2D uMap;
           varying vec3 vColor;
           varying float vAlpha;
-          varying float vShade;
-          varying float vHaze;
-          varying vec2 vRot;
-          varying vec2 vMoonDir;
+          varying float vRing;
           void main() {
-            vec2 off = gl_PointCoord - vec2(0.5);
-            // Per-lobe stamp rotation: same billow canvas, never the same curl
-            // twice. Lighting below stays in UNROTATED screen space.
-            vec2 ruv = vec2(vRot.x * off.x - vRot.y * off.y, vRot.y * off.x + vRot.x * off.y) + vec2(0.5);
-            vec4 tex = texture2D(uMap, ruv);
-            // Crown lobes take a HARDER edge (dense sunlit cauliflower);
-            // bases keep the soft feather (mist under the belly).
-            float shaped = mix(tex.a, smoothstep(0.1, 0.62, tex.a), vShade * 0.85);
-            // Value + hue modelling: warm-white crowns falling to blue-grey
-            // undersides — a real shading ramp, not one flat grey.
-            float shadeMix = clamp(vShade * 1.15 - (gl_PointCoord.y - 0.5) * 0.9, 0.0, 1.0);
-            vec3 lit = vColor * mix(vec3(0.5, 0.55, 0.7), vec3(1.12, 1.07, 0.98), shadeMix);
-            // Warm moon-keyed rim on the moon-facing silhouette edge.
-            float edge = smoothstep(0.22, 0.5, length(off));
-            float facing = clamp(dot(normalize(off + vec2(1e-4)), vec2(vMoonDir.x, -vMoonDir.y)), 0.0, 1.0);
-            lit += vec3(1.0, 0.95, 0.84) * edge * facing * facing * 0.55 * (0.35 + 0.65 * vShade);
-            // Aerial perspective: age hazes the body into the dusk sky —
-            // CAPPED so distant clouds keep a silhouette (never a smudge).
-            lit = mix(lit, vec3(0.2, 0.24, 0.38), vHaze);
-            gl_FragColor = vec4(lit, shaped * vAlpha);
+            float d = length(gl_PointCoord - vec2(0.5));
+            // Disc: hot core + soft skirt. Ring: a hollow band (elided mark).
+            float disc = smoothstep(0.5, 0.08, d) * (0.55 + 0.45 * smoothstep(0.22, 0.0, d));
+            float ring = smoothstep(0.5, 0.42, d) * smoothstep(0.26, 0.34, d);
+            float shape = mix(disc, ring, vRing);
+            gl_FragColor = vec4(vColor, shape * vAlpha);
           }
         `,
         transparent: true,
         depthWrite: false,
+        blending: THREE.AdditiveBlending,
       });
-      // Seed the pixel factor from the live viewport (resize keeps it fresh;
-      // the anchor glows below share it once built).
-      puffMat.uniforms.uScale!.value = Math.max(container.clientHeight, 1) / (2 * Math.tan((camera.fov * Math.PI) / 360));
-      const puffs = new THREE.Points(puffGeom, puffMat);
-      puffs.frustumCulled = false;
-      puffs.renderOrder = 6;
-      group.add(puffs);
-      disposables.push(puffGeom, puffMat, puffTexture);
+      const dataStars = new THREE.Points(dataStarGeom, dataStarMat);
+      dataStars.frustumCulled = false;
+      dataStars.renderOrder = 6;
+      group.add(dataStars);
+      disposables.push(dataStarGeom, dataStarMat);
+      // ALL CHRONOLOGY LINES in ONE LineSegments draw: asterism polylines
+      // (spoken order along the eastward tangent), elided-history stubs,
+      // planet filaments, and researching progress arcs. Additive — alpha is
+      // encoded in color magnitude (black segments vanish).
+      const lineGeom = new THREE.BufferGeometry();
+      const linePos = new Float32Array(SKY_MAX_LINE_VERTS * 3);
+      const lineColor = new Float32Array(SKY_MAX_LINE_VERTS * 3);
+      lineGeom.setAttribute("position", new THREE.BufferAttribute(linePos, 3).setUsage(THREE.DynamicDrawUsage));
+      lineGeom.setAttribute("color", new THREE.BufferAttribute(lineColor, 3).setUsage(THREE.DynamicDrawUsage));
+      lineGeom.setDrawRange(0, 0);
+      const lineMat = new THREE.LineBasicMaterial({
+        vertexColors: true,
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+      });
+      const lineMesh = new THREE.LineSegments(lineGeom, lineMat);
+      lineMesh.frustumCulled = false;
+      lineMesh.renderOrder = 5;
+      group.add(lineMesh);
+      disposables.push(lineGeom, lineMat);
+      // PLANETS (research quests): ONE limb-lit InstancedMesh sphere. Status
+      // rides per-instance color, confidence rides per-instance scale; the
+      // moon is the light key (same light the whole sky agrees with).
+      const planetGeom = new THREE.SphereGeometry(1, 20, 14);
+      const planetMat = new THREE.ShaderMaterial({
+        uniforms: { uMoonWorld: { value: moonWorld.clone() } },
+        vertexShader: `
+          varying vec3 vNormalW;
+          varying vec3 vWorld;
+          varying vec3 vInstColor;
+          #ifdef USE_INSTANCING_COLOR
+            // three injects the instanceColor attribute declaration.
+          #endif
+          void main() {
+            vec4 local = vec4(position, 1.0);
+            vec3 nrm = normal;
+            #ifdef USE_INSTANCING
+              local = instanceMatrix * local;
+              nrm = mat3(instanceMatrix) * nrm;
+            #endif
+            vec4 world = modelMatrix * local;
+            vWorld = world.xyz;
+            vNormalW = normalize(mat3(modelMatrix) * nrm);
+            #ifdef USE_INSTANCING_COLOR
+              vInstColor = instanceColor;
+            #else
+              vInstColor = vec3(1.0);
+            #endif
+            gl_Position = projectionMatrix * viewMatrix * world;
+          }
+        `,
+        fragmentShader: `
+          varying vec3 vNormalW;
+          varying vec3 vWorld;
+          varying vec3 vInstColor;
+          uniform vec3 uMoonWorld;
+          void main() {
+            vec3 toMoon = normalize(uMoonWorld - vWorld);
+            float lit = clamp(dot(normalize(vNormalW), toMoon), 0.0, 1.0);
+            // Limb-lit: dark body, moonlit limb + a faint status ambient so
+            // the night side still reads its color.
+            vec3 col = vInstColor * (0.22 + 0.78 * pow(lit, 1.35)) + vInstColor * 0.08;
+            gl_FragColor = vec4(col, 1.0);
+          }
+        `,
+      });
+      const planetMesh = new THREE.InstancedMesh(planetGeom, planetMat, SKY_MAX_PLANETS);
+      planetMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      // Allocate instanceColor up front (three lazily creates it on first
+      // setColorAt — do it here so USE_INSTANCING_COLOR is defined from the
+      // first compile).
+      planetMesh.setColorAt(0, planetColorScratch.setRGB(1, 1, 1));
+      planetMesh.count = 0;
+      planetMesh.frustumCulled = false;
+      planetMesh.renderOrder = 6;
+      group.add(planetMesh);
+      disposables.push(planetGeom, planetMat);
+      // The single NOW halo: one pulsing accent sprite on the freshest live
+      // star of the freshest active constellation (single-NOW law).
+      const nowHalo = new THREE.Sprite(
+        new THREE.SpriteMaterial({ map: glowTexture, color: CLOUD_NOW_ACCENT, transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false, fog: false }),
+      );
+      nowHalo.visible = false;
+      nowHalo.scale.setScalar(1.6);
+      nowHalo.renderOrder = 7;
+      group.add(nowHalo);
+      disposables.push(nowHalo.material);
       // ALL wisps in ONE Mesh of soft-edged additive RIBBONS: quad strips
       // along an arc that bows gently ABOVE the deck (an arch between clouds,
       // never a hairline sagging into the ground). aEdge = (across −1..1,
@@ -2607,53 +2623,10 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       anchorPoints.renderOrder = 7;
       group.add(anchorPoints);
       disposables.push(anchorGeom, anchorMat);
-      anchorMat.uniforms.uScale!.value = puffMat.uniforms.uScale!.value;
-      // ALL rain in ONE Mesh of tapered streak quads anchored to the cloud
-      // base: alpha thins to nothing at the tip and glints where the streak
-      // leaves the cloud. Status keeps the RESEARCH_STATUS_COLOR hue but
-      // desaturated toward rain-grey — finished weather, not debug ticks.
-      const rainGeom = new THREE.BufferGeometry();
-      const rainPos = new Float32Array(SKY_MAX_RAIN_VERTS * 3);
-      const rainColor = new Float32Array(SKY_MAX_RAIN_VERTS * 3);
-      const rainEdge = new Float32Array(SKY_MAX_RAIN_VERTS * 2);
-      rainGeom.setAttribute("position", new THREE.BufferAttribute(rainPos, 3).setUsage(THREE.DynamicDrawUsage));
-      rainGeom.setAttribute("aColor", new THREE.BufferAttribute(rainColor, 3).setUsage(THREE.DynamicDrawUsage));
-      rainGeom.setAttribute("aEdge", new THREE.BufferAttribute(rainEdge, 2).setUsage(THREE.DynamicDrawUsage));
-      rainGeom.setDrawRange(0, 0);
-      const rainMat = new THREE.ShaderMaterial({
-        vertexShader: `
-          attribute vec3 aColor;
-          attribute vec2 aEdge;
-          varying vec3 vColor;
-          varying vec2 vEdge;
-          void main() {
-            vColor = aColor;
-            vEdge = aEdge;
-            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-          }
-        `,
-        fragmentShader: `
-          varying vec3 vColor;
-          varying vec2 vEdge;
-          void main() {
-            float across = 1.0 - abs(vEdge.x);
-            float taper = 1.0 - vEdge.y;
-            float glint = smoothstep(0.12, 0.0, vEdge.y) * 0.4;
-            gl_FragColor = vec4(vColor, across * across * (taper * taper * 0.85 + glint));
-          }
-        `,
-        transparent: true,
-        depthWrite: false,
-        blending: THREE.AdditiveBlending,
-        side: THREE.DoubleSide,
-      });
-      const rainMesh = new THREE.Mesh(rainGeom, rainMat);
-      rainMesh.frustumCulled = false;
-      rainMesh.renderOrder = 5;
-      group.add(rainMesh);
-      disposables.push(rainGeom, rainMat);
+      // World-size pixel factor for the anchor glows (resize keeps it fresh).
+      anchorMat.uniforms.uScale!.value = Math.max(container.clientHeight, 1) / (2 * Math.tan((camera.fov * Math.PI) / 360));
       scene.add(group);
-      skyRig = { group, puffTexture, puffGeom, puffMat, puffPos, puffSize, puffColor, puffAlpha, puffShade, puffHaze, puffRot, wispGeom, wispPos, wispColor, wispEdge, anchorGeom, anchorPos, anchorColor, anchorMat, rainGeom, rainPos, rainColor, rainEdge, starMat, moonHalo, moonWorld, disposables };
+      skyRig = { group, dataStarGeom, dataStarMat, dataStarPos, dataStarSize, dataStarColor, dataStarAlpha, dataStarRing, lineGeom, linePos, lineColor, wispGeom, wispPos, wispColor, wispEdge, anchorGeom, anchorPos, anchorColor, anchorMat, planetMesh, planetMat, nowHalo, starMat, moonHalo, moonWorld, disposables };
       return skyRig;
     };
     const clearSkyRig = () => {
@@ -3801,71 +3774,74 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       return { kind: "flower", ideaSpec: spec, group, mats, baseEmissive, head, headY: 0, cat: null, catBaseX: 0, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false };
     };
 
-    // ── research-sky builders ───────────────────────────────────────────────
-    // Regrow a cloud entry's deterministic puff lobes (packed
-    // [ox,oy,oz,size,shade,rot] per lobe): a flat-ish BASE row of large lobes
-    // with smaller cauliflower lobes stacked above — the cumulus silhouette.
-    // Seeded by cloud id, so a cloud keeps its exact shape until more is said.
-    // rot varies the sprite stamp per lobe (no visible repeat-stamping).
-    const genCloudPuffs = (entry: Entry, cloud: ResolvedCloud) => {
-      const count = puffCount(cloud.turnCount);
-      const radius = puffRadius(cloud.turnCount);
-      const rng = mulberry32(hashSeed(`cloud:${cloud.id}`));
-      const data = entry.cloudPuffs ?? new Float32Array(SKY_MAX_PUFFS_PER_CLOUD * 6);
-      // Sculpted cumulus: one broad CORE mass, a flat BASE row of large lobes,
-      // then smaller cauliflower CROWN lobes tapering toward the top — a flat
-      // underside with billowed heights, recognizable in a still screenshot.
-      const baseLobes = Math.max(3, Math.round(count * 0.45));
-      for (let index = 0; index < count; index += 1) {
-        const j = index * 6;
-        if (index === 0) {
-          // The core mass everything else billows out of.
-          data[j] = 0;
-          data[j + 1] = 0.26 * radius;
-          data[j + 2] = 0;
-          data[j + 3] = 1.08 * radius;
-          data[j + 4] = 0.55;
-          data[j + 5] = rng() * Math.PI * 2;
+    // ── constellation builders ──────────────────────────────────────────────
+    // Shared per-star hit geometry (invisible, generous): one sphere reused by
+    // every live star's pick volume — freed once at unmount.
+    const starHitGeom = new THREE.SphereGeometry(0.85, 6, 6);
+    const starColorScratch = new THREE.Color();
+    // Resolve a constellation entry's stars: retired gists + live window
+    // members in spoken order, their asterism-walk local offsets (anchor-
+    // relative — the frame loop adds group.position, allocation-free), packed
+    // per-star sizes (word count law) and raw-sRGB speaker colors, and the
+    // per-LIVE-star pick volumes (every windowed star pickable via the
+    // existing {kind:"dialogue"} path; retired gists and dust honestly not —
+    // the endpoint can only resolve windowed turns).
+    const rebuildConstellationStars = (entry: Entry, cloud: ResolvedCloud, az: number) => {
+      const resolved = constellationStars(cloud, topicsRef.current, dialogueRef.current);
+      const stars = resolved.stars;
+      const sig = `${az.toFixed(3)}|${stars.map((star) => `${star.id}${star.live ? "+" : "-"}${star.text.length}`).join("|")}`;
+      entry.skyStars = stars;
+      entry.skyElided = resolved.elided;
+      entry.skyAz = az;
+      if (entry.skyStarSig === sig) {
+        return;
+      }
+      entry.skyStarSig = sig;
+      const offsets = entry.skyStarOffsets ?? new Float32Array(MAX_STARS_PER_CONST * 3);
+      const sizes = entry.skyStarSizes ?? new Float32Array(MAX_STARS_PER_CONST);
+      const colors = entry.skyStarColors ?? new Float32Array(MAX_STARS_PER_CONST * 3);
+      const walk = asterismPositions({ x: 0, y: 0, z: 0 }, az, stars);
+      for (let index = 0; index < stars.length; index += 1) {
+        const star = stars[index]!;
+        const p = walk[index]!;
+        offsets[index * 3] = p.x;
+        offsets[index * 3 + 1] = p.y;
+        offsets[index * 3 + 2] = p.z;
+        sizes[index] = starSize(star.text.split(/\s+/u).filter((word) => word.length > 0).length);
+        const hex = speakerColor(star.speaker);
+        starColorScratch.setRGB(((hex >> 16) & 0xff) / 255, ((hex >> 8) & 0xff) / 255, (hex & 0xff) / 255, THREE.LinearSRGBColorSpace);
+        colors[index * 3] = starColorScratch.r;
+        colors[index * 3 + 1] = starColorScratch.g;
+        colors[index * 3 + 2] = starColorScratch.b;
+      }
+      entry.skyStarOffsets = offsets;
+      entry.skyStarSizes = sizes;
+      entry.skyStarColors = colors;
+      // Per-star pick volumes (live stars only), rebuilt on membership change.
+      const hits = entry.group.children.filter((node) => node.userData.starHit === true);
+      for (const node of hits) {
+        entry.group.remove(node);
+      }
+      for (let index = 0; index < stars.length; index += 1) {
+        const star = stars[index]!;
+        if (!star.live) {
           continue;
         }
-        const angle = rng() * Math.PI * 2;
-        if (index <= baseLobes) {
-          // Base row: wide, hugging y≈0 (the flat cloud bottom).
-          const reach = (0.3 + 0.48 * rng()) * radius;
-          data[j] = Math.cos(angle) * reach;
-          data[j + 1] = (0.02 + 0.08 * rng()) * radius;
-          data[j + 2] = Math.sin(angle) * reach * 0.62;
-          data[j + 3] = (0.66 + 0.24 * rng()) * radius;
-        } else {
-          // Crown: the higher a lobe sits, the nearer the centre and the
-          // smaller it billows (the cauliflower taper).
-          const heightN = 0.35 + 0.55 * rng();
-          const reach = (1.05 - heightN) * (0.55 + 0.3 * rng()) * radius;
-          data[j] = Math.cos(angle) * reach;
-          data[j + 1] = heightN * 0.95 * radius;
-          data[j + 2] = Math.sin(angle) * reach * 0.62;
-          data[j + 3] = (0.62 - 0.28 * heightN + 0.12 * rng()) * radius;
-        }
-        // Shade follows height: dark undersides, moonlit crowns.
-        data[j + 4] = Math.max(0, Math.min(1, data[j + 1] / (0.9 * radius) + 0.12));
-        // Stamp rotation: every lobe samples the billow canvas differently.
-        data[j + 5] = rng() * Math.PI * 2;
+        const hit = new THREE.Mesh(starHitGeom, invisibleHitMat);
+        hit.userData.starHit = true;
+        hit.userData.pick = { kind: "dialogue", key: star.id };
+        hit.position.set(offsets[index * 3]!, offsets[index * 3 + 1]!, offsets[index * 3 + 2]!);
+        entry.group.add(hit);
       }
-      entry.cloudPuffs = data;
-      entry.cloudPuffN = count;
-      // The body ramp is mixed per relayout tick (dormant → active white);
-      // the speaker tint stays a ≤12% nudge so the sky reads composed.
-      entry.cloudTint = rawColor(speakerColor(cloud.dominantSpeaker));
-      entry.cloudColor = entry.cloudColor ?? new THREE.Color();
-      entry.cloudColor.copy(CLOUD_DORMANT_RGB);
-      // The invisible hit ellipsoid tracks the cloud's grown size.
-      entry.cloudHit?.scale.set(radius * 1.25, radius * 0.75 + 0.5, radius * 1.25);
+      // The whole-asterism hit ellipsoid tracks the patch (generous dwell).
+      const half = Math.min(4.2, 1.4 + 0.85 * Math.log2(1 + stars.length));
+      entry.cloudHit?.scale.set(half * 1.2, 1.6, half * 1.2);
     };
 
-    // One cloud: an invisible hit ellipsoid (live clouds pick as their topic's
-    // FRESHEST utterance — the branch-tip precedent, so click/dwell researches
-    // the topic through the existing dialogue path) + a lazy label. The
-    // visible body is the shared puff Points buffer.
+    // One constellation: an invisible whole-patch hit ellipsoid (falls back to
+    // the topic's FRESHEST utterance — the branch-tip precedent) + per-star
+    // volumes + a lazy label. The visible body is the shared data-star Points
+    // + chronology LineSegments buffers.
     const buildCloudEntry = (cloud: ResolvedCloud): Entry => {
       const group = new THREE.Group();
       const hit = new THREE.Mesh(GEO.hitShell, invisibleHitMat);
@@ -3875,7 +3851,6 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       group.add(hit);
       const entry: Entry = { kind: "cloud", cloudSpec: cloud, group, mats: [], baseEmissive: 0, head: null, headY: 0, cat: null, catBaseX: 0, label: null, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: (hashSeed(cloud.id) % 628) / 100, flashStart: null, removing: false };
       entry.cloudHit = hit;
-      genCloudPuffs(entry, cloud);
       return entry;
     };
 
@@ -3900,26 +3875,27 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       }
       const title = cloud.labelSource === "agent" ? `✦ ${cloud.label}` : cloud.label;
       const label = makeLabelSprite(title, statusLine, cssHex(accent));
-      // Cloud chips sit far (the under-deck vista is ~35-60 units out), so
-      // they scale up to the tree-card read size — and the frame loop
-      // distance-normalizes them so every card reads the SAME size on screen.
+      // Constellation chips sit far (the under-deck vista is ~35-60 units
+      // out), so they scale up to the tree-card read size — and the frame
+      // loop distance-normalizes them so every card reads the SAME size on
+      // screen.
       label.scale.multiplyScalar(2.2);
       label.userData.baseSX = label.scale.x;
       label.userData.baseSY = label.scale.y;
-      // The card OVERLAPS its own crown silhouette (bottom edge sunk into the
-      // upper body) — the pill visibly belongs to ITS cloud, never floats.
-      label.position.y = puffRadius(cloud.turnCount) * 0.55 + 0.3;
+      // The card floats just above the asterism's star jitter band — the pill
+      // visibly belongs to ITS constellation, never drifts.
+      label.position.y = 1.5;
       label.userData.accent = accent;
       entry.label = label;
       entry.group.add(label);
     };
 
-    // One research quest: an invisible hit sphere riding under its cloud (the
-    // rain streaks render from the shared buffer) plus a droplet glow once the
-    // dossier is ready. Pick payload stays {kind:"research"} — the existing
+    // One research quest = one PLANET: an invisible generous hit sphere (the
+    // limb-lit body renders from the shared InstancedMesh; failed planets are
+    // honestly non-pickable — sceneTargetIdOf already scopes dwell to
+    // proposed/complete). Pick payload stays {kind:"research"} — the existing
     // accept/deck plumbing is untouched.
-    const buildRainEntry = (spec: ResearchNodeSpec): Entry => {
-      const color = RESEARCH_STATUS_COLOR[spec.status];
+    const buildPlanetEntry = (spec: ResearchNodeSpec): Entry => {
       const group = new THREE.Group();
       const hit = new THREE.Mesh(
         new THREE.SphereGeometry(1.3, 8, 8),
@@ -3929,15 +3905,6 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       hit.userData.ownMaterial = true;
       hit.userData.pick = { kind: "research", key: spec.id };
       group.add(hit);
-      // The droplet: a small glow at the streak head — bright mint when the
-      // dossier is open-able, dim red when the research failed.
-      if (spec.status === "complete" || spec.status === "failed") {
-        const droplet = new THREE.Sprite(
-          new THREE.SpriteMaterial({ map: glowTexture, color, transparent: true, opacity: spec.status === "complete" ? 0.7 : 0.25, blending: THREE.AdditiveBlending, depthWrite: false }),
-        );
-        droplet.scale.setScalar(spec.status === "complete" ? 1.6 : 1.0);
-        group.add(droplet);
-      }
       return { kind: "research", researchSpec: spec, group, mats: [], baseEmissive: 0, head: null, headY: 0, cat: null, catBaseX: 0, label: null, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: (hashSeed(spec.id) % 628) / 100, flashStart: null, removing: false };
     };
 
@@ -4093,7 +4060,7 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       // placeholder): a window holding clouds is the research ceiling — no
       // stray "forming" flower floating in its dusk.
       const nowMs = Date.now();
-      const clouds = resolveClouds(topicsRef.current, skyRef.current, dialogueRef.current);
+      const clouds = resolveConstellations(topicsRef.current, skyRef.current, dialogueRef.current);
       const skyActive = clouds.length > 0;
 
       // PER-WALL CONTRACT: the 3D scene reconciles the FULL data set — all
@@ -4292,14 +4259,15 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         }
       }
 
-      // ── the conversation SKY ────────────────────────────────────────────
-      // One cloud per concept topic on the polar time fan (overhead = now,
-      // horizon = the past), wisps between related clouds (provenance-
-      // colored), research quests as RAIN. Prefers the server's beyond-the-
-      // window `sky`; falls back to dialogueTopics when it is absent (no
-      // wisps then — the fallback invents no relations). Zero cost when the
-      // research props are empty — nothing mounts, the classic scene is
-      // untouched. (`clouds` resolved above, before the idea sweep.)
+      // ── the CONSTELLATION sky ───────────────────────────────────────────
+      // One constellation per concept topic on the chronological band
+      // (azimuth = founding order, west→east; radius = recency), its turns as
+      // stars walked along the eastward tangent in spoken order, relation
+      // arcs between constellations (provenance-colored), research quests as
+      // limb-lit PLANETS, babble as nameless DUST. Prefers the server's
+      // beyond-the-window `sky`; falls back to dialogueTopics when absent (no
+      // arcs then — the fallback invents no relations). Zero cost when the
+      // research props are empty. (`clouds` resolved above.)
       if (skyActive) {
         ensureSkyRig();
       }
@@ -4317,84 +4285,98 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
           agentLinked.add(link.b);
         }
       }
-      // HONESTY FLICKER: agentAtMs ADVANCED = the relate thread actually
-      // applied an update — the agent-linked clouds answer with ~1.2s of
-      // internal lightning. The lexical fallback never stamps, so the sky
-      // never flickers on invented relations.
+      // HONESTY SHIMMER: agentAtMs ADVANCED = the relate thread actually
+      // applied an update — agent-named constellations and agent arcs answer
+      // with ~1.2s of shimmer. The lexical fallback never stamps, so the sky
+      // never shimmers on invented relations.
       const agentAt = skyRef.current?.agentAtMs ?? null;
       if (agentAt !== null && agentAt !== skyAgentAtMs && skyAgentAtMs !== null) {
         skyFlashUntil = performance.now() + 1200;
       }
       skyAgentAtMs = agentAt;
       freshTurnToCloud.clear();
-      // Bearings: hash-stable inside the visible fan, gravitated ≤25% toward
-      // the strongest partner, then relaxed apart (spreadAzimuths) so the
-      // vista reads balanced — clouds never clump into one corner of frame.
-      const rawBearings = clouds.map((cloud) => {
-        const partner = strongestPartner(cloud.id, skyWisps);
-        let az = fanAzimuth(cloud.id, skyFanCenter);
-        if (partner !== null) {
-          az = gravitatedAzimuth(az, fanAzimuth(partner.id, skyFanCenter), partner.strength);
-        }
-        return { id: cloud.id, az };
-      });
-      // Near-uniform spread: bodies cap at puffRadius 6, so pushing bearings
-      // toward even spacing keeps every silhouette separate (label→cloud
-      // binding depends on it), while ≥14 clouds still honor ~10° minimum.
-      const minSep = Math.min(0.8, ((SKY_FAN_HALF * 2) / Math.max(clouds.length - 1, 1)) * 0.9);
-      const bearings = spreadAzimuths(rawBearings, skyFanCenter, minSep);
+      // BAND LAW: azimuth is founding chronology — oldest west, newest east;
+      // a new topic slides every older constellation gently west.
+      const bearings = bandAzimuths(clouds, skyFanCenter);
+      // Dust chronology's western edge: the oldest moment this sky still
+      // remembers (constellation founding or retired dust).
+      let sessionStart = Number.POSITIVE_INFINITY;
+      for (const cloud of clouds) {
+        sessionStart = Math.min(sessionStart, cloud.firstAtMs);
+      }
+      for (const mote of skyRef.current?.dust ?? []) {
+        sessionStart = Math.min(sessionStart, mote.atMs);
+      }
+      skySessionStartMs = Number.isFinite(sessionStart) ? sessionStart : nowMs;
       const seenClouds = new Set<string>();
       for (const cloud of clouds) {
         seenClouds.add(cloud.id);
-        // TIME IS THE LAYOUT: radius + altitude follow the age log law (fresh
-        // = lifted overhead near the core, old = sunk to the horizon rim);
-        // the bearing stays hash-anchored — clouds never orbit randomly.
+        // TIME IS THE LAYOUT twice over: radius/altitude follow the age law
+        // (fresh = lifted near the core, old = sunk to the horizon) while the
+        // bearing is the founding order — a revisited topic rides back toward
+        // the core in its ORIGINAL azimuth slot (an old constellation waking).
         const age = cloudAge(nowMs, cloud.freshAtMs);
-        const azimuth = bearings.get(cloud.id) ?? fanAzimuth(cloud.id, skyFanCenter);
-        const radius = staggeredRadius(cloud.id, age);
-        const norm = radiusNorm(age);
-        const altJitter = ((hashSeed(`alt:${cloud.id}`) % 1000) / 1000 - 0.5) * 1.4;
+        const azimuth = bearings.get(cloud.id) ?? skyFanCenter;
+        const anchor = constellationAnchor(cloud.id, azimuth, age);
         let entry = cloudEntries.get(cloud.id);
         if (entry === undefined) {
           entry = buildCloudEntry(cloud);
-          entry.targetPos.set(Math.sin(azimuth) * radius, cloudAltitude(norm, altJitter), Math.cos(azimuth) * radius);
-          // Clouds CONDENSE: scale in from nothing at their own spot.
+          entry.targetPos.set(anchor.x, anchor.y, anchor.z);
+          // Constellations CONDENSE: scale in from nothing at their own spot.
           entry.group.position.copy(entry.targetPos);
           entry.group.scale.setScalar(0.01);
           cloudEntries.set(cloud.id, entry);
           scene.add(entry.group);
         } else {
           const prior = entry.cloudSpec;
-          entry.targetPos.set(Math.sin(azimuth) * radius, cloudAltitude(norm, altJitter), Math.cos(azimuth) * radius);
+          entry.targetPos.set(anchor.x, anchor.y, anchor.z);
           entry.removing = false;
           entry.targetScale = 1;
-          // More said → the cloud regrows its lobes; a rename (agent
-          // condensation or topic relabel) drops the card so the next show
-          // repaints it.
-          if (prior !== undefined && (prior.turnCount !== cloud.turnCount || prior.dominantSpeaker !== cloud.dominantSpeaker)) {
-            genCloudPuffs(entry, cloud);
-          }
-          if (prior !== undefined && prior.label !== cloud.label && entry.label !== null) {
+          // A rename (agent condensation or topic relabel) or a naming-gate
+          // flip drops the card so the next show repaints it.
+          if (prior !== undefined && (prior.label !== cloud.label || prior.named !== cloud.named) && entry.label !== null) {
             entry.group.remove(entry.label);
             entry.label.material.map?.dispose();
             entry.label.material.dispose();
             entry.label = null;
           }
           entry.cloudSpec = cloud;
-          // The pick identity follows the freshest utterance; a memory cloud
-          // (nothing live left) honestly exposes no pick at all.
+          // The whole-patch pick identity follows the freshest utterance; a
+          // memory constellation (nothing live left) honestly exposes none.
           if (entry.cloudHit !== undefined) {
             entry.cloudHit.userData.pick =
               cloud.freshestTurnId !== null ? { kind: "dialogue", key: cloud.freshestTurnId } : undefined;
           }
         }
-        entry.cloudNorm = norm;
-        entry.cloudLife = lifeFactor(age);
-        entry.cloudJitter = altJitter;
+        // Stars (retired gists + live members), their offsets, sizes, colors,
+        // and per-live-star pick volumes.
+        rebuildConstellationStars(entry, cloud, azimuth);
+        entry.cloudNorm = radiusNorm(age);
+        entry.cloudLife = constellationBrightness(age);
         entry.cloudHasAgentLink = agentLinked.has(cloud.id);
+        // EVERY windowed star is pickable — the turn→constellation index
+        // routes hover/dwell/activation through the dialogue path.
+        for (const star of entry.skyStars ?? []) {
+          if (star.live) {
+            freshTurnToCloud.set(star.id, cloud.id);
+          }
+        }
         if (cloud.freshestTurnId !== null) {
           freshTurnToCloud.set(cloud.freshestTurnId, cloud.id);
         }
+      }
+      // THE SINGLE NOW: the freshest live star of the freshest ACTIVE
+      // constellation (or none — an idle sky has no NOW).
+      {
+        const starsById = new Map<string, readonly ConstellationStar[]>();
+        for (const [cloudId, entry] of cloudEntries) {
+          if (!entry.removing && entry.skyStars !== undefined) {
+            starsById.set(cloudId, entry.skyStars);
+          }
+        }
+        const nowPick = nowStarId(clouds, starsById, nowMs);
+        skyNowConstId = nowPick?.constellationId ?? null;
+        skyNowStarId = nowPick?.starId ?? null;
       }
       for (const [cloudId, entry] of cloudEntries) {
         if (seenClouds.has(cloudId) || entry.removing) {
@@ -4424,43 +4406,48 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         }
       }
 
-      // RAIN: one entry per research quest, hanging under its cloud (the
-      // zenith core when the grounding turn's cloud is unknown). Siblings fan
-      // out so every quest stays separately pointable.
+      // PLANETS: one entry per research quest, hung 0.9 below its grounding
+      // STAR when that exact turn is rendered (the filament the operator
+      // missed ties them), else below its constellation's anchor, else the
+      // inner deck. Siblings fan out so every quest stays pointable.
       const researchSpecs = researchRef.current;
       const seenResearch = new Set<string>();
-      const rainSiblings = new Map<string, number>();
+      const planetSiblings = new Map<string, number>();
+      let planetSlot = 0;
       for (const spec of researchSpecs) {
         seenResearch.add(spec.id);
         const cloudId = questCloudId(spec.turnId, dialogueRef.current, clouds);
         const anchor = cloudId !== null ? cloudEntries.get(cloudId) : undefined;
-        const sibling = rainSiblings.get(cloudId ?? "@zenith") ?? 0;
-        rainSiblings.set(cloudId ?? "@zenith", sibling + 1);
-        const fan = (hashSeed(`rain:${spec.id}`) % 628) / 100;
-        // Streaks stay CONFINED under their cloud's footprint (a detached
-        // tick reads as a glitch): lateral spread scales with the cloud's own
-        // radius. Orphans (turn gone, cloud unknown) hang at the inner deck.
-        const anchorSpread =
-          anchor?.cloudSpec !== undefined ? puffRadius(anchor.cloudSpec.turnCount) * (0.28 + 0.18 * sibling) : 0.8 + sibling * 0.5;
+        const sibling = planetSiblings.get(cloudId ?? "@zenith") ?? 0;
+        planetSiblings.set(cloudId ?? "@zenith", sibling + 1);
+        const fan = (hashSeed(`planet:${spec.id}`) % 628) / 100;
+        // The exact grounding star, when the asterism renders it.
+        let starIndex = -1;
+        if (anchor !== undefined && spec.turnId !== null && anchor.skyStars !== undefined) {
+          starIndex = anchor.skyStars.findIndex((star) => star.id === spec.turnId);
+        }
         const placed =
           anchor !== undefined
-            ? new THREE.Vector3(
-                anchor.targetPos.x + Math.cos(fan) * anchorSpread,
-                anchor.targetPos.y - 0.9,
-                anchor.targetPos.z + Math.sin(fan) * anchorSpread,
-              )
+            ? starIndex >= 0 && anchor.skyStarOffsets !== undefined
+              ? new THREE.Vector3(
+                  anchor.targetPos.x + anchor.skyStarOffsets[starIndex * 3]!,
+                  anchor.targetPos.y + anchor.skyStarOffsets[starIndex * 3 + 1]! - 0.9,
+                  anchor.targetPos.z + anchor.skyStarOffsets[starIndex * 3 + 2]!,
+                )
+              : new THREE.Vector3(
+                  anchor.targetPos.x + Math.cos(fan) * (0.8 + 0.5 * sibling),
+                  anchor.targetPos.y - 0.9,
+                  anchor.targetPos.z + Math.sin(fan) * (0.8 + 0.5 * sibling),
+                )
             : new THREE.Vector3(
                 Math.sin(skyFanCenter) * 4 + Math.cos(fan) * 1.8,
                 SKY_ALT + 1.2 - sibling * 0.6,
                 Math.cos(skyFanCenter) * 4 + Math.sin(fan) * 1.8,
               );
-        // Shower footprint: streaks spread under the parent cloud's own base
-        // (orphans get a tight zenith drizzle).
-        const spread =
-          anchor?.cloudSpec !== undefined ? Math.max(1.2, puffRadius(anchor.cloudSpec.turnCount) * 0.55) : 1.2;
         const existing = researchEntries.get(spec.id);
+        let entry: Entry;
         if (existing === undefined || (existing.researchSpec !== undefined && researchSpecChanged(existing.researchSpec, spec))) {
-          // Completing is THE payoff moment: the finished rain flashes.
+          // Completing is THE payoff moment: the finished planet flashes.
           const finished =
             existing?.researchSpec !== undefined && existing.researchSpec.status !== "complete" && spec.status === "complete";
           const keepPos = existing?.group.position.clone();
@@ -4468,9 +4455,8 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
           if (existing !== undefined) {
             disposeEntry(existing);
           }
-          const entry = buildRainEntry(spec);
+          entry = buildPlanetEntry(spec);
           entry.targetPos.copy(placed);
-          entry.rainSpread = spread;
           entry.group.position.copy(keepPos ?? placed);
           entry.group.scale.setScalar(Math.max(keepScale ?? 0.01, 0.01));
           researchEntries.set(spec.id, entry);
@@ -4479,12 +4465,14 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
             entry.flashStart = performance.now();
           }
         } else {
+          entry = existing;
           existing.researchSpec = spec;
           existing.targetPos.copy(placed);
-          existing.rainSpread = spread;
           existing.removing = false;
           existing.targetScale = 1;
         }
+        entry.planetSlot = planetSlot < SKY_MAX_PLANETS ? planetSlot : -1;
+        planetSlot += 1;
       }
       for (const [specId, entry] of researchEntries) {
         if (!seenResearch.has(specId)) {
@@ -4492,16 +4480,92 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
           entry.targetScale = 0;
         }
       }
+      // PLANET LABELS (≤2 — the label budget): the freshest proposed and the
+      // freshest researching quest. proposed `{glyph} {topic}`, researching
+      // `{glyph} {topic} · {pct}%`, complete flashes then goes quiet.
+      {
+        const labeled = new Set<string>();
+        for (const status of ["proposed", "researching"] as const) {
+          const pick = researchSpecs.find((spec) => spec.status === status);
+          if (pick !== undefined) {
+            labeled.add(pick.id);
+          }
+        }
+        for (const [specId, entry] of researchEntries) {
+          const spec = entry.researchSpec;
+          const want = spec !== undefined && labeled.has(specId) && !entry.removing;
+          if (!want) {
+            if (entry.label !== null) {
+              entry.group.remove(entry.label);
+              entry.label.material.map?.dispose();
+              entry.label.material.dispose();
+              entry.label = null;
+            }
+            continue;
+          }
+          const status =
+            spec.status === "researching" ? `${Math.round(spec.progress)}%` : spec.status === "complete" ? "open dossier" : "dwell to accept";
+          if (entry.label === null) {
+            const label = makeLabelSprite(`${RESEARCH_KIND_GLYPH[spec.kind]} ${spec.topic}`, status, cssHex(RESEARCH_STATUS_COLOR[spec.status]));
+            label.scale.multiplyScalar(1.8);
+            label.userData.baseSX = label.scale.x;
+            label.userData.baseSY = label.scale.y;
+            label.position.y = 1.1;
+            entry.label = label;
+            entry.group.add(label);
+            entry.label.userData.lastStatus = status;
+          } else if (entry.label.userData.lastStatus !== status) {
+            entry.label.userData.lastStatus = status;
+            updateLabelStatus(entry.label, status);
+          }
+        }
+      }
 
-      // Fresh membership ⇒ fresh back-to-front lobe order for the normal-
-      // blended cumulus bodies (re-sorted again on the 1s relayout tick).
-      rebuildSkyLobeOrder(camera.position);
+      // DUST: precomputed placements (event-cadence — dust barely moves):
+      // windowed babble turns (topicId null) + the retired dust ledger. Stars
+      // of UNNAMED constellations dim to dust in place instead (they keep
+      // their asterism seat, honesty about structure).
+      {
+        let dustCount = 0;
+        for (const turn of dialogueRef.current) {
+          if (dustCount >= MAX_DUST) {
+            break;
+          }
+          // EXPLICIT null topicId = the server's dust pool (babble). Absent
+          // (undefined) means a legacy unclustered turn — not dust.
+          if (turn.topicId === null) {
+            const p = dustPosition(turn.id, turn.atMs, skySessionStartMs, nowMs, skyFanCenter);
+            skyDustPos[dustCount * 3] = p.x;
+            skyDustPos[dustCount * 3 + 1] = p.y;
+            skyDustPos[dustCount * 3 + 2] = p.z;
+            dustCount += 1;
+          }
+        }
+        const ledger = skyRef.current?.dust ?? [];
+        for (let index = 0; index < ledger.length && dustCount < MAX_DUST; index += 1) {
+          const p = dustPosition(`sd:${index}`, ledger[index]!.atMs, skySessionStartMs, nowMs, skyFanCenter);
+          skyDustPos[dustCount * 3] = p.x;
+          skyDustPos[dustCount * 3 + 1] = p.y;
+          skyDustPos[dustCount * 3 + 2] = p.z;
+          dustCount += 1;
+        }
+        skyDustCount = dustCount;
+      }
 
       // Prober stamps: the sky's structural counts (data-labeled-clouds and
       // data-draw-calls ride the 1s tick in the frame loop).
+      let starStamp = 0;
+      for (const entry of cloudEntries.values()) {
+        if (!entry.removing) {
+          starStamp += entry.skyStars?.length ?? 0;
+        }
+      }
       container.dataset.cloudCount = String(clouds.length);
       container.dataset.wispCount = String(skyWisps.length);
-      container.dataset.rainCount = String(Math.min(researchSpecs.length, SKY_MAX_RAIN_QUESTS));
+      container.dataset.skyConstellations = String(clouds.length);
+      container.dataset.skyStars = String(starStamp);
+      container.dataset.skyDust = String(skyDustCount);
+      container.dataset.skyPlanets = String(Math.min(researchSpecs.length, SKY_MAX_PLANETS));
 
     };
 
@@ -5155,12 +5219,13 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       }
       renderer.setSize(width, height);
       camera.aspect = width / height;
-      // Puff sprites are sized in-shader (world size / distance): keep the
-      // pixel factor tied to the viewport height + vertical fov.
+      // Anchor glows are sized in-shader (world size / distance): keep the
+      // pixel factor tied to the viewport height + vertical fov; data stars
+      // track the device pixel ratio.
       if (skyRig !== null) {
         const pixelFactor = height / (2 * Math.tan((camera.fov * Math.PI) / 360));
-        skyRig.puffMat.uniforms.uScale!.value = pixelFactor;
         skyRig.anchorMat.uniforms.uScale!.value = pixelFactor;
+        skyRig.dataStarMat.uniforms.uPx!.value = renderer.getPixelRatio();
       }
       if (flatLocked) {
         // This window renders ITS column of the pair's single wide frustum.
@@ -5511,16 +5576,16 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         }
       }
 
-      // ── the conversation sky, per frame ─────────────────────────────────
-      // Clouds DRIFT (slow τ≈3s lerp — recurrence made visible: a topic that
-      // comes back glides overhead instead of snapping). Pass 1 walks the
-      // cloud entries (motion, chips, per-cloud light); pass 2 walks the
-      // depth-sorted lobe order rewriting the shared Points buffers (normal
-      // blending needs back-to-front). Zero allocation in this whole block.
+      // ── the constellation sky, per frame ────────────────────────────────
+      // Constellations DRIFT (slow τ≈3s lerp — recurrence made visible: a
+      // topic that comes back glides toward the core in its own azimuth
+      // slot). Pass 1 walks the entries (motion, chips, brightness); pass 2
+      // rewrites the shared data-star / chronology-line / planet buffers in
+      // place. Zero allocation in this whole block.
       const skySmoothing = 1 - Math.exp(-dt * 0.35);
       // 1s low-cadence relayout: ages advance through silence between
-      // snapshots (radius + altitude keep drifting toward the horizon), the
-      // body ramp re-mixes, the lobe order re-sorts, prober stamps refresh.
+      // snapshots (radius + altitude keep drifting toward the horizon),
+      // brightness re-mixes, prober stamps refresh.
       const relayoutDue = now - skyLastRelayoutMs >= 1000;
       if (relayoutDue) {
         skyLastRelayoutMs = now;
@@ -5541,7 +5606,8 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         }
         if (relayoutDue) {
           // Write targets only (auto-fit-poll discipline): radius + altitude
-          // from the fresh age; the bearing stays whatever reconcile computed.
+          // from the fresh age; the bearing stays whatever reconcile computed
+          // (the chronological band slot).
           const norm = radiusNorm(age);
           const radial = Math.hypot(entry.targetPos.x, entry.targetPos.z);
           if (radial > 1e-6) {
@@ -5549,27 +5615,39 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
             entry.targetPos.x *= radius / radial;
             entry.targetPos.z *= radius / radial;
           }
-          entry.targetPos.y = cloudAltitude(norm, entry.cloudJitter ?? 0);
+          entry.targetPos.y = SKY_ALT + (1 - norm) * (1 - norm) * CONST_LIFT;
           entry.cloudNorm = norm;
-          entry.cloudLife = lifeFactor(age);
-          // Body ramp: dormant lavender-grey → near-white while ACTIVE (the
-          // focal law), relaxing back over ~3min of silence; ≤12% speaker
-          // tint on top so the sky stays composed, not carnival.
-          const activeness = age < ACTIVE_MS ? 1 : Math.max(0, 1 - (age - ACTIVE_MS) / 180_000);
-          if (entry.cloudColor !== undefined) {
-            entry.cloudColor.copy(CLOUD_DORMANT_RGB).lerp(CLOUD_ACTIVE_RGB, activeness);
-            if (entry.cloudTint !== undefined) {
-              entry.cloudColor.lerp(entry.cloudTint, 0.12);
-            }
-          }
+          entry.cloudLife = constellationBrightness(age);
         }
-      }
-      if (relayoutDue) {
-        rebuildSkyLobeOrder(camera.position);
       }
       const flashing = skyFlashUntil > now;
       const rig2 = skyRig;
+      let skyLineVert = 0;
       if (rig2 !== null) {
+        // LABEL BUDGET (≤3 constellation cards + ≤2 planet cards): the active
+        // constellation plus the two freshest NAMED others. Unnamed
+        // accumulations (thin, or agent-dusted) never carry a card.
+        let labelA: string | null = null;
+        let labelAFresh = -Infinity;
+        let labelB: string | null = null;
+        let labelBFresh = -Infinity;
+        for (const [cloudId, entry] of cloudEntries) {
+          const cloud = entry.cloudSpec;
+          if (entry.removing || cloud === undefined || cloud.named === false || cloudId === activeCloudId) {
+            continue;
+          }
+          if (cloud.freshAtMs > labelAFresh) {
+            labelB = labelA;
+            labelBFresh = labelAFresh;
+            labelA = cloudId;
+            labelAFresh = cloud.freshAtMs;
+          } else if (cloud.freshAtMs > labelBFresh) {
+            labelB = cloudId;
+            labelBFresh = cloud.freshAtMs;
+          }
+        }
+        let starIdx = 0;
+        let nowHaloPlaced = false;
         for (const [cloudId, entry] of cloudEntries) {
           entry.group.position.lerp(entry.targetPos, entry.removing ? smoothing : skySmoothing);
           const cloud = entry.cloudSpec;
@@ -5585,12 +5663,17 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
             cloudEntries.delete(cloudId);
             continue;
           }
-          // PERSISTENT name chips (the glance-readability contract): every
-          // live cloud keeps its card; ONLY the single freshest active cloud
-          // says the green "NOW" — a refreshed runner-up demotes to a cool
-          // "JUST NOW", so two cards never both claim the present. Status
-          // ticks repaint in place; accent flips rebuild.
-          const wantLabel = !entry.removing && cloud !== undefined;
+          // NAME CHIPS under the label budget; ONLY the single freshest
+          // active constellation says the green "NOW" — a refreshed
+          // runner-up demotes to a cool "JUST NOW", so two cards never both
+          // claim the present. Status ticks repaint in place; accent flips
+          // rebuild.
+          const named = cloud !== undefined && cloud.named !== false;
+          const wantLabel =
+            !entry.removing &&
+            cloud !== undefined &&
+            named &&
+            (cloudId === activeCloudId || cloudId === labelA || cloudId === labelB);
           if (wantLabel && cloud !== undefined) {
             const age = cloudAge(nowEpoch, cloud.freshAtMs);
             const minutes = Math.round(age / 60_000);
@@ -5613,21 +5696,25 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
             if (baseSX !== undefined && baseSY !== undefined) {
               const dist = camera.position.distanceTo(entry.group.position);
               // Group-scale compensation is capped so a condensing/dissolving
-              // cloud still carries its card through the scale animation.
+              // constellation still carries its card through the animation.
               const k = Math.min(2.4, Math.max(0.8, dist / 42)) / Math.max(entry.group.scale.x, 0.5);
-              entry.label.scale.set(baseSX * k, baseSY * k, 1);
+              // AGENT SHIMMER: agentAtMs advanced → ✦-titled cards shimmer
+              // ~1.2s (deterministic structure never shimmers).
+              const shimmer =
+                flashing && cloud?.labelSource === "agent" && !reducedMotion ? 1 + 0.07 * Math.sin(t * 21) : 1;
+              entry.label.scale.set(baseSX * k * shimmer, baseSY * k * shimmer, 1);
             }
           }
-          const norm = entry.cloudNorm ?? 0;
-          const life = entry.cloudLife ?? 1;
-          // Lightning: only agent-linked clouds, only while a real applied
-          // tick is fresh — a jittery two-tone flicker that decays fast.
-          const flicker =
-            flashing && entry.cloudHasAgentLink === true && !reducedMotion
-              ? (0.5 + 0.5 * Math.sin(t * 23 + entry.phase) * Math.sin(t * 31)) * ((skyFlashUntil - now) / 1200) * 0.6
-              : 0;
-          // Merge-survivor pulse (the shared flashStart path): the absorbing
-          // cloud brightens briefly, then settles.
+          // STARS + CHRONOLOGY LINES into the shared buffers.
+          const stars = entry.skyStars;
+          const offsets = entry.skyStarOffsets;
+          const sizes = entry.skyStarSizes;
+          const colors = entry.skyStarColors;
+          if (entry.removing || cloud === undefined || stars === undefined || offsets === undefined || sizes === undefined || colors === undefined) {
+            continue;
+          }
+          // Merge-survivor pulse (the shared flashStart path) + agent
+          // shimmer on agent-touched constellations while a tick is fresh.
           let flashBoost = 0;
           if (entry.flashStart !== null) {
             const progress = (now - entry.flashStart) / FLASH_MS;
@@ -5637,66 +5724,147 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
               flashBoost = Math.abs(Math.sin(progress * Math.PI * 3)) * (1 - progress) * 0.8;
             }
           }
-          // FLOOR: every labeled topic keeps a visible body (~40% of active)
-          // — a card must never float over empty sky (the aged-out smudge).
-          entry.cloudAlphaBase = Math.max(
-            0.62 * life * rimFactor(norm) * (1 + flicker + flashBoost),
-            0.26,
-          ) * (hovered ? 1.3 : 1);
-        }
-        // Pass 2: rewrite the shared lobe buffer BACK-TO-FRONT (skyLobeOrder)
-        // so the normal-blended cumulus bodies layer like real clouds.
-        let puffIndex = 0;
-        for (let orderIndex = 0; orderIndex < SKY_MAX_PUFFS && puffIndex < SKY_MAX_PUFFS; orderIndex += 1) {
-          const slot = skyLobeOrder[orderIndex];
-          const entry = slot.entry;
-          if (entry === null || entry.group.parent === null) {
-            continue; // slot empty, or the entry was disposed since the sort
-          }
-          const puffs = entry.cloudPuffs;
-          const color = entry.cloudColor;
-          if (puffs === undefined || color === undefined || slot.lobe >= (entry.cloudPuffN ?? 0)) {
-            continue;
-          }
-          const norm = entry.cloudNorm ?? 0;
-          const life = entry.cloudLife ?? 1;
-          const active = life >= 1;
-          const flatten = rimFlatten(norm);
+          const shimmerBoost =
+            flashing && (entry.cloudHasAgentLink === true || cloud.labelSource === "agent") && !reducedMotion
+              ? 0.3 * Math.abs(Math.sin(t * 17 + entry.phase)) * ((skyFlashUntil - now) / 1200)
+              : 0;
+          const brightness = (entry.cloudLife ?? 1) * (1 + flashBoost + shimmerBoost) * (hovered ? 1.25 : 1);
+          const gx = entry.group.position.x;
+          const gy = entry.group.position.y;
+          const gz = entry.group.position.z;
           const grow = entry.group.scale.x;
-          const j = slot.lobe * 6;
-          // Lobe-level roil while the cloud is ACTIVE (calm breathe, never
-          // a blink — blink stays the emergency register).
-          const roil = active && !reducedMotion ? 1 + 0.07 * Math.sin(t * 1.1 + entry.phase + slot.lobe * 1.7) : 1;
-          const w = puffIndex * 3;
-          rig2.puffPos[w] = entry.group.position.x + puffs[j] * grow * roil;
-          rig2.puffPos[w + 1] = entry.group.position.y + puffs[j + 1] * grow * flatten * roil;
-          rig2.puffPos[w + 2] = entry.group.position.z + puffs[j + 2] * grow * roil;
-          rig2.puffSize[puffIndex] = puffs[j + 3] * grow * (active && !reducedMotion ? 1 + 0.05 * Math.sin(t * 0.9 + entry.phase + slot.lobe) : 1);
-          rig2.puffColor[w] = color.r;
-          rig2.puffColor[w + 1] = color.g;
-          rig2.puffColor[w + 2] = color.b;
-          rig2.puffAlpha[puffIndex] = (entry.cloudAlphaBase ?? 0) * (0.78 + 0.22 * puffs[j + 4]);
-          rig2.puffShade[puffIndex] = puffs[j + 4];
-          // Aerial perspective: the older (rim-normed) the cloud, the deeper
-          // its body sinks into the dusk — history reads as haze, CAPPED so
-          // a rim cloud is still a cloud shape, not a shapeless smudge.
-          rig2.puffHaze[puffIndex] = Math.min(0.45, norm * norm * 0.6);
-          rig2.puffRot[puffIndex] = puffs[j + 5];
-          puffIndex += 1;
+          let prevX = 0;
+          let prevY = 0;
+          let prevZ = 0;
+          let prevAt = 0;
+          for (let k = 0; k < stars.length && starIdx < SKY_MAX_DATA_STARS; k += 1) {
+            const star = stars[k]!;
+            const px = gx + offsets[k * 3]! * grow;
+            const py = gy + offsets[k * 3 + 1]! * grow;
+            const pz = gz + offsets[k * 3 + 2]! * grow;
+            const w = starIdx * 3;
+            rig2.dataStarPos[w] = px;
+            rig2.dataStarPos[w + 1] = py;
+            rig2.dataStarPos[w + 2] = pz;
+            const isNow = cloudId === skyNowConstId && star.id === skyNowStarId;
+            if (named) {
+              // Speaker identity color; the single NOW star carries the
+              // green accent (and the pulsing halo below).
+              const cr = isNow ? NOW_ACCENT_RGB.r : colors[k * 3]!;
+              const cg = isNow ? NOW_ACCENT_RGB.g : colors[k * 3 + 1]!;
+              const cb = isNow ? NOW_ACCENT_RGB.b : colors[k * 3 + 2]!;
+              rig2.dataStarColor[w] = cr;
+              rig2.dataStarColor[w + 1] = cg;
+              rig2.dataStarColor[w + 2] = cb;
+              rig2.dataStarSize[starIdx] = sizes[k]! * (isNow ? 1.15 : 1);
+              rig2.dataStarAlpha[starIdx] = Math.min(1, (star.live ? 1 : 0.7) * brightness);
+            } else {
+              // UNNAMED accumulation (thin / agent-dusted): its stars keep
+              // their asterism seats but dim to the dust class — structure
+              // stays honest, decoration goes quiet.
+              rig2.dataStarColor[w] = SKY_DUST_RGB.r;
+              rig2.dataStarColor[w + 1] = SKY_DUST_RGB.g;
+              rig2.dataStarColor[w + 2] = SKY_DUST_RGB.b;
+              rig2.dataStarSize[starIdx] = 2.4;
+              rig2.dataStarAlpha[starIdx] = 0.25;
+            }
+            rig2.dataStarRing[starIdx] = 0;
+            starIdx += 1;
+            if (isNow) {
+              rig2.nowHalo.position.set(px, py, pz);
+              nowHaloPlaced = true;
+            }
+            // The chronology line: consecutive spoken-order segments; a >2min
+            // gap renders faint (the return line of a revisited topic).
+            if (k > 0 && named && skyLineVert + 2 <= SKY_MAX_LINE_VERTS) {
+              const lineTone = Math.min(1, 0.5 * brightness) * segmentAlphaFactor(star.atMs - prevAt);
+              const lb = skyLineVert * 3;
+              rig2.linePos[lb] = prevX;
+              rig2.linePos[lb + 1] = prevY;
+              rig2.linePos[lb + 2] = prevZ;
+              rig2.linePos[lb + 3] = px;
+              rig2.linePos[lb + 4] = py;
+              rig2.linePos[lb + 5] = pz;
+              for (let v = 0; v < 2; v += 1) {
+                const lc = (skyLineVert + v) * 3;
+                rig2.lineColor[lc] = STAR_LINE_RGB.r * lineTone;
+                rig2.lineColor[lc + 1] = STAR_LINE_RGB.g * lineTone;
+                rig2.lineColor[lc + 2] = STAR_LINE_RGB.b * lineTone;
+              }
+              skyLineVert += 2;
+            }
+            prevX = px;
+            prevY = py;
+            prevZ = pz;
+            prevAt = star.atMs;
+          }
+          // ELIDED HISTORY: one hollow ring star west of the asterism plus a
+          // faint stub — "more turns before this sky remembers", never a lie
+          // of completeness. No pick (the turns are gone).
+          if (named && (entry.skyElided ?? 0) > 0 && stars.length > 0 && starIdx < SKY_MAX_DATA_STARS) {
+            const az = entry.skyAz ?? 0;
+            const ringX = gx + (offsets[0]! - Math.cos(az) * 1.1) * grow;
+            const ringY = gy + offsets[1]! * grow;
+            const ringZ = gz + (offsets[2]! + Math.sin(az) * 1.1) * grow;
+            const w = starIdx * 3;
+            const ringTone = Math.min(1, 0.55 * brightness);
+            rig2.dataStarPos[w] = ringX;
+            rig2.dataStarPos[w + 1] = ringY;
+            rig2.dataStarPos[w + 2] = ringZ;
+            rig2.dataStarColor[w] = STAR_LINE_RGB.r;
+            rig2.dataStarColor[w + 1] = STAR_LINE_RGB.g;
+            rig2.dataStarColor[w + 2] = STAR_LINE_RGB.b;
+            rig2.dataStarSize[starIdx] = 5.5;
+            rig2.dataStarAlpha[starIdx] = ringTone;
+            rig2.dataStarRing[starIdx] = 1;
+            starIdx += 1;
+            if (skyLineVert + 2 <= SKY_MAX_LINE_VERTS) {
+              const stubTone = Math.min(1, 0.35 * brightness);
+              const lb = skyLineVert * 3;
+              rig2.linePos[lb] = ringX;
+              rig2.linePos[lb + 1] = ringY;
+              rig2.linePos[lb + 2] = ringZ;
+              rig2.linePos[lb + 3] = gx + offsets[0]! * grow;
+              rig2.linePos[lb + 4] = gy + offsets[1]! * grow;
+              rig2.linePos[lb + 5] = gz + offsets[2]! * grow;
+              for (let v = 0; v < 2; v += 1) {
+                const lc = (skyLineVert + v) * 3;
+                rig2.lineColor[lc] = STAR_LINE_RGB.r * stubTone;
+                rig2.lineColor[lc + 1] = STAR_LINE_RGB.g * stubTone;
+                rig2.lineColor[lc + 2] = STAR_LINE_RGB.b * stubTone;
+              }
+              skyLineVert += 2;
+            }
+          }
         }
-        rig2.puffGeom.setDrawRange(0, puffIndex);
-        rig2.puffGeom.getAttribute("position").needsUpdate = true;
-        rig2.puffGeom.getAttribute("aSize").needsUpdate = true;
-        rig2.puffGeom.getAttribute("aColor").needsUpdate = true;
-        rig2.puffGeom.getAttribute("aAlpha").needsUpdate = true;
-        rig2.puffGeom.getAttribute("aShade").needsUpdate = true;
-        rig2.puffGeom.getAttribute("aHaze").needsUpdate = true;
-        rig2.puffGeom.getAttribute("aRot").needsUpdate = true;
-        // The moon light direction for the shader's moon-side rim: the moon's
-        // fixed world spot expressed in THIS frame's view space (one scratch
-        // vector, no allocation).
-        skyMoonScratch.copy(rig2.moonWorld).applyMatrix4(camera.matrixWorldInverse);
-        (rig2.puffMat.uniforms.uMoonView!.value as THREE.Vector3).copy(skyMoonScratch);
+        // DUST: precomputed placements (reconcile cadence) — chronological,
+        // below the band, tiny, quiet, never connected, never labeled.
+        for (let d = 0; d < skyDustCount && starIdx < SKY_MAX_DATA_STARS; d += 1) {
+          const w = starIdx * 3;
+          rig2.dataStarPos[w] = skyDustPos[d * 3]!;
+          rig2.dataStarPos[w + 1] = skyDustPos[d * 3 + 1]!;
+          rig2.dataStarPos[w + 2] = skyDustPos[d * 3 + 2]!;
+          rig2.dataStarColor[w] = SKY_DUST_RGB.r;
+          rig2.dataStarColor[w + 1] = SKY_DUST_RGB.g;
+          rig2.dataStarColor[w + 2] = SKY_DUST_RGB.b;
+          rig2.dataStarSize[starIdx] = 2;
+          rig2.dataStarAlpha[starIdx] = 0.25;
+          rig2.dataStarRing[starIdx] = 0;
+          starIdx += 1;
+        }
+        rig2.dataStarGeom.setDrawRange(0, starIdx);
+        rig2.dataStarGeom.getAttribute("position").needsUpdate = true;
+        rig2.dataStarGeom.getAttribute("aSize").needsUpdate = true;
+        rig2.dataStarGeom.getAttribute("aColor").needsUpdate = true;
+        rig2.dataStarGeom.getAttribute("aAlpha").needsUpdate = true;
+        rig2.dataStarGeom.getAttribute("aRing").needsUpdate = true;
+        // The single NOW halo: pulsing on the freshest live star, hidden when
+        // nothing is active (an idle sky has no NOW).
+        rig2.nowHalo.visible = nowHaloPlaced;
+        if (nowHaloPlaced) {
+          const pulse = reducedMotion ? 1 : 1 + 0.22 * Math.sin(t * 2.6);
+          rig2.nowHalo.scale.setScalar(1.5 * pulse);
+        }
         // WISPS: glowing ribbons arched ABOVE the deck between the clouds'
         // CURRENT positions — width + brightness from strength, color from
         // provenance (warm agent / cool lexical — the honesty surface), and a
@@ -5823,19 +5991,12 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         }
       }
 
-      // Research RAIN: a real SHOWER of slanted, varied streaks under each
-      // quest's cloud base (wind-sheared, per-streak deterministic length/
-      // alpha — never a row of ticks). proposed = sparse faint blue-grey ·
-      // researching = dense falling (rewritten in place, cycle-masked so the
-      // wrap never pops) · complete = bright mint-grey + droplet · failed =
-      // thin dim red-grey. The saturated status read lives in the droplet;
-      // the entries (hit spheres + droplets) glide and fade like everything.
-      let rainVert = 0;
-      // Camera-facing width axis for the vertical quads (no allocation).
-      const camE = camera.matrixWorld.elements;
-      const camRLen = Math.hypot(camE[0], camE[2]) || 1;
-      const camRX = camE[0] / camRLen;
-      const camRZ = camE[2] / camRLen;
+      // Research PLANETS: limb-lit spheres hung from their grounding star.
+      // proposed = amber-blue pulse, dwell→accept · researching = slow spin +
+      // progress arc · complete = flash then steady bright, dwell→open deck ·
+      // failed = desaturated dark, no pick. The filament to the star and the
+      // progress arc ride the shared chronology-line buffer.
+      let planetCount = 0;
       for (const [specId, entry] of researchEntries) {
         entry.group.position.lerp(entry.targetPos, smoothing);
         const hovered =
@@ -5848,8 +6009,8 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
           researchEntries.delete(specId);
           continue;
         }
-        const status = entry.researchSpec?.status;
-        if (rig2 === null || status === undefined || entry.removing) {
+        const spec = entry.researchSpec;
+        if (rig2 === null || spec === undefined || entry.removing || planetCount >= SKY_MAX_PLANETS) {
           continue;
         }
         let flashBoost = 0;
@@ -5861,81 +6022,84 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
             flashBoost = Math.abs(Math.sin(progress * Math.PI * 3)) * (1 - progress);
           }
         }
-        const color = RAIN_STATUS_RGB[status];
-        const streaks = status === "researching" ? SKY_MAX_RAIN_STREAKS : status === "complete" ? 6 : status === "proposed" ? 4 : 3;
-        const tone = (status === "proposed" ? 0.5 : status === "failed" ? 0.3 : status === "complete" ? 0.85 : 0.7) + (hovered ? 0.25 : 0) + flashBoost;
-        const spread = entry.rainSpread ?? 1.4;
-        for (let k = 0; k < streaks && rainVert + 6 <= SKY_MAX_RAIN_VERTS; k += 1) {
-          // Deterministic per-streak variation (cheap sin hashes, no alloc):
-          // where in the footprint, how long, how bright.
-          const h1 = (Math.sin(entry.phase * 13.7 + k * 7.31) + 1) / 2;
-          const h2 = (Math.sin(entry.phase * 27.9 + k * 3.17) + 1) / 2;
-          const h3 = (Math.sin(entry.phase * 7.3 + k * 11.93) + 1) / 2;
-          const falling = status === "researching" && !reducedMotion;
-          const phase = falling ? (t * 0.55 + entry.phase + k * 0.61) % 1 : 0.3;
-          const cycleMask = falling ? Math.sin(phase * Math.PI) : 1;
-          const len = 1.1 + 1.6 * h3;
-          const topX = entry.group.position.x + (h1 - 0.5) * 2 * spread;
-          const topZ = entry.group.position.z + (h2 - 0.5) * 1.2 * spread;
-          const topY = entry.group.position.y + 0.5 - h2 * 0.5 - phase * 1.1;
-          const botY = topY - len;
-          // Wind shear: the whole sky's rain leans the same way (weather).
-          const botX = topX + skyRainWindX * len;
-          const botZ = topZ + skyRainWindZ * len;
-          const px = camRX * 0.1;
-          const pz = camRZ * 0.1;
-          const streakTone = tone * (0.45 + 0.55 * h1) * cycleMask;
-          const cr = color.r * streakTone;
-          const cg = color.g * streakTone;
-          const cb = color.b * streakTone;
-          const base = rainVert * 3;
-          const eBase = rainVert * 2;
-          // Quad (A0,A1,B1)+(A0,B1,B0); aEdge = (across, 0 top → 1 tip);
-          // bottom verts carry the wind shear (the slant).
-          rig2.rainPos[base] = topX - px;
-          rig2.rainPos[base + 1] = topY;
-          rig2.rainPos[base + 2] = topZ - pz;
-          rig2.rainEdge[eBase] = -1;
-          rig2.rainEdge[eBase + 1] = 0;
-          rig2.rainPos[base + 3] = topX + px;
-          rig2.rainPos[base + 4] = topY;
-          rig2.rainPos[base + 5] = topZ + pz;
-          rig2.rainEdge[eBase + 2] = 1;
-          rig2.rainEdge[eBase + 3] = 0;
-          rig2.rainPos[base + 6] = botX + px;
-          rig2.rainPos[base + 7] = botY;
-          rig2.rainPos[base + 8] = botZ + pz;
-          rig2.rainEdge[eBase + 4] = 1;
-          rig2.rainEdge[eBase + 5] = 1;
-          rig2.rainPos[base + 9] = topX - px;
-          rig2.rainPos[base + 10] = topY;
-          rig2.rainPos[base + 11] = topZ - pz;
-          rig2.rainEdge[eBase + 6] = -1;
-          rig2.rainEdge[eBase + 7] = 0;
-          rig2.rainPos[base + 12] = botX + px;
-          rig2.rainPos[base + 13] = botY;
-          rig2.rainPos[base + 14] = botZ + pz;
-          rig2.rainEdge[eBase + 8] = 1;
-          rig2.rainEdge[eBase + 9] = 1;
-          rig2.rainPos[base + 15] = botX - px;
-          rig2.rainPos[base + 16] = botY;
-          rig2.rainPos[base + 17] = botZ - pz;
-          rig2.rainEdge[eBase + 10] = -1;
-          rig2.rainEdge[eBase + 11] = 1;
-          for (let v = 0; v < 6; v += 1) {
-            const c = (rainVert + v) * 3;
-            rig2.rainColor[c] = cr;
-            rig2.rainColor[c + 1] = cg;
-            rig2.rainColor[c + 2] = cb;
+        // Radius = confidence; proposed planets breathe ±8% at ~0.5Hz.
+        const proposedPulse =
+          spec.status === "proposed" && !reducedMotion ? 1 + 0.08 * Math.sin(t * Math.PI + entry.phase) : 1;
+        const radius =
+          (0.35 + 0.3 * Math.max(0, Math.min(1, spec.confidence))) *
+          entry.group.scale.x *
+          proposedPulse *
+          (1 + flashBoost * 0.45);
+        planetPosScratch.copy(entry.group.position);
+        planetQuatScratch.setFromAxisAngle(
+          planetAxisY,
+          spec.status === "researching" && !reducedMotion ? (t * 0.5 + entry.phase) % (Math.PI * 2) : 0,
+        );
+        planetScaleScratch.setScalar(Math.max(radius, 0.001));
+        planetMatScratch.compose(planetPosScratch, planetQuatScratch, planetScaleScratch);
+        rig2.planetMesh.setMatrixAt(planetCount, planetMatScratch);
+        planetColorScratch.copy(PLANET_STATUS_RGB[spec.status]);
+        if (hovered || flashBoost > 0) {
+          planetColorScratch.multiplyScalar(1 + 0.35 * (hovered ? 1 : flashBoost));
+        }
+        rig2.planetMesh.setColorAt(planetCount, planetColorScratch);
+        planetCount += 1;
+        // FILAMENT: the visible tie to the grounding star 0.9 above.
+        if (skyLineVert + 2 <= SKY_MAX_LINE_VERTS) {
+          const tone = spec.status === "failed" ? 0.18 : 0.5;
+          const lb = skyLineVert * 3;
+          rig2.linePos[lb] = entry.group.position.x;
+          rig2.linePos[lb + 1] = entry.group.position.y + radius;
+          rig2.linePos[lb + 2] = entry.group.position.z;
+          rig2.linePos[lb + 3] = entry.group.position.x;
+          rig2.linePos[lb + 4] = entry.group.position.y + 0.9;
+          rig2.linePos[lb + 5] = entry.group.position.z;
+          const c = PLANET_STATUS_RGB[spec.status];
+          for (let v = 0; v < 2; v += 1) {
+            const lc = (skyLineVert + v) * 3;
+            rig2.lineColor[lc] = c.r * tone;
+            rig2.lineColor[lc + 1] = c.g * tone;
+            rig2.lineColor[lc + 2] = c.b * tone;
           }
-          rainVert += 6;
+          skyLineVert += 2;
+        }
+        // PROGRESS ARC: a growing ring around a researching planet — the
+        // restored researching-state affordance (real progress, never a
+        // timer).
+        if (spec.status === "researching") {
+          const frac = Math.max(0, Math.min(1, spec.progress / 100));
+          const segs = Math.round(SKY_PROGRESS_ARC_SEGMENTS * frac);
+          const arcR = radius + 0.28;
+          const c = PLANET_STATUS_RGB.researching;
+          for (let seg = 0; seg < segs && skyLineVert + 2 <= SKY_MAX_LINE_VERTS; seg += 1) {
+            const a0 = (seg / SKY_PROGRESS_ARC_SEGMENTS) * Math.PI * 2;
+            const a1 = ((seg + 1) / SKY_PROGRESS_ARC_SEGMENTS) * Math.PI * 2;
+            const lb = skyLineVert * 3;
+            rig2.linePos[lb] = entry.group.position.x + Math.cos(a0) * arcR;
+            rig2.linePos[lb + 1] = entry.group.position.y + Math.sin(a0) * arcR * 0.35;
+            rig2.linePos[lb + 2] = entry.group.position.z + Math.sin(a0) * arcR;
+            rig2.linePos[lb + 3] = entry.group.position.x + Math.cos(a1) * arcR;
+            rig2.linePos[lb + 4] = entry.group.position.y + Math.sin(a1) * arcR * 0.35;
+            rig2.linePos[lb + 5] = entry.group.position.z + Math.sin(a1) * arcR;
+            for (let v = 0; v < 2; v += 1) {
+              const lc = (skyLineVert + v) * 3;
+              rig2.lineColor[lc] = c.r * 0.7;
+              rig2.lineColor[lc + 1] = c.g * 0.7;
+              rig2.lineColor[lc + 2] = c.b * 0.7;
+            }
+            skyLineVert += 2;
+          }
         }
       }
       if (rig2 !== null) {
-        rig2.rainGeom.setDrawRange(0, rainVert);
-        rig2.rainGeom.getAttribute("position").needsUpdate = true;
-        rig2.rainGeom.getAttribute("aColor").needsUpdate = true;
-        rig2.rainGeom.getAttribute("aEdge").needsUpdate = true;
+        rig2.planetMesh.count = planetCount;
+        rig2.planetMesh.instanceMatrix.needsUpdate = true;
+        if (rig2.planetMesh.instanceColor !== null) {
+          rig2.planetMesh.instanceColor.needsUpdate = true;
+        }
+        rig2.lineGeom.setDrawRange(0, skyLineVert);
+        rig2.lineGeom.getAttribute("position").needsUpdate = true;
+        rig2.lineGeom.getAttribute("color").needsUpdate = true;
       }
 
       renderer.render(scene, camera);

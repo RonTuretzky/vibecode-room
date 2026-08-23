@@ -13,7 +13,55 @@ import type { SummarizerMode } from "../audio/summarizer";
 
 export type SmithersClientMode = "memory" | "gateway";
 
-export type DegradedLegName = "asr" | "tts" | "sink" | "decider" | "smithers" | "summarizer";
+export type DegradedLegName =
+  | "asr"
+  | "tts"
+  | "sink"
+  | "decider"
+  | "smithers"
+  | "summarizer"
+  | "sky-relate"
+  | "topic-refiner";
+
+// The recurrent Cerebras agents' RUNTIME failure surface (CloudGraph.agentHealth
+// / ConceptTree.agentHealth shape, structurally typed so this module stays free
+// of runtime imports). Unlike the boot-time leg selections these degrade and
+// recover DYNAMICALLY: a persistent miss streak (e.g. the silent HTTP 402 that
+// starved the sky for 77 consecutive ticks) grows a leg, a landed tick drops it.
+export interface AgentTickHealth {
+  missStreak: number;
+  lastMissReason: string | null;
+}
+
+// Misses this many consecutive ticks → the leg reports degraded.
+export const AGENT_MISS_DEGRADED_STREAK = 3;
+
+// Pure: dynamic degraded legs for the sky relate + topic refiner agents.
+export function agentTickLegs(health: {
+  skyRelate?: AgentTickHealth;
+  topicRefiner?: AgentTickHealth;
+}): DegradedLeg[] {
+  const legs: DegradedLeg[] = [];
+  const sky = health.skyRelate;
+  if (sky !== undefined && sky.missStreak >= AGENT_MISS_DEGRADED_STREAK) {
+    legs.push({
+      leg: "sky-relate",
+      mode: "miss-streak",
+      detail: `sky relate: ${sky.missStreak} consecutive misses (${sky.lastMissReason ?? "unknown"})`,
+      upgrade: "top up Cerebras billing / check CEREBRAS_API_KEY (CEREBRAS_MODEL optional)",
+    });
+  }
+  const refiner = health.topicRefiner;
+  if (refiner !== undefined && refiner.missStreak >= AGENT_MISS_DEGRADED_STREAK) {
+    legs.push({
+      leg: "topic-refiner",
+      mode: "miss-streak",
+      detail: `topic refiner: ${refiner.missStreak} consecutive misses (${refiner.lastMissReason ?? "unknown"})`,
+      upgrade: "top up Cerebras billing / check CEREBRAS_API_KEY (CEREBRAS_MODEL optional)",
+    });
+  }
+  return legs;
+}
 
 // The resolved backend mode of each runtime leg the notice reasons about.
 export interface RuntimeLegSelections {
@@ -127,17 +175,33 @@ export function formatDegradationNotice(notice: DegradationNotice): string {
 // wall that reconnects and sees a DIFFERENT bootId is talking to a new build of
 // the server and reloads itself); `selfMode` says whether VIBERSYN_SELF_MODE
 // pinned the mirror project. Both are tolerant of legacy callers (null/false).
-export function healthPayload(rt: { degradation: DegradationNotice; bootId?: string; selfMode?: boolean }): {
+// AGENT LOUDNESS additions: optional `skyAgent`/`topicRefiner` runtime health —
+// when a recurrent Cerebras agent has missed AGENT_MISS_DEGRADED_STREAK
+// consecutive ticks, the payload's degradation grows a DYNAMIC leg (and drops
+// it again after a landed tick), so a silent permanent relate failure is
+// impossible. Tolerant of legacy callers (absent = no dynamic legs).
+export function healthPayload(rt: {
+  degradation: DegradationNotice;
+  bootId?: string;
+  selfMode?: boolean;
+  skyAgent?: AgentTickHealth;
+  topicRefiner?: AgentTickHealth;
+}): {
   ok: true;
   app: "vibersyn-projector";
   degradation: DegradationNotice;
   bootId: string | null;
   selfMode: boolean;
 } {
+  const dynamic = agentTickLegs({ skyRelate: rt.skyAgent, topicRefiner: rt.topicRefiner });
+  const degradation =
+    dynamic.length === 0
+      ? rt.degradation
+      : { degraded: [...rt.degradation.degraded, ...dynamic], allReal: false };
   return {
     ok: true,
     app: "vibersyn-projector",
-    degradation: rt.degradation,
+    degradation,
     bootId: rt.bootId ?? null,
     selfMode: rt.selfMode === true,
   };

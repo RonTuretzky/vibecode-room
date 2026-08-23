@@ -83,10 +83,28 @@ const DEFAULT_NEW_WORDS_THRESHOLD = 8;
 const DEFAULT_STALE_MISSED_ROUNDS = 6;
 const DEFAULT_SUPPRESS_MS = 5 * 60_000;
 // Deepgram finalizes every few words; a same-speaker follow-up inside this gap
-// is the SAME utterance still being spoken, not a new one.
-const DEFAULT_COALESCE_GAP_MS = 6_000;
+// is the SAME utterance still being spoken, not a new one. The gap is measured
+// between final ARRIVALS (atMs = server ingest clock), and live-room evidence
+// shows continuous monologue finals landing 8-12s apart — 6s split real
+// sentences ("part of a sentence inputted, the rest never merged"). NOTE this
+// ASR stream is caseless and punctuation-free, so gap + speaker + overlap
+// carry ALL the continuation signal — no punctuation heuristic can help.
+const DEFAULT_COALESCE_GAP_MS = 15_000;
+// A fragment that OPENS with a continuation word is mid-sentence by
+// construction — it gets a longer leash.
+const CONTINUATION_GAP_MS = 20_000;
+const CONTINUATION_WORDS = new Set(["and", "but", "so", "on", "to", "because", "which", "then"]);
 // Past this a "turn" stops being one clickable thought — cap the merge.
 const DEFAULT_COALESCE_MAX_WORDS = 50;
+// CROSS-MIC DEDUPE + LOOKBACK MERGE scan depth: the rig's two mics each
+// transcribe the room (every utterance arrives twice, interleaved, with
+// independent diarization labels), so a speaker's own previous fragment is
+// usually NOT the newest turn — scan a few back.
+const COALESCE_LOOKBACK_TURNS = 4;
+// An echo of an already-ingested final: near-identical word set within this
+// arrival window (the two mics land 20-200ms apart on the same utterance).
+const DEDUPE_WINDOW_MS = 2_000;
+const DEDUPE_MIN_OVERLAP = 0.8;
 // PRECISION GUARDS (reconcile): proposals below this confidence never surface…
 const MIN_SURFACING_CONFIDENCE = 0.45;
 // …claims this token-Jaccard-similar to an existing quest merge instead of
@@ -125,9 +143,10 @@ export class ResearchLoop {
 
   #turns: TranscriptTurn[] = [];
   #turnSeq = 0;
-  // When the newest turn last grew (its atMs stays at the FIRST fragment, so
-  // continuous speech needs its own freshness marker for the coalesce gap).
-  #newestFragmentAtMs = Number.NEGATIVE_INFINITY;
+  // When each windowed turn last grew (its atMs stays at the FIRST fragment,
+  // so continuous speech needs per-turn freshness for the coalesce gap — the
+  // lookback merge means ANY of the last few turns can still be growing).
+  readonly #lastGrowthAtMs = new Map<string, number>();
   readonly #quests = new Map<string, ResearchQuest>();
   readonly #running = new Map<string, RunningQuest>();
   readonly #suppressed = new Map<string, number>();
@@ -219,25 +238,70 @@ export class ResearchLoop {
   ingestTurn(input: { speaker: string | null; text: string; atMs: number }): TranscriptTurn {
     const text = input.text.trim();
     const newWords = countWords(text);
-    const newest = this.#turns[this.#turns.length - 1];
-    if (
-      newest !== undefined &&
-      newest.speaker === input.speaker &&
-      input.atMs - this.#newestFragmentAtMs <= this.#coalesceGapMs &&
-      countWords(newest.text) < this.#coalesceMaxWords
-    ) {
-      newest.text = `${newest.text} ${text}`;
-      this.#newestFragmentAtMs = input.atMs;
+    const recent = this.#turns.slice(-COALESCE_LOOKBACK_TURNS);
+    // 1. CROSS-MIC DEDUPE: the rig's two mics each transcribe the room, so
+    //    every utterance arrives twice within ~2s under DIFFERENT diarization
+    //    labels. A near-identical word set hot on the heels of a kept turn is
+    //    the echo, not new speech — drop it (keeping the longer transcription
+    //    in place: the mics disagree on a word sometimes). Without this, the
+    //    interleaved echo always sat between a speaker's fragments and
+    //    defeated every same-speaker merge.
+    for (let index = recent.length - 1; index >= 0; index -= 1) {
+      const kept = recent[index]!;
+      if (Math.abs(input.atMs - kept.atMs) > DEDUPE_WINDOW_MS) {
+        continue;
+      }
+      if (wordOverlap(kept.text, text) < DEDUPE_MIN_OVERLAP) {
+        continue;
+      }
+      if (text.length > kept.text.length) {
+        kept.text = text;
+        this.#tree.update(kept);
+        this.#observeClouds();
+      }
+      this.#trace("research.loop.dedupe", "debug", `corr-research-ingest-${kept.id}`, {
+        keptId: kept.id,
+        droppedSpeaker: input.speaker,
+      });
+      this.#emit();
+      return kept;
+    }
+    // 2. LOOKBACK COALESCE: the same speaker still mid-utterance GROWS their
+    //    turn in place — same id, same atMs (the growth-only contract quest
+    //    anchors and wall click paths depend on). Scanned over the last few
+    //    turns because the other mic's echoes interleave between a speaker's
+    //    own fragments; gap measured from the turn's LAST growth.
+    const gapMs = CONTINUATION_WORDS.has(firstWordOf(text)) ? Math.max(this.#coalesceGapMs, CONTINUATION_GAP_MS) : this.#coalesceGapMs;
+    for (let index = recent.length - 1; index >= 0; index -= 1) {
+      const candidate = recent[index]!;
+      if (candidate.speaker !== input.speaker) {
+        continue;
+      }
+      if (input.atMs - (this.#lastGrowthAtMs.get(candidate.id) ?? candidate.atMs) > gapMs) {
+        continue;
+      }
+      if (countWords(candidate.text) >= this.#coalesceMaxWords) {
+        continue;
+      }
+      candidate.text = `${candidate.text} ${text}`;
+      this.#lastGrowthAtMs.set(candidate.id, input.atMs);
       // The suggester cadence counts SPOKEN words, merged or not.
       this.#wordsSinceRound += newWords;
-      this.#tree.update(newest);
+      if (candidate !== this.#turns[this.#turns.length - 1]) {
+        this.#trace("research.loop.lookback-merge", "debug", `corr-research-ingest-${candidate.id}`, {
+          id: candidate.id,
+          behind: this.#turns.length - 1 - this.#turns.indexOf(candidate),
+        });
+      }
+      this.#tree.update(candidate);
       this.#observeClouds();
       if (this.#active) {
         void this.maybeSuggest();
       }
       this.#emit();
-      return newest;
+      return candidate;
     }
+    // 3. A genuinely new turn.
     this.#turnSeq += 1;
     const turn: TranscriptTurn = {
       id: `rturn-${String(this.#turnSeq).padStart(4, "0")}`,
@@ -246,7 +310,15 @@ export class ResearchLoop {
       atMs: input.atMs,
     };
     this.#turns = [...this.#turns, turn].slice(-this.#windowTurns);
-    this.#newestFragmentAtMs = input.atMs;
+    this.#lastGrowthAtMs.set(turn.id, input.atMs);
+    if (this.#lastGrowthAtMs.size > this.#windowTurns * 2) {
+      const live = new Set(this.#turns.map((entry) => entry.id));
+      for (const id of [...this.#lastGrowthAtMs.keys()]) {
+        if (!live.has(id)) {
+          this.#lastGrowthAtMs.delete(id);
+        }
+      }
+    }
     this.#wordsSinceRound += newWords;
     this.#tree.assign(turn);
     // Turns the window just dropped must not haunt the topic branches — but
@@ -281,6 +353,11 @@ export class ResearchLoop {
     return this.#clouds;
   }
 
+  // The topic refiner's failure surface (/api/health's topic-refiner leg).
+  refinerHealth(): { missStreak: number; lastMissReason: string | null } {
+    return this.#tree.agentHealth();
+  }
+
   // Feed the sky the current clustering + window + quest projection. Runs on
   // every ingest (after assign/prune) and on async tree refinements; quest
   // status changes ride along on the next ingest — links are decoration, not
@@ -296,6 +373,9 @@ export class ResearchLoop {
         claim: quest.claim,
         turnId: quest.contextSpan.endTurnId,
       })),
+      // Babble turns (the tree's dust pool): their retirements fold into the
+      // sky's dust ledger, never a cloud.
+      this.#tree.dustTurnIds(),
     );
   }
 
@@ -873,7 +953,7 @@ export class ResearchLoop {
     this.#quests.clear();
     this.#suppressed.clear();
     this.#turns = [];
-    this.#newestFragmentAtMs = Number.NEGATIVE_INFINITY;
+    this.#lastGrowthAtMs.clear();
     this.#wordsSinceRound = 0;
     this.#tree.reset();
     // The sky's memory dies with the tree — the user asked for a clean slate.
@@ -951,6 +1031,28 @@ export function readResearchSuggestIntervalMs(
 
 function countWords(text: string): number {
   return text.split(/\s+/u).filter((word) => word.length > 0).length;
+}
+
+function firstWordOf(text: string): string {
+  return text.trim().split(/\s+/u)[0]?.toLowerCase() ?? "";
+}
+
+// Word-set overlap on the SMALLER side (a fragment echo is usually a subset
+// of the kept turn once that turn has grown): 1 = every word of the smaller
+// utterance appears in the other.
+function wordOverlap(a: string, b: string): number {
+  const wordsA = new Set(a.toLowerCase().split(/\s+/u).filter((word) => word.length > 0));
+  const wordsB = new Set(b.toLowerCase().split(/\s+/u).filter((word) => word.length > 0));
+  if (wordsA.size === 0 || wordsB.size === 0) {
+    return 0;
+  }
+  let shared = 0;
+  for (const word of wordsB) {
+    if (wordsA.has(word)) {
+      shared += 1;
+    }
+  }
+  return shared / Math.min(wordsA.size, wordsB.size);
 }
 
 function suppressKey(topic: string, claim: string): string {

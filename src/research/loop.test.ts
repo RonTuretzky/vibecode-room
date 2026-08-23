@@ -80,7 +80,7 @@ describe("ResearchLoop dialogue window", () => {
     const loop = makeLoop({ windowTurns: 3 });
     for (let index = 0; index < 5; index += 1) {
       // Spaced past the coalesce gap so each ingest is its own turn.
-      loop.ingestTurn({ speaker: "s1", text: `turn ${index}`, atMs: index * 10_000 });
+      loop.ingestTurn({ speaker: "s1", text: `turn ${index}`, atMs: index * 30_000 });
     }
     const turns = loop.turns();
     expect(turns).toHaveLength(3);
@@ -481,12 +481,15 @@ describe("ResearchLoop concept topics", () => {
     expect(topics[0]!.freshAtMs).toBe(20_000);
   });
 
-  test("coalescing growth re-scores the merged turn's topic", () => {
+  test("coalescing growth re-scores the merged turn's topic (dust promotes)", () => {
     const loop = makeLoop();
     loop.ingestTurn({ speaker: "s1", text: "solar panels power the roof", atMs: 1_000 });
     loop.ingestTurn({ speaker: "s2", text: "cats", atMs: 2_000 });
-    expect(loop.topics()).toHaveLength(2);
-    // The cats turn grows into solar-panel territory → it moves branches.
+    // "cats" alone is babble (single content token) — the dust pool, not a
+    // branch of its own.
+    expect(loop.topics()).toHaveLength(1);
+    // The cats turn grows into a full sentence in solar-panel territory → it
+    // PROMOTES out of the dust and joins the solar branch.
     loop.ingestTurn({ speaker: "s2", text: "sleep on warm solar panels", atMs: 3_000 });
     const topics = loop.topics();
     expect(topics).toHaveLength(1);
@@ -496,8 +499,8 @@ describe("ResearchLoop concept topics", () => {
   test("topics never outlive the rolling window", () => {
     const loop = makeLoop({ windowTurns: 2 });
     loop.ingestTurn({ speaker: "s1", text: "alpha rocket engines", atMs: 0 });
-    loop.ingestTurn({ speaker: "s1", text: "pasta cooking tips", atMs: 10_000 });
-    loop.ingestTurn({ speaker: "s1", text: "gardening in winter", atMs: 20_000 });
+    loop.ingestTurn({ speaker: "s1", text: "pasta cooking tips", atMs: 30_000 });
+    loop.ingestTurn({ speaker: "s1", text: "gardening in winter", atMs: 60_000 });
     const topics = loop.topics();
     const surfaced = topics.flatMap((topic) => topic.turnIds);
     expect(surfaced.sort()).toEqual(["rturn-0002", "rturn-0003"]);
@@ -567,5 +570,103 @@ describe("dossier follow-ups", () => {
     // Unknown index / parent are 404-free no-ops.
     expect(loop.researchFollowUp(parent.id, 9)).toBeNull();
     expect(loop.researchFollowUp("rq-nope", 0)).toBeNull();
+  });
+});
+
+// ── cross-mic dedupe + lookback coalesce (live-room rules, 2026-08) ──────────
+
+describe("ResearchLoop cross-mic dedupe + lookback coalesce", () => {
+  test("a two-mic echo (identical text, different diarization label, <200ms) is ONE turn", () => {
+    const traces: { event: string; meta: Record<string, unknown> }[] = [];
+    const loop = makeLoop({ onTrace: (event) => traces.push(event) });
+    const kept = loop.ingestTurn({ speaker: "speaker_1", text: "the overlay is now rendering in preview", atMs: 1_000 });
+    const echo = loop.ingestTurn({ speaker: "speaker_3", text: "the overlay is now rendering in preview", atMs: 1_109 });
+    expect(echo.id).toBe(kept.id);
+    expect(loop.turns()).toHaveLength(1);
+    const dedupe = traces.find((event) => event.event === "research.loop.dedupe");
+    expect(dedupe?.meta.keptId).toBe(kept.id);
+    expect(dedupe?.meta.droppedSpeaker).toBe("speaker_3");
+  });
+
+  test("an echo with ASR variance keeps the LONGER transcription in place", () => {
+    const loop = makeLoop();
+    const kept = loop.ingestTurn({ speaker: "speaker_2", text: "we could visit people downtown this weekend", atMs: 1_000 });
+    loop.ingestTurn({ speaker: "speaker_1", text: "we could visit business people downtown this weekend", atMs: 1_150 });
+    expect(loop.turns()).toHaveLength(1);
+    expect(loop.turns()[0]!.id).toBe(kept.id);
+    expect(loop.turns()[0]!.text).toBe("we could visit business people downtown this weekend");
+  });
+
+  test("THE operator fixture: fragment + interleaved echo + late completion = one turn, one topic", () => {
+    const loop = makeLoop();
+    const first = loop.ingestTurn({
+      speaker: "speaker_1",
+      text: "do it and then today i i see telegram and shanti has a full",
+      atMs: 10_000,
+    });
+    // The other mic's echo lands between the speaker's own fragments…
+    loop.ingestTurn({
+      speaker: "speaker_3",
+      text: "do it and then today i i see telegram and shanti has a full",
+      atMs: 10_150,
+    });
+    // …and the rest of the sentence arrives 3s later.
+    const merged = loop.ingestTurn({ speaker: "speaker_1", text: "instruction manual", atMs: 13_000 });
+    expect(merged.id).toBe(first.id);
+    expect(loop.turns()).toHaveLength(1);
+    expect(loop.turns()[0]!.text).toBe("do it and then today i i see telegram and shanti has a full instruction manual");
+    expect(loop.topics()).toHaveLength(1);
+  });
+
+  test("monologue finals 9.7s apart (same speaker) merge — the 6s gap was a lie", () => {
+    const loop = makeLoop();
+    const first = loop.ingestTurn({ speaker: "speaker_5", text: "the overlay is now in and rendering", atMs: 100_000 });
+    const second = loop.ingestTurn({ speaker: "speaker_5", text: "in the off air preview and the lower third", atMs: 109_670 });
+    expect(second.id).toBe(first.id);
+    expect(loop.turns()).toHaveLength(1);
+  });
+
+  test("a lookback merge behind an interposed turn keeps the grown turn's id and atMs (quest anchor contract)", () => {
+    const loop = makeLoop();
+    const anchor = loop.ingestTurn({ speaker: "s1", text: "vending machines could accept crypto payments", atMs: 1_000 });
+    loop.ingestTurn({ speaker: "s2", text: "kabul weather looks snowy and cold tonight folks", atMs: 4_000 });
+    const merged = loop.ingestTurn({ speaker: "s1", text: "and settle them nightly", atMs: 8_000 });
+    expect(merged.id).toBe(anchor.id);
+    expect(merged.atMs).toBe(1_000);
+    expect(loop.turns()).toHaveLength(2);
+    expect(loop.turns()[0]!.text).toBe("vending machines could accept crypto payments and settle them nightly");
+  });
+
+  test("REPLAY: the live 40-turn window collapses to 18 utterance-shaped turns", async () => {
+    const window = (await import("../../fixtures/research/live-window-2026-08-10.json"))
+      .default as Array<{ speaker: string | null; text: string; atMs: number }>;
+    expect(window).toHaveLength(40);
+    const loop = makeLoop();
+    for (const turn of window) {
+      loop.ingestTurn(turn);
+    }
+    // Probe-verified: current rules merged 0/40; these rules merge/dedupe 22.
+    expect(loop.turns()).toHaveLength(18);
+    // The operator's split sentence class: 'yep that makes' + 'sense' (same
+    // speaker, echo interleaved, 3.2s apart) is ONE turn now.
+    expect(loop.turns().some((turn) => turn.text.includes("yep that makes sense"))).toBe(true);
+    // The 9.7s monologue pair (rturn-1631/1632) merged too.
+    expect(loop.turns().some((turn) => turn.text.includes("overlay is now in") && turn.text.includes("off air preview"))).toBe(true);
+  });
+});
+
+// ── the babble gate at loop level ────────────────────────────────────────────
+
+describe("ResearchLoop babble gate", () => {
+  test("a babble-only exchange forms no named topic while a content sentence does", () => {
+    const loop = makeLoop();
+    loop.ingestTurn({ speaker: "s1", text: "yep", atMs: 30_000 });
+    loop.ingestTurn({ speaker: "s2", text: "oh my god", atMs: 60_000 });
+    loop.ingestTurn({ speaker: "s1", text: "sure sure", atMs: 90_000 });
+    expect(loop.topics()).toHaveLength(0);
+    loop.ingestTurn({ speaker: "s2", text: "the solar inverter efficiency dropped nine percent overnight", atMs: 120_000 });
+    expect(loop.topics()).toHaveLength(1);
+    // Babble is never deleted: all four turns are still in the window.
+    expect(loop.turns()).toHaveLength(4);
   });
 });

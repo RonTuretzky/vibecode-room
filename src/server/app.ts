@@ -85,7 +85,20 @@ export function createProjectorApp(runtime: ProjectorRuntime, options: Projector
   // /api/seam/status returns the real fleet summary, GET /api/seam/health pings.
   // Wired to the same registry as the voice/click paths via runtime.seamDispatcher.
   app.route("/api/seam", createSeamApp(runtime.seamDispatcher));
-  app.get("/api/health", (context) => context.json(healthPayload(runtime)));
+  // /api/health carries the boot-time degradation notice PLUS the recurrent
+  // Cerebras agents' live miss streaks (sky relate + topic refiner) — a
+  // persistent 402/timeout surfaces here instead of failing silently forever.
+  app.get("/api/health", (context) =>
+    context.json(
+      healthPayload({
+        degradation: runtime.degradation,
+        bootId: runtime.bootId,
+        selfMode: runtime.selfMode,
+        skyAgent: runtime.research.cloudGraph().agentHealth(),
+        topicRefiner: runtime.research.refinerHealth(),
+      }),
+    ),
+  );
   app.get("/api/state", (context) => context.json(runtime.snapshot()));
   app.get("/api/events", () => eventsResponse(runtime));
   // REQ-2 / REQ-14: in the real (live) projector path these controls ALWAYS drive
