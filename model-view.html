@@ -1,4 +1,9 @@
-<!doctype html><html><body style="margin:0;background:#20262e">
+<!doctype html>
+<!-- Dev-only GLB inspector (vite serves root .html in dev; the production
+     build ignores it): /model-view.html?glb=<url> frames the model with an
+     orbit camera — used to vet the CC-BY landmark models in
+     public/assets/park/models (e.g. ?glb=/assets/park/models/plaza_hotel.glb). -->
+<html><body style="margin:0;background:#20262e">
 <script type="module">
 import * as THREE from "/node_modules/three/build/three.module.js";
 import { GLTFLoader } from "/node_modules/three/examples/jsm/loaders/GLTFLoader.js";
