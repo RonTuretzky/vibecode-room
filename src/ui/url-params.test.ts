@@ -155,12 +155,13 @@ describe("parseProjectorUrl", () => {
     expect(config.gesture?.wall).toBe("B");
   });
 
-  // Cursor dots are hidden by default (live-room clutter request); ?dots=1 is
-  // the launcher's per-window override so pointing always has a visible dot.
-  test("?dots=1 forces cursor dots on; anything else leaves the stored default", () => {
+  // Cursor dots default VISIBLE (live-room reversal: an invisible pointer
+  // reads as a dead joystick). The URL is a tri-state override; absent means
+  // the stored preference — itself default-visible — decides.
+  test("?dots is a tri-state override and absent never means hidden", () => {
     expect(parseProjectorUrl("?dots=1", "h").dots).toBe(true);
     expect(parseProjectorUrl("?dots=0", "h").dots).toBe(false);
-    expect(parseProjectorUrl("", "h").dots).toBe(false);
+    expect(parseProjectorUrl("", "h").dots).toBeNull();
   });
 
   // CONTINUOUS AUTO-FRAMING (?autofit=): tri-state override for the

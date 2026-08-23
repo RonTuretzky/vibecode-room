@@ -1504,8 +1504,10 @@ describe("gesture cursor dots (hidden default, no toggle)", () => {
     expect(mouseDwell).not.toContain('data-testid="cursor-toggle-button"');
   });
 
-  test("the stored preference parses: only an explicit '1' shows the dots", () => {
-    expect(cursorDotsFromStored(null)).toBe(false); // first visit → hidden
+  test("the stored preference parses: only an explicit '0' hides the dots", () => {
+    // Live-room reversal: the hidden-default cost a session diagnosing a
+    // healthy joystick nobody could see. First visit → VISIBLE.
+    expect(cursorDotsFromStored(null)).toBe(true);
     expect(cursorDotsFromStored("1")).toBe(true);
     expect(cursorDotsFromStored("0")).toBe(false);
   });

@@ -57,25 +57,27 @@ interface CursorState {
 
 // CURSOR DOTS (live-room request): a persistent colored dot per tracked person
 // — like the standalone wall client (gesture-wall/web/wall.js) — so people SEE
-// where they are pointing between targets. HIDDEN by default (live-room
-// request); localStorage "1" opts back in. Dwell rings render regardless.
+// where they are pointing between targets. VISIBLE by default (live-room
+// reversal: an invisible pointer reads as "the joystick died" — the operator
+// asked that the default is NEVER an invisible cursor). localStorage "0" or
+// ?dots=0 opts a window out. Dwell rings render regardless.
 export const CURSOR_DOTS_STORAGE_KEY = "vibersyn.cursor-dots";
 
-// Pure: parse the persisted preference. Hidden is THE default (live-room
-// request: the dots read as clutter) — only an explicit "1" opts back in,
-// and only via localStorage; the on-wall toggle button is gone.
+// Pure: parse the persisted preference. VISIBLE is the default — only an
+// explicit "0" hides (the old hidden-default cost a session to diagnosing a
+// healthy stick because nobody could see its cursor).
 export function cursorDotsFromStored(stored: string | null): boolean {
-  return stored === "1";
+  return stored !== "0";
 }
 
 function readCursorDotsPref(): boolean {
   if (typeof window === "undefined") {
-    return false;
+    return true;
   }
   try {
     return cursorDotsFromStored(window.localStorage.getItem(CURSOR_DOTS_STORAGE_KEY));
   } catch {
-    return false; // storage unavailable (kiosk/private mode) — default hidden
+    return true; // storage unavailable (kiosk/private mode) — stay visible
   }
 }
 

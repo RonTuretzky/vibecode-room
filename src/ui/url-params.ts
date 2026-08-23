@@ -58,10 +58,11 @@ export interface ProjectorUrlConfig {
   // via --flat. Needs ?wall= to pick this window's half; wins over the
   // corner lock.
   flat: boolean;
-  // ?dots=1 — force the per-person cursor dots ON for this window, overriding
+  // ?dots — per-window cursor-dot override: true (?dots=1) / false (?dots=0) /
   // the persisted hidden-by-default preference (GestureLayer). run-room.sh
   // appends it in gesture mode so pointing always has visible feedback.
-  dots: boolean;
+  // null = unspecified (the stored preference — default visible — decides).
+  dots: boolean | null;
   // ?research=1 — force THIS window into the research-mode scene (the 3D
   // conversation tree + crystals) regardless of the room-wide toggle: a
   // dedicated display (e.g. a ceiling projector) always shows the tree while
@@ -139,9 +140,11 @@ export function parseProjectorUrl(search: string, hostname: string): ProjectorUr
   // halves of a single wide frustum instead of the corner-locked yawed pair.
   const flat = params.get("flat") === "1";
 
-  // Cursor dots (?dots=1): force-show the per-person pointing dots (they are
-  // hidden by default — an earlier live-room request found them cluttering).
-  const dots = params.get("dots") === "1";
+  // Cursor dots: VISIBLE unless this window explicitly opts out with ?dots=0
+  // (?dots=1 still forces on over a stored "0"). The old hidden-default made a
+  // healthy joystick look dead — the default is never an invisible cursor.
+  const dotsParam = params.get("dots");
+  const dots = dotsParam === "0" ? false : dotsParam === "1" ? true : null;
 
   // Dedicated-display extras: window-local research view + boot-into-zen.
   const research = params.get("research") === "1";

@@ -2304,7 +2304,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
           fusionUrl={urlConfig.gesture?.fusionUrl ?? ""}
           remoteUrl={remoteHandsUrl}
           mouseTest={urlConfig.dwell === "mouse"}
-          initialCursorDots={urlConfig.dots ? true : undefined}
+          initialCursorDots={urlConfig.dots ?? undefined}
           onDwellMiss={closeTopPopup}
         />
       ) : null}
