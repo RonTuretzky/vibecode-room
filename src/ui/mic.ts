@@ -12,10 +12,53 @@ export interface MicCaptureOptions {
   onLevel?: (rms: number) => void;
   onStatus?: (status: "connecting" | "live" | "stopped") => void;
   onError?: (message: string) => void;
+  // Which microphone: a case-insensitive substring of the device label
+  // (?mic=wireless → "Wireless GO RX"). Absent → the ROOM-MIC preference
+  // below picks an external mic over the laptop's builtin when one exists.
+  deviceLabel?: string;
+  // Surfaced once the stream is open, so the wall can SAY which physical mic
+  // is feeding the room instead of leaving it to faith.
+  onDevice?: (label: string) => void;
 }
 
 export interface MicCaptureHandle {
   stop(): void;
+}
+
+// Pure device policy, unit-tested: an explicit label substring wins; otherwise
+// PREFER AN EXTERNAL MIC over the builtin. A projector room's laptop sits in a
+// corner — when somebody has plugged in a real room mic (a RØDE receiver, a
+// USB conference puck), silently capturing the laptop's own mic instead is a
+// deaf room that looks healthy. Builtin stays the honest fallback.
+export function pickMicDevice(
+  devices: ReadonlyArray<{ kind: string; label: string; deviceId: string }>,
+  preferredLabel?: string,
+): { deviceId: string; label: string } | null {
+  const inputs = devices.filter((device) => device.kind === "audioinput" && device.deviceId.length > 0);
+  if (inputs.length === 0) {
+    return null;
+  }
+  if (preferredLabel !== undefined && preferredLabel.trim().length > 0) {
+    const wanted = preferredLabel.trim().toLowerCase();
+    const match = inputs.find((device) => device.label.toLowerCase().includes(wanted));
+    if (match !== undefined) {
+      return { deviceId: match.deviceId, label: match.label };
+    }
+    // An explicit ask that matches nothing falls through to the default policy
+    // (the caller surfaces the label actually used, so the miss is visible).
+  }
+  const BUILTIN = /\b(built-?in|macbook|internal)\b/iu;
+  const VIRTUAL = /virtual|aggregate|zoomaudio|blackhole|loopback|teams|soundflower/iu;
+  const external = inputs.find((device) => !BUILTIN.test(device.label) && !VIRTUAL.test(device.label) && device.label.length > 0);
+  // Fallback order matters: a real builtin beats the system "default" alias
+  // beats whatever virtual device happens to enumerate first — a Zoom loopback
+  // must never become the room's ears just by being at index 0.
+  const chosen =
+    external ??
+    inputs.find((device) => BUILTIN.test(device.label)) ??
+    inputs.find((device) => device.deviceId === "default") ??
+    inputs[0]!;
+  return { deviceId: chosen.deviceId, label: chosen.label };
 }
 
 export async function startMicCapture(options: MicCaptureOptions = {}): Promise<MicCaptureHandle> {
@@ -25,9 +68,35 @@ export async function startMicCapture(options: MicCaptureOptions = {}): Promise<
 
   options.onStatus?.("connecting");
 
-  const mediaStream = await navigator.mediaDevices.getUserMedia({
+  // Two-step open: device labels are hidden until the origin holds a live
+  // audio permission, so open the default mic first, THEN enumerate and — if
+  // the policy picks a different physical device — swap the stream to it.
+  let mediaStream = await navigator.mediaDevices.getUserMedia({
     audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
   });
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const picked = pickMicDevice(devices, options.deviceLabel);
+    const currentLabel = mediaStream.getAudioTracks()[0]?.label ?? "";
+    if (picked !== null && picked.label.length > 0 && picked.label !== currentLabel) {
+      const swapped = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          deviceId: { exact: picked.deviceId },
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+        },
+      });
+      for (const track of mediaStream.getTracks()) {
+        track.stop();
+      }
+      mediaStream = swapped;
+    }
+  } catch {
+    // Enumeration/swap failing must never cost the room its mic — the default
+    // stream keeps capturing and the device label below reports the truth.
+  }
+  options.onDevice?.(mediaStream.getAudioTracks()[0]?.label ?? "unknown microphone");
 
   const AudioCtor: typeof AudioContext =
     window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;

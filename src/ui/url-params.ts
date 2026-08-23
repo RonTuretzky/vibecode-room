@@ -26,6 +26,10 @@ export interface ProjectorUrlConfig {
   // point→highlight→dwell-select mechanic (no cameras needed). The OS cursor
   // stays visible; only pure gesture mode hides it.
   dwell: "mouse" | null;
+  // ?mic=<label substring> — pin the room's capture to a specific microphone
+  // (e.g. ?mic=wireless for a RØDE Wireless GO receiver). Absent → the
+  // capture's room-mic policy (external over builtin) decides.
+  mic: string | null;
   // TouchDesigner hand-pinch camera control, non-null ONLY on explicit opt-in.
   // ?hands=1 → default TD URL on the page's hostname (port 9980);
   // ?hands=ws://td-mac:9980 → explicit remote source; absent/"0"/"" → off.
@@ -106,6 +110,8 @@ export function parseProjectorUrl(search: string, hostname: string): ProjectorUr
   // Mouse-dwell fallback (?dwell=mouse): desk testing / accessibility path for
   // the gesture interaction — independent of gesture mode.
   const dwell = params.get("dwell") === "mouse" ? ("mouse" as const) : null;
+  const micParam = params.get("mic");
+  const mic = micParam !== null && micParam.trim().length > 0 ? micParam.trim() : null;
 
   // TouchDesigner pinch camera (?hands=): camera CONTROL only, independent of
   // the dwell/gesture layers; ?hands=1 defaults to the TD port on this host.
@@ -160,5 +166,6 @@ export function parseProjectorUrl(search: string, hostname: string): ProjectorUr
         ? view.toUpperCase()
         : null;
 
-  return { view, wall, badge, gesture, dwell, hands, remote, demo, mock, flat, dots, research, zen, park, autoFit };
+  return { view, wall, badge, gesture, dwell,
+    mic, hands, remote, demo, mock, flat, dots, research, zen, park, autoFit };
 }

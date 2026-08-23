@@ -4133,3 +4133,15 @@ main.gesture-mode .record-steer-heard-line { font-size: 1.2rem; }
   letter-spacing: 0.02em;
   pointer-events: none;
 }
+
+/* Which physical mic the room is hearing — a small honest chip under the
+   capture meter ("Wireless GO RX" vs the laptop's builtin). */
+.mic-device {
+  font-size: 11px;
+  color: #8fa4cc;
+  letter-spacing: 0.03em;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

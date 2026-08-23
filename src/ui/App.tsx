@@ -179,6 +179,10 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
   // fully real one. Nobody standing in the room could tell.
   const [standIns, setStandIns] = useState<string[]>([]);
   const [micState, setMicState] = useState<"off" | "connecting" | "live">("off");
+  // The physical microphone actually feeding the room ("Wireless GO RX" /
+  // "MacBook Pro Microphone") — shown on the capture control so the operator
+  // never has to guess which mic the room is hearing.
+  const [micDeviceLabel, setMicDeviceLabel] = useState<string | null>(null);
   // Per-TAB marker (not localStorage): the one window holding the room's mic.
   // Survives the reload a self-rebuild forces; never leaks to the other walls.
   const [micLevel, setMicLevel] = useState(0);
@@ -1101,6 +1105,11 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
             }
           },
           onError: (message) => setMicError(message),
+          // ?mic=<label substring> pins the device; absent, the capture's
+          // room-mic policy prefers an external mic (RØDE receiver, USB puck)
+          // over the laptop's builtin.
+          ...(urlConfig.mic !== null ? { deviceLabel: urlConfig.mic } : {}),
+          onDevice: (label) => setMicDeviceLabel(label),
         });
         // While getUserMedia was pending a stop (or emergency/unmount) may
         // have disowned this start; committing now would resurrect — or, if a
@@ -2469,6 +2478,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
               gets the mic. */}
           <MicCaptureControl
             active={captureMode || micState !== "off"}
+            deviceLabel={micDeviceLabel}
             micState={micState}
             level={micLevel}
             error={micError}
@@ -3054,6 +3064,7 @@ function MicCaptureControl({
   mode,
   bytesReceived,
   onToggle,
+  deviceLabel = null,
 }: {
   active: boolean;
   micState: "off" | "connecting" | "live";
@@ -3062,6 +3073,8 @@ function MicCaptureControl({
   mode?: "deepgram" | "voxterm" | "replay";
   bytesReceived: number;
   onToggle: () => void;
+  // The physical device feeding the capture, once known ("Wireless GO RX").
+  deviceLabel?: string | null;
 }) {
   // Map RMS (~0–0.3 for speech) onto a 0–100% bar with mild gain.
   const levelPercent = Math.min(100, Math.round(level * 320));
@@ -3069,7 +3082,7 @@ function MicCaptureControl({
   const hint = active
     ? mode === "replay"
       ? "Capturing. Audio streams to the server, but transcription needs DEEPGRAM_API_KEY."
-      : "Capturing: live mic → server ASR → ideas. Click to stop the mic and Idea Capture together."
+      : `Capturing${deviceLabel !== null ? ` via ${deviceLabel}` : ""}: live mic → server ASR → ideas. Click to stop the mic and Idea Capture together.`
     : "One button: unmute + mic on + Idea Capture on. Click again to stop both.";
 
   return (
@@ -3089,6 +3102,11 @@ function MicCaptureControl({
       </button>
       {micState === "live" ? (
         <>
+          {deviceLabel !== null ? (
+            <span className="mic-device" data-testid="mic-device-label" title="The physical microphone the room is hearing.">
+              {deviceLabel}
+            </span>
+          ) : null}
           <span className="mic-meter" aria-label="Microphone input level">
             <span className="mic-meter-fill" data-testid="mic-meter-fill" style={{ width: `${levelPercent}%` }} />
           </span>
