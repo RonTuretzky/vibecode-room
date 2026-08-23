@@ -313,17 +313,19 @@ def rasterise_water(elements, half_east, half_north):
 # the curling walks around the Pond, the drives, the Mall. Exported as
 # polylines (not a raster) so the runtime can lay crisp ribbons on the
 # terrain and stand lamps and benches along them.
+# Widths from the photographs, not from generosity: a Central Park walk is
+# ~2.5 m of asphalt with brick-edged gutters; the drives are two lanes.
 PATH_WIDTHS_DM = {
-    "footway": 35,
-    "path": 35,
-    "pedestrian": 50,
-    "cycleway": 45,
-    "bridleway": 45,
-    "track": 40,
-    "service": 60,
-    "residential": 90,
-    "unclassified": 90,
-    "tertiary": 110,
+    "footway": 26,
+    "path": 24,
+    "pedestrian": 36,
+    "cycleway": 34,
+    "bridleway": 36,
+    "track": 30,
+    "service": 45,
+    "residential": 70,
+    "unclassified": 70,
+    "tertiary": 85,
 }
 
 

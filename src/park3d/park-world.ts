@@ -78,6 +78,10 @@ export interface ParkWorldOptions {
   // back to the real terrain over `feather` — the room parks its meadow disc
   // on Sheep Meadow and must not have the lawn poke through it.
   flatten?: { x: number; z: number; radius: number; feather: number };
+  // Split the hero water body (the one containing this local point) out of
+  // the merged sheet and expose its geometry for a real reflective water
+  // material (the room hands the Pond to three.js Water).
+  heroWaterAt?: { x: number; z: number };
   // Downscale the orthophoto on decode to at most this many pixels wide. The
   // bake is 4638×6417 (~160 MB of GPU memory with mips per WebGL context);
   // the room's ground-level view is fine at 2048 and runs two contexts.
@@ -90,6 +94,9 @@ export interface ParkWorld {
   terrain: THREE.Mesh;
   buildings: THREE.Mesh | null;
   water: THREE.Mesh | null;
+  // Hero body geometry (local XY plane, +Z up — rotate -90° about X and set
+  // position.y to `level`) for a planar-reflection water material.
+  heroWater: { geometry: THREE.BufferGeometry; level: number } | null;
   paths: THREE.Mesh | null;
   // Path centrelines in local metres (width, flat [x,z,...] runs) for the
   // caller's street furniture — lamps and benches stand along these.
@@ -362,7 +369,7 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
 
   orthoTexture.colorSpace = THREE.SRGBColorSpace;
   orthoTexture.anisotropy = 8;
-  let terrainMaterial: THREE.Material;
+  let terrainMaterial: THREE.Material | THREE.Material[];
   if (opts.detailGround === true) {
     // Tint each vertex from a small readback of the photo, then let the
     // garden's tiled grass carry the surface detail. Lifted toward the
@@ -422,6 +429,30 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
     });
     // The photo no longer drapes the ground; release it.
     orthoTexture.dispose();
+    // The grass belongs INSIDE the wall only: split the index into a park
+    // group (tiled grass) and a city group (plain ortho-tinted paving) by
+    // triangle centroid, so the blocks between buildings read as street,
+    // not meadow.
+    const src = geometry.getIndex()!;
+    const parkTris: number[] = [];
+    const cityTris: number[] = [];
+    for (let t = 0; t < src.count; t += 3) {
+      const a = src.getX(t);
+      const b = src.getX(t + 1);
+      const c = src.getX(t + 2);
+      const cxT = (pos.getX(a) + pos.getX(b) + pos.getX(c)) / 3;
+      const czT = (pos.getZ(a) + pos.getZ(b) + pos.getZ(c)) / 3;
+      (insidePark(cxT, czT, 6) ? parkTris : cityTris).push(a, b, c);
+    }
+    const merged = new Uint32Array(parkTris.length + cityTris.length);
+    merged.set(parkTris, 0);
+    merged.set(cityTris, parkTris.length);
+    geometry.setIndex(new THREE.BufferAttribute(merged, 1));
+    geometry.clearGroups();
+    geometry.addGroup(0, parkTris.length, 0);
+    geometry.addGroup(parkTris.length, cityTris.length, 1);
+    const paving = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, metalness: 0, color: 0xb8b5af });
+    terrainMaterial = [terrainMaterial, paving];
   } else {
     terrainMaterial = new THREE.MeshBasicMaterial({ map: orthoTexture, vertexColors: true });
   }
@@ -437,9 +468,12 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
   // (the DEM already sits at the water surface over lakes). Built on its own
   // 4 m grid so shorelines stay crisp whatever the terrain step.
   let water: THREE.Mesh | null = null;
+  let heroWater: { geometry: THREE.BufferGeometry; level: number } | null = null;
   if (waterImage !== null) {
     await nextFrame();
-    water = buildWater(sampleWater, groundAt, halfEast, halfNorth, 2);
+    const built = buildWater(sampleWater, groundAt, halfEast, halfNorth, 2, opts.heroWaterAt);
+    water = built.mesh;
+    heroWater = built.hero;
     if (water !== null) {
       group.add(water);
     }
@@ -493,6 +527,7 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
     terrain,
     buildings,
     water,
+    heroWater,
     paths,
     pathLines,
     groundAt,
@@ -502,10 +537,12 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
     waterAt: sampleWater,
     dispose: () => {
       geometry.dispose();
-      const tm = terrain.material as THREE.MeshStandardMaterial;
-      tm.map?.dispose();
-      tm.normalMap?.dispose();
-      tm.dispose();
+      for (const m of Array.isArray(terrain.material) ? terrain.material : [terrain.material]) {
+        const tm = m as THREE.MeshStandardMaterial;
+        tm.map?.dispose();
+        tm.normalMap?.dispose();
+        tm.dispose();
+      }
       orthoTexture.dispose();
       if (buildings !== null) {
         buildings.geometry.dispose();
@@ -529,6 +566,7 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
         paths.geometry.dispose();
         (paths.material as THREE.Material).dispose();
       }
+      heroWater?.geometry.dispose();
       group.getObjectByName("park-landmarks")?.traverse((node) => {
         if (node instanceof THREE.Mesh) {
           node.geometry.dispose();
@@ -549,7 +587,8 @@ export function buildWater(
   halfEast: number,
   halfNorth: number,
   cell: number,
-): THREE.Mesh | null {
+  heroAt?: { x: number; z: number },
+): { mesh: THREE.Mesh | null; hero: { geometry: THREE.BufferGeometry; level: number } | null } {
   const cols = Math.ceil((2 * halfEast) / cell);
   const rows = Math.ceil((2 * halfNorth) / cell);
   // Which cells are water, then one LEVEL per connected body: lidar DEMs
@@ -606,9 +645,20 @@ export function buildWater(
     }
     bodies++;
   }
+  // Which body is the hero (real reflections)? The one under `heroAt`.
+  let heroLabel = -1;
+  if (heroAt !== undefined) {
+    const hi = Math.min(cols - 1, Math.max(0, Math.floor((heroAt.x + halfEast) / cell)));
+    const hj = Math.min(rows - 1, Math.max(0, Math.floor((heroAt.z + halfNorth) / cell)));
+    heroLabel = label[hj * cols + hi];
+  }
   const positions: number[] = [];
   const uvs: number[] = [];
   const index: number[] = [];
+  const heroPositions: number[] = [];
+  const heroUvs: number[] = [];
+  const heroIndex: number[] = [];
+  let heroLevel = 0;
   for (let j = 0; j < rows; j++) {
     for (let i = 0; i < cols; i++) {
       if (isWater[j * cols + i] === 0) {
@@ -617,17 +667,42 @@ export function buildWater(
       const x0 = -halfEast + i * cell;
       const z0 = -halfNorth + j * cell;
       const y = level[j * cols + i] + 0.1;
+      const T = 3.5;
+      if (label[j * cols + i] === heroLabel) {
+        // Local XY plane (x, −z) so the caller can mount it the way
+        // three's Water expects (rotation.x = −π/2 → back to y-up).
+        heroLevel = y;
+        const v = heroPositions.length / 3;
+        heroPositions.push(x0, -z0, 0, x0 + cell, -z0, 0, x0 + cell, -(z0 + cell), 0, x0, -(z0 + cell), 0);
+        heroUvs.push(x0 / T, z0 / T, (x0 + cell) / T, z0 / T, (x0 + cell) / T, (z0 + cell) / T, x0 / T, (z0 + cell) / T);
+        // CCW in local XY (normal +Z, so the −π/2 X-rotation lands it +Y).
+        heroIndex.push(v, v + 3, v + 2, v, v + 2, v + 1);
+        continue;
+      }
       const v = positions.length / 3;
       positions.push(x0, y, z0, x0 + cell, y, z0, x0 + cell, y, z0 + cell, x0, y, z0 + cell);
-      // World-space UVs (one ripple tile ≈ 7 m) for the normal map.
-      const T = 3.5;
+      // World-space UVs for the ripple normal map.
       uvs.push(x0 / T, z0 / T, (x0 + cell) / T, z0 / T, (x0 + cell) / T, (z0 + cell) / T, x0 / T, (z0 + cell) / T);
       // Counter-clockwise from above (+Y): (x0,z0) → (x0,z1) → (x1,z1) …
       index.push(v, v + 3, v + 2, v, v + 2, v + 1);
     }
   }
+  let hero: { geometry: THREE.BufferGeometry; level: number } | null = null;
+  if (heroPositions.length > 0) {
+    const heroGeometry = new THREE.BufferGeometry();
+    heroGeometry.setAttribute("position", new THREE.Float32BufferAttribute(heroPositions, 3));
+    heroGeometry.setAttribute("uv", new THREE.Float32BufferAttribute(heroUvs, 2));
+    const heroNormals = new Float32Array(heroPositions.length);
+    for (let i = 2; i < heroNormals.length; i += 3) {
+      heroNormals[i] = 1;
+    }
+    heroGeometry.setAttribute("normal", new THREE.BufferAttribute(heroNormals, 3));
+    heroGeometry.setIndex(heroIndex);
+    heroGeometry.computeBoundingSphere();
+    hero = { geometry: heroGeometry, level: heroLevel };
+  }
   if (positions.length === 0) {
-    return null;
+    return { mesh: null, hero };
   }
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
@@ -650,7 +725,7 @@ export function buildWater(
   }
   const mesh = new THREE.Mesh(geometry, material);
   mesh.name = "park-water";
-  return mesh;
+  return { mesh, hero };
 }
 
 // Tileable ripple normal map (sum of sines), generated once per page.
@@ -689,10 +764,12 @@ export function waterRippleNormals(): THREE.CanvasTexture {
   return rippleTexture;
 }
 
-// Path ribbons: each polyline becomes a flat triangle strip lying a hand
-// above the terrain, broken where it crosses water (the bridges carry those
-// spans). Walks are gravel-tan, the drives asphalt-grey, with a light
-// per-vertex jitter so long runs don't read as vector art.
+// Path ribbons the way the photographs show them: a narrow asphalt core
+// (grey-warm on the walks, darker on the drives) flanked by brick edging
+// strips — the red-brown gutter courses that line Central Park's walks.
+// Each polyline becomes flat triangle strips lying a hand above the
+// terrain, broken where it crosses water (the bridges carry those spans),
+// with light per-vertex jitter so long runs don't read as vector art.
 export function buildPaths(
   lines: { width: number; pts: number[] }[],
   groundAt: (x: number, z: number) => number,
@@ -701,20 +778,28 @@ export function buildPaths(
   const positions: number[] = [];
   const colors: number[] = [];
   const index: number[] = [];
-  const walk = new THREE.Color(0xb3a58a);
-  const drive = new THREE.Color(0x83817b);
+  const walk = new THREE.Color(0x958e85);
+  const drive = new THREE.Color(0x716f6b);
+  const brick = new THREE.Color(0x8a5747);
+  const curb = new THREE.Color(0x8f8c85);
   let seed = 0x50415448;
   const rand = () => {
     seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
     return seed / 4294967296;
   };
   for (const line of lines) {
-    const base = line.width > 5.5 ? drive : walk;
+    const isDrive = line.width > 5.5;
+    const core = line.width > 5.5 ? drive : walk;
+    const edge = isDrive ? curb : brick;
+    const half = line.width / 2;
+    const edgeHalf = Math.min(0.16, half * 0.2);
     const n = line.pts.length / 2;
     let run: number[] = [];
     const flush = () => {
       if (run.length >= 4) {
-        emitRibbon(run, line.width / 2, base);
+        emitRibbon(run, 0, half - edgeHalf * 2, core, 0.07, 0.08);
+        emitRibbon(run, half - edgeHalf, edgeHalf, edge, 0.085, 0.05);
+        emitRibbon(run, -(half - edgeHalf), edgeHalf, edge, 0.085, 0.05);
       }
       run = [];
     };
@@ -729,7 +814,7 @@ export function buildPaths(
     }
     flush();
   }
-  function emitRibbon(run: number[], half: number, base: THREE.Color): void {
+  function emitRibbon(run: number[], offset: number, half: number, base: THREE.Color, lift: number, jitter: number): void {
     const n = run.length / 2;
     const start = positions.length / 3;
     for (let i = 0; i < n; i++) {
@@ -744,9 +829,11 @@ export function buildPaths(
       const len = Math.hypot(dx, dz) || 1;
       const px = -dz / len;
       const pz = dx / len;
-      const y = groundAt(x, z) + 0.07;
-      positions.push(x + px * half, y, z + pz * half, x - px * half, y, z - pz * half);
-      const tone = 0.92 + rand() * 0.16;
+      const cx = x + px * offset;
+      const cz = z + pz * offset;
+      const y = groundAt(cx, cz) + lift;
+      positions.push(cx + px * half, y, cz + pz * half, cx - px * half, y, cz - pz * half);
+      const tone = 1 - jitter / 2 + rand() * jitter;
       colors.push(base.r * tone, base.g * tone, base.b * tone, base.r * tone, base.g * tone, base.b * tone);
       if (i > 0) {
         const a = start + (i - 1) * 2;

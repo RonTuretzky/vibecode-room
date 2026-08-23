@@ -8,6 +8,7 @@ import { loadGardenFlora, type FloraLibrary } from "./garden-flora";
 import { POND_STAGE, alongAcross as alongAcrossOf, localFromAlongAcross as parkLocalFromAlongAcross } from "../park3d/park-frame";
 import { GAPSTOW, OUTCROPS } from "../park3d/park-landmarks";
 import { loadParkWorldShared, type ParkWorld } from "../park3d/park-world";
+import { Water } from "three/addons/objects/Water.js";
 import { localFromLatLon } from "../park3d/park-frame";
 
 // The full-viewport 3D stage (after conductor-github-visualizer): the scene IS
@@ -1068,6 +1069,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
       };
       let parkWorld: ParkWorld | null = null;
       let parkWater: THREE.MeshStandardMaterial | null = null;
+      let parkHeroWater: Water | null = null;
       let parkDisposed = false;
       if (park) {
         // Shared for the page (see park-world.ts): a garden↔orbit toggle
@@ -1088,6 +1090,8 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
           // No window-boxes standing in the greenery (Wollman Rink, the
           // Zoo…): inside the wall the park is landmarks, trees and rock.
           clearParkInterior: true,
+          // The Pond itself gets real planar reflections (three's Water).
+          heroWaterAt: localFromLatLon(40.766, -73.9741),
         };
         // The stage lands on the room origin, turned half a circle so the
         // boot framing (yaw 0 looks down −Z) faces SOUTH across the Pond at
@@ -1374,6 +1378,52 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
               waterMat.needsUpdate = true;
               parkWater = waterMat;
             }
+            // The Pond itself: three's Water — a real mirror pass, so the
+            // towers and sky genuinely reflect in the surface the way they
+            // do in every photograph. Cached on the shared world; only the
+            // vegetation-hiding hook rebinds to this build's group.
+            if (world.heroWater !== null) {
+              let hero = world.group.userData.heroWaterMesh as Water | undefined;
+              if (hero === undefined) {
+                const waterNormals = new THREE.TextureLoader().load("/assets/park/waternormals.jpg", (t) => {
+                  t.wrapS = THREE.RepeatWrapping;
+                  t.wrapT = THREE.RepeatWrapping;
+                });
+                hero = new Water(world.heroWater.geometry, {
+                  textureWidth: 512,
+                  textureHeight: 512,
+                  waterNormals,
+                  sunDirection: new THREE.Vector3(-24, 42, -30).normalize(),
+                  sunColor: 0xfff2d9,
+                  waterColor: 0x0e1f19,
+                  distortionScale: 2.4,
+                  fog: true,
+                });
+                hero.rotation.x = -Math.PI / 2;
+                hero.position.y = world.heroWater.level;
+                world.group.add(hero);
+                world.group.userData.heroWaterMesh = hero;
+                world.group.userData.heroWaterRender = hero.onBeforeRender;
+              }
+              parkHeroWater = hero;
+              // The mirror pass re-renders the scene; hide the ~27M-tris of
+              // instanced vegetation for it — the reflection wants sky,
+              // skyline and shore, and doubles the frame cost otherwise.
+              const original = world.group.userData.heroWaterRender as typeof hero.onBeforeRender;
+              hero.onBeforeRender = (renderer2, scene2, camera2, geometry2, material2, group2) => {
+                const hidden: THREE.Object3D[] = [];
+                scene.traverse((node) => {
+                  if (node instanceof THREE.InstancedMesh && node.visible) {
+                    node.visible = false;
+                    hidden.push(node);
+                  }
+                });
+                original.call(hero, renderer2, scene2, camera2, geometry2, material2, group2);
+                for (const node of hidden) {
+                  node.visible = true;
+                }
+              };
+            }
             group.add(world.group);
             return loadGardenFlora().then((flora) => {
               if (!parkDisposed) {
@@ -1440,6 +1490,9 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
           // still water reads as a rendering bug, not calm.
           if (parkWater?.normalMap != null) {
             parkWater.normalMap.offset.set((t * 0.014) % 1, (t * 0.011) % 1);
+          }
+          if (parkHeroWater !== null) {
+            (parkHeroWater.material as THREE.ShaderMaterial).uniforms.time.value = t * 0.6;
           }
           if (reducedMotion) {
             return;

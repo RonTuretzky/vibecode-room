@@ -20,7 +20,8 @@ rectangle of ±2147 m east / ±2971 m north around the park centre
 | `dem.bin` | USGS 3DEP via the National Map `3DEPElevation` image service | Bare-earth heights on an 8 m grid (538×744), Int16 little-endian decimetres relative to the park centre's surface (34.6 m), row 0 = north. |
 | `relief.png` | derived from the NAIP imagery (always leaf-on, even under `--ortho nys`) | Tree-canopy height field at 2 m/px, 8-bit in 0.1 m units (0–22 m). Leaf-on canopy is dark green, lawns bright green, water dark/smooth/blue-shifted — a colour classifier, restricted to the park rectangle, with noise for crown bumps. |
 | `water.png` | OpenStreetMap `natural=water` polygons (© OpenStreetMap contributors, ODbL), rasterised at 2 m/px | The Lake, the Pond, Turtle Pond, the Reservoir, Harlem Meer, the Pool, Conservatory Water, the fountains, the river edges. The photo classifier is only a fallback when Overpass is down. |
-| `paths.json` | OpenStreetMap footway/drive polylines clipped to the park (© OpenStreetMap contributors, ODbL) | 1.8k segments in local decimetres; the runtime lays ribbon geometry on the terrain and stands lamps/benches along them. |
+| `paths.json` | OpenStreetMap footway/drive polylines clipped to the park (© OpenStreetMap contributors, ODbL) | 1.8k segments in local decimetres at photograph widths (~2.5 m walks); the runtime lays brick-edged ribbon geometry on the terrain and stands lamps/benches along them. |
+| `waternormals.jpg` | three.js examples (MIT) | Normal map for the Pond's reflective Water material in the room. |
 | `buildings.json` | NYC Open Data, DOITT Building Footprints (dataset `5zhs-2jue`) | 17k footprints with roof height, ground elevation, construction year; rings in local decimetres, one building per line. |
 | `manifest.json` | — | The frame, per-file dimensions and anchors (Sheep Meadow's local position and ground height); `park-world.ts` validates it against `park-frame.ts` and the tests pin the two together. |
 
