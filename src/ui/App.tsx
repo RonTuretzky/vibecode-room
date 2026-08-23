@@ -2640,7 +2640,6 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
                   : "✋ Hands: connecting"}
             </button>
             <TranscriptStream lines={snapshot.transcript} />
-            <AstrologyFeed />
           </aside>
         ) : null}
       </div>
@@ -3137,122 +3136,6 @@ function TranscriptStream({ lines }: { lines: TranscriptLine[] }) {
             <p>{line.text}</p>
           </div>
         ))}
-      </div>
-    </section>
-  );
-}
-
-// AstrologyFeed — a live-ticking sidereal readout for the wall. Spoken in the
-// room: a live astrology feed that says what is retrograding "during burger
-// season", the other incidents in play, and how it lands on people whose Virgo
-// shows up in their Sun, Moon or Rising. It visualizes a small chart with
-// glyphs, and — because nobody is assumed to already read astrological symbols
-// — every glyph is decoded in an explicit KEY next to the chart.
-interface AstroSign {
-  glyph: string;
-  name: string;
-  meaning: string;
-}
-
-// Planets/points whose glyphs appear in the chart, each with a plain-language
-// gloss so the key never assumes the reader knows the symbol.
-const ASTRO_BODIES: AstroSign[] = [
-  { glyph: "☿", name: "Mercury", meaning: "messages, thinking, small plans" },
-  { glyph: "♀", name: "Venus", meaning: "love, taste, what you enjoy" },
-  { glyph: "♂", name: "Mars", meaning: "drive, temper, getting things done" },
-  { glyph: "♃", name: "Jupiter", meaning: "luck, growth, big-picture faith" },
-  { glyph: "♄", name: "Saturn", meaning: "limits, patience, hard lessons" },
-  { glyph: "♅", name: "Uranus", meaning: "surprises, sudden changes" },
-  { glyph: "℞", name: "retrograde", meaning: "a planet looks like it moves backward — a time to review, not launch" },
-  { glyph: "♍", name: "Virgo", meaning: "the tidy, careful, detail-loving sign" },
-];
-
-// The "live" burger-season sky. It rotates on a timer so the wall shows motion
-// like a real feed, and each entry names a body, whether it is retrograde, and
-// the incident it stirs up.
-const ASTRO_EVENTS: { glyph: string; retro: boolean; text: string }[] = [
-  { glyph: "☿", retro: true, text: "Mercury retrograde ℞ — orders come out wrong; double-check the burger tickets." },
-  { glyph: "♂", retro: false, text: "Mars fires up the flat-top; tempers and grease both run hot in the kitchen." },
-  { glyph: "♄", retro: true, text: "Saturn retrograde ℞ — the fryer timer demands you finally fix what you kept ignoring." },
-  { glyph: "♀", retro: false, text: "Venus glazes the buns; cravings spike and the special sauce tastes like romance." },
-  { glyph: "♃", retro: false, text: "Jupiter super-sizes the line out the door; abundance, but watch the overwhelm." },
-  { glyph: "♅", retro: true, text: "Uranus retrograde ℞ — a surprise walk-in outage; improvise the pickle rotation." },
-];
-
-// How the current sky lands specifically on Virgo placements — Sun (core self),
-// Moon (feelings), Rising (how you meet the world).
-const VIRGO_PLACEMENTS: { placement: string; glyph: string; effect: string }[] = [
-  { placement: "Virgo Sun ♍☉", glyph: "☉", effect: "Your core organizer kicks in — you become the one re-counting the patties and saving the shift." },
-  { placement: "Virgo Moon ♍☾", glyph: "☾", effect: "Feelings tidy themselves through lists; a messy grill makes you anxious, a clean prep station soothes you." },
-  { placement: "Virgo Rising ♍↑", glyph: "↑", effect: "Others read you as the calm, competent one at the counter — hand you the rush and you shine." },
-];
-
-function AstrologyFeed() {
-  // Rotate the "live" event on a timer so the wall reads as a moving feed.
-  const [tick, setTick] = useState(0);
-  useEffect(() => {
-    const id = setInterval(() => setTick((n) => n + 1), 4000);
-    return () => clearInterval(id);
-  }, []);
-  const now = ASTRO_EVENTS[tick % ASTRO_EVENTS.length];
-  const retrograding = ASTRO_EVENTS.filter((e) => e.retro).map((e) => e.glyph).join(" ");
-
-  return (
-    <section className="rail-card astro-card" data-region="astrology" data-testid="astrology-feed">
-      <h3 className="rail-title">Live Astrology · burger season</h3>
-
-      {/* The moving live line. */}
-      <p className="astro-live" data-testid="astro-live">
-        <span className="astro-live-glyph" aria-hidden="true">{now.glyph}</span>
-        {now.text}
-      </p>
-      <p className="astro-retro">Currently retrograding ℞: {retrograding || "nothing"}</p>
-
-      {/* Visualized chart — a ring of the season's glyphs. */}
-      <div className="astro-chart" data-testid="astro-chart" role="img" aria-label="Astrological chart of burger-season bodies">
-        <span className="astro-chart-hub">♍</span>
-        {ASTRO_EVENTS.map((e, i) => {
-          const angle = (i / ASTRO_EVENTS.length) * 2 * Math.PI - Math.PI / 2;
-          const left = 50 + 38 * Math.cos(angle);
-          const top = 50 + 38 * Math.sin(angle);
-          return (
-            <span
-              key={`${e.glyph}-${i}`}
-              className={`astro-node${e.retro ? " retro" : ""}${i === tick % ASTRO_EVENTS.length ? " active" : ""}`}
-              style={{ left: `${left}%`, top: `${top}%` }}
-            >
-              {e.glyph}
-            </span>
-          );
-        })}
-      </div>
-
-      {/* KEY / legend — never assume the reader knows the symbols. */}
-      <div className="astro-key" data-testid="astro-key">
-        <h4 className="astro-key-title">Key — what each symbol means</h4>
-        <ul>
-          {ASTRO_BODIES.map((b) => (
-            <li key={b.name}>
-              <span className="astro-key-glyph" aria-hidden="true">{b.glyph}</span>
-              <span className="astro-key-name">{b.name}</span>
-              <span className="astro-key-meaning">{b.meaning}</span>
-            </li>
-          ))}
-        </ul>
-      </div>
-
-      {/* Virgo placements — how the sky lands on Sun / Moon / Rising. */}
-      <div className="astro-virgo" data-testid="astro-virgo">
-        <h4 className="astro-key-title">If you have Virgo in your chart</h4>
-        <ul>
-          {VIRGO_PLACEMENTS.map((v) => (
-            <li key={v.placement}>
-              <span className="astro-virgo-name">{v.placement}</span>
-              <span className="astro-virgo-effect">{v.effect}</span>
-            </li>
-          ))}
-        </ul>
-        <p className="astro-key-foot">☉ Sun = core self · ☾ Moon = feelings · ↑ Rising = how you meet the world</p>
       </div>
     </section>
   );
