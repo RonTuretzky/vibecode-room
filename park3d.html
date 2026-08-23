@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Central Park — Photorealistic 3D Tiles evaluation</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: #0b1420;
+        font-family: -apple-system, "Segoe UI", sans-serif;
+      }
+      #hud {
+        position: fixed;
+        top: 12px;
+        left: 12px;
+        color: #eaf2fb;
+        background: rgba(10, 18, 28, 0.72);
+        border: 1px solid rgba(140, 180, 220, 0.25);
+        border-radius: 10px;
+        padding: 10px 14px;
+        font-size: 13px;
+        line-height: 1.5;
+        max-width: 340px;
+      }
+      #hud b {
+        color: #9ee2ff;
+      }
+      #hud button {
+        margin: 2px 4px 2px 0;
+        padding: 3px 9px;
+        border-radius: 6px;
+        border: 1px solid rgba(140, 180, 220, 0.4);
+        background: rgba(30, 50, 70, 0.8);
+        color: #eaf2fb;
+        cursor: pointer;
+      }
+      #alt {
+        font-variant-numeric: tabular-nums;
+      }
+      #attrib {
+        position: fixed;
+        bottom: 8px;
+        right: 10px;
+        color: rgba(234, 242, 251, 0.85);
+        background: rgba(10, 18, 28, 0.55);
+        border-radius: 6px;
+        padding: 2px 8px;
+        font-size: 11px;
+      }
+      #err {
+        position: fixed;
+        inset: 40% 20%;
+        color: #ffb0a8;
+        font-size: 15px;
+        text-align: center;
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="hud">
+      <b>Central Park 110th → 90th St</b> — Google Photorealistic 3D Tiles<br />
+      altitude: <span id="alt">—</span><br />
+      <span id="presets"></span><br />
+      keys 1–6 = altitude presets · C = toggle segment crop · drag/wheel = orbit
+    </div>
+    <div id="attrib">Data © Google</div>
+    <div id="err"></div>
+    <script type="module" src="/src/park3d/main.ts"></script>
+  </body>
+</html>
