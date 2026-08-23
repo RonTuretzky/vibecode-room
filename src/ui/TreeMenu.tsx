@@ -265,7 +265,7 @@ export function TreeMenu({ process, snapshot, anchor, onClose, onOpenDeck, onDis
       <header className="tree-menu-head">
         <div className="tree-menu-identity">
           <span className="tree-menu-eyebrow">
-            {model.isSelf ? "🪞 the room" : model.stage === "commissioned" ? "🌳 commissioned" : "🌱 concept"}
+            {model.isSelf ? "🪞 mirror" : model.stage === "commissioned" ? "🌳 commissioned" : "🌱 concept"}
           </span>
           <h2 className="tree-menu-title" data-testid="tree-menu-title">
             {model.title}
@@ -385,23 +385,26 @@ export function TreeMenu({ process, snapshot, anchor, onClose, onOpenDeck, onDis
       {model.isSelf && versions !== null && versions.branches.length > 0 ? (
         <div className="tree-menu-versions" data-testid="tree-menu-versions">
           <span className="tree-menu-versions-head">versions · running {versions.current}</span>
-          {versions.branches
-            .filter((entry) => entry.name !== versions.current)
-            .slice(0, 6)
-            .map((entry) => (
-              <button
-                key={entry.name}
-                type="button"
-                className="ctl-button tree-menu-version"
-                data-testid="tree-menu-version"
-                title={`Load the room to ${entry.name} — rebuilds and relaunches on that branch.`}
-                onClick={() => loadVersion(entry.name)}
-                disabled={loadingVersion !== null}
-              >
-                {loadingVersion === entry.name ? "⤵ loading… (the room will reload)" : `⤵ ${entry.name.replace(/^room\//u, "")}`}
-                <span className="tree-menu-version-subject">{entry.subject.replace(/^self: /u, "")}</span>
-              </button>
-            ))}
+          {/* Scroll through every version (not just the first few): the list
+              scrolls inside a capped viewport. */}
+          <div className="tree-menu-versions-scroll">
+            {versions.branches
+              .filter((entry) => entry.name !== versions.current)
+              .map((entry) => (
+                <button
+                  key={entry.name}
+                  type="button"
+                  className="ctl-button tree-menu-version"
+                  data-testid="tree-menu-version"
+                  title={`Load the room to ${entry.name} — rebuilds and relaunches on that branch.`}
+                  onClick={() => loadVersion(entry.name)}
+                  disabled={loadingVersion !== null}
+                >
+                  {loadingVersion === entry.name ? "⤵ loading… (the room will reload)" : `⤵ ${entry.name.replace(/^room\//u, "")}`}
+                  <span className="tree-menu-version-subject">{entry.subject.replace(/^self: /u, "")}</span>
+                </button>
+              ))}
+          </div>
         </div>
       ) : null}
 
