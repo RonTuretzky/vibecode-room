@@ -4061,7 +4061,12 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       // stray "forming" flower floating in its dusk.
       const nowMs = Date.now();
       const clouds = resolveConstellations(topicsRef.current, skyRef.current, dialogueRef.current);
-      const skyActive = clouds.length > 0;
+      // A research-pinned window (the ceiling) is ALWAYS the night sky — an
+      // empty sky is still a sky. Gating the rig on data left a freshly
+      // booted room projecting the daytime garden onto the ceiling until the
+      // first sentence landed (live-room report: "does not show a
+      // constellation" — it showed grass).
+      const skyActive = clouds.length > 0 || skyViewRef.current;
 
       // PER-WALL CONTRACT: the 3D scene reconciles the FULL data set — all
       // ideas AND all builds — on every window regardless of ?view=. Walls
