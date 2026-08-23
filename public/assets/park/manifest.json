@@ -57,6 +57,11 @@
     "width": 2147,
     "height": 2971
   },
+  "lawn": {
+    "file": "lawn.png",
+    "width": 2147,
+    "height": 2971
+  },
   "buildings": {
     "file": "buildings.json",
     "count": 17196,

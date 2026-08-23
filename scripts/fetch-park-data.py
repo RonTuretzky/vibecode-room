@@ -14,6 +14,9 @@ photogrammetry it may be stored, modified, and shipped offline:
   dem.bin        USGS 3DEP bare-earth elevation (National Map image
                  service), Int16 little-endian DECIMETRES relative to the park
                  centre's surface height, row 0 = north edge.
+  lawn.png       Lawn mask (bright saturated green inside the park, minus
+                 canopy/water) — drives the ground scatter of grass tufts
+                 and wildflowers in the room.
   water.png      Water-body mask (8-bit, 2 m/px) rasterised from
                  OpenStreetMap natural=water polygons (© OpenStreetMap
                  contributors, ODbL) — the Lake, the Pond, the Reservoir…;
@@ -375,11 +378,19 @@ def build_relief(ortho, half_east, half_north, osm_water=None, seed=0x5041524B):
         wmask = water.astype(np.float32) * park_mask(half_east, half_north, 1.0, pad=0.0)
         wmask = (box_blur(wmask, 7) > 0.5).astype(np.float32)
         wmask = (box_blur(wmask, 7) > 0.45).astype(np.float32)
-    print(f"[relief] canopy cover {100 * mask.mean():.1f}% of frame, water {100 * wmask.mean():.1f}%")
+    # Lawns: bright saturated green inside the park, minus canopy and water —
+    # where the ground scatter puts grass tufts and wildflowers.
+    lmask = (exg > 40) & (V1 >= 100) & (mask == 0) & (wmask == 0)
+    lmask = (box_blur(lmask.astype(np.float32), 2) > 0.45).astype(np.float32)
+    lmask *= park_mask(half_east, half_north, 1.0)
+    print(
+        f"[relief] canopy {100 * mask.mean():.1f}%, water {100 * wmask.mean():.1f}%, lawn {100 * lmask.mean():.1f}% of frame"
+    )
     # Down to 2 m/px for the files.
     rel = Image.fromarray(np.clip(height * 10.0, 0, 255).astype(np.uint8), "L").resize((w1 // 2, h1 // 2), Image.BILINEAR)
     wat = Image.fromarray((wmask * 255).astype(np.uint8), "L").resize((w1 // 2, h1 // 2), Image.BILINEAR)
-    return rel, wat
+    law = Image.fromarray((lmask * 255).astype(np.uint8), "L").resize((w1 // 2, h1 // 2), Image.BILINEAR)
+    return rel, wat, law
 
 
 # ── buildings ───────────────────────────────────────────────────────────────
@@ -507,7 +518,7 @@ def main():
     except (urllib.error.URLError, TimeoutError, OSError, KeyError, ValueError) as error:
         print(f"[water] Overpass failed ({error}); falling back to the photo classifier")
         osm_water = None
-    relief, water = build_relief(leaf_on, half_east, half_north, osm_water)
+    relief, water, lawn = build_relief(leaf_on, half_east, half_north, osm_water)
     grid, h0 = fetch_dem(half_east, half_north, args.dem_step)
     dem = np.clip(np.round((grid - h0) * 10.0), -32768, 32767).astype("<i2")
     buildings_path = os.path.join(ROOT, "buildings.json")
@@ -546,6 +557,7 @@ def main():
         "dem": {"file": "dem.bin", "cols": dem.shape[1], "rows": dem.shape[0], "stepM": args.dem_step, "unitM": 0.1},
         "relief": {"file": "relief.png", "width": relief.width, "height": relief.height, "unitM": 0.1},
         "water": {"file": "water.png", "width": water.width, "height": water.height},
+        "lawn": {"file": "lawn.png", "width": lawn.width, "height": lawn.height},
         "buildings": {"file": "buildings.json", "count": count, "unitM": 0.1},
     }
 
@@ -554,6 +566,7 @@ def main():
     ortho.save(os.path.join(ROOT, "ortho.jpg"), quality=82, optimize=True)
     relief.save(os.path.join(ROOT, "relief.png"), optimize=True)
     water.save(os.path.join(ROOT, "water.png"), optimize=True)
+    lawn.save(os.path.join(ROOT, "lawn.png"), optimize=True)
     dem.tofile(os.path.join(ROOT, "dem.bin"))
     if buildings is not None:
         with open(buildings_path, "w") as f:

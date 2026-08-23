@@ -755,6 +755,19 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
 
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(46, 1, 0.1, 400);
+    // Fixed per window (URL-derived): the park scene allows a far wider orbit
+    // envelope so the whole postcard — Pond, bridge, skyline — fits in frame.
+    const parkEnvWindow = environmentRef.current === "park";
+    const maxOrbitRadius = parkEnvWindow ? 700 : 45;
+    const maxOrbitHeight = parkEnvWindow ? 520 : 30;
+    // Pulling far back in the park also lifts the eye above the city, so the
+    // long zoom-out becomes the aerial postcard instead of a flight through
+    // a tower's floors.
+    const parkHeightFloor = () => {
+      if (parkEnvWindow && rig.dRadius > 60) {
+        rig.dHeight = Math.max(rig.dHeight, Math.min(maxOrbitHeight, (rig.dRadius - 60) * 0.75));
+      }
+    };
     // Two-wall default mode runs TWO simultaneous fullscreen WebGL contexts on
     // one machine, so keep the renderer settings sane: prefer the discrete GPU,
     // cap the pixel ratio, and (below) pause the frame loop while hidden.
@@ -1065,6 +1078,12 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
           orthoMaxWidth: 3072,
           // No raised canopy — real trees stand in for the mask instead.
           displace: false,
+          // Ground parity with the garden: crisp tiled grass, photo-tinted.
+          detailGround: true,
+          // The 5th Ave blocks press right against the stage from the east;
+          // clear the extrusions near the room so only the skyline across
+          // the water remains (the real models all stand farther out).
+          clearFootprints: [{ x: POND_STAGE.x, z: POND_STAGE.z, r: 190 }],
         };
         // The stage lands on the room origin, turned half a circle so the
         // boot framing (yaw 0 looks down −Z) faces SOUTH across the Pond at
@@ -1141,6 +1160,50 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
             trees.push({ x: rx, z: rz, px: p.x, pz: p.z, scale: 0.52 + rng() * 0.24, rot: rng() * Math.PI * 2 });
           }
           instance("jacaranda_tree", trees);
+          // Understorey from the imagery masks: shrubs where the canopy is
+          // low (bush height, not crown height), grass tufts and wildflowers
+          // where the map has open lawn — the same photoscans the meadow
+          // uses, so the ground cover matches the stage.
+          const sprinkle = (
+            name: string,
+            count: number,
+            rMax: number,
+            spacing: number,
+            sMin: number,
+            sMax: number,
+            keep: (px: number, pz: number) => boolean,
+          ) => {
+            const placed: { x: number; z: number; scale: number; rot: number; px: number; pz: number }[] = [];
+            for (let attempt = 0; attempt < count * 40 && placed.length < count; attempt++) {
+              const angle = rng() * Math.PI * 2;
+              const radius = meadowRadius + 3 + Math.sqrt(rng()) * rMax;
+              const rx = Math.cos(angle) * radius;
+              const rz = Math.sin(angle) * radius;
+              const p = roomToPark(rx, rz);
+              if (world.waterAt(p.x, p.z) > 0.4 || !keep(p.x, p.z)) {
+                continue;
+              }
+              if ((p.x - GAPSTOW.x) ** 2 + (p.z - GAPSTOW.z) ** 2 < 16 * 16) {
+                continue;
+              }
+              if (placed.some((q) => (q.x - rx) ** 2 + (q.z - rz) ** 2 < spacing * spacing)) {
+                continue;
+              }
+              placed.push({ x: rx, z: rz, px: p.x, pz: p.z, scale: sMin + rng() * (sMax - sMin), rot: rng() * Math.PI * 2 });
+            }
+            instance(name, placed);
+          };
+          const lowVeg = (px: number, pz: number) => {
+            const c = world.canopyAt(px, pz);
+            return c > 1.5 && c < 8;
+          };
+          const lawn = (px: number, pz: number) => world.lawnAt(px, pz) > 0.45;
+          sprinkle("shrub_03", 70, 380, 9, 2.0, 3.5, lowVeg);
+          sprinkle("shrub_02", 50, 380, 9, 0.8, 1.2, lowVeg);
+          sprinkle("grass_medium_01", 240, 300, 4, 3.0, 4.5, lawn);
+          sprinkle("flower_gazania", 60, 280, 5, 2.8, 4.0, lawn);
+          sprinkle("flower_ursinia", 60, 280, 5, 2.5, 3.8, lawn);
+          sprinkle("dandelion_01", 50, 280, 5, 3.0, 4.5, lawn);
           // Outcrops: a handful of rock clumps scattered over each.
           const rocks: { x: number; z: number; scale: number; rot: number; px: number; pz: number }[] = [];
           for (const outcrop of OUTCROPS) {
@@ -2915,7 +2978,7 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
           const dAngle = -dx * 0.005;
           const dHeight = dy * 0.045;
           rig.dAngle += dAngle;
-          rig.dHeight = Math.max(1.4, Math.min(30, rig.dHeight + dHeight));
+          rig.dHeight = Math.max(1.4, Math.min(maxOrbitHeight, rig.dHeight + dHeight));
           // Exponential moving average keeps the flick velocity stable.
           angVel = angVel * 0.75 + (dAngle / dtMove) * 0.25;
           heightVel = heightVel * 0.75 + (dHeight / dtMove) * 0.25;
@@ -3011,7 +3074,9 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
     };
     const onWheel = (event: WheelEvent) => {
       event.preventDefault();
-      rig.dRadius = Math.max(4, Math.min(45, rig.dRadius + event.deltaY * 0.02));
+      // Step grows with distance so the long pull-out isn't a hundred ticks.
+      rig.dRadius = Math.max(4, Math.min(maxOrbitRadius, rig.dRadius + event.deltaY * 0.02 * Math.max(1, rig.dRadius / 40)));
+      parkHeightFloor();
     };
     // GESTURE-DWELL SEAM: expose real raycast picking + projected node rects +
     // click-equivalent activation to the gesture layer, so pointing a hand at a
@@ -3136,7 +3201,7 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
       orbitBy: (dYaw, dHeight) => {
         // Exact mirror of the onPointerMove orbit path (incl. height clamp).
         rig.dAngle += dYaw;
-        rig.dHeight = Math.max(1.4, Math.min(30, rig.dHeight + dHeight));
+        rig.dHeight = Math.max(1.4, Math.min(maxOrbitHeight, rig.dHeight + dHeight));
       },
       panBy: (dxPx, dyPx) => {
         // Exact mirror of the onPointerMove shift-pan path.
@@ -3151,7 +3216,8 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
           return; // defensive: a bad ratio must never NaN the rig
         }
         // Multiplicative dolly, re-clamped to the onWheel envelope [4,45].
-        rig.dRadius = Math.max(4, Math.min(45, rig.dRadius * scale));
+        rig.dRadius = Math.max(4, Math.min(maxOrbitRadius, rig.dRadius * scale));
+        parkHeightFloor();
       },
       // Params deliberately NOT named angVel/heightVel — they must not shadow
       // the inertia vars this feeds.
@@ -3327,7 +3393,7 @@ const researchSpecChanged = (a: ResearchNodeSpec, b: ResearchNodeSpec) =>
             angVel *= Math.exp(-dt * 2.2);
           }
           if (Math.abs(heightVel) > 1e-3) {
-            rig.dHeight = Math.max(1.4, Math.min(30, rig.dHeight + heightVel * dt));
+            rig.dHeight = Math.max(1.4, Math.min(maxOrbitHeight, rig.dHeight + heightVel * dt));
             heightVel *= Math.exp(-dt * 2.6);
           }
         }

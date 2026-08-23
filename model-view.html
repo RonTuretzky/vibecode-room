@@ -16,12 +16,15 @@ const sun=new THREE.DirectionalLight(0xfff0da,1.8);sun.position.set(3,5,2);scene
 const camera=new THREE.PerspectiveCamera(45,innerWidth/innerHeight,0.1,50000);
 const controls=new OrbitControls(camera,renderer.domElement);
 new GLTFLoader().load(params.get("glb"),(g)=>{
+  if(params.get("rotx")){g.scene.rotation.x=Number(params.get("rotx"))*Math.PI/180;}
+  g.scene.updateMatrixWorld(true);
   const box=new THREE.Box3().setFromObject(g.scene);
   const c=box.getCenter(new THREE.Vector3()),s=box.getSize(new THREE.Vector3());
   const d=Math.max(s.x,s.y,s.z);
   camera.position.set(c.x+d*0.9,c.y+d*0.55,c.z+d*0.9);controls.target.copy(c);controls.update();
   scene.add(g.scene);
   document.title="loaded "+JSON.stringify([s.x|0,s.y|0,s.z|0]);
+  console.info("[view] size",s.x.toFixed(1),s.y.toFixed(1),s.z.toFixed(1));
 });
 renderer.setAnimationLoop(()=>{controls.update();renderer.render(scene,camera);});
 </script></body></html>

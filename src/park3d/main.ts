@@ -201,6 +201,7 @@ if (src === "tiles") {
   const orthoParam = Number.parseInt(params.get("ortho") ?? "", 10);
   loadParkWorld({
     stepM: Number.isFinite(stepParam) && stepParam > 0 ? stepParam : 6,
+    models: params.get("models") !== "0",
     orthoMaxWidth: Number.isFinite(orthoParam) && orthoParam > 0 ? orthoParam : undefined,
     relief: params.get("relief") !== "0",
     buildings: params.get("buildings") !== "0",

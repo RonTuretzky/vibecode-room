@@ -24,7 +24,9 @@ export interface SkylineModelSpec {
   // runs 29°; each spec is tuned so the face the model authors as "front"
   // looks down its real street.
   bearing: number;
-  // Source up-axis (glTF is y-up, but not every upload respects it).
+  // Source up-axis override (glTF is y-up; none of the current set needs
+  // this — the packed files carry their own orienting node rotations, which
+  // an accessor-space bbox does NOT reveal, so trust the RUNTIME measure).
   up?: "z";
   // Extruded footprints within this radius of the site are dropped so the
   // box city never doubles a real model.
@@ -38,7 +40,7 @@ export const SKYLINE_MODELS: SkylineModelSpec[] = [
   { file: "central_park_tower", title: "Central Park Tower", author: "NanoRay", lat: 40.76632, lon: -73.98107, heightM: 472, bearing: 29, clearRadius: 55 },
   { file: "220_cps", title: "220 Central Park South", author: "NanoRay", lat: 40.76688, lon: -73.98072, heightM: 290, bearing: 29, clearRadius: 40 },
   { file: "one57", title: "One57", author: "NanoRay", lat: 40.76552, lon: -73.97909, heightM: 306, bearing: 29, clearRadius: 45 },
-  { file: "steinway_tower", title: "111 W 57th (Steinway Tower)", author: "NanoRay", lat: 40.76465, lon: -73.97753, heightM: 435, bearing: 29, up: "z", clearRadius: 40 },
+  { file: "steinway_tower", title: "111 W 57th (Steinway Tower)", author: "NanoRay", lat: 40.76465, lon: -73.97753, heightM: 435, bearing: 29, clearRadius: 40 },
   { file: "432_park", title: "432 Park Avenue", author: "NanoRay", lat: 40.76158, lon: -73.97175, heightM: 426, bearing: 29, clearRadius: 45 },
 ];
 
@@ -66,6 +68,9 @@ export async function loadSkylineModels(groundAt: (x: number, z: number) => numb
       const size = box.getSize(new THREE.Vector3());
       const centre = box.getCenter(new THREE.Vector3());
       const scale = spec.heightM / size.y;
+      console.info(
+        `[park-models] ${spec.file}: raw ${size.x.toFixed(1)}×${size.y.toFixed(1)}×${size.z.toFixed(1)} → scale ${scale.toFixed(3)}`,
+      );
       // Wrap: scale + re-base inside a holder so the site transform stays
       // clean (position at the footprint, yaw down the street).
       const holder = new THREE.Group();

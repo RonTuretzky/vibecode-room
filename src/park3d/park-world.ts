@@ -26,6 +26,7 @@ export interface ParkManifest {
   dem: { file: string; cols: number; rows: number; stepM: number; unitM: number };
   relief: { file: string; width: number; height: number; unitM: number };
   water: { file: string; width: number; height: number };
+  lawn: { file: string; width: number; height: number };
   buildings: { file: string; count: number; unitM: number };
 }
 
@@ -55,6 +56,14 @@ export interface ParkWorldOptions {
   // Dress the extruded footprints in a window-grid facade texture instead
   // of flat vertex colour (default true) — boxes read as buildings.
   facades?: boolean;
+  // Additional footprint-clearing discs (local metres) on top of the model
+  // sites — the room clears the blocks pressing on its stage.
+  clearFootprints?: { x: number; z: number; r: number }[];
+  // Ground parity with the garden: drape the terrain in the garden's tiled
+  // photoscan grass (crisp underfoot), tinted per-vertex by the orthophoto
+  // so paths, woodland floor and lawns keep their large-scale colour. The
+  // default (false) keeps the raw orthophoto — right for the aerial page.
+  detailGround?: boolean;
   // Blend the surface to the anchor's ground height inside `radius`, easing
   // back to the real terrain over `feather` — the room parks its meadow disc
   // on Sheep Meadow and must not have the lawn poke through it.
@@ -81,6 +90,8 @@ export interface ParkWorld {
   // Canopy height from the relief map (metres above ground, 0 = no trees),
   // independent of flatten/displace.
   canopyAt: (x: number, z: number) => number;
+  // 1 where the map has open lawn (mowed bright green), 0 elsewhere.
+  lawnAt: (x: number, z: number) => number;
   dispose: () => void;
 }
 
@@ -219,10 +230,11 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
   }
   const { halfEast, halfNorth } = manifest.extent;
 
-  const [demBuffer, reliefImage, waterImage, orthoTexture, buildingsJson] = await Promise.all([
+  const [demBuffer, reliefImage, waterImage, lawnImage, orthoTexture, buildingsJson] = await Promise.all([
     fetchOk(`${base}/${manifest.dem.file}`).then((r) => r.arrayBuffer()),
     opts.relief === false ? null : loadImage(`${base}/${manifest.relief.file}`),
     opts.water === false ? null : loadImage(`${base}/${manifest.water.file}`),
+    opts.relief === false ? null : loadImage(`${base}/${manifest.lawn.file}`),
     loadOrtho(`${base}/${manifest.ortho.file}`, manifest.ortho.width, manifest.ortho.height, opts.orthoMaxWidth),
     opts.buildings === false
       ? null
@@ -255,6 +267,7 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
   };
   const sampleRelief = maskSampler(reliefImage, manifest.relief.unitM);
   const sampleWater = maskSampler(waterImage, 1 / 255);
+  const sampleLawn = maskSampler(lawnImage, 1 / 255);
 
   const flatten = opts.flatten;
   const anchorGround = flatten === undefined ? 0 : sampleDem(flatten.x, flatten.z);
@@ -322,14 +335,80 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
     colors[i * 3 + 2] = shade;
   }
   geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
-  // The normals only served the bake above — the unlit material never reads
-  // them, so don't ship 400k of them to the GPU.
-  geometry.deleteAttribute("normal");
+  if (opts.detailGround !== true) {
+    // The normals only served the bake above — the unlit photo material
+    // never reads them, so don't ship 400k of them to the GPU. The lit
+    // detail-ground material DOES need them.
+    geometry.deleteAttribute("normal");
+  }
   geometry.computeBoundingSphere();
 
   orthoTexture.colorSpace = THREE.SRGBColorSpace;
   orthoTexture.anisotropy = 8;
-  const terrain = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ map: orthoTexture, vertexColors: true }));
+  let terrainMaterial: THREE.Material;
+  if (opts.detailGround === true) {
+    // Tint each vertex from a small readback of the photo, then let the
+    // garden's tiled grass carry the surface detail. Lifted toward the
+    // meadow's brightness so the room's stage and the park ground match.
+    const sampleCanvas = document.createElement("canvas");
+    const sw = 512;
+    const sh = Math.round((sw * manifest.ortho.height) / manifest.ortho.width);
+    sampleCanvas.width = sw;
+    sampleCanvas.height = sh;
+    const sctx = sampleCanvas.getContext("2d", { willReadFrequently: true })!;
+    // loadOrtho may hand back a pre-flipped ImageBitmap (flipY=false) — keep
+    // orientation consistent: row 0 of the DRAWN canvas must be north.
+    const image = orthoTexture.image as CanvasImageSource;
+    if (orthoTexture.flipY) {
+      sctx.drawImage(image, 0, 0, sw, sh);
+    } else {
+      sctx.translate(0, sh);
+      sctx.scale(1, -1);
+      sctx.drawImage(image, 0, 0, sw, sh);
+      sctx.setTransform(1, 0, 0, 1, 0, 0);
+    }
+    const rgba = sctx.getImageData(0, 0, sw, sh).data;
+    // The garden disc's tint — lawns pull toward it so the stage never sits
+    // on a differently-green island.
+    const meadowTint = new THREE.Color(0xaef29a);
+    for (let i = 0; i < pos.count; i++) {
+      const x = pos.getX(i);
+      const z = pos.getZ(i);
+      const px = Math.min(sw - 1, Math.max(0, Math.round(((x + halfEast) / (2 * halfEast)) * sw)));
+      const py = Math.min(sh - 1, Math.max(0, Math.round(((z + halfNorth) / (2 * halfNorth)) * sh)));
+      const o = (py * sw + px) * 4;
+      const t = sampleLawn(x, z) * 0.6;
+      colors[i * 3] *= Math.min(1, (rgba[o] / 255) * 2.1) * (1 - t) + meadowTint.r * t;
+      colors[i * 3 + 1] *= Math.min(1, (rgba[o + 1] / 255) * 2.1) * (1 - t) + meadowTint.g * t;
+      colors[i * 3 + 2] *= Math.min(1, (rgba[o + 2] / 255) * 2.1) * (1 - t) + meadowTint.b * t;
+    }
+    (geometry.getAttribute("color") as THREE.BufferAttribute).needsUpdate = true;
+    const texLoader = new THREE.TextureLoader();
+    const repeat = { x: (2 * halfEast) / 10, y: (2 * halfNorth) / 10 };
+    const groundDiff = texLoader.load("/assets/garden/ground/aerial_grass_rock_diff_1k.jpg");
+    groundDiff.wrapS = THREE.RepeatWrapping;
+    groundDiff.wrapT = THREE.RepeatWrapping;
+    groundDiff.repeat.set(repeat.x, repeat.y);
+    groundDiff.colorSpace = THREE.SRGBColorSpace;
+    groundDiff.anisotropy = 8;
+    const groundNor = texLoader.load("/assets/garden/ground/aerial_grass_rock_nor_1k.jpg");
+    groundNor.wrapS = THREE.RepeatWrapping;
+    groundNor.wrapT = THREE.RepeatWrapping;
+    groundNor.repeat.set(repeat.x, repeat.y);
+    groundNor.anisotropy = 8;
+    terrainMaterial = new THREE.MeshStandardMaterial({
+      map: groundDiff,
+      normalMap: groundNor,
+      vertexColors: true,
+      roughness: 1,
+      metalness: 0,
+    });
+    // The photo no longer drapes the ground; release it.
+    orthoTexture.dispose();
+  } else {
+    terrainMaterial = new THREE.MeshBasicMaterial({ map: orthoTexture, vertexColors: true });
+  }
+  const terrain = new THREE.Mesh(geometry, terrainMaterial);
   terrain.name = "park-terrain";
 
   const group = new THREE.Group();
@@ -360,7 +439,7 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
     await nextFrame();
     buildings = buildBuildings(buildingsJson.buildings, manifest.buildings.unitM, groundAt, {
       facades: opts.facades !== false,
-      exclude: models ? skylineSites() : [],
+      exclude: [...(models ? skylineSites() : []), ...(opts.clearFootprints ?? [])],
     });
     group.add(buildings);
   }
@@ -381,10 +460,14 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
     groundAt,
     heightAt,
     canopyAt: sampleRelief,
+    lawnAt: sampleLawn,
     waterAt: sampleWater,
     dispose: () => {
       geometry.dispose();
-      (terrain.material as THREE.Material).dispose();
+      const tm = terrain.material as THREE.MeshStandardMaterial;
+      tm.map?.dispose();
+      tm.normalMap?.dispose();
+      tm.dispose();
       orthoTexture.dispose();
       if (buildings !== null) {
         buildings.geometry.dispose();
