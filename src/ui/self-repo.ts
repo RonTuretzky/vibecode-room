@@ -149,7 +149,7 @@ export function useSelfRepoTree(armed: boolean, seed?: SelfTreeSeed): SelfTreeSp
 // tip subject.
 export interface SelfBranchesPayload {
   current: string;
-  branches: Array<{ name: string; subject: string }>;
+  branches: Array<{ name: string; subject: string; date?: string }>;
 }
 
 // The data hook: fetch the rails once while `armed` (the surface that needs

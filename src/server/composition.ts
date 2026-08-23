@@ -332,7 +332,7 @@ export interface ProjectorRuntime {
   autoAccept(): boolean;
   // SELF VERSION RAILS: the room's own branch list (record windows cut one
   // per spoken change) and load-a-version (checkout + supervisor relaunch).
-  selfBranches(): Promise<{ current: string; branches: Array<{ name: string; subject: string }> }>;
+  selfBranches(): Promise<{ current: string; branches: Array<{ name: string; subject: string; date: string }> }>;
   checkoutSelfBranch(branch: string): Promise<{ ok: true } | { ok: false; error: string }>;
   // GUIDED-DEMO HOLD: suspends the armed auto-build's self-firing while the
   // demo's "describe your idea" step is up (Done is the only trigger). TTL'd
@@ -3863,22 +3863,22 @@ class LiveProjectorRuntime implements ProjectorRuntime {
 
   // The room's own branches (the wall's "load this version" rows): every
   // room/* head plus the current branch, newest first, with subjects.
-  async selfBranches(): Promise<{ current: string; branches: Array<{ name: string; subject: string }> }> {
+  async selfBranches(): Promise<{ current: string; branches: Array<{ name: string; subject: string; date: string }> }> {
     const current = (await this.#selfGit(["branch", "--show-current"])).out.trim();
     const listed = await this.#selfGit([
       "for-each-ref",
       "--sort=-committerdate",
-      "--format=%(refname:short)\u0001%(subject)",
+      "--format=%(refname:short)\u0001%(subject)\u0001%(committerdate:relative)",
       "refs/heads/room/",
       `refs/heads/${current}`,
     ]);
     const seen = new Set<string>();
-    const branches: Array<{ name: string; subject: string }> = [];
+    const branches: Array<{ name: string; subject: string; date: string }> = [];
     for (const line of listed.out.split("\n")) {
-      const [name, subject] = line.split("\u0001");
+      const [name, subject, date] = line.split("\u0001");
       if (name !== undefined && name.length > 0 && !seen.has(name)) {
         seen.add(name);
-        branches.push({ name, subject: subject ?? "" });
+        branches.push({ name, subject: subject ?? "", date: date ?? "" });
       }
     }
     return { current, branches };

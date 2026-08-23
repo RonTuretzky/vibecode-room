@@ -390,7 +390,7 @@ export function TreeMenu({ process, snapshot, anchor, onClose, onOpenDeck, onDis
           <div className="tree-menu-versions-scroll">
             {versions.branches
               .filter((entry) => entry.name !== versions.current)
-              .map((entry) => (
+              .map((entry, index) => (
                 <button
                   key={entry.name}
                   type="button"
@@ -400,8 +400,19 @@ export function TreeMenu({ process, snapshot, anchor, onClose, onOpenDeck, onDis
                   onClick={() => loadVersion(entry.name)}
                   disabled={loadingVersion !== null}
                 >
-                  {loadingVersion === entry.name ? "⤵ loading… (the room will reload)" : `⤵ ${entry.name.replace(/^room\//u, "")}`}
-                  <span className="tree-menu-version-subject">{entry.subject.replace(/^self: /u, "")}</span>
+                  {/* Chronological indicator: rows arrive newest-first, so #1 is
+                      the latest version; the relative commit date sits beside it. */}
+                  <span className="tree-menu-version-when">
+                    #{index + 1}
+                    {entry.date !== undefined && entry.date.length > 0 ? ` · ${entry.date}` : ""}
+                  </span>
+                  {/* One label only — the branch slug just echoed the subject, so
+                      drop it and show the spoken change (or the load state). */}
+                  <span className="tree-menu-version-subject">
+                    {loadingVersion === entry.name
+                      ? "⤵ loading… (the room will reload)"
+                      : `⤵ ${entry.subject.replace(/^self: /u, "")}`}
+                  </span>
                 </button>
               ))}
           </div>

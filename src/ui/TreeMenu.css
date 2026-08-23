@@ -240,4 +240,5 @@ main.gesture-mode .tree-menu-close {
   overflow-y: auto;
 }
 .tree-menu-version { display: flex; flex-direction: column; align-items: flex-start; gap: 0.15rem; text-align: left; font-size: 0.82rem; }
-.tree-menu-version-subject { font-size: 0.72rem; color: #8fa4cc; font-weight: 400; }
+.tree-menu-version-when { font-size: 0.66rem; color: #6f83a8; letter-spacing: 0.03em; font-weight: 600; }
+.tree-menu-version-subject { font-size: 0.82rem; color: #cdd8ef; font-weight: 500; }
