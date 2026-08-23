@@ -245,21 +245,35 @@ export function createProjectorApp(runtime: ProjectorRuntime, options: Projector
     const result = await runtime.checkoutSelfBranch(branch);
     return context.json(result, result.ok ? 200 : 400);
   });
-  // TEND A LIMB: archive or delete one of the room's own branches (never the
-  // running one). Local git bookkeeping only — the tree-menu's per-branch
-  // lifecycle actions POST here.
+  // STOP GROWING: abort the EXECUTING self-run without touching the pinned
+  // mirror record. Distinct from POST /api/process/self/halt (the emergency
+  // path), which registry-halts the record — marking it dead and orphaning
+  // the mirror until reboot. This route only cancels the durable run and
+  // settles the lane failed·"aborted"; the next steer is accepted. Idempotent:
+  // nothing executing answers 200 {halted:false}.
+  app.post("/api/self/run/halt", async (context) => {
+    if (isOfflineDemoRequest(context.req.header("referer"))) {
+      return context.json({ ok: false, error: "offline demo" }, 400);
+    }
+    const result = await runtime.haltSelfRun(`corr-self-halt-api-${crypto.randomUUID()}`);
+    return context.json(result, result.ok ? 200 : 400);
+  });
+  // TEND A LIMB: archive, delete, or merge (finalize) one of the room's own
+  // branches — the tree-menu's per-branch lifecycle actions POST here. Every
+  // ok response carries the FRESH rails payload (current + branches[]) so the
+  // wall re-renders without a second GET (the tend refresh contract).
   app.post("/api/self/branch", async (context) => {
     if (isOfflineDemoRequest(context.req.header("referer"))) {
       return context.json({ ok: false, error: "offline demo" }, 400);
     }
     let branch = "";
-    let action: "archive" | "delete" | "" = "";
+    let action: "archive" | "delete" | "merge" | "" = "";
     try {
       const body = (await context.req.json()) as { branch?: unknown; action?: unknown };
       if (typeof body?.branch === "string") {
         branch = body.branch;
       }
-      if (body?.action === "archive" || body?.action === "delete") {
+      if (body?.action === "archive" || body?.action === "delete" || body?.action === "merge") {
         action = body.action;
       }
     } catch {
@@ -269,10 +283,14 @@ export function createProjectorApp(runtime: ProjectorRuntime, options: Projector
       return context.json({ ok: false, error: "branch required" }, 400);
     }
     if (action === "") {
-      return context.json({ ok: false, error: "action must be archive or delete" }, 400);
+      return context.json({ ok: false, error: "action must be archive, delete, or merge" }, 400);
     }
-    const result = await runtime.manageSelfBranch(branch, action);
-    return context.json(result, result.ok ? 200 : 400);
+    const result =
+      action === "merge" ? await runtime.mergeSelfBranch(branch) : await runtime.manageSelfBranch(branch, action);
+    if (!result.ok) {
+      return context.json(result, 400);
+    }
+    return context.json({ ...result, ...(await runtime.selfBranches()) });
   });
   // GUIDED-DEMO HOLD: the wall posts {on:true} entering the demo's "describe
   // your idea" step and {on:false} leaving it — while held, an armed auto-build

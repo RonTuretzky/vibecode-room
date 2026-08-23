@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { FOREST_CI_COLORS, type ForestPayload } from "./forest-spec";
-import { SELF_REPO_POLL_MS, selfGardenTree, selfRepoState } from "./self-repo";
+import { SELF_REPO_POLL_MS, parseTendBranches, selfGardenTree, selfRepoState } from "./self-repo";
 
 // The self-rebuild repo tree DATA path: /api/forest payload → the ONE garden
 // tree input RoomScene grows among the fleet. Pure functions only — the poll
@@ -82,5 +82,42 @@ describe("selfGardenTree — payload → the ONE garden tree spec", () => {
 describe("poll cadence", () => {
   test("the forest poll only re-reads the server loader's ~5-minute cache", () => {
     expect(SELF_REPO_POLL_MS).toBe(30_000);
+  });
+});
+
+// The TEND rails' parse seam: ok responses from POST /api/self/branch carry
+// the refreshed rails ({current, branches}) beside ok — the wall re-renders
+// without a second GET, and a half-payload must never repaint the list.
+describe("parseTendBranches — the tend refresh contract's parser", () => {
+  test("a full ok response yields the rails payload (subject/date defaults included)", () => {
+    expect(
+      parseTendBranches({
+        ok: true,
+        merged: true,
+        via: "pr",
+        current: "room/hp-at-hp-four",
+        branches: [
+          { name: "room/hp-at-hp-four", subject: "the default is never an invisible cursor", date: "2 minutes ago" },
+          { name: "room/older-change" },
+        ],
+      }),
+    ).toEqual({
+      current: "room/hp-at-hp-four",
+      branches: [
+        { name: "room/hp-at-hp-four", subject: "the default is never an invisible cursor", date: "2 minutes ago" },
+        { name: "room/older-change", subject: "" },
+      ],
+    });
+  });
+
+  test("refusal bodies and half-payloads parse to null — never an empty repaint", () => {
+    // The server's honest refusal strings carry NO rails — the wall keeps its
+    // list and shows the error verbatim instead.
+    expect(parseTendBranches({ ok: false, error: "cannot tend the running branch — load another version first" })).toBeNull();
+    expect(parseTendBranches({ ok: false, error: "no PR and not fast-forward from main — needs a PR" })).toBeNull();
+    expect(parseTendBranches(null)).toBeNull();
+    expect(parseTendBranches({ current: "room/x" })).toBeNull(); // branches missing
+    expect(parseTendBranches({ branches: [] })).toBeNull(); // current missing
+    expect(parseTendBranches({ current: "room/x", branches: [{ subject: "nameless" }] })).toBeNull();
   });
 });

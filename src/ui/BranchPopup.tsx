@@ -135,7 +135,7 @@ export interface BranchPopupProps {
 export function BranchPopup({ process, branch, anchor, self, onClose }: BranchPopupProps) {
   // The room's own rails: fetched only on the self tree, and only once the
   // popup is up (an adopted tree's card never asks about the room's checkout).
-  const fetchedVersions = useSelfBranches(stageOf(process) === "self");
+  const fetchedVersions = useSelfBranches(stageOf(process) === "self").payload;
   const selfContext: SelfBranchContext | null =
     self === undefined || self === null ? null : { tree: self.tree, versions: self.versions ?? fetchedVersions };
   const model = branchPopupModel(process, branch, selfContext);
@@ -317,10 +317,10 @@ export function BranchPopup({ process, branch, anchor, self, onClose }: BranchPo
                 type="button"
                 className="ctl-button branch-popup-here"
                 data-testid="branch-popup-here"
-                title="The room is running this version right now."
+                title="The room lives on this branch right now."
                 disabled
               >
-                ⏱ you are here — the room is running this
+                🌳 you are here — the room lives on this branch
               </button>
               <RecordSteerToggle process={process} kind="room" />
             </>
@@ -329,21 +329,21 @@ export function BranchPopup({ process, branch, anchor, self, onClose }: BranchPo
               type="button"
               className="ctl-button branch-popup-load"
               data-testid="branch-popup-load"
-              title={`Load the room to ${model.branch} — rebuilds and relaunches on that version.`}
+              title={`Climb the room onto ${model.branch} — rebuilds and relaunches on it.`}
               disabled={loadBusy}
               onClick={() => void loadVersion()}
             >
-              {loadBusy ? "⤵ loading… (the room will reload)" : "⏱ Load this version"}
+              {loadBusy ? "⤴ climbing… the room will reload" : "⤴ climb here · load"}
             </button>
           ) : railsKnown ? (
             <button
               type="button"
               className="ctl-button branch-popup-absent"
               data-testid="branch-popup-absent"
-              title="This PR's branch has never been fetched onto this machine, so the room cannot check it out."
+              title="This PR's branch has never been fetched onto this machine, so the room cannot climb it."
               disabled
             >
-              ⏱ not on this machine
+              🍂 not grown on this machine
             </button>
           ) : (
             <button
@@ -353,7 +353,7 @@ export function BranchPopup({ process, branch, anchor, self, onClose }: BranchPo
               title="Reading the room's local branches…"
               disabled
             >
-              ⏱ checking this machine…
+              🔍 reading the tree…
             </button>
           )}
         </div>

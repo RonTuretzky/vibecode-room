@@ -12,6 +12,7 @@ import type { BuildBackend, BuildRequest, BuildResult } from "../buildloop/types
 import type { DetectionInput, DetectionResult, IdeaDetector } from "../detect";
 import type { InterfaceAddresses } from "./project-import";
 import type { ProjectorSnapshot } from "../ui/types";
+import { SELF_UPID } from "../self/commission";
 
 // HTTP-level coverage of the projector app (no bound port — app.request()): the
 // idea-tray endpoints, the QR import flow, and the phone submit page, all over a
@@ -109,6 +110,10 @@ interface MakeAppArgs {
   resolveDeployFn?: ProjectorRuntimeOptions["resolveDeployFn"];
   // /salem proxy upstream seam — no test may ever reach the real board.
   salemFetch?: (input: string | URL, init?: RequestInit) => Promise<Response>;
+  // Extra RUNTIME options merged LAST (the self version-rail tests inject
+  // selfGitRunner/selfGhRunner/selfGitHead/exitProcess) — same contract as
+  // runtimeEnv: makeApp's deterministic defaults stay unless overridden.
+  runtimeOptions?: ProjectorRuntimeOptions;
 }
 
 async function makeApp(args: MakeAppArgs = {}): Promise<{ app: ReturnType<typeof createProjectorApp>; runtime: ProjectorRuntime }> {
@@ -134,6 +139,7 @@ async function makeApp(args: MakeAppArgs = {}): Promise<{ app: ReturnType<typeof
       treeGitRunner: args.treeGitRunner ?? null,
       treeGhRunner: args.treeGhRunner,
       resolveDeployFn: args.resolveDeployFn ?? null,
+      ...args.runtimeOptions,
     },
   );
   runtimes.push(runtime);
@@ -1185,6 +1191,383 @@ describe("adopted-tree branch + PR routes", () => {
     const { app } = await makeApp();
     const response = await app.request("/api/process/upid-ghost/repo");
     expect(response.status).toBe(404);
+  });
+});
+
+// THE ROOM'S OWN VERSION RAILS (self git/gh over the injected seams — no real
+// subprocess, no network, ever). These are the tree-tending surface's routes:
+// GET /api/self/branches, POST /api/self/checkout, POST /api/self/branch
+// (archive / delete+remote-prune / merge), POST /api/self/run/halt.
+describe("self version rails over the seamed git/gh", () => {
+  // Just enough git semantics for the self rails: a current branch, an ordered
+  // (newest-first) branch list with subjects, fast-forward ancestry, and
+  // scriptable push failures. Argv arrives WITHOUT the leading "git".
+  function selfRailGit(setup: {
+    current: string;
+    branches: Array<{ name: string; subject?: string; date?: string }>;
+    ffAncestors?: string[];
+    dirtySrc?: boolean;
+    failPushDelete?: boolean;
+  }): { calls: string[][]; run: NonNullable<ProjectorRuntimeOptions["selfGitRunner"]> } {
+    const calls: string[][] = [];
+    const state = {
+      current: setup.current,
+      branches: setup.branches.map((entry) => ({ subject: "", date: "1 hour ago", ...entry })),
+    };
+    const ok = (stdout = ""): { ok: true; stdout: string; stderr: string } => ({ ok: true, stdout, stderr: "" });
+    const fail = (stderr: string): { ok: false; stdout: string; stderr: string } => ({ ok: false, stdout: "", stderr });
+    const run: NonNullable<ProjectorRuntimeOptions["selfGitRunner"]> = async (argv) => {
+      calls.push(argv);
+      switch (argv[0]) {
+        case "branch": {
+          if (argv[1] === "--show-current") {
+            return ok(state.current);
+          }
+          if (argv[1] === "-D") {
+            const index = state.branches.findIndex((entry) => entry.name === argv[2]);
+            if (index < 0) {
+              return fail(`error: branch '${argv[2]}' not found.`);
+            }
+            state.branches.splice(index, 1);
+            return ok();
+          }
+          if (argv[1] === "-m") {
+            const entry = state.branches.find((candidate) => candidate.name === argv[2]);
+            if (entry === undefined) {
+              return fail(`error: branch '${argv[2]}' not found.`);
+            }
+            entry.name = argv[3]!;
+            return ok();
+          }
+          return ok();
+        }
+        case "for-each-ref": {
+          // room/* heads + the current branch, in stored (newest-first) order.
+          const lines = state.branches
+            .filter((entry) => entry.name.startsWith("room/") || entry.name === state.current)
+            .map((entry) => `${entry.name}${entry.subject}${entry.date}`);
+          return ok(lines.join("\n"));
+        }
+        case "rev-parse": {
+          const ref = argv[argv.length - 1]!;
+          const name = ref.replace(/^refs\/heads\//u, "");
+          return state.branches.some((entry) => entry.name === name) ? ok(name) : fail("");
+        }
+        case "status":
+          // Porcelain: the runner's out-join trims the leading space off the
+          // first line, so an untracked entry (3-char "?? " prefix survives
+          // the trim) is the faithful way to fake dirty src/.
+          return ok(setup.dirtySrc === true ? "?? src/ui/App.tsx" : "");
+        case "checkout":
+          state.current = argv[argv.length - 1]!;
+          return ok();
+        case "merge-base":
+          return (setup.ffAncestors ?? []).includes(argv[argv.length - 1]!.replace(/^refs\/heads\//u, ""))
+            ? ok()
+            : fail("");
+        case "push":
+          if (argv.includes("--delete") && setup.failPushDelete === true) {
+            return fail("remote: permission denied");
+          }
+          return ok();
+        default:
+          return ok();
+      }
+    };
+    return { calls, run };
+  }
+
+  // gh seam (argv INCLUDES the leading "gh"): `pr list --state all` answers
+  // the finalize probe, `--state open` the prune's close probe.
+  function selfRailGh(setup: {
+    pr?: { number: number; state: string; isDraft: boolean; baseRefName: string } | null;
+    openPr?: { number: number } | null;
+  } = {}): { calls: string[][]; run: NonNullable<ProjectorRuntimeOptions["selfGhRunner"]> } {
+    const calls: string[][] = [];
+    const run: NonNullable<ProjectorRuntimeOptions["selfGhRunner"]> = async (argv) => {
+      calls.push(argv);
+      if (argv[1] === "pr" && argv[2] === "list") {
+        const openProbe = argv[argv.indexOf("--state") + 1] === "open";
+        const listed = openProbe ? (setup.openPr ?? null) : (setup.pr ?? null);
+        return { ok: true, stdout: JSON.stringify(listed === null ? [] : [listed]), stderr: "" };
+      }
+      return { ok: true, stdout: "", stderr: "" };
+    };
+    return { calls, run };
+  }
+
+  const RAILS = [
+    { name: "room/hp-at-hp-four", subject: "the default is never an invisible cursor", date: "2 minutes ago" },
+    { name: "room/older-limb", subject: "self: an older change", date: "2 hours ago" },
+    { name: "main", subject: "trunk", date: "3 hours ago" },
+  ];
+
+  test("GET /api/self/branches: current + room/* heads through the seam, newest first", async () => {
+    const git = selfRailGit({ current: "room/hp-at-hp-four", branches: RAILS });
+    const { app } = await makeApp({ runtimeOptions: { selfGitRunner: git.run, selfGhRunner: selfRailGh().run } });
+    const response = await app.request("/api/self/branches");
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { current: string; branches: Array<{ name: string; subject: string }> };
+    expect(body.current).toBe("room/hp-at-hp-four");
+    expect(body.branches.map((entry) => entry.name)).toEqual(["room/hp-at-hp-four", "room/older-limb"]);
+    expect(body.branches[0]?.subject).toBe("the default is never an invisible cursor");
+  });
+
+  test("checkout refuses honestly: unknown branch / dirty src/ / no supervisor", async () => {
+    // No supervisor (VIBERSYN_SELF_MODE unset): the refusal names the launch.
+    const bare = await makeApp({ runtimeOptions: { selfGitRunner: selfRailGit({ current: "main", branches: RAILS }).run } });
+    const unsupervised = await postJson(bare.app, "/api/self/checkout", { branch: "room/older-limb" });
+    expect(unsupervised.status).toBe(400);
+    expect(((await unsupervised.json()) as { error: string }).error).toContain("no supervisor");
+
+    // Self mode on: unknown branch and dirty src/ each say exactly why.
+    const dirty = selfRailGit({ current: "room/hp-at-hp-four", branches: RAILS, dirtySrc: true });
+    const { app } = await makeApp({
+      runtimeEnv: { VIBERSYN_SELF_MODE: "1" },
+      runtimeOptions: {
+        selfGitRunner: dirty.run,
+        selfGitHead: async () => ({ sha: "sha-0", subject: "prior" }),
+        exitProcess: () => undefined,
+      },
+    });
+    const ghost = await postJson(app, "/api/self/checkout", { branch: "room/ghost" });
+    expect(ghost.status).toBe(400);
+    expect(((await ghost.json()) as { error: string }).error).toContain("no local branch");
+    const refused = await postJson(app, "/api/self/checkout", { branch: "room/older-limb" });
+    expect(refused.status).toBe(400);
+    expect(((await refused.json()) as { error: string }).error).toContain("uncommitted work");
+    expect(dirty.calls.some((argv) => argv[0] === "checkout")).toBe(false);
+  });
+
+  test("checkout success: git checkout runs and the supervisor exit fires through the seam", async () => {
+    const git = selfRailGit({ current: "room/hp-at-hp-four", branches: RAILS });
+    const exits: number[] = [];
+    const { app } = await makeApp({
+      runtimeEnv: { VIBERSYN_SELF_MODE: "1" },
+      runtimeOptions: {
+        selfGitRunner: git.run,
+        selfGitHead: async () => ({ sha: "sha-0", subject: "prior" }),
+        exitProcess: (code) => {
+          exits.push(code);
+        },
+      },
+    });
+    const response = await postJson(app, "/api/self/checkout", { branch: "room/older-limb" });
+    expect(response.status).toBe(200);
+    expect(git.calls.some((argv) => argv[0] === "checkout" && argv[1] === "room/older-limb")).toBe(true);
+    await waitFor(() => exits.length === 1, 2_000);
+    expect(exits).toEqual([87]);
+  });
+
+  test("archive renames room/x → archive/x and the response carries the refreshed rails", async () => {
+    const git = selfRailGit({ current: "room/hp-at-hp-four", branches: RAILS });
+    const { app } = await makeApp({ runtimeOptions: { selfGitRunner: git.run, selfGhRunner: selfRailGh().run } });
+    const response = await postJson(app, "/api/self/branch", { branch: "room/older-limb", action: "archive" });
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { ok: boolean; current: string; branches: Array<{ name: string }> };
+    expect(body.ok).toBe(true);
+    expect(git.calls.some((argv) => argv[0] === "branch" && argv[1] === "-m" && argv[3] === "archive/older-limb")).toBe(true);
+    // The tend refresh contract: no second GET needed — the archived limb is
+    // already gone from the returned rails.
+    expect(body.current).toBe("room/hp-at-hp-four");
+    expect(body.branches.map((entry) => entry.name)).toEqual(["room/hp-at-hp-four"]);
+  });
+
+  test("delete prunes locally THEN remotely (branch -D → push origin --delete → pr close)", async () => {
+    const git = selfRailGit({ current: "room/hp-at-hp-four", branches: RAILS });
+    const gh = selfRailGh({ openPr: { number: 21 } });
+    const { app } = await makeApp({ runtimeOptions: { selfGitRunner: git.run, selfGhRunner: gh.run } });
+    const response = await postJson(app, "/api/self/branch", { branch: "room/older-limb", action: "delete" });
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { ok: boolean; branches: Array<{ name: string }> };
+    expect(body.ok).toBe(true);
+    const deleteIndex = git.calls.findIndex((argv) => argv[0] === "branch" && argv[1] === "-D");
+    const pushIndex = git.calls.findIndex((argv) => argv[0] === "push" && argv.includes("--delete"));
+    expect(deleteIndex).toBeGreaterThanOrEqual(0);
+    expect(pushIndex).toBeGreaterThan(deleteIndex);
+    expect(git.calls[pushIndex]).toEqual(["push", "origin", "--delete", "room/older-limb"]);
+    // The open PR was closed through the gh seam.
+    expect(gh.calls.some((argv) => argv[1] === "pr" && argv[2] === "close" && argv[3] === "21")).toBe(true);
+    expect(body.branches.map((entry) => entry.name)).toEqual(["room/hp-at-hp-four"]);
+  });
+
+  test("a remote-prune failure never rolls back the local prune: still 200 ok:true", async () => {
+    const git = selfRailGit({ current: "room/hp-at-hp-four", branches: RAILS, failPushDelete: true });
+    const { app } = await makeApp({ runtimeOptions: { selfGitRunner: git.run, selfGhRunner: selfRailGh().run } });
+    const response = await postJson(app, "/api/self/branch", { branch: "room/older-limb", action: "delete" });
+    expect(response.status).toBe(200);
+    expect(((await response.json()) as { ok: boolean }).ok).toBe(true);
+  });
+
+  test("delete refuses the running branch and the trunk", async () => {
+    const git = selfRailGit({ current: "room/hp-at-hp-four", branches: RAILS });
+    const { app } = await makeApp({ runtimeOptions: { selfGitRunner: git.run, selfGhRunner: selfRailGh().run } });
+    const running = await postJson(app, "/api/self/branch", { branch: "room/hp-at-hp-four", action: "delete" });
+    expect(running.status).toBe(400);
+    expect(((await running.json()) as { error: string }).error).toContain("cannot tend the running branch");
+    const trunk = await postJson(app, "/api/self/branch", { branch: "main", action: "delete" });
+    expect(trunk.status).toBe(400);
+    expect(git.calls.some((argv) => argv[0] === "branch" && argv[1] === "-D")).toBe(false);
+  });
+});
+
+// INTO THE TRUNK (finalize): POST /api/self/branch action:"merge" — the PR
+// path (ready a draft, retarget the base to main, merge commit) and the
+// no-PR fast-forward fallback, all through the seams.
+describe("POST /api/self/branch action:'merge' (into the trunk)", () => {
+  const RAILS = [
+    { name: "room/current-limb", subject: "self: current", date: "1 minute ago" },
+    { name: "room/grown-limb", subject: "self: grown", date: "1 hour ago" },
+    { name: "main", subject: "trunk", date: "2 hours ago" },
+  ];
+  function railGit(extra: { ffAncestors?: string[] } = {}) {
+    const calls: string[][] = [];
+    const run: NonNullable<ProjectorRuntimeOptions["selfGitRunner"]> = async (argv) => {
+      calls.push(argv);
+      switch (argv[0]) {
+        case "branch":
+          return { ok: true, stdout: "room/current-limb", stderr: "" };
+        case "for-each-ref":
+          return {
+            ok: true,
+            stdout: RAILS.filter((entry) => entry.name.startsWith("room/"))
+              .map((entry) => `${entry.name}${entry.subject}${entry.date}`)
+              .join("\n"),
+            stderr: "",
+          };
+        case "rev-parse": {
+          const name = argv[argv.length - 1]!.replace(/^refs\/heads\//u, "");
+          return RAILS.some((entry) => entry.name === name)
+            ? { ok: true, stdout: name, stderr: "" }
+            : { ok: false, stdout: "", stderr: "" };
+        }
+        case "merge-base":
+          return (extra.ffAncestors ?? []).includes(argv[argv.length - 1]!.replace(/^refs\/heads\//u, ""))
+            ? { ok: true, stdout: "", stderr: "" }
+            : { ok: false, stdout: "", stderr: "" };
+        default:
+          return { ok: true, stdout: "", stderr: "" };
+      }
+    };
+    return { calls, run };
+  }
+  function railGh(pr: { number: number; state: string; isDraft: boolean; baseRefName: string } | null) {
+    const calls: string[][] = [];
+    const run: NonNullable<ProjectorRuntimeOptions["selfGhRunner"]> = async (argv) => {
+      calls.push(argv);
+      if (argv[1] === "pr" && argv[2] === "list") {
+        return { ok: true, stdout: JSON.stringify(pr === null ? [] : [pr]), stderr: "" };
+      }
+      return { ok: true, stdout: "", stderr: "" };
+    };
+    return { calls, run };
+  }
+
+  test("a draft PR based on another room/* is readied, retargeted to main, then merge-committed", async () => {
+    const git = railGit();
+    const gh = railGh({ number: 21, state: "OPEN", isDraft: true, baseRefName: "room/current-limb" });
+    const { app } = await makeApp({ runtimeOptions: { selfGitRunner: git.run, selfGhRunner: gh.run } });
+    const response = await postJson(app, "/api/self/branch", { branch: "room/grown-limb", action: "merge" });
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { ok: boolean; merged: boolean; via: string; branches: unknown[] };
+    expect(body.ok).toBe(true);
+    expect(body.merged).toBe(true);
+    expect(body.via).toBe("pr");
+    // Argv sequence: list → ready → edit --base main → merge --merge.
+    const verbs = gh.calls.map((argv) => argv[2]);
+    expect(verbs).toEqual(["list", "ready", "edit", "merge"]);
+    const edit = gh.calls[2]!;
+    expect(edit[edit.indexOf("--base") + 1]).toBe("main");
+    const merge = gh.calls[3]!;
+    expect(merge).toContain("--merge");
+    expect(merge).not.toContain("--squash");
+    // The refresh contract rides the same response.
+    expect(Array.isArray(body.branches)).toBe(true);
+  });
+
+  test("an already-MERGED PR is idempotent ok — no ready/edit/merge calls", async () => {
+    const gh = railGh({ number: 14, state: "MERGED", isDraft: false, baseRefName: "main" });
+    const { app } = await makeApp({ runtimeOptions: { selfGitRunner: railGit().run, selfGhRunner: gh.run } });
+    const response = await postJson(app, "/api/self/branch", { branch: "room/grown-limb", action: "merge" });
+    expect(response.status).toBe(200);
+    expect(((await response.json()) as { via: string }).via).toBe("pr");
+    expect(gh.calls.map((argv) => argv[2])).toEqual(["list"]);
+  });
+
+  test("no PR + main is an ancestor → a plain fast-forward push, never --force", async () => {
+    const git = railGit({ ffAncestors: ["room/grown-limb"] });
+    const { app } = await makeApp({ runtimeOptions: { selfGitRunner: git.run, selfGhRunner: railGh(null).run } });
+    const response = await postJson(app, "/api/self/branch", { branch: "room/grown-limb", action: "merge" });
+    expect(response.status).toBe(200);
+    expect(((await response.json()) as { via: string }).via).toBe("fast-forward");
+    const push = git.calls.find((argv) => argv[0] === "push")!;
+    expect(push).toEqual(["push", "origin", "refs/heads/room/grown-limb:refs/heads/main"]);
+    expect(push).not.toContain("--force");
+  });
+
+  test("no PR + NOT fast-forward → honest 400, and nothing is pushed", async () => {
+    const git = railGit();
+    const { app } = await makeApp({ runtimeOptions: { selfGitRunner: git.run, selfGhRunner: railGh(null).run } });
+    const response = await postJson(app, "/api/self/branch", { branch: "room/grown-limb", action: "merge" });
+    expect(response.status).toBe(400);
+    expect(((await response.json()) as { error: string }).error).toContain("needs a PR");
+    expect(git.calls.some((argv) => argv[0] === "push")).toBe(false);
+  });
+
+  test("refuses the trunk and non-room names — gh never runs", async () => {
+    const gh = railGh({ number: 9, state: "OPEN", isDraft: false, baseRefName: "main" });
+    const { app } = await makeApp({ runtimeOptions: { selfGitRunner: railGit().run, selfGhRunner: gh.run } });
+    for (const branch of ["main", "archive/old-limb", "feature/x"]) {
+      const response = await postJson(app, "/api/self/branch", { branch, action: "merge" });
+      expect(response.status).toBe(400);
+      expect(((await response.json()) as { error: string }).error).toContain("room/*");
+    }
+    expect(gh.calls).toHaveLength(0);
+  });
+});
+
+// STOP GROWING: POST /api/self/run/halt cancels the executing self-run and
+// settles the lane failed·"aborted" WITHOUT killing the pinned mirror record
+// (that is /api/process/self/halt, the emergency path). Memory client — no
+// gateway, no subprocess; the lane stays executing until halted.
+describe("POST /api/self/run/halt (stop growing)", () => {
+  test("outside self mode the refusal is honest", async () => {
+    const { app } = await makeApp();
+    const response = await postJson(app, "/api/self/run/halt");
+    expect(response.status).toBe(400);
+    expect(((await response.json()) as { error: string }).error).toBe("self mode is off");
+  });
+
+  test("halts the executing run (lane failed·aborted, record alive), then idempotent {halted:false}", async () => {
+    const { app, runtime } = await makeApp({
+      runtimeEnv: { VIBERSYN_SELF_MODE: "1" },
+      runtimeOptions: {
+        selfGitHead: async () => ({ sha: "sha-0", subject: "prior" }),
+        exitProcess: () => undefined,
+      },
+    });
+    const selfProcess = () =>
+      runtime.snapshot().processes.find((process) => process.upid === SELF_UPID) as
+        | { state?: string; execution?: { status?: string; label?: string } | null }
+        | undefined;
+    // Seed an executing lane through the registry's steer chokepoint (the
+    // same call click-steer and "mirror, <instruction>" reach).
+    await runtime.registry.steer(SELF_UPID, { text: "make the header calmer" }, "corr-halt-test");
+    await waitFor(() => selfProcess()?.execution?.status === "executing");
+
+    const halted = await postJson(app, "/api/self/run/halt");
+    expect(halted.status).toBe(200);
+    expect((await halted.json()) as unknown).toEqual({ ok: true, halted: true });
+    // The lane settled failed·"aborted"…
+    expect(selfProcess()?.execution?.status).toBe("failed");
+    expect(selfProcess()?.execution?.label).toBe("aborted");
+    // …and the pinned record is NOT halted (the mirror stays live).
+    expect(selfProcess()?.state).not.toBe("halted");
+
+    // Idempotent: a second press is a truthful no-op, never an error.
+    const again = await postJson(app, "/api/self/run/halt");
+    expect(again.status).toBe(200);
+    expect((await again.json()) as unknown).toEqual({ ok: true, halted: false });
   });
 });
 

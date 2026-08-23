@@ -55,6 +55,9 @@ interface ProjectorAppProps {
   // suggestion).
   initialOverlay?: {
     selected?: string;
+    // Seeds the selected tree's screen-projected anchor rect (the static
+    // renderer has no scene to project) — the halo/lock markup tests need one.
+    menuAnchor?: SceneDwellRect;
     slideshowUpid?: string;
     qrOpen?: boolean;
     ideaCard?: { id: string | null };
@@ -166,7 +169,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
   // Where the selected tree stood ON SCREEN at pick time (RoomScene projects
   // its dwell rect through onSelectProcess) — the tree menu anchors beside it.
   // Null = no projection (keyboard select / test seam): the menu edge-rests.
-  const [menuAnchor, setMenuAnchor] = useState<SceneDwellRect | null>(null);
+  const [menuAnchor, setMenuAnchor] = useState<SceneDwellRect | null>(initialOverlay?.menuAnchor ?? null);
   const [isUnmuting, setIsUnmuting] = useState(false);
   // Is the live push stream actually attached? Starts optimistic so a wall that
   // has never connected (offline demo, static render) shows no alarm; the SSE
@@ -464,6 +467,12 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
       ) ?? null
     );
   }, [selected, snapshot.processes]);
+
+  // TEND LOCK (the self tree's surface): while the tending menu is open the
+  // desk/orbit rooms feed the EXISTING focus glide the self upid (RoomScene
+  // clears it on close; flat/corner rigs no-op the prop by design — the DOM
+  // halo below is the lock mechanism on the flat wall, never the camera).
+  const tendingSelfUpid = selectedProcess !== null && stageOf(selectedProcess) === "self" ? selectedProcess.upid : null;
 
   const ideaSelected = selected === IDEA_ID;
 
@@ -2329,7 +2338,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
         focusUpid={
           guided !== null && (guided.step === "race" || guided.step === "decide")
             ? guided.focusUpid
-            : null
+            : tendingSelfUpid
         }
         pointerNav={!gestureMode && !flatLock}
         onAcceptIdea={acceptOrb}
@@ -2891,11 +2900,36 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
           closes on ✕, on picking empty ground (onPickMiss), or moves when
           another tree is picked. Its plain enabled <button>s are dwell
           targets automatically (GestureLayer collectDomTargets). */}
+      {/* LOCK HALO (self tree only): a pure-decor ring hugging the tree's
+          live projected rect — the visible "locked around it". It rides the
+          SAME 1 Hz anchor chase as the menu (one source of truth, no new
+          interval); the 240ms CSS glide smooths the 1 Hz steps. Never a dwell
+          target (pointer-events:none, no buttons), hidden when no projection
+          exists this beat. */}
+      {tendingSelfUpid !== null && menuAnchor !== null ? (
+        <div
+          className="tree-halo"
+          data-testid="tree-menu-halo"
+          aria-hidden="true"
+          style={{
+            left: `${Math.round(menuAnchor.left - 14)}px`,
+            top: `${Math.round(menuAnchor.top - 14)}px`,
+            width: `${Math.round(menuAnchor.width + 28)}px`,
+            height: `${Math.round(menuAnchor.height + 28)}px`,
+          }}
+        >
+          <span className="tree-halo-lock" data-testid="tree-menu-lock">
+            🔒 tending this tree
+          </span>
+        </div>
+      ) : null}
       {selectedProcess !== null ? (
         <TreeMenu
           process={selectedProcess}
           snapshot={snapshot}
           anchor={menuAnchor}
+          selfBranches={initialSelfBranches ?? null}
+          onControlFailure={reportControlFailure}
           onClose={closeMenu}
           onOpenDeck={(upid, backend) => {
             // The deck window takes over — one overlay at a time.

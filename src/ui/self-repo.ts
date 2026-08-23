@@ -152,11 +152,25 @@ export interface SelfBranchesPayload {
   branches: Array<{ name: string; subject: string; date?: string }>;
 }
 
-// The data hook: fetch the rails once while `armed` (the surface that needs
-// them is open on the self tree), null until they land. Unarmed → null, so a
+// The rails handle a tending surface holds: the payload plus the two refresh
+// seams the tend verbs need — `adopt` swallows the fresh rails a tend route
+// returned in its own response (the Rails 2/3 refresh contract: no second
+// GET), `refresh` re-fetches on demand (a tend whose response carried no
+// rails). The bare payload alone was enough while the list was read-only;
+// prune/merge/archive change it mid-mount.
+export interface SelfBranchesHandle {
+  payload: SelfBranchesPayload | null;
+  adopt: (next: SelfBranchesPayload) => void;
+  refresh: () => void;
+}
+
+// The data hook: fetch the rails while `armed` (the surface that needs them
+// is open on the self tree), null until they land. Unarmed → null, so a
 // fleet tree's popup never asks the server about the room's own checkout.
-export function useSelfBranches(armed: boolean): SelfBranchesPayload | null {
-  const [payload, setPayload] = useState<SelfBranchesPayload | null>(null);
+// `seed` is the SSR/test seam (the effect-free static renderer cannot fetch).
+export function useSelfBranches(armed: boolean, seed?: SelfBranchesPayload | null): SelfBranchesHandle {
+  const [payload, setPayload] = useState<SelfBranchesPayload | null>(seed ?? null);
+  const [fetchTick, setFetchTick] = useState(0);
   useEffect(() => {
     if (!armed || typeof window === "undefined") {
       return;
@@ -173,8 +187,15 @@ export function useSelfBranches(armed: boolean): SelfBranchesPayload | null {
     return () => {
       closed = true;
     };
-  }, [armed]);
-  return payload;
+  }, [armed, fetchTick]);
+  return useMemo(
+    () => ({
+      payload,
+      adopt: (next: SelfBranchesPayload) => setPayload(next),
+      refresh: () => setFetchTick((tick) => tick + 1),
+    }),
+    [payload],
+  );
 }
 
 // POST /api/self/checkout — load the room to a version (checkout, then the
@@ -205,13 +226,53 @@ export async function loadSelfVersion(branch: string): Promise<{ ok: boolean; er
   }
 }
 
-// POST /api/self/branch — tend a limb: archive (room/x -> archive/x) or delete
-// a room/* branch that is not the running one. Local git bookkeeping only; the
-// server's honest refusals (running branch, unknown name) surface to the wall.
+// A tend verb's parsed outcome. `branches` is the fresh rails payload the
+// route returned alongside ok (the refresh contract) — null when the response
+// carried none (older server, refusal), in which case the caller refresh()es.
+export interface TendResult {
+  ok: boolean;
+  error: string | null;
+  branches: SelfBranchesPayload | null;
+}
+
+// Pure: pull the refreshed rails out of a tend response body ({current,
+// branches} ride beside ok). Null unless BOTH halves parse — a half-payload
+// must never repaint the list as empty.
+export function parseTendBranches(body: unknown): SelfBranchesPayload | null {
+  if (typeof body !== "object" || body === null) {
+    return null;
+  }
+  const { current, branches } = body as { current?: unknown; branches?: unknown };
+  if (typeof current !== "string" || !Array.isArray(branches)) {
+    return null;
+  }
+  const entries: SelfBranchesPayload["branches"] = [];
+  for (const entry of branches) {
+    if (typeof entry !== "object" || entry === null) {
+      return null;
+    }
+    const { name, subject, date } = entry as { name?: unknown; subject?: unknown; date?: unknown };
+    if (typeof name !== "string") {
+      return null;
+    }
+    entries.push({
+      name,
+      subject: typeof subject === "string" ? subject : "",
+      ...(typeof date === "string" ? { date } : {}),
+    });
+  }
+  return { current, branches: entries };
+}
+
+// POST /api/self/branch — tend a limb: archive (room/x -> archive/x), delete
+// (prune — local branch -D + best-effort remote prune), or merge (finalize —
+// into the trunk via the PR or a fast-forward). The server's honest refusals
+// (running branch, unknown name, "no PR and not fast-forward…") surface to
+// the wall VERBATIM; ok responses carry the refreshed rails.
 export async function manageSelfVersion(
   branch: string,
-  action: "archive" | "delete",
-): Promise<{ ok: boolean; error: string | null }> {
+  action: "archive" | "delete" | "merge",
+): Promise<TendResult> {
   try {
     const response = await fetch("/api/self/branch", {
       method: "POST",
@@ -220,7 +281,7 @@ export async function manageSelfVersion(
     });
     const body = (await response.json().catch(() => null)) as { ok?: unknown; error?: unknown } | null;
     if (response.ok && body?.ok !== false) {
-      return { ok: true, error: null };
+      return { ok: true, error: null, branches: parseTendBranches(body) };
     }
     return {
       ok: false,
@@ -228,8 +289,34 @@ export async function manageSelfVersion(
         typeof body?.error === "string" && body.error.length > 0
           ? body.error
           : `${action} failed (HTTP ${response.status})`,
+      branches: null,
     };
   } catch {
-    return { ok: false, error: `${action} request failed — is the room server up?` };
+    return { ok: false, error: `${action} request failed — is the room server up?`, branches: null };
+  }
+}
+
+// POST /api/self/run/halt — stop the growing self-run (✂ stop growing).
+// Idempotent server-side: `halted:false` means nothing was executing (it
+// already finished) — a truth the wall must say, not an error. `status`
+// (present on an HTTP answer) feeds the reportControlFailure toast.
+export async function haltSelfRun(): Promise<{ ok: boolean; halted: boolean; error: string | null; status?: number }> {
+  try {
+    const response = await fetch("/api/self/run/halt", { method: "POST" });
+    const body = (await response.json().catch(() => null)) as { ok?: unknown; halted?: unknown; error?: unknown } | null;
+    if (response.ok && body?.ok !== false) {
+      return { ok: true, halted: body?.halted === true, error: null, status: response.status };
+    }
+    return {
+      ok: false,
+      halted: false,
+      error:
+        typeof body?.error === "string" && body.error.length > 0
+          ? body.error
+          : `stop failed (HTTP ${response.status})`,
+      status: response.status,
+    };
+  } catch {
+    return { ok: false, halted: false, error: "stop request failed — is the room server up?" };
   }
 }

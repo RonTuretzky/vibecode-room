@@ -128,7 +128,7 @@ import { callsignFromRepo, parseImportRequest } from "./project-import";
 import { cloneRepo, repoDigest } from "./repo-clone";
 import { resolveDeployUrl } from "./deploy-resolver";
 import { TreeGitSubstrate, treeGitEnabled, type GitCommandRunner } from "./tree-git";
-import type { ForestCommandRunner } from "./github-org";
+import { ghCommandRunner, type ForestCommandRunner } from "./github-org";
 import { applySteerEdit, steerApplierEnabled } from "./steer-applier";
 import { appendSliceLine, joinedSliceText, type SteerSliceLine } from "./transcript-slice";
 import { TreeIssuesCache, type TreeIssue } from "./tree-issues";
@@ -341,6 +341,21 @@ export interface ProjectorRuntime {
     branch: string,
     action: "archive" | "delete",
   ): Promise<{ ok: true } | { ok: false; error: string }>;
+  // STOP GROWING (the wall's halt verb): abort the EXECUTING self-run —
+  // cancels the durable run through the commissioner and settles the lane
+  // failed·"aborted" — WITHOUT touching registry.halt (POST /api/process/
+  // self/halt marks the pinned record dead and orphans the mirror until
+  // reboot; that stays the emergency path). Idempotent: nothing executing is
+  // {halted:false}, never an error.
+  haltSelfRun(correlationId?: string): Promise<{ ok: true; halted: boolean } | { ok: false; error: string }>;
+  // INTO THE TRUNK (finalize): merge a room/* branch to main — via its PR
+  // (draft → ready, base retargeted to main, merge commit) or a plain
+  // fast-forward push when no PR exists. Merging the CURRENT branch is
+  // allowed: the room keeps standing on it; main simply gains its commits
+  // (the operator loads main later via /api/self/checkout).
+  mergeSelfBranch(
+    branch: string,
+  ): Promise<{ ok: true; merged: true; via: "pr" | "fast-forward" } | { ok: false; error: string }>;
   // GUIDED-DEMO HOLD: suspends the armed auto-build's self-firing while the
   // demo's "describe your idea" step is up (Done is the only trigger). TTL'd
   // server-side; releasing re-checks an armed candidate immediately.
@@ -483,6 +498,14 @@ export interface ProjectorRuntimeOptions {
   // the commission-time publish (gh repo create / pr create).
   treeGitRunner?: GitCommandRunner | null;
   treeGhRunner?: ForestCommandRunner;
+  // SELF VERSION-RAIL seams (the room's OWN checkout, not a build's clone):
+  // `selfGitRunner` undefined = the real `git` subprocess in process.cwd();
+  // injected = every self rail (branches/checkout/archive/delete/merge) is
+  // testable with no subprocess. `selfGhRunner` backs the finalize (merge)
+  // and remote-prune gh calls the same way — plain keychain gh, never the
+  // tree-git credential chain.
+  selfGitRunner?: GitCommandRunner;
+  selfGhRunner?: ForestCommandRunner;
   // The real coding agent that turns an accepted idea's scaffold into a working
   // app (idea-builder). Defaults to the host `claude` CLI builder. Tests inject a
   // synthetic builder so no real `claude` spawn occurs.
@@ -797,6 +820,10 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   #selfReloadPending = false;
   readonly #exit: (code: number) => void;
   readonly #selfReloadDelayMs: number;
+  // SELF VERSION-RAIL seams: injected runners make every self git/gh rail
+  // testable without a subprocess; null = the real spawns below.
+  readonly #selfGitRunner: GitCommandRunner | null;
+  readonly #selfGhRunner: ForestCommandRunner | null;
 
   constructor(
     readonly sessionId: string,
@@ -816,6 +843,8 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     this.#selfRebuild = this.#selfMode;
     this.#exit = options.exitProcess ?? ((code: number) => process.exit(code));
     this.#selfReloadDelayMs = resolveSelfReloadDelayMs(env);
+    this.#selfGitRunner = options.selfGitRunner ?? null;
+    this.#selfGhRunner = options.selfGhRunner ?? null;
     // Single audible-output sink seam (ISSUE-0026): an injected sink wins, else
     // selectAudioSink(env) (no-op unless VIBERSYN_AUDIO_SINK=device). The one sink
     // backs both the earcon playPcm path and the TTS drain so a fired suggestion's
@@ -3839,7 +3868,15 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   }
 
   // ── self BRANCH rails (branch-per-record + click-a-branch-to-load) ──────
+  // Delegates to the injected seam when one exists (tests script every rail
+  // without a subprocess); production stays the plain git spawn in the room's
+  // own working directory — deliberately keychain-plain, never the tree-git
+  // credential chain (this is the operator's checkout, not a build's clone).
   async #selfGit(argv: string[]): Promise<{ code: number; out: string }> {
+    if (this.#selfGitRunner !== null) {
+      const result = await this.#selfGitRunner(argv);
+      return { code: result.ok ? 0 : 1, out: (result.stdout + result.stderr).trim() };
+    }
     try {
       const proc = Bun.spawn(["git", ...argv], { cwd: process.cwd(), stdout: "pipe", stderr: "pipe" });
       const out = await new Response(proc.stdout).text();
@@ -3849,6 +3886,15 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     } catch (error) {
       return { code: 1, out: error instanceof Error ? error.message : String(error) };
     }
+  }
+
+  // The gh sibling (finalize + remote prune): argv INCLUDES the leading "gh"
+  // (ForestCommandRunner contract). Plain keychain gh — GH_TOKEN handling and
+  // timeouts live in the default runner.
+  async #selfGh(argv: string[]): Promise<{ code: number; out: string }> {
+    const run = this.#selfGhRunner ?? ghCommandRunner;
+    const result = await run(argv);
+    return { code: result.ok ? 0 : 1, out: (result.stdout + result.stderr).trim() };
   }
 
   // Cut a fresh smart-named room/* branch off the CURRENT branch for a spoken
@@ -3924,23 +3970,126 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       meta: { branch },
     });
     // Respond first, exit after: the supervisor rebuilds the tree (now on the
-    // requested branch) and relaunches the room on it.
-    setTimeout(() => process.exit(87), 400);
+    // requested branch) and relaunches the room on it. Through the #exit seam
+    // so tests observe the 87 instead of dying with it.
+    setTimeout(() => this.#exit(87), 400);
     return { ok: true };
+  }
+
+  // INTO THE TRUNK (finalize): merge a room/* branch into main. The gh path
+  // drives the branch's PR — ready it if draft, retarget its base to main
+  // (vibersyn-self drafts PRs against the branch it started FROM, often
+  // another room/*), then a plain merge commit (--merge, never --squash: self
+  // commits are the room's history). No PR at all falls back to a fast-
+  // forward push when main is an ancestor. Merging the CURRENT branch is
+  // ALLOWED — the room keeps standing on it; main simply gains its commits
+  // (the operator loads main later via /api/self/checkout). Every gh/git
+  // refusal surfaces verbatim (sliced) — the wall renders it inline.
+  async mergeSelfBranch(
+    branch: string,
+  ): Promise<{ ok: true; merged: true; via: "pr" | "fast-forward" } | { ok: false; error: string }> {
+    const correlationId = `corr-self-finalize-${crypto.randomUUID()}`;
+    const refuse = (error: string): { ok: false; error: string } => {
+      this.recordExternalTrace({
+        event: "self.version.finalize",
+        level: "warn",
+        sessionId: this.sessionId,
+        correlationId,
+        meta: { branch, error },
+      });
+      return { ok: false, error };
+    };
+    if (!/^[A-Za-z0-9][A-Za-z0-9._/-]*$/u.test(branch) || branch.includes("..")) {
+      return refuse("unsafe branch name");
+    }
+    if (!branch.startsWith("room/")) {
+      return refuse("only room/* limbs can be finalized");
+    }
+    const exists = await this.#selfGit(["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`]);
+    if (exists.code !== 0) {
+      return refuse(`no local branch named ${branch}`);
+    }
+    const slug = this.#env.VIBERSYN_SELF_REPO ?? "RonTuretzky/vibecode-room";
+    const listed = await this.#selfGh([
+      "gh", "pr", "list", "-R", slug, "--head", branch,
+      "--state", "all", "--json", "number,state,isDraft,baseRefName", "--limit", "1",
+    ]);
+    if (listed.code !== 0) {
+      return refuse(listed.out.slice(0, 160));
+    }
+    let prs: Array<{ number?: unknown; state?: unknown; isDraft?: unknown; baseRefName?: unknown }> = [];
+    try {
+      const parsed = JSON.parse(listed.out) as unknown;
+      prs = Array.isArray(parsed) ? parsed : [];
+    } catch {
+      prs = [];
+    }
+    const pr = prs[0];
+    let via: "pr" | "fast-forward";
+    if (pr === undefined || typeof pr.number !== "number") {
+      // No PR: a plain fast-forward push is the only honest merge left.
+      via = "fast-forward";
+      const ancestor = await this.#selfGit(["merge-base", "--is-ancestor", "refs/heads/main", `refs/heads/${branch}`]);
+      if (ancestor.code !== 0) {
+        return refuse("no PR and not fast-forward from main — needs a PR");
+      }
+      const pushed = await this.#selfGit(["push", "origin", `refs/heads/${branch}:refs/heads/main`]);
+      if (pushed.code !== 0) {
+        return refuse(pushed.out.slice(0, 160));
+      }
+    } else {
+      via = "pr";
+      if (pr.state !== "MERGED") {
+        if (pr.isDraft === true) {
+          const readied = await this.#selfGh(["gh", "pr", "ready", String(pr.number), "-R", slug]);
+          if (readied.code !== 0) {
+            return refuse(readied.out.slice(0, 160));
+          }
+        }
+        if (typeof pr.baseRefName === "string" && pr.baseRefName !== "main") {
+          const retargeted = await this.#selfGh(["gh", "pr", "edit", String(pr.number), "-R", slug, "--base", "main"]);
+          if (retargeted.code !== 0) {
+            return refuse(retargeted.out.slice(0, 160));
+          }
+        }
+        const merged = await this.#selfGh(["gh", "pr", "merge", String(pr.number), "-R", slug, "--merge"]);
+        if (merged.code !== 0) {
+          return refuse(merged.out.slice(0, 160));
+        }
+      }
+      // Best-effort: freshen the local main ref so a later fast-forward /
+      // checkout sees the merge; a failure here changes nothing upstream.
+      await this.#selfGit(["fetch", "origin", "main:main"]).catch(() => undefined);
+    }
+    this.recordExternalTrace({
+      event: "self.version.finalize",
+      level: "info",
+      sessionId: this.sessionId,
+      correlationId,
+      meta: { branch, via },
+    });
+    return { ok: true, merged: true, via };
   }
 
   // TEND A LIMB: archive or delete one of the room's local branches — the
   // tree-menu's per-branch lifecycle actions. Neither ever touches the running
   // branch (the room must not saw off the limb it stands on), and both refuse
   // unsafe names. Archiving RENAMES room/<x> -> archive/<x> (the limb leaves
-  // the load list but the work survives); deleting is a local `branch -D`.
-  // Purely local bookkeeping — GitHub is untouched.
+  // the load list but the work survives); deleting is a local `branch -D`
+  // followed by a BEST-EFFORT remote prune (push origin --delete + closing
+  // any open PR) — a remote failure is reported in the trace, never rolled
+  // back (the local prune already happened; honesty = report, not rollback).
   async manageSelfBranch(
     branch: string,
     action: "archive" | "delete",
   ): Promise<{ ok: true } | { ok: false; error: string }> {
     if (!/^[A-Za-z0-9][A-Za-z0-9._/-]*$/u.test(branch) || branch.includes("..")) {
       return { ok: false, error: "unsafe branch name" };
+    }
+    // Belt-and-braces: the room/* gate below already excludes the trunk, but
+    // the trunk must never be tendable even if that gate ever loosens.
+    if (branch === "main") {
+      return { ok: false, error: "the trunk (main) is never tended" };
     }
     if (!branch.startsWith("room/")) {
       return { ok: false, error: "only room/* branches can be tended" };
@@ -3954,6 +4103,10 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     if (exists.code !== 0) {
       return { ok: false, error: `no local branch named ${branch}` };
     }
+    // Remote-prune bookkeeping for the delete path's trace (report, never
+    // rollback): what happened to origin's copy + whether an open PR closed.
+    let remote = "skipped";
+    let prClosed = false;
     if (action === "archive") {
       // Archiving the LIVE branch: step off it onto main first so the running
       // room no longer stands on the limb being archived, then rename and hand
@@ -3983,7 +4136,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
         });
         // Respond first, exit after: the supervisor rebuilds on main and
         // relaunches — the archived change is gone from the live room.
-        setTimeout(() => process.exit(87), 400);
+        setTimeout(() => this.#exit(87), 400);
         return { ok: true };
       }
     } else {
@@ -3991,15 +4144,64 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       if (removed.code !== 0) {
         return { ok: false, error: removed.out.slice(0, 160) };
       }
+      // BEST-EFFORT remote prune: the local branch is already gone, so a
+      // remote failure is reported (trace meta), never rolled back — the
+      // pruned limb must not resurrect as an error.
+      const pushed = await this.#selfGit(["push", "origin", "--delete", branch]);
+      remote = pushed.code === 0 ? "deleted" : `failed: ${pushed.out.slice(0, 120)}`;
+      const slug = this.#env.VIBERSYN_SELF_REPO ?? "RonTuretzky/vibecode-room";
+      const listed = await this.#selfGh([
+        "gh", "pr", "list", "-R", slug, "--head", branch, "--state", "open", "--json", "number", "--limit", "1",
+      ]);
+      try {
+        const openPrs = listed.code === 0 ? (JSON.parse(listed.out) as Array<{ number?: unknown }>) : [];
+        const openPr = Array.isArray(openPrs) ? openPrs[0] : undefined;
+        if (openPr !== undefined && typeof openPr.number === "number") {
+          const closed = await this.#selfGh(["gh", "pr", "close", String(openPr.number), "-R", slug]);
+          prClosed = closed.code === 0;
+        }
+      } catch {
+        // Unparseable gh output = no PR found; the prune already succeeded.
+      }
     }
     this.recordExternalTrace({
       event: "self.version.tend",
       level: "info",
       sessionId: this.sessionId,
       correlationId: `corr-self-tend-${crypto.randomUUID()}`,
-      meta: { branch, action },
+      meta: { branch, action, ...(action === "delete" ? { remote, prClosed } : {}) },
     });
     return { ok: true };
+  }
+
+  // STOP GROWING: abort the executing self-run through the commissioner —
+  // cancelRun on the durable run, lane settled failed·"aborted" (a reload can
+  // never fire from it). NEVER registry.halt("self"): that marks the pinned
+  // record dead and orphans the mirror until reboot. The run's uncommitted
+  // edits stay on the room/* branch it cut; the next run's hygiene step
+  // stashes them as "self-run leftovers" (vibersyn-self.tsx), so there is no
+  // server-side cleanup here. Idempotent: nothing executing → {halted:false}.
+  async haltSelfRun(
+    correlationId = `corr-self-halt-${crypto.randomUUID()}`,
+  ): Promise<{ ok: true; halted: boolean } | { ok: false; error: string }> {
+    if (this.#selfCommission === null) {
+      return { ok: false, error: "self mode is off" };
+    }
+    const lane = this.#selfCommission.lane();
+    if (lane === null || lane.status !== "executing") {
+      return { ok: true, halted: false };
+    }
+    await this.#selfCommission.abort();
+    this.publish();
+    this.recordExternalTrace({
+      event: "self.run.halt",
+      level: "info",
+      sessionId: this.sessionId,
+      correlationId,
+      upid: SELF_UPID,
+      meta: { runId: lane.runId },
+    });
+    return { ok: true, halted: true };
   }
 
   // ── self-run ACTIVITY PROBE (live-room complaint: "run heartbeat · 95%"

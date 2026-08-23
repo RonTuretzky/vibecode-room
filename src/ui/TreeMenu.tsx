@@ -1,12 +1,17 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import type { ProjectorProcess, ProjectorSnapshot } from "./types";
 import type { SceneDwellRect } from "./gesture/scene-source";
 import { laneStatusLabel, processLanes, type GuidedLane } from "./guided/machine";
 import { executionOf, stageOf, type ProcessStage } from "./stage";
 import { ExecutionChip } from "./BuildChips";
-import { FleetScrollRail } from "./FleetScroll";
 import { RecordSteerToggle } from "./RecordSteerToggle";
-import { loadSelfVersion, manageSelfVersion, useSelfBranches } from "./self-repo";
+import {
+  haltSelfRun,
+  loadSelfVersion,
+  manageSelfVersion,
+  useSelfBranches,
+  type SelfBranchesPayload,
+} from "./self-repo";
 import { TakeHomeQr } from "./TakeHomeQr";
 import "./TreeMenu.css";
 
@@ -32,13 +37,20 @@ import "./TreeMenu.css";
  *     this process (select), press again to stop (select/clear). No typing.
  *   - 🗑 remove with a TWO-STAGE confirm (second dwell within ~4s) → POST
  *     /api/process/:upid/dismiss (stops builds + removes from the snapshot).
- *   - the SELF/mirror tree gets the same shape with "the room" flavor and NO
- *     remove button — the room must not dismiss itself.
+ *
+ * THE SELF TREE gets "TEND THE TREE" instead: a two-column tree-hugging
+ * surface in ONE plant vocabulary (branch = the git word AND the plant word;
+ * main = the trunk). Column A = GRAFT (the record toggle re-skinned) plus the
+ * GROWING card with ✂ stop growing while a self-run executes. Column B = the
+ * 🌳 you-are-here card (merge/press on the current branch) and the grown
+ * branches, dwell-PAGINATED four at a time — no CSS scroll, ever — with a
+ * per-branch FOCUS view carrying the 2×2 verb grid (climb/merge/press/prune).
  */
 
-// The remove confirm window: the second press must land within this budget or
-// the button falls back to its resting stage (a wandering dwell cursor four
-// seconds later must not delete a build).
+// The confirm window for every two-stage verb (remove, prune, merge, stop
+// growing): the second press must land within this budget or the button falls
+// back to its resting stage (a wandering dwell cursor four seconds later must
+// not delete a build or a branch).
 export const DISMISS_CONFIRM_MS = 4_000;
 
 // Placement geometry. The pure function stays SSR-safe by working from a
@@ -52,9 +64,39 @@ export const TREE_MENU_WIDTH = 440;
 // Mirror of the gesture-mode CSS width — exported so placement tests exercise
 // the widest real footprint, not just the desk nominal.
 export const TREE_MENU_GESTURE_WIDTH = 620;
+// The SELF tree's tending surface is two columns, so it takes a wider glass
+// footprint (desk / gesture) — same export contract as the pair above so the
+// placement tests exercise the widest real panel.
+export const TREE_MENU_SELF_WIDTH = 760;
+export const TREE_MENU_SELF_GESTURE_WIDTH = 960;
 export const TREE_MENU_EST_HEIGHT = 560;
 const MENU_GAP = 18;
 const VIEWPORT_MARGIN = 16;
+
+// Branch list pagination: four stationary rows per page — a dwell cursor
+// steps pages with ▲/⌄, and no row ever moves mid-dwell (lists never scroll).
+export const TREE_TEND_PAGE_SIZE = 4;
+
+// Pure: one page of a list plus the clamped page/pages arithmetic (the list
+// shrinks under the cursor when a branch is pruned/merged away — the shown
+// page must clamp back into range rather than render an empty screen).
+export function pageSlice<T>(
+  list: readonly T[],
+  page: number,
+  size: number = TREE_TEND_PAGE_SIZE,
+): { slice: T[]; page: number; pages: number } {
+  const pages = Math.max(1, Math.ceil(list.length / size));
+  const clamped = Math.min(Math.max(0, page), pages - 1);
+  return { slice: list.slice(clamped * size, clamped * size + size), page: clamped, pages };
+}
+
+// Pure: "room/hp-at-hp-four" → "hp at hp four" — the human-readable slug line
+// on branch cards. The slug is REQUIRED beside the subject: recorded subjects
+// repeat (three limbs of "manufacture GPU server racks…" in one afternoon),
+// and only the slug tells them apart.
+export function deslugBranch(name: string): string {
+  return name.replace(/^room\//u, "").replace(/-/gu, " ");
+}
 
 // useLayoutEffect measures before paint in the browser; on the server (the
 // SSR unit tests render with renderToStaticMarkup) it downgrades to useEffect
@@ -148,7 +190,7 @@ export function treeMenuModel(process: ProjectorProcess, snapshot: ProjectorSnap
     // The MIRROR runs durable self-runs, never concept lanes — roster-derived
     // "queued…" rows on the room's own tree read as dead deck buttons from
     // projector distance (live-room report). Its real telemetry is the
-    // ExecutionChip below.
+    // ExecutionChip / growing card below.
     lanes: isSelf ? [] : processLanes(process, snapshot),
     isSelf,
     hasFixtureDeck: (process.slides?.length ?? 0) > 0,
@@ -162,6 +204,40 @@ export function treeMenuModel(process: ProjectorProcess, snapshot: ProjectorSnap
     adopted:
       !isSelf && typeof process.treeRepo?.remoteUrl === "string" && process.treeRepo.remoteUrl.length > 0,
   };
+}
+
+// A tend verb in flight: which verb and on which branch (null = the here-card
+// / the growing run). One at a time — every verb button disables while busy.
+interface TendBusy {
+  verb: "climb" | "merge" | "press" | "prune" | "stop";
+  branch: string | null;
+}
+
+// A two-line dwell verb (strong line + honest sub-line). `armedSkin` recolors
+// the confirm stage; the sync data-state stamp happens in the click handler
+// (markPressed pattern) so an 8fps wall shows the press before React renders.
+function TendVerb(props: {
+  testid: string;
+  className?: string;
+  line1: string;
+  line2: string;
+  title?: string;
+  disabled?: boolean;
+  onPress: (event: ReactMouseEvent<HTMLButtonElement>) => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={`ctl-button tend-verb${props.className !== undefined ? ` ${props.className}` : ""}`}
+      data-testid={props.testid}
+      title={props.title}
+      disabled={props.disabled}
+      onClick={props.onPress}
+    >
+      <span className="tend-line">{props.line1}</span>
+      <span className="tend-sub">{props.line2}</span>
+    </button>
+  );
 }
 
 export interface TreeMenuProps {
@@ -184,9 +260,32 @@ export interface TreeMenuProps {
   // App fires it and closes the menu; the new limb appears via the snapshot.
   // Absent = the row never renders.
   onGrowBranch?: (upid: string) => void;
+  // SSR/test seam for the self tree's rails (the effect-free static renderer
+  // cannot fetch /api/self/branches) — the live wall leaves this undefined.
+  selfBranches?: SelfBranchesPayload | null;
+  // SSR/test seam for the tend surface's interaction states (the static
+  // renderer cannot dwell): boots the body in a focus view / with a verb
+  // armed / on a later page. The live wall leaves this undefined.
+  tendSeed?: { focusBranch?: string; armed?: string; page?: number };
+  // Failure toast seam (App.reportControlFailure): a verb whose POST failed
+  // says so inline AND raises the room-wide "… failed — nothing changed."
+  // epilogue. Absent = inline notes only (tests exercising the menu alone).
+  onControlFailure?: (what: string, status?: number) => void;
 }
 
-export function TreeMenu({ process, snapshot, anchor, onClose, onOpenDeck, onDismiss, onOpenLiveApp, onGrowBranch }: TreeMenuProps) {
+export function TreeMenu({
+  process,
+  snapshot,
+  anchor,
+  onClose,
+  onOpenDeck,
+  onDismiss,
+  onOpenLiveApp,
+  onGrowBranch,
+  selfBranches,
+  onControlFailure,
+  tendSeed,
+}: TreeMenuProps) {
   const model = treeMenuModel(process, snapshot);
   const execution = executionOf(process);
   // Re-derived per render — the anchor prop changes on a fresh pick and on the
@@ -200,7 +299,7 @@ export function TreeMenu({ process, snapshot, anchor, onClose, onOpenDeck, onDis
   // runs pre-paint (layout effect), so the nominal-size first pass is never
   // visible; the guarded setState bails once the size settles, so this cannot
   // loop. Re-measured every render because the CONTENT changes size too
-  // (lanes appear, remove arms, QR lands).
+  // (lanes appear, verbs arm, QR lands).
   const panelRef = useRef<HTMLElement | null>(null);
   const [measured, setMeasured] = useState<{ width: number; height: number } | null>(null);
   useIsomorphicLayoutEffect(() => {
@@ -218,51 +317,132 @@ export function TreeMenu({ process, snapshot, anchor, onClose, onOpenDeck, onDis
         : { width: rect.width, height: rect.height },
     );
   });
-  const placement = treeMenuPlacement(anchor, viewport, measured ?? undefined);
+  const placement = treeMenuPlacement(
+    anchor,
+    viewport,
+    // SSR/nominal fallback at the SELF width when tending — the measured real
+    // footprint still wins the moment it exists.
+    measured ?? (model.isSelf ? { width: TREE_MENU_SELF_WIDTH, height: TREE_MENU_EST_HEIGHT } : undefined),
+  );
 
-  // VERSIONS (self tree): every record window cuts a room/* branch — these
-  // rows load the room to any of them (checkout + supervisor relaunch). The
-  // rails and the load POST live in self-repo.ts, shared verbatim with the
-  // self tree's branch popup.
-  const versions = useSelfBranches(model.isSelf);
-  const [loadingVersion, setLoadingVersion] = useState<string | null>(null);
-  const loadVersion = (branch: string) => {
-    setLoadingVersion(branch);
-    void loadSelfVersion(branch);
+  // THE ROOM'S BRANCHES (self tree): every record window cuts a room/* branch
+  // — this payload is the rails the room can actually be tended along. The
+  // handle's adopt/refresh seams keep the list honest after prune/merge
+  // (Rails 2/3 return the fresh rails in their own response — no second GET).
+  const rails = useSelfBranches(model.isSelf, selfBranches);
+
+  // TEND STATE. One armed slot for every two-stage verb ("stop" | "merge:…" |
+  // "prune:…") with the shared auto-disarm; one busy verb at a time; the
+  // server's refusals verbatim in `tendError`; `tendNote`/`haltNote` are the
+  // transient honest receipts. Everything resets when the menu moves to
+  // another tree (a stale confirm must never fire on the wrong target).
+  const [page, setPage] = useState(tendSeed?.page ?? 0);
+  const [focusBranch, setFocusBranch] = useState<string | null>(tendSeed?.focusBranch ?? null);
+  const [armed, setArmed] = useState<string | null>(tendSeed?.armed ?? null);
+  const [busy, setBusy] = useState<TendBusy | null>(null);
+  const [tendError, setTendError] = useState<string | null>(null);
+  const [tendNote, setTendNote] = useState<string | null>(null);
+  const [haltNote, setHaltNote] = useState<string | null>(null);
+  useEffect(() => {
+    setPage(0);
+    setFocusBranch(null);
+    setArmed(null);
+    setBusy(null);
+    setTendError(null);
+    setTendNote(null);
+    setHaltNote(null);
+  }, [process.upid]);
+  // Auto-disarm: an armed confirm falls back to resting after the window.
+  useEffect(() => {
+    if (armed === null) {
+      return;
+    }
+    const timer = setTimeout(() => setArmed(null), DISMISS_CONFIRM_MS);
+    return () => clearTimeout(timer);
+  }, [armed]);
+  // The merged/pressed receipts fade on the same budget.
+  useEffect(() => {
+    if (tendNote === null) {
+      return;
+    }
+    const timer = setTimeout(() => setTendNote(null), DISMISS_CONFIRM_MS);
+    return () => clearTimeout(timer);
+  }, [tendNote]);
+
+  // 8fps-wall ack rule: stamp the SAME attribute React manages, synchronously
+  // in the handler, so the press shows at the next frame (markPressed pattern,
+  // RecordSteerToggle) — React's own render then takes over.
+  const stampPressed = (event: ReactMouseEvent<HTMLButtonElement>, state = "pressed"): void => {
+    event.currentTarget.dataset.state = state;
   };
 
-  // LIMB LIFECYCLE (self tree): a branch row expands to its finalize/archive/
-  // delete actions on the first press, so a wandering dwell cursor never
-  // stumbles straight onto a destructive verb. `tending` is the busy branch
-  // (archive/delete in flight); `tendError` surfaces the server's honest
-  // refusal (e.g. tending the running limb). Both reset when the menu moves.
-  const [expandedVersion, setExpandedVersion] = useState<string | null>(null);
-  const [deleteArmed, setDeleteArmed] = useState<string | null>(null);
-  const [tending, setTending] = useState<string | null>(null);
-  const [tendError, setTendError] = useState<string | null>(null);
-  useEffect(() => {
-    setExpandedVersion(null);
-    setDeleteArmed(null);
-    setTending(null);
+  // A tend verb (merge / press / prune) through the one endpoint. Success
+  // adopts the refreshed rails from the response (or re-fetches when an older
+  // server sent none) and leaves the focus view for the re-clamped list.
+  const tendVerb = (branch: string, verb: "merge" | "press" | "prune"): void => {
+    const action = verb === "merge" ? "merge" : verb === "press" ? "archive" : "delete";
+    setBusy({ verb, branch });
     setTendError(null);
-  }, [process.upid]);
-  const tendVersion = (branch: string, action: "archive" | "delete") => {
-    setTending(branch);
-    setTendError(null);
+    setTendNote(null); // one receipt row at a time — a stale note under a fresh error would outgrow the list-view budget
     void manageSelfVersion(branch, action).then((result) => {
-      setTending(null);
+      setBusy(null);
+      setArmed(null);
       if (result.ok) {
-        setExpandedVersion(null);
-        setDeleteArmed(null);
+        if (result.branches !== null) {
+          rails.adopt(result.branches);
+        } else {
+          rails.refresh();
+        }
+        if (verb === "merge") {
+          setTendNote("🪵 in the trunk — merged");
+        }
+        setFocusBranch(null);
       } else {
         setTendError(result.error);
+        onControlFailure?.(verb === "merge" ? "into the trunk" : verb === "press" ? "press" : "prune");
       }
     });
   };
 
-  // TWO-STAGE remove: the first press arms "really remove?"; it disarms by
-  // itself after DISMISS_CONFIRM_MS. Both stages reset when the menu moves to
-  // another tree so a stale confirm can never delete the wrong build.
+  // CLIMB (focus view): checkout + supervisor relaunch. Success keeps the
+  // busy label — the room reloads under us; a refusal clears it and shows the
+  // server's reason (the old load path span forever on failure — fixed here).
+  const climbVerb = (branch: string): void => {
+    setBusy({ verb: "climb", branch });
+    setTendError(null);
+    setTendNote(null);
+    void loadSelfVersion(branch).then((result) => {
+      if (result.ok) {
+        return; // the room is rebuilding onto the branch — this window reloads
+      }
+      setBusy(null);
+      setTendError(result.error);
+      onControlFailure?.("climb");
+    });
+  };
+
+  // ✂ STOP GROWING (the halt verb): POST /api/self/run/halt — never the
+  // registry's /api/process/self/halt (that kills the pinned mirror record).
+  const stopGrowing = (event: ReactMouseEvent<HTMLButtonElement>): void => {
+    stampPressed(event, "stopping");
+    setArmed(null);
+    setBusy({ verb: "stop", branch: null });
+    setHaltNote(null);
+    void haltSelfRun().then((result) => {
+      setBusy(null);
+      if (result.ok) {
+        setHaltNote(result.halted ? "✂ stopped — the branch keeps what grew" : "nothing growing — it already finished");
+      } else {
+        setHaltNote(result.error);
+        onControlFailure?.("stop growing", result.status);
+      }
+    });
+  };
+
+  // TWO-STAGE remove (fleet trees): the first press arms "really remove?"; it
+  // disarms by itself after DISMISS_CONFIRM_MS. Both stages reset when the
+  // menu moves to another tree so a stale confirm can never delete the wrong
+  // build.
   const [dismissArmed, setDismissArmed] = useState(false);
   useEffect(() => {
     setDismissArmed(false);
@@ -275,10 +455,67 @@ export function TreeMenu({ process, snapshot, anchor, onClose, onOpenDeck, onDis
     return () => clearTimeout(timer);
   }, [dismissArmed]);
 
+  // ── SELF derivations (cheap; null-safe when not the self tree) ──────────
+  const payload = rails.payload;
+  const growing = model.isSelf && execution !== null && execution.status === "executing";
+  const growLabel = execution?.progressLabel ?? "growing";
+  const currentEntry =
+    payload === null
+      ? null
+      : payload.branches.find((entry) => entry.name === payload.current) ?? {
+          name: payload.current,
+          subject: "",
+          date: "",
+        };
+  const grown = payload === null ? [] : payload.branches.filter((entry) => entry.name !== payload.current);
+  const paged = pageSlice(grown, page);
+  const focusEntry = focusBranch === null ? null : grown.find((entry) => entry.name === focusBranch) ?? null;
+  const anyBusy = busy !== null;
+  const cleanSubject = (subject: string): string => subject.replace(/^self: /u, "");
+
+  // The shared merge verb (here-card + focus view): resting → armed(amber) →
+  // busy. HONESTY DEVIATION (recorded): the button is NOT pre-flighted for
+  // PR/mergeability — the armed line says what the merge needs, and a server
+  // 400 surfaces verbatim in the inline error. It never promises success.
+  const mergeVerb = (branch: string, testidBase: string) => {
+    const key = `merge:${branch}`;
+    if (busy?.verb === "merge" && busy.branch === branch) {
+      return <TendVerb testid={testidBase} className="verb-merge" line1="🪵 merging…" line2="into the trunk (main)" disabled onPress={() => undefined} />;
+    }
+    return armed === key ? (
+      <TendVerb
+        testid={`${testidBase}-confirm`}
+        className="verb-merge is-armed-caution"
+        line1="make it permanent?"
+        line2="merges this branch into the trunk (main) — needs its PR or fast-forward"
+        title="Second press merges for real. It needs the branch's PR (or a fast-forward) — a refusal shows right here."
+        disabled={anyBusy}
+        onPress={(event) => {
+          stampPressed(event);
+          tendVerb(branch, "merge");
+        }}
+      />
+    ) : (
+      <TendVerb
+        testid={testidBase}
+        className="verb-merge"
+        line1="🪵 into the trunk"
+        line2="merge to main"
+        title="Merge this branch into the trunk (main) — asks once more."
+        disabled={anyBusy}
+        onPress={(event) => {
+          stampPressed(event);
+          setArmed(key);
+          setTendError(null);
+        }}
+      />
+    );
+  };
+
   return (
     <section
       ref={panelRef}
-      className={`tree-menu stage-${model.stage}`}
+      className={`tree-menu stage-${model.stage}${model.isSelf ? " tree-tend" : ""}`}
       data-testid="tree-menu"
       data-upid={process.upid}
       data-stage={model.stage}
@@ -295,7 +532,7 @@ export function TreeMenu({ process, snapshot, anchor, onClose, onOpenDeck, onDis
       <header className="tree-menu-head">
         <div className="tree-menu-identity">
           <span className="tree-menu-eyebrow">
-            {model.isSelf ? "🪞 mirror" : model.stage === "commissioned" ? "🌳 commissioned" : "🌱 concept"}
+            {model.isSelf ? "🌳 the room's tree" : model.stage === "commissioned" ? "🌳 commissioned" : "🌱 concept"}
           </span>
           <h2 className="tree-menu-title" data-testid="tree-menu-title">
             {model.title}
@@ -312,227 +549,409 @@ export function TreeMenu({ process, snapshot, anchor, onClose, onOpenDeck, onDis
           className="ctl-button tree-menu-close"
           data-testid="tree-menu-close"
           onClick={onClose}
-          title="Close this tree's menu"
+          title={model.isSelf ? "stop tending — close this surface" : "Close this tree's menu"}
         >
           ✕
         </button>
       </header>
 
-      {/* Commission-stage telemetry (reused chip: executing → BUILT + link). */}
-      {execution !== null ? <ExecutionChip execution={execution} /> : null}
+      {/* Commission-stage telemetry (reused chip: executing → BUILT + link).
+          On the SELF tree the chip lives in COLUMN A below (settled lanes) or
+          becomes the growing card (executing) — same data, no duplication, and
+          a full-width chip here would eat column B's list-view budget. */}
+      {execution !== null && !model.isSelf ? <ExecutionChip execution={execution} /> : null}
 
-      {/* CONCEPT LANES (shared derivation with the guided demo's race): a
-          ready lane is a real button into that backend's deck; a building/
-          queued/failed lane is an honest status row — the percent shows, and
-          there is no dead button pretending otherwise. */}
-      {model.lanes.length > 0 ? (
-        <div className="tree-menu-lanes" data-testid="tree-menu-lanes">
-          {model.lanes.map((lane) =>
-            lane.status === "ready" && (lane.hasDeck || lane.previewUrl !== null) ? (
-              <button
-                key={lane.id}
-                type="button"
-                className="tree-menu-lane lane-ready"
-                data-testid="tree-menu-lane"
-                data-backend={lane.id}
-                data-status={lane.status}
-                title={`Open the deck window on the ${lane.label} result.`}
-                onClick={() => onOpenDeck(process.upid, lane.id)}
-              >
-                <span className="tree-lane-label">{lane.label}</span>
-                <span className="tree-lane-status">{laneStatusLabel(lane)}</span>
-                <span className="tree-lane-open">View ▸</span>
-              </button>
-            ) : (
-              <div
-                key={lane.id}
-                className={`tree-menu-lane lane-${lane.status}`}
-                data-testid="tree-menu-lane"
-                data-backend={lane.id}
-                data-status={lane.status}
-                title={lane.summary ?? undefined}
-              >
-                <span className="tree-lane-label">{lane.label}</span>
-                <span className="tree-lane-status">{laneStatusLabel(lane)}</span>
+      {model.isSelf ? (
+        /* ── TEND THE TREE (the self tree's whole body) ────────────────── */
+        <div className="tree-tend-columns" data-testid="tree-tend-columns">
+          {/* COLUMN A — graft a change + whatever is growing right now. */}
+          <div className="tree-tend-col tree-tend-col-a">
+            <div className="tree-menu-steer" data-testid="tree-menu-steer">
+              <RecordSteerToggle process={process} kind="room" transcript={snapshot.transcript} />
+            </div>
+            {/* A SETTLED lane (built/failed) keeps its chip — in this column,
+                where the vertical slack is, not above the branch list. */}
+            {execution !== null && !growing ? <ExecutionChip execution={execution} /> : null}
+            {growing ? (
+              <div className="tree-growing-card" data-testid="tree-menu-growing">
+                <span className="tree-card-eyebrow">🌿 growing now</span>
+                {/* The run's REAL label + percent, verbatim from the lane. */}
+                <p className="tree-growing-label">
+                  {growLabel}
+                  {execution?.percent != null ? ` · ${Math.round(execution.percent)}%` : ""}
+                </p>
+                {busy?.verb === "stop" ? (
+                  <TendVerb testid="tree-menu-halt" className="verb-halt" line1="✂ stopping…" line2="halting this change" disabled onPress={() => undefined} />
+                ) : armed === "stop" ? (
+                  <TendVerb
+                    testid="tree-menu-halt-confirm"
+                    className="verb-halt is-armed-danger"
+                    line1="✂ really stop?"
+                    line2={`'${growLabel}' stays half-grown on its branch`}
+                    title="Second press cancels the growing self-run. Whatever it already grew stays on its branch."
+                    onPress={stopGrowing}
+                  />
+                ) : (
+                  <TendVerb
+                    testid="tree-menu-halt"
+                    className="verb-halt"
+                    line1="✂ stop growing"
+                    line2="halt this change"
+                    title="Stop the change growing right now (asks once more)."
+                    disabled={anyBusy}
+                    onPress={(event) => {
+                      stampPressed(event);
+                      setArmed("stop");
+                    }}
+                  />
+                )}
+                {haltNote !== null ? (
+                  <p className="tree-tend-note" data-testid="tree-menu-halt-note">
+                    {haltNote}
+                  </p>
+                ) : null}
               </div>
-            ),
-          )}
-        </div>
-      ) : null}
+            ) : haltNote !== null ? (
+              /* The run settled while the note was up (halt landed): keep the
+                 receipt readable for its own window even as the card folds. */
+              <p className="tree-tend-note" data-testid="tree-menu-halt-note">
+                {haltNote}
+              </p>
+            ) : null}
+          </div>
 
-      {/* 🌐 LIVE APP (imported trees only): the deploy-resolver confirmed a
-          running deployment, so one press opens the holo panel's same-origin
-          /salem window right beside the tree (the App swaps this menu out). */}
-      {model.deployUrl !== null && onOpenLiveApp !== undefined ? (
-        <button
-          type="button"
-          className="ctl-button tree-menu-live"
-          data-testid="tree-menu-live"
-          title={`Open the live deployment (${model.deployUrl}) on a holo panel beside this tree.`}
-          onClick={() => onOpenLiveApp(process.upid)}
-        >
-          🌐 Live app ▸
-        </button>
-      ) : null}
+          {/* COLUMN B — you are here + the grown branches. */}
+          <div className="tree-tend-col tree-tend-col-b">
+            {payload === null || currentEntry === null ? (
+              <p className="tree-tend-reading">reading the tree…</p>
+            ) : (
+              <>
+                <div className="tree-here-card" data-testid="tree-menu-here">
+                  {/* One head row (D2's whole phrase: "you are here — the room
+                      lives on this branch"): the sub shares the eyebrow's line
+                      so the card fits the 1080p list-view budget — a stacked
+                      sub row was the 50px that pushed the pager off the glass
+                      when the current branch carries a real subject. */}
+                  <div className="tree-here-head">
+                    <span className="tree-card-eyebrow">🌳 you are here</span>
+                    <span className="tree-here-sub">the room lives on this branch</span>
+                  </div>
+                  <p className="tree-here-subject">
+                    {cleanSubject(currentEntry.subject.length > 0 ? currentEntry.subject : currentEntry.name)}
+                  </p>
+                  <p className="tree-here-slug">
+                    {deslugBranch(currentEntry.name)}
+                    {currentEntry.date !== undefined && currentEntry.date.length > 0 ? ` · ${currentEntry.date}` : ""}
+                  </p>
+                  <div className="tree-here-verbs">
+                    {mergeVerb(currentEntry.name, "tree-menu-here-merge")}
+                    {busy?.verb === "press" && busy.branch === currentEntry.name ? (
+                      <TendVerb testid="tree-menu-here-archive" className="verb-press" line1="🍁 pressing…" line2="the room will reload on the trunk" disabled onPress={() => undefined} />
+                    ) : (
+                      <TendVerb
+                        testid="tree-menu-here-archive"
+                        className="verb-press"
+                        line1="🍁 press & step off"
+                        line2="archive — the room reloads on the trunk"
+                        title="Press this branch into the album: the room steps off onto the trunk (main), the branch is renamed archive/…, and the room reloads without it."
+                        disabled={anyBusy}
+                        onPress={(event) => {
+                          stampPressed(event);
+                          tendVerb(currentEntry.name, "press");
+                        }}
+                      />
+                    )}
+                  </div>
+                </div>
 
-      {/* 🌱 GROW A BRANCH (adopted trees only): one press names a real room/*
-          rail off the freshly fetched origin tip; the menu closes and the new
-          LIMB grows on the tree within a snapshot tick. */}
-      {model.adopted && onGrowBranch !== undefined ? (
-        <button
-          type="button"
-          className="ctl-button tree-menu-grow"
-          data-testid="tree-menu-grow"
-          title="Grow a real branch (room/spoken-changes) on this import's repo — it appears as a limb on the tree."
-          onClick={() => onGrowBranch(process.upid)}
-        >
-          🌱 Grow a branch ▸
-        </button>
-      ) : null}
+                {tendNote !== null ? (
+                  <p className="tree-tend-note" data-testid="tree-menu-tend-note">
+                    {tendNote}
+                  </p>
+                ) : null}
+                {tendError !== null ? (
+                  <span className="tree-menu-version-error" data-testid="tree-menu-version-error">
+                    {tendError}
+                  </span>
+                ) : null}
 
-      {/* Fixture decks (mock room) keep their one-press open. */}
-      {model.hasFixtureDeck ? (
-        <button
-          type="button"
-          className="ctl-button tree-menu-deck"
-          data-testid="tree-menu-deck"
-          title="Open this project's slideshow deck."
-          onClick={() => onOpenDeck(process.upid)}
-        >
-          🎞 Deck ▸
-        </button>
-      ) : null}
-
-      {/* STEER = the record toggle, nothing typed (live-room directive). The
-          lit state rides the snapshot's steering flag, so the button shows the
-          honest truth about where spoken words are going. */}
-      <div className="tree-menu-steer" data-testid="tree-menu-steer">
-        <RecordSteerToggle process={process} kind={model.isSelf ? "room" : "build"} transcript={snapshot.transcript} />
-      </div>
-
-      {/* VERSIONS (self tree only): every row is a BRANCH on this tree — dwell
-          one to load the room to that limb (checkout → rebuild → relaunch). The
-          heading names the UX honestly (this screen grows/switches branches),
-          and FleetScrollRail supplies the dwell-compatible ▲/▼ so a cursor that
-          can only dwell (no wheel) can still page past the fold. */}
-      {model.isSelf && versions !== null && versions.branches.length > 0 ? (
-        <div className="tree-menu-versions" data-testid="tree-menu-versions">
-          <span className="tree-menu-versions-head">
-            branches on this tree · running {versions.current}
-          </span>
-          <FleetScrollRail>
-            {versions.branches
-              .map((entry, index) => {
-                const isRunning = entry.name === versions.current;
-                // Each row is a LIMB: the header press opens its lifecycle
-                // actions in place (finalize/load, archive, delete) rather than
-                // loading immediately, so a stray dwell can't yank the room to
-                // another version — and never onto a delete without a second,
-                // armed press.
-                const isOpen = expandedVersion === entry.name;
-                const isTending = tending === entry.name;
-                const isArmed = deleteArmed === entry.name;
-                return (
-                  <div
-                    key={entry.name}
-                    className={`tree-menu-version${isOpen ? " is-open" : ""}`}
-                    data-testid="tree-menu-version"
-                    data-branch={entry.name}
-                    data-open={isOpen ? "true" : "false"}
-                  >
+                {focusEntry !== null ? (
+                  /* ── FOCUS VIEW: the one branch + its verb grid. ──────── */
+                  <div className="tree-branch-focus">
                     <button
                       type="button"
-                      className="tree-menu-version-head"
-                      data-testid="tree-menu-version-head"
-                      title={`Tend the ${entry.name} limb — finalize (load), archive, or delete it.`}
+                      className="ctl-button tree-branch-back"
+                      data-testid="tree-menu-version-back"
+                      title="Back to the branch list."
                       onClick={() => {
-                        setExpandedVersion(isOpen ? null : entry.name);
-                        setDeleteArmed(null);
+                        setFocusBranch(null);
+                        setArmed(null);
                         setTendError(null);
                       }}
                     >
-                      {/* Chronological indicator: rows arrive newest-first, so #1
-                          is the latest version; the relative commit date sits
-                          beside it. */}
-                      <span className="tree-menu-version-when">
-                        #{index + 1}
-                        {entry.date !== undefined && entry.date.length > 0 ? ` · ${entry.date}` : ""}
-                      </span>
-                      {/* One label only — the branch slug just echoed the subject,
-                          so drop it and show the spoken change (or the busy state). */}
-                      <span className="tree-menu-version-subject">
-                        {loadingVersion === entry.name
-                          ? "⤵ loading… (the room will reload)"
-                          : isTending
-                            ? "…tending this limb"
-                            : `${isRunning ? "🟢" : "🌿"} ${entry.subject.replace(/^self: /u, "")}${isRunning ? " · running" : ""}`}
-                      </span>
+                      ◂ back to branches
                     </button>
-                    {/* LIFECYCLE ACTIONS: revealed once the limb is picked. */}
-                    {isOpen ? (
-                      <div className="tree-menu-version-actions" data-testid="tree-menu-version-actions">
-                        {isRunning ? null : (
-                          <button
-                            type="button"
-                            className="ctl-button tree-menu-version-load"
-                            data-testid="tree-menu-version-load"
-                            title={`Finalize this limb: load the room to ${entry.name} — rebuilds and relaunches on it.`}
-                            onClick={() => loadVersion(entry.name)}
-                            disabled={loadingVersion !== null || isTending}
-                          >
-                            ⤵ finalize · load
-                          </button>
-                        )}
-                        <button
-                          type="button"
-                          className="ctl-button tree-menu-version-archive"
-                          data-testid="tree-menu-version-archive"
-                          title={
-                            isRunning
-                              ? `Archive this running limb: step the room off ${entry.name} onto main, rename it → archive/…, and reload so it is no longer live.`
-                              : `Archive this limb: rename ${entry.name} → archive/… (leaves the load list, keeps the work).`
-                          }
-                          onClick={() => tendVersion(entry.name, "archive")}
-                          disabled={loadingVersion !== null || isTending}
-                        >
-                          {isRunning ? "🗄 archive · reload" : "🗄 archive"}
-                        </button>
-                        {isRunning ? null : isArmed ? (
-                          <button
-                            type="button"
-                            className="ctl-button tree-menu-version-delete is-armed"
-                            data-testid="tree-menu-version-delete-confirm"
-                            title={`Really delete the ${entry.name} limb (local branch -D).`}
-                            onClick={() => tendVersion(entry.name, "delete")}
-                            disabled={isTending}
-                          >
-                            really delete?
-                          </button>
-                        ) : (
-                          <button
-                            type="button"
-                            className="ctl-button tree-menu-version-delete"
-                            data-testid="tree-menu-version-delete"
-                            title={`Delete this limb (asks once more): removes the local ${entry.name} branch. Never touches GitHub.`}
-                            onClick={() => setDeleteArmed(entry.name)}
-                            disabled={loadingVersion !== null || isTending}
-                          >
-                            🗑 delete
-                          </button>
-                        )}
-                        {tendError !== null && (isArmed || isTending) ? (
-                          <span className="tree-menu-version-error" data-testid="tree-menu-version-error">
-                            {tendError}
-                          </span>
-                        ) : null}
-                      </div>
-                    ) : null}
+                    <div
+                      className="tree-branch-card is-open"
+                      data-testid="tree-menu-version"
+                      data-branch={focusEntry.name}
+                      data-open="true"
+                    >
+                      <span className="tree-branch-subject">🌿 {cleanSubject(focusEntry.subject)}</span>
+                      <span className="tree-branch-slug">
+                        #{grown.indexOf(focusEntry) + 1} · {deslugBranch(focusEntry.name)}
+                        {focusEntry.date !== undefined && focusEntry.date.length > 0 ? ` · ${focusEntry.date}` : ""}
+                      </span>
+                    </div>
+                    <div className="tree-branch-verbs" data-testid="tree-menu-version-actions">
+                      {busy?.verb === "climb" && busy.branch === focusEntry.name ? (
+                        <TendVerb testid="tree-menu-version-load" className="verb-climb" line1="⤴ climbing…" line2="the room will reload" disabled onPress={() => undefined} />
+                      ) : (
+                        <TendVerb
+                          testid="tree-menu-version-load"
+                          className="verb-climb"
+                          line1="⤴ climb here"
+                          line2="the room reloads onto this branch"
+                          title="Load the room onto this branch — rebuilds and relaunches on it."
+                          disabled={anyBusy}
+                          onPress={(event) => {
+                            stampPressed(event);
+                            climbVerb(focusEntry.name);
+                          }}
+                        />
+                      )}
+                      {mergeVerb(focusEntry.name, "tree-menu-version-merge")}
+                      {busy?.verb === "press" && busy.branch === focusEntry.name ? (
+                        <TendVerb testid="tree-menu-version-archive" className="verb-press" line1="🍁 pressing…" line2="archiving this branch" disabled onPress={() => undefined} />
+                      ) : (
+                        <TendVerb
+                          testid="tree-menu-version-archive"
+                          className="verb-press"
+                          line1="🍁 press"
+                          line2="archive — keeps the work, leaves the tree"
+                          title="Press this branch into the album (archive/…): keeps the work, leaves this list."
+                          disabled={anyBusy}
+                          onPress={(event) => {
+                            stampPressed(event);
+                            tendVerb(focusEntry.name, "press");
+                          }}
+                        />
+                      )}
+                      {busy?.verb === "prune" && busy.branch === focusEntry.name ? (
+                        <TendVerb testid="tree-menu-version-delete" className="verb-prune" line1="🍂 pruning…" line2="deleting this branch" disabled onPress={() => undefined} />
+                      ) : armed === `prune:${focusEntry.name}` ? (
+                        <TendVerb
+                          testid="tree-menu-version-delete-confirm"
+                          className="verb-prune is-armed-danger"
+                          line1="really prune?"
+                          line2="the branch falls — gone from this machine and origin"
+                          title="Second press deletes for real: the local branch AND its copy on origin."
+                          disabled={anyBusy}
+                          onPress={(event) => {
+                            stampPressed(event);
+                            tendVerb(focusEntry.name, "prune");
+                          }}
+                        />
+                      ) : (
+                        <TendVerb
+                          testid="tree-menu-version-delete"
+                          className="verb-prune"
+                          line1="🍂 prune"
+                          line2="delete this branch"
+                          title="Delete this branch (asks once more)."
+                          disabled={anyBusy}
+                          onPress={(event) => {
+                            stampPressed(event);
+                            setArmed(`prune:${focusEntry.name}`);
+                            setTendError(null);
+                          }}
+                        />
+                      )}
+                    </div>
                   </div>
-                );
-              })}
-          </FleetScrollRail>
+                ) : (
+                  /* ── LIST VIEW: heading + four stationary cards + pager. ── */
+                  <>
+                    <span className="tree-branches-head">🌿 branches · {grown.length} grown</span>
+                    {grown.length === 0 ? (
+                      <p className="tree-tend-reading">no other branches — graft a change to grow one</p>
+                    ) : (
+                      <>
+                        {paged.slice.map((entry) => (
+                          <div
+                            key={entry.name}
+                            className="tree-branch-card"
+                            data-testid="tree-menu-version"
+                            data-branch={entry.name}
+                            data-open="false"
+                          >
+                            <button
+                              type="button"
+                              className="tree-branch-head"
+                              data-testid="tree-menu-version-head"
+                              title="tend this branch — climb, merge, press, or prune."
+                              onClick={(event) => {
+                                stampPressed(event);
+                                setFocusBranch(entry.name);
+                                setArmed(null);
+                                setTendError(null);
+                              }}
+                            >
+                              <span className="tree-branch-subject">🌿 {cleanSubject(entry.subject)}</span>
+                              {/* The slug line is REQUIRED: subjects repeat
+                                  (three "manufacture GPU server racks…" in one
+                                  afternoon) — only the slug + date tell the
+                                  branches apart. #N is the position in the
+                                  FULL newest-first list, stable across pages. */}
+                              <span className="tree-branch-slug">
+                                #{grown.indexOf(entry) + 1} · {deslugBranch(entry.name)}
+                                {entry.date !== undefined && entry.date.length > 0 ? ` · ${entry.date}` : ""}
+                              </span>
+                            </button>
+                          </div>
+                        ))}
+                        {paged.pages > 1 ? (
+                          <div className="tree-branch-pager" data-testid="tree-menu-branch-pager">
+                            {/* At-limit buttons stay ENABLED but dim (FleetScroll
+                                precedent) — never hide/disable a control under a
+                                mid-dwell cursor; the press just no-ops. */}
+                            <button
+                              type="button"
+                              className="ctl-button tree-branch-page-btn"
+                              data-testid="tree-menu-page-newer"
+                              data-at-limit={paged.page === 0 ? "1" : undefined}
+                              title="Newer branches."
+                              onClick={() => {
+                                if (paged.page > 0) {
+                                  setPage(paged.page - 1);
+                                  setArmed(null);
+                                  setTendError(null);
+                                }
+                              }}
+                            >
+                              ▲ newer
+                            </button>
+                            <span className="tree-branch-page-status" data-testid="tree-menu-page-status">
+                              page {paged.page + 1}/{paged.pages}
+                            </span>
+                            <button
+                              type="button"
+                              className="ctl-button tree-branch-page-btn"
+                              data-testid="tree-menu-page-older"
+                              data-at-limit={paged.page >= paged.pages - 1 ? "1" : undefined}
+                              title="Older branches."
+                              onClick={() => {
+                                if (paged.page < paged.pages - 1) {
+                                  setPage(paged.page + 1);
+                                  setArmed(null);
+                                  setTendError(null);
+                                }
+                              }}
+                            >
+                              ⌄ older
+                            </button>
+                          </div>
+                        ) : null}
+                      </>
+                    )}
+                  </>
+                )}
+              </>
+            )}
+          </div>
         </div>
-      ) : null}
+      ) : (
+        <>
+          {/* CONCEPT LANES (shared derivation with the guided demo's race): a
+              ready lane is a real button into that backend's deck; a building/
+              queued/failed lane is an honest status row — the percent shows,
+              and there is no dead button pretending otherwise. */}
+          {model.lanes.length > 0 ? (
+            <div className="tree-menu-lanes" data-testid="tree-menu-lanes">
+              {model.lanes.map((lane) =>
+                lane.status === "ready" && (lane.hasDeck || lane.previewUrl !== null) ? (
+                  <button
+                    key={lane.id}
+                    type="button"
+                    className="tree-menu-lane lane-ready"
+                    data-testid="tree-menu-lane"
+                    data-backend={lane.id}
+                    data-status={lane.status}
+                    title={`Open the deck window on the ${lane.label} result.`}
+                    onClick={() => onOpenDeck(process.upid, lane.id)}
+                  >
+                    <span className="tree-lane-label">{lane.label}</span>
+                    <span className="tree-lane-status">{laneStatusLabel(lane)}</span>
+                    <span className="tree-lane-open">View ▸</span>
+                  </button>
+                ) : (
+                  <div
+                    key={lane.id}
+                    className={`tree-menu-lane lane-${lane.status}`}
+                    data-testid="tree-menu-lane"
+                    data-backend={lane.id}
+                    data-status={lane.status}
+                    title={lane.summary ?? undefined}
+                  >
+                    <span className="tree-lane-label">{lane.label}</span>
+                    <span className="tree-lane-status">{laneStatusLabel(lane)}</span>
+                  </div>
+                ),
+              )}
+            </div>
+          ) : null}
+
+          {/* 🌐 LIVE APP (imported trees only): the deploy-resolver confirmed a
+              running deployment, so one press opens the holo panel's same-origin
+              /salem window right beside the tree (the App swaps this menu out). */}
+          {model.deployUrl !== null && onOpenLiveApp !== undefined ? (
+            <button
+              type="button"
+              className="ctl-button tree-menu-live"
+              data-testid="tree-menu-live"
+              title={`Open the live deployment (${model.deployUrl}) on a holo panel beside this tree.`}
+              onClick={() => onOpenLiveApp(process.upid)}
+            >
+              🌐 Live app ▸
+            </button>
+          ) : null}
+
+          {/* 🌱 GROW A BRANCH (adopted trees only): one press names a real room/*
+              rail off the freshly fetched origin tip; the menu closes and the new
+              LIMB grows on the tree within a snapshot tick. */}
+          {model.adopted && onGrowBranch !== undefined ? (
+            <button
+              type="button"
+              className="ctl-button tree-menu-grow"
+              data-testid="tree-menu-grow"
+              title="Grow a real branch (room/spoken-changes) on this import's repo — it appears as a limb on the tree."
+              onClick={() => onGrowBranch(process.upid)}
+            >
+              🌱 Grow a branch ▸
+            </button>
+          ) : null}
+
+          {/* Fixture decks (mock room) keep their one-press open. */}
+          {model.hasFixtureDeck ? (
+            <button
+              type="button"
+              className="ctl-button tree-menu-deck"
+              data-testid="tree-menu-deck"
+              title="Open this project's slideshow deck."
+              onClick={() => onOpenDeck(process.upid)}
+            >
+              🎞 Deck ▸
+            </button>
+          ) : null}
+
+          {/* STEER = the record toggle, nothing typed (live-room directive). The
+              lit state rides the snapshot's steering flag, so the button shows the
+              honest truth about where spoken words are going. */}
+          <div className="tree-menu-steer" data-testid="tree-menu-steer">
+            <RecordSteerToggle process={process} kind="build" transcript={snapshot.transcript} />
+          </div>
+        </>
+      )}
 
       {/* Take-home QR (folded in from the old fleet card — the rail is gone). */}
       {model.published !== null ? (

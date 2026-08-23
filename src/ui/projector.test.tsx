@@ -20,7 +20,19 @@ import { demoProjectorSnapshot, busyRoomSnapshot } from "./demo-data";
 import { selfGardenTree, type SelfBranchesPayload, type SelfTreeSeed } from "./self-repo";
 import type { BuildloopProcess, BuildloopSnapshot } from "./buildloop";
 import { PRACTICE_ORB_COUNT } from "./guided/machine";
-import { DISMISS_CONFIRM_MS, TREE_MENU_GESTURE_WIDTH, TREE_MENU_WIDTH, treeMenuModel, treeMenuPlacement } from "./TreeMenu";
+import {
+  DISMISS_CONFIRM_MS,
+  TREE_MENU_GESTURE_WIDTH,
+  TREE_MENU_SELF_GESTURE_WIDTH,
+  TREE_MENU_SELF_WIDTH,
+  TREE_MENU_WIDTH,
+  TREE_TEND_PAGE_SIZE,
+  TreeMenu,
+  deslugBranch,
+  pageSlice,
+  treeMenuModel,
+  treeMenuPlacement,
+} from "./TreeMenu";
 import { HOLO_PAGES, HOLO_TILT_DEG, holoPanelTilt, salemSrc } from "./HoloPanel";
 import { branchPopupModel } from "./BranchPopup";
 import { issuePopupModel } from "./IssuePopup";
@@ -452,7 +464,7 @@ describe("per-tree menu: the tree is the interface", () => {
     expect(DISMISS_CONFIRM_MS).toBeLessThanOrEqual(8_000);
   });
 
-  test("the SELF/mirror tree: 'the room' flavor, room-steer chat, NO remove button", () => {
+  test("the SELF/mirror tree: 'the room' flavor, graft toggle, NO remove button", () => {
     const selfProcess = {
       ...demoProjectorSnapshot.processes[0]!,
       upid: "self",
@@ -468,7 +480,9 @@ describe("per-tree menu: the tree is the interface", () => {
     );
     expect(html).toContain('data-self="true"');
     expect(html).toContain("the room");
-    expect(html).toContain("Record a change to the room");
+    // renderToStaticMarkup escapes the apostrophe in "the room's tree".
+    expect(html).toContain("🌳 the room&#x27;s tree");
+    expect(html).toContain("🌱 Graft a change");
     expect(html).toContain('data-testid="record-steer-start"');
     // The room must not dismiss itself.
     expect(html).not.toContain('data-testid="tree-menu-remove"');
@@ -590,6 +604,247 @@ describe("per-tree menu: the tree is the interface", () => {
       expect(placement.left + menu.width).toBeLessThanOrEqual(viewport.width - margin);
       expect(placement.top).toBeGreaterThanOrEqual(margin);
     }
+  });
+});
+
+// ── TEND THE TREE: the SELF tree's redesigned two-column surface ────────────
+// One plant vocabulary (branch/trunk/graft/climb/press/prune), the current
+// branch hoisted into an always-visible here-card, the grown branches dwell-
+// PAGINATED four at a time (never CSS-scrolled), and a per-branch FOCUS view
+// carrying the 2×2 verb grid. Static renders throughout — the tendSeed /
+// selfBranches props are the SSR seams for interaction states.
+describe("tend the tree: the self tree's surface", () => {
+  const CURRENT = "room/hp-at-hp-four";
+  const selfProcess = (extra: Record<string, unknown> = {}): ProjectorProcess =>
+    ({
+      ...demoProjectorSnapshot.processes[0]!,
+      upid: "self",
+      callsign: "mirror",
+      task: "Vibersyn Room",
+      stage: "self",
+      ...extra,
+    }) as ProjectorProcess;
+  // 23 rails — the live room's real count: the current branch + 22 grown,
+  // newest first, with the fixture's real duplicate-subject cluster (only the
+  // slug line tells those apart on the wall).
+  const rails: SelfBranchesPayload = {
+    current: CURRENT,
+    branches: [
+      { name: CURRENT, subject: "the default is never an invisible cursor", date: "2 minutes ago" },
+      ...Array.from({ length: 22 }, (_, index) => ({
+        name: `room/grown-change-${index + 1}`,
+        subject:
+          index < 3
+            ? "self: manufacture GPU server racks at the tree's foot"
+            : `self: grown change number ${index + 1}`,
+        date: `${index + 1} hours ago`,
+      })),
+    ],
+  };
+  const renderTend = (overrides: {
+    process?: ProjectorProcess;
+    branches?: SelfBranchesPayload | null;
+    tendSeed?: { focusBranch?: string; armed?: string; page?: number };
+  } = {}) =>
+    renderToStaticMarkup(
+      <TreeMenu
+        process={overrides.process ?? selfProcess()}
+        snapshot={demoProjectorSnapshot}
+        anchor={null}
+        onClose={() => {}}
+        onOpenDeck={() => {}}
+        onDismiss={() => {}}
+        selfBranches={overrides.branches === undefined ? rails : overrides.branches}
+        tendSeed={overrides.tendSeed}
+      />,
+    );
+
+  test("list view: here-card + exactly 4 branch cards + 'page 1/6' — climb exists only in the focus view", () => {
+    const html = renderTend();
+    // The you-are-here card with its two inline verbs.
+    expect(html).toContain('data-testid="tree-menu-here"');
+    expect(html).toContain('data-testid="tree-menu-here-merge"');
+    expect(html).toContain('data-testid="tree-menu-here-archive"');
+    expect(html).toContain("🌳 you are here");
+    expect(html).toContain("the room lives on this branch");
+    expect(html).toContain(deslugBranch(CURRENT)); // "hp at hp four"
+    // Four stationary cards, PAGE_SIZE=4, and the honest pager arithmetic.
+    expect(countOccurrences(html, 'data-testid="tree-menu-version"')).toBe(TREE_TEND_PAGE_SIZE);
+    expect(html).toContain('data-testid="tree-menu-branch-pager"');
+    expect(html).toContain("page 1/6");
+    expect(html).toContain('data-testid="tree-menu-page-newer"');
+    expect(html).toContain('data-testid="tree-menu-page-older"');
+    expect(html).toContain("🌿 branches · 22 grown");
+    // The current branch is HOISTED — never among the paginated cards.
+    expect(html).not.toContain(`data-branch="${CURRENT}"`);
+    // No climb verb outside the focus view (focus entry is stage one).
+    expect(html).not.toContain('data-testid="tree-menu-version-load"');
+    // The slug line disambiguates the duplicate subjects.
+    expect(html).toContain("#1 · grown change 1");
+  });
+
+  test("focus view: ◂ back + the one open card + all four verbs (list + pager unmount)", () => {
+    const html = renderTend({ tendSeed: { focusBranch: "room/grown-change-1" } });
+    expect(html).toContain('data-testid="tree-menu-version-back"');
+    expect(html).toContain("◂ back to branches");
+    expect(countOccurrences(html, 'data-testid="tree-menu-version"')).toBe(1);
+    expect(html).toContain('data-open="true"');
+    expect(html).not.toContain('data-testid="tree-menu-branch-pager"');
+    expect(html).toContain('data-testid="tree-menu-version-actions"');
+    expect(html).toContain('data-testid="tree-menu-version-load"');
+    expect(html).toContain("⤴ climb here");
+    expect(html).toContain('data-testid="tree-menu-version-merge"');
+    expect(html).toContain("🪵 into the trunk");
+    expect(html).toContain('data-testid="tree-menu-version-archive"');
+    expect(html).toContain("🍁 press");
+    expect(html).toContain('data-testid="tree-menu-version-delete"');
+    expect(html).toContain("🍂 prune");
+  });
+
+  test("armed prune (danger) and armed merge (caution) render their confirm stages", () => {
+    const pruneArmed = renderTend({
+      tendSeed: { focusBranch: "room/grown-change-1", armed: "prune:room/grown-change-1" },
+    });
+    expect(pruneArmed).toContain('data-testid="tree-menu-version-delete-confirm"');
+    expect(pruneArmed).toContain("really prune?");
+    expect(pruneArmed).toContain("the branch falls — gone from this machine and origin");
+    expect(pruneArmed).toContain("is-armed-danger");
+    const mergeArmed = renderTend({
+      tendSeed: { focusBranch: "room/grown-change-1", armed: "merge:room/grown-change-1" },
+    });
+    expect(mergeArmed).toContain('data-testid="tree-menu-version-merge-confirm"');
+    expect(mergeArmed).toContain("make it permanent?");
+    expect(mergeArmed).toContain("needs its PR or fast-forward");
+    expect(mergeArmed).toContain("is-armed-caution");
+    // The here-card merge shares strings and skin.
+    const hereArmed = renderTend({ tendSeed: { armed: `merge:${CURRENT}` } });
+    expect(hereArmed).toContain('data-testid="tree-menu-here-merge-confirm"');
+    expect(hereArmed).toContain("make it permanent?");
+  });
+
+  test("growing card + ✂ stop growing appear ONLY while a self-run executes (and replace the chip)", () => {
+    const executing = renderTend({
+      process: selfProcess({ execution: { status: "executing", progressLabel: "growing the header", percent: 40 } }),
+    });
+    expect(executing).toContain('data-testid="tree-menu-growing"');
+    expect(executing).toContain("🌿 growing now");
+    expect(executing).toContain("growing the header · 40%");
+    expect(executing).toContain('data-testid="tree-menu-halt"');
+    expect(executing).toContain("✂ stop growing");
+    // Same lane data, no duplication: the ExecutionChip stands down.
+    expect(executing).not.toContain('data-testid="execution-chip"');
+    // Two-stage: the armed confirm names what stays behind.
+    const armed = renderTend({
+      process: selfProcess({ execution: { status: "executing", progressLabel: "growing the header", percent: 40 } }),
+      tendSeed: { armed: "stop" },
+    });
+    expect(armed).toContain('data-testid="tree-menu-halt-confirm"');
+    expect(armed).toContain("✂ really stop?");
+    // Static markup escapes the quotes around the run label.
+    expect(armed).toContain("&#x27;growing the header&#x27; stays half-grown on its branch");
+    // Nothing executing → no growing card, no halt verb.
+    const resting = renderTend();
+    expect(resting).not.toContain('data-testid="tree-menu-growing"');
+    expect(resting).not.toContain('data-testid="tree-menu-halt"');
+  });
+
+  test("pre-fetch and empty states stay honest", () => {
+    expect(renderTend({ branches: null })).toContain("reading the tree…");
+    const empty = renderTend({
+      branches: { current: CURRENT, branches: [{ name: CURRENT, subject: "self: only me", date: "now" }] },
+    });
+    expect(empty).toContain("🌿 branches · 0 grown");
+    expect(empty).toContain("no other branches — graft a change to grow one");
+    expect(empty).not.toContain('data-testid="tree-menu-branch-pager"');
+  });
+
+  test("the legacy vocabulary is gone from the self markup", () => {
+    for (const html of [
+      renderTend(),
+      renderTend({ tendSeed: { focusBranch: "room/grown-change-1" } }),
+      renderTend({ process: selfProcess({ execution: { status: "executing", progressLabel: "x", percent: 1 } }) }),
+    ]) {
+      expect(html).not.toContain("finalize · load");
+      expect(html).not.toContain("versions");
+      // The word "limb" is gone (the lookbehind spares "climb"/"climbing" —
+      // the sanctioned plant verb that happens to contain it).
+      expect(html).not.toMatch(/(?<!c)limbs?/iu);
+      expect(html).not.toContain("Record a change to the room");
+    }
+  });
+
+  test("pageSlice: clamps a stale page back into range when the list shrinks", () => {
+    const list = Array.from({ length: 22 }, (_, index) => index);
+    expect(pageSlice(list, 0).slice).toEqual([0, 1, 2, 3]);
+    expect(pageSlice(list, 5).slice).toEqual([20, 21]);
+    expect(pageSlice(list, 5).pages).toBe(6);
+    // Pruned down to 5 entries: the stored page 5 clamps to the last page.
+    const pruned = pageSlice(list.slice(0, 5), 5);
+    expect(pruned.page).toBe(1);
+    expect(pruned.slice).toEqual([4]);
+    expect(pageSlice([], 3)).toEqual({ slice: [], page: 0, pages: 1 });
+  });
+
+  test("deslugBranch: room/hp-at-hp-four → 'hp at hp four'", () => {
+    expect(deslugBranch("room/hp-at-hp-four")).toBe("hp at hp four");
+    expect(deslugBranch("room/one")).toBe("one");
+  });
+
+  test("the tend widths export the same contract as the gesture pair (placement stays on-screen)", () => {
+    expect(TREE_MENU_SELF_WIDTH).toBeGreaterThan(TREE_MENU_WIDTH);
+    expect(TREE_MENU_SELF_GESTURE_WIDTH).toBeGreaterThan(TREE_MENU_GESTURE_WIDTH);
+    const viewport = { width: 1920, height: 1080 };
+    const menu = { width: TREE_MENU_SELF_GESTURE_WIDTH, height: 928 };
+    for (const anchor of [
+      { left: 200, top: 300, width: 100, height: 200 },
+      { left: 1700, top: 300, width: 150, height: 200 },
+      { left: 2200, top: 300, width: 200, height: 200 },
+      null,
+    ]) {
+      const placement = treeMenuPlacement(anchor, viewport, menu);
+      expect(placement.left).toBeGreaterThanOrEqual(16);
+      expect(placement.left + menu.width).toBeLessThanOrEqual(viewport.width - 16);
+    }
+  });
+
+  // The LOCK HALO: rendered by the App beside (never inside) the menu, glued
+  // to the tree's live anchor rect — pure decor, never a dwell target.
+  test("the halo + lock chip render for the tended self tree with an anchor — and never as dwell targets", () => {
+    const snapshot = {
+      ...demoProjectorSnapshot,
+      processes: [selfProcess(), ...demoProjectorSnapshot.processes.slice(1)],
+    };
+    const anchored = renderToStaticMarkup(
+      <ProjectorApp
+        initialSnapshot={snapshot}
+        initialOverlay={{ selected: "mirror", menuAnchor: { left: 600, top: 300, width: 220, height: 420 } }}
+      />,
+    );
+    expect(anchored).toContain('data-testid="tree-menu-halo"');
+    expect(anchored).toContain('data-testid="tree-menu-lock"');
+    expect(anchored).toContain("🔒 tending this tree");
+    expect(anchored).toContain("aria-hidden");
+    // 14px/side inflation around the anchor rect.
+    expect(anchored).toContain("left:586px");
+    expect(anchored).toContain("width:248px");
+    // The halo subtree carries NO buttons and no dwell attributes.
+    const haloIndex = anchored.indexOf('data-testid="tree-menu-halo"');
+    const haloChunk = anchored.slice(haloIndex, anchored.indexOf("</div>", haloIndex));
+    expect(haloChunk).not.toContain("<button");
+    expect(haloChunk).not.toContain("data-dwell");
+    // No anchor this beat → no halo (the menu edge-rests alone).
+    const bare = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={snapshot} initialOverlay={{ selected: "mirror" }} />,
+    );
+    expect(bare).not.toContain('data-testid="tree-menu-halo"');
+    // A fleet tree never grows the halo.
+    const fleet = renderToStaticMarkup(
+      <ProjectorApp
+        initialSnapshot={demoProjectorSnapshot}
+        initialOverlay={{ selected: "Atlas", menuAnchor: { left: 600, top: 300, width: 220, height: 420 } }}
+      />,
+    );
+    expect(fleet).not.toContain('data-testid="tree-menu-halo"');
   });
 });
 
@@ -2096,7 +2351,7 @@ describe("adopted trees: grow-a-branch row + branch/issue popups", () => {
         />,
       );
 
-    test("a PR-backed local branch offers ⏱ Load this version + the PR URL inline", () => {
+    test("a PR-backed local branch offers ⤴ climb here + the PR URL inline", () => {
       const html = renderSelfBranch(DOG);
       expect(html).toContain('data-testid="branch-popup"');
       expect(html).toContain("dancing-dog-at-bottom");
@@ -2104,7 +2359,7 @@ describe("adopted trees: grow-a-branch row + branch/issue popups", () => {
       expect(html).toContain("Dancing dog at every tree");
       expect(html).toContain("PR #18");
       expect(html).toContain('data-testid="branch-popup-load"');
-      expect(html).toContain("⏱ Load this version");
+      expect(html).toContain("⤴ climb here · load");
       // The PR rides in-room (the room never opens a PR against itself).
       expect(html).toContain(`https://github.com/${SELF_REPO}/pull/18`);
       expect(html).not.toContain("target=");
@@ -2115,7 +2370,7 @@ describe("adopted trees: grow-a-branch row + branch/issue popups", () => {
     test("the branch the room is RUNNING says 'you are here' and carries the record toggle", () => {
       const html = renderSelfBranch(CURRENT);
       expect(html).toContain('data-testid="branch-popup-here"');
-      expect(html).toContain("⏱ you are here — the room is running this");
+      expect(html).toContain("🌳 you are here — the room lives on this branch");
       // #cutSelfBranch cuts off the CURRENT branch, so this is the one honest
       // per-branch record affordance on the self tree.
       expect(html).toContain('data-testid="record-steer-start"');
@@ -2123,10 +2378,10 @@ describe("adopted trees: grow-a-branch row + branch/issue popups", () => {
       expect(html).not.toContain('data-testid="branch-popup-steer"');
     });
 
-    test("a PR head ref that was never fetched here reads 'not on this machine'", () => {
+    test("a PR head ref that was never fetched here reads 'not grown on this machine'", () => {
       const html = renderSelfBranch(REMOTE_ONLY);
       expect(html).toContain('data-testid="branch-popup-absent"');
-      expect(html).toContain("⏱ not on this machine");
+      expect(html).toContain("🍂 not grown on this machine");
       expect(html).not.toContain('data-testid="branch-popup-load"');
       // The PR is still readable from the wall.
       expect(html).toContain(`https://github.com/${SELF_REPO}/pull/15`);

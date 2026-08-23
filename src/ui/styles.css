@@ -29,6 +29,14 @@
   /* Glass */
   --glass-line: rgba(150, 200, 220, 0.14);
   --glass-fill: rgba(16, 30, 40, 0.42);
+  /* Glass PANEL tokens (tree menu / tree popups): previously hard-coded per
+     file — and --ink-dim was referenced but never defined, so every
+     var(--ink-dim, …) fallback fired. Values match the old literals exactly:
+     no visual change intended. */
+  --ink-dim: rgba(190, 214, 228, 0.7);
+  --glass-border: rgba(160, 210, 230, 0.22);
+  --glass-panel-top: rgba(16, 28, 38, 0.92);
+  --glass-panel-bottom: rgba(9, 16, 24, 0.88);
 
   --display: "Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --mono: "SFMono-Regular", "JetBrains Mono", Consolas, "Liberation Mono", monospace;
@@ -4112,7 +4120,9 @@ main.gesture-mode .idea-card-confidence { font-size: 15px; }
   0%, 100% { opacity: 1; transform: scale(1); }
   50% { opacity: 0.45; transform: scale(0.8); }
 }
-main.gesture-mode .record-steer { min-height: 72px; font-size: 1.15rem; }
+/* The graft/record toggle is the PRIMARY verb on the wall's tend surface —
+   full 128px primary hit height (was a 72px floor). */
+main.gesture-mode .record-steer { min-height: 128px; font-size: 1.15rem; }
 
 /* live echo of the words spoken into the record window */
 .record-steer-live { display: flex; flex-direction: column; gap: 0.5rem; width: 100%; }
