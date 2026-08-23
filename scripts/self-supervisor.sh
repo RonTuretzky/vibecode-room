@@ -26,6 +26,9 @@ SERVER_CMD="${VIBERSYN_SELF_SERVER_CMD:-bun src/server/index.ts}"
 BUILD_CMD="${VIBERSYN_SELF_BUILD_CMD:-bun run build}"
 
 export VIBERSYN_SELF_MODE=1
+# The conversation's disk shadow (transcript survives the exit-87 reload).
+# Only the supervisor sets this — test runtimes must never touch it.
+export VIBERSYN_TRANSCRIPT_STORE="builds/session-transcript.json"
 
 code=0
 while true; do

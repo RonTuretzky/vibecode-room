@@ -550,6 +550,10 @@ export interface ProjectorRuntimeOptions {
   // observe the 87 without killing the test process.
   selfGitHead?: () => Promise<GitHeadFact | null>;
   exitProcess?: (code: number) => void;
+  // Where the conversation's disk shadow lives (transcript survives the self
+  // reload). Absent → the env marker VIBERSYN_TRANSCRIPT_STORE decides; null
+  // and no marker → no persistence (every test runtime).
+  transcriptStorePath?: string | null;
   // GitHub Pages deck publisher seam (src/publish/gh-pages). Fired once per
   // kicked-off idea, fire-and-forget, after its FIRST pitch deck lands; the
   // resolved public URL becomes the process's publishedUrl + take-home QR.
@@ -861,7 +865,12 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     // starts armed, everything else starts off (and can only record intent
     // for a future --self launch — see setSelfRebuild).
     this.#selfRebuild = this.#selfMode;
-    this.#transcriptStore = this.#selfMode ? new TranscriptStore({ path: "builds/session-transcript.json" }) : null;
+    // The path comes from the supervisor's env (self-supervisor.sh exports
+    // VIBERSYN_TRANSCRIPT_STORE): the LIVE self-hosted room persists; test
+    // runtimes — even self-mode ones — have no marker, so they can neither
+    // read the live room's conversation nor pollute it (one did, in review).
+    const transcriptStorePath = options.transcriptStorePath ?? this.#env.VIBERSYN_TRANSCRIPT_STORE ?? null;
+    this.#transcriptStore = this.#selfMode && transcriptStorePath !== null ? new TranscriptStore({ path: transcriptStorePath }) : null;
     this.#exit = options.exitProcess ?? ((code: number) => process.exit(code));
     this.#selfReloadDelayMs = resolveSelfReloadDelayMs(env);
     this.#selfGitRunner = options.selfGitRunner ?? null;
