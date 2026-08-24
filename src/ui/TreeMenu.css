@@ -285,6 +285,14 @@ button.tend-chip {
   padding: 4px 2px;
 }
 
+/* Lane rows inside chips (the fleet constellation): the chip owns the glass —
+   the row keeps its status-colored border as the accent edge but drops its
+   own background and shrinks the double padding. */
+.tend-chip .tree-menu-lane {
+  background: none;
+  padding: 8px 10px;
+}
+
 /* Card eyebrows ("🌿 growing now" / "🌳 you are here"). */
 .tree-card-eyebrow {
   font-size: 12px;
@@ -663,6 +671,30 @@ main.gesture-mode .tree-tend .tree-menu-status {
 
 main.gesture-mode .tree-tend .tree-menu-callsign {
   font-size: 18px;
+}
+
+/* Lane rows step down from the panel-XL scale (the 104px/24px rules at the
+   top of this file are descendant selectors, so they'd otherwise apply inside
+   chips too) — but the READY lane is a real dwell button, so it keeps the
+   wall's 96px interactive floor; non-ready rows match for a steady column. */
+main.gesture-mode .tree-tend .tree-menu-lane {
+  min-height: 96px;
+  padding: 14px 18px;
+  font-size: 20px;
+  border-radius: 14px;
+}
+
+/* Fleet verb/lane chips trim the chip padding at gesture scale so a
+   96px-floor interactive row yields a 114px chip — the tend-radial gesture
+   nominals (116) budget exactly this real footprint. */
+main.gesture-mode .tend-chip.tend-chip-lane,
+main.gesture-mode .tend-chip.tend-chip-brief,
+main.gesture-mode .tend-chip.tend-chip-live,
+main.gesture-mode .tend-chip.tend-chip-deck,
+main.gesture-mode .tend-chip.tend-chip-grow,
+main.gesture-mode .tend-chip.tend-chip-replant,
+main.gesture-mode .tend-chip.tend-chip-remove {
+  padding: 8px 12px;
 }
 
 main.gesture-mode .tree-card-eyebrow {

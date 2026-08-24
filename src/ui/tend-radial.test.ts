@@ -44,6 +44,41 @@ const LIST_PRESENT: TendChipId[] = [
 ];
 // The FOCUS view (prune among the limbs): the leaf-chips stand down.
 const FOCUS_PRESENT: TendChipId[] = ["identity", "close", "graft", "here", "focus", "error"];
+// The busiest realistic ADOPTED fleet tree (salem-class import): three lane
+// chips share the leaf slots with one branch card (TreeMenu pages branches
+// into the remainder), the brief/live/grow verbs stack above the record chip,
+// remove roots the arc, a receipt + replant rest under the trunk.
+const FLEET_ADOPTED_PRESENT: TendChipId[] = [
+  "identity",
+  "close",
+  "graft",
+  "remove",
+  "lane-0",
+  "lane-1",
+  "lane-2",
+  "settled",
+  "brief",
+  "live",
+  "grow",
+  "branches-head",
+  "branch-0",
+  "pager",
+  "note",
+  "replant",
+];
+// A concept/mock tree: lanes + deck + the fleet verbs, QR after a publish.
+const FLEET_CONCEPT_PRESENT: TendChipId[] = [
+  "identity",
+  "close",
+  "graft",
+  "remove",
+  "lane-0",
+  "lane-1",
+  "lane-2",
+  "deck",
+  "replant",
+  "qr",
+];
 
 const ANCHOR = { left: 800, top: 240, width: 320, height: 620 }; // a framed tree, mid-frame
 
@@ -65,7 +100,7 @@ describe("tend-radial: the chip constellation layout", () => {
     const family = gesture ? "gesture-XL" : "desk";
 
     test(`${family}: every chip lands fully on-screen at 1920×1080 (anchored + focus views)`, () => {
-      for (const present of [LIST_PRESENT, FOCUS_PRESENT]) {
+      for (const present of [LIST_PRESENT, FOCUS_PRESENT, FLEET_ADOPTED_PRESENT, FLEET_CONCEPT_PRESENT]) {
         const layout = tendChipLayout(ANCHOR, VIEWPORT, { gesture, present });
         for (const id of present) {
           const rect = rectOf(id, layout, gesture);
@@ -78,7 +113,7 @@ describe("tend-radial: the chip constellation layout", () => {
     });
 
     test(`${family}: no two chips overlap — a covered center is a dead dwell target`, () => {
-      for (const present of [LIST_PRESENT, FOCUS_PRESENT]) {
+      for (const present of [LIST_PRESENT, FOCUS_PRESENT, FLEET_ADOPTED_PRESENT, FLEET_CONCEPT_PRESENT]) {
         const layout = tendChipLayout(ANCHOR, VIEWPORT, { gesture, present });
         const rects = present.map((id) => rectOf(id, layout, gesture));
         for (let i = 0; i < rects.length; i += 1) {
@@ -203,4 +238,22 @@ describe("normalizeAnchor keeps both arcs on the wall", () => {
       expect(placement.top, `${id} top`).toBeGreaterThanOrEqual(0);
     }
   });
+});
+
+describe("root slots: transient receipts never move the persistent chips", () => {
+  // The '⚘ replant…' chip is a real dwell BUTTON (and the QR a stable
+  // take-home surface): a receipt mounting above it used to re-stack the
+  // shared root column and slide it out from under a mid-dwell cursor — the
+  // exact moving-target class the pager/prune-scope comments forbid. The
+  // two-part root stack pins them regardless of receipts.
+  const BASE: TendChipId[] = ["identity", "close", "graft", "remove", "replant", "qr"];
+  for (const gesture of [false, true]) {
+    const family = gesture ? "gesture-XL" : "desk";
+    test(`${family}: replant and qr hold still while note/error come and go`, () => {
+      const bare = tendChipLayout(ANCHOR, VIEWPORT, { gesture, present: BASE });
+      const withReceipts = tendChipLayout(ANCHOR, VIEWPORT, { gesture, present: [...BASE, "note", "error"] });
+      expect(withReceipts.replant).toEqual(bare.replant!);
+      expect(withReceipts.qr).toEqual(bare.qr!);
+    });
+  }
 });
