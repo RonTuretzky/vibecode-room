@@ -263,6 +263,10 @@ export interface TreeMenuProps {
   // App fires it and closes the menu; the new limb appears via the snapshot.
   // Absent = the row never renders.
   onGrowBranch?: (upid: string) => void;
+  // "⚘ Replant…": choose a new ground spot for this tree (planting mode) —
+  // the same flow the idea card's Plant… uses, bound to an existing upid.
+  // Absent = no replant affordance (static renderers).
+  onReplant?: (upid: string) => void;
   // SSR/test seam for the self tree's rails (the effect-free static renderer
   // cannot fetch /api/self/branches) — the live wall leaves this undefined.
   selfBranches?: SelfBranchesPayload | null;
@@ -284,6 +288,7 @@ export function TreeMenu({
   onClose,
   onOpenDeck,
   onDismiss,
+  onReplant,
   onOpenLiveApp,
   onGrowBranch,
   selfBranches,
@@ -1014,6 +1019,19 @@ export function TreeMenu({
       {/* Take-home QR (folded in from the old fleet card — the rail is gone). */}
       {model.published !== null ? (
         <TakeHomeQr url={model.published.url} qrSvg={model.published.qrSvg} size="card" />
+      ) : null}
+
+      {/* ⚘ REPLANT: choose a new spot on the ground for this tree. */}
+      {onReplant !== undefined ? (
+        <button
+          type="button"
+          className="ctl-button tree-menu-replant"
+          data-testid="tree-menu-replant"
+          title="Choose a new spot for this tree — click the ground where it should grow (Esc cancels)."
+          onClick={() => onReplant(process.upid)}
+        >
+          ⚘ Replant…
+        </button>
       ) : null}
 
       {/* 🗑 REMOVE (never for the self tree): two-stage confirm; the second

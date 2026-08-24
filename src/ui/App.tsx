@@ -31,6 +31,10 @@ import type { DecisionChoice, StagedProcess } from "./stage";
 import { selfOf, trackBootId } from "./self-reload";
 import { parseProjectorUrl } from "./url-params";
 import { loadPlantedPositions, newUpidAfterAccept, savePlantedPosition } from "./planted-positions";
+
+// What planting mode is aiming for: a not-yet-accepted idea (accept fires on
+// the ground click, the new upid binds to the spot) or an existing tree.
+type PlantingTarget = { kind: "idea"; ideaId: string | null } | { kind: "tree"; upid: string };
 import { GuidedDemo } from "./guided/GuidedDemo";
 import { advanceOnSnapshot, popPracticeOrb, restartIdea, setHandsLive, skipStep, startGuided, type GuidedState, type PointerRig } from "./guided/machine";
 import "./buildloop.css";
@@ -272,13 +276,18 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
   const [ideaCard, setIdeaCard] = useState<{ id: string | null } | null>(initialOverlay?.ideaCard ?? null);
   const ideaCardRef = useRef<{ id: string | null } | null>(null);
   ideaCardRef.current = ideaCard;
-  // PLANTING MODE (the idea card's "Plant…" button): the next click on the
-  // scene's ground chooses where the accepted idea's tree grows. Esc cancels
-  // back to nothing-accepted; positions live in localStorage so the second
-  // wall window repositions the same tree via the storage event.
-  const [planting, setPlanting] = useState<{ ideaId: string | null } | null>(null);
-  const plantingRef = useRef<{ ideaId: string | null } | null>(null);
+  // PLANTING MODE: the next click on the scene's ground chooses a tree's
+  // spot. Three doors in: the idea card's "Plant…" (accept-then-bind), the
+  // tree menu's "Replant…" and the guided demo's "Choose its spot…" (bind an
+  // existing upid), and the import-arrival offer. Esc cancels; positions
+  // live in localStorage so the second wall window repositions the same
+  // tree via the storage event.
+  const [planting, setPlanting] = useState<PlantingTarget | null>(null);
+  const plantingRef = useRef<PlantingTarget | null>(null);
   plantingRef.current = planting;
+  // A freshly-imported project (QR phone import / GitHub clone) offers its
+  // tree for planting the moment it lands on the wall.
+  const [importPlantOffer, setImportPlantOffer] = useState<{ upid: string; title: string } | null>(null);
   const [plantedVersion, setPlantedVersion] = useState(0);
   const plantedPositions = useMemo(() => loadPlantedPositions(), [plantedVersion]);
   useEffect(() => {
@@ -286,6 +295,36 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
   }, []);
+  // Watch the snapshot for freshly-ARRIVED imports (QR phone submissions,
+  // GitHub clones): those trees appear without any wall interaction, so the
+  // wall offers them a chosen spot. Only genuine arrivals count — the first
+  // snapshot seeds the seen-set silently.
+  const seenImportUpids = useRef<Set<string> | null>(null);
+  useEffect(() => {
+    const seen = seenImportUpids.current;
+    if (seen === null) {
+      seenImportUpids.current = new Set(snapshot.processes.map((process) => process.upid));
+      return;
+    }
+    for (const process of snapshot.processes) {
+      if (seen.has(process.upid)) {
+        continue;
+      }
+      seen.add(process.upid);
+      const kind = process.source?.kind;
+      if (kind === "phone-import" || kind === "github-import") {
+        setImportPlantOffer({ upid: process.upid, title: process.task || process.callsign });
+      }
+    }
+  }, [snapshot.processes]);
+  // The offer evaporates if nobody takes it.
+  useEffect(() => {
+    if (importPlantOffer === null) {
+      return;
+    }
+    const timer = window.setTimeout(() => setImportPlantOffer(null), 30_000);
+    return () => window.clearTimeout(timer);
+  }, [importPlantOffer]);
 
   // ?zen=1 boots a dedicated display straight into the chrome-less scene.
   const [zenMode, setZenMode] = useState(urlConfig.zen);
@@ -590,6 +629,11 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
         return;
       }
       setPlanting(null);
+      if (target.kind === "tree") {
+        savePlantedPosition(target.upid, point);
+        setPlantedVersion((v) => v + 1);
+        return;
+      }
       const before = snapshotRef.current.processes.map((process) => process.upid);
       const fresh = target.ideaId === null ? await acceptIdea() : await actOnIdea(target.ideaId, "accept");
       if (fresh === null) {
@@ -1595,7 +1639,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
         setSelected(resolveSelection(id));
       },
       getSelected: () => selected,
-      plant: (ideaId) => setPlanting({ ideaId }),
+      plant: (ideaId) => setPlanting({ kind: "idea", ideaId }),
     };
     return () => {
       delete window.__VIBERSYN__;
@@ -2695,7 +2739,31 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
       {/* PLANTING HINT: while choosing a spot for a new tree. */}
       {planting !== null ? (
         <div className="planting-hint" data-testid="planting-hint">
-          ⚘ Click the ground to plant this idea&apos;s tree — Esc to cancel
+          {planting.kind === "idea"
+            ? "⚘ Click the ground to plant this idea's tree — Esc to cancel"
+            : "⚘ Click the ground to replant this tree — Esc to cancel"}
+        </div>
+      ) : null}
+
+      {/* IMPORT ARRIVAL: a phone/GitHub import just landed — offer its tree
+          a chosen spot. Quietly evaporates if ignored. */}
+      {importPlantOffer !== null && planting === null ? (
+        <div className="planting-offer" data-testid="import-plant-offer">
+          <span className="planting-offer-copy">📦 “{importPlantOffer.title}” arrived</span>
+          <button
+            type="button"
+            className="ctl-button"
+            data-testid="import-plant-button"
+            onClick={() => {
+              setPlanting({ kind: "tree", upid: importPlantOffer.upid });
+              setImportPlantOffer(null);
+            }}
+          >
+            ⚘ Plant it…
+          </button>
+          <button type="button" className="ctl-button" aria-label="Dismiss" onClick={() => setImportPlantOffer(null)}>
+            ✕
+          </button>
         </div>
       ) : null}
 
@@ -2750,7 +2818,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
             data-testid="idea-plant-button"
             title="Build it AND choose where in the park its tree grows — click a spot on the ground (Esc cancels)."
             onClick={() => {
-              setPlanting({ ideaId: ideaCard.id });
+              setPlanting({ kind: "idea", ideaId: ideaCard.id });
               setIdeaCard(null);
             }}
           >
@@ -2883,6 +2951,10 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
             setSelected(null);
           }}
           onGrowBranch={(upid) => void growBranch(upid)}
+          onReplant={(upid) => {
+            setPlanting({ kind: "tree", upid });
+            setSelected(null);
+          }}
         />
       ) : null}
 
@@ -2979,6 +3051,11 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
           onExit={exitGuidedDemo}
           onFinish={exitGuidedDemo}
           onStartOver={guidedStartOver}
+          onPlantSpot={
+            (guided.step === "race" || guided.step === "decide") && guided.focusUpid != null
+              ? () => setPlanting({ kind: "tree", upid: guided.focusUpid as string })
+              : null
+          }
           onDone={() => {
             // Planting is the ONLY way forward from the idea step: accept
             // builds from the surfaced idea (or the raw transcript,
