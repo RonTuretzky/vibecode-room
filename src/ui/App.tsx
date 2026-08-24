@@ -38,7 +38,6 @@ type PlantingTarget = { kind: "idea"; ideaId: string | null } | { kind: "tree"; 
 import { GuidedDemo } from "./guided/GuidedDemo";
 import { advanceOnSnapshot, popPracticeOrb, restartIdea, setHandsLive, skipStep, startGuided, type GuidedState, type PointerRig } from "./guided/machine";
 import "./buildloop.css";
-import { isFreshImportArrival } from "./import-arrival";
 import { TopicCard } from "./TopicCard";
 import { ProjectBriefPanel } from "./ProjectBriefPanel";
 import type { ProjectBrief } from "../server/project-brief";
@@ -348,7 +347,6 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
   plantingRef.current = planting;
   // A freshly-imported project (QR phone import / GitHub clone) offers its
   // tree for planting the moment it lands on the wall.
-  const [importPlantOffer, setImportPlantOffer] = useState<{ upid: string; title: string } | null>(null);
   const [plantedVersion, setPlantedVersion] = useState(0);
   const plantedPositions = useMemo(() => loadPlantedPositions(), [plantedVersion]);
   useEffect(() => {
@@ -356,66 +354,6 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
   }, []);
-  // Watch the snapshot for freshly-ARRIVED imports (QR phone submissions,
-  // GitHub clones): those trees appear without any wall interaction, so the
-  // wall offers them a chosen spot. "Fresh" is the SERVER's arrival stamp, not
-  // "a upid this wall hasn't seen" — see import-arrival.ts: the old test made
-  // an ordinary room startup (wall connects before the first filled snapshot)
-  // announce every previously imported project as a new arrival.
-  const seenImportUpids = useRef<Set<string>>(new Set<string>());
-  useEffect(() => {
-    const seen = seenImportUpids.current;
-    const now = Date.now();
-    for (const process of snapshot.processes) {
-      if (seen.has(process.upid)) {
-        continue;
-      }
-      const arrived = isFreshImportArrival(process, seen, now);
-      seen.add(process.upid);
-      if (arrived) {
-        setImportPlantOffer({ upid: process.upid, title: process.task || process.callsign });
-      }
-    }
-  }, [snapshot.processes]);
-  // PROBE FOR STUDIES. The tree menu offers "📖 About this project" only when
-  // a study exists behind it — a row that opens an empty card is worse than
-  // no row. One HEAD-ish GET per imported tree, once, cached by upid.
-  useEffect(() => {
-    let cancelled = false;
-    for (const process of snapshot.processes) {
-      const kind = process.source?.kind;
-      if (kind !== "github-import" && kind !== "phone-import") {
-        continue;
-      }
-      if (process.upid in briefUpids) {
-        continue;
-      }
-      void (async () => {
-        let has = false;
-        try {
-          const response = await fetch(`/api/process/${encodeURIComponent(process.upid)}/brief`);
-          has = response.ok;
-        } catch {
-          has = false; // server down / route absent: no row, no lie
-        }
-        if (!cancelled) {
-          setBriefUpids((current) => ({ ...current, [process.upid]: has }));
-        }
-      })();
-    }
-    return () => {
-      cancelled = true;
-    };
-  }, [snapshot.processes, briefUpids]);
-
-  // The offer evaporates if nobody takes it.
-  useEffect(() => {
-    if (importPlantOffer === null) {
-      return;
-    }
-    const timer = window.setTimeout(() => setImportPlantOffer(null), 30_000);
-    return () => window.clearTimeout(timer);
-  }, [importPlantOffer]);
 
   // ?zen=1 boots a dedicated display straight into the chrome-less scene.
   const [zenMode, setZenMode] = useState(urlConfig.zen);
@@ -3042,27 +2980,19 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
         </div>
       ) : null}
 
-      {/* IMPORT ARRIVAL: a phone/GitHub import just landed — offer its tree
-          a chosen spot. Quietly evaporates if ignored. */}
-      {importPlantOffer !== null && planting === null ? (
-        <div className="planting-offer" data-testid="import-plant-offer">
-          <span className="planting-offer-copy">📦 “{importPlantOffer.title}” arrived</span>
-          <button
-            type="button"
-            className="ctl-button"
-            data-testid="import-plant-button"
-            onClick={() => {
-              setPlanting({ kind: "tree", upid: importPlantOffer.upid });
-              setImportPlantOffer(null);
-            }}
-          >
-            ⚘ Plant it…
-          </button>
-          <button type="button" className="ctl-button" aria-label="Dismiss" onClick={() => setImportPlantOffer(null)}>
-            ✕
-          </button>
-        </div>
-      ) : null}
+      {/* NO IMPORT-ARRIVAL OFFER. There used to be a "📦 <title> arrived —
+          ⚘ Plant it…" prompt here, and it could not be made to fire only on
+          real arrivals. Try one: "a upid this wall has not seen" — but a wall
+          that connects before the server's first filled snapshot seeds an
+          empty seen-set, so every existing project announced itself on an
+          ordinary startup. Try two: the server's own arrival stamp — but the
+          import records live in an in-memory Map, so a fresh boot re-creates
+          them and re-stamps them Date.now(), and every restart announced the
+          same projects again.
+          Both attempts measured when the ROOM learned about a project, never
+          when the project arrived, and nothing in the current architecture
+          knows the difference. Planting is a deliberate act instead: the tree
+          menu's ⚘ Replant… row, chosen by whoever wants to move a tree. */}
 
       {/* IDEA ACTION CARD: the contextual "✓ Done — build it" surface, opened
           by clicking an idea orb in the scene (see acceptOrb). Floats

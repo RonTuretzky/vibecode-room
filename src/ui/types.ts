@@ -50,10 +50,13 @@ export interface ProjectorProcess {
   // projects imported from outside via the phone QR page: "github-import" when
   // the link was a real github.com repo (the server clones it), "phone-import"
   // for context-only or any-other-link submissions (url null when no link).
-  // `atMs` is when the import LANDED — the wall's arrival offer ("📦 … arrived
-  // — ⚘ Plant it…") keys off it, because "a upid I have not seen before" is
-  // true of every old import whenever a wall boots ahead of the first filled
-  // snapshot. Optional: pre-atMs servers simply never trigger the offer.
+  // `atMs` is when the import RECORD WAS CREATED IN MEMORY — NOT when the
+  // project arrived, and the difference matters. The import map does not
+  // survive a restart, so a fresh boot re-creates every record and re-stamps
+  // it Date.now(). Reading this as an arrival time is what made the wall
+  // announce long-standing projects as new on every startup (the "⚘ Plant
+  // it…" offer, now removed — see App.tsx). Nothing in the room currently
+  // knows a project's true arrival time; do not build on this as if it did.
   source?:
     | {
         kind: "github-import";
