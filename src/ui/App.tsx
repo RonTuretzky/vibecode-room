@@ -40,6 +40,8 @@ import { advanceOnSnapshot, popPracticeOrb, restartIdea, setHandsLive, skipStep,
 import "./buildloop.css";
 import { isFreshImportArrival } from "./import-arrival";
 import { TopicCard } from "./TopicCard";
+import { ProjectBriefPanel } from "./ProjectBriefPanel";
+import type { ProjectBrief } from "../server/project-brief";
 import type { TopicCardDetail } from "./sky/topic-card";
 import { startMicCapture, type MicCaptureHandle } from "./mic";
 
@@ -271,6 +273,18 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
   const topicCardRef = useRef<typeof topicCard>(null);
   topicCardRef.current = topicCard;
   const [topicResearchBusy, setTopicResearchBusy] = useState(false);
+  // PROJECT BRIEF (studied imports): which trees have a study to read, and the
+  // open card. `briefUpids` is probed per adopted tree so the tree menu only
+  // grows the "📖 About this project" row when something is actually behind
+  // it — an offered row that opens an empty card is worse than no row.
+  const [briefUpids, setBriefUpids] = useState<Record<string, boolean>>({});
+  const [briefPanel, setBriefPanel] = useState<{
+    upid: string;
+    anchor: SceneDwellRect | null;
+    brief: ProjectBrief | null;
+    error: string | null;
+  } | null>(null);
+  const [briefBuildBusy, setBriefBuildBusy] = useState(false);
   // GUEST HANDS overlay (the URL/QR other computers open to get hand controls).
   const [guestsOpen, setGuestsOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -363,6 +377,37 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
       }
     }
   }, [snapshot.processes]);
+  // PROBE FOR STUDIES. The tree menu offers "📖 About this project" only when
+  // a study exists behind it — a row that opens an empty card is worse than
+  // no row. One HEAD-ish GET per imported tree, once, cached by upid.
+  useEffect(() => {
+    let cancelled = false;
+    for (const process of snapshot.processes) {
+      const kind = process.source?.kind;
+      if (kind !== "github-import" && kind !== "phone-import") {
+        continue;
+      }
+      if (process.upid in briefUpids) {
+        continue;
+      }
+      void (async () => {
+        let has = false;
+        try {
+          const response = await fetch(`/api/process/${encodeURIComponent(process.upid)}/brief`);
+          has = response.ok;
+        } catch {
+          has = false; // server down / route absent: no row, no lie
+        }
+        if (!cancelled) {
+          setBriefUpids((current) => ({ ...current, [process.upid]: has }));
+        }
+      })();
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [snapshot.processes, briefUpids]);
+
   // The offer evaporates if nobody takes it.
   useEffect(() => {
     if (importPlantOffer === null) {
@@ -948,6 +993,64 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
       }
     },
     [liveMode],
+  );
+
+  // Read one studied project's brief. The card opens instantly and fills in
+  // (the wall must never look like a press did nothing), and a miss says why.
+  const loadProjectBrief = useCallback(
+    async (upid: string) => {
+      if (!liveMode || mockModeRef.current) {
+        return;
+      }
+      try {
+        const response = await fetch(`/api/process/${encodeURIComponent(upid)}/brief`);
+        if (!response.ok) {
+          setBriefPanel((current) =>
+            current === null || current.upid !== upid
+              ? current
+              : { ...current, error: "The room has no study of this project to read." },
+          );
+          return;
+        }
+        const payload = (await response.json()) as { brief?: ProjectBrief };
+        setBriefPanel((current) =>
+          current === null || current.upid !== upid ? current : { ...current, brief: payload.brief ?? null, error: null },
+        );
+      } catch {
+        setBriefPanel((current) =>
+          current === null || current.upid !== upid
+            ? current
+            : { ...current, error: "Could not read this project — is the room server up?" },
+        );
+      }
+    },
+    [liveMode],
+  );
+
+  // 🌱 The brief's one press forward: build the project we just read.
+  const buildStudiedProject = useCallback(
+    async (upid: string) => {
+      if (!liveMode || mockModeRef.current) {
+        return;
+      }
+      setBriefBuildBusy(true);
+      try {
+        const response = await fetch(`/api/process/${encodeURIComponent(upid)}/build`, { method: "POST" });
+        if (response.ok && response.headers.get("content-type")?.includes("application/json")) {
+          setSnapshot((await response.json()) as ProjectorSnapshot);
+          setBriefPanel(null);
+          // The study is spent — the row goes with it.
+          setBriefUpids((current) => ({ ...current, [upid]: false }));
+        } else {
+          reportControlFailure("Plant something here", response.status);
+        }
+      } catch {
+        reportControlFailure("Plant something here");
+      } finally {
+        setBriefBuildBusy(false);
+      }
+    },
+    [liveMode, reportControlFailure],
   );
 
   // 🔭 The topic card's research verb — what a bare constellation pick used to
@@ -2138,7 +2241,12 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
             const payload = (await response.json().catch(() => null)) as { issues?: unknown } | null;
             if (payload !== null && Array.isArray(payload.issues)) {
               issues = payload.issues.flatMap((issue): IssueInfo[] => {
-                const candidate = issue as { number?: unknown; title?: unknown; labels?: unknown };
+                const candidate = issue as {
+                  number?: unknown;
+                  title?: unknown;
+                  labels?: unknown;
+                  updatedAtMs?: unknown;
+                };
                 if (typeof candidate.number !== "number" || !Number.isFinite(candidate.number)) {
                   return [];
                 }
@@ -2149,6 +2257,12 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
                     labels: Array.isArray(candidate.labels)
                       ? candidate.labels.filter((label): label is string => typeof label === "string")
                       : [],
+                    // Last-touched, so the fruit card can admit an issue may
+                    // be years stale instead of implying it is live work.
+                    updatedAtMs:
+                      typeof candidate.updatedAtMs === "number" && Number.isFinite(candidate.updatedAtMs)
+                        ? candidate.updatedAtMs
+                        : null,
                   },
                 ];
               });
@@ -3136,6 +3250,15 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
             setSlideshowUpid(upid);
           }}
           onDismiss={(upid) => void dismissProcess(upid)}
+          onOpenBrief={
+            briefUpids[selectedProcess.upid] === true
+              ? (upid) => {
+                  setBriefPanel({ upid, anchor: menuAnchor, brief: null, error: null });
+                  setSelected(null);
+                  void loadProjectBrief(upid);
+                }
+              : undefined
+          }
           onOpenLiveApp={(upid) => {
             // The holo panel takes the menu's place beside the tree — it
             // inherits the pick-time anchor, and only ONE panel ever exists.
@@ -3220,6 +3343,39 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
                 className="ctl-button tree-popup-close"
                 data-testid="topic-card-close"
                 onClick={() => setTopicCard(null)}
+              >
+                ✕
+              </button>
+            </div>
+          </section>
+        )
+      ) : null}
+
+      {/* PROJECT BRIEF: what the room learned reading a studied import. */}
+      {briefPanel !== null ? (
+        briefPanel.brief !== null ? (
+          <ProjectBriefPanel
+            brief={briefPanel.brief}
+            anchor={briefPanel.anchor}
+            buildBusy={briefBuildBusy}
+            onBuild={() => void buildStudiedProject(briefPanel.upid)}
+            onClose={() => setBriefPanel(null)}
+          />
+        ) : (
+          <section
+            className="tree-popup brief-panel"
+            data-testid="project-brief-loading"
+            data-dwell-shield="1"
+            role="dialog"
+            aria-label="About this project"
+          >
+            <p className="brief-unavailable">{briefPanel.error ?? "Reading this project…"}</p>
+            <div className="tree-popup-actions">
+              <button
+                type="button"
+                className="ctl-button tree-popup-close"
+                data-testid="project-brief-close"
+                onClick={() => setBriefPanel(null)}
               >
                 ✕
               </button>

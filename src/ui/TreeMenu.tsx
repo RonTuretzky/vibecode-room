@@ -315,6 +315,9 @@ export interface TreeMenuProps {
   // beside the tree — the App closes this menu and mounts HoloPanel. Absent =
   // the row never renders (older mounts, tests exercising the menu alone).
   onOpenLiveApp?: (upid: string) => void;
+  // Present only for a tree the room STUDIED (App probes GET
+  // /api/process/:upid/brief) — a built import has no study to read.
+  onOpenBrief?: (upid: string) => void;
   // GROW A BRANCH (adopted trees only): POST /api/process/:upid/branch — the
   // App fires it and closes the menu; the new limb appears via the snapshot.
   // Absent = the row never renders.
@@ -346,6 +349,7 @@ export function TreeMenu({
   onDismiss,
   onReplant,
   onOpenLiveApp,
+  onOpenBrief,
   onGrowBranch,
   selfBranches,
   onControlFailure,
@@ -1267,6 +1271,24 @@ export function TreeMenu({
                 ),
               )}
             </div>
+          ) : null}
+
+          {/* 📖 ABOUT THIS PROJECT: for an import the room STUDIED rather than
+              built. Clicking an imported tree used to show build controls and
+              not one fact about the project — you could take an issue off a
+              codebase the room had never told you anything about. Shown only
+              when a study actually exists behind it (App probes the brief
+              route and passes the handler in). */}
+          {onOpenBrief !== undefined ? (
+            <button
+              type="button"
+              className="ctl-button tree-menu-brief"
+              data-testid="tree-menu-brief"
+              title="What the room learned reading this repository — nothing has been built."
+              onClick={() => onOpenBrief(process.upid)}
+            >
+              📖 About this project ▸
+            </button>
           ) : null}
 
           {/* 🌐 LIVE APP: an imported tree's confirmed deployment (deployUrl)

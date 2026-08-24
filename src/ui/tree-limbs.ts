@@ -44,6 +44,12 @@ export interface IssueInfo {
   number: number;
   title: string;
   labels: string[];
+  // When the issue was last touched, epoch ms (the API's updated_at). Fruit
+  // hanging on a tree reads as live work, but an ungroomed tracker leaves
+  // issues that were fixed or abandoned years ago — this is what lets the
+  // card say so before someone spends a build on one. Null/absent = unknown,
+  // which is its own state and never rendered as "fresh".
+  updatedAtMs?: number | null;
 }
 
 // Bounded render caps: treeRepo.branches is server-bounded (<=8) but clamp

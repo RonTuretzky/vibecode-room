@@ -14,7 +14,13 @@ function scriptedGh(stdout: string, ok = true): { calls: string[][]; run: Forest
 }
 
 const ISSUES_JSON = JSON.stringify([
-  { number: 7, title: "Fix the welcome banner", labels: [{ name: "bug" }, { name: "good first issue" }] },
+  {
+    number: 7,
+    title: "Fix the welcome banner",
+    labels: [{ name: "bug" }, { name: "good first issue" }],
+    updated_at: "2026-08-01T10:00:00Z",
+  },
+  // No updated_at at all: the age must come back null, not a guess.
   { number: 12, title: "Dark mode", labels: [] },
   // A PR rides the issues endpoint too — it must be dropped.
   { number: 13, title: "PR: dark mode", labels: [], pull_request: { url: "x" } },
@@ -30,8 +36,13 @@ describe("TreeIssuesCache", () => {
     const issues = await cache.issuesFor("upid-1", "https://github.com/acme/widget");
 
     expect(issues).toEqual([
-      { number: 7, title: "Fix the welcome banner", labels: ["bug", "good first issue"] },
-      { number: 12, title: "Dark mode", labels: [] },
+      {
+        number: 7,
+        title: "Fix the welcome banner",
+        labels: ["bug", "good first issue"],
+        updatedAtMs: Date.parse("2026-08-01T10:00:00Z"),
+      },
+      { number: 12, title: "Dark mode", labels: [], updatedAtMs: null },
     ]);
     expect(gh.calls).toEqual([["gh", "api", "repos/acme/widget/issues?state=open&per_page=10"]]);
   });

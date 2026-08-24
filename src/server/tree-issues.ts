@@ -14,6 +14,13 @@ export interface TreeIssue {
   number: number;
   title: string;
   labels: string[];
+  // WHEN THE ISSUE WAS LAST TOUCHED (epoch ms), straight off the API's
+  // `updated_at`. The room hangs open issues on a tree as fruit you can pick
+  // and start work on, which quietly implies they are all live — but a
+  // tracker nobody grooms leaves issues that were fixed or abandoned years
+  // ago. This is what lets the fruit say so. Null when the API did not carry
+  // a parsable stamp: unknown is its own state, never silently "fresh".
+  updatedAtMs: number | null;
 }
 
 export const TREE_ISSUES_CACHE_MS = 60_000;
@@ -98,7 +105,13 @@ function parseIssues(stdout: string): TreeIssue[] {
     if (typeof entry !== "object" || entry === null) {
       continue;
     }
-    const record = entry as { number?: unknown; title?: unknown; labels?: unknown; pull_request?: unknown };
+    const record = entry as {
+      number?: unknown;
+      title?: unknown;
+      labels?: unknown;
+      pull_request?: unknown;
+      updated_at?: unknown;
+    };
     if (record.pull_request !== undefined || typeof record.number !== "number" || typeof record.title !== "string") {
       continue;
     }
@@ -107,7 +120,13 @@ function parseIssues(stdout: string): TreeIssue[] {
           .map((label) => (typeof label === "string" ? label : (label as { name?: unknown } | null)?.name))
           .filter((name): name is string => typeof name === "string")
       : [];
-    issues.push({ number: record.number, title: record.title, labels });
+    const updatedAt = typeof record.updated_at === "string" ? Date.parse(record.updated_at) : Number.NaN;
+    issues.push({
+      number: record.number,
+      title: record.title,
+      labels,
+      updatedAtMs: Number.isFinite(updatedAt) ? updatedAt : null,
+    });
   }
   return issues;
 }

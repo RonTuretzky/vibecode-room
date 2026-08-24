@@ -305,7 +305,13 @@ describe("git substrate wiring — GitHub imports adopt their clone", () => {
       repoDigestFn: async () => "digest: fake repo",
     });
 
-    const imported = await runtime.importProject("https://github.com/acme/widget", "corr-treegit-import");
+    // A BUILD-intent import: with no instruction a repo is now STUDIED
+    // instead (project-intake.ts), and a study never fans out — this test is
+    // about the substrate the fan-out births, so it asks for the build.
+    const imported = await runtime.importProject(
+      { url: "https://github.com/acme/widget", context: "build a dashboard for this repo" },
+      "corr-treegit-import",
+    );
     expect(imported.ok).toBe(true);
     if (!imported.ok) return;
 

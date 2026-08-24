@@ -435,8 +435,12 @@ describe("GET /api/process/:upid/issues — the UI contract", () => {
     expect(first.status).toBe(200);
     expect(await first.json()).toEqual({
       issues: [
-        { number: 7, title: "Fix the welcome banner", labels: ["bug"] },
-        { number: 12, title: "Dark mode", labels: [] },
+        // updatedAtMs rides the contract now: the fruit card says how stale an
+        // issue is rather than implying every open issue is live work. This
+        // fixture's gh stub carries no updated_at, so both come back null —
+        // unknown is its own state, never silently "fresh".
+        { number: 7, title: "Fix the welcome banner", labels: ["bug"], updatedAtMs: null },
+        { number: 12, title: "Dark mode", labels: [], updatedAtMs: null },
       ],
     });
     const issueCalls = () => gh.calls.filter((argv) => argv[1] === "api").length;

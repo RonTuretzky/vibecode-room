@@ -3,6 +3,7 @@ import type { ProjectorProcess } from "./types";
 import type { SceneDwellRect } from "./gesture/scene-source";
 import { treeMenuPlacement } from "./TreeMenu";
 import { fruitColor, type IssueInfo } from "./tree-limbs";
+import { ageLabel, issueFreshness, stalenessWarning, type IssueFreshness } from "../server/project-intake";
 import "./TreePopups.css";
 
 /**
@@ -27,17 +28,33 @@ export interface IssuePopupModel {
   heading: string;
   // One chip per label, tinted by the same palette the fruit wears.
   chips: Array<{ label: string; color: number }>;
+  // How alive this issue is, from the API's last-touched stamp.
+  freshness: IssueFreshness;
+  // "3 days ago" / "14 months ago"; null when the stamp is unknown.
+  age: string | null;
+  // The sentence a stale/aging issue carries into the take-it flow. Null for
+  // live work — the room does not nag about issues that are plainly current.
+  warning: string | null;
 }
 
 // Pure: the fetched issue → everything the card renders. Falls back to the
 // bare number when the poller has not surfaced a title (e.g. the issue list
 // refreshed between pick and open).
-export function issuePopupModel(issue: IssueInfo): IssuePopupModel {
+export function issuePopupModel(issue: IssueInfo, nowMs: number = Date.now()): IssuePopupModel {
+  // HOW ALIVE IS THIS ISSUE? Fruit on a tree reads as work waiting to be
+  // picked up, so an issue nobody has touched in over a year has to say so —
+  // it may already be done, or no longer wanted, and finding that out AFTER a
+  // build is the expensive way.
+  const freshness = issueFreshness(issue.updatedAtMs, nowMs);
+  const age = ageLabel(issue.updatedAtMs, nowMs);
   return {
     number: issue.number,
     title: issue.title,
     heading: `#${issue.number}${issue.title.length > 0 ? ` ${issue.title}` : ""}`,
     chips: issue.labels.map((label) => ({ label, color: fruitColor([label]) })),
+    freshness,
+    age,
+    warning: stalenessWarning(freshness, age),
   };
 }
 
@@ -91,9 +108,12 @@ export function IssuePopup({ process, issue, anchor, onClose }: IssuePopupProps)
   // the honest error inline and leaves the card open.
   const [takeBusy, setTakeBusy] = useState(false);
   const [takeError, setTakeError] = useState<string | null>(null);
+  // Second-press arm for a STALE issue (see the button below).
+  const [takeArmed, setTakeArmed] = useState(false);
   useEffect(() => {
     setTakeBusy(false);
     setTakeError(null);
+    setTakeArmed(false);
   }, [process.upid, issue.number]);
 
   const takeIssue = async (): Promise<void> => {
@@ -174,6 +194,24 @@ export function IssuePopup({ process, issue, anchor, onClose }: IssuePopupProps)
         </div>
       ) : null}
 
+      {/* HOW ALIVE IS IT. An issue tracker nobody grooms leaves work that was
+          fixed or abandoned years ago; the fruit implies it is all live, so
+          the card says otherwise before a build is spent on it. */}
+      {model.age !== null ? (
+        <p className="issue-popup-age" data-testid="issue-popup-age" data-freshness={model.freshness}>
+          last touched {model.age}
+        </p>
+      ) : (
+        <p className="issue-popup-age" data-testid="issue-popup-age" data-freshness="unknown">
+          the room doesn&rsquo;t know when this was last touched
+        </p>
+      )}
+      {model.warning !== null ? (
+        <p className="issue-popup-warning" data-testid="issue-popup-warning">
+          ⚠ {model.warning}
+        </p>
+      ) : null}
+
       {takeError !== null ? (
         <div className="tree-popup-error" data-testid="issue-popup-error">
           {takeError}
@@ -185,11 +223,28 @@ export function IssuePopup({ process, issue, anchor, onClose }: IssuePopupProps)
           type="button"
           className="ctl-button issue-popup-take"
           data-testid="issue-popup-take"
-          title="Grow a real branch for this issue and route everything you say into it."
+          title={
+            model.freshness === "stale"
+              ? "This issue looks abandoned — press again to grow a branch for it anyway."
+              : "Grow a real branch for this issue and route everything you say into it."
+          }
           disabled={takeBusy}
-          onClick={() => void takeIssue()}
+          onClick={() => {
+            // A STALE issue takes two presses. Not friction for its own sake:
+            // the first press is usually someone reading fruit as live work,
+            // and the second is them deciding it is worth it anyway.
+            if (model.freshness === "stale" && !takeArmed) {
+              setTakeArmed(true);
+              return;
+            }
+            void takeIssue();
+          }}
         >
-          {takeBusy ? "🌱 Taking…" : "🌱 Take this issue"}
+          {takeBusy
+            ? "🌱 Taking…"
+            : model.freshness === "stale" && !takeArmed
+              ? "🌱 Take it anyway?"
+              : "🌱 Take this issue"}
         </button>
       </div>
     </section>

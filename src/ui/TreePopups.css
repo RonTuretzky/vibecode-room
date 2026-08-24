@@ -253,3 +253,101 @@ main.gesture-mode .topic-card-related-reason {
 main.gesture-mode .topic-card-related-label {
   font-size: 20px;
 }
+
+/* ── ISSUE FRESHNESS ────────────────────────────────────────────────────────
+   Fruit on a tree reads as live work. When it isn't, the card says so. */
+.issue-popup-age {
+  margin: 0;
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #8ea0bb;
+}
+
+.issue-popup-age[data-freshness="aging"] {
+  color: #e5c07b;
+}
+
+.issue-popup-age[data-freshness="stale"] {
+  color: #e08c6b;
+}
+
+.issue-popup-warning {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.45;
+  color: #f0c9a0;
+}
+
+main.gesture-mode .issue-popup-age {
+  font-size: 17px;
+}
+
+main.gesture-mode .issue-popup-warning {
+  font-size: 20px;
+}
+
+/* ── PROJECT BRIEF ("about this project") ───────────────────────────────── */
+.brief-panel {
+  width: 440px;
+}
+
+.brief-summary {
+  margin: 0;
+  font-size: 17px;
+  line-height: 1.5;
+  color: #eef3ff;
+}
+
+.brief-readme {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+  color: #b9c6dc;
+}
+
+.brief-facts {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.brief-fact {
+  font-size: 13px;
+  color: #9db6cf;
+  padding-left: 10px;
+  border-left: 2px solid rgba(150, 180, 230, 0.28);
+}
+
+.brief-ask {
+  margin: 0;
+  font-size: 14px;
+  font-style: italic;
+  color: #9fe6b5;
+}
+
+.brief-unavailable {
+  margin: 0;
+  font-size: 15px;
+  color: #f0c9a0;
+}
+
+main.gesture-mode .brief-panel {
+  width: min(640px, 46vw);
+}
+
+main.gesture-mode .brief-summary {
+  font-size: 24px;
+}
+
+main.gesture-mode .brief-readme,
+main.gesture-mode .brief-ask {
+  font-size: 19px;
+}
+
+main.gesture-mode .brief-fact {
+  font-size: 18px;
+}

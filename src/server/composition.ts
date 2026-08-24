@@ -135,6 +135,8 @@ import { applySteerEdit, steerApplierEnabled } from "./steer-applier";
 import { appendSliceLine, joinedSliceText, type SteerSliceLine } from "./transcript-slice";
 
 import { dirtySourcePaths, graftOntoBranch, type SelfLandingResult as SelfLanding } from "./self-graft";
+import { buildProjectBrief, type ProjectBrief, type ProjectBriefSource } from "./project-brief";
+import { readIntent, type ProjectIntent } from "./project-intake";
 import { TranscriptStore } from "./transcript-store";
 import { TreeIssuesCache, type TreeIssue } from "./tree-issues";
 import { buildImportPlanPrompt, buildImportPlanQuestions } from "./import-plan";
@@ -331,6 +333,15 @@ export interface ProjectorRuntime {
   // open issues via the gh seam ({issues: [{number, title, labels}]}),
   // 60s-cached per upid, {issues: []} for local/self trees or ANY failure.
   treeIssues(upid: string): Promise<{ issues: TreeIssue[] }>;
+  // PROJECT INTAKE (project-intake.ts / project-brief.ts): what an import
+  // asked the room to do, and what studying it turned up. Null for trees that
+  // were never imported or never studied — the wall shows the "About this
+  // project" row only when there is something behind it.
+  projectBrief(upid: string): ProjectBrief | null;
+  projectIntent(upid: string): ProjectIntent | null;
+  // The brief's one press forward: fan a studied project out to the build
+  // backends after all. No-op for anything that was not studied.
+  buildStudiedProject(upid: string, correlationId?: string): ProjectorSnapshot;
   // AUTO-BUILD toggle (no click required): when on, every fired suggestion is
   // accepted+built the instant it pops.
   setAutoAccept(on: boolean, correlationId?: string): ProjectorSnapshot;
@@ -786,6 +797,13 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       // room startup. An arrival timestamp is the honest test, and it
       // survives reloads and second walls.
       atMs: number;
+      // WHAT THE IMPORT ASKED FOR (project-intake.ts). "study" reads the repo
+      // and produces a brief without building anything; "build" is the old
+      // straight-to-the-backends path. A repo with no instruction defaults to
+      // study — you understand a codebase before you change it.
+      intent: ProjectIntent;
+      // The study's deliverable, once the clone settled. Null while studying.
+      brief?: ProjectBrief;
     }
   >();
   // In-flight GitHub clone routines, keyed by UPID. Emergency stop and per-
@@ -1891,6 +1909,9 @@ class LiveProjectorRuntime implements ProjectorRuntime {
         input,
         correlationId,
         // Non-github imports fan out immediately; github waits for the clone.
+        // Non-github imports fan out immediately; github waits for the clone —
+        // and a github import that asked to be STUDIED never fans out at all
+        // (the clone routine writes a brief instead).
         build: parsed.kind !== "github",
       });
     } catch (error) {
@@ -1914,6 +1935,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       task,
       status: parsed.kind === "github" ? "cloning" : "ready",
       atMs: Date.now(),
+      intent: readIntent(context, parsed.kind === "github"),
     });
     this.recordExternalTrace({
       event: "project.import",
@@ -2039,6 +2061,43 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       // are further windows in which a halt/emergency stop can land (startBuild
       // also refuses dead records — this is belt and braces).
       if (this.#emergencyTriggered || controller.signal.aborted) {
+        return;
+      }
+      // STUDY FIRST. An import that asked to be read ("just study it first"),
+      // or a repo imported with no instruction at all, does NOT fan out to the
+      // build backends — a codebase you have never seen is something to
+      // understand before it is something to change. The brief is the
+      // deliverable; building it is one press on the brief afterwards.
+      if (this.#imports.get(upid)?.intent === "study") {
+        // The substrate still comes up. Birth is normally the build fan-out's
+        // first act, so skipping the fan-out used to leave a studied tree with
+        // NO repo surface — no branches, no issue fruit — which would make the
+        // room worse at exactly what someone studying a project wants to do.
+        // On an adopted clone this self-detects repo/.git and never inits over
+        // it; it just records the origin.
+        void Promise.resolve(
+          this.#treeGit?.birth(upid, {
+            ideaId: `import-${upid}`,
+            pitch: basePitch,
+            callsign: this.#imports.get(upid)?.callsign ?? upid,
+          }),
+        ).catch(() => undefined);
+        this.#recordProjectBrief(upid, {
+          repo: `${parsed.owner}/${parsed.repo}`,
+          url: parsed.url,
+          digest: result.ok ? await this.#repoDigestFn(result.dir).catch(() => null) : null,
+          cloneError: result.ok ? null : result.error,
+          context,
+        });
+        this.recordExternalTrace({
+          event: "project.import.study",
+          level: "info",
+          sessionId: this.sessionId,
+          correlationId,
+          upid,
+          meta: { url: parsed.url, cloned: result.ok },
+        });
+        this.publish();
         return;
       }
       this.registry.startBuild(upid, {
@@ -4019,6 +4078,56 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       }
     }
     return null;
+  }
+
+  // Write the study's deliverable onto the import entry and put the tree's
+  // display line in the language of a finished read rather than a stalled
+  // build ("imported" used to sit there forever with nothing behind it).
+  #recordProjectBrief(upid: string, source: ProjectBriefSource): void {
+    const entry = this.#imports.get(upid);
+    if (entry === undefined) {
+      return;
+    }
+    entry.brief = buildProjectBrief(source, this.#clock());
+    entry.status = source.cloneError === null ? "ready" : "clone-failed";
+    entry.task = entry.brief.summary ?? `Studied ${source.repo}`;
+  }
+
+  // THE PROJECT BRIEF behind the tree's "📖 About this project" row. Null for
+  // trees that were never studied (a built import, a local concept, the room
+  // itself) — the wall shows the row only when there is something to read.
+  projectBrief(upid: string): ProjectBrief | null {
+    return this.#imports.get(upid)?.brief ?? null;
+  }
+
+  // What this import asked the room to do. Absent for non-imports.
+  projectIntent(upid: string): ProjectIntent | null {
+    return this.#imports.get(upid)?.intent ?? null;
+  }
+
+  // BUILD IT AFTER ALL: the brief's one press forward. A studied project that
+  // someone now wants worked on fans out exactly like a build-intent import
+  // would have — the study was the first step, not a dead end.
+  buildStudiedProject(upid: string, correlationId = `corr-study-build-${crypto.randomUUID()}`): ProjectorSnapshot {
+    const entry = this.#imports.get(upid);
+    if (entry === undefined || entry.intent !== "study") {
+      return this.#snapshot;
+    }
+    entry.intent = "build";
+    this.recordExternalTrace({
+      event: "project.import.study.build",
+      level: "info",
+      sessionId: this.sessionId,
+      correlationId,
+      upid,
+      meta: { repo: entry.brief?.repo ?? null },
+    });
+    this.registry.startBuild(upid, {
+      correlationId,
+      prompt: entry.brief?.summary ?? entry.task,
+    });
+    this.publish();
+    return this.#snapshot;
   }
 
   // GRAFT ONTO AN EXISTING BRANCH: stand the room on `branch` so the spoken

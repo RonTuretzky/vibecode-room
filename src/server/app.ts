@@ -386,6 +386,26 @@ export function createProjectorApp(runtime: ProjectorRuntime, options: Projector
     }
     return context.json(runtime.researchTurn(context.req.param("id")));
   });
+  // PROJECT BRIEF: what the room learned by STUDYING an imported repo — the
+  // tree's "📖 About this project" card. 404 for trees that were never
+  // studied (a build-intent import, a local concept, the room itself), which
+  // is how the wall decides whether to offer the row at all.
+  app.get("/api/process/:upid/brief", (context) => {
+    const brief = runtime.projectBrief(context.req.param("upid"));
+    if (brief === null) {
+      return context.json({ error: "this tree has no study to read" }, 404);
+    }
+    return context.json({ brief, intent: runtime.projectIntent(context.req.param("upid")) });
+  });
+  // BUILD IT AFTER ALL: the brief's one press forward — a studied project
+  // someone now wants worked on fans out like a build-intent import would
+  // have. The study was the first step, not a dead end.
+  app.post("/api/process/:upid/build", (context) => {
+    if (isOfflineDemoRequest(context.req.header("referer"))) {
+      return context.json(runtime.snapshot());
+    }
+    return context.json(runtime.buildStudiedProject(context.req.param("upid")));
+  });
   // TOPIC CARD: read ONE constellation in full — its abstract (when the relate
   // agent has written one), the thread's lines in spoken order, what it relates
   // to, and how much history has been elided. Off the snapshot on purpose: the

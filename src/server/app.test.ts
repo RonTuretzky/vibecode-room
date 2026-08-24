@@ -394,7 +394,13 @@ describe("POST /api/projects/import", () => {
     const published: ProjectorSnapshot[] = [];
     const unsubscribe = runtime.subscribe((snapshot) => published.push(snapshot));
 
-    const response = await postJson(app, "/api/projects/import", { url: "https://github.com/RonTuretzky/gesture-wall" });
+    // A repo imported with NO instruction is STUDIED now, not built
+    // (project-intake.ts) — this test is about the build pipeline, so it asks
+    // for the build the way a person would.
+    const response = await postJson(app, "/api/projects/import", {
+      url: "https://github.com/RonTuretzky/gesture-wall",
+      context: "build a live preview for this",
+    });
     expect(response.status).toBe(200);
     const body = (await response.json()) as { ok: boolean; upid?: string; callsign?: string; title?: string | null };
     expect(body.ok).toBe(true);
@@ -406,8 +412,11 @@ describe("POST /api/projects/import", () => {
     const state = (await stateResponse.json()) as ProjectorSnapshot;
     expect(state.processes).toHaveLength(1);
     const imported = state.processes[0]!;
-    expect(imported.source).toEqual({ kind: "github-import", url: "https://github.com/RonTuretzky/gesture-wall" });
-    expect(imported.task).toBe("Imported from GitHub: RonTuretzky/gesture-wall");
+    // `atMs` (the arrival stamp the wall's plant offer keys off) rides the
+    // source now, so match structurally rather than exactly.
+    expect(imported.source).toMatchObject({ kind: "github-import", url: "https://github.com/RonTuretzky/gesture-wall" });
+    expect(typeof imported.source?.atMs).toBe("number");
+    expect(imported.task).toBe("build a live preview for this");
     expect(imported.state).toBe("active");
     expect(imported.progressLabel).toBe("cloning repository");
     expect(imported.previewUrl).toBe("https://github.com/RonTuretzky/gesture-wall");
@@ -425,6 +434,51 @@ describe("POST /api/projects/import", () => {
     expect(built.previewUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+\//u);
   });
 
+  test("A BARE REPO LINK IS STUDIED, NOT BUILT — and the brief route serves it", async () => {
+    // The live miss this exists for: someone imported a repo, typed "just
+    // study it first", and the room built it anyway because the description
+    // was only ever used as build framing. A repo with no instruction (or an
+    // explicit ask to read) now produces a brief and fans out NOTHING.
+    const { app, runtime } = await makeApp({
+      cloneRepoFn: async ({ dir }) => ({ ok: true, dir }),
+      // repoDigestFn is a runtime option (makeApp pins its own default above).
+      runtimeOptions: { repoDigestFn: async () => "Appears to be a Vite + React app.\nStack: typescript, react" },
+    });
+    const response = await postJson(app, "/api/projects/import", {
+      url: "https://github.com/acme/widget",
+      context: "just study it first",
+    });
+    expect(response.status).toBe(200);
+    const { upid } = (await response.json()) as { upid: string };
+
+    // waitFor takes a SYNC predicate — an async one returns a truthy promise
+    // and passes instantly. Poll the route directly.
+    const deadline = Date.now() + 5_000;
+    let briefStatus = 0;
+    while (briefStatus !== 200 && Date.now() < deadline) {
+      briefStatus = (await app.request(`/api/process/${upid}/brief`)).status;
+      if (briefStatus !== 200) {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+    }
+    expect(briefStatus).toBe(200);
+    const brief = (await (await app.request(`/api/process/${upid}/brief`)).json()) as {
+      brief: { summary: string | null; ask: string | null };
+      intent: string;
+    };
+    expect(brief.intent).toBe("study");
+    expect(brief.brief.summary).toContain("Appears to be");
+    expect(brief.brief.ask).toBe("just study it first");
+    // NOTHING was built.
+    expect(runtime.registry.builds(upid)).toHaveLength(0);
+
+    // And the brief's one press forward flips the project to build intent —
+    // the study was the first step, not a dead end.
+    const built = await app.request(`/api/process/${upid}/build`, { method: "POST" });
+    expect(built.status).toBe(200);
+    expect(runtime.projectIntent(upid)).toBe("build");
+  });
+
   test("context alone starts a building project (no link required)", async () => {
     const { app, runtime } = await makeApp();
     const response = await postJson(app, "/api/projects/import", { context: "A synthwave dashboard for our ticket queue" });
@@ -436,7 +490,7 @@ describe("POST /api/projects/import", () => {
     const state = (await (await app.request("/api/state")).json()) as ProjectorSnapshot;
     expect(state.processes).toHaveLength(1);
     const process = state.processes[0]!;
-    expect(process.source).toEqual({ kind: "phone-import", url: null });
+    expect(process.source).toMatchObject({ kind: "phone-import", url: null });
     expect(process.task).toBe("A synthwave dashboard for our ticket queue");
 
     // The fan-out starts immediately for non-github imports.
@@ -461,7 +515,7 @@ describe("POST /api/projects/import", () => {
     expect(response.status).toBe(200);
     const state = (await (await app.request("/api/state")).json()) as ProjectorSnapshot;
     const process = state.processes[0]!;
-    expect(process.source).toEqual({ kind: "phone-import", url: "https://example.com/spec" });
+    expect(process.source).toMatchObject({ kind: "phone-import", url: "https://example.com/spec" });
     expect(process.task).toBe("make a viewer for this spec");
     expect(cloneCalls).toBe(0);
   });
@@ -492,7 +546,12 @@ describe("POST /api/projects/import", () => {
 
   test("a failed clone still builds from the link — never a dead card", async () => {
     const { app, runtime } = await makeApp({ cloneRepoFn: async () => ({ ok: false, error: "repository not found" }) });
-    const response = await postJson(app, "/api/projects/import", { url: "https://github.com/o/gone" });
+    // A bare link with no instruction is STUDIED now (project-intake.ts); this
+    // test is about the fallback BUILD when the clone fails, so it asks.
+    const response = await postJson(app, "/api/projects/import", {
+      url: "https://github.com/o/gone",
+      context: "build something from this link",
+    });
     expect(response.status).toBe(200);
     const body = (await response.json()) as { upid?: string };
     await settleImportBuild(runtime, body.upid!);
@@ -2530,7 +2589,12 @@ describe("GitHub import → deploy resolver → deployUrl surfaces", () => {
       },
       treeGitRunner: async () => ({ ok: true, stdout: "", stderr: "" }),
     });
-    const response = await postJson(app, "/api/projects/import", { url: "https://github.com/RonTuretzky/convent-profile" });
+    // Build intent: a bare link with no instruction is STUDIED now, and a
+    // study never fans out — these assertions wait on the build.
+    const response = await postJson(app, "/api/projects/import", {
+      url: "https://github.com/RonTuretzky/convent-profile",
+      context: "build a profile page",
+    });
     expect(response.status).toBe(200);
     const { upid } = (await response.json()) as { upid: string };
 
@@ -2552,7 +2616,10 @@ describe("GitHub import → deploy resolver → deployUrl surfaces", () => {
 
   test("no resolution (or the null test seam) → no deployUrl anywhere", async () => {
     const { app, runtime } = await makeApp({ buildBackends: [new RouteFakeBackend()] });
-    const response = await postJson(app, "/api/projects/import", { url: "https://github.com/o/quiet" });
+    const response = await postJson(app, "/api/projects/import", {
+      url: "https://github.com/o/quiet",
+      context: "build something quiet",
+    });
     const { upid } = (await response.json()) as { upid: string };
     await waitFor(() => runtime.registry.builds(upid).some((build) => build.status === "ready"));
     expect(runtime.snapshot().processes.find((entry) => entry.upid === upid)!.deployUrl).toBeNull();
