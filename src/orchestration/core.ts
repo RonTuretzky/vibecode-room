@@ -270,7 +270,7 @@ export const REQUIRED_BUNDLE_FILES = [
 ];
 
 // ─── Run config: re-apply the input defaults smithers does NOT apply to ctx.input ──
-// CRITICAL smithers behavior (verified against @smithers-orchestrator/db/zodToTable.js +
+// CRITICAL smithers behavior (verified against @smthrs/db zodToTable (package renamed from @smithers-orchestrator at 0.33) +
 // unwrapZodType.js): the durable input table's columns are generated from the Zod input
 // schema with the `.default()` wrapper STRIPPED, so a field the caller OMITS at launch is
 // stored as SQL NULL and surfaces on `ctx.input` as `null` — NOT its declared schema default.

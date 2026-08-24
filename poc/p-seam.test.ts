@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import React from "react";
-import { Gateway, createSmithers } from "smithers-orchestrator";
+import { Gateway, createSmithers } from "smthrs";
 import { z } from "zod";
 import { cueSourceBuildAvailable, ensureCueSourceBuild } from "../src/cue/source";
 

@@ -4,7 +4,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import React from "react";
-import { Gateway, createSmithers } from "smithers-orchestrator";
+import { Gateway, createSmithers } from "smthrs";
 import { z } from "zod";
 
 const PROBE_ID = "probe-smithers-durable-runs";
@@ -84,7 +84,8 @@ describe("P-SMITHERS durable run lifecycle against the real Gateway harness", ()
         },
       });
       expect(create.ok).toBe(true);
-      expect(create.payload).toEqual({ runId, workflow: "durable" });
+      // smthrs 0.35: runs.create now reports the run's system flag too.
+      expect(create.payload).toEqual({ runId, workflow: "durable", system: false });
 
       const paused = await waitForStatus(gateway, connection, runId, "waiting-event");
       expect(paused.payload.summary).toEqual(
