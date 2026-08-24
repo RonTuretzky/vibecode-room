@@ -169,6 +169,52 @@ export function BranchPopup({ process, branch, anchor, self, landing = null, onC
     measured ?? { width: BRANCH_POPUP_WIDTH, height: BRANCH_POPUP_EST_HEIGHT },
   );
 
+  // ✓ Finalize (adopted trees): squash-merge this branch's open PR into the
+  // origin's main via POST /api/process/:upid/branch/:branch/merge. Armed on
+  // the first press — merging into an upstream main is not a one-press act —
+  // and the server's refusal ("no PR is open for this branch") shows verbatim.
+  const [mergeArmed, setMergeArmed] = useState(false);
+  const [mergeBusy, setMergeBusy] = useState(false);
+  const [mergeResult, setMergeResult] = useState<{ ok: true } | { ok: false; error: string } | null>(null);
+  useEffect(() => {
+    setMergeArmed(false);
+    setMergeBusy(false);
+    setMergeResult(null);
+  }, [process.upid, branch]);
+  // The arm falls back to resting on its own — a stale "really merge?" left
+  // sitting on a wall is an accident waiting for the next person's dwell.
+  useEffect(() => {
+    if (!mergeArmed) {
+      return;
+    }
+    const timer = window.setTimeout(() => setMergeArmed(false), 10_000);
+    return () => window.clearTimeout(timer);
+  }, [mergeArmed]);
+  const mergeBranch = async (): Promise<void> => {
+    setMergeBusy(true);
+    setMergeArmed(false);
+    try {
+      const response = await fetch(
+        `/api/process/${encodeURIComponent(process.upid)}/branch/${encodeURIComponent(branch)}/merge`,
+        { method: "POST" },
+      );
+      const body = (await response.json().catch(() => null)) as { merged?: unknown; error?: unknown } | null;
+      if (response.ok && body?.merged === true) {
+        setMergeResult({ ok: true });
+        return;
+      }
+      setMergeResult({
+        ok: false,
+        error:
+          typeof body?.error === "string" && body.error.length > 0 ? body.error : `Merge failed (HTTP ${response.status})`,
+      });
+    } catch {
+      setMergeResult({ ok: false, error: "Merge failed — is the room server up?" });
+    } finally {
+      setMergeBusy(false);
+    }
+  };
+
   // ⬆ Open PR state: in-flight disables the button; the result (URL or the
   // honest error) shows inline. ⏱ Load-this-version state rides alongside —
   // both reset when the popup moves to another branch.
@@ -367,7 +413,15 @@ export function BranchPopup({ process, branch, anchor, self, landing = null, onC
           )}
         </div>
       ) : (
+        <>
         <div className="tree-popup-actions">
+          {/* ONE PLANT LANGUAGE ACROSS EVERY TREE. The room's own branches are
+              tended with graft/finalize; an adopted project's branches are the
+              same kind of thing and now say so, backed by the same real rails
+              (select {branch} → the steer applier's commit; the branch merge
+              route). What an adopted tree still lacks is PRUNE — there is no
+              delete-branch rail on the clone substrate yet, and a verb with no
+              rail behind it is the one thing this surface must never grow. */}
           <button
             type="button"
             className="ctl-button branch-popup-steer"
@@ -375,7 +429,7 @@ export function BranchPopup({ process, branch, anchor, self, landing = null, onC
             title="Press, then talk — everything you say routes into THIS branch until you stop."
             onClick={steerBranch}
           >
-            🎙 Steer this branch
+            🌱 Graft onto this branch
           </button>
           <button
             type="button"
@@ -387,7 +441,35 @@ export function BranchPopup({ process, branch, anchor, self, landing = null, onC
           >
             {prBusy ? "⬆ Opening PR…" : "⬆ Open PR ▸"}
           </button>
+          {/* ✓ INTO THE TRUNK: squash-merge this branch's open PR upstream.
+              Two-stage like every destructive verb in the room — merging into
+              someone else's main is not a thing to do on one press. */}
+          <button
+            type="button"
+            className={`ctl-button branch-popup-merge${mergeArmed ? " is-armed" : ""}`}
+            data-testid="branch-popup-merge"
+            title="Squash-merge this branch's open PR into the origin's main."
+            disabled={mergeBusy}
+            onClick={() => {
+              if (!mergeArmed) {
+                setMergeArmed(true);
+                return;
+              }
+              void mergeBranch();
+            }}
+          >
+            {mergeBusy ? "✓ merging…" : mergeArmed ? "✓ really merge into main?" : "✓ Finalize · into the trunk"}
+          </button>
         </div>
+        {mergeResult !== null ? (
+          <div
+            className={mergeResult.ok ? "tree-popup-link" : "tree-popup-error"}
+            data-testid="branch-popup-merge-result"
+          >
+            {mergeResult.ok ? "✓ merged into the trunk" : mergeResult.error}
+          </div>
+        ) : null}
+        </>
       )}
     </section>
   );

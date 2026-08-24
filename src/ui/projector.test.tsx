@@ -2355,7 +2355,10 @@ describe("adopted trees: grow-a-branch row + branch/issue popups", () => {
     expect(html).toContain(PR_URL);
     expect(html).not.toContain("target=");
     expect(html).toContain('data-testid="branch-popup-steer"');
-    expect(html).toContain("🎙 Steer this branch");
+    // One plant language across every tree: an adopted project's branches are
+    // grafted and finalized in the same words the room's own branches are.
+    expect(html).toContain("🌱 Graft onto this branch");
+    expect(html).toContain("✓ Finalize · into the trunk");
     expect(html).toContain('data-testid="branch-popup-pr"');
     expect(html).toContain("⬆ Open PR ▸");
     expect(html).toContain('data-testid="branch-popup-close"');
