@@ -1449,6 +1449,26 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
       skyDome.renderOrder = -1;
       group.add(skyDome);
 
+      // Multiverse: a parallel sky bleeds through — the same panorama flipped
+      // and yaw-offset, held at low opacity so a mirror world ghosts behind
+      // this one. Additive so it only lightens, never occludes the ground.
+      const ghostSky = new THREE.Mesh(
+        skyDome.geometry,
+        new THREE.MeshBasicMaterial({
+          map: skyTexture,
+          side: THREE.BackSide,
+          fog: false,
+          depthWrite: false,
+          transparent: true,
+          opacity: 0.3,
+          blending: THREE.AdditiveBlending,
+        }),
+      );
+      ghostSky.scale.set(-1, 0.32, 1);
+      ghostSky.rotation.y = Math.PI * 0.5;
+      ghostSky.renderOrder = -1;
+      group.add(ghostSky);
+
       // Ground: tiled photoscan grass (1k diff+normal over ~10-unit tiles;
       // the tiling repeat hides under fog, flora cover and label chrome).
       const texLoader = new THREE.TextureLoader();
