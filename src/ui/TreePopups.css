@@ -117,3 +117,139 @@ main.gesture-mode .tree-popup-close {
   padding: 20px 30px;
   font-size: 28px;
 }
+
+/* ── TOPIC CARD (the ceiling's constellation card) ──────────────────────────
+   Same glass family as the tree popups. Read from BELOW, at projector
+   distance, so: bigger leading, no scrollbars anywhere (the list is paged),
+   and the "recalled" lines are visibly fragments of memory rather than
+   quotes. */
+.topic-card {
+  width: 420px;
+}
+
+.topic-card-live {
+  color: #9fe6b5;
+  border-color: #9fe6b5;
+}
+
+.topic-card-summary {
+  margin: 0;
+  font-size: 17px;
+  line-height: 1.5;
+  color: #eef3ff;
+}
+
+/* The two silences read as quiet notes, never as content. */
+.topic-card-summary-pending,
+.topic-card-summary-never {
+  color: #93a3bd;
+  font-style: italic;
+  font-size: 15px;
+}
+
+.topic-card-lines {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.topic-card-line {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-left: 10px;
+  border-left: 2px solid rgba(150, 180, 230, 0.28);
+}
+
+.topic-card-line-focus {
+  border-left-color: #ffc98a;
+}
+
+/* Memory, not transcript: a recalled gist is dimmer and its clipped tail is
+   marked with an ellipsis in the markup. */
+.topic-card-line[data-source="recalled"] .topic-card-line-text {
+  color: #b9c6dc;
+}
+
+.topic-card-line-meta {
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #8ea0bb;
+}
+
+.topic-card-line-text {
+  font-size: 15px;
+  line-height: 1.4;
+  color: #e6ecf8;
+}
+
+.topic-card-pager {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.topic-card-pager-count {
+  font-size: 13px;
+  color: #93a3bd;
+  letter-spacing: 0.08em;
+}
+
+.topic-card-related {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.topic-card-related-row {
+  display: flex;
+  flex-direction: column;
+}
+
+.topic-card-related-label {
+  font-size: 14px;
+  color: #e6ecf8;
+}
+
+/* Provenance stays visible: the model's arcs are warm, lexical ones cool —
+   the same law the ceiling's arcs are drawn by. */
+.topic-card-related-row[data-source="agent"] .topic-card-related-label {
+  color: #ffc98a;
+}
+
+.topic-card-related-row[data-source="lexical"] .topic-card-related-label {
+  color: #9db6cf;
+}
+
+.topic-card-related-reason {
+  font-size: 12px;
+  color: #8ea0bb;
+}
+
+main.gesture-mode .topic-card {
+  width: min(620px, 46vw);
+}
+
+main.gesture-mode .topic-card-summary {
+  font-size: 24px;
+}
+
+main.gesture-mode .topic-card-line-text {
+  font-size: 21px;
+}
+
+main.gesture-mode .topic-card-line-meta,
+main.gesture-mode .topic-card-related-reason {
+  font-size: 16px;
+}
+
+main.gesture-mode .topic-card-related-label {
+  font-size: 20px;
+}

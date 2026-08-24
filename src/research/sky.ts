@@ -60,6 +60,29 @@ export interface CloudSnapshotEntry {
   elidedCount: number;
 }
 
+// One constellation read in full — the wall's topic card (see cloudDetail).
+export interface CloudDetail {
+  id: string;
+  label: string;
+  labelSource: "agent" | "topic";
+  firstAtMs: number;
+  freshAtMs: number;
+  turnCount: number;
+  dominantSpeaker: string | null;
+  live: boolean;
+  named: boolean;
+  // The agent's one-sentence abstract, or null — the card NEVER fabricates one.
+  summary: string | null;
+  summaryAtMs: number | null;
+  agentAtMs: number | null;
+  // The thread in spoken order. "said" = live text; "recalled" = a retired
+  // turn's ≤80-char star gist (the window dropped the rest).
+  lines: Array<{ id: string; atMs: number; speaker: string | null; text: string; source: "said" | "recalled" }>;
+  // How many turns fell off even the star memory.
+  elidedCount: number;
+  related: Array<{ id: string; label: string; strength: number; reason: string; source: "agent" | "lexical" }>;
+}
+
 export interface SkySnapshot {
   clouds: CloudSnapshotEntry[];
   links: CloudLink[];
@@ -155,6 +178,11 @@ const DEFAULT_RELATE_TIMEOUT_MS = 30_000;
 const MAX_CLOUDS = 24;
 const MAX_SNAPSHOT_LINKS = 12;
 const MAX_SAMPLES_PER_CLOUD = 4;
+// The agent abstract shown on the topic card — one sentence, hard-capped so a
+// runaway reply can never blow out the card.
+const MAX_SUMMARY_CHARS = 320;
+// Related constellations listed on a topic card (strongest first).
+const MAX_RELATED_IN_DETAIL = 4;
 const MAX_SAMPLE_CHARS = 200;
 const RECENT_TURNS_FOR_MODEL = 12;
 // Persisted token bags are trimmed back to this many top tokens once they
@@ -208,6 +236,12 @@ interface CloudState {
   // dusted at (new material re-earns the name). Deterministic structure is
   // never silently overridden: the demotion is traced (research.sky.dust).
   dustedAtTurnCount: number | null;
+  // AGENT ABSTRACT: one sentence answering "what was this thread about?", for
+  // the wall's topic card. Null until the relate tick writes one (and forever,
+  // with no model) — the card then falls back to the spoken lines themselves
+  // rather than inventing a recap.
+  agentSummary: string | null;
+  agentSummaryAtMs: number | null;
 }
 
 interface LiveTurnState {
@@ -364,6 +398,8 @@ export class CloudGraph {
           stars: [],
           elidedCount: 0,
           dustedAtTurnCount: null,
+          agentSummary: null,
+          agentSummaryAtMs: null,
         };
         this.#clouds.set(topic.id, cloud);
       }
@@ -500,6 +536,82 @@ export class CloudGraph {
   }
 
   // ── reads ─────────────────────────────────────────────────────────────────
+
+  /**
+   * ONE CONSTELLATION, IN FULL — what the wall's topic card reads when a
+   * constellation is picked ("what was this thread about?").
+   *
+   * Deliberately NOT in the snapshot: abstracts plus every line of 24 clouds
+   * would ride every SSE frame for a card that shows one cloud at a time. The
+   * wall fetches this on open instead (GET /api/research/sky/topic/:id).
+   *
+   * `lines` is the thread in spoken order, and says which half it came from:
+   * "said" = a live turn whose text the window still holds, "recalled" = a
+   * retired turn kept as an ≤80-char star gist. `elidedCount` counts what fell
+   * off even that — the card admits the gap instead of implying completeness.
+   */
+  cloudDetail(id: string): CloudDetail | null {
+    const cloud = this.#clouds.get(id);
+    if (cloud === undefined) {
+      return null;
+    }
+    const lines: CloudDetail["lines"] = cloud.stars.map((star) => ({
+      id: star.id,
+      atMs: star.atMs,
+      speaker: star.speaker,
+      text: star.gist,
+      source: "recalled" as const,
+    }));
+    const recalled = new Set(cloud.stars.map((star) => star.id));
+    for (const sample of cloud.samples) {
+      if (recalled.has(sample.id)) {
+        continue;
+      }
+      lines.push({
+        id: sample.id,
+        atMs: this.#liveTurns.get(sample.id)?.atMs ?? cloud.freshAtMs,
+        speaker: sample.speaker,
+        text: sample.text,
+        source: "said",
+      });
+    }
+    lines.sort((a, b) => a.atMs - b.atMs);
+    const related = [...this.#agentLinks, ...this.#lexicalLinks()]
+      .filter((link) => link.a === id || link.b === id)
+      .map((link) => {
+        const otherId = link.a === id ? link.b : link.a;
+        const other = this.#clouds.get(otherId);
+        return {
+          id: otherId,
+          label: other === undefined ? otherId : other.agentName ?? other.label,
+          strength: link.strength,
+          reason: link.reason,
+          source: link.source,
+        };
+      })
+      .sort((a, b) => b.strength - a.strength)
+      .slice(0, MAX_RELATED_IN_DETAIL);
+    return {
+      id: cloud.id,
+      label: cloud.agentName ?? cloud.label,
+      labelSource: cloud.agentName !== null ? "agent" : "topic",
+      firstAtMs: cloud.firstAtMs,
+      freshAtMs: cloud.freshAtMs,
+      turnCount: cloud.retiredTurnCount + cloud.liveTurnIds.size,
+      dominantSpeaker: this.#dominantSpeaker(cloud),
+      live: cloud.liveTopicId !== null,
+      named: this.#isNamed(cloud),
+      summary: cloud.agentSummary,
+      summaryAtMs: cloud.agentSummaryAtMs,
+      // The card's honesty line: with no abstract it says so and shows the
+      // lines instead. `agentAtMs === null` means the model has never spoken
+      // at all, which is a different silence than "not summarized yet".
+      agentAtMs: this.#agentAtMs,
+      lines,
+      elidedCount: cloud.elidedCount,
+      related,
+    };
+  }
 
   snapshot(): SkySnapshot {
     if (this.#snapshotMemo !== null) {
@@ -752,6 +864,11 @@ export class CloudGraph {
         into.stars = [...into.stars, ...from.stars].sort((a, b) => a.atMs - b.atMs);
         into.elidedCount += from.elidedCount;
         capStars(into);
+        // The absorbed thread's abstract now describes only part of the merged
+        // one, so it is STALE, not wrong-to-keep: drop both and let the next
+        // tick summarize the union. A merged card shows its lines meanwhile.
+        into.agentSummary = null;
+        into.agentSummaryAtMs = null;
         this.#clouds.delete(from.id);
         // Re-point everything that referenced the absorbed cloud.
         this.#agentLinks = this.#agentLinks
@@ -808,6 +925,25 @@ export class CloudGraph {
       cloud.agentName = name;
       names += 1;
     }
+    // SUMMARIES: one sentence per constellation, for the wall's topic card
+    // (click a constellation → "what was this thread about?"). Purely
+    // additive: absent or rejected leaves `agentSummary` null and the card
+    // falls back to the actual spoken lines, which is the honest floor —
+    // never a fabricated recap.
+    let summaries = 0;
+    for (const entry of asArray(value.summaries)) {
+      const id = isRecord(entry) && typeof entry.id === "string" ? entry.id : null;
+      const text = isRecord(entry) && typeof entry.summary === "string" ? entry.summary.trim() : "";
+      const cloud = id !== null ? this.#clouds.get(id) : undefined;
+      if (cloud === undefined || text.length === 0) {
+        rejected += 1;
+        this.#trace("research.sky.reject", "debug", correlationId, { kind: "summary", id: id ?? "?" });
+        continue;
+      }
+      cloud.agentSummary = text.slice(0, MAX_SUMMARY_CHARS);
+      cloud.agentSummaryAtMs = this.#clock();
+      summaries += 1;
+    }
     // DUST verb: the agent judged a cloud babble — it drops its name and
     // renders as dust. REVERSIBLE (cleared when the cloud grows past the turn
     // count it was dusted at) and never silent: every demotion is traced.
@@ -852,6 +988,7 @@ export class CloudGraph {
     this.#trace("research.sky.applied", "info", correlationId, {
       links: links.length,
       names,
+      summaries,
       merges,
       dusted,
       rejected,
@@ -1027,10 +1164,14 @@ const SKY_SYSTEM_PROMPT =
   "(rendered as arcs between constellations) with a short reason, optional MERGES of constellations that are " +
   "really one concept (only merge ids you were given), a condensed NAME (max 4 words) per constellation where " +
   "the label is weak, DUST for a constellation that is pure conversational babble not worth a name (it fades " +
-  "to background dust; reversible), and optional researchHooks (a question worth researching for a topicId). " +
+  "to background dust; reversible), a one-sentence SUMMARY per named constellation (what this thread was " +
+  "actually about and where it landed — written for someone reading it off a ceiling, grounded ONLY in the " +
+  "turns you were given; omit the entry rather than guess), and optional researchHooks (a question worth " +
+  "researching for a topicId). " +
   'Reply with STRICT JSON only — {"merges":[{"into":"topic-0001","from":["topic-0002"],"reason":"..."}],' +
   '"links":[{"a":"topic-0001","b":"topic-0003","strength":0.7,"reason":"..."}],' +
-  '"names":[{"id":"topic-0001","name":"..."}],"dust":[{"id":"topic-0001","reason":"..."}],' +
+  '"names":[{"id":"topic-0001","name":"..."}],"summaries":[{"id":"topic-0001","summary":"..."}],' +
+  '"dust":[{"id":"topic-0001","reason":"..."}],' +
   '"researchHooks":[{"topicId":"topic-0001","question":"..."}]} — no markdown, no prose. Omit empty arrays.';
 
 // Null ONLY when no key is configured (a clean, deliberate no-op). Every real

@@ -348,7 +348,11 @@ interface RoomSceneProps {
   onResearchNode?: (id: string) => void;
   // Click/dwell a CLOUD (it picks as its topic's freshest turn — the branch-
   // tip precedent): research that utterance directly.
-  onDialogueNode?: (turnId: string) => void;
+  // A constellation was picked (click or dwell, star or whole patch): the turn
+  // key, the constellation it belongs to, and the picked node's projected rect
+  // so the topic card opens beside it. `cloudId` is null only for payloads
+  // from before constellations carried their own id.
+  onDialogueNode?: (turnId: string, cloudId: string | null, anchor: SceneDwellRect | null) => void;
   // The server's conversation sky (ProjectorSnapshot.sky): clouds remembered
   // BEYOND the rolling dialogue window + provenance-tagged relations. Absent
   // → clouds derive from `topics` and no wisps render (degradation gate).
@@ -4239,7 +4243,11 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
         }
         const hit = new THREE.Mesh(starHitGeom, invisibleHitMat);
         hit.userData.starHit = true;
-        hit.userData.pick = { kind: "dialogue", key: star.id };
+        // The star carries its CONSTELLATION too: picking anywhere in a
+        // constellation opens that thread's topic card (the card highlights
+        // the star that was picked), rather than firing a research quest at
+        // one utterance with no context.
+        hit.userData.pick = { kind: "dialogue", key: star.id, cloud: entry.cloudSpec?.id };
         hit.position.set(offsets[index * 3]!, offsets[index * 3 + 1]!, offsets[index * 3 + 2]!);
         entry.group.add(hit);
       }
@@ -4256,7 +4264,12 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
       const group = new THREE.Group();
       const hit = new THREE.Mesh(GEO.hitShell, invisibleHitMat);
       if (cloud.freshestTurnId !== null) {
-        hit.userData.pick = { kind: "dialogue", key: cloud.freshestTurnId };
+        hit.userData.pick = { kind: "dialogue", key: cloud.freshestTurnId, cloud: cloud.id };
+      } else {
+        // A MEMORY constellation: nothing live is left, so there is no turn to
+        // anchor to — but the thread is still readable. The card opens off the
+        // cloud id alone.
+        hit.userData.pick = { kind: "dialogue", key: `cloud:${cloud.id}`, cloud: cloud.id };
       }
       group.add(hit);
       const entry: Entry = { kind: "cloud", cloudSpec: cloud, group, mats: [], baseEmissive: 0, head: null, headY: 0, cat: null, catBaseX: 0, label: null, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: (hashSeed(cloud.id) % 628) / 100, flashStart: null, removing: false };
@@ -5328,7 +5341,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
       } else if (picked?.kind === "research" && picked.key !== undefined) {
         onResearchRef.current?.(picked.key);
       } else if (picked?.kind === "dialogue" && picked.key !== undefined) {
-        onDialogueRef.current?.(picked.key);
+        onDialogueRef.current?.(picked.key, picked.cloud ?? null, dwellRectFor(`${SCENE_TURN_PREFIX}${picked.key}`));
       } else if (picked === null) {
         // Empty ground: a deliberate click on nothing closes the tree menu.
         onPickMissRef.current?.();
@@ -5390,9 +5403,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
     const SCENE_RESEARCH_PREFIX = "scene:research:";
     const SCENE_TURN_PREFIX = "scene:turn:";
     let dwellHighlights: ReadonlySet<string> = new Set();
-    const sceneTargetIdOf = (
-      picked: { kind: string; key?: string; callsign?: string; branch?: string; number?: number } | null,
-    ): string | null => {
+    const sceneTargetIdOf = (picked: ScenePickPayload | null): string | null => {
       if (picked?.kind === "idea" && picked.key !== undefined && picked.key !== "__idle__") {
         const entry = ideaEntries.get(picked.key);
         if (entry?.ideaSpec?.status === "ready" && !entry.removing) {
@@ -5413,9 +5424,10 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
           return `${SCENE_RESEARCH_PREFIX}${picked.key}`;
         }
       } else if (picked?.kind === "dialogue" && picked.key !== undefined) {
-        // A turn pick is a CLOUD pick (the cloud's hit ellipsoid carries its
-        // topic's freshest turn id) — resolve through the fresh-turn index.
-        const cloudId = freshTurnToCloud.get(picked.key);
+        // A turn pick is a CLOUD pick — the payload names its constellation
+        // outright (the fresh-turn index is the fallback for pre-`cloud`
+        // payloads and for memory constellations with no live turn left).
+        const cloudId = picked.cloud ?? freshTurnToCloud.get(picked.key);
         const entry = cloudId !== undefined ? cloudEntries.get(cloudId) : undefined;
         if (entry !== undefined && !entry.removing) {
           return `${SCENE_TURN_PREFIX}${picked.key}`;
@@ -5431,7 +5443,9 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
         return researchEntries.get(id.slice(SCENE_RESEARCH_PREFIX.length)) ?? null;
       }
       if (id.startsWith(SCENE_TURN_PREFIX)) {
-        const cloudId = freshTurnToCloud.get(id.slice(SCENE_TURN_PREFIX.length));
+        const key = id.slice(SCENE_TURN_PREFIX.length);
+        // "cloud:<id>" is a memory constellation's key (no live turn to name).
+        const cloudId = key.startsWith("cloud:") ? key.slice("cloud:".length) : freshTurnToCloud.get(key);
         return cloudId !== undefined ? cloudEntries.get(cloudId) ?? null : null;
       }
       if (id.startsWith(SCENE_PROC_PREFIX)) {
@@ -5544,9 +5558,9 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
         } else if (id.startsWith(SCENE_RESEARCH_PREFIX) && entry.researchSpec !== undefined) {
           onResearchRef.current?.(entry.researchSpec.id);
         } else if (id.startsWith(SCENE_TURN_PREFIX) && entry.kind === "cloud") {
-          // The dwelled cloud researches its freshest utterance (the turn id
-          // IS the target id's key — same contract as the click path).
-          onDialogueRef.current?.(id.slice(SCENE_TURN_PREFIX.length));
+          // The dwelled constellation opens its topic card (same contract as
+          // the click path: turn key + the constellation it belongs to).
+          onDialogueRef.current?.(id.slice(SCENE_TURN_PREFIX.length), entry.cloudSpec?.id ?? null, dwellRectFor(id));
         } else if (id.startsWith(SCENE_PROC_PREFIX) && entry.treeSpec !== undefined) {
           // Dwell activation: same anchor contract as the click path.
           onSelectRef.current(entry.treeSpec.callsign, dwellRectFor(id));

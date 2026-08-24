@@ -386,6 +386,18 @@ export function createProjectorApp(runtime: ProjectorRuntime, options: Projector
     }
     return context.json(runtime.researchTurn(context.req.param("id")));
   });
+  // TOPIC CARD: read ONE constellation in full — its abstract (when the relate
+  // agent has written one), the thread's lines in spoken order, what it relates
+  // to, and how much history has been elided. Off the snapshot on purpose: the
+  // ceiling shows a card for one constellation at a time, so this rides a fetch
+  // instead of every SSE frame. 404 for an unknown/evicted topic id.
+  app.get("/api/research/sky/topic/:id", (context) => {
+    const detail = runtime.research.cloudGraph().cloudDetail(context.req.param("id"));
+    if (detail === null) {
+      return context.json({ error: "no such constellation" }, 404);
+    }
+    return context.json(detail);
+  });
   // FOLLOW-UP: spawn one of a completed dossier's open questions as its own
   // quest (body: {index}). Bad input degrades to a no-op current snapshot.
   app.post("/api/research/:id/followup", async (context) => {

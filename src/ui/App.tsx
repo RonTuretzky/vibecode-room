@@ -38,6 +38,9 @@ type PlantingTarget = { kind: "idea"; ideaId: string | null } | { kind: "tree"; 
 import { GuidedDemo } from "./guided/GuidedDemo";
 import { advanceOnSnapshot, popPracticeOrb, restartIdea, setHandsLive, skipStep, startGuided, type GuidedState, type PointerRig } from "./guided/machine";
 import "./buildloop.css";
+import { isFreshImportArrival } from "./import-arrival";
+import { TopicCard } from "./TopicCard";
+import type { TopicCardDetail } from "./sky/topic-card";
 import { startMicCapture, type MicCaptureHandle } from "./mic";
 
 export const REQUIRED_PROJECTOR_REGIONS = [
@@ -234,6 +237,19 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
   );
   const issuePopupRef = useRef<typeof issuePopup>(null);
   issuePopupRef.current = issuePopup;
+  // TOPIC CARD (ceiling): the picked constellation's thread. `detail` is null
+  // while the fetch is in flight — the card opens instantly and fills in, so a
+  // pick never looks like it did nothing. `error` carries the honest miss.
+  const [topicCard, setTopicCard] = useState<{
+    cloudId: string;
+    focusTurnId: string | null;
+    anchor: SceneDwellRect | null;
+    detail: TopicCardDetail | null;
+    error: string | null;
+  } | null>(null);
+  const topicCardRef = useRef<typeof topicCard>(null);
+  topicCardRef.current = topicCard;
+  const [topicResearchBusy, setTopicResearchBusy] = useState(false);
   // GUEST HANDS overlay (the URL/QR other computers open to get hand controls).
   const [guestsOpen, setGuestsOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -307,22 +323,21 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
   }, []);
   // Watch the snapshot for freshly-ARRIVED imports (QR phone submissions,
   // GitHub clones): those trees appear without any wall interaction, so the
-  // wall offers them a chosen spot. Only genuine arrivals count — the first
-  // snapshot seeds the seen-set silently.
-  const seenImportUpids = useRef<Set<string> | null>(null);
+  // wall offers them a chosen spot. "Fresh" is the SERVER's arrival stamp, not
+  // "a upid this wall hasn't seen" — see import-arrival.ts: the old test made
+  // an ordinary room startup (wall connects before the first filled snapshot)
+  // announce every previously imported project as a new arrival.
+  const seenImportUpids = useRef<Set<string>>(new Set<string>());
   useEffect(() => {
     const seen = seenImportUpids.current;
-    if (seen === null) {
-      seenImportUpids.current = new Set(snapshot.processes.map((process) => process.upid));
-      return;
-    }
+    const now = Date.now();
     for (const process of snapshot.processes) {
       if (seen.has(process.upid)) {
         continue;
       }
+      const arrived = isFreshImportArrival(process, seen, now);
       seen.add(process.upid);
-      const kind = process.source?.kind;
-      if (kind === "phone-import" || kind === "github-import") {
+      if (arrived) {
         setImportPlantOffer({ upid: process.upid, title: process.task || process.callsign });
       }
     }
@@ -873,24 +888,70 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
     }
   }, [liveMode]);
 
-  // Clicking a dialogue TURN in the 3D tree: research that utterance directly —
-  // the server creates the quest and spawns the agent in one step, no passive
-  // suggestion round required.
+  // PICKING A CONSTELLATION opens its TOPIC CARD — what this thread was about,
+  // in its own words. It used to POST a research quest at the constellation's
+  // freshest utterance and show nothing at all, which is a heavy invisible
+  // side effect for a gesture that reads as "tell me about this". Researching
+  // the thread is now a verb ON the card (researchTopicThread below).
   const onDialogueNode = useCallback(
+    async (turnId: string, cloudId: string | null, anchor: SceneDwellRect | null) => {
+      if (cloudId === null) {
+        return; // pre-`cloud` payload: nothing to read, and no silent quest
+      }
+      // Open immediately with what the ceiling already knows, then fill in the
+      // full thread — the card must never wait on a fetch at wall latency.
+      setTopicCard({ cloudId, focusTurnId: turnId.startsWith("cloud:") ? null : turnId, anchor, detail: null, error: null });
+      if (!liveMode || mockModeRef.current) {
+        return; // offline demo: constellations render, but the thread lives server-side
+      }
+      try {
+        const response = await fetch(`/api/research/sky/topic/${encodeURIComponent(cloudId)}`);
+        if (!response.ok) {
+          setTopicCard((current) =>
+            current === null || current.cloudId !== cloudId
+              ? current
+              : { ...current, error: `This thread is no longer kept (HTTP ${response.status}).` },
+          );
+          return;
+        }
+        const detail = (await response.json()) as TopicCardDetail;
+        setTopicCard((current) =>
+          current === null || current.cloudId !== cloudId ? current : { ...current, detail, error: null },
+        );
+      } catch {
+        setTopicCard((current) =>
+          current === null || current.cloudId !== cloudId
+            ? current
+            : { ...current, error: "Could not read this thread — is the room server up?" },
+        );
+      }
+    },
+    [liveMode],
+  );
+
+  // 🔭 The topic card's research verb — what a bare constellation pick used to
+  // do invisibly, now a deliberate press on a card you have already read.
+  const researchTopicThread = useCallback(
     async (turnId: string) => {
       if (!liveMode || mockModeRef.current) {
-        return; // offline demo: turns render but the direct spawn needs the server
+        return;
       }
+      setTopicResearchBusy(true);
       try {
         const response = await fetch(`/api/research/turn/${encodeURIComponent(turnId)}`, { method: "POST" });
         if (response.ok && response.headers.get("content-type")?.includes("application/json")) {
           setSnapshot((await response.json()) as ProjectorSnapshot);
+          setTopicCard(null);
+        } else {
+          reportControlFailure("Research this thread", response.status);
         }
       } catch {
-        // Non-authoritative projector: a failed POST must never block the UI.
+        reportControlFailure("Research this thread");
+      } finally {
+        setTopicResearchBusy(false);
       }
     },
-    [liveMode],
+    [liveMode, reportControlFailure],
   );
 
   // CLICK/DWELL A TREE -> ITS MENU, NOTHING MORE. Picking a garden tree opens
@@ -2488,7 +2549,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
         topics={topicSpecs}
         research={researchSpecs}
         onResearchNode={onResearchNode}
-        onDialogueNode={(turnId) => void onDialogueNode(turnId)}
+        onDialogueNode={(turnId, cloudId, anchor) => void onDialogueNode(turnId, cloudId, anchor)}
         sky={showResearch ? snapshot.sky : undefined}
         researchThinking={snapshot.researchThinking === true}
         skyView={urlConfig.research}
@@ -3101,6 +3162,48 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
             ) : null;
           })()
         : null}
+
+      {/* TOPIC CARD: the picked constellation's thread (ceiling). Opens the
+          instant the pick lands — while `detail` is still null it shows the
+          waiting line, and a miss shows why, so a pick is never silent. */}
+      {topicCard !== null ? (
+        topicCard.detail !== null ? (
+          <TopicCard
+            detail={topicCard.detail}
+            focusTurnId={topicCard.focusTurnId}
+            anchor={topicCard.anchor}
+            researchBusy={topicResearchBusy}
+            onResearch={
+              topicCard.focusTurnId !== null
+                ? () => void researchTopicThread(topicCard.focusTurnId as string)
+                : undefined
+            }
+            onClose={() => setTopicCard(null)}
+          />
+        ) : (
+          <section
+            className="tree-popup topic-card"
+            data-testid="topic-card-loading"
+            data-dwell-shield="1"
+            role="dialog"
+            aria-label="Topic"
+          >
+            <p className="topic-card-summary topic-card-summary-pending">
+              {topicCard.error ?? "Reading this thread…"}
+            </p>
+            <div className="tree-popup-actions">
+              <button
+                type="button"
+                className="ctl-button tree-popup-close"
+                data-testid="topic-card-close"
+                onClick={() => setTopicCard(null)}
+              >
+                ✕
+              </button>
+            </div>
+          </section>
+        )
+      ) : null}
 
       {/* HOLO PANEL: the imported tree's LIVE deployment (via the same-origin
           /salem proxy) floating beside the tree. Mounted like the tree menu —

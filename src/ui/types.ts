@@ -42,14 +42,20 @@ export interface ProjectorProcess {
   // projects imported from outside via the phone QR page: "github-import" when
   // the link was a real github.com repo (the server clones it), "phone-import"
   // for context-only or any-other-link submissions (url null when no link).
+  // `atMs` is when the import LANDED — the wall's arrival offer ("📦 … arrived
+  // — ⚘ Plant it…") keys off it, because "a upid I have not seen before" is
+  // true of every old import whenever a wall boots ahead of the first filled
+  // snapshot. Optional: pre-atMs servers simply never trigger the offer.
   source?:
     | {
         kind: "github-import";
         url: string;
+        atMs?: number;
       }
     | {
         kind: "phone-import";
         url: string | null;
+        atMs?: number;
       };
   // TAKE-HOME publish surface: once this idea's pitch deck is published to
   // GitHub Pages (confirmed 200), the public URL and the server-generated QR

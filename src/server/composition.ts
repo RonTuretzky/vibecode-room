@@ -772,6 +772,14 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       // the snapshot's per-process deployUrl (the tree menu's "Live app" row)
       // and the /api/process/:upid/repo surface.
       deployUrl?: string;
+      // WHEN this import landed (wall clock). The wall's "📦 … arrived —
+      // ⚘ Plant it…" offer keys off this instead of "upid I haven't seen
+      // before": a wall that boots while the server is still filling its
+      // first snapshot used to seed an EMPTY seen-set, so every previously
+      // imported tree re-announced itself as a fresh arrival on ordinary
+      // room startup. An arrival timestamp is the honest test, and it
+      // survives reloads and second walls.
+      atMs: number;
     }
   >();
   // In-flight GitHub clone routines, keyed by UPID. Emergency stop and per-
@@ -1899,6 +1907,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       callsign: displayCallsign,
       task,
       status: parsed.kind === "github" ? "cloning" : "ready",
+      atMs: Date.now(),
     });
     this.recordExternalTrace({
       event: "project.import",
@@ -3903,8 +3912,8 @@ class LiveProjectorRuntime implements ProjectorRuntime {
         ...(imported === undefined
           ? {}
           : imported.kind === "github"
-            ? { source: { kind: "github-import" as const, url: imported.url ?? "" } }
-            : { source: { kind: "phone-import" as const, url: imported.url } }),
+            ? { source: { kind: "github-import" as const, url: imported.url ?? "", atMs: imported.atMs } }
+            : { source: { kind: "phone-import" as const, url: imported.url, atMs: imported.atMs } }),
         // SELF stage label: the wall renders this card/scene node like any
         // project but badges it SELF (stage.ts folds unknown stages safely for
         // pre-self clients).

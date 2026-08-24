@@ -224,6 +224,10 @@ export interface ScenePickPayload {
   callsign?: string;
   branch?: string;
   number?: number;
+  // Ceiling only: the CONSTELLATION a dialogue pick belongs to. Every star and
+  // the whole-patch ellipsoid carry it, so picking anywhere in a constellation
+  // opens that thread's topic card.
+  cloud?: string;
   // Set ONLY on a tree's coarse whole-body proxy: the metres-wide invisible
   // CANOPY ellipsoid standing in for geometry that never raycasts (the HD
   // engine's merged wood + instanced foliage). It spans the whole crown, so a
