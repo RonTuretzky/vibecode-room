@@ -2,9 +2,10 @@ import { questionsFromAssessment, type IdeaCandidate } from "../detect";
 import { IDEA_BRIEF_QUOTE_MAX_CHARS, IDEA_BRIEF_RATIONALE_MAX_CHARS, type IdeaBrief, type PendingSuggestion } from "../types";
 import type { IdeaTrayItem, ProjectorSuggestion } from "../ui/types";
 
-// How long a surfaced idea bubble stays acceptable before its pending suggestion
-// expires (mirrors VIBERSYN_ACCEPT_WINDOW_SECONDS' 120s default).
-export const DETECTION_BUBBLE_TTL_MS = 120_000;
+// How long a surfaced idea bubble stays acceptable before it's "not relevant
+// anymore" and its pending suggestion expires. Shortened to 60s so stale ideas
+// stop lingering on the projector once the conversation has moved on.
+export const DETECTION_BUBBLE_TTL_MS = 60_000;
 
 // Map a detected idea candidate to the projector's idea-bubble shape. The bubble
 // now carries its PROVENANCE — the turn span + verbatim quote the idea was
