@@ -1475,30 +1475,28 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         group.add(cat);
         envCats.push({ group: cat, baseX: x, baseZ: z, phase: floraRng() * Math.PI * 2 });
       };
-      // A dancing purple chihuahua parked at the foot of every meadow tree too
-      // — a low-poly companion (tiny body, big pointed upright ears, small
-      // snout, wagging tail) that rides the same cat field so the frame loop
-      // hops it into a dance.
-      const dogMat = new THREE.MeshPhongMaterial({ color: 0x9b30ff, emissive: 0x9b30ff, emissiveIntensity: 0.12 });
+      // A dancing dog parked at the foot of every meadow tree too — a low-poly
+      // companion (longer body, droopy ears, snout, wagging tail) that rides
+      // the same cat field so the frame loop hops it into a dance.
+      const dogMat = new THREE.MeshPhongMaterial({ color: 0x8a6a44, emissive: 0x8a6a44, emissiveIntensity: 0.08 });
       const spawnTreeDog = (x: number, z: number, scale: number) => {
         const dog = new THREE.Group();
         const body = new THREE.Mesh(catGeoBody, dogMat);
-        body.scale.set(0.7, 0.75, 0.95);
-        body.position.y = 0.2;
+        body.scale.set(1.0, 1.0, 1.3);
+        body.position.y = 0.22;
         dog.add(body);
         const head = new THREE.Mesh(catGeoBody, dogMat);
-        head.scale.setScalar(0.8);
-        head.position.set(0, 0.4, 0.18);
+        head.scale.setScalar(0.85);
+        head.position.set(0, 0.42, 0.22);
         dog.add(head);
         const snout = new THREE.Mesh(catGeoBody, dogMat);
-        snout.scale.set(0.3, 0.3, 0.42);
-        snout.position.set(0, 0.34, 0.32);
+        snout.scale.set(0.4, 0.4, 0.6);
+        snout.position.set(0, 0.36, 0.4);
         dog.add(snout);
-        // Big pointed upright ears — the chihuahua's signature.
         for (const side of [-1, 1]) {
-          const ear = new THREE.Mesh(catGeoEar, dogMat);
-          ear.scale.set(0.1, 0.16, 0.06);
-          ear.position.set(side * 0.13, 0.58, 0.16);
+          const ear = new THREE.Mesh(catGeoBody, dogMat);
+          ear.scale.set(0.16, 0.32, 0.1);
+          ear.position.set(side * 0.14, 0.5, 0.18);
           dog.add(ear);
         }
         const tail = new THREE.Mesh(catGeoTail, dogMat);
