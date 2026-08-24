@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import React from "react";
-import { Gateway, createSmithers } from "smithers-orchestrator";
+import { Gateway, createSmithers } from "smthrs";
 import { z } from "zod";
 import { MemoryCorrelationStore } from "../../src/seam/correlation-store";
 import { SeamDispatcher } from "../../src/seam/dispatcher";
