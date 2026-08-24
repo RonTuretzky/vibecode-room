@@ -229,34 +229,60 @@ main.gesture-mode .ctl-button.tree-menu-close {
 }
 
 /* ============================================================================
-   TEND THE TREE — the SELF tree's two-column surface. One plant vocabulary,
-   glass tokens throughout, and every verb a generous stationary dwell target.
-   Column order is FIXED (never mirrored by placement side): a mid-open flip
-   would move targets under a dwelling cursor.
+   TEND THE TREE — the SELF tree's CONSTELLATION OF CHIPS. No panel, no
+   container: the root is a full-viewport pointer-events:none section and
+   every verb / branch row / receipt is its OWN floating glass chip, placed by
+   tendChipLayout (tend-radial.ts) on arcs around the tree's projected anchor
+   rect. The 240ms left/top transition is the halo's proven glide idiom — the
+   App's 1 Hz anchor chase steps positions, CSS smooths them, and no per-frame
+   React render ever runs. One plant vocabulary, glass tokens throughout, and
+   every verb a generous stationary dwell target.
    ============================================================================ */
-.tree-menu.tree-tend {
-  width: min(760px, 92vw);
-  /* The tending body is the one panel that must hold a here-card + four
-     branch cards + pager with ZERO internal scrolling at wall sizes; 86vh
-     cannot hold that at 1080p gesture scale, so the tend panel alone gets a
-     taller ceiling — 96vh keeps ~20px of honest headroom for an inline tend
-     note/error above the list (overflow-y stays as the safety valve on tiny
-     windows). */
-  max-height: 96vh;
+.tree-tend-constellation {
+  position: fixed;
+  inset: 0;
+  z-index: 30; /* over the scene + halo (29), under the deck/QR overlays */
+  pointer-events: none; /* the garden stays pickable BETWEEN chips */
 }
 
-.tree-tend-columns {
-  display: grid;
-  grid-template-columns: 44% 1fr;
-  gap: 24px;
-  align-items: start;
-}
-
-.tree-tend-col {
+.tend-chip {
+  position: fixed;
+  z-index: 30;
+  pointer-events: auto;
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  min-width: 0;
+  gap: 8px;
+  border-radius: 16px;
+  border: 1px solid var(--glass-border);
+  padding: 12px 14px;
+  background: linear-gradient(180deg, var(--glass-panel-top), var(--glass-panel-bottom));
+  box-shadow: 0 10px 34px rgba(0, 0, 0, 0.4);
+  /* THE glide idiom (.tree-halo): chips re-project as the tree sways — the
+     1 Hz anchor step lands, the transition carries the chip there. */
+  transition: left 240ms ease, top 240ms ease;
+  animation: fade-in 200ms ease;
+}
+
+/* The ✕ chip is a real button (dwell-native); center its glyph. */
+button.tend-chip {
+  align-items: center;
+  justify-content: center;
+}
+
+/* Cards ride INSIDE chips now — the chip owns the glass, the card keeps its
+   accent edge but stops double-padding the pill. */
+.tend-chip .tree-here-card,
+.tend-chip .tree-growing-card {
+  padding: 10px 12px;
+}
+
+.tend-chip .tree-branch-card {
+  border-color: transparent;
+}
+
+.tend-chip .tree-branch-head {
+  padding: 4px 2px;
 }
 
 /* Card eyebrows ("🌿 growing now" / "🌳 you are here"). */
@@ -367,6 +393,8 @@ main.gesture-mode .ctl-button.tree-menu-close {
   padding: 10px 14px;
   border-radius: 12px;
   min-height: 56px;
+  position: relative; /* anchors the armed drain bar */
+  overflow: hidden;
 }
 
 .ctl-button.tend-verb .tend-line {
@@ -407,6 +435,31 @@ main.gesture-mode .ctl-button.tree-menu-close {
 }
 
 .ctl-button.tend-verb.is-armed-caution .tend-sub { color: #ffd166; }
+
+/* ── THE DRAIN — the armed window made VISIBLE (the tulip lesson: a real
+   prune died to an invisible 4s deadline). A full-width bar that drains
+   left→right over the armed window; the 10s here MUST match ARMED_CONFIRM_MS
+   (TreeMenu.tsx — the auto-disarm timer), and the element is keyed on the
+   armed slot so the prune stage change (prune: → prune2:) remounts it and
+   the fresh window restarts the sweep. Pure CSS — no JS ticks, nothing for
+   the 8fps wall to render per frame. ─────────────────────────────────────── */
+.tend-drain {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 5px;
+  background: currentColor;
+  opacity: 0.9;
+  transform-origin: left center;
+  animation: tend-drain 10s linear forwards;
+  pointer-events: none;
+}
+
+@keyframes tend-drain {
+  from { transform: scaleX(1); }
+  to { transform: scaleX(0); }
+}
 
 /* Honest receipts + the "reading the tree…" resting line. */
 .tree-tend-note {
@@ -509,6 +562,8 @@ main.gesture-mode .ctl-button.tree-menu-close {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  position: relative; /* anchors stage 3's own drain bar */
+  padding-bottom: 8px; /* the drain rides the block's bottom edge */
 }
 
 .tree-prune-scope-question {
@@ -580,22 +635,22 @@ main.gesture-mode .ctl-button.tree-menu-close {
 @media (prefers-reduced-motion: reduce) {
   .tree-halo { transition: none; animation: none; }
   .tree-growing-card { animation: none; }
+  .tend-chip { transition: none; animation: none; }
+  /* The drain freezes full — the armed skin still says "confirm stage". */
+  .tend-drain { animation: none; }
 }
 
-/* ── TEND gesture-XL (main.gesture-mode): the tending panel is THE wall
-   surface — 960px glass, ≥96px cards/verbs, ≥88px pager/back, ≥128px graft.
-   The vertical budget is the hard constraint (here-card + 4 cards + pager
-   with ZERO internal scroll), so the header/meta type rides slightly under
-   the generic menu scale and card gaps sit at 16px — the cards themselves
-   are ~470×96 targets, far past any straddle risk; the destructive verb
-   grids keep the full 24px separation. ─────────────────────────────────── */
-main.gesture-mode .tree-menu.tree-tend {
-  width: min(960px, 72vw);
-  padding: 24px 32px;
-  gap: 16px;
+/* ── TEND gesture-XL (main.gesture-mode): the chips are THE wall surface —
+   ≥96px verbs, ≥88px pager/back, ≥128px graft (the generic .ctl-button XL).
+   tendChipLayout hands each chip its gesture-width footprint; this block
+   scales the type + inner paddings to match. ───────────────────────────── */
+main.gesture-mode .tend-chip {
+  gap: 12px;
+  border-radius: 20px;
+  padding: 16px 18px;
 }
 
-/* Header on the tend panel: a notch under the generic menu scale — the
+/* Header on the identity chip: a notch under the generic menu scale — the
    vertical budget goes to the verb targets, not the title. */
 main.gesture-mode .tree-tend .tree-menu-title {
   font-size: 28px;
@@ -608,24 +663,6 @@ main.gesture-mode .tree-tend .tree-menu-status {
 
 main.gesture-mode .tree-tend .tree-menu-callsign {
   font-size: 18px;
-}
-
-main.gesture-mode .tree-tend-columns {
-  gap: 32px;
-  /* Column A only holds the graft button (+ a settled chip / growing card);
-     column B carries the whole vertical budget. 38% hands column B the width
-     that keeps the 2-up verb labels ("🍁 press & step off") on ONE line —
-     wrapped labels grew the here-card verbs to 129px and pushed the pager off
-     the 1080p glass. */
-  grid-template-columns: 38% 1fr;
-}
-
-main.gesture-mode .tree-tend-col {
-  gap: 24px;
-}
-
-main.gesture-mode .tree-tend-col-b {
-  gap: 16px;
 }
 
 main.gesture-mode .tree-card-eyebrow {

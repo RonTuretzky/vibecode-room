@@ -21,6 +21,7 @@ import { selfGardenTree, type SelfBranchesPayload, type SelfTreeSeed } from "./s
 import type { BuildloopProcess, BuildloopSnapshot } from "./buildloop";
 import { PRACTICE_ORB_COUNT } from "./guided/machine";
 import {
+  ARMED_CONFIRM_MS,
   DISMISS_CONFIRM_MS,
   TREE_MENU_GESTURE_WIDTH,
   TREE_MENU_SELF_GESTURE_WIDTH,
@@ -28,11 +29,15 @@ import {
   TREE_MENU_WIDTH,
   TREE_TEND_PAGE_SIZE,
   TreeMenu,
+  armedAfterDeadline,
   deslugBranch,
   pageSlice,
+  pruneScopeAllowed,
+  pruneStage2Advance,
   treeMenuModel,
   treeMenuPlacement,
 } from "./TreeMenu";
+import { tendChipLayout, type TendChipId } from "./tend-radial";
 import { HOLO_PAGES, HOLO_TILT_DEG, holoPanelTilt, salemSrc } from "./HoloPanel";
 import { branchPopupModel } from "./BranchPopup";
 import { issuePopupModel } from "./IssuePopup";
@@ -645,6 +650,7 @@ describe("tend the tree: the self tree's surface", () => {
   const renderTend = (overrides: {
     process?: ProjectorProcess;
     branches?: SelfBranchesPayload | null;
+    anchor?: { left: number; top: number; width: number; height: number };
     tendSeed?: {
       focusBranch?: string;
       armed?: string;
@@ -660,7 +666,7 @@ describe("tend the tree: the self tree's surface", () => {
       <TreeMenu
         process={overrides.process ?? selfProcess()}
         snapshot={demoProjectorSnapshot}
-        anchor={null}
+        anchor={overrides.anchor ?? null}
         onClose={() => {}}
         onOpenDeck={() => {}}
         onDismiss={() => {}}
@@ -885,6 +891,139 @@ describe("tend the tree: the self tree's surface", () => {
       />,
     );
     expect(fleet).not.toContain('data-testid="tree-menu-halo"');
+  });
+
+  // ── THE CONSTELLATION: no panel, no container ─────────────────────────────
+  // The two-column glass slab hid the garden and never framed the tree it
+  // tended (live-room verdict) — the self surface is now floating chips on
+  // arcs around the projected tree (tendChipLayout), each its own dwell
+  // target or dismiss shield.
+
+  test("NO PANEL: the self surface is chip-anchored — no columns, per-chip shields, a pass-through root", () => {
+    const html = renderTend();
+    // The two-column slab is GONE from the self markup.
+    expect(html).not.toContain("tree-tend-columns");
+    expect(html).toContain("tree-tend-constellation");
+    // The ROOT is NOT a shield: a full-viewport shield would swallow the
+    // dwell-miss/walk-away dismissal (the designed close). The shield moved
+    // onto each individual non-button chip instead.
+    const rootIdx = html.indexOf('data-testid="tree-menu"');
+    const rootTag = html.slice(html.lastIndexOf("<", rootIdx), html.indexOf(">", rootIdx));
+    expect(rootTag).not.toContain("data-dwell-shield");
+    // Every chip is EITHER a real <button> (dwell-native the moment it
+    // renders — DWELL_DOM_SELECTOR) or carries its OWN data-dwell-shield
+    // (dismiss-only glass: identity, receipts, card chips whose buttons
+    // live inside).
+    const chipTags = [...html.matchAll(/<(button|div)[^>]*data-chip="[^"]*"[^>]*>/gu)];
+    expect(chipTags.length).toBeGreaterThanOrEqual(9); // identity ✕ graft here head + 4 leaves + pager
+    for (const tag of chipTags) {
+      if (tag[1] !== "button") {
+        expect(tag[0]).toContain("data-dwell-shield");
+      }
+    }
+    // The non-self flavor keeps the whole-panel shield untouched.
+    const fleetIdx = renderToStaticMarkup(
+      <ProjectorApp initialSnapshot={demoProjectorSnapshot} initialOverlay={{ selected: "Atlas" }} />,
+    );
+    expect(fleetIdx).toContain("data-dwell-shield");
+  });
+
+  test("chips take their slots from tendChipLayout around the SAME anchor rect the halo chases", () => {
+    const anchor = { left: 800, top: 240, width: 320, height: 620 };
+    const html = renderTend({ anchor });
+    // The default fixture's present set (list view, nothing growing).
+    const present: TendChipId[] = [
+      "identity",
+      "close",
+      "graft",
+      "here",
+      "branches-head",
+      "branch-0",
+      "branch-1",
+      "branch-2",
+      "branch-3",
+      "pager",
+    ];
+    const layout = tendChipLayout(anchor, { width: 1920, height: 1080 }, { gesture: false, present });
+    for (const id of present) {
+      const slot = layout[id]!;
+      expect(html).toContain(`left:${Math.round(slot.left)}px;top:${Math.round(slot.top)}px`);
+    }
+  });
+
+  // ── CONFIRM TIMING (the tulip saga): the prune's TWO-question flow at dwell
+  // economics (0.8s dwell + 0.4s cooldown per press) could not land inside the
+  // old 4s window — a real prune was lost to the timeout. ───────────────────
+
+  test("the tend armed window is 10s, split from the 4s receipt-fade/fleet budget — and the drain sweeps exactly that window", () => {
+    expect(ARMED_CONFIRM_MS).toBe(10_000);
+    // The transient receipts and the single-question fleet remove keep the
+    // short honest budget.
+    expect(DISMISS_CONFIRM_MS).toBeGreaterThanOrEqual(2_000);
+    expect(DISMISS_CONFIRM_MS).toBeLessThanOrEqual(8_000);
+    expect(ARMED_CONFIRM_MS).toBeGreaterThan(DISMISS_CONFIRM_MS);
+    // The pure-CSS countdown MUST drain over the same window the timer
+    // enforces (no JS ticks — nothing for the 8fps wall to render per frame).
+    const css = readFileSync(new URL("./TreeMenu.css", import.meta.url), "utf8");
+    expect(css).toContain(`animation: tend-drain ${ARMED_CONFIRM_MS / 1000}s linear forwards`);
+    // And the auto-disarm timer lands exactly where armedAfterDeadline says
+    // (source seam — the App-source pin precedent).
+    const source = readFileSync(new URL("./TreeMenu.tsx", import.meta.url), "utf8");
+    expect(source).toContain("setTimeout(() => setArmed(armedAfterDeadline(armed)), ARMED_CONFIRM_MS)");
+  });
+
+  test("a deadline falls to RESTING: a stage-3 timeout never re-arms stage 2, nothing re-arms anything", () => {
+    expect(armedAfterDeadline("prune2:room/grown-change-1")).toBeNull();
+    expect(armedAfterDeadline("prune:room/grown-change-1")).toBeNull();
+    expect(armedAfterDeadline("merge:room/grown-change-1")).toBeNull();
+    expect(armedAfterDeadline("stop")).toBeNull();
+  });
+
+  test("presses racing the deadline no-op — and the stage-2 press hands stage 3 its OWN fresh window", () => {
+    // Stage 2 → stage 3 only while stage 2 is STILL armed…
+    expect(pruneStage2Advance("prune:room/b", "room/b")).toBe("prune2:room/b");
+    // …and the advance lands on a DIFFERENT armed key, so the [armed]-keyed
+    // auto-disarm effect re-runs and stage 3 owns a fresh 10s window.
+    expect(pruneStage2Advance("prune:room/b", "room/b")).not.toBe("prune:room/b");
+    // After the timeout (armed = null) the press is a no-op — never a re-arm.
+    expect(pruneStage2Advance(null, "room/b")).toBeNull();
+    expect(pruneStage2Advance("prune2:room/b", "room/b")).toBeNull();
+    // The scope buttons fire ONLY while stage 3 is still armed — a late press
+    // never cuts anything and never restarts the flow.
+    expect(pruneScopeAllowed("prune2:room/b", "room/b")).toBe(true);
+    expect(pruneScopeAllowed(null, "room/b")).toBe(false);
+    expect(pruneScopeAllowed("prune:room/b", "room/b")).toBe(false);
+    expect(pruneScopeAllowed("prune2:room/other", "room/b")).toBe(false);
+    // The rendered handlers guard through the ref'd CURRENT slot, not the
+    // closure's stale render (source pin).
+    const source = readFileSync(new URL("./TreeMenu.tsx", import.meta.url), "utf8");
+    expect(source.match(/pruneScopeAllowed\(armedRef\.current/gu)?.length).toBe(2);
+    expect(source).toContain("pruneStage2Advance(armedRef.current");
+  });
+
+  test("every armed stage draws the draining countdown — the deadline is visible, resting draws none", () => {
+    const mergeArmed = renderTend({
+      tendSeed: { focusBranch: "room/grown-change-1", armed: "merge:room/grown-change-1" },
+    });
+    expect(mergeArmed).toContain('class="tend-drain"');
+    expect(mergeArmed).toContain('data-armed-key="merge:room/grown-change-1"');
+    const pruneArmed = renderTend({
+      tendSeed: { focusBranch: "room/grown-change-1", armed: "prune:room/grown-change-1" },
+    });
+    expect(pruneArmed).toContain('data-armed-key="prune:room/grown-change-1"');
+    // Stage 3 (the scope question) draws its OWN drain — the fresh window has
+    // its fresh sweep.
+    const scopeArmed = renderTend({
+      tendSeed: { focusBranch: "room/grown-change-1", armed: "prune2:room/grown-change-1" },
+    });
+    expect(scopeArmed).toContain('data-armed-key="prune2:room/grown-change-1"');
+    const haltArmed = renderTend({
+      process: selfProcess({ execution: { status: "executing", progressLabel: "x", percent: 1 } }),
+      tendSeed: { armed: "stop" },
+    });
+    expect(haltArmed).toContain('data-armed-key="stop"');
+    // No armed stage → no drain anywhere.
+    expect(renderTend()).not.toContain("tend-drain");
   });
 });
 

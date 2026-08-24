@@ -472,6 +472,24 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
   // clears it on close; flat/corner rigs no-op the prop by design — the DOM
   // halo below is the lock mechanism on the flat wall, never the camera).
   const tendingSelfUpid = selectedProcess !== null && stageOf(selectedProcess) === "self" ? selectedProcess.upid : null;
+  // The lock label rides the halo, which rings the REAL tree — and a flat-
+  // locked wall never reframes, so that tree can sit far off-frame (measured
+  // live at left=2474 on a 1920 wall). When it does, pin the label to the
+  // viewport edge so the operator can still read what is being tended. Read
+  // in an EFFECT, never during render: the static renderer has no window.
+  const [lockPin, setLockPin] = useState<CSSProperties | undefined>(undefined);
+  useEffect(() => {
+    if (typeof window === "undefined" || menuAnchor === null) {
+      setLockPin(undefined);
+      return;
+    }
+    const offFrame = menuAnchor.left + menuAnchor.width > window.innerWidth - 24;
+    setLockPin(
+      offFrame
+        ? { position: "fixed", right: "24px", left: "auto", top: `${Math.max(16, Math.round(menuAnchor.top - 14))}px` }
+        : undefined,
+    );
+  }, [menuAnchor]);
 
   const ideaSelected = selected === IDEA_ID;
 
@@ -2843,7 +2861,16 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
             height: `${Math.round(menuAnchor.height + 28)}px`,
           }}
         >
-          <span className="tree-halo-lock" data-testid="tree-menu-lock">
+          {/* The lock label rides the halo, but the halo rings the REAL tree —
+              which a flat-locked wall can leave far off-frame (it never
+              reframes). Pin the label inside the viewport so the operator can
+              always read what is being tended, even when its tree cannot be
+              seen from this projection. */}
+          <span
+            className="tree-halo-lock"
+            data-testid="tree-menu-lock"
+            style={lockPin}
+          >
             🔒 tending this tree
           </span>
         </div>
