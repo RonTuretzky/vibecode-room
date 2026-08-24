@@ -30,6 +30,11 @@ import { executionOf, parseDeckDecisionMessage, sceneStageOf, stageOf } from "./
 import type { DecisionChoice, StagedProcess } from "./stage";
 import { selfOf, trackBootId } from "./self-reload";
 import { parseProjectorUrl } from "./url-params";
+import { loadPlantedPositions, newUpidAfterAccept, savePlantedPosition } from "./planted-positions";
+
+// What planting mode is aiming for: a not-yet-accepted idea (accept fires on
+// the ground click, the new upid binds to the spot) or an existing tree.
+type PlantingTarget = { kind: "idea"; ideaId: string | null } | { kind: "tree"; upid: string };
 import { GuidedDemo } from "./guided/GuidedDemo";
 import { advanceOnSnapshot, popPracticeOrb, restartIdea, setHandsLive, skipStep, startGuided, type GuidedState, type PointerRig } from "./guided/machine";
 import "./buildloop.css";
@@ -118,6 +123,9 @@ declare global {
       // scripts/self-exercise.ts probe the deck decision bar's dwell
       // reachability without a scene pick.
       openDeck: (callsignOrUpid: string, backend?: string) => void;
+      // Enter the "Plant…" flow for an idea (null = the primary suggestion):
+      // the next ground click chooses the new tree's spot. e2e/QA surface.
+      plant: (ideaId: string | null) => void;
     };
   }
 }
@@ -273,6 +281,61 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
   const [ideaCard, setIdeaCard] = useState<{ id: string | null } | null>(initialOverlay?.ideaCard ?? null);
   const ideaCardRef = useRef<{ id: string | null } | null>(null);
   ideaCardRef.current = ideaCard;
+  // PLANTING MODE: the next click on the scene's ground chooses a tree's
+  // spot. Three doors in: the idea card's "Plant…" (accept-then-bind), the
+  // tree menu's "Replant…" and the guided demo's "Choose its spot…" (bind an
+  // existing upid), and the import-arrival offer. Esc cancels; positions
+  // live in localStorage so the second wall window repositions the same
+  // tree via the storage event.
+  // CENTRAL PARK toggle (Controls dock): overrides the URL's ?env= seed at
+  // runtime. Purely environmental — the same trees and ideas stand in
+  // whichever ground is under them.
+  const [envOverride, setEnvOverride] = useState<"meadow" | "park" | null>(null);
+  const sceneEnvironment = envOverride ?? urlConfig.environment;
+  const [planting, setPlanting] = useState<PlantingTarget | null>(null);
+  const plantingRef = useRef<PlantingTarget | null>(null);
+  plantingRef.current = planting;
+  // A freshly-imported project (QR phone import / GitHub clone) offers its
+  // tree for planting the moment it lands on the wall.
+  const [importPlantOffer, setImportPlantOffer] = useState<{ upid: string; title: string } | null>(null);
+  const [plantedVersion, setPlantedVersion] = useState(0);
+  const plantedPositions = useMemo(() => loadPlantedPositions(), [plantedVersion]);
+  useEffect(() => {
+    const onStorage = () => setPlantedVersion((v) => v + 1);
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
+  // Watch the snapshot for freshly-ARRIVED imports (QR phone submissions,
+  // GitHub clones): those trees appear without any wall interaction, so the
+  // wall offers them a chosen spot. Only genuine arrivals count — the first
+  // snapshot seeds the seen-set silently.
+  const seenImportUpids = useRef<Set<string> | null>(null);
+  useEffect(() => {
+    const seen = seenImportUpids.current;
+    if (seen === null) {
+      seenImportUpids.current = new Set(snapshot.processes.map((process) => process.upid));
+      return;
+    }
+    for (const process of snapshot.processes) {
+      if (seen.has(process.upid)) {
+        continue;
+      }
+      seen.add(process.upid);
+      const kind = process.source?.kind;
+      if (kind === "phone-import" || kind === "github-import") {
+        setImportPlantOffer({ upid: process.upid, title: process.task || process.callsign });
+      }
+    }
+  }, [snapshot.processes]);
+  // The offer evaporates if nobody takes it.
+  useEffect(() => {
+    if (importPlantOffer === null) {
+      return;
+    }
+    const timer = window.setTimeout(() => setImportPlantOffer(null), 30_000);
+    return () => window.clearTimeout(timer);
+  }, [importPlantOffer]);
+
   // ?zen=1 boots a dedicated display straight into the chrome-less scene.
   const [zenMode, setZenMode] = useState(urlConfig.zen);
   const zenModeRef = useRef(false);
@@ -555,18 +618,20 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
   // returned snapshot; offline demo drops the card locally so the static tray
   // stays interactive.
   const actOnIdea = useCallback(
-    async (id: string, action: "accept" | "dismiss") => {
+    async (id: string, action: "accept" | "dismiss"): Promise<ProjectorSnapshot | null> => {
       if (!liveMode || mockModeRef.current) {
         setSnapshot((current) => ({
           ...current,
           ideas: (current.ideas ?? []).filter((idea) => idea.id !== id),
         }));
-        return;
+        return null;
       }
       try {
         const response = await fetch(`/api/idea/${encodeURIComponent(id)}/${action}`, { method: "POST" });
         if (response.ok && response.headers.get("content-type")?.includes("application/json")) {
-          setSnapshot((await response.json()) as ProjectorSnapshot);
+          const fresh = (await response.json()) as ProjectorSnapshot;
+          setSnapshot(fresh);
+          return fresh;
         } else {
           // The most consequential button in the room. With the endpoint
           // failing the wall was completely unchanged 2.4s later — no tree, no
@@ -577,8 +642,38 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
       } catch {
         reportControlFailure(action === "accept" ? "Build it" : "Dismiss");
       }
+      return null;
     },
     [liveMode],
+  );
+
+  // Accept-and-bind for the "Plant…" flow: fire the same accept the Build
+  // button uses, then bind whichever upid the accept ADDED to the chosen
+  // ground point (see planted-positions.ts for the cross-window contract).
+  const plantAt = useCallback(
+    async (point: { x: number; z: number }) => {
+      const target = plantingRef.current;
+      if (target === null) {
+        return;
+      }
+      setPlanting(null);
+      if (target.kind === "tree") {
+        savePlantedPosition(target.upid, point);
+        setPlantedVersion((v) => v + 1);
+        return;
+      }
+      const before = snapshotRef.current.processes.map((process) => process.upid);
+      const fresh = target.ideaId === null ? await acceptIdea() : await actOnIdea(target.ideaId, "accept");
+      if (fresh === null) {
+        return;
+      }
+      const upid = newUpidAfterAccept(before, fresh.processes.map((process) => process.upid));
+      if (upid !== null) {
+        savePlantedPosition(upid, point);
+        setPlantedVersion((v) => v + 1);
+      }
+    },
+    [acceptIdea, actOnIdea],
   );
 
   // Keyboard/voice-parity target: b/Enter and x act on the TOP ready idea (the
@@ -1630,6 +1725,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
         setSlideshowBackend(backend ?? null);
         setSlideshowUpid(match.upid);
       },
+      plant: (ideaId) => setPlanting({ kind: "idea", ideaId }),
     };
     return () => {
       delete window.__VIBERSYN__;
@@ -1709,6 +1805,11 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
         }
         if (guestsOpenRef.current) {
           setGuestsOpen(false);
+          return;
+        }
+        // Planting mode cancels without accepting anything.
+        if (plantingRef.current !== null) {
+          setPlanting(null);
           return;
         }
         // The contextual idea card closes without building anything.
@@ -2039,9 +2140,12 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
             // limbs each reconcile, so a fresh branch appears within a tick.
             treeRepo: process.treeRepo ?? null,
             issues: issuesByUpid[process.upid],
+            // The chosen spot from the "Plant…" flow (localStorage-synced
+            // across the two wall windows); absent → the automatic slot.
+            plantedAt: plantedPositions[process.upid] ?? null,
           };
         }),
-    [snapshot.processes, hiddenTrees, steeringUpid, issuesByUpid],
+    [snapshot.processes, hiddenTrees, steeringUpid, issuesByUpid, plantedPositions],
   );
 
   const visibleIdeaOrbs = useMemo<IdeaOrbSpec[]>(
@@ -2361,6 +2465,9 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
         trees={researchActive ? [] : treeSpecs}
         mode={sceneMode}
         layout={sceneLayout}
+        environment={sceneEnvironment}
+        planting={planting !== null && sceneMode === "garden" && !researchActive}
+        onPlantPick={(point) => void plantAt(point)}
         wall={urlConfig.wall}
         cornerLock={cornerLock}
         flatLock={flatLock}
@@ -2386,7 +2493,6 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
         researchThinking={snapshot.researchThinking === true}
         skyView={urlConfig.research}
         selfTree={selfTree}
-        park={urlConfig.park}
       />
       {dwellLayerOn ? (
         <GestureLayer
@@ -2592,6 +2698,20 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
               Guided Demo
             </button>
           ) : null}
+          {/* CENTRAL PARK: swap the garden's ground and horizon between the
+              pastoral meadow and the real park at the Pond (same content —
+              the toggle never adds or removes a tree). Seeds from ?env=. */}
+          <button
+            type="button"
+            className={`ctl-button park-toggle${sceneEnvironment === "park" ? " on" : ""}`}
+            data-testid="central-park-button"
+            data-state={sceneEnvironment === "park" ? "on" : "off"}
+            aria-pressed={sceneEnvironment === "park"}
+            onClick={() => setEnvOverride(sceneEnvironment === "park" ? "meadow" : "park")}
+            title="Central Park: the garden stands at the Pond by Gapstow Bridge — same trees, same ideas, the real park under them. Toggle off for the pastoral meadow."
+          >
+            {sceneEnvironment === "park" ? "● Central Park" : "Central Park"}
+          </button>
           {/* AUDIT (no-mocks): the Mock Room fixture toggle is HIDDEN unless the
               launcher opts in with ?mock=1 (run-room.sh appends it only when
               VIBERSYN_MOCK_ROOM=1). A default room never offers canned decks. */}
@@ -2716,6 +2836,37 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
       </div>
       )}
 
+      {/* PLANTING HINT: while choosing a spot for a new tree. */}
+      {planting !== null ? (
+        <div className="planting-hint" data-testid="planting-hint">
+          {planting.kind === "idea"
+            ? "⚘ Click the ground to plant this idea's tree — Esc to cancel"
+            : "⚘ Click the ground to replant this tree — Esc to cancel"}
+        </div>
+      ) : null}
+
+      {/* IMPORT ARRIVAL: a phone/GitHub import just landed — offer its tree
+          a chosen spot. Quietly evaporates if ignored. */}
+      {importPlantOffer !== null && planting === null ? (
+        <div className="planting-offer" data-testid="import-plant-offer">
+          <span className="planting-offer-copy">📦 “{importPlantOffer.title}” arrived</span>
+          <button
+            type="button"
+            className="ctl-button"
+            data-testid="import-plant-button"
+            onClick={() => {
+              setPlanting({ kind: "tree", upid: importPlantOffer.upid });
+              setImportPlantOffer(null);
+            }}
+          >
+            ⚘ Plant it…
+          </button>
+          <button type="button" className="ctl-button" aria-label="Dismiss" onClick={() => setImportPlantOffer(null)}>
+            ✕
+          </button>
+        </div>
+      ) : null}
+
       {/* IDEA ACTION CARD: the contextual "✓ Done — build it" surface, opened
           by clicking an idea orb in the scene (see acceptOrb). Floats
           bottom-center above the scene-controls cluster; the Done button runs
@@ -2760,6 +2911,18 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
             {ideaCard.id === null && snapshot.ideaSettle?.armed === true && snapshot.ideaSettle.firesInMs !== null
               ? ` (${Math.max(1, Math.ceil(snapshot.ideaSettle.firesInMs / 1000))}s)`
               : ""}
+          </button>
+          <button
+            type="button"
+            className="ctl-button idea-plant"
+            data-testid="idea-plant-button"
+            title="Build it AND choose where in the park its tree grows — click a spot on the ground (Esc cancels)."
+            onClick={() => {
+              setPlanting({ kind: "idea", ideaId: ideaCard.id });
+              setIdeaCard(null);
+            }}
+          >
+            ⚘ Plant…
           </button>
           <button
             type="button"
@@ -2897,6 +3060,10 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
             setSelected(null);
           }}
           onGrowBranch={(upid) => void growBranch(upid)}
+          onReplant={(upid) => {
+            setPlanting({ kind: "tree", upid });
+            setSelected(null);
+          }}
         />
       ) : null}
 
@@ -2993,6 +3160,11 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
           onExit={exitGuidedDemo}
           onFinish={exitGuidedDemo}
           onStartOver={guidedStartOver}
+          onPlantSpot={
+            (guided.step === "race" || guided.step === "decide") && guided.focusUpid != null
+              ? () => setPlanting({ kind: "tree", upid: guided.focusUpid as string })
+              : null
+          }
           onDone={() => {
             // Planting is the ONLY way forward from the idea step: accept
             // builds from the surfaced idea (or the raw transcript,

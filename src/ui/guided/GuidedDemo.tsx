@@ -59,6 +59,10 @@ export interface GuidedDemoProps {
   // guided-hold boundary and re-watermarks the machine so the words so far
   // stop counting toward the plan. Nothing already built is touched.
   onStartOver: () => void;
+  // "⚘ Choose its spot…" (race/decide, once the focus tree exists): enter
+  // planting mode for the freshly-grown tree — click the ground to move it.
+  // Null hides the affordance (step without a tree yet, or a rig without it).
+  onPlantSpot?: (() => void) | null;
 }
 
 // Practice-orb resting spots (viewport %), spread so a visitor sweeps the wall.
@@ -83,6 +87,7 @@ export function GuidedDemo({
   onFinish,
   onDone,
   onStartOver,
+  onPlantSpot = null,
 }: GuidedDemoProps) {
   // Which practice orbs this run has popped (local render state; the machine
   // holds only the count). GuidedDemo unmounts on exit, so re-entry is fresh.
@@ -232,6 +237,17 @@ export function GuidedDemo({
               title={skip.title}
             >
               {skip.label}
+            </button>
+          ) : null}
+          {onPlantSpot !== null ? (
+            <button
+              type="button"
+              className="ctl-button guided-plant"
+              data-testid="guided-plant-button"
+              onClick={onPlantSpot}
+              title="Your idea's tree is growing — click the ground anywhere in the park to choose its spot (Esc keeps it where it is)."
+            >
+              ⚘ Choose its spot…
             </button>
           ) : null}
           <button

@@ -37,10 +37,36 @@ agents building them.
   legacy view badge.
 - **Vibersyn projector only:** `bun run start` (server on :8787), or `bun run dev`
   for the UI dev server. Open `/?live=1` for the live runtime.
+- **Central Park (optional):** toggle **Central Park** in the ⚙ Controls dock
+  (or seed it with `?env=park`) and the room stands in ONE
+  iconic place at true scale — the lawn north of **Gapstow Bridge over the
+  Pond**, the park's south-east corner. Around the stage: the real map (NAIP
+  photo on USGS terrain), the Pond as mirror water from OpenStreetMap's
+  outline, Gapstow's stone arch, real canopy trees and Pond-shore schist as
+  photoscans, and the actual skyline — the Plaza Hotel and Billionaires' Row
+  as real CC-BY models on their true footprints, the rest of Midtown as
+  window-textured footprint extrusions fading into the haze
+  (`public/assets/park/ASSETS.md`). Purely environmental: nodes, layouts, the
+  `g` garden↔orbit toggle and every control are unchanged.
+  The standalone evaluation page `park3d.html` (dev server only) renders the
+  whole park at 1:1 from Google's Photorealistic 3D Tiles (`VITE_MAPTILES_KEY`
+  in `.env`) or, with `?src=open`, from the same baked data: keys `1–6` are
+  the 110th→90th St altitude ladder, `7` the postcard aerial, `8` satellite,
+  `9` Sheep Meadow at eye level, `C` cycles the crop park → segment → city;
+  `?at=lat,lon,height&see=lat,lon,height` (or `?eye=x,y,z&look=x,y,z` in
+  local metres) is a free camera for inspecting a spot.
 
 ## Control (desk mode — the default)
 
 - **Mouse:** click bubbles and buttons directly.
+- **Plant a tree where you want it:** click an idea orb in the scene and choose
+  **⚘ Plant…** — a ghost marker follows your cursor over the ground (green =
+  legal: on the meadow, or anywhere inside the park wall in `?env=park`, never
+  in water); click to build the idea AND grow its tree on that spot. Esc
+  cancels. Spots persist per-browser and sync to the other wall window. The
+  same flow opens from a tree's menu (**⚘ Replant…**), from the guided demo
+  once your idea's tree is growing (**⚘ Choose its spot…**), and from the
+  arrival toast when a QR/GitHub import lands (**⚘ Plant it…**).
 - **Keyboard:** press `?` (or `h`) for the cheat-sheet overlay. Highlights:
   `b`/`Enter` build the top ready idea · `x` dismiss it · `c` toggle Idea
   Capture · `a` toggle Auto-Build · `r` toggle Research mode · `q` QR import ·

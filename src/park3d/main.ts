@@ -1,18 +1,23 @@
-// Photorealistic 3D Tiles evaluation page (park3d.html): streams Google's
-// photogrammetry of the REAL Central Park — the 110th→90th St segment (North
-// Woods, Harlem Meer, the Reservoir's north end) — at true 1:1 scale (1 unit
-// = 1 meter), cropped to the segment slab by clipping planes. Altitude presets
-// (keys 1–6) exist to answer ONE question: at which camera heights does the
-// photogrammetry look acceptable for the room?
+// Central Park evaluation page (park3d.html): the WHOLE park — 59th→110th
+// St, 5th Ave→Central Park West — plus the city that frames it, at true 1:1
+// scale (1 unit = 1 metre), from either of two sources:
 //
-// Standalone dev-mode page (vite serves any root .html in dev; the production
-// build ignores it) — deliberately not wired into RoomScene until the
-// evaluation says which altitudes/looks are worth integrating.
+//   ?src=tiles (default)  Google's Photorealistic 3D Tiles, streamed at
+//                         runtime (needs a Map Tiles API key; Google ToS
+//                         forbids persisting the tiles).
+//   ?src=open             the baked public-domain world (park-world.ts):
+//                         NAIP leaf-on orthophoto on USGS terrain, canopy
+//                         relief, NYC building footprints — storable,
+//                         offline, and the same module the room mounts.
 //
-// Key comes from ?key=… or VITE_MAPTILES_KEY in .env (never committed).
-// Google ToS: tiles stream at runtime and may not be persisted offline; one
-// root-tile session covers 3+ hours, so a projector day is a handful of the
-// free tier's ~1k monthly sessions.
+// The crop (key C) cycles park → segment → city: "park" is the iconic
+// rectangle with its margin of streets, "segment" the original 110th→90th St
+// evaluation slab, "city" everything the source covers. Presets 1–6 are the
+// original segment altitude ladder, unchanged; 7–9 are the whole-park
+// pictures (postcard aerial, satellite, Sheep Meadow at eye level).
+//
+// Standalone dev-mode page (vite serves any root .html in dev; the
+// production build ignores it). Key via ?key=… or VITE_MAPTILES_KEY in .env.
 
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
@@ -24,28 +29,34 @@ import {
   ReorientationPlugin,
   TilesFadePlugin,
 } from "3d-tiles-renderer/plugins";
+import {
+  type CropMode,
+  DEG,
+  type GroundAt,
+  PARK_CENTER,
+  PRESETS,
+  TILES_SURFACE_Y,
+  cropPlanes,
+  defaultGroundAt,
+  localFromLatLon,
+  nextCrop,
+  presetEye,
+  presetTarget,
+} from "./park-frame";
+import { PARK_ATTRIBUTION, loadParkWorld } from "./park-world";
 
 const params = new URLSearchParams(location.search);
-// ?src=open swaps Google's proprietary stream for public-domain USGS/NYS
-// data (open-terrain.ts) — the storable, strippable, offline-legal variant.
 const src = params.get("src") === "open" ? "open" : "tiles";
 const apiKey = params.get("key") ?? (import.meta.env.VITE_MAPTILES_KEY as string | undefined) ?? "";
-if (src === "tiles" && apiKey === "") {
+const showError = (message: string) => {
   const err = document.getElementById("err")!;
   err.style.display = "block";
-  err.textContent = "No Map Tiles API key — pass ?key=… or set VITE_MAPTILES_KEY in .env";
+  err.textContent = message;
+};
+if (src === "tiles" && apiKey === "") {
+  showError("No Map Tiles API key — pass ?key=… or set VITE_MAPTILES_KEY in .env (or try ?src=open, which needs no key)");
   throw new Error("missing api key");
 }
-
-const DEG = Math.PI / 180;
-// Center of the 110th→90th St segment (20 blocks ≈ 1610 m of the park's north
-// end), on the park's center line.
-const CENTER_LAT = 40.7922;
-const CENTER_LON = -73.9584;
-// Manhattan grid bearing: the park's long axis runs ~29° east of true north.
-const AXIS_BEARING = 29 * DEG;
-const HALF_LEN = 805; // 10 blocks either side of center
-const HALF_WIDTH = 465; // park half-width + a sidewalk margin
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -53,27 +64,102 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 document.body.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0xbfd9ee);
-const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 2, 60_000);
+const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 2, 80_000);
 
-// Local frame after reorientation: +X east, +Y up, -Z north. The slab crop is
-// two plane pairs: across the axis (110th and 90th St cuts) and along it
-// (just outside the park's east/west walls).
-const axis = new THREE.Vector3(Math.sin(AXIS_BEARING), 0, -Math.cos(AXIS_BEARING));
-const perp = new THREE.Vector3(Math.cos(AXIS_BEARING), 0, Math.sin(AXIS_BEARING));
-const cropPlanes = [
-  new THREE.Plane(axis.clone().negate(), HALF_LEN),
-  new THREE.Plane(axis.clone(), HALF_LEN),
-  new THREE.Plane(perp.clone().negate(), HALF_WIDTH),
-  new THREE.Plane(perp.clone(), HALF_WIDTH),
-];
-let cropped = true;
-renderer.clippingPlanes = cropPlanes;
+// ── crop ───────────────────────────────────────────────────────────────────
+// Clipping is LOCAL (per material) rather than renderer-global so the sky
+// dome stays whole: every park material registers here and picks up the
+// current crop; Google tiles register as they stream in.
+renderer.localClippingEnabled = true;
+const cropParam = params.get("crop");
+let crop: CropMode = cropParam === "segment" || cropParam === "city" ? cropParam : "park";
+// Once the crop has been chosen by hand (?crop= or the C key) the presets
+// stop re-cropping — C stays the independent toggle it always was.
+let cropPinned = cropParam === "park" || cropParam === "segment" || cropParam === "city";
+let planes: THREE.Plane[] = [];
+const clipped = new Set<THREE.Material>();
+const registerClipped = (root: THREE.Object3D) => {
+  root.traverse((node) => {
+    const material = (node as THREE.Mesh).material as THREE.Material | THREE.Material[] | undefined;
+    if (material === undefined) {
+      return;
+    }
+    for (const m of Array.isArray(material) ? material : [material]) {
+      m.clippingPlanes = planes;
+      clipped.add(m);
+    }
+  });
+};
+const unregisterClipped = (root: THREE.Object3D) => {
+  root.traverse((node) => {
+    const material = (node as THREE.Mesh).material as THREE.Material | THREE.Material[] | undefined;
+    if (material === undefined) {
+      return;
+    }
+    for (const m of Array.isArray(material) ? material : [material]) {
+      clipped.delete(m);
+    }
+  });
+};
+const cropEl = document.getElementById("crop")!;
+const applyCrop = (mode: CropMode) => {
+  crop = mode;
+  planes = cropPlanes(mode);
+  for (const m of clipped) {
+    m.clippingPlanes = planes;
+  }
+  cropEl.textContent = mode;
+  // The hazy table below a cropped slab; with Google's globe uncropped it
+  // would slice through the curving tiles ~10 km out, so it leaves with the
+  // crop there (the baked world never reaches that far).
+  groundPlane.visible = src === "open" || mode !== "city";
+};
 
-// Photogrammetry ships baked lighting (unlit materials) — lights are only a
-// fallback for any non-unlit tile content.
-scene.add(new THREE.AmbientLight(0xffffff, 2.2));
+// ── sky + haze ─────────────────────────────────────────────────────────────
+// The garden's CC0 Poly Haven panorama on a full dome (no squash here — the
+// aerial presets look well below the horizon) and a long linear haze so the
+// far end of the park and the Midtown wall melt into the sky the way they do
+// in every aerial photo. Haze stops short of the sky dome (fog: false).
+const HORIZON = 0xd3e1ec;
+scene.background = new THREE.Color(HORIZON);
+scene.fog = new THREE.Fog(HORIZON, 2000, 13_000);
+const skyTexture = new THREE.TextureLoader().load("/assets/garden/sky/sunflowers_puresky_4k.jpg");
+skyTexture.colorSpace = THREE.SRGBColorSpace;
+const skyDome = new THREE.Mesh(
+  new THREE.SphereGeometry(40_000, 48, 32),
+  new THREE.MeshBasicMaterial({ map: skyTexture, side: THREE.BackSide, fog: false, depthWrite: false }),
+);
+skyDome.renderOrder = -1;
+scene.add(skyDome);
+// Under a crop the world is a slab floating over nothing; a hazy ground
+// plane (never clipped) reads as the rest of the city lost in haze instead
+// of the panorama's field showing through from below.
+const groundPlane = new THREE.Mesh(
+  new THREE.CircleGeometry(39_000, 64),
+  new THREE.MeshBasicMaterial({ color: 0xb8b6ae }),
+);
+groundPlane.rotation.x = -Math.PI / 2;
+// Heights are relative to the park centre (on a rise ~35 m above the rivers),
+// so the plane sits at river level.
+groundPlane.position.y = -40;
+scene.add(groundPlane);
+applyCrop(crop);
 
+// Light rig for the extruded city (the terrain and the Google tiles are
+// unlit): warm afternoon sun from the south-west + sky/ground bounce.
+scene.add(new THREE.HemisphereLight(0xc9dcf0, 0x8d9478, 1.1));
+const sunLight = new THREE.DirectionalLight(0xfff1dc, 1.7);
+sunLight.position.set(-0.45, 0.75, 0.45).multiplyScalar(1000);
+scene.add(sunLight);
+// Photogrammetry ships baked lighting (unlit materials) — a fallback for any
+// non-unlit tile content.
+scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+
+// ── source ─────────────────────────────────────────────────────────────────
+// Ground under ground-relative presets: the baked DEM once the open world is
+// in; before that (and for the Google stream, which has no DEM) the one
+// anchor the presets stand on, lifted to the tiles frame's surface level.
+let groundAt: GroundAt = src === "tiles" ? (x, z) => defaultGroundAt(x, z) + TILES_SURFACE_Y : defaultGroundAt;
 let tiles: TilesRenderer | null = null;
 if (src === "tiles") {
   const dracoLoader = new DRACOLoader();
@@ -83,10 +169,18 @@ if (src === "tiles") {
   tiles.registerPlugin(new GoogleCloudAuthPlugin({ apiToken: apiKey }));
   tiles.registerPlugin(new GLTFExtensionsPlugin({ dracoLoader }));
   tiles.registerPlugin(new TilesFadePlugin());
-  tiles.registerPlugin(new ReorientationPlugin({ lat: CENTER_LAT * DEG, lon: CENTER_LON * DEG }));
+  // Local frame after reorientation: origin at the park centre on the WGS84
+  // ellipsoid (the ground is ~2 m up), +Y up. The plugin's own frame is
+  // X-WEST / Z-NORTH; the half-turn azimuth yields the +X east / −Z north
+  // frame park-frame.ts, the crop planes and the presets are written in.
+  tiles.registerPlugin(
+    new ReorientationPlugin({ lat: PARK_CENTER.lat * DEG, lon: PARK_CENTER.lon * DEG, azimuth: Math.PI }),
+  );
   tiles.setCamera(camera);
   tiles.setResolutionFromRenderer(camera, renderer);
   scene.add(tiles.group);
+  tiles.addEventListener("load-model", (event) => registerClipped((event as unknown as { scene: THREE.Object3D }).scene));
+  tiles.addEventListener("dispose-model", (event) => unregisterClipped((event as unknown as { scene: THREE.Object3D }).scene));
 
   // ?detail= overrides the screen-space error target (the auth plugin's
   // recommended setting is a bandwidth-friendly 20; ~2 forces Google's finest
@@ -94,56 +188,86 @@ if (src === "tiles") {
   const detailParam = Number.parseFloat(params.get("detail") ?? "");
   if (Number.isFinite(detailParam) && detailParam > 0) {
     const t = tiles;
-    // Applied after the plugin's tileset load hook so it wins over the
-    // recommended default.
     t.addEventListener("load-tile-set", () => {
       t.errorTarget = detailParam;
     });
     t.errorTarget = detailParam;
   }
 } else {
-  // Open-data mode: USGS 3DEP elevation + government orthoimagery, no key,
-  // no proprietary content — the slab crop and presets work identically.
-  document.getElementById("attrib")!.textContent = "USGS 3DEP · NYS/USGS orthoimagery (public domain)";
-  import("./open-terrain")
-    .then(({ buildOpenTerrain }) =>
-      buildOpenTerrain({ centerLat: CENTER_LAT, centerLon: CENTER_LON, halfEast: 820, halfNorth: 950, stepM: 8 }),
-    )
-    .then((mesh) => scene.add(mesh))
+  document.getElementById("attrib")!.textContent = PARK_ATTRIBUTION;
+  document.getElementById("source")!.textContent = "baked open data";
+  const stepParam = Number.parseFloat(params.get("step") ?? "");
+  // ?ortho=2048 downscales the photo on decode (what the room does).
+  const orthoParam = Number.parseInt(params.get("ortho") ?? "", 10);
+  loadParkWorld({
+    stepM: Number.isFinite(stepParam) && stepParam > 0 ? stepParam : 6,
+    models: params.get("models") !== "0",
+    orthoMaxWidth: Number.isFinite(orthoParam) && orthoParam > 0 ? orthoParam : undefined,
+    relief: params.get("relief") !== "0",
+    buildings: params.get("buildings") !== "0",
+  })
+    .then((world) => {
+      registerClipped(world.group);
+      scene.add(world.group);
+      groundAt = world.groundAt;
+      if (PRESETS[currentPreset].groundRelative === true) {
+        applyPreset(currentPreset);
+      }
+      applyFreeCamera();
+    })
     .catch((error: unknown) => {
-      const err = document.getElementById("err")!;
-      err.style.display = "block";
-      err.textContent = `open terrain failed: ${String(error)}`;
+      showError(`open world failed: ${String(error)}`);
     });
 }
 
+// ── camera ─────────────────────────────────────────────────────────────────
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
-controls.maxDistance = 20_000;
-controls.minDistance = 10;
+controls.maxDistance = 30_000;
+controls.minDistance = 3;
 
-// Altitude presets: eye stands south of center looking north up the segment.
-const PRESETS: { alt: number; pitch: number }[] = [
-  { alt: 2500, pitch: 72 },
-  { alt: 1200, pitch: 60 },
-  { alt: 600, pitch: 55 },
-  { alt: 250, pitch: 45 },
-  { alt: 100, pitch: 30 },
-  { alt: 40, pitch: 15 },
-];
+let currentPreset = 6;
 const applyPreset = (i: number) => {
-  const { alt, pitch } = PRESETS[i];
-  const horiz = alt / Math.tan(pitch * DEG);
-  camera.position.copy(axis).multiplyScalar(-horiz).setY(alt);
-  controls.target.set(0, 0, 0);
+  const preset = PRESETS[i];
+  currentPreset = i;
+  camera.position.copy(presetEye(preset, groundAt));
+  controls.target.copy(presetTarget(preset, groundAt));
   controls.update();
+  if (!cropPinned) {
+    applyCrop(preset.crop);
+  }
 };
-applyPreset(2);
+const presetParam = Number.parseInt(params.get("preset") ?? "", 10);
+applyPreset(presetParam >= 1 && presetParam <= PRESETS.length ? presetParam - 1 : 6);
+// Free camera for inspection: ?eye=x,y,z&look=x,y,z in local metres, or
+// ?at=lat,lon,height&see=lat,lon,height with heights above the ground.
+const vec = (value: string | null, geo: boolean): THREE.Vector3 | null => {
+  const parts = (value ?? "").split(",").map(Number);
+  if (parts.length !== 3 || parts.some((n) => !Number.isFinite(n))) {
+    return null;
+  }
+  if (geo) {
+    const p = localFromLatLon(parts[0], parts[1]);
+    return new THREE.Vector3(p.x, parts[2] + groundAt(p.x, p.z), p.z);
+  }
+  return new THREE.Vector3(parts[0], parts[1], parts[2]);
+};
+const applyFreeCamera = () => {
+  const eye = vec(params.get("eye"), false) ?? vec(params.get("at"), true);
+  const look = vec(params.get("look"), false) ?? vec(params.get("see"), true);
+  if (eye !== null && look !== null) {
+    camera.position.copy(eye);
+    controls.target.copy(look);
+    controls.update();
+  }
+};
+applyFreeCamera();
 
 const presetsEl = document.getElementById("presets")!;
-PRESETS.forEach(({ alt }, i) => {
+PRESETS.forEach((preset, i) => {
   const btn = document.createElement("button");
-  btn.textContent = `${i + 1}: ${alt}m`;
+  btn.textContent = `${i + 1}: ${preset.label}`;
+  btn.title = `crop: ${preset.crop}`;
   btn.addEventListener("click", () => applyPreset(i));
   presetsEl.appendChild(btn);
 });
@@ -153,8 +277,8 @@ window.addEventListener("keydown", (event) => {
     applyPreset(i);
   }
   if (event.key === "c" || event.key === "C") {
-    cropped = !cropped;
-    renderer.clippingPlanes = cropped ? cropPlanes : [];
+    cropPinned = true;
+    applyCrop(nextCrop(crop));
   }
 });
 
