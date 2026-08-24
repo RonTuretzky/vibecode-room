@@ -49,6 +49,27 @@ export const REQUIRED_PROJECTOR_REGIONS = [
   "transcript",
 ] as const;
 
+// A live wall clock (top-right): the room forgets what time it is once the
+// projector's been running for hours, so ambient minutes read at a glance.
+// Ticks once a second; chrome-less like the rest of the corner furniture.
+function WallClock() {
+  const [now, setNow] = useState<Date>(() => new Date());
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(id);
+  }, []);
+  const label = now.toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
+  return (
+    <div className="wall-clock" data-testid="wall-clock" role="status" aria-live="off">
+      🕐 {label}
+    </div>
+  );
+}
+
 interface ProjectorAppProps {
   initialSnapshot?: ProjectorSnapshot;
   // Test seam: overrides window.location.search for URL-config parsing so the
@@ -2582,6 +2603,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
         </div>
       ) : null}
       <FullscreenButton />
+      <WallClock />
       {/* Research-pinned displays (the ceiling) run zen — chrome-less — but
           still need the one sky control: a corner chip, dimmed until a
           cursor rests on it, dwellable like everything else. */}
@@ -3144,6 +3166,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
                 // mirror carries no treeRepo); the local rails ride along so
                 // the static renderer can exercise the version buttons.
                 self={selfTree !== null ? { tree: selfTree, versions: initialSelfBranches ?? null } : null}
+                landing={snapshot.selfLanding ?? null}
                 onClose={() => setBranchPopup(null)}
               />
             ) : null;

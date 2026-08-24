@@ -1206,6 +1206,27 @@ main.gesture-mode .control-dock-tray {
   pointer-events: none;
 }
 
+/* Live wall clock — top-left ambient time readout under the status bar, ticks
+   each second. Sits below the header cluster (top-right is the control cluster)
+   in clear sky, above chrome so nothing hides it. */
+.wall-clock {
+  position: fixed;
+  top: 74px;
+  left: 22px;
+  z-index: 41;
+  font-family: var(--mono);
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: var(--ink-faint);
+  border: 1px solid var(--glass-line);
+  border-radius: 999px;
+  padding: 5px 12px;
+  background: rgba(8, 14, 20, 0.55);
+  backdrop-filter: blur(6px);
+  pointer-events: none;
+}
+
 /* Voice feedback — flashes the last recognized wake command under the status bar
    so the room sees the utterance landed ("🎤 vibersyn → build"). */
 .voice-flash {
