@@ -2146,7 +2146,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
                 fly.flapping = !fly.flapping;
                 if (fly.flapping) {
                   fly.modeT = 0.45 + rng() * 1.1;
-                  fly.heading += (rng() - 0.5) * 0.6; // burst opens with a jink
+                  fly.heading += (rng() - 0.5) * 1.1; // burst opens with an anxious jink
                 } else {
                   fly.modeT = 0.25 + rng() * 0.8;
                 }
