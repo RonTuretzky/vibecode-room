@@ -3,7 +3,8 @@ import { expect, test, type Page } from "@playwright/test";
 /**
  * Browser e2e for RESEARCH MODE — the dialogue-tree + research-quest surface:
  *
- *  - the mode toggle (status-bar button + `r`) and its snapshot round-trip
+ *  - research surfaces are WINDOW-PINNED now (?research=1, e.g. the ceiling
+ *    projector) — there is no per-wall toggle button any more
  *  - the research tray: proposed quests carry Research/Dismiss, a researching
  *    quest shows live progress, a complete quest offers the dossier
  *  - the 3D scene mounts the dialogue helix + research crystals (asserted via
@@ -21,16 +22,15 @@ async function waitForHook(page: Page): Promise<void> {
   });
 }
 
-async function gotoStatic(page: Page, query = "?live=0"): Promise<void> {
+async function gotoStatic(page: Page, query = "?live=0&research=1"): Promise<void> {
   await page.goto(`/${query}`);
   await waitForHook(page);
   await expect(page.getByTestId("app")).toBeVisible();
 }
 
 test.describe("research mode — toggle + tray", () => {
-  test("demo boots with research ON: toggle button lit, tray shows all three lifecycle stages", async ({ page }) => {
+  test("a research-pinned window shows the tray with all three lifecycle stages", async ({ page }) => {
     await gotoStatic(page);
-    await expect(page.getByTestId("research-mode-button")).toHaveAttribute("data-state", "on");
     const tray = page.getByTestId("research-tray");
     await expect(tray).toBeVisible();
     const items = page.getByTestId("research-item");
@@ -42,13 +42,10 @@ test.describe("research mode — toggle + tray", () => {
     await expect(page.getByTestId("research-result")).toContainText("4 sources");
   });
 
-  test("the r key toggles research mode off (tray unmounts) and back on", async ({ page }) => {
-    await gotoStatic(page);
-    await page.keyboard.press("r");
-    await expect(page.getByTestId("research-mode-button")).toHaveAttribute("data-state", "off");
+  test("an unpinned wall window carries no research surfaces at all", async ({ page }) => {
+    await gotoStatic(page, "?live=0");
     await expect(page.getByTestId("research-tray")).toHaveCount(0);
-    await page.keyboard.press("r");
-    await expect(page.getByTestId("research-tray")).toBeVisible();
+    await expect(page.getByTestId("research-deck-button")).toHaveCount(0);
   });
 
   test("accepting a proposed quest flips it to researching (offline demo keeps the tray interactive)", async ({ page }) => {
@@ -76,11 +73,9 @@ test.describe("research mode — 3D dialogue tree", () => {
     await expect(scene).toHaveAttribute("data-research-count", "3");
   });
 
-  test("toggling the mode off empties the scene's research surfaces", async ({ page }) => {
+  test("clearing the quests and dialogue empties the scene's research surfaces", async ({ page }) => {
     await gotoStatic(page);
-    // The demo fixture keeps quests alive, so crystals persist after toggle-off
-    // (a finished dossier stays visitable); clearing the quests empties both.
-    await page.evaluate(() => (window as any).__VIBERSYN__.applySnapshot({ researchMode: false, research: [] }));
+    await page.evaluate(() => (window as any).__VIBERSYN__.applySnapshot({ researchMode: false, research: [], dialogue: [] }));
     const scene = page.getByTestId("room-scene");
     await expect(scene).toHaveAttribute("data-dialogue-count", "0");
     await expect(scene).toHaveAttribute("data-research-count", "0");

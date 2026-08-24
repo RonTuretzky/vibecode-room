@@ -7,9 +7,11 @@ import { expect, test, type Page } from "@playwright/test";
  * `?live=0` disables the live /api connect so we can drive deterministic state
  * via `applySnapshot`; the live-data spec omits it to exercise the real server.
  *
- * The 2D bubble stage, trace rail, audio panel and emergency BUTTON are gone —
- * builds/ideas live in the 3D scene (room-scene), the fleet rail carries the
- * per-process panels, and the kill-all is the deliberate Shift+E chord.
+ * The 2D bubble stage, trace rail, audio panel, emergency BUTTON and the
+ * fleet rail are all gone — builds/ideas live in the 3D scene (room-scene),
+ * each process's surface is the anchored per-tree menu (select a tree), the
+ * routine controls fold behind the ⚙ Controls dock, and the kill-all is the
+ * deliberate Shift+E chord.
  */
 
 async function waitForHook(page: Page): Promise<void> {
@@ -43,17 +45,15 @@ test.describe("projector UI — first paint & feature parity", () => {
     // Active cue (top-center).
     await expect(page.getByTestId("active-cue")).toBeVisible();
 
-    // The 3D scene renders the demo fleet as trees; the fleet rail carries a
-    // panel per process with its state semantics.
+    // The 3D scene renders the demo fleet as trees (the 2D fleet rail is
+    // gone); selecting a process surfaces its anchored tree menu with the
+    // state semantics.
     const scene = page.getByTestId("room-scene");
     await expect(scene).toBeVisible();
     await expect(scene).toHaveAttribute("data-tree-count", "2");
-    await expect(page.locator('[data-testid="fleet-panel"][data-callsign="Atlas"]')).toBeVisible();
-    await expect(page.locator('[data-testid="fleet-panel"][data-callsign="Cobalt"]')).toBeVisible();
-    await expect(page.locator('[data-testid="fleet-panel"][data-callsign="Atlas"]')).toHaveAttribute(
-      "data-state",
-      "active",
-    );
+    await page.evaluate(() => (window as any).__VIBERSYN__.select("Atlas"));
+    await expect(page.getByTestId("tree-menu-callsign")).toContainText("Atlas");
+    await expect(page.getByTestId("tree-menu-status")).toHaveClass(/state-active/);
   });
 
   test("shows the 3D garden with at least one idea flower (a pending suggestion)", async ({ page }) => {
@@ -64,50 +64,51 @@ test.describe("projector UI — first paint & feature parity", () => {
     await expect(field.locator("canvas")).toBeVisible();
   });
 
-  test("status bar carries the desk-mode control row; unmute only appears when muted", async ({ page }) => {
+  test("routine controls fold behind the ⚙ dock; one click unfolds them", async ({ page }) => {
     await gotoStatic(page);
-    // Fixed order: mic+capture (ONE merged button) · auto-build · QR import ·
-    // guided demo.
+    // Folded at boot: the tray's children exist in the DOM but stay hidden.
+    await expect(page.getByTestId("control-dock")).toHaveAttribute("data-expanded", "false");
+    await expect(page.getByTestId("mic-capture-button")).toBeHidden();
+    await page.getByTestId("control-dock-button").click();
+    await expect(page.getByTestId("control-dock")).toHaveAttribute("data-expanded", "true");
     await expect(page.getByTestId("mic-capture-button")).toBeVisible();
-    await expect(page.getByTestId("auto-build-button")).toBeVisible();
-    await expect(page.getByTestId("qr-import-button")).toBeVisible();
     await expect(page.getByTestId("guided-demo-button")).toBeVisible();
-    // NO-MOCKS AUDIT: the Mock Room fixture toggle is hidden by default —
-    // only ?mock=1 (VIBERSYN_MOCK_ROOM=1 via run-room.sh) exposes it.
+    await expect(page.getByTestId("central-park-button")).toBeVisible();
+    // Gone by design: the separate auto-build and QR buttons (voice + the q
+    // key carry those verbs), the emergency button (Shift+E), and — NO-MOCKS
+    // AUDIT — the Mock Room toggle without ?mock=1.
+    await expect(page.getByTestId("auto-build-button")).toHaveCount(0);
+    await expect(page.getByTestId("qr-import-button")).toHaveCount(0);
     await expect(page.getByTestId("mock-room-button")).toHaveCount(0);
-    // The emergency BUTTON is gone by design — Shift+E is the kill-all.
     await expect(page.getByTestId("emergency-button")).toHaveCount(0);
     // Not muted at first paint → no unmute button.
     await expect(page.getByTestId("unmute-button")).toHaveCount(0);
   });
 });
 
-test.describe("projector UI — drill into a build", () => {
-  test("clicking a fleet panel opens the build detail; Escape closes it", async ({ page }) => {
+test.describe("projector UI — drill into a build (the anchored tree menu)", () => {
+  test("selecting a process opens its tree menu; Escape closes it", async ({ page }) => {
     await gotoStatic(page);
 
-    await expect(page.getByTestId("build-detail")).toHaveCount(0);
-    await page.locator('[data-testid="fleet-panel"][data-callsign="Atlas"]').click();
+    await expect(page.getByTestId("tree-menu")).toHaveCount(0);
+    // Digit keys select processes (projector-friendly; scene clicks route the
+    // same way through the pick seam).
+    await page.keyboard.press("1");
 
-    const detail = page.getByTestId("build-detail");
-    await expect(detail).toBeVisible();
-    await expect(page.getByTestId("detail-callsign")).toContainText("Atlas");
-    await expect(page.getByTestId("detail-action-log")).toBeVisible();
-    await expect(page.getByTestId("detail-trace")).toBeVisible();
-
-    // Selection is reflected on the fleet panel and via the hook.
-    await expect(page.locator('[data-testid="fleet-panel"][data-callsign="Atlas"]')).toHaveClass(/selected/);
+    const menu = page.getByTestId("tree-menu");
+    await expect(menu).toBeVisible();
+    await expect(page.getByTestId("tree-menu-callsign")).toContainText("Atlas");
     expect(await page.evaluate(() => (window as any).__VIBERSYN__.getSelected())).toBe("Atlas");
 
     await page.keyboard.press("Escape");
-    await expect(page.getByTestId("build-detail")).toHaveCount(0);
+    await expect(page.getByTestId("tree-menu")).toHaveCount(0);
   });
 
-  test("programmatic select() via the hook opens the detail", async ({ page }) => {
+  test("programmatic select() via the hook opens the tree menu", async ({ page }) => {
     await gotoStatic(page);
     await page.evaluate(() => (window as any).__VIBERSYN__.select("Cobalt"));
-    await expect(page.getByTestId("build-detail")).toBeVisible();
-    await expect(page.getByTestId("detail-callsign")).toContainText("Cobalt");
+    await expect(page.getByTestId("tree-menu")).toBeVisible();
+    await expect(page.getByTestId("tree-menu-callsign")).toContainText("Cobalt");
   });
 });
 
@@ -122,7 +123,9 @@ test.describe("projector UI — bounded safety controls", () => {
     await expect(unmute).toBeVisible();
     await unmute.click();
 
-    await expect(page.getByTestId("listening-indicator")).toHaveAttribute("data-state", "listening");
+    // Unmuted again — on the offline page the mic itself is not running, so
+    // the orb reports deaf (unmuted, no live mic) rather than listening.
+    await expect(page.getByTestId("listening-indicator")).not.toHaveAttribute("data-state", "muted");
     await expect(page.getByTestId("unmute-button")).toHaveCount(0);
   });
 
@@ -141,9 +144,17 @@ test.describe("projector UI — live backend wiring", () => {
     await page.goto("/");
     await waitForHook(page);
     await expect(page.getByTestId("app")).toBeVisible();
-    // The server seeds the same deterministic demo, so the fleet must appear.
-    await expect(page.locator('[data-testid="fleet-panel"][data-callsign="Atlas"]')).toBeVisible();
-    await expect(page.getByTestId("room-scene")).toBeVisible();
+    // The server seeds the same deterministic demo (plus whatever pinned
+    // imports it adopts at boot), so the demo fleet must be in the live
+    // snapshot and standing as trees.
+    await expect
+      .poll(async () =>
+        page.evaluate(() => (window as any).__VIBERSYN__.getSnapshot().processes.map((p: any) => p.callsign)),
+      )
+      .toEqual(expect.arrayContaining(["Atlas", "Cobalt"]));
+    const scene = page.getByTestId("room-scene");
+    await expect(scene).toBeVisible();
+    await expect(scene).not.toHaveAttribute("data-tree-count", "0");
   });
 
   test("a server-pushed snapshot re-renders the board over SSE (no reload)", async ({ page }) => {
@@ -163,27 +174,28 @@ test.describe("projector UI — keyboard, a11y & detail completeness", () => {
   test("digit key (1) selects the first process (projector-friendly, no mouse)", async ({ page }) => {
     await gotoStatic(page);
     await page.keyboard.press("1");
-    await expect(page.getByTestId("build-detail")).toBeVisible();
-    await expect(page.getByTestId("detail-callsign")).toContainText("Atlas");
+    await expect(page.getByTestId("tree-menu")).toBeVisible();
+    await expect(page.getByTestId("tree-menu-callsign")).toContainText("Atlas");
   });
 
-  test("build detail shows the full build context", async ({ page }) => {
+  test("the tree menu shows the process context", async ({ page }) => {
     await gotoStatic(page);
     await page.evaluate(() => (window as any).__VIBERSYN__.select("Atlas"));
-    const detail = page.getByTestId("build-detail");
-    await expect(detail).toBeVisible();
-    await expect(page.getByTestId("detail-state")).toContainText("active");
-    await expect(detail).toContainText("Codex gpt-5.5"); // model
-    await expect(detail).toContainText("Blocker announcer"); // task
-    await expect(detail).toContainText("upid_atlas_7f3"); // UPID
-    await expect(detail).toContainText("smithers_run_9c12"); // runId
-    await expect(page.getByTestId("detail-action-log").locator("li").first()).toBeVisible();
+    const menu = page.getByTestId("tree-menu");
+    await expect(menu).toBeVisible();
+    // Identity plate: inferred title + callsign + status; the UPID rides the
+    // menu's own data contract; steering is right there.
+    await expect(page.getByTestId("tree-menu-title")).toContainText("Blocker announcer");
+    await expect(page.getByTestId("tree-menu-callsign")).toContainText("Atlas");
+    await expect(page.getByTestId("tree-menu-status")).toHaveClass(/state-active/);
+    await expect(menu).toHaveAttribute("data-upid", "upid_atlas_7f3");
+    await expect(page.getByTestId("record-steer-start")).toBeVisible();
   });
 
-  test("build detail is an accessible modal dialog", async ({ page }) => {
+  test("the tree menu is an accessible dialog", async ({ page }) => {
     await gotoStatic(page);
     await page.evaluate(() => (window as any).__VIBERSYN__.select("Atlas"));
-    await expect(page.getByRole("dialog", { name: /Build detail for Atlas/ })).toBeVisible();
+    await expect(page.getByRole("dialog", { name: /Tree controls for Atlas/ })).toBeVisible();
   });
 
   test("loads console-error-free on both the demo and live paths", async ({ page }) => {
@@ -208,19 +220,17 @@ test.describe("projector UI — boundary fleet states", () => {
     const scene = page.getByTestId("room-scene");
     await expect(scene).toBeVisible();
     await expect(scene).toHaveAttribute("data-tree-count", "0");
-    await expect(page.getByTestId("fleet-empty")).toBeVisible();
   });
 
-  test("single process: the 'No second process running' empty slot is shown (spec §9)", async ({ page }) => {
+  test("single process: one tree stands, and it is selectable", async ({ page }) => {
     await gotoStatic(page);
     await page.evaluate(() => {
       const snap = (window as any).__VIBERSYN__.getSnapshot();
       (window as any).__VIBERSYN__.applySnapshot({ processes: [snap.processes[0]] });
     });
-    await expect(page.getByTestId("fleet-panel")).toHaveCount(1);
-    const empty = page.getByTestId("fleet-empty");
-    await expect(empty).toBeVisible();
-    await expect(empty).toContainText("No second process running");
+    await expect(page.getByTestId("room-scene")).toHaveAttribute("data-tree-count", "1");
+    await page.keyboard.press("1");
+    await expect(page.getByTestId("tree-menu-callsign")).toContainText("Atlas");
   });
 
   test("non-active process state renders with the correct data-state", async ({ page }) => {
@@ -231,10 +241,8 @@ test.describe("projector UI — boundary fleet states", () => {
       const processes = snap.processes.map((p: any, i: number) => ({ ...p, state: states[i] ?? p.state }));
       (window as any).__VIBERSYN__.applySnapshot({ processes });
     });
-    await expect(page.locator('[data-testid="fleet-panel"][data-callsign="Atlas"]')).toHaveAttribute(
-      "data-state",
-      "paused",
-    );
+    await page.evaluate(() => (window as any).__VIBERSYN__.select("Atlas"));
+    await expect(page.getByTestId("tree-menu-status")).toHaveClass(/state-paused/);
   });
 });
 
@@ -264,6 +272,8 @@ test.describe("projector UI — 3D scene navigation & decks", () => {
     await page.goto("/?live=0&mock=1");
     await waitForHook(page);
     await expect(page.getByTestId("app")).toBeVisible();
+    // The toggle folds inside the ⚙ Controls dock.
+    await page.getByTestId("control-dock-button").click();
     await page.getByTestId("mock-room-button").click();
     const scene = page.getByTestId("room-scene");
     await expect(scene).toHaveAttribute("data-tree-count", "5");
@@ -299,9 +309,12 @@ test.describe("projector UI — 3D scene navigation & decks", () => {
       );
       (window as any).__VIBERSYN__.applySnapshot({ processes });
     });
-    const deckButton = page.getByTestId("process-deck-button");
-    await expect(deckButton).toBeVisible();
-    await deckButton.click();
+    // The deck opens from the process's tree menu — the READY build lane is
+    // the affordance ("View ▸").
+    await page.evaluate(() => (window as any).__VIBERSYN__.select("Atlas"));
+    const readyLane = page.locator('[data-testid="tree-menu-lane"][data-status="ready"]');
+    await expect(readyLane.first()).toBeVisible();
+    await readyLane.first().click();
     await expect(page.getByTestId("slideshow-overlay")).toBeVisible();
     await expect(page.getByTestId("slideshow-project")).toContainText("Blocker announcer");
     // The live slide embeds the generated deck with an open-in-window link.

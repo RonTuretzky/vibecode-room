@@ -37,15 +37,18 @@ async function normalizedCenter(page: Page, testId: string): Promise<{ x: number
 
 test.describe("guest hands (?remote=1)", () => {
   test("a guest WS cursor dwells a wall control: highlight, fire, and one click per approach", async ({ page }) => {
-    // &mock=1 exposes the Mock Room toggle purely as a deterministic dwell
-    // target (same trick as the gesture-dwell spec).
-    await page.goto(`/?live=0&remote=1&mock=1`);
+    // The garden↔orbit scene toggle is the deterministic dwell target (same
+    // choice as the gesture-dwell spec: always visible, flips both ways).
+    await page.goto(`/?live=0&remote=1`);
     await waitForHook(page);
     await expect(page.getByTestId("gesture-overlay")).toBeAttached();
+    // Dwell rides requestAnimationFrame — keep this page focused so parallel
+    // workers' background throttling can't freeze the ring mid-fill.
+    await page.bringToFront();
 
-    const mock = page.getByTestId("mock-room-button");
-    await expect(mock).toHaveAttribute("data-state", "off");
-    const target = await normalizedCenter(page, "mock-room-button");
+    const scene = page.getByTestId("room-scene");
+    await expect(scene).toHaveAttribute("data-mode", "garden");
+    const target = await normalizedCenter(page, "scene-mode-button");
 
     const ws = new WebSocket(`ws://127.0.0.1:${PORT}/hands/ws`);
     const frames: { stop: () => void } = { stop: () => undefined };
@@ -70,9 +73,9 @@ test.describe("guest hands (?remote=1)", () => {
       };
       stream(target);
 
-      // Pointing at it: highlight + filling ring, then the dwell fires the click.
-      await expect(page.locator('[data-testid="mock-room-button"][data-dwell-hot]')).toBeAttached({ timeout: 3_000 });
-      await expect(mock).toHaveAttribute("data-state", "on", { timeout: 4_000 });
+      // The dwell fires the click (the highlight/ring semantics are pinned
+      // by the mouse-dwell spec on this same pipeline).
+      await expect(scene).toHaveAttribute("data-mode", "orbit", { timeout: 10_000 });
 
       // Hand leaves (stream stops → the wall evicts the cursor): no ghost
       // re-fire without a cursor. (The stricter parked-cursor re-arm rule is
@@ -80,12 +83,12 @@ test.describe("guest hands (?remote=1)", () => {
       // MOVES when its label toggles, so a parked assertion would race reflow.)
       frames.stop();
       await page.waitForTimeout(1_400);
-      await expect(mock).toHaveAttribute("data-state", "on");
+      await expect(scene).toHaveAttribute("data-mode", "orbit");
 
-      // A fresh approach at the re-measured position toggles it back off —
+      // A fresh approach at the re-measured position toggles it back —
       // one click per approach, through the real relay both times.
-      stream(await normalizedCenter(page, "mock-room-button"));
-      await expect(mock).toHaveAttribute("data-state", "off", { timeout: 4_000 });
+      stream(await normalizedCenter(page, "scene-mode-button"));
+      await expect(scene).toHaveAttribute("data-mode", "garden", { timeout: 10_000 });
     } finally {
       frames.stop();
       ws.close();
@@ -93,11 +96,12 @@ test.describe("guest hands (?remote=1)", () => {
   });
 
   test("full journey: a second browser page drives the wall through the /hands trackpad", async ({ page, context }) => {
-    await page.goto(`/?live=0&remote=1&mock=1`);
+    await page.goto(`/?live=0&remote=1`);
     await waitForHook(page);
-    const mock = page.getByTestId("mock-room-button");
-    await expect(mock).toHaveAttribute("data-state", "off");
-    const target = await normalizedCenter(page, "mock-room-button");
+    await page.bringToFront();
+    const scene = page.getByTestId("room-scene");
+    await expect(scene).toHaveAttribute("data-mode", "garden");
+    const target = await normalizedCenter(page, "scene-mode-button");
 
     // The guest opens /hands on "their computer" (a second page here). The
     // trackpad is the zero-permission default mode.
@@ -118,16 +122,11 @@ test.describe("guest hands (?remote=1)", () => {
     await guest.mouse.down();
 
     // Holding still on the pad dwells the wall control until it clicks.
-    await expect(page.locator('[data-testid="mock-room-button"][data-dwell-hot]')).toBeAttached({ timeout: 3_000 });
-    await expect(mock).toHaveAttribute("data-state", "on", { timeout: 4_000 });
+    await expect(scene).toHaveAttribute("data-mode", "orbit", { timeout: 10_000 });
     await guest.mouse.up();
-
-    // The wall's Guests overlay reports the live connection: open it via its
-    // HUD button and read the URL + count off the real DOM.
-    await page.getByTestId("guest-hands-button").click();
-    await expect(page.getByTestId("guest-hands-overlay")).toBeVisible();
-    await expect(page.getByTestId("guest-hands-url")).toContainText("/hands");
-    await expect(page.getByTestId("guest-hands-count")).toContainText("1 guest", { timeout: 8_000 });
+    // (The 🖐 Guests HUD button left the walls — live-room directive; the
+    // always-on QR badge carries the invitation now, so the journey's proof
+    // ends here: the pad genuinely drove the wall.)
 
     await guest.close();
   });

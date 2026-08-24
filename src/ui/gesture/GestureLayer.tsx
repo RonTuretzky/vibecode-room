@@ -493,6 +493,14 @@ export function GestureLayer({ wall, fusionUrl, remoteUrl = "", mouseTest = fals
         getSceneDwellSource()?.setHighlights(nextScene);
       }
       sceneHighlights = nextScene;
+      // Scene targets highlight in-canvas (emissive), invisible to the DOM —
+      // mirror the count onto the overlay so e2e/ops can observe that the
+      // cursors are acquiring REAL targets out in the 3D room too.
+      if (nextScene.size > 0) {
+        canvas?.setAttribute("data-dwell-scene-hot", String(nextScene.size));
+      } else {
+        canvas?.removeAttribute("data-dwell-scene-hot");
+      }
 
       // Presence, not acquisition: chrome that opens while a cursor RESTS on
       // it (the ⚙ dock) reads this — dwell-hot only marks acquired targets,

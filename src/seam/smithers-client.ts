@@ -1,5 +1,5 @@
 import type { CorrelationRecord, CorrelationStore } from "./correlation-store";
-import { SmithersGatewayClient as OfficialSmithersGatewayClient } from "smithers-orchestrator/gateway-client";
+import { SmithersGatewayClient as OfficialSmithersGatewayClient } from "smthrs/gateway-client";
 
 const SIGNAL_WAIT_TIMEOUT_MS = 2_000;
 const SIGNAL_WAIT_POLL_MS = 20;

@@ -28,35 +28,39 @@ async function gotoStatic(page: Page, query = "?live=0"): Promise<void> {
 
 test.describe("mouse-dwell fallback (?dwell=mouse)", () => {
   test("parking the mouse on a control highlights it, fills the ring, and clicks it ONCE", async ({ page }) => {
-    // &mock=1 exposes the Mock Room toggle (hidden by default — no-mocks
-    // audit) purely as a deterministic on/off dwell target for this spec.
-    await gotoStatic(page, "?live=0&dwell=mouse&mock=1");
+    // The garden↔orbit scene toggle is the deterministic dwell target: it is
+    // always visible (never folded into the ⚙ dock) and flips a stable scene
+    // attribute both ways.
+    await gotoStatic(page, "?live=0&dwell=mouse");
     await expect(page.getByTestId("gesture-overlay")).toBeAttached();
+    // Same rAF-throttling guard as the sweep spec below.
+    await page.bringToFront();
 
-    const mock = page.getByTestId("mock-room-button");
-    await expect(mock).toHaveAttribute("data-state", "off");
-    const box = await mock.boundingBox();
+    const scene = page.getByTestId("room-scene");
+    await expect(scene).toHaveAttribute("data-mode", "garden");
+    const toggle = page.getByTestId("scene-mode-button");
+    const box = await toggle.boundingBox();
     expect(box).not.toBeNull();
     await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
 
     // Pointing at it: the target highlights (grow/glow) while the ring fills.
-    await expect(page.locator('[data-testid="mock-room-button"][data-dwell-hot]')).toBeAttached({ timeout: 2_000 });
+    await expect(page.locator('[data-testid="scene-mode-button"][data-dwell-hot]')).toBeAttached({ timeout: 2_000 });
     // Dwell completion (~0.8s) synthesizes the click.
-    await expect(mock).toHaveAttribute("data-state", "on", { timeout: 4_000 });
+    await expect(scene).toHaveAttribute("data-mode", "orbit", { timeout: 8_000 });
 
     // Re-arm only after leaving: a parked cursor must NOT toggle it again.
     await page.waitForTimeout(1_600);
-    await expect(mock).toHaveAttribute("data-state", "on");
+    await expect(scene).toHaveAttribute("data-mode", "orbit");
 
-    // Leave, return, dwell again: toggles back off (one click per approach).
-    // Re-measure first — toggling ON changes the label ("● Mock Room"), which
-    // can reflow the (wrapping) control row and move the button.
-    const box2 = await mock.boundingBox();
+    // Leave, return, dwell again: toggles back (one click per approach).
+    // Re-measure first — the label changes ("🌳 Garden" ↔ "🪐 Orbit"), which
+    // can reflow the control row and move the button.
+    const box2 = await toggle.boundingBox();
     expect(box2).not.toBeNull();
-    await page.mouse.move(box2!.x + box2!.width / 2, box2!.y + box2!.height + 160);
+    await page.mouse.move(box2!.x + box2!.width / 2, box2!.y - 160);
     await page.waitForTimeout(300);
     await page.mouse.move(box2!.x + box2!.width / 2, box2!.y + box2!.height / 2);
-    await expect(mock).toHaveAttribute("data-state", "off", { timeout: 4_000 });
+    await expect(scene).toHaveAttribute("data-mode", "garden", { timeout: 8_000 });
   });
 
   test("OS cursor stays visible in mouse-dwell mode (no gesture-mode class)", async ({ page }) => {
@@ -114,15 +118,36 @@ test.describe("gesture mode cursor policy (?gesture=1)", () => {
 
 test.describe("synthetic fusion emitter (run-room.sh --fake parity)", () => {
   let fake: ChildProcess | null = null;
-  const FAKE_PORT = 8791;
+  // Pid-varied port: a fixed one collides with TIME_WAIT sockets on rapid
+  // re-runs and the emitter dies silently — no cursors, nothing to acquire.
+  const FAKE_PORT = 8791 + (process.pid % 97);
 
   test.beforeAll(async () => {
     fake = spawn("bun", ["gesture-wall/tools/fake-fusion.mjs"], {
       env: { ...process.env, FAKE_WS_PORT: String(FAKE_PORT), FAKE_FPS: "30" },
       stdio: "ignore",
     });
-    // Give the WS server a moment to bind.
-    await new Promise((resolve) => setTimeout(resolve, 700));
+    // Wait until the WS server genuinely accepts connections (a silent bind
+    // failure otherwise burns the whole 60s sweep budget on nothing).
+    const { WebSocket } = await import("ws");
+    await new Promise<void>((resolve, reject) => {
+      const deadline = Date.now() + 5_000;
+      const attempt = () => {
+        const probe = new WebSocket(`ws://127.0.0.1:${FAKE_PORT}`);
+        probe.once("open", () => {
+          probe.close();
+          resolve();
+        });
+        probe.once("error", () => {
+          if (Date.now() > deadline) {
+            reject(new Error("fake fusion emitter never came up"));
+          } else {
+            setTimeout(attempt, 150);
+          }
+        });
+      };
+      attempt();
+    });
   });
 
   test.afterAll(() => {
@@ -130,11 +155,22 @@ test.describe("synthetic fusion emitter (run-room.sh --fake parity)", () => {
   });
 
   test("fake fusion cursors sweep the wall and light up real dwell targets", async ({ page }) => {
+    // The sweep needs wall-clock (Lissajous period × frame budget) and slows
+    // under parallel-worker load — give it real headroom.
+    test.setTimeout(90_000);
     await gotoStatic(page, `?live=0&wall=A&gesture=1&fusion=ws://127.0.0.1:${FAKE_PORT}`);
+    // The dwell layer lives on requestAnimationFrame — parallel workers'
+    // background pages get rAF-throttled and the cursors freeze mid-sweep,
+    // so make this the focused page for its wall-clock-bound assertion.
+    await page.bringToFront();
     await expect(page.getByTestId("gesture-overlay")).toBeAttached();
-    // The two Lissajous cursors sweep [0.16,0.84]×[0.18,0.82]; as they cross
-    // HUD controls / panels, the dwell layer must set data-dwell-hot (the
-    // point→highlight feedback) on real UI elements.
-    await expect(page.locator("[data-dwell-hot]").first()).toBeAttached({ timeout: 30_000 });
+    // The two Lissajous cursors sweep [0.16,0.84]×[0.18,0.82] — the centre
+    // of the wall, which nowadays is the 3D room itself: crossing a tree or
+    // an idea orb must light it up. Scene targets highlight in-canvas, so
+    // the overlay mirrors the acquisition count (data-dwell-scene-hot); a
+    // DOM control acquiring (data-dwell-hot) counts too.
+    await expect(
+      page.locator("[data-dwell-hot], [data-dwell-scene-hot]").first(),
+    ).toBeAttached({ timeout: 60_000 });
   });
 });

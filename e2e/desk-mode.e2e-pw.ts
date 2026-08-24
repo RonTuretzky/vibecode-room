@@ -64,23 +64,27 @@ test.describe("desk mode — per-wall scoping (each wall renders ITS surface + c
     await gotoStatic(page, "?live=0&wall=A&view=ideas");
     await expect(page.getByTestId("room-scene")).toBeVisible();
     await expect(page.getByTestId("idea-tray")).toBeVisible();
-    await expect(page.locator('[data-region="suggestion"]')).toBeVisible();
+    // Mic + guided fold behind the ⚙ dock (the fleet rail and the separate
+    // QR button are gone everywhere — trees and the q key carry them).
+    await page.getByTestId("control-dock-button").click();
     await expect(page.getByTestId("mic-capture-button")).toBeVisible();
     await expect(page.getByTestId("guided-demo-button")).toBeVisible();
-    await expect(page.getByTestId("fleet-panel")).toHaveCount(0);
-    await expect(page.locator('[data-region="transcript"]')).toHaveCount(0);
+    // The transcript lives on BOTH walls now (it is the room's only proof it
+    // heard anything — gating it off wall A hid everyone's words).
+    await expect(page.locator('[data-region="transcript"]')).toBeVisible();
     await expect(page.getByTestId("qr-import-button")).toHaveCount(0);
   });
 
-  test("?view=builds (wall B): fleet + build controls, NO idea surfaces", async ({ page }) => {
+  test("?view=builds (wall B): transcript + mic, NO idea surfaces", async ({ page }) => {
     await gotoStatic(page, "?live=0&wall=B&view=builds");
     await expect(page.getByTestId("room-scene")).toBeVisible();
-    await expect(page.getByTestId("fleet-panel")).toHaveCount(2);
     await expect(page.locator('[data-region="transcript"]')).toBeVisible();
-    await expect(page.getByTestId("qr-import-button")).toBeVisible();
     await expect(page.getByTestId("idea-tray")).toHaveCount(0);
     await expect(page.locator('[data-region="suggestion"]')).toHaveCount(0);
-    await expect(page.getByTestId("mic-capture-button")).toHaveCount(0);
+    // EVERY wall gets the mic (whoever stands in front of it can wake the
+    // room); the idea-side guided demo stays scoped to idea walls.
+    await page.getByTestId("control-dock-button").click();
+    await expect(page.getByTestId("mic-capture-button")).toBeVisible();
     await expect(page.getByTestId("guided-demo-button")).toHaveCount(0);
   });
 
@@ -160,13 +164,16 @@ test.describe("desk mode — overlays & keyboard map", () => {
     await expect(page.getByTestId("qr-overlay")).toHaveCount(0);
   });
 
-  test("the QR Import button opens the overlay with the server's submit URL + QR image", async ({ page }) => {
+  test("the q key opens the QR overlay with the server's submit URL + QR image", async ({ page }) => {
     await gotoStatic(page);
-    await page.getByTestId("qr-import-button").click();
+    await page.keyboard.press("q");
     await expect(page.getByTestId("qr-overlay")).toBeVisible();
-    // /api/import/info resolves against the real server; the QR renders client-side.
+    // /api/import/info resolves against the real server; bound to loopback
+    // (as in CI) the overlay says so honestly: the submit URL shows and the
+    // QR slot carries the explicit not-LAN-reachable notice instead of a
+    // code no phone could use.
     await expect(page.getByTestId("qr-submit-url")).toContainText("/submit");
-    await expect(page.getByTestId("qr-code-image")).toBeVisible();
+    await expect(page.locator('[data-testid="qr-code-image"], [data-testid="qr-code-unreachable"]').first()).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(page.getByTestId("qr-overlay")).toHaveCount(0);
   });

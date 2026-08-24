@@ -220,9 +220,10 @@ test.describe("guided demo — coached flow with mouse-dwell", () => {
     await page.goto("/?live=0");
     await waitForHook(page);
 
-    // Enter via the HUD button (it lives INSIDE the ⚙ Controls tray — hover
-    // the dock toggle so the popover unfolds first).
-    await page.getByTestId("control-dock-button").hover();
+    // Enter via the HUD button (it lives INSIDE the ⚙ Controls tray — click
+    // the dock toggle so the popover unfolds first; hover only HOLDS an open
+    // tray, it never opens one).
+    await page.getByTestId("control-dock-button").click();
     await expect(page.getByTestId("control-dock")).toHaveAttribute("data-expanded", "true");
     await page.getByTestId("guided-demo-button").click();
     const demo = page.getByTestId("guided-demo");
@@ -246,7 +247,7 @@ test.describe("guided demo — coached flow with mouse-dwell", () => {
     await expect(page.getByTestId("guided-demo")).toHaveCount(0);
 
     // Re-enter: a FRESH run back at step 1 (dock folds again on re-entry).
-    await page.getByTestId("control-dock-button").hover();
+    await page.getByTestId("control-dock-button").click();
     await page.getByTestId("guided-demo-button").click();
     await expect(page.getByTestId("guided-demo")).toHaveAttribute("data-step", "orientation");
     await expect(page.getByTestId("guided-orb-progress")).toContainText("0 / 3");
