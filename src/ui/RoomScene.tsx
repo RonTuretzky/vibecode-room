@@ -1474,6 +1474,26 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
       ground.rotation.x = -Math.PI / 2;
       group.add(ground);
 
+      // The meeting-room table: a plain oak slab on four legs standing at the
+      // meadow's centre, so the garden reads as the shared room it is. Meadow
+      // only — the pond stage keeps its little rise clear.
+      if (!pondScene) {
+        const TABLE_TOP_Y = 0.92;
+        const table = new THREE.Group();
+        const oak = new THREE.MeshLambertMaterial({ color: 0x8a6a44 });
+        const oakDark = new THREE.MeshLambertMaterial({ color: 0x5e4a33 });
+        const top = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.16, 1.6), oak);
+        top.position.y = TABLE_TOP_Y;
+        table.add(top);
+        const legGeo = new THREE.BoxGeometry(0.18, TABLE_TOP_Y - 0.08, 0.18);
+        for (const [lx, lz] of [[1.5, 0.65], [-1.5, 0.65], [1.5, -0.65], [-1.5, -0.65]]) {
+          const leg = new THREE.Mesh(legGeo, oakDark);
+          leg.position.set(lx, (TABLE_TOP_Y - 0.08) / 2, lz);
+          table.add(leg);
+        }
+        group.add(table);
+      }
+
       // Flora: instanced photoscan scatter. Loads async (cached for the page
       // after the first garden build); each species lands as a handful of
       // InstancedMesh draw calls, so density is nearly free. The rng here is
