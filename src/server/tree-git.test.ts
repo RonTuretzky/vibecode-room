@@ -305,6 +305,9 @@ describe("TreeGitSubstrate — birth", () => {
     expect(substrate.snapshot("upid-1")).toEqual({
       branches: [{ name: "main", commits: 1 }],
       remoteUrl: null,
+      // A born-here tree is LOCAL, and says so on the wire: the wall gates the
+      // branch rails on this, never on remoteUrl (publish() sets one here too).
+      adopted: false,
     });
     expect(substrate.seedPitch("upid-1")).toBe(SEED.pitch);
   });
@@ -343,7 +346,11 @@ describe("TreeGitSubstrate — birth", () => {
     expect(existsSync(join(root, "upid-4", ".tree"))).toBe(false);
 
     substrate.adopt("upid-4", "https://github.com/acme/widget");
-    expect(substrate.snapshot("upid-4")).toEqual({ branches: [], remoteUrl: "https://github.com/acme/widget" });
+    expect(substrate.snapshot("upid-4")).toEqual({
+      branches: [],
+      remoteUrl: "https://github.com/acme/widget",
+      adopted: true,
+    });
 
     const published = await substrate.publish("upid-4", { name: "widget" });
     expect(published.ok).toBe(false);
@@ -572,6 +579,73 @@ describe("TreeGitSubstrate — adopted branch rails", () => {
     // The adopted tree's trace.log lives in the CLONE's gitdir (#gitDirFor).
     const log = await readFile(join(root, upid, "repo", ".git", "trace.log"), "utf8");
     expect(log).toContain("branch room/add-dark-mode ok");
+  });
+
+  // 🌱 GROW A BRANCH's substrate half. createBranch is idempotent ON PURPOSE
+  // (graft-onto-this-branch must not move a rail that already exists), which
+  // makes it exactly wrong for grow: two spoken changes opening with the same
+  // words would both claim a new limb and the second would cut nothing,
+  // silently growing onto the first one's rail.
+  test("growBranch cuts a NEW limb every time — dedupe -2..-6 against the authoritative set, past the snapshot cap", async () => {
+    const { root, git, substrate } = makeSubstrate();
+    const upid = adoptTree(root, substrate);
+
+    expect(await substrate.growBranch(upid, "dark mode for the board")).toEqual({
+      ok: true,
+      branch: "room/dark-mode-for-the-board",
+    });
+    // The idempotent sibling still answers ok for the same name…
+    expect(await substrate.createBranch(upid, "dark mode for the board")).toEqual({
+      ok: true,
+      branch: "room/dark-mode-for-the-board",
+    });
+    // …and grow steps PAST it, cutting a real ref at the fetched origin tip.
+    expect(await substrate.growBranch(upid, "dark mode for the board")).toEqual({
+      ok: true,
+      branch: "room/dark-mode-for-the-board-2",
+    });
+    expect(git.refs.get("refs/heads/room/dark-mode-for-the-board-2")).toBe("origin-tip-1");
+
+    // PAST THE WIRE'S HORIZON. snapshot() publishes only the first 8 branches,
+    // so once the tree is busy the newest limbs are INVISIBLE to anything
+    // predicting a free name from the published list — which is how the old
+    // client-side prediction landed back on an existing rail. The substrate
+    // asks its own uncapped Map, so the limbs it cannot see still count.
+    for (let index = 0; index < 8; index += 1) {
+      expect((await substrate.createBranch(upid, `filler ${index}`)).ok).toBe(true);
+    }
+    const published = substrate.snapshot(upid)!.branches.map((entry) => entry.name);
+    expect(published).toHaveLength(8);
+    expect(published).not.toContain("room/filler-7");
+    expect(await substrate.growBranch(upid, "filler 7")).toEqual({ ok: true, branch: "room/filler-7-2" });
+
+    // The budget is finite and its end is READABLE, never a silent reuse.
+    for (const suffix of ["-3", "-4", "-5", "-6"]) {
+      expect(await substrate.growBranch(upid, "dark mode for the board")).toEqual({
+        ok: true,
+        branch: `room/dark-mode-for-the-board${suffix}`,
+      });
+    }
+    expect(await substrate.growBranch(upid, "dark mode for the board")).toEqual({
+      ok: false,
+      error: "room/dark-mode-for-the-board and every -2..-6 name after it already exist — say something different",
+    });
+  });
+
+  test("growBranch refuses local trees and unusable names, and never cuts on a git refusal", async () => {
+    const { root, git, substrate } = makeSubstrate();
+    const upid = adoptTree(root, substrate);
+    // A tree with no adopted clone has no origin to cut against.
+    expect(await substrate.growBranch("upid-nope", "dark mode")).toEqual({ ok: false, error: "no tree repo for upid-nope" });
+    // Words that slug to nothing name no branch.
+    expect((await substrate.growBranch(upid, "!!!")).ok).toBe(false);
+    // A refused fetch means NO ref is written — the caller must be free to
+    // report "nothing grew" without wondering whether something did.
+    git.failSubcommands.add("fetch");
+    const refused = await substrate.growBranch(upid, "dark mode");
+    expect(refused.ok).toBe(false);
+    expect(git.refs.has("refs/heads/room/dark-mode")).toBe(false);
+    expect(substrate.snapshot(upid)!.branches.some((entry) => entry.name === "room/dark-mode")).toBe(false);
   });
 
   test("commitBranch commits the clone's CURRENT working tree via a detached index (HEAD untouched); no-change guard returns changed:false", async () => {

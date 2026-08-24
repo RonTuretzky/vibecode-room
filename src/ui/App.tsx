@@ -3240,7 +3240,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
                 // mirror carries no treeRepo); the local rails ride along so
                 // the static renderer can exercise the version buttons.
                 self={selfTree !== null ? { tree: selfTree, versions: initialSelfBranches ?? null } : null}
-                landing={snapshot.selfLanding ?? null}
+                landing={snapshot.steerLanding ?? null}
                 // The words the room is hearing RIGHT NOW: without them the
                 // card's graft toggle echoed nothing while the operator spoke.
                 transcript={snapshot.transcript}

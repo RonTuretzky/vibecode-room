@@ -83,6 +83,12 @@ export interface TendChipSize {
 export interface TendChipPlacement {
   left: number;
   top: number;
+  // A HARD CEILING, present only when the arc could not afford this chip's
+  // full nominal and squeezed it (see FLEXIBLE_CHIPS). The renderer applies it
+  // as max-height, so the budget the layout reserved is the budget the chip
+  // actually occupies — otherwise the chip below is painted over and its
+  // centre goes dead, which is the whole failure this module exists to avoid.
+  height?: number;
 }
 
 // NOMINAL chip footprints (desk / gesture-XL). The rendered chips take these
@@ -90,10 +96,49 @@ export interface TendChipPlacement {
 // under the nominal heights, so the pure layout's separation budget holds on
 // the real wall. Heights carry headroom for the taller transient states
 // (armed sub-lines, halt receipts) — the 48px separation absorbs the rest.
+//
+// A nominal that under-states what a chip DRAWS is not a rounding error: the
+// arc budgets from these numbers, so the chip below gets painted over, and a
+// covered chip centre is a dead dwell target (GestureLayer's elementFromPoint
+// occlusion check drops it). `scripts/measure-tend-chips.tsx` renders the
+// surface in a real browser and prints every chip's true rect; the RECORD
+// heights below come from it, and tend-radial.test.ts re-asserts them so a CSS
+// change that grows the record surface fails out loud instead of quietly
+// eating the next chip.
+//
+// MEASURED (1920×1080, echo full): 221px desk, 314px gesture — a 128px press
+// over the echo box (max-height 9rem) inside the chip padding.
+export const RECORD_CHIP_HEIGHT = { desk: 232, gesture: 324 } as const;
+// …and the least a record chip may be squeezed to when the arc cannot afford
+// its full height (FLEXIBLE_CHIPS, below): the press itself, at wall scale,
+// plus the chip's padding. Below this the button stops being a dwell target,
+// which is worse than a shorter echo.
+export const RECORD_CHIP_MIN_HEIGHT = { desk: 96, gesture: 172 } as const;
+
+// CHIPS WHOSE HEIGHT IS NEGOTIABLE. A busy adopted tree at gesture scale
+// spends 716 of its 1048px verb column on identity + settled + brief + live +
+// deck + remove; a full-size record surface (324) does not fit after them at
+// ANY honest separation. The record chips are the only ones that can give: the
+// press keeps its wall-scale height and the ECHO — which is a rolling tail of
+// what was just said, not a claim the operator has to read — takes the cut.
+// Every other chip is text that would be sliced mid-sentence.
+const FLEXIBLE_CHIPS: ReadonlySet<TendChipId> = new Set<TendChipId>(["graft", "grow"]);
+
+function minHeightOf(id: TendChipId, gesture: boolean): number {
+  return FLEXIBLE_CHIPS.has(id) ? (gesture ? RECORD_CHIP_MIN_HEIGHT.gesture : RECORD_CHIP_MIN_HEIGHT.desk) : Number.POSITIVE_INFINITY;
+}
+
 export const DESK_SIZES: Record<TendChipId, TendChipSize> = {
-  identity: { width: 250, height: 108 },
+  // The identity plate is four stacked lines (eyebrow / title / callsign /
+  // status) and a long inferred title wraps: measured 120 desk, 152 gesture.
+  identity: { width: 250, height: 124 },
   close: { width: 64, height: 52 },
-  graft: { width: 280, height: 96 },
+  // THE RECORD SURFACE, not a verb row. Budgeted as a one-line verb (96 desk /
+  // 190 gesture) it drew its echo straight over the chip below and killed that
+  // chip's centre. `grow` renders the IDENTICAL component; `graft` was
+  // under-budgeted the same way and only looked safe because nothing follows
+  // it on the self arc — until a take-home QR appeared under the trunk.
+  graft: { width: 280, height: RECORD_CHIP_HEIGHT.desk },
   growing: { width: 300, height: 172 },
   settled: { width: 300, height: 96 },
   "halt-note": { width: 280, height: 60 },
@@ -120,15 +165,18 @@ export const DESK_SIZES: Record<TendChipId, TendChipSize> = {
   brief: { width: 280, height: 84 },
   live: { width: 280, height: 84 },
   deck: { width: 280, height: 84 },
-  grow: { width: 310, height: 96 },
+  // GROW renders the SAME RecordSteerToggle the graft chip does, so it takes
+  // the same VERTICAL budget; the width is its own (it sits in the wider fleet
+  // column).
+  grow: { width: 310, height: RECORD_CHIP_HEIGHT.desk },
   replant: { width: 280, height: 84 },
   remove: { width: 280, height: 84 },
 };
 
 const GESTURE_SIZES: Record<TendChipId, TendChipSize> = {
-  identity: { width: 300, height: 132 },
+  identity: { width: 300, height: 156 },
   close: { width: 120, height: 104 },
-  graft: { width: 390, height: 190 },
+  graft: { width: 390, height: RECORD_CHIP_HEIGHT.gesture },
   growing: { width: 400, height: 232 },
   settled: { width: 400, height: 120 },
   "halt-note": { width: 340, height: 72 },
@@ -161,7 +209,10 @@ const GESTURE_SIZES: Record<TendChipId, TendChipSize> = {
   brief: { width: 390, height: 116 },
   live: { width: 390, height: 116 },
   deck: { width: 390, height: 116 },
-  grow: { width: 420, height: 116 },
+  // …and at gesture scale both record chips keep the record surface's own
+  // budget (the 128px press + the capped echo + full chip padding), not the
+  // trimmed verb-row one.
+  grow: { width: 420, height: RECORD_CHIP_HEIGHT.gesture },
   replant: { width: 280, height: 116 },
   remove: { width: 390, height: 116 },
 };
@@ -243,21 +294,47 @@ const clamp = (value: number, lo: number, hi: number): number => Math.min(Math.m
 // Stack a column of chips vertically with the shared separation, compressing
 // (never below the floor) when the viewport cannot hold the full budget, and
 // clamping the whole run inside the vertical margins.
+//
+// THE ORDER OF CONCESSIONS matters. Separation goes first: it is slack, and
+// the floor is where it stops being slack. Only then does a FLEXIBLE chip give
+// up height, down to its own floor. The alternative — what this module used to
+// do — was to keep every nominal, overflow the column, and clamp: the run then
+// runs off the bottom of the wall and the chips inside it sit exactly where a
+// taller neighbour paints over them.
 function stackColumn(
   ids: readonly TendChipId[],
   sizes: Record<TendChipId, TendChipSize>,
   viewportH: number,
   align: "top" | "bottom",
   anchorEdgeY: number,
-): { tops: number[]; sep: number; top: number; total: number } {
+  gesture: boolean,
+): { tops: number[]; heights: number[]; sep: number; top: number; total: number } {
   const heights = ids.map((id) => sizes[id].height);
-  const sum = heights.reduce((a, b) => a + b, 0);
   const avail = viewportH - 2 * TEND_CHIP_MARGIN;
+  const gaps = Math.max(0, ids.length - 1);
+  const sumOf = (): number => heights.reduce((a, b) => a + b, 0);
   let sep = TEND_CHIP_SEPARATION;
-  if (ids.length > 1 && sum + sep * (ids.length - 1) > avail) {
-    sep = Math.max(TEND_CHIP_MIN_SEPARATION, (avail - sum) / (ids.length - 1));
+  if (ids.length > 1 && sumOf() + sep * gaps > avail) {
+    sep = Math.max(TEND_CHIP_MIN_SEPARATION, (avail - sumOf()) / gaps);
   }
-  const total = sum + sep * Math.max(0, ids.length - 1);
+  // Still over budget at the separation floor: take it out of the chips that
+  // can afford to give, largest overshoot first, never past their floors.
+  let excess = sumOf() + sep * gaps - avail;
+  if (excess > 0) {
+    const flexible = ids
+      .map((id, index) => ({ index, give: heights[index]! - minHeightOf(id, gesture) }))
+      .filter((entry) => entry.give > 0)
+      .sort((a, b) => b.give - a.give);
+    for (const entry of flexible) {
+      if (excess <= 0) {
+        break;
+      }
+      const take = Math.min(entry.give, excess);
+      heights[entry.index] = heights[entry.index]! - take;
+      excess -= take;
+    }
+  }
+  const total = sumOf() + sep * gaps;
   let top = align === "top" ? anchorEdgeY : anchorEdgeY - total;
   top = clamp(top, TEND_CHIP_MARGIN, viewportH - TEND_CHIP_MARGIN - total);
   const tops: number[] = [];
@@ -266,7 +343,7 @@ function stackColumn(
     tops.push(y);
     y += h + sep;
   }
-  return { tops, sep, top, total };
+  return { tops, heights, sep, top, total };
 }
 
 // The arc bulge for a chip whose vertical center sits at fraction t (0..1) of
@@ -429,24 +506,25 @@ export function tendChipLayout(
   // VERB ARC — left of the tree, bottom-aligned to the base.
   const verbIds = VERB_ARC.filter((id) => present.includes(id));
   if (verbIds.length > 0) {
-    const col = stackColumn(verbIds, sizes, viewport.height, "bottom", anchor.top + anchor.height);
+    const col = stackColumn(verbIds, sizes, viewport.height, "bottom", anchor.top + anchor.height, spec.gesture);
     const colRight = anchor.left - ANCHOR_GAP;
     verbIds.forEach((id, index) => {
       const size = sizes[id];
-      const centerT = col.total <= 0 ? 0.5 : (col.tops[index]! + size.height / 2 - col.top) / col.total;
+      const height = col.heights[index]!;
+      const centerT = col.total <= 0 ? 0.5 : (col.tops[index]! + height / 2 - col.top) / col.total;
       const left = clamp(
         colRight - size.width + arcInset(centerT),
         TEND_CHIP_MARGIN,
         viewport.width - TEND_CHIP_MARGIN - size.width,
       );
-      rects.push({ id, left, top: col.tops[index]!, width: size.width, height: size.height });
+      rects.push({ id, left, top: col.tops[index]!, width: size.width, height });
     });
   }
 
   // LEAF ARC — right of the tree, top-aligned to the crown.
   const leafIds = LEAF_ARC.filter((id) => present.includes(id));
   if (leafIds.length > 0) {
-    const col = stackColumn(leafIds, sizes, viewport.height, "top", anchor.top);
+    const col = stackColumn(leafIds, sizes, viewport.height, "top", anchor.top, spec.gesture);
     const colLeft = anchor.left + anchor.width + ANCHOR_GAP;
     leafIds.forEach((id, index) => {
       const size = sizes[id];
@@ -483,7 +561,7 @@ export function tendChipLayout(
   const persistentRoot = ROOT_PERSISTENT.filter((id) => present.includes(id));
   let rootCursor = anchor.top + anchor.height + ANCHOR_GAP;
   if (persistentRoot.length > 0) {
-    const col = stackColumn(persistentRoot, sizes, viewport.height, "top", rootCursor);
+    const col = stackColumn(persistentRoot, sizes, viewport.height, "top", rootCursor, spec.gesture);
     persistentRoot.forEach((id, index) => {
       const size = sizes[id];
       rects.push({ id, left: rootLeft(size), top: col.tops[index]!, width: size.width, height: size.height });
@@ -491,11 +569,26 @@ export function tendChipLayout(
     const last = sizes[persistentRoot[persistentRoot.length - 1]!];
     rootCursor = col.tops[persistentRoot.length - 1]! + last.height + col.sep;
   }
+  // The receipts append BELOW the persistent stack while the wall has room —
+  // and stack UPWARD from the trunk when it does not. Clamping them to the
+  // bottom margin instead (what this did) put every over-budget receipt on the
+  // SAME line, one painted over the other and both over the verb arc's last
+  // chip — the 🗑 remove button, whose centre then stopped being a dwell
+  // target. Measured at gesture scale on a tree carrying a QR, a full leaf
+  // page and both receipts.
+  let upwardCursor = anchor.top + anchor.height + ANCHOR_GAP;
   for (const id of ROOT_TRANSIENT.filter((candidate) => present.includes(candidate))) {
     const size = sizes[id];
-    const top = clamp(rootCursor, TEND_CHIP_MARGIN, viewport.height - TEND_CHIP_MARGIN - size.height);
+    const fitsBelow = rootCursor + size.height <= viewport.height - TEND_CHIP_MARGIN;
+    const top = fitsBelow
+      ? rootCursor
+      : clamp(upwardCursor - size.height - TEND_CHIP_SEPARATION, TEND_CHIP_MARGIN, viewport.height - TEND_CHIP_MARGIN - size.height);
     rects.push({ id, left: rootLeft(size), top, width: size.width, height: size.height });
-    rootCursor = top + size.height + TEND_CHIP_SEPARATION;
+    if (fitsBelow) {
+      rootCursor = top + size.height + TEND_CHIP_SEPARATION;
+    } else {
+      upwardCursor = top;
+    }
   }
 
   // Deterministic cross-arc nudge (12px pad keeps visual daylight; the arcs'
@@ -504,7 +597,16 @@ export function tendChipLayout(
 
   const out: Record<string, TendChipPlacement> = {};
   for (const rect of rects) {
-    out[rect.id] = { left: Math.round(rect.left), top: Math.round(rect.top) };
+    // The ceiling rides out ONLY when the column squeezed this chip below its
+    // nominal — an unconditional max-height would clip every chip that renders
+    // a few px taller than its budget (a wrapped receipt, a two-line title),
+    // and clipping words is a different kind of lying.
+    const squeezed = rect.height < sizes[rect.id].height;
+    out[rect.id] = {
+      left: Math.round(rect.left),
+      top: Math.round(rect.top),
+      ...(squeezed ? { height: Math.round(rect.height) } : {}),
+    };
   }
   return out;
 }

@@ -342,7 +342,7 @@ describe("steer slice → applier — the record-toggle commit", () => {
     });
     const upid = await importAdopted(runtime);
 
-    runtime.setSteeringTarget(upid, "corr-steerslice-on", "room/demo");
+    runtime.setSteeringTarget(upid, "corr-steerslice-on", { mode: "onto", branch: "room/demo" });
     await drive(runtime, [final("swap the hero image", "utt-steer-scope")]);
     runtime.clearSteeringTarget("corr-steerslice-off");
 
@@ -445,6 +445,329 @@ describe("steer slice → applier — the record-toggle commit", () => {
     await new Promise((resolve) => setTimeout(resolve, 100));
     expect(steerApplierEvents(runtime)).toEqual([]);
     expect(existsSync(join(buildsRoot, upid, "repo", "ROOM-NOTES.md"))).toBe(false);
+  });
+});
+
+// ── 🌱 GROW A BRANCH — the record-then-cut window ────────────────────────────
+// The verb used to POST a machine-generated name the instant it was pressed
+// (room/spoken-changes, an empty rail cut before anyone had said what it was
+// for). It is a RECORDING window now: press → speak → press again → the room
+// cuts a FRESH branch named from those words and grows the change on it.
+describe("grow-scoped select — the branch is named by what was said", () => {
+  function steerLandingOf(runtime: ProjectorRuntime): {
+    upid: string;
+    branch: string | null;
+    onto: string | null;
+    error: string | null;
+    atMs: number;
+  } | null {
+    return (
+      (runtime.snapshot() as unknown as { steerLanding?: { upid: string; branch: string | null; onto: string | null; error: string | null; atMs: number } })
+        .steerLanding ?? null
+    );
+  }
+
+  test("a grow window cuts a FRESH branch from the speech even though room/* rails already exist", async () => {
+    const git = scriptedGit();
+    const { runtime, buildsRoot } = await makeRuntime({
+      buildBackends: [new FakeBackend()],
+      treeGitRunner: git.run,
+      cloneRepoFn: fakeClone,
+      repoDigestFn: async () => "digest: fake repo",
+    });
+    const upid = await importAdopted(runtime);
+    // The tree is already carrying work. An UNSCOPED window continues on the
+    // newest of these (see "the most recently created room/* branch wins") —
+    // and that difference IS the feature: grow must not continue anything.
+    expect((await runtime.createTreeBranch(upid, "feature-x")).ok).toBe(true);
+    const app = createProjectorApp(runtime);
+
+    const armed = await app.request(`/api/process/${upid}/select`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ grow: true }),
+    });
+    expect(armed.status).toBe(200);
+    const armedSnapshot = (await armed.json()) as { steeringUpid?: string | null; steeringBranch?: string | null };
+    expect(armedSnapshot.steeringUpid).toBe(upid);
+    // A grow window has NO branch yet — its name is still unspoken, and the
+    // wire must not claim one that does not exist.
+    expect(armedSnapshot.steeringBranch).toBeNull();
+
+    await drive(runtime, [final("give the board a proper dark mode", "utt-grow-1")]);
+    await app.request("/api/process/select/clear", { method: "POST" });
+
+    await waitFor(() => steerLandingOf(runtime) !== null);
+    const landing = steerLandingOf(runtime)!;
+    expect(landing.upid).toBe(upid);
+    expect(landing.error).toBeNull();
+    // Named by the words (slugFromSpeech), NOT "spoken-changes", and NOT the
+    // rail that already existed.
+    expect(landing.branch).toBe("room/give-board-proper-dark");
+    expect(landing.onto).toBeNull();
+
+    const branches = runtime.snapshot().processes.find((entry) => entry.upid === upid)!.treeRepo!.branches;
+    expect(branches.some((branch) => branch.name === "room/give-board-proper-dark")).toBe(true);
+    // room/feature-x was left exactly as it was — the change did not go there.
+    expect(branches.find((branch) => branch.name === "room/feature-x")!.commits).toBe(0);
+    // …and the spoken change really landed ON the new limb.
+    await waitFor(() => steerApplierEvents(runtime).includes("steer.applier.applied"));
+    expect(readFileSync(join(buildsRoot, upid, "repo", "ROOM-NOTES.md"), "utf8")).toContain(
+      "give the board a proper dark mode",
+    );
+    await waitFor(
+      () =>
+        runtime
+          .snapshot()
+          .processes.find((entry) => entry.upid === upid)
+          ?.treeRepo?.branches.some((branch) => branch.name === "room/give-board-proper-dark" && branch.commits === 1) === true,
+    );
+  });
+
+  test("two grow windows on the same words grow TWO limbs — never one claimed twice", async () => {
+    const git = scriptedGit();
+    const { runtime } = await makeRuntime({
+      buildBackends: [new FakeBackend()],
+      treeGitRunner: git.run,
+      cloneRepoFn: fakeClone,
+      repoDigestFn: async () => "digest: fake repo",
+    });
+    const upid = await importAdopted(runtime);
+
+    runtime.setSteeringTarget(upid, "corr-grow-twice-1", { mode: "grow" });
+    await drive(runtime, [final("give the board a proper dark mode", "utt-grow-twice-1")]);
+    runtime.clearSteeringTarget("corr-grow-twice-1-off");
+    await waitFor(() => steerLandingOf(runtime)?.branch === "room/give-board-proper-dark");
+    expect(steerLandingOf(runtime)!.error).toBeNull();
+
+    runtime.setSteeringTarget(upid, "corr-grow-twice-2", { mode: "grow" });
+    await drive(runtime, [final("give the board a proper dark mode", "utt-grow-twice-2")]);
+    runtime.clearSteeringTarget("corr-grow-twice-2-off");
+    // The substrate's createBranch is idempotent, so a naive second cut would
+    // answer ok WITHOUT cutting and the change would land on window one's rail.
+    await waitFor(() => steerLandingOf(runtime)?.branch === "room/give-board-proper-dark-2");
+    expect(steerLandingOf(runtime)!.error).toBeNull();
+    const branches = runtime.snapshot().processes.find((entry) => entry.upid === upid)!.treeRepo!.branches;
+    expect(branches.filter((branch) => branch.name.startsWith("room/give-board-proper-dark"))).toHaveLength(2);
+    // Two real endpointing graces (STEER_GRACE_MS each) ride in this one test.
+  }, 20_000);
+
+  test("AN EMPTY WINDOW GROWS NOTHING: no branch, no landing, no commit", async () => {
+    const git = scriptedGit();
+    const { runtime, buildsRoot } = await makeRuntime({
+      buildBackends: [new FakeBackend()],
+      treeGitRunner: git.run,
+      cloneRepoFn: fakeClone,
+      repoDigestFn: async () => "digest: fake repo",
+    });
+    const upid = await importAdopted(runtime);
+    const branchesBefore = runtime.snapshot().processes.find((entry) => entry.upid === upid)!.treeRepo!.branches.length;
+
+    runtime.setSteeringTarget(upid, "corr-grow-silent", { mode: "grow" });
+    runtime.clearSteeringTarget("corr-grow-silent-off"); // pressed stop having said nothing
+    await new Promise((resolve) => setTimeout(resolve, STEER_GRACE_MS + 300));
+
+    // A branch named after silence is worse than no branch.
+    expect(runtime.snapshot().processes.find((entry) => entry.upid === upid)!.treeRepo!.branches).toHaveLength(
+      branchesBefore,
+    );
+    expect(runtime.trace.events().some((event) => event.event === "steer.grow.branch")).toBe(false);
+    expect(steerLandingOf(runtime)).toBeNull();
+    expect(existsSync(join(buildsRoot, upid, "repo", "ROOM-NOTES.md"))).toBe(false);
+  });
+
+  test("a REFUSED cut says why VERBATIM and applies the words nowhere", async () => {
+    // git can refuse the cut for real (no network, no credentials): the room
+    // must report the reason it was given and must NOT fall back to growing
+    // the change on some other rail.
+    const base = scriptedGit();
+    const refusingGit: GitCommandRunner = async (argv, opts) => {
+      if (argv.includes("fetch")) {
+        return { ok: false, stdout: "", stderr: "fatal: could not read Username for 'https://github.com'" };
+      }
+      return base.run(argv, opts);
+    };
+    const { runtime, buildsRoot } = await makeRuntime({
+      buildBackends: [new FakeBackend()],
+      treeGitRunner: refusingGit,
+      cloneRepoFn: fakeClone,
+      repoDigestFn: async () => "digest: fake repo",
+    });
+    const upid = await importAdopted(runtime);
+    expect((await runtime.createTreeBranch(upid, "feature-x")).ok).toBe(false); // the fetch really is dead
+
+    runtime.setSteeringTarget(upid, "corr-grow-refused", { mode: "grow" });
+    await drive(runtime, [final("give the board a proper dark mode", "utt-grow-refused")]);
+    runtime.clearSteeringTarget("corr-grow-refused-off");
+
+    await waitFor(() => steerLandingOf(runtime) !== null);
+    const landing = steerLandingOf(runtime)!;
+    expect(landing.branch).toBeNull();
+    expect(landing.error).toBe("fatal: could not read Username for 'https://github.com'");
+    // Nothing was written anywhere: no notes file, no applier run at all.
+    expect(existsSync(join(buildsRoot, upid, "repo", "ROOM-NOTES.md"))).toBe(false);
+    expect(steerApplierEvents(runtime)).toEqual([]);
+    expect(runtime.trace.events().some((event) => event.event === "steer.grow.refused")).toBe(true);
+  });
+
+  test("the branch still grows with the change-writer off, and the receipt says the change did not land", async () => {
+    const git = scriptedGit();
+    const { runtime, buildsRoot } = await makeRuntime({
+      buildBackends: [new FakeBackend()],
+      treeGitRunner: git.run,
+      cloneRepoFn: fakeClone,
+      repoDigestFn: async () => "digest: fake repo",
+      env: { VIBERSYN_STEER_APPLIER: "0" },
+    });
+    const upid = await importAdopted(runtime);
+
+    runtime.setSteeringTarget(upid, "corr-grow-gated", { mode: "grow" });
+    await drive(runtime, [final("give the board a proper dark mode", "utt-grow-gated")]);
+    runtime.clearSteeringTarget("corr-grow-gated-off");
+
+    await waitFor(() => steerLandingOf(runtime) !== null);
+    const landing = steerLandingOf(runtime)!;
+    // The limb is real (the /branch route is not gated either)…
+    expect(landing.branch).toBe("room/give-board-proper-dark");
+    // …and the receipt refuses to imply the change rode along with it.
+    expect(landing.error).toBe("the room's change-writer is off (VIBERSYN_STEER_APPLIER=0) — the branch grew empty");
+    expect(existsSync(join(buildsRoot, upid, "repo", "ROOM-NOTES.md"))).toBe(false);
+  });
+
+  test("the route refuses a window it cannot honour: both scopes at once, or a tree with no origin", async () => {
+    const git = scriptedGit();
+    const { runtime } = await makeRuntime({
+      buildBackends: [new FakeBackend()],
+      treeGitRunner: git.run,
+      cloneRepoFn: fakeClone,
+      repoDigestFn: async () => "digest: fake repo",
+    });
+    const upid = await importAdopted(runtime);
+    const app = createProjectorApp(runtime);
+
+    const both = await app.request(`/api/process/${upid}/select`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ grow: true, branch: "room/demo" }),
+    });
+    expect(both.status).toBe(400);
+    expect(await both.json()).toEqual({
+      ok: false,
+      error: "a window either grows a new branch or grafts onto one — not both",
+    });
+    // …and the refused press left no window open.
+    expect(runtime.steeringTarget()).toBeNull();
+
+    // A tree the substrate has never heard of refuses in the substrate's own
+    // words, not in a paraphrase the route invented.
+    const rootless = await app.request("/api/process/self/select", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ grow: true }),
+    });
+    expect(rootless.status).toBe(400);
+    expect(await rootless.json()).toEqual({ ok: false, error: "no tree repo for self" });
+  });
+
+  // DEFECT 1 — THE REGRESSION, END TO END. A LOCAL tree that has been
+  // published through publish-repo carries a remoteUrl (tree-git publish()
+  // records one), and the route used to gate grow on exactly that: it answered
+  // 200, opened a window, collected the words, and the drain — seeing a
+  // NON-adopted tree — handed them to registry.steer, the BUILD loop. Nothing
+  // grew, no receipt was written, and the card settled on "heard you — the
+  // room hasn't said whether the branch grew". The old one-press grow verb got
+  // this right: it POSTed :upid/branch and printed the substrate's refusal.
+  test("a PUBLISHED LOCAL tree refuses grow with WORDS, and steers nothing", async () => {
+    const git = scriptedGit();
+    const gh: ForestCommandRunner = async (argv) =>
+      argv[1] === "repo" && argv[2] === "create"
+        ? { ok: true, stdout: `https://github.com/roomowner/${argv[3]}\n`, stderr: "" }
+        : { ok: false, stdout: "", stderr: "unscripted gh" };
+    const { runtime, buildsRoot } = await makeRuntime({
+      buildBackends: [new FakeBackend()],
+      treeGitRunner: git.run,
+      treeGhRunner: gh,
+    });
+    // A tree BORN HERE — no clone, no adopt — then published take-home.
+    await drive(runtime, [final(BUILDABLE, "utt-build-local")]);
+    await runtime.acceptPendingSuggestion("corr-grow-local-accept");
+    const upid = runtime.snapshot().processes[0]!.upid;
+    await waitFor(() => runtime.registry.builds(upid).some((build) => build.status === "ready"));
+    const published = await runtime.publishTreeRepo(upid);
+    expect(published.ok).toBe(true);
+    // The tree now looks adopted to anything reading remoteUrl…
+    const treeRepo = runtime.snapshot().processes.find((entry) => entry.upid === upid)!.treeRepo!;
+    expect(treeRepo.remoteUrl).toMatch(/^https:\/\/github\.com\/roomowner\//u);
+    // …and the wire says plainly that it is not, so the chip is never offered.
+    expect(treeRepo.adopted).toBe(false);
+    const branchesBefore = treeRepo.branches.map((entry) => entry.name);
+
+    const app = createProjectorApp(runtime);
+    const armed = await app.request(`/api/process/${upid}/select`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ grow: true }),
+    });
+    // REFUSED AT THE PRESS, in the exact sentence the old verb printed.
+    expect(armed.status).toBe(400);
+    expect(await armed.json()).toEqual({
+      ok: false,
+      error: "branch rails are for adopted GitHub imports — local trees publish via publish-repo",
+    });
+    // No window opened, so nothing spoken next can be collected into one.
+    expect(runtime.steeringTarget()).toBeNull();
+
+    await drive(runtime, [final("give the board a proper dark mode", "utt-grow-local")]);
+    await app.request("/api/process/select/clear", { method: "POST" });
+    await new Promise((resolve) => setTimeout(resolve, STEER_GRACE_MS + 300));
+
+    // NOTHING WAS STEERED. The reviewer's exact three readings: no traces into
+    // the build loop, no branch grew, no receipt at all.
+    const steered = runtime.trace
+      .events()
+      .map((event) => event.event)
+      .filter((event) => event.startsWith("process.steer"));
+    expect(steered).toEqual([]);
+    expect(runtime.snapshot().processes.find((entry) => entry.upid === upid)!.treeRepo!.branches.map((entry) => entry.name)).toEqual(
+      branchesBefore,
+    );
+    expect(steerLandingOf(runtime)).toBeNull();
+    expect(steerApplierEvents(runtime)).toEqual([]);
+    expect(existsSync(join(buildsRoot, upid, "repo", "ROOM-NOTES.md"))).toBe(false);
+  });
+
+  // BELT AND BRACES for the same lie, one layer down. If a grow window is ever
+  // open on a tree the rails refuse — a server whose route did not guard, a
+  // tree that stopped being adopted mid-window — the DRAIN must refuse in
+  // words too. It used to fall through to the ambient path, which is how the
+  // words reached the build loop with no receipt.
+  test("a grow window that reaches the drain on a non-adopted tree lands a REFUSAL, never the build loop", async () => {
+    const git = scriptedGit();
+    const { runtime, buildsRoot } = await makeRuntime({ buildBackends: [new FakeBackend()], treeGitRunner: git.run });
+    await drive(runtime, [final(BUILDABLE, "utt-build-local-drain")]);
+    await runtime.acceptPendingSuggestion("corr-grow-local-drain-accept");
+    const upid = runtime.snapshot().processes[0]!.upid;
+    await waitFor(() => runtime.registry.builds(upid).some((build) => build.status === "ready"));
+
+    // Arm the window past the route, exactly as a stale client would.
+    runtime.setSteeringTarget(upid, "corr-grow-local-drain", { mode: "grow" });
+    await drive(runtime, [final("give the board a proper dark mode", "utt-grow-local-drain")]);
+    runtime.clearSteeringTarget("corr-grow-local-drain-off");
+
+    await waitFor(() => steerLandingOf(runtime) !== null);
+    const landing = steerLandingOf(runtime)!;
+    expect(landing.upid).toBe(upid);
+    expect(landing.branch).toBeNull();
+    expect(landing.error).toBe("branch rails are for adopted GitHub imports — local trees publish via publish-repo");
+    // …and the words went NOWHERE: not onto a branch, not into the build.
+    expect(steerApplierEvents(runtime)).toEqual([]);
+    expect(existsSync(join(buildsRoot, upid, "repo", "ROOM-NOTES.md"))).toBe(false);
+    expect(
+      runtime.trace
+        .events()
+        .map((event) => event.event)
+        .filter((event) => event.startsWith("process.steer")),
+    ).toEqual([]);
   });
 });
 

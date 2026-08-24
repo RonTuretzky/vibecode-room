@@ -14,8 +14,7 @@ import { FLEET_SCROLL_PX_PER_SECOND, FleetScrollRail, hoverScrollDelta, railOver
 import { IdeaTray } from "./IdeaTray";
 import { HelpOverlay } from "./HelpOverlay";
 import { QrImport, qrPanelState } from "./QrImport";
-import { freshLanding, receiptLine, receiptState } from "./RecordSteerToggle";
-import { freshBranchName } from "./tree-repo";
+import { freshLanding, receiptLine, receiptState, windowIsMine } from "./RecordSteerToggle";
 import { preferredGuestUrl } from "./GuestHands";
 import { Slideshow } from "./Slideshow";
 import { demoProjectorSnapshot, busyRoomSnapshot } from "./demo-data";
@@ -44,7 +43,7 @@ import { HOLO_PAGES, HOLO_TILT_DEG, holoPanelTilt, salemSrc } from "./HoloPanel"
 import { branchPopupModel } from "./BranchPopup";
 import { issuePopupModel } from "./IssuePopup";
 import { FRUIT_BUG_COLOR, FRUIT_DEFAULT_COLOR } from "./tree-limbs";
-import type { ProjectorProcess } from "./types";
+import type { ProjectorProcess, ProjectorSnapshot } from "./types";
 
 function countOccurrences(haystack: string, needle: string): number {
   return haystack.split(needle).length - 1;
@@ -1097,10 +1096,11 @@ describe("tend the tree: the self tree's surface", () => {
 // narration into that build). Picking opens the MENU only; the menu's
 // RecordSteerToggle is the ONLY armer.
 describe("picking a tree never arms voice steering", () => {
-  // Stronger than it was: the fleet menu no longer carries a record toggle at
-  // all, so a pick cannot arm steering even by accident — there is nothing on
-  // the surface to arm, invited or armed.
-  test("a picked fleet tree's menu claims no steering — no toggle at all, armed or not", () => {
+  // THE RULE, precisely: no tree ARMS steering from a pick. A LOCAL fleet tree
+  // carries no steering surface at all (nothing to arm, invited or armed) —
+  // that is this test; an ADOPTED one carries the 🌱 grow chip, which is the
+  // next test's job to show sitting IDLE after a pick.
+  test("a picked local fleet tree's menu claims no steering — no toggle at all, armed or not", () => {
     const menu = treeMenuMarkup(
       renderToStaticMarkup(
         <ProjectorApp
@@ -1112,6 +1112,31 @@ describe("picking a tree never arms voice steering", () => {
     expect(menu).not.toContain('data-testid="record-steer-start"');
     expect(menu).not.toContain('data-testid="record-steer-stop"');
     expect(menu).not.toContain('data-testid="tree-menu-steer"');
+  });
+
+  test("an ADOPTED tree's grow chip is INVITED by the pick, never armed by it", () => {
+    // The grow verb records now, so an adopted tree does have a steering
+    // surface on the menu — and the regression this whole describe exists to
+    // prevent (a dwell that lands on a tree quietly arming the room's mic)
+    // would show up here as a lit chip with steeringUpid still null.
+    const adopted = {
+      ...demoProjectorSnapshot,
+      steeringUpid: null,
+      processes: demoProjectorSnapshot.processes.map((process, index) =>
+        index === 0
+          ? {
+              ...process,
+              treeRepo: { branches: [{ name: "main", commits: 3 }], remoteUrl: "https://github.com/acme/atlas", adopted: true },
+            }
+          : process,
+      ),
+    };
+    const menu = treeMenuMarkup(
+      renderToStaticMarkup(<ProjectorApp initialSnapshot={adopted} initialOverlay={{ selected: "Atlas" }} />),
+    );
+    expect(menu).toContain('data-testid="tree-menu-grow"');
+    expect(menu).not.toContain('data-testid="record-steer-stop"');
+    expect(menu).toContain('data-state="idle"');
   });
 
   test("the armed state comes from the snapshot's steering flag (the toggle's POST), not the pick", () => {
@@ -1187,11 +1212,13 @@ describe("picking a tree never arms voice steering", () => {
         const props = site.slice(0, site.indexOf("/>"));
         expect(`${file.name}: ${props}`).toContain("transcript=");
         expect(props).not.toContain("transcript={undefined}");
-        // …and the room's own graft surfaces must carry the SERVER's verdict.
-        // The tend chip echoed correctly but had no `landing`, so a graft git
-        // refused (nothing dispatched) still read "✓ graft taken". A build
-        // lane must NOT be handed one: selfLanding is the mirror's receipt.
-        if (props.includes('kind="room"')) {
+        // …and every surface that HAS a server verdict must carry it. The tend
+        // chip echoed correctly but had no `landing`, so a graft git refused
+        // (nothing dispatched) still read "✓ graft taken"; a grow chip without
+        // one would announce a limb the room may have refused to cut. A build
+        // lane must NOT be handed one — none is ever published for it, and
+        // borrowing another tree's is the wrong-tree bug.
+        if (props.includes('kind="room"') || props.includes('kind="grow"')) {
           expect(`${file.name}: ${props}`).toContain("landing=");
         } else {
           expect(`${file.name}: ${props}`).not.toContain("landing=");
@@ -1276,21 +1303,50 @@ describe("the record toggle's receipt never claims a thing that did not happen",
     );
   });
 
-  test("a landing counts only when it is THIS window's, and only on the room's own tree", () => {
-    const previous = { ...grafted, atMs: 1_000 };
-    const fresh = { ...grew, atMs: 2_000 };
+  test("a landing counts only when it is THIS window's, and only on THIS tree", () => {
+    const previous = { ...grafted, upid: "self", atMs: 1_000 };
+    const fresh = { ...grew, upid: "self", atMs: 2_000 };
     // The stamp observed at arm is the previous change's receipt: stale.
-    expect(freshLanding("room", previous, 1_000)).toBeNull();
-    expect(freshLanding("room", fresh, 1_000)).toEqual(fresh);
+    expect(freshLanding("self", previous, 1_000)).toBeNull();
+    expect(freshLanding("self", fresh, 1_000)).toEqual(fresh);
     // Nothing had landed when this window armed, so the first receipt is ours.
-    expect(freshLanding("room", fresh, null)).toEqual(fresh);
-    // selfLanding is the MIRROR's receipt — a fleet project must never borrow
-    // it and report "couldn't graft onto room/…" about someone else's branch.
-    expect(freshLanding("build", fresh, null)).toBeNull();
+    expect(freshLanding("self", fresh, null)).toEqual(fresh);
+    // WRONG TREE, pinned by IDENTITY rather than by the old `kind` label. The
+    // room has ONE landing slot for its ONE steering window, and arming a
+    // window preempts a pending grace elsewhere — so a fleet card really can
+    // be handed the mirror's receipt, with a stamp fresh enough to pass, and
+    // would otherwise report "couldn't graft onto room/…" about a branch that
+    // has nothing to do with it. A stricter check than "am I the mirror?": it
+    // also separates two FLEET trees from each other.
+    expect(freshLanding("upid-atlas", fresh, null)).toBeNull();
+    expect(freshLanding("upid-atlas", { ...fresh, upid: "upid-cobalt" }, null)).toBeNull();
+    expect(freshLanding("upid-atlas", { ...fresh, upid: "upid-atlas" }, null)).toEqual({ ...fresh, upid: "upid-atlas" });
     // A stale landing therefore cannot fabricate a verdict…
     expect(
-      receiptState({ kind: "room", words: 2, wired: true, landed: freshLanding("room", previous, 1_000), settled: false }),
+      receiptState({ kind: "room", words: 2, wired: true, landed: freshLanding("self", previous, 1_000), settled: false }),
     ).toBe("cutting");
+  });
+
+  // WHOSE WINDOW IS OPEN. `process.steering` is per-UPID, and one tree can
+  // carry two record surfaces at once (the tend menu's 🌱 grow chip and, in
+  // the branch popup stacked over it, a graft toggle). The flag alone lit both
+  // for whichever one armed — a grow chip claiming "● growing" over a graft,
+  // then waiting for a grow receipt no onto drain writes. The wire says what
+  // the open window will DO; a card that arms the other thing stays dark.
+  test("a card lights only for the window MODE it arms", () => {
+    expect(windowIsMine("grow", "grow")).toBe(true);
+    expect(windowIsMine("grow", "onto")).toBe(false);
+    expect(windowIsMine("room", "onto")).toBe(true);
+    expect(windowIsMine("room", "grow")).toBe(false);
+    expect(windowIsMine("build", "onto")).toBe(true);
+    expect(windowIsMine("build", "grow")).toBe(false);
+    // A server too old to publish a mode said nothing about the window, and
+    // the only surface it could have armed was an "onto" one — so the graft
+    // surfaces keep working and the grow chip, which did not exist then,
+    // refuses to claim the window.
+    expect(windowIsMine("room", undefined)).toBe(true);
+    expect(windowIsMine("build", undefined)).toBe(true);
+    expect(windowIsMine("grow", undefined)).toBe(false);
   });
 });
 
@@ -2584,6 +2640,7 @@ describe("adopted trees: grow-a-branch row + branch/issue popups", () => {
       { name: "room/issue-12", commits: 1 },
     ],
     remoteUrl: REMOTE_URL,
+    adopted: true,
   };
   const adoptedSnapshot = () => ({
     ...demoProjectorSnapshot,
@@ -2608,10 +2665,27 @@ describe("adopted trees: grow-a-branch row + branch/issue popups", () => {
     expect(html).not.toContain('data-testid="tree-menu-grow"');
   });
 
-  test("treeMenuModel.adopted: remoteUrl gates it, and the SELF tree never adopts", () => {
+  // THE ONE THING ALLOWED TO GATE THE BRANCH RAILS. It used to be "has a
+  // remoteUrl", and the take-home publish sets one on a LOCAL tree
+  // (tree-git publish()) — so a published local tree grew the whole adopted
+  // surface, including a 🌱 grow chip whose every press the substrate refuses.
+  test("treeMenuModel.adopted: the SERVER's adopted flag gates it — a PUBLISHED LOCAL tree does not", () => {
     expect(treeMenuModel(adoptedProcess(), demoProjectorSnapshot).adopted).toBe(true);
-    const unpublished = { ...adoptedProcess(), treeRepo: { branches: TREE_REPO.branches, remoteUrl: null } };
-    expect(treeMenuModel(unpublished, demoProjectorSnapshot).adopted).toBe(false);
+    // THE REGRESSION, pinned: an origin recorded by publish-repo on a local
+    // tree. remoteUrl says yes; the substrate says no, and the substrate wins.
+    const publishedLocal = {
+      ...adoptedProcess(),
+      treeRepo: { branches: TREE_REPO.branches, remoteUrl: "https://github.com/roomowner/replay-prototype", adopted: false },
+    };
+    expect(treeMenuModel(publishedLocal, demoProjectorSnapshot).adopted).toBe(false);
+    // An adopted import whose origin is somehow unrecorded is still adopted:
+    // the rails are about the CLONE, not about the URL beside it.
+    const originless = { ...adoptedProcess(), treeRepo: { branches: TREE_REPO.branches, remoteUrl: null, adopted: true } };
+    expect(treeMenuModel(originless, demoProjectorSnapshot).adopted).toBe(true);
+    // A server too old to send the flag reads as NOT adopted: a missing rail
+    // is a nuisance, an offered-but-impossible one is a lie.
+    const preFlag = { ...adoptedProcess(), treeRepo: { branches: TREE_REPO.branches, remoteUrl: REMOTE_URL } };
+    expect(treeMenuModel(preFlag, demoProjectorSnapshot).adopted).toBe(false);
     expect(treeMenuModel(demoProjectorSnapshot.processes[0]!, demoProjectorSnapshot).adopted).toBe(false);
     const selfish = { ...adoptedProcess(), stage: "self" } as unknown as ProjectorProcess;
     expect(treeMenuModel(selfish, demoProjectorSnapshot).adopted).toBe(false);
@@ -2640,6 +2714,36 @@ describe("adopted trees: grow-a-branch row + branch/issue popups", () => {
     expect(html).toContain('data-testid="branch-popup-pr"');
     expect(html).toContain("⬆ Open PR ▸");
     expect(html).toContain('data-testid="branch-popup-close"');
+  });
+
+  // DEFECT 2, the other half. The branch popup STACKS OVER the tree menu, so
+  // on an adopted tree the 🌱 grow chip and this card are mounted at the same
+  // time, on the SAME process — and `process.steering` is per-UPID. A grow
+  // window used to light this card too ("● grafting — your words grow the
+  // change"), over a window that will cut a brand-new limb instead, and then
+  // hand it the grow landing to report as a graft. A card lights for its own
+  // mode only.
+  test("a GROW window does not light the branch card's graft toggle", () => {
+    const growing = {
+      ...adoptedSnapshot(),
+      steeringUpid: "upid_atlas_7f3",
+      processes: adoptedSnapshot().processes.map((process, index) =>
+        index === 0 ? { ...process, steering: true, steeringSince: "12:04:30", steeringMode: "grow" as const } : process,
+      ),
+    };
+    const html = renderToStaticMarkup(
+      <ProjectorApp
+        initialSnapshot={growing}
+        initialOverlay={{ selected: "Atlas", branchPopup: { upid: "upid_atlas_7f3", branch: "room/spoken-changes" } }}
+      />,
+    );
+    // The grow chip IS lit — it is the window's own surface…
+    expect(html).toContain("● growing — say what this branch is for · tap to stop");
+    // …and the branch card, mounted over it, is not: no second stop button and
+    // no graft claim over a window that grafts nothing.
+    expect(countOccurrences(html, 'data-testid="record-steer-stop"')).toBe(1);
+    expect(html).not.toContain("● grafting — your words grow the change");
+    expect(html).toContain("🌱 Graft onto this branch");
   });
 
   test("the branch popup root shields its WHOLE rect from the dwell-miss close", () => {
@@ -2999,16 +3103,18 @@ describe("fleet constellation: adopted branches tended in the room's words", () 
         { name: "room/issue-12", commits: 1 },
       ],
       remoteUrl: REMOTE,
+      adopted: true,
     },
   });
   const renderFleet = (overrides: {
     process?: ProjectorProcess;
+    snapshot?: ProjectorSnapshot;
     tendSeed?: {
       focusBranch?: string;
       armed?: string;
       page?: number;
       busy?: {
-        verb: "climb" | "merge" | "press" | "prune" | "stop" | "grow" | "pr" | "graft";
+        verb: "climb" | "merge" | "press" | "prune" | "stop" | "pr" | "graft";
         branch: string | null;
         scope?: "branch" | "everywhere";
       };
@@ -3019,7 +3125,7 @@ describe("fleet constellation: adopted branches tended in the room's words", () 
     renderToStaticMarkup(
       <TreeMenu
         process={overrides.process ?? fleetProcess()}
-        snapshot={demoProjectorSnapshot}
+        snapshot={overrides.snapshot ?? demoProjectorSnapshot}
         anchor={null}
         onClose={() => {}}
         onOpenDeck={() => {}}
@@ -3063,15 +3169,87 @@ describe("fleet constellation: adopted branches tended in the room's words", () 
     expect(html).not.toContain('data-testid="tree-menu-version-load"');
   });
 
-  test("merge is two-stage with the visible 10s drain; grow shows its busy truth", () => {
+  test("merge is two-stage with the visible 10s drain", () => {
     const armedHtml = renderFleet({
       tendSeed: { focusBranch: "room/spoken-changes", armed: "treemerge:room/spoken-changes" },
     });
     expect(armedHtml).toContain('data-testid="tree-menu-branch-merge-confirm"');
     expect(armedHtml).toContain("make it permanent?");
     expect(armedHtml).toContain('class="tend-drain"');
-    const busyHtml = renderFleet({ tendSeed: { busy: { verb: "grow", branch: null } } });
-    expect(busyHtml).toContain("🌱 growing…");
+  });
+
+  // 🌱 GROW A BRANCH IS A RECORDING FLOW. It used to be a one-press verb that
+  // POSTed a machine-generated name ("spoken-changes") the instant it was
+  // touched — an empty rail cut before anyone had said what it was for. The
+  // chip now carries the same record surface the self tree and the branch
+  // cards use, so the press starts LISTENING and the branch is cut, and named,
+  // from what was actually said.
+  test("the grow chip is the RECORD affordance, not a one-press cut", () => {
+    const html = renderFleet();
+    // The chip is the record toggle: press → speak → press again. Its name
+    // rides the BUTTON — on the wrapping div (whose only handler stops click
+    // propagation) it named a thing nobody can press, and would keep passing
+    // over a chip whose button had gone missing.
+    expect(html).toContain('data-testid="tree-menu-grow"');
+    expect(html).toMatch(/<button[^>]*data-testid="tree-menu-grow"/u);
+    expect(html).toContain('data-state="idle"');
+    expect(html).toContain("🌱 grow a branch");
+    expect(html).toContain("names it from your words");
+    // …and NOT the old fire-and-forget verb, whose busy line promised a cut
+    // that had already been dispatched before the first word.
+    expect(html).not.toContain("🌱 growing…");
+    expect(html).not.toContain("a fresh rail off the origin tip");
+    // A branch name predicted client-side is exactly what this replaced.
+    expect(html).not.toContain("spoken-changes-2");
+  });
+
+  test("armed, the grow chip echoes the room's words and offers only STOP", () => {
+    const html = renderFleet({
+      process: { ...fleetProcess(), steering: true, steeringSince: "12:04:30", steeringMode: "grow" } as ProjectorProcess,
+      snapshot: { ...demoProjectorSnapshot, steeringUpid: fleetProcess().upid },
+    });
+    expect(html).toContain('data-testid="record-steer-stop"');
+    expect(html).not.toContain('data-testid="tree-menu-grow"');
+    expect(html).toContain("● growing — say what this branch is for · tap to stop");
+    // The echo is live: the words already spoken inside this window are on the
+    // card, so the operator can see what will name the branch.
+    expect(html).toContain('data-testid="record-steer-heard"');
+    expect(html).toContain("The standup notes keep losing blockers.");
+  });
+
+  // DEFECT 2, pinned. `process.steering` is per-UPID, and an adopted tree can
+  // carry two record surfaces at once (this chip and, stacked over the same
+  // menu, a branch card's graft toggle). The flag alone lit BOTH for whichever
+  // one armed: the grow chip announced "● growing — say what this branch is
+  // for" over a graft, and — since the onto drain writes no grow landing —
+  // then settled on "the room hasn't said whether the branch grew" while the
+  // words were being grafted onto a rail. Both halves are the surface saying a
+  // thing did not happen when it did.
+  test("a GRAFT window does not light the grow chip — only its own mode does", () => {
+    const grafting = renderFleet({
+      process: {
+        ...fleetProcess(),
+        steering: true,
+        steeringSince: "12:04:30",
+        steeringMode: "onto",
+      } as ProjectorProcess,
+      snapshot: { ...demoProjectorSnapshot, steeringUpid: fleetProcess().upid, steeringBranch: "room/spoken-changes" },
+    });
+    expect(grafting).not.toContain('data-testid="record-steer-stop"');
+    expect(grafting).not.toContain("● growing — say what this branch is for · tap to stop");
+    // It sits IDLE and pressable — the room is busy elsewhere, not here.
+    expect(grafting).toMatch(/<button[^>]*data-testid="tree-menu-grow"/u);
+    expect(grafting).toContain('data-state="idle"');
+
+    // …and a server too old to publish a mode says nothing about the window;
+    // the only surface it could have armed was an "onto" one, so the grow chip
+    // stays dark rather than claiming a grow that was never asked for.
+    const preFlag = renderFleet({
+      process: { ...fleetProcess(), steering: true, steeringSince: "12:04:30" } as ProjectorProcess,
+      snapshot: { ...demoProjectorSnapshot, steeringUpid: fleetProcess().upid },
+    });
+    expect(preFlag).not.toContain('data-testid="record-steer-stop"');
+    expect(preFlag).toContain('data-state="idle"');
   });
 
   test("a local (non-adopted) tree grows NO branch chips and NO grow verb — it keeps ✕ and 🗑 remove", () => {
@@ -3117,6 +3295,7 @@ describe("fleet constellation: adopted branches tended in the room's words", () 
           })),
         ],
         remoteUrl: REMOTE,
+        adopted: true,
       },
     } as unknown as ProjectorProcess;
     const html = renderFleet({ process: many });
@@ -3147,7 +3326,7 @@ describe("fleet constellation: adopted branches tended in the room's words", () 
   test("an adopted tree with no room/* rails yet shows the grow invitation", () => {
     const bare = {
       ...fleetProcess(),
-      treeRepo: { branches: [{ name: "main", commits: 2 }], remoteUrl: REMOTE },
+      treeRepo: { branches: [{ name: "main", commits: 2 }], remoteUrl: REMOTE, adopted: true },
     } as unknown as ProjectorProcess;
     const html = renderFleet({ process: bare });
     expect(html).toContain('data-chip="empty"');
@@ -3155,10 +3334,59 @@ describe("fleet constellation: adopted branches tended in the room's words", () 
     expect(html).not.toContain('data-testid="tree-menu-version"');
   });
 
-  test("freshBranchName: never collides with an existing room/* rail (the idempotent-no-op fix)", () => {
-    expect(freshBranchName([])).toBe("spoken-changes");
-    expect(freshBranchName(["main"])).toBe("spoken-changes");
-    expect(freshBranchName(["main", "room/spoken-changes"])).toBe("spoken-changes-2");
-    expect(freshBranchName(["room/spoken-changes", "room/spoken-changes-2"])).toBe("spoken-changes-3");
+  // THE GROW RECEIPT. Pure, because the static renderer runs no effects and the
+  // receipt only exists after a recording→stopped transition SSR cannot make.
+  // (The client-side freshBranchName this replaced is gone with its function:
+  // the collision rule now runs on the server, against the UNCAPPED branch set
+  // — composition.treegit.test.ts — instead of the 8-branch wire list.)
+  describe("what the grow chip is allowed to say afterwards", () => {
+    const grown = { branch: "room/dark-mode-for-the-board", onto: null, error: null };
+
+    test("a grown limb is named, and the name is the SERVER's", () => {
+      const state = receiptState({ kind: "grow", words: 5, wired: true, landed: grown, settled: true });
+      expect(state).toBe("landed");
+      expect(receiptLine(state, { kind: "grow", words: 5, landed: grown })).toBe(
+        "✓ grown — dark-mode-for-the-board is a new limb, growing your change",
+      );
+    });
+
+    test("a REFUSED cut says why, verbatim, and claims no branch", () => {
+      const refusal = { branch: null, onto: null, error: "git fetch origin main failed: could not read Username" };
+      const state = receiptState({ kind: "grow", words: 5, wired: true, landed: refusal, settled: true });
+      expect(state).toBe("refused");
+      const line = receiptLine(state, { kind: "grow", words: 5, landed: refusal });
+      expect(line).toBe("couldn't grow a branch — git fetch origin main failed: could not read Username");
+      expect(line).not.toContain("✓");
+    });
+
+    test("a limb that grew with the change UNWRITTEN still names the limb", () => {
+      // The third landing shape: the cut landed, the write did not. Reporting
+      // it as a flat refusal would hide a branch that really exists on the
+      // tree; reporting it as a success would claim a change that is not there.
+      const half = { branch: "room/dark-mode-for-the-board", onto: null, error: "the room's change-writer is off (VIBERSYN_STEER_APPLIER=0) — the branch grew empty" };
+      const state = receiptState({ kind: "grow", words: 5, wired: true, landed: half, settled: true });
+      expect(state).toBe("refused");
+      expect(receiptLine(state, { kind: "grow", words: 5, landed: half })).toBe(
+        "🌱 grew dark-mode-for-the-board — but the change didn’t land: the room's change-writer is off (VIBERSYN_STEER_APPLIER=0) — the branch grew empty",
+      );
+    });
+
+    test("an empty window says NO BRANCH WAS GROWN — never a limb named after silence", () => {
+      const state = receiptState({ kind: "grow", words: 0, wired: true, landed: null, settled: true });
+      expect(state).toBe("silent");
+      expect(receiptLine(state, { kind: "grow", words: 0, landed: null })).toBe("heard nothing — no branch was grown");
+    });
+
+    test("mid-flight and unanswered are said out loud, and neither claims a limb", () => {
+      expect(receiptLine("cutting", { kind: "grow", words: 4, landed: null })).toBe(
+        "✓ heard — the room is growing the branch…",
+      );
+      expect(receiptLine("unanswered", { kind: "grow", words: 4, landed: null })).toBe(
+        "heard you — the room hasn’t said whether the branch grew",
+      );
+      // …and a card that was never wired may not report silence for grow
+      // either: it cannot tell a quiet room from its own blindness.
+      expect(receiptState({ kind: "grow", words: 0, wired: false, landed: null, settled: true })).toBe("unanswered");
+    });
   });
 });

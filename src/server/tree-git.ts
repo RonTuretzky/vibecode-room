@@ -132,7 +132,22 @@ export interface TreeSeed {
 export interface TreeRepoSnapshot {
   branches: Array<{ name: string; commits: number; prUrl?: string }>;
   remoteUrl: string | null;
+  // IS THIS AN ADOPTED GITHUB IMPORT? The branch rails (grow / graft / PR /
+  // merge) exist only here, so the wall needs the answer on the wire.
+  //
+  // It is NOT derivable from remoteUrl, and reading it that way was a live
+  // lie: the take-home publish() sets remoteUrl on a LOCAL tree, so a
+  // published local tree grew a 🌱 grow chip that could only ever be refused
+  // — and the refusal happened somewhere the operator could not see it.
+  adopted: boolean;
 }
+
+// The one refusal every branch rail gives a LOCAL tree, worded for the wall.
+// Exported because the /select route now refuses a grow window with the same
+// sentence the substrate would have refused the cut with: two spellings of one
+// rule drift apart, and the wall reads whichever drifted.
+export const LOCAL_TREE_BRANCH_REFUSAL =
+  "branch rails are for adopted GitHub imports — local trees publish via publish-repo";
 
 export interface TreeGitOptions {
   buildsRoot: string;
@@ -352,6 +367,25 @@ export class TreeGitSubstrate {
     return this.#chainBranchOp(state, () => this.#createBranchOnce(state, name));
   }
 
+  // GROW A NEW LIMB — createBranch's non-idempotent sibling, for the 🌱 grow
+  // verb. createBranch answering ok for an EXISTING room/<slug> is right for
+  // "graft onto this branch" and wrong here: two spoken changes that open with
+  // the same words would both claim a new limb and the second would cut
+  // nothing, silently growing onto the first one's rail. Dedupe -2..-6 against
+  // the AUTHORITATIVE branch map — snapshot() caps its list at
+  // SNAPSHOT_BRANCH_CAP, so any caller predicting a free name from the wire
+  // goes blind past eight limbs — and refuse readably when the budget is out.
+  growBranch(upid: string, name: string): Promise<{ ok: true; branch: string } | { ok: false; error: string }> {
+    const state = this.#trees.get(upid);
+    const refused = this.#branchOpRefusal(upid, state);
+    if (refused !== null || state === undefined) {
+      return Promise.resolve(refused ?? { ok: false, error: `no tree repo for ${upid}` });
+    }
+    // Inside the per-upid chain slot: two presses cannot both read "free" for
+    // the same name and race onto one ref.
+    return this.#chainBranchOp(state, () => this.#growBranchOnce(state, name));
+  }
+
   // Commit the clone's CURRENT WORKING TREE onto refs/heads/room/<branch> via
   // the detached-index plumbing — HEAD/checkout untouched, the working tree
   // keeps serving previews. No-change guard: {ok:true, changed:false}.
@@ -473,6 +507,9 @@ export class TreeGitSubstrate {
         return prUrl === undefined ? { name, commits } : { name, commits, prUrl };
       }),
       remoteUrl: state.remoteUrl,
+      // The wall may not infer this from remoteUrl (publish() sets one on a
+      // local tree); the substrate is the only place that knows.
+      adopted: state.mode === "adopted",
     };
   }
 
@@ -480,6 +517,15 @@ export class TreeGitSubstrate {
   // below apply and the commission-time publish must NOT fire.
   isAdopted(upid: string): boolean {
     return this.#trees.get(upid)?.mode === "adopted";
+  }
+
+  // WHY A BRANCH RAIL WOULD REFUSE THIS TREE, in the exact words the refusal
+  // itself carries, or null when the rails really do apply. A caller that must
+  // decide BEFORE running an op (the /select route, which would otherwise open
+  // a record window that can only end in a refusal after the operator has
+  // finished speaking) asks here and prints the answer.
+  branchRailRefusal(upid: string): string | null {
+    return this.#branchOpRefusal(upid, this.#trees.get(upid))?.error ?? null;
   }
 
   // The seed pitch recorded at birth (publish descriptions / PR bodies).
@@ -811,7 +857,7 @@ export class TreeGitSubstrate {
       return { ok: false, error: `no tree repo for ${upid}` };
     }
     if (state.mode !== "adopted") {
-      return { ok: false, error: "branch rails are for adopted GitHub imports — local trees publish via publish-repo" };
+      return { ok: false, error: LOCAL_TREE_BRANCH_REFUSAL };
     }
     return null;
   }
@@ -864,6 +910,32 @@ export class TreeGitSubstrate {
     if (state.branches.has(branch)) {
       return { ok: true, branch };
     }
+    return this.#cutBranchAt(state, branch);
+  }
+
+  // Same slug rules, opposite collision rule: a taken name is stepped past
+  // rather than adopted. The suffix budget mirrors the mirror's own
+  // #cutSelfBranch (-2..-6), so both trees speak the same branch vocabulary.
+  async #growBranchOnce(state: TreeState, name: string): Promise<{ ok: true; branch: string } | { ok: false; error: string }> {
+    const slug = roomSlug(name);
+    if (slug === null) {
+      return { ok: false, error: `"${clampLine(name, 60)}" leaves no usable branch name` };
+    }
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      const branch = attempt === 0 ? `room/${slug}` : `room/${slug}-${attempt + 1}`;
+      if (state.branches.has(branch)) {
+        continue;
+      }
+      return this.#cutBranchAt(state, branch);
+    }
+    return { ok: false, error: `room/${slug} and every -2..-6 name after it already exist — say something different` };
+  }
+
+  // The cut itself, shared so a grown limb and a created one are the same
+  // object: fetch the real origin/main tip, point the ref at it, register the
+  // branch BEFORE any commit exists (the wall's snapshot.treeRepo must show
+  // the limb the moment the action lands), trace, republish.
+  async #cutBranchAt(state: TreeState, branch: string): Promise<{ ok: true; branch: string } | { ok: false; error: string }> {
     const fetched = await this.#fetchOriginMainOnce(state);
     if (!fetched.ok) {
       return fetched;
@@ -875,8 +947,6 @@ export class TreeGitSubstrate {
       await this.#traceLog(state.upid, `branch ${branch}`, false, error);
       return { ok: false, error };
     }
-    // Register IMMEDIATELY: the wall's snapshot.treeRepo must show the branch
-    // the moment the action lands, before any commit exists on it.
     state.branches.set(branch, 0);
     this.#trace("tree.git.branch", "info", state.upid, { branch, base: fetched.sha });
     await this.#traceLog(state.upid, `branch ${branch}`, true, fetched.sha);

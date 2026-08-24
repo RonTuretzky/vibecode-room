@@ -14,7 +14,7 @@ import {
   type SelfBranchesPayload,
 } from "./self-repo";
 import { TakeHomeQr } from "./TakeHomeQr";
-import { freshBranchName, growTreeBranch, mergeTreeBranch, openTreeBranchPr, steerOntoTreeBranch } from "./tree-repo";
+import { mergeTreeBranch, openTreeBranchPr, steerOntoTreeBranch } from "./tree-repo";
 import "./TreeMenu.css";
 
 /**
@@ -164,6 +164,30 @@ export interface TreeMenuPlacement {
   top: number;
 }
 
+// WHERE A CHIP SITS AND HOW BIG IT IS ALLOWED TO BE. One helper for both
+// bodies (self + fleet) because they had a copy each and only one of them
+// would have learned about the ceiling.
+//
+// `maxHeight` appears only when the arc could not afford the chip's nominal
+// and squeezed it (tend-radial's FLEXIBLE_CHIPS). Without it the chip renders
+// at its content height regardless of the budget the layout reserved, and the
+// chip below is painted over — a covered centre is a dead dwell target.
+function tendChipStyle(
+  id: TendChipId,
+  layout: Record<string, { left: number; top: number; height?: number }>,
+  viewport: { width: number; height: number },
+  gesture: boolean,
+): CSSProperties {
+  const size = tendChipSize(id, gesture);
+  const pos = layout[id] ?? { left: viewport.width - size.width - 16, top: 16 };
+  return {
+    left: `${Math.round(pos.left)}px`,
+    top: `${Math.round(pos.top)}px`,
+    width: `${size.width}px`,
+    ...(pos.height === undefined ? {} : { maxHeight: `${pos.height}px` }),
+  };
+}
+
 // Pure: where the panel opens. Prefers the side of the anchor rect with room
 // (right first — labels read left-to-right), so the menu never covers the tree
 // it belongs to; EVERY branch clamps inside the viewport margins. A null
@@ -257,8 +281,12 @@ export function treeMenuModel(process: ProjectorProcess, snapshot: ProjectorSnap
         ? { url: process.publishedUrl, qrSvg: process.publishedQrSvg }
         : null,
     deployUrl: typeof process.deployUrl === "string" && process.deployUrl.length > 0 ? process.deployUrl : null,
-    adopted:
-      !isSelf && typeof process.treeRepo?.remoteUrl === "string" && process.treeRepo.remoteUrl.length > 0,
+    // ADOPTED = the server said so. It used to mean "has a remoteUrl", but the
+    // take-home publish records one on a LOCAL tree (tree-git publish()), so a
+    // published local tree grew the whole adopted surface — branch rails and
+    // the 🌱 grow chip — over a substrate that refuses every one of those ops.
+    // The chip must not offer what cannot work.
+    adopted: !isSelf && process.treeRepo?.adopted === true,
   };
 }
 
@@ -268,7 +296,7 @@ export function treeMenuModel(process: ProjectorProcess, snapshot: ProjectorSnap
 // can say what the wait actually is ("removing the graft everywhere…" is a
 // longer cut). grow/pr/graft are the fleet rails (tree-repo.ts).
 interface TendBusy {
-  verb: "climb" | "merge" | "press" | "prune" | "stop" | "grow" | "pr" | "graft";
+  verb: "climb" | "merge" | "press" | "prune" | "stop" | "pr" | "graft";
   branch: string | null;
   scope?: "branch" | "everywhere";
 }
@@ -540,28 +568,12 @@ export function TreeMenu({
   // (substrate disabled, local-tree refusal, git fetch failure) was invisible
   // on the wall, the exact silent-control bug the App's own rule forbids. ──
 
-  // 🌱 GROW A BRANCH: a fresh, non-colliding room/* rail off the origin tip.
-  // The menu STAYS OPEN — the new limb's chip arrives via the next snapshot
-  // push (tree-git registers the branch and republishes immediately).
-  const growVerb = (): void => {
-    const name = freshBranchName((process.treeRepo?.branches ?? []).map((entry) => entry.name));
-    setBusy({ verb: "grow", branch: null });
-    setTendError(null);
-    setTendNote(null);
-    const forUpid = process.upid;
-    void growTreeBranch(forUpid, name).then((result) => {
-      if (upidRef.current !== forUpid) {
-        return; // landed after the menu moved to another tree
-      }
-      setBusy(null);
-      if (result.ok) {
-        setTendNote(`🌱 grown — ${result.branch} is a new limb on this tree`);
-      } else {
-        setTendError(result.error);
-        onControlFailure?.("grow a branch", result.status);
-      }
-    });
-  };
+  // 🌱 GROW A BRANCH is no longer a verb with a handler: it is a RECORDING
+  // window (RecordSteerToggle kind="grow", rendered on the chip below). It
+  // used to POST a machine-generated name the instant it was pressed, which
+  // cut an empty rail called "spoken-changes" before anyone had said what it
+  // was for. The branch is now named by what the operator actually says, and
+  // is cut only once they have said it.
 
   // ⬆ OPEN PR (focus view): the whole spoken-changes → PR ride. The URL rides
   // the receipt AND lands on the branch card via the snapshot's prUrl.
@@ -761,11 +773,7 @@ export function TreeMenu({
       present.push("qr");
     }
     const layout = tendChipLayout(anchor, viewport, { gesture: gestureWall, present });
-    const chipStyle = (id: TendChipId): CSSProperties => {
-      const size = tendChipSize(id, gestureWall);
-      const pos = layout[id] ?? { left: viewport.width - size.width - 16, top: 16 };
-      return { left: `${Math.round(pos.left)}px`, top: `${Math.round(pos.top)}px`, width: `${size.width}px` };
-    };
+      const chipStyle = (id: TendChipId): CSSProperties => tendChipStyle(id, layout, viewport, gestureWall);
     const stopClicks = (clickEvent: ReactMouseEvent<HTMLElement>): void => clickEvent.stopPropagation();
     return (
       <section
@@ -830,7 +838,7 @@ export function TreeMenu({
               process={process}
               kind="room"
               transcript={snapshot.transcript}
-              landing={snapshot.selfLanding ?? null}
+              landing={snapshot.steerLanding ?? null}
             />
           </div>
         </div>
@@ -1371,11 +1379,7 @@ export function TreeMenu({
     present.push("qr");
   }
   const layout = tendChipLayout(anchor, viewport, { gesture: gestureWall, present });
-  const chipStyle = (id: TendChipId): CSSProperties => {
-    const size = tendChipSize(id, gestureWall);
-    const pos = layout[id] ?? { left: viewport.width - size.width - 16, top: 16 };
-    return { left: `${Math.round(pos.left)}px`, top: `${Math.round(pos.top)}px`, width: `${size.width}px` };
-  };
+  const chipStyle = (id: TendChipId): CSSProperties => tendChipStyle(id, layout, viewport, gestureWall);
   const stopClicks = (clickEvent: ReactMouseEvent<HTMLElement>): void => clickEvent.stopPropagation();
 
   return (
@@ -1755,34 +1759,25 @@ export function TreeMenu({
         </>
       ) : null}
 
-      {/* 🌱 GROW A BRANCH (adopted trees) — the verb above the record chip:
-          a fresh room/* rail off the origin tip. The new limb-chip arrives
-          via the snapshot while the menu stays open; refusals land in the
-          receipt slots below the trunk. */}
+      {/* 🌱 GROW A BRANCH (adopted trees) — press, SAY WHAT THE BRANCH IS FOR,
+          press again: the room cuts a new room/* limb named from those words
+          and grows the change on it. The same recording surface the self tree
+          and the branch cards use (its sibling verb "🌱 Graft onto this
+          branch" records onto an EXISTING limb); the receipt lives on the card
+          itself, so a refusal is read where the press happened. */}
       {model.adopted ? (
-        <div
-          className="tend-chip tend-chip-grow"
-          data-chip="grow"
-          data-dwell-shield="1"
-          style={chipStyle("grow")}
-          onClick={stopClicks}
-        >
-          {busy?.verb === "grow" ? (
-            <TendVerb testid="tree-menu-grow" className="verb-merge" line1="🌱 growing…" line2="cutting a fresh branch off the origin tip" disabled onPress={() => undefined} />
-          ) : (
-            <TendVerb
-              testid="tree-menu-grow"
-              className="verb-merge"
-              line1="🌱 grow a branch"
-              line2="a fresh rail off the origin tip — a new limb on this tree"
-              title="Grow a real branch (room/*) on this import's repo — it appears as a limb on the tree."
-              disabled={anyBusy}
-              onPress={(event) => {
-                stampPressed(event);
-                growVerb();
-              }}
-            />
-          )}
+        <div className="tend-chip tend-chip-grow" data-chip="grow" data-dwell-shield="1" style={chipStyle("grow")} onClick={stopClicks}>
+          {/* The chip's name rides the BUTTON, not this wrapper: the wrapper's
+              only handler stops click propagation, so an id on it named a
+              thing nobody can press — and would keep passing over a chip
+              whose button had gone missing. */}
+          <RecordSteerToggle
+            process={process}
+            kind="grow"
+            pressTestId="tree-menu-grow"
+            transcript={snapshot.transcript}
+            landing={snapshot.steerLanding ?? null}
+          />
         </div>
       ) : null}
 

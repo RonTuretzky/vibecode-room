@@ -173,6 +173,30 @@ const MAX_LIVE_TRANSCRIPT_LINES = 40;
 // in memory; past this backlog (~15s of frames) new frames are dropped instead.
 const MIC_MAX_QUEUED_CHUNKS = 64;
 
+/**
+ * WHAT THE OPEN RECORD WINDOW WILL DO WITH WHAT IT HEARS.
+ *
+ *  • "onto" — graft: apply the spoken change to a branch. `branch` names the
+ *    one the operator dwelled on, or null for the default (continue on the
+ *    tree's newest room/* rail, cutting one only if none exists).
+ *  • "grow" — cut a BRAND NEW branch named by the words themselves, and apply
+ *    the change there. Never reuses a rail: reusing one is exactly what the
+ *    operator pressed 🌱 grow a branch to avoid.
+ *
+ * A discriminated union rather than a nullable branch + a boolean, because the
+ * pair makes "graft onto room/x AND cut a fresh one" representable, and a
+ * sentinel branch name would leak onto the wire (snapshot.steeringBranch is
+ * public and read by the branch card).
+ */
+export type SteerScope = { mode: "onto"; branch: string | null } | { mode: "grow" };
+
+// The unscoped default: continue the tree's work, cut nothing on purpose.
+export const STEER_SCOPE_DEFAULT: SteerScope = { mode: "onto", branch: null };
+
+// The branch rails' refusal when the git substrate itself is off — the one
+// refusal TreeGitSubstrate cannot give, because there is no substrate to ask.
+const NO_TREE_SUBSTRATE_REFUSAL = "the room's git substrate is off — no branches to grow";
+
 export interface ProjectorRuntimeEnv {
   DEEPGRAM_API_KEY?: string;
   VIBERSYN_SESSION_ID?: string;
@@ -267,6 +291,12 @@ export interface ProjectorRuntime {
   // PR answers ok. For an import whose host deploys latest main, this IS the
   // deploy, so the UI asks twice before it calls.
   mergeTreeBranch(upid: string, branch: string, correlationId?: string): Promise<{ ok: true; merged: true } | { ok: false; error: string }>;
+  // WHY THE BRANCH RAILS WOULD REFUSE THIS TREE, in the substrate's own words,
+  // or null when they apply. For a caller that has to decide BEFORE it starts
+  // anything — the grow-scoped /select, which would otherwise open a record
+  // window whose only possible ending is a refusal delivered after the
+  // operator has finished speaking.
+  treeBranchRailRefusal(upid: string): string | null;
   // The tree's repo facts for menus/popups (GET /api/process/:upid/repo):
   // origin + branches (with per-branch prUrl once open) + optional deployUrl
   // (an import's resolved live deployment, else the take-home publish URL).
@@ -323,11 +353,11 @@ export interface ProjectorRuntime {
   acceptPendingSuggestion(correlationId?: string): Promise<ProjectorSnapshot>;
   // Click-to-steer (CLICK A PROJECT -> STEER IT): set the steering target UPID so
   // subsequent live FINAL transcript lines route to THAT process's agent loop
-  // (registry.steer) instead of seeding a fresh ambient suggestion. `branch`
-  // (a room/<slug> name) scopes the record toggle's spoken-change window to a
-  // specific room branch of an adopted tree — stored beside the target and
-  // cleared with it.
-  setSteeringTarget(upid: string, correlationId?: string, branch?: string | null): ProjectorSnapshot;
+  // (registry.steer) instead of seeding a fresh ambient suggestion. The `scope`
+  // says what the window DOES with what it hears — graft onto a branch
+  // (optionally a named one) or grow a fresh one named by the speech. Stored
+  // beside the target and cleared with it.
+  setSteeringTarget(upid: string, correlationId?: string, scope?: SteerScope): ProjectorSnapshot;
   // Clear the steering target; live transcript returns to ambient suggestion +
   // click-to-build behavior. For an ADOPTED tree with a non-empty spoken slice,
   // the clear ALSO fires the steer applier (steer-applier.ts): the joined
@@ -716,10 +746,11 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   // instead of seeding a fresh ambient suggestion. Set/cleared by the projector
   // click endpoints; cleared automatically if the target stops being live.
   #steeringUpid: string | null = null;
-  // Branch scope for the steering target (the record toggle dwelled on a
-  // specific room/<slug> of an adopted tree). Lives and dies with
-  // #steeringUpid; rides the snapshot as steeringBranch.
-  #steeringBranch: string | null = null;
+  // What the open window will DO with what it hears (graft onto a branch /
+  // grow a fresh one named by the speech). Lives and dies with #steeringUpid;
+  // its branch — grow has none yet, and must not claim one — rides the
+  // snapshot as steeringBranch.
+  #steeringScope: SteerScope = STEER_SCOPE_DEFAULT;
   // WHEN THE RECORD WINDOW OPENED (HH:MM:SS UTC — the same stamp format the
   // transcript lines carry), or null when nothing is being recorded. Published
   // per-process beside `steering` because the WALL cannot work it out: the
@@ -738,11 +769,18 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   // window closes hard. For STEER_GRACE_MS after clear, trailing finals still
   // route to the just-cleared target (and join an adopted tree's slice, whose
   // applier drain waits for them). Preempted by a new target; lazily drained.
-  #steerGrace: { upid: string; branch: string | null; slice: SteerSliceLine[]; untilMs: number; timer: ReturnType<typeof setTimeout> | null } | null = null;
+  #steerGrace: { upid: string; scope: SteerScope; slice: SteerSliceLine[]; untilMs: number; timer: ReturnType<typeof setTimeout> | null } | null = null;
   // WHERE THE LAST SPOKEN CHANGE LANDED — the wall's post-Stop receipt. `onto`
   // is the branch the operator asked to graft onto (null = a fresh cut);
   // `error` is set when the room refused, in which case NOTHING was dispatched.
-  #selfLanding: { branch: string | null; onto: string | null; error: string | null; atMs: number } | null = null;
+  //
+  // ONE slot, because the room only ever has ONE steering window — and `upid`
+  // is what makes one slot safe. Arming grow on a fleet tree PREEMPTS a
+  // pending self grace, so the mirror's landing can be written with a fresh
+  // stamp in the middle of the grow window; without an identity the fleet card
+  // would adopt the mirror's verdict as its own, which is the wrong-tree bug
+  // the old `kind !== "room"` guard existed to prevent and no longer covers.
+  #steerLanding: { upid: string; branch: string | null; onto: string | null; error: string | null; atMs: number } | null = null;
   // AUTO-BUILD toggle. When true, every fired suggestion is accepted+built the
   // instant it pops — no click required. Operator flips it from the projector
   // (POST /api/auto-accept) or boots with VIBERSYN_AUTO_ACCEPT=1. A re-entrancy guard
@@ -1191,7 +1229,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
         if (this.#steeringUpid === upid) {
           // Silent drop (no applier): a halted target's slice must not commit.
           this.#steeringUpid = null;
-          this.#steeringBranch = null;
+          this.#steeringScope = STEER_SCOPE_DEFAULT;
           this.#steerSlice = [];
           this.#steeringSince = null;
         }
@@ -2295,7 +2333,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   setSteeringTarget(
     upid: string,
     correlationId = `corr-steer-select-${crypto.randomUUID()}`,
-    branch: string | null = null,
+    scope: SteerScope = STEER_SCOPE_DEFAULT,
   ): ProjectorSnapshot {
     if (this.#emergencyTriggered) {
       return this.#snapshot;
@@ -2310,10 +2348,10 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     // (its slice drains now — the two spoken windows never merge).
     this.#drainSteerGrace(`${correlationId}-preempted-by-select`);
     this.#steeringUpid = upid;
-    // Branch scope (the record toggle dwelled on a specific room/<slug>) rides
-    // beside the target; setting a target (re)opens the spoken-change window,
-    // so the slice resets — stage narration before toggle-on never leaks in.
-    this.#steeringBranch = branch;
+    // The scope (graft onto this room/<slug> / grow a fresh limb) rides beside
+    // the target; setting a target (re)opens the spoken-change window, so the
+    // slice resets — stage narration before toggle-on never leaks in.
+    this.#steeringScope = scope;
     this.#steerSlice = [];
     // The window's open stamp rides the snapshot so every card — including one
     // opened after the arm — knows which spoken lines belong to it.
@@ -2324,7 +2362,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       sessionId: this.sessionId,
       correlationId,
       upid,
-      meta: { upid, branch },
+      meta: { upid, branch: this.steeringBranch(), mode: scope.mode },
     });
     this.publish();
     return this.#snapshot;
@@ -2337,10 +2375,10 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   // — the stage guarantee that the one-dwell PR is never empty.
   clearSteeringTarget(correlationId = `corr-steer-clear-${crypto.randomUUID()}`): ProjectorSnapshot {
     const had = this.#steeringUpid;
-    const branch = this.#steeringBranch;
+    const scope = this.#steeringScope;
     const slice = this.#steerSlice;
     this.#steeringUpid = null;
-    this.#steeringBranch = null;
+    this.#steeringScope = STEER_SCOPE_DEFAULT;
     this.#steerSlice = [];
     this.#steeringSince = null;
     if (had !== null) {
@@ -2359,7 +2397,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       this.#drainSteerGrace(`${correlationId}-preempt`);
       const timer = setTimeout(() => this.#drainSteerGrace(`${correlationId}-grace-timer`), STEER_GRACE_MS + 100);
       (timer as { unref?: () => void }).unref?.();
-      this.#steerGrace = { upid: had, branch, slice, untilMs: this.#clock() + STEER_GRACE_MS, timer };
+      this.#steerGrace = { upid: had, scope, slice, untilMs: this.#clock() + STEER_GRACE_MS, timer };
     }
     this.publish();
     return this.#snapshot;
@@ -2383,15 +2421,34 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     }
     const text = joinedSliceText(grace.slice, this.#clock());
     if (text.length === 0) {
+      // AN EMPTY WINDOW GROWS NOTHING, and leaves no receipt to mistake for
+      // one: no branch is cut (not even in grow mode, where the name would be
+      // slugged from silence), nothing is dispatched, no landing is written.
+      // The card's own echo reports the silence.
       return;
     }
     // THE dispatch: everything the window collected acts NOW, once.
     // Adopted trees → the steer applier's bounded commit; everything else —
     // the mirror (one self-run for the whole description), kickoff trees (one
     // coherent mock revision) — a single registry.steer with the joined text.
+
+    // 🌱 GROW A BRANCH answers for itself FIRST, before the adopted test below,
+    // so a grow window can never fall through to the ambient path. It used to
+    // sit INSIDE that test, and a published LOCAL tree (publish() records a
+    // remoteUrl, so the chip rendered and the route said yes) landed here
+    // non-adopted: the words were handed to the build loop and no receipt was
+    // ever written — the room said nothing had grown while it steered a build.
+    // #growSteerBranch refuses in the substrate's own words instead.
+    // The cut itself is the point, so grow is NOT gated on the applier knob
+    // (neither is POST /api/process/:upid/branch): with the writer off the limb
+    // still grows and the receipt says the change was not written to it.
+    if (grace.scope.mode === "grow") {
+      void this.#growSteerBranch(grace.upid, text, correlationId).catch(() => undefined);
+      return;
+    }
     if (this.#treeGit?.isAdopted(grace.upid) === true) {
       if (steerApplierEnabled(this.#env)) {
-        void this.#applySteerSlice(grace.upid, grace.branch, text, correlationId).catch(() => undefined);
+        void this.#applySteerSlice(grace.upid, grace.scope.branch, text, correlationId).catch(() => undefined);
       }
       return;
     }
@@ -2404,7 +2461,10 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       //     to it first, so what you say grows the branch you picked instead
       //     of starting a sibling. The self path used to drop the scope on the
       //     floor and cut a new branch regardless.
-      const onto = grace.branch;
+      // GROW needs no case of its own here: #cutSelfBranch already IS "cut a
+      // fresh branch named by the speech", so grow on the mirror is the
+      // default, and a second implementation would only be a way to disagree.
+      const onto = grace.scope.mode === "onto" ? grace.scope.branch : null;
       void (onto !== null
         ? this.#graftOntoSelfBranch(onto)
         : this.#cutSelfBranch(text).then(
@@ -2428,7 +2488,8 @@ class LiveProjectorRuntime implements ProjectorRuntime {
           });
           // THE RECEIPT the wall reads after Stop — where this change landed,
           // or why it landed nowhere.
-          this.#selfLanding = {
+          this.#steerLanding = {
+            upid: grace.upid,
             branch: landing.ok ? landing.branch : null,
             onto,
             error: landing.ok ? null : landing.error,
@@ -2487,8 +2548,112 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     return this.#steeringUpid;
   }
 
+  // DERIVED from the scope, never stored beside it: a grow window has no
+  // branch yet (its name is still unspoken), and saying otherwise on the wire
+  // would put a branch on the wall that does not exist.
   steeringBranch(): string | null {
-    return this.#steeringBranch;
+    return this.#steeringScope.mode === "onto" ? this.#steeringScope.branch : null;
+  }
+
+  /**
+   * 🌱 GROW A BRANCH — the drain for a window armed in grow mode.
+   *
+   * Cut a BRAND NEW room/* limb named by what was actually said (never the
+   * newest existing rail: reusing one is precisely what this verb exists to
+   * avoid), then apply the spoken change to it. Exactly one landing is written
+   * at the end, in one of three shapes:
+   *   {branch:null, error}  the cut was refused — and the words were applied
+   *                         NOWHERE. Growing them on some other branch instead
+   *                         is the one outcome worse than refusing.
+   *   {branch, error:null}  grown, and the change landed on it.
+   *   {branch, error}       grown, but the change did not land — the receipt
+   *                         still names the limb that really grew.
+   *
+   * A tree the branch rails refuse (a LOCAL tree, published or not; a missing
+   * substrate) takes the first shape. It must never take a FOURTH, silent
+   * one — returning with nothing written was how a published local tree's
+   * spoken change ended up in the build loop with no receipt at all.
+   */
+  async #growSteerBranch(upid: string, text: string, correlationId: string): Promise<void> {
+    const treeGit = this.#treeGit;
+    // THE RAILS DECIDE, not the presence of an origin. A LOCAL tree that has
+    // been published carries a remoteUrl and would have passed an origin test,
+    // while the substrate refuses its every branch op.
+    const railRefusal = treeGit === null ? NO_TREE_SUBSTRATE_REFUSAL : treeGit.branchRailRefusal(upid);
+    if (treeGit === null || railRefusal !== null) {
+      this.#refuseGrow(upid, correlationId, railRefusal ?? NO_TREE_SUBSTRATE_REFUSAL);
+      return;
+    }
+    const grown = await treeGit.growBranch(upid, slugFromSpeech(text));
+    if (!grown.ok) {
+      this.#refuseGrow(upid, correlationId, grown.error);
+      return;
+    }
+    this.recordExternalTrace({
+      event: "steer.grow.branch",
+      level: "info",
+      sessionId: this.sessionId,
+      correlationId,
+      upid,
+      meta: { branch: grown.branch, text },
+    });
+    // The knob gates the WRITER, not the limb: an operator who grew a branch
+    // gets the branch either way, and is told the change was not written.
+    if (!steerApplierEnabled(this.#env)) {
+      this.#steerLanding = {
+        upid,
+        branch: grown.branch,
+        onto: null,
+        error: "the room's change-writer is off (VIBERSYN_STEER_APPLIER=0) — the branch grew empty",
+        atMs: this.#clock(),
+      };
+      this.publish();
+      return;
+    }
+    const result = await applySteerEdit({
+      repoDir: join(this.#buildsRoot, upid, "repo"),
+      branch: grown.branch,
+      text,
+      upid,
+      // Non-null by construction: a null substrate cannot produce an ok cut —
+      // it is the first refusal above.
+      treeGit,
+      now: this.#clock,
+      env: this.#env,
+    });
+    this.recordExternalTrace({
+      event: result.ok ? "steer.applier.applied" : "steer.applier.error",
+      level: result.ok ? "info" : "warn",
+      sessionId: this.sessionId,
+      correlationId,
+      upid,
+      meta: result.ok ? { branch: result.branch, unchanged: result.unchanged, text } : { stage: "apply", error: result.error },
+    });
+    this.#steerLanding = {
+      upid,
+      branch: grown.branch,
+      onto: null,
+      error: result.ok ? null : result.error,
+      atMs: this.#clock(),
+    };
+    this.publish();
+  }
+
+  // NO LIMB GREW, and the words were applied NOWHERE. One shape, one place,
+  // so every way grow can fail leaves the same readable receipt — a refusal
+  // that returns silently is indistinguishable, on the wall, from a success
+  // nobody has heard about yet.
+  #refuseGrow(upid: string, correlationId: string, error: string): void {
+    this.recordExternalTrace({
+      event: "steer.grow.refused",
+      level: "warn",
+      sessionId: this.sessionId,
+      correlationId,
+      upid,
+      meta: { stage: "branch", error },
+    });
+    this.#steerLanding = { upid, branch: null, onto: null, error, atMs: this.#clock() };
+    this.publish();
   }
 
   // STEER APPLIER wiring (steer-applier.ts). Resolve the room branch the
@@ -3684,8 +3849,8 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       updatedAt: new Date().toISOString(),
       mic: { mode: this.micMode, active: this.#micActive, bytesReceived: this.#micBytes },
       steeringUpid: this.#steeringUpid,
-      steeringBranch: this.#steeringBranch,
-      ...(this.#selfLanding === null ? {} : { selfLanding: this.#selfLanding }),
+      steeringBranch: this.steeringBranch(),
+      ...(this.#steerLanding === null ? {} : { steerLanding: this.#steerLanding }),
       autoAccept: this.#autoAccept,
       captureMode: this.#captureMode,
       researchMode: this.research.active(),
@@ -4010,6 +4175,14 @@ class LiveProjectorRuntime implements ProjectorRuntime {
         // lines belong to it without having watched the flip itself.
         ...(record.state !== "dead" && this.#steeringUpid === record.upid && this.#steeringSince !== null
           ? { steeringSince: this.#steeringSince }
+          : {}),
+        // …and WHAT IT WILL DO with what it hears. A tree can carry more than
+        // one record surface at once (the 🌱 grow chip and, stacked over the
+        // same menu, a branch card's graft toggle), and `steering` alone is
+        // per-UPID: every one of them lit for a window only one of them armed,
+        // and then reported on a landing shaped for a different verb.
+        ...(record.state !== "dead" && this.#steeringUpid === record.upid
+          ? { steeringMode: this.#steeringScope.mode }
           : {}),
         // A GitHub import's display contract is its "Imported from GitHub: …"
         // line — the registry's inferred title (project naming) must not shadow
@@ -5147,6 +5320,14 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     }
     const origin = this.#treeGit.snapshot(upid)?.remoteUrl ?? null;
     return { issues: await this.#treeIssues.issuesFor(upid, origin) };
+  }
+
+  // WHY THE BRANCH RAILS WOULD REFUSE THIS TREE, verbatim, or null when they
+  // apply. Deliberately NOT "does it have an origin": publish() records a
+  // remoteUrl on a LOCAL tree, so origin-presence answers yes for a tree whose
+  // every branch op the substrate will refuse.
+  treeBranchRailRefusal(upid: string): string | null {
+    return this.#treeGit === null ? NO_TREE_SUBSTRATE_REFUSAL : this.#treeGit.branchRailRefusal(upid);
   }
 
   // The tree's repo facts for menus/popups: the recorded origin, the branch

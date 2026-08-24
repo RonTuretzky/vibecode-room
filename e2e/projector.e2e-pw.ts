@@ -189,6 +189,17 @@ test.describe("projector UI — keyboard, a11y & detail completeness", () => {
     await expect(page.getByTestId("tree-menu-callsign")).toContainText("Atlas");
     await expect(page.getByTestId("tree-menu-status")).toHaveClass(/state-active/);
     await expect(menu).toHaveAttribute("data-upid", "upid_atlas_7f3");
+    // STALE AFFORDANCE — this step will FAIL until it is rehomed. The fleet
+    // menu's record-a-change toggle was removed at the operator's request
+    // ("remove … record a change button"), so a LOCAL demo tree like Atlas has
+    // no record-steer-start at all. The surviving steering surfaces are the
+    // SELF tree's graft chip, a branch card, and — on an ADOPTED import only —
+    // the 🌱 grow chip (data-testid="tree-menu-grow"), and the static demo
+    // fleet carries no adopted tree to open one on.
+    // Left failing ON PURPOSE rather than deleted: this spec's other
+    // assertions (identity plate, upid contract) are real coverage, and
+    // silently dropping the steering claim would hide the gap instead of
+    // naming it.
     await expect(page.getByTestId("record-steer-start")).toBeVisible();
   });
 

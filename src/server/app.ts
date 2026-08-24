@@ -475,18 +475,39 @@ export function createProjectorApp(runtime: ProjectorRuntime, options: Projector
   });
   // CLICK A PROJECT -> STEER IT. Set the steering target so subsequent FINAL
   // transcript lines route to that process's agent loop. Returns the snapshot.
-  // Optional body {branch: "room/<slug>"} scopes the record toggle's
-  // spoken-change window to a specific room branch of an adopted tree — the
-  // scope rides the snapshot as steeringBranch and clears with the target.
+  // The optional body says what the window will DO with what it hears:
+  //   {branch: "room/<slug>"} — graft onto that existing branch of an adopted
+  //     tree; the scope rides the snapshot as steeringBranch;
+  //   {grow: true} — cut a NEW branch, named by the words themselves, when the
+  //     window closes (🌱 grow a branch).
   // No/malformed body = the pre-existing unscoped select.
   app.post("/api/process/:upid/select", async (context) => {
     if (isOfflineDemoRequest(context.req.header("referer"))) {
       return context.json(runtime.snapshot());
     }
     const upid = context.req.param("upid");
-    const body = (await context.req.json().catch(() => null)) as { branch?: unknown } | null;
+    const body = (await context.req.json().catch(() => null)) as { branch?: unknown; grow?: unknown } | null;
     const branch = body !== null && typeof body.branch === "string" && body.branch.trim().length > 0 ? body.branch.trim() : null;
-    const snapshot = runtime.setSteeringTarget(upid, undefined, branch);
+    const grow = body !== null && body.grow === true;
+    if (grow && branch !== null) {
+      // The two scopes are opposites, and a window that tried to be both would
+      // have to pick one silently.
+      return context.json({ ok: false, error: "a window either grows a new branch or grafts onto one — not both" }, 400);
+    }
+    if (grow) {
+      // ADOPTED-NESS, not origin-presence. The take-home publish() records a
+      // remoteUrl on a LOCAL tree, so "has an origin" answered yes for a tree
+      // the substrate refuses every branch op on: the window opened, the words
+      // were collected, the drain saw a non-adopted tree and quietly steered
+      // them into the BUILD loop, and nothing ever grew. Refuse AT THE PRESS,
+      // in the substrate's own words — the same sentence the old one-press
+      // grow verb printed in the tend error chip.
+      const refusal = runtime.treeBranchRailRefusal(upid);
+      if (refusal !== null) {
+        return context.json({ ok: false, error: refusal }, 400);
+      }
+    }
+    const snapshot = runtime.setSteeringTarget(upid, undefined, grow ? { mode: "grow" } : { mode: "onto", branch });
     return context.json(snapshot);
   });
   // Clear the steering target (both POST and DELETE) so transcript returns to

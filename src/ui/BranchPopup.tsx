@@ -18,8 +18,13 @@ import "./TreePopups.css";
  * of truth feed it, because two kinds of tree grow limbs:
  *   • ADOPTED imports resolve out of the snapshot's treeRepo, and the branch
  *     is a live work rail:
- *       - 🎙 Steer this branch → POST /api/process/:upid/select {branch},
- *         close — the record path, scoped to this branch.
+ *       - 🌱 Graft onto this branch → the SAME RecordSteerToggle the self tree
+ *         uses, scoped to this branch: arm, echo the words live, stop, and
+ *         show the server's receipt. It used to be a bare button that POSTed
+ *         select {branch} and then CLOSED the card — which destroyed the only
+ *         surface that knew about the window it had just opened, leaving an
+ *         adopted tree's graft window with no stop button anywhere on the
+ *         wall. The surface that arms is the surface that stops.
  *       - ⬆ Open PR ▸ → POST /api/process/:upid/branch/<branch>/pr; the
  *         returned URL (or the honest error) shows INLINE — in-room text,
  *         never a new tab.
@@ -129,9 +134,10 @@ export interface BranchPopupProps {
   // The SELF tree's forest spec (App holds it), with the local rails optional
   // — live they are fetched here; the static renderer seeds them.
   self?: { tree: SelfTreeSpec; versions?: SelfBranchesPayload | null } | null;
-  // The server's receipt for the last spoken change (snapshot.selfLanding) —
-  // which branch grew it, or why the room refused to grow anything.
-  landing?: { branch: string | null; onto: string | null; error: string | null; atMs: number } | null;
+  // The server's receipt for the last spoken change (snapshot.steerLanding) —
+  // which branch grew it, or why the room refused to grow anything. It names
+  // the tree it belongs to; the card only reads a receipt that is its own.
+  landing?: { upid: string; branch: string | null; onto: string | null; error: string | null; atMs: number } | null;
   // The live transcript (snapshot.transcript), threaded from App exactly as
   // TreeMenu gets it. NOT optional: it was, and this card — on the very branch
   // the room was running — silently omitted it, so the graft toggle echoed
@@ -243,17 +249,6 @@ export function BranchPopup({ process, branch, anchor, self, landing = null, tra
   // The rails answer "is this branch on this machine?" — until they land the
   // card must not claim it isn't.
   const railsKnown = selfContext?.versions != null;
-
-  // The record path, scoped: this branch becomes the steering target and
-  // everything spoken routes into it (the server slugs/validates the branch).
-  const steerBranch = (): void => {
-    void fetch(`/api/process/${encodeURIComponent(process.upid)}/select`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ branch: model.branch }),
-    }).catch(() => undefined);
-    onClose();
-  };
 
   const openPr = async (): Promise<void> => {
     setPrBusy(true);
@@ -429,15 +424,28 @@ export function BranchPopup({ process, branch, anchor, self, landing = null, tra
               route). What an adopted tree still lacks is PRUNE — there is no
               delete-branch rail on the clone substrate yet, and a verb with no
               rail behind it is the one thing this surface must never grow. */}
-          <button
-            type="button"
-            className="ctl-button branch-popup-steer"
-            data-testid="branch-popup-steer"
-            title="Press, then talk — everything you say routes into THIS branch until you stop."
-            onClick={steerBranch}
-          >
-            🌱 Graft onto this branch
-          </button>
+          {/* THE SURFACE THAT ARMS IS THE SURFACE THAT STOPS. This was a
+              fire-and-close button: it POSTed select {branch} and then called
+              onClose(), destroying the only card that knew about the window it
+              had just opened. Nothing else on an adopted tree could stop it —
+              the 🌱 grow chip appeared to, but that was only because it lit for
+              any window on this upid, and once it stopped lying about windows
+              it did not arm, the graft window had no stop button anywhere on
+              the wall. Worse, the one press still offered (idle "grow a
+              branch") calls setSteeringTarget, which resets #steerSlice — every
+              word collected for the graft discarded with no trace and no
+              receipt. The same toggle the self tree uses does all of this
+              correctly: arm, echo the words live, stop, and show the server's
+              receipt. */}
+          <div className="tree-menu-steer" data-testid="branch-popup-steer">
+            <RecordSteerToggle
+              process={process}
+              kind="room"
+              branch={model.branch}
+              transcript={transcript}
+              landing={landing}
+            />
+          </div>
           <button
             type="button"
             className="ctl-button branch-popup-pr"

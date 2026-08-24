@@ -42,26 +42,35 @@ export const SETTLE_MS = 6_000;
 /**
  * WHOSE RECEIPT IS THIS? Two ways a landing lies if taken at face value:
  *
- *  • STALE. The server never clears #selfLanding, so the prop still holds the
+ *  • STALE. The server never clears #steerLanding, so the prop still holds the
  *    PREVIOUS change's receipt for the seconds this one spends being cut —
  *    long enough to stamp a ✓ and someone else's branch name onto a graft that
  *    has not happened, or to report an old refusal over a fresh success.
  *    Freshness is decided by comparing the STAMP observed when this window
  *    armed, never by comparing clocks: browser/server skew cannot forge it.
- *  • WRONG TREE. selfLanding is the mirror's receipt. A "build" card that
- *    borrowed it would report "couldn't graft onto room/…" about a branch that
- *    has nothing to do with the fleet project it is steering.
+ *  • WRONG TREE. The room keeps ONE landing slot for its ONE steering window,
+ *    and arming a window preempts a pending grace elsewhere — so a card can be
+ *    handed a receipt that belongs to the tree next door, with a stamp fresh
+ *    enough to pass. It used to be enough to ask whether this card was the
+ *    mirror's; now the landing says whose it is, and identity decides.
  */
-export function freshLanding<T extends { atMs: number }>(
-  kind: "room" | "build",
+export function freshLanding<T extends { atMs: number; upid: string }>(
+  upid: string,
   landing: T | null,
   atArm: number | null,
 ): T | null {
-  if (kind !== "room" || landing === null || landing.atMs === atArm) {
+  if (landing === null || landing.upid !== upid || landing.atMs === atArm) {
     return null;
   }
   return landing;
 }
+
+// WHAT THIS TOGGLE IS FOR. "room" = graft onto the room's own source (a fresh
+// branch by default, a named one when scoped); "build" = steer a fleet
+// project's mocks; "grow" = cut a NEW branch on an adopted tree, named by what
+// is about to be said. grow is a scope on the same recording flow, not a
+// second recorder — the echo, the watermark and the receipt are shared.
+export type SteerKind = "room" | "build" | "grow";
 
 // WHAT THE RECEIPT IS ALLOWED TO SAY.
 export type ReceiptState =
@@ -86,7 +95,7 @@ export type ReceiptState =
  * runs no effects, so the receipt never renders in SSR).
  */
 export function receiptState(input: {
-  kind: "room" | "build";
+  kind: SteerKind;
   // Words THIS CARD saw. 0 is not evidence of silence unless `wired`.
   words: number;
   // Was this card handed the transcript at all? A card that was not wired
@@ -98,7 +107,7 @@ export function receiptState(input: {
   settled: boolean;
 }): ReceiptState {
   const { kind, words, wired, landed, settled } = input;
-  // 1. A landing is written for every self window that dispatched text
+  // 1. A landing is written for every self OR grow window that dispatched text
   //    (composition.ts #drainSteerGrace returns early on an empty slice), so
   //    its presence — refusal or not — is itself proof the room heard.
   if (landed !== null) {
@@ -126,14 +135,27 @@ export function receiptState(input: {
 // copy is asserted in tests instead of only the enum.
 export function receiptLine(
   state: ReceiptState,
-  input: { kind: "room" | "build"; words: number; landed: { branch: string | null; onto: string | null; error: string | null } | null },
+  input: { kind: SteerKind; words: number; landed: { branch: string | null; onto: string | null; error: string | null } | null },
 ): string {
   const { kind, words, landed } = input;
   const short = (name: string): string => name.replace(/^room\//u, "");
   switch (state) {
     case "refused":
+      // GROW has two refusals and they are not the same news: no limb at all
+      // (and the words went nowhere), or a limb that grew with the change
+      // still unwritten on it. The second names the branch that really exists.
+      if (kind === "grow") {
+        return landed?.branch == null
+          ? `couldn't grow a branch — ${landed?.error ?? ""}`
+          : `🌱 grew ${short(landed.branch)} — but the change didn’t land: ${landed.error ?? ""}`;
+      }
       return `couldn't graft${landed?.onto != null ? ` onto ${short(landed.onto)}` : ""} — ${landed?.error ?? ""}`;
     case "landed":
+      if (kind === "grow") {
+        return landed?.branch == null
+          ? "✓ grown — the room is growing your change on a new branch"
+          : `✓ grown — ${short(landed.branch)} is a new limb, growing your change`;
+      }
       return landed?.branch == null
         ? "✓ graft taken — the room is growing this change"
         : landed.onto != null
@@ -142,19 +164,31 @@ export function receiptLine(
     case "sent":
       return "✓ got it — shaping this build";
     case "silent":
-      return kind === "room" ? "heard nothing — no graft was made" : "heard nothing — nothing was sent";
+      // A branch named after silence is worse than no branch: say that nothing
+      // grew, out loud.
+      return kind === "grow"
+        ? "heard nothing — no branch was grown"
+        : kind === "room"
+          ? "heard nothing — no graft was made"
+          : "heard nothing — nothing was sent";
     case "cutting":
       return words === 0
         ? "stopped — checking what the room heard…"
-        : kind === "room"
-          ? "✓ heard — the room is cutting the branch…"
-          : "✓ heard — sending this to the build…";
+        : kind === "grow"
+          ? "✓ heard — the room is growing the branch…"
+          : kind === "room"
+            ? "✓ heard — the room is cutting the branch…"
+            : "✓ heard — sending this to the build…";
     default:
       return kind === "build"
         ? "stopped — no receipt came back from the room"
-        : words > 0
-          ? "heard you — the room hasn’t said where this landed"
-          : "stopped — the room hasn’t said where this landed";
+        : kind === "grow"
+          ? words > 0
+            ? "heard you — the room hasn’t said whether the branch grew"
+            : "stopped — the room hasn’t said whether the branch grew"
+          : words > 0
+            ? "heard you — the room hasn’t said where this landed"
+            : "stopped — the room hasn’t said where this landed";
   }
 }
 
@@ -173,8 +207,10 @@ export function receiptLine(
 export interface RecordSteerToggleProps {
   process: ProjectorProcess;
   // "room" = the mirror (words change the room's own source); "build" = a
-  // fleet project (words steer its mocks/build).
-  kind: "room" | "build";
+  // fleet project (words steer its mocks/build); "grow" = an adopted tree's
+  // 🌱 grow a branch — the same recording flow, ending in a NEW branch named
+  // by what was said.
+  kind: SteerKind;
   // The live transcript (finals + trailing interim): the toggle ECHOES the
   // words spoken since the window opened, so the operator sees what the room
   // has heard before pressing stop.
@@ -192,13 +228,49 @@ export interface RecordSteerToggleProps {
   // stands the room on it before the run, so the words grow the branch you
   // picked instead of a sibling of it.
   branch?: string | null;
-  // The server's landing receipt for the last window (snapshot.selfLanding) —
-  // where the change actually went, or why it went nowhere.
-  landing?: { branch: string | null; onto: string | null; error: string | null; atMs: number } | null;
+  // The server's landing receipt for the last window (snapshot.steerLanding) —
+  // where the change actually went, or why it went nowhere. It carries the
+  // upid it belongs to; this card only reads the one that is its own.
+  landing?: { upid: string; branch: string | null; onto: string | null; error: string | null; atMs: number } | null;
+  // THE NAME OF THE PRESS, for a surface that has one of its own — the tend
+  // menu's 🌱 grow chip is "tree-menu-grow" to every test and every e2e step
+  // that ever pressed it. That id belongs on the BUTTON: hung on the chip's
+  // wrapping <div> it named a thing nobody can press (the div's only handler
+  // stops click propagation), so an assertion could pass over a chip whose
+  // button had gone missing. Defaults to the id every record surface answers
+  // to.
+  pressTestId?: string;
 }
 
-export function RecordSteerToggle({ process, kind, transcript, branch = null, landing = null }: RecordSteerToggleProps) {
-  const recording = process.steering === true;
+// THE WINDOW MODE THIS SURFACE ARMS. The wire says what the OPEN window will
+// do ("grow" cuts a new branch, "onto" grafts); a card that arms the other one
+// is not this window's surface, however loudly `steering` is set for the tree.
+// Exported so the rule is testable without a room — it is the whole of the fix
+// for a grow chip that lit for a graft.
+export function windowIsMine(kind: SteerKind, mode: "onto" | "grow" | undefined): boolean {
+  // A server too old to publish a mode says nothing about the window; the one
+  // surface it could have armed back then was an "onto" one, so read it as
+  // that rather than darkening every card.
+  return (mode ?? "onto") === (kind === "grow" ? "grow" : "onto");
+}
+
+export function RecordSteerToggle({
+  process,
+  kind,
+  transcript,
+  branch = null,
+  landing = null,
+  pressTestId = "record-steer-start",
+}: RecordSteerToggleProps) {
+  // LIT ONLY FOR MY OWN WINDOW. `process.steering` is per-UPID: on an adopted
+  // tree the 🌱 grow chip and a branch card's graft toggle are both mounted on
+  // the same process, so the flag alone lit both for whichever one armed — the
+  // grow chip announcing "● growing — say what this branch is for" over a
+  // graft, and then, since the onto drain writes no grow landing, settling on
+  // "the room hasn't said whether the branch grew" while the words were being
+  // grafted onto a rail. Gating `recording` gates the receipt too: a window
+  // this card never saw open cannot close into a verdict here.
+  const recording = process.steering === true && windowIsMine(kind, process.steeringMode);
   // A card handed `null` is BLIND, not a witness to silence.
   const wired = transcript !== null;
   const lines = transcript ?? [];
@@ -220,7 +292,7 @@ export function RecordSteerToggle({ process, kind, transcript, branch = null, la
   const [armed, setArmed] = useState<{ key: string | null; at: string } | null>(null);
   const armedRef = useRef(false);
   const sawIdleRef = useRef(false);
-  // WHICH WINDOW A LANDING BELONGS TO. The server never clears #selfLanding
+  // WHICH WINDOW A LANDING BELONGS TO. The server never clears #steerLanding
   // (composition.ts writes it at the end of the drain and nothing resets it),
   // so the prop still holds the PREVIOUS change's receipt while this one is
   // being cut — long enough to stamp a ✓ and someone else's branch name onto a
@@ -334,16 +406,25 @@ export function RecordSteerToggle({ process, kind, transcript, branch = null, la
     setPressError(null);
     markPressed("arming");
     setPending("arming");
+    // WHAT THIS WINDOW WILL DO rides the arm, not the stop: the room must know
+    // it is growing a branch while it listens, so the card can say so.
+    const scope: Record<string, unknown> | null = kind === "grow" ? { grow: true } : branch === null ? null : { branch };
     void fetch(`/api/process/${encodeURIComponent(process.upid)}/select`, {
       method: "POST",
-      ...(branch === null
-        ? {}
-        : { headers: { "content-type": "application/json" }, body: JSON.stringify({ branch }) }),
+      ...(scope === null ? {} : { headers: { "content-type": "application/json" }, body: JSON.stringify(scope) }),
     })
-      .then((response) => {
+      .then(async (response) => {
         if (!response.ok) {
           setPending(null);
-          setPressError(`could not start recording (${response.status})`);
+          // The room refuses a window it cannot honour ("this tree has no
+          // origin — nothing to grow a branch on") in words meant to be read
+          // at projector distance. A bare status code throws them away.
+          const body = (await response.json().catch(() => null)) as { error?: unknown } | null;
+          setPressError(
+            typeof body?.error === "string" && body.error.length > 0
+              ? body.error
+              : `could not start recording (${response.status})`,
+          );
         }
       })
       .catch(() => {
@@ -376,11 +457,11 @@ export function RecordSteerToggle({ process, kind, transcript, branch = null, la
     // never handed the transcript announced "heard nothing — no graft was
     // made" over a graft the room had really cut.
     //
-    // A "build" tree gets NO landing — the room publishes selfLanding only for
-    // its own mirror — and must not borrow the room's, or a fleet project's
-    // card would report "couldn't graft onto room/…" about a branch that has
-    // nothing to do with it.
-    const landed = freshLanding(kind, landing, landingAtArmRef.current);
+    // A "build" tree gets NO landing (nothing publishes one for it) and must
+    // never borrow another tree's, or a fleet project's card would report
+    // "couldn't graft onto room/…" about a branch that has nothing to do with
+    // it. The landing names its own tree; only a matching one counts.
+    const landed = freshLanding(process.upid, landing, landingAtArmRef.current);
     const state = receiptState({ kind, words: dispatched.length, wired, landed, settled });
     const failing = state === "refused" || state === "silent" || state === "unanswered";
     return (
@@ -407,18 +488,20 @@ export function RecordSteerToggle({ process, kind, transcript, branch = null, la
         <button
           type="button"
           className="ctl-button record-steer"
-          data-testid="record-steer-start"
+          data-testid={pressTestId}
           title={
             kind === "room"
               ? "Press, then speak — the room grows your words on a fresh branch."
-              : "Press, then talk — everything you say goes into this until you press again."
+              : kind === "grow"
+                ? "Press, then say what the next branch is for — the room cuts it and names it from your words."
+                : "Press, then talk — everything you say goes into this until you press again."
           }
           onClick={() => {
             setDispatched(null);
             arm();
           }}
         >
-          {kind === "room" ? "🌱 Graft another change" : "🎙 Record another change"}
+          {kind === "room" ? "🌱 Graft another change" : kind === "grow" ? "🌱 Grow another branch" : "🎙 Record another change"}
         </button>
       </div>
     );
@@ -439,7 +522,9 @@ export function RecordSteerToggle({ process, kind, transcript, branch = null, la
           ? "stopping…"
           : kind === "room"
             ? "● grafting — your words grow the change · tap to stop"
-            : "Recording — your words shape this build · tap to stop"}
+            : kind === "grow"
+              ? "● growing — say what this branch is for · tap to stop"
+              : "Recording — your words shape this build · tap to stop"}
       </button>
       {heard.length > 0 ? (
         <div className="record-steer-heard" data-testid="record-steer-heard" aria-live="polite">
@@ -461,26 +546,30 @@ export function RecordSteerToggle({ process, kind, transcript, branch = null, la
         type="button"
         ref={buttonRef}
         className={`ctl-button record-steer${pending === "arming" ? " is-pending" : ""}`}
-        data-testid="record-steer-start"
+        data-testid={pressTestId}
         data-state={pending === "arming" ? "arming" : "idle"}
         title={
           kind === "room"
             ? branch === null
               ? "Press, then speak — the room grows your words on a fresh branch."
               : `Press, then speak — the room climbs onto ${branch} and grows your words THERE, not on a new branch.`
-            : "Press, then talk — everything you say goes into this until you press again."
+            : kind === "grow"
+              ? "Press, then say what the next branch is for — the room cuts a NEW branch, names it from your words, and grows the change on it."
+              : "Press, then talk — everything you say goes into this until you press again."
         }
         onClick={arm}
       >
         {pending === "arming"
-          ? kind === "room"
-            ? "🌱 starting…"
-            : "🎙 starting…"
+          ? kind === "build"
+            ? "🎙 starting…"
+            : "🌱 starting…"
           : kind === "room"
             ? branch === null
               ? "🌱 Graft a change"
               : "🌱 Graft onto this branch"
-            : "🎙 Record a change"}
+            : kind === "grow"
+              ? "🌱 grow a branch"
+              : "🎙 Record a change"}
       </button>
       {pressError !== null ? (
         <p className="record-steer-error" data-testid="record-steer-error">

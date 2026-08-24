@@ -46,6 +46,18 @@ export interface ProjectorProcess {
   // no watermark and echoed nothing while the room was hearing every word.
   // The room stamps the window; the card no longer has to guess.
   steeringSince?: string;
+  // WHAT THE OPEN WINDOW WILL DO with what it hears — "onto" (graft the change
+  // onto a branch: a fresh cut by default, the scoped `steeringBranch` when
+  // one was named) or "grow" (cut a NEW branch named by the words). Absent
+  // whenever `steering` is not true.
+  //
+  // A tree can carry TWO record surfaces at once — the tend menu's 🌱 grow
+  // chip and, stacked over the same menu, a branch card's graft toggle — and
+  // `steering` is per-UPID, so both lit for whichever window either of them
+  // armed. The grow chip announced "● growing — say what this branch is for"
+  // over a graft, then waited for a grow receipt that was never coming. A card
+  // lights only for the mode it itself arms.
+  steeringMode?: "onto" | "grow";
   // Where this process came from. Absent for idea-detected builds; set for
   // projects imported from outside via the phone QR page: "github-import" when
   // the link was a real github.com repo (the server clones it), "phone-import"
@@ -86,7 +98,19 @@ export interface ProjectorProcess {
   // its PR URL once one is open against the origin), with session commit
   // counts. remoteUrl is null until published on commission (private GitHub
   // repo + draft PR per concept branch) — for adopted trees it is the origin.
-  treeRepo?: { branches: Array<{ name: string; commits: number; prUrl?: string }>; remoteUrl: string | null } | null;
+  //
+  // `adopted` is the server's own answer to "is this an adopted GitHub
+  // import?", and the ONLY thing allowed to gate the branch rails on the wall.
+  // The menu used to infer it from remoteUrl, which the take-home publish sets
+  // on LOCAL trees too: a published local tree grew a 🌱 grow chip whose every
+  // press the substrate refuses. Absent (a server too old to send it) reads as
+  // NOT adopted — a missing rail is a nuisance, an offered-but-impossible one
+  // is a lie.
+  treeRepo?: {
+    branches: Array<{ name: string; commits: number; prUrl?: string }>;
+    remoteUrl: string | null;
+    adopted?: boolean;
+  } | null;
 }
 
 // One candidate in the idea tray: the full ledger surfaced to the projector, not
@@ -217,13 +241,17 @@ export interface ProjectorSnapshot {
   // dwelled on a specific branch of an adopted tree), or null when the select
   // was unscoped. Lives and dies with steeringUpid.
   steeringBranch?: string | null;
-  // WHERE THE LAST SPOKEN CHANGE TO THE ROOM LANDED — the post-Stop receipt.
+  // WHERE THE LAST SPOKEN CHANGE LANDED — the post-Stop receipt for the room's
+  // ONE steering window, whichever tree it was open on.
+  //   • upid: WHOSE receipt this is. The room has a single landing slot, and
+  //     arming a window preempts a pending grace on another tree, so a card
+  //     that trusted the stamp alone could adopt a neighbour's verdict.
   //   • branch: the branch that will grow the change (null = it grew nothing),
   //   • onto: the existing branch the operator asked to graft onto, or null
-  //     for the default fresh cut,
+  //     for a fresh cut (grow, or the mirror's default),
   //   • error: why the room refused. A refusal means NOTHING was dispatched —
   //     the change was not quietly grown on some other branch.
-  selfLanding?: { branch: string | null; onto: string | null; error: string | null; atMs: number } | null;
+  steerLanding?: { upid: string; branch: string | null; onto: string | null; error: string | null; atMs: number } | null;
   // AUTO-BUILD: when true, every fired idea is accepted+built without a click. The
   // projector shows the toggle as ON.
   autoAccept?: boolean;

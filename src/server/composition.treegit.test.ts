@@ -222,6 +222,10 @@ describe("git substrate wiring — birth + lane commits on accept", () => {
         { name: "concept/native", commits: 1 },
       ],
       remoteUrl: null,
+      // A tree born HERE is local, and the wire says so outright — the wall
+      // gates the branch rails on this, never on remoteUrl, because publish()
+      // records one of those on a local tree too.
+      adopted: false,
     });
   });
 

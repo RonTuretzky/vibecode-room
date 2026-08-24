@@ -264,6 +264,37 @@ main.gesture-mode .ctl-button.tree-menu-close {
   animation: fade-in 200ms ease;
 }
 
+/* A SQUEEZED RECORD CHIP GIVES UP ECHO, NEVER THE PRESS. When the verb arc
+   cannot afford the record surface's full height it hands the chip a
+   max-height (tend-radial's FLEXIBLE_CHIPS), and the chip must honour it — a
+   chip that overflows its budget paints over the one below and kills its dwell
+   centre. The press keeps its wall-scale height; the echo box, whose content
+   is a rolling tail of what was just said, takes the whole cut. The receipt's
+   VERDICT is the first line in that box, so what disappears under pressure is
+   always the oldest words, never the room's answer. */
+.tend-chip.tend-chip-graft,
+.tend-chip.tend-chip-grow {
+  overflow: hidden;
+  min-height: 0;
+}
+/* The mirror's graft chip wraps its toggle one level deeper; the squeeze has
+   to travel through that wrapper or it stops at the chip's edge. */
+.tend-chip .tree-menu-steer {
+  overflow: hidden;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.tend-chip .record-steer-live {
+  min-height: 0;
+}
+.tend-chip .record-steer-heard {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.tend-chip .record-steer {
+  flex: 0 0 auto;
+}
+
 /* The ✕ chip is a real button (dwell-native); center its glyph. */
 button.tend-chip {
   align-items: center;
@@ -686,12 +717,13 @@ main.gesture-mode .tree-tend .tree-menu-lane {
 
 /* Fleet verb/lane chips trim the chip padding at gesture scale so a
    96px-floor interactive row yields a 114px chip — the tend-radial gesture
-   nominals (116) budget exactly this real footprint. */
+   nominals (116) budget exactly this real footprint. The grow chip is NOT one
+   of them any more: it carries the record surface (128px button + the echo),
+   so trimming it would squeeze a chip that is budgeted at graft's 190. */
 main.gesture-mode .tend-chip.tend-chip-lane,
 main.gesture-mode .tend-chip.tend-chip-brief,
 main.gesture-mode .tend-chip.tend-chip-live,
 main.gesture-mode .tend-chip.tend-chip-deck,
-main.gesture-mode .tend-chip.tend-chip-grow,
 main.gesture-mode .tend-chip.tend-chip-replant,
 main.gesture-mode .tend-chip.tend-chip-remove {
   padding: 8px 12px;
