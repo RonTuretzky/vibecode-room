@@ -354,6 +354,38 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
   }, []);
+  // PROBE FOR STUDIES. The tree menu offers "📖 About this project" only when
+  // a study exists behind it — a row that opens an empty card is worse than
+  // no row. One HEAD-ish GET per imported tree, once, cached by upid.
+  useEffect(() => {
+    let cancelled = false;
+    for (const process of snapshot.processes) {
+      const kind = process.source?.kind;
+      if (kind !== "github-import" && kind !== "phone-import") {
+        continue;
+      }
+      if (process.upid in briefUpids) {
+        continue;
+      }
+      void (async () => {
+        let has = false;
+        try {
+          // The exists route answers 200 either way — probing the brief route
+          // itself meant a console 404 per no-study import on every load.
+          const response = await fetch(`/api/process/${encodeURIComponent(process.upid)}/brief/exists`);
+          has = response.ok && ((await response.json()) as { has?: unknown }).has === true;
+        } catch {
+          has = false; // server down / route absent: no row, no lie
+        }
+        if (!cancelled) {
+          setBriefUpids((current) => ({ ...current, [process.upid]: has }));
+        }
+      })();
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [snapshot.processes, briefUpids]);
 
   // ?zen=1 boots a dedicated display straight into the chrome-less scene.
   const [zenMode, setZenMode] = useState(urlConfig.zen);

@@ -394,6 +394,14 @@ export function createProjectorApp(runtime: ProjectorRuntime, options: Projector
   // tree's "📖 About this project" card. 404 for trees that were never
   // studied (a build-intent import, a local concept, the room itself), which
   // is how the wall decides whether to offer the row at all.
+  // EXISTENCE PROBE — always 200. The wall asks this for EVERY import on
+  // every load to gate the "📖 About this project" row; answering the
+  // perfectly normal "no study" case with a 404 sprayed a console error per
+  // import (Chromium logs every 404 fetch) and tripped the console-error-free
+  // e2e on the seeded live path.
+  app.get("/api/process/:upid/brief/exists", (context) => {
+    return context.json({ has: runtime.projectBrief(context.req.param("upid")) !== null });
+  });
   app.get("/api/process/:upid/brief", (context) => {
     const brief = runtime.projectBrief(context.req.param("upid"));
     if (brief === null) {
