@@ -284,6 +284,34 @@ describe("Slideshow post-choice decision states", () => {
     expect(html).not.toContain('data-testid="deck-decision"');
   });
 
+  test('decisionState="iterate": the record toggle echoes what the room is hearing', () => {
+    // The deck repeated the branch card's bug: it passed no transcript at all,
+    // so the toggle showed "listening" through the whole revision and then
+    // claimed "heard nothing — nothing was sent" about words registry.steer
+    // really dispatched. A build card has NO server receipt, so this echo is
+    // the only witness the operator gets.
+    const spoken = "make the hero image full bleed";
+    const html = renderToStaticMarkup(
+      <Slideshow
+        process={{ ...conceptProcess(), steering: true, steeringSince: "14:03:00" }}
+        onLifecycle={() => {}}
+        onClose={() => {}}
+        onDecision={() => {}}
+        decisionState="iterate"
+        onSteer={() => {}}
+        transcript={[
+          { time: "14:02:41", speaker: "Room", text: "before the toggle went down", kind: "room" },
+          { time: "14:03:06", speaker: "Room", text: spoken, kind: "room" },
+        ]}
+      />,
+    );
+    expect(html).toContain('data-testid="record-steer-stop"');
+    expect(html).toContain('data-testid="record-steer-heard"');
+    expect(html).toContain(spoken);
+    expect(html).not.toContain("before the toggle went down");
+    expect(html).not.toContain('data-testid="record-steer-heard-empty"');
+  });
+
   test('decisionState="done" shows the parked confirmation strip', () => {
     const html = renderToStaticMarkup(
       <Slideshow

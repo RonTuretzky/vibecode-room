@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { ProjectorProcess } from "./types";
+import type { ProjectorProcess, TranscriptLine } from "./types";
 import { buildsOf } from "./buildloop";
 import type { LifecycleAction, ProcessBuild } from "./buildloop";
 import { BuildChips, ExecutionChip, ProcessControls } from "./BuildChips";
@@ -77,6 +77,14 @@ export interface SlideshowProps {
   // open (initialBackend precedent) so a later prop flip never reloads the
   // iframe mid-view.
   openAtDecision?: boolean;
+  // The live transcript, for the iterate state's record toggle. Optional here
+  // ONLY because the fixture decks in the tests genuinely have no room behind
+  // them — they pass nothing and the toggle receives an explicit `null`, which
+  // makes it refuse to claim it heard or didn't hear anything. A live deck
+  // MUST get snapshot.transcript: this card is the only witness a build steer
+  // has, and unwired it announced "heard nothing — nothing was sent" after a
+  // revision the room really dispatched.
+  transcript?: readonly TranscriptLine[] | null;
 }
 
 // What the pop-up window should show, decided purely from the deck surface:
@@ -114,6 +122,7 @@ export function Slideshow({
   decisionState = null,
   onSteer,
   openAtDecision = false,
+  transcript = null,
 }: SlideshowProps) {
   const builds = useMemo(() => buildsOf(process), [process]);
   const stage = stageOf(process);
@@ -459,7 +468,7 @@ export function Slideshow({
               <span className="deck-decision-title">🔁 Keep shaping it</span>
               {/* No typing at projector distance (live-room directive): the
                   record toggle routes EVERYTHING spoken into this build. */}
-              <RecordSteerToggle process={process} kind="build" />
+              <RecordSteerToggle process={process} kind="build" transcript={transcript} />
             </div>
           ) : (
             <div className="deck-decision" data-testid="deck-decision" role="group" aria-label="How should we continue?">

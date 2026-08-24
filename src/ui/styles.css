@@ -4169,6 +4169,11 @@ main.gesture-mode .record-steer-heard-line { font-size: 1.2rem; }
 
 /* post-stop dispatch confirmation (sticky until Record is pressed again) */
 .record-steer-got { margin: 0 0 0.3rem 0; color: #7ee2a8; font-weight: 600; }
+/* …and NOT the success green when nothing landed. .record-steer-empty was
+   applied by the refusal / heard-nothing / no-receipt verdicts but had no rule
+   anywhere, so every one of them was painted the same green as "✓" — the
+   colour itself was part of the false claim. */
+.record-steer-got.record-steer-empty { color: #f0b46b; }
 .record-steer-runlabel { margin: 0.3rem 0 0 0; color: #8fa4cc; font-size: 0.9rem; }
 
 /* LOST THE ROOM: the push stream dropped and every reading on this wall is now

@@ -717,7 +717,16 @@ export function TreeMenu({
           onClick={stopClicks}
         >
           <div className="tree-menu-steer" data-testid="tree-menu-steer">
-            <RecordSteerToggle process={process} kind="room" transcript={snapshot.transcript} />
+            {/* The room's own graft chip. It echoed correctly but never got
+                the server's verdict, so a graft git REFUSED (uncommitted work
+                in the tree — nothing was dispatched at all) still read
+                "✓ graft taken — the room is growing this change". */}
+            <RecordSteerToggle
+              process={process}
+              kind="room"
+              transcript={snapshot.transcript}
+              landing={snapshot.selfLanding ?? null}
+            />
           </div>
         </div>
 

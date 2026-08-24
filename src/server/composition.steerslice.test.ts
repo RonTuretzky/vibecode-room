@@ -245,6 +245,37 @@ describe("branch-scoped select — POST /api/process/:upid/select {branch}", () 
     expect(runtime.steeringBranch()).toBeNull();
   });
 
+  test("the steered process carries WHEN the window opened, and drops it on clear", async () => {
+    // The wall's record card echoes the words spoken inside the window. It
+    // used to work the window out by itself, from the moment IT saw `steering`
+    // flip true — so a card opened AFTER the arm (the branch popup, reached by
+    // picking a limb while the graft was already recording) had no watermark
+    // and echoed nothing at all. The room stamps the window instead.
+    const git = scriptedGit();
+    const { runtime } = await makeRuntime({
+      buildBackends: [new FakeBackend()],
+      treeGitRunner: git.run,
+      cloneRepoFn: fakeClone,
+      repoDigestFn: async () => "digest: fake repo",
+    });
+    const upid = await importAdopted(runtime);
+    const app = createProjectorApp(runtime);
+    type Steered = { processes: Array<{ upid: string; steering?: boolean; steeringSince?: string }> };
+
+    const selected = (await (await app.request(`/api/process/${upid}/select`, { method: "POST" })).json()) as Steered;
+    const armed = selected.processes.find((process) => process.upid === upid);
+    expect(armed?.steering).toBe(true);
+    // Same HH:MM:SS UTC shape the transcript lines carry, so the card can
+    // compare them directly.
+    expect(armed?.steeringSince).toMatch(/^\d{2}:\d{2}:\d{2}$/u);
+
+    const cleared = (await (await app.request("/api/process/select/clear", { method: "POST" })).json()) as Steered;
+    const idle = cleared.processes.find((process) => process.upid === upid);
+    expect(idle?.steering).toBe(false);
+    // No window is open, so there is no window stamp to read.
+    expect(idle?.steeringSince).toBeUndefined();
+  });
+
   test("a bodyless select keeps the pre-existing unscoped contract (branch null)", async () => {
     const git = scriptedGit();
     const { runtime } = await makeRuntime({

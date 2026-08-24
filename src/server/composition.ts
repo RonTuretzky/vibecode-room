@@ -706,6 +706,14 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   // specific room/<slug> of an adopted tree). Lives and dies with
   // #steeringUpid; rides the snapshot as steeringBranch.
   #steeringBranch: string | null = null;
+  // WHEN THE RECORD WINDOW OPENED (HH:MM:SS UTC — the same stamp format the
+  // transcript lines carry), or null when nothing is being recorded. Published
+  // per-process beside `steering` because the WALL cannot work it out: the
+  // record card watermarks the transcript at the moment IT sees steering flip
+  // true, so a card that mounts mid-window (the branch popup opened after the
+  // graft was armed from the tend chip) has no watermark at all and echoes
+  // nothing while the room is plainly hearing. The room knows; it says so.
+  #steeringSince: string | null = null;
   // STEER TRANSCRIPT SLICE: the FINAL lines that arrived while steering an
   // ADOPTED tree — reset on target set, drained on clear into the steer
   // applier (the toggle-on→toggle-off window exactly; joinedSliceText trims
@@ -1162,6 +1170,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
           this.#steeringUpid = null;
           this.#steeringBranch = null;
           this.#steerSlice = [];
+          this.#steeringSince = null;
         }
         // A process halted mid-clone kills its git subprocess too; the clone
         // routine's post-clone build kick then sees the abort and stands down.
@@ -2283,6 +2292,9 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     // so the slice resets — stage narration before toggle-on never leaks in.
     this.#steeringBranch = branch;
     this.#steerSlice = [];
+    // The window's open stamp rides the snapshot so every card — including one
+    // opened after the arm — knows which spoken lines belong to it.
+    this.#steeringSince = new Date(this.#clock()).toISOString().slice(11, 19);
     this.recordExternalTrace({
       event: "steering.target.set",
       level: "info",
@@ -2307,6 +2319,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     this.#steeringUpid = null;
     this.#steeringBranch = null;
     this.#steerSlice = [];
+    this.#steeringSince = null;
     if (had !== null) {
       this.recordExternalTrace({
         event: "steering.target.cleared",
@@ -3970,6 +3983,11 @@ class LiveProjectorRuntime implements ProjectorRuntime {
         // Click-to-steer marker: this process is the live steering target, so
         // subsequent FINAL transcript lines route to it. A dead record never steers.
         steering: record.state !== "dead" && this.#steeringUpid === record.upid,
+        // …and WHEN that window opened, so a record card can tell which spoken
+        // lines belong to it without having watched the flip itself.
+        ...(record.state !== "dead" && this.#steeringUpid === record.upid && this.#steeringSince !== null
+          ? { steeringSince: this.#steeringSince }
+          : {}),
         // A GitHub import's display contract is its "Imported from GitHub: …"
         // line — the registry's inferred title (project naming) must not shadow
         // it. Everything else prefers the inferred title.

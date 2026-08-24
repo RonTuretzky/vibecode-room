@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { ProjectorProcess } from "./types";
+import type { ProjectorProcess, TranscriptLine } from "./types";
 import type { SceneDwellRect } from "./gesture/scene-source";
 import { RecordSteerToggle } from "./RecordSteerToggle";
 import { loadSelfVersion, useSelfBranches, type SelfBranchesPayload, type SelfTreeSpec } from "./self-repo";
@@ -132,10 +132,17 @@ export interface BranchPopupProps {
   // The server's receipt for the last spoken change (snapshot.selfLanding) —
   // which branch grew it, or why the room refused to grow anything.
   landing?: { branch: string | null; onto: string | null; error: string | null; atMs: number } | null;
+  // The live transcript (snapshot.transcript), threaded from App exactly as
+  // TreeMenu gets it. NOT optional: it was, and this card — on the very branch
+  // the room was running — silently omitted it, so the graft toggle echoed
+  // nothing while the operator spoke and then announced "heard nothing — no
+  // graft was made" over a graft the room had really cut. `null` says "no
+  // transcript here" out loud; a missing prop is now a compile error.
+  transcript: readonly TranscriptLine[] | null;
   onClose: () => void;
 }
 
-export function BranchPopup({ process, branch, anchor, self, landing = null, onClose }: BranchPopupProps) {
+export function BranchPopup({ process, branch, anchor, self, landing = null, transcript, onClose }: BranchPopupProps) {
   // The room's own rails: fetched only on the self tree, and only once the
   // popup is up (an adopted tree's card never asks about the room's checkout).
   const fetchedVersions = useSelfBranches(stageOf(process) === "self").payload;
@@ -374,11 +381,11 @@ export function BranchPopup({ process, branch, anchor, self, landing = null, onC
               >
                 🌳 you are here — the room lives on this branch
               </button>
-              <RecordSteerToggle process={process} kind="room" landing={landing} />
+              <RecordSteerToggle process={process} kind="room" transcript={transcript} landing={landing} />
             </>
           ) : model.loadable ? (
             <>
-              <RecordSteerToggle process={process} kind="room" branch={model.branch} landing={landing} />
+              <RecordSteerToggle process={process} kind="room" branch={model.branch} transcript={transcript} landing={landing} />
               <button
                 type="button"
                 className="ctl-button branch-popup-load"

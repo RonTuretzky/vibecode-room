@@ -38,6 +38,14 @@ export interface ProjectorProcess {
   // transcript lines route to THIS process's agent loop (registry.steer) instead
   // of seeding a fresh ambient suggestion. Clicking the process sets/clears it.
   steering?: boolean;
+  // When the room OPENED that record window (HH:MM:SS UTC — the same stamp the
+  // transcript lines carry), absent whenever `steering` is not true. The record
+  // card echoes the words spoken inside the window, and it used to work that
+  // out purely from watching `steering` flip true itself — so a card that
+  // MOUNTED mid-window (the branch popup opened after the graft was armed) had
+  // no watermark and echoed nothing while the room was hearing every word.
+  // The room stamps the window; the card no longer has to guess.
+  steeringSince?: string;
   // Where this process came from. Absent for idea-detected builds; set for
   // projects imported from outside via the phone QR page: "github-import" when
   // the link was a real github.com repo (the server clones it), "phone-import"

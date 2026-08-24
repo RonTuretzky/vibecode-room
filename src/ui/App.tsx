@@ -3290,6 +3290,9 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
                 // the static renderer can exercise the version buttons.
                 self={selfTree !== null ? { tree: selfTree, versions: initialSelfBranches ?? null } : null}
                 landing={snapshot.selfLanding ?? null}
+                // The words the room is hearing RIGHT NOW: without them the
+                // card's graft toggle echoed nothing while the operator spoke.
+                transcript={snapshot.transcript}
                 onClose={() => setBranchPopup(null)}
               />
             ) : null;
@@ -3409,6 +3412,11 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
                 onDecision={(choice) => deckDecision(deckProcess.upid, choice)}
                 decisionState={deckDecisionState}
                 onSteer={(text) => void deckSteer(deckProcess.upid, text)}
+                // Same wire as the branch card: the deck's "Keep shaping it"
+                // record toggle is the ONLY witness a build steer has, so an
+                // unwired one claimed "heard nothing — nothing was sent" after
+                // a revision the room really dispatched.
+                transcript={snapshot.transcript}
                 /* The guided demo's decide finale opens the generated deck
                    STRAIGHT on its decision slide (#decision hash nav). */
                 openAtDecision={guided?.step === "decide"}

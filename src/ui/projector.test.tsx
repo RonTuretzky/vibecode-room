@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { ProjectorApp, REQUIRED_PROJECTOR_REGIONS } from "./App";
 import {
@@ -14,6 +14,7 @@ import { FLEET_SCROLL_PX_PER_SECOND, FleetScrollRail, hoverScrollDelta, railOver
 import { IdeaTray } from "./IdeaTray";
 import { HelpOverlay } from "./HelpOverlay";
 import { QrImport, qrPanelState } from "./QrImport";
+import { freshLanding, receiptLine, receiptState } from "./RecordSteerToggle";
 import { preferredGuestUrl } from "./GuestHands";
 import { Slideshow } from "./Slideshow";
 import { demoProjectorSnapshot, busyRoomSnapshot } from "./demo-data";
@@ -1068,6 +1069,128 @@ describe("picking a tree never arms voice steering", () => {
     const togglerSource = readFileSync(new URL("./RecordSteerToggle.tsx", import.meta.url), "utf8");
     expect(togglerSource).toMatch(/\/select`/);
     expect(togglerSource).toContain("/api/process/select/clear");
+  });
+
+  test("source contract: EVERY record toggle is handed the transcript", () => {
+    // The reported bug in one line: `transcript` was optional, three call
+    // sites omitted it, and the compiler said nothing — so the omission
+    // surfaced as a confident false statement on a projector. It is a required
+    // prop now (tsc enforces the general case); this pins the specific shape,
+    // because `transcript={undefined}` would type-check and re-open it.
+    for (const file of readdirSync(new URL(".", import.meta.url), { withFileTypes: true })) {
+      if (!file.name.endsWith(".tsx") || file.name.includes(".test.")) {
+        continue;
+      }
+      const source = readFileSync(new URL(`./${file.name}`, import.meta.url), "utf8");
+      const sites = source.split("<RecordSteerToggle").slice(1);
+      for (const site of sites) {
+        const props = site.slice(0, site.indexOf("/>"));
+        expect(`${file.name}: ${props}`).toContain("transcript=");
+        expect(props).not.toContain("transcript={undefined}");
+        // …and the room's own graft surfaces must carry the SERVER's verdict.
+        // The tend chip echoed correctly but had no `landing`, so a graft git
+        // refused (nothing dispatched) still read "✓ graft taken". A build
+        // lane must NOT be handed one: selfLanding is the mirror's receipt.
+        if (props.includes('kind="room"')) {
+          expect(`${file.name}: ${props}`).toContain("landing=");
+        } else {
+          expect(`${file.name}: ${props}`).not.toContain("landing=");
+        }
+      }
+    }
+  });
+});
+
+// THE POST-STOP RECEIPT. The verdict used to be rooted in this card's own echo
+// (`caughtNothing = dispatched.length === 0`), which short-circuited every
+// server-derived branch: a card that had simply not been handed the transcript
+// announced "heard nothing — no graft was made" over a graft the room had
+// really cut and dispatched. The rank order is now SERVER FIRST, and it is a
+// pure function because the static renderer runs no effects — the receipt only
+// exists after a recording→stopped transition, which SSR can never perform.
+describe("the record toggle's receipt never claims a thing that did not happen", () => {
+  const grew = { branch: "room/dancing-cat-under-trees", onto: null, error: null };
+  const grafted = { branch: "room/spoken-changes", onto: "room/spoken-changes", error: null };
+  const refusal = { branch: null, onto: "room/spoken-changes", error: "uncommitted work in the tree" };
+
+  test("THE BUG: an empty echo over a real landing reports the landing, never 'heard nothing'", () => {
+    const state = receiptState({ kind: "room", words: 0, wired: false, landed: grew, settled: true });
+    expect(state).toBe("landed");
+    const line = receiptLine(state, { kind: "room", words: 0, landed: grew });
+    expect(line).toBe("✓ graft taken — growing on dancing-cat-under-trees");
+    expect(line).not.toContain("heard nothing");
+  });
+
+  test("a REFUSAL is still reported as a refusal, with the room's reason, not as success", () => {
+    const state = receiptState({ kind: "room", words: 4, wired: true, landed: refusal, settled: true });
+    expect(state).toBe("refused");
+    expect(receiptLine(state, { kind: "room", words: 4, landed: refusal })).toBe(
+      "couldn't graft onto spoken-changes — uncommitted work in the tree",
+    );
+    // …and a refusal reaches the wall even when this card's echo was blank —
+    // the reason used to be discarded along with the verdict.
+    expect(receiptState({ kind: "room", words: 0, wired: false, landed: refusal, settled: true })).toBe("refused");
+  });
+
+  test("a genuinely empty window still says it heard nothing (the 342ms '✓ got it' guarantee)", () => {
+    const state = receiptState({ kind: "room", words: 0, wired: true, landed: null, settled: true });
+    expect(state).toBe("silent");
+    expect(receiptLine(state, { kind: "room", words: 0, landed: null })).toBe("heard nothing — no graft was made");
+    expect(receiptLine("silent", { kind: "build", words: 0, landed: null })).toBe("heard nothing — nothing was sent");
+  });
+
+  test("'heard nothing' needs BOTH a wired card and the room's full answering window", () => {
+    // Not wired: this card cannot tell a silent room from its own blindness.
+    expect(receiptState({ kind: "room", words: 0, wired: false, landed: null, settled: true })).toBe("unanswered");
+    // Not settled: the room collects finals for STEER_GRACE_MS after the stop
+    // and only then cuts the branch — silence here is just impatience.
+    expect(receiptState({ kind: "room", words: 0, wired: true, landed: null, settled: false })).toBe("cutting");
+    // The gap is spoken out loud rather than left blank (no silent no-ops).
+    expect(receiptLine("unanswered", { kind: "room", words: 3, landed: null })).toBe(
+      "heard you — the room hasn’t said where this landed",
+    );
+    expect(receiptLine("cutting", { kind: "room", words: 3, landed: null })).toBe(
+      "✓ heard — the room is cutting the branch…",
+    );
+  });
+
+  test("no ✓ before the room has answered: words alone are not a landing", () => {
+    const state = receiptState({ kind: "room", words: 3, wired: true, landed: null, settled: false });
+    expect(state).toBe("cutting");
+    expect(receiptLine(state, { kind: "room", words: 3, landed: null })).not.toContain("graft taken");
+    // Once the landing arrives it names the branch the change actually grew on.
+    const landedState = receiptState({ kind: "room", words: 3, wired: true, landed: grafted, settled: false });
+    expect(receiptLine(landedState, { kind: "room", words: 3, landed: grafted })).toBe(
+      "✓ grafted onto spoken-changes — it is growing this change",
+    );
+  });
+
+  test("a build tree has no server receipt: the dispatch IS the send, and it must be wired", () => {
+    expect(receiptState({ kind: "build", words: 2, wired: true, landed: null, settled: false })).toBe("sent");
+    expect(receiptLine("sent", { kind: "build", words: 2, landed: null })).toBe("✓ got it — shaping this build");
+    // An UNWIRED build card is the deck's version of the reported bug: it has
+    // no witness at all, so it may not claim the room heard nothing.
+    expect(receiptState({ kind: "build", words: 0, wired: false, landed: null, settled: true })).toBe("unanswered");
+    expect(receiptLine("unanswered", { kind: "build", words: 0, landed: null })).toBe(
+      "stopped — no receipt came back from the room",
+    );
+  });
+
+  test("a landing counts only when it is THIS window's, and only on the room's own tree", () => {
+    const previous = { ...grafted, atMs: 1_000 };
+    const fresh = { ...grew, atMs: 2_000 };
+    // The stamp observed at arm is the previous change's receipt: stale.
+    expect(freshLanding("room", previous, 1_000)).toBeNull();
+    expect(freshLanding("room", fresh, 1_000)).toEqual(fresh);
+    // Nothing had landed when this window armed, so the first receipt is ours.
+    expect(freshLanding("room", fresh, null)).toEqual(fresh);
+    // selfLanding is the MIRROR's receipt — a fleet project must never borrow
+    // it and report "couldn't graft onto room/…" about someone else's branch.
+    expect(freshLanding("build", fresh, null)).toBeNull();
+    // A stale landing therefore cannot fabricate a verdict…
+    expect(
+      receiptState({ kind: "room", words: 2, wired: true, landed: freshLanding("room", previous, 1_000), settled: false }),
+    ).toBe("cutting");
   });
 });
 
@@ -2520,6 +2643,84 @@ describe("adopted trees: grow-a-branch row + branch/issue popups", () => {
       expect(html).toContain('data-testid="record-steer-start"');
       expect(html).not.toContain('data-testid="branch-popup-load"');
       expect(html).not.toContain('data-testid="branch-popup-steer"');
+    });
+
+    // THE LIVE BUG: the operator opened this card on the branch the room was
+    // running, pressed 🌱 Graft, and spoke — and NO WORDS APPEARED. BranchPopup
+    // simply never passed `transcript` to RecordSteerToggle (it was an optional
+    // prop, so nothing complained), and heardSince over an undefined transcript
+    // is [] for every arm point, so the card sat on "listening" forever while
+    // the room heard every word.
+    //
+    // The echo is asserted INSIDE the popup markup only: the same words are in
+    // the transcript rail further up the page, and an assertion over the whole
+    // document would have passed with the card blank.
+    const spoken = (time: string, text: string) => ({ time, speaker: "Room", text, kind: "room" as const });
+    const WINDOW_OPENED = "09:12:00";
+    const BEFORE_THE_WINDOW = "the tulips should come out by hand";
+    const IN_THE_WINDOW_1 = "make the ceiling join the cursor fabric";
+    const IN_THE_WINDOW_2 = "and call it wall C";
+    const recordingSelfSnapshot = (lines: Array<{ time: string; text: string }>) => {
+      const base = selfSnapshot();
+      return {
+        ...base,
+        steeringUpid: "self",
+        transcript: lines.map((line) => spoken(line.time, line.text)),
+        processes: [
+          { ...base.processes[0]!, steering: true, steeringSince: WINDOW_OPENED } as ProjectorProcess,
+          ...base.processes.slice(1),
+        ],
+      };
+    };
+    const cardMarkup = (html: string) => {
+      const idx = html.indexOf('data-testid="branch-popup"');
+      expect(idx).toBeGreaterThan(-1);
+      return html.slice(idx);
+    };
+    const renderRecording = (branch: string, lines: Array<{ time: string; text: string }>) =>
+      cardMarkup(
+        renderToStaticMarkup(
+          <ProjectorApp
+            initialSnapshot={recordingSelfSnapshot(lines)}
+            urlSearch="?live=1&wall=A&view=ideas"
+            initialSelfTree={selfSeed}
+            initialSelfBranches={selfRails}
+            initialOverlay={{ branchPopup: { upid: "self", branch } }}
+          />,
+        ),
+      );
+
+    test("recording on the branch the room is RUNNING echoes the spoken words in the card", () => {
+      const card = renderRecording(CURRENT, [
+        { time: "09:11:40", text: BEFORE_THE_WINDOW },
+        { time: "09:12:04", text: IN_THE_WINDOW_1 },
+        { time: "09:12:09", text: IN_THE_WINDOW_2 },
+      ]);
+      expect(card).toContain('data-testid="record-steer-stop"');
+      expect(card).toContain('data-testid="record-steer-heard"');
+      expect(card).toContain(IN_THE_WINDOW_1);
+      expect(card).toContain(IN_THE_WINDOW_2);
+      // Ambient talk from BEFORE the graft was armed is not this change.
+      expect(card).not.toContain(BEFORE_THE_WINDOW);
+      // …and the card must not still claim it is waiting to hear something.
+      expect(card).not.toContain('data-testid="record-steer-heard-empty"');
+    });
+
+    test("recording a graft ONTO another branch echoes the words too (same omission, second path)", () => {
+      const card = renderRecording(DOG, [{ time: "09:12:04", text: IN_THE_WINDOW_1 }]);
+      expect(card).toContain('data-testid="record-steer-stop"');
+      expect(card).toContain(IN_THE_WINDOW_1);
+      expect(card).not.toContain('data-testid="record-steer-heard-empty"');
+    });
+
+    test("a window in which nothing has been said yet still reads 'listening', not words", () => {
+      // The watermark is the ROOM's window stamp, so talk that predates the
+      // press stays out of the echo — the card would otherwise attribute
+      // whatever was in the air to this change.
+      const card = renderRecording(CURRENT, [{ time: "09:11:40", text: BEFORE_THE_WINDOW }]);
+      expect(card).toContain('data-testid="record-steer-heard-empty"');
+      expect(card).toContain("listening — say the whole change, then tap stop");
+      expect(card).not.toContain(BEFORE_THE_WINDOW);
     });
 
     test("a PR head ref that was never fetched here reads 'not grown on this machine'", () => {
