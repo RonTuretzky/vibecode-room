@@ -10,6 +10,7 @@
 import type { AsrProviderMode, DecisionLLMMode, TtsProviderMode } from "../providers";
 import type { AudioSinkMode } from "./audio-device-sink";
 import type { SummarizerMode } from "../audio/summarizer";
+import { SUPPORTED_GATEWAY_PROTOCOL, type GatewayLiveness } from "./gateway-probe";
 
 export type SmithersClientMode = "memory" | "gateway";
 
@@ -93,8 +94,21 @@ export interface DegradationNotice {
   allReal: boolean;
 }
 
+// LIVE FACTS the notice cannot derive from a selection — measured elsewhere and
+// passed in as data so this function stays pure. Absent = not measured, which
+// is its own state: the notice never claims health it has not established.
+export interface RuntimeLegLiveness {
+  gateway?: GatewayLiveness;
+  // Shown verbatim in the failure detail so the operator knows WHICH address
+  // is dead (two machines, two gateways — that is how this bug was found).
+  gatewayUrl?: string | null;
+}
+
 // Pure: which legs are running a stubbed/offline backend, and how to upgrade each.
-export function buildDegradationNotice(selections: RuntimeLegSelections): DegradationNotice {
+export function buildDegradationNotice(
+  selections: RuntimeLegSelections,
+  live?: RuntimeLegLiveness,
+): DegradationNotice {
   const degraded: DegradedLeg[] = [];
 
   if (selections.asr === "replay") {
@@ -136,6 +150,37 @@ export function buildDegradationNotice(selections: RuntimeLegSelections): Degrad
       detail: "in-memory Smithers client — spawns are fixtures and run telemetry is fake, not durable runs",
       upgrade: "set VIBERSYN_SMITHERS_GATEWAY_URL",
     });
+  } else if (live?.gateway !== undefined) {
+    // A CONFIGURED GATEWAY IS NOT A LIVE ONE. Every other leg here reports what
+    // was SELECTED, which is right for backends chosen at boot and unable to
+    // vanish — but the gateway is a separate process on a port. Setting the URL
+    // flipped this leg to "gateway" and nothing ever asked again, so a gateway
+    // that was never started, died, or lives on another machine read as
+    // perfectly healthy while every spawn failed. Found exactly that way: a
+    // room pointed at a dead :7331 reporting nothing wrong at all.
+    //
+    // The reachability I/O happens at the health-endpoint layer (gateway-probe
+    // .ts) and arrives here as DATA, so this function stays pure and every
+    // leg's reasoning stays in one place.
+    const { reachable, protocol, error } = live.gateway;
+    if (reachable === false) {
+      degraded.push({
+        leg: "smithers",
+        mode: "gateway-unreachable",
+        detail: `Smithers gateway at ${live.gatewayUrl ?? "the configured URL"} is not answering${error !== null && error !== undefined ? ` (${error})` : ""} — every spawn will fail`,
+        upgrade: "start the gateway (bun .smithers/gateway.ts) or unset VIBERSYN_SMITHERS_GATEWAY_URL to fall back to the in-memory client",
+      });
+    } else if (reachable === true && protocol !== null && protocol !== undefined && protocol !== SUPPORTED_GATEWAY_PROTOCOL) {
+      // The gateway advertises its protocol and the room's client never read
+      // it. Saying so at boot beats a mid-build failure nobody can trace.
+      degraded.push({
+        leg: "smithers",
+        mode: `gateway-protocol-${protocol}`,
+        detail: `Smithers gateway speaks protocol ${protocol}; this room speaks ${SUPPORTED_GATEWAY_PROTOCOL} — runs may fail in ways that look like bugs`,
+        upgrade: "match the gateway and the room's smithers package versions",
+      });
+    }
+    // reachable === null means nobody has measured yet — claim nothing.
   }
   if (selections.summarizer === undefined) {
     degraded.push({

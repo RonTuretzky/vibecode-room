@@ -10,7 +10,8 @@ import { EMERGENCY_STOP_LATENCY_BUDGET_MS, EmergencySessionState, EmergencyStopC
 import { TraceProcessor } from "../obs/trace";
 import { ProcessRegistry, type RegistryProcess } from "../process/registry";
 import { GatewayRegistryClient, selectSmithersClient, type RegistrySmithersClient } from "./smithers-select";
-import { buildDegradationNotice, type DegradationNotice, type SmithersClientMode } from "./degradation-notice";
+import { buildDegradationNotice, type DegradationNotice, type RuntimeLegSelections, type SmithersClientMode } from "./degradation-notice";
+import { GatewayProbe } from "./gateway-probe";
 import { RunEventDriver, type RunEventStreamClient } from "./run-event-driver";
 import type { GatewayRpcTransport, SmithersClient } from "../seam/smithers-client";
 import type { AcceptanceSpawnResult } from "../acceptance/spawn";
@@ -196,6 +197,11 @@ export interface ProjectorRuntime {
   // Structured startup degradation notice (GAP-002): which legs resolved to a
   // stubbed/offline backend and how to upgrade each. Logged at boot and surfaced
   // on /api/health so a degraded deployment is explicit, not silent.
+  // The notice REBUILT with live facts — currently the gateway's reachability
+  // and advertised protocol, which the boot-time `degradation` cannot know
+  // because a gateway is a separate process that can die after boot. Bounded
+  // and cached (gateway-probe.ts), so /api/health stays cheap.
+  degradationNow(): Promise<DegradationNotice>;
   readonly degradation: DegradationNotice;
   readonly muteController: MuteController;
   readonly suggestionEngine: SuggestionEngine;
@@ -533,6 +539,9 @@ export interface ProjectorRuntimeOptions {
   // and remote-prune gh calls the same way — plain keychain gh, never the
   // tree-git credential chain.
   selfGitRunner?: GitCommandRunner;
+  // Test seam: replaces the real gateway /health round-trip so the unreachable
+  // and protocol-mismatch paths are provable without a socket.
+  gatewayProbe?: (url: string) => Promise<import("./gateway-probe").GatewayLiveness>;
   selfGhRunner?: ForestCommandRunner;
   // The real coding agent that turns an accepted idea's scaffold into a working
   // app (idea-builder). Defaults to the host `claude` CLI builder. Tests inject a
@@ -624,6 +633,11 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   readonly asrMode: AsrProviderMode;
   readonly micMode: AsrProviderMode;
   readonly degradation: DegradationNotice;
+  // Retained so /api/health can rebuild the notice with LIVE facts (the boot
+  // notice is a snapshot of selections and cannot know the gateway died).
+  readonly #legSelections: RuntimeLegSelections;
+  readonly #gatewayProbe: GatewayProbe;
+  readonly #gatewayUrl: string | null;
   readonly asr: ASRProvider;
   readonly #micAsr: ASRProvider;
   // Selected by env (Noop default — silent-but-recorded, no key/network/device).
@@ -1019,13 +1033,22 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     this.#summarizer = summarizerSelection.summarizer;
     // Structured degradation notice computed from the resolved per-leg selections
     // (GAP-002). The live mic ASR is the leg that gates real transcription.
-    this.degradation = buildDegradationNotice({
+    this.#legSelections = {
       asr: this.micMode,
       tts: ttsSelection.mode,
       sink: sinkMode,
       decider: decisionSelection.mode,
       smithers: smithersMode,
       summarizer: summarizerSelection.mode,
+    };
+    this.degradation = buildDegradationNotice(this.#legSelections);
+    // The gateway is the one leg that can die AFTER boot — it is a separate
+    // process on a port, not a backend chosen once. The boot notice above
+    // cannot see that, so /api/health rebuilds through degradationNow().
+    this.#gatewayUrl = env.VIBERSYN_SMITHERS_GATEWAY_URL ?? null;
+    this.#gatewayProbe = new GatewayProbe({
+      url: smithersMode === "gateway" ? this.#gatewayUrl : null,
+      ...(options.gatewayProbe === undefined ? {} : { probe: options.gatewayProbe }),
     });
     // Real accept->build->preview registry. A voice-accepted idea spawns a
     // process AND scaffolds a runnable artifact served live from builds/<upid>/.
@@ -4168,6 +4191,15 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       const result = await this.#selfGit(argv);
       return { ok: result.code === 0, stdout: result.out, stderr: "" };
     }, branch);
+  }
+
+  // /api/health's notice: the boot selections PLUS whatever is measurably true
+  // right now. Only the gateway leg is dynamic today — see gateway-probe.ts for
+  // why it has to be, and why the I/O lives there rather than in the pure
+  // notice builder.
+  async degradationNow(): Promise<DegradationNotice> {
+    const gateway = await this.#gatewayProbe.liveness();
+    return buildDegradationNotice(this.#legSelections, { gateway, gatewayUrl: this.#gatewayUrl });
   }
 
   // The room's own branches (the wall's "load this version" rows): every

@@ -88,10 +88,14 @@ export function createProjectorApp(runtime: ProjectorRuntime, options: Projector
   // /api/health carries the boot-time degradation notice PLUS the recurrent
   // Cerebras agents' live miss streaks (sky relate + topic refiner) — a
   // persistent 402/timeout surfaces here instead of failing silently forever.
-  app.get("/api/health", (context) =>
+  // ASYNC because one leg cannot be answered from configuration: the Smithers
+  // gateway is a separate process on a port, so the room has to ASK. Bounded
+  // and cached in gateway-probe.ts — a status page must not become a load
+  // generator, and must never hang on a dead port.
+  app.get("/api/health", async (context) =>
     context.json(
       healthPayload({
-        degradation: runtime.degradation,
+        degradation: await runtime.degradationNow(),
         bootId: runtime.bootId,
         selfMode: runtime.selfMode,
         skyAgent: runtime.research.cloudGraph().agentHealth(),
