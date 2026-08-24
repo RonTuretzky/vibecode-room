@@ -266,8 +266,10 @@ interface RoomSceneProps {
   trees: TreeSpec[];
   mode: SceneMode;
   layout: SceneLayout;
-  // Garden far-field (URL-derived, fixed per window): "meadow" hills or the
-  // real Central Park ("park"). Only the garden env's horizon changes.
+  // Garden far-field: "meadow" hills or the real Central Park ("park").
+  // Seeded by ?env=park and toggleable at runtime from the Controls dock —
+  // switching swaps ground and horizon only; the tree/idea content and the
+  // camera stay put.
   environment?: SceneEnvironment;
   // PLANTING MODE (the idea card's "Plant…" flow): while true, the pointer
   // hovers a ghost marker over the ground and a click hands the chosen spot
@@ -1176,7 +1178,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
 
   useEffect(() => {
     tick.current += 1;
-  }, [ideas, trees, mode, layout, dialogue, topics, research, sky, selfTree]);
+  }, [ideas, trees, mode, layout, environment, dialogue, topics, research, sky, selfTree]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -1189,20 +1191,23 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
     const camera = new THREE.PerspectiveCamera(46, 1, 0.1, 400);
     // Fixed per window (URL-derived): the park scene allows a far wider orbit
     // envelope so the whole postcard — Pond, bridge, skyline — fits in frame.
-    const parkEnvWindow = environmentRef.current === "park";
+    // Live env check (the Controls dock toggles Central Park at runtime —
+    // the ref always holds the current environment; the env rebuild swaps
+    // ground and horizon while the tree/idea specs stay untouched).
+    const parkEnvActive = () => environmentRef.current === "park";
     // PLANTING surface: where a chosen tree spot is legal and how high the
     // ground sits there. Defaults describe the meadow disc; the park env
     // rebinds both once its world loads (inside the park wall, never water).
     let plantableAt: (x: number, z: number) => boolean = (x, z) => Math.hypot(x, z) < 104;
     let plantGroundY: (x: number, z: number) => number = () => 0;
-    const maxOrbitRadius = parkEnvWindow ? 700 : 45;
-    const maxOrbitHeight = parkEnvWindow ? 520 : 30;
+    const maxOrbitRadius = () => (parkEnvActive() ? 700 : 45);
+    const maxOrbitHeight = () => (parkEnvActive() ? 520 : 30);
     // Pulling far back in the park also lifts the eye above the city, so the
     // long zoom-out becomes the aerial postcard instead of a flight through
     // a tower's floors.
     const parkHeightFloor = () => {
-      if (parkEnvWindow && rig.dRadius > 60) {
-        rig.dHeight = Math.max(rig.dHeight, Math.min(maxOrbitHeight, (rig.dRadius - 60) * 0.75));
+      if (parkEnvActive() && rig.dRadius > 60) {
+        rig.dHeight = Math.max(rig.dHeight, Math.min(maxOrbitHeight(), (rig.dRadius - 60) * 0.75));
       }
     };
     // Two-wall default mode runs TWO simultaneous fullscreen WebGL contexts on
@@ -4475,7 +4480,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
     const reconcile = () => {
       const garden = modeRef.current === "garden";
       const hyper = layoutRef.current !== "radial";
-      const key = `${modeRef.current}|${layoutRef.current}`;
+      const key = `${modeRef.current}|${layoutRef.current}|${environmentRef.current}`;
       if (builtKey !== key) {
         // Style/layout switch: tear the world down and regrow it.
         env?.dispose();
@@ -5285,7 +5290,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
           const dAngle = -dx * 0.005;
           const dHeight = dy * 0.045;
           rig.dAngle += dAngle;
-          rig.dHeight = Math.max(1.4, Math.min(maxOrbitHeight, rig.dHeight + dHeight));
+          rig.dHeight = Math.max(1.4, Math.min(maxOrbitHeight(), rig.dHeight + dHeight));
           // Exponential moving average keeps the flick velocity stable.
           angVel = angVel * 0.75 + (dAngle / dtMove) * 0.25;
           heightVel = heightVel * 0.75 + (dHeight / dtMove) * 0.25;
@@ -5415,7 +5420,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
       event.preventDefault();
       lastCameraInputMs = performance.now(); // manual input — suspend auto-framing
       // Step grows with distance so the long pull-out isn't a hundred ticks.
-      rig.dRadius = Math.max(4, Math.min(maxOrbitRadius, rig.dRadius + event.deltaY * 0.02 * Math.max(1, rig.dRadius / 40)));
+      rig.dRadius = Math.max(4, Math.min(maxOrbitRadius(), rig.dRadius + event.deltaY * 0.02 * Math.max(1, rig.dRadius / 40)));
       parkHeightFloor();
     };
     // GESTURE-DWELL SEAM: expose real raycast picking + projected node rects +
@@ -5616,7 +5621,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
         }
         // Exact mirror of the onPointerMove orbit path (incl. height clamp).
         rig.dAngle += dYaw;
-        rig.dHeight = Math.max(1.4, Math.min(maxOrbitHeight, rig.dHeight + dHeight));
+        rig.dHeight = Math.max(1.4, Math.min(maxOrbitHeight(), rig.dHeight + dHeight));
       },
       panBy: (dxPx, dyPx) => {
         lastCameraInputMs = performance.now();
@@ -5644,7 +5649,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
           return;
         }
         // Multiplicative dolly, re-clamped to the onWheel envelope [4,45].
-        rig.dRadius = Math.max(4, Math.min(maxOrbitRadius, rig.dRadius * scale));
+        rig.dRadius = Math.max(4, Math.min(maxOrbitRadius(), rig.dRadius * scale));
         parkHeightFloor();
       },
       // FREE-ROAM WALK (the one-hand palm-depth gesture): a signed normalized
@@ -5969,7 +5974,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
             angVel *= Math.exp(-dt * 2.2);
           }
           if (Math.abs(heightVel) > 1e-3) {
-            rig.dHeight = Math.max(1.4, Math.min(maxOrbitHeight, rig.dHeight + heightVel * dt));
+            rig.dHeight = Math.max(1.4, Math.min(maxOrbitHeight(), rig.dHeight + heightVel * dt));
             heightVel *= Math.exp(-dt * 2.6);
           }
         }

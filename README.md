@@ -37,7 +37,8 @@ agents building them.
   legacy view badge.
 - **Vibersyn projector only:** `bun run start` (server on :8787), or `bun run dev`
   for the UI dev server. Open `/?live=1` for the live runtime.
-- **Central Park (optional):** add `?env=park` and the room stands in ONE
+- **Central Park (optional):** toggle **Central Park** in the ⚙ Controls dock
+  (or seed it with `?env=park`) and the room stands in ONE
   iconic place at true scale — the lawn north of **Gapstow Bridge over the
   Pond**, the park's south-east corner. Around the stage: the real map (NAIP
   photo on USGS terrain), the Pond as mirror water from OpenStreetMap's

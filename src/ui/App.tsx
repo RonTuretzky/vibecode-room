@@ -282,6 +282,11 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
   // existing upid), and the import-arrival offer. Esc cancels; positions
   // live in localStorage so the second wall window repositions the same
   // tree via the storage event.
+  // CENTRAL PARK toggle (Controls dock): overrides the URL's ?env= seed at
+  // runtime. Purely environmental — the same trees and ideas stand in
+  // whichever ground is under them.
+  const [envOverride, setEnvOverride] = useState<"meadow" | "park" | null>(null);
+  const sceneEnvironment = envOverride ?? urlConfig.environment;
   const [planting, setPlanting] = useState<PlantingTarget | null>(null);
   const plantingRef = useRef<PlantingTarget | null>(null);
   plantingRef.current = planting;
@@ -2379,7 +2384,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
         trees={researchActive ? [] : treeSpecs}
         mode={sceneMode}
         layout={sceneLayout}
-        environment={urlConfig.environment}
+        environment={sceneEnvironment}
         planting={planting !== null && sceneMode === "garden" && !researchActive}
         onPlantPick={(point) => void plantAt(point)}
         wall={urlConfig.wall}
@@ -2612,6 +2617,20 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
               Guided Demo
             </button>
           ) : null}
+          {/* CENTRAL PARK: swap the garden's ground and horizon between the
+              pastoral meadow and the real park at the Pond (same content —
+              the toggle never adds or removes a tree). Seeds from ?env=. */}
+          <button
+            type="button"
+            className={`ctl-button park-toggle${sceneEnvironment === "park" ? " on" : ""}`}
+            data-testid="central-park-button"
+            data-state={sceneEnvironment === "park" ? "on" : "off"}
+            aria-pressed={sceneEnvironment === "park"}
+            onClick={() => setEnvOverride(sceneEnvironment === "park" ? "meadow" : "park")}
+            title="Central Park: the garden stands at the Pond by Gapstow Bridge — same trees, same ideas, the real park under them. Toggle off for the pastoral meadow."
+          >
+            {sceneEnvironment === "park" ? "● Central Park" : "Central Park"}
+          </button>
           {/* AUDIT (no-mocks): the Mock Room fixture toggle is HIDDEN unless the
               launcher opts in with ?mock=1 (run-room.sh appends it only when
               VIBERSYN_MOCK_ROOM=1). A default room never offers canned decks. */}
