@@ -133,6 +133,8 @@ import { TreeGitSubstrate, treeGitEnabled, type GitCommandRunner } from "./tree-
 import { ghCommandRunner, type ForestCommandRunner } from "./github-org";
 import { applySteerEdit, steerApplierEnabled } from "./steer-applier";
 import { appendSliceLine, joinedSliceText, type SteerSliceLine } from "./transcript-slice";
+
+import { dirtySourcePaths, graftOntoBranch, type SelfLandingResult as SelfLanding } from "./self-graft";
 import { TranscriptStore } from "./transcript-store";
 import { TreeIssuesCache, type TreeIssue } from "./tree-issues";
 import { buildImportPlanPrompt, buildImportPlanQuestions } from "./import-plan";
@@ -704,6 +706,10 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   // route to the just-cleared target (and join an adopted tree's slice, whose
   // applier drain waits for them). Preempted by a new target; lazily drained.
   #steerGrace: { upid: string; branch: string | null; slice: SteerSliceLine[]; untilMs: number; timer: ReturnType<typeof setTimeout> | null } | null = null;
+  // WHERE THE LAST SPOKEN CHANGE LANDED — the wall's post-Stop receipt. `onto`
+  // is the branch the operator asked to graft onto (null = a fresh cut);
+  // `error` is set when the room refused, in which case NOTHING was dispatched.
+  #selfLanding: { branch: string | null; onto: string | null; error: string | null; atMs: number } | null = null;
   // AUTO-BUILD toggle. When true, every fired suggestion is accepted+built the
   // instant it pops — no click required. Operator flips it from the projector
   // (POST /api/auto-accept) or boots with VIBERSYN_AUTO_ACCEPT=1. A re-entrancy guard
@@ -2295,18 +2301,51 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       return;
     }
     if (grace.upid === "self") {
-      // EVERY record window on the room = its OWN branch off the current one
-      // (live-room directive). The SERVER cuts it — deterministic, before the
-      // run exists — so the agent only ever commits where it stands.
-      void this.#cutSelfBranch(text)
-        .then((branch) => {
+      // WHERE THE CHANGE LANDS is decided HERE, before the run exists, because
+      // the agent only ever commits where it stands:
+      //   • no branch scope → a FRESH room/<slug> branch off the current one
+      //     (the default: every spoken change is its own branch),
+      //   • a branch scope → GRAFT ONTO that existing branch — the room climbs
+      //     to it first, so what you say grows the branch you picked instead
+      //     of starting a sibling. The self path used to drop the scope on the
+      //     floor and cut a new branch regardless.
+      const onto = grace.branch;
+      void (onto !== null
+        ? this.#graftOntoSelfBranch(onto)
+        : this.#cutSelfBranch(text).then(
+            (branch): SelfLanding =>
+              branch !== null ? { ok: true, branch } : { ok: false, error: "git refused to cut a branch for this change" },
+          )
+      )
+        .then((landing) => {
           this.recordExternalTrace({
-            event: branch !== null ? "self.branch.cut" : "self.branch.cut.failed",
-            level: branch !== null ? "info" : "warn",
+            event: landing.ok
+              ? onto !== null
+                ? "self.branch.graft"
+                : "self.branch.cut"
+              : onto !== null
+                ? "self.branch.graft.failed"
+                : "self.branch.cut.failed",
+            level: landing.ok ? "info" : "warn",
             sessionId: this.sessionId,
             correlationId: `${correlationId}-branch-cut`,
-            meta: { branch },
+            meta: { branch: landing.ok ? landing.branch : null, onto, error: landing.ok ? null : landing.error },
           });
+          // THE RECEIPT the wall reads after Stop — where this change landed,
+          // or why it landed nowhere.
+          this.#selfLanding = {
+            branch: landing.ok ? landing.branch : null,
+            onto,
+            error: landing.ok ? null : landing.error,
+            atMs: this.#clock(),
+          };
+          if (!landing.ok) {
+            // NEVER commit somewhere else. Asking for a branch and silently
+            // growing a different one is the one outcome worse than refusing:
+            // the change is not dispatched, and the receipt says why.
+            this.publish();
+            return undefined;
+          }
           return this.registry.steer(grace.upid, { text, source: "live-transcript" }, `${correlationId}-window-dispatch`);
         })
         .then(() => {
@@ -3551,6 +3590,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       mic: { mode: this.micMode, active: this.#micActive, bytesReceived: this.#micBytes },
       steeringUpid: this.#steeringUpid,
       steeringBranch: this.#steeringBranch,
+      ...(this.#selfLanding === null ? {} : { selfLanding: this.#selfLanding }),
       autoAccept: this.#autoAccept,
       captureMode: this.#captureMode,
       researchMode: this.research.active(),
@@ -3981,6 +4021,28 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     return null;
   }
 
+  // GRAFT ONTO AN EXISTING BRANCH: stand the room on `branch` so the spoken
+  // change grows THAT branch instead of a fresh sibling — steering a branch
+  // you already have. Returns the branch on success, null on any refusal
+  // (the caller traces self.branch.graft.failed and the wall says so).
+  //
+  // Already standing there is the common case and costs nothing. Otherwise
+  // this is the same climb as /api/self/checkout WITHOUT the exit-87: the run
+  // is about to happen in this worktree, and the supervisor rebuilds when the
+  // run's green commit lands — so the room comes back up ON the branch it
+  // grew, which is exactly what "steer this branch" should mean.
+  //
+  // Refuses on uncommitted src/ rather than dragging someone's work onto
+  // another branch: an unexpected merge is far worse than an honest no.
+  async #graftOntoSelfBranch(branch: string): Promise<SelfLanding> {
+    // The decision itself lives in self-graft.ts, where every refusal path is
+    // unit-tested against a scripted git.
+    return graftOntoBranch(async (argv) => {
+      const result = await this.#selfGit(argv);
+      return { ok: result.code === 0, stdout: result.out, stderr: "" };
+    }, branch);
+  }
+
   // The room's own branches (the wall's "load this version" rows): every
   // room/* head plus the current branch, newest first, with subjects.
   async selfBranches(): Promise<{ current: string; branches: Array<{ name: string; subject: string; date: string }> }> {
@@ -4018,10 +4080,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     if (exists.code !== 0) {
       return { ok: false, error: `no local branch named ${branch}` };
     }
-    const dirty = (await this.#selfGit(["status", "--porcelain"])).out
-      .split("\n")
-      .map((line) => line.slice(3).trim())
-      .filter((path) => path.startsWith("src/"));
+    const dirty = dirtySourcePaths((await this.#selfGit(["status", "--porcelain"])).out);
     if (dirty.length > 0) {
       return { ok: false, error: `uncommitted work in the tree (${dirty[0]}${dirty.length > 1 ? ` +${dirty.length - 1}` : ""}) — commit or stash first` };
     }
@@ -4367,10 +4426,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
               // THIS branch only (reported, the rest of the excise stands).
               conflicts.push(`${current} (no supervisor — --self launch required)`);
             } else {
-              const dirty = (await this.#selfGit(["status", "--porcelain"])).out
-                .split("\n")
-                .map((line) => line.slice(3).trim())
-                .filter((path) => path.startsWith("src/"));
+              const dirty = dirtySourcePaths((await this.#selfGit(["status", "--porcelain"])).out);
               if (dirty.length > 0) {
                 conflicts.push(`${current} (uncommitted work)`);
               } else {
@@ -4526,10 +4582,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     const elapsed = elapsedSec >= 60 ? `${Math.floor(elapsedSec / 60)}m${String(elapsedSec % 60).padStart(2, "0")}s` : `${elapsedSec}s`;
     const [branch, status] = await Promise.all([run(["git", "branch", "--show-current"]), run(["git", "status", "--porcelain"])]);
     const branchName = branch.trim();
-    const srcEdits = status
-      .split("\n")
-      .map((line) => line.slice(3).trim())
-      .filter((path) => path.startsWith("src/"));
+    const srcEdits = dirtySourcePaths(status);
     // Most-specific truth first: verify screenshots → building → editing →
     // branch cut → reading. All derived from the run's REAL footprint.
     try {

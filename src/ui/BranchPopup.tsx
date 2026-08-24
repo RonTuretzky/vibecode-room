@@ -129,10 +129,13 @@ export interface BranchPopupProps {
   // The SELF tree's forest spec (App holds it), with the local rails optional
   // — live they are fetched here; the static renderer seeds them.
   self?: { tree: SelfTreeSpec; versions?: SelfBranchesPayload | null } | null;
+  // The server's receipt for the last spoken change (snapshot.selfLanding) —
+  // which branch grew it, or why the room refused to grow anything.
+  landing?: { branch: string | null; onto: string | null; error: string | null; atMs: number } | null;
   onClose: () => void;
 }
 
-export function BranchPopup({ process, branch, anchor, self, onClose }: BranchPopupProps) {
+export function BranchPopup({ process, branch, anchor, self, landing = null, onClose }: BranchPopupProps) {
   // The room's own rails: fetched only on the self tree, and only once the
   // popup is up (an adopted tree's card never asks about the room's checkout).
   const fetchedVersions = useSelfBranches(stageOf(process) === "self").payload;
@@ -303,12 +306,15 @@ export function BranchPopup({ process, branch, anchor, self, onClose }: BranchPo
         </div>
       ) : null}
 
-      {/* SELF tree: only what the server honors. Loading a version is real
-          (POST /api/self/checkout); steering a NON-current self branch is
-          not (the dispatch cuts a fresh rail off the CURRENT branch and
-          ignores the scope), so the record toggle appears only on the branch
-          the room is running; opening a PR against ourselves 400s, and the
-          PR URL rides the inline link above instead. */}
+      {/* SELF tree: only what the server honors. On the branch the room is
+          running, the record toggle grows a FRESH branch per spoken change.
+          On any OTHER branch that exists locally, the toggle now arms scoped
+          to it — the server stands the room on that branch before the run, so
+          the words GROW THAT BRANCH instead of a sibling (it used to drop the
+          scope and cut a new rail regardless, which is why steering an
+          existing branch was impossible). Climbing without speaking is still
+          its own verb. Opening a PR against ourselves 400s, so the PR URL
+          rides the inline link above instead. */}
       {isSelf ? (
         <div className="tree-popup-actions">
           {model.isCurrent ? (
@@ -322,19 +328,22 @@ export function BranchPopup({ process, branch, anchor, self, onClose }: BranchPo
               >
                 🌳 you are here — the room lives on this branch
               </button>
-              <RecordSteerToggle process={process} kind="room" />
+              <RecordSteerToggle process={process} kind="room" landing={landing} />
             </>
           ) : model.loadable ? (
-            <button
-              type="button"
-              className="ctl-button branch-popup-load"
-              data-testid="branch-popup-load"
-              title={`Climb the room onto ${model.branch} — rebuilds and relaunches on it.`}
-              disabled={loadBusy}
-              onClick={() => void loadVersion()}
-            >
-              {loadBusy ? "⤴ climbing… the room will reload" : "⤴ climb here · load"}
-            </button>
+            <>
+              <RecordSteerToggle process={process} kind="room" branch={model.branch} landing={landing} />
+              <button
+                type="button"
+                className="ctl-button branch-popup-load"
+                data-testid="branch-popup-load"
+                title={`Climb the room onto ${model.branch} — rebuilds and relaunches on it.`}
+                disabled={loadBusy}
+                onClick={() => void loadVersion()}
+              >
+                {loadBusy ? "⤴ climbing… the room will reload" : "⤴ climb here · load"}
+              </button>
+            </>
           ) : railsKnown ? (
             <button
               type="button"

@@ -206,6 +206,13 @@ export interface ProjectorSnapshot {
   // dwelled on a specific branch of an adopted tree), or null when the select
   // was unscoped. Lives and dies with steeringUpid.
   steeringBranch?: string | null;
+  // WHERE THE LAST SPOKEN CHANGE TO THE ROOM LANDED — the post-Stop receipt.
+  //   • branch: the branch that will grow the change (null = it grew nothing),
+  //   • onto: the existing branch the operator asked to graft onto, or null
+  //     for the default fresh cut,
+  //   • error: why the room refused. A refusal means NOTHING was dispatched —
+  //     the change was not quietly grown on some other branch.
+  selfLanding?: { branch: string | null; onto: string | null; error: string | null; atMs: number } | null;
   // AUTO-BUILD: when true, every fired idea is accepted+built without a click. The
   // projector shows the toggle as ON.
   autoAccept?: boolean;
