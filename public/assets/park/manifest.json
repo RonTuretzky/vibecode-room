@@ -1,0 +1,75 @@
+{
+  "center": {
+    "lat": 40.7829,
+    "lon": -73.9656,
+    "surfaceHeightM": 34.56
+  },
+  "axisBearingDeg": 29.0,
+  "park": {
+    "halfLen": 2040.0,
+    "halfWidth": 424.0
+  },
+  "segment": {
+    "lat": 40.7922,
+    "lon": -73.9584,
+    "halfLen": 805.0,
+    "halfWidth": 465.0
+  },
+  "margin": {
+    "south": 900.0,
+    "north": 250.0,
+    "across": 400.0
+  },
+  "extent": {
+    "halfEast": 2147,
+    "halfNorth": 2971
+  },
+  "anchors": {
+    "sheepMeadow": {
+      "lat": 40.77156,
+      "lon": -73.97442,
+      "x": -743.4,
+      "z": 1262.3,
+      "groundM": -11.8
+    }
+  },
+  "ortho": {
+    "file": "ortho.jpg",
+    "width": 4638,
+    "height": 6417,
+    "source": "naip"
+  },
+  "dem": {
+    "file": "dem.bin",
+    "cols": 538,
+    "rows": 744,
+    "stepM": 8.0,
+    "unitM": 0.1
+  },
+  "relief": {
+    "file": "relief.png",
+    "width": 2147,
+    "height": 2971,
+    "unitM": 0.1
+  },
+  "water": {
+    "file": "water.png",
+    "width": 2147,
+    "height": 2971
+  },
+  "lawn": {
+    "file": "lawn.png",
+    "width": 2147,
+    "height": 2971
+  },
+  "buildings": {
+    "file": "buildings.json",
+    "count": 17196,
+    "unitM": 0.1
+  },
+  "paths": {
+    "file": "paths.json",
+    "count": 1842,
+    "unitM": 0.1
+  }
+}

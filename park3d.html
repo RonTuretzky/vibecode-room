@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Central Park — Photorealistic 3D Tiles evaluation</title>
+    <title>Central Park — whole-park evaluation (3D Tiles / open data)</title>
     <style>
       html,
       body {
@@ -24,7 +24,7 @@
         padding: 10px 14px;
         font-size: 13px;
         line-height: 1.5;
-        max-width: 340px;
+        max-width: 420px;
       }
       #hud b {
         color: #9ee2ff;
@@ -63,10 +63,11 @@
   </head>
   <body>
     <div id="hud">
-      <b>Central Park 110th → 90th St</b> — Google Photorealistic 3D Tiles<br />
-      altitude: <span id="alt">—</span><br />
+      <b>Central Park</b> 59th → 110th St · <span id="source">Google Photorealistic 3D Tiles</span><br />
+      altitude: <span id="alt">—</span> · crop: <span id="crop">park</span><br />
       <span id="presets"></span><br />
-      keys 1–6 = altitude presets · C = toggle segment crop · drag/wheel = orbit
+      keys 1–6 = segment altitude ladder · 7 postcard · 8 satellite · 9 Sheep Meadow<br />
+      C = crop park → segment → city · drag/wheel = orbit · ?src=open for the key-free bake
     </div>
     <div id="attrib">Data © Google</div>
     <div id="err"></div>

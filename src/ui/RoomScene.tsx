@@ -7,7 +7,11 @@ import { getFlatPoseSender, registerSceneFlatPoseControl } from "./gesture/flat-
 import { cornerEye, cornerVerticalFovDeg, cornerYaw } from "./corner-lock";
 import { FLAT_EYE_DISTANCE, FLAT_EYE_HEIGHT, FLAT_YAW, flatVerticalFovDeg, flatViewOffset } from "./flat-lock";
 import { loadGardenFlora, type FloraLibrary } from "./garden-flora";
-import { buildCentralPark, loadCentralParkLayout, type CentralParkBuild } from "./central-park";
+import { POND_STAGE, alongAcross as alongAcrossOf, insidePark as insideParkRect, localFromAlongAcross as parkLocalFromAlongAcross } from "../park3d/park-frame";
+import { GAPSTOW, OUTCROPS } from "../park3d/park-landmarks";
+import { loadParkWorldShared, type ParkWorld } from "../park3d/park-world";
+import { Water } from "three/addons/objects/Water.js";
+import { localFromLatLon } from "../park3d/park-frame";
 import type { SelfTreeSpec } from "./self-repo";
 import {
   buildTreeLOD,
@@ -152,6 +156,11 @@ export interface TreeSpec {
   // /api/process/:upid/issues) — up to FRUIT_CAP hang as emissive fruit on
   // ONE translucent holo branch off the mid-trunk. Absent = no fruit.
   issues?: IssueInfo[];
+  // CHOSEN PLANTING SPOT (the idea card's "Plant…" flow): local scene metres
+  // where the person planted this tree. Garden radial layout only — the
+  // abstract layouts (orbit/ball/disk) keep their own geometry. Absent/null =
+  // the automatic slot row.
+  plantedAt?: { x: number; z: number } | null;
 }
 
 // The ring style that marks a tree's stage on the ground/orb.
@@ -206,6 +215,9 @@ export function treeIndicators(spec: TreeSpec): TreeIndicators {
 }
 
 export type SceneMode = "garden" | "orbit";
+// Garden horizon: pastoral hills (default) or the real Central Park far-field
+// around Sheep Meadow (?env=park). Orbit mode ignores it.
+export type SceneEnvironment = "meadow" | "park";
 // Spatial layout strategies (visualizer parity: standard radial, H3 Poincaré
 // ball after Munzner 1997, and the Lamping/Rao/Pirolli Poincaré disk).
 export type SceneLayout = "radial" | "ball" | "disk";
@@ -254,6 +266,17 @@ interface RoomSceneProps {
   trees: TreeSpec[];
   mode: SceneMode;
   layout: SceneLayout;
+  // Garden far-field: "meadow" hills or the real Central Park ("park").
+  // Seeded by ?env=park and toggleable at runtime from the Controls dock —
+  // switching swaps ground and horizon only; the tree/idea content and the
+  // camera stay put.
+  environment?: SceneEnvironment;
+  // PLANTING MODE (the idea card's "Plant…" flow): while true, the pointer
+  // hovers a ghost marker over the ground and a click hands the chosen spot
+  // to onPlantPick instead of picking nodes. The scene validates the spot
+  // (inside the park boundary / on the meadow, never in water).
+  planting?: boolean;
+  onPlantPick?: (point: { x: number; z: number }) => void;
   // Wall identity ("A" | "B" | …) or null. Seeds the default camera yaw (desk
   // mode) or selects this window's side of the corner-locked pair (gesture
   // mode) — it NEVER filters content.
@@ -347,10 +370,6 @@ interface RoomSceneProps {
   // adopts the mirror's live TreeSpec from `trees`, so selecting it steers
   // the room itself.
   selfTree?: SelfTreeSpec | null;
-  // CENTRAL PARK (?park=1): lay the real park under the garden as a stylized
-  // diorama (baked OSM layers + the surveyed trees — see central-park.ts).
-  // Fixed per window (URL-derived, like the locks).
-  park?: boolean;
 }
 
 const MATURITY_COLOR: Record<IdeaTrayItem["maturity"], number> = {
@@ -1088,7 +1107,7 @@ interface Entry {
   disposeExtra?: () => void;
 }
 
-export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, focusUpid = null, pointerNav = true, cornerLock = false, flatLock = false, autoFit = false, onAcceptIdea, onSelectProcess, onPickMiss, onPickBranch, onPickIssue, dialogue = [], topics = [], research = [], onResearchNode, onDialogueNode, sky, researchThinking = false, skyView = false, selfTree = null, park = false }: RoomSceneProps) {
+export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", wall = null, fitSignal, focusUpid = null, pointerNav = true, cornerLock = false, flatLock = false, autoFit = false, onAcceptIdea, onSelectProcess, onPickMiss, onPickBranch, onPickIssue, dialogue = [], topics = [], research = [], onResearchNode, onDialogueNode, sky, researchThinking = false, skyView = false, selfTree = null, planting = false, onPlantPick }: RoomSceneProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const ideasRef = useRef(ideas);
   ideasRef.current = ideas;
@@ -1117,6 +1136,13 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
   modeRef.current = mode;
   const layoutRef = useRef(layout);
   layoutRef.current = layout;
+  // URL-derived and fixed for the window's life (like wall/cornerLock).
+  const environmentRef = useRef(environment);
+  environmentRef.current = environment;
+  const plantingRef = useRef(planting);
+  plantingRef.current = planting;
+  const onPlantPickRef = useRef(onPlantPick);
+  onPlantPickRef.current = onPlantPick;
   // Wall identity is fixed per window (parsed from the URL once); a ref keeps
   // the mount-once scene effect honest about never re-running for it.
   const wallRef = useRef(wall);
@@ -1128,8 +1154,6 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
   const cornerLockRef = useRef(cornerLock);
   cornerLockRef.current = cornerLock;
   // Same deal: the Central Park layer is URL-derived and fixed per window.
-  const parkRef = useRef(park);
-  parkRef.current = park;
   // Same deal: the flat lock is URL-derived and fixed for the window's life.
   const flatLockRef = useRef(flatLock);
   flatLockRef.current = flatLock;
@@ -1154,7 +1178,7 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
 
   useEffect(() => {
     tick.current += 1;
-  }, [ideas, trees, mode, layout, dialogue, topics, research, sky, selfTree]);
+  }, [ideas, trees, mode, layout, environment, dialogue, topics, research, sky, selfTree]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -1165,6 +1189,27 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
 
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(46, 1, 0.1, 400);
+    // Fixed per window (URL-derived): the park scene allows a far wider orbit
+    // envelope so the whole postcard — Pond, bridge, skyline — fits in frame.
+    // Live env check (the Controls dock toggles Central Park at runtime —
+    // the ref always holds the current environment; the env rebuild swaps
+    // ground and horizon while the tree/idea specs stay untouched).
+    const parkEnvActive = () => environmentRef.current === "park";
+    // PLANTING surface: where a chosen tree spot is legal and how high the
+    // ground sits there. Defaults describe the meadow disc; the park env
+    // rebinds both once its world loads (inside the park wall, never water).
+    let plantableAt: (x: number, z: number) => boolean = (x, z) => Math.hypot(x, z) < 104;
+    let plantGroundY: (x: number, z: number) => number = () => 0;
+    const maxOrbitRadius = () => (parkEnvActive() ? 700 : 45);
+    const maxOrbitHeight = () => (parkEnvActive() ? 520 : 30);
+    // Pulling far back in the park also lifts the eye above the city, so the
+    // long zoom-out becomes the aerial postcard instead of a flight through
+    // a tower's floors.
+    const parkHeightFloor = () => {
+      if (parkEnvActive() && rig.dRadius > 60) {
+        rig.dHeight = Math.max(rig.dHeight, Math.min(maxOrbitHeight(), (rig.dRadius - 60) * 0.75));
+      }
+    };
     // Two-wall default mode runs TWO simultaneous fullscreen WebGL contexts on
     // one machine, so keep the renderer settings sane: prefer the discrete GPU,
     // cap the pixel ratio, and (below) pause the frame loop while hidden.
@@ -1346,9 +1391,32 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       const rng = mulberry32(0x47415244);
       const group = new THREE.Group();
       scene.add(group);
+      // CENTRAL PARK (?env=park): ONE iconic place at true 1:1 scale — the
+      // Pond at Gapstow Bridge, the park's south-east corner. The stage
+      // stands on the wooded rise north-east of the bridge looking south
+      // over the water, and around it the baked world (park-world.ts)
+      // carries the real scene: the NAIP photo on the real terrain, the
+      // Pond as mirror water from OpenStreetMap's outline, Gapstow's stone
+      // arch, real canopy trees and the Pond-shore schist as photoscans —
+      // and the actual skyline: the Plaza Hotel and Billionaires' Row as
+      // real CC-BY models on their true footprints (park-models.ts), with
+      // the rest of Midtown as window-textured footprint extrusions fading
+      // into the haze. Software rasterizers get the plain meadow (far
+      // heavier than the flora they already skip).
+      const pondScene = environmentRef.current === "park" && !softwareGL;
+      const PARK_SCALE = 1;
       // Aerial perspective: haze tinted to the sky horizon so meadow and hills
       // melt into the sky instead of ending at a hard disc edge.
-      scene.fog = new THREE.Fog(0xdcedf8, 80, 210);
+      const meadowFog = () => new THREE.Fog(0xdcedf8, 80, 210);
+      scene.fog = pondScene ? new THREE.Fog(0xdcedf8, 150, 2400) : meadowFog();
+      // The stage shrinks to the little rise it stands on; the Pond's shore
+      // begins just past the flora.
+      const meadowRadius = pondScene ? 30 : 110;
+      const defaultFar = camera.far;
+      if (pondScene) {
+        camera.far = 12_000;
+        camera.updateProjectionMatrix();
+      }
 
       // Daylight rig (env-local): warm sun key matching the panorama's sun,
       // blue-sky/grass hemisphere bounce, and a soft cool fill so shaded
@@ -1372,10 +1440,13 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       );
       skyTexture.colorSpace = THREE.SRGBColorSpace;
       const skyDome = new THREE.Mesh(
-        new THREE.SphereGeometry(340, 48, 32),
+        new THREE.SphereGeometry(pondScene ? 9000 : 340, 48, 32),
         new THREE.MeshBasicMaterial({ map: skyTexture, side: THREE.BackSide, fog: false, depthWrite: false }),
       );
       skyDome.scale.y = 0.32;
+      // Drawn first: the dome writes no depth, so anything rendered after it
+      // must not be overdrawn by its nearer-than-the-skyline surface.
+      skyDome.renderOrder = -1;
       group.add(skyDome);
 
       // Ground: tiled photoscan grass (1k diff+normal over ~10-unit tiles;
@@ -1393,7 +1464,7 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       groundNor.repeat.set(22, 22);
       groundNor.anisotropy = 8;
       const ground = new THREE.Mesh(
-        new THREE.CircleGeometry(110, 64),
+        new THREE.CircleGeometry(meadowRadius, 64),
         // Tint pushes the olive scan toward lush pasture green.
         new THREE.MeshStandardMaterial({ map: groundDiff, normalMap: groundNor, color: 0xaef29a, roughness: 1, metalness: 0 }),
       );
@@ -1431,11 +1502,21 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         // SAME photoscan quality as the other trees.
         { name: "jacaranda_tree", count: 8, rMin: 22, rMax: 70, sMin: 0.5, sMax: 0.7 },
       ];
+      if (pondScene) {
+        // Keep the meadow's own scatter on the smaller stage — minus the
+        // garden's jacaranda band, which at this stage radius would stand
+        // inside the camera orbit (the real shore trees take its place).
+        const k = meadowRadius / 110;
+        for (let i = FLORA_SCATTER.length - 1; i >= 0; i--) {
+          if (FLORA_SCATTER[i].name === "jacaranda_tree") {
+            FLORA_SCATTER.splice(i, 1);
+            continue;
+          }
+          FLORA_SCATTER[i].rMin *= k;
+          FLORA_SCATTER[i].rMax *= k;
+        }
+      }
       let floraDisposed = false;
-      // Central Park diorama (?park=1): built (async) BEFORE the flora
-      // scatters, so the scatter can keep grass and jacarandas out of the
-      // park's real water bodies via the layer's point test.
-      let parkBuild: CentralParkBuild | null = null;
       // Flower-top landing spots for the butterflies, filled in as the flora
       // scatter runs (async — no flowers loaded simply means no landings).
       const flowerSpots: { x: number; y: number; z: number }[] = [];
@@ -1563,17 +1644,6 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
           for (let i = 0; i < spec.count; i++) {
             const angle = ((i + floraRng() * 0.9) / spec.count) * Math.PI * 2;
             let radius = spec.rMin + floraRng() * (spec.rMax - spec.rMin);
-            // Park layer: nothing sprouts out of the Reservoir — re-roll the
-            // radius a few times (same wedge, so ring coverage survives),
-            // then concede the instance to the water.
-            if (parkBuild !== null) {
-              for (let tries = 0; tries < 6 && parkBuild.isWater(Math.cos(angle) * radius, Math.sin(angle) * radius); tries++) {
-                radius = spec.rMin + floraRng() * (spec.rMax - spec.rMin);
-              }
-              if (parkBuild.isWater(Math.cos(angle) * radius, Math.sin(angle) * radius)) {
-                continue;
-              }
-            }
             dummy.position.set(Math.cos(angle) * radius, 0, Math.sin(angle) * radius);
             dummy.rotation.y = floraRng() * Math.PI * 2;
             dummy.scale.setScalar(spec.sMin + floraRng() * (spec.sMax - spec.sMin));
@@ -1628,24 +1698,7 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         }
       };
       if (!softwareGL) {
-        // The park layer (when requested) resolves BEFORE the flora scatter so
-        // the scatter's water test sees it; a failed park fetch degrades to
-        // the plain meadow rather than blocking the flora.
-        const parkReady = parkRef.current
-          ? loadCentralParkLayout()
-              .then((parkLayout) => {
-                if (floraDisposed) {
-                  return;
-                }
-                parkBuild = buildCentralPark(parkLayout);
-                group.add(parkBuild.group);
-              })
-              .catch((error: unknown) => {
-                console.warn("central park layer failed to load; plain meadow stays", error);
-              })
-          : Promise.resolve();
-        parkReady.then(() =>
-          loadGardenFlora()
+        loadGardenFlora()
             .then((flora) => {
               floraLib = flora;
               // Rebuild the data nodes as real models on the next frame.
@@ -1656,8 +1709,7 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
             })
             .catch((error: unknown) => {
               console.warn("garden flora failed to load; primitive glyphs stay", error);
-            }),
-        );
+            });
       }
 
       // Rolling hills ring the horizon (haze-tinted by the fog) so the meadow
@@ -1666,18 +1718,407 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       // tinted toward the horizon pale) — kept FLAT and far so the fog reads
       // them as aerial perspective, with the real jacaranda band in front.
       const hillTones = [0xc2d8b2, 0xcfe2c0, 0xb8cfae];
-      for (let i = 0; i < 5; i++) {
-        const angle = (i / 5) * Math.PI * 2 + rng() * 0.7;
-        const dist = 98 + rng() * 12;
-        const rx = 30 + rng() * 22;
-        const ry = 2.2 + rng() * 2.2;
-        const hill = new THREE.Mesh(
-          new THREE.SphereGeometry(1, 24, 16),
-          new THREE.MeshStandardMaterial({ map: groundDiff, color: hillTones[i % hillTones.length], roughness: 1 }),
-        );
-        hill.scale.set(rx, ry, 16 + rng() * 8);
-        hill.position.set(Math.cos(angle) * dist, -ry * 0.35, Math.sin(angle) * dist);
-        group.add(hill);
+      const buildHills = () => {
+        for (let i = 0; i < 5; i++) {
+          const angle = (i / 5) * Math.PI * 2 + rng() * 0.7;
+          const dist = 98 + rng() * 12;
+          const rx = 30 + rng() * 22;
+          const ry = 2.2 + rng() * 2.2;
+          const hill = new THREE.Mesh(
+            new THREE.SphereGeometry(1, 24, 16),
+            new THREE.MeshStandardMaterial({ map: groundDiff, color: hillTones[i % hillTones.length], roughness: 1 }),
+          );
+          hill.scale.set(rx, ry, 16 + rng() * 8);
+          hill.position.set(Math.cos(angle) * dist, -ry * 0.35, Math.sin(angle) * dist);
+          group.add(hill);
+        }
+      };
+      let parkWorld: ParkWorld | null = null;
+      let parkWater: THREE.MeshStandardMaterial | null = null;
+      let parkHeroWater: Water | null = null;
+      let parkDisposed = false;
+      if (pondScene) {
+        // Shared for the page (see park-world.ts): a garden↔orbit toggle
+        // re-attaches the same world instead of refetching and rebuilding.
+        const parkOptions = {
+          // Level the terrain under the stage, easing back to the real
+          // ground beyond (park metres).
+          flatten: { x: POND_STAGE.x, z: POND_STAGE.z, radius: meadowRadius + 4, feather: 14 },
+          orthoMaxWidth: 3072,
+          // No raised canopy — real trees stand in for the mask instead.
+          displace: false,
+          // Ground parity with the garden: crisp tiled grass, photo-tinted.
+          detailGround: true,
+          // The 5th Ave blocks press right against the stage from the east;
+          // clear the extrusions near the room so only the skyline across
+          // the water remains (the real models all stand farther out).
+          clearFootprints: [{ x: POND_STAGE.x, z: POND_STAGE.z, r: 190 }],
+          // No window-boxes standing in the greenery (Wollman Rink, the
+          // Zoo…): inside the wall the park is landmarks, trees and rock.
+          clearParkInterior: true,
+          // The Pond itself gets real planar reflections (three's Water).
+          heroWaterAt: localFromLatLon(40.766, -73.9741),
+        };
+        // The stage lands on the room origin, turned half a circle so the
+        // boot framing (yaw 0 looks down −Z) faces SOUTH across the Pond at
+        // Gapstow and the skyline.
+        const parkToRoom = (x: number, z: number) => ({
+          x: (POND_STAGE.x - x) * PARK_SCALE,
+          z: (POND_STAGE.z - z) * PARK_SCALE,
+        });
+        const roomToPark = (x: number, z: number) => ({
+          x: POND_STAGE.x - x / PARK_SCALE,
+          z: POND_STAGE.z - z / PARK_SCALE,
+        });
+        // Real scans from the flora library, instanced: elms down the Mall,
+        // sparse canopy where the map has trees (thinned hard so the park
+        // reads open), rock clumps on the named outcrops. Seeded so both
+        // walls grow the same park.
+        const scatterParkFlora = (flora: FloraLibrary, world: ParkWorld, yAnchor: number) => {
+          const rng = mulberry32(0x5041524b);
+          const dummy = new THREE.Object3D();
+          const roomY = (px: number, pz: number) => (world.groundAt(px, pz) - yAnchor) * PARK_SCALE - 0.15;
+          const instance = (name: string, placements: { x: number; z: number; scale: number; rot: number; px: number; pz: number }[]) => {
+            const variants = flora.get(name);
+            if (variants === undefined || variants.length === 0 || placements.length === 0) {
+              return;
+            }
+            const matrices: THREE.Matrix4[][] = variants.map(() => []);
+            placements.forEach((p, i) => {
+              dummy.position.set(p.x, roomY(p.px, p.pz), p.z);
+              dummy.rotation.y = p.rot;
+              dummy.scale.setScalar(p.scale);
+              dummy.updateMatrix();
+              matrices[i % variants.length].push(dummy.matrix.clone());
+            });
+            variants.forEach((variant, v) => {
+              if (matrices[v].length === 0) {
+                return;
+              }
+              for (const piece of variant.pieces) {
+                const instanced = new THREE.InstancedMesh(piece.geometry, piece.material, matrices[v].length);
+                matrices[v].forEach((matrix, i) => instanced.setMatrixAt(i, matrix));
+                instanced.userData.sharedAsset = true;
+                instanced.frustumCulled = false;
+                group.add(instanced);
+              }
+            });
+          };
+          // Trees at full size (the scan is ~19 m tall; shore trees run
+          // 10–15 m), kept sparse and off the bridge so the postcard's
+          // sightline over the water stays open.
+          // Candidates are drawn in PARK coordinates over the park's own
+          // corner — a blind disc around the stage lands mostly in the city
+          // (zeroed masks) and starves every species long before its target.
+          const stageAA = alongAcrossOf(POND_STAGE.x, POND_STAGE.z);
+          const samplePark = (reach: number): { px: number; pz: number; rx: number; rz: number; radius: number } => {
+            const along = Math.max(-2034, Math.min(2034, stageAA.along - reach + rng() * 2 * reach));
+            const across = -418 + rng() * 836;
+            const p = parkLocalFromAlongAcross(along, across);
+            const r = parkToRoom(p.x, p.z);
+            return { px: p.x, pz: p.z, rx: r.x, rz: r.z, radius: Math.hypot(r.x, r.z) };
+          };
+          const trees: { x: number; z: number; scale: number; rot: number; px: number; pz: number }[] = [];
+          const TARGET = 300;
+          for (let attempt = 0; attempt < 20000 && trees.length < TARGET; attempt++) {
+            const { px, pz, rx, rz, radius } = samplePark(700);
+            if (radius < meadowRadius + 14 || radius > 700) {
+              continue;
+            }
+            // Keep the postcard's sightline: no trees inside the view cone
+            // from the stage south over the water toward the skyline (room
+            // −Z after the half turn), out to where the far shore's own
+            // trees belong in the frame.
+            if (radius < 170 && rz < 0 && Math.abs(Math.atan2(rx, -rz)) < 0.3) {
+              continue;
+            }
+            const p = { x: px, z: pz };
+            if (world.canopyAt(p.x, p.z) < 6 || world.waterAt(p.x, p.z) > 0.5) {
+              continue;
+            }
+            if ((p.x - GAPSTOW.x) ** 2 + (p.z - GAPSTOW.z) ** 2 < 22 * 22) {
+              continue;
+            }
+            if (trees.some((q) => (q.x - rx) ** 2 + (q.z - rz) ** 2 < 9 * 9)) {
+              continue;
+            }
+            // Mature park canopy: the scan is ~19 m, so 0.68–1.0 spans the
+            // 13–19 m elms and oaks in the photographs.
+            trees.push({ x: rx, z: rz, px: p.x, pz: p.z, scale: 0.68 + rng() * 0.32, rot: rng() * Math.PI * 2 });
+          }
+          console.info(`[park-flora] jacaranda_tree: ${trees.length} placed`);
+          instance("jacaranda_tree", trees);
+          // Understorey from the imagery masks: shrubs where the canopy is
+          // low (bush height, not crown height), grass tufts and wildflowers
+          // where the map has open lawn — the same photoscans the meadow
+          // uses, so the ground cover matches the stage.
+          const sprinkle = (
+            name: string,
+            count: number,
+            rMax: number,
+            spacing: number,
+            sMin: number,
+            sMax: number,
+            keep: (px: number, pz: number) => boolean,
+          ) => {
+            const placed: { x: number; z: number; scale: number; rot: number; px: number; pz: number }[] = [];
+            for (let attempt = 0; attempt < count * 60 && placed.length < count; attempt++) {
+              const { px, pz, rx, rz, radius } = samplePark(rMax);
+              if (radius < meadowRadius + 3 || radius > rMax) {
+                continue;
+              }
+              if (world.waterAt(px, pz) > 0.4 || !keep(px, pz)) {
+                continue;
+              }
+              if ((px - GAPSTOW.x) ** 2 + (pz - GAPSTOW.z) ** 2 < 16 * 16) {
+                continue;
+              }
+              if (placed.some((q) => (q.x - rx) ** 2 + (q.z - rz) ** 2 < spacing * spacing)) {
+                continue;
+              }
+              placed.push({ x: rx, z: rz, px, pz, scale: sMin + rng() * (sMax - sMin), rot: rng() * Math.PI * 2 });
+            }
+            console.info(`[park-flora] ${name}: ${placed.length} placed`);
+            instance(name, placed);
+          };
+          // Photographs of the Pond show a WOODED bowl: continuous shrub
+          // masses under and between the trees, brush overhanging the
+          // shoreline, rocks at the water's edge. The shrub scans are ~1-3k
+          // tris a clump, so mass them freely; the jacarandas stay the only
+          // expensive species.
+          const underwood = (px: number, pz: number) => world.canopyAt(px, pz) > 1.2;
+          const lowVeg = (px: number, pz: number) => {
+            const c = world.canopyAt(px, pz);
+            return c > 1.2 && c < 9;
+          };
+          // "Near the water's edge": on land, with water within ~7 m — the
+          // mask ring itself is too thin at 2 m/px to sample directly.
+          const shore = (px: number, pz: number) => {
+            if (world.waterAt(px, pz) > 0.35) {
+              return false;
+            }
+            return (
+              world.waterAt(px + 7, pz) > 0.45 ||
+              world.waterAt(px - 7, pz) > 0.45 ||
+              world.waterAt(px, pz + 7) > 0.45 ||
+              world.waterAt(px, pz - 7) > 0.45
+            );
+          };
+          const lawn = (px: number, pz: number) => world.lawnAt(px, pz) > 0.45;
+          sprinkle("shrub_03", 420, 640, 5, 3.2, 6.0, underwood);
+          // Background thicket: the same ~1k-tri clumps blown up to small-
+          // tree size fill the wooded areas the 85k-tri scans can't afford
+          // to.
+          sprinkle("shrub_03", 400, 700, 7, 6.0, 9.5, (px, pz) => world.canopyAt(px, pz) > 7);
+          sprinkle("shrub_02", 220, 520, 5.5, 1.2, 1.9, lowVeg);
+          sprinkle("shrub_03", 120, 420, 4.5, 2.6, 4.5, shore);
+          sprinkle("rock_moss_set_01", 50, 420, 6, 1.6, 3.0, shore);
+          sprinkle("grass_medium_01", 340, 340, 4, 3.0, 4.5, lawn);
+          sprinkle("flower_gazania", 70, 300, 5, 2.8, 4.0, lawn);
+          sprinkle("flower_ursinia", 70, 300, 5, 2.5, 3.8, lawn);
+          sprinkle("dandelion_01", 60, 300, 5, 3.0, 4.5, lawn);
+          // Street furniture along the real paths: the cast-iron luminaires
+          // and slat benches that say "Central Park" at eye level. Lamps
+          // march both sides of the walks near the stage; benches face the
+          // water on the Pond loop.
+          const furniture = () => {
+            const lampPole = new THREE.CylinderGeometry(0.045, 0.07, 3.4, 8);
+            lampPole.translate(0, 1.7, 0);
+            const lampGlobe = new THREE.SphereGeometry(0.17, 10, 8);
+            lampGlobe.translate(0, 3.55, 0);
+            const poleMat = new THREE.MeshLambertMaterial({ color: 0x27362b });
+            const globeMat = new THREE.MeshLambertMaterial({ color: 0xfff3d0, emissive: 0xffe9b0, emissiveIntensity: 0.55 });
+            const seat = new THREE.BoxGeometry(1.9, 0.08, 0.55);
+            seat.translate(0, 0.45, 0);
+            const back = new THREE.BoxGeometry(1.9, 0.5, 0.07);
+            back.translate(0, 0.82, -0.26);
+            const legs = new THREE.BoxGeometry(1.7, 0.45, 0.45);
+            legs.translate(0, 0.22, 0);
+            const benchWood = new THREE.MeshLambertMaterial({ color: 0x5e4a33 });
+            const benchFrame = new THREE.MeshLambertMaterial({ color: 0x2e2e2c });
+            const lamps: THREE.Matrix4[] = [];
+            const benches: THREE.Matrix4[] = [];
+            for (const line of world.pathLines) {
+              if (line.width > 5.5) {
+                continue; // drives keep their own furniture out of scope
+              }
+              let travelled = 0;
+              for (let i = 2; i < line.pts.length; i += 2) {
+                const x0 = line.pts[i - 2];
+                const z0 = line.pts[i - 1];
+                const x1 = line.pts[i];
+                const z1 = line.pts[i + 1];
+                const seg = Math.hypot(x1 - x0, z1 - z0);
+                travelled += seg;
+                if (travelled < 26) {
+                  continue;
+                }
+                travelled = 0;
+                const room = parkToRoom(x1, z1);
+                const dist = Math.hypot(room.x, room.z);
+                if (dist < meadowRadius + 2 || dist > 330) {
+                  continue;
+                }
+                const ux = (x1 - x0) / seg;
+                const uz = (z1 - z0) / seg;
+                const side = lamps.length % 2 === 0 ? 1 : -1;
+                const off = (line.width / 2 + 0.5) * side;
+                const px = x1 - uz * off;
+                const pz = z1 + ux * off;
+                if (world.waterAt(px, pz) > 0.4) {
+                  continue;
+                }
+                const at = parkToRoom(px, pz);
+                dummy.position.set(at.x, roomY(px, pz) + 0.12, at.z);
+                dummy.rotation.y = rng() * Math.PI * 2;
+                dummy.scale.setScalar(1);
+                dummy.updateMatrix();
+                lamps.push(dummy.matrix.clone());
+                // Every third lamp interval, a bench on the opposite side,
+                // backed against the path and facing away from it.
+                if (lamps.length % 3 === 0 && dist < 220) {
+                  const boff = (line.width / 2 + 0.7) * -side;
+                  const bx = x1 - uz * boff;
+                  const bz = z1 + ux * boff;
+                  if (world.waterAt(bx, bz) < 0.4) {
+                    const bat = parkToRoom(bx, bz);
+                    dummy.position.set(bat.x, roomY(bx, bz) + 0.05, bat.z);
+                    // Face the path (rotated π from the world-frame edge
+                    // normal, which the half-turn world transform absorbs).
+                    dummy.rotation.y = Math.atan2(-uz, -ux) + (side > 0 ? 0 : Math.PI);
+                    dummy.updateMatrix();
+                    benches.push(dummy.matrix.clone());
+                  }
+                }
+              }
+            }
+            const place = (geometry: THREE.BufferGeometry, material: THREE.Material, matrices: THREE.Matrix4[]) => {
+              if (matrices.length === 0) {
+                return;
+              }
+              const instanced = new THREE.InstancedMesh(geometry, material, matrices.length);
+              matrices.forEach((matrix, i) => instanced.setMatrixAt(i, matrix));
+              instanced.frustumCulled = false;
+              group.add(instanced);
+            };
+            place(lampPole, poleMat, lamps);
+            place(lampGlobe, globeMat, lamps);
+            place(seat, benchWood, benches);
+            place(back, benchWood, benches);
+            place(legs, benchFrame, benches);
+          };
+          furniture();
+          // Outcrops: a handful of rock clumps scattered over each.
+          const rocks: { x: number; z: number; scale: number; rot: number; px: number; pz: number }[] = [];
+          for (const outcrop of OUTCROPS) {
+            const c = localFromLatLon(outcrop.lat, outcrop.lon);
+            for (let i = 0; i < 7; i++) {
+              const a = rng() * Math.PI * 2;
+              const d = Math.sqrt(rng()) * outcrop.radius;
+              const px = c.x + Math.cos(a) * d;
+              const pz = c.z + Math.sin(a) * d;
+              rocks.push({ ...parkToRoom(px, pz), px, pz, scale: 2.2 + rng() * 2.2, rot: rng() * Math.PI * 2 });
+            }
+          }
+          instance("rock_moss_set_01", rocks);
+        };
+        loadParkWorldShared(parkOptions)
+          .then((world) => {
+            if (parkDisposed) {
+              return;
+            }
+            parkWorld = world;
+            const y = world.groundAt(POND_STAGE.x, POND_STAGE.z);
+            world.group.scale.setScalar(PARK_SCALE);
+            world.group.rotation.y = Math.PI;
+            world.group.position.set(POND_STAGE.x * PARK_SCALE, -y * PARK_SCALE - 0.15, POND_STAGE.z * PARK_SCALE);
+            // The Lake mirrors the sky: the same panorama as the dome, as a
+            // reflection map (a fresh view per build; the dome's texture is
+            // env-owned and disposed with it).
+            if (world.water !== null) {
+              const reflection = skyTexture.clone();
+              reflection.mapping = THREE.EquirectangularReflectionMapping;
+              const waterMat = world.water.material as THREE.MeshStandardMaterial;
+              waterMat.envMap = reflection;
+              waterMat.envMapIntensity = 0.55;
+              waterMat.needsUpdate = true;
+              parkWater = waterMat;
+            }
+            // The Pond itself: three's Water — a real mirror pass, so the
+            // towers and sky genuinely reflect in the surface the way they
+            // do in every photograph. Cached on the shared world; only the
+            // vegetation-hiding hook rebinds to this build's group.
+            if (world.heroWater !== null) {
+              let hero = world.group.userData.heroWaterMesh as Water | undefined;
+              if (hero === undefined) {
+                const waterNormals = new THREE.TextureLoader().load("/assets/park/waternormals.jpg", (t) => {
+                  t.wrapS = THREE.RepeatWrapping;
+                  t.wrapT = THREE.RepeatWrapping;
+                });
+                hero = new Water(world.heroWater.geometry, {
+                  textureWidth: 512,
+                  textureHeight: 512,
+                  waterNormals,
+                  sunDirection: new THREE.Vector3(-24, 42, -30).normalize(),
+                  sunColor: 0xfff2d9,
+                  waterColor: 0x0e1f19,
+                  distortionScale: 2.4,
+                  fog: true,
+                });
+                hero.rotation.x = -Math.PI / 2;
+                hero.position.y = world.heroWater.level;
+                world.group.add(hero);
+                world.group.userData.heroWaterMesh = hero;
+                world.group.userData.heroWaterRender = hero.onBeforeRender;
+              }
+              parkHeroWater = hero;
+              // The mirror pass re-renders the scene; hide the ~27M-tris of
+              // instanced vegetation for it — the reflection wants sky,
+              // skyline and shore, and doubles the frame cost otherwise.
+              const original = world.group.userData.heroWaterRender as typeof hero.onBeforeRender;
+              hero.onBeforeRender = (renderer2, scene2, camera2, geometry2, material2, group2) => {
+                const hidden: THREE.Object3D[] = [];
+                scene.traverse((node) => {
+                  if (node instanceof THREE.InstancedMesh && node.visible) {
+                    node.visible = false;
+                    hidden.push(node);
+                  }
+                });
+                original.call(hero, renderer2, scene2, camera2, geometry2, material2, group2);
+                for (const node of hidden) {
+                  node.visible = true;
+                }
+              };
+            }
+            group.add(world.group);
+            // Planting reach: anywhere inside the park wall that isn't
+            // water (room→park is the half-turn about the stage).
+            plantableAt = (x, z) => {
+              const px = POND_STAGE.x - x / PARK_SCALE;
+              const pz = POND_STAGE.z - z / PARK_SCALE;
+              return insideParkRect(px, pz, -4) && world.waterAt(px, pz) < 0.4;
+            };
+            plantGroundY = (x, z) => {
+              const px = POND_STAGE.x - x / PARK_SCALE;
+              const pz = POND_STAGE.z - z / PARK_SCALE;
+              return (world.groundAt(px, pz) - y) * PARK_SCALE - 0.15;
+            };
+            return loadGardenFlora().then((flora) => {
+              if (!parkDisposed) {
+                scatterParkFlora(flora, world, y);
+              }
+            });
+          })
+          .catch((error: unknown) => {
+            // Fall back to the pastoral horizon rather than an empty one.
+            console.warn("park world failed to load; falling back to the meadow hills", error);
+            if (!parkDisposed) {
+              buildHills();
+              scene.fog = meadowFog();
+            }
+          });
+      } else {
+        buildHills();
       }
 
       // Butterflies: alpha-cutout two-lobed wings (procedural veined texture,
@@ -1789,6 +2230,14 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       return {
         group,
         update: (t, dt) => {
+          // The Pond's ripples drift even when motion is reduced elsewhere —
+          // still water reads as a rendering bug, not calm.
+          if (parkWater?.normalMap != null) {
+            parkWater.normalMap.offset.set((t * 0.014) % 1, (t * 0.011) % 1);
+          }
+          if (parkHeroWater !== null) {
+            (parkHeroWater.material as THREE.ShaderMaterial).uniforms.time.value = t * 0.6;
+          }
           if (reducedMotion) {
             return;
           }
@@ -1942,11 +2391,15 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         },
         dispose: () => {
           floraDisposed = true;
-          // The park detaches + disposes itself FIRST — its InstancedMesh
-          // owns real geometry/material, unlike the shared-cache flora the
-          // traverse below is calibrated for.
-          parkBuild?.dispose();
-          parkBuild = null;
+          parkDisposed = true;
+          parkWorld?.dispose();
+          parkWorld = null;
+          plantableAt = (x, z) => Math.hypot(x, z) < 104;
+          plantGroundY = () => 0;
+          if (pondScene) {
+            camera.far = defaultFar;
+            camera.updateProjectionMatrix();
+          }
           scene.remove(group);
           scene.fog = null;
           scene.background = null;
@@ -3966,7 +4419,7 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
     const reconcile = () => {
       const garden = modeRef.current === "garden";
       const hyper = layoutRef.current !== "radial";
-      const key = `${modeRef.current}|${layoutRef.current}`;
+      const key = `${modeRef.current}|${layoutRef.current}|${environmentRef.current}`;
       if (builtKey !== key) {
         // Style/layout switch: tear the world down and regrow it.
         env?.dispose();
@@ -4088,6 +4541,15 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         seenTrees.add(spec.upid);
         const existing = treeEntries.get(spec.upid);
         const placed = treePosition(index, treeSpecs.length, garden);
+        // A chosen planting spot (the "Plant…" flow) overrides the slot row —
+        // garden radial only; the abstract layouts keep their geometry. The
+        // plantable test re-validates at render time so stale storage (or a
+        // spot chosen in the park env viewed from the meadow env) degrades
+        // to the slot instead of a floating tree.
+        if (garden && !hyper && spec.plantedAt != null && plantableAt(spec.plantedAt.x, spec.plantedAt.z)) {
+          placed.pos = new THREE.Vector3(spec.plantedAt.x, plantGroundY(spec.plantedAt.x, spec.plantedAt.z), spec.plantedAt.z);
+          placed.k = 1;
+        }
         const scale = !hyper && garden ? 0.62 + Math.min(Math.max(spec.progress, 0), 100) / 100 * 0.33 : 1;
         const create = () => {
           const entry = hyper
@@ -4623,6 +5085,60 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
     // precedence rule runs: deep enough to see a sub-target standing behind
     // its own trunk volume, shallow enough to stay allocation-cheap.
     const PICK_PAYLOAD_CAP = 32;
+    // ── PLANTING marker ("Plant…" flow) ──────────────────────────────────
+    // A ghost ring + sapling stem hovering the ground under the pointer;
+    // green where the spot is legal, ember-red where it isn't (water, past
+    // the park wall). Scene-level, so env rebuilds never orphan it.
+    const plantMarker = new THREE.Group();
+    plantMarker.visible = false;
+    const plantRing = new THREE.Mesh(
+      new THREE.RingGeometry(1.35, 1.85, 40),
+      new THREE.MeshBasicMaterial({ color: 0x7dffa0, transparent: true, opacity: 0.85, side: THREE.DoubleSide, depthWrite: false }),
+    );
+    plantRing.rotation.x = -Math.PI / 2;
+    plantRing.position.y = 0.06;
+    plantMarker.add(plantRing);
+    const plantStem = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.06, 0.1, 1.5, 8),
+      new THREE.MeshBasicMaterial({ color: 0x7dffa0, transparent: true, opacity: 0.7 }),
+    );
+    plantStem.position.y = 0.75;
+    plantMarker.add(plantStem);
+    scene.add(plantMarker);
+    const plantPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+    const plantHit = new THREE.Vector3();
+    // Where does this pointer ray meet the ground? One refinement pass keeps
+    // the marker honest on the park's sloped terrain beyond the stage.
+    const plantPointAt = (clientX: number, clientY: number): { x: number; z: number; y: number; valid: boolean } | null => {
+      const rect = renderer.domElement.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) {
+        return null;
+      }
+      pointer.set(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
+      raycaster.setFromCamera(pointer, camera);
+      plantPlane.constant = 0;
+      if (raycaster.ray.intersectPlane(plantPlane, plantHit) === null) {
+        return null;
+      }
+      plantPlane.constant = -plantGroundY(plantHit.x, plantHit.z);
+      if (raycaster.ray.intersectPlane(plantPlane, plantHit) === null) {
+        return null;
+      }
+      const valid = modeRef.current === "garden" && layoutRef.current === "radial" && plantableAt(plantHit.x, plantHit.z);
+      return { x: plantHit.x, z: plantHit.z, y: plantGroundY(plantHit.x, plantHit.z), valid };
+    };
+    const updatePlantMarker = (clientX: number, clientY: number): void => {
+      const spot = plantPointAt(clientX, clientY);
+      if (spot === null) {
+        plantMarker.visible = false;
+        return;
+      }
+      plantMarker.visible = true;
+      plantMarker.position.set(spot.x, spot.y, spot.z);
+      const tint = spot.valid ? 0x7dffa0 : 0xff7d6b;
+      (plantRing.material as THREE.MeshBasicMaterial).color.setHex(tint);
+      (plantStem.material as THREE.MeshBasicMaterial).color.setHex(tint);
+    };
     const pick = (clientX: number, clientY: number): ScenePickPayload | null => {
       const rect = renderer.domElement.getBoundingClientRect();
       if (rect.width === 0 || rect.height === 0) {
@@ -4713,12 +5229,20 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
           const dAngle = -dx * 0.005;
           const dHeight = dy * 0.045;
           rig.dAngle += dAngle;
-          rig.dHeight = Math.max(1.4, Math.min(30, rig.dHeight + dHeight));
+          rig.dHeight = Math.max(1.4, Math.min(maxOrbitHeight(), rig.dHeight + dHeight));
           // Exponential moving average keeps the flick velocity stable.
           angVel = angVel * 0.75 + (dAngle / dtMove) * 0.25;
           heightVel = heightVel * 0.75 + (dHeight / dtMove) * 0.25;
         }
         return;
+      }
+      if (plantingRef.current) {
+        updatePlantMarker(event.clientX, event.clientY);
+        renderer.domElement.style.cursor = "crosshair";
+        return;
+      }
+      if (plantMarker.visible) {
+        plantMarker.visible = false;
       }
       const picked = pick(event.clientX, event.clientY);
       hoveredIdea = null;
@@ -4756,6 +5280,14 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
       dragging = false;
       panning = false;
       if (wasDrag || event.button !== 0) {
+        return;
+      }
+      if (plantingRef.current) {
+        const spot = plantPointAt(event.clientX, event.clientY);
+        if (spot !== null && spot.valid) {
+          plantMarker.visible = false;
+          onPlantPickRef.current?.({ x: spot.x, z: spot.z });
+        }
         return;
       }
       const picked = pick(event.clientX, event.clientY);
@@ -4826,7 +5358,9 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
     const onWheel = (event: WheelEvent) => {
       event.preventDefault();
       lastCameraInputMs = performance.now(); // manual input — suspend auto-framing
-      rig.dRadius = Math.max(4, Math.min(45, rig.dRadius + event.deltaY * 0.02));
+      // Step grows with distance so the long pull-out isn't a hundred ticks.
+      rig.dRadius = Math.max(4, Math.min(maxOrbitRadius(), rig.dRadius + event.deltaY * 0.02 * Math.max(1, rig.dRadius / 40)));
+      parkHeightFloor();
     };
     // GESTURE-DWELL SEAM: expose real raycast picking + projected node rects +
     // click-equivalent activation to the gesture layer, so pointing a hand at a
@@ -5026,7 +5560,7 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
         }
         // Exact mirror of the onPointerMove orbit path (incl. height clamp).
         rig.dAngle += dYaw;
-        rig.dHeight = Math.max(1.4, Math.min(30, rig.dHeight + dHeight));
+        rig.dHeight = Math.max(1.4, Math.min(maxOrbitHeight(), rig.dHeight + dHeight));
       },
       panBy: (dxPx, dyPx) => {
         lastCameraInputMs = performance.now();
@@ -5054,7 +5588,8 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
           return;
         }
         // Multiplicative dolly, re-clamped to the onWheel envelope [4,45].
-        rig.dRadius = Math.max(4, Math.min(45, rig.dRadius * scale));
+        rig.dRadius = Math.max(4, Math.min(maxOrbitRadius(), rig.dRadius * scale));
+        parkHeightFloor();
       },
       // FREE-ROAM WALK (the one-hand palm-depth gesture): a signed normalized
       // velocity factor plus the wall-clock seconds it covers — the source
@@ -5378,7 +5913,7 @@ export function RoomScene({ ideas, trees, mode, layout, wall = null, fitSignal, 
             angVel *= Math.exp(-dt * 2.2);
           }
           if (Math.abs(heightVel) > 1e-3) {
-            rig.dHeight = Math.max(1.4, Math.min(30, rig.dHeight + heightVel * dt));
+            rig.dHeight = Math.max(1.4, Math.min(maxOrbitHeight(), rig.dHeight + heightVel * dt));
             heightVel *= Math.exp(-dt * 2.6);
           }
         }
