@@ -393,8 +393,10 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
       void (async () => {
         let has = false;
         try {
-          const response = await fetch(`/api/process/${encodeURIComponent(process.upid)}/brief`);
-          has = response.ok;
+          // The exists route answers 200 either way — probing the brief route
+          // itself meant a console 404 per no-study import on every load.
+          const response = await fetch(`/api/process/${encodeURIComponent(process.upid)}/brief/exists`);
+          has = response.ok && ((await response.json()) as { has?: unknown }).has === true;
         } catch {
           has = false; // server down / route absent: no row, no lie
         }

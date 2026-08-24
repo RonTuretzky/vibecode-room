@@ -434,6 +434,13 @@ describe("POST /api/projects/import", () => {
     expect(built.previewUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+\//u);
   });
 
+  test("the brief EXISTENCE probe answers 200 either way — no console-404 per no-study import", async () => {
+    const { app } = await makeApp();
+    const response = await app.request("/api/process/upid-never-studied/brief/exists");
+    expect(response.status).toBe(200);
+    expect(((await response.json()) as { has: boolean }).has).toBe(false);
+  });
+
   test("A BARE REPO LINK IS STUDIED, NOT BUILT — and the brief route serves it", async () => {
     // The live miss this exists for: someone imported a repo, typed "just
     // study it first", and the room built it anyway because the description
