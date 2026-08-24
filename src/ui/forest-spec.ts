@@ -81,7 +81,7 @@ export const FOREST_CI_COLORS: Record<ForestCi, number> = {
 
 // Foliage greens (fresh repos) and the parched olive set (stale repos) — the
 // lush pool matches the dialogue tree's garden family.
-export const FOREST_LEAF_LUSH = [0x5c8a41, 0x6f9d4c, 0x82b05a, 0x96c06b];
+export const FOREST_LEAF_LUSH = [0x66a544, 0x7ec052, 0x94d861, 0xaee878];
 export const FOREST_LEAF_PARCHED = [0x8a8a4a, 0x9d8f4c, 0xa38f58, 0x7d7a45];
 
 // Unlabeled issues fall back to this neutral gray marker.
