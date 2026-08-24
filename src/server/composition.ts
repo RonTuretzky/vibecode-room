@@ -3992,6 +3992,37 @@ class LiveProjectorRuntime implements ProjectorRuntime {
         branches.push({ name, subject: subject ?? "", date: date ?? "" });
       }
     }
+    // LABEL A BRANCH BY WHAT IT GREW, NOT BY WHAT LANDED ON TOP. The tip
+    // subject was the label — so a prune-everywhere, which lands the SAME
+    // revert on every branch that carried the graft, renamed the whole rail
+    // to 'Revert "self: …"' and the operator could no longer tell the
+    // branches apart (live report: "the whole tree history is now reverts").
+    // A room branch's identity is the SPOKEN graft it carries: the newest
+    // `self:` commit on it. Reverts, merges and my own hand commits are
+    // skipped; a branch with no self: commit at all keeps its tip subject
+    // (honest — there is nothing better to call it).
+    await Promise.all(
+      branches.map(async (branch) => {
+        const own = await this.#selfGit([
+          "log",
+          "--no-merges",
+          "--format=%s",
+          "-n",
+          "40",
+          `refs/heads/${branch.name}`,
+        ]);
+        if (own.code !== 0) {
+          return;
+        }
+        const graft = own.out
+          .split("\n")
+          .map((line) => line.trim())
+          .find((line) => line.startsWith("self: "));
+        if (graft !== undefined) {
+          branch.subject = graft.slice("self: ".length);
+        }
+      }),
+    );
     return { current, branches };
   }
 
