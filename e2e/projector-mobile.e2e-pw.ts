@@ -9,7 +9,7 @@ async function waitForHook(page: Page): Promise<void> {
 }
 
 test.describe("projector UI — mobile layout", () => {
-  test("the 3D scene and every fleet panel fit a narrow viewport without horizontal cutoff", async ({ page }) => {
+  test("the 3D scene and every process's tree menu fit a narrow viewport without horizontal cutoff", async ({ page }) => {
     await page.goto("/?live=0");
     await waitForHook(page);
     await expect(page.getByTestId("app")).toBeVisible();
@@ -23,21 +23,23 @@ test.describe("projector UI — mobile layout", () => {
     const viewport = page.viewportSize();
     expect(viewport).not.toBeNull();
 
-    // Guard against a silent no-op: the demo fleet must actually render panels,
+    // Guard against a silent no-op: the demo fleet must actually be there,
     // otherwise the loop below would vacuously pass on an empty board.
     expect(callsigns).toEqual(expect.arrayContaining(["Atlas", "Cobalt"]));
 
+    // The per-process surface is the anchored tree menu now: open each one
+    // and hold it to the viewport.
     for (const callsign of callsigns) {
-      const panel = page.locator(`[data-testid="fleet-panel"][data-callsign="${callsign}"]`);
-      await panel.scrollIntoViewIfNeeded();
-      await expect(panel).toBeVisible();
-
-      const box = await panel.boundingBox();
-      expect(box, `${callsign} panel should have a bounding box`).not.toBeNull();
+      await page.evaluate((cs) => (window as any).__VIBERSYN__.select(cs), callsign);
+      const menu = page.getByTestId("tree-menu");
+      await expect(menu).toBeVisible();
+      const box = await menu.boundingBox();
+      expect(box, `${callsign} menu should have a bounding box`).not.toBeNull();
       expect(box!.x, `${callsign} left edge should be in viewport`).toBeGreaterThanOrEqual(0);
       expect(box!.x + box!.width, `${callsign} right edge should be in viewport`).toBeLessThanOrEqual(
         viewport!.width,
       );
+      await page.keyboard.press("Escape");
     }
   });
 });

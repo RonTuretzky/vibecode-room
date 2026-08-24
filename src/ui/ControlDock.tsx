@@ -77,6 +77,11 @@ export interface ControlDockProps {
 export function ControlDock({ children, initialExpanded = false, collapseSignal = 0 }: ControlDockProps) {
   const rootRef = useRef<HTMLDivElement | null>(null);
   const [expanded, setExpanded] = useState(initialExpanded);
+  // A mouse click on ⚙ arrives as focus-then-click: the focus handler has
+  // just expanded the tray when the click handler runs, and a naive toggle
+  // slams it shut in the same gesture — the dock looked click-dead. Remember
+  // WHEN focus opened it and let the immediately-following click stand.
+  const focusOpenedAtMs = useRef(0);
   // A bumped collapseSignal folds the tray (see the prop doc). Presence never
   // auto-opens (opening is click/dwell only), so no reopen latch is needed.
   useEffect(() => {
@@ -137,7 +142,14 @@ export function ControlDock({ children, initialExpanded = false, collapseSignal 
       ref={rootRef}
       // Keyboard path: tabbing to the dock button (or anything inside) expands
       // immediately — React's onFocus bubbles like focusin.
-      onFocus={() => setExpanded(true)}
+      onFocus={() => {
+        setExpanded((open) => {
+          if (!open) {
+            focusOpenedAtMs.current = Date.now();
+          }
+          return true;
+        });
+      }}
     >
       <button
         type="button"
@@ -152,7 +164,12 @@ export function ControlDock({ children, initialExpanded = false, collapseSignal 
         // honestly alternates: closed → open, open → closed (live-room ask:
         // dwelling the button again must close the tray). Walking away still
         // idle-folds it.
-        onClick={() => setExpanded((open) => !open)}
+        onClick={() => {
+          if (Date.now() - focusOpenedAtMs.current < 500) {
+            return; // the focus of this same gesture already opened it
+          }
+          setExpanded((open) => !open);
+        }}
       >
         ⚙ Controls
       </button>
