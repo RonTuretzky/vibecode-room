@@ -58,7 +58,22 @@ export type TendChipId =
   | "pager"
   | "note"
   | "error"
-  | "qr";
+  | "qr"
+  // Fleet-tree chips (the generalized constellation — TreeMenu's non-self
+  // body speaks the same chip vocabulary): concept lanes ride the leaf arc
+  // like branch cards, the action verbs (brief/live/deck/grow) join the verb
+  // arc above the steer chip, remove roots it, and replant rests with the
+  // receipts at the roots.
+  | "lane-0"
+  | "lane-1"
+  | "lane-2"
+  | "lane-3"
+  | "brief"
+  | "live"
+  | "deck"
+  | "grow"
+  | "replant"
+  | "remove";
 
 export interface TendChipSize {
   width: number;
@@ -95,6 +110,19 @@ export const DESK_SIZES: Record<TendChipId, TendChipSize> = {
   note: { width: 320, height: 56 },
   error: { width: 320, height: 56 },
   qr: { width: 220, height: 230 },
+  "lane-0": { width: 310, height: 68 },
+  "lane-1": { width: 310, height: 68 },
+  "lane-2": { width: 310, height: 68 },
+  "lane-3": { width: 310, height: 68 },
+  // Verb-chip nominals cover the REAL rendered minimum: 56px verb button +
+  // 24px chip padding + 2px border = 82 — an under-budgeted nominal quietly
+  // eats the separation the dwell hitboxes rely on.
+  brief: { width: 280, height: 84 },
+  live: { width: 280, height: 84 },
+  deck: { width: 280, height: 84 },
+  grow: { width: 310, height: 96 },
+  replant: { width: 280, height: 84 },
+  remove: { width: 280, height: 84 },
 };
 
 const GESTURE_SIZES: Record<TendChipId, TendChipSize> = {
@@ -114,9 +142,28 @@ const GESTURE_SIZES: Record<TendChipId, TendChipSize> = {
   "branch-2": { width: 420, height: 126 },
   "branch-3": { width: 420, height: 126 },
   pager: { width: 420, height: 130 },
-  note: { width: 380, height: 64 },
-  error: { width: 380, height: 64 },
+  // Root-slot chips stay NARROW at gesture scale: the free band between the
+  // two arcs' bulged edges is ~290px on a busy fleet tree — a wider receipt
+  // has nowhere to rest and the nudge pass can only trade overlap for
+  // off-screen.
+  // Long verbatim refusals wrap in the narrow band — the taller nominal
+  // keeps the wrapped receipt from eating the next chip's separation.
+  note: { width: 280, height: 120 },
+  error: { width: 280, height: 120 },
   qr: { width: 260, height: 270 },
+  // Fleet chips render with trimmed 8px chip padding at gesture scale
+  // (TreeMenu.css), so a 96px-floor interactive row yields a 114px chip —
+  // these nominals cover that real footprint.
+  "lane-0": { width: 420, height: 116 },
+  "lane-1": { width: 420, height: 116 },
+  "lane-2": { width: 420, height: 116 },
+  "lane-3": { width: 420, height: 116 },
+  brief: { width: 390, height: 116 },
+  live: { width: 390, height: 116 },
+  deck: { width: 390, height: 116 },
+  grow: { width: 420, height: 116 },
+  replant: { width: 280, height: 116 },
+  remove: { width: 390, height: 116 },
 };
 
 export function tendChipSize(id: TendChipId, gesture: boolean): TendChipSize {
@@ -127,12 +174,36 @@ export function tendChipSize(id: TendChipId, gesture: boolean): TendChipSize {
 // VERB ARC (left of the tree), top → bottom: the identity plate crowns it,
 // the trunk verbs sit mid-height, whatever is growing sits beside its ✂, and
 // graft roots the arc at the tree's base.
-const VERB_ARC: readonly TendChipId[] = ["identity", "here", "growing", "settled", "halt-note", "graft"];
-// LEAF ARC (right of the tree), top → bottom: ✕ crowns it; the focus view
-// (prune among the limbs) or the paginated leaf-chips fill the crown; the
-// pager hangs below the last leaf.
+// Fleet-only ids interleave where their meaning sits: brief/live/deck/grow
+// are action verbs above the steer/graft chip at the base, remove is the
+// danger verb below everything. A present-set never mixes self-only and
+// fleet-only ids, so the self constellation's slots are byte-identical to
+// before.
+const VERB_ARC: readonly TendChipId[] = [
+  "identity",
+  "here",
+  "growing",
+  "settled",
+  "halt-note",
+  "brief",
+  "live",
+  "deck",
+  "grow",
+  "graft",
+  "remove",
+];
+// LEAF ARC (right of the tree), top → bottom: ✕ crowns it; concept lanes fill
+// the crown on fleet trees; the focus view (prune among the limbs) or the
+// paginated leaf-chips fill it on trees with branches; the pager hangs below
+// the last leaf. Lanes and branch cards SHARE the four leaf slots (TreeMenu
+// pages branches into the remainder) so the arc's vertical budget is bounded
+// at gesture sizes — a 1080p wall cannot stack both families in full.
 const LEAF_ARC: readonly TendChipId[] = [
   "close",
+  "lane-0",
+  "lane-1",
+  "lane-2",
+  "lane-3",
   "focus",
   "branches-head",
   "reading",
@@ -143,8 +214,13 @@ const LEAF_ARC: readonly TendChipId[] = [
   "branch-3",
   "pager",
 ];
-// FIXED SLOTS below the tree: the honest receipts (and the take-home QR).
-const ROOT_SLOTS: readonly TendChipId[] = ["note", "error", "qr"];
+// FIXED SLOTS below the tree: replant and the take-home QR first (STATIONARY
+// — a dwell button must never move because a transient receipt mounted above
+// it), then the honest receipts, which come and go on their own budgets. The
+// layout stacks the two groups independently (see the root-slot pass below).
+const ROOT_PERSISTENT: readonly TendChipId[] = ["replant", "qr"];
+const ROOT_TRANSIENT: readonly TendChipId[] = ["note", "error"];
+const ROOT_SLOTS: readonly TendChipId[] = [...ROOT_PERSISTENT, ...ROOT_TRANSIENT];
 
 // Canonical order for the rest column + the deterministic nudge pass.
 const CANONICAL: readonly TendChipId[] = [...VERB_ARC.slice(0, 1), "close", ...VERB_ARC.slice(1), ...LEAF_ARC.slice(1), ...ROOT_SLOTS];
@@ -384,25 +460,42 @@ export function tendChipLayout(
     });
   }
 
-  // ROOT SLOTS — receipts (and QR) centered under the trunk. A wide receipt
+  // ROOT SLOTS — replant/QR and the receipts under the trunk. A wide chip
   // under a narrow tree would straddle the leaf column's lower chips (its arc
   // bulges up to ARC_CURVE toward the trunk), so the preferred X is bounded
   // by that conservative boundary FIRST — the nudge pass then only handles
   // the residual brushes (e.g. the verb arc overflowing below a tall column).
-  const rootIds = ROOT_SLOTS.filter((id) => present.includes(id));
-  if (rootIds.length > 0) {
-    const col = stackColumn(rootIds, sizes, viewport.height, "top", anchor.top + anchor.height + ANCHOR_GAP);
-    const centerX = anchor.left + anchor.width / 2;
-    const leafBoundary = anchor.left + anchor.width + ANCHOR_GAP - ARC_CURVE - TEND_CHIP_MIN_SEPARATION;
-    rootIds.forEach((id, index) => {
+  //
+  // TWO-PART STACK: the persistent chips (replant — a dwell BUTTON — and the
+  // QR) are stacked and clamped on their own, so a transient receipt mounting
+  // or fading can NEVER move them (a shared column's whole-run clamp used to
+  // pull the replant button up out from under a mid-dwell cursor whenever a
+  // receipt landed). Receipts then append below, each clamped individually;
+  // the nudge pass resolves whatever they brush.
+  const centerX = anchor.left + anchor.width / 2;
+  const leafBoundary = anchor.left + anchor.width + ANCHOR_GAP - ARC_CURVE - TEND_CHIP_MIN_SEPARATION;
+  const rootLeft = (size: TendChipSize): number =>
+    clamp(
+      Math.min(centerX - size.width / 2, leafBoundary - size.width),
+      TEND_CHIP_MARGIN,
+      viewport.width - TEND_CHIP_MARGIN - size.width,
+    );
+  const persistentRoot = ROOT_PERSISTENT.filter((id) => present.includes(id));
+  let rootCursor = anchor.top + anchor.height + ANCHOR_GAP;
+  if (persistentRoot.length > 0) {
+    const col = stackColumn(persistentRoot, sizes, viewport.height, "top", rootCursor);
+    persistentRoot.forEach((id, index) => {
       const size = sizes[id];
-      const left = clamp(
-        Math.min(centerX - size.width / 2, leafBoundary - size.width),
-        TEND_CHIP_MARGIN,
-        viewport.width - TEND_CHIP_MARGIN - size.width,
-      );
-      rects.push({ id, left, top: col.tops[index]!, width: size.width, height: size.height });
+      rects.push({ id, left: rootLeft(size), top: col.tops[index]!, width: size.width, height: size.height });
     });
+    const last = sizes[persistentRoot[persistentRoot.length - 1]!];
+    rootCursor = col.tops[persistentRoot.length - 1]! + last.height + col.sep;
+  }
+  for (const id of ROOT_TRANSIENT.filter((candidate) => present.includes(candidate))) {
+    const size = sizes[id];
+    const top = clamp(rootCursor, TEND_CHIP_MARGIN, viewport.height - TEND_CHIP_MARGIN - size.height);
+    rects.push({ id, left: rootLeft(size), top, width: size.width, height: size.height });
+    rootCursor = top + size.height + TEND_CHIP_SEPARATION;
   }
 
   // Deterministic cross-arc nudge (12px pad keeps visual daylight; the arcs'

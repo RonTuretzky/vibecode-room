@@ -2395,21 +2395,11 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
     setIssuePopup({ upid: process.upid, issue, anchor });
   }, []);
 
-  // 🌱 GROW A BRANCH (tree menu, adopted trees): POST names a real room/*
-  // rail off the freshly fetched origin tip; the menu closes immediately and
-  // the LIMB appears via the next snapshot (limbs re-derive each reconcile).
-  const growBranch = useCallback(async (upid: string) => {
-    setSelected(null);
-    try {
-      await fetch(`/api/process/${encodeURIComponent(upid)}/branch`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name: "spoken-changes" }),
-      });
-    } catch {
-      // No limb grows; the server logs the honest failure.
-    }
-  }, []);
+  // 🌱 GROW A BRANCH moved INTO TreeMenu (tree-repo.ts): the old handler
+  // here closed the menu and swallowed the response body, so every server
+  // refusal was silent — the exact bug reportControlFailure exists to forbid.
+  // The menu now runs the POST itself, keeps itself open, and shows the
+  // receipt (or the refusal verbatim) as a constellation chip.
 
   // ANCHOR CHASE (menu ↔ tree): while a menu is open, refresh its anchor from
   // the tree's LIVE projected dwell rect about once a second — slot re-shuffles
@@ -3195,7 +3185,6 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
             setHoloPanel({ upid, anchor: menuAnchor });
             setSelected(null);
           }}
-          onGrowBranch={(upid) => void growBranch(upid)}
           onReplant={(upid) => {
             setPlanting({ kind: "tree", upid });
             setSelected(null);

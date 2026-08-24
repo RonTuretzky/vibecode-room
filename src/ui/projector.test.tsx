@@ -15,6 +15,7 @@ import { IdeaTray } from "./IdeaTray";
 import { HelpOverlay } from "./HelpOverlay";
 import { QrImport, qrPanelState } from "./QrImport";
 import { freshLanding, receiptLine, receiptState } from "./RecordSteerToggle";
+import { freshBranchName } from "./tree-repo";
 import { preferredGuestUrl } from "./GuestHands";
 import { Slideshow } from "./Slideshow";
 import { demoProjectorSnapshot, busyRoomSnapshot } from "./demo-data";
@@ -435,18 +436,27 @@ describe("per-tree menu: the tree is the interface", () => {
     expect(html.slice(html.lastIndexOf("<", buildingIdx), buildingIdx)).not.toContain("button");
   });
 
-  test("the panel shields its WHOLE rect from the dwell-miss close (data-dwell-shield)", () => {
-    // A cursor reading the menu's non-button regions (title/status, building-
-    // lane rows, QR, ExecutionChip) must not count as empty ground: the
-    // GestureLayer's dismiss check treats [data-dwell-shield] rects as
-    // on-target, so the panel opts in on its own root element.
+  test("fleet constellation: NO root shield — every chip is a button or shields itself", () => {
+    // The fleet menu is a constellation now (no panel): its root is a full-
+    // viewport pointer-events:none section, so a shield THERE would swallow
+    // the dwell-miss close everywhere. Instead each non-button chip carries
+    // its own data-dwell-shield (a cursor reading the title/status, building-
+    // lane rows or ExecutionChip must not count as empty ground), and button
+    // chips are dwell targets in their own right.
     const html = renderToStaticMarkup(
       <ProjectorApp initialSnapshot={demoProjectorSnapshot} initialOverlay={{ selected: "Atlas" }} />,
     );
     const idx = html.indexOf('data-testid="tree-menu"');
     expect(idx).toBeGreaterThan(-1);
     const openTag = html.slice(html.lastIndexOf("<", idx), html.indexOf(">", idx));
-    expect(openTag).toContain("data-dwell-shield");
+    expect(openTag).toContain("tree-tend-constellation");
+    expect(openTag).not.toContain("data-dwell-shield");
+    // Every chip: a <button> (dwell target) or its own shield.
+    const chipMatches = [...html.matchAll(/<(\w+)[^>]*data-chip="[^"]+"[^>]*>/gu)];
+    expect(chipMatches.length).toBeGreaterThanOrEqual(4);
+    for (const match of chipMatches) {
+      expect(match[1] === "button" || match[0].includes('data-dwell-shield="1"')).toBe(true);
+    }
   });
 
   test("steer: the menu offers the record toggle (no typed input anywhere)", () => {
@@ -2341,7 +2351,7 @@ describe("holo panel: the live app beside its tree", () => {
       <ProjectorApp initialSnapshot={deploySnapshot()} initialOverlay={{ selected: "Atlas" }} />,
     );
     expect(html).toContain('data-testid="tree-menu-live"');
-    expect(html).toContain("🌐 Live app ▸");
+    expect(html).toContain("🌐 live app");
   });
 
   test("no deployUrl → no Live app row (the demo fleet has none)", () => {
@@ -2443,7 +2453,7 @@ describe("adopted trees: grow-a-branch row + branch/issue popups", () => {
       <ProjectorApp initialSnapshot={adoptedSnapshot()} initialOverlay={{ selected: "Atlas" }} />,
     );
     expect(html).toContain('data-testid="tree-menu-grow"');
-    expect(html).toContain("🌱 Grow a branch ▸");
+    expect(html).toContain("🌱 grow a branch");
   });
 
   test("no treeRepo (the demo fleet) → no Grow-a-branch row", () => {
@@ -2824,5 +2834,164 @@ describe("listening orb reports the mic, not the intent", () => {
       />,
     );
     expect(markup).toContain('data-state="muted"');
+  });
+});
+
+describe("fleet constellation: adopted branches tended in the room's words", () => {
+  // The generalized tend surface (TreeMenu's non-self body): an adopted
+  // GitHub import hangs its room/* rails as leaf-chips with a focus view
+  // carrying exactly the verbs the clone substrate backs — graft-onto-branch,
+  // ⬆ open PR, ✓ merge — and the 🌱 grow verb reports honestly instead of
+  // the old fire-and-forget POST.
+  const REMOTE = "https://github.com/acme/pr-triage";
+  const FLEET_PR_URL = "https://github.com/acme/pr-triage/pull/7";
+  const fleetProcess = (): ProjectorProcess => ({
+    ...demoProjectorSnapshot.processes[0]!,
+    treeRepo: {
+      branches: [
+        { name: "main", commits: 5 },
+        { name: "room/spoken-changes", commits: 3, prUrl: FLEET_PR_URL },
+        { name: "room/issue-12", commits: 1 },
+      ],
+      remoteUrl: REMOTE,
+    },
+  });
+  const renderFleet = (overrides: {
+    process?: ProjectorProcess;
+    tendSeed?: {
+      focusBranch?: string;
+      armed?: string;
+      page?: number;
+      busy?: {
+        verb: "climb" | "merge" | "press" | "prune" | "stop" | "grow" | "pr" | "graft";
+        branch: string | null;
+        scope?: "branch" | "everywhere";
+      };
+      note?: string;
+      error?: string;
+    };
+  } = {}) =>
+    renderToStaticMarkup(
+      <TreeMenu
+        process={overrides.process ?? fleetProcess()}
+        snapshot={demoProjectorSnapshot}
+        anchor={null}
+        onClose={() => {}}
+        onOpenDeck={() => {}}
+        onDismiss={() => {}}
+        tendSeed={overrides.tendSeed}
+      />,
+    );
+
+  test("list view: main is the trunk (never a leaf-chip); branches share the leaf slots with the lanes", () => {
+    const html = renderFleet();
+    // Only room/* rails hang as leaves — 2 grown, and with 3 concept lanes on
+    // the arc the branch pages carry max(1, 4-3) = 1 card each.
+    expect(html).toContain("🌿 branches · 2 grown");
+    // The demo fleet snapshot carries no concept lanes, so both rails fit one
+    // page (size 4 − 0) and no pager renders; with 3 lanes the page slims to
+    // max(1, 4−3)=1 — pinned through pageSlice's own size contract.
+    expect(countOccurrences(html, 'data-testid="tree-menu-version"')).toBe(2);
+    expect(html).not.toContain('data-branch="main"');
+    expect(html).not.toContain('data-testid="tree-menu-branch-pager"');
+    expect(pageSlice(["a", "b"], 0, Math.max(1, TREE_TEND_PAGE_SIZE - 3)).slice).toEqual(["a"]);
+    // The card carries the honest facts the snapshot knows: grafts + PR.
+    expect(html).toContain("3 grafts · ⬆ PR open");
+    // The grow verb is present and enabled; the constellation root carries
+    // the fleet contract (no root shield — chips shield themselves).
+    expect(html).toContain('data-testid="tree-menu-grow"');
+    const idx = html.indexOf('data-testid="tree-menu"');
+    const openTag = html.slice(html.lastIndexOf("<", idx), html.indexOf(">", idx));
+    expect(openTag).toContain("tree-tend-constellation");
+    expect(openTag).not.toContain("data-dwell-shield");
+  });
+
+  test("focus view: exactly the substrate's verbs — graft / open PR / merge; no prune, no climb", () => {
+    const html = renderFleet({ tendSeed: { focusBranch: "room/spoken-changes" } });
+    expect(html).toContain('data-testid="tree-menu-version-back"');
+    expect(html).toContain('data-open="true"');
+    expect(html).toContain('data-testid="tree-menu-branch-graft"');
+    expect(html).toContain('data-testid="tree-menu-branch-pr"');
+    expect(html).toContain('data-testid="tree-menu-branch-merge"');
+    // A verb with no rail behind it is the one thing this surface must never
+    // grow (80f0904): no delete-branch rail and no checkout rail exist on the
+    // adopted clone substrate.
+    expect(html).not.toContain('data-testid="tree-menu-version-delete"');
+    expect(html).not.toContain('data-testid="tree-menu-version-load"');
+  });
+
+  test("merge is two-stage with the visible 10s drain; grow shows its busy truth", () => {
+    const armedHtml = renderFleet({
+      tendSeed: { focusBranch: "room/spoken-changes", armed: "treemerge:room/spoken-changes" },
+    });
+    expect(armedHtml).toContain('data-testid="tree-menu-branch-merge-confirm"');
+    expect(armedHtml).toContain("make it permanent?");
+    expect(armedHtml).toContain('class="tend-drain"');
+    const busyHtml = renderFleet({ tendSeed: { busy: { verb: "grow", branch: null } } });
+    expect(busyHtml).toContain("🌱 growing…");
+  });
+
+  test("a local (non-adopted) tree grows NO branch chips and NO grow verb — but keeps lanes/steer/remove", () => {
+    const html = renderFleet({ process: demoProjectorSnapshot.processes[0]! });
+    expect(html).not.toContain('data-testid="tree-menu-grow"');
+    expect(html).not.toContain('data-testid="tree-menu-version"');
+    expect(html).toContain('data-testid="record-steer-start"');
+    expect(html).toContain('data-testid="tree-menu-remove"');
+  });
+
+  test("lanes share the leaf slots: 3 lanes squeeze the branch pages to one card + the pager", () => {
+    const laned = {
+      ...fleetProcess(),
+      builds: [
+        { backend: "smithers", label: "Smithers", status: "building", previewUrl: null, summary: null, slideshowUrl: null, progressLabel: "mocking", percent: 40 },
+        { backend: "native", label: "Native", status: "ready", previewUrl: "http://127.0.0.1:4100/", summary: null, slideshowUrl: "http://127.0.0.1:4100/slides.html" },
+        { backend: "eliza", label: "ElizaOS", status: "failed", previewUrl: null, summary: "boom", slideshowUrl: null },
+      ],
+    } as unknown as ProjectorProcess;
+    const html = renderFleet({ process: laned });
+    expect(countOccurrences(html, 'data-testid="tree-menu-lane"')).toBe(3);
+    // Budget: max(1, 4 − 3 lanes) = 1 branch card per page, so the two grown
+    // rails paginate and the pager's dwell buttons render.
+    expect(countOccurrences(html, 'data-testid="tree-menu-version"')).toBe(1);
+    expect(html).toContain('data-testid="tree-menu-branch-pager"');
+    expect(html).toContain("page 1/2");
+    expect(html).toContain('data-testid="tree-menu-page-newer"');
+    expect(html).toContain('data-testid="tree-menu-page-older"');
+    // The ready lane stays a literal enabled button inside its chip.
+    const readyIdx = html.indexOf('data-status="ready"');
+    expect(html.slice(html.lastIndexOf("<", readyIdx), readyIdx)).toContain("button");
+  });
+
+  test("the honest receipts render through the tendSeed seam (SSR can reach every state)", () => {
+    const html = renderFleet({
+      tendSeed: {
+        note: "🌱 grown — room/spoken-changes is a new limb on this tree",
+        error: "branch rails are for adopted GitHub imports — local trees publish via publish-repo",
+      },
+    });
+    expect(html).toContain('data-chip="note"');
+    expect(html).toContain('data-testid="tree-menu-tend-note"');
+    expect(html).toContain("🌱 grown — room/spoken-changes is a new limb on this tree");
+    expect(html).toContain('data-chip="error"');
+    expect(html).toContain('data-testid="tree-menu-version-error"');
+    expect(html).toContain("branch rails are for adopted GitHub imports");
+  });
+
+  test("an adopted tree with no room/* rails yet shows the grow invitation", () => {
+    const bare = {
+      ...fleetProcess(),
+      treeRepo: { branches: [{ name: "main", commits: 2 }], remoteUrl: REMOTE },
+    } as unknown as ProjectorProcess;
+    const html = renderFleet({ process: bare });
+    expect(html).toContain('data-chip="empty"');
+    expect(html).toContain("no branches yet — 🌱 grow one to start a change");
+    expect(html).not.toContain('data-testid="tree-menu-version"');
+  });
+
+  test("freshBranchName: never collides with an existing room/* rail (the idempotent-no-op fix)", () => {
+    expect(freshBranchName([])).toBe("spoken-changes");
+    expect(freshBranchName(["main"])).toBe("spoken-changes");
+    expect(freshBranchName(["main", "room/spoken-changes"])).toBe("spoken-changes-2");
+    expect(freshBranchName(["room/spoken-changes", "room/spoken-changes-2"])).toBe("spoken-changes-3");
   });
 });
