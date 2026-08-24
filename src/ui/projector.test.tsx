@@ -50,6 +50,17 @@ function countOccurrences(haystack: string, needle: string): number {
   return haystack.split(needle).length - 1;
 }
 
+// The picked tree's menu markup ALONE. "The menu no longer grows X" is only a
+// real assertion when it is made against the menu: the idea tray, the status
+// bar and the deck HUD carry the same words and testids, so an absence check
+// over the whole document would pass for the wrong reason — or silently pass
+// against a document where no menu ever opened.
+function treeMenuMarkup(html: string): string {
+  const idx = html.indexOf('data-testid="tree-menu"');
+  expect(idx).toBeGreaterThan(-1);
+  return html.slice(html.lastIndexOf("<section", idx));
+}
+
 describe("projector UI contract", () => {
   test("renders every required projector region from deterministic demo state", () => {
     const html = renderToStaticMarkup(<ProjectorApp initialSnapshot={demoProjectorSnapshot} />);
@@ -422,18 +433,35 @@ describe("per-tree menu: the tree is the interface", () => {
     expect(html).toContain('data-testid="tree-menu-close"');
   });
 
-  test("concept lanes: ready = View button, building = honest percent row, failed = FAILED", () => {
-    const html = renderToStaticMarkup(
-      <ProjectorApp initialSnapshot={conceptSnapshot()} initialOverlay={{ selected: "Atlas" }} />,
+  // THE ABSENCE PIN for both surfaces the operator pulled off the generalized
+  // tree: the concept-lane chips (each ready lane was a button into that
+  // backend's MOCK deck) and the record-a-change toggle. The lanes are still
+  // DERIVED — the model carries them, and the guided demo still races them —
+  // so this menu's silence has to be asserted against a process that really
+  // has three of them, or a regression would re-grow the chips unnoticed.
+  test("concept lanes never reach the menu: three racing mocks render no chip at all", () => {
+    const snapshot = conceptSnapshot();
+    // The data is there: the same process still derives its three lanes.
+    expect(treeMenuModel(snapshot.processes[0]!, snapshot).lanes).toHaveLength(3);
+    const menu = treeMenuMarkup(
+      renderToStaticMarkup(
+        <ProjectorApp initialSnapshot={snapshot} initialOverlay={{ selected: "Atlas" }} />,
+      ),
     );
-    expect(countOccurrences(html, 'data-testid="tree-menu-lane"')).toBe(3);
-    expect(html).toContain("mocking · 40%");
-    expect(html).toContain("MOCK READY ✓");
-    expect(html).toContain("View ▸");
-    expect(html).toContain("FAILED");
-    // The building/failed rows are NOT buttons — no dead controls, just truth.
-    const buildingIdx = html.indexOf('data-status="building"');
-    expect(html.slice(html.lastIndexOf("<", buildingIdx), buildingIdx)).not.toContain("button");
+    // …and none of it reaches the tree: no lane chip, no mock deck button, no
+    // percent row, no FAILED row.
+    expect(menu).not.toContain('data-testid="tree-menu-lane"');
+    expect(menu).not.toContain("MOCK READY ✓");
+    expect(menu).not.toContain("View ▸");
+    expect(menu).not.toContain("mocking · 40%");
+    expect(menu).not.toContain("FAILED");
+    // The other pulled surface, pinned in the same breath: voice steering only
+    // lives where it commits somewhere nameable (the SELF tree, a branch card).
+    expect(menu).not.toContain('data-testid="tree-menu-steer"');
+    expect(menu).not.toContain('data-testid="record-steer-start"');
+    // What a concept tree still says for itself.
+    expect(menu).toContain('data-testid="tree-menu-title"');
+    expect(menu).toContain('data-testid="tree-menu-remove"');
   });
 
   test("fleet constellation: NO root shield — every chip is a button or shields itself", () => {
@@ -459,13 +487,39 @@ describe("per-tree menu: the tree is the interface", () => {
     }
   });
 
-  test("steer: the menu offers the record toggle (no typed input anywhere)", () => {
-    const html = renderToStaticMarkup(
-      <ProjectorApp initialSnapshot={demoProjectorSnapshot} initialOverlay={{ selected: "Atlas" }} />,
+  // A fleet tree's spoken change went into a mock revision — nothing anyone
+  // can point at afterwards — so the operator pulled the toggle off this menu.
+  // Steering survives where the words land somewhere nameable: the SELF tree's
+  // graft chip (below), a branch card (BranchPopup), the deck HUD (Slideshow).
+  // The pair is the assertion: gone HERE, still there THERE.
+  test("steer: the fleet menu offers NO record toggle — the self tree still does", () => {
+    const fleet = treeMenuMarkup(
+      renderToStaticMarkup(
+        <ProjectorApp initialSnapshot={demoProjectorSnapshot} initialOverlay={{ selected: "Atlas" }} />,
+      ),
     );
-    expect(html).toContain('data-testid="tree-menu-steer"');
-    expect(html).toContain('data-testid="record-steer-start"');
-    expect(html).not.toContain("type a change");
+    expect(fleet).not.toContain('data-testid="tree-menu-steer"');
+    expect(fleet).not.toContain('data-testid="record-steer-start"');
+    const selfProcess = {
+      ...demoProjectorSnapshot.processes[0]!,
+      upid: "self",
+      callsign: "mirror",
+      task: "Vibersyn Room",
+      stage: "self",
+    } as ProjectorProcess;
+    const mirror = treeMenuMarkup(
+      renderToStaticMarkup(
+        <ProjectorApp
+          initialSnapshot={{ ...demoProjectorSnapshot, processes: [selfProcess, ...demoProjectorSnapshot.processes.slice(1)] }}
+          initialOverlay={{ selected: "mirror" }}
+        />,
+      ),
+    );
+    expect(mirror).toContain('data-testid="tree-menu-steer"');
+    expect(mirror).toContain('data-testid="record-steer-start"');
+    // Wherever it lives, steering is spoken — never typed.
+    expect(fleet).not.toContain("type a change");
+    expect(mirror).not.toContain("type a change");
   });
 
   test("remove is TWO-STAGE: resting shows 🗑 remove, never the armed confirm", () => {
@@ -1043,31 +1097,67 @@ describe("tend the tree: the self tree's surface", () => {
 // narration into that build). Picking opens the MENU only; the menu's
 // RecordSteerToggle is the ONLY armer.
 describe("picking a tree never arms voice steering", () => {
-  test("a picked tree's menu shows the UNARMED record toggle when nothing is steering", () => {
-    const html = renderToStaticMarkup(
-      <ProjectorApp
-        initialSnapshot={{ ...demoProjectorSnapshot, steeringUpid: null }}
-        initialOverlay={{ selected: "Atlas" }}
-      />,
+  // Stronger than it was: the fleet menu no longer carries a record toggle at
+  // all, so a pick cannot arm steering even by accident — there is nothing on
+  // the surface to arm, invited or armed.
+  test("a picked fleet tree's menu claims no steering — no toggle at all, armed or not", () => {
+    const menu = treeMenuMarkup(
+      renderToStaticMarkup(
+        <ProjectorApp
+          initialSnapshot={{ ...demoProjectorSnapshot, steeringUpid: null }}
+          initialOverlay={{ selected: "Atlas" }}
+        />,
+      ),
     );
-    // The pick opened the menu…
-    expect(html).toContain('data-testid="tree-menu"');
-    // …but steering is NOT claimed: the toggle invites, it does not report.
-    expect(html).toContain('data-testid="record-steer-start"');
-    expect(html).not.toContain('data-testid="record-steer-stop"');
+    expect(menu).not.toContain('data-testid="record-steer-start"');
+    expect(menu).not.toContain('data-testid="record-steer-stop"');
+    expect(menu).not.toContain('data-testid="tree-menu-steer"');
   });
 
   test("the armed state comes from the snapshot's steering flag (the toggle's POST), not the pick", () => {
-    const processes = demoProjectorSnapshot.processes.map((process, index) =>
-      index === 0 ? { ...process, steering: true } : process,
+    // The claim now rides the surface that still HAS a toggle — the self tree:
+    // its lit/armed state is read off the snapshot, never off which tree the
+    // operator happened to pick.
+    const mirror = {
+      ...demoProjectorSnapshot.processes[0]!,
+      upid: "self",
+      callsign: "mirror",
+      task: "Vibersyn Room",
+      stage: "self",
+      steering: true,
+    } as ProjectorProcess;
+    const armed = treeMenuMarkup(
+      renderToStaticMarkup(
+        <ProjectorApp
+          initialSnapshot={{
+            ...demoProjectorSnapshot,
+            processes: [mirror, ...demoProjectorSnapshot.processes.slice(1)],
+            steeringUpid: "self",
+          }}
+          initialOverlay={{ selected: "mirror" }}
+        />,
+      ),
     );
-    const html = renderToStaticMarkup(
-      <ProjectorApp
-        initialSnapshot={{ ...demoProjectorSnapshot, processes, steeringUpid: processes[0]!.upid }}
-        initialOverlay={{ selected: "Atlas" }}
-      />,
+    expect(armed).toContain('data-testid="record-steer-stop"');
+    expect(armed).not.toContain('data-testid="record-steer-start"');
+    // The same snapshot picked on a FLEET tree grows no toggle to arm — the
+    // steering flag reaches the tree's own surface, and only there.
+    const fleet = treeMenuMarkup(
+      renderToStaticMarkup(
+        <ProjectorApp
+          initialSnapshot={{
+            ...demoProjectorSnapshot,
+            processes: demoProjectorSnapshot.processes.map((process, index) =>
+              index === 0 ? { ...process, steering: true } : process,
+            ),
+            steeringUpid: demoProjectorSnapshot.processes[0]!.upid,
+          }}
+          initialOverlay={{ selected: "Atlas" }}
+        />,
+      ),
     );
-    expect(html).toContain('data-testid="record-steer-stop"');
+    expect(fleet).not.toContain('data-testid="record-steer-stop"');
+    expect(fleet).not.toContain('data-testid="record-steer-start"');
   });
 
   test("source contract: the App has NO select POST left — RecordSteerToggle is the only armer", () => {
@@ -1270,7 +1360,12 @@ describe("build loop surfaces (backward compatible)", () => {
     expect(html).not.toContain("still booting");
   });
 
-  test("process.builds[] surfaces as the picked tree's MENU LANES (the fleet-card chips are gone)", () => {
+  // Backward compatible now means SILENT: a snapshot may still carry builds[]
+  // (the server publishes it, the deck window still reads it — see the deck
+  // describe's build-chip coverage), but no wall surface renders one. The
+  // fleet-card chips went with the rail; the menu lanes went at the operator's
+  // request, because each ready lane was a button into a mock.
+  test("process.builds[] is still carried and still renders NOTHING on the wall (no chips, no lanes)", () => {
     const processes: BuildloopProcess[] = demoProjectorSnapshot.processes.map((process, index) =>
       index === 0
         ? {
@@ -1289,21 +1384,22 @@ describe("build loop surfaces (backward compatible)", () => {
     expect(closed).not.toContain('data-testid="build-chip"');
     expect(closed).not.toContain('data-testid="tree-menu-lane"');
 
-    const html = renderToStaticMarkup(
-      <ProjectorApp
-        initialSnapshot={{ ...demoProjectorSnapshot, processes }}
-        initialOverlay={{ selected: "Atlas" }}
-      />,
+    const snapshot = { ...demoProjectorSnapshot, processes };
+    // The lanes are still DERIVED from builds[] — the menu simply renders none
+    // of them, so this pins the silence against a process that really has two.
+    expect(treeMenuModel(processes[0]!, snapshot).lanes).toHaveLength(2);
+    const menu = treeMenuMarkup(
+      renderToStaticMarkup(<ProjectorApp initialSnapshot={snapshot} initialOverlay={{ selected: "Atlas" }} />),
     );
-    expect(countOccurrences(html, 'data-testid="tree-menu-lane"')).toBe(2);
-    // A building lane is an HONEST status row (live label + percent), never a
-    // silent dead button; a ready lane is the in-room View ▸ button.
-    expect(html).toContain('data-status="building"');
-    expect(html).toContain("scaffolding · 40%");
-    expect(html).toContain('data-status="ready"');
-    expect(html).toContain("MOCK READY ✓");
-    expect(html).toContain("View ▸");
-    expect(html).not.toContain('data-testid="build-preview-link"');
+    expect(menu).not.toContain('data-testid="tree-menu-lane"');
+    expect(menu).not.toContain('data-testid="build-chip"');
+    expect(menu).not.toContain("scaffolding · 40%");
+    expect(menu).not.toContain("MOCK READY ✓");
+    expect(menu).not.toContain("View ▸");
+    expect(menu).not.toContain('data-testid="build-preview-link"');
+    // The picked tree still opens: builds[] going quiet is not the menu going
+    // missing.
+    expect(menu).toContain('data-testid="tree-menu-title"');
   });
 
   // Per-process lifecycle (pause/resume/halt) now lives in the deck window's
@@ -1393,7 +1489,11 @@ describe("project deck (slideshow)", () => {
     expect(html).toBe("");
   });
 
-  test("the tree menu offers a deck path only when a deck exists (ready lane View ▸ / fixture Deck ▸)", () => {
+  // Half of this survived the operator's cut: the FIXTURE deck button (🎞 deck)
+  // is now the menu's only deck path. The other half — a ready lane's View ▸
+  // into that backend's mock — is gone, so a process whose only deck is a mock
+  // lane's now offers no deck path at all.
+  test("the tree menu's ONLY deck path is the fixture 🎞 deck — a ready lane opens nothing", () => {
     const processes: BuildloopProcess[] = demoProjectorSnapshot.processes.map((process, index) =>
       index === 0
         ? {
@@ -1411,26 +1511,34 @@ describe("project deck (slideshow)", () => {
           }
         : process,
     );
-    const withDeck = renderToStaticMarkup(
-      <ProjectorApp
-        initialSnapshot={{ ...demoProjectorSnapshot, processes }}
-        initialOverlay={{ selected: "Atlas" }}
-      />,
+    const laneDeck = treeMenuMarkup(
+      renderToStaticMarkup(
+        <ProjectorApp
+          initialSnapshot={{ ...demoProjectorSnapshot, processes }}
+          initialOverlay={{ selected: "Atlas" }}
+        />,
+      ),
     );
-    // The ready lane's row is the deck button (View ▸ opens that backend's tab).
-    expect(withDeck).toContain('data-testid="tree-menu-lane"');
-    expect(withDeck).toContain("View ▸");
+    // A ready lane with a real slideshowUrl no longer buys a row on the tree.
+    expect(laneDeck).not.toContain('data-testid="tree-menu-lane"');
+    expect(laneDeck).not.toContain("View ▸");
+    expect(laneDeck).not.toContain('data-testid="tree-menu-deck"');
 
-    // Fixture decks (mock room) get the plain Deck ▸ button instead.
+    // Fixture decks (mock room) keep their one-press open — the surviving path.
     const busy = busyRoomSnapshot();
-    const fixture = renderToStaticMarkup(
-      <ProjectorApp initialSnapshot={busy} initialOverlay={{ selected: busy.processes[0]!.callsign }} />,
+    const fixture = treeMenuMarkup(
+      renderToStaticMarkup(
+        <ProjectorApp initialSnapshot={busy} initialOverlay={{ selected: busy.processes[0]!.callsign }} />,
+      ),
     );
     expect(fixture).toContain('data-testid="tree-menu-deck"');
+    expect(fixture).toContain("open this project&#x27;s slideshow ▸");
 
     // A deck-less legacy process offers neither.
-    const without = renderToStaticMarkup(
-      <ProjectorApp initialSnapshot={demoProjectorSnapshot} initialOverlay={{ selected: "Atlas" }} />,
+    const without = treeMenuMarkup(
+      renderToStaticMarkup(
+        <ProjectorApp initialSnapshot={demoProjectorSnapshot} initialOverlay={{ selected: "Atlas" }} />,
+      ),
     );
     expect(without).not.toContain('data-testid="tree-menu-deck"');
     expect(without).not.toContain("View ▸");
@@ -1453,23 +1561,30 @@ describe("two-stage kickoff/commission surfaces", () => {
     execution: { status: "executing", progressLabel: "run step 2/9", percent: 22 },
   });
 
-  test("a concept tree's menu: 🌱 stage, honest building percent, MOCK READY ✓ View lane", () => {
+  // The STAGE half of this survives (a concept still reads as 🌱 concept and
+  // grows no execution chip); the lane half is gone with the mock buttons, so
+  // the racing mocks are now something the tree says nothing about until a
+  // commission gives it real telemetry.
+  test("a concept tree's menu: 🌱 stage, no execution chip — and no mock lanes", () => {
     const processes = demoProjectorSnapshot.processes.map((process, index) =>
       index === 0 ? conceptProcess() : process,
     );
-    const html = renderToStaticMarkup(
-      <ProjectorApp
-        initialSnapshot={{ ...demoProjectorSnapshot, processes }}
-        initialOverlay={{ selected: "Atlas" }}
-      />,
+    const menu = treeMenuMarkup(
+      renderToStaticMarkup(
+        <ProjectorApp
+          initialSnapshot={{ ...demoProjectorSnapshot, processes }}
+          initialOverlay={{ selected: "Atlas" }}
+        />,
+      ),
     );
-    expect(html).toContain('data-testid="tree-menu"');
-    expect(html).toContain('data-stage="concept"');
-    expect(html).toContain("🌱 concept");
-    expect(html).toContain("mocking · 40%");
-    expect(html).toContain("MOCK READY ✓");
-    expect(html).toContain("View ▸");
-    expect(html).not.toContain('data-testid="execution-chip"');
+    expect(menu).toContain('data-testid="tree-menu"');
+    expect(menu).toContain('data-stage="concept"');
+    expect(menu).toContain("🌱 concept");
+    expect(menu).not.toContain('data-testid="execution-chip"');
+    expect(menu).not.toContain('data-testid="tree-menu-lane"');
+    expect(menu).not.toContain("mocking · 40%");
+    expect(menu).not.toContain("MOCK READY ✓");
+    expect(menu).not.toContain("View ▸");
   });
 
   test("a commissioned tree's menu: 🌳 stage + the pulsing execution chip", () => {
@@ -1627,16 +1742,46 @@ describe("gesture dwell-select interaction", () => {
   });
 
   test("the tree menu's controls are plain enabled <button>s (automatic dwell targets)", () => {
-    const html = renderToStaticMarkup(
-      <ProjectorApp initialSnapshot={demoProjectorSnapshot} initialOverlay={{ selected: "Atlas" }} />,
-    );
     // GestureLayer.collectDomTargets targets "button:not(:disabled)" — every
-    // menu control must therefore be a plain enabled <button>.
-    for (const id of ['data-testid="tree-menu-close"', 'data-testid="record-steer-start"', 'data-testid="tree-menu-remove"']) {
-      const idx = html.indexOf(id);
+    // menu control must therefore be a plain enabled <button>. The dwell
+    // grammar outlived the mock lanes and the fleet record toggle: it now has
+    // to hold for the chips that REMAIN, on both bodies of the menu.
+    const dwellable = (markup: string, id: string): void => {
+      const idx = markup.indexOf(id);
       expect(idx).toBeGreaterThan(-1);
       // The <button …data-testid…> open tag carries no disabled attribute.
-      expect(html.slice(html.lastIndexOf("<button", idx), html.indexOf(">", idx))).not.toContain("disabled");
+      expect(markup.slice(markup.lastIndexOf("<button", idx), markup.indexOf(">", idx))).not.toContain("disabled");
+    };
+    const fleet = treeMenuMarkup(
+      renderToStaticMarkup(
+        <ProjectorApp initialSnapshot={demoProjectorSnapshot} initialOverlay={{ selected: "Atlas" }} />,
+      ),
+    );
+    for (const id of [
+      'data-testid="tree-menu-close"',
+      'data-testid="tree-menu-remove"',
+      'data-testid="tree-menu-replant"',
+    ]) {
+      dwellable(fleet, id);
+    }
+    // The record toggle still has to be dwell-native where it survives.
+    const selfTree = {
+      ...demoProjectorSnapshot.processes[0]!,
+      upid: "self",
+      callsign: "mirror",
+      task: "Vibersyn Room",
+      stage: "self",
+    } as ProjectorProcess;
+    const mirror = treeMenuMarkup(
+      renderToStaticMarkup(
+        <ProjectorApp
+          initialSnapshot={{ ...demoProjectorSnapshot, processes: [selfTree, ...demoProjectorSnapshot.processes.slice(1)] }}
+          initialOverlay={{ selected: "mirror" }}
+        />,
+      ),
+    );
+    for (const id of ['data-testid="tree-menu-close"', 'data-testid="record-steer-start"']) {
+      dwellable(mirror, id);
     }
   });
 
@@ -2883,18 +3028,16 @@ describe("fleet constellation: adopted branches tended in the room's words", () 
       />,
     );
 
-  test("list view: main is the trunk (never a leaf-chip); branches share the leaf slots with the lanes", () => {
+  test("list view: main is the trunk (never a leaf-chip); the rails get the whole page", () => {
     const html = renderFleet();
-    // Only room/* rails hang as leaves — 2 grown, and with 3 concept lanes on
-    // the arc the branch pages carry max(1, 4-3) = 1 card each.
+    // Only room/* rails hang as leaves — 2 grown. Nothing shares the arc with
+    // them any more (the lane chips are gone), so the page is the flat
+    // TREE_TEND_PAGE_SIZE and both rails fit it without a pager.
     expect(html).toContain("🌿 branches · 2 grown");
-    // The demo fleet snapshot carries no concept lanes, so both rails fit one
-    // page (size 4 − 0) and no pager renders; with 3 lanes the page slims to
-    // max(1, 4−3)=1 — pinned through pageSlice's own size contract.
     expect(countOccurrences(html, 'data-testid="tree-menu-version"')).toBe(2);
     expect(html).not.toContain('data-branch="main"');
     expect(html).not.toContain('data-testid="tree-menu-branch-pager"');
-    expect(pageSlice(["a", "b"], 0, Math.max(1, TREE_TEND_PAGE_SIZE - 3)).slice).toEqual(["a"]);
+    expect(pageSlice(["a", "b"], 0, TREE_TEND_PAGE_SIZE).slice).toEqual(["a", "b"]);
     // The card carries the honest facts the snapshot knows: grafts + PR.
     expect(html).toContain("3 grafts · ⬆ PR open");
     // The grow verb is present and enabled; the constellation root carries
@@ -2931,35 +3074,59 @@ describe("fleet constellation: adopted branches tended in the room's words", () 
     expect(busyHtml).toContain("🌱 growing…");
   });
 
-  test("a local (non-adopted) tree grows NO branch chips and NO grow verb — but keeps lanes/steer/remove", () => {
+  test("a local (non-adopted) tree grows NO branch chips and NO grow verb — it keeps ✕ and 🗑 remove", () => {
     const html = renderFleet({ process: demoProjectorSnapshot.processes[0]! });
+    // A local tree has no origin, so no rail can be grown or hung on it.
     expect(html).not.toContain('data-testid="tree-menu-grow"');
     expect(html).not.toContain('data-testid="tree-menu-version"');
-    expect(html).toContain('data-testid="record-steer-start"');
+    expect(html).not.toContain('data-testid="tree-menu-branches-head"');
+    // Neither surface the operator pulled comes back on the bare tree either —
+    // this is the direct-render half of the absence pin (no App around it).
+    expect(html).not.toContain('data-testid="tree-menu-lane"');
+    expect(html).not.toContain('data-testid="tree-menu-steer"');
+    expect(html).not.toContain('data-testid="record-steer-start"');
+    // What the barest fleet tree still owns: identity, close, two-stage remove.
+    expect(html).toContain('data-testid="tree-menu-title"');
+    expect(html).toContain('data-testid="tree-menu-close"');
     expect(html).toContain('data-testid="tree-menu-remove"');
   });
 
-  test("lanes share the leaf slots: 3 lanes squeeze the branch pages to one card + the pager", () => {
-    const laned = {
+  // RETIRED: "lanes share the leaf slots: 3 lanes squeeze the branch pages to
+  // one card + the pager". The generalized tree renders no concept lanes at
+  // all any more, so nothing competes with the leaf arc and the squeeze that
+  // test described (page size = max(1, 4 − lanes)) cannot occur — a suite that
+  // keeps pinning an arithmetic the source no longer performs is lying about
+  // what it protects. Its ONE surviving claim — the leaf arc really does
+  // paginate — keeps its assertions below on the premise that can still
+  // happen: more room/* rails than a full page holds.
+  test("the leaf arc paginates when the rails outgrow a page — a full page now, no lane budget", () => {
+    const many = {
       ...fleetProcess(),
+      // Lanes present and loud: the page size must ignore them completely.
       builds: [
         { backend: "smithers", label: "Smithers", status: "building", previewUrl: null, summary: null, slideshowUrl: null, progressLabel: "mocking", percent: 40 },
         { backend: "native", label: "Native", status: "ready", previewUrl: "http://127.0.0.1:4100/", summary: null, slideshowUrl: "http://127.0.0.1:4100/slides.html" },
         { backend: "eliza", label: "ElizaOS", status: "failed", previewUrl: null, summary: "boom", slideshowUrl: null },
       ],
+      treeRepo: {
+        branches: [
+          { name: "main", commits: 5 },
+          ...Array.from({ length: TREE_TEND_PAGE_SIZE + 1 }, (_, index) => ({
+            name: `room/change-${index + 1}`,
+            commits: index + 1,
+          })),
+        ],
+        remoteUrl: REMOTE,
+      },
     } as unknown as ProjectorProcess;
-    const html = renderFleet({ process: laned });
-    expect(countOccurrences(html, 'data-testid="tree-menu-lane"')).toBe(3);
-    // Budget: max(1, 4 − 3 lanes) = 1 branch card per page, so the two grown
-    // rails paginate and the pager's dwell buttons render.
-    expect(countOccurrences(html, 'data-testid="tree-menu-version"')).toBe(1);
+    const html = renderFleet({ process: many });
+    expect(countOccurrences(html, 'data-testid="tree-menu-version"')).toBe(TREE_TEND_PAGE_SIZE);
     expect(html).toContain('data-testid="tree-menu-branch-pager"');
     expect(html).toContain("page 1/2");
     expect(html).toContain('data-testid="tree-menu-page-newer"');
     expect(html).toContain('data-testid="tree-menu-page-older"');
-    // The ready lane stays a literal enabled button inside its chip.
-    const readyIdx = html.indexOf('data-status="ready"');
-    expect(html.slice(html.lastIndexOf("<", readyIdx), readyIdx)).toContain("button");
+    // …and the three lanes bought no chip on the arc while doing it.
+    expect(html).not.toContain('data-testid="tree-menu-lane"');
   });
 
   test("the honest receipts render through the tendSeed seam (SSR can reach every state)", () => {

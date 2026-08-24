@@ -116,6 +116,14 @@ test("a build lane that stops moving has to say so", async ({ room, wall }) => {
   // Open the tree's own menu — the only surface in the room that shows a build's
   // progress now that the fleet rail is gone.
   await wall.page.evaluate((callsign) => window.__VIBERSYN__?.select(callsign), target.callsign);
+  // STALE AFFORDANCE — this step will FAIL until it is rehomed. The tree
+  // menu's concept-lane chips were removed at the operator's request ("remove
+  // the mock buttons"), and that button was also the only door to a finished
+  // build's deck: the surviving tree-menu-deck button is gated on
+  // model.hasFixtureDeck (process.slides), which real builds do not carry.
+  // Left failing ON PURPOSE rather than deleted — this spec's remaining
+  // assertions (deck provenance, build chips, live frame) are real coverage,
+  // and silently skipping them would hide the gap instead of naming it.
   const lanes = wall.page.locator('[data-testid="tree-menu-lane"]');
   await expect(lanes.first(), "the tree menu shows the build lanes").toBeVisible({ timeout: 10_000 });
 

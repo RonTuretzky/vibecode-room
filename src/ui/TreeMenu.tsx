@@ -32,13 +32,19 @@ import "./TreeMenu.css";
  *
  * Contents (reuse before reinvent — the guided demo already solved these):
  *   - header: inferred project title / callsign / state·progress line + ✕.
- *   - concept lanes via the SHARED processLanes derivation (guided/machine.ts):
- *     a ready lane's row is a button opening that backend's deck; a building
- *     lane is an honest status row with the live percent — never a dead button.
- *   - steer: the RecordSteerToggle — press to route EVERYTHING spoken into
- *     this process (select), press again to stop (select/clear). No typing.
  *   - 🗑 remove with a TWO-STAGE confirm (second dwell within ~4s) → POST
  *     /api/process/:upid/dismiss (stops builds + removes from the snapshot).
+ *
+ * TWO THINGS THIS MENU DELIBERATELY NO LONGER HAS, both at the operator's
+ * request, because a doc that promises removed surfaces is its own kind of
+ * lie:
+ *   - CONCEPT-LANE CHIPS. processLanes (guided/machine.ts) still derives them
+ *     and `model.lanes` still carries them, but nothing here renders one. Each
+ *     ready lane was a button into that backend's MOCK deck — furniture from
+ *     the guided demo's race, not work anyone can point at afterwards.
+ *   - THE RECORD-A-CHANGE TOGGLE. Voice steering lives where it commits
+ *     somewhere nameable: the SELF tree's graft slot (below) and a branch
+ *     card. On a fleet tree the words went into a mock revision.
  *
  * EVERY TREE is tended as a CONSTELLATION OF CHIPS, no panel, no container
  * (the two-column glass slab hid the garden and never framed the tree it
@@ -1298,7 +1304,6 @@ export function TreeMenu({
   // this substrate can actually back. Root contract unchanged (testid/upid/
   // stage/dialog); no root shield — every non-button chip carries its own, so
   // parking on the garden between chips still dwell-dismisses the surface. ──
-  const laneChips = model.lanes.slice(0, TREE_TEND_PAGE_SIZE);
   const liveOpenable =
     (model.deployUrl !== null || (execution?.status === "built" && execution.previewUrl !== null)) &&
     onOpenLiveApp !== undefined;
@@ -1310,15 +1315,19 @@ export function TreeMenu({
   const treeBranches = model.adopted
     ? (process.treeRepo?.branches ?? []).filter((entry) => entry.name.startsWith("room/"))
     : [];
-  const treePaged = pageSlice(treeBranches, page, Math.max(1, TREE_TEND_PAGE_SIZE - laneChips.length));
+  // Lanes no longer eat leaf slots, so the branch list gets the full page.
+  const treePaged = pageSlice(treeBranches, page, TREE_TEND_PAGE_SIZE);
   const treeFocus = focusBranch === null ? null : treeBranches.find((entry) => entry.name === focusBranch) ?? null;
   const branchSubLine = (entry: { name: string; commits: number; prUrl?: string }, index: number): string =>
     `#${index + 1} · ${entry.commits} ${entry.commits === 1 ? "graft" : "grafts"}${
       typeof entry.prUrl === "string" && entry.prUrl.length > 0 ? " · ⬆ PR open" : ""
     }`;
 
-  const present: TendChipId[] = ["identity", "close", "graft", "remove"];
-  laneChips.forEach((_, index) => present.push(`lane-${index}` as TendChipId));
+  // No "graft" slot and no lane slots: the record-a-change toggle and the
+  // concept-mock buttons are gone from the generalized tree (above), so the
+  // radial layout must not reserve arc positions for chips nothing renders —
+  // that would leave holes in the ring.
+  const present: TendChipId[] = ["identity", "close", "remove"];
   if (execution !== null) {
     present.push("settled");
   }
@@ -1416,47 +1425,10 @@ export function TreeMenu({
         ✕
       </button>
 
-      {/* CONCEPT LANES on the leaf arc (shared derivation with the guided
-          demo's race): a ready lane is a real button into that backend's
-          deck; a building/queued/failed lane is an honest status row — the
-          percent shows, and there is no dead button pretending otherwise. */}
-      {laneChips.map((lane, index) => (
-        <div
-          key={lane.id}
-          className="tend-chip tend-chip-lane"
-          data-chip={`lane-${index}`}
-          data-dwell-shield="1"
-          style={chipStyle(`lane-${index}` as TendChipId)}
-          onClick={stopClicks}
-        >
-          {lane.status === "ready" && (lane.hasDeck || lane.previewUrl !== null) ? (
-            <button
-              type="button"
-              className="tree-menu-lane lane-ready"
-              data-testid="tree-menu-lane"
-              data-backend={lane.id}
-              data-status={lane.status}
-              title={`Open the deck window on the ${lane.label} result.`}
-              onClick={() => onOpenDeck(process.upid, lane.id)}
-            >
-              <span className="tree-lane-label">{lane.label}</span>
-              <span className="tree-lane-status">{laneStatusLabel(lane)}</span>
-              <span className="tree-lane-open">View ▸</span>
-            </button>
-          ) : (
-            <div
-              className={`tree-menu-lane lane-${lane.status}`}
-              data-testid="tree-menu-lane"
-              data-backend={lane.id}
-              data-status={lane.status}
-              title={lane.summary ?? undefined}
-            >
-              <span className="tree-lane-label">{lane.label}</span>
-              <span className="tree-lane-status">{laneStatusLabel(lane)}</span>
-            </div>
-          )}
-        </div>
-      ))}
+      {/* NO CONCEPT-LANE CHIPS, at the operator's request. Each ready lane
+          was a button into that backend's MOCK deck — furniture from the
+          guided demo's race. The lane data still rides the model for anything
+          that wants it; nothing on this menu opens a mock any more. */}
 
       {/* Commission-stage telemetry (reused chip: executing → BUILT + link). */}
       {execution !== null ? (
@@ -1534,20 +1506,10 @@ export function TreeMenu({
         </div>
       ) : null}
 
-      {/* 🎙 RECORD — the steer toggle roots the verb arc (the graft slot):
-          press to route EVERYTHING spoken into this process, press again to
-          stop. The lit state rides the snapshot's steering flag. */}
-      <div
-        className="tend-chip tend-chip-graft"
-        data-chip="graft"
-        data-dwell-shield="1"
-        style={chipStyle("graft")}
-        onClick={stopClicks}
-      >
-        <div className="tree-menu-steer" data-testid="tree-menu-steer">
-          <RecordSteerToggle process={process} kind="build" transcript={snapshot.transcript} />
-        </div>
-      </div>
+      {/* NO RECORD-A-CHANGE TOGGLE HERE, at the operator's request. On a
+          fleet tree the words went into a mock revision — not a change anyone
+          can point at afterwards. Voice steering lives where it commits
+          somewhere nameable: the SELF tree, and a branch card. */}
 
       {/* 🗑 REMOVE roots the whole verb arc — two-stage confirm on the FLEET
           budget (DISMISS_CONFIRM_MS, a single-question flow; no drain bar —

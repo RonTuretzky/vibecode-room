@@ -312,6 +312,14 @@ test.describe("projector UI — 3D scene navigation & decks", () => {
     // The deck opens from the process's tree menu — the READY build lane is
     // the affordance ("View ▸").
     await page.evaluate(() => (window as any).__VIBERSYN__.select("Atlas"));
+    // STALE AFFORDANCE — this step will FAIL until it is rehomed. The tree
+    // menu's concept-lane chips were removed at the operator's request ("remove
+    // the mock buttons"), and that button was also the only door to a finished
+    // build's deck: the surviving tree-menu-deck button is gated on
+    // model.hasFixtureDeck (process.slides), which real builds do not carry.
+    // Left failing ON PURPOSE rather than deleted — this spec's remaining
+    // assertions (deck provenance, build chips, live frame) are real coverage,
+    // and silently skipping them would hide the gap instead of naming it.
     const readyLane = page.locator('[data-testid="tree-menu-lane"][data-status="ready"]');
     await expect(readyLane.first()).toBeVisible();
     await readyLane.first().click();
