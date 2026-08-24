@@ -1078,9 +1078,10 @@ interface Entry {
   baseEmissive: number;
   head: THREE.Group | null;
   headY: number;
-  // No `cat`/`catBaseX`/`mana` fields: the dancing cats, dogs and crystal-mana
-  // shards were one-off props grafted by voice during demos, and the operator
-  // asked for them out — so the entries carry no per-prop animation state.
+  // No `cat`/`catBaseX`/`mana` fields: the dancing cats, dogs, crystal-mana
+  // shards and the horse-head companion at the tree's foot were one-off props
+  // grafted by voice during demos, and the operator asked for them out — so no
+  // companion grows here and the entries carry no per-prop animation state.
   label: THREE.Sprite | null;
   targetPos: THREE.Vector3;
   targetScale: number;
@@ -1447,26 +1448,9 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
       // must not be overdrawn by its nearer-than-the-skyline surface.
       skyDome.renderOrder = -1;
       group.add(skyDome);
-
-      // Multiverse: a parallel sky bleeds through — the same panorama flipped
-      // and yaw-offset, held at low opacity so a mirror world ghosts behind
-      // this one. Additive so it only lightens, never occludes the ground.
-      const ghostSky = new THREE.Mesh(
-        skyDome.geometry,
-        new THREE.MeshBasicMaterial({
-          map: skyTexture,
-          side: THREE.BackSide,
-          fog: false,
-          depthWrite: false,
-          transparent: true,
-          opacity: 0.3,
-          blending: THREE.AdditiveBlending,
-        }),
-      );
-      ghostSky.scale.set(-1, 0.32, 1);
-      ghostSky.rotation.y = Math.PI * 0.5;
-      ghostSky.renderOrder = -1;
-      group.add(ghostSky);
+      // One dome only: the mirrored "parallel ghost sky" that used to ride on
+      // top was a one-off prop grafted by voice during a demo, and the operator
+      // asked for it out — the pastoral daylight sky stands on its own.
 
       // Ground: tiled photoscan grass (1k diff+normal over ~10-unit tiles;
       // the tiling repeat hides under fog, flora cover and label chrome).
@@ -2393,7 +2377,11 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
       ring: new THREE.TorusGeometry(0.34, 0.015, 8, 48),
       orb: new THREE.SphereGeometry(1, 48, 48),
       turn: new THREE.SphereGeometry(0.22, 16, 16),
-      crystal: new THREE.OctahedronGeometry(0.55, 0),
+      // (No `crystal` octahedron: the horse-head companion's ears were its last
+      // consumer, and the companions came out with the other one-off props. A
+      // shared geometry with no meshes left is allocated and disposed every
+      // scene build while being invisible to tsc and lint — so it goes with
+      // them rather than lingering as a shape nothing wears.)
       // Small unit sphere reused for build-lane satellites and failure pips.
       pip: new THREE.SphereGeometry(0.12, 10, 10),
       // Unit sphere reused (scaled per axis) for every coarse tree hit volume
@@ -3291,34 +3279,6 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
       }
     };
 
-    // The low-poly horse head companion parked at the tree's foot (muzzle,
-    // head, two pricked ears, neck) — extracted verbatim from the old bodies.
-    const makeHorseHead = (): THREE.Group => {
-      const horse = new THREE.Group();
-      const horseMat = new THREE.MeshPhongMaterial({ color: 0x8b6f47, emissive: 0x8b6f47, emissiveIntensity: 0.08 });
-      const horseHead = new THREE.Mesh(GEO.bud, horseMat);
-      horseHead.scale.set(0.9, 1.1, 0.8);
-      horseHead.position.y = 0.55;
-      horseHead.userData.ownMaterial = true;
-      horse.add(horseHead);
-      const horseMuzzle = new THREE.Mesh(GEO.bud, horseMat);
-      horseMuzzle.scale.set(0.55, 0.55, 0.9);
-      horseMuzzle.position.set(0, 0.42, 0.24);
-      horse.add(horseMuzzle);
-      for (const ex of [-0.08, 0.08]) {
-        const ear = new THREE.Mesh(GEO.crystal, horseMat);
-        ear.scale.set(0.1, 0.18, 0.06);
-        ear.position.set(ex, 0.76, -0.02);
-        horse.add(ear);
-      }
-      const horseNeck = new THREE.Mesh(GEO.stem, horseMat);
-      horseNeck.scale.set(0.35, 0.6, 0.35);
-      horseNeck.position.set(0, 0.2, -0.12);
-      horseNeck.rotation.x = 0.5;
-      horse.add(horseNeck);
-      return horse;
-    };
-
     const buildRealFlower = (spec: IdeaOrbSpec): Entry | null => {
       const ready = spec.status === "ready";
       const variants = floraLib?.get(ready ? "flower_gazania" : "dandelion_01");
@@ -3465,9 +3425,9 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
     // buds via addBranchTipChrome), concepts stand as small young saplings,
     // and id-seeded determinism makes every tree an individual. The DATA
     // overlays (rings, arc, satellites, beacon, pip, glass label), the
-    // ghostly issue-fruit bough, the coarse invisible hit sphere (engine
-    // wood/foliage never raycasts — module policy) and the horse-head
-    // companion all ride on top exactly as before.
+    // ghostly issue-fruit bough and the coarse invisible hit sphere (engine
+    // wood/foliage never raycasts — module policy) all ride on top exactly as
+    // before.
     const buildTree = (spec: TreeSpec): Entry => {
       const color = STATE_COLOR[spec.state];
       const ind = treeIndicators(spec);
@@ -3542,14 +3502,6 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
         }
         updateLabelStatus(label, treeStatus(next));
       };
-      // The horse head is the one surviving companion at the tree's foot: the
-      // cats, dogs, GPU racks and mana shards were one-off props grafted by
-      // voice during demos and the operator asked for them out.
-      const companionBase = grown ? 2.7 : 1.4;
-      const horse = makeHorseHead();
-      horse.position.set(-companionBase, 0, companionBase * 0.35);
-      horse.rotation.y = Math.PI / 4;
-      group.add(horse);
       return {
         kind: "tree", treeSpec: spec, group, mats, baseEmissive: 0.55, head: null, headY: 0, label,
         targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false, updateProgress,

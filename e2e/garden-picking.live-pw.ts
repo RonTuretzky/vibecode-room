@@ -14,10 +14,16 @@
 // pointing at them.
 //
 // SCOPE, STATED HONESTLY: with no seam, this spec cannot address a NAMED
-// target. K3 (issue fruit loses to the whole-tree hit volume), K4 (self tree
-// has no companions) and K5 (labels clip at the wall edge) stay BLOCKED — see
-// the last test in this file, which is skipped with that reason rather than
-// faked.
+// target. K3 (issue fruit loses to the whole-tree hit volume) and K5 (labels
+// clip at the wall edge) stay BLOCKED — see the last test in this file, which
+// is skipped with that reason rather than faked.
+//
+// K4 ("the self tree has no companions") is RETIRED, not blocked: the garden
+// no longer grows companions on ANY tree. The dancing cats, dogs, horse heads,
+// GPU racks and mana shards were one-off props grafted by voice during demos
+// and the operator asked for them out, so the asymmetry K4 described cannot
+// occur. A suite that keeps advertising a bug that can no longer happen is
+// lying in the other direction.
 
 import { expect, reportCoverage, test } from "./live-room";
 import type { GardenPress as GardenPressResult } from "./journey";
@@ -125,10 +131,11 @@ test("pointing at the garden opens the thing that was pointed at", async ({ room
   ).toBeGreaterThanOrEqual(4);
 });
 
-// BLOCKED, NOT PASSING. Seeds K3/K4/K5 (issue fruit unreachable, the self tree
-// missing its companions, labels clipping at the wall edge) are all statements
-// about NAMED scene objects. Every one of them is a one-line assertion the
-// moment src/ui/App.tsx publishes the singleton it already builds:
+// BLOCKED, NOT PASSING. Seeds K3 and K5 (issue fruit unreachable, labels
+// clipping at the wall edge) are statements about NAMED scene objects. Both
+// are a one-line assertion the moment src/ui/App.tsx publishes the singleton
+// it already builds. (K4 is retired — see the header: no tree has companions
+// any more, so the asymmetry it described cannot occur.)
 //
 //   window.__VIBERSYN__.scene = { pick(x, y), rectFor(id), targets() }
 //     — ids already standardized in src/ui/gesture/scene-source.ts:
