@@ -3335,7 +3335,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
       group.add(hit);
       let label: THREE.Sprite | null = null;
       if (ready && spec.pitch.length > 0) {
-        const statusLine = `${Math.round(spec.confidence * 100)}% · ${spec.maturity}${spec.verified ? " ✓" : ""}`;
+        const statusLine = `~${Math.round(spec.confidence * 100)}% likely · ${spec.maturity}${spec.verified ? " ✓" : ""}`;
         label = makeLabelSprite(spec.pitch, statusLine, cssHex(color));
         label.position.y = 1.1 * size + 0.45;
         group.add(label);
@@ -3409,7 +3409,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
 
       let label: THREE.Sprite | null = null;
       if (ready && spec.pitch.length > 0) {
-        const statusLine = `${Math.round(spec.confidence * 100)}% · ${spec.maturity}${spec.verified ? " ✓" : ""}`;
+        const statusLine = `~${Math.round(spec.confidence * 100)}% likely · ${spec.maturity}${spec.verified ? " ✓" : ""}`;
         label = makeLabelSprite(spec.pitch, statusLine, cssHex(color));
         label.position.y = stemH + 0.32 * size + 0.1;
         group.add(label);
@@ -3645,7 +3645,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
       }
       let label: THREE.Sprite | null = null;
       if (ready && spec.pitch.length > 0) {
-        const statusLine = `${Math.round(spec.confidence * 100)}% · ${spec.maturity}${spec.verified ? " ✓" : ""}`;
+        const statusLine = `~${Math.round(spec.confidence * 100)}% likely · ${spec.maturity}${spec.verified ? " ✓" : ""}`;
         label = makeLabelSprite(spec.pitch, statusLine, cssHex(color));
         label.position.y = radius + 0.25;
         group.add(label);
@@ -3832,7 +3832,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
       head.add(hit);
       let label: THREE.Sprite | null = null;
       if (ready && spec.pitch.length > 0) {
-        const statusLine = `${Math.round(spec.confidence * 100)}% · ${spec.maturity}${spec.verified ? " ✓" : ""}`;
+        const statusLine = `~${Math.round(spec.confidence * 100)}% likely · ${spec.maturity}${spec.verified ? " ✓" : ""}`;
         label = makeLabelSprite(spec.pitch, statusLine, cssHex(color));
         label.position.y = 0.42 * size + 0.15;
         group.add(label);
