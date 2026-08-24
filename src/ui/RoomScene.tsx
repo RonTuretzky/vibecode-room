@@ -1078,14 +1078,9 @@ interface Entry {
   baseEmissive: number;
   head: THREE.Group | null;
   headY: number;
-  // A little companion cat parked next to a garden tree — the frame loop sways
-  // it so it "dances" (skips reduced-motion). Null on every non-tree entry.
-  cat: THREE.Group | null;
-  // The cat's parked X so the dance sway pivots around it (0 when no cat).
-  catBaseX: number;
-  // Floating crystal-mana shards ringing a garden tree — the frame loop spins
-  // and bobs each one. Absent on every non-tree entry.
-  mana?: THREE.Mesh[];
+  // No `cat`/`catBaseX`/`mana` fields: the dancing cats, dogs and crystal-mana
+  // shards were one-off props grafted by voice during demos, and the operator
+  // asked for them out — so the entries carry no per-prop animation state.
   label: THREE.Sprite | null;
   targetPos: THREE.Vector3;
   targetScale: number;
@@ -1544,105 +1539,6 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
       // Flower-top landing spots for the butterflies, filled in as the flora
       // scatter runs (async — no flowers loaded simply means no landings).
       const flowerSpots: { x: number; y: number; z: number }[] = [];
-      // A dancing cat parked at the foot of every tree in the meadow "sea" of
-      // scattered jacarandas — one low-poly companion per placed tree instance,
-      // swayed by the env update loop (same hop-and-tilt idiom as the garden
-      // build-tree cats). Filled in as the flora scatter lands the trees.
-      const catGeoBody = new THREE.SphereGeometry(0.16, 8, 8);
-      const catGeoEar = new THREE.OctahedronGeometry(0.55, 0);
-      const catGeoTail = new THREE.CylinderGeometry(0.03, 0.05, 1, 5);
-      const catMat = new THREE.MeshPhongMaterial({ color: 0x6b5b4a, emissive: 0x6b5b4a, emissiveIntensity: 0.08 });
-      const envCats: { group: THREE.Group; baseX: number; baseZ: number; phase: number }[] = [];
-      const envMana: { mesh: THREE.Mesh; baseY: number; phase: number }[] = [];
-      const spawnTreeCat = (x: number, z: number, scale: number) => {
-        const cat = new THREE.Group();
-        const body = new THREE.Mesh(catGeoBody, catMat);
-        body.scale.set(0.9, 1.2, 0.7);
-        body.position.y = 0.24;
-        cat.add(body);
-        const head = new THREE.Mesh(catGeoBody, catMat);
-        head.scale.setScalar(0.8);
-        head.position.set(0, 0.5, 0.05);
-        cat.add(head);
-        for (const side of [-1, 1]) {
-          const ear = new THREE.Mesh(catGeoEar, catMat);
-          ear.scale.setScalar(0.12);
-          ear.position.set(side * 0.12, 0.66, 0.05);
-          cat.add(ear);
-        }
-        const tail = new THREE.Mesh(catGeoTail, catMat);
-        tail.scale.set(0.25, 0.4, 0.25);
-        tail.position.set(0, 0.32, -0.28);
-        tail.rotation.x = -0.7;
-        cat.add(tail);
-        cat.scale.setScalar(scale);
-        cat.position.set(x, 0, z);
-        group.add(cat);
-        envCats.push({ group: cat, baseX: x, baseZ: z, phase: floraRng() * Math.PI * 2 });
-      };
-      // A dancing dog parked at the foot of every meadow tree too — a low-poly
-      // companion (longer body, droopy ears, snout, wagging tail) that rides
-      // the same cat field so the frame loop hops it into a dance.
-      const dogMat = new THREE.MeshPhongMaterial({ color: 0x8a6a44, emissive: 0x8a6a44, emissiveIntensity: 0.08 });
-      const spawnTreeDog = (x: number, z: number, scale: number) => {
-        const dog = new THREE.Group();
-        const body = new THREE.Mesh(catGeoBody, dogMat);
-        body.scale.set(1.0, 1.0, 1.3);
-        body.position.y = 0.22;
-        dog.add(body);
-        const head = new THREE.Mesh(catGeoBody, dogMat);
-        head.scale.setScalar(0.85);
-        head.position.set(0, 0.42, 0.22);
-        dog.add(head);
-        const snout = new THREE.Mesh(catGeoBody, dogMat);
-        snout.scale.set(0.4, 0.4, 0.6);
-        snout.position.set(0, 0.36, 0.4);
-        dog.add(snout);
-        for (const side of [-1, 1]) {
-          const ear = new THREE.Mesh(catGeoBody, dogMat);
-          ear.scale.set(0.16, 0.32, 0.1);
-          ear.position.set(side * 0.14, 0.5, 0.18);
-          dog.add(ear);
-        }
-        const tail = new THREE.Mesh(catGeoTail, dogMat);
-        tail.scale.set(0.28, 0.35, 0.28);
-        tail.position.set(0, 0.4, -0.32);
-        tail.rotation.x = -1.0;
-        dog.add(tail);
-        dog.scale.setScalar(scale);
-        dog.position.set(x, 0, z);
-        group.add(dog);
-        envCats.push({ group: dog, baseX: x, baseZ: z, phase: floraRng() * Math.PI * 2 });
-      };
-      // green stem topped by a pink blossom cup, shared geometry/material so a
-      // whole ring is a handful of cheap meshes. Static planting (no dance);
-      // the ring sits just outside the trunk scan so the blooms read at the
-      // tree's foot from the projector.
-      // Crystal mana floating around the base of every meadow tree — a few
-      // glowing cyan octahedron shards hovering at head height, shared
-      // geometry/material so a whole cluster is a handful of cheap meshes.
-      // Bobbing/spin is driven per-shard in the frame loop via envMana.
-      const manaGeo = new THREE.OctahedronGeometry(0.22, 0);
-      const manaMat = new THREE.MeshPhongMaterial({
-        color: 0x66e0ff,
-        emissive: 0x33bbff,
-        emissiveIntensity: 0.9,
-        transparent: true,
-        opacity: 0.82,
-      });
-      const spawnTreeMana = (x: number, z: number, scale: number) => {
-        const count = 5;
-        for (let i = 0; i < count; i++) {
-          const a = (i / count) * Math.PI * 2 + floraRng() * 0.6;
-          const r = (1.4 + floraRng() * 0.8) * scale;
-          const shard = new THREE.Mesh(manaGeo, manaMat);
-          const baseY = (1.6 + floraRng() * 1.2) * scale;
-          shard.position.set(x + Math.cos(a) * r, baseY, z + Math.sin(a) * r);
-          shard.scale.setScalar(scale);
-          envMana.push({ mesh: shard, baseY, phase: floraRng() * Math.PI * 2 });
-          group.add(shard);
-        }
-      };
       const scatterFlora = (flora: FloraLibrary) => {
         const dummy = new THREE.Object3D();
         for (const spec of FLORA_SCATTER) {
@@ -1653,9 +1549,6 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
           // Blossom height per variant (bounding boxes are precomputed by
           // garden-flora) so a landing butterfly sits ON the flower head.
           const isFlower = spec.name.startsWith("flower_");
-          // The scattered jacarandas ARE the meadow's "sea" of trees; each gets
-          // a dancing cat parked at its foot.
-          const isTree = spec.name === "jacaranda_tree";
           const variantTopY = variants.map((variant) =>
             variant.pieces.reduce((maxY, piece) => Math.max(maxY, piece.geometry.boundingBox?.max.y ?? 0), 0),
           );
@@ -1677,28 +1570,6 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
                 y: variantTopY[i % variants.length] * dummy.scale.x + 0.05,
                 z: dummy.position.z,
               });
-            }
-            if (isTree) {
-              // Nudge the cat just off the trunk toward the meadow centre so it
-              // reads at the tree's foot rather than buried in the canopy scan.
-              const offset = 2.4;
-              const inward = Math.hypot(dummy.position.x, dummy.position.z) || 1;
-              const nx = dummy.position.x / inward;
-              const nz = dummy.position.z / inward;
-              spawnTreeCat(
-                dummy.position.x - nx * offset,
-                dummy.position.z - nz * offset,
-                1.4,
-              );
-              // The dog stands on the opposite flank of the trunk (a tangential
-              // nudge) so cat and dog both read at the tree's foot, not stacked.
-              spawnTreeDog(
-                dummy.position.x - nx * offset - nz * 1.6,
-                dummy.position.z - nz * offset + nx * 1.6,
-                1.4,
-              );
-              // Crystal mana shards hovering around the tree.
-              spawnTreeMana(dummy.position.x, dummy.position.z, 1.4);
             }
           }
           variants.forEach((variant, v) => {
@@ -2396,20 +2267,6 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
             );
             mote.sprite.material.opacity = 0.22 + Math.abs(Math.sin(t * 0.7 + mote.phase)) * 0.3;
           }
-          // The tree-foot cats dance: a bouncing hop with a wiggling side-step
-          // and tail-swaying tilt (same idiom as the garden build-tree cats).
-          for (const cat of envCats) {
-            cat.group.position.y = Math.abs(Math.sin(t * 3 + cat.phase)) * 0.42;
-            cat.group.position.x = cat.baseX + Math.sin(t * 2 + cat.phase) * 0.18;
-            cat.group.position.z = cat.baseZ + Math.cos(t * 2 + cat.phase) * 0.12;
-            cat.group.rotation.z = Math.sin(t * 6 + cat.phase) * 0.25;
-          }
-          // Crystal mana shards bob gently and spin above the meadow trees.
-          for (const mana of envMana) {
-            mana.mesh.position.y = mana.baseY + Math.sin(t * 1.6 + mana.phase) * 0.28;
-            mana.mesh.rotation.y = t * 0.9 + mana.phase;
-            mana.mesh.rotation.x = Math.sin(t * 0.7 + mana.phase) * 0.4;
-          }
         },
         dispose: () => {
           floraDisposed = true;
@@ -2429,15 +2286,6 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
           groundDiff.dispose();
           groundNor.dispose();
           butterflyWingMats.forEach((mat) => mat.map?.dispose());
-          // Tree-foot cat assets are shared across every cat instance, so drop
-          // them once here rather than per-mesh in the traverse below.
-          catGeoBody.dispose();
-          catGeoEar.dispose();
-          catGeoTail.dispose();
-          catMat.dispose();
-          // Tree-foot crystal-mana assets are shared across every shard too.
-          manaGeo.dispose();
-          manaMat.dispose();
           group.traverse((node) => {
             if (node instanceof THREE.InstancedMesh) {
               // Flora instances: release ONLY the instance buffers — the
@@ -3443,78 +3291,8 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
       }
     };
 
-    // A dancing dog parked at the foot of the tree beside the cat — a longer
-    // body, snout, droopy ears and a wagging tail. It sits on the far side of
-    // the cat and counter-rotates so both companions face outward at the
-    // trunk's foot rather than overlapping; makeDancingCat parents it, so it
-    // rides the same frame-loop sway (its "dance").
-    const makeDancingDog = (): THREE.Group => {
-      const dogMat = new THREE.MeshPhongMaterial({ color: 0x8a6a44, emissive: 0x8a6a44, emissiveIntensity: 0.08 });
-      const dog = new THREE.Group();
-      const dogBody = new THREE.Mesh(GEO.bud, dogMat);
-      dogBody.scale.set(1.0, 1.0, 1.3);
-      dogBody.position.y = 0.22;
-      dogBody.userData.ownMaterial = true;
-      dog.add(dogBody);
-      const dogHead = new THREE.Mesh(GEO.bud, dogMat);
-      dogHead.scale.setScalar(0.85);
-      dogHead.position.set(0, 0.42, 0.22);
-      dog.add(dogHead);
-      const dogSnout = new THREE.Mesh(GEO.bud, dogMat);
-      dogSnout.scale.set(0.4, 0.4, 0.6);
-      dogSnout.position.set(0, 0.36, 0.4);
-      dog.add(dogSnout);
-      for (const ex of [-0.14, 0.14]) {
-        const ear = new THREE.Mesh(GEO.bud, dogMat);
-        ear.scale.set(0.16, 0.32, 0.1);
-        ear.position.set(ex, 0.5, 0.18);
-        dog.add(ear);
-      }
-      const dogTail = new THREE.Mesh(GEO.stem, dogMat);
-      dogTail.scale.set(0.28, 0.35, 0.28);
-      dogTail.position.set(0, 0.4, -0.32);
-      dogTail.rotation.x = -1.0;
-      dog.add(dogTail);
-      dog.position.set(-1.9, 0, 0.4);
-      dog.rotation.y = Math.PI / 3;
-      return dog;
-    };
-
-    // The dancing-cat companion parked at every garden tree's foot — the
-    // spoken-feature low-poly build (body, head, ears, tail), extracted
-    // verbatim so the HD bodies attach the SAME cat the old bodies did. The
-    // caller parks/rotates it; the frame loop's cat field dances it.
-    const makeDancingCat = (): THREE.Group => {
-      const cat = new THREE.Group();
-      const catMat = new THREE.MeshPhongMaterial({ color: 0x6b5b4a, emissive: 0x6b5b4a, emissiveIntensity: 0.08 });
-      const catBody = new THREE.Mesh(GEO.bud, catMat);
-      catBody.scale.set(0.9, 1.2, 0.7);
-      catBody.position.y = 0.24;
-      catBody.userData.ownMaterial = true;
-      cat.add(catBody);
-      const catHead = new THREE.Mesh(GEO.bud, catMat);
-      catHead.scale.setScalar(0.8);
-      catHead.position.set(0, 0.5, 0.05);
-      cat.add(catHead);
-      for (const ex of [-0.09, 0.09]) {
-        const ear = new THREE.Mesh(GEO.crystal, catMat);
-        ear.scale.set(0.12, 0.16, 0.06);
-        ear.position.set(ex, 0.62, 0.05);
-        cat.add(ear);
-      }
-      const catTail = new THREE.Mesh(GEO.stem, catMat);
-      catTail.scale.set(0.25, 0.4, 0.25);
-      catTail.position.set(0, 0.32, -0.28);
-      catTail.rotation.x = -0.7;
-      cat.add(catTail);
-      // The dancing dog rides WITH the cat: parented to the cat group so the
-      // frame loop's cat sway carries it into the same dance.
-      cat.add(makeDancingDog());
-      return cat;
-    };
-
-    // The low-poly horse head companion parked opposite the cat (muzzle,
-    // head, two pricked ears, neck) — same idiom, extracted verbatim.
+    // The low-poly horse head companion parked at the tree's foot (muzzle,
+    // head, two pricked ears, neck) — extracted verbatim from the old bodies.
     const makeHorseHead = (): THREE.Group => {
       const horse = new THREE.Group();
       const horseMat = new THREE.MeshPhongMaterial({ color: 0x8b6f47, emissive: 0x8b6f47, emissiveIntensity: 0.08 });
@@ -3539,71 +3317,6 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
       horseNeck.rotation.x = 0.5;
       horse.add(horseNeck);
       return horse;
-    };
-
-
-    // "computing devices are being produced" — a cluster of freshly-built GPU
-    // server racks parked at the tree's foot, blinking green as they come off
-    // the line toward the theme's "one hundred times as many GPU factories".
-    const makeGpuRackCluster = (radius: number): THREE.Group => {
-      const cluster = new THREE.Group();
-      const chassisGeo = new THREE.BoxGeometry(0.6, 1.1, 0.42);
-      const ventGeo = new THREE.BoxGeometry(0.5, 0.07, 0.03);
-      const lightGeo = new THREE.BoxGeometry(0.07, 0.07, 0.03);
-      const chassisMat = new THREE.MeshPhongMaterial({ color: 0x2b3440, emissive: 0x0a0f14, emissiveIntensity: 0.15 });
-      const ventMat = new THREE.MeshPhongMaterial({ color: 0x11161c });
-      const lightMat = new THREE.MeshPhongMaterial({ color: 0x00ff88, emissive: 0x00ff88, emissiveIntensity: 0.8 });
-      const count = 4;
-      for (let i = 0; i < count; i++) {
-        const a = (i / count) * Math.PI * 2 + 0.35;
-        const rack = new THREE.Group();
-        const chassis = new THREE.Mesh(chassisGeo, chassisMat);
-        chassis.position.y = 0.55;
-        chassis.userData.ownMaterial = true;
-        rack.add(chassis);
-        for (let v = 0; v < 6; v++) {
-          const vent = new THREE.Mesh(ventGeo, ventMat);
-          vent.position.set(0, 0.25 + v * 0.15, 0.22);
-          vent.userData.ownMaterial = true;
-          rack.add(vent);
-        }
-        const light = new THREE.Mesh(lightGeo, lightMat);
-        light.position.set(0.22, 0.98, 0.22);
-        light.userData.ownMaterial = true;
-        rack.add(light);
-        rack.position.set(Math.cos(a) * radius, 0, Math.sin(a) * radius);
-        rack.rotation.y = -a;
-        cluster.add(rack);
-      }
-      return cluster;
-    };
-
-    // "crystal mana" — a ring of glowing cyan crystal shards floating at head
-    // height around the tree's foot. Cheap octahedron meshes sharing one
-    // geometry/material (flagged own* so the garden dispose traverse frees
-    // them); the frame loop spins/bobs each shard via entry.mana.
-    const makeCrystalManaCluster = (radius: number): { group: THREE.Group; shards: THREE.Mesh[] } => {
-      const cluster = new THREE.Group();
-      const shardGeo = new THREE.OctahedronGeometry(0.3, 0);
-      const shardMat = new THREE.MeshPhongMaterial({
-        color: 0x66e0ff,
-        emissive: 0x33bbff,
-        emissiveIntensity: 0.9,
-        transparent: true,
-        opacity: 0.82,
-      });
-      const shards: THREE.Mesh[] = [];
-      const count = 6;
-      for (let i = 0; i < count; i++) {
-        const a = (i / count) * Math.PI * 2;
-        const shard = new THREE.Mesh(shardGeo, shardMat);
-        shard.userData.ownGeometry = i === 0;
-        shard.userData.ownMaterial = i === 0;
-        shard.position.set(Math.cos(a) * radius, 1.8 + (i % 2) * 0.6, Math.sin(a) * radius);
-        cluster.add(shard);
-        shards.push(shard);
-      }
-      return { group: cluster, shards };
     };
 
     const buildRealFlower = (spec: IdeaOrbSpec): Entry | null => {
@@ -3667,7 +3380,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
         label.position.y = 1.1 * size + 0.45;
         group.add(label);
       }
-      return { kind: "flower", ideaSpec: spec, group, mats, baseEmissive, head: null, headY: 0, cat: null, catBaseX: 0, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false };
+      return { kind: "flower", ideaSpec: spec, group, mats, baseEmissive, head: null, headY: 0, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false };
     };
 
     const buildFlower = (spec: IdeaOrbSpec): Entry => {
@@ -3741,7 +3454,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
         label.position.y = stemH + 0.32 * size + 0.1;
         group.add(label);
       }
-      return { kind: "flower", ideaSpec: spec, group, mats, baseEmissive, head, headY: stemH, cat: null, catBaseX: 0, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false };
+      return { kind: "flower", ideaSpec: spec, group, mats, baseEmissive, head, headY: stemH, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false };
     };
 
     // EVERY garden fleet tree — adopted imports (salem) AND local concept/
@@ -3753,8 +3466,8 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
     // and id-seeded determinism makes every tree an individual. The DATA
     // overlays (rings, arc, satellites, beacon, pip, glass label), the
     // ghostly issue-fruit bough, the coarse invisible hit sphere (engine
-    // wood/foliage never raycasts — module policy) and the dancing-cat +
-    // horse-head companions all ride on top exactly as before.
+    // wood/foliage never raycasts — module policy) and the horse-head
+    // companion all ride on top exactly as before.
     const buildTree = (spec: TreeSpec): Entry => {
       const color = STATE_COLOR[spec.state];
       const ind = treeIndicators(spec);
@@ -3829,26 +3542,16 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
         }
         updateLabelStatus(label, treeStatus(next));
       };
-      // The spoken-feature companions, unchanged: the dancing cat (frame loop
-      // dances it via entry.cat/catBaseX) and the horse head opposite it.
-      const catBase = grown ? 2.7 : 1.4;
-      const cat = makeDancingCat();
-      cat.position.set(catBase, 0, catBase * 0.35);
-      cat.rotation.y = -Math.PI / 4;
-      group.add(cat);
+      // The horse head is the one surviving companion at the tree's foot: the
+      // cats, dogs, GPU racks and mana shards were one-off props grafted by
+      // voice during demos and the operator asked for them out.
+      const companionBase = grown ? 2.7 : 1.4;
       const horse = makeHorseHead();
-      horse.position.set(-catBase, 0, catBase * 0.35);
+      horse.position.set(-companionBase, 0, companionBase * 0.35);
       horse.rotation.y = Math.PI / 4;
       group.add(horse);
-      // state ring so the blooms read at the tree's foot.
-      // A cluster of freshly-manufactured GPU racks at the tree's foot.
-      group.add(makeGpuRackCluster(grown ? 4.6 : 3.4));
-      // Crystal mana floating around the tree — glowing cyan shards the frame
-      // loop spins and bobs.
-      const manaCluster = makeCrystalManaCluster(grown ? 3.6 : 2.6);
-      group.add(manaCluster.group);
       return {
-        kind: "tree", treeSpec: spec, group, mats, baseEmissive: 0.55, head: null, headY: 0, cat, catBaseX: catBase, mana: manaCluster.shards, label,
+        kind: "tree", treeSpec: spec, group, mats, baseEmissive: 0.55, head: null, headY: 0, label,
         targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false, updateProgress,
         // The engine owns the body's GPU resources; foliage sway rides the
         // shared frame loop through bodyUpdate.
@@ -3942,15 +3645,12 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
         ring.position.y = 0.08;
         group.add(ring);
       }
-      // Crystal mana floating around the self tree, same as the fleet trees.
-      const manaCluster = makeCrystalManaCluster(3.6);
-      group.add(manaCluster.group);
       // The adopted spec keys the shared machinery (hover on callsign, dwell
       // entryForTargetId, activation) to the MIRROR, first-class. mats stays
       // empty — the module owns its materials — so the frame loop's
       // active-pulse (mats[0]) skips this entry even in "active" state.
       return {
-        kind: "tree", treeSpec: spec, group, mats: [], baseEmissive: 0, head: null, headY: 0, cat: null, catBaseX: 0, mana: manaCluster.shards, label,
+        kind: "tree", treeSpec: spec, group, mats: [], baseEmissive: 0, head: null, headY: 0, label,
         targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false,
         disposeExtra: () => {
           built.dispose();
@@ -3998,7 +3698,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
         label.position.y = radius + 0.25;
         group.add(label);
       }
-      return { kind: "orb-idea", ideaSpec: spec, group, mats: [orbMat], baseEmissive, head: null, headY: 0, cat: null, catBaseX: 0, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false };
+      return { kind: "orb-idea", ideaSpec: spec, group, mats: [orbMat], baseEmissive, head: null, headY: 0, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false };
     };
 
     // Orb radius grows with a run's progress; kept in one place so the build
@@ -4066,7 +3766,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
         }
         updateLabelStatus(label, treeStatus(next));
       };
-      return { kind: "orb-proc", treeSpec: spec, group, mats: [orbMat], baseEmissive: 0.5, head: null, headY: 0, cat: null, catBaseX: 0, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false, updateProgress };
+      return { kind: "orb-proc", treeSpec: spec, group, mats: [orbMat], baseEmissive: 0.5, head: null, headY: 0, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false, updateProgress };
     };
 
     // ── layout ──────────────────────────────────────────────────────────────
@@ -4125,7 +3825,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
         }
         updateLabelStatus(label, treeStatus(next));
       };
-      return { kind: "tree", treeSpec: spec, group, mats: [folMat], baseEmissive: 0.22, head: null, headY: 0, cat: null, catBaseX: 0, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false, updateProgress };
+      return { kind: "tree", treeSpec: spec, group, mats: [folMat], baseEmissive: 0.22, head: null, headY: 0, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false, updateProgress };
     };
 
     const buildFloraIdea = (spec: IdeaOrbSpec): Entry => {
@@ -4185,7 +3885,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
         label.position.y = 0.42 * size + 0.15;
         group.add(label);
       }
-      return { kind: "flower", ideaSpec: spec, group, mats, baseEmissive, head, headY: 0, cat: null, catBaseX: 0, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false };
+      return { kind: "flower", ideaSpec: spec, group, mats, baseEmissive, head, headY: 0, label, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false };
     };
 
     // ── constellation builders ──────────────────────────────────────────────
@@ -4272,7 +3972,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
         hit.userData.pick = { kind: "dialogue", key: `cloud:${cloud.id}`, cloud: cloud.id };
       }
       group.add(hit);
-      const entry: Entry = { kind: "cloud", cloudSpec: cloud, group, mats: [], baseEmissive: 0, head: null, headY: 0, cat: null, catBaseX: 0, label: null, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: (hashSeed(cloud.id) % 628) / 100, flashStart: null, removing: false };
+      const entry: Entry = { kind: "cloud", cloudSpec: cloud, group, mats: [], baseEmissive: 0, head: null, headY: 0, label: null, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: (hashSeed(cloud.id) % 628) / 100, flashStart: null, removing: false };
       entry.cloudHit = hit;
       return entry;
     };
@@ -4328,7 +4028,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
       hit.userData.ownMaterial = true;
       hit.userData.pick = { kind: "research", key: spec.id };
       group.add(hit);
-      return { kind: "research", researchSpec: spec, group, mats: [], baseEmissive: 0, head: null, headY: 0, cat: null, catBaseX: 0, label: null, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: (hashSeed(spec.id) % 628) / 100, flashStart: null, removing: false };
+      return { kind: "research", researchSpec: spec, group, mats: [], baseEmissive: 0, head: null, headY: 0, label: null, targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: (hashSeed(spec.id) % 628) / 100, flashStart: null, removing: false };
     };
 
     // Boundary/context cues per layout: the Poincaré ball's wireframe horizon,
@@ -6062,22 +5762,6 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
           // by buildTreeLOD — the self tree's sway runs above via
           // selfTreeBuilt; only the visible LOD level pays).
           entry.bodyUpdate?.(t);
-          // The companion cat dances: a bouncing hop with a wiggling tilt and
-          // a side-to-side sway so the little dancer sashays as it hops.
-          if (entry.cat !== null) {
-            entry.cat.position.y = Math.abs(Math.sin(t * 3 + entry.phase)) * 0.3;
-            entry.cat.position.x = entry.catBaseX + Math.sin(t * 2 + entry.phase) * 0.12;
-            entry.cat.rotation.z = Math.sin(t * 6 + entry.phase) * 0.25;
-          }
-          // Crystal mana shards spin and bob around the tree's foot.
-          if (entry.mana !== undefined) {
-            for (let m = 0; m < entry.mana.length; m++) {
-              const shard = entry.mana[m];
-              shard.rotation.y = t * 0.9 + m;
-              shard.rotation.x = Math.sin(t * 0.7 + m) * 0.4;
-              shard.position.y = (1.8 + (m % 2) * 0.6) + Math.sin(t * 1.6 + m) * 0.22;
-            }
-          }
           // mats guard: the HD self tree adopts the LIVE mirror spec (often
           // "active") but owns no overlay materials — the module renders its
           // own wood/foliage, so the pulse simply skips it.
