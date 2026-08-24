@@ -58,6 +58,11 @@ agents building them.
 ## Control (desk mode — the default)
 
 - **Mouse:** click bubbles and buttons directly.
+- **Plant a tree where you want it:** click an idea orb in the scene and choose
+  **⚘ Plant…** — a ghost marker follows your cursor over the ground (green =
+  legal: on the meadow, or anywhere inside the park wall in `?env=park`, never
+  in water); click to build the idea AND grow its tree on that spot. Esc
+  cancels. Spots persist per-browser and sync to the other wall window.
 - **Keyboard:** press `?` (or `h`) for the cheat-sheet overlay. Highlights:
   `b`/`Enter` build the top ready idea · `x` dismiss it · `c` toggle Idea
   Capture · `a` toggle Auto-Build · `r` toggle Research mode · `q` QR import ·

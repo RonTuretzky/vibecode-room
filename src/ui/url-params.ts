@@ -57,8 +57,7 @@ export interface ProjectorUrlConfig {
   // Billionaires' Row) behind the water (baked open data + CC-BY models, see
   // public/assets/park). Opt-in only; the default "meadow" keeps the
   // pastoral hills. Purely environmental — nodes, layouts, modes, gestures
-  // and the G garden↔orbit toggle behave identically. Distinct from ?park=1
-  // (the stylized OSM diorama laid under the meadow).
+  // and the G garden↔orbit toggle behave identically.
   environment: "meadow" | "park";
   // ?flat=1 — the two wall windows sit side by side on ONE flat wall (no 90°
   // corner): lock them into the rigid split-frustum pair (see flat-lock.ts)
@@ -84,10 +83,6 @@ export interface ProjectorUrlConfig {
   // ?zen=1 — boot with the zen (chrome-less) presentation on, same as the Z
   // key: just the scene, no trays/status chrome. For dedicated displays.
   zen: boolean;
-  // ?park=1 — lay the REAL Central Park under the garden as a stylized
-  // diorama (baked OSM data: water bodies, lawns, every footpath, and the
-  // surveyed trees at their true positions — see src/ui/central-park.ts).
-  park: boolean;
   // ?autofit= — continuous auto-framing override (the camera re-fits itself
   // to keep the whole scene in view as it grows): "1" forces it on for any
   // unlocked window, "0" forces it off, absent/unknown → null so App applies
@@ -168,8 +163,6 @@ export function parseProjectorUrl(search: string, hostname: string): ProjectorUr
   const research = params.get("research") === "1";
   const zen = params.get("zen") === "1";
 
-  // Central Park diorama layer under the garden (?park=1).
-  const park = params.get("park") === "1";
 
   // Continuous auto-framing tri-state: explicit "1"/"0" override, anything
   // else defers (null) to App's default (on for research-pinned windows).
@@ -188,5 +181,5 @@ export function parseProjectorUrl(search: string, hostname: string): ProjectorUr
         : null;
 
   return { view, wall, badge, gesture, dwell,
-    mic, hands, remote, demo, mock, flat, dots, stick, research, zen, park, autoFit, environment };
+    mic, hands, remote, demo, mock, flat, dots, stick, research, zen, autoFit, environment };
 }

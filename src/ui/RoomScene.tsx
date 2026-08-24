@@ -7,12 +7,11 @@ import { getFlatPoseSender, registerSceneFlatPoseControl } from "./gesture/flat-
 import { cornerEye, cornerVerticalFovDeg, cornerYaw } from "./corner-lock";
 import { FLAT_EYE_DISTANCE, FLAT_EYE_HEIGHT, FLAT_YAW, flatVerticalFovDeg, flatViewOffset } from "./flat-lock";
 import { loadGardenFlora, type FloraLibrary } from "./garden-flora";
-import { POND_STAGE, alongAcross as alongAcrossOf, localFromAlongAcross as parkLocalFromAlongAcross } from "../park3d/park-frame";
+import { POND_STAGE, alongAcross as alongAcrossOf, insidePark as insideParkRect, localFromAlongAcross as parkLocalFromAlongAcross } from "../park3d/park-frame";
 import { GAPSTOW, OUTCROPS } from "../park3d/park-landmarks";
 import { loadParkWorldShared, type ParkWorld } from "../park3d/park-world";
 import { Water } from "three/addons/objects/Water.js";
 import { localFromLatLon } from "../park3d/park-frame";
-import { buildCentralPark, loadCentralParkLayout, type CentralParkBuild } from "./central-park";
 import type { SelfTreeSpec } from "./self-repo";
 import {
   buildTreeLOD,
@@ -157,6 +156,11 @@ export interface TreeSpec {
   // /api/process/:upid/issues) — up to FRUIT_CAP hang as emissive fruit on
   // ONE translucent holo branch off the mid-trunk. Absent = no fruit.
   issues?: IssueInfo[];
+  // CHOSEN PLANTING SPOT (the idea card's "Plant…" flow): local scene metres
+  // where the person planted this tree. Garden radial layout only — the
+  // abstract layouts (orbit/ball/disk) keep their own geometry. Absent/null =
+  // the automatic slot row.
+  plantedAt?: { x: number; z: number } | null;
 }
 
 // The ring style that marks a tree's stage on the ground/orb.
@@ -265,6 +269,12 @@ interface RoomSceneProps {
   // Garden far-field (URL-derived, fixed per window): "meadow" hills or the
   // real Central Park ("park"). Only the garden env's horizon changes.
   environment?: SceneEnvironment;
+  // PLANTING MODE (the idea card's "Plant…" flow): while true, the pointer
+  // hovers a ghost marker over the ground and a click hands the chosen spot
+  // to onPlantPick instead of picking nodes. The scene validates the spot
+  // (inside the park boundary / on the meadow, never in water).
+  planting?: boolean;
+  onPlantPick?: (point: { x: number; z: number }) => void;
   // Wall identity ("A" | "B" | …) or null. Seeds the default camera yaw (desk
   // mode) or selects this window's side of the corner-locked pair (gesture
   // mode) — it NEVER filters content.
@@ -358,10 +368,6 @@ interface RoomSceneProps {
   // adopts the mirror's live TreeSpec from `trees`, so selecting it steers
   // the room itself.
   selfTree?: SelfTreeSpec | null;
-  // CENTRAL PARK (?park=1): lay the real park under the garden as a stylized
-  // diorama (baked OSM layers + the surveyed trees — see central-park.ts).
-  // Fixed per window (URL-derived, like the locks).
-  park?: boolean;
 }
 
 const MATURITY_COLOR: Record<IdeaTrayItem["maturity"], number> = {
@@ -1099,7 +1105,7 @@ interface Entry {
   disposeExtra?: () => void;
 }
 
-export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", wall = null, fitSignal, focusUpid = null, pointerNav = true, cornerLock = false, flatLock = false, autoFit = false, onAcceptIdea, onSelectProcess, onPickMiss, onPickBranch, onPickIssue, dialogue = [], topics = [], research = [], onResearchNode, onDialogueNode, sky, researchThinking = false, skyView = false, selfTree = null, park = false }: RoomSceneProps) {
+export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", wall = null, fitSignal, focusUpid = null, pointerNav = true, cornerLock = false, flatLock = false, autoFit = false, onAcceptIdea, onSelectProcess, onPickMiss, onPickBranch, onPickIssue, dialogue = [], topics = [], research = [], onResearchNode, onDialogueNode, sky, researchThinking = false, skyView = false, selfTree = null, planting = false, onPlantPick }: RoomSceneProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const ideasRef = useRef(ideas);
   ideasRef.current = ideas;
@@ -1131,6 +1137,10 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
   // URL-derived and fixed for the window's life (like wall/cornerLock).
   const environmentRef = useRef(environment);
   environmentRef.current = environment;
+  const plantingRef = useRef(planting);
+  plantingRef.current = planting;
+  const onPlantPickRef = useRef(onPlantPick);
+  onPlantPickRef.current = onPlantPick;
   // Wall identity is fixed per window (parsed from the URL once); a ref keeps
   // the mount-once scene effect honest about never re-running for it.
   const wallRef = useRef(wall);
@@ -1142,8 +1152,6 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
   const cornerLockRef = useRef(cornerLock);
   cornerLockRef.current = cornerLock;
   // Same deal: the Central Park layer is URL-derived and fixed per window.
-  const parkRef = useRef(park);
-  parkRef.current = park;
   // Same deal: the flat lock is URL-derived and fixed for the window's life.
   const flatLockRef = useRef(flatLock);
   flatLockRef.current = flatLock;
@@ -1182,6 +1190,11 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
     // Fixed per window (URL-derived): the park scene allows a far wider orbit
     // envelope so the whole postcard — Pond, bridge, skyline — fits in frame.
     const parkEnvWindow = environmentRef.current === "park";
+    // PLANTING surface: where a chosen tree spot is legal and how high the
+    // ground sits there. Defaults describe the meadow disc; the park env
+    // rebinds both once its world loads (inside the park wall, never water).
+    let plantableAt: (x: number, z: number) => boolean = (x, z) => Math.hypot(x, z) < 104;
+    let plantGroundY: (x: number, z: number) => number = () => 0;
     const maxOrbitRadius = parkEnvWindow ? 700 : 45;
     const maxOrbitHeight = parkEnvWindow ? 520 : 30;
     // Pulling far back in the park also lifts the eye above the city, so the
@@ -1499,10 +1512,6 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
         }
       }
       let floraDisposed = false;
-      // Central Park diorama (?park=1): built (async) BEFORE the flora
-      // scatters, so the scatter can keep grass and jacarandas out of the
-      // park's real water bodies via the layer's point test.
-      let parkBuild: CentralParkBuild | null = null;
       // Flower-top landing spots for the butterflies, filled in as the flora
       // scatter runs (async — no flowers loaded simply means no landings).
       const flowerSpots: { x: number; y: number; z: number }[] = [];
@@ -1655,17 +1664,6 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
           for (let i = 0; i < spec.count; i++) {
             const angle = ((i + floraRng() * 0.9) / spec.count) * Math.PI * 2;
             let radius = spec.rMin + floraRng() * (spec.rMax - spec.rMin);
-            // Park layer: nothing sprouts out of the Reservoir — re-roll the
-            // radius a few times (same wedge, so ring coverage survives),
-            // then concede the instance to the water.
-            if (parkBuild !== null) {
-              for (let tries = 0; tries < 6 && parkBuild.isWater(Math.cos(angle) * radius, Math.sin(angle) * radius); tries++) {
-                radius = spec.rMin + floraRng() * (spec.rMax - spec.rMin);
-              }
-              if (parkBuild.isWater(Math.cos(angle) * radius, Math.sin(angle) * radius)) {
-                continue;
-              }
-            }
             dummy.position.set(Math.cos(angle) * radius, 0, Math.sin(angle) * radius);
             dummy.rotation.y = floraRng() * Math.PI * 2;
             dummy.scale.setScalar(spec.sMin + floraRng() * (spec.sMax - spec.sMin));
@@ -1722,24 +1720,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
         }
       };
       if (!softwareGL) {
-        // The park layer (when requested) resolves BEFORE the flora scatter so
-        // the scatter's water test sees it; a failed park fetch degrades to
-        // the plain meadow rather than blocking the flora.
-        const parkReady = parkRef.current
-          ? loadCentralParkLayout()
-              .then((parkLayout) => {
-                if (floraDisposed) {
-                  return;
-                }
-                parkBuild = buildCentralPark(parkLayout);
-                group.add(parkBuild.group);
-              })
-              .catch((error: unknown) => {
-                console.warn("central park layer failed to load; plain meadow stays", error);
-              })
-          : Promise.resolve();
-        parkReady.then(() =>
-          loadGardenFlora()
+        loadGardenFlora()
             .then((flora) => {
               floraLib = flora;
               // Rebuild the data nodes as real models on the next frame.
@@ -1750,8 +1731,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
             })
             .catch((error: unknown) => {
               console.warn("garden flora failed to load; primitive glyphs stay", error);
-            }),
-        );
+            });
       }
 
       // Rolling hills ring the horizon (haze-tinted by the fog) so the meadow
@@ -2133,6 +2113,18 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
               };
             }
             group.add(world.group);
+            // Planting reach: anywhere inside the park wall that isn't
+            // water (room→park is the half-turn about the stage).
+            plantableAt = (x, z) => {
+              const px = POND_STAGE.x - x / PARK_SCALE;
+              const pz = POND_STAGE.z - z / PARK_SCALE;
+              return insideParkRect(px, pz, -4) && world.waterAt(px, pz) < 0.4;
+            };
+            plantGroundY = (x, z) => {
+              const px = POND_STAGE.x - x / PARK_SCALE;
+              const pz = POND_STAGE.z - z / PARK_SCALE;
+              return (world.groundAt(px, pz) - y) * PARK_SCALE - 0.15;
+            };
             return loadGardenFlora().then((flora) => {
               if (!parkDisposed) {
                 scatterParkFlora(flora, world, y);
@@ -2424,15 +2416,12 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
           parkDisposed = true;
           parkWorld?.dispose();
           parkWorld = null;
+          plantableAt = (x, z) => Math.hypot(x, z) < 104;
+          plantGroundY = () => 0;
           if (pondScene) {
             camera.far = defaultFar;
             camera.updateProjectionMatrix();
           }
-          // The park detaches + disposes itself FIRST — its InstancedMesh
-          // owns real geometry/material, unlike the shared-cache flora the
-          // traverse below is calibrated for.
-          parkBuild?.dispose();
-          parkBuild = null;
           scene.remove(group);
           scene.fog = null;
           scene.background = null;
@@ -4608,6 +4597,15 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
         seenTrees.add(spec.upid);
         const existing = treeEntries.get(spec.upid);
         const placed = treePosition(index, treeSpecs.length, garden);
+        // A chosen planting spot (the "Plant…" flow) overrides the slot row —
+        // garden radial only; the abstract layouts keep their geometry. The
+        // plantable test re-validates at render time so stale storage (or a
+        // spot chosen in the park env viewed from the meadow env) degrades
+        // to the slot instead of a floating tree.
+        if (garden && !hyper && spec.plantedAt != null && plantableAt(spec.plantedAt.x, spec.plantedAt.z)) {
+          placed.pos = new THREE.Vector3(spec.plantedAt.x, plantGroundY(spec.plantedAt.x, spec.plantedAt.z), spec.plantedAt.z);
+          placed.k = 1;
+        }
         const scale = !hyper && garden ? 0.62 + Math.min(Math.max(spec.progress, 0), 100) / 100 * 0.33 : 1;
         const create = () => {
           const entry = hyper
@@ -5143,6 +5141,60 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
     // precedence rule runs: deep enough to see a sub-target standing behind
     // its own trunk volume, shallow enough to stay allocation-cheap.
     const PICK_PAYLOAD_CAP = 32;
+    // ── PLANTING marker ("Plant…" flow) ──────────────────────────────────
+    // A ghost ring + sapling stem hovering the ground under the pointer;
+    // green where the spot is legal, ember-red where it isn't (water, past
+    // the park wall). Scene-level, so env rebuilds never orphan it.
+    const plantMarker = new THREE.Group();
+    plantMarker.visible = false;
+    const plantRing = new THREE.Mesh(
+      new THREE.RingGeometry(1.35, 1.85, 40),
+      new THREE.MeshBasicMaterial({ color: 0x7dffa0, transparent: true, opacity: 0.85, side: THREE.DoubleSide, depthWrite: false }),
+    );
+    plantRing.rotation.x = -Math.PI / 2;
+    plantRing.position.y = 0.06;
+    plantMarker.add(plantRing);
+    const plantStem = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.06, 0.1, 1.5, 8),
+      new THREE.MeshBasicMaterial({ color: 0x7dffa0, transparent: true, opacity: 0.7 }),
+    );
+    plantStem.position.y = 0.75;
+    plantMarker.add(plantStem);
+    scene.add(plantMarker);
+    const plantPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+    const plantHit = new THREE.Vector3();
+    // Where does this pointer ray meet the ground? One refinement pass keeps
+    // the marker honest on the park's sloped terrain beyond the stage.
+    const plantPointAt = (clientX: number, clientY: number): { x: number; z: number; y: number; valid: boolean } | null => {
+      const rect = renderer.domElement.getBoundingClientRect();
+      if (rect.width === 0 || rect.height === 0) {
+        return null;
+      }
+      pointer.set(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
+      raycaster.setFromCamera(pointer, camera);
+      plantPlane.constant = 0;
+      if (raycaster.ray.intersectPlane(plantPlane, plantHit) === null) {
+        return null;
+      }
+      plantPlane.constant = -plantGroundY(plantHit.x, plantHit.z);
+      if (raycaster.ray.intersectPlane(plantPlane, plantHit) === null) {
+        return null;
+      }
+      const valid = modeRef.current === "garden" && layoutRef.current === "radial" && plantableAt(plantHit.x, plantHit.z);
+      return { x: plantHit.x, z: plantHit.z, y: plantGroundY(plantHit.x, plantHit.z), valid };
+    };
+    const updatePlantMarker = (clientX: number, clientY: number): void => {
+      const spot = plantPointAt(clientX, clientY);
+      if (spot === null) {
+        plantMarker.visible = false;
+        return;
+      }
+      plantMarker.visible = true;
+      plantMarker.position.set(spot.x, spot.y, spot.z);
+      const tint = spot.valid ? 0x7dffa0 : 0xff7d6b;
+      (plantRing.material as THREE.MeshBasicMaterial).color.setHex(tint);
+      (plantStem.material as THREE.MeshBasicMaterial).color.setHex(tint);
+    };
     const pick = (clientX: number, clientY: number): ScenePickPayload | null => {
       const rect = renderer.domElement.getBoundingClientRect();
       if (rect.width === 0 || rect.height === 0) {
@@ -5240,6 +5292,14 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
         }
         return;
       }
+      if (plantingRef.current) {
+        updatePlantMarker(event.clientX, event.clientY);
+        renderer.domElement.style.cursor = "crosshair";
+        return;
+      }
+      if (plantMarker.visible) {
+        plantMarker.visible = false;
+      }
       const picked = pick(event.clientX, event.clientY);
       hoveredIdea = null;
       hoveredProc = null;
@@ -5276,6 +5336,14 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
       dragging = false;
       panning = false;
       if (wasDrag || event.button !== 0) {
+        return;
+      }
+      if (plantingRef.current) {
+        const spot = plantPointAt(event.clientX, event.clientY);
+        if (spot !== null && spot.valid) {
+          plantMarker.visible = false;
+          onPlantPickRef.current?.({ x: spot.x, z: spot.z });
+        }
         return;
       }
       const picked = pick(event.clientX, event.clientY);

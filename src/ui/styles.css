@@ -4235,3 +4235,21 @@ main.gesture-mode .record-steer-heard-line { font-size: 1.2rem; }
   color: #8fa4cc;
   letter-spacing: 0.04em;
 }
+
+/* ── planting mode (the idea card's "Plant…" flow) ─────────────────────── */
+.planting-hint {
+  position: fixed;
+  top: 72px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 40;
+  padding: 8px 16px;
+  border-radius: 999px;
+  border: 1px solid rgba(125, 255, 160, 0.45);
+  background: rgba(10, 24, 16, 0.82);
+  color: #b9ffcd;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  pointer-events: none;
+}

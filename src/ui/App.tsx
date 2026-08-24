@@ -30,6 +30,7 @@ import { executionOf, parseDeckDecisionMessage, sceneStageOf, stageOf } from "./
 import type { DecisionChoice, StagedProcess } from "./stage";
 import { selfOf, trackBootId } from "./self-reload";
 import { parseProjectorUrl } from "./url-params";
+import { loadPlantedPositions, newUpidAfterAccept, savePlantedPosition } from "./planted-positions";
 import { GuidedDemo } from "./guided/GuidedDemo";
 import { advanceOnSnapshot, popPracticeOrb, restartIdea, setHandsLive, skipStep, startGuided, type GuidedState, type PointerRig } from "./guided/machine";
 import "./buildloop.css";
@@ -113,6 +114,9 @@ declare global {
       applySnapshot: (snapshot: Partial<ProjectorSnapshot>) => void;
       select: (callsignOrUpid: string | null) => void;
       getSelected: () => string | null;
+      // Enter the "Plant…" flow for an idea (null = the primary suggestion):
+      // the next ground click chooses the new tree's spot. e2e/QA surface.
+      plant: (ideaId: string | null) => void;
     };
   }
 }
@@ -268,6 +272,21 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
   const [ideaCard, setIdeaCard] = useState<{ id: string | null } | null>(initialOverlay?.ideaCard ?? null);
   const ideaCardRef = useRef<{ id: string | null } | null>(null);
   ideaCardRef.current = ideaCard;
+  // PLANTING MODE (the idea card's "Plant…" button): the next click on the
+  // scene's ground chooses where the accepted idea's tree grows. Esc cancels
+  // back to nothing-accepted; positions live in localStorage so the second
+  // wall window repositions the same tree via the storage event.
+  const [planting, setPlanting] = useState<{ ideaId: string | null } | null>(null);
+  const plantingRef = useRef<{ ideaId: string | null } | null>(null);
+  plantingRef.current = planting;
+  const [plantedVersion, setPlantedVersion] = useState(0);
+  const plantedPositions = useMemo(() => loadPlantedPositions(), [plantedVersion]);
+  useEffect(() => {
+    const onStorage = () => setPlantedVersion((v) => v + 1);
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
+
   // ?zen=1 boots a dedicated display straight into the chrome-less scene.
   const [zenMode, setZenMode] = useState(urlConfig.zen);
   const zenModeRef = useRef(false);
@@ -532,18 +551,20 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
   // returned snapshot; offline demo drops the card locally so the static tray
   // stays interactive.
   const actOnIdea = useCallback(
-    async (id: string, action: "accept" | "dismiss") => {
+    async (id: string, action: "accept" | "dismiss"): Promise<ProjectorSnapshot | null> => {
       if (!liveMode || mockModeRef.current) {
         setSnapshot((current) => ({
           ...current,
           ideas: (current.ideas ?? []).filter((idea) => idea.id !== id),
         }));
-        return;
+        return null;
       }
       try {
         const response = await fetch(`/api/idea/${encodeURIComponent(id)}/${action}`, { method: "POST" });
         if (response.ok && response.headers.get("content-type")?.includes("application/json")) {
-          setSnapshot((await response.json()) as ProjectorSnapshot);
+          const fresh = (await response.json()) as ProjectorSnapshot;
+          setSnapshot(fresh);
+          return fresh;
         } else {
           // The most consequential button in the room. With the endpoint
           // failing the wall was completely unchanged 2.4s later — no tree, no
@@ -554,8 +575,33 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
       } catch {
         reportControlFailure(action === "accept" ? "Build it" : "Dismiss");
       }
+      return null;
     },
     [liveMode],
+  );
+
+  // Accept-and-bind for the "Plant…" flow: fire the same accept the Build
+  // button uses, then bind whichever upid the accept ADDED to the chosen
+  // ground point (see planted-positions.ts for the cross-window contract).
+  const plantAt = useCallback(
+    async (point: { x: number; z: number }) => {
+      const target = plantingRef.current;
+      if (target === null) {
+        return;
+      }
+      setPlanting(null);
+      const before = snapshotRef.current.processes.map((process) => process.upid);
+      const fresh = target.ideaId === null ? await acceptIdea() : await actOnIdea(target.ideaId, "accept");
+      if (fresh === null) {
+        return;
+      }
+      const upid = newUpidAfterAccept(before, fresh.processes.map((process) => process.upid));
+      if (upid !== null) {
+        savePlantedPosition(upid, point);
+        setPlantedVersion((v) => v + 1);
+      }
+    },
+    [acceptIdea, actOnIdea],
   );
 
   // Keyboard/voice-parity target: b/Enter and x act on the TOP ready idea (the
@@ -1549,6 +1595,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
         setSelected(resolveSelection(id));
       },
       getSelected: () => selected,
+      plant: (ideaId) => setPlanting({ ideaId }),
     };
     return () => {
       delete window.__VIBERSYN__;
@@ -1628,6 +1675,11 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
         }
         if (guestsOpenRef.current) {
           setGuestsOpen(false);
+          return;
+        }
+        // Planting mode cancels without accepting anything.
+        if (plantingRef.current !== null) {
+          setPlanting(null);
           return;
         }
         // The contextual idea card closes without building anything.
@@ -1958,9 +2010,12 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
             // limbs each reconcile, so a fresh branch appears within a tick.
             treeRepo: process.treeRepo ?? null,
             issues: issuesByUpid[process.upid],
+            // The chosen spot from the "Plant…" flow (localStorage-synced
+            // across the two wall windows); absent → the automatic slot.
+            plantedAt: plantedPositions[process.upid] ?? null,
           };
         }),
-    [snapshot.processes, hiddenTrees, steeringUpid, issuesByUpid],
+    [snapshot.processes, hiddenTrees, steeringUpid, issuesByUpid, plantedPositions],
   );
 
   const visibleIdeaOrbs = useMemo<IdeaOrbSpec[]>(
@@ -2281,6 +2336,8 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
         mode={sceneMode}
         layout={sceneLayout}
         environment={urlConfig.environment}
+        planting={planting !== null && sceneMode === "garden" && !researchActive}
+        onPlantPick={(point) => void plantAt(point)}
         wall={urlConfig.wall}
         cornerLock={cornerLock}
         flatLock={flatLock}
@@ -2306,7 +2363,6 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
         researchThinking={snapshot.researchThinking === true}
         skyView={urlConfig.research}
         selfTree={selfTree}
-        park={urlConfig.park}
       />
       {dwellLayerOn ? (
         <GestureLayer
@@ -2636,6 +2692,13 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
       </div>
       )}
 
+      {/* PLANTING HINT: while choosing a spot for a new tree. */}
+      {planting !== null ? (
+        <div className="planting-hint" data-testid="planting-hint">
+          ⚘ Click the ground to plant this idea&apos;s tree — Esc to cancel
+        </div>
+      ) : null}
+
       {/* IDEA ACTION CARD: the contextual "✓ Done — build it" surface, opened
           by clicking an idea orb in the scene (see acceptOrb). Floats
           bottom-center above the scene-controls cluster; the Done button runs
@@ -2680,6 +2743,18 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
             {ideaCard.id === null && snapshot.ideaSettle?.armed === true && snapshot.ideaSettle.firesInMs !== null
               ? ` (${Math.max(1, Math.ceil(snapshot.ideaSettle.firesInMs / 1000))}s)`
               : ""}
+          </button>
+          <button
+            type="button"
+            className="ctl-button idea-plant"
+            data-testid="idea-plant-button"
+            title="Build it AND choose where in the park its tree grows — click a spot on the ground (Esc cancels)."
+            onClick={() => {
+              setPlanting({ ideaId: ideaCard.id });
+              setIdeaCard(null);
+            }}
+          >
+            ⚘ Plant…
           </button>
           <button
             type="button"
