@@ -13,6 +13,7 @@ import { FORBIDDEN_PORTS, findFreePort, MIC_FRAME_BYTES, MIC_FRAME_MS, parseSseB
 const baseInput = {
   repoRoot: "/repo",
   port: 8901,
+  tmpDir: "/tmp/scratch-room",
   binDir: "/tmp/bin",
   scriptPath: "/tmp/script.json",
   ledgerPath: "/tmp/ledger.jsonl",
@@ -57,6 +58,16 @@ describe("room harness safety", () => {
     expect(env.VIBERSYN_PINNED_IMPORTS).toBe("");
     expect(env.VIBERSYN_PHONE_LISTENER).toBe("0");
     expect(env.HOST).toBe("127.0.0.1");
+  });
+
+  // The transcript archive is default-ON at the boot entry this harness spawns
+  // for real, so scripted fake speech WOULD land in the operator's permanent
+  // record if the redirect were ever dropped. This is the guard.
+  test("scripted speech goes to a scratch archive, never the operator's record", () => {
+    const env = serverEnv(baseInput);
+    expect(env.VIBERSYN_TRANSCRIPT_ARCHIVE).toBe("/tmp/scratch-room/transcripts");
+    expect(env.VIBERSYN_TRANSCRIPT_ARCHIVE.startsWith(baseInput.tmpDir)).toBe(true);
+    expect(env.VIBERSYN_TRANSCRIPT_ARCHIVE).not.toContain("builds/transcripts");
   });
 
   test("nothing may write a repo, open a PR, or spawn an agent CLI", () => {

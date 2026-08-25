@@ -536,7 +536,7 @@ async function bootRoom(options: RoomOptions, port: number): Promise<RoomUnderTe
 
   const child = spawn("bun", ["src/server/index.ts"], {
     cwd: repoRoot,
-    env: serverEnv({ repoRoot, port, binDir, scriptPath, ledgerPath, options }),
+    env: serverEnv({ repoRoot, port, tmpDir, binDir, scriptPath, ledgerPath, options }),
     stdio: ["ignore", "pipe", "pipe"],
   });
   let stderrBuffer = "";
@@ -581,6 +581,7 @@ async function bootRoom(options: RoomOptions, port: number): Promise<RoomUnderTe
 export function serverEnv(input: {
   repoRoot: string;
   port: number;
+  tmpDir: string;
   binDir: string;
   scriptPath: string;
   ledgerPath: string;
@@ -600,6 +601,12 @@ export function serverEnv(input: {
     // Empty (not unset) disables the fire-and-forget GitHub clone that
     // src/server/index.ts performs at every boot.
     VIBERSYN_PINNED_IMPORTS: "",
+    // The transcript archive is ON BY DEFAULT at the boot entry, and this
+    // harness spawns that entry FOR REAL with scripted fake-voxterm speech.
+    // Redirected into the scratch room's tmp dir (torn down with it) so a
+    // harness run can never write invented sentences into the operator's
+    // permanent record — the exact pollution 6a1d228 was written to stop.
+    VIBERSYN_TRANSCRIPT_ARCHIVE: join(input.tmpDir, "transcripts"),
 
     // The recognizer seam.
     VIBERSYN_ASR_PROVIDER: "voxterm",

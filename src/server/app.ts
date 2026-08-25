@@ -13,6 +13,10 @@ import { RemoteHandsHub, resolveHandsInfo } from "./remote-hands";
 import { resolveImportInfo, type InterfaceAddresses } from "./project-import";
 import { registerForestSurface, sharedForestLoader } from "./github-org";
 import { createSeamApp } from "../seam/dispatcher";
+import { listDays, readDay, renderTranscriptText, resolveDayKey } from "./transcript-archive";
+
+const TRANSCRIPT_ARCHIVE_OFF =
+  "this room keeps no transcript archive (VIBERSYN_TRANSCRIPT_ARCHIVE is off) — nothing said here is being saved";
 
 export interface ProjectorAppOptions {
   env?: Record<string, string | undefined>;
@@ -105,6 +109,43 @@ export function createProjectorApp(runtime: ProjectorRuntime, options: Projector
   );
   app.get("/api/state", (context) => context.json(runtime.snapshot()));
   app.get("/api/events", () => eventsResponse(runtime));
+  // READ THE ARCHIVE BACK. The operator asked for "today's transcript" and the
+  // answer was a bespoke python pass over a rolling 400-line file; day-segmented
+  // JSONL makes it a read. Registered STATIC-FIRST so /days is not swallowed by
+  // the :day param route. (`bun run transcript` is the same read without a
+  // server — that one works when the room is DOWN, which is exactly when last
+  // night's conversation is wanted.)
+  app.get("/api/transcript/days", (context) => {
+    const dir = runtime.transcriptArchiveDir;
+    if (dir === null) {
+      return context.json({ error: TRANSCRIPT_ARCHIVE_OFF }, 503);
+    }
+    return context.json({ archiveDir: dir, days: listDays(dir) });
+  });
+  // :day is YYYY-MM-DD | today | yesterday — "today" being the LOCAL day, which
+  // is the whole point: the operator's evening straddles UTC midnight, so a UTC
+  // "today" would answer a 3-hour conversation with its last 19 lines.
+  app.get("/api/transcript/:day", (context) => {
+    const dir = runtime.transcriptArchiveDir;
+    if (dir === null) {
+      return context.json({ error: TRANSCRIPT_ARCHIVE_OFF }, 503);
+    }
+    const spec = context.req.param("day");
+    const day = resolveDayKey(spec, Date.now());
+    // Distinct, non-silent failures: a bad day string is a 400 and a day with
+    // no segment is a 404. An empty array would read as "we said nothing".
+    if (day === null) {
+      return context.json({ error: `"${spec}" is not a day — use YYYY-MM-DD, "today", or "yesterday".` }, 400);
+    }
+    const segment = readDay(dir, day);
+    if (!segment.exists) {
+      return context.json({ error: `no transcript for ${day}`, day, archiveDir: dir, days: listDays(dir) }, 404);
+    }
+    if (context.req.query("format") === "text") {
+      return context.text(renderTranscriptText(segment.lines));
+    }
+    return context.json({ day, archiveDir: dir, lines: segment.lines, skipped: segment.skipped });
+  });
   // REQ-2 / REQ-14: in the real (live) projector path these controls ALWAYS drive
   // the real MuteController / EmergencyStopController — see runtime.unmute() /
   // runtime.emergencyStop(). A client explicitly loaded in OFFLINE-DEMO mode

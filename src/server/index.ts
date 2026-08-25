@@ -1,5 +1,6 @@
 import { websocket as honoWebsocket } from "hono/bun";
 import { existsSync } from "node:fs";
+import { resolve } from "node:path";
 import type { Hono } from "hono";
 import { createProjectorRuntime } from "./composition";
 import { createPhoneImportApp, createProjectorApp } from "./app";
@@ -7,8 +8,32 @@ import { formatDegradationNotice } from "./degradation-notice";
 import { RemoteHandsHub, resolveHandsInfo, type HubConnection } from "./remote-hands";
 import { createLanFetch, createLanWebsocket, resolvePhonePort, resolveTlsPort, type LanSocketData } from "./lan-listener";
 import { GenAiOtlpExporter } from "../obs/otel";
+import { TRANSCRIPT_ARCHIVE_DEFAULT_DIR, resolveTranscriptArchiveDir } from "./transcript-archive";
 
-const runtime = await createProjectorRuntime(process.env);
+// THE TRANSCRIPT ARCHIVE IS ON BY DEFAULT, and the default lives HERE.
+//
+// Commit 6a1d228 gated the old store behind an env marker because self-mode
+// TEST runtimes were writing the LIVE store and polluting the operator's
+// record. Putting the default in the runtime constructor would reintroduce
+// exactly that — every `bun test` that builds a runtime would append to the
+// real archive. This entry is the only REAL server process, so the default
+// belongs at this boundary: `bun run start`, run-room.sh and the self
+// supervisor all get an archive; a directly-constructed runtime never does.
+// (The one other thing that boots this file is src/testing/room-harness.ts,
+// which spawns it with scripted fake speech — its serverEnv redirects
+// VIBERSYN_TRANSCRIPT_ARCHIVE into the scratch room's tmp dir.)
+const transcriptArchiveDir = resolveTranscriptArchiveDir(
+  process.env,
+  process.env.VIBERSYN_TRANSCRIPT_ARCHIVE === undefined ? resolve(process.cwd(), TRANSCRIPT_ARCHIVE_DEFAULT_DIR) : undefined,
+);
+const runtime = await createProjectorRuntime(process.env, { transcriptArchiveDir });
+if (transcriptArchiveDir === null) {
+  console.warn(
+    "[transcript] archive DISABLED by VIBERSYN_TRANSCRIPT_ARCHIVE — this room is keeping no record of what is said. Unset it (or point it at a directory) to save transcripts.",
+  );
+} else {
+  console.log(`[transcript] archive: ${transcriptArchiveDir} (one YYYY-MM-DD.jsonl per day, kept forever) — read it with \`bun run transcript\`.`);
+}
 // Start the idea-detection background tick so a detection scheduled by a SPEECH
 // PAUSE still fires while the room is quiet (no new turns arriving). Tests drive
 // detection synchronously via ingestTurn/flush and never start this tick.

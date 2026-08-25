@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { Hono } from "hono";
 import { createPhoneImportApp, createProjectorApp } from "./app";
+import { TRANSCRIPT_ARCHIVE_DEFAULT_DIR, listDays, localDayKey, readDay } from "./transcript-archive";
 import { registerForestSurface, type ForestState, type ForestSurfaceLoader } from "./github-org";
 import { RemoteHandsHub } from "./remote-hands";
 import { createProjectorRuntime, type ProjectorRuntime, type ProjectorRuntimeOptions } from "./composition";
@@ -2630,5 +2631,122 @@ describe("GitHub import → deploy resolver → deployUrl surfaces", () => {
     const { upid } = (await response.json()) as { upid: string };
     await waitFor(() => runtime.registry.builds(upid).some((build) => build.status === "ready"));
     expect(runtime.snapshot().processes.find((entry) => entry.upid === upid)!.deployUrl).toBeNull();
+  });
+});
+
+// THE READ-BACK SURFACE. "Get me today's transcript" used to be a bespoke
+// python pass over a rolling file that had already evicted most of the evening;
+// the archive answers it with a read. (`bun run transcript` is the same read
+// without a server, for when the room is down.)
+describe("GET /api/transcript/*", () => {
+  function seedArchive(lines: { text: string; atMs: number }[]): string {
+    const dir = mkdtempSync(join(tmpdir(), "vibersyn-transcript-"));
+    tempDirs.push(dir);
+    const byDay = new Map<string, string[]>();
+    for (const entry of lines) {
+      const day = localDayKey(entry.atMs);
+      const body = JSON.stringify({
+        time: new Date(entry.atMs).toISOString().slice(11, 19),
+        speaker: "speaker_0",
+        text: entry.text,
+        kind: "room",
+        atMs: entry.atMs,
+      });
+      byDay.set(day, [...(byDay.get(day) ?? []), body]);
+    }
+    mkdirSync(dir, { recursive: true });
+    for (const [day, bodies] of byDay) {
+      writeFileSync(join(dir, `${day}.jsonl`), `${bodies.join("\n")}\n`);
+    }
+    return dir;
+  }
+
+  const noonToday = new Date(new Date().setHours(12, 0, 0, 0)).getTime();
+  const noonYesterday = noonToday - 24 * 60 * 60_000;
+
+  test("today's lines come back, in spoken order, with their original atMs", async () => {
+    const archiveDir = seedArchive([
+      { text: "we should build a birdhouse app", atMs: noonToday },
+      { text: "with a webcam feed", atMs: noonToday + 2_000 },
+    ]);
+    const { app } = await makeApp({ runtimeOptions: { transcriptArchiveDir: archiveDir } });
+    const response = await app.request("/api/transcript/today");
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { day: string; archiveDir: string; lines: { text: string; atMs: number }[] };
+    expect(body.archiveDir).toBe(archiveDir);
+    expect(body.lines.map((line) => line.text)).toEqual(["we should build a birdhouse app", "with a webcam feed"]);
+    expect(body.lines[0]!.atMs).toBe(noonToday);
+  });
+
+  test("yesterday, and an explicit YYYY-MM-DD, address their own segments", async () => {
+    const archiveDir = seedArchive([
+      { text: "last night", atMs: noonYesterday },
+      { text: "this afternoon", atMs: noonToday },
+    ]);
+    const { app } = await makeApp({ runtimeOptions: { transcriptArchiveDir: archiveDir } });
+    const yesterday = (await (await app.request("/api/transcript/yesterday")).json()) as { lines: { text: string }[] };
+    expect(yesterday.lines.map((line) => line.text)).toEqual(["last night"]);
+    const explicit = (await (await app.request(`/api/transcript/${localDayKey(noonToday)}`)).json()) as { lines: { text: string }[] };
+    expect(explicit.lines.map((line) => line.text)).toEqual(["this afternoon"]);
+  });
+
+  test("?format=text renders LOCAL stamps a human can read", async () => {
+    const at = new Date(new Date().setHours(17, 52, 1, 0)).getTime();
+    const archiveDir = seedArchive([{ text: "not i just", atMs: at }]);
+    const { app } = await makeApp({ runtimeOptions: { transcriptArchiveDir: archiveDir } });
+    const response = await app.request("/api/transcript/today?format=text");
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("17:52:01  speaker_0: not i just");
+  });
+
+  test("/days lists what the archive holds, oldest first", async () => {
+    const archiveDir = seedArchive([
+      { text: "last night", atMs: noonYesterday },
+      { text: "this afternoon", atMs: noonToday },
+    ]);
+    const { app } = await makeApp({ runtimeOptions: { transcriptArchiveDir: archiveDir } });
+    const body = (await (await app.request("/api/transcript/days")).json()) as { archiveDir: string; days: string[] };
+    expect(body.days).toEqual([localDayKey(noonYesterday), localDayKey(noonToday)]);
+  });
+
+  // Every failure says something specific. An empty array would read as "we
+  // said nothing", which is the one answer that must never be guessed at.
+  test("a malformed day is 400, a day with no segment is 404, no archive is 503", async () => {
+    const archiveDir = seedArchive([{ text: "this afternoon", atMs: noonToday }]);
+    const { app } = await makeApp({ runtimeOptions: { transcriptArchiveDir: archiveDir } });
+    const bad = await app.request("/api/transcript/tomorrow");
+    expect(bad.status).toBe(400);
+    expect((await bad.json()) as { error: string }).toHaveProperty("error");
+    const missing = await app.request("/api/transcript/2001-01-01");
+    expect(missing.status).toBe(404);
+    expect(((await missing.json()) as { days: string[] }).days).toEqual([localDayKey(noonToday)]);
+
+    const { app: noArchive } = await makeApp();
+    expect((await noArchive.request("/api/transcript/today")).status).toBe(503);
+    expect((await noArchive.request("/api/transcript/days")).status).toBe(503);
+  });
+});
+
+// THE DEFAULT-ON GUARD, asserted the way the operator asked: a runtime built
+// the way TESTS build one must write NOTHING to the default archive path.
+// Commit 6a1d228 gated the old store behind an env marker because self-mode
+// test runtimes were polluting the operator's live store; making the archive
+// default-on at the BOOT ENTRY (src/server/index.ts) keeps that hole shut, and
+// this test is what proves it stays shut.
+describe("a test-built runtime keeps no archive", () => {
+  const defaultArchivePath = resolve(process.cwd(), TRANSCRIPT_ARCHIVE_DEFAULT_DIR);
+
+  test("no archive directory resolves, and the default path is never created", async () => {
+    const before = existsSync(defaultArchivePath) ? listDays(defaultArchivePath).map((day) => `${day}:${readDay(defaultArchivePath, day).lines.length}`) : null;
+    const { runtime } = await makeApp();
+    expect(runtime.transcriptArchiveDir).toBeNull();
+    const after = existsSync(defaultArchivePath) ? listDays(defaultArchivePath).map((day) => `${day}:${readDay(defaultArchivePath, day).lines.length}`) : null;
+    expect(after).toEqual(before);
+  });
+
+  test("even a SELF-MODE runtime with no directory keeps no archive", async () => {
+    const { runtime } = await makeApp({ runtimeEnv: { VIBERSYN_SELF_MODE: "1" } });
+    expect(runtime.transcriptArchiveDir).toBeNull();
+    expect(existsSync(defaultArchivePath) ? listDays(defaultArchivePath) : []).not.toContain("__never__");
   });
 });

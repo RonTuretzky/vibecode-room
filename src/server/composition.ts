@@ -139,6 +139,7 @@ import { dirtySourcePaths, graftOntoBranch, type SelfLandingResult as SelfLandin
 import { buildProjectBrief, type ProjectBrief, type ProjectBriefSource } from "./project-brief";
 import { readIntent, type ProjectIntent } from "./project-intake";
 import { TranscriptStore } from "./transcript-store";
+import { resolveTranscriptArchiveDir } from "./transcript-archive";
 import { TreeIssuesCache, type TreeIssue } from "./tree-issues";
 import { buildImportPlanPrompt, buildImportPlanQuestions } from "./import-plan";
 import { hasBuildableCue } from "../detect";
@@ -210,6 +211,10 @@ export interface ProjectorRuntimeEnv {
 
 export interface ProjectorRuntime {
   readonly sessionId: string;
+  // The directory this room's permanent transcript archive is written to, or
+  // null when it keeps no record. The read-back endpoints report it so "where
+  // are my words" has an answer even when the archive is off.
+  readonly transcriptArchiveDir: string | null;
   readonly asrMode: AsrProviderMode;
   readonly micMode: AsrProviderMode;
   readonly asr: ASRProvider;
@@ -602,10 +607,12 @@ export interface ProjectorRuntimeOptions {
   // observe the 87 without killing the test process.
   selfGitHead?: () => Promise<GitHeadFact | null>;
   exitProcess?: (code: number) => void;
-  // Where the conversation's disk shadow lives (transcript survives the self
-  // reload). Absent → the env marker VIBERSYN_TRANSCRIPT_STORE decides; null
-  // and no marker → no persistence (every test runtime).
-  transcriptStorePath?: string | null;
+  // Where the conversation's permanent archive lives (a directory of
+  // YYYY-MM-DD.jsonl day segments — transcript-archive.ts). Absent → the env
+  // marker VIBERSYN_TRANSCRIPT_ARCHIVE decides; null (explicit) or no marker →
+  // no archive at all, which is what every directly-constructed test runtime
+  // gets. This option NEVER falls back to a literal path.
+  transcriptArchiveDir?: string | null;
   // GitHub Pages deck publisher seam (src/publish/gh-pages). Fired once per
   // kicked-off idea, fire-and-forget, after its FIRST pitch deck lands; the
   // resolved public URL becomes the process's publishedUrl + take-home QR.
@@ -927,11 +934,13 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   // SELF-REBUILD runtime toggle: the operator-flippable gate consulted by the
   // exit-87 trigger (requestSelfReload). Boots from VIBERSYN_SELF_MODE.
   #selfRebuild: boolean;
-  // The conversation's disk shadow: finals persist so a SELF reload resumes
-  // the same evening instead of a blank room (transcript-store.ts). Null off
-  // self mode — only the self-hosting loop reboots the room mid-conversation,
-  // and test runtimes must never read the live room's file.
+  // The conversation's permanent archive: every FINAL line is appended to a
+  // day-segmented JSONL record that is never evicted (transcript-store.ts), and
+  // its recent tail is restored at boot so a reload — or a restart after dinner
+  // — resumes the same conversation. Null when no archive directory resolved
+  // (every directly-constructed test runtime).
   readonly #transcriptStore: TranscriptStore | null;
+  readonly transcriptArchiveDir: string | null;
   #selfCommission: SelfCommissioner | null = null;
   #selfReloadPending = false;
   readonly #exit: (code: number) => void;
@@ -957,13 +966,24 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     // starts armed, everything else starts off (and can only record intent
     // for a future --self launch — see setSelfRebuild).
     this.#selfRebuild = this.#selfMode;
-    // The path comes from the supervisor's env (self-supervisor.sh exports
-    // VIBERSYN_TRANSCRIPT_STORE): the LIVE self-hosted room persists; test
-    // runtimes — even self-mode ones — have no marker, so they can neither
-    // read the live room's conversation nor pollute it (one did, in review).
-    const transcriptStorePath = options.transcriptStorePath ?? this.#env.VIBERSYN_TRANSCRIPT_STORE ?? null;
-    this.#transcriptStore = this.#selfMode && transcriptStorePath !== null ? new TranscriptStore({ path: transcriptStorePath }) : null;
-    this.#exit = options.exitProcess ?? ((code: number) => process.exit(code));
+    // The archive directory is resolved, never invented — see
+    // resolveTranscriptArchiveDir. The DEFAULT lives at the boot entry
+    // (src/server/index.ts), so every real server process keeps a permanent
+    // record while a directly-constructed runtime (how every unit test builds
+    // one) has no directory and can neither read the operator's conversation
+    // nor pollute it. The self-mode conjunct is gone on purpose: the archive is
+    // the operator's record now, not a self-reload feature, so `bun run start`
+    // and a non-self run-room.sh deserve one too.
+    this.transcriptArchiveDir = resolveTranscriptArchiveDir(this.#env, options.transcriptArchiveDir);
+    // EVERY exit drains the archive first. The save is debounced 750ms, so a
+    // reload firing between two words would otherwise drop the last thing said
+    // — the exact loss "the conversation survives the reload" promises not to
+    // have. Wrapping the seam covers all four exit-87 call sites at once.
+    const exit = options.exitProcess ?? ((code: number) => process.exit(code));
+    this.#exit = (code: number) => {
+      this.#transcriptStore?.dispose();
+      exit(code);
+    };
     this.#selfReloadDelayMs = resolveSelfReloadDelayMs(env);
     this.#selfGitRunner = options.selfGitRunner ?? null;
     this.#selfGhRunner = options.selfGhRunner ?? null;
@@ -980,6 +1000,23 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     const ttsSelection = selectTtsProvider(env, { transport: options.ttsTransport });
     this.tts = ttsSelection.provider;
     this.trace = new TraceProcessor({ clock });
+    // Built AFTER the trace processor because its notes ride recordExternalTrace:
+    // a store that cannot write must SAY so (once per kind of trouble), not fail
+    // silently forever the way the old three bare `catch {}` blocks did.
+    this.#transcriptStore =
+      this.transcriptArchiveDir === null
+        ? null
+        : new TranscriptStore({
+            dir: this.transcriptArchiveDir,
+            onNote: (note) => {
+              this.recordExternalTrace({ event: "transcript.archive", level: note.level, sessionId, meta: { kind: note.kind, message: note.message } });
+              if (note.level === "warn") {
+                console.warn(note.message);
+              } else {
+                console.log(note.message);
+              }
+            },
+          });
     this.#demoProcesses = demoProjectorSnapshot.processes.map((process) => ({ ...process }));
     this.#session = new EmergencySessionState({ sessionId, listening: true, muted: false });
     this.muteController = new MuteController({
@@ -1496,11 +1533,13 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     if (this.#env.VIBERSYN_RESEARCH !== "0") {
       this.research.setActive(true);
     }
-    // RESUME THE CONVERSATION across a self reload: restore fresh finals into
-    // the live window AND re-feed them (original atMs) through the research
-    // loop, so the ceiling's chronology/topics survive the reboot too. Stale
-    // files (previous session) restore nothing — an old evening never haunts
-    // a new room.
+    // RESUME THE CONVERSATION across a reload or a restart: restore the recent
+    // TAIL of the archive into the live window and re-feed it (original atMs)
+    // through the research loop, so the ceiling's chronology/topics survive the
+    // reboot too. The archive keeps everything; this reads only the last
+    // TRANSCRIPT_RESTORE_MAX_LINES within TRANSCRIPT_RESTORE_MAX_AGE_MS —
+    // "saved forever" must never mean "replayed into the live room", or a
+    // week-old sentence would arrive on the ceiling wearing a NOW marker.
     for (const stored of this.#transcriptStore?.restore() ?? []) {
       const line: TranscriptLine = { time: stored.time, speaker: stored.speaker, text: stored.text, kind: stored.kind as TranscriptLine["kind"] };
       this.#liveFinals = [...this.#liveFinals, line].slice(-MAX_LIVE_TRANSCRIPT_LINES);
@@ -2856,7 +2895,8 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     if (observation.isFinal) {
       this.#liveFinals = [...this.#liveFinals, line].slice(-MAX_LIVE_TRANSCRIPT_LINES);
       this.#interim = null;
-      // Shadow to disk (debounced, atomic): the self reload resumes from here.
+      // Into the permanent archive (debounced, append-only): this line is kept
+      // forever, whether or not any future boot restores it.
       this.#transcriptStore?.append({ ...line, atMs: Date.now() });
     } else {
       this.#interim = line;

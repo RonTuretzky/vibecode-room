@@ -26,9 +26,10 @@ SERVER_CMD="${VIBERSYN_SELF_SERVER_CMD:-bun src/server/index.ts}"
 BUILD_CMD="${VIBERSYN_SELF_BUILD_CMD:-bun run build}"
 
 export VIBERSYN_SELF_MODE=1
-# The conversation's disk shadow (transcript survives the exit-87 reload).
-# Only the supervisor sets this — test runtimes must never touch it.
-export VIBERSYN_TRANSCRIPT_STORE="builds/session-transcript.json"
+# NOTE: the transcript archive is no longer exported here. It is ON BY DEFAULT
+# at the boot entry (src/server/index.ts -> builds/transcripts/YYYY-MM-DD.jsonl),
+# so every launch keeps a permanent record, not just a supervised one. Set
+# VIBERSYN_TRANSCRIPT_ARCHIVE to relocate it, or to "off" to keep no record.
 
 # Deliberate-stop marker: `touch /tmp/vibersyn-stop` (or Ctrl-C, which kills
 # THIS script) ends the loop. A bare SIGTERM to the SERVER alone does not —

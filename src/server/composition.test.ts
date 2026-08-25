@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createProjectorRuntime, liveProjectorSuggestion, type ProjectorRuntime } from "./composition";
+import { listDays, localDayKey, readDay } from "./transcript-archive";
 import { DetectionRunner } from "./detection-runner";
 import { HeuristicIdeaDetector, type DetectionInput, type DetectionResult, type IdeaDetector } from "../detect";
 import { RecordingAudioSink, type AudioSink } from "./audio-device-sink";
@@ -870,3 +871,54 @@ function interim(text: string, utteranceId: string): TranscriptObservation {
 function observation(text: string, isFinal: boolean, utteranceId: string): TranscriptObservation {
   return { text, isFinal, speaker: "Room", sessionId: "test-session", latencyMs: 20, utteranceId };
 }
+
+// THE LIVE WRITE PATH, end to end: a spoken FINAL goes through ingestTranscript
+// into the day segment on disk, and the next boot restores it. This is the seam
+// the operator's whole ask rides on, so it is exercised through the real mic
+// session rather than by poking the store.
+describe("the room's words reach the permanent archive", () => {
+  async function waitForSegment(dir: string, day: string, timeoutMs = 4_000): Promise<ReturnType<typeof readDay>> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const segment = readDay(dir, day);
+      if (segment.lines.length > 0) {
+        return segment;
+      }
+      await new Promise((tick) => setTimeout(tick, 25));
+    }
+    return readDay(dir, day);
+  }
+
+  test("a spoken final lands in today's segment and comes back on the next boot", async () => {
+    const archiveDir = mkdtempSync(join(tmpdir(), "vibersyn-archive-"));
+    tempDirs.push(archiveDir);
+    const { runtime, drive } = await makeRuntime({ options: { transcriptArchiveDir: archiveDir } });
+    expect(runtime.transcriptArchiveDir).toBe(archiveDir);
+
+    await drive([interim("we should build a", "u-archive-1"), final("we should build a birdhouse app", "u-archive-1")]);
+    const day = localDayKey(Date.now());
+    const segment = await waitForSegment(archiveDir, day);
+    // FINALS only — an interim is ephemeral by definition and must never be
+    // written into a permanent record.
+    expect(segment.lines.map((line) => line.text)).toEqual(["we should build a birdhouse app"]);
+    expect(segment.skipped).toBe(0);
+    expect(segment.lines[0]!.atMs).toBeGreaterThan(0);
+
+    // A fresh runtime over the same archive resumes the same conversation, with
+    // the ORIGINAL atMs (the ceiling must not stamp it NOW).
+    const { runtime: rebooted } = await makeRuntime({ options: { transcriptArchiveDir: archiveDir } });
+    const resumed = rebooted.snapshot().transcript;
+    expect(resumed.map((line) => line.text)).toContain("we should build a birdhouse app");
+  });
+
+  test("no archive directory, no writes — and the room still ingests speech", async () => {
+    const archiveDir = mkdtempSync(join(tmpdir(), "vibersyn-archive-off-"));
+    tempDirs.push(archiveDir);
+    const { runtime, drive } = await makeRuntime();
+    expect(runtime.transcriptArchiveDir).toBeNull();
+    await drive([final("nothing here is written down", "u-archive-off-1")]);
+    expect(runtime.snapshot().transcript.map((line) => line.text)).toContain("nothing here is written down");
+    await new Promise((tick) => setTimeout(tick, 900)); // past the save debounce
+    expect(listDays(archiveDir)).toEqual([]);
+  });
+});

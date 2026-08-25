@@ -10,6 +10,7 @@
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1",
     "start": "bun src/server/index.ts",
+    "transcript": "bun scripts/transcript.ts",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "test:e2e": "playwright test",
