@@ -2113,7 +2113,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
           group: fly, left, right, homeX, homeZ,
           heading: rng() * Math.PI * 2, speed: 0.8, cruise: 0.75 + rng() * 0.55, vy: 0,
           turnRate: 0, turnTarget: 0, turnT: rng(), targetAlt: 1.2 + rng() * 2,
-          flapPhase: rng(), flapFreq: 6.5 + rng() * 2.5, flapEnv: 1, flapping: true,
+          flapPhase: rng(), flapFreq: 4.5 + rng() * 1.5, flapEnv: 1, flapping: true,
           modeT: 0.5 + rng(), bank: 0, mode: 0, landT: 8 + rng() * 18, tx: 0, ty: 0, tz: 0,
         });
       }
