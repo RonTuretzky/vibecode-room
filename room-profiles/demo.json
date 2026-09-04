@@ -1,0 +1,14 @@
+{
+  "description": "A local room with demo projects and deterministic inference; no resident imports.",
+  "env": {
+    "HOST": "127.0.0.1",
+    "VIBERSYN_PINNED_IMPORTS": "",
+    "VIBERSYN_PHONE_LISTENER": "0",
+    "VIBERSYN_SEED_DEMO_FLEET": "1",
+    "VIBERSYN_IDEA_DETECTOR": "heuristic",
+    "VIBERSYN_DECISION_LLM": "heuristic",
+    "VIBERSYN_RESEARCH_SUGGESTER": "heuristic",
+    "VIBERSYN_RESEARCH_AGENT": "stub",
+    "VIBERSYN_TRANSCRIPT_ARCHIVE": "off"
+  }
+}

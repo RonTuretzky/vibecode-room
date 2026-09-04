@@ -1549,7 +1549,7 @@ describe("project deck (slideshow)", () => {
   // is now the menu's only deck path. The other half — a ready lane's View ▸
   // into that backend's mock — is gone, so a process whose only deck is a mock
   // lane's now offers no deck path at all.
-  test("the tree menu's ONLY deck path is the fixture 🎞 deck — a ready lane opens nothing", () => {
+  test("the tree menu opens generated and fixture decks through one control", () => {
     const processes: BuildloopProcess[] = demoProjectorSnapshot.processes.map((process, index) =>
       index === 0
         ? {
@@ -1575,10 +1575,10 @@ describe("project deck (slideshow)", () => {
         />,
       ),
     );
-    // A ready lane with a real slideshowUrl no longer buys a row on the tree.
+    // A generated deck has its own entry point without restoring per-lane clutter.
     expect(laneDeck).not.toContain('data-testid="tree-menu-lane"');
     expect(laneDeck).not.toContain("View ▸");
-    expect(laneDeck).not.toContain('data-testid="tree-menu-deck"');
+    expect(laneDeck).toContain('data-testid="tree-menu-deck"');
 
     // Fixture decks (mock room) keep their one-press open — the surviving path.
     const busy = busyRoomSnapshot();

@@ -243,17 +243,10 @@ test("deck journey: answer reshapes the mock, commission runs a real implementat
   // --- open the deck the way a person does: tree menu → ready lane ---------
   await waitForWallBuild(wall.page, target.upid, { slideshowUrl: deck.slideshowUrl }, "the ready lane with its deck");
   await wall.page.evaluate((id) => window.__VIBERSYN__?.select(id), target.callsign);
-  // STALE AFFORDANCE — this step will FAIL until it is rehomed. The tree
-  // menu's concept-lane chips were removed at the operator's request ("remove
-  // the mock buttons"), and that button was also the only door to a finished
-  // build's deck: the surviving tree-menu-deck button is gated on
-  // model.hasFixtureDeck (process.slides), which real builds do not carry.
-  // Left failing ON PURPOSE rather than deleted — this spec's remaining
-  // assertions (deck provenance, build chips, live frame) are real coverage,
-  // and silently skipping them would hide the gap instead of naming it.
-  const lane = wall.page.locator('button[data-testid="tree-menu-lane"][data-status="ready"]');
-  await expect(lane.first(), "the tree menu offers the ready lane as a real button").toBeVisible({ timeout: 10_000 });
-  await lane.first().click();
+  // Generated decks now have the same explicit menu entry as fixture decks.
+  const deckButton = wall.page.getByTestId("tree-menu-deck");
+  await expect(deckButton, "the tree menu exposes the generated deck").toBeVisible({ timeout: 10_000 });
+  await deckButton.click();
   await expect(wall.page.locator('[data-testid="slideshow-overlay"]')).toBeVisible();
   const frame = wall.page.frameLocator('[data-testid="slideshow-live-frame"]');
   await expect(frame.locator("[data-slide]").first()).toBeAttached({ timeout: 15_000 });

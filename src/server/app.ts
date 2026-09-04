@@ -903,7 +903,6 @@ export function createProjectorApp(runtime: ProjectorRuntime, options: Projector
 
 // ── /salem authenticated app proxy ───────────────────────────────────────────
 
-const SALEM_DEFAULT_UPSTREAM = "https://residency.convent.fun";
 // Upstream budget: the board is a small remote app — 8s covers a cold Caddy
 // hop, and the fallback page beats a spinner pinned to a dead upstream.
 const SALEM_PROXY_TIMEOUT_MS = 8_000;
@@ -979,13 +978,20 @@ function registerSalemSurface(
     salemFetch: (input: string | URL, init?: RequestInit) => Promise<Response>;
   },
 ): void {
-  const upstreamOrigin = ((): string => {
+  const upstreamOrigin = ((): string | null => {
     try {
-      return new URL(options.env.VIBERSYN_SALEM_UPSTREAM ?? SALEM_DEFAULT_UPSTREAM).origin;
+      const url = new URL(options.env.VIBERSYN_SALEM_UPSTREAM ?? "");
+      return url.protocol === "https:" || url.protocol === "http:" ? url.origin : null;
     } catch {
-      return new URL(SALEM_DEFAULT_UPSTREAM).origin;
+      return null;
     }
   })();
+  if (upstreamOrigin === null) {
+    app.get("/salem/healthz", (context) => context.json({ up: false, authed: false, disabled: true }));
+    app.all("/salem", (context) => context.text("This room has no house-board integration configured.", 503));
+    app.all("/salem/*", (context) => context.text("This room has no house-board integration configured.", 503));
+    return;
+  }
   // The salem_session cookie VALUE. May be unset tonight: every request then
   // goes up cookie-less and the board honestly serves its login page.
   const sid = (options.env.VIBERSYN_SALEM_SID ?? "").trim();

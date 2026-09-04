@@ -24,6 +24,37 @@ agents building them.
 
 ## Run
 
+First install **Bun 1.3.14 or newer** and **Node.js 22.12 or newer** (for Vite), then run:
+
+```sh
+bun install --frozen-lockfile
+cp .env.example .env
+bun run doctor
+bun run dev
+```
+
+Development starts both the API and Vite. Open `http://127.0.0.1:5173`;
+HTTP, SSE and microphone/guest WebSockets are proxied to the API. Live mode is
+the default; `?live=0` explicitly selects the offline fixture. `bun run dev:ui`
+and `bun run dev:api` remain available for separate terminals.
+
+The shared API port is **8787**, overridden by `VIBERSYN_PORT`, then `PORT`.
+`bun run start`, `run-room.sh`, Vite and generated previews use this same setting.
+
+Room profiles live in `room-profiles/`. The `default` profile starts empty;
+`demo` provides local fixture projects and deterministic detection; `convent`
+restores the original installation's resident repository and house board.
+Environment values (including empty strings) override profile defaults:
+
+```sh
+VIBERSYN_ROOM_PROFILE=demo bun run dev
+bun run room --profile=convent --single
+```
+
+Keep credentials in `.env`, never in profile JSON. `bun run doctor` reports
+missing integrations without printing credentials. See [development notes](docs/DEVELOPMENT.md)
+for artifact recovery, module ownership, and the test commands.
+
 - **The whole room, one command:** `./run-room.sh` — builds + serves Vibersyn
   (bound to `0.0.0.0` so your phone can reach the QR-import page) and opens the
   UI fullscreen on two walls. **Both walls render the complete 3D room** — all
@@ -35,8 +66,8 @@ agents building them.
   keyboard, and voice. `./run-room.sh --single` opens one window instead — a
   laptop or single projector; `--single=ideas`/`--single=builds` only add the
   legacy view badge.
-- **Vibersyn projector only:** `bun run start` (server on :8787), or `bun run dev`
-  for the UI dev server. Open `/?live=1` for the live runtime.
+- **Vibersyn projector only:** `bun run build && bun run start` (server on :8787),
+  or `bun run dev` for the API and UI with live reload.
 - **Central Park (optional):** toggle **Central Park** in the ⚙ Controls dock
   (or seed it with `?env=park`) and the room stands in ONE
   iconic place at true scale — the lawn north of **Gapstow Bridge over the

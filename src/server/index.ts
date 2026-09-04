@@ -9,6 +9,10 @@ import { RemoteHandsHub, resolveHandsInfo, type HubConnection } from "./remote-h
 import { createLanFetch, createLanWebsocket, resolvePhonePort, resolveTlsPort, type LanSocketData } from "./lan-listener";
 import { GenAiOtlpExporter } from "../obs/otel";
 import { TRANSCRIPT_ARCHIVE_DEFAULT_DIR, resolveTranscriptArchiveDir } from "./transcript-archive";
+import { resolveRoomPort } from "../config/network";
+import { resolveRoomEnv } from "../config/profiles";
+
+Object.assign(process.env, await resolveRoomEnv(process.env));
 
 // THE TRANSCRIPT ARCHIVE IS ON BY DEFAULT, and the default lives HERE.
 //
@@ -45,12 +49,11 @@ runtime.detection.start();
 // exactly once; export failures are swallowed and never touch the runtime.
 startOtelTraceExport(runtime);
 
-// PINNED IMPORTS (live-room request: the salem profile stands in the garden
-// beside the room's own tree at every boot; khalildh/handstrudel joins it,
-// checked out from GitHub by voice in the room). Comma-separated GitHub URLs;
+// Optional resident projects, configured by the room profile or environment.
+// Comma-separated GitHub URLs;
 // fire-and-forget through the exact same import path the QR uses — clone
 // (reused when already on disk), adopt, deploy-resolve, tree.
-const pinnedImports = (process.env.VIBERSYN_PINNED_IMPORTS ?? "https://github.com/khalildh/handstrudel")
+const pinnedImports = (process.env.VIBERSYN_PINNED_IMPORTS ?? "")
   .split(",")
   .map((entry) => entry.trim())
   .filter((entry) => entry.length > 0);
@@ -61,7 +64,7 @@ for (const pinnedUrl of pinnedImports) {
 }
 
 const host = process.env.HOST ?? "127.0.0.1";
-const port = parsePort(process.env.VIBERSYN_PORT ?? process.env.PORT ?? "8787");
+const port = resolveRoomPort(process.env);
 
 // GUEST HANDS relay hub — shared by every listener: LAN guests stream cursors
 // in over WS /hands/ws (any listener), wall windows subscribe on WS
@@ -153,6 +156,9 @@ Bun.serve<MicSocketData>({
   port,
   fetch(request, server) {
     const pathname = new URL(request.url).pathname;
+    // A quiet room is still connected. Bun's default ten-second idle timeout
+    // otherwise repeatedly cuts the event stream and flashes a disconnect warning.
+    if (pathname === "/api/events") server.timeout(request, 0);
     // The live microphone path is a WebSocket so the browser can stream raw PCM
     // continuously. Everything else stays on the Hono app.
     if (pathname === "/api/mic") {
@@ -290,9 +296,4 @@ function startOtelTraceExport(exportingRuntime: Awaited<ReturnType<typeof create
   }, 3_000);
   (timer as { unref?: () => void }).unref?.();
   console.log(`[otel] Langfuse OTLP trace export enabled -> ${endpoint}`);
-}
-
-function parsePort(value: string): number {
-  const parsed = Number(value);
-  return Number.isInteger(parsed) && parsed > 0 ? parsed : 8787;
 }

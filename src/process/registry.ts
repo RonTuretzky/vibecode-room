@@ -110,6 +110,9 @@ export interface ProcessRegistryOptions {
   // (bare "vibersyn-<upid>", the existing test contract); production passes a
   // per-boot nonce.
   runIdNonce?: string;
+  // Production supplies UUIDs so disk paths never belong to two projects,
+  // even after a restart. Tests can keep deterministic sequence identifiers.
+  allocateUpid?: () => string;
 }
 
 // Retention cap for dead (halted) records. Halted cards stay visible on the
@@ -177,8 +180,10 @@ export class ProcessRegistry {
   #runIdNonce: string | null = null;
   #selectedUPID: string | null = null;
   #upidSeq = 0;
+  readonly #allocateUpid: () => string;
 
   constructor(options: ProcessRegistryOptions) {
+    this.#allocateUpid = options.allocateUpid ?? (() => `upid-${++this.#upidSeq}`);
     this.client = options.client;
     this.sessionId = options.sessionId ?? "vibersyn-process";
     this.maxConcurrentProcesses = options.maxConcurrentProcesses ?? DEFAULT_MAX_CONCURRENT_PROCESSES;
@@ -274,7 +279,7 @@ export class ProcessRegistry {
       };
     }
 
-    const upid = seed.upid ?? `upid-${++this.#upidSeq}`;
+    const upid = seed.upid ?? this.#allocateUpid();
     // Name the process after the idea, not a codename: infer a display title +
     // a one-word spoken handle from the pitch. The handle goes through the
     // allocator's phonetic collision guard — on a collision (or an empty

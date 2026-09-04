@@ -5,6 +5,7 @@ import { tendChipLayout, tendChipSize, type TendChipId } from "./tend-radial";
 import { laneStatusLabel, processLanes, type GuidedLane } from "./guided/machine";
 import { executionOf, stageOf, type ProcessStage } from "./stage";
 import { ExecutionChip } from "./BuildChips";
+import { buildsOf } from "./buildloop";
 import { RecordSteerToggle } from "./RecordSteerToggle";
 import {
   haltSelfRun,
@@ -242,6 +243,7 @@ export interface TreeMenuModel {
   // Fixture decks (mock room): the process carries slides directly, so the
   // menu offers the plain deck-open button instead of per-lane views.
   hasFixtureDeck: boolean;
+  hasDeck: boolean;
   published: { url: string; qrSvg: string } | null;
   // LIVE DEPLOYMENT (imported trees): the deploy-resolver's confirmed URL —
   // present, the menu grows a "🌐 Live app ▸" row opening the holo panel.
@@ -274,6 +276,8 @@ export function treeMenuModel(process: ProjectorProcess, snapshot: ProjectorSnap
     lanes: isSelf ? [] : processLanes(process, snapshot),
     isSelf,
     hasFixtureDeck: (process.slides?.length ?? 0) > 0,
+    hasDeck: (process.slides?.length ?? 0) > 0 || buildsOf(process).some((build) =>
+      build.status === "ready" && Boolean(build.slideshowUrl?.trim())),
     published:
       typeof process.publishedUrl === "string" &&
       process.publishedUrl.length > 0 &&
@@ -1345,7 +1349,7 @@ export function TreeMenu({
   if (liveOpenable) {
     present.push("live");
   }
-  if (model.hasFixtureDeck) {
+  if (model.hasDeck) {
     present.push("deck");
   }
   if (model.adopted) {
@@ -1490,8 +1494,8 @@ export function TreeMenu({
         </div>
       ) : null}
 
-      {/* Fixture decks (mock room) keep their one-press open. */}
-      {model.hasFixtureDeck ? (
+      {/* Both generated and fixture decks have a stable entry point. */}
+      {model.hasDeck ? (
         <div
           className="tend-chip tend-chip-deck"
           data-chip="deck"

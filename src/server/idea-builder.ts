@@ -13,8 +13,10 @@
 // clickable "Preview ->" once the page is live, and lifecycle events (halt /
 // emergency stop) can tear the servers down.
 
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
+import { roomApiOrigin } from "../config/network";
+import { archiveArtifacts } from "../buildloop/artifact-history";
 
 export type BuildStatus = "building" | "ready" | "failed";
 
@@ -47,6 +49,7 @@ export interface BuildIdeaPreviewOptions {
   // Emergency-stop seam: aborting kills the in-flight builder subprocess
   // immediately (never waits out the builder timeout).
   signal?: AbortSignal;
+  apiOrigin?: string;
 }
 
 const DEFAULT_HOST = "127.0.0.1";
@@ -78,23 +81,18 @@ const NO_CACHE_HEADERS: Record<string, string> = {
 // resolves to smithers/index.html) with no-cache headers. This is the seam the
 // multi-backend orchestrator uses to give each builds/<upid>/<backendId>/ its
 // own previewUrl off one per-UPID server.
-export function servePreviewDirectory(dir: string, host: string = DEFAULT_HOST): Promise<PreviewServer> {
-  return serveDirectory(dir, host);
+export function servePreviewDirectory(dir: string, host: string = DEFAULT_HOST, apiOrigin = roomApiOrigin(process.env)): Promise<PreviewServer> {
+  return serveDirectory(dir, host, apiOrigin);
 }
 
 // The pitch deck served off a preview port posts its decision buttons to
 // RELATIVE /api/... endpoints (template.ts contract: same-origin). The preview
 // server is NOT the room server, so those posts land here — forward them to
-// the room (VIBERSYN_PORT, default 8788) instead of 404ing the deck's
+// the room (VIBERSYN_PORT, default 8787) instead of 404ing the deck's
 // "Build it for real" button.
-function roomApiTarget(pathname: string, search: string): string {
-  const port = Number.parseInt(process.env.VIBERSYN_PORT ?? "8788", 10);
-  return `http://127.0.0.1:${Number.isInteger(port) && port > 0 ? port : 8788}${pathname}${search}`;
-}
-
-async function forwardApiRequest(request: Request, pathname: string, search: string): Promise<Response> {
+async function forwardApiRequest(request: Request, pathname: string, search: string, apiOrigin: string): Promise<Response> {
   try {
-    const forwarded = await fetch(roomApiTarget(pathname, search), {
+    const forwarded = await fetch(new URL(`${pathname}${search}`, apiOrigin), {
       method: request.method,
       headers: { "content-type": request.headers.get("content-type") ?? "application/json" },
       ...(request.method === "GET" || request.method === "HEAD" ? {} : { body: await request.arrayBuffer() }),
@@ -105,7 +103,7 @@ async function forwardApiRequest(request: Request, pathname: string, search: str
   }
 }
 
-async function serveDirectory(dir: string, host: string): Promise<PreviewServer> {
+async function serveDirectory(dir: string, host: string, apiOrigin: string): Promise<PreviewServer> {
   const bun = (globalThis as { Bun?: typeof import("bun") }).Bun;
   if (bun !== undefined && typeof bun.serve === "function") {
     const server = bun.serve({
@@ -114,7 +112,7 @@ async function serveDirectory(dir: string, host: string): Promise<PreviewServer>
       async fetch(request) {
         const url = new URL(request.url);
         if (url.pathname.startsWith("/api/")) {
-          return forwardApiRequest(request, url.pathname, url.search);
+          return forwardApiRequest(request, url.pathname, url.search, apiOrigin);
         }
         const file = resolveRequestedFile(dir, url.pathname);
         let handle = bun.file(file);
@@ -138,10 +136,10 @@ async function serveDirectory(dir: string, host: string): Promise<PreviewServer>
       },
     };
   }
-  return serveDirectoryNode(dir, host);
+  return serveDirectoryNode(dir, host, apiOrigin);
 }
 
-async function serveDirectoryNode(dir: string, host: string): Promise<PreviewServer> {
+async function serveDirectoryNode(dir: string, host: string, apiOrigin: string): Promise<PreviewServer> {
   const http = await import("node:http");
   const { readFile, stat } = await import("node:fs/promises");
   const server = http.createServer((request, response) => {
@@ -164,6 +162,7 @@ async function serveDirectoryNode(dir: string, host: string): Promise<PreviewSer
             }),
             pathname,
             query === undefined || query.length === 0 ? "" : `?${query}`,
+            apiOrigin,
           );
           response.statusCode = forwarded.status;
           for (const [name, value] of Object.entries(NO_CACHE_HEADERS)) {
@@ -346,7 +345,7 @@ export async function buildIdeaPreview(
   const dir = join(root, safeSegment(upid));
 
   // Fresh directory: an accept always starts the artifact from scratch.
-  await rm(dir, { recursive: true, force: true });
+  await archiveArtifacts(dir);
   await mkdir(dir, { recursive: true });
 
   // Instant placeholder: write the deterministic scaffold and start the server
@@ -356,7 +355,7 @@ export async function buildIdeaPreview(
   await writeFile(join(dir, "styles.css"), renderStyles(), "utf8");
   await writeFile(join(dir, "app.js"), renderScript(upid), "utf8");
 
-  const server = await serveDirectory(dir, host);
+  const server = await serveDirectory(dir, host, options.apiOrigin ?? roomApiOrigin(process.env));
   const previewUrl = `http://${host}:${server.port}/`;
 
   // Real build: run the coding agent to overwrite the scaffold with a working

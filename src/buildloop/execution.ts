@@ -22,7 +22,7 @@
 // leaves a reachable preview up.
 
 import { existsSync, readdirSync } from "node:fs";
-import { rm } from "node:fs/promises";
+import { archiveArtifacts } from "./artifact-history";
 import { join, resolve } from "node:path";
 import { servePreviewDirectory, type PreviewServer } from "../server/idea-builder";
 
@@ -124,7 +124,7 @@ export class ExecutionRegistry {
     if (this.#lanes.has(upid)) {
       return;
     }
-    await rm(this.artifactsDir(upid), { recursive: true, force: true });
+    await archiveArtifacts(this.artifactsDir(upid));
   }
 
   // Open the lane at commission time: the durable run has been launched. The
