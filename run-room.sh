@@ -62,7 +62,7 @@
 #                                 # server in scripts/self-supervisor.sh — exit 87
 #                                 # (green self-commit) → bun run build → relaunch
 #
-# Env: VIBERSYN_PORT(8788) HOST(0.0.0.0) WS_PORT(8770) BROWSER("Google Chrome")
+# Env: VIBERSYN_PORT(8787) HOST(0.0.0.0) WS_PORT(8770) BROWSER("Google Chrome")
 #      WALL_A_POS(0,0) WALL_B_POS(1920,0) ROOM_CONFIG(gesture-wall/room.json)
 #      PYTHON(gesture-wall/.venv/bin/python if present, else python3)
 #      WALL_A_M / WALL_B_M (unset = tape-measured widths stored in the room
@@ -73,6 +73,16 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT"
+if [ "${VIBERSYN_ROOM_PROFILE_LOADED:-}" != "1" ]; then
+  if [ -n "${VIBERSYN_ROOM_PROFILE:-}" ]; then
+    exec bun scripts/room.ts "$@"
+  fi
+  for room_arg in "$@"; do
+    if [[ "$room_arg" == --profile=* ]]; then
+      exec bun scripts/room.ts "$@"
+    fi
+  done
+fi
 
 GESTURE=0
 GESTURE_EXPLICIT=0                    # an explicit --gesture (vs implied by --arcade/--fake): --arcade + --gesture = stick BESIDE cameras
@@ -87,7 +97,7 @@ SINGLE=0
 SINGLE_VIEW="${SINGLE_VIEW:-full}"   # full | ideas | builds (--single=<view>; legacy badge, never filters)
 CALIBRATE=0
 CONFIG="${ROOM_CONFIG:-gesture-wall/room.json}"
-VIBERSYN_PORT="${VIBERSYN_PORT:-8788}"
+VIBERSYN_PORT="${VIBERSYN_PORT:-${PORT:-8787}}"
 HOST="${HOST:-0.0.0.0}"               # bind all interfaces so phones reach /submit (QR import)
 WS_PORT="${WS_PORT:-8770}"
 ARCADE_PORT="${ARCADE_PORT:-8771}"    # joystick bridge port when it runs BESIDE the camera fusion server

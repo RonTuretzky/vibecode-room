@@ -299,6 +299,20 @@ describe("LiveProjectorRuntime — assembled ambient loop end to end", () => {
     expect(runtime.micMode).toBe("replay");
   });
 
+  test("fresh runtime sessions never reuse a newly accepted project's artifact identity", async () => {
+    const ids: string[] = [];
+    for (let session = 0; session < 2; session += 1) {
+      const { runtime, drive } = await makeRuntime({ env: { VIBERSYN_SEED_DEMO_FLEET: "0" } });
+      await drive([final(BUILDABLE, `idea-${session}`)]);
+      await drive([final("yes", `accept-${session}`)]);
+      const projects = runtime.snapshot().processes;
+      expect(projects).toHaveLength(1);
+      ids.push(projects[0]!.upid);
+    }
+    expect(ids[0]).toMatch(/^upid-[0-9a-f-]{36}$/);
+    expect(ids[1]).not.toBe(ids[0]);
+  });
+
   test("ambient loop chain on the live runtime — detect -> deliver -> accept -> spawn -> ack (integration)", async () => {
     const { runtime, drive } = await makeRuntime();
     const upidsBefore = new Set(runtime.snapshot().processes.map((process) => process.upid));

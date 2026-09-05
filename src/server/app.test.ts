@@ -405,7 +405,7 @@ describe("POST /api/projects/import", () => {
     expect(response.status).toBe(200);
     const body = (await response.json()) as { ok: boolean; upid?: string; callsign?: string; title?: string | null };
     expect(body.ok).toBe(true);
-    expect(body.upid).toBe("upid-1");
+    expect(body.upid).toMatch(/^upid-[0-9a-f-]{36}$/);
     expect(body.callsign).toBe("GESTUREW");
     unsubscribe();
 
@@ -428,7 +428,7 @@ describe("POST /api/projects/import", () => {
     // Clone settles → the build fan-out kicks and a REAL local preview outranks
     // the repo URL on the legacy preview field.
     releaseClone({ ok: true, dir: join(tmpdir(), "fake-clone") });
-    await settleImportBuild(runtime, "upid-1");
+    await settleImportBuild(runtime, body.upid!);
     const builtState = (await (await app.request("/api/state")).json()) as ProjectorSnapshot;
     const built = builtState.processes[0]!;
     expect(built.buildStatus).toBe("ready");
@@ -601,7 +601,7 @@ describe("POST /api/projects/import", () => {
     });
     const response = await postJson(app, "/api/projects/import", { url: "https://github.com/o/r" });
     const body = (await response.json()) as { upid?: string };
-    expect(body.upid).toBe("upid-1");
+    expect(body.upid).toMatch(/^upid-[0-9a-f-]{36}$/);
 
     await runtime.emergencyStop("corr-test-emergency");
     // The in-flight clone's signal was aborted by the kill-all.
@@ -610,7 +610,7 @@ describe("POST /api/projects/import", () => {
     // A late clone settle must NOT start a build on the halted process.
     releaseClone({ ok: true, dir: join(tmpdir(), "late-clone") });
     await new Promise((resolveTick) => setTimeout(resolveTick, 25));
-    expect(runtime.ideaBuilds.state("upid-1")).toBeUndefined();
+    expect(runtime.ideaBuilds.state(body.upid!)).toBeUndefined();
     const state = (await (await app.request("/api/state")).json()) as ProjectorSnapshot;
     expect(state.processes[0]!.state).toBe("halted");
     expect(state.processes[0]!.previewUrl).toBe(null);
@@ -1145,7 +1145,7 @@ describe("adopted-tree branch + PR routes", () => {
     });
   });
 
-  test("the PR route commits spoken changes, pushes ONLY the room branch, opens one PR to the ORIGIN — and is idempotent", async () => {
+  test("the PR route pushes the committed branch without overwriting it from the checkout, opens one PR to the ORIGIN — and is idempotent", async () => {
     const git = branchRailGit();
     const gh = branchRailGh();
     const { app, runtime } = await makeApp({
@@ -1160,9 +1160,8 @@ describe("adopted-tree branch + PR routes", () => {
     expect(opened.status).toBe(200);
     expect((await opened.json()) as unknown).toEqual({ ok: true, url: "https://github.com/acme/widget/pull/7" });
 
-    // The working-tree commit landed on the room branch with the spoken-changes message.
-    const commit = git.calls.find((argv) => argv.includes("commit-tree"))!;
-    expect(commit[commit.indexOf("-m") + 1]).toBe("room: spoken changes");
+    // PR creation must never snapshot the original checkout over branch edits.
+    expect(git.calls.some(argv => argv.includes("commit-tree"))).toBe(false);
     // Push: exactly refs/heads/room/<slug>, never --all / main / force.
     const push = git.calls.find((argv) => argv.includes("push"))!;
     expect(push).toContain("refs/heads/room/add-dark-mode:refs/heads/room/add-dark-mode");
@@ -2404,9 +2403,17 @@ describe("/salem authenticated app proxy", () => {
     return { calls, fetchFn };
   }
 
-  const SID_ENV = { VIBERSYN_SALEM_SID: "sid-abc123" };
+  const SID_ENV = { VIBERSYN_SALEM_SID: "sid-abc123", VIBERSYN_SALEM_UPSTREAM: "https://residency.convent.fun" };
 
-  test("GET forwards path+query to the default upstream and injects the salem_session cookie", async () => {
+  test("an unconfigured installation makes no upstream requests", async () => {
+    const salem = scriptedSalem(() => new Response("unexpected"));
+    const { app } = await makeApp({ env: { VIBERSYN_SALEM_UPSTREAM: "" }, salemFetch: salem.fetchFn });
+    expect(await (await app.request("/salem/healthz")).json()).toEqual({ up: false, authed: false, disabled: true });
+    expect((await app.request("/salem/")).status).toBe(503);
+    expect(salem.calls).toHaveLength(0);
+  });
+
+  test("GET forwards path+query to the configured upstream and injects the salem_session cookie", async () => {
     const salem = scriptedSalem(() => new Response("ok", { headers: { "content-type": "text/plain" } }));
     const { app } = await makeApp({ env: SID_ENV, salemFetch: salem.fetchFn });
     const response = await app.request("/salem/chores?week=2");
@@ -2432,7 +2439,7 @@ describe("/salem authenticated app proxy", () => {
     const salem = scriptedSalem(
       () => new Response("<h1>Login</h1>", { headers: { "content-type": "text/html; charset=utf-8" } }),
     );
-    const { app } = await makeApp({ env: {}, salemFetch: salem.fetchFn });
+    const { app } = await makeApp({ env: { VIBERSYN_SALEM_UPSTREAM: SID_ENV.VIBERSYN_SALEM_UPSTREAM }, salemFetch: salem.fetchFn });
     const response = await app.request("/salem/");
     expect(response.status).toBe(200);
     expect(await response.text()).toContain("Login");

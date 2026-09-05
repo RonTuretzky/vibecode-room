@@ -13,6 +13,7 @@ export interface ProjectSlide {
 }
 
 export interface ProjectorProcess {
+  recovery?: "interrupted";
   upid: string;
   runId: string;
   callsign: string;
@@ -216,6 +217,10 @@ export interface ProjectorSuggestion {
 }
 
 export interface ProjectorSnapshot {
+  providers?: import("../server/degradation-notice").DegradationNotice;
+  plantedPositions?: Record<string, { x: number; z: number }>;
+  recovery?: { restoredAtMs: number | null; interrupted: string[]; error: string | null };
+  branchJobs?: import("../server/branch-jobs").BranchJob[];
   sessionId: string;
   listening: boolean;
   muted: boolean;

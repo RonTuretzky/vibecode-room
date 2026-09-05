@@ -72,6 +72,8 @@ export interface DeckRig {
   signals: Array<Record<string, unknown>>;
   /** artifacts/vibersyn-runs dirs the scripted runs created (cleaned on stop). */
   artifactDirs: string[];
+  /** Keep scripted work executing until the test has observed its progress. */
+  holdCompletion(): () => void;
   stop(): Promise<void>;
 }
 
@@ -124,6 +126,8 @@ export async function startDeckRig(options: DeckRigOptions): Promise<DeckRig> {
   const timers: Array<ReturnType<typeof setTimeout>> = [];
   let stopped = false;
   let streamSeq = 0;
+  let completionHeld = false;
+  const pendingCompletions: Array<() => void> = [];
 
   function pushFrame(run: RunState, event: string, summary: string): void {
     run.seq += 1;
@@ -184,8 +188,13 @@ export async function startDeckRig(options: DeckRigOptions): Promise<DeckRig> {
       ).then(() => pushFrame(run, "task.progress", "wrote index.html"));
     });
     at(stepMs * 4, () => {
-      run.status = "finished";
-      pushFrame(run, "run.completed", "run finished");
+      const finish = () => {
+        if (stopped || run.status !== "running") return;
+        run.status = "finished";
+        pushFrame(run, "run.completed", "run finished");
+      };
+      if (completionHeld) pendingCompletions.push(finish);
+      else finish();
     });
   }
 
@@ -317,8 +326,16 @@ export async function startDeckRig(options: DeckRigOptions): Promise<DeckRig> {
     launches,
     signals,
     artifactDirs,
+    holdCompletion() {
+      completionHeld = true;
+      return () => {
+        completionHeld = false;
+        for (const finish of pendingCompletions.splice(0)) finish();
+      };
+    },
     async stop(): Promise<void> {
       stopped = true;
+      pendingCompletions.length = 0;
       for (const timer of timers) {
         clearTimeout(timer);
       }

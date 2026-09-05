@@ -30,14 +30,8 @@ test("a degraded room admits it on the wall", async ({ room, wall }) => {
   );
   expect(degraded.length, "this boot is degraded, so there is something to render").toBeGreaterThan(0);
 
+  await wall.page.getByRole("button", { name: /^Projects \(/ }).click();
+  await wall.page.getByText("Providers · fallback services active", { exact: true }).click();
   const text = await wallText(wall.page);
-  const named = degraded.filter((leg) => new RegExp(`\\b${leg.leg}\\b`, "iu").test(text));
-  // CONTRACT REVERSED (live-room directive): the wall carries NO stand-ins
-  // chip — permanently naming intentionally-stubbed legs (tts, sink) read as
-  // noise to the operator. /api/health remains the full degradation truth for
-  // diagnostics and this harness; the wall stays clean.
-  const anyNotice = /stand-?in/iu.test(text);
-  console.log(`[degradation] health knows ${degraded.length} degraded legs; wall shows stand-ins chip=${anyNotice}`);
-  expect(degraded.length, "health must keep reporting the stubbed legs").toBeGreaterThan(0);
-  expect(anyNotice, "the wall must NOT render the stand-ins chip").toBe(false);
+  for (const leg of degraded) expect(text).toContain(leg.leg);
 });

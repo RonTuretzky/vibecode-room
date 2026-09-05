@@ -115,6 +115,18 @@ export class GatewayRegistryClient implements RegistrySmithersClient {
     readonly correlations: CorrelationStore,
   ) {}
 
+  async stopForRetry(upid: string): Promise<void> {
+    const record = await this.correlations.findByUPID(upid);
+    if (!record) throw new Error("Cannot reconcile the previous run");
+    const run = await this.client.transport.request("getRun", { runId: record.runId }) as { status?: string; state?: string } | null;
+    const status = run?.status ?? run?.state;
+    if (!["completed", "complete", "finished", "failed", "cancelled", "canceled", "halted"].includes(status ?? "")) await this.client.halt(upid);
+  }
+
+  async restoreRun(seed: SpawnSeed): Promise<void> {
+    await this.correlations.upsert(createCorrelationRecord({ upid: seed.upid, runId: seed.runId!, callsign: seed.callsign ?? null, steeringWindowId: seed.steeringWindowId ?? null, correlationId: seed.correlationId, parentId: seed.parentId ?? null, state: "planning" }));
+  }
+
   async spawn(seed: SpawnSeed): Promise<SpawnResult> {
     const result = await this.client.spawn(seed);
     await this.correlations.upsert(

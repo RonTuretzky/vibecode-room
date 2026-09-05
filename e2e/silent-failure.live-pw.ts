@@ -1,3 +1,4 @@
+import { openProjectWork } from "./project-workspace";
 // JOURNEY: "I pressed it. Did anything happen?"
 //
 // The operator's words were "there are so many broken things … the app is
@@ -46,7 +47,7 @@ test("no control on the wall is a silent no-op when its endpoint fails", async (
   const openDock = async (): Promise<void> => {
     // The dock folds itself away; the rAF hover loop (ControlDock.tsx) reopens
     // it when the cursor rests on it — exactly what a person does.
-    await dock.hover();
+    await page.getByTestId("control-dock-button").click();
     await expect(dock).toHaveAttribute("data-expanded", "true", { timeout: 5_000 });
   };
   const openTreeMenu = async (): Promise<void> => {
@@ -55,14 +56,12 @@ test("no control on the wall is a silent no-op when its endpoint fails", async (
   };
 
   const rows: Row[] = [
-    { name: "Auto-Build", testid: "auto-build-button", route: "**/api/auto-accept", reach: openDock },
-    { name: "Self-Rebuild", testid: "self-rebuild-button", route: "**/api/self-rebuild", reach: openDock },
     { name: "Research mode", testid: "research-mode-button", route: "**/api/research-mode", reach: openDock },
     {
       name: "Record a change (arm)",
       testid: "record-steer-start",
       route: "**/api/process/*/select",
-      reach: openTreeMenu,
+      reach: () => openProjectWork(page, target.callsign),
     },
     {
       name: "Remove this tree (confirm)",
@@ -86,6 +85,8 @@ test("no control on the wall is a silent no-op when its endpoint fails", async (
   const mute: string[] = [];
   for (const row of rows) {
     await page.unrouteAll();
+    const closeProjects = page.getByRole("button", { name: "Close projects" });
+    if (await closeProjects.isVisible()) await closeProjects.click();
     await page.route(row.route, async (route) => {
       await route.fulfill({ status: 500, contentType: "application/json", body: '{"error":"injected fault"}' });
     });

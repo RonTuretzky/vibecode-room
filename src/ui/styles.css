@@ -4280,3 +4280,39 @@ main.gesture-mode .record-steer-heard-line { font-size: 1.2rem; }
   pointer-events: none;
 }
 
+
+/* Reachable desktop controls, independent of 3D picking and projector menus. */
+.workspace-nav { position: fixed; top: 124px; left: 18px; display: flex; gap: 6px; z-index: 40; }
+.project-workspace { position: fixed; top: 174px; left: 18px; bottom: 78px; width: min(440px, calc(100vw - 36px)); overflow: auto; z-index: 85; background: #101d23f5; color: #f2f5f4; border: 1px solid #719090; border-radius: 14px; padding: 16px; box-sizing: border-box; box-shadow: 0 8px 30px #0007; }
+.project-workspace header { display: flex; align-items: center; justify-content: space-between; }
+.project-workspace h2 { margin: 0 0 12px; }
+.project-workspace input, .project-workspace select, .text-change textarea { width: 100%; box-sizing: border-box; padding: 10px; border-radius: 6px; background: #24343b; color: #fff; border: 1px solid #899e9e; font: inherit; }
+.project-list { display: grid; gap: 6px; margin-top: 10px; max-height: 210px; overflow: auto; }
+.project-row { text-align: left; display: grid; gap: 4px; padding: 10px; color: inherit; background: #20363d; border: 1px solid #546d74; border-radius: 6px; cursor: pointer; }
+.project-row[aria-pressed=true] { outline: 2px solid #c0e799; }
+.project-row span { overflow-wrap: anywhere; }
+.project-detail { border-top: 1px solid #547078; margin-top: 14px; padding-top: 8px; }
+.project-detail a { display: inline-block; padding: 8px; color: #c0e799; }
+.text-change { display: grid; gap: 8px; margin-top: 12px; min-width: min(280px, 60vw); }
+.text-change textarea { display: block; min-height: 70px; margin-top: 6px; resize: vertical; }
+.text-change p, .branch-job p { overflow-wrap: anywhere; margin: 8px 0; }
+.branch-job { padding: 12px 0; border-top: 1px solid #496168; }
+.persistent-recording { position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%); width: min(640px, calc(100vw - 24px)); box-sizing: border-box; padding: 12px; z-index: 210; background: #321b26f5; border: 2px solid #ff97ad; border-radius: 12px; color: #fff; box-shadow: 0 8px 30px #0008; }
+.persistent-recording strong { display: block; margin-bottom: 6px; }
+.recording-echo { max-height: 48px; overflow: auto; margin: 6px 0 0; }
+.recovery-banner { position: fixed; top: 126px; right: 18px; max-width: min(420px, 90vw); z-index: 80; padding: 12px; background: #493822; color: #fff2c8; border: 1px solid #dcb875; border-radius: 8px; }
+:where(button, a, input, textarea, select):focus-visible { outline: 3px solid #d0f493; outline-offset: 3px; }
+.project-workspace .ctl-button { min-height: 38px; margin: 4px 4px 4px 0; }
+@media (max-width: 600px) {
+  .workspace-nav { top: 200px; left: 8px; right: 8px; flex-wrap: wrap; }
+  .project-workspace { left: 8px; width: calc(100vw - 16px); top: 250px; bottom: 140px; }
+  .scene-controls { left: 8px; right: 8px; flex-wrap: wrap; gap: 4px; }
+}
+
+.fullscreen-button { min-height: 40px; padding: 8px 16px; font-size: 14px; left: auto; right: 18px; bottom: 16px; transform: none; border-radius: 8px; }
+.add-project-overlay { padding: 16px; z-index: 200; min-width: 0; }
+.add-project-card { width: min(520px, 100%); max-height: calc(100vh - 40px); overflow: auto; background: #13272e; color: #eff6ef; border: 1px solid #729b8b; border-radius: 14px; padding: 22px; box-sizing: border-box; }
+.add-project-card label { display: block; margin: 16px 0; }
+.add-project-card input, .add-project-card textarea { display: block; width: 100%; box-sizing: border-box; padding: 10px; margin-top: 6px; font: inherit; background: #20383d; color: #fff; border: 1px solid #8ca59e; border-radius: 6px; }
+.add-project-card textarea { min-height: 86px; }
+.add-project-card .ctl-button { margin-right: 8px; }

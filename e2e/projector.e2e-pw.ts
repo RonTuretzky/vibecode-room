@@ -189,18 +189,22 @@ test.describe("projector UI — keyboard, a11y & detail completeness", () => {
     await expect(page.getByTestId("tree-menu-callsign")).toContainText("Atlas");
     await expect(page.getByTestId("tree-menu-status")).toHaveClass(/state-active/);
     await expect(menu).toHaveAttribute("data-upid", "upid_atlas_7f3");
-    // STALE AFFORDANCE — this step will FAIL until it is rehomed. The fleet
-    // menu's record-a-change toggle was removed at the operator's request
-    // ("remove … record a change button"), so a LOCAL demo tree like Atlas has
-    // no record-steer-start at all. The surviving steering surfaces are the
-    // SELF tree's graft chip, a branch card, and — on an ADOPTED import only —
-    // the 🌱 grow chip (data-testid="tree-menu-grow"), and the static demo
-    // fleet carries no adopted tree to open one on.
-    // Left failing ON PURPOSE rather than deleted: this spec's other
-    // assertions (identity plate, upid contract) are real coverage, and
-    // silently dropping the steering claim would hide the gap instead of
-    // naming it.
-    await expect(page.getByTestId("record-steer-start")).toBeVisible();
+    // Local concept trees do not offer a Git branch recording action.
+    await expect(page.getByTestId("tree-menu-grow")).toHaveCount(0);
+  });
+
+  test("an adopted repository exposes branch recording on its grow control", async ({ page }) => {
+    await gotoStatic(page);
+    await page.evaluate(() => {
+      const room = (window as any).__VIBERSYN__;
+      const snap = room.getSnapshot();
+      room.applySnapshot({ processes: snap.processes.map((p: any, i: number) => i === 0 ? {
+        ...p, treeRepo: { adopted: true, remoteUrl: "https://github.com/example/demo", branches: [] },
+      } : p) });
+      room.select("Atlas");
+    });
+    await expect(page.getByTestId("tree-menu-grow")).toBeVisible();
+    await expect(page.getByTestId("tree-menu-grow")).toBeEnabled();
   });
 
   test("the tree menu is an accessible dialog", async ({ page }) => {
@@ -305,6 +309,7 @@ test.describe("projector UI — 3D scene navigation & decks", () => {
         i === 0
           ? {
               ...p,
+              slides: [], // A real generated deck has no fixture slides.
               builds: [
                 {
                   backend: "native",
@@ -320,20 +325,9 @@ test.describe("projector UI — 3D scene navigation & decks", () => {
       );
       (window as any).__VIBERSYN__.applySnapshot({ processes });
     });
-    // The deck opens from the process's tree menu — the READY build lane is
-    // the affordance ("View ▸").
     await page.evaluate(() => (window as any).__VIBERSYN__.select("Atlas"));
-    // STALE AFFORDANCE — this step will FAIL until it is rehomed. The tree
-    // menu's concept-lane chips were removed at the operator's request ("remove
-    // the mock buttons"), and that button was also the only door to a finished
-    // build's deck: the surviving tree-menu-deck button is gated on
-    // model.hasFixtureDeck (process.slides), which real builds do not carry.
-    // Left failing ON PURPOSE rather than deleted — this spec's remaining
-    // assertions (deck provenance, build chips, live frame) are real coverage,
-    // and silently skipping them would hide the gap instead of naming it.
-    const readyLane = page.locator('[data-testid="tree-menu-lane"][data-status="ready"]');
-    await expect(readyLane.first()).toBeVisible();
-    await readyLane.first().click();
+    await expect(page.getByTestId("tree-menu-deck")).toBeVisible();
+    await page.getByTestId("tree-menu-deck").click();
     await expect(page.getByTestId("slideshow-overlay")).toBeVisible();
     await expect(page.getByTestId("slideshow-project")).toContainText("Blocker announcer");
     // The live slide embeds the generated deck with an open-in-window link.

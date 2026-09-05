@@ -428,7 +428,7 @@ describe("per-tree menu: the tree is the interface", () => {
     expect(html).toContain('data-testid="tree-menu-callsign"');
     expect(html).toContain("Atlas");
     expect(html).toContain('data-testid="tree-menu-status"');
-    expect(html).toContain("active · 68%");
+    expect(html).toContain("Waiting for a concept provider");
     expect(html).toContain('data-testid="tree-menu-close"');
   });
 
@@ -1181,7 +1181,7 @@ describe("picking a tree never arms voice steering", () => {
         />,
       ),
     );
-    expect(fleet).not.toContain('data-testid="record-steer-stop"');
+    expect(fleet).toContain('aria-label="Active recording"');
     expect(fleet).not.toContain('data-testid="record-steer-start"');
   });
 
@@ -1549,7 +1549,7 @@ describe("project deck (slideshow)", () => {
   // is now the menu's only deck path. The other half — a ready lane's View ▸
   // into that backend's mock — is gone, so a process whose only deck is a mock
   // lane's now offers no deck path at all.
-  test("the tree menu's ONLY deck path is the fixture 🎞 deck — a ready lane opens nothing", () => {
+  test("the tree menu opens generated and fixture decks through one control", () => {
     const processes: BuildloopProcess[] = demoProjectorSnapshot.processes.map((process, index) =>
       index === 0
         ? {
@@ -1575,10 +1575,10 @@ describe("project deck (slideshow)", () => {
         />,
       ),
     );
-    // A ready lane with a real slideshowUrl no longer buys a row on the tree.
+    // A generated deck has its own entry point without restoring per-lane clutter.
     expect(laneDeck).not.toContain('data-testid="tree-menu-lane"');
     expect(laneDeck).not.toContain("View ▸");
-    expect(laneDeck).not.toContain('data-testid="tree-menu-deck"');
+    expect(laneDeck).toContain('data-testid="tree-menu-deck"');
 
     // Fixture decks (mock room) keep their one-press open — the surviving path.
     const busy = busyRoomSnapshot();
@@ -1951,7 +1951,7 @@ describe("gesture-mode status bar keeps only actionable controls", () => {
     // Auto-Build and Research left the dock (live-room directive): voice
     // keeps auto-build reachable; research is always on, ceiling-only.
     expect(gestureA).not.toContain('data-testid="auto-build-button"');
-    expect(gestureA).not.toContain('data-testid="research-mode-button"');
+    expect(gestureA).toContain('data-testid="research-mode-button"');
   });
 
   test("a LIVE emergency still shows its banner in gesture mode", () => {
@@ -1969,7 +1969,7 @@ describe("gesture-mode status bar keeps only actionable controls", () => {
     const desk = renderToStaticMarkup(<ProjectorApp initialSnapshot={demoProjectorSnapshot} />);
     expect(desk).toContain('data-testid="listening-indicator"');
     expect(desk).toContain('data-testid="active-cue"');
-    expect(desk).toContain("READ-ONLY · NON-AUTHORITATIVE");
+    expect(desk).toContain("ROOM WORKSPACE");
     expect(desk).toContain('data-testid="emergency-status"');
   });
 });
@@ -2741,7 +2741,7 @@ describe("adopted trees: grow-a-branch row + branch/issue popups", () => {
     expect(html).toContain("● growing — say what this branch is for · tap to stop");
     // …and the branch card, mounted over it, is not: no second stop button and
     // no graft claim over a window that grafts nothing.
-    expect(countOccurrences(html, 'data-testid="record-steer-stop"')).toBe(1);
+    expect(countOccurrences(html, 'data-testid="record-steer-stop"')).toBe(2); // grow card + persistent room recorder
     expect(html).not.toContain("● grafting — your words grow the change");
     expect(html).toContain("🌱 Graft onto this branch");
   });

@@ -1,13 +1,27 @@
+import { AddProject } from "./AddProject";
+import { projectStatus } from "./project-status";
+import { ProjectWorkspace } from "./ProjectWorkspace";
+import { useRoomConnection } from "./use-room-connection";
+import { WallClock, FullscreenButton, MicCaptureControl, TranscriptStream } from "./room-chrome";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { demoProjectorSnapshot, busyRoomSnapshot, emptyProjectorSnapshot, withUnmuted } from "./demo-data";
-import type { ProjectorProcess, ProjectorSnapshot, ResearchTrayItem, TranscriptLine } from "./types";
+import type { ProjectorProcess, ProjectorSnapshot, ResearchTrayItem } from "./types";
 import { GestureLayer } from "./gesture/GestureLayer";
 import { CalibrationOverlay, type AutocalState } from "./CalibrationOverlay";
 import { PinchCameraLayer } from "./gesture/PinchCameraLayer";
 import { HandSkeletonHud } from "./gesture/HandSkeletonHud";
 import type { HandsStatus } from "./gesture/hands-client";
-import { RoomScene, type DialogueNodeSpec, type DialogueTopicSpec, type IdeaOrbSpec, type ResearchNodeSpec, type SceneLayout, type SceneMode, type TreeSpec } from "./RoomScene";
+import {
+  RoomScene,
+  type DialogueNodeSpec,
+  type DialogueTopicSpec,
+  type IdeaOrbSpec,
+  type ResearchNodeSpec,
+  type SceneLayout,
+  type SceneMode,
+  type TreeSpec,
+} from "./RoomScene";
 import { getSceneDwellSource, procDwellTargetId, type SceneDwellRect } from "./gesture/scene-source";
 import { Slideshow } from "./Slideshow";
 import { TreeMenu } from "./TreeMenu";
@@ -19,7 +33,7 @@ import { IdeaTray } from "./IdeaTray";
 import { ResearchTray } from "./ResearchTray";
 import { ResearchDeckOverlay } from "./ResearchDeckOverlay";
 import { QrImport } from "./QrImport";
-import { GuestHands , GuestQrBadge } from "./GuestHands";
+import { GuestHands, GuestQrBadge } from "./GuestHands";
 import { roomHandsSocketUrl } from "./gesture/remote";
 import { HelpOverlay } from "./HelpOverlay";
 import { ControlDock } from "./ControlDock";
@@ -36,7 +50,16 @@ import { loadPlantedPositions, newUpidAfterAccept, savePlantedPosition } from ".
 // the ground click, the new upid binds to the spot) or an existing tree.
 type PlantingTarget = { kind: "idea"; ideaId: string | null } | { kind: "tree"; upid: string };
 import { GuidedDemo } from "./guided/GuidedDemo";
-import { advanceOnSnapshot, popPracticeOrb, restartIdea, setHandsLive, skipStep, startGuided, type GuidedState, type PointerRig } from "./guided/machine";
+import {
+  advanceOnSnapshot,
+  popPracticeOrb,
+  restartIdea,
+  setHandsLive,
+  skipStep,
+  startGuided,
+  type GuidedState,
+  type PointerRig,
+} from "./guided/machine";
 import "./buildloop.css";
 import { TopicCard } from "./TopicCard";
 import { ProjectBriefPanel } from "./ProjectBriefPanel";
@@ -49,27 +72,6 @@ export const REQUIRED_PROJECTOR_REGIONS = [
   "fleet",
   "transcript",
 ] as const;
-
-// A live wall clock (top-right): the room forgets what time it is once the
-// projector's been running for hours, so ambient minutes read at a glance.
-// Ticks once a second; chrome-less like the rest of the corner furniture.
-function WallClock() {
-  const [now, setNow] = useState<Date>(() => new Date());
-  useEffect(() => {
-    const id = setInterval(() => setNow(new Date()), 1000);
-    return () => clearInterval(id);
-  }, []);
-  const label = now.toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
-  return (
-    <div className="wall-clock" data-testid="wall-clock" role="status" aria-live="off">
-      🕐 {label}
-    </div>
-  );
-}
 
 interface ProjectorAppProps {
   initialSnapshot?: ProjectorSnapshot;
@@ -231,6 +233,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
   // stopMic clears it to disown a pending start, and a disowned start tears
   // down its own pipeline instead of committing it (see toggleMic).
   const micStartRef = useRef<Promise<void> | null>(null);
+  const [addProjectOpen, setAddProjectOpen] = useState(false);
   const [qrOpen, setQrOpen] = useState(initialOverlay?.qrOpen ?? false);
   // HOLO PANEL (the imported tree's LIVE deployment via the /salem proxy): at
   // most ONE at a time — {upid, anchor} or null. Opened from the tree menu's
@@ -348,7 +351,8 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
   // A freshly-imported project (QR phone import / GitHub clone) offers its
   // tree for planting the moment it lands on the wall.
   const [plantedVersion, setPlantedVersion] = useState(0);
-  const plantedPositions = useMemo(() => loadPlantedPositions(), [plantedVersion]);
+  const localPositions = useMemo(() => loadPlantedPositions(), [plantedVersion]);
+  const plantedPositions = useMemo(() => ({ ...localPositions, ...snapshot.plantedPositions }), [localPositions, snapshot.plantedPositions]);
   useEffect(() => {
     const onStorage = () => setPlantedVersion((v) => v + 1);
     window.addEventListener("storage", onStorage);
@@ -428,7 +432,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
 
   // Whether this projector is bound to the LIVE runtime (vs. the static offline
   // demo). Mirrors the /api/state + SSE gate below: ?live=0 is always offline; in
-  // DEV only ?live=1 opts in; in a built deployment live is the default. Click-to-
+  // live is the default in development and production. Click-to-
   // build / click-to-steer POST to the runtime only in live mode; in offline demo
   // they fall back to local selection so the static fixtures stay interactive.
   const liveMode = useMemo(() => {
@@ -439,13 +443,10 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
     if (liveParam === "0") {
       return false;
     }
-    if (import.meta.env.DEV && liveParam !== "1") {
-      return false;
-    }
     return true;
   }, []);
 
-  // Offline demo (?live=0, or DEV without ?live=1) with no explicit snapshot
+  // Offline demo (?live=0) with no explicit snapshot
   // prop: seed the interactive demo fixture. The LIVE path stays on the empty
   // baseline until the real /api/state arrives (see the audit note above).
   const hasExplicitSnapshot = initialSnapshot !== undefined;
@@ -701,6 +702,16 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
   // Accept-and-bind for the "Plant…" flow: fire the same accept the Build
   // button uses, then bind whichever upid the accept ADDED to the chosen
   // ground point (see planted-positions.ts for the cross-window contract).
+  const persistPlantPosition = useCallback(async (upid: string, point: { x: number; z: number }) => {
+    if (liveMode) {
+      try {
+        const response = await fetch(`/api/process/${upid}/position`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(point) });
+        if (!response.ok) { reportControlFailure("Save planting position", response.status); return false; }
+      } catch { reportControlFailure("Save planting position"); return false; }
+    }
+    savePlantedPosition(upid, point); setPlantedVersion(v => v + 1); return true;
+  }, [liveMode, reportControlFailure]);
+
   const plantAt = useCallback(
     async (point: { x: number; z: number }) => {
       const target = plantingRef.current;
@@ -709,8 +720,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
       }
       setPlanting(null);
       if (target.kind === "tree") {
-        savePlantedPosition(target.upid, point);
-        setPlantedVersion((v) => v + 1);
+        if (!await persistPlantPosition(target.upid, point)) setPlanting(target);
         return;
       }
       const before = snapshotRef.current.processes.map((process) => process.upid);
@@ -720,11 +730,10 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
       }
       const upid = newUpidAfterAccept(before, fresh.processes.map((process) => process.upid));
       if (upid !== null) {
-        savePlantedPosition(upid, point);
-        setPlantedVersion((v) => v + 1);
+        if (!await persistPlantPosition(upid, point)) setPlanting({ kind: "tree", upid });
       }
     },
-    [acceptIdea, actOnIdea],
+    [acceptIdea, actOnIdea, persistPlantPosition],
   );
 
   // Keyboard/voice-parity target: b/Enter and x act on the TOP ready idea (the
@@ -1730,127 +1739,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
     };
   }, []);
 
-  // --- Live data: fetch /api/state + subscribe to /api/events (SSR-guarded) ---
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-    const liveParam = new URLSearchParams(window.location.search).get("live");
-    if (liveParam === "0") {
-      return;
-    }
-    if (import.meta.env.DEV && liveParam !== "1") {
-      return;
-    }
-
-    let closed = false;
-    let events: EventSource | undefined;
-    let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
-    let backoffMs = 1_000;
-
-    // Pull the authoritative snapshot from /api/state. Runs on first load and on
-    // EVERY (re)connect / tab re-focus, so a server restart or dropped SSE stream
-    // can never leave the projector frozen on stale state.
-    async function syncState() {
-      try {
-        const response = await fetch("/api/state", { headers: { accept: "application/json" } });
-        if (!response.ok || !response.headers.get("content-type")?.includes("application/json")) {
-          return;
-        }
-        const liveSnapshot = (await response.json()) as ProjectorSnapshot;
-        if (!closed && !mockModeRef.current) {
-          // Out-of-order guard: a resync ISSUED before a state change can
-          // RESOLVE after that change's SSE push — applying it blindly would
-          // revert the wall to pre-change state with nothing left to correct
-          // it (no further push comes). Never let a fetched snapshot roll the
-          // clock back over one the stream already delivered.
-          setSnapshot((current) =>
-            typeof current.updatedAt === "string" &&
-            typeof liveSnapshot.updatedAt === "string" &&
-            liveSnapshot.updatedAt < current.updatedAt
-              ? current
-              : liveSnapshot,
-          );
-        }
-      } catch {
-        // Transient (e.g. server restarting); the reconnect loop will retry.
-      }
-    }
-
-    function openStream() {
-      if (closed || typeof EventSource === "undefined") {
-        return;
-      }
-      const source = new EventSource("/api/events");
-      events = source;
-      source.addEventListener("open", () => {
-        backoffMs = 1_000; // healthy connection — reset backoff
-        void syncState(); // resync current state immediately on (re)connect
-      });
-      source.addEventListener("snapshot", (messageEvent) => {
-        if (closed || mockModeRef.current) {
-          return;
-        }
-        try {
-          setSnapshot(JSON.parse((messageEvent as MessageEvent).data) as ProjectorSnapshot);
-          setStreamLive(true);
-        } catch {
-          // Ignore a malformed frame; the next push or a resync recovers.
-        }
-      });
-      // Lightweight mic byte-counter ticks: merge into the current snapshot's
-      // mic section without a full-snapshot parse (the server no longer pushes
-      // whole snapshots just to move this counter).
-      source.addEventListener("mic", (messageEvent) => {
-        if (closed || mockModeRef.current) {
-          return;
-        }
-        try {
-          const mic = JSON.parse((messageEvent as MessageEvent).data) as ProjectorSnapshot["mic"];
-          setSnapshot((current) => ({ ...current, mic }));
-        } catch {
-          // Ignore a malformed frame; the next push or a resync recovers.
-        }
-      });
-      source.addEventListener("error", () => {
-        // The stream dropped (server restart / network blip). Tear it down and
-        // reconnect with capped exponential backoff so the tab self-heals instead
-        // of silently going stale — the root cause of "the bubble stopped showing".
-        source.close();
-        if (closed) {
-          return;
-        }
-        // SAY SO. Reconnecting silently meant a killed server left the wall
-        // projecting a confident, frozen room forever — same status chips, same
-        // last transcript line, still reading "listening". Nobody in the room
-        // could tell a quiet room from a dead one. The banner clears itself the
-        // moment a frame lands again.
-        setStreamLive(false);
-        reconnectTimer = setTimeout(openStream, backoffMs);
-        backoffMs = Math.min(backoffMs * 2, 15_000);
-      });
-    }
-
-    // Re-focusing the tab may have missed pushes while backgrounded/disconnected.
-    const onVisible = () => {
-      if (document.visibilityState === "visible") {
-        void syncState();
-      }
-    };
-    document.addEventListener("visibilitychange", onVisible);
-
-    void syncState();
-    openStream();
-
-    return () => {
-      closed = true;
-      events?.close();
-      if (reconnectTimer) {
-        clearTimeout(reconnectTimer);
-      }
-      document.removeEventListener("visibilitychange", onVisible);
-    };
-  }, []);
+  useRoomConnection({ enabled: liveMode, mockModeRef, setSnapshot, setStreamLive });
 
   // --- Window hook for e2e (SSR-guarded) ---
   useEffect(() => {
@@ -1956,6 +1845,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
         }
         if (qrOpenRef.current) {
           setQrOpen(false);
+          setAddProjectOpen(false);
           return;
         }
         if (guestsOpenRef.current) {
@@ -2293,6 +2183,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
             callsign: process.callsign,
             state: process.state,
             progress: process.progress,
+            statusText: projectStatus(process, snapshot.branchJobs).label,
             task: process.task,
             steering: process.upid === steeringUpid,
             // The scene knows sapling/tree only; the SELF project folds onto
@@ -2311,7 +2202,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
             plantedAt: plantedPositions[process.upid] ?? null,
           };
         }),
-    [snapshot.processes, hiddenTrees, steeringUpid, issuesByUpid, plantedPositions],
+    [snapshot.processes, snapshot.branchJobs, hiddenTrees, steeringUpid, issuesByUpid, plantedPositions],
   );
 
   const visibleIdeaOrbs = useMemo<IdeaOrbSpec[]>(
@@ -2769,7 +2660,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
             {snapshot.activeCue}
           </span>
           <div className="center-tags">
-            <span className="readonly-tag">READ-ONLY · NON-AUTHORITATIVE</span>
+            <span className="readonly-tag">ROOM WORKSPACE</span>
             <div className="gate-chip" aria-label="Suggestion gate progress">
               <span className="gate-track">
                 <span className="gate-fill" style={{ width: `${gatePercent}%` }} />
@@ -2790,7 +2681,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
               data-testid="emergency-status"
               data-triggered={snapshot.emergencyStopTriggered ? "true" : "false"}
             >
-              {snapshot.emergencyStopTriggered ? "EMERGENCY STOP" : "ALL CLEAR"}
+              {snapshot.emergencyStopTriggered ? "EMERGENCY STOP" : "ROOM ACTIVE"}
             </div>
           ) : null}
           {/* UNMUTE — the SAFETY control. A muted room must SAY so and offer
@@ -2816,6 +2707,9 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
               menu folds the tray (collapseSignal) so two glass panels never
               overlap on the projector. */}
           <ControlDock collapseSignal={dockCollapseSignal}>
+          <button className="ctl-button" data-testid="research-mode-button" aria-pressed={researchEngineOn} onClick={() => void toggleResearchMode()}>Background research: {researchEngineOn ? "on" : "off"}</button>
+          <a className="ctl-button" href={researchActive ? "/" : "/?research=1"}>{researchActive ? "Open garden view" : "Open research view"}</a>
+
           {/* ONE control for mic + capture (live-room request): activating
               unmutes + starts the mic AND turns Idea Capture on; deactivating
               stops both. Replaces the separate Mic and Idea Capture buttons. */}
@@ -2892,9 +2786,10 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
 
       <div className="stage">
         <div className="stage-main">
-          {showIdeaTray && !mockMode && !researchActive ? (
+          {showIdeaTray && !mockMode && !researchActive && !planting ? (
             <IdeaTray
               ideas={ideas}
+              onPlant={(ideaId) => { setPlanting({ kind: "idea", ideaId }); setSelected(null); setIdeaCard(null); setDockCollapseSignal(n => n + 1); }}
               onBuild={(id) => void actOnIdea(id, "accept")}
               onDismiss={(id) => void actOnIdea(id, "dismiss")}
             />
@@ -2966,10 +2861,11 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
           type="button"
           className="ctl-button scene-fit"
           data-testid="scene-fit-button"
+          disabled={cornerLock || flatLock}
           onClick={() => setFitSignal((n) => n + 1)}
-          title="Frame everything in view (F). Drag orbits · Shift+drag pans · scroll zooms."
+          title={cornerLock || flatLock ? "Paired projector camera is locked. Use Projects to find offscreen work, or open the desktop view." : "Frame everything in view (F). Drag orbits · Shift+drag pans · scroll zooms."}
         >
-          ⤢ Fit
+          {cornerLock || flatLock ? "Projector camera locked" : "⤢ Fit"}
         </button>
         <button
           type="button"
@@ -3378,6 +3274,8 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
       {researchDeckQuest !== null ? (
         <ResearchDeckOverlay quest={researchDeckQuest} onClose={() => setResearchDeckId(null)} />
       ) : null}
+      {!mockMode && !researchActive && <ProjectWorkspace snapshot={snapshot} onSelect={setSelected} onAdd={() => setAddProjectOpen(true)} onHelp={() => setHelpOpen(true)} planting={planting !== null} onStartMic={() => void toggleMicCapture()} micError={micError} />}
+      {addProjectOpen && <AddProject onClose={() => setAddProjectOpen(false)} />}
       {qrOpen ? <QrImport processes={snapshot.processes} onClose={() => setQrOpen(false)} /> : null}
       {guestsOpen ? <GuestHands onClose={() => setGuestsOpen(false)} /> : null}
       {/* Standing guest invitation (live-room request): a small always-on QR,
@@ -3431,190 +3329,6 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
         />
       ) : null}
     </main>
-  );
-}
-
-// Live-mic control: toggles browser capture and shows a real-time input level
-// meter so the room can confirm the mic is actually feeding the server. When the
-// server reports ASR mode "replay" (no DEEPGRAM_API_KEY), audio still streams and
-// the meter moves, but words are not transcribed — surfaced via the title hint.
-// Placement-time fullscreen affordance: browsers only honor requestFullscreen
-// from a real user gesture, so this is a mouse/trackpad button for when the
-// operator drags a wall window onto its projector. It hides once the window
-// is fullscreen (or effectively fullscreen, e.g. Chrome --kiosk).
-function FullscreenButton() {
-  const [visible, setVisible] = useState<boolean>(() => needsFullscreenHint());
-  useEffect(() => {
-    const update = () => setVisible(needsFullscreenHint());
-    // Keyboard path: plain "f" toggles fullscreen (keydown counts as a real
-    // user gesture, so requestFullscreen is honored). Stays bound while the
-    // button is hidden so "f" also EXITS fullscreen. Ignored with modifiers
-    // held or while typing into a field.
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "f" && event.key !== "F") return;
-      if (event.metaKey || event.ctrlKey || event.altKey) return;
-      const target = event.target as HTMLElement | null;
-      if (
-        target !== null &&
-        (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)
-      ) {
-        return;
-      }
-      if (document.fullscreenElement !== null) {
-        void document.exitFullscreen?.();
-      } else {
-        void document.documentElement.requestFullscreen?.();
-      }
-    };
-    document.addEventListener("fullscreenchange", update);
-    window.addEventListener("resize", update);
-    window.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("fullscreenchange", update);
-      window.removeEventListener("resize", update);
-      window.removeEventListener("keydown", onKey);
-    };
-  }, []);
-  if (!visible) {
-    return null;
-  }
-  return (
-    <button
-      type="button"
-      className="ctl-button fullscreen-button"
-      data-testid="fullscreen-button"
-      // Dwell-exempt: requestFullscreen only works from a TRUSTED gesture
-      // (real mouse/keyboard). A dwell cursor "clicking" this would silently
-      // no-op — use the keyboard F, or a real mouse click.
-      data-dwell-exempt="true"
-      title="Fullscreen this wall on its projector (or press F)"
-      onClick={() => {
-        void document.documentElement.requestFullscreen?.();
-      }}
-    >
-      ⛶ Fullscreen <span className="fullscreen-key-hint">(F)</span>
-    </button>
-  );
-}
-
-function needsFullscreenHint(): boolean {
-  if (typeof document === "undefined" || typeof window === "undefined") {
-    return false;
-  }
-  if (document.fullscreenElement !== null) {
-    return false;
-  }
-  // Kiosk/native-fullscreen windows report no fullscreenElement but already
-  // cover the screen — no hint needed there.
-  const screenH = window.screen?.height ?? 0;
-  return screenH === 0 || window.innerHeight < screenH - 2;
-}
-
-// ONE button for mic + Idea Capture (live-room request): "mic on" and
-// "capturing" were two adjacent controls; a visitor should hit a single
-// target. Inactive it invites ("🎤 Capture idea"); active it shows a live
-// capturing indicator — the pulsing dot plus the mic level meter (the RMS the
-// mic capture already reports) — and deactivating stops BOTH mic and capture.
-function MicCaptureControl({
-  active,
-  micState,
-  level,
-  error,
-  mode,
-  bytesReceived,
-  onToggle,
-  deviceLabel = null,
-}: {
-  active: boolean;
-  micState: "off" | "connecting" | "live";
-  level: number;
-  error: string | null;
-  mode?: "deepgram" | "voxterm" | "replay";
-  bytesReceived: number;
-  onToggle: () => void;
-  // The physical device feeding the capture, once known ("Wireless GO RX").
-  deviceLabel?: string | null;
-}) {
-  // Map RMS (~0–0.3 for speech) onto a 0–100% bar with mild gain.
-  const levelPercent = Math.min(100, Math.round(level * 320));
-  const label = micState === "connecting" ? "Starting" : active ? "● Capturing" : "🎤 Capture idea";
-  const hint = active
-    ? mode === "replay"
-      ? "Capturing. Audio streams to the server, but transcription needs DEEPGRAM_API_KEY."
-      : `Capturing${deviceLabel !== null ? ` via ${deviceLabel}` : ""}: live mic → server ASR → ideas. Click to stop the mic and Idea Capture together.`
-    : "One button: unmute + mic on + Idea Capture on. Click again to stop both.";
-
-  return (
-    <div className="mic-control" data-testid="mic-capture-control" data-state={micState}>
-      <button
-        type="button"
-        className={`ctl-button mic-capture mic-${micState}${active ? " on" : ""}`}
-        data-testid="mic-capture-button"
-        data-state={active ? "on" : "off"}
-        aria-pressed={active}
-        onClick={onToggle}
-        disabled={micState === "connecting"}
-        title={error ?? hint}
-      >
-        <span className="mic-dot" aria-hidden="true" />
-        {label}
-      </button>
-      {micState === "live" ? (
-        <>
-          {deviceLabel !== null ? (
-            <span className="mic-device" data-testid="mic-device-label" title="The physical microphone the room is hearing.">
-              {deviceLabel}
-            </span>
-          ) : null}
-          <span className="mic-meter" aria-label="Microphone input level">
-            <span className="mic-meter-fill" data-testid="mic-meter-fill" style={{ width: `${levelPercent}%` }} />
-          </span>
-          <span className="mic-stats" data-testid="mic-stats">
-            {mode === "replay" ? "replay · " : "deepgram · "}
-            {formatBytes(bytesReceived)} in
-          </span>
-        </>
-      ) : null}
-      {error ? <span className="mic-error" data-testid="mic-error">{error}</span> : null}
-    </div>
-  );
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) {
-    return `${bytes} B`;
-  }
-  if (bytes < 1024 * 1024) {
-    return `${(bytes / 1024).toFixed(1)} KB`;
-  }
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-// NOTE: the FleetPanel rail is GONE (operator-directed redesign): its
-// per-process controls now live in the anchored per-tree menu (TreeMenu.tsx),
-// opened by picking a tree in the garden. FleetScroll.tsx / BuildChips.tsx
-// stay as components — the deck HUD still composes BuildChips/ProcessControls.
-
-function TranscriptStream({ lines }: { lines: TranscriptLine[] }) {
-  // Newest line FIRST: this is a passive wall display with no scroll
-  // interaction, and appending at the bottom of an overflowing card meant new
-  // lines landed below the fold — the transcript looked permanently frozen.
-  const newestFirst = [...lines].reverse();
-  return (
-    <section className="rail-card transcript-card" data-region="transcript">
-      <h3 className="rail-title">Transcript</h3>
-      <div className="transcript-scroll">
-        {newestFirst.map((line) => (
-          <div key={`${line.time}-${line.speaker}-${line.text}`} className={`tx-line tx-${line.kind}`}>
-            <span className="tx-meta">
-              <time>{line.time}</time>
-              <strong>{line.speaker}</strong>
-            </span>
-            <p>{line.text}</p>
-          </div>
-        ))}
-      </div>
-    </section>
   );
 }
 

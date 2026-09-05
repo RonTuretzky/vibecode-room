@@ -5,6 +5,23 @@ import { MemorySmithersClient } from "./test-helpers";
 import { ProcessRegistry, steerRevision, steerText, type BuildLoopOrchestrator } from "./registry";
 
 describe("process registry", () => {
+  test("restored execution launches only after retry and uses a new run ID", async () => {
+    const original = new ProcessRegistry({ client: new MemorySmithersClient(), sessionId: "before-restart" });
+    await original.spawn({ correlationId: "seed", upid: "upid-recovered", workflow: "wf", prompt: "Preserve this seed" });
+    await original.execute("upid-recovered");
+    const previousRun = original.records()[0]!.runId;
+    const client = new MemorySmithersClient();
+    const restored = new ProcessRegistry({ client, sessionId: "after-restart" });
+    await restored.restoreState(original.exportState());
+    expect(client.calls).toHaveLength(0);
+    expect((await restored.execute("upid-recovered")).started).toBe(false);
+    await restored.prepareExecutionRetry("upid-recovered");
+    expect(client.calls).toEqual([{ name: "halt", upid: "upid-recovered" }]);
+    expect((await restored.execute("upid-recovered")).started).toBe(true);
+    expect(restored.records()[0]!.runId).not.toBe(previousRun);
+    expect(client.calls.filter(call => call.name === "spawn")).toHaveLength(1);
+  });
+
   test("AC13.1 holds two live processes with independent state — and a KICKOFF spawn never launches the durable run", async () => {
     const client = new MemorySmithersClient();
     const registry = new ProcessRegistry({ client, sessionId: "registry-concurrent" });

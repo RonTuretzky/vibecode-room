@@ -24,6 +24,8 @@ export interface ProcessBuild {
   previewUrl: string | null;
   summary: string | null;
   slideshowUrl: string | null;
+  error?: string;
+  lastProgressAtMs?: number;
   progressLabel?: string;
   percent?: number;
 }
@@ -76,6 +78,8 @@ function normalizeBuild(value: unknown): ProcessBuild | null {
     previewUrl: asNonEmptyString(record.previewUrl),
     summary: asNonEmptyString(record.summary),
     slideshowUrl: asNonEmptyString(record.slideshowUrl),
+    lastProgressAtMs: typeof record.lastProgressAtMs === "number" ? record.lastProgressAtMs : undefined,
+    error: asNonEmptyString(record.error) ?? undefined,
     progressLabel: asNonEmptyString(record.progressLabel) ?? undefined,
     percent:
       typeof record.percent === "number" && Number.isFinite(record.percent)

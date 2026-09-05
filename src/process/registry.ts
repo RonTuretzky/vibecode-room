@@ -65,7 +65,7 @@ export interface BuildLoopOrchestrator {
 export type ExecutionLaneRegistry = Pick<ExecutionRegistry, "start" | "snapshot" | "isExecuting" | "stop">;
 
 export interface ProcessRegistryOptions {
-  client: Pick<SmithersClient, "spawn" | "pause" | "resume" | "halt" | "steer">;
+  client: Pick<SmithersClient, "spawn" | "pause" | "resume" | "halt" | "steer"> & { restoreRun?: (seed: SpawnSeed) => Promise<void>; stopForRetry?: (upid: string) => Promise<void> };
   sessionId?: string;
   maxConcurrentProcesses?: number;
   minRunSlots?: number;
@@ -110,6 +110,9 @@ export interface ProcessRegistryOptions {
   // (bare "vibersyn-<upid>", the existing test contract); production passes a
   // per-boot nonce.
   runIdNonce?: string;
+  // Production supplies UUIDs so disk paths never belong to two projects,
+  // even after a restart. Tests can keep deterministic sequence identifiers.
+  allocateUpid?: () => string;
 }
 
 // Retention cap for dead (halted) records. Halted cards stay visible on the
@@ -177,8 +180,10 @@ export class ProcessRegistry {
   #runIdNonce: string | null = null;
   #selectedUPID: string | null = null;
   #upidSeq = 0;
+  readonly #allocateUpid: () => string;
 
   constructor(options: ProcessRegistryOptions) {
+    this.#allocateUpid = options.allocateUpid ?? (() => `upid-${++this.#upidSeq}`);
     this.client = options.client;
     this.sessionId = options.sessionId ?? "vibersyn-process";
     this.maxConcurrentProcesses = options.maxConcurrentProcesses ?? DEFAULT_MAX_CONCURRENT_PROCESSES;
@@ -212,7 +217,7 @@ export class ProcessRegistry {
   execution(upid: string): ExecutionSnapshot | null {
     const launched = this.#durableRuns.get(upid);
     if (launched === undefined) {
-      return null;
+      return this.#execution?.snapshot(upid) ?? null;
     }
     const lane = this.#execution?.snapshot(upid);
     if (lane !== null && lane !== undefined) {
@@ -233,6 +238,41 @@ export class ProcessRegistry {
   // Has this process's durable subscription run been launched (commissioned)?
   hasDurableRun(upid: string): boolean {
     return this.#durableRuns.has(upid);
+  }
+
+  exportState() {
+    return { records: this.records(), seeds: [...this.#seeds.entries()], durableRuns: [...this.#durableRuns.entries()], selected: this.#selectedUPID };
+  }
+
+  async restoreState(saved: ReturnType<ProcessRegistry["exportState"]>): Promise<void> {
+    for (const record of saved.records) {
+      if (record.upid === "self") continue;
+      const copy = { ...record };
+      if (copy.state !== "dead") this.callsigns.assign(copy.upid, copy.callsign);
+      this.#processes.set(copy.upid, copy);
+      this.#upidSeq = Math.max(this.#upidSeq, Number(copy.upid.match(/^upid-(\d+)$/)?.[1] ?? 0));
+    }
+    for (const [upid, seed] of saved.seeds) this.#seeds.set(upid, seed);
+    // Rebuild correlation metadata without issuing a gateway command.
+    for (const [upid, run] of saved.durableRuns) {
+      this.#durableRuns.set(upid, run);
+      const record = this.#processes.get(upid);
+      const seed = this.#seeds.get(upid);
+      if (record && seed) await this.client.restoreRun?.({ ...seed, upid, runId: run.runId, callsign: record.callsign, correlationId: `corr-restored-${upid}` });
+    }
+    this.#selectedUPID = saved.selected;
+  }
+
+  async prepareExecutionRetry(upid: string): Promise<void> {
+    const record = this.requireLive(upid);
+    if (this.#executeInFlight.has(upid)) throw new Error("A launch is already in progress");
+    if (this.#durableRuns.has(upid)) {
+      if (this.client.stopForRetry) await this.client.stopForRetry(upid);
+      else await this.client.halt(upid);
+      this.#durableRuns.delete(upid);
+    }
+    record.runId = `vibersyn-${upid}-${crypto.randomUUID()}`;
+    record.lastAction = "retry";
   }
 
   records(): RegistryProcess[] {
@@ -274,7 +314,7 @@ export class ProcessRegistry {
       };
     }
 
-    const upid = seed.upid ?? `upid-${++this.#upidSeq}`;
+    const upid = seed.upid ?? this.#allocateUpid();
     // Name the process after the idea, not a codename: infer a display title +
     // a one-word spoken handle from the pitch. The handle goes through the
     // allocator's phonetic collision guard — on a collision (or an empty

@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 // Multi-backend KICKOFF orchestrator: for one accepted idea, fan build() out to
 // every enabled+available backend CONCURRENTLY, each into its own
 // builds/<upid>/<backendId>/ subdirectory, all served off ONE per-UPID preview
@@ -49,6 +50,7 @@ export interface ProcessBuildSnapshot {
   previewUrl: string | null;
   summary: string | null;
   slideshowUrl: string | null;
+  lastProgressAtMs?: number;
   progressLabel?: string;
   percent?: number;
   /** Last backend failure message (honesty surface — present only when set). */
@@ -144,7 +146,7 @@ export interface BuildOrchestratorOptions {
   // Hostname the per-UPID preview server binds to. Always loopback in practice.
   host?: string;
   // Preview-server seam (tests inject; default is the real idea-builder server).
-  serve?: (dir: string, host?: string) => Promise<PreviewServer>;
+  serve?: (dir: string, host?: string, ideaId?: string) => Promise<PreviewServer>;
   slideshow?: SlideshowHook | null;
   // Git-substrate hooks (above). Default null = substrate off.
   treeGit?: TreeGitHooks | null;
@@ -172,6 +174,7 @@ interface TrackedBuild {
   backend: BuildBackendId;
   label: string;
   status: OrchestratorBuildStatus;
+  lastProgressAtMs?: number;
   progressLabel?: string;
   percent?: number;
   summary: string | null;
@@ -214,7 +217,7 @@ export class BuildOrchestrator {
   readonly #selector: BackendSelector;
   readonly #buildsRoot: string;
   readonly #host: string;
-  readonly #serve: (dir: string, host?: string) => Promise<PreviewServer>;
+  readonly #serve: (dir: string, host?: string, ideaId?: string) => Promise<PreviewServer>;
   readonly #slideshow: SlideshowHook | null;
   readonly #treeGit: TreeGitHooks | null;
   readonly #onUpdate: () => void;
@@ -230,6 +233,36 @@ export class BuildOrchestrator {
     this.#treeGit = options.treeGit ?? null;
     this.#onUpdate = options.onUpdate ?? (() => undefined);
     this.#abortBudgetMs = options.abortBudgetMs ?? DEFAULT_ABORT_BUDGET_MS;
+  }
+
+  exportState() {
+    return [...this.#processes.values()].map(state => ({
+      input: state.input, revisionSeq: state.revisionSeq,
+      builds: state.order.map(id => { const { run, ...build } = state.builds.get(id)!; return build; }),
+    }));
+  }
+
+  async restoreState(saved: ReturnType<BuildOrchestrator["exportState"]>): Promise<string[]> {
+    const interrupted: string[] = [];
+    for (const item of saved) {
+      const dir = join(this.#buildsRoot, safeSegment(item.input.upid));
+      const state: TrackedProcess = { input: item.input, revisionSeq: item.revisionSeq, nonce: crypto.randomUUID(), dir, server: null, order: [], builds: new Map(), controllers: new Set(), tasks: new Set(), aborted: false };
+      for (const old of item.builds) {
+        const build = { ...old };
+        if (build.status === "building" || build.phase === "enriching" || build.phase === "hero") {
+          build.status = "failed"; build.error = "Interrupted by room restart. Retry to continue.";
+          build.progressLabel = "interrupted"; interrupted.push(item.input.upid);
+        }
+        if (build.entrypoint && !existsSync(join(dir, build.backend, build.entrypoint))) {
+          build.entrypoint = null; build.status = "failed"; build.error = "Saved preview files are missing. Retry to rebuild.";
+          interrupted.push(item.input.upid);
+        }
+        state.order.push(build.backend); state.builds.set(build.backend, build);
+      }
+      if (state.order.some(id => state.builds.get(id)?.entrypoint)) state.server = await this.#serve(dir, this.#host, item.input.ideaId);
+      this.#processes.set(item.input.upid, state);
+    }
+    return interrupted;
   }
 
   // Fan one accepted idea out to every enabled+available backend concurrently.
@@ -281,7 +314,7 @@ export class BuildOrchestrator {
     );
     // ONE preview server per UPID serving builds/<upid>/ — each backend's app is
     // a subdirectory, so each gets its own previewUrl off the same port.
-    const server = await this.#serve(state.dir, this.#host);
+    const server = await this.#serve(state.dir, this.#host, state.input.ideaId);
     if (state.aborted) {
       await server.stop().catch(() => undefined);
       return;
@@ -294,6 +327,7 @@ export class BuildOrchestrator {
         backend: backend.id,
         label: backend.label,
         status: "building",
+        lastProgressAtMs: Date.now(),
         summary: null,
         entrypoint: null,
         hasSlideshow: false,
@@ -345,6 +379,7 @@ export class BuildOrchestrator {
         previewUrl: base === null ? null : `${base}?v=${state.nonce}.${build.version}`,
         summary: build.summary,
         slideshowUrl: base !== null && build.hasSlideshow ? `${base}slideshow/?v=${state.nonce}.${build.version}` : null,
+        ...(build.lastProgressAtMs === undefined ? {} : { lastProgressAtMs: build.lastProgressAtMs }),
         ...(build.progressLabel === undefined ? {} : { progressLabel: build.progressLabel }),
         ...(build.percent === undefined ? {} : { percent: build.percent }),
         ...(build.error === undefined ? {} : { error: build.error }),
@@ -496,6 +531,7 @@ export class BuildOrchestrator {
           if (state.aborted || controller.signal.aborted) {
             return; // a superseded/aborted run must not clobber the successor's labels
           }
+          build.lastProgressAtMs = Date.now();
           build.progressLabel = update.label;
           build.percent = update.percent;
           this.#onUpdate();

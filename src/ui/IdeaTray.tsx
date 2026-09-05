@@ -15,11 +15,12 @@ export interface IdeaTrayProps {
   ideas: IdeaTrayItem[];
   // Build/Dismiss a SPECIFIC candidate. The handlers own the POST + snapshot
   // application (App keeps the "a failed POST must never block the UI" contract).
+  onPlant?: (id: string) => void;
   onBuild: (id: string) => void;
   onDismiss: (id: string) => void;
 }
 
-export function IdeaTray({ ideas, onBuild, onDismiss }: IdeaTrayProps) {
+export function IdeaTray({ ideas, onBuild, onDismiss, onPlant }: IdeaTrayProps) {
   return (
     <section className="idea-tray" data-testid="idea-tray" aria-label="Idea tray">
       <div className="rail-title-row">
@@ -35,7 +36,7 @@ export function IdeaTray({ ideas, onBuild, onDismiss }: IdeaTrayProps) {
       ) : (
         <div className="idea-tray-items">
           {ideas.map((idea) => (
-            <IdeaCard key={idea.id} idea={idea} onBuild={onBuild} onDismiss={onDismiss} />
+            <IdeaCard key={idea.id} idea={idea} onBuild={onBuild} onDismiss={onDismiss} {...(onPlant ? { onPlant } : {})} />
           ))}
         </div>
       )}
@@ -45,10 +46,12 @@ export function IdeaTray({ ideas, onBuild, onDismiss }: IdeaTrayProps) {
 
 function IdeaCard({
   idea,
+  onPlant,
   onBuild,
   onDismiss,
 }: {
   idea: IdeaTrayItem;
+  onPlant?: (id: string) => void;
   onBuild: (id: string) => void;
   onDismiss: (id: string) => void;
 }) {
@@ -80,6 +83,7 @@ function IdeaCard({
       ) : null}
       {ready ? (
         <div className="idea-item-actions">
+          {onPlant && <button className="ctl-button" data-testid="idea-plant-button" onClick={() => onPlant(idea.id)}>Plant…</button>}
           <button
             type="button"
             className="ctl-button idea-build"

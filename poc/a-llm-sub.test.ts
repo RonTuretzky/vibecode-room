@@ -11,6 +11,7 @@ import {
 // live-probe test skips LOUDLY; the pure provenance/sanitization test runs
 // everywhere.
 const subscriptionCliMissing = Bun.which("codex") === null && Bun.which("claude") === null;
+const liveSubscriptionEnabled = process.env.VIBERSYN_LIVE_SUBSCRIPTION_TEST === "1";
 if (subscriptionCliMissing) {
   console.warn(
     "[llm-subscription] skipping the live hot-loop probe: no `codex` or `claude` CLI on PATH (host subscription binding unavailable)",
@@ -46,7 +47,7 @@ describe("A-LLM-SUB host subscription reachability probe", () => {
     }
   });
 
-  test.skipIf(subscriptionCliMissing)("subscription-routed hot-loop access is either green or surfaced as a binding PRD conflict", async () => {
+  test.skipIf(subscriptionCliMissing || !liveSubscriptionEnabled)("subscription-routed hot-loop access is either green or surfaced as a binding PRD conflict", async () => {
     const verdict = await runHotLoopSubscriptionProbe();
 
     expect(verdict.checks.noRawKeyRoute).toBe(true);

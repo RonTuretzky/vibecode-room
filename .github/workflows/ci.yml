@@ -28,3 +28,25 @@ jobs:
       # serves it (plus the /api surface) through the real Hono server.
       - run: bunx playwright install --with-deps chromium
       - run: bun run test:e2e
+
+  live-flows:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+      - run: bun install --frozen-lockfile
+      - run: bunx playwright install --with-deps chromium
+      - run: bun run build
+      # Real HTTP/SSE, files and Git; model and gateway responses are fixtures.
+      - run: bunx playwright test --config playwright.live.config.ts e2e/branch-and-recovery.live-pw.ts e2e/deck-decide.live-pw.ts
+        env:
+          VIBERSYN_LIVE_WORKERS: "1"
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: live-flow-failures
+          path: test-results-live
+          retention-days: 7

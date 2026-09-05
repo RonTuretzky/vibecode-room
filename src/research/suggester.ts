@@ -173,6 +173,9 @@ export function suggestFromTurn(turn: TranscriptTurn): ResearchSuggestion | null
   if (words.length < MIN_CLAIM_WORDS) {
     return null;
   }
+  // Product intentions are not factual claims, even when they contain
+  // numbers ("add 3 cards") or absolutes ("always show progress").
+  if (/^(?:(?:i|we) (?:(?:want|need|would like)(?: to)?|(?:should|could) (?:build|add|create|make))|(?:can|could) (?:you|we)|please|let['’]s|build|add|create|implement|make|change|show|put)\b/u.test(lower)) return null;
   const signals = [REPORTED_SPEECH.test(lower), SUPERLATIVE.test(lower), NUMERIC.test(lower)].filter(Boolean).length;
   const span = { startTurnId: turn.id, endTurnId: turn.id, quote: text.slice(0, 180) };
   if (signals >= 1) {

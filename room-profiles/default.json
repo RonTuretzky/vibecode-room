@@ -1,0 +1,6 @@
+{
+  "description": "An empty room. Add resident repositories and integrations explicitly.",
+  "env": {
+    "VIBERSYN_PINNED_IMPORTS": ""
+  }
+}

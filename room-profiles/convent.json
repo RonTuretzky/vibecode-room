@@ -1,0 +1,7 @@
+{
+  "description": "The original installation. Authentication stays in the local environment.",
+  "env": {
+    "VIBERSYN_PINNED_IMPORTS": "https://github.com/khalildh/handstrudel",
+    "VIBERSYN_SALEM_UPSTREAM": "https://residency.convent.fun"
+  }
+}

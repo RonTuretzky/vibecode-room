@@ -243,17 +243,10 @@ test("deck journey: answer reshapes the mock, commission runs a real implementat
   // --- open the deck the way a person does: tree menu → ready lane ---------
   await waitForWallBuild(wall.page, target.upid, { slideshowUrl: deck.slideshowUrl }, "the ready lane with its deck");
   await wall.page.evaluate((id) => window.__VIBERSYN__?.select(id), target.callsign);
-  // STALE AFFORDANCE — this step will FAIL until it is rehomed. The tree
-  // menu's concept-lane chips were removed at the operator's request ("remove
-  // the mock buttons"), and that button was also the only door to a finished
-  // build's deck: the surviving tree-menu-deck button is gated on
-  // model.hasFixtureDeck (process.slides), which real builds do not carry.
-  // Left failing ON PURPOSE rather than deleted — this spec's remaining
-  // assertions (deck provenance, build chips, live frame) are real coverage,
-  // and silently skipping them would hide the gap instead of naming it.
-  const lane = wall.page.locator('button[data-testid="tree-menu-lane"][data-status="ready"]');
-  await expect(lane.first(), "the tree menu offers the ready lane as a real button").toBeVisible({ timeout: 10_000 });
-  await lane.first().click();
+  // Generated decks now have the same explicit menu entry as fixture decks.
+  const deckButton = wall.page.getByTestId("tree-menu-deck");
+  await expect(deckButton, "the tree menu exposes the generated deck").toBeVisible({ timeout: 10_000 });
+  await deckButton.click();
   await expect(wall.page.locator('[data-testid="slideshow-overlay"]')).toBeVisible();
   const frame = wall.page.frameLocator('[data-testid="slideshow-live-frame"]');
   await expect(frame.locator("[data-slide]").first()).toBeAttached({ timeout: 15_000 });
@@ -337,13 +330,20 @@ test("deck journey: answer reshapes the mock, commission runs a real implementat
   expect(reach.filter((row) => !row.reachable), "every decision button is dwell-reachable").toEqual([]);
 
   // --- COMMISSION: "Build it for real" --------------------------------------
-  const executePromise = wall.page.waitForResponse(
-    (response) => response.url().includes("/execute") && response.request().method() === "POST",
-    { timeout: COMMISSION_BUDGET_MS },
-  );
+  const executeButton = wall.page.locator('[data-testid="decision-commission"]');
+  await executeButton.click({ trial: true });
+  // A real agent stays busy long enough to inspect progress. Hold this tiny
+  // scripted run at its completion boundary until the same evidence is visible;
+  // slow browser rendering must not make the test miss the entire working state.
+  const releaseCompletion = rig.holdCompletion();
   const commissionAtMs = Date.now();
-  await wall.page.locator('[data-testid="decision-commission"]').click();
-  const executeResponse = await executePromise;
+  const [executeResponse] = await Promise.all([
+    wall.page.waitForResponse(
+      (response) => response.url().includes("/execute") && response.request().method() === "POST",
+      { timeout: COMMISSION_BUDGET_MS },
+    ),
+    executeButton.click(),
+  ]);
   expect(executeResponse.status(), "the commission POST answered 200").toBe(200);
   await expect(wall.page.locator('[data-testid="decision-status-commissioned"]'), "synchronous acknowledgement").toBeVisible();
   console.log(`[deck-decide] commission press → 200: ${Date.now() - commissionAtMs}ms (budget ${COMMISSION_BUDGET_MS}ms)`);
@@ -383,6 +383,9 @@ test("deck journey: answer reshapes the mock, commission runs a real implementat
             const chipText = await wall.page.locator('[data-testid="execution-chip-footprint"]').innerText();
             sawFootprintOnWall = /on disk|no files yet/u.test(chipText);
           }
+        }
+        if (execution.status === "executing" && (execution.filesWritten ?? 0) > 0 && sawFootprintOnWall) {
+          releaseCompletion();
         }
       }
       await wall.page.waitForTimeout(150);
@@ -463,12 +466,15 @@ test("in-deck decision slide commissions through the bridge, with an honest sent
       subtree: true,
     });
   });
-  const executePromise = wall.page.waitForResponse(
-    (response) => response.url().includes("/execute") && response.request().method() === "POST",
-    { timeout: COMMISSION_BUDGET_MS },
-  );
-  await frame.locator('[data-decision="execute"]').click();
-  const executeResponse = await executePromise;
+  const executeButton = frame.locator('[data-decision="execute"]');
+  await executeButton.click({ trial: true });
+  const [executeResponse] = await Promise.all([
+    wall.page.waitForResponse(
+      (response) => response.url().includes("/execute") && response.request().method() === "POST",
+      { timeout: COMMISSION_BUDGET_MS },
+    ),
+    executeButton.click(),
+  ]);
   expect(executeResponse.status(), "the bridged commission POST answered 200").toBe(200);
   // HONESTY, step 2: the room's decision-result reply settles the slide on
   // the true confirmation, and the native chrome shows the same truth.

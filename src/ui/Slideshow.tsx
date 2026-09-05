@@ -1,3 +1,4 @@
+import { TextChange } from "./TextChange";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ProjectorProcess, TranscriptLine } from "./types";
 import { buildsOf } from "./buildloop";
@@ -469,6 +470,7 @@ export function Slideshow({
               {/* No typing at projector distance (live-room directive): the
                   record toggle routes EVERYTHING spoken into this build. */}
               <RecordSteerToggle process={process} kind="build" transcript={transcript} />
+              <TextChange upid={process.upid} />
             </div>
           ) : (
             <div className="deck-decision" data-testid="deck-decision" role="group" aria-label="How should we continue?">

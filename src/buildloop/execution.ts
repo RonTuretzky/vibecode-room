@@ -22,7 +22,7 @@
 // leaves a reachable preview up.
 
 import { existsSync, readdirSync } from "node:fs";
-import { rm } from "node:fs/promises";
+import { archiveArtifacts } from "./artifact-history";
 import { join, resolve } from "node:path";
 import { servePreviewDirectory, type PreviewServer } from "../server/idea-builder";
 
@@ -124,7 +124,7 @@ export class ExecutionRegistry {
     if (this.#lanes.has(upid)) {
       return;
     }
-    await rm(this.artifactsDir(upid), { recursive: true, force: true });
+    await archiveArtifacts(this.artifactsDir(upid));
   }
 
   // Open the lane at commission time: the durable run has been launched. The
@@ -260,6 +260,26 @@ export class ExecutionRegistry {
 
   isExecuting(upid: string): boolean {
     return this.#lanes.get(upid)?.status === "executing";
+  }
+
+  exportState() { return [...this.#lanes.keys()].map(upid => ({ upid, lane: this.snapshot(upid)! })); }
+
+  async restoreState(saved: ReturnType<ExecutionRegistry["exportState"]>): Promise<string[]> {
+    const interrupted: string[] = [];
+    for (const { upid, lane: old } of saved) {
+      const lane: ExecutionLane = { ...old, server: null, version: 1, completing: false, probe: null };
+      if (lane.status === "executing") {
+        lane.status = "failed"; lane.label = "interrupted"; lane.error = "Room restarted. The previous run was not resumed; retry explicitly.";
+        interrupted.push(upid);
+      }
+      if (lane.status === "built") {
+        const dir = join(this.#artifactsRoot, upid);
+        if (existsSync(join(dir, "index.html"))) lane.server = await this.#serve(dir, this.#host);
+        else { lane.status = "failed"; lane.error = "Saved application files are missing."; interrupted.push(upid); }
+      }
+      this.#lanes.set(upid, lane);
+    }
+    return interrupted;
   }
 
   snapshot(upid: string): ExecutionSnapshot | null {
