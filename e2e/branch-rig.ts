@@ -64,7 +64,7 @@ if (request.includes('cancel this slow change')) { setTimeout(() => { fs.writeFi
 else if (request.includes('fail this change')) { console.log(JSON.stringify({is_error:true,result:'Intentional fixture failure'})); }
 else {
  let html = fs.readFileSync('index.html', 'utf8');
- if (/dark.mode/i.test(request)) html = html.replace('</body>', '<button onclick="document.body.dataset.theme=\\'dark\\'">Dark mode</button></body>');
+ if (/dark.mode/i.test(request)) html = html.replace('</body>', '<style>body{background:#fff;color:#111}body[data-theme=dark]{background:#17212b;color:#f4f4f4}</style><button onclick="document.body.dataset.theme=\\'dark\\'">Dark mode</button></body>');
  if (/reset/i.test(request)) html = html.replace('</body>', '<button onclick="delete document.body.dataset.theme">Reset theme</button></body>');
  fs.writeFileSync('index.html', html); console.log(JSON.stringify({result:'Implemented requested controls'}));
 }

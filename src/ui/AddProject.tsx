@@ -14,7 +14,7 @@ export function AddProject({ onClose }: { onClose: () => void }) {
   }, []);
   return (
     <div
-      className="detail-overlay"
+      className="detail-overlay add-project-overlay"
       onClick={onClose}
       onKeyDown={(event) => {
         if (event.key === "Tab") {

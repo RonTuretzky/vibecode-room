@@ -178,10 +178,12 @@ test("cancelling work preserves the project and seed for an explicit retry", asy
   });
   const before = count();
   const app = createProjectorApp(runtime);
+  runtime.setSteeringTarget(upid);
   expect(
     (await app.request(`/api/process/${upid}/cancel-work`, { method: "POST" }))
       .status,
   ).toBe(200);
+  expect(runtime.steeringTarget()).toBeNull();
   expect(
     runtime.snapshot().processes.find((process) => process.upid === upid)
       ?.recovery,
@@ -190,6 +192,45 @@ test("cancelling work preserves the project and seed for an explicit retry", asy
   const deadline = Date.now() + 2000;
   while (count() === before && Date.now() < deadline) await Bun.sleep(10);
   expect(count()).toBe(before + 1);
+});
+
+test("offline demo controls cannot change live work or placement", async () => {
+  const { boot, count } = await setup();
+  const runtime = await boot();
+  const spawned = await runtime.registry.spawn({
+    workflow: "vibersyn-process",
+    prompt: "A garden",
+    callsign: "garden",
+    correlationId: "demo",
+  });
+  if (!spawned.accepted) throw new Error("spawn");
+  const upid = spawned.process.upid;
+  runtime.setSteeringTarget(upid);
+  const app = createProjectorApp(runtime);
+  const before = count();
+  for (const path of [
+    "/api/process/select/cancel",
+    `/api/process/${upid}/position`,
+    `/api/process/${upid}/change`,
+    `/api/process/${upid}/cancel-work`,
+    `/api/process/${upid}/retry`,
+  ]) {
+    expect(
+      (
+        await app.request(path, {
+          method: "POST",
+          headers: {
+            referer: "http://localhost/?live=0",
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ x: 2, z: 3, text: "Change the garden" }),
+        })
+      ).status,
+    ).toBe(409);
+  }
+  expect(runtime.steeringTarget()).toBe(upid);
+  expect(count()).toBe(before);
+  expect(runtime.snapshot().plantedPositions?.[upid]).toBeUndefined();
 });
 
 test("atomic state writer leaves an unreadable original untouched", async () => {

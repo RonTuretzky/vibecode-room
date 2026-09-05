@@ -44,3 +44,9 @@ jobs:
       - run: bunx playwright test --config playwright.live.config.ts e2e/branch-and-recovery.live-pw.ts e2e/deck-decide.live-pw.ts
         env:
           VIBERSYN_LIVE_WORKERS: "1"
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: live-flow-failures
+          path: test-results-live
+          retention-days: 7

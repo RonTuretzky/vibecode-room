@@ -56,7 +56,9 @@ test("plant, implement a branch, graft, cancel, and recover in a second room ses
   page,
   context,
 }) => {
-  test.setTimeout(180_000);
+  // Whole-journey allowance includes two room boots and many browser actions.
+  // Individual job/placement readiness deadlines remain separately bounded.
+  test.setTimeout(300_000);
   const rig = await startBranchRig(resolve("."));
   let room = await startRoom({ seedDemoFleet: false, env: rig.env });
   try {
@@ -118,6 +120,10 @@ test("plant, implement a branch, graft, cancel, and recover in a second room ses
     await preview.goto(grown.previewUrl!);
     await preview.getByRole("button", { name: "Dark mode" }).click();
     await expect(preview.locator("body")).toHaveAttribute("data-theme", "dark");
+    await expect(preview.locator("body")).toHaveCSS(
+      "background-color",
+      "rgb(23, 33, 43)",
+    );
     await preview.close();
     await page
       .getByRole("combobox", { name: "Change target" })
@@ -142,6 +148,10 @@ test("plant, implement a branch, graft, cancel, and recover in a second room ses
     await graft.getByRole("button", { name: "Dark mode" }).click();
     await graft.getByRole("button", { name: "Reset theme" }).click();
     await expect(graft.locator("body")).not.toHaveAttribute("data-theme");
+    await expect(graft.locator("body")).toHaveCSS(
+      "background-color",
+      "rgb(255, 255, 255)",
+    );
     await graft.close();
     await page
       .getByRole("textbox", { name: "Describe the change" })

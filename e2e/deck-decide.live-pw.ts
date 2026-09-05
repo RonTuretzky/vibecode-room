@@ -330,13 +330,16 @@ test("deck journey: answer reshapes the mock, commission runs a real implementat
   expect(reach.filter((row) => !row.reachable), "every decision button is dwell-reachable").toEqual([]);
 
   // --- COMMISSION: "Build it for real" --------------------------------------
-  const executePromise = wall.page.waitForResponse(
-    (response) => response.url().includes("/execute") && response.request().method() === "POST",
-    { timeout: COMMISSION_BUDGET_MS },
-  );
+  const executeButton = wall.page.locator('[data-testid="decision-commission"]');
+  await executeButton.click({ trial: true });
   const commissionAtMs = Date.now();
-  await wall.page.locator('[data-testid="decision-commission"]').click();
-  const executeResponse = await executePromise;
+  const [executeResponse] = await Promise.all([
+    wall.page.waitForResponse(
+      (response) => response.url().includes("/execute") && response.request().method() === "POST",
+      { timeout: COMMISSION_BUDGET_MS },
+    ),
+    executeButton.click(),
+  ]);
   expect(executeResponse.status(), "the commission POST answered 200").toBe(200);
   await expect(wall.page.locator('[data-testid="decision-status-commissioned"]'), "synchronous acknowledgement").toBeVisible();
   console.log(`[deck-decide] commission press → 200: ${Date.now() - commissionAtMs}ms (budget ${COMMISSION_BUDGET_MS}ms)`);
@@ -456,12 +459,15 @@ test("in-deck decision slide commissions through the bridge, with an honest sent
       subtree: true,
     });
   });
-  const executePromise = wall.page.waitForResponse(
-    (response) => response.url().includes("/execute") && response.request().method() === "POST",
-    { timeout: COMMISSION_BUDGET_MS },
-  );
-  await frame.locator('[data-decision="execute"]').click();
-  const executeResponse = await executePromise;
+  const executeButton = frame.locator('[data-decision="execute"]');
+  await executeButton.click({ trial: true });
+  const [executeResponse] = await Promise.all([
+    wall.page.waitForResponse(
+      (response) => response.url().includes("/execute") && response.request().method() === "POST",
+      { timeout: COMMISSION_BUDGET_MS },
+    ),
+    executeButton.click(),
+  ]);
   expect(executeResponse.status(), "the bridged commission POST answered 200").toBe(200);
   // HONESTY, step 2: the room's decision-result reply settles the slide on
   // the true confirmation, and the native chrome shows the same truth.

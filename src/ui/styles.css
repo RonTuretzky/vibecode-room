@@ -4303,10 +4303,15 @@ main.gesture-mode .record-steer-heard-line { font-size: 1.2rem; }
 .recovery-banner { position: fixed; top: 126px; right: 18px; max-width: min(420px, 90vw); z-index: 80; padding: 12px; background: #493822; color: #fff2c8; border: 1px solid #dcb875; border-radius: 8px; }
 :where(button, a, input, textarea, select):focus-visible { outline: 3px solid #d0f493; outline-offset: 3px; }
 .project-workspace .ctl-button { min-height: 38px; margin: 4px 4px 4px 0; }
-@media (max-width: 600px) { .workspace-nav { top: 118px; left: 8px; } .project-workspace { left: 8px; width: calc(100vw - 16px); top: 168px; } }
+@media (max-width: 600px) {
+  .workspace-nav { top: 200px; left: 8px; right: 8px; flex-wrap: wrap; }
+  .project-workspace { left: 8px; width: calc(100vw - 16px); top: 250px; bottom: 140px; }
+  .scene-controls { left: 8px; right: 8px; flex-wrap: wrap; gap: 4px; }
+}
 
 .fullscreen-button { min-height: 40px; padding: 8px 16px; font-size: 14px; left: auto; right: 18px; bottom: 16px; transform: none; border-radius: 8px; }
-.add-project-card { width: min(520px, calc(100vw - 32px)); max-height: calc(100vh - 40px); overflow: auto; background: #13272e; color: #eff6ef; border: 1px solid #729b8b; border-radius: 14px; padding: 22px; box-sizing: border-box; }
+.add-project-overlay { padding: 16px; z-index: 200; min-width: 0; }
+.add-project-card { width: min(520px, 100%); max-height: calc(100vh - 40px); overflow: auto; background: #13272e; color: #eff6ef; border: 1px solid #729b8b; border-radius: 14px; padding: 22px; box-sizing: border-box; }
 .add-project-card label { display: block; margin: 16px 0; }
 .add-project-card input, .add-project-card textarea { display: block; width: 100%; box-sizing: border-box; padding: 10px; margin-top: 6px; font: inherit; background: #20383d; color: #fff; border: 1px solid #8ca59e; border-radius: 6px; }
 .add-project-card textarea { min-height: 86px; }

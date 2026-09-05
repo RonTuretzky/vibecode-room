@@ -512,8 +512,11 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
     const gpuName = debugInfo === null ? "" : String(renderer.getContext().getParameter(debugInfo.UNMASKED_RENDERER_WEBGL));
     const softwareGL = /swiftshader|llvmpipe|softpipe|software/i.test(gpuName);
     const maxPixelRatio = Math.min(window.devicePixelRatio, softwareGL ? 1 : 2);
-    renderer.setPixelRatio(maxPixelRatio);
-    const resolution = new AdaptiveResolution(maxPixelRatio, maxPixelRatio, Math.min(.75, maxPixelRatio));
+    // Start conservatively on CPU rasterizers; DOM controls remain full-size.
+    // Waiting for a long sample window at full resolution starves those controls.
+    const initialPixelRatio = Math.min(maxPixelRatio, softwareGL ? .5 : 2);
+    renderer.setPixelRatio(initialPixelRatio);
+    const resolution = new AdaptiveResolution(initialPixelRatio, maxPixelRatio, Math.min(softwareGL ? .5 : .75, maxPixelRatio));
     container.appendChild(renderer.domElement);
 
     // Lighting is per-environment (added to each env's group): the garden is a
