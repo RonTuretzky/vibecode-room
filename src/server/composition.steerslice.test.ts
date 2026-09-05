@@ -154,6 +154,7 @@ async function makeRuntime(
   const buildsRoot = join(dir, "builds");
   const runtime = await createProjectorRuntime(
     {
+      VIBERSYN_BRANCH_WRITER: "notes",
       VIBERSYN_INITIAL_MUTED: "0",
       VIBERSYN_MIC_REPLAY_PATH: path,
       VIBERSYN_IDEA_DETECTOR: "heuristic",

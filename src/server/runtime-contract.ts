@@ -239,6 +239,13 @@ export interface ProjectorRuntime {
   // the clear ALSO fires the steer applier (steer-applier.ts): the joined
   // slice becomes a real, bounded commit on the tree's room/<slug> branch.
   clearSteeringTarget(correlationId?: string): ProjectorSnapshot;
+  submitProjectChange(upid: string, text: string, scope: SteerScope): Promise<boolean>;
+  setPlantPosition(upid: string, point: { x: number; z: number }): boolean;
+  retryProject(upid: string): Promise<boolean>;
+  cancelProjectWork(upid: string): Promise<boolean>;
+  shutdownWork(): Promise<void>;
+  cancelSteeringTarget(): ProjectorSnapshot;
+  branchJobAction(id: string, action: "retry" | "cancel"): boolean;
   steeringTarget(): string | null;
   steeringBranch(): string | null;
   // ADOPTED-TREE ISSUES (GET /api/process/:upid/issues): the origin repo's
@@ -389,6 +396,8 @@ export interface SeededProcessView {
 
 
 export interface ProjectorRuntimeOptions {
+  stateFile?: string | null;
+  branchAgent?: import("./branch-jobs").BranchAgent;
   // Injects a gateway RPC transport for the Smithers client (tests/e2e drive the
   // gateway path with a stub transport; production builds the real one from env).
   smithersTransport?: GatewayRpcTransport;

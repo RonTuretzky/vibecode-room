@@ -193,9 +193,8 @@ export function receiptLine(
 }
 
 /**
- * RECORD-A-CHANGE toggle — the one steering surface (live-room directive:
- * every "type a change" text input dies; typing at projector distance was
- * never real).
+ * Voice recording control, shared by the room, project and deck surfaces.
+ * The desktop workspace also provides a typed change form.
  *
  * Press → this process becomes the room's steering target
  * (POST /api/process/:upid/select) and EVERYTHING spoken routes into it as
@@ -240,6 +239,7 @@ export interface RecordSteerToggleProps {
   // button had gone missing. Defaults to the id every record surface answers
   // to.
   pressTestId?: string;
+  micActive?: boolean;
 }
 
 // THE WINDOW MODE THIS SURFACE ARMS. The wire says what the OPEN window will
@@ -261,6 +261,7 @@ export function RecordSteerToggle({
   branch = null,
   landing = null,
   pressTestId = "record-steer-start",
+  micActive = true,
 }: RecordSteerToggleProps) {
   // LIT ONLY FOR MY OWN WINDOW. `process.steering` is per-UPID: on an adopted
   // tree the 🌱 grow chip and a branch card's graft toggle are both mounted on
@@ -512,7 +513,7 @@ export function RecordSteerToggle({
         type="button"
         className="ctl-button record-steer is-recording"
         data-testid="record-steer-stop"
-        title="Everything you say is being recorded into this — press to stop."
+        title={micActive ? "Everything you say is being recorded into this — press to stop." : "The microphone is off. Press to close this recording window."}
         onClick={stop}
         ref={buttonRef}
         data-state={pending === "stopping" ? "stopping" : "recording"}
@@ -520,6 +521,8 @@ export function RecordSteerToggle({
         <span className="record-steer-dot" aria-hidden="true" />
         {pending === "stopping"
           ? "stopping…"
+          : !micActive
+            ? "Microphone off · tap to stop"
           : kind === "room"
             ? "● grafting — your words grow the change · tap to stop"
             : kind === "grow"
@@ -536,7 +539,7 @@ export function RecordSteerToggle({
         </div>
       ) : (
         <p className="record-steer-heard-empty" data-testid="record-steer-heard-empty">
-          listening — say the whole change, then tap stop
+          {micActive ? "listening — say the whole change, then tap stop" : "Start the microphone to record your change."}
         </p>
       )}
     </div>

@@ -1,3 +1,6 @@
+import { RoomStateFile } from "./room-state";
+import { roomStateSchema } from "./room-state-schema";
+import { BranchJobs } from "./branch-jobs";
 import { SelfVersionManager } from "./self-versions";
 import { BufferedAudioOutput, runEventStreamClient, registrySeamClient, RegistryCorrelationView } from "./runtime-adapters";
 import {
@@ -192,6 +195,7 @@ export async function createProjectorRuntime(
 ): Promise<ProjectorRuntime> {
   const sessionId = env.VIBERSYN_SESSION_ID ?? emptyProjectorSnapshot.sessionId;
   const runtime = new LiveProjectorRuntime(sessionId, env, options);
+  await runtime.restoreRoom();
   await runtime.initCueBridge();
   // SELF-HOSTING MODE: pin the standing "Vibersyn Room" project (upid "self",
   // callsign "mirror") onto the wall before anything else spawns. It has no
@@ -217,6 +221,13 @@ export async function createProjectorRuntime(
 }
 
 class LiveProjectorRuntime implements ProjectorRuntime {
+  readonly #branchJobs: BranchJobs | null;
+  readonly #stateFile: RoomStateFile<ReturnType<LiveProjectorRuntime["durableState"]>>;
+  #restoring = true;
+  #recoveredAt: number | null = null;
+  readonly #interrupted = new Map<string, "concept" | "execution" | "import">();
+  readonly #positions: Record<string, { x: number; z: number }> = {};
+
   readonly asrMode: AsrProviderMode;
   readonly micMode: AsrProviderMode;
   readonly degradation: DegradationNotice;
@@ -507,6 +518,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     options: ProjectorRuntimeOptions = {},
   ) {
     this.#env = env;
+    this.#stateFile = new RoomStateFile(options.stateFile ?? null, value => roomStateSchema.safeParse(value).success);
     const clock = options.clock ?? (() => Date.now());
     this.#clock = clock;
     // SELF-HOSTING MODE resolves first: it shapes the callsign allocator (the
@@ -533,6 +545,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     const exit = options.exitProcess ?? ((code: number) => process.exit(code));
     this.#exit = (code: number) => {
       this.#transcriptStore?.dispose();
+      void this.#branchJobs?.stop();
       exit(code);
     };
     this.#selfReloadDelayMs = resolveSelfReloadDelayMs(env);
@@ -710,6 +723,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     // Issues ride the SAME gh seam as the substrate's PR engine — an injected
     // fake covers both; only adopted trees with a recorded origin ever fetch.
     this.#treeIssues = new TreeIssuesCache({ runGh: options.treeGhRunner, now: clock });
+    this.#branchJobs = this.#treeGit === null ? null : new BranchJobs({ root: this.#buildsRoot, git: this.#treeGit, env, onUpdate: () => this.publish(), ...(options.branchAgent ? { agent: options.branchAgent } : {}) });
     this.ideaBuilds = new IdeaBuildRegistry({
       apiOrigin: roomApiOrigin(env),
       buildsRoot: options.buildsRoot,
@@ -729,7 +743,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     });
     this.#publishDeckFn = options.publishDeck !== undefined ? options.publishDeck : publishDeck;
     this.buildOrchestrator = new BuildOrchestrator({
-      serve: (dir, host) => servePreviewDirectory(dir, host, roomApiOrigin(env)),
+      serve: (dir, host, ideaId) => servePreviewDirectory(dir, host, roomApiOrigin(env), { upid: dir.split("/").at(-1)!, ...(ideaId ? { ideaId } : {}) }),
       selector: this.buildSelector,
       buildsRoot: options.buildsRoot,
       // GIT SUBSTRATE hooks: birth at fan-out start, one lane commit per
@@ -822,6 +836,8 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       // process was the steering target, drop the target so transcript stops
       // routing into a dead process and returns to ambient handling.
       onHalt: (upid) => {
+        for (const job of this.#branchJobs?.snapshot() ?? []) if (job.upid === upid) this.#branchJobs?.cancel(job.id);
+        this.#interrupted.delete(upid);
         if (this.#steeringUpid === upid) {
           // Silent drop (no applier): a halted target's slice must not commit.
           this.#steeringUpid = null;
@@ -832,6 +848,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
         // A process halted mid-clone kills its git subprocess too; the clone
         // routine's post-clone build kick then sees the abort and stands down.
         this.#importClones.get(upid)?.abort();
+        if (this.#steerGrace?.upid === upid) { if (this.#steerGrace.timer) clearTimeout(this.#steerGrace.timer); this.#steerGrace = null; }
         // A halted process needs no further live-run telemetry; drop its overlay
         // so the driver's map does not keep one entry per run forever.
         this.runEventDriver.forget(upid);
@@ -1110,6 +1127,96 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   // Rendered dossier decks by quest id — a report is immutable once complete,
   // so the (async, QR-generating) render runs once per quest.
   readonly #researchDecks = new Map<string, string>();
+
+  durableState() {
+    return { version: 1 as const, registry: this.registry.exportState(), imports: [...this.#imports.entries()],
+      builds: this.buildOrchestrator.exportState(), executions: this.executionRegistry.exportState(),
+      jobs: this.#branchJobs?.snapshot() ?? [], positions: this.#positions,
+      trees: this.registry.records().flatMap(record => { const tree = this.#treeGit?.snapshot(record.upid, true); return tree ? [{ upid: record.upid, tree }] : []; }),
+      published: [...this.#published.entries()], interrupted: [...this.#interrupted.entries()], answers: [...this.#deckAnswers.entries()].map(([upid, answers]) => [upid, [...answers.entries()]] as const),
+    };
+  }
+
+  async shutdownWork(): Promise<void> {
+    // Preserve the last recoverable state before teardown clears live lanes.
+    this.#stateFile.write(this.durableState());
+    this.#restoring = true;
+    await Promise.all([this.#branchJobs?.stop(), this.buildOrchestrator.abortEverything(), this.executionRegistry.stopAll(), this.ideaBuilds.stopAll()]);
+  }
+
+  async restoreRoom(): Promise<void> {
+    const saved = this.#stateFile.read();
+    if (saved) {
+      try {
+        await this.registry.restoreState(saved.registry);
+        for (const [upid, entry] of saved.imports) {
+          if (entry.status === "cloning") { entry.status = "clone-failed"; this.#interrupted.set(upid, "import"); }
+          this.#imports.set(upid, entry);
+        }
+        for (const [upid, kind] of saved.interrupted ?? []) this.#interrupted.set(upid, kind);
+        for (const upid of await this.buildOrchestrator.restoreState(saved.builds)) this.#interrupted.set(upid, "concept");
+        for (const upid of await this.executionRegistry.restoreState(saved.executions)) this.#interrupted.set(upid, "execution");
+        for (const { upid, tree } of saved.trees) this.#treeGit?.restore(upid, tree);
+        await this.#branchJobs?.restore(saved.jobs);
+        Object.assign(this.#positions, saved.positions);
+        for (const [upid, published] of saved.published ?? []) this.#published.set(upid, published);
+        for (const [upid, answers] of saved.answers ?? []) this.#deckAnswers.set(upid, new Map(answers));
+        this.#recoveredAt = this.#clock();
+      } catch (error) { this.#stateFile.error = `Recovery incomplete; saved file preserved: ${String(error)}`; }
+    }
+    this.#restoring = false;
+  }
+
+  async submitProjectChange(upid: string, text: string, scope: SteerScope): Promise<boolean> {
+    if (!this.registry.activeRecords().some(record => record.upid === upid) || this.#emergencyTriggered) return false;
+    if (scope.mode === "grow") {
+      if (this.#treeGit?.branchRailRefusal(upid) !== null) return false;
+      void this.#growSteerBranch(upid, text, `corr-text-${crypto.randomUUID()}`);
+    } else if (this.#treeGit?.isAdopted(upid)) {
+      void this.#applySteerSlice(upid, scope.branch, text, `corr-text-${crypto.randomUUID()}`);
+    } else await this.registry.steer(upid, { text, source: "api" }, `corr-text-${crypto.randomUUID()}`);
+    this.publish(); return true;
+  }
+
+  setPlantPosition(upid: string, point: { x: number; z: number }): boolean {
+    if (!this.registry.activeRecords().some(record => record.upid === upid) || !Number.isFinite(point.x) || !Number.isFinite(point.z) || Math.abs(point.x) > 1000 || Math.abs(point.z) > 1000) return false;
+    this.#positions[upid] = point; this.publish(); return true;
+  }
+
+  async cancelProjectWork(upid: string): Promise<boolean> {
+    if (!this.registry.activeRecords().some(record => record.upid === upid)) return false;
+    if (this.#steeringUpid === upid) this.cancelSteeringTarget();
+    if (this.#steerGrace?.upid === upid) {
+      if (this.#steerGrace.timer) clearTimeout(this.#steerGrace.timer);
+      this.#steerGrace = null;
+    }
+    const execution = this.registry.execution(upid)?.status === "executing";
+    if (execution) await this.registry.prepareExecutionRetry(upid);
+    await Promise.all([this.buildOrchestrator.abortAll(upid), this.executionRegistry.stop(upid), this.ideaBuilds.stop(upid)]);
+    this.#interrupted.set(upid, execution ? "execution" : "concept");
+    this.publish(); return true;
+  }
+
+  async retryProject(upid: string): Promise<boolean> {
+    if (this.#emergencyTriggered || !this.registry.activeRecords().some(record => record.upid === upid)) return false;
+    const kind = this.#interrupted.get(upid);
+    if (kind === "execution" || this.registry.execution(upid)?.status === "failed") {
+      await this.registry.prepareExecutionRetry(upid);
+      this.#interrupted.delete(upid);
+      await this.executeProcess(upid); this.publish(); return true;
+    }
+    if (kind === "import" || this.#imports.get(upid)?.status === "clone-failed") {
+      const entry = this.#imports.get(upid);
+      const match = entry?.url?.match(/^https:\/\/github\.com\/([^/]+)\/([^/#?]+)/);
+      if (!entry || !match) return false;
+      entry.status = "cloning"; this.#interrupted.delete(upid);
+      this.runGitHubImportRoutine(upid, { url: entry.url!, owner: match[1]!, repo: match[2]!.replace(/\.git$/, "") }, entry.task, null, `corr-retry-${upid}`);
+      this.publish(); return true;
+    }
+    this.#interrupted.delete(upid);
+    const okay = this.registry.startBuild(upid, { correlationId: `corr-retry-${upid}` });
+    this.publish(); return okay;
+  }
 
   snapshot(): ProjectorSnapshot {
     return this.#snapshot;
@@ -2142,6 +2249,24 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       });
   }
 
+  cancelSteeringTarget(): ProjectorSnapshot {
+    if (this.#steerGrace?.timer) clearTimeout(this.#steerGrace.timer);
+    this.#steerGrace = null;
+    this.#steeringUpid = null; this.#steeringScope = STEER_SCOPE_DEFAULT;
+    this.#steerSlice = []; this.#steeringSince = null;
+    this.publish(); return this.#snapshot;
+  }
+
+  branchJobAction(id: string, action: "retry" | "cancel"): boolean {
+    if (!this.#branchJobs) return false;
+    if (action === "cancel") return this.#branchJobs.cancel(id);
+    const job = this.#branchJobs.jobs.get(id);
+    if (this.#emergencyTriggered || !job || !this.registry.activeRecords().some(record => record.upid === job.upid)) return false;
+    const retry = this.#branchJobs.retry(id);
+    if (retry) void retry.catch(() => undefined);
+    return retry !== null;
+  }
+
   steeringTarget(): string | null {
     return this.#steeringUpid;
   }
@@ -2209,6 +2334,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       return;
     }
     const result = await applySteerEdit({
+      ...(this.#branchJobs ? { jobs: this.#branchJobs } : {}),
       repoDir: join(this.#buildsRoot, upid, "repo"),
       branch: grown.branch,
       text,
@@ -2283,6 +2409,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       return;
     }
     const result = await applySteerEdit({
+      ...(this.#branchJobs ? { jobs: this.#branchJobs } : {}),
       repoDir: join(this.#buildsRoot, upid, "repo"),
       branch: resolved.branch,
       text,
@@ -2299,6 +2426,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       upid,
       meta: result.ok ? { branch: result.branch, unchanged: result.unchanged, text } : { stage: "apply", error: result.error },
     });
+    this.#steerLanding = { upid, branch: resolved.branch, onto: resolved.branch, error: result.ok ? null : result.error, atMs: this.#clock() };
     // The substrate's onUpdate republished on a landed commit; republishing
     // here too covers the unchanged/no-commit path so the wall settles honest.
     this.publish();
@@ -3403,6 +3531,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     }
     this.#lastComparable = comparable;
     this.#snapshot = { ...candidate, updatedAt: new Date().toISOString() };
+    if (!this.#restoring) this.#stateFile.write(this.durableState());
     // One serialization shared by every subscriber (each SSE client used to
     // stringify the full snapshot independently).
     const serialized = JSON.stringify(this.#snapshot);
@@ -3446,7 +3575,11 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       // events shows an empty trace, not the canned demo causal chain.
       trace: this.trace.lastEvents(80),
       updatedAt: new Date().toISOString(),
+      providers: this.degradation,
       mic: { mode: this.micMode, active: this.#micActive, bytesReceived: this.#micBytes },
+      branchJobs: this.#branchJobs?.snapshot() ?? [],
+      plantedPositions: { ...this.#positions },
+      recovery: { restoredAtMs: this.#recoveredAt, interrupted: [...this.#interrupted.keys()], error: this.#stateFile.error },
       steeringUpid: this.#steeringUpid,
       steeringBranch: this.steeringBranch(),
       ...(this.#steerLanding === null ? {} : { steerLanding: this.#steerLanding }),
@@ -3740,6 +3873,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       // artifact, not a room-local server that tore down.
       const published = this.#published.get(record.upid) ?? null;
       return {
+        ...(this.#interrupted.has(record.upid) ? { recovery: "interrupted" as const } : {}),
         upid: record.upid,
         runId: record.runId,
         // A BUILT commission preview (the real full app) outranks every mock
@@ -4407,20 +4541,13 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     if (this.#treeGit === null) {
       return { ok: false, error: "tree git substrate is disabled" };
     }
-    // Commit whatever the steered working tree holds right now; the no-change
-    // guard makes a clean tree a no-op ({changed:false}) instead of an error.
-    const committed = await this.#treeGit.commitBranch(upid, branch, "room: spoken changes");
-    if (!committed.ok) {
-      this.#traceTreePr(correlationId, upid, branch, { error: committed.error, stage: "commit" });
-      return committed;
-    }
     const pushed = await this.#treeGit.pushBranch(upid, branch);
     if (!pushed.ok) {
       this.#traceTreePr(correlationId, upid, branch, { error: pushed.error, stage: "push" });
       return pushed;
     }
     const pr = await this.#treeGit.openPrToOrigin(upid, branch, input.title, input.body);
-    this.#traceTreePr(correlationId, upid, branch, pr.ok ? { url: pr.url, committed: committed.changed } : { error: pr.error, stage: "pr" });
+    this.#traceTreePr(correlationId, upid, branch, pr.ok ? { url: pr.url } : { error: pr.error, stage: "pr" });
     return pr;
   }
 

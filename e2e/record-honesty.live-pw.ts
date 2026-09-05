@@ -1,3 +1,4 @@
+import { openProjectWork } from "./project-workspace";
 // JOURNEY B, THE TWO HALVES NOBODY CAN SEE — pressing Record, and being told
 // the room got it.
 //
@@ -36,8 +37,8 @@ test("pressing Record acknowledges the press before the server answers", async (
   const page = wall.page;
   const target = (await room.state()).processes[0]!;
 
-  await page.evaluate((callsign) => window.__VIBERSYN__?.select(callsign), target.callsign);
-  await expect(page.locator('[data-testid="tree-menu"]')).toBeVisible({ timeout: 10_000 });
+  await openProjectWork(page, target.callsign);
+  await expect(page.locator('#project-workspace')).toBeVisible({ timeout: 10_000 });
 
   // A slow-but-working room: the POST still lands, it just takes 3s.
   await page.route("**/api/process/*/select", async (route) => {
@@ -45,7 +46,7 @@ test("pressing Record acknowledges the press before the server answers", async (
     await route.continue();
   });
 
-  const button = page.locator('[data-testid="record-steer-start"]').first();
+  const button = page.locator('#project-workspace [data-testid="record-steer-start"]').first();
   const before = await wallFingerprint(page);
   await button.click();
   const acked = await measure(async () => (await wallFingerprint(page)) !== before, {
@@ -58,7 +59,7 @@ test("pressing Record acknowledges the press before the server answers", async (
 
   // The room is not broken — it is mute. Prove the round trip eventually works,
   // so the finding is precisely "no optimistic state", not "arming is broken".
-  await expect(page.locator('[data-testid="record-steer-stop"]').first()).toBeVisible({
+  await expect(page.locator('#project-workspace [data-testid="record-steer-stop"]').first()).toBeVisible({
     timeout: SLOW_NETWORK_MS + 5_000,
   });
   expect(
@@ -74,18 +75,18 @@ test("the room does not claim it got a recording nobody made", async ({ room, wa
   const page = wall.page;
   const target = (await room.state()).processes[0]!;
 
-  await page.evaluate((callsign) => window.__VIBERSYN__?.select(callsign), target.callsign);
-  await page.locator('[data-testid="record-steer-start"]').first().click();
+  await openProjectWork(page, target.callsign);
+  await page.locator('#project-workspace [data-testid="record-steer-start"]').first().click();
   await room.waitFor((snapshot) => snapshot.steeringUpid === target.upid, { label: "record armed", timeoutMs: 5_000 });
-  await expect(page.locator('[data-testid="record-steer-stop"]').first()).toBeVisible();
+  await expect(page.locator('#project-workspace [data-testid="record-steer-stop"]').first()).toBeVisible();
 
   // …and say NOTHING. Then stop. This is what happens every time somebody arms
   // the window by accident, or speaks and the mic was muted.
   await page.waitForTimeout(1_000);
   const stoppedAtMs = Date.now();
-  await page.locator('[data-testid="record-steer-stop"]').first().click();
+  await page.locator('#project-workspace [data-testid="record-steer-stop"]').first().click();
 
-  const panel = page.locator('[data-testid="record-steer-dispatched"]');
+  const panel = page.locator('#project-workspace [data-testid="record-steer-dispatched"]');
   const claimed = await measure(async () => (await panel.count()) > 0, { timeoutMs: RECEIPT_BUDGET_MS, pollMs: 30 });
   const claimText = claimed.ok ? (await panel.innerText()).replace(/\s+/gu, " ").trim() : "(no panel)";
   console.log(`[record-honesty] stop → receipt panel in ${claimed.elapsedMs}ms: "${claimText}"`);

@@ -52,3 +52,48 @@ On machines that globally sign commits, use a per-command test override
 `GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=commit.gpgsign GIT_CONFIG_VALUE_0=false bun test`
 so temporary fixture commits do not wait for a signing prompt. This does not
 change the user's Git configuration.
+
+## Branch implementation and recovery
+
+Imported repository changes now run through `src/server/branch-jobs.ts`. Each
+request clones the selected `room/*` tip into a separate job directory under
+`builds/<upid>/.branch-jobs/`. The local Claude CLI implements the request, then
+the room checks the staged diff and runs available `typecheck`, `test`, and
+`build` package scripts. Failed checks or cancellation leave the branch tip
+untouched. Jobs expose changed files, passed checks, an error, and a static
+preview when a usable HTML entry exists. Framework apps needing a running
+application server still need their project-specific launch procedure.
+
+`VIBERSYN_CLAUDE_CLI` selects the executable and `VIBERSYN_BRANCH_MODEL` selects
+the model (default `sonnet`). The existing `VIBERSYN_STEER_APPLIER=0` switch
+disables branch writing. `VIBERSYN_BRANCH_WRITER=notes` explicitly selects the
+old deterministic notes demo; it is never used automatically after an agent
+failure. Jobs do not push, open PRs, or deploy. Opening a PR pushes the branch's
+existing commits and no longer snapshots the original checkout over them.
+
+The production entry saves room metadata atomically in
+`builds/.room-state.json`. Set `VIBERSYN_STATE_FILE` to another path or `off` to
+disable it. Demo profiles disable persistence; test harnesses use their own
+temporary state file. Directly constructed runtimes persist only when a
+`stateFile` option is passed, so unit tests cannot read an operator's garden.
+
+Restart restores project identities, seeds, selection, import briefs, concept
+and app previews, branch jobs, published links and shared positions. Previously
+running work is shown as interrupted. Retry is explicit; execution retry first
+reconciles/cancels the old gateway run and uses a new run ID. A failed recovery
+preserves the original state file and shows its error in the UI. Keep the state
+file **and** its referenced artifact directories together when moving a room.
+No external agent or publication is started merely by loading saved state.
+
+Generated concept previews can forward only their own execute/steer/answer and
+idea-dismiss actions. Branch previews have no room API access. Hidden files,
+repository internals, dependencies, and symlinks outside the preview directory
+are excluded from static serving.
+
+Use **Projects** for search, status, retry, cancellation and typed changes.
+**Add project** opens a desktop form; the QR/phone form remains available with
+`q`. An active recording has persistent Stop/Cancel controls even when a menu
+closes. **Background research** and **Open research view** are separate dock
+actions. Paired projector cameras label their locked view and disable Fit;
+normal desktop views retain camera controls. Rendering resolution adapts to
+sustained frame load, while DOM controls and text stay at full resolution.

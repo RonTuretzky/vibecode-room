@@ -1,3 +1,4 @@
+import { openProjectWork } from "./project-workspace";
 // THE RECORD-A-CHANGE WINDOW — the room's one steering surface.
 //
 // Journey: dwell a tree → press Record → say the change → press Stop → the room
@@ -42,16 +43,16 @@ test("everything said inside the record window is collected and NOTHING dispatch
 
   // Open the tree's anchored menu the way a pick does (App.tsx renders TreeMenu
   // off `selectedProcess`), then press the real Record button in the real menu.
-  await wall.page.evaluate((callsign) => window.__VIBERSYN__?.select(callsign), target.callsign);
-  await expect(wall.page.locator('[data-testid="tree-menu"]')).toBeVisible();
-  await wall.page.locator('[data-testid="record-steer-start"]').first().click();
+  await openProjectWork(wall.page, target.callsign);
+  await expect(wall.page.locator('#project-workspace')).toBeVisible();
+  await wall.page.locator('#project-workspace [data-testid="record-steer-start"]').first().click();
 
   const armed = await room.waitFor((snapshot) => snapshot.steeringUpid === target.upid, {
     label: `POST /select to arm ${target.callsign}`,
     timeoutMs: 5_000,
   });
   console.log(`[record-window] arm acknowledged by the server in ${armed.elapsedMs}ms`);
-  await expect(wall.page.locator('[data-testid="record-steer-stop"]').first()).toBeVisible();
+  await expect(wall.page.locator('#project-workspace [data-testid="record-steer-stop"]').first()).toBeVisible();
 
   const spoken = await room.speak({
     utterances: [
@@ -71,7 +72,7 @@ test("everything said inside the record window is collected and NOTHING dispatch
 
   // The operator must SEE what the window has heard before pressing Stop — the
   // live-room request "show me the text I spoke in the recording component".
-  const echo = wall.page.locator('[data-testid="record-steer-heard"]');
+  const echo = wall.page.locator('#project-workspace [data-testid="record-steer-heard"]');
   for (const said of spoken.script.finals) {
     await expect(echo, `the record panel echoed "${said}"`).toContainText(said, { timeout: 5_000 });
   }
@@ -84,11 +85,11 @@ async function recordOneChange(
   sentence: string,
 ): Promise<{ upid: string; said: string }> {
   const target = (await room.state()).processes[0]!;
-  await wall.page.evaluate((callsign) => window.__VIBERSYN__?.select(callsign), target.callsign);
-  await wall.page.locator('[data-testid="record-steer-start"]').first().click();
+  await openProjectWork(wall.page, target.callsign);
+  await wall.page.locator('#project-workspace [data-testid="record-steer-start"]').first().click();
   await room.waitFor((snapshot) => snapshot.steeringUpid === target.upid, { label: "record armed", timeoutMs: 5_000 });
   const spoken = await room.speak({ utterances: [{ text: sentence }] });
-  await wall.page.locator('[data-testid="record-steer-stop"]').first().click();
+  await wall.page.locator('#project-workspace [data-testid="record-steer-stop"]').first().click();
   await room.waitFor((snapshot) => snapshot.steeringUpid === null, { label: "record disarmed", timeoutMs: 5_000 });
   return { upid: target.upid, said: spoken.script.finals[0]! };
 }
@@ -112,7 +113,7 @@ test('the "✓ got it" panel lists the change that was just recorded', async ({ 
   // By the time that effect body runs, `recording` is already false, so the
   // `heard` it closes over is the empty branch. `dispatched` is therefore
   // ALWAYS [] — the panel can never show anything, in any room, ever.
-  const dispatchedPanel = wall.page.locator('[data-testid="record-steer-dispatched"]');
+  const dispatchedPanel = wall.page.locator('#project-workspace [data-testid="record-steer-dispatched"]');
   await expect(dispatchedPanel, "the wall claims it got the recording").toBeVisible({ timeout: 5_000 });
   await expect(dispatchedPanel, "…and says WHAT it got").toContainText(said);
 });

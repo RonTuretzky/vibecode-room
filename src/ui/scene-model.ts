@@ -48,6 +48,7 @@ export interface TreeBuildSummary {
 
 
 export interface TreeSpec {
+  statusText?: string;
   upid: string;
   callsign: string;
   state: ProjectorProcess["state"];
@@ -344,6 +345,7 @@ export function stageWord(stage: TreeSpec["stage"]): string {
 // Node label status: stage · state · progress, with the live steering marker
 // appended so the steering target reads from across the room.
 export function treeStatus(spec: TreeSpec): string {
+  if (spec.statusText) return `${spec.statusText}${spec.steering ? " · recording" : ""}`;
   return `${stageWord(spec.stage)} · ${spec.state} · ${Math.round(spec.progress)}%${spec.steering ? " · ⟵ steering" : ""}`;
 }
 

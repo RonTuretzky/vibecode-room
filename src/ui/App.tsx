@@ -1,3 +1,6 @@
+import { AddProject } from "./AddProject";
+import { projectStatus } from "./project-status";
+import { ProjectWorkspace } from "./ProjectWorkspace";
 import { useRoomConnection } from "./use-room-connection";
 import { WallClock, FullscreenButton, MicCaptureControl, TranscriptStream } from "./room-chrome";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -230,6 +233,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
   // stopMic clears it to disown a pending start, and a disowned start tears
   // down its own pipeline instead of committing it (see toggleMic).
   const micStartRef = useRef<Promise<void> | null>(null);
+  const [addProjectOpen, setAddProjectOpen] = useState(false);
   const [qrOpen, setQrOpen] = useState(initialOverlay?.qrOpen ?? false);
   // HOLO PANEL (the imported tree's LIVE deployment via the /salem proxy): at
   // most ONE at a time — {upid, anchor} or null. Opened from the tree menu's
@@ -347,7 +351,8 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
   // A freshly-imported project (QR phone import / GitHub clone) offers its
   // tree for planting the moment it lands on the wall.
   const [plantedVersion, setPlantedVersion] = useState(0);
-  const plantedPositions = useMemo(() => loadPlantedPositions(), [plantedVersion]);
+  const localPositions = useMemo(() => loadPlantedPositions(), [plantedVersion]);
+  const plantedPositions = useMemo(() => ({ ...localPositions, ...snapshot.plantedPositions }), [localPositions, snapshot.plantedPositions]);
   useEffect(() => {
     const onStorage = () => setPlantedVersion((v) => v + 1);
     window.addEventListener("storage", onStorage);
@@ -697,6 +702,16 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
   // Accept-and-bind for the "Plant…" flow: fire the same accept the Build
   // button uses, then bind whichever upid the accept ADDED to the chosen
   // ground point (see planted-positions.ts for the cross-window contract).
+  const persistPlantPosition = useCallback(async (upid: string, point: { x: number; z: number }) => {
+    if (liveMode) {
+      try {
+        const response = await fetch(`/api/process/${upid}/position`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(point) });
+        if (!response.ok) { reportControlFailure("Save planting position", response.status); return false; }
+      } catch { reportControlFailure("Save planting position"); return false; }
+    }
+    savePlantedPosition(upid, point); setPlantedVersion(v => v + 1); return true;
+  }, [liveMode, reportControlFailure]);
+
   const plantAt = useCallback(
     async (point: { x: number; z: number }) => {
       const target = plantingRef.current;
@@ -705,8 +720,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
       }
       setPlanting(null);
       if (target.kind === "tree") {
-        savePlantedPosition(target.upid, point);
-        setPlantedVersion((v) => v + 1);
+        if (!await persistPlantPosition(target.upid, point)) setPlanting(target);
         return;
       }
       const before = snapshotRef.current.processes.map((process) => process.upid);
@@ -716,11 +730,10 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
       }
       const upid = newUpidAfterAccept(before, fresh.processes.map((process) => process.upid));
       if (upid !== null) {
-        savePlantedPosition(upid, point);
-        setPlantedVersion((v) => v + 1);
+        if (!await persistPlantPosition(upid, point)) setPlanting({ kind: "tree", upid });
       }
     },
-    [acceptIdea, actOnIdea],
+    [acceptIdea, actOnIdea, persistPlantPosition],
   );
 
   // Keyboard/voice-parity target: b/Enter and x act on the TOP ready idea (the
@@ -1832,6 +1845,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
         }
         if (qrOpenRef.current) {
           setQrOpen(false);
+          setAddProjectOpen(false);
           return;
         }
         if (guestsOpenRef.current) {
@@ -2169,6 +2183,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
             callsign: process.callsign,
             state: process.state,
             progress: process.progress,
+            statusText: projectStatus(process, snapshot.branchJobs).label,
             task: process.task,
             steering: process.upid === steeringUpid,
             // The scene knows sapling/tree only; the SELF project folds onto
@@ -2187,7 +2202,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
             plantedAt: plantedPositions[process.upid] ?? null,
           };
         }),
-    [snapshot.processes, hiddenTrees, steeringUpid, issuesByUpid, plantedPositions],
+    [snapshot.processes, snapshot.branchJobs, hiddenTrees, steeringUpid, issuesByUpid, plantedPositions],
   );
 
   const visibleIdeaOrbs = useMemo<IdeaOrbSpec[]>(
@@ -2645,7 +2660,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
             {snapshot.activeCue}
           </span>
           <div className="center-tags">
-            <span className="readonly-tag">READ-ONLY · NON-AUTHORITATIVE</span>
+            <span className="readonly-tag">ROOM WORKSPACE</span>
             <div className="gate-chip" aria-label="Suggestion gate progress">
               <span className="gate-track">
                 <span className="gate-fill" style={{ width: `${gatePercent}%` }} />
@@ -2666,7 +2681,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
               data-testid="emergency-status"
               data-triggered={snapshot.emergencyStopTriggered ? "true" : "false"}
             >
-              {snapshot.emergencyStopTriggered ? "EMERGENCY STOP" : "ALL CLEAR"}
+              {snapshot.emergencyStopTriggered ? "EMERGENCY STOP" : "ROOM ACTIVE"}
             </div>
           ) : null}
           {/* UNMUTE — the SAFETY control. A muted room must SAY so and offer
@@ -2692,6 +2707,9 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
               menu folds the tray (collapseSignal) so two glass panels never
               overlap on the projector. */}
           <ControlDock collapseSignal={dockCollapseSignal}>
+          <button className="ctl-button" data-testid="research-mode-button" aria-pressed={researchEngineOn} onClick={() => void toggleResearchMode()}>Background research: {researchEngineOn ? "on" : "off"}</button>
+          <a className="ctl-button" href={researchActive ? "/" : "/?research=1"}>{researchActive ? "Open garden view" : "Open research view"}</a>
+
           {/* ONE control for mic + capture (live-room request): activating
               unmutes + starts the mic AND turns Idea Capture on; deactivating
               stops both. Replaces the separate Mic and Idea Capture buttons. */}
@@ -2768,9 +2786,10 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
 
       <div className="stage">
         <div className="stage-main">
-          {showIdeaTray && !mockMode && !researchActive ? (
+          {showIdeaTray && !mockMode && !researchActive && !planting ? (
             <IdeaTray
               ideas={ideas}
+              onPlant={(ideaId) => { setPlanting({ kind: "idea", ideaId }); setSelected(null); setIdeaCard(null); setDockCollapseSignal(n => n + 1); }}
               onBuild={(id) => void actOnIdea(id, "accept")}
               onDismiss={(id) => void actOnIdea(id, "dismiss")}
             />
@@ -2842,10 +2861,11 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
           type="button"
           className="ctl-button scene-fit"
           data-testid="scene-fit-button"
+          disabled={cornerLock || flatLock}
           onClick={() => setFitSignal((n) => n + 1)}
-          title="Frame everything in view (F). Drag orbits · Shift+drag pans · scroll zooms."
+          title={cornerLock || flatLock ? "Paired projector camera is locked. Use Projects to find offscreen work, or open the desktop view." : "Frame everything in view (F). Drag orbits · Shift+drag pans · scroll zooms."}
         >
-          ⤢ Fit
+          {cornerLock || flatLock ? "Projector camera locked" : "⤢ Fit"}
         </button>
         <button
           type="button"
@@ -3254,6 +3274,8 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
       {researchDeckQuest !== null ? (
         <ResearchDeckOverlay quest={researchDeckQuest} onClose={() => setResearchDeckId(null)} />
       ) : null}
+      {!mockMode && !researchActive && <ProjectWorkspace snapshot={snapshot} onSelect={setSelected} onAdd={() => setAddProjectOpen(true)} onHelp={() => setHelpOpen(true)} planting={planting !== null} onStartMic={() => void toggleMicCapture()} micError={micError} />}
+      {addProjectOpen && <AddProject onClose={() => setAddProjectOpen(false)} />}
       {qrOpen ? <QrImport processes={snapshot.processes} onClose={() => setQrOpen(false)} /> : null}
       {guestsOpen ? <GuestHands onClose={() => setGuestsOpen(false)} /> : null}
       {/* Standing guest invitation (live-room request): a small always-on QR,

@@ -1,3 +1,4 @@
+import { runCommand } from "../../process/run-command";
 import { existsSync } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
 import { extname, join, sep } from "node:path";
@@ -14,7 +15,6 @@ export const CEREBRAS_CHAT_COMPLETIONS_URL = "https://api.cerebras.ai/v1/chat/co
 // kickoff lane settles around a minute.
 const DEFAULT_MAX_ITERATIONS = 2;
 const DEFAULT_CALL_TIMEOUT_MS = 45_000;
-const KILL_ESCALATION_MS = 1_000;
 const DEFAULT_MAX_COMPLETION_TOKENS = 16_384;
 const MAX_PROMPT_FILE_CHARS = 20_000;
 const MAX_READ_FILE_BYTES = 512 * 1024;
@@ -656,34 +656,13 @@ export function createClaudeCliModel(options: ClaudeCliModelOptions = {}): Model
   const timeoutMs = options.timeoutMs ?? DEFAULT_CALL_TIMEOUT_MS;
   return async ({ system, user, signal }) => {
     signal.throwIfAborted();
-    const proc = Bun.spawn(
+    const out = await runCommand(
       [cli, "-p", `${system}\n\n${user}`, "--output-format", "json", "--dangerously-skip-permissions"],
-      { stdout: "pipe", stderr: "ignore", stdin: "ignore" },
+      process.cwd(), signal, process.env, timeoutMs,
     );
-    let killTimer: ReturnType<typeof setTimeout> | undefined;
-    const kill = (): void => {
-      proc.kill();
-      killTimer ??= setTimeout(() => proc.kill(9), KILL_ESCALATION_MS);
-    };
-    signal.addEventListener("abort", kill, { once: true });
-    const timer = setTimeout(kill, timeoutMs);
-    try {
-      const out = await new Response(proc.stdout).text();
-      const exitCode = await proc.exited;
-      signal.throwIfAborted();
-      if (exitCode !== 0) {
-        throw new Error(`claude CLI exited with code ${exitCode}`);
-      }
-      const reply = unwrapClaudeEnvelope(out);
-      if (reply === null) {
-        throw new Error("claude CLI gave no usable output");
-      }
-      return reply;
-    } finally {
-      clearTimeout(timer);
-      clearTimeout(killTimer);
-      signal.removeEventListener("abort", kill);
-    }
+    const reply = unwrapClaudeEnvelope(out);
+    if (reply === null) throw new Error("claude CLI gave no usable output");
+    return reply;
   };
 }
 

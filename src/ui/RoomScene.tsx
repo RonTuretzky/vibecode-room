@@ -1,3 +1,4 @@
+import { AdaptiveResolution } from "./render-quality";
 import {
   cssHex,
   rawColor,
@@ -510,6 +511,9 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
     const debugInfo = renderer.getContext().getExtension("WEBGL_debug_renderer_info");
     const gpuName = debugInfo === null ? "" : String(renderer.getContext().getParameter(debugInfo.UNMASKED_RENDERER_WEBGL));
     const softwareGL = /swiftshader|llvmpipe|softpipe|software/i.test(gpuName);
+    const maxPixelRatio = Math.min(window.devicePixelRatio, softwareGL ? 1 : 2);
+    renderer.setPixelRatio(maxPixelRatio);
+    const resolution = new AdaptiveResolution(maxPixelRatio, maxPixelRatio, Math.min(.75, maxPixelRatio));
     container.appendChild(renderer.domElement);
 
     // Lighting is per-environment (added to each env's group): the garden is a
@@ -4746,6 +4750,8 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
       const dt = Math.min(clock.getDelta(), 0.1);
       const t = clock.elapsedTime;
       const now = performance.now();
+      const ratio = resolution.sample(dt * 1000, now);
+      if (ratio !== null) { renderer.setPixelRatio(ratio); resize(); }
       if (tick.current !== lastTick) {
         lastTick = tick.current;
         reconcile();

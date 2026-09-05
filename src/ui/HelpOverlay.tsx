@@ -14,7 +14,7 @@ const KEYBOARD_SHORTCUTS: ReadonlyArray<readonly [keys: string, action: string]>
   ["c", "mic + Idea Capture on / off (one control)"],
   ["W A S D", "walk / strafe through the 3D scene"],
   ["Shift+A", "toggle Auto-Build"],
-  ["r", "toggle Research mode (dialogue tree + quests)"],
+  ["r", "toggle background research; open its view from Controls"],
   ["k", "halt the selected build"],
   ["m", "same as c — mic + Idea Capture"],
   ["u", "unmute the room"],
@@ -36,7 +36,7 @@ const VOICE_COMMANDS: ReadonlyArray<readonly [phrase: string, effect: string]> =
   ["“Vibersyn, build it”", "build the top ready idea"],
   ["“Vibersyn, dismiss”", "dismiss the current idea"],
   ["“Vibersyn, auto build on / off”", "toggle Auto-Build"],
-  ["“Vibersyn, research on / off”", "toggle Research mode"],
+  ["“Vibersyn, research on / off”", "toggle background research"],
   ["“Vibersyn, research it” / “fact check”", "research the top suggested quest"],
   ["“Vibersyn, emergency”", "EMERGENCY STOP"],
 ];

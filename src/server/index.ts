@@ -30,7 +30,7 @@ const transcriptArchiveDir = resolveTranscriptArchiveDir(
   process.env,
   process.env.VIBERSYN_TRANSCRIPT_ARCHIVE === undefined ? resolve(process.cwd(), TRANSCRIPT_ARCHIVE_DEFAULT_DIR) : undefined,
 );
-const runtime = await createProjectorRuntime(process.env, { transcriptArchiveDir });
+const runtime = await createProjectorRuntime(process.env, { transcriptArchiveDir, stateFile: process.env.VIBERSYN_STATE_FILE === "off" || process.env.VIBERSYN_ROOM_PROFILE === "demo" ? null : resolve(process.env.VIBERSYN_STATE_FILE || "builds/.room-state.json") });
 if (transcriptArchiveDir === null) {
   console.warn(
     "[transcript] archive DISABLED by VIBERSYN_TRANSCRIPT_ARCHIVE — this room is keeping no record of what is said. Unset it (or point it at a directory) to save transcripts.",
@@ -58,6 +58,7 @@ const pinnedImports = (process.env.VIBERSYN_PINNED_IMPORTS ?? "")
   .map((entry) => entry.trim())
   .filter((entry) => entry.length > 0);
 for (const pinnedUrl of pinnedImports) {
+  if (runtime.snapshot().processes.some(process => process.state !== "halted" && process.source?.url === pinnedUrl)) continue;
   void runtime
     .importProject({ url: pinnedUrl, context: "pinned resident of the garden" }, `corr-pinned-import-${Date.now().toString(36)}`)
     .catch(() => undefined);
@@ -296,4 +297,15 @@ function startOtelTraceExport(exportingRuntime: Awaited<ReturnType<typeof create
   }, 3_000);
   (timer as { unref?: () => void }).unref?.();
   console.log(`[otel] Langfuse OTLP trace export enabled -> ${endpoint}`);
+}
+
+let shuttingDown = false;
+for (const signal of ["SIGINT", "SIGTERM"] as const) {
+  process.on(signal, () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    const deadline = setTimeout(() => process.exit(0), 2500);
+    deadline.unref();
+    void runtime.shutdownWork().finally(() => process.exit(0));
+  });
 }

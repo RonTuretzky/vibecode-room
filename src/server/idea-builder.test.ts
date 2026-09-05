@@ -168,6 +168,8 @@ describe("idea-builder — real scaffold + live preview server", () => {
     // forwarded emergency-stop signal aborts it (the SIGKILL path). Without the
     // abort fix, stop() would await this build's 180s ceiling.
     let sawSignal = false;
+    let builderStarted!: () => void;
+    const started = new Promise<void>(resolve => { builderStarted = resolve; });
     const hangingBuilder: BuilderAgent = (_pitch, _dir, _upid, signal) =>
       new Promise<void>((_resolve, reject) => {
         if (signal === undefined) {
@@ -175,14 +177,15 @@ describe("idea-builder — real scaffold + live preview server", () => {
           return;
         }
         sawSignal = true;
+        builderStarted();
         signal.addEventListener("abort", () => reject(new Error("builder SIGKILLed")), { once: true });
       });
 
     const registry = new IdeaBuildRegistry({ buildsRoot, builderAgent: hangingBuilder });
     const task = registry.start("An app whose build hangs forever", "upid-abort-1");
     expect(registry.state("upid-abort-1")?.status).toBe("building");
-    // Give the async build a beat to reach the hanging builder call.
-    await new Promise((resolve) => setTimeout(resolve, 25));
+    // Synchronize with the actual start, not filesystem timing under load.
+    await started;
 
     const startedAt = Date.now();
     await registry.stop("upid-abort-1");

@@ -428,6 +428,55 @@ export class TreeGitSubstrate {
     });
   }
 
+  // Agent changes start at this branch's tip in an independent clone. Failed
+  // edits never touch the adopted checkout or another branch's files.
+  editBranchIsolated(
+    upid: string, branch: string, workspace: string, message: string,
+    edit: (dir: string) => Promise<void>,
+  ): Promise<{ ok: true; branch: string; changed: boolean } | { ok: false; error: string }> {
+    const state = this.#trees.get(upid);
+    const refused = this.#branchOpRefusal(upid, state);
+    if (refused !== null || state === undefined) return Promise.resolve(refused ?? { ok: false, error: "Unknown tree" });
+    const slug = roomSlug(branch);
+    if (slug === null) return Promise.resolve({ ok: false, error: "Expected a room/* branch" });
+    return this.#chainBranchOp(state, async () => {
+      try {
+        await mkdir(resolve(workspace, ".."), { recursive: true });
+        const cloned = await this.#runGit(["clone", "--no-hardlinks", "--single-branch", "--branch", branch, this.#repoDir(upid), workspace]);
+        if (!cloned.ok) return { ok: false as const, error: cloned.stderr || "Could not prepare branch workspace" };
+        const detached = await this.#runGit(["-C", workspace, "remote", "remove", "origin"]);
+        if (!detached.ok) return { ok: false as const, error: detached.stderr };
+        const base = await this.#runGit(["-C", workspace, "rev-parse", "HEAD"]);
+        if (!base.ok) return { ok: false as const, error: base.stderr };
+        await edit(workspace);
+        const committed = await this.#commitTree(state, {
+          workTree: workspace, indexName: `index.agent-${slug}`,
+          ref: `refs/heads/${branch}`, message, expectedParentSha: base.stdout.trim(),
+        });
+        if ("error" in committed) return { ok: false as const, error: committed.error };
+        if ("unchanged" in committed) return { ok: true as const, branch, changed: false };
+        state.branches.set(branch, (state.branches.get(branch) ?? 0) + 1);
+        this.#onUpdate();
+        return { ok: true as const, branch, changed: true };
+      } catch (error) {
+        return { ok: false as const, error: messageOf(error) };
+      }
+    });
+  }
+
+  restore(upid: string, snapshot: TreeRepoSnapshot): void {
+    const state = snapshot.adopted && snapshot.remoteUrl
+      ? this.#adoptedState(upid, snapshot.remoteUrl)
+      : { ...this.#adoptedState(upid, snapshot.remoteUrl), mode: "local" as const };
+    if (!state) return;
+    state.remoteUrl = snapshot.remoteUrl;
+    for (const branch of snapshot.branches) {
+      state.branches.set(branch.name, branch.commits);
+      if (branch.prUrl) state.prUrls.set(branch.name, branch.prUrl);
+    }
+    this.#trees.set(upid, state);
+  }
+
   // Push ONLY refs/heads/room/<slug> — never --all, never main, never force.
   pushBranch(upid: string, branch: string): Promise<{ ok: true; branch: string } | { ok: false; error: string }> {
     const state = this.#trees.get(upid);
@@ -496,13 +545,13 @@ export class TreeGitSubstrate {
   }
 
   // Pure in-memory snapshot fragment — ZERO subprocesses per publish.
-  snapshot(upid: string): TreeRepoSnapshot | null {
+  snapshot(upid: string, includeAll = false): TreeRepoSnapshot | null {
     const state = this.#trees.get(upid);
     if (state === undefined) {
       return null;
     }
     return {
-      branches: [...state.branches.entries()].slice(0, SNAPSHOT_BRANCH_CAP).map(([name, commits]) => {
+      branches: [...state.branches.entries()].slice(0, includeAll ? undefined : SNAPSHOT_BRANCH_CAP).map(([name, commits]) => {
         const prUrl = state.prUrls.get(name);
         return prUrl === undefined ? { name, commits } : { name, commits, prUrl };
       }),
@@ -686,6 +735,7 @@ export class TreeGitSubstrate {
       message: string;
       fallbackParentRef?: string;
       allowEmptyParent?: boolean;
+      expectedParentSha?: string;
     },
   ): Promise<{ sha: string } | { unchanged: true } | { error: string }> {
     const gitDir = this.#gitDirFor(state);
@@ -701,6 +751,8 @@ export class TreeGitSubstrate {
     }
     let parentSha: string | null = null;
     const head = await this.#runGit([`--git-dir=${gitDir}`, "rev-parse", "-q", "--verify", input.ref]);
+    const previousRef = head.ok ? head.stdout.trim() : "0000000000000000000000000000000000000000";
+    if (input.expectedParentSha && previousRef !== input.expectedParentSha) return { error: "The branch changed while this job was running. Retry from its new tip." };
     if (head.ok && head.stdout.trim().length > 0) {
       parentSha = head.stdout.trim();
     } else if (input.fallbackParentRef !== undefined) {
@@ -731,7 +783,7 @@ export class TreeGitSubstrate {
     if (!commit.ok || commitSha.length === 0) {
       return this.#plumbingFailure(state.upid, "commit-tree", commit);
     }
-    const updateRef = await this.#runGit([`--git-dir=${gitDir}`, "update-ref", input.ref, commitSha]);
+    const updateRef = await this.#runGit([`--git-dir=${gitDir}`, "update-ref", input.ref, commitSha, previousRef]);
     if (!updateRef.ok) {
       return this.#plumbingFailure(state.upid, "update-ref", updateRef);
     }
@@ -910,7 +962,7 @@ export class TreeGitSubstrate {
     if (state.branches.has(branch)) {
       return { ok: true, branch };
     }
-    return this.#cutBranchAt(state, branch);
+    return this.#cutBranchAt(state, branch, true);
   }
 
   // Same slug rules, opposite collision rule: a taken name is stepped past
@@ -935,13 +987,17 @@ export class TreeGitSubstrate {
   // object: fetch the real origin/main tip, point the ref at it, register the
   // branch BEFORE any commit exists (the wall's snapshot.treeRepo must show
   // the limb the moment the action lands), trace, republish.
-  async #cutBranchAt(state: TreeState, branch: string): Promise<{ ok: true; branch: string } | { ok: false; error: string }> {
+  async #cutBranchAt(state: TreeState, branch: string, reuseExisting = false): Promise<{ ok: true; branch: string } | { ok: false; error: string }> {
     const fetched = await this.#fetchOriginMainOnce(state);
     if (!fetched.ok) {
       return fetched;
     }
-    const updateRef = await this.#runGit([`--git-dir=${this.#gitDirFor(state)}`, "update-ref", `refs/heads/${branch}`, fetched.sha]);
+    const updateRef = await this.#runGit([`--git-dir=${this.#gitDirFor(state)}`, "update-ref", `refs/heads/${branch}`, fetched.sha, "0000000000000000000000000000000000000000"]);
     if (!updateRef.ok) {
+      if (reuseExisting) {
+        const existing = await this.#runGit([`--git-dir=${this.#gitDirFor(state)}`, "rev-parse", "--verify", `refs/heads/${branch}`]);
+        if (existing.ok && existing.stdout.trim()) { state.branches.set(branch, 0); this.#onUpdate(); return { ok: true, branch }; }
+      }
       const error = clampLine(updateRef.stderr || updateRef.stdout, 200) || "git update-ref failed";
       this.#trace("tree.git.error", "error", state.upid, { op: "branch.create", branch, message: error });
       await this.#traceLog(state.upid, `branch ${branch}`, false, error);

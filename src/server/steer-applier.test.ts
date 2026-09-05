@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { applySteerEdit, steerApplierEnabled, type SteerApplierGit } from "./steer-applier";
+import { applySteerEdit, steerApplierEnabled, type SteerApplierGit } from "./notes-writer";
 
 // The steer applier over a tmpdir repoDir (the injectable fs root) and a fake
 // treeGit (the commit seam) — no real clone, no git subprocess, ever.

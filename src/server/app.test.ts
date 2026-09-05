@@ -1145,7 +1145,7 @@ describe("adopted-tree branch + PR routes", () => {
     });
   });
 
-  test("the PR route commits spoken changes, pushes ONLY the room branch, opens one PR to the ORIGIN — and is idempotent", async () => {
+  test("the PR route pushes the committed branch without overwriting it from the checkout, opens one PR to the ORIGIN — and is idempotent", async () => {
     const git = branchRailGit();
     const gh = branchRailGh();
     const { app, runtime } = await makeApp({
@@ -1160,9 +1160,8 @@ describe("adopted-tree branch + PR routes", () => {
     expect(opened.status).toBe(200);
     expect((await opened.json()) as unknown).toEqual({ ok: true, url: "https://github.com/acme/widget/pull/7" });
 
-    // The working-tree commit landed on the room branch with the spoken-changes message.
-    const commit = git.calls.find((argv) => argv.includes("commit-tree"))!;
-    expect(commit[commit.indexOf("-m") + 1]).toBe("room: spoken changes");
+    // PR creation must never snapshot the original checkout over branch edits.
+    expect(git.calls.some(argv => argv.includes("commit-tree"))).toBe(false);
     // Push: exactly refs/heads/room/<slug>, never --all / main / force.
     const push = git.calls.find((argv) => argv.includes("push"))!;
     expect(push).toContain("refs/heads/room/add-dark-mode:refs/heads/room/add-dark-mode");

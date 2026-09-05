@@ -607,6 +607,7 @@ export function serverEnv(input: {
     // harness run can never write invented sentences into the operator's
     // permanent record — the exact pollution 6a1d228 was written to stop.
     VIBERSYN_TRANSCRIPT_ARCHIVE: join(input.tmpDir, "transcripts"),
+    VIBERSYN_STATE_FILE: join(input.tmpDir, "room-state.json"),
 
     // The recognizer seam.
     VIBERSYN_ASR_PROVIDER: "voxterm",

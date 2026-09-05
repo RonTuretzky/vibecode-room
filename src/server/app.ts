@@ -559,6 +559,40 @@ export function createProjectorApp(runtime: ProjectorRuntime, options: Projector
     }
     return context.json(runtime.clearSteeringTarget());
   });
+  app.post("/api/process/select/cancel", context => {
+    if (isOfflineDemoRequest(context.req.header("referer"))) return context.json({ error: "Demo mode cannot change live work" }, 409);
+    return context.json(runtime.cancelSteeringTarget());
+  });
+  app.post("/api/branch-job/:id/:action", context => {
+    if (isOfflineDemoRequest(context.req.header("referer"))) return context.json({ error: "Demo mode cannot change live work" }, 409);
+    const action = context.req.param("action");
+    if (action !== "retry" && action !== "cancel") return context.json({ error: "Unknown action" }, 400);
+    return runtime.branchJobAction(context.req.param("id"), action) ? context.json(runtime.publishNow()) : context.json({ error: "Job does not allow this action" }, 409);
+  });
+  app.post("/api/process/:upid/position", async context => {
+    if (isOfflineDemoRequest(context.req.header("referer"))) return context.json({ error: "Demo mode cannot change live work" }, 409);
+    const point = await context.req.json().catch(() => null);
+    if (!point || typeof point.x !== "number" || typeof point.z !== "number" || !runtime.setPlantPosition(context.req.param("upid"), { x: point.x, z: point.z })) return context.json({ error: "Choose a valid position for an active project" }, 400);
+    return context.json(runtime.publishNow());
+  });
+  app.post("/api/process/:upid/change", async context => {
+    if (isOfflineDemoRequest(context.req.header("referer"))) return context.json({ error: "Demo mode cannot change live work" }, 409);
+    const body = await context.req.json().catch(() => null);
+    if (!body || typeof body.text !== "string" || !body.text.trim() || body.text.length > 4000 || (body.branch && typeof body.branch !== "string") || (body.grow && body.branch)) return context.json({ error: "Provide a change of 1–4000 characters and one target" }, 400);
+    if (runtime.steeringTarget()) return context.json({ error: "Stop or cancel the active recording before submitting a typed change" }, 409);
+    const okay = await runtime.submitProjectChange(context.req.param("upid"), body.text.trim(), body.grow === true ? { mode: "grow" } : { mode: "onto", branch: body.branch || null });
+    return okay ? context.json(runtime.publishNow()) : context.json({ error: "This project cannot accept that change" }, 409);
+  });
+  app.post("/api/process/:upid/cancel-work", async context => {
+    if (isOfflineDemoRequest(context.req.header("referer"))) return context.json({ error: "Demo mode cannot change live work" }, 409);
+    try { return (await runtime.cancelProjectWork(context.req.param("upid"))) ? context.json(runtime.publishNow()) : context.json({ error: "Project could not be cancelled" }, 409); }
+    catch (error) { return context.json({ error: `Could not cancel work: ${String(error)}` }, 409); }
+  });
+  app.post("/api/process/:upid/retry", async context => {
+    if (isOfflineDemoRequest(context.req.header("referer"))) return context.json({ error: "Demo mode cannot change live work" }, 409);
+    try { return (await runtime.retryProject(context.req.param("upid"))) ? context.json(runtime.publishNow()) : context.json({ error: "Project could not be retried" }, 409); }
+    catch (error) { return context.json({ error: `Could not reconcile the previous run: ${String(error)}` }, 409); }
+  });
   app.delete("/api/process/select", (context) => {
     if (isOfflineDemoRequest(context.req.header("referer"))) {
       return context.json(runtime.snapshot());

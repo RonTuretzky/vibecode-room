@@ -1,3 +1,4 @@
+import { openProjectWork } from "./project-workspace";
 // RESPONSIVITY — the operator's "the responsivity sucks", as a number.
 //
 // A real conversation is spoken into a real room and every committed line is
@@ -90,8 +91,8 @@ test("after the transcript hits its 40-line cap, the record window still echoes 
 
   // Now do the thing the operator does: record a change.
   const target = capped.processes[0]!;
-  await wall.page.evaluate((callsign) => window.__VIBERSYN__?.select(callsign), target.callsign);
-  await wall.page.locator('[data-testid="record-steer-start"]').first().click();
+  await openProjectWork(wall.page, target.callsign);
+  await wall.page.locator('#project-workspace [data-testid="record-steer-start"]').first().click();
   await room.waitFor((snapshot) => snapshot.steeringUpid === target.upid, { label: "record armed", timeoutMs: 5_000 });
 
   const spoken = await room.speak({ utterances: [{ text: "swap the hero image for the new render" }] });
@@ -109,7 +110,7 @@ test("after the transcript hits its 40-line cap, the record window still echoes 
   // panel shows its "listening — say the whole change" empty state while the
   // operator is talking, and the frozen "✓ got it" panel afterwards lists
   // nothing. This is literally "the room lost my recording".
-  const echo = wall.page.locator('[data-testid="record-steer-heard"]');
+  const echo = wall.page.locator('#project-workspace [data-testid="record-steer-heard"]');
   await expect(echo, `the record panel echoed "${spoken.script.finals[0]}" after the cap`).toContainText(
     spoken.script.finals[0]!,
     { timeout: 6_000 },

@@ -1,3 +1,4 @@
+import { projectStatus } from "./project-status";
 import { useEffect, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from "react";
 import type { ProjectorProcess, ProjectorSnapshot } from "./types";
 import type { SceneDwellRect } from "./gesture/scene-source";
@@ -266,9 +267,7 @@ export function treeMenuModel(process: ProjectorProcess, snapshot: ProjectorSnap
     title: isSelf ? "the room" : process.task.length > 0 ? process.task : process.callsign,
     callsign: process.callsign,
     stage,
-    statusLine: `${process.state} · ${Math.round(process.progress)}%${
-      process.progressLabel.length > 0 ? ` · ${process.progressLabel}` : ""
-    }`,
+    statusLine: projectStatus(process).label,
     // The MIRROR runs durable self-runs, never concept lanes — roster-derived
     // "queued…" rows on the room's own tree read as dead deck buttons from
     // projector distance (live-room report). Its real telemetry is the
@@ -642,7 +641,7 @@ export function TreeMenu({
       }
       setBusy(null);
       if (result.ok) {
-        onClose();
+        setFocusBranch(branch);
       } else {
         setTendError(result.error);
         onControlFailure?.("graft onto branch", result.status);
