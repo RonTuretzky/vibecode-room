@@ -332,6 +332,10 @@ test("deck journey: answer reshapes the mock, commission runs a real implementat
   // --- COMMISSION: "Build it for real" --------------------------------------
   const executeButton = wall.page.locator('[data-testid="decision-commission"]');
   await executeButton.click({ trial: true });
+  // A real agent stays busy long enough to inspect progress. Hold this tiny
+  // scripted run at its completion boundary until the same evidence is visible;
+  // slow browser rendering must not make the test miss the entire working state.
+  const releaseCompletion = rig.holdCompletion();
   const commissionAtMs = Date.now();
   const [executeResponse] = await Promise.all([
     wall.page.waitForResponse(
@@ -379,6 +383,9 @@ test("deck journey: answer reshapes the mock, commission runs a real implementat
             const chipText = await wall.page.locator('[data-testid="execution-chip-footprint"]').innerText();
             sawFootprintOnWall = /on disk|no files yet/u.test(chipText);
           }
+        }
+        if (execution.status === "executing" && (execution.filesWritten ?? 0) > 0 && sawFootprintOnWall) {
+          releaseCompletion();
         }
       }
       await wall.page.waitForTimeout(150);

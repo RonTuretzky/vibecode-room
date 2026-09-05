@@ -51,8 +51,14 @@ The branch/deck rigs control model and gateway responses and write actual files;
 Git import, branch creation, isolation, commits and grafting use a local bare
 remote. GitHub publication is refused by the test publisher.
 
+A separate smoke test used the installed Claude CLI with the production branch
+agent: it implemented a counter in a small HTML repository, passed the Git
+whitespace check, committed the selected branch and served its preview. Manual
+browser actions verified Increment (0 → 1 → 2) and Reset (2 → 0). This confirms
+one real-provider integration; it does not establish quality on arbitrary repos.
+
 Manual browser checks use desktop and phone-sized viewports. These checks do
-not establish physical microphone/ASR accuracy, real model output quality,
+not establish physical microphone/ASR accuracy, general model output quality,
 authenticated GitHub publication/deployment, camera tracking or physical
 projector performance. Static branch previews work when an HTML entry exists;
 applications requiring their own server use their project-specific launch
@@ -63,9 +69,9 @@ is local and is not a security sandbox for untrusted repositories.
 
 - Full live browser suite: **32 passed, 1 skipped, 0 failed** (10.6 minutes). The existing skipped case concerns naming 3D issue-fruit/limb hit targets.
 - TypeScript and production build passed.
-- Full unit suite passed in CI, with **20 optional live-integration tests skipped**.
-- Standard browser checks: **59 existing cases passed**; the new phone layout/focus check passed after repairing an 8-pixel overflow, header overlap and clipped scene controls.
-- Focused command, recovery and Gateway regressions: **10 passed, 1 optional integration skipped**. Earlier loaded full Mac runs encountered subprocess/Gateway timing failures; the affected cases pass in isolation and CI.
+- Full unit suite passed in CI: **2,577 passed, 20 optional live-integration tests skipped**.
+- Standard browser checks: **60 passed in CI**, including the new phone layout/focus check after repairing an 8-pixel overflow, header overlap and clipped scene controls.
+- Focused command, recovery and Gateway regressions: **10 passed, 1 optional integration skipped**. Full Mac runs still intermittently encounter subprocess timing failures; the native-backend cases passed in isolation (**55 passed**) and the full suite passes in CI.
 - The CI gate now also runs planting, branch/recovery and deck commissioning against controlled providers with real HTTP, files and Git. Its whole-journey timeout allows multiple server boots; per-operation deadlines remain enforced.
 
 The software-rendered live run measured transcript-to-DOM p95 at **274 ms**
@@ -74,3 +80,5 @@ and server-disconnect feedback at **257 ms**. Canvas picking remained slower
 list is the reliable selection path under software rendering. Physical-GPU
 acceptance is still required; adaptive resolution does not establish that
 every projector meets its frame or input-latency target.
+After the software-renderer adjustment, the focused frame test measured median
+frame times of **16.7–18.4 ms (about 54–60 fps)**, including with a menu open.
