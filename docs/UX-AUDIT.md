@@ -27,6 +27,12 @@ branch-job, process-command, status and workspace code lives in separate modules
 The main scene and runtime orchestrators remain large; further decomposition
 is maintenance work, rather than a missing user flow.
 
+The September 5 reconciliation includes `room/dobbin-street-intersection-know`
+at `04006cf`, which contains the older `-main-merged` branch. Its two additions
+beyond main are preserved: the meadow table's blue monitor surface and the
+calmer butterfly flap rate. The monitor is geometry, not implemented video
+playback. Central Park and all prior room reliability fixes remain included.
+
 ## Exercised flows
 
 - Speech → idea → Build/Plant → concept preview and deck.
@@ -64,6 +70,13 @@ projector performance. Static branch previews work when an HTML entry exists;
 applications requiring their own server use their project-specific launch
 instructions. Preview filtering limits files and API forwarding; agent execution
 is local and is not a security sandbox for untrusted repositories.
+
+Desktop and gesture/joystick modes still have different scene controls: Garden,
+Radial, Fit, Hide and Zen are desktop-only; `?gesture=1` omits that toolbar.
+The Central Park toggle remains in the Controls dock in both modes. The
+launcher uses gesture mode for `--gesture` and `--arcade`. Browser acceptance
+must exercise that URL explicitly; a plain desktop preview does not establish
+projector interface parity.
 
 ## Validation
 

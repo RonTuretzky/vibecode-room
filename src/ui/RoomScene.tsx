@@ -787,6 +787,20 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
           leg.position.set(lx, (TABLE_TOP_Y - 0.08) / 2, lz);
           table.add(leg);
         }
+        // A little screen stood on the table — "footage here": the meeting's
+        // playback monitor, a dark oak-framed slab glowing cold blue.
+        const SCREEN_W = 1.4, SCREEN_H = 0.82;
+        const bezel = new THREE.Mesh(new THREE.BoxGeometry(SCREEN_W + 0.12, SCREEN_H + 0.12, 0.06), oakDark);
+        const footage = new THREE.Mesh(
+          new THREE.PlaneGeometry(SCREEN_W, SCREEN_H),
+          new THREE.MeshBasicMaterial({ color: 0x2a6cff }),
+        );
+        footage.position.z = 0.032;
+        const monitor = new THREE.Group();
+        monitor.add(bezel);
+        monitor.add(footage);
+        monitor.position.set(0, TABLE_TOP_Y + 0.08 + (SCREEN_H + 0.12) / 2, 0.2);
+        table.add(monitor);
         group.add(table);
       }
 
@@ -1395,7 +1409,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
           group: fly, left, right, homeX, homeZ,
           heading: rng() * Math.PI * 2, speed: 0.8, cruise: 0.75 + rng() * 0.55, vy: 0,
           turnRate: 0, turnTarget: 0, turnT: rng(), targetAlt: 1.2 + rng() * 2,
-          flapPhase: rng(), flapFreq: 6.5 + rng() * 2.5, flapEnv: 1, flapping: true,
+          flapPhase: rng(), flapFreq: 4.5 + rng() * 1.5, flapEnv: 1, flapping: true,
           modeT: 0.5 + rng(), bank: 0, mode: 0, landT: 8 + rng() * 18, tx: 0, ty: 0, tz: 0,
         });
       }
