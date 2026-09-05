@@ -1,3 +1,9 @@
+import { localCloudRelate } from "../research/sky";
+import { enforceLocalAi, localAiEnabled, localModel } from "../config/local";
+import { probeLocalAi } from "../providers/local";
+import { probeLocalWhisper } from "../providers/asr/local";
+import { runLocalAgent } from "../providers/local-agent";
+import { localProjectName } from "../process/project-name";
 import { RoomStateFile } from "./room-state";
 import { roomStateSchema } from "./room-state-schema";
 import { BranchJobs } from "./branch-jobs";
@@ -517,6 +523,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     env: ProjectorRuntimeEnv,
     options: ProjectorRuntimeOptions = {},
   ) {
+    env = enforceLocalAi(env);
     this.#env = env;
     this.#stateFile = new RoomStateFile(options.stateFile ?? null, value => roomStateSchema.safeParse(value).success);
     const clock = options.clock ?? (() => Date.now());
@@ -651,8 +658,8 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     // is correct. When VIBERSYN_SMITHERS_GATEWAY_URL (or an injected transport) is
     // present, selectSmithersClient returns a gateway-backed client that routes
     // spawn/halt to a real Smithers gateway over its RPC transport.
-    const smithersClient = selectSmithersClient(env, { transport: options.smithersTransport });
-    const smithersMode: SmithersClientMode = smithersClient instanceof GatewayRegistryClient ? "gateway" : "memory";
+    const smithersClient = selectSmithersClient(env, { transport: options.smithersTransport, artifactsRoot: options.executionArtifactsRoot, buildsRoot: options.buildsRoot });
+    const smithersMode: SmithersClientMode = localAiEnabled(env) ? "local" : smithersClient instanceof GatewayRegistryClient ? "gateway" : "memory";
     // Terminal-status prober for the commission watchdog (gateway mode only —
     // the in-memory client has no durable runs to poll).
     this.#getRun =
@@ -727,7 +734,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     this.ideaBuilds = new IdeaBuildRegistry({
       apiOrigin: roomApiOrigin(env),
       buildsRoot: options.buildsRoot,
-      builderAgent: options.builderAgent,
+      builderAgent: options.builderAgent ?? (localAiEnabled(env) ? async (pitch, dir, _upid, signal) => { await runLocalAgent(dir, pitch, { env, signal: signal ?? new AbortController().signal }); } : undefined),
     });
     // Multi-backend BUILD LOOP (src/buildloop): the selector owns the registered
     // roster (VIBERSYN_BUILD_BACKENDS csv, default "smithers,native" — eliza is
@@ -738,7 +745,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     // hook regenerates the per-backend deck after every successful build/steer;
     // it is garnish — the orchestrator swallows its failures.
     this.buildSelector = new BackendSelector({
-      backends: options.buildBackends ?? [new SmithersBuildBackend(), new NativeBuildBackend(), new ElizaBuildBackend()],
+      backends: options.buildBackends ?? (localAiEnabled(env) ? [new NativeBuildBackend({ env })] : [new SmithersBuildBackend({ env }), new NativeBuildBackend({ env }), new ElizaBuildBackend({ env })]),
       env,
     });
     this.#publishDeckFn = options.publishDeck !== undefined ? options.publishDeck : publishDeck;
@@ -764,7 +771,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
             answeredQuestions: this.answeredQuestions(input.upid),
             answerEndpoint: `/api/process/${encodeURIComponent(input.upid)}/answer`,
           },
-          { signal: input.signal },
+          { signal: input.signal, env },
         );
         // PROVENANCE (house rule): whether the deck's copy came from a model
         // or degraded to template text is recorded — the deck footer says it
@@ -815,6 +822,12 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     const baseOrchestrator = useOrchestrator ? this.buildOrchestrator : null;
     this.registry = new ProcessRegistry({
       client: smithersClient,
+      ...(localAiEnabled(env) ? { namer: (pitch: string) => localProjectName(pitch, env) } : {}),
+      ...(localAiEnabled(env) ? { onBuiltSteer: async (upid: string, correlationId: string) => {
+        await this.registry.prepareExecutionRetry(upid);
+        const result = await this.executeProcess(upid, correlationId);
+        if (!result.ok) throw new Error(result.error);
+      } } : {}),
       sessionId,
       now: clock,
       maxConcurrentProcesses: maxConcurrent,
@@ -1067,6 +1080,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     // for researchable material. Turns are always ingested (the dialogue tree
     // is live data); suggestion inference runs only while the mode is active.
     this.research = new ResearchLoop({
+      env,
       sessionId,
       suggester: options.researchSuggester ?? selectResearchSuggester(env).suggester,
       agent: options.researchAgent ?? selectResearchAgent(env).agent,
@@ -1077,6 +1091,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       cloudGraph:
         options.cloudGraph ??
         new CloudGraph({
+          ...(localAiEnabled(env) ? { runner: localCloudRelate(env), timeoutMs: 60_000 } : {}),
           intervalMs: readSkyIntervalMs(env),
           clock,
           onUpdate: () => this.publish(),
@@ -1791,7 +1806,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
         // the mode from the digest+context and never throws / never needs net.
         pitch = await buildImportPlanPrompt(
           { context, digest, repoPath: result.dir },
-          { signal: controller.signal },
+          { signal: controller.signal, env: this.#env },
         ).catch(() =>
           digest !== null
             ? `${basePitch}\n\nThe repository is cloned at ${result.dir}. Digest:\n${digest}`
@@ -1803,7 +1818,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
         // (which yields no cards for imports, exactly today's behavior).
         planQuestions = await buildImportPlanQuestions(
           { context, digest, repoPath: result.dir },
-          { signal: controller.signal },
+          { signal: controller.signal, env: this.#env },
         ).catch(() => []);
       } else if (entry !== undefined) {
         // A failed clone keeps the link-only build AND no drafted questions —
@@ -3559,6 +3574,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
 
     return {
       ...emptyProjectorSnapshot,
+      ...(localAiEnabled(this.#env) ? { ai: { mode: "local" as const, model: localModel(this.#env, "code"), fastModel: localModel(this.#env) } } : {}),
       sessionId: this.sessionId,
       listening,
       muted,
@@ -3740,7 +3756,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   // ONE publish attempt per kicked-off idea. No PAT in the environment →
   // publishing is cleanly disabled with an explicit trace (never an error).
   private kickDeckPublish(upid: string, backend: string, mockDir: string, deckDir: string): void {
-    if (this.#publishKicked.has(upid) || this.#publishDeckFn === null) {
+    if ((localAiEnabled(this.#env) && this.#env.VIBERSYN_AUTO_PUBLISH !== "1") || this.#publishKicked.has(upid) || this.#publishDeckFn === null) {
       return;
     }
     this.#publishKicked.add(upid);
@@ -4104,6 +4120,15 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   // why it has to be, and why the I/O lives there rather than in the pure
   // notice builder.
   async degradationNow(): Promise<DegradationNotice> {
+    if (localAiEnabled(this.#env)) {
+      const notice = buildDegradationNotice(this.#legSelections);
+      const [local, whisperError] = await Promise.all([probeLocalAi(this.#env), probeLocalWhisper(this.#env)]);
+      if (!local.ok) { notice.degraded.push({ leg: "decider", mode: "local", detail: local.reason!, upgrade: "Start LM Studio’s local server and load the selected model." }); notice.allReal = false; }
+      if (whisperError) notice.degraded.push({ leg: "asr", mode: "local", detail: whisperError, upgrade: "Install local Whisper and run bun run local:setup." });
+      if (process.platform !== "darwin") notice.degraded.push({ leg: "tts", mode: "local", detail: "Local speech output currently requires macOS system voices.", upgrade: "Use macOS for spoken output; text and local transcription remain available." });
+      notice.allReal = notice.degraded.length === 0;
+      return notice;
+    }
     const gateway = await this.#gatewayProbe.liveness();
     return buildDegradationNotice(this.#legSelections, { gateway, gatewayUrl: this.#gatewayUrl });
   }
@@ -4322,14 +4347,17 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       return;
     }
     void (async () => {
-      while (this.executionRegistry.isExecuting(upid) && !this.#emergencyTriggered) {
+      const isCurrent = () => this.registry.execution(upid)?.runId === runId;
+      while (isCurrent() && this.executionRegistry.isExecuting(upid) && !this.#emergencyTriggered) {
         await delay(this.#runCompletionPollMs);
-        if (!this.executionRegistry.isExecuting(upid) || this.#emergencyTriggered) {
+        if (!isCurrent() || !this.executionRegistry.isExecuting(upid) || this.#emergencyTriggered) {
           return;
         }
         const run = await probe(runId);
+        if (!isCurrent()) return;
         const status = typeof run?.status === "string" ? run.status : null;
-        if (status === "finished" || status === "failed" || status === "cancelled") {
+        if (status === "finished" || status === "completed" || status === "failed" || status === "cancelled") {
+          if (localAiEnabled(this.#env) && (status === "failed" || status === "cancelled")) { this.executionRegistry.fail(upid, String(run?.error ?? `Local run ${status}`)); return; }
           this.recordExternalTrace({
             event: "process.execute.terminal.poll",
             level: "info",
@@ -4349,6 +4377,19 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   // (percent/label from real telemetry) and, on run completion, flip the lane
   // to `built` by serving the artifacts directory (fire-and-forget — the
   // ExecutionRegistry republishes when the preview server is up).
+  private async completeExecution(upid: string) {
+    if (localAiEnabled(this.#env) && this.#getRun) {
+      const runId = this.registry.execution(upid)?.runId;
+      const run = runId ? await this.#getRun(runId) : null;
+      if (this.registry.execution(upid)?.runId !== runId) return this.executionRegistry.snapshot(upid);
+      if (!run || run.status !== "completed") {
+        this.executionRegistry.fail(upid, String(run?.error ?? "Local run did not complete successfully."));
+        return this.executionRegistry.snapshot(upid);
+      }
+    }
+    return this.executionRegistry.complete(upid);
+  }
+
   private onRunOverlay(upid: string, overlay: RunEventOverlay): void {
     // SELF lane: live vibersyn-self telemetry folds into the commission's lane;
     // a completed stream frame hands off to the room-side green gate (which
@@ -4368,8 +4409,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     if (this.executionRegistry.isExecuting(upid)) {
       this.executionRegistry.progress(upid, { percent: overlay.progress, label: overlay.lastOutput });
       if (overlay.state === "completed") {
-        void this.executionRegistry
-          .complete(upid)
+        void this.completeExecution(upid)
           .then((lane) => {
             this.recordExternalTrace({
               event: "process.execute.artifacts",
@@ -4416,7 +4456,12 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       // Clear any PREVIOUS session's stale artifacts for this UPID before the
       // durable run launches (no-op when this session already has a lane).
       await this.executionRegistry.prepare(upid);
-      result = await this.registry.execute(upid, { correlationId });
+      const localContext = localAiEnabled(this.#env) ? [
+        "Carry these approved planning decisions and corrections into the full app. Preserve existing working behavior.",
+        ...this.answeredQuestions(upid).map(answer => `${answer.prompt}: ${answer.answer}`),
+        ...new Set(this.buildOrchestrator.builds(upid).flatMap(build => (build.revisions ?? []).map(revision => revision.text))),
+      ].join("\n") : undefined;
+      result = await this.registry.execute(upid, { correlationId, additionalPrompt: localContext });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       this.recordExternalTrace({
@@ -4457,7 +4502,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
         upid,
         meta: { refused: "adopted", reason: "origin is the remote — the room/* PR flow replaces commission publish" },
       });
-    } else {
+    } else if (!localAiEnabled(this.#env) || this.#env.VIBERSYN_AUTO_PUBLISH === "1") {
       const record = this.registry.records().find((entry) => entry.upid === upid);
       const seedPitch = this.#seedPitchFor(upid);
       void this.#treeGit

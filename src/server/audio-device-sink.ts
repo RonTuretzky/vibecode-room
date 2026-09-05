@@ -1,3 +1,5 @@
+import { localAiEnabled } from "../config/local";
+import { LocalAudioSink } from "./local-audio-sink";
 // Selectable real audio sink (ISSUE-0026).
 //
 // Closes GAP-001: the live loop previously bound a no-op earcon output and a
@@ -87,6 +89,7 @@ export class RecordingAudioSink implements AudioSink {
 // the silent-but-read no-op sink, so the offline default never reaches for a
 // device. Case/whitespace insensitive to match the other VIBERSYN_* selectors.
 export function selectAudioSink(env: AudioSinkSelectionEnv = process.env): AudioSinkSelection {
+  if (localAiEnabled(env) && env.VIBERSYN_AUDIO_SINK !== "noop") return { mode: "device", sink: new LocalAudioSink() };
   const mode = resolveAudioSinkMode(env);
   switch (mode) {
     case "device":

@@ -1,3 +1,5 @@
+import { localAiEnabled } from "../../config/local";
+import { LocalSystemTTS } from "./local";
 // TTS provider registry / factory (ISSUE-0007).
 //
 // `selectTtsProvider(env, opts)` is the single seam that maps VIBERSYN_TTS_PROVIDER
@@ -26,7 +28,7 @@ import {
 import { NoopTTSProvider } from "./noop";
 import type { TTSProvider } from "../types";
 
-export type TtsProviderMode = "noop" | "elevenlabs";
+export type TtsProviderMode = "local" | "noop" | "elevenlabs";
 
 // The real streaming provider resolves its key from this environment variable
 // through the sanctioned audio credential seam (see providers/credentials.ts).
@@ -62,6 +64,7 @@ export function selectTtsProvider(
   env: TtsSelectionEnv,
   options: TtsSelectionOptions = {},
 ): TtsSelection {
+  if (localAiEnabled(env) || env.VIBERSYN_TTS_PROVIDER === "local") return { mode: "local", provider: new LocalSystemTTS(env) };
   const variable = options.credentialVariable ?? DEFAULT_TTS_CREDENTIAL_VARIABLE;
   const mode = resolveTtsMode(env, variable);
   switch (mode) {
@@ -72,7 +75,7 @@ export function selectTtsProvider(
   }
 }
 
-function resolveTtsMode(env: TtsSelectionEnv, variable: string): TtsProviderMode {
+function resolveTtsMode(env: TtsSelectionEnv, variable: string): Exclude<TtsProviderMode, "local"> {
   const explicit = env.VIBERSYN_TTS_PROVIDER?.trim().toLowerCase();
   if (explicit !== undefined && explicit.length > 0) {
     if (explicit === "noop" || explicit === "elevenlabs") {

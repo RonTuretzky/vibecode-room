@@ -108,7 +108,7 @@ describe("agentTickLegs + healthPayload dynamic degradation", () => {
     expect(legs.map((leg) => leg.leg)).toEqual(["sky-relate", "topic-refiner"]);
     expect(legs[0]!.detail).toBe("sky relate: 5 consecutive misses (cerebras 402: payment_required)");
     expect(legs[1]!.detail).toBe("topic refiner: 3 consecutive misses (timeout)");
-    expect(legs[0]!.upgrade).toContain("Cerebras billing");
+    expect(legs[0]!.upgrade).toContain("configured research model");
   });
 
   test("healthPayload appends dynamic legs and flips allReal; healthy agents leave it untouched", () => {

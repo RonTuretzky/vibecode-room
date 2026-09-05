@@ -1,3 +1,5 @@
+import { localAiEnabled } from "../config/local";
+import { LocalExecutionTransport } from "./local-execution";
 // Smithers client selection seam (ISSUE-0011 / GAP-004).
 //
 // `selectSmithersClient(env, opts)` is the single place that decides which
@@ -51,6 +53,8 @@ export interface SelectSmithersClientOptions {
   // Injected transport for tests/e2e — when present, the gateway client is used
   // regardless of env (no real OfficialGatewayTransport / WebSocket is created).
   transport?: GatewayRpcTransport;
+  artifactsRoot?: string;
+  buildsRoot?: string;
   // Correlation store the gateway client persists spawns into (defaults to an
   // in-memory store scoped to this runtime).
   correlations?: CorrelationStore;
@@ -70,6 +74,7 @@ export function selectSmithersClient(
     return gatewayClient(options.transport, env, options.correlations);
   }
 
+  if (localAiEnabled(env)) return gatewayClient(new LocalExecutionTransport(env, options), env, options.correlations);
   const hasUrl = url.length > 0;
   const hasToken = token.length > 0;
 

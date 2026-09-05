@@ -1,9 +1,10 @@
+import { localAiEnabled } from "../config/local";
 import { ideaBriefSchema, type IdeaBrief, type LogEvent, type OutputDecision } from "../types";
 import { questionsFromAssessment, type PlanQuestion } from "../detect";
 import type { OrchestratorRevisionInput, ProcessBuildSnapshot } from "../buildloop/orchestrator";
 import type { ExecutionRegistry, ExecutionSnapshot } from "../buildloop/execution";
 import { CallsignAllocator, type CallsignAssignment } from "../routing/callsigns";
-import { inferProjectName, llmProjectName, type InferredProjectName } from "./project-name";
+import { localProjectName, inferProjectName, llmProjectName, type InferredProjectName } from "./project-name";
 import type { SmithersClient, SpawnSeed, SpawnResult } from "../seam/smithers-client";
 import type { IdeaBuildRegistry } from "../server/idea-builder";
 import {
@@ -102,6 +103,8 @@ export interface ProcessRegistryOptions {
   // addressing must stay stable for the session. undefined = default (Cerebras
   // via CEREBRAS_API_KEY when present); null = disabled.
   namer?: ((pitch: string) => Promise<InferredProjectName | null>) | null;
+  /** A local completed app starts a fresh execution when it receives a change. */
+  onBuiltSteer?: (upid: string, correlationId: string) => Promise<void>;
   // Session nonce folded into pre-assigned runIds ("vibersyn-<upid>-<nonce>").
   // The gateway's runs are DURABLE across room restarts while UPIDs restart
   // from upid-1 every session — without a nonce a commission collides with a
@@ -141,6 +144,7 @@ export type RegistryExecuteResult =
   | { started: false; reason: "already-executing" | "already-built"; execution: ExecutionSnapshot | null };
 
 export interface RegistryExecuteOptions {
+  additionalPrompt?: string;
   correlationId?: string;
   // Override the commissioned prompt; defaults to the kickoff pitch.
   prompt?: string;
@@ -162,6 +166,7 @@ export class ProcessRegistry {
   readonly #orchestrator: BuildLoopOrchestrator | null;
   readonly #execution: ExecutionLaneRegistry | null;
   readonly #namer: ((pitch: string) => Promise<InferredProjectName | null>) | null;
+  readonly #onBuiltSteer?: ProcessRegistryOptions["onBuiltSteer"];
   readonly #processes = new Map<string, RegistryProcess>();
   // Kickoff seed facts kept per UPID so a later execute() can commission the
   // durable run with the same pitch/steering-window contract the accept carried.
@@ -199,6 +204,7 @@ export class ProcessRegistry {
     this.#orchestrator = options.orchestrator ?? null;
     this.#execution = options.execution ?? null;
     this.#namer = options.namer !== undefined ? options.namer : defaultNamerFromEnv();
+    this.#onBuiltSteer = options.onBuiltSteer;
     this.#runIdNonce = options.runIdNonce ?? null;
   }
 
@@ -512,7 +518,8 @@ export class ProcessRegistry {
     try {
       const correlationId = options.correlationId ?? `corr-execute-${upid}`;
       const seed = this.#seeds.get(upid);
-      const prompt = options.prompt ?? (seed !== undefined && seed.prompt.length > 0 ? seed.prompt : pitchFromInput(seed?.input));
+      const originalPrompt = options.prompt ?? (seed !== undefined && seed.prompt.length > 0 ? seed.prompt : pitchFromInput(seed?.input));
+      const prompt = options.additionalPrompt ? `${originalPrompt}\n\n${options.additionalPrompt}` : originalPrompt;
       const spawn = await this.client.spawn({
         upid,
         runId: process.runId,
@@ -544,6 +551,19 @@ export class ProcessRegistry {
 
   async steer(upid: string, payload: unknown, correlationId: string): Promise<void> {
     const before = this.requireLive(upid);
+    if (this.#onBuiltSteer) {
+      const revision = steerRevision(payload);
+      const text = typeof revision === "string" ? revision : revision?.text;
+      const seed = this.#seeds.get(upid);
+      if (seed && text) seed.prompt = `${seed.prompt.slice(0, 18000)}\n\nUser correction: ${text}`;
+      if (this.#durableRuns.has(upid)) {
+        const status = this.execution(upid)?.status;
+        if (status === "built" || status === "failed") await this.#onBuiltSteer(upid, correlationId);
+        else await this.client.steer(upid, payload);
+        this.patch(upid, { lastAction: "steer", updatedAtMs: this.now() });
+        return;
+      }
+    }
     // The smithers-client steer signal only exists for a COMMISSIONED process —
     // a kickoff-only process has no durable run parked in a steer window.
     if (this.#durableRuns.has(upid)) {
@@ -776,6 +796,7 @@ function cloneProcess(process: RegistryProcess): RegistryProcess {
 // Default LLM namer: Cerebras when a key is in the environment, else disabled
 // (deterministic titles stand). Kept here so composition needs no extra wiring.
 function defaultNamerFromEnv(): ((pitch: string) => Promise<InferredProjectName | null>) | null {
+  if (localAiEnabled()) return (pitch) => localProjectName(pitch);
   const apiKey = process.env.CEREBRAS_API_KEY;
   if (apiKey === undefined || apiKey.length === 0) {
     return null;

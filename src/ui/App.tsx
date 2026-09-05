@@ -2672,6 +2672,11 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
         )}
 
         <div className="status-right">
+          {snapshot.ai?.mode === "local" && (
+            <span className="provider" data-testid="local-ai-badge" title={`All AI runs on this computer. Coding: ${snapshot.ai.model}. Conversation: ${snapshot.ai.fastModel}. GitHub and web access remain available.`}>
+              Local AI{gestureMode ? "" : ` · ${snapshot.ai.model}`}
+            </span>
+          )}
           {/* Emergency status: desk mode always shows it (ALL CLEAR is a
               debugging readout); gesture mode shows it ONLY while an emergency
               is actually active — that's the actionable case. */}

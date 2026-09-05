@@ -6,6 +6,13 @@ Vibersyn is an ambient **idea room**: people talk, the room detects concrete
 and turns it into a running app. A projector UI shows the ideas forming and the
 agents building them.
 
+## Local AI
+
+Run every AI feature on your computer with LM Studio, local Whisper and macOS
+speech: `bun run local:setup`, `bun run build`, then `bun run local`.
+See [local setup, models, and limitations](docs/local-ai.md). GitHub and web
+research remain available; no cloud AI fallback is used.
+
 ## Layout
 
 - **`src/`** — the Vibersyn app:

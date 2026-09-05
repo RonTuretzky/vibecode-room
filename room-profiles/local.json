@@ -1,0 +1,17 @@
+{
+  "description": "All AI on this computer: LM Studio, local Whisper transcription, and system speech. GitHub and web research remain available.",
+  "env": {
+    "VIBERSYN_LOCAL_AI": "1",
+    "VIBERSYN_LOCAL_LLM_URL": "http://127.0.0.1:1234/v1",
+    "VIBERSYN_LOCAL_MODEL": "openai/gpt-oss-20b",
+    "VIBERSYN_LOCAL_WHISPER_MODEL": "base.en",
+    "VIBERSYN_AUDIO_SINK": "device",
+    "VIBERSYN_PINNED_IMPORTS": "",
+    "VIBERSYN_MAX_CONCURRENT_PROCESSES": "2",
+    "VIBERSYN_SKY_INTERVAL_MS": "120000",
+    "VIBERSYN_BUILDS_ROOT": "builds/local",
+    "VIBERSYN_EXECUTION_ROOT": "artifacts/local-runs",
+    "VIBERSYN_STATE_FILE": "builds/local/.room-state.json",
+    "VIBERSYN_TRANSCRIPT_ARCHIVE": "artifacts/local-transcripts"
+  }
+}

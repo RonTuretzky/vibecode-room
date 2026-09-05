@@ -122,7 +122,7 @@ export function MicCaptureControl({
   micState: "off" | "connecting" | "live";
   level: number;
   error: string | null;
-  mode?: "deepgram" | "voxterm" | "replay";
+  mode?: "local" | "deepgram" | "voxterm" | "replay";
   bytesReceived: number;
   onToggle: () => void;
   // The physical device feeding the capture, once known ("Wireless GO RX").
@@ -163,7 +163,7 @@ export function MicCaptureControl({
             <span className="mic-meter-fill" data-testid="mic-meter-fill" style={{ width: `${levelPercent}%` }} />
           </span>
           <span className="mic-stats" data-testid="mic-stats">
-            {mode === "replay" ? "replay · " : "deepgram · "}
+            {mode === "local" ? "local Whisper · " : `${mode ?? "ASR"} · `}
             {formatBytes(bytesReceived)} in
           </span>
         </>

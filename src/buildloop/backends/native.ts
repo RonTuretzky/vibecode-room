@@ -1,3 +1,5 @@
+import { localAiEnabled } from "../../config/local";
+import { localComplete, probeLocalAi } from "../../providers/local";
 import { runCommand } from "../../process/run-command";
 import { existsSync } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
@@ -81,6 +83,7 @@ export class NativeBuildBackend implements BuildBackend {
   }
 
   async available(): Promise<{ ok: boolean; reason?: string }> {
+    if (localAiEnabled(this.#env)) return probeLocalAi(this.#env);
     if (this.#options.model !== undefined) {
       return { ok: true };
     }
@@ -96,7 +99,7 @@ export class NativeBuildBackend implements BuildBackend {
   async build(req: BuildRequest): Promise<BuildResult> {
     const model =
       this.#options.model ??
-      createFailoverModel({
+      (localAiEnabled(this.#env) ? (call: ModelCallRequest) => localComplete([{ role: "system", content: call.system }, { role: "user", content: call.user }], { env: this.#env, purpose: "code", signal: call.signal, timeoutMs: 240_000, maxTokens: 12000 }) : createFailoverModel({
         cerebras: createCerebrasModel({
           apiKey: this.#env.CEREBRAS_API_KEY,
           model: this.#env.CEREBRAS_MODEL,
@@ -108,7 +111,7 @@ export class NativeBuildBackend implements BuildBackend {
           env: this.#env,
           timeoutMs: this.#options.timeoutMs,
         }),
-      });
+      }));
     try {
       return await this.#run(req, model);
     } catch (error) {

@@ -1,3 +1,4 @@
+import { localComplete } from "../providers/local";
 // The CONVERSATION SKY's server half: a CloudGraph accumulator that remembers
 // topics BEYOND the rolling 40-turn window, plus the recurrent async thread
 // that relates clouds across time and topics. Nothing else in the research
@@ -1301,4 +1302,8 @@ function parseLooseJson(text: string): unknown {
     }
   }
   return null;
+}
+
+export function localCloudRelate(env: Record<string, string | undefined>): CloudRelateRunner {
+  return async (request, signal) => ({ kind: "agent-reply", agent: "local", standinFor: null, reply: await localComplete([{ role: "system", content: SKY_SYSTEM_PROMPT }, { role: "user", content: JSON.stringify(request) }], { env, signal }) });
 }

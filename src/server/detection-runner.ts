@@ -212,7 +212,7 @@ export class DetectionRunner {
   }
 }
 
-export type DetectionRunnerMode = "host-claude" | "heuristic" | "smithers" | "injected";
+export type DetectionRunnerMode = "local" | "host-claude" | "heuristic" | "smithers" | "injected";
 
 export interface DetectionRunnerSelection {
   mode: DetectionRunnerMode;

@@ -1,3 +1,5 @@
+import { localAiEnabled } from "../../config/local";
+import { LocalWhisperASR } from "./local";
 // ASR provider registry / factory (ISSUE-0002).
 //
 // `selectAsrProvider(env, opts)` is the single seam that maps VIBERSYN_ASR_PROVIDER
@@ -19,7 +21,7 @@ import { VoxTermASRProvider, type VoxTermSegmentSource } from "./voxterm";
 import { createVoxTermSegmentSource } from "./voxterm-source";
 import type { ASRProvider } from "../types";
 
-export type AsrProviderMode = "deepgram" | "voxterm" | "replay";
+export type AsrProviderMode = "local" | "deepgram" | "voxterm" | "replay";
 
 // Deepgram's stream() applies a close timer as a safety cap on total duration.
 // A live mic must stay open for the whole session, so the mic profile lifts the
@@ -55,6 +57,7 @@ export interface AsrSelection {
 }
 
 export function selectAsrProvider(env: AsrSelectionEnv, options: AsrSelectionOptions): AsrSelection {
+  if (localAiEnabled(env) || env.VIBERSYN_ASR_PROVIDER === "local") return { mode: "local", provider: new LocalWhisperASR(env, options.sessionId) };
   const mode = resolveAsrMode(env);
   switch (mode) {
     case "deepgram":
@@ -66,7 +69,7 @@ export function selectAsrProvider(env: AsrSelectionEnv, options: AsrSelectionOpt
   }
 }
 
-function resolveAsrMode(env: AsrSelectionEnv): AsrProviderMode {
+function resolveAsrMode(env: AsrSelectionEnv): Exclude<AsrProviderMode, "local"> {
   const explicit = env.VIBERSYN_ASR_PROVIDER?.trim().toLowerCase();
   if (explicit !== undefined && explicit.length > 0) {
     if (explicit === "deepgram" || explicit === "voxterm" || explicit === "replay") {

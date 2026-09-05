@@ -13,6 +13,8 @@ builds/
 # Commissioned full-build outputs (durable Smithers runs write the real app
 # here and the preview server serves it live) — runtime output, not source.
 artifacts/vibersyn-runs/
+artifacts/local-runs/
+artifacts/local-transcripts/
 
 # Guest-hands self-signed TLS material (run-room.sh --guests). The PRIVATE KEY
 # lives here — machine-local runtime state, never source.

@@ -30,7 +30,7 @@ const transcriptArchiveDir = resolveTranscriptArchiveDir(
   process.env,
   process.env.VIBERSYN_TRANSCRIPT_ARCHIVE === undefined ? resolve(process.cwd(), TRANSCRIPT_ARCHIVE_DEFAULT_DIR) : undefined,
 );
-const runtime = await createProjectorRuntime(process.env, { transcriptArchiveDir, stateFile: process.env.VIBERSYN_STATE_FILE === "off" || process.env.VIBERSYN_ROOM_PROFILE === "demo" ? null : resolve(process.env.VIBERSYN_STATE_FILE || "builds/.room-state.json") });
+const runtime = await createProjectorRuntime(process.env, { buildsRoot: process.env.VIBERSYN_BUILDS_ROOT, executionArtifactsRoot: process.env.VIBERSYN_EXECUTION_ROOT, transcriptArchiveDir, stateFile: process.env.VIBERSYN_STATE_FILE === "off" || process.env.VIBERSYN_ROOM_PROFILE === "demo" ? null : resolve(process.env.VIBERSYN_STATE_FILE || "builds/.room-state.json") });
 if (transcriptArchiveDir === null) {
   console.warn(
     "[transcript] archive DISABLED by VIBERSYN_TRANSCRIPT_ARCHIVE — this room is keeping no record of what is said. Unset it (or point it at a directory) to save transcripts.",

@@ -1,3 +1,5 @@
+import { localAiEnabled } from "../config/local";
+import { localComplete } from "../providers/local";
 // Additions-framed build prompt for phone GitHub imports. A QR-imported repo is
 // shallow-cloned to builds/<upid>/repo/ and digested (repo-clone.ts). Instead of
 // planning a NEW app from scratch, we frame the fleet build as ADDING the
@@ -33,6 +35,7 @@ export type AdditionPlanner = (
 ) => Promise<string | null>;
 
 export interface BuildImportPlanOptions {
+  env?: Record<string, string | undefined>;
   planner?: AdditionPlanner; // default: cerebrasAdditionPlanner (no key → null)
   signal?: AbortSignal; // upstream abort (emergency stop / halt)
   timeoutMs?: number; // model budget; the fallback path is instant
@@ -50,10 +53,10 @@ const MAX_SUGGESTION_CHARS = 200;
 // string straight into registry.startBuild().
 export async function buildImportPlanPrompt(input: ImportPlanInput, options: BuildImportPlanOptions = {}): Promise<string> {
   const mode = inferAdditionMode(input.digest, input.context);
-  const planner = options.planner ?? cerebrasAdditionPlanner;
+  const planner = options.planner ?? (localAiEnabled(options.env) ? localAdditionPlanner(options.env ?? process.env) : cerebrasAdditionPlanner);
   const suggestion = await callWithBudget(
     (signal) => planner({ context: input.context, digest: input.digest, mode }, signal).then(cleanSuggestion),
-    options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+    options.timeoutMs ?? (localAiEnabled(options.env) ? 60_000 : DEFAULT_TIMEOUT_MS),
     options.signal,
   );
   return renderImportPlanPrompt(input, mode, suggestion);
@@ -169,6 +172,7 @@ export type ImportQuestionPlanner = (
 ) => Promise<unknown>;
 
 export interface BuildImportPlanQuestionsOptions {
+  env?: Record<string, string | undefined>;
   planner?: ImportQuestionPlanner; // default: cerebrasQuestionPlanner (no key → null)
   signal?: AbortSignal; // upstream abort (emergency stop / halt)
   timeoutMs?: number; // model budget; the fallback path is instant
@@ -187,10 +191,10 @@ export async function buildImportPlanQuestions(
   options: BuildImportPlanQuestionsOptions = {},
 ): Promise<PlanQuestion[]> {
   const mode = inferAdditionMode(input.digest, input.context);
-  const planner = options.planner ?? cerebrasQuestionPlanner;
+  const planner = options.planner ?? (localAiEnabled(options.env) ? localQuestionPlanner(options.env ?? process.env) : cerebrasQuestionPlanner);
   const raw = await callWithBudget(
     (signal) => planner({ context: input.context, digest: input.digest, mode }, signal),
-    options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+    options.timeoutMs ?? (localAiEnabled(options.env) ? 60_000 : DEFAULT_TIMEOUT_MS),
     options.signal,
   );
   const drafted = questionsFromModelOutput(raw);
@@ -371,6 +375,7 @@ const PLANNER_SYSTEM_PROMPT =
 // miss (no key, HTTP error, unparseable output). Errors reject and are converted
 // to null by callPlannerWithBudget.
 export const cerebrasAdditionPlanner: AdditionPlanner = async (request, signal) => {
+  if (localAiEnabled()) return localComplete([{ role: "system", content: PLANNER_SYSTEM_PROMPT }, { role: "user", content: JSON.stringify(request) }], { signal });
   const apiKey = process.env.CEREBRAS_API_KEY;
   if (apiKey === undefined || apiKey.trim().length === 0) {
     return null;
@@ -415,6 +420,7 @@ const QUESTION_SYSTEM_PROMPT =
 // content string (questionsFromModelOutput owns decoding); null on any miss.
 // Errors reject and are converted to null by callWithBudget.
 export const cerebrasQuestionPlanner: ImportQuestionPlanner = async (request, signal) => {
+  if (localAiEnabled()) return localComplete([{ role: "system", content: QUESTION_SYSTEM_PROMPT }, { role: "user", content: JSON.stringify(request) }], { signal });
   const apiKey = process.env.CEREBRAS_API_KEY;
   if (apiKey === undefined || apiKey.trim().length === 0) {
     return null;
@@ -461,3 +467,6 @@ function chatContent(payload: unknown): string | null {
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
+
+export const localAdditionPlanner = (env: Record<string,string|undefined>): AdditionPlanner => (request, signal) => localComplete([{ role: "system", content: PLANNER_SYSTEM_PROMPT }, { role: "user", content: JSON.stringify(request) }], { env, signal });
+export const localQuestionPlanner = (env: Record<string,string|undefined>): ImportQuestionPlanner => (request, signal) => localComplete([{ role: "system", content: QUESTION_SYSTEM_PROMPT }, { role: "user", content: JSON.stringify(request) }], { env, signal });

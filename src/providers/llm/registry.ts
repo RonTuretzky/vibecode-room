@@ -1,3 +1,5 @@
+import { localAiEnabled, localModel } from "../../config/local";
+import { localPromptRunner } from "../../providers/local";
 // DecisionLLM registry / factory (ISSUE-0005).
 //
 // `selectDecisionLLM(env, opts)` is the single seam that maps VIBERSYN_DECISION_LLM
@@ -28,7 +30,7 @@ import type { DecisionLLM } from "../types";
 
 // "claude-cli" = genuine inference via the host's logged-in `claude` CLI (no key).
 // "cue-cerebras" = idea inference through Cue's CerebrasLLMProvider (needs CEREBRAS_API_KEY).
-export type DecisionLLMMode = "heuristic" | "claude" | "claude-cli" | "cue-cerebras" | "replay";
+export type DecisionLLMMode = "local" | "heuristic" | "claude" | "claude-cli" | "cue-cerebras" | "replay";
 
 // Default sanctioned host-subscription invocation for the Claude decider. The
 // model credential is never a raw key — access routes through the host's
@@ -76,6 +78,7 @@ export function selectDecisionLLM(
   env: DecisionLLMSelectionEnv,
   options: DecisionLLMSelectionOptions = {},
 ): DecisionLLMSelection {
+  if (localAiEnabled(env) || env.VIBERSYN_DECISION_LLM === "local") return { mode: "local", llm: new HostClaudeDecisionLLM({ policy: "local-decision.v1", model: localModel(env), runner: localPromptRunner(env), timeoutMs: 60_000 }) };
   const mode = resolveDecisionMode(env);
   switch (mode) {
     case "heuristic":
@@ -99,7 +102,7 @@ export function selectDecisionLLM(
   }
 }
 
-function resolveDecisionMode(env: DecisionLLMSelectionEnv): DecisionLLMMode {
+function resolveDecisionMode(env: DecisionLLMSelectionEnv): Exclude<DecisionLLMMode, "local"> {
   const explicit = env.VIBERSYN_DECISION_LLM?.trim().toLowerCase();
   if (explicit !== undefined && explicit.length > 0) {
     if (

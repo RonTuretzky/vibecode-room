@@ -1,3 +1,5 @@
+import { localAiEnabled } from "../config/local";
+import { localTopicModel } from "./tree";
 // The research loop: owns the rolling dialogue window (turns with STABLE ids —
 // the 3D dialogue tree anchors to them), the quest ledger, and the cadence of
 // suggestion rounds. Mirrors the DetectionRunner/engine split in spirit but
@@ -25,6 +27,7 @@ export interface ResearchTraceEvent {
 }
 
 export interface ResearchLoopOptions {
+  env?: Record<string, string | undefined>;
   sessionId: string;
   suggester: ResearchSuggester;
   agent: ResearchAgent;
@@ -176,6 +179,7 @@ export class ResearchLoop {
     // the sky (regroups/relabels reach the clouds without waiting for the next
     // turn) and republish so the wall re-arranges.
     this.#tree = options.conceptTree ?? new ConceptTree({
+      ...(localAiEnabled(options.env) ? { model: localTopicModel(options.env ?? process.env), timeoutMs: 60_000 } : {}),
       onRefined: () => {
         this.#observeClouds();
         this.#emit();

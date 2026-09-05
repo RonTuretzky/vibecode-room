@@ -1,3 +1,5 @@
+import { localAiEnabled, localModel } from "../config/local";
+import { localPromptRunner } from "../providers/local";
 import { type ClaudeCliRunner, defaultClaudeCliRunner } from "./claude-cli";
 import { buildJudgePrompt, buildVerifyPrompt, groundQuote, parseJudgeReply, parseVerifyReply } from "./prompt";
 import { deriveAssessment, type IdeaRubric } from "./rubric";
@@ -242,7 +244,7 @@ export class HeuristicIdeaDetector implements IdeaDetector {
   }
 }
 
-export type IdeaDetectorMode = "host-claude" | "heuristic";
+export type IdeaDetectorMode = "local" | "host-claude" | "heuristic";
 
 export interface IdeaDetectorSelectionEnv {
   VIBERSYN_IDEA_DETECTOR?: string;
@@ -266,6 +268,7 @@ export function selectIdeaDetector(
   env: IdeaDetectorSelectionEnv = process.env,
   options: SelectIdeaDetectorOptions = {},
 ): IdeaDetectorSelection {
+  if (localAiEnabled(env) || env.VIBERSYN_IDEA_DETECTOR === "local") return { mode: "local", detector: new HostClaudeIdeaJudge({ model: localModel(env), runner: options.runner ?? localPromptRunner(env), timeoutMs: 60_000 }) };
   const requested = env.VIBERSYN_IDEA_DETECTOR?.trim().toLowerCase();
   if (requested === "heuristic") {
     return { mode: "heuristic", detector: new HeuristicIdeaDetector({ env }) };

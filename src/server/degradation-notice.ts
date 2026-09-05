@@ -12,7 +12,7 @@ import type { AudioSinkMode } from "./audio-device-sink";
 import type { SummarizerMode } from "../audio/summarizer";
 import { SUPPORTED_GATEWAY_PROTOCOL, type GatewayLiveness } from "./gateway-probe";
 
-export type SmithersClientMode = "memory" | "gateway";
+export type SmithersClientMode = "local" | "memory" | "gateway";
 
 export type DegradedLegName =
   | "asr"
@@ -49,7 +49,7 @@ export function agentTickLegs(health: {
       leg: "sky-relate",
       mode: "miss-streak",
       detail: `sky relate: ${sky.missStreak} consecutive misses (${sky.lastMissReason ?? "unknown"})`,
-      upgrade: "top up Cerebras billing / check CEREBRAS_API_KEY (CEREBRAS_MODEL optional)",
+      upgrade: "check the configured research model and its server or provider credentials",
     });
   }
   const refiner = health.topicRefiner;
@@ -58,7 +58,7 @@ export function agentTickLegs(health: {
       leg: "topic-refiner",
       mode: "miss-streak",
       detail: `topic refiner: ${refiner.missStreak} consecutive misses (${refiner.lastMissReason ?? "unknown"})`,
-      upgrade: "top up Cerebras billing / check CEREBRAS_API_KEY (CEREBRAS_MODEL optional)",
+      upgrade: "check the configured research model and its server or provider credentials",
     });
   }
   return legs;
@@ -150,7 +150,7 @@ export function buildDegradationNotice(
       detail: "in-memory Smithers client — spawns are fixtures and run telemetry is fake, not durable runs",
       upgrade: "set VIBERSYN_SMITHERS_GATEWAY_URL",
     });
-  } else if (live?.gateway !== undefined) {
+  } else if (selections.smithers === "gateway" && live?.gateway !== undefined) {
     // A CONFIGURED GATEWAY IS NOT A LIVE ONE. Every other leg here reports what
     // was SELECTED, which is right for backends chosen at boot and unable to
     // vanish — but the gateway is a separate process on a port. Setting the URL

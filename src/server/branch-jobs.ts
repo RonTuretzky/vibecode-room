@@ -1,3 +1,5 @@
+import { localAiEnabled } from "../config/local";
+import { runLocalAgent } from "../providers/local-agent";
 import { runCommand as runBranchCommand } from "../process/run-command";
 export { runCommand as runBranchCommand } from "../process/run-command";
 import { existsSync } from "node:fs";
@@ -38,6 +40,7 @@ export type BranchAgent = (
 export function branchAgent(
   env: Record<string, string | undefined>,
 ): BranchAgent {
+  if (localAiEnabled(env)) return async (dir, request, signal) => { await runLocalAgent(dir, request, { env, signal }); };
   return async (dir, request, signal) => {
     const prompt = `Implement this user's change in the existing repository. Read its instructions and understand its structure first. Preserve unrelated behavior. Add appropriate tests and run available checks. Do not commit, push, publish, deploy, or modify Git configuration. Do not substitute a notes entry for working code. Work only in this checkout. Report what changed and any remaining limitations.\n\nRequested change:\n${request}`;
     const output = await runBranchCommand(

@@ -126,6 +126,9 @@ test("a build lane that stops moving has to say so", async ({ room, wall }) => {
     samples.push((await lanes.first().innerText()).replace(/\s+/gu, " ").trim());
     await wall.page.waitForTimeout(1_000);
   }
+  // Include the final lane state: an automatic retry may begin just as the
+  // sampling window ends, replacing its earlier provider-unavailable message.
+  samples.push((await lanes.first().innerText()).replace(/\s+/gu, " ").trim());
   const distinct = [...new Set(samples)];
   const finalText = await wallText(wall.page);
   console.log(
@@ -138,10 +141,10 @@ test("a build lane that stops moving has to say so", async ({ room, wall }) => {
   console.log(`[idea-to-build] /api/health degraded legs: ${degraded.join(", ") || "none"}`);
 
   const advanced = distinct.length > 1;
-  const explained = /stall|stuck|waiting|no progress|degrad|unavailable|fail|error|timed out/iu.test(finalText);
+  const explained = /stall|stuck|waiting|no progress|degrad|unavailable|fail|error|timed out/iu.test(samples.at(-1) ?? finalText);
   expect(
     advanced || explained,
-    `after ${STALL_BUDGET_MS}s the lane either moved or the wall explained why not. It rendered "${distinct[0] ?? ""}" the whole time, ` +
+    `after ${STALL_BUDGET_MS}ms the lane either moved or the wall explained why not. It rendered "${distinct[0] ?? ""}" the whole time, ` +
       `while /api/health reported degraded legs [${degraded.join(", ")}] that appear nowhere on the wall.`,
   ).toBe(true);
 });

@@ -50,6 +50,19 @@ describe("RunEventDriver — run-event frame maps to ProjectorProcess fields", (
 // folds them into the per-UPID overlay, deduping replays so a reconnect that
 // re-emits the afterSeq boundary frame is not double-applied.
 describe("RunEventDriver — streamed frames overlay the process panel for a spawned upid", () => {
+  test("retry starts at sequence zero and ignores a cancelled run's late events", async () => {
+    const client = new ScriptedStreamClient([
+      [frame("node.output", { summary: "old progress" }, 40)],
+      [frame("node.output", { summary: "new progress" }, 1)],
+    ]);
+    const driver = new RunEventDriver({ client });
+    await driver.subscribe("upid-retry", "old-run");
+    await driver.subscribe("upid-retry", "new-run");
+    expect(client.afterSeqByCall).toEqual([0, 0]);
+    expect(driver.ingest({ upid: "upid-retry", runId: "old-run", kind: "completed", seq: 41, text: "cancelled" })).toBeNull();
+    expect(driver.overlay("upid-retry")?.lastOutput).toBe("new progress");
+    expect(driver.overlay("upid-retry")?.state).toBe("active");
+  });
   test("subscribed frames populate the overlay and onUpdate fires per applied frame", async () => {
     const client = new ScriptedStreamClient([
       [

@@ -1,3 +1,5 @@
+import { localAiEnabled } from "../config/local";
+import { localComplete } from "../providers/local";
 // Hot-loop summarizer — the production leg of the ">15 words → summarize" guard.
 //
 // output-policy's ttsDecision applies the guard (output-policy.ts:67 in the
@@ -20,7 +22,7 @@
 import type { HotLoopSummaryLLM, SummaryInput } from "./output-policy";
 import { DEFAULT_OUTPUT_SUMMARY_MODEL } from "./output-policy";
 
-export type SummarizerMode = "deterministic" | "cerebras";
+export type SummarizerMode = "local" | "deterministic" | "cerebras";
 
 export const CEREBRAS_CHAT_COMPLETIONS_URL = "https://api.cerebras.ai/v1/chat/completions";
 // Cerebras's Gemma 4 (31B) — the same hot-loop default as the cue-cerebras
@@ -161,6 +163,7 @@ export function selectSummarizer(
   env: SummarizerSelectionEnv,
   options: SummarizerSelectionOptions = {},
 ): SummarizerSelection {
+  if (localAiEnabled(env) || env.VIBERSYN_SUMMARIZER === "local") return { mode: "local", summarizer: { async summarize(input) { try { return clampWords(await localComplete([{ role: "user", content: `Summarize this spoken status in at most ${input.maxWords} words. Reply with the summary only: ${input.text}` }], { env, timeoutMs: 15_000, maxTokens: 1024 }), input.maxWords); } catch { return clampWords(input.text, input.maxWords); } } } };
   const mode = resolveSummarizerMode(env, options);
   switch (mode) {
     case "deterministic":
@@ -180,7 +183,7 @@ export function selectSummarizer(
 function resolveSummarizerMode(
   env: SummarizerSelectionEnv,
   options: SummarizerSelectionOptions,
-): SummarizerMode {
+): Exclude<SummarizerMode, "local"> {
   const explicit = env.VIBERSYN_SUMMARIZER?.trim().toLowerCase();
   if (explicit !== undefined && explicit.length > 0) {
     if (explicit === "deterministic") {

@@ -1,3 +1,4 @@
+import { localComplete } from "../providers/local";
 // Concept clustering over the research loop's dialogue window — the server
 // half of "stop making a ball for every few words". Turns are grouped into
 // labeled CONCEPT TOPICS; each topic is a BRANCH of the 3D conversation tree
@@ -816,3 +817,7 @@ export const defaultTopicModel: TopicModelRunner = composeAgentRunner({
   promptFor: (request: TopicRefineRequest) =>
     `${TOPIC_SYSTEM_PROMPT}\n\n${JSON.stringify({ topics: request.topics, recentTurns: request.recentTurns })}`,
 });
+
+export function localTopicModel(env: Record<string, string | undefined>): TopicModelRunner {
+  return async (request, signal) => ({ kind: "agent-reply", agent: "local", standinFor: null, reply: await localComplete([{ role: "system", content: TOPIC_SYSTEM_PROMPT }, { role: "user", content: JSON.stringify(request) }], { env, signal }) });
+}

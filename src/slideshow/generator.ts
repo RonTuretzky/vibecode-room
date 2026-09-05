@@ -1,3 +1,5 @@
+import { localAiEnabled } from "../config/local";
+import { localComplete } from "../providers/local";
 // Pitch-deck generator: at kickoff, turn a spoken idea + its framework concept
 // mocks into a SELF-CONTAINED interactive pitch at <outDir>/slideshow/index.html
 // — four projector-friendly slides that END BY ASKING HOW TO CONTINUE:
@@ -179,6 +181,7 @@ export type SlideshowCopyModel = (
 ) => Promise<Partial<SlideshowCopy> | null>;
 
 export interface GenerateSlideshowOptions {
+  env?: Record<string, string | undefined>;
   model?: SlideshowCopyModel; // default: one Cerebras chat/completions call
   signal?: AbortSignal; // the kickoff's abort signal (emergency stop)
   timeoutMs?: number; // model budget; the fallback path is instant
@@ -243,8 +246,9 @@ export async function generateSlideshow(
   // leg is available the budget widens (a host `claude -p` needs more than the
   // 8s a chat/completions call does — the fallback path is still instant).
   const fallback = fallbackCopy(input);
-  const model = options.model ?? deckCopyModel;
-  const defaultTimeoutMs =
+  const env = options.env ?? process.env;
+  const model = options.model ?? (localAiEnabled(env) ? localCopyModel(env) : deckCopyModel);
+  const defaultTimeoutMs = localAiEnabled(env) ? 90_000 :
     options.model === undefined && resolveDeckCopyCli() !== null ? CLI_COPY_TIMEOUT_MS : DEFAULT_TIMEOUT_MS;
   const brief = input.brief ?? null;
   const briefQuote = brief?.sourceQuote.trim() ?? "";
@@ -1070,6 +1074,7 @@ export function resetDeckCopyFailover(): void {
 // Null only when both legs miss — the deterministic fallback then stands (and
 // the deck footer says "template copy — no model").
 export const deckCopyModel: SlideshowCopyModel = async (request, signal) => {
+  if (localAiEnabled()) return parseModelCopy(await localComplete([{ role: "system", content: COPY_SYSTEM_PROMPT }, { role: "user", content: copyUserContent(request) }], { signal })) as Partial<SlideshowCopy> | null;
   if (!deckCopyStickyClaude) {
     const fromCerebras = await cerebrasCopyModel(request, signal);
     if (fromCerebras !== null) {
@@ -1194,4 +1199,8 @@ function chatContent(payload: unknown): string | null {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export function localCopyModel(env: Record<string, string | undefined>): SlideshowCopyModel {
+  return async (request, signal) => parseModelCopy(await localComplete([{ role: "system", content: `${COPY_SYSTEM_PROMPT}\nDescribe only the supplied features and respect the user's storage and platform choices. Do not add unrequested features or reopen decisions already specified in the request.` }, { role: "user", content: copyUserContent(request) }], { env, signal })) as Partial<SlideshowCopy> | null;
 }

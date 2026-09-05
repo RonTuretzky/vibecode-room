@@ -1,3 +1,4 @@
+import { localComplete, parseLocalJson } from "../providers/local";
 // Infer a human project name from a spoken idea pitch, replacing the old
 // random codename callsigns ("virellium") the user couldn't connect to their
 // ideas. Two outputs per pitch:
@@ -144,4 +145,13 @@ export function inferProjectName(pitch: string | undefined | null): InferredProj
   // collision-friendlier than short generic ones.
   const handle = [...chosen].sort((a, b) => score(b) - score(a))[0] ?? "";
   return { title, handle };
+}
+
+export async function localProjectName(pitch: string, env: Record<string, string | undefined> = process.env): Promise<InferredProjectName | null> {
+  try {
+    const raw = parseLocalJson(await localComplete([{ role: "user", content: `Name this software project. Return JSON {"title":"2-4 words", "handle":"one lowercase word"}. Idea: ${pitch}` }], { env, timeoutMs: 30_000, maxTokens: 1024 })) as Record<string, unknown>;
+    const title = typeof raw.title === "string" ? raw.title.trim().slice(0,48) : "";
+    const handle = typeof raw.handle === "string" ? raw.handle.toLowerCase().replace(/[^a-z0-9]/g, "") : "";
+    return title ? { title, handle: handle.length >= 3 ? handle : inferProjectName(pitch).handle } : null;
+  } catch { return null; }
 }

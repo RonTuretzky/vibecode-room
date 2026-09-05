@@ -1,3 +1,5 @@
+import { localAiEnabled } from "../config/local";
+import { LocalResearchAgent } from "./local-agent";
 // The research agent: turns an accepted quest into a sourced, fact-checked,
 // bias-scanned report. The host-`claude` implementation runs THREE staged CLI
 // calls (the CLI has live web search, so sources are real URLs):
@@ -337,7 +339,7 @@ export class StubResearchAgent implements ResearchAgent {
 
 // ── selection ───────────────────────────────────────────────────────────────
 
-export type ResearchAgentMode = "host-claude" | "stub";
+export type ResearchAgentMode = "local" | "host-claude" | "stub";
 
 export interface ResearchAgentSelection {
   mode: ResearchAgentMode;
@@ -350,6 +352,7 @@ export function selectResearchAgent(
   env: Record<string, string | undefined> = process.env,
   options: { runner?: ClaudeCliRunner } = {},
 ): ResearchAgentSelection {
+  if (localAiEnabled(env) || env.VIBERSYN_RESEARCH_AGENT === "local") return { mode: "local", agent: new LocalResearchAgent(env) };
   const explicit = env.VIBERSYN_RESEARCH_AGENT?.trim().toLowerCase();
   if (explicit === "stub") {
     return { mode: "stub", agent: new StubResearchAgent() };

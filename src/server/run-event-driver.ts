@@ -65,6 +65,7 @@ export class RunEventDriver {
   readonly #sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
   readonly #onReconnect?: RunEventDriverOptions["onReconnect"];
   readonly #overlays = new Map<string, RunEventOverlay>();
+  readonly #runIds = new Map<string, string>();
   readonly #active = new Set<Promise<void>>();
   // In-flight subscription abort handles keyed by UPID so forget() can cancel a
   // still-streaming run before dropping its overlay. A UPID can hold several
@@ -92,6 +93,8 @@ export class RunEventDriver {
   // Returns a tracked promise so callers (and tests) can await all in-flight
   // subscriptions via idle().
   subscribe(upid: string, runId: string, options: { signal?: AbortSignal; maxFrames?: number } = {}): Promise<void> {
+    if (this.#runIds.get(upid) !== runId) this.forget(upid);
+    this.#runIds.set(upid, runId);
     // Every subscription gets its own abort handle (combined with any caller
     // signal) so forget() can tear down this UPID's stream on halt.
     const controller = new AbortController();
@@ -115,6 +118,7 @@ export class RunEventDriver {
   // so a dead run's telemetry doesn't sit in the overlay map forever.
   forget(upid: string): void {
     this.#overlays.delete(upid);
+    this.#runIds.delete(upid);
     const handles = this.#subscriptionAborts.get(upid);
     if (handles === undefined) {
       return;
@@ -136,6 +140,8 @@ export class RunEventDriver {
   // Fold one already-normalized run event into the UPID's overlay, deduping by
   // seq. Returns the new overlay, or null when the event was a duplicate/replay.
   ingest(event: RunEvent): RunEventOverlay | null {
+    const runId = this.#runIds.get(event.upid);
+    if (runId !== undefined && event.runId !== runId) return null;
     const previous = this.#overlays.get(event.upid);
     if (previous !== undefined && event.seq <= previous.lastSeq) {
       // Already applied this seq — a reconnect replayed the afterSeq boundary, or
@@ -164,6 +170,7 @@ export class RunEventDriver {
           signal,
         } satisfies StreamRunEventsOptions);
         for await (const frame of stream) {
+          if (isAborted(signal)) return;
           // A received frame proves the gateway is reachable again — reset the
           // backoff so the next drop retries from the floor, not a 10s wait.
           consecutiveFailures = 0;

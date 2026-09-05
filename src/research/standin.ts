@@ -1,3 +1,5 @@
+import { localAiEnabled, localModel } from "../config/local";
+import { localComplete } from "../providers/local";
 // The research agents' STAND-IN seam (ROUND 2 root-cause fix).
 //
 // The sky relate tick and the topic refiner both ride ONE Cerebras account —
@@ -110,6 +112,7 @@ export function composeAgentRunner<TRequest>(
 ): (request: TRequest, signal: AbortSignal) => Promise<unknown> {
   return async (request, signal) => {
     const env = options.env?.() ?? process.env;
+    if (localAiEnabled(env) || env.VIBERSYN_RESEARCH_LLM === "local") return { kind: "agent-reply", agent: `local:${localModel(env)}`, standinFor: null, reply: await localComplete([{ role: "user", content: options.promptFor(request) }], { env, signal }) } satisfies AgentReply;
     const mode = readResearchAgentMode(env);
     const cliAvailable = options.cliAvailable ?? hostClaudeAvailable;
     const standIn = options.standIn ?? hostClaudeComplete;

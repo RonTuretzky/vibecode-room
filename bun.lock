@@ -1,5 +1,6 @@
 {
   "lockfileVersion": 1,
+  "configVersion": 0,
   "workspaces": {
     "": {
       "name": "panopticon",
@@ -9,6 +10,7 @@
         "@mediapipe/tasks-vision": "0.10.21",
         "@types/three": "^0.185.1",
         "hono": "^4.12.25",
+        "playwright": "1.61.0",
         "qrcode": "^1.5.4",
         "react": "^19.2.7",
         "react-dom": "^19.2.7",

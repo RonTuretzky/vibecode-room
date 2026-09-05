@@ -461,6 +461,36 @@ describe("commission stage — two-stage pivot", () => {
     expect(runtime.registry.execution(upid)).toMatchObject({ status: "built", percent: 100 });
     expect(runtime.trace.events().some((event) => event.event === "process.execute.terminal.poll")).toBe(true);
   });
+
+  test("a cancelled run's delayed status response cannot finish its replacement", async () => {
+    let oldRun = "";
+    let probeStarted = false;
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const { runtime } = await makeRuntime({ buildBackends: [new FakeBackend()], env: { VIBERSYN_RUN_POLL_MS: "25" }, smithersTransport: {
+      async request(method, params) {
+        if (method === "getRun") {
+          if (params?.runId === oldRun && !probeStarted) { probeStarted = true; await gate; return { status: "finished" }; }
+          return { status: "running" };
+        }
+        return {};
+      },
+    } });
+    await drive(runtime, [final(BUILDABLE, "retry-idea")]);
+    await runtime.acceptPendingSuggestion("retry-accept");
+    const upid = runtime.snapshot().processes[0]!.upid;
+    await waitFor(() => runtime.registry.builds(upid).some(build => build.status === "ready"));
+    await runtime.executeProcess(upid);
+    oldRun = runtime.registry.execution(upid)!.runId!;
+    await waitFor(() => probeStarted);
+    await runtime.cancelProjectWork(upid);
+    await runtime.retryProject(upid);
+    const replacement = runtime.registry.execution(upid)!.runId;
+    expect(replacement).not.toBe(oldRun);
+    release();
+    await Bun.sleep(100);
+    expect(runtime.registry.execution(upid)).toMatchObject({ runId: replacement, status: "executing" });
+  });
 });
 
 // --- harness -----------------------------------------------------------------

@@ -1,3 +1,4 @@
+import { enforceLocalAi } from "./local";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
@@ -24,5 +25,5 @@ export async function resolveRoomEnv(env: RoomEnv, root = process.cwd()): Promis
       throw new Error(`Invalid room profile setting ${key}: expected a supported environment key and string value.`);
     }
   }
-  return { ...(defaults as Record<string, string>), ...Object.fromEntries(Object.entries(env).filter(([, value]) => value !== undefined)) };
+  return enforceLocalAi({ ...(defaults as Record<string, string>), ...Object.fromEntries(Object.entries(env).filter(([, value]) => value !== undefined)) });
 }

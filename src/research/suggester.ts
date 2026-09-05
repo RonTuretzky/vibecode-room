@@ -1,3 +1,6 @@
+import { localAiEnabled, localModel } from "../config/local";
+import { localComplete, parseLocalJson } from "../providers/local";
+import { z } from "zod";
 // Research suggesters: the inference that watches the rolling transcript and
 // proposes what the room should RESEARCH — claims to fact-check, topics for a
 // sourced deep-dive, framings worth a bias scan. Mirrors the idea-detector
@@ -218,7 +221,7 @@ function normalizeText(text: string): string {
 
 // ── selection ───────────────────────────────────────────────────────────────
 
-export type ResearchSuggesterMode = "host-claude" | "heuristic";
+export type ResearchSuggesterMode = "local" | "host-claude" | "heuristic";
 
 export interface ResearchSuggesterSelection {
   mode: ResearchSuggesterMode;
@@ -231,6 +234,20 @@ export function selectResearchSuggester(
   env: Record<string, string | undefined> = process.env,
   options: { runner?: ClaudeCliRunner } = {},
 ): ResearchSuggesterSelection {
+  if (localAiEnabled(env) || env.VIBERSYN_RESEARCH_SUGGESTER === "local") {
+    const schema = z.array(researchSuggestionSchema.extend({ claim: z.string().min(20), rationale: z.string().min(20) })).max(MAX_SUGGESTIONS_PER_ROUND);
+    return { mode: "local", suggester: { async suggest(input) {
+      const prompt = buildSuggestPrompt(input);
+      const reply = options.runner
+        ? await options.runner(prompt, { model: localModel(env), timeoutMs: 60_000 })
+        : await localComplete([
+          { role: "system", content: "Identify up to three researchable claims or questions in this conversation. Use fact-check for factual assertions, deep-dive for open questions, and bias-scan for one-sided framing. A direct request to check documentation is researchable. Return [] only for small talk or material already covered. Ground each suggestion in the exact turn IDs and a verbatim quote. Use matchId null for new suggestions, or a known quest's ID for updates. Write complete claims and rationales, without placeholders or duplicate suggestions." },
+          { role: "user", content: JSON.stringify({ turns: input.turns, knownQuests: input.known, topics: input.topics }) },
+        ], { env, timeoutMs: 60_000, schema: z.toJSONSchema(schema) });
+      // Invalid inference is an error, never an apparently empty research round.
+      return schema.parse(parseLocalJson(reply));
+    } } };
+  }
   const explicit = env.VIBERSYN_RESEARCH_SUGGESTER?.trim().toLowerCase();
   if (explicit === "heuristic") {
     return { mode: "heuristic", suggester: new HeuristicResearchSuggester() };

@@ -1,3 +1,4 @@
+import type { SpawnSeed } from "../seam/smithers-client";
 import { describe, expect, test } from "bun:test";
 import type { OrchestratorRevisionInput, ProcessBuildSnapshot } from "../buildloop/orchestrator";
 import { CallsignAllocator } from "../routing/callsigns";
@@ -5,6 +6,27 @@ import { MemorySmithersClient } from "./test-helpers";
 import { ProcessRegistry, steerRevision, steerText, type BuildLoopOrchestrator } from "./registry";
 
 describe("process registry", () => {
+  test("local commissions retain shaping decisions and restart a completed app for a correction", async () => {
+    const client = new (class extends MemorySmithersClient { readonly seeds: SpawnSeed[] = []; override async spawn(seed: SpawnSeed) { this.seeds.push(seed); return super.spawn(seed); } })();
+    let lane = { status: "built" as const, runId: "run", percent: 100, label: "built", previewUrl: "http://localhost/app", startedAtMs: 0, error: null, filesWritten: 1 };
+    let restarts = 0;
+    const registry = new ProcessRegistry({
+      client, namer: null,
+      execution: { start: () => lane, snapshot: () => lane, isExecuting: () => false, stop: async () => {} },
+      onBuiltSteer: async (upid, correlationId) => { restarts++; await registry.prepareExecutionRetry(upid); await registry.execute(upid, { correlationId }); },
+    });
+    await registry.spawn({ upid: "local-project", workflow: "app", prompt: "Build a timer", correlationId: "plant" });
+    await registry.steer("local-project", { text: "Add reset" }, "shape");
+    await registry.execute("local-project", { additionalPrompt: "Platform: web app" });
+    const first = client.seeds[0];
+    expect(first?.prompt).toContain("Add reset");
+    expect(first?.prompt).toContain("Platform: web app");
+    await registry.steer("local-project", { text: "Add dark mode" }, "edit-built");
+    expect(restarts).toBe(1);
+    expect(client.calls.filter(call => call.name === "steer")).toHaveLength(0);
+    expect(client.seeds.at(-1)?.prompt).toContain("Add dark mode");
+    expect(registry.exportState().seeds[0]?.[1].prompt).toContain("Add reset");
+  });
   test("restored execution launches only after retry and uses a new run ID", async () => {
     const original = new ProcessRegistry({ client: new MemorySmithersClient(), sessionId: "before-restart" });
     await original.spawn({ correlationId: "seed", upid: "upid-recovered", workflow: "wf", prompt: "Preserve this seed" });

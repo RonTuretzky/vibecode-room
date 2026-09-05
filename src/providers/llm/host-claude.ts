@@ -132,7 +132,7 @@ export class HostClaudeDecisionLLM implements DecisionLLM {
       model: input.model,
       temperature: 0,
       decision: cueDecisionSchema.parse(decision),
-      raw: { hostClaude: true, transcript: windowText, verdict },
+      raw: { [this.#policy.startsWith("local-") ? "local" : "hostClaude"]: true, transcript: windowText, verdict },
     };
   }
 
@@ -151,7 +151,7 @@ export class HostClaudeDecisionLLM implements DecisionLLM {
       model: input.model,
       temperature: 0,
       decision: cueDecisionSchema.parse(decision),
-      raw: { hostClaude: true, reason },
+      raw: { [this.#policy.startsWith("local-") ? "local" : "hostClaude"]: true, reason },
     };
   }
 

@@ -264,6 +264,7 @@ export interface ProjectorSnapshot {
   // loop — detection runs eagerly and every surfaced idea builds itself. The
   // projector shows a distinct "capturing" indicator.
   captureMode?: boolean;
+  ai?: { mode: "local"; model: string; fastModel: string };
   // AUTO-BUILD SETTLE GATE surface: while an idea is armed and waiting for the
   // room to go quiet, the walls show the heard pitch, a live countdown
   // (firesInMs is SERVER-computed and republished every second), and a Done
@@ -275,7 +276,7 @@ export interface ProjectorSnapshot {
   // "voxterm" = the local VoxTerm transcriber, "replay" = audio received but not
   // transcribed because no key/transcriber is set).
   mic?: {
-    mode: "deepgram" | "voxterm" | "replay";
+    mode: "local" | "deepgram" | "voxterm" | "replay";
     active: boolean;
     // Total raw PCM bytes the server has received from the live mic socket. Lets
     // the projector prove audio is flowing even in "replay" mode (no ASR key).
