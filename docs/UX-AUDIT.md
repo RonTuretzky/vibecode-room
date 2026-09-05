@@ -28,10 +28,10 @@ The main scene and runtime orchestrators remain large; further decomposition
 is maintenance work, rather than a missing user flow.
 
 The September 5 reconciliation includes `room/dobbin-street-intersection-know`
-at `04006cf`, which contains the older `-main-merged` branch. Its two additions
-beyond main are preserved: the meadow table's blue monitor surface and the
-calmer butterfly flap rate. The monitor is geometry, not implemented video
-playback. Central Park and all prior room reliability fixes remain included.
+at `04006cf`, which contains the older `-main-merged` branch. The calmer
+butterfly flap rate remains. The meadow table's blue monitor surface was
+subsequently reverted at the user's request; the table itself remains.
+Central Park and all prior room reliability fixes remain included.
 
 ## Exercised flows
 
