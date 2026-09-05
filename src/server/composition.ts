@@ -510,6 +510,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   readonly transcriptArchiveDir: string | null;
   #selfCommission: SelfCommissioner | null = null;
   #selfReloadPending = false;
+  #selfLandingPending = false;
   readonly #exit: (code: number) => void;
   readonly #selfReloadDelayMs: number;
   // SELF VERSION-RAIL seams: injected runners make every self git/gh rail
@@ -896,7 +897,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
           onTrace: (event) => this.recordExternalTrace(event),
           onOutput: (decision) => this.recordOutput(decision),
           onLaunched: (runId) => {
-            this.#startSelfActivityProbe();
+            if (!localAiEnabled(env)) this.#startSelfActivityProbe();
             void this.runEventDriver.subscribe(SELF_UPID, runId).catch((error) => {
               this.recordExternalTrace({
                 event: "run.events.error",
@@ -1184,6 +1185,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
 
   async submitProjectChange(upid: string, text: string, scope: SteerScope): Promise<boolean> {
     if (!this.registry.activeRecords().some(record => record.upid === upid) || this.#emergencyTriggered) return false;
+    if (upid === SELF_UPID) return this.#submitSelfChange(text, scope, `corr-text-${crypto.randomUUID()}`);
     if (scope.mode === "grow") {
       if (this.#treeGit?.branchRailRefusal(upid) !== null) return false;
       void this.#growSteerBranch(upid, text, `corr-text-${crypto.randomUUID()}`);
@@ -1205,6 +1207,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       if (this.#steerGrace.timer) clearTimeout(this.#steerGrace.timer);
       this.#steerGrace = null;
     }
+    if (upid === SELF_UPID) return (await this.haltSelfRun()).ok;
     const execution = this.registry.execution(upid)?.status === "executing";
     if (execution) await this.registry.prepareExecutionRetry(upid);
     await Promise.all([this.buildOrchestrator.abortAll(upid), this.executionRegistry.stop(upid), this.ideaBuilds.stop(upid)]);
@@ -1214,6 +1217,14 @@ class LiveProjectorRuntime implements ProjectorRuntime {
 
   async retryProject(upid: string): Promise<boolean> {
     if (this.#emergencyTriggered || !this.registry.activeRecords().some(record => record.upid === upid)) return false;
+    if (upid === SELF_UPID) {
+      const lane = this.#selfCommission?.lane();
+      if (this.#selfLandingPending || !lane || lane.status !== "failed") return false;
+      const result = await this.#selfCommission!.steer(lane.instruction);
+      if (result.accepted) this.#steerLanding = null;
+      this.publish();
+      return result.accepted;
+    }
     const kind = this.#interrupted.get(upid);
     if (kind === "execution" || this.registry.execution(upid)?.status === "failed") {
       await this.registry.prepareExecutionRetry(upid);
@@ -2115,9 +2126,23 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       // lands moments after the toggle-off still joins the commit), and any
       // pending previous grace drains first — windows never merge.
       this.#drainSteerGrace(`${correlationId}-preempt`);
-      const timer = setTimeout(() => this.#drainSteerGrace(`${correlationId}-grace-timer`), STEER_GRACE_MS + 100);
+      // Batch local ASR can still be transcribing when Stop is pressed. Flush
+      // the captured utterance and keep its target sealed until its final is
+      // consumed, bounded by the provider's 30-second transcription timeout.
+      const finish = this.#micAsr.finishUtterance?.();
+      const graceMs = finish ? 30_000 : STEER_GRACE_MS;
+      const timer = setTimeout(() => this.#drainSteerGrace(`${correlationId}-grace-timer`), graceMs + 100);
       (timer as { unref?: () => void }).unref?.();
-      this.#steerGrace = { upid: had, scope, slice, untilMs: this.#clock() + STEER_GRACE_MS, timer };
+      const grace = { upid: had, scope, slice, untilMs: this.#clock() + graceMs, timer };
+      this.#steerGrace = grace;
+      if (finish) {
+        void Promise.all([
+          finish.catch(() => undefined), // the mic loop reports provider failures
+          new Promise((resolve) => setTimeout(resolve, STEER_GRACE_MS)),
+        ]).then(() => {
+          if (this.#steerGrace === grace) this.#drainSteerGrace(`${correlationId}-asr-finished`);
+        });
+      }
     }
     this.publish();
     return this.#snapshot;
@@ -2162,6 +2187,10 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     // The cut itself is the point, so grow is NOT gated on the applier knob
     // (neither is POST /api/process/:upid/branch): with the writer off the limb
     // still grows and the receipt says the change was not written to it.
+    if (grace.upid === SELF_UPID) {
+      void this.#submitSelfChange(text, grace.scope, correlationId).catch(() => undefined);
+      return;
+    }
     if (grace.scope.mode === "grow") {
       void this.#growSteerBranch(grace.upid, text, correlationId).catch(() => undefined);
       return;
@@ -2170,79 +2199,6 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       if (steerApplierEnabled(this.#env)) {
         void this.#applySteerSlice(grace.upid, grace.scope.branch, text, correlationId).catch(() => undefined);
       }
-      return;
-    }
-    if (grace.upid === "self") {
-      // WHERE THE CHANGE LANDS is decided HERE, before the run exists, because
-      // the agent only ever commits where it stands:
-      //   • no branch scope → a FRESH room/<slug> branch off the current one
-      //     (the default: every spoken change is its own branch),
-      //   • a branch scope → GRAFT ONTO that existing branch — the room climbs
-      //     to it first, so what you say grows the branch you picked instead
-      //     of starting a sibling. The self path used to drop the scope on the
-      //     floor and cut a new branch regardless.
-      // GROW needs no case of its own here: #cutSelfBranch already IS "cut a
-      // fresh branch named by the speech", so grow on the mirror is the
-      // default, and a second implementation would only be a way to disagree.
-      const onto = grace.scope.mode === "onto" ? grace.scope.branch : null;
-      void (onto !== null
-        ? this.#graftOntoSelfBranch(onto)
-        : this.#cutSelfBranch(text).then(
-            (branch): SelfLanding =>
-              branch !== null ? { ok: true, branch } : { ok: false, error: "git refused to cut a branch for this change" },
-          )
-      )
-        .then((landing) => {
-          this.recordExternalTrace({
-            event: landing.ok
-              ? onto !== null
-                ? "self.branch.graft"
-                : "self.branch.cut"
-              : onto !== null
-                ? "self.branch.graft.failed"
-                : "self.branch.cut.failed",
-            level: landing.ok ? "info" : "warn",
-            sessionId: this.sessionId,
-            correlationId: `${correlationId}-branch-cut`,
-            meta: { branch: landing.ok ? landing.branch : null, onto, error: landing.ok ? null : landing.error },
-          });
-          // THE RECEIPT the wall reads after Stop — where this change landed,
-          // or why it landed nowhere.
-          this.#steerLanding = {
-            upid: grace.upid,
-            branch: landing.ok ? landing.branch : null,
-            onto,
-            error: landing.ok ? null : landing.error,
-            atMs: this.#clock(),
-          };
-          if (!landing.ok) {
-            // NEVER commit somewhere else. Asking for a branch and silently
-            // growing a different one is the one outcome worse than refusing:
-            // the change is not dispatched, and the receipt says why.
-            this.publish();
-            return undefined;
-          }
-          return this.registry.steer(grace.upid, { text, source: "live-transcript" }, `${correlationId}-window-dispatch`);
-        })
-        .then(() => {
-          // PUBLISH, or the dispatch never reaches a wall. registry.steer
-          // mutates the record and writes a process.steer trace, but the
-          // cached snapshot behind GET /api/state and the SSE stream only
-          // learn when something else publishes. On a quiet room after Stop
-          // nothing else does, so the wall showed a change that had already
-          // been dispatched as if it had never happened.
-          this.publish();
-        })
-        .catch((error) => {
-          this.recordExternalTrace({
-            event: "steering.route.error",
-            level: "error",
-            sessionId: this.sessionId,
-            correlationId: `${correlationId}-window-dispatch`,
-            upid: grace.upid,
-            meta: { message: error instanceof Error ? error.message : String(error), windowDispatch: true },
-          });
-        });
       return;
     }
     void this.registry
@@ -2639,6 +2595,25 @@ class LiveProjectorRuntime implements ProjectorRuntime {
         return;
       }
 
+      // ENDPOINTING GRACE: the record toggle was released moments ago — this
+      // FINAL carries words spoken DURING the window (ASR finals trail the
+      // speaker by 1-2s), so it still belongs to the released target. Adopted
+      // trees also append it to the grace slice the delayed drain will commit.
+      const steerGrace = this.#steerGrace;
+      if (steerGrace !== null) {
+        if (this.#clock() <= steerGrace.untilMs) {
+          // Trailing final for the just-released window: joins the slice the
+          // drain will dispatch — still no per-final action (STOP is the
+          // trigger; the drain fires moments from now).
+          steerGrace.slice = appendSliceLine(steerGrace.slice, { text: observation.text, atMs: this.#clock() });
+          this.publish();
+          return;
+        }
+        // The window lapsed with no timer fire yet — drain lazily and let this
+        // FINAL flow to the ambient path below.
+        this.#drainSteerGrace(`${correlationId}-grace-lapsed`);
+      }
+
       // VOICE CALLSIGN STEERING: an utterance ADDRESSED to a live process by its
       // callsign ("atlas, make the header blue") sets that process as the
       // steering target and routes the remainder as steer text — before any
@@ -2671,24 +2646,6 @@ class LiveProjectorRuntime implements ProjectorRuntime {
         return;
       }
 
-      // ENDPOINTING GRACE: the record toggle was released moments ago — this
-      // FINAL carries words spoken DURING the window (ASR finals trail the
-      // speaker by 1-2s), so it still belongs to the released target. Adopted
-      // trees also append it to the grace slice the delayed drain will commit.
-      const steerGrace = this.#steerGrace;
-      if (steerGrace !== null) {
-        if (this.#clock() <= steerGrace.untilMs) {
-          // Trailing final for the just-released window: joins the slice the
-          // drain will dispatch — still no per-final action (STOP is the
-          // trigger; the drain fires moments from now).
-          steerGrace.slice = appendSliceLine(steerGrace.slice, { text: observation.text, atMs: this.#clock() });
-          this.publish();
-          return;
-        }
-        // The window lapsed with no timer fire yet — drain lazily and let this
-        // FINAL flow to the ambient path below.
-        this.#drainSteerGrace(`${correlationId}-grace-lapsed`);
-      }
 
       // Expire a stale pending suggestion FIRST. Acceptance otherwise only times
       // out on a room-idle tick; during continuous talk the room never goes idle,
@@ -4043,6 +4000,40 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     return null;
   }
 
+  // Typed and recorded changes share one branch landing and one commission.
+  // Lock before the first git await: another request must not move HEAD while
+  // this run is starting or editing its isolated worktree.
+  async #submitSelfChange(text: string, scope: SteerScope, correlationId: string): Promise<boolean> {
+    const onto = scope.mode === "onto" ? scope.branch : null;
+    const receipt = (landing: SelfLanding) => {
+      this.#steerLanding = { upid: SELF_UPID, branch: landing.ok ? landing.branch : null,
+        onto, error: landing.ok ? null : landing.error, atMs: this.#clock() };
+      this.recordExternalTrace({ event: landing.ok ? (onto ? "self.branch.graft" : "self.branch.cut")
+        : (onto ? "self.branch.graft.failed" : "self.branch.cut.failed"),
+        level: landing.ok ? "info" : "warn", sessionId: this.sessionId, correlationId,
+        meta: { ...this.#steerLanding } });
+      this.publish();
+    };
+    if (!this.#selfCommission || this.#emergencyTriggered || this.#selfLandingPending || this.#selfCommission.isBusy()) {
+      receipt({ ok: false, error: "The room is busy changing or reloading. Stop the current change or wait for it to finish." });
+      return false;
+    }
+    this.#selfLandingPending = true;
+    try {
+      const status = await this.#selfGit(["status", "--porcelain"]);
+      if (status.code !== 0 || status.out.trim()) {
+        receipt({ ok: false, error: "Commit or stash existing room changes before rebuilding the tree." });
+        return false;
+      }
+      const landing = onto !== null ? await this.#graftOntoSelfBranch(onto)
+        : await this.#cutSelfBranch(text).then((branch): SelfLanding => branch
+          ? { ok: true, branch } : { ok: false, error: "git refused to cut a branch for this change" });
+      receipt(landing);
+      if (!landing.ok || this.#emergencyTriggered) return false;
+      return (await this.#selfCommission.steer(text, correlationId)).accepted;
+    } finally { this.#selfLandingPending = false; this.publish(); }
+  }
+
   // Write the study's deliverable onto the import entry and put the tree's
   // display line in the language of a finished read rather than a stalled
   // build ("imported" used to sit there forever with nothing behind it).
@@ -4137,12 +4128,14 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   }
 
   async checkoutSelfBranch(branch: string): Promise<{ ok: true } | { ok: false; error: string }> {
+    if (this.#selfLandingPending || this.#selfCommission?.isBusy()) return { ok: false, error: "Stop the current self-change before loading another version." };
     return this.#selfVersions.checkoutSelfBranch(branch);
   }
 
   async mergeSelfBranch(
     branch: string,
   ): Promise<{ ok: true; merged: true; via: "pr" | "fast-forward" } | { ok: false; error: string }> {
+    if (this.#selfLandingPending || this.#selfCommission?.isBusy()) return { ok: false, error: "Wait for the current self-change before merging a version." };
     return this.#selfVersions.mergeSelfBranch(branch);
   }
 
@@ -4154,6 +4147,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
     | { ok: true; excised?: Array<{ branch: string; reverted: number }>; conflicts?: string[]; reloading?: boolean; grafts?: number }
     | { ok: false; error: string }
   > {
+    if (this.#selfLandingPending || this.#selfCommission?.isBusy()) return { ok: false, error: "Stop the current self-change before tending a version." };
     return this.#selfVersions.manageSelfBranch(branch, action, scope);
   }
 
@@ -4400,8 +4394,19 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       // with real working-tree signals; folding the heartbeat here would
       // flicker the honest label back to a mock every frame. Only the
       // completion edge matters from this stream.
+      if (localAiEnabled(this.#env)) {
+        this.#selfCommission.progress({ label: overlay.lastOutput });
+      }
       if (overlay.state === "completed") {
-        void this.#selfCommission.completeFromRun("finished").catch(() => undefined);
+        const runId = this.#selfCommission.lane()?.runId;
+        if (this.#getRun && runId) {
+          void this.#getRun(runId).then(run => {
+            const state = run?.status;
+            if (state === "finished" || state === "completed" || state === "failed" || state === "cancelled")
+              return this.#selfCommission?.completeFromRun(state === "completed" ? "finished" : state,
+                runId, typeof run?.error === "string" ? run.error : undefined);
+          }).catch(() => undefined);
+        } else void this.#selfCommission.completeFromRun("finished", runId).catch(() => undefined);
       }
       this.publish();
       return;
@@ -4637,6 +4642,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   // remoteUrl on a LOCAL tree, so origin-presence answers yes for a tree whose
   // every branch op the substrate will refuse.
   treeBranchRailRefusal(upid: string): string | null {
+    if (upid === SELF_UPID && this.#selfMode) return null;
     return this.#treeGit === null ? NO_TREE_SUBSTRATE_REFUSAL : this.#treeGit.branchRailRefusal(upid);
   }
 

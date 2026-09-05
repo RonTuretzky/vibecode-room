@@ -116,6 +116,29 @@ Arbitrary long-running backend services are not automatically provisioned.
 Self-editing is supported only from a clean room checkout and still uses the
 existing checks/commit/reload gate; save your work before enabling self mode.
 
+## Rebuild the room itself
+
+From a clean checkout, launch the supervised local room:
+
+```sh
+VIBERSYN_LOCAL_MODEL=room-local VIBERSYN_LOCAL_CODE_MODEL=room-local-code bun run local:self
+```
+
+Open Projects → mirror. Choose “Grow a new branch” or an existing room branch,
+then type or record the change. Both inputs use the same branch targeting.
+The local coding agent edits an isolated worktree. Typecheck, tests and build
+must pass before a `self:` commit advances the room and the supervisor rebuilds
+and restarts it. Generated test evidence is excluded from the commit.
+
+Cancel stops the job while preserving the live room. Retry repeats the last
+instruction on the same branch. Failed attempts remain in
+`artifacts/local-runs/.self-worktrees/` for inspection. Branch switching and
+tending are refused while a change or reload is in progress. The tree menu
+also lets you load an earlier local version.
+
+Unit tests block installed host AI CLIs; their provider behavior uses injected
+fixtures. Actual coding in this mode uses the configured LM Studio model.
+
 ## Verify
 
 ```sh

@@ -25,11 +25,13 @@ const IGNORED = new Set([
 const SYSTEM = `You are the room's LOCAL coding agent. Implement working software in the supplied checkout. Read AGENTS.md and relevant files first. Preserve unrelated work. No cloud AI tools, credentials, commits, pushes or deployment. For a new app produce a self-contained index.html with actual functioning interactions and local persistence, no CDN dependencies. For an existing app follow its stack and tests. Work only in this checkout.
 Respond with JSON ONLY in exactly one of these forms:
 {"actions":[{"tool":"list","path":"."},{"tool":"read","path":"index.html"}]}
+{"actions":[{"tool":"search","path":"src","query":"Projects"}]}
 {"actions":[{"tool":"write","path":"index.html","content":"complete file contents"}]}
+{"actions":[{"tool":"edit","path":"src/App.tsx","oldText":"exact existing text","newText":"replacement text"}]}
 {"actions":[{"tool":"check","command":["bun","run","typecheck"]}]}
 {"actions":[{"tool":"browser","steps":[{"action":"click","selector":"#start"},{"action":"wait","ms":1200},{"action":"expectText","selector":"#timer","text":"00:01"}]}]}
 {"done":true,"summary":"What changed and what you verified"}
-Available tools: list (one directory), read (file), write (complete UTF-8 file), check (argv array: bun/npm/pnpm/yarn run, test, install; git status/diff/log/ls-files; python3 -m pytest), browser (fresh browser session for index.html or built dist/index.html; steps: click/fill with CSS selector and text, wait up to 3000 ms, reload, expectText, expectChecked with checked boolean, expectStyle with CSS property and expected computed value in text). Each browser call starts fresh; use up to 12 steps in one call to test persistence across reload. Test the requested interactions in the browser before finishing; for visual changes assert the computed style with expectStyle, including after reload; use the actual selectors in the code. No shell syntax. You can batch at most 8 actions, performed in order. Failed tool actions are reported so you can repair them. Inspect the implementation before reporting done. If a retried task is already implemented, verify it without needless changes. Never invent test results. Read before overwriting existing files.`;
+Available tools: list (one directory), search (literal case-insensitive query in source files below path; use this to locate code in a large repo), read (file), write (complete UTF-8 file), edit (replace exactly one occurrence of oldText with newText in a file you have read; prefer this for small changes to existing files), check (argv array: bun/npm/pnpm/yarn run, test, install; git status/diff/log/ls-files; python3 -m pytest), browser (fresh browser session for index.html or built dist/index.html; steps: click/fill with CSS selector and text, wait up to 3000 ms, reload, expectText, expectChecked with checked boolean, expectStyle with CSS property and expected computed value in text). Each browser call starts fresh; use up to 12 steps in one call to test persistence across reload. Test the requested interactions in the browser before finishing; for visual changes assert the computed style with expectStyle, including after reload; use the actual selectors in the code. No shell syntax. You can batch at most 8 actions, performed in order. Failed tool actions are reported so you can repair them. Inspect the implementation before reporting done. If a retried task is already implemented, verify it without needless changes. Never invent test results. Read before overwriting existing files.`;
 
 export interface LocalAgentOptions {
   env: RoomEnv;
@@ -89,10 +91,13 @@ export async function runLocalAgent(
               properties: {
                 tool: {
                   type: "string",
-                  enum: ["list", "read", "write", "check", "browser"],
+                  enum: ["list", "search", "read", "write", "edit", "check", "browser"],
                 },
                 path: { type: "string" },
+                query: { type: "string" },
                 content: { type: "string" },
+                oldText: { type: "string" },
+                newText: { type: "string" },
                 command: { type: "array", items: { type: "string" } },
                 steps: {
                   type: "array",
@@ -143,6 +148,10 @@ export async function runLocalAgent(
       if (!value || typeof value !== "object")
         throw new Error("Expected an object");
     } catch {
+      // Do not feed malformed Harmony/tool-channel text back into the model:
+      // those control tokens can poison subsequent chat turns.
+      messages.pop();
+      options.onProgress?.("Local model returned an unsupported tool format; retrying.");
       messages.push({
         role: "user",
         content:
@@ -150,7 +159,7 @@ export async function runLocalAgent(
       });
       continue;
     }
-    if (value.done && evidence.size > 0) {
+    if (value.done && !value.actions?.length && evidence.size > 0) {
       let browserEvidence: string | undefined;
       if (
         existsSync(resolve(root, "dist/index.html")) ||
@@ -277,7 +286,8 @@ export async function runLocalAgent(
           );
         } else {
           const path = await safeAgentPath(root, String(action.path ?? "."));
-          if (tool === "list")
+          if (tool === "search") output = await searchLocalSource(root, path, action.query, signal);
+          else if (tool === "list")
             output = (await readdir(path, { withFileTypes: true }))
               .filter((x) => !IGNORED.has(x.name) && !x.name.startsWith(".env"))
               .slice(0, 200)
@@ -288,6 +298,15 @@ export async function runLocalAgent(
               throw new Error("File too large; inspect a smaller source file.");
             output = await readFile(path, "utf8");
             evidence.set(relative(root, path), output);
+          } else if (tool === "edit") {
+            const name = relative(root, path);
+            if (!evidence.has(name)) throw new Error("Read the file before editing it.");
+            const before = await readFile(path, "utf8");
+            const after = replaceUniqueText(before, action.oldText, action.newText);
+            await writeFile(path, after);
+            interactionEvidence = undefined;
+            evidence.set(name, after);
+            output = "File edited.";
           } else if (tool === "write") {
             if (
               typeof action.content !== "string" ||
@@ -308,6 +327,7 @@ export async function runLocalAgent(
         });
       } catch (error) {
         if (signal.aborted) throw signal.reason;
+        options.onProgress?.(`Tool failed: ${error instanceof Error ? error.message.slice(0, 240) : String(error)}`);
         results.push({
           error:
             error instanceof Error
@@ -320,6 +340,8 @@ export async function runLocalAgent(
       role: "user",
       content: JSON.stringify({ toolResults: results }),
     });
+    if (value.done) messages.push({ role: "user", content:
+      'Your actions have now run. Inspect the tool results; if successful, finish with {"done":true,"summary":"what was verified"} and no actions. Otherwise repair the failed actions.' });
     // Keep the task and recent tool evidence within smaller models' context.
     while (
       messages.length > 8 &&
@@ -381,4 +403,35 @@ function cleanAgentEnv(env: RoomEnv): Record<string, string> {
         !/TOKEN|SECRET|API_KEY|PASSWORD|CREDENTIAL/i.test(key),
     ),
   ) as Record<string, string>;
+}
+
+export function replaceUniqueText(before: string, oldText: unknown, newText: unknown): string {
+  if (typeof oldText !== "string" || !oldText || typeof newText !== "string" || newText.length > 512_000)
+    throw new Error("Provide nonempty oldText and a string newText.");
+  const index = before.indexOf(oldText);
+  if (index < 0 || before.indexOf(oldText, index + 1) >= 0)
+    throw new Error("oldText must match exactly once. Read the file and include more surrounding context.");
+  return before.slice(0, index) + newText + before.slice(index + oldText.length);
+}
+
+export async function searchLocalSource(root: string, directory: string, query: unknown, signal: AbortSignal): Promise<string> {
+  if (typeof query !== "string" || !query.trim() || query.length > 200) throw new Error("Search needs a query of 1–200 characters.");
+  const pending = [directory], matches: string[] = [];
+  let inspected = 0;
+  while (pending.length && inspected < 3000 && matches.length < 80) {
+    signal.throwIfAborted();
+    const current = pending.pop()!;
+    for (const entry of await readdir(current, { withFileTypes: true })) {
+      if (entry.isSymbolicLink() || entry.name.startsWith(".") || IGNORED.has(entry.name) || entry.name === "dist") continue;
+      const path = resolve(current, entry.name);
+      if (entry.isDirectory()) { pending.push(path); continue; }
+      if (!/\.(?:[cm]?[jt]sx?|json|md|html|css|scss|txt|toml|ya?ml)$/i.test(entry.name)) continue;
+      if (++inspected > 3000 || (await lstat(path)).size > 512_000) continue;
+      const lines = (await readFile(path, "utf8")).split("\n");
+      for (let i = 0; i < lines.length && matches.length < 80; i++)
+        if (lines[i]!.toLowerCase().includes(query.toLowerCase())) matches.push(`${relative(root, path)}:${i + 1}: ${lines[i]!.slice(0, 300)}`);
+      if (matches.length >= 80) break;
+    }
+  }
+  return matches.join("\n") || "No matches in the searched source files.";
 }

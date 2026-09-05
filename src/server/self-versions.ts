@@ -386,6 +386,8 @@ export class SelfVersionManager {
       // the process to the supervisor (exit 87 -> rebuild -> relaunch on main)
       // so whatever is archived is no longer live on the room.
       if (archivingLive) {
+        const dirty = dirtySourcePaths((await this.#selfGit(["status", "--porcelain"])).out);
+        if (dirty.length) return { ok: false, error: "Commit or stash existing room changes before archiving the running version." };
         if (!selfModeEnabled(this.#env)) {
           return { ok: false, error: "no supervisor is wrapping this process (--self launch required)" };
         }

@@ -168,7 +168,7 @@ export interface SelfBranchesHandle {
 // is open on the self tree), null until they land. Unarmed → null, so a
 // fleet tree's popup never asks the server about the room's own checkout.
 // `seed` is the SSR/test seam (the effect-free static renderer cannot fetch).
-export function useSelfBranches(armed: boolean, seed?: SelfBranchesPayload | null): SelfBranchesHandle {
+export function useSelfBranches(armed: boolean, seed?: SelfBranchesPayload | null, revision?: number): SelfBranchesHandle {
   const [payload, setPayload] = useState<SelfBranchesPayload | null>(seed ?? null);
   const [fetchTick, setFetchTick] = useState(0);
   useEffect(() => {
@@ -187,7 +187,7 @@ export function useSelfBranches(armed: boolean, seed?: SelfBranchesPayload | nul
     return () => {
       closed = true;
     };
-  }, [armed, fetchTick]);
+  }, [armed, fetchTick, revision]);
   return useMemo(
     () => ({
       payload,

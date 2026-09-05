@@ -134,3 +134,9 @@ describe("porcelainPath — the status parse the dirty guards depend on", () => 
     expect(dirtySourcePaths("")).toEqual([]);
   });
 });
+
+
+test("version switches also protect configuration and new source files", () => {
+  expect(dirtySourcePaths(" M package.json\n?? scripts/new.ts\n M bunfig.toml\n?? artifacts/result.json\n?? builds/app/index.html"))
+    .toEqual(["package.json", "scripts/new.ts", "bunfig.toml"]);
+});

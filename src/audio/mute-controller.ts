@@ -263,10 +263,13 @@ export class MuteController {
 }
 
 class MuteProtectedASRProvider implements ASRProvider {
+  readonly finishUtterance?: () => Promise<void>;
   constructor(
     private readonly upstream: ASRProvider,
     private readonly controller: MuteController,
-  ) {}
+  ) {
+    if (upstream.finishUtterance) this.finishUtterance = () => upstream.finishUtterance!();
+  }
 
   async *stream(audio: AudioReadableStream): AsyncIterable<TranscriptObservation> {
     if (this.controller.isMuted()) {

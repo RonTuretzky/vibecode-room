@@ -360,3 +360,44 @@ describe("selfRoutingOrchestrator", () => {
     expect(wrapped.builds("upid-9")).toEqual([]);
   });
 });
+
+test("an old completion cannot settle a retried self run", async () => {
+  const h = makeHarness({ withProbe: false });
+  await h.commissioner.steer("first");
+  const old = h.commissioner.lane()!.runId;
+  await h.commissioner.abort();
+  await h.commissioner.steer("retry");
+  await h.commissioner.completeFromRun("failed", old, "old failure");
+  expect(h.commissioner.lane()?.status).toBe("executing");
+  const current = h.commissioner.lane()!.runId;
+  await h.commissioner.completeFromRun("failed", current, "Typecheck failed: bad import");
+  expect(h.commissioner.lane()?.error).toBe("Typecheck failed: bad import");
+  expect(h.greens).toEqual([]);
+});
+
+test("local completed status settles through the poll watchdog", async () => {
+  const h = makeHarness({ pollMs: 2 });
+  await h.commissioner.steer("add a clock");
+  h.setHead({ sha: "new", subject: "self: add a clock" });
+  h.setRunStatus("completed");
+  await until(() => h.commissioner.lastRunGreen());
+  expect(h.greens).toHaveLength(1);
+});
+
+test("cancellation during the asynchronous git gate prevents reload", async () => {
+  let release!: (head: GitHeadFact) => void;
+  let calls = 0;
+  const greens: string[] = [];
+  const c = new SelfCommissioner({
+    client: { spawn: async seed => ({ upid: seed.upid, runId: seed.runId!, workflow: seed.workflow, parentId: null }), halt: async () => {} },
+    gitHead: async () => ++calls === 1 ? { sha: "old", subject: "old" } : new Promise(resolve => { release = resolve; }),
+    onGreen: lane => { greens.push(lane.runId); },
+  });
+  await c.steer("change");
+  const completion = c.completeFromRun("finished");
+  await c.abort();
+  release({ sha: "new", subject: "self: change" });
+  await completion;
+  expect(c.lane()?.status).toBe("failed");
+  expect(greens).toEqual([]);
+});

@@ -120,6 +120,7 @@ export class LocalExecutionTransport implements GatewayRpcTransport {
     let dir = join(this.artifactsRoot, upid);
     const roomDir = this.roomRoot;
     let originalHead = "";
+    let originalBranch = "";
     try {
       const signal = run.controller.signal;
       if (self) {
@@ -134,6 +135,7 @@ export class LocalExecutionTransport implements GatewayRpcTransport {
         originalHead = (
           await runCommand(["git", "rev-parse", "HEAD"], roomDir, signal)
         ).trim();
+        originalBranch = (await runCommand(["git", "branch", "--show-current"], roomDir, signal)).trim();
         dir = resolve(this.artifactsRoot, ".self-worktrees", run.id);
         await mkdir(resolve(this.artifactsRoot, ".self-worktrees"), {
           recursive: true,
@@ -177,9 +179,17 @@ export class LocalExecutionTransport implements GatewayRpcTransport {
         },
       );
       signal.throwIfAborted();
-      await checkLocalProject(dir, signal, this.env);
       if (self) {
-        await runCommand(["git", "add", "-A"], dir, signal);
+        // Test harnesses rewrite tracked evidence bundles. Keep those runtime
+        // outputs out of source commits, and stage the intended change BEFORE
+        // validation so generators cannot silently enter the commit.
+        await runCommand(["git", "add", "-A", "--", ".", ":(exclude)artifacts/smithering"], dir, signal);
+      }
+      const checkEnv = self ? Object.fromEntries(Object.entries(this.env).filter(([key]) => !key.startsWith("VIBERSYN_"))) : this.env;
+      await checkLocalProject(dir, signal, checkEnv, text => this.record(run, "run.output", text));
+      if (self) {
+        await runCommand(["git", "diff", "--exit-code", "--", ".", ":(exclude)artifacts/smithering"], dir, signal);
+        await this.record(run, "run.output", "Checks passed. Committing the room change.");
         await runCommand(
           [
             "git",
@@ -201,6 +211,7 @@ export class LocalExecutionTransport implements GatewayRpcTransport {
           (
             await runCommand(["git", "rev-parse", "HEAD"], roomDir, signal)
           ).trim() !== originalHead ||
+          (await runCommand(["git", "branch", "--show-current"], roomDir, signal)).trim() !== originalBranch ||
           (
             await runCommand(["git", "status", "--porcelain"], roomDir, signal)
           ).trim()
@@ -213,7 +224,7 @@ export class LocalExecutionTransport implements GatewayRpcTransport {
           roomDir,
           signal,
         );
-        await runCommand(["git", "worktree", "remove", dir], roomDir, signal);
+        await runCommand(["git", "worktree", "remove", "--force", dir], roomDir, signal);
       } else {
         if (existsSync(join(dir, "dist", "index.html")))
           await cp(join(dir, "dist"), dir, { recursive: true });
@@ -329,6 +340,7 @@ export async function checkLocalProject(
   dir: string,
   signal: AbortSignal,
   env: RoomEnv,
+  progress: (text: string) => Promise<void> = async () => {},
 ): Promise<void> {
   if (!existsSync(join(dir, "package.json"))) return;
   const pkg = JSON.parse(await readFile(join(dir, "package.json"), "utf8"));
@@ -345,7 +357,8 @@ export async function checkLocalProject(
   )
     await runCommand([manager, "install"], dir, signal, env, 180_000);
   for (const script of ["typecheck", "test", "build"])
-    if (pkg.scripts?.[script])
+    if (pkg.scripts?.[script]) {
+      await progress(`Validating: ${script}`);
       await runCommand(
         [manager, "run", script],
         dir,
@@ -353,4 +366,6 @@ export async function checkLocalProject(
         { ...env, CI: "1" },
         180_000,
       );
+      await progress(`Passed: ${script}`);
+    }
 }

@@ -3,6 +3,8 @@ import type { CueDecision, TranscriptObservation } from "../types";
 export type AudioReadableStream = ReadableStream<Uint8Array>;
 
 export interface ASRProvider {
+  /** Flush captured audio and resolve after its final observations are consumed. */
+  finishUtterance?(): Promise<void>;
   stream(audio: AudioReadableStream): AsyncIterable<TranscriptObservation>;
 }
 

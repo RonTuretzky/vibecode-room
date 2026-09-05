@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { realpath } from "node:fs/promises";
+import { realpath, readFile } from "node:fs/promises";
 import { resolve, sep } from "node:path";
 import { chromium } from "playwright";
 
@@ -26,6 +26,10 @@ export async function checkLocalPreview(
   steps: LocalBrowserStep[] = [],
 ): Promise<string> {
   if (steps.length > 12) throw new Error("Use at most 12 browser steps.");
+  if (!existsSync(resolve(dir, "dist/index.html")) && existsSync(resolve(dir, "package.json"))) {
+    const pkg = JSON.parse(await readFile(resolve(dir, "package.json"), "utf8"));
+    if (pkg.scripts?.build) throw new Error("This project needs a compiled preview. Run its install and build commands first; the browser opens dist/index.html, not source TSX.");
+  }
   const root = await realpath(
     existsSync(resolve(dir, "dist/index.html")) ? resolve(dir, "dist") : dir,
   );

@@ -1,6 +1,6 @@
 import type { ProjectorProcess } from "./types";
 import { buildsOf } from "./buildloop";
-import { executionOf } from "./stage";
+import { executionOf, stageOf } from "./stage";
 import type { BranchJob } from "../server/branch-jobs";
 export interface ProjectStatus {
   label: string;
@@ -67,15 +67,16 @@ export function projectStatus(
   if (execution)
     return status(
       execution.status === "built"
-        ? "App ready"
+        ? (stageOf(process) === "self" ? "Room change verified" : "App ready")
         : execution.status === "failed"
-          ? "Build failed"
+          ? (stageOf(process) === "self" ? (execution.progressLabel === "aborted" ? "Room change cancelled" : "Room change failed") : "Build failed")
           : "Implementing",
       execution.summary ?? execution.progressLabel ?? "",
       execution.percent,
       execution.status === "failed",
       execution.status === "executing",
     );
+  if (stageOf(process) === "self") return status("Ready to rebuild the room", "Describe a change to grow a new version, or choose an existing branch.");
   const builds = buildsOf(process);
   const building = builds.find((build) => build.status === "building");
   if (building) {

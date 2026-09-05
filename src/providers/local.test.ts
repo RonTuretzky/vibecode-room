@@ -9,13 +9,14 @@ import { selectResearchSuggester } from "../research/suggester";
 
 const servers: ReturnType<typeof Bun.serve>[] = [];
 const dirs: string[] = [];
-test("local code review receives the latest file once, including live steering", async () => {
+test("actions accompanying done still execute before review, including live steering", async () => {
   const root = await mkdtemp(join(tmpdir(), "room-review-"));
   dirs.push(root);
   await writeFile(join(root, "index.html"), "OLD FILE");
   const replies = [
+    { actions: [{ tool: "search", path: ".", query: "OLD FILE" }] },
     { actions: [{ tool: "read", path: "./index.html" }] },
-    { actions: [{ tool: "write", path: "index.html", content: "NEW FILE" }] },
+    { actions: [{ tool: "edit", path: "index.html", oldText: "OLD FILE", newText: "NEW FILE" }], done: true, summary: "Updated" },
     { done: true, summary: "Updated" },
     { pass: true, issues: [] },
   ];

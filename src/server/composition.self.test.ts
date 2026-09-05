@@ -281,3 +281,44 @@ describe("the guarded HTTP trigger (POST /api/self/reload)", () => {
     expect(body.selfMode).toBe(true);
   });
 });
+
+test("typed self changes create or target a branch and refuse overlap before any checkout", async () => {
+  const gitCalls: string[][] = [];
+  let current = "room/base";
+  const h = await makeSelfRuntime({ options: { selfGitRunner: async argv => {
+    gitCalls.push(argv);
+    if (argv[0] === "branch") return { ok: true, stdout: current, stderr: "" };
+    if (argv[0] === "checkout") current = argv.at(-1)!;
+    return { ok: true, stdout: "", stderr: "" };
+  } } });
+  expect(await h.runtime.submitProjectChange("self", "add a clock", { mode: "grow" })).toBe(true);
+  expect(current).toBe("room/clock");
+  const before = gitCalls.length;
+  expect(await h.runtime.submitProjectChange("self", "another", { mode: "onto", branch: "room/other" })).toBe(false);
+  expect(await h.runtime.checkoutSelfBranch("room/other")).toMatchObject({ ok: false });
+  expect(gitCalls.length).toBe(before);
+  expect(h.launches).toHaveLength(1);
+  expect(await h.runtime.cancelProjectWork("self")).toBe(true);
+  expect(h.cancels).toHaveLength(1);
+  expect(selfProcess(h.runtime)?.execution?.status).toBe("failed");
+  expect(selfProcess(h.runtime)?.state).not.toBe("halted");
+  expect(await h.runtime.retryProject("self")).toBe(true);
+  expect(h.launches).toHaveLength(2);
+  expect(gitCalls.length).toBe(before); // retry stays on the original branch
+  await h.runtime.cancelProjectWork("self");
+  expect(await h.runtime.submitProjectChange("self", "make the clock blue", { mode: "onto", branch: "room/other" })).toBe(true);
+  expect(current).toBe("room/other");
+  expect(h.launches).toHaveLength(3);
+  await h.runtime.cancelProjectWork("self");
+});
+
+test("self changes refuse dirty work before cutting a branch or launching a run", async () => {
+  const calls: string[][] = [];
+  const h = await makeSelfRuntime({ options: { selfGitRunner: async argv => {
+    calls.push(argv); return { ok: true, stdout: " M package.json", stderr: "" };
+  } } });
+  expect(await h.runtime.submitProjectChange("self", "change room", { mode: "grow" })).toBe(false);
+  expect(calls).toEqual([["status", "--porcelain"]]);
+  expect(h.launches).toHaveLength(0);
+  expect(await h.runtime.retryProject("self")).toBe(false);
+});

@@ -249,19 +249,20 @@ export class SelfCommissioner {
   // The run reached a terminal state (stream overlay or the poll watchdog).
   // GREEN GATE: re-verify against git — a finished run only counts as green
   // when a NEW commit with a "self:" subject landed. Idempotent per lane.
-  async completeFromRun(status: "finished" | "failed" | "cancelled"): Promise<void> {
+  async completeFromRun(status: "finished" | "failed" | "cancelled", runId?: string, error?: string): Promise<void> {
     const lane = this.#lane;
-    if (lane === null || lane.status !== "executing" || this.#completing) {
+    if (lane === null || (runId !== undefined && lane.runId !== runId) || lane.status !== "executing" || this.#completing) {
       return;
     }
     this.#completing = true;
     try {
       if (status !== "finished") {
-        this.settle(lane, "failed", `run ${status}`, `the self-run ended ${status} — nothing was committed, no reload.`);
+        this.settle(lane, "failed", `run ${status}`, error ?? `the self-run ended ${status} — no reload.`);
         this.trace("warn", "self.gate.failed", `corr-self-gate-${lane.runId}`, { runId: lane.runId, status });
         return;
       }
       const head = await this.#gitHead().catch(() => null);
+      if (this.#lane !== lane || lane.status !== "executing") return;
       const before = this.#headAtLaunch;
       const green =
         head !== null && before !== null && head.sha !== before.sha && head.subject.trimStart().startsWith("self:");
@@ -328,8 +329,9 @@ export class SelfCommissioner {
           return;
         }
         const status = await probe(runId).catch(() => null);
-        if (status === "finished" || status === "failed" || status === "cancelled") {
-          await this.completeFromRun(status);
+        if (this.#lane !== lane || lane.status !== "executing") return;
+        if (status === "finished" || status === "completed" || status === "failed" || status === "cancelled") {
+          await this.completeFromRun(status === "completed" ? "finished" : status, runId);
           return;
         }
       }

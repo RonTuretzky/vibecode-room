@@ -98,3 +98,36 @@ describe("self-supervisor.sh", () => {
     expect(result.stdout).toContain("mode=1");
   });
 });
+
+test("failed version builds restore the previous source and frontend without deleting the rejected branch", async () => {
+  const { mkdirSync, copyFileSync } = await import("node:fs");
+  const dir = mkdtempSync(join(tmpdir(), "selfsup-rollback-"));
+  tempDirs.push(dir);
+  mkdirSync(join(dir, "scripts")); mkdirSync(join(dir, "dist"));
+  copyFileSync(SCRIPT, join(dir, "scripts/self-supervisor.sh"));
+  const git = (...args: string[]) => {
+    const result = Bun.spawnSync(["git", ...args], { cwd: dir, stdout: "pipe", stderr: "pipe", env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null" } });
+    if (result.exitCode) throw new Error(result.stderr.toString());
+    return result.stdout.toString().trim();
+  };
+  git("init", "-b", "main"); git("config", "user.name", "Supervisor test"); git("config", "user.email", "test@example.test");
+  writeFileSync(join(dir, ".gitignore"), "dist/\nstate\n");
+  writeFileSync(join(dir, "source.txt"), "good");
+  writeFileSync(join(dir, "dist/index.html"), "working frontend");
+  git("add", "."); git("commit", "-m", "good");
+  const good = git("rev-parse", "HEAD");
+  git("checkout", "-b", "room/broken");
+  writeFileSync(join(dir, "source.txt"), "broken"); git("commit", "-am", "broken");
+  const broken = git("rev-parse", "HEAD"); git("checkout", "main");
+  const proc = Bun.spawn(["bash", "scripts/self-supervisor.sh"], { cwd: dir, stdout: "pipe", stderr: "pipe", env: {
+    ...process.env,
+    VIBERSYN_SELF_SERVER_CMD: 'if [ ! -f state ]; then touch state; git checkout room/broken; exit 87; fi; test "$(cat source.txt)" = good && test "$(cat dist/index.html)" = "working frontend"',
+    VIBERSYN_SELF_BUILD_CMD: "rm -rf dist; exit 1",
+  } });
+  const output = await new Response(proc.stderr).text();
+  expect(await proc.exited).toBe(0);
+  expect(output).toContain("rebuild FAILED");
+  expect(git("rev-parse", "HEAD")).toBe(good);
+  expect(git("rev-parse", "room/broken")).toBe(broken);
+  expect(readFileSync(join(dir, "dist/index.html"), "utf8")).toBe("working frontend");
+});

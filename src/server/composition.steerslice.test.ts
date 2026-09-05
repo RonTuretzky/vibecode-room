@@ -869,7 +869,7 @@ describe("steering endpointing grace", () => {
     runtime.setSteeringTarget(upid, "corr-grace-on");
     runtime.clearSteeringTarget("corr-grace-off"); // stop tapped before the final lands
     nowMs += 1_500; // within STEER_GRACE_MS
-    await drive(runtime, [final("add a welcome note for the residents", "utt-grace-1")]);
+    await drive(runtime, [final("In the Projects panel, change its heading to local widget ready. Keep everything else as it is.", "utt-grace-1")]);
     // The trailing final still reached the released target's agent loop…
     // …and joins the applier commit once the (lazy or timed) drain runs: a
     // later out-of-window final drains lazily and flows ambient.
@@ -878,7 +878,7 @@ describe("steering endpointing grace", () => {
     const notesPath = join(buildsRoot, upid, "repo", "ROOM-NOTES.md");
     await waitFor(() => existsSync(notesPath));
     const notes = readFileSync(notesPath, "utf8");
-    expect(notes).toContain("add a welcome note for the residents");
+    expect(notes).toContain("In the Projects panel, change its heading to local widget ready. Keep everything else as it is.");
     expect(notes).not.toContain("unrelated ambient chatter");
   });
 

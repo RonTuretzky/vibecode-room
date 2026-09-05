@@ -1110,7 +1110,7 @@ describe("deck copy claude-CLI failover", () => {
     const { mkdtemp: mkTmp } = await import("node:fs/promises");
     const { writeFileSync, chmodSync } = await import("node:fs");
     cliDir = await mkTmp(join(tmpdir(), "deck-cli-"));
-    const cli = join(cliDir, "claude");
+    const cli = join(cliDir, "fake-claude");
     writeFileSync(
       cli,
       `#!/usr/bin/env bun\nconsole.log(JSON.stringify({ result: JSON.stringify({ tagline: "From the CLI", concept: ["cli line"] }) }));\n`,

@@ -8,9 +8,8 @@
 #     started with (HOST / VIBERSYN_PORT / keys all pass through).
 #   - Server exit code 87 = "I committed a green self-change, rebuild me":
 #       bun run build  →  relaunch the server (loop).
-#     A failed rebuild still relaunches (the previous dist/ keeps the wall
-#     alive) with a loud warning — the committed source was green-gated, so a
-#     red rebuild here means an environment problem, not a red commit.
+#     A failed rebuild restores the last running source and frontend before
+#     relaunching. The rejected branch remains available for inspection.
 #   - ANY other exit code ends the loop normally with that code (Ctrl-C, crash,
 #     clean shutdown — the supervisor never resurrects those).
 #
@@ -40,15 +39,38 @@ rm -f "$STOP_MARKER"
 
 code=0
 while true; do
+  # Remember the source that this live process actually booted from. A broken
+  # version checkout must not strand the room on source that cannot rebuild.
+  good_head="$(git rev-parse HEAD 2>/dev/null || true)"
+  good_branch="$(git branch --show-current 2>/dev/null || true)"
   bash -c "$SERVER_CMD"
   code=$?
   if [ "$code" -eq 87 ]; then
     echo "[self] server exited 87 (green self-change committed) — rebuilding…"
+    backup="$(mktemp -d "${TMPDIR:-/tmp}/vibersyn-self-dist.XXXXXX")"
+    if [ -d dist ]; then cp -R dist "$backup/dist"; fi
     if bash -c "$BUILD_CMD"; then
       echo "[self] rebuilt — relaunching the server."
     else
-      echo "[self] WARNING: rebuild FAILED — relaunching on the previous build." >&2
+      echo "[self] WARNING: rebuild FAILED — restoring the previous working version." >&2
+      failed_head="$(git rev-parse HEAD 2>/dev/null || true)"
+      if [ -n "$good_head" ] && [ "$failed_head" != "$good_head" ]; then
+        # Never reset or delete the rejected branch: its commits remain for
+        # inspection. Reuse the old branch only if it still names the old tip.
+        if [ -n "$good_branch" ] && [ "$(git rev-parse "refs/heads/$good_branch" 2>/dev/null || true)" = "$good_head" ]; then
+          git checkout "$good_branch" || echo "[self] WARNING: could not restore the previous source." >&2
+        else
+          git checkout -b "room/recovered-${good_head:0:8}-$(date +%s)-$$" "$good_head" || echo "[self] WARNING: could not restore the previous source." >&2
+        fi
+      fi
+      # Build tools may clear dist before failing. Keep the frontend that the
+      # previous process served, even if the failed build left a partial bundle.
+      if [ -d "$backup/dist" ]; then
+        rm -rf dist
+        cp -R "$backup/dist" dist
+      fi
     fi
+    rm -rf "$backup"
     continue
   fi
   if [ -f "$STOP_MARKER" ]; then

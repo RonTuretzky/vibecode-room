@@ -82,3 +82,8 @@ test("feature requests with numbers and superlatives are not proposed as factual
     })?.kind,
   ).toBe("fact-check");
 });
+
+test("the pinned mirror is ready for self changes without a concept provider", () => {
+  const process = { ...demoProjectorSnapshot.processes[0]!, upid: "self", stage: "self", builds: [], execution: null };
+  expect(projectStatus(process)).toMatchObject({ label: "Ready to rebuild the room", retry: false, active: false });
+});

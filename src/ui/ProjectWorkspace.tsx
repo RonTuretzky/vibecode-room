@@ -4,7 +4,9 @@ import { projectStatus } from "./project-status";
 import { ProjectRecorder } from "./ProjectRecorder";
 import { TextChange } from "./TextChange";
 import { backendsOf, buildsOf } from "./buildloop";
-import { executionOf } from "./stage";
+import { executionOf, stageOf } from "./stage";
+
+import { useSelfBranches } from "./self-repo";
 
 export function ProjectWorkspace({
   snapshot,
@@ -70,7 +72,9 @@ export function ProjectWorkspace({
     ["queued", "implementing", "validating", "committing"].includes(job.status),
   ).length;
   const adopted = process?.source?.kind === "github-import";
-  const branches = process?.treeRepo?.branches ?? [];
+  const isSelf = process !== undefined && stageOf(process) === "self";
+  const selfBranches = useSelfBranches(open && isSelf, undefined, snapshot.steerLanding?.atMs);
+  const branches = isSelf ? selfBranches.payload?.branches ?? [] : process?.treeRepo?.branches ?? [];
   return (
     <>
       {!planting && (
@@ -285,9 +289,9 @@ export function ProjectWorkspace({
                   </a>
                 ))}
               {executionOf(process)?.status === "built" && (
-                <p>Full application build completed.</p>
+                <p>{isSelf ? "Room change verified; the supervisor reloads the room." : "Full application build completed."}</p>
               )}
-              {adopted && (
+              {(adopted || isSelf) && (
                 <label>
                   Change target
                   <select
@@ -309,14 +313,14 @@ export function ProjectWorkspace({
                   process={process}
                   snapshot={snapshot}
                   branch={branch}
-                  grow={adopted && !branch}
+                  grow={(adopted || isSelf) && !branch}
                 />
               )}
               {process.state !== "halted" && (
                 <TextChange
                   key={`${process.upid}/${branch}`}
                   upid={process.upid}
-                  grow={adopted && !branch}
+                  grow={(adopted || isSelf) && !branch}
                   {...(branch ? { branch } : {})}
                 />
               )}

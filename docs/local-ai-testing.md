@@ -38,7 +38,7 @@ transcripts, model reports and run journals are ignored by Git.
 | Import and grow | Imported `mdn/beginner-html-site-styled`, grew `room/accessible-dark-mode-toggle`, then applied another local branch edit. Changes were committed locally and previewed; no upstream push or PR was made. |
 | Research | Real web retrieval plus local synthesis and verification produced sourced reports. A separate spoken question about Rayleigh scattering passed through Whisper into the room's research flow. |
 | Language-model seams | All 11 `local:smoke` checks passed: ambient decisions, idea judging/verification, naming, summarization, research suggestions, topic refinement, cloud relationships, import planning, planning questions, slide copy and sourced research/verification. The final report was inspected for substantive content, not just valid JSON. |
-| Self-edit | Isolated-worktree, checks, commit and clean-checkout fast-forward lifecycle covered with a fixture. A real model was not asked to rewrite the room during this implementation. |
+| Self-edit | Real UI → LM Studio → source edit → typecheck/unit tests/build → `self:` commit → supervisor rebuild/restart → browser reconnect passed in an independent clone. Loading the previous branch reverted the visible heading. See [self-rebuild verification](local-self-rebuild-testing.md). |
 
 ## Defects found and corrected during testing
 
@@ -84,15 +84,13 @@ See [setup and configuration](local-ai.md).
 - `bun run typecheck` and `bun run build`: passed. The build retains the existing
   warning about a large frontend bundle.
 - Focused provider, lifecycle, retry, registry and research regressions: **92 passed**.
-- Standard browser suite with one worker: **60 passed**.
+- Standard browser suite with one worker: **61 passed**, including the self workspace.
 - Live journey suite: **31 passed, 1 skipped, 1 failed** on the full run. The failure
   was a sampling race when an automatic retry replaced a waiting message. After
   correcting the observation window, both tests in that file passed.
-- Full unit/integration run under simultaneous local-model load: **2,588 passed,
-  20 skipped, 7 failed**, with one related socket error. The failures hit timing
-  budgets. Rerunning the affected six files gave **71 passed, 1 timeout**; the remaining
-  gateway fleet file then passed all **4 tests** in isolation. This does not claim
-  that the original full run was clean.
+- Final full unit/integration run after self-rebuild fixes: **2,608 passed,
+  20 skipped, 0 failed** across 219 files in 63.91 seconds. Host cloud AI CLIs are
+  blocked in this suite. This supersedes earlier runs with timing failures.
 - Real inference smoke: **11 passed**. Saved report:
   `.context/local-smoke-reports/2026-09-05T19-41-01-118Z.json` on the test machine.
 

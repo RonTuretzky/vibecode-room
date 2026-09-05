@@ -46,12 +46,13 @@ export function porcelainPath(line: string): string {
   return (match?.[1] ?? "").trim();
 }
 
-/** Uncommitted paths under src/ — the ones a checkout would drag along. */
+/** Uncommitted source/configuration work a checkout would drag along.
+ * Generated runtime output is excluded from version edits and rebuilds. */
 export function dirtySourcePaths(statusOut: string): string[] {
   return statusOut
     .split("\n")
     .map(porcelainPath)
-    .filter((path) => path.startsWith("src/"));
+    .filter((path) => path.length > 0 && !/^(?:artifacts|builds|dist|node_modules|\.context)\//u.test(path));
 }
 
 /**
@@ -59,7 +60,7 @@ export function dirtySourcePaths(statusOut: string): string[] {
  *
  * Refuses — never throws — when the name is unsafe, the branch is gone (a
  * prune between arming and speaking is entirely normal), the working tree has
- * uncommitted src/ work that a checkout would drag along, or git itself says
+ * uncommitted source or configuration work that a checkout would drag along, or git itself says
  * no. Already standing there is a no-op success, which is the common case.
  */
 export async function graftOntoBranch(git: GraftGitRunner, branch: string): Promise<SelfLandingResult> {
@@ -74,7 +75,7 @@ export async function graftOntoBranch(git: GraftGitRunner, branch: string): Prom
   if (exists.code !== 0) {
     return { ok: false, error: `no branch named ${branch} — it may have been pruned` };
   }
-  // Uncommitted work in src/ would ride along to the other branch. Someone
+  // Uncommitted source or configuration would ride along to the other branch. Someone
   // else's half-finished edit silently following your words onto a different
   // rail is exactly the kind of surprise this room must not produce.
   const dirty = dirtySourcePaths((await run(git, ["status", "--porcelain"])).out);

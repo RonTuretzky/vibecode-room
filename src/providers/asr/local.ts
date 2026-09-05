@@ -56,6 +56,10 @@ export function whisperPython(env: RoomEnv): string {
 /** Browser PCM is segmented by silence and transcribed by a resident Whisper
  * process. No device capture in the child and no audio sent to a cloud service. */
 export class LocalWhisperASR implements ASRProvider {
+  readonly #flushers = new Set<() => Promise<void>>();
+  async finishUtterance(): Promise<void> {
+    await Promise.all([...this.#flushers].map((flush) => flush()));
+  }
   constructor(
     readonly env: RoomEnv,
     readonly sessionId: string,
@@ -82,6 +86,8 @@ export class LocalWhisperASR implements ASRProvider {
     const errors = new Response(child.stderr).text();
     const lines = child.stdout.pipeThrough(new TextDecoderStream()).getReader();
     const queue: Uint8Array[] = [];
+    let queued = 0, consumed = 0;
+    const waiters: Array<{ target: number; resolve(): void; reject(error: unknown): void }> = [];
     let ended = false,
       failure: unknown,
       notify: (() => void) | undefined;
@@ -100,7 +106,7 @@ export class LocalWhisperASR implements ASRProvider {
       parts: Uint8Array[] = [],
       pending = Buffer.alloc(0);
     const push = () => {
-      if (total >= 3200) queue.push(Buffer.concat(parts));
+      if (total >= 3200) { queue.push(Buffer.concat(parts)); queued += 1; }
       parts = [];
       total = 0;
       silence = 0;
@@ -111,6 +117,13 @@ export class LocalWhisperASR implements ASRProvider {
         );
       notify?.();
     };
+    const flush = async () => {
+      if (active) push();
+      if (consumed < queued) {
+        await new Promise<void>((resolve, reject) => waiters.push({ target: queued, resolve, reject }));
+      }
+    };
+    this.#flushers.add(flush);
     const pump = (async () => {
       try {
         while (true) {
@@ -189,9 +202,15 @@ export class LocalWhisperASR implements ASRProvider {
             latencyMs: Math.round(performance.now() - start),
             utteranceId: `local-${crypto.randomUUID()}`,
           };
+        consumed += 1;
+        for (let index = waiters.length - 1; index >= 0; index -= 1) {
+          if (waiters[index]!.target <= consumed) waiters.splice(index, 1)[0]!.resolve();
+        }
       }
       if (failure) throw failure;
     } finally {
+      this.#flushers.delete(flush);
+      for (const waiter of waiters.splice(0)) waiter.reject(new Error("Local transcription ended before the recording finished"));
       await reader.cancel().catch(() => {});
       child.kill();
       await lines.cancel().catch(() => {});

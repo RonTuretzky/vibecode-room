@@ -581,7 +581,7 @@ export function createProjectorApp(runtime: ProjectorRuntime, options: Projector
     if (!body || typeof body.text !== "string" || !body.text.trim() || body.text.length > 4000 || (body.branch && typeof body.branch !== "string") || (body.grow && body.branch)) return context.json({ error: "Provide a change of 1–4000 characters and one target" }, 400);
     if (runtime.steeringTarget()) return context.json({ error: "Stop or cancel the active recording before submitting a typed change" }, 409);
     const okay = await runtime.submitProjectChange(context.req.param("upid"), body.text.trim(), body.grow === true ? { mode: "grow" } : { mode: "onto", branch: body.branch || null });
-    return okay ? context.json(runtime.publishNow()) : context.json({ error: "This project cannot accept that change" }, 409);
+    return okay ? context.json(runtime.publishNow()) : context.json({ error: (context.req.param("upid") === "self" ? runtime.snapshot().steerLanding?.error : null) ?? "This project cannot accept that change" }, 409);
   });
   app.post("/api/process/:upid/cancel-work", async context => {
     if (isOfflineDemoRequest(context.req.header("referer"))) return context.json({ error: "Demo mode cannot change live work" }, 409);
