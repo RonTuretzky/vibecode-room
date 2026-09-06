@@ -92,7 +92,7 @@ import { registerSceneCameraControl } from "./gesture/camera-source";
 import { getFlatPoseSender, registerSceneFlatPoseControl } from "./gesture/flat-pose-source";
 import { cornerEye, cornerVerticalFovDeg, cornerYaw } from "./corner-lock";
 import { FLAT_EYE_DISTANCE, FLAT_EYE_HEIGHT, FLAT_YAW, flatVerticalFovDeg, flatViewOffset } from "./flat-lock";
-import { loadGardenFlora, type FloraLibrary } from "./garden-flora";
+import { loadGardenFlora, PARK_FLORA_MODELS, type FloraLibrary } from "./garden-flora";
 import {
   POND_STAGE,
   alongAcross as alongAcrossOf,
@@ -925,7 +925,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
         }
       };
       if (!softwareGL) {
-        loadGardenFlora()
+        loadGardenFlora(pondScene ? PARK_FLORA_MODELS : undefined)
             .then((flora) => {
               floraLib = flora;
               // Rebuild the data nodes as real models on the next frame.
@@ -1290,7 +1290,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
           instance("rock_moss_set_01", rocks);
         };
         loadParkWorldShared(parkOptions)
-          .then((world) => {
+          .then(async (world) => {
             if (parkDisposed) {
               return;
             }
@@ -1366,9 +1366,16 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
                 }
               };
             }
-            ground.visible = false; // one continuous terrain; no differently coloured stage disc
             world.terrain.receiveShadow = true;
             if (world.paths) world.paths.receiveShadow = true;
+            // Link the new world's shaders before its first visible frame.
+            // Target the existing light/fog rig so the warmed variants match
+            // the eventual scene. Keep controls rendering while the GPU works.
+            if (renderer.extensions.has('KHR_parallel_shader_compile')) {
+              await renderer.compileAsync(world.group, camera, scene);
+              if (parkDisposed) return;
+            }
+            ground.visible = false; // one continuous terrain; no differently coloured stage disc
             group.add(world.group);
             // Planting reach: anywhere inside the park wall that isn't
             // water (room→park is the half-turn about the stage).
@@ -1395,7 +1402,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
               const px = POND_STAGE.x - x / PARK_SCALE, pz = POND_STAGE.z - z / PARK_SCALE;
               return (world.cameraGroundAt(px, pz) - y) * PARK_SCALE - .15;
             };
-            return loadGardenFlora().then((flora) => {
+            return loadGardenFlora(PARK_FLORA_MODELS).then((flora) => {
               if (!parkDisposed) {
                 scatterParkFlora(flora, world, y);
               }

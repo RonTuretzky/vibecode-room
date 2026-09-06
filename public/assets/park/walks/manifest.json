@@ -1,0 +1,35 @@
+{
+  "source": "Original seeded canvas painters in scripts/lib/park-walk-texture-paint.ts; illustrative materials, not surveyed finishes.",
+  "textures": [
+    {
+      "name": "aggregate",
+      "size": 1024,
+      "bytes": 2101488,
+      "sha256": "ebddc238fdf8b6741782df17774100981715479607a345e8a5f25670c07f656f"
+    },
+    {
+      "name": "pavers",
+      "size": 512,
+      "bytes": 369066,
+      "sha256": "b60824b7c4c5e5cf394e4a88e6533c5a3b371a4b4491a0aa0ce778ce547a518c"
+    },
+    {
+      "name": "earth",
+      "size": 512,
+      "bytes": 474513,
+      "sha256": "ed22e211cc050333b50260597a52ed261e8e56cb777746d3de7a315b0c5ca4d1"
+    },
+    {
+      "name": "mulch",
+      "size": 512,
+      "bytes": 398344,
+      "sha256": "b8c3d3743c1e986d39c50111e6330efd14249d39e85c9a0aa177d0a33b66372d"
+    },
+    {
+      "name": "boards",
+      "size": 512,
+      "bytes": 366245,
+      "sha256": "2cf95dcf98cf5db69397e088b98018af1a7498227df801c7cdaa41203b4830d3"
+    }
+  ]
+}

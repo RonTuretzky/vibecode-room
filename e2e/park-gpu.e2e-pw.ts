@@ -22,6 +22,10 @@ async function cameraSettled(page: Page) {
 test('the full park renders every preset, material and environment return without GPU errors', async ({ page }, info) => {
   test.setTimeout(180000);
   const errors: string[] = [];
+  const floraRequests: string[] = [];
+  page.on('request', request => {
+    if (request.url().includes('/assets/garden/models/')) floraRequests.push(request.url());
+  });
   page.on('pageerror', error => errors.push(error.message));
   page.on('console', message => {
     if (message.type() === 'error' || /shader.*error|failed to load|context lost/i.test(message.text())) errors.push(message.text());
@@ -63,10 +67,16 @@ test('the full park renders every preset, material and environment return withou
   await page.getByTestId('scene-mode-button').click();
   await expect(scene).toHaveAttribute('data-park-ready', 'true');
   await page.getByTestId('control-dock-button').click();
+  expect(floraRequests.some(url => url.endsWith('/jacaranda_tree.glb'))).toBe(false);
   await page.getByTestId('central-park-button').click();
   await expect(view).toHaveCount(0);
+  // Park defers the meadow-only tree; switching environments must still load
+  // it, while sharing every model already decoded for the park.
+  await expect.poll(() => floraRequests.filter(url => url.endsWith('/jacaranda_tree.glb')).length).toBe(1);
+  await cameraSettled(page);
   await page.getByTestId('central-park-button').click();
   await expect(scene).toHaveAttribute('data-park-ready', 'true');
+  expect(new Set(floraRequests).size).toBe(floraRequests.length);
   await page.getByTestId('control-dock-button').click();
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByTestId('scene-fit-button').click(); await cameraSettled(page);

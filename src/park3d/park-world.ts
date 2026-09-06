@@ -30,7 +30,7 @@ import { loadSkylineModels, skylineSites } from "./park-models";
 import { buildParkStreets } from "./park-streets";
 import { refreshSouthWalks, type ParkWalk, type ParkStreetData } from "./park-walks";
 import { createWalkGrade } from "./park-walk-grade";
-import { buildPaths } from "./park-paths";
+import { buildPathsAsync } from "./park-paths";
 export { buildPaths } from "./park-paths";
 import { buildBuildings } from "./park-buildings";
 export { buildBuildings } from "./park-buildings";
@@ -518,7 +518,7 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
   let paths: THREE.Mesh | null = null;
   if (pathLines.length) {
     await nextFrame();
-    paths = buildPaths(pathLines,
+    paths = await buildPathsAsync(pathLines,
       (x, z) => deckAt(x, z) ?? groundAt(x, z),
       (x, z) => deckAt(x, z) != null ? 0 : sampleWater(x, z), { west, east, north, south, focus: opts.flatten ?? opts.viewBounds });
     if (paths !== null) {

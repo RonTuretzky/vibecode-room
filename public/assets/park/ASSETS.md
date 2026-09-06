@@ -113,3 +113,19 @@ This scan is illustrative ground detail, not a Central Park survey image.
 files offline; omit `--check` to restore missing or changed files. The grass
 pair adds 2.54 MiB of local asset payload and replaces the prior generated
 ground albedo and unrelated aerial-rock normal map in the park material.
+
+## Baked paving (`walks/*.png`)
+
+Five local procedural textures retain the original seeded aggregate, paver,
+earth, mulch and board painters. They are illustrative finishes, not survey
+photographs. Baking removes approximately 357,500 canvas marks from each
+fresh park startup. Aggregate remains 1024×1024; the other maps remain
+512×512. Their PNG payload totals 3.54 MiB, with unchanged sampling and bump
+scales. No external service is used during baking or runtime loading.
+
+Run `bun scripts/bake-park-walk-textures.ts` to rebuild them from
+`scripts/lib/park-walk-texture-paint.ts` using the installed Playwright
+Chromium. `--check` validates committed dimensions and SHA-256 hashes against
+`walks/manifest.json` without launching a browser or accessing the network.
+Canvas rasterization can differ across browser/platform versions; intentional
+rebakes update the manifest and should be inspected visually.

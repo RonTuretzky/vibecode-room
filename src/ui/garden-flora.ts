@@ -39,7 +39,11 @@ export const FLORA_MODELS = [
   "jacaranda_tree",
 ] as const;
 
-let libraryPromise: Promise<FloraLibrary> | null = null;
+export type FloraModel = typeof FLORA_MODELS[number];
+// The park's landscape trees are authored broadleaf forms. Only the meadow
+// needs the 11 MB jacaranda scan; common plants still share the same cache.
+export const PARK_FLORA_MODELS = FLORA_MODELS.filter(name => name !== 'jacaranda_tree');
+const modelPromises = new Map<FloraModel, Promise<FloraVariant[]>>();
 
 function tuneMaterial(material: THREE.MeshStandardMaterial): void {
   // Foliage ships as alpha-BLEND; hundreds of instanced blended surfaces
@@ -117,12 +121,16 @@ async function loadModel(loader: GLTFLoader, name: string): Promise<FloraVariant
   return variants;
 }
 
-export function loadGardenFlora(): Promise<FloraLibrary> {
-  if (libraryPromise === null) {
-    const loader = new GLTFLoader();
-    libraryPromise = Promise.all(
-      FLORA_MODELS.map(async (name): Promise<[string, FloraVariant[]]> => [name, await loadModel(loader, name)]),
-    ).then((entries) => new Map(entries));
-  }
-  return libraryPromise;
+export function loadGardenFlora(models: readonly FloraModel[] = FLORA_MODELS): Promise<FloraLibrary> {
+  const loader = new GLTFLoader();
+  return Promise.all(models.map(async (name): Promise<[string, FloraVariant[]]> => {
+    let promise = modelPromises.get(name);
+    if (!promise) {
+      promise = loadModel(loader, name);
+      modelPromises.set(name, promise);
+      // A transient asset failure must not poison subsequent mode switches.
+      promise.catch(() => modelPromises.delete(name));
+    }
+    return [name, await promise];
+  })).then(entries => new Map(entries));
 }

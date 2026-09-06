@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { mulberry32 } from "../ui/tree/spec";
+import { parkWalkTexture } from "./park-walk-textures";
 
 // These textures are generated locally once; no remote images or GPU readback.
 const textures = new Map<string, THREE.CanvasTexture>();
@@ -160,19 +161,8 @@ export function parkStoneTexture(): THREE.CanvasTexture {
 }
 
 /** Fine aggregate shared by the paths; world-space UVs keep grain at human scale. */
-export function parkPathTexture(): THREE.CanvasTexture {
-  const map = texture("path", 1024, (ctx, size) => {
-    const rng = mulberry32(8042);
-    ctx.fillStyle = "#dedbd4";
-    ctx.fillRect(0, 0, size, size);
-    for (let i = 0; i < 260000; i++) {
-      const light = 130 + rng() * 115;
-      ctx.fillStyle = `rgba(${light},${light},${light},.4)`;
-      ctx.fillRect(rng() * size, rng() * size, .5 + rng() * 1.3, .5 + rng() * 1.3);
-    }
-  });
-  map.wrapS = map.wrapT = THREE.RepeatWrapping;
-  return map;
+export function parkPathTexture(): THREE.Texture {
+  return parkWalkTexture('aggregate');
 }
 
 /** Quiet rolled-roof grain; the architectural details supply real shadows. */

@@ -165,6 +165,18 @@ prove that the visual objective has been achieved.
    two-second samples from +2 s onward are 8.3 ms average / 9.0–9.3 ms p95.
    Investigate construction, asset decode and shader warmup latency; settled
    frame cadence does not establish good startup behavior.
+   A subsequent production CPU profile isolated the one-second paving task.
+   Sliced construction, baked copies of the existing paving textures, deferred
+   meadow-only flora and parallel shader warmup reduce the longest task from
+   992–995 ms to 360–368 ms in two fresh runs of each build on this Mac.
+   The largest animation-frame interval falls from 991 ms to 542–551 ms;
+   world-ready time changes from 3.32–3.38 s to 3.16–3.21 s. Resource payload
+   is about 8 MB smaller with the same rendered detail. Half-second startup
+   gaps remain: continue investigating terrain/water construction, uploads
+   and late models. These are startup observations, not cross-device guarantees.
+   The startup pass passes all four hardware browser scenarios, including
+   deferred meadow flora and six rebuilds with stable warm GPU counts
+   (179 geometries / 91 textures / 92 programs). All 101 targeted tests pass.
 
 ## Completion remains unproven
 

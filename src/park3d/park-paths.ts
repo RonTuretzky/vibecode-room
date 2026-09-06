@@ -2,15 +2,16 @@ import * as THREE from 'three';
 import { walkMaterial, walkSurface, type WalkSurface } from './park-walk-materials';
 import type { ParkWalk } from './park-walks';
 import { walkJunctions } from './park-walk-junctions';
+import { yieldParkBuild } from './park-build-scheduler';
 
 interface Station { x: number; z: number; px: number; pz: number; along: number }
 interface Vertex { x: number; y: number; z: number; wet: number; along: number; edge: number }
 
 /** Fine ribbons follow the rendered terrain. Clip at the actual path edge:
  * a steep bank or water beside a walk must not erase the entire walk. */
-export function buildPaths(lines: ParkWalk[], groundAt: (x: number, z: number) => number,
+function* pathBuildSteps(lines: ParkWalk[], groundAt: (x: number, z: number) => number,
   waterAt: (x: number, z: number) => number,
-  bounds?: { west: number; east: number; north: number; south: number; focus?: { x: number; z: number } }): THREE.Mesh | null {
+  bounds?: { west: number; east: number; north: number; south: number; focus?: { x: number; z: number } }): Generator<void, THREE.Mesh | null> {
   const positions: number[] = [], colors: number[] = [], uvs: number[] = [], walkCoords: number[] = [];
   const batches = new Map<WalkSurface['texture'], number[]>();
   let activeTexture: WalkSurface['texture'] = 'aggregate';
@@ -181,7 +182,9 @@ export function buildPaths(lines: ParkWalk[], groundAt: (x: number, z: number) =
         }
         stairTreads++; previousTop = top;
       }
+      yield;
     }
+    yield;
   }
   if (!batches.size) return null;
   const geometry = new THREE.BufferGeometry();
@@ -194,9 +197,34 @@ export function buildPaths(lines: ParkWalk[], groundAt: (x: number, z: number) =
     geometry.addGroup(index.length, batch.length, materials.length);
     for (const id of batch) index.push(id);
     materials.push(walkMaterial(texture));
+    yield;
   }
   geometry.setIndex(index); geometry.computeVertexNormals(); geometry.computeBoundingSphere();
   const mesh = new THREE.Mesh(geometry, materials.length === 1 ? materials[0]! : materials);
   mesh.receiveShadow = true; mesh.name = 'park-paths'; mesh.userData.stairTreads = stairTreads;
   return mesh;
+}
+
+/** Synchronous construction for offline geometry checks. */
+export function buildPaths(...args: Parameters<typeof pathBuildSteps>): THREE.Mesh | null {
+  const steps = pathBuildSteps(...args);
+  let result = steps.next();
+  while (!result.done) result = steps.next();
+  return result.value;
+}
+
+/** Identical geometry, with small work slices so a whole park's junctions
+ * and bank-conforming ribbons do not monopolize the browser for a second. */
+export async function buildPathsAsync(...args: Parameters<typeof pathBuildSteps>): Promise<THREE.Mesh | null> {
+  const steps = pathBuildSteps(...args);
+  let deadline = performance.now() + 8;
+  let result = steps.next();
+  while (!result.done) {
+    if (performance.now() >= deadline) {
+      await yieldParkBuild();
+      deadline = performance.now() + 8;
+    }
+    result = steps.next();
+  }
+  return result.value;
 }

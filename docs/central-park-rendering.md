@@ -734,3 +734,54 @@ two-second sample from +2 s through +18 s stays at 8.3 ms average and
 9.0–9.3 ms p95 at DPR 2. These data separate startup from the settled view;
 they do not prove that startup cost is unchanged versus the previous commit.
 Trace: `.context/ground-base-live-timing.json`. Startup latency remains open.
+
+## Startup construction and shader warmup — 2026-09-06
+
+A production build with source maps and a Chromium CPU profile attributed a
+roughly one-second startup task largely to path construction and procedural
+paving textures. The paths now use the same geometry generator in synchronous
+checks and an asynchronous browser runner. An eight-millisecond work budget
+between station checkpoints gives rendering/input an opportunity to run; it
+does not guarantee every construction task or frame completes in eight
+milliseconds. The five paving textures are baked from their original seeded
+painters, retaining dimensions, color, sampling and bump scales. Geometry
+parity checks cover sloped junctions, water clipping, stairs and material groups.
+
+Flora caching is now per model. The park requests its nine used scans; the
+11 MB jacaranda loads only when entering the meadow. Successful model loads
+remain shared across environments, while failed loads can retry. The full
+GPU scenario checks both the deferred request and absence of duplicate model
+downloads on mode switches. On renderers exposing parallel shader compilation,
+the world warms against the room's current lighting/fog before attachment;
+an environment-disposal guard prevents late attachment after navigation away.
+
+Two fresh browser runs of the unchanged baseline and final build used the same
+local two-project room, 1280×900 viewport, DPR 2, reduced motion and M4 Max
+Metal renderer. Profiling was disabled for these timing comparisons:
+
+| Measurement | Baseline | Updated |
+| --- | --- | --- |
+| Longest observed main-thread task | 992–995 ms | 360–368 ms |
+| Longest animation-frame interval | 991 ms | 542–551 ms |
+| Sum of long-task time beyond 50 ms | 2,006–2,059 ms | 1,040–1,066 ms |
+| World-ready marker after navigation | 3.32–3.38 s | 3.16–3.21 s |
+| Encoded resource payload observed | 54.64 MB | 46.67 MB |
+
+The observation continued eight seconds after world-ready. That marker means
+the terrain/world is attached, not that every asynchronous skyline model or
+texture is loaded; these numbers are not Core Web Vitals or a cross-device
+guarantee. Settled samples retained 8.3 ms average frame intervals and the
+same 179 geometries / 79 textures / 86 programs in this two-project view.
+Lawn renders before/after were inspected. Remaining 0.5-second frame gaps
+mean startup is improved, not finished. Evidence: `.context/park-startup-baseline-{1,2}/`,
+`.context/park-startup-warmed-{1,2}/`, and the CPU profiles under
+`.context/park-startup-before/` and `.context/park-startup-after-profile/`.
+
+All 101 targeted park/asset tests and product typechecking pass. The five baked
+textures pass offline manifest validation. All four production GPU scenarios
+pass with motion enabled at DPR 2: six presets, meadow/park switching with
+lazy flora requests, the low shoreline route, six rebuild cycles, portrait
+controls and repeated reflection resizing. Warm rebuild counts remain fixed
+at 179 geometries / 91 textures / 92 programs; the six presets sample 8.2–8.4 ms
+average frame intervals and 10.0–10.4 ms p95 on this Mac. Evidence:
+`.context/startup-gpu-results/`. Preceding commit `194b297` passed all CI jobs.
