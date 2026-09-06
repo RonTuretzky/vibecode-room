@@ -1,7 +1,7 @@
 # Central Park world assets
 
 This directory contains **public domain / open government data**, OpenStreetMap
-data under ODbL, CC0 bark scans and the CC BY landmark models listed below.
+data under ODbL, CC0 ground/bark scans and the CC BY landmark models listed below.
 The geographic layers are baked by `scripts/fetch-park-data.py` and consumed by `src/park3d/park-world.ts`
 (the `park3d.html?src=open` evaluation page and the room's `?env=park`
 environment). Unlike Google's Photorealistic 3D Tiles (the page's default
@@ -89,7 +89,7 @@ scan supplies a furrowed-bark approximation for elm/oak forms; it is not an
 elm or oak scan. Plane-like trees use the Platanus scan.
 
 `bark/sources.json` pins the original download URLs and MD5 hashes. Restore
-missing/changed maps with `python3 scripts/fetch-park-bark.py`; validate the
+missing/changed maps with `python3 scripts/fetch-park-materials.py`; validate the
 committed copies without network access with `--check`. All runtime requests
 use these local files. The combined payload is approximately 5 MiB.
 
@@ -98,3 +98,18 @@ the Conservancy's [American elm](https://www.centralparknyc.org/plants/american-
 [red oak](https://www.centralparknyc.org/plants/red-oak) and
 [London plane](https://www.centralparknyc.org/plants/london-plane) descriptions.
 They illustrate genus-level traits, rather than reproduce individual trees.
+
+## Grass surface (`ground/*.jpg`)
+
+[Leafy Grass](https://polyhaven.com/a/leafy_grass) by Charlotte Baglioni,
+under the [Poly Haven CC0 asset license](https://polyhaven.com/license). The
+unchanged 1k diffuse/OpenGL-normal JPEG pair covers two metres. The ground
+shader removes the source's average color, retaining local blades, leaves
+and relief while the terrain palette controls the broad lawn/woodland hue.
+This scan is illustrative ground detail, not a Central Park survey image.
+
+`ground/sources.json` pins both source URLs and hashes.
+`python3 scripts/fetch-park-materials.py --check` validates all eight bark/grass
+files offline; omit `--check` to restore missing or changed files. The grass
+pair adds 2.54 MiB of local asset payload and replaces the prior generated
+ground albedo and unrelated aerial-rock normal map in the park material.

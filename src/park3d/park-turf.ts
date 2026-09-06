@@ -37,14 +37,17 @@ export function turfTile(source: TurfSource, tx: number, tz: number): TurfBladeP
   return patches;
 }
 
-/** Five bent, tapered blades: fifteen solid triangles, no alpha overdraw. */
+/** Eleven bent, tapered blades: thirty-three solid triangles, no alpha
+ * overdraw. Varied heights and a wider footprint fill the gaps between tufts. */
 export function turfGeometry(): THREE.BufferGeometry {
   const positions: number[] = [], colors: number[] = [], indices: number[] = [];
-  for (let blade = 0; blade < 5; blade++) {
+  for (let blade = 0; blade < 11; blade++) {
     const angle = blade * 2.39996, c = Math.cos(angle), s = Math.sin(angle), start = positions.length / 3;
+    const height = blade === 0 ? 1 : .58 + .42 * ((blade * 3) % 11) / 10;
+    const spread = .25 + .5 * ((blade * 7) % 11) / 10;
     for (const [t, side] of [[0, -1], [0, 1], [.58, -1], [.58, 1], [1, 0]]) {
-      const lean = t! * t! * .30, width = .035 * (1 - t! * .65) * side!;
-      positions.push(c * lean - s * width + c * .38, t!, s * lean + c * width + s * .38);
+      const lean = t! * t! * (.18 + blade % 3 * .1), width = .035 * (1 - t! * .65) * side!;
+      positions.push(c * lean - s * width + c * spread, t! * height, s * lean + c * width + s * spread);
       const brightness = .58 + t! * .58;
       colors.push(brightness, brightness, brightness * .96);
     }

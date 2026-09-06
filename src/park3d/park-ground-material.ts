@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 
-/** Mineral grain on steep banks and small leaf fragments under woodland.
- * Uses the terrain's existing draw/material, with no extra texture or pass.
+/** Grass scan detail, mineral grain on steep banks and woodland fragments.
+ * Two offset samples break regular tiling in the existing terrain draw.
  * Layers are illustrative ground cover, not a geological survey. */
 export function refineParkGround(material: THREE.MeshStandardMaterial): void {
   material.onBeforeCompile = shader => {
@@ -38,7 +38,23 @@ export function refineParkGround(material: THREE.MeshStandardMaterial): void {
       vec3 leafColor = mix(vec3(.13, .105, .065), vec3(.24, .19, .11), seed);
       diffuseColor.rgb = mix(diffuseColor.rgb, leafColor, coverage * detail * vParkGroundLayers.y * .65);
       `);
+    shader.fragmentShader = shader.fragmentShader.replace('#include <map_fragment>', `
+      #ifdef USE_MAP
+        float parkGrassBlend = smoothstep(.15, .85, parkGroundNoise(vParkGroundPosition.xz * .17));
+        vec3 parkGrass = mix(texture2D(map, vMapUv).rgb,
+          texture2D(map, vMapUv + vec2(.371, .613)).rgb, parkGrassBlend);
+        // Remove the source scan's average color so the continuous lawn/soil
+        // palette still owns the park. Preserve local blades and leaf variation.
+        diffuseColor.rgb *= .72 * clamp(parkGrass / vec3(.319764, .235742, .106143), vec3(.32), vec3(1.8));
+      #endif
+    `);
+    const normalMaps = THREE.ShaderChunk.normal_fragment_maps.replace(
+      'vec3 mapN = texture2D( normalMap, vNormalMapUv ).xyz * 2.0 - 1.0;',
+      `vec3 mapN = mix(texture2D(normalMap, vNormalMapUv).xyz,
+        texture2D(normalMap, vNormalMapUv + vec2(.371, .613)).xyz, parkGrassBlend) * 2.0 - 1.0;`,
+    );
+    shader.fragmentShader = shader.fragmentShader.replace('#include <normal_fragment_maps>', normalMaps);
   };
-  material.customProgramCacheKey = () => 'park-ground-cover-v1';
+  material.customProgramCacheKey = () => 'park-ground-cover-v2';
   material.needsUpdate = true;
 }

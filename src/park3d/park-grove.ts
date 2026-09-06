@@ -4,14 +4,20 @@ import { parkLeafMaterial } from "./park-materials";
 import { buildGroveGeometry, GROVE_FORMS } from "./park-grove-geometry";
 import { createParkWind } from './park-wind';
 import { broadleafTexture } from './park-broadleaf-texture';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { fitTreeBase, splitTreeBase } from './park-tree-bases';
 
 export interface GroveTree { x: number; y: number; z: number; scale: number; rot: number; form?: number; detail?: boolean; height?: number }
 
 /** Several broadleaf silhouettes, spatially batched for eye/water culling. */
-export function createParkGrove(trees: GroveTree[]) {
+export function createParkGrove(trees: GroveTree[], groundAt: (x: number, z: number) => number) {
   const group = new THREE.Group();
   group.name = "park-broadleaf-groves";
-  const forms = [false, true].flatMap(detail => GROVE_FORMS.map((_, i) => buildGroveGeometry(i, detail)));
+  const forms = [false, true].flatMap(detail => GROVE_FORMS.map((_, i) => {
+    const { trunk, canopy } = buildGroveGeometry(i, detail), split = splitTreeBase(trunk);
+    trunk.dispose(); return { ...split, canopy };
+  }));
+  const fittedBases: THREE.BufferGeometry[] = [];
   const barkMaterials = [parkBarkMaterial(), parkBarkMaterial(true)];
   const wind = createParkWind();
   const leafMaterials = GROVE_FORMS.map((_, i) => {
@@ -32,17 +38,27 @@ export function createParkGrove(trees: GroveTree[]) {
     batch.trees.push(tree); batches.set(key, batch);
   });
   const dummy = new THREE.Object3D(), tint = new THREE.Color();
-  for (const { form, trees: batch } of batches.values()) {
+  const baseBatches = new Map<string, { geometry: THREE.BufferGeometry[]; material: THREE.Material; shadow: boolean }>();
+  for (const [cell, { form, trees: batch }] of batches) {
     const bark = barkMaterials[form % GROVE_FORMS.length === 2 ? 1 : 0]!;
     const leaves = leafMaterials[form % GROVE_FORMS.length]!;
     const modelHeight = Math.max(forms[form]!.trunk.boundingBox!.max.y, forms[form]!.canopy.boundingBox!.max.y);
+    const placements = batch.map((tree, i) => {
+      dummy.position.set(tree.x, tree.y, tree.z); dummy.rotation.y = tree.rot;
+      dummy.scale.set(tree.scale * (.93 + (i % 3) * .07), tree.height === undefined ? tree.scale * (.92 + (i % 4) * .06) : tree.height / modelHeight, tree.scale);
+      dummy.updateMatrix(); return dummy.matrix.clone();
+    });
+    const bases = placements.map(matrix => fitTreeBase(forms[form]!.base, matrix, groundAt));
+    // Bases sharing a spatial cell and bark can share a draw even when their
+    // upper trunks use different forms/detail levels.
+    const baseKey = `${cell.slice(0, cell.lastIndexOf(','))},${bark === barkMaterials[1] ? 1 : 0}`;
+    const baseBatch = baseBatches.get(baseKey) ?? { geometry: [], material: bark, shadow: false };
+    baseBatch.geometry.push(...bases); baseBatch.shadow ||= batch.some(tree => Math.hypot(tree.x, tree.z) < 260);
+    baseBatches.set(baseKey, baseBatch);
     for (const [geometry, material] of [[forms[form]!.trunk, bark], [forms[form]!.canopy, leaves]] as const) {
       const mesh = new THREE.InstancedMesh(geometry, material, batch.length);
       batch.forEach((tree, i) => {
-        dummy.position.set(tree.x, tree.y, tree.z);
-        dummy.rotation.y = tree.rot;
-        dummy.scale.set(tree.scale * (.93 + (i % 3) * .07), tree.height === undefined ? tree.scale * (.92 + (i % 4) * .06) : tree.height / modelHeight, tree.scale);
-        dummy.updateMatrix(); mesh.setMatrixAt(i, dummy.matrix);
+        mesh.setMatrixAt(i, placements[i]!);
         if (material === leaves) mesh.setColorAt(i, tint.setHSL(.20 + (form % 3) * .015, .08, .83 + (i % 3) * .045));
       });
       mesh.computeBoundingSphere();
@@ -57,10 +73,18 @@ export function createParkGrove(trees: GroveTree[]) {
       group.add(mesh);
     }
   }
+  for (const { geometry, material, shadow } of baseBatches.values()) {
+    const baseGeometry = mergeGeometries(geometry)!;
+    geometry.forEach(base => base.dispose()); fittedBases.push(baseGeometry);
+    const roots = new THREE.Mesh(baseGeometry, material);
+    roots.name = 'park-grounded-tree-bases'; roots.castShadow = shadow;
+    roots.receiveShadow = true; roots.userData.parkReflect = true; group.add(roots);
+  }
   return { group, update: wind.update, dispose() {
     group.removeFromParent();
     group.traverse(node => { if (node instanceof THREE.InstancedMesh) node.dispose(); });
-    forms.forEach(({ trunk, canopy }) => { trunk.dispose(); canopy.dispose(); });
+    forms.forEach(({ trunk, canopy, base }) => { trunk.dispose(); canopy.dispose(); base.dispose(); });
+    fittedBases.forEach(base => base.dispose());
     [...barkMaterials, ...leafMaterials, ...leafDepths].forEach(material => material.dispose());
   } };
 }

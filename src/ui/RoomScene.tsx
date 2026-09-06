@@ -1124,7 +1124,9 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
           parkGrove = createParkGrove(trees.map(p => ({
             x: p.x, z: p.z, y: roomY(p.px, p.pz), scale: p.scale * 1.8, height: p.scale * 19,
             rot: p.rot, form: p.form, detail: nearSet.has(p),
-          })));
+          })), (x, z) => {
+            const p = roomToPark(x, z); return roomY(p.x, p.z);
+          });
           group.add(parkGrove.group);
           // Understorey from the imagery masks: shrubs where the canopy is
           // low (bush height, not crown height), grass tufts and wildflowers

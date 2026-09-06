@@ -67,7 +67,9 @@ prove that the visual objective has been achieved.
    A subsequent reference-based pass adds green beveled slats, curved bench
    castings, small fasteners and Type B-style framed lanterns. Close inspection
    corrected blocky slope supports and overly dark paint. Continue checking
-   texture repetition and stair transitions.
+   texture repetition and stair transitions. A new downward view exposed a
+   thin grass slit between stone edging and asphalt. The edging is now flush;
+   a fresh close render and slope/junction raycasts confirm the seam closes.
 4. **Vegetation and atmosphere.** Grove foliage now has gentle, phased crown
    motion with matching shadow deformation and a live reduced-motion stop. The
    hardware test compiled both shaders and recorded all presets with motion
@@ -92,9 +94,17 @@ prove that the visual objective has been achieved.
    fan-like forks; the next iterations improved bark scale and branch hierarchy.
    Individual trees and unmapped genera remain approximations; near detail is
    limited to the sixteen trees closest to the lawn, not camera-adaptive LOD.
+   Root bases now fit the rendered terrain, with unchanged upper joins and
+   instanced crowns. Split geometry preserves the original triangle count;
+   tests cover rotated/scaled trees on slopes and curved surfaces. Keep
+   inspecting very abrupt banks and the still-repeated root architecture.
    The close turf now has four times
    the cell density in a smaller 25-tile neighbourhood, fading by 16 m; wrapped
    diffuse light gives thin blades a softer response without another pass.
+   A matched grass color/normal scan now adds finer surface detail, with
+   color normalization and offset sampling. Eleven varied blades per tuft
+   replace five while retaining the same tile pool; downward and grazing
+   views were inspected. Continue judging distant tiling and woodland density.
    Small-basin ripples now use an
    irregular seamless spectrum with softer highlights and reduced-motion
    support; the change was checked in the Zoo render. A fresh Pond capture
@@ -145,7 +155,16 @@ prove that the visual objective has been achieved.
    warm counts of 160 geometries, 91 textures and 89 programs across six
    rebuilds. Six park views sample 8.3–8.4 ms average / 9.2–9.4 ms p95 at DPR 2
    on the M4 Max. The cached bark/leaf maps increase texture memory; nearby
-   tree meshes are substantially smaller than the replaced scans.
+   tree meshes are substantially smaller than the replaced scans. The next
+   ground/base pass also passes all four GPU scenarios: six preset views
+   sample 8.3–8.5 ms average / 9.2–10.0 ms p95, with stable warm counts of
+   179 geometries, 91 textures and 91 programs after six rebuilds. Fitted root
+   batches and denser tufts add work, so continue judging cost on long routes.
+   A slow initial live-room sample prompted an 18-second trace: the first
+   sample includes 100.4 ms average / 544.9 ms p95 startup stalls, while all
+   two-second samples from +2 s onward are 8.3 ms average / 9.0–9.3 ms p95.
+   Investigate construction, asset decode and shader warmup latency; settled
+   frame cadence does not establish good startup behavior.
 
 ## Completion remains unproven
 

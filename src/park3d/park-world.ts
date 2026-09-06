@@ -13,7 +13,6 @@
 import * as THREE from "three";
 import { parkTerrainAxis, terrainAxisCoordinate } from "./park-terrain-grid";
 import { parkGroundColor } from "./park-ground";
-import { parkGroundDetailTexture } from "./park-materials";
 import { AXIS_BEARING, DEG, PARK_CENTER, PARK_HALF_LEN, PARK_HALF_WIDTH } from "./park-frame";
 import { insideParkOutline as insidePark } from "./park-outline";
 import { waterInteriorAt } from "./park-pond-material";
@@ -450,14 +449,16 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
     geometry.setAttribute("parkGroundLayers", new THREE.BufferAttribute(layers, 2));
     (geometry.getAttribute("color") as THREE.BufferAttribute).needsUpdate = true;
     const texLoader = new THREE.TextureLoader();
-    const repeat = { x: (2 * halfEast) / 3, y: (2 * halfNorth) / 3 };
-    const groundDiff = parkGroundDetailTexture().clone();
+    // Poly Haven's grass scan covers two metres; color and normal detail use
+    // the same coordinates. The ground shader retains the park's broad palette.
+    const repeat = { x: (2 * halfEast) / 2, y: (2 * halfNorth) / 2 };
+    const groundDiff = texLoader.load("/assets/park/ground/leafy_grass_diff_1k.jpg");
     groundDiff.wrapS = THREE.RepeatWrapping;
     groundDiff.wrapT = THREE.RepeatWrapping;
     groundDiff.repeat.set(repeat.x, repeat.y);
     groundDiff.colorSpace = THREE.SRGBColorSpace;
     groundDiff.anisotropy = 8;
-    const groundNor = texLoader.load("/assets/garden/ground/aerial_grass_rock_nor_1k.jpg");
+    const groundNor = texLoader.load("/assets/park/ground/leafy_grass_nor_1k.jpg");
     groundNor.wrapS = THREE.RepeatWrapping;
     groundNor.wrapT = THREE.RepeatWrapping;
     groundNor.repeat.set(repeat.x, repeat.y);
@@ -465,7 +466,7 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
     const groundMaterial = new THREE.MeshStandardMaterial({
       map: groundDiff,
       normalMap: groundNor,
-      normalScale: new THREE.Vector2(.12, .12),
+      normalScale: new THREE.Vector2(.38, .38),
       vertexColors: true,
       roughness: 1,
       metalness: 0,

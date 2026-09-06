@@ -150,7 +150,9 @@ export function buildPaths(lines: ParkWalk[], groundAt: (x: number, z: number) =
       const top = isSteps ? Math.max(...[a, b].flatMap(s => cross.map(offset => side(s, offset, 0).y))) + .07 : undefined;
       for (let k = 1; k < cross.length; k++) {
         const left = cross[k]!, right = cross[k - 1]!, border = k === 1 || k === cross.length - 1;
-        const lift = border && !isSteps && surface.hardEdge ? .085 : .07;
+        // Flush edging shares the walking surface height. The former 1.5 cm
+        // offset left an open slit through which the lawn showed at eye level.
+        const lift = .07;
         const color = border && !isSteps && surface.hardEdge ? edge : coreColor;
         activeTexture = border && !isSteps && surface.hardEdge ? 'edging' : surface.texture;
         clipWalkAt = isSteps ? undefined : (x, z) => insideOtherWalk(line, x, z, !(border && surface.hardEdge));

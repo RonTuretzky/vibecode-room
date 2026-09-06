@@ -66,13 +66,28 @@ describe('walk surfaces', () => {
   test('crossing walks remove edging through the junction without opening corner holes', () => {
     const mesh = buildPaths([{ width: 2, pts: [-8, 16, 8, 16] }, { width: 2, pts: [0, 8, 0, 24] }], () => 0, () => 0)!;
     const ray = new THREE.Raycaster(new THREE.Vector3(0, 10, 16.85), new THREE.Vector3(0, -1, 0));
-    expect(ray.intersectObject(mesh)[0]!.point.y).toBeCloseTo(.07);
+    const crossing = ray.intersectObject(mesh)[0]!;
+    expect(crossing.point.y).toBeCloseTo(.07);
     for (const dx of [-.9, 0, .9]) for (const dz of [-.9, 0, .9]) {
       ray.set(new THREE.Vector3(dx, 10, 16 + dz), new THREE.Vector3(0, -1, 0));
       expect(ray.intersectObject(mesh).length).toBeGreaterThan(0);
     }
     ray.set(new THREE.Vector3(5, 10, 16.85), new THREE.Vector3(0, -1, 0));
-    expect(ray.intersectObject(mesh)[0]!.point.y).toBeCloseTo(.085);
+    const border = ray.intersectObject(mesh)[0]!;
+    expect(border.point.y).toBeCloseTo(.07);
+    expect(border.face!.materialIndex).not.toBe(crossing.face!.materialIndex);
+    dispose(mesh);
+  });
+
+  test('the stone border meets asphalt without a vertical slit on a slope', () => {
+    const ground = (x: number, z: number) => x * .2 + z * .1;
+    const mesh = buildPaths([{ width: 2, pts: [-5, 0, 5, 0], surface: 'asphalt' }], ground, () => 0)!;
+    const ray = new THREE.Raycaster();
+    for (const side of [-1, 1]) for (const distance of [.679, .681]) {
+      const z = side * distance;
+      ray.set(new THREE.Vector3(.13, 10, z), new THREE.Vector3(0, -1, 0));
+      expect(ray.intersectObject(mesh)[0]!.point.y - ground(.13, z)).toBeCloseTo(.07, 5);
+    }
     dispose(mesh);
   });
 

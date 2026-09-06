@@ -48,14 +48,21 @@ material textures. It needs no cloud rendering or external asset service.
   Locally bundled CC0 bark scans add color, normal and roughness detail.
   Six 1k bark maps add roughly 5 MiB of downloads; all nine textures together
   require about 36 MiB as RGBA8 with mipmaps. Textures persist for the page;
-  instanced buffers, six geometry templates and materials are disposed on exit.
+  instanced buffers, geometry templates and materials are disposed on exit.
+- `park-tree-bases.ts`: splits the original wood triangles below 1.3 local
+  metres into compact bases and instanced upper trunks. Each base follows
+  the rendered terrain; position and normal changes fade out at the join.
+  Fitted bases sharing bark and a spatial cell share a mesh. No triangles are
+  added by the split and no terrain sampling runs per frame.
 - `park-wind.ts`: shared time/strength uniforms gently bend and flutter grove
   foliage. Instance positions vary the phase, and the same deformation runs
   in the leaf shadow material. Root geometry stays fixed; reduced motion sets
   wind strength to zero, including preference changes while the room is open.
   Instance bounds include the small crown displacement.
-- `park-ground.ts` / `park-terrain-grid.ts`: continuous, linear grass/soil
-  albedo and a graded terrain grid. Two-metre sampling around the lawn
+- `park-ground.ts` / `park-ground-material.ts` / `park-terrain-grid.ts`:
+  continuous linear grass/soil color, a locally bundled grass scan with
+  matching normals and a graded terrain grid. Two offset texture samples
+  reduce tiling; the broad terrain palette remains independent of scan color. Two-metre sampling around the lawn
   and Pond gradually becomes 18 m near the distant city. Paths and project
   placement interpolate those exact rendered triangles.
 - `park-pond-material.ts`: gentler normals and reflection distortion, with
@@ -666,3 +673,64 @@ The previous opacity-repair commit `f6ee7a3` has passed all CI jobs.
 Remaining vegetation work includes less repeated individual architecture,
 root transitions on steep slopes and camera-adaptive near detail beyond the
 fixed sixteen-tree lawn neighbourhood. The full visual audit remains open.
+
+## Ground contact and lawn detail — 2026-09-06
+
+Root bases now bend to the actual rendered ground while the upper trunk and
+crown retain their placement and height. The small base portions contain
+112 triangles per distant tree and 656–688 per detailed tree, taken from the
+existing trunk mesh. The split preserves the total triangle count. Base
+positions and normals blend back to the original upper boundary, avoiding a
+new joint seam. Roots with the same bark share spatial batches across crown
+variants. Their geometry is owned and released by the grove.
+
+Two unchanged 1k Leafy Grass scans replace the generated ground color detail
+and unrelated aerial-rock normal map. Both use the source's two-metre scale.
+The shader divides the scan by its measured linear RGB mean, keeping the
+continuous park palette, and blends offset samples to reduce repetition. The
+pair is 2.54 MiB on disk; RGBA8 storage with mipmaps is roughly 10.7 MiB in
+total, replacing about 6.7 MiB for the previous 512-pixel color/1k normal pair.
+The terrain retains its existing draw/material. Sources, CC0 license and
+checksums are recorded in `public/assets/park/ASSETS.md` and
+`ground/sources.json`. `scripts/fetch-park-materials.py --check` validates both
+grass and bark without network access.
+
+Each short-grass tuft now has eleven blades with varied heights and spread,
+up from five, for 33 solid triangles. The 25-tile/102,400-tuft allocation cap,
+distance fade, reduced-motion behavior and update sampling budget remain.
+This spends more vertex work on the nearby lawn without increasing terrain
+queries or per-frame instance-buffer updates.
+
+The looking-down capture also exposed a thin slit between asphalt and its
+stone margin. Making the margin flush closes it without another surface or
+render pass. A slope raycast checks the joined height; crossing tests still
+check that edging stops at junctions and leaves no holes.
+
+The 100 targeted tests and product typecheck pass, including new root fits on
+rotated/scaled slopes and curved terrain, unchanged upper joins and source
+geometry, compact split budgets, turf-pool lifetime and the walk seam. All
+eight source material files pass hash validation. Final close evidence is
+`.context/ground-base-final-close-2026-09-06/`; the root/scan iterations are in
+`.context/tree-base-first-2026-09-06/`, `.context/grass-scan-first-2026-09-06/`
+and `.context/grass-dense-eye-2026-09-06/`.
+
+All four production GPU browser scenarios pass, including the six park
+presets, ground-level shoreline route, motion preference changes, six
+environment rebuilds, portrait views and repeated reflection resizing.
+The preset run sampled 8.3–8.5 ms frame intervals and 9.2–10.0 ms p95 at
+DPR 2 on this M4 Max. Warm GPU counts stay at 179 geometries, 91 textures
+and 91 programs across rebuilds. The fitted bases add geometry batches,
+while the grass adds vertex work; this brief local run is not a measurement
+of performance on other hardware. Evidence: `.context/ground-base-gpu-results/`.
+The preceding broadleaf commit `c183f26` has passed all CI jobs.
+
+Fresh lawn/Pond captures of the running two-project local room show the new
+surfaces without browser errors (`.context/ground-base-live-2026-09-06/`).
+Its health and server boot ID remain unchanged. The first lawn sample was
+slow (28.6 ms average), prompting an 18-second startup trace rather than
+assuming steady performance. In the trace, the initial sample includes
+loading/construction stalls (100.4 ms average, 544.9 ms p95), then every
+two-second sample from +2 s through +18 s stays at 8.3 ms average and
+9.0–9.3 ms p95 at DPR 2. These data separate startup from the settled view;
+they do not prove that startup cost is unchanged versus the previous commit.
+Trace: `.context/ground-base-live-timing.json`. Startup latency remains open.

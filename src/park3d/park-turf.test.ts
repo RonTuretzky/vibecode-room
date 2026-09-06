@@ -21,9 +21,9 @@ test('short turf follows slopes, stops at water and path margins, and repeats wh
   expect(turfTile({ ...source, waterAt: () => .3 }, 0, 0)).toHaveLength(0);
 });
 
-test('turf geometry stays within its fifteen-triangle budget with pointed, grounded blades', () => {
+test('turf geometry stays within its thirty-three-triangle budget with pointed, grounded blades', () => {
   const geometry = turfGeometry(), p = geometry.getAttribute('position');
-  expect(geometry.index!.count / 3).toBe(15);
+  expect(geometry.index!.count / 3).toBeLessThanOrEqual(33);
   expect(Array.from(geometry.getAttribute('normal').array).every(Number.isFinite)).toBe(true);
   expect(Math.min(...Array.from({ length: p.count }, (_, i) => p.getY(i)))).toBe(0);
   expect(Math.max(...Array.from({ length: p.count }, (_, i) => p.getY(i)))).toBe(1);
