@@ -398,3 +398,47 @@ The final production build passed all 13 combined browser scenarios: park
 camera presets, room/guest/dwell navigation, phone workspace focus, the full
 hardware rendering pass, low-shore exploration and repeated GPU rebuilds.
 Earlier turf commit `31d4ed2` also passed all CI jobs, including live flows.
+
+### Readable project forests and explicit focus — 2026-09-06
+
+`tree-tip-detail.ts` fades branch cards by projected CSS-pixel height (18–30 px),
+with a separate, earlier fade for their small additive glows. Subpixel buds stop
+rendering; wood and branch pick volumes remain intact. Reduced motion applies
+the settled values immediately. The frame loop reuses its projection scratch
+vector and avoids allocations per label.
+
+Show in garden now frames the actual grown body, accounting for planted ground
+height and screen aspect. A repeated request also works after moving away with
+Fit. Locked projector pairs retain their camera. Explicit project focus clears
+the idea tray and transcript until the tree menu closes. Measured header and
+navigation bands constrain the chip layout; on phones, small four-chip project
+menus place identity above and actions below the scene. Larger branch menus
+retain the existing constellation layout and still need focused visual review.
+
+Fresh Metal/M4 Max captures at 1280×900 CSS pixels, DPR 2, with motion enabled:
+
+| Mature projects | Overview draw calls | Average frame sample | p95 sample |
+| --- | --- | --- | --- |
+| 32 | 789–800 | 8.3–9.0 ms | 9.1–10.3 ms |
+| 64 | 1,004–1,014 | 8.7–8.8 ms | 11.9–12.5 ms |
+
+Each range covers six one-second diagnostic samples. The preceding 64-project
+baseline was 2,877–2,906 draws, 18.4–19.1 ms average and 26.2–27.6 ms p95.
+These short local checks are not a cross-device performance guarantee.
+
+Screenshots cover overview, Zen, selected tree and a 390×844 phone. Close-range
+verification found all six branch targets with the actual scene raycaster and
+opened each through mouse clicks; the dwell bridge opened the expected branch
+too. The fixture performed no API writes and emitted no browser errors.
+Local evidence is under `.context/tip-focus-compact-quality-2026-09-06/` and
+`.context/tip-focus-picking-2026-09-06/`. The layout/detail tests pass 96 cases;
+product and graphics-fixture TypeScript checks also pass.
+The additional 188 projector/component rendering tests pass as well.
+
+The production regression checks pass: 13 existing park, hardware, room/guest
+navigation and workspace scenarios, plus three new desktop/phone/repeated-focus
+and locked-camera scenarios. The new test fixture initially put planting
+positions on the process instead of the snapshot's `plantedPositions` field and
+sampled the projector before its import-fit settled; those test setup errors
+were corrected, then all three new scenarios passed. The live local-AI room at
+port 18994 remains healthy with the same server boot and no degraded providers.

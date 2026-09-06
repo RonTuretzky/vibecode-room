@@ -176,7 +176,7 @@ export interface TreeMenuPlacement {
 // chip below is painted over — a covered centre is a dead dwell target.
 function tendChipStyle(
   id: TendChipId,
-  layout: Record<string, { left: number; top: number; height?: number }>,
+  layout: Record<string, { left: number; top: number; width?: number; height?: number }>,
   viewport: { width: number; height: number },
   gesture: boolean,
 ): CSSProperties {
@@ -185,7 +185,7 @@ function tendChipStyle(
   return {
     left: `${Math.round(pos.left)}px`,
     top: `${Math.round(pos.top)}px`,
-    width: `${size.width}px`,
+    width: `${pos.width ?? size.width}px`,
     ...(pos.height === undefined ? {} : { maxHeight: `${pos.height}px` }),
   };
 }
@@ -342,6 +342,7 @@ function TendVerb(props: {
 
 export interface TreeMenuProps {
   process: ProjectorProcess;
+  projectFocus?: boolean;
   snapshot: ProjectorSnapshot;
   // The picked tree's screen rect at pick time (RoomScene projects it); null
   // when unavailable (keyboard select, degenerate projection) → edge resting.
@@ -382,6 +383,7 @@ export interface TreeMenuProps {
 
 export function TreeMenu({
   process,
+  projectFocus = false,
   snapshot,
   anchor,
   onClose,
@@ -408,6 +410,26 @@ export function TreeMenu({
   // Gesture-XL chips take wider nominal footprints; the wall sets the class
   // on <main> (App), so the component reads it rather than growing a prop.
   const gestureWall = typeof document !== "undefined" && document.querySelector("main.gesture-mode") !== null;
+  const [insets, setInsets] = useState<{ top: number; bottom: number }>({ top: 0, bottom: 0 });
+  useEffect(() => {
+    if (!projectFocus || gestureWall) {
+      setInsets({ top: 0, bottom: 0 });
+      return;
+    }
+    const header = document.querySelector(".status-bar");
+    const controls = document.querySelector('[data-testid="scene-controls"]');
+    const measure = () => {
+      const top = Math.ceil(header?.getBoundingClientRect().bottom ?? 0);
+      const bottom = Math.ceil(window.innerHeight - (controls?.getBoundingClientRect().top ?? window.innerHeight));
+      setInsets(old => old.top === top && old.bottom === bottom ? old : { top, bottom });
+    };
+    const observer = new ResizeObserver(measure);
+    if (header) observer.observe(header);
+    if (controls) observer.observe(controls);
+    window.addEventListener("resize", measure);
+    measure();
+    return () => { observer.disconnect(); window.removeEventListener("resize", measure); };
+  }, [projectFocus, gestureWall]);
 
   // THE ROOM'S BRANCHES (self tree): every record window cuts a room/* branch
   // — this payload is the rails the room can actually be tended along. The
@@ -775,7 +797,7 @@ export function TreeMenu({
     if (model.published !== null) {
       present.push("qr");
     }
-    const layout = tendChipLayout(anchor, viewport, { gesture: gestureWall, present });
+    const layout = tendChipLayout(anchor, viewport, { gesture: gestureWall, present, insets });
       const chipStyle = (id: TendChipId): CSSProperties => tendChipStyle(id, layout, viewport, gestureWall);
     const stopClicks = (clickEvent: ReactMouseEvent<HTMLElement>): void => clickEvent.stopPropagation();
     return (
@@ -1381,7 +1403,9 @@ export function TreeMenu({
   if (model.published !== null) {
     present.push("qr");
   }
-  const layout = tendChipLayout(anchor, viewport, { gesture: gestureWall, present });
+  const compact = projectFocus && !gestureWall && viewport.width <= 600 &&
+    present.every(id => ["identity", "close", "remove", "replant"].includes(id));
+  const layout = tendChipLayout(anchor, viewport, { gesture: gestureWall, present, insets, compact });
   const chipStyle = (id: TendChipId): CSSProperties => tendChipStyle(id, layout, viewport, gestureWall);
   const stopClicks = (clickEvent: ReactMouseEvent<HTMLElement>): void => clickEvent.stopPropagation();
 
@@ -1392,6 +1416,7 @@ export function TreeMenu({
       data-upid={process.upid}
       data-stage={model.stage}
       data-self="false"
+      data-compact={compact ? "true" : undefined}
       role="dialog"
       aria-label={`Tree controls for ${model.callsign}`}
     >

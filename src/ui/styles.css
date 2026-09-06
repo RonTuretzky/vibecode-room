@@ -265,6 +265,35 @@ button {
   transition: opacity 0.4s ease;
 }
 
+/* Explicitly visiting a project clears the foreground around its tree.
+   Closing its menu restores the room feed and waiting ideas. */
+.deep[data-project-focus="true"] .idea-tray,
+.deep[data-project-focus="true"] .rail {
+  display: none;
+}
+@media (max-width: 1080px) {
+  .deep[data-project-focus="true"] .status-left,
+  .deep[data-project-focus="true"] .status-center,
+  .deep[data-project-focus="true"] .wall-clock {
+    display: none;
+  }
+}
+@media (max-width: 600px) {
+  .deep[data-project-focus="true"] .status-right { padding: 8px; gap: 8px; }
+  .deep[data-project-focus="true"] .status-right .ctl-button,
+  .deep[data-project-focus="true"] .status-right .emergency-status,
+  .deep[data-project-focus="true"] .scene-controls .ctl-button { font-size: 12px; padding: 8px; }
+  .deep[data-project-focus="true"] .scene-controls { padding: 6px; gap: 6px; }
+  .tree-tend[data-compact="true"] .tend-chip { padding: 10px; min-height: 0; }
+  .tree-tend[data-compact="true"] .tree-menu-title { font-size: 16px; line-height: 1.25; margin: 4px 0; }
+  .tree-tend[data-compact="true"] .tree-menu-callsign { font-size: 12px; }
+  .tree-tend[data-compact="true"] .tree-menu-status,
+  .tree-tend[data-compact="true"] .tree-menu-eyebrow { font-size: 10px; line-height: 1.3; }
+  .tree-tend[data-compact="true"] .tend-verb { padding: 6px; min-height: 0; }
+  .tree-tend[data-compact="true"] .tend-line { font-size: 12px; line-height: 1.2; }
+  .tree-tend[data-compact="true"] .tend-sub { font-size: 10px; line-height: 1.3; }
+}
+
 .deep.zen .status-bar,
 .deep.zen .stage,
 .deep.zen .scene-controls,

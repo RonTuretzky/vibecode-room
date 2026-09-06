@@ -76,18 +76,25 @@ prove that the visual objective has been achieved.
    controls and planting/branch interaction. The fresh 32/64-project fixture
    exposed an automatic single-row layout that forced Fit too far away. Compact
    terrain-aware slots now reduce its radius from 435/872 m to 169/256 m;
-   chosen planting positions retain their override. In the mature-tree fixture,
-   distant branch-tip cards still obscure crowns. Selecting through Projects
-   opens controls but does not bring a distant tree closer; the menu can overlap
-   the top controls. Inspect that focus/label behavior next.
+   chosen planting positions retain their override. Distant branch-tip cards
+   now fade with their projected size, leaving the crowns visible. Explicit
+   Show in garden fits the grown tree at its actual terrain elevation, clears
+   the foreground tray/feed, and can be repeated after navigating away. The
+   first phone capture exposed oversized chips across the crown; compact
+   identity/action placement now leaves the tree visible between them. Desktop
+   and phone captures were inspected. Six real branch raycasts, mouse picks
+   and the dwell activation path still open the expected branch. Larger adopted
+   branch menus and the remaining ground-level compositions need further review.
 6. **Cost and lifecycle.** Re-measure a large project forest, transitions and
    repeated rebuilds. Audit cached world/atlas lifetimes, reflection/shadow
    cadence, resolution adaptation and long-frame behavior. Six environment
    rebuild cycles now show stable GPU resource counts after warmup, including
-   recreating the close turf. The fresh 64-mature-tree fixture has six branch
-   tips per tree and measures roughly 2,900 draw calls / 18–19 ms average frames
-   at 2× resolution on this M4 Max, with p95 around 27 ms. Reduce distant chrome
-   work while retaining branch picking at useful distances. Brief local frame
+   recreating the close turf. The 64-mature-tree fixture has six branch tips per
+   tree. Fading unreadable distant chrome reduces its overview from roughly
+   2,900 draw calls / 18–19 ms average frames to 1,004–1,014 draws / 8.7–8.8 ms
+   at 2× resolution on this M4 Max; p95 is 11.9–12.5 ms in the fresh six-sample
+   check. Close detail returns and branch picking remains available. Continue
+   auditing reflection cadence and long-frame behavior. Brief local frame
    samples are not a cross-device performance guarantee.
 
 ## Completion remains unproven

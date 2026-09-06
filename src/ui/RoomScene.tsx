@@ -8,6 +8,7 @@ import { createParkGrove } from "../park3d/park-grove";
 import { createParkUnderstorey, understoreyPlacements } from "../park3d/park-understorey";
 import { parkTurfTexture } from "../park3d/park-materials";
 import { AdaptiveResolution } from "./render-quality";
+import { projectFocusPose, updateTreeTipDetail, type TreeTipDetail } from "./tree-tip-detail";
 import {
   cssHex,
   rawColor,
@@ -386,6 +387,8 @@ interface Entry {
   // grafted by voice during demos, and the operator asked for them out — so no
   // companion grows here and the entries carry no per-prop animation state.
   label: THREE.Sprite | null;
+  tipDetails?: TreeTipDetail[];
+  focusBounds?: THREE.Box3;
   targetPos: THREE.Vector3;
   targetScale: number;
   // Conformal Poincaré factor (1 near the centre, small near the boundary).
@@ -410,7 +413,7 @@ interface Entry {
   disposeExtra?: () => void;
 }
 
-export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", wall = null, fitSignal, parkViewSignal = 0, focusUpid = null, pointerNav = true, cornerLock = false, flatLock = false, autoFit = false, onAcceptIdea, onSelectProcess, onPickMiss, onPickBranch, onPickIssue, dialogue = [], topics = [], research = [], onResearchNode, onDialogueNode, sky, researchThinking = false, skyView = false, selfTree = null, planting = false, onPlantPick }: RoomSceneProps) {
+export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", wall = null, fitSignal, parkViewSignal = 0, focusUpid = null, focusSignal = 0, pointerNav = true, cornerLock = false, flatLock = false, autoFit = false, onAcceptIdea, onSelectProcess, onPickMiss, onPickBranch, onPickIssue, dialogue = [], topics = [], research = [], onResearchNode, onDialogueNode, sky, researchThinking = false, skyView = false, selfTree = null, planting = false, onPlantPick }: RoomSceneProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const ideasRef = useRef(ideas);
   ideasRef.current = ideas;
@@ -469,6 +472,8 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
   fitRef.current = fitSignal;
   const focusRef = useRef<string | null>(focusUpid);
   focusRef.current = focusUpid;
+  const focusSignalRef = useRef(focusSignal);
+  focusSignalRef.current = focusSignal;
   const onAcceptRef = useRef(onAcceptIdea);
   onAcceptRef.current = onAcceptIdea;
   const onSelectRef = useRef(onSelectProcess);
@@ -2601,6 +2606,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
     // picks: the tip owns the anchor group, and invisible spine volumes carry
     // the same payload down the wood (addLimbSpineHits).
     const addBranchTipChrome = (group: THREE.Group, spec: TreeSpec, spec3d: TreeSpec3D, scale: number) => {
+      const details: TreeTipDetail[] = [];
       for (const branchSpec of spec3d.branches) {
         const tipSpec = branchSpec.tip;
         if (tipSpec === undefined || tipSpec.pickId === undefined || tipSpec.pickId === null || branchSpec.points.length === 0) {
@@ -2633,6 +2639,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
         tipLabel.userData.ownMap = true;
         tipLabel.position.set(tip.x, tip.y + 0.22, tip.z);
         tipGroup.add(tipLabel);
+        details.push({ label: tipLabel, glow: budGlow, bud });
         const tipHit = new THREE.Mesh(new THREE.SphereGeometry(0.85, 8, 8), invisibleHitMat);
         tipHit.userData.ownGeometry = true;
         tipHit.position.copy(tip);
@@ -2640,6 +2647,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
         group.add(tipGroup);
         addLimbSpineHits(group, branchSpec, limbPick);
       }
+      return details;
     };
     const addIssueFruit = (group: THREE.Group, spec: TreeSpec, trunkTop: number, scale: number) => {
       const fruits = fruitSpecs(spec.issues);
@@ -2891,7 +2899,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
       }
       // Git substrate chrome: tip cards/buds on the engine-grown room/*
       // limbs, and the issue fruit on its ghostly holo bough attachment.
-      addBranchTipChrome(group, spec, spec3d, bodyScale);
+      const tipDetails = addBranchTipChrome(group, spec, spec3d, bodyScale);
       addIssueFruit(group, spec, trunkH, bodyScale);
       const label = makeLabelSprite(treeTitle(spec), treeStatus(spec), cssHex(color));
       label.position.y = trunkH + 1.4;
@@ -2914,7 +2922,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
         targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false, updateProgress,
         // The engine owns the body's GPU resources; foliage sway rides the
         // shared frame loop through bodyUpdate.
-        bodyUpdate: built.update,
+        bodyUpdate: built.update, tipDetails, focusBounds: new THREE.Box3().setFromObject(built.group),
         disposeExtra: () => built.dispose(),
       };
     };
@@ -2938,6 +2946,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
       group.add(built.group);
       selfTreeBuilt = built;
       const trunkH = input.spec.trunk.height;
+      const tipDetails: TreeTipDetail[] = [];
       // ONE pick surface for every HD tree: the same fitted trunk+canopy
       // volumes the garden trees get, so clicking the self tree's crown
       // selects it exactly like clicking any adopted tree's.
@@ -2972,6 +2981,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
         tipLabel.userData.ownMap = true;
         tipLabel.position.set(tip.x, tip.y + 0.25, tip.z);
         tipGroup.add(tipLabel);
+        tipDetails.push({ label: tipLabel, glow: tipGlow });
         const tipHit = new THREE.Mesh(new THREE.SphereGeometry(1.0, 8, 8), invisibleHitMat);
         tipHit.userData.ownGeometry = true;
         tipHit.position.set(tip.x, tip.y + 0.3, tip.z);
@@ -3011,6 +3021,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
       return {
         kind: "tree", treeSpec: spec, group, mats: [], baseEmissive: 0, head: null, headY: 0, label,
         targetPos: new THREE.Vector3(), targetScale: 1, scaleMult: 1, phase: 0, flashStart: null, removing: false,
+        tipDetails, focusBounds: new THREE.Box3().setFromObject(built.group),
         disposeExtra: () => {
           built.dispose();
           if (selfTreeBuilt === built) {
@@ -4855,6 +4866,9 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
     // focus retries each frame until the node exists (fresh spawns land a beat
     // after the snapshot), then applies exactly once.
     let appliedFocus: string | null = null;
+    let appliedFocusSignal = focusSignalRef.current;
+    const focusBody = new THREE.Box3(), detailViewPoint = new THREE.Vector3();
+    let visibleBranchLabels = 0;
 
     const clock = new THREE.Timer();
     let rafId = 0;
@@ -4940,9 +4954,10 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
       // Guided-demo focus: glide the rig to the requested process node
       // (disabled under corner/flat lock — a rigid pair never reframes).
       const wantFocus = cornerLocked || flatLocked ? null : focusRef.current;
-      if (wantFocus !== appliedFocus) {
+      if (wantFocus !== appliedFocus || appliedFocusSignal !== focusSignalRef.current) {
         if (wantFocus === null) {
           appliedFocus = null;
+          appliedFocusSignal = focusSignalRef.current;
         } else {
           // While the HD self tree stands in for the mirror's fleet node, a
           // focus request for the mirror process glides to the HD tree.
@@ -4950,10 +4965,16 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
             treeEntries.get(wantFocus) ??
             (wantFocus === SELF_PROCESS_UPID ? treeEntries.get(SELF_TREE_UPID) : undefined);
           if (focusEntry !== undefined && !focusEntry.removing) {
-            rig.dTargetX = focusEntry.targetPos.x;
-            rig.dTargetZ = focusEntry.targetPos.z;
-            rig.dRadius = Math.max(7, Math.min(rig.dRadius, 11));
+            if (focusEntry.focusBounds) focusBody.copy(focusEntry.focusBounds);
+            else focusBody.set(new THREE.Vector3(-3, 0, -3), new THREE.Vector3(3, 6, 3));
+            const scale = focusEntry.targetScale * focusEntry.scaleMult;
+            focusBody.min.multiplyScalar(scale); focusBody.max.multiplyScalar(scale);
+            focusBody.translate(focusEntry.targetPos);
+            Object.assign(fitIdeal, projectFocusPose(focusBody, camera.fov, camera.aspect));
+            applyFitTargets();
+            angVel = 0; heightVel = 0; lastCameraInputMs = now;
             appliedFocus = wantFocus;
+            appliedFocusSignal = focusSignalRef.current;
           }
         }
       }
@@ -5126,6 +5147,8 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
         });
       }
 
+      visibleBranchLabels = 0;
+      const viewportProjection = container.clientHeight * camera.projectionMatrix.elements[5]! / 2;
       for (const [specId, entry] of treeEntries) {
         entry.group.position.lerp(entry.targetPos, smoothing);
         const hovered =
@@ -5134,6 +5157,11 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
         const target = entry.targetScale * entry.scaleMult * (hovered ? (garden ? 1.06 : 1.12) : 1);
         const next = THREE.MathUtils.lerp(entry.group.scale.x, target, smoothing);
         entry.group.scale.setScalar(Math.max(next, 0.0001));
+        if (entry.tipDetails) {
+          detailViewPoint.copy(entry.group.position).applyMatrix4(camera.matrixWorldInverse);
+          const pixels = detailViewPoint.z < 0 ? viewportProjection * entry.group.scale.x / -detailViewPoint.z : 0;
+          visibleBranchLabels += updateTreeTipDetail(entry.tipDetails, pixels, dt, reducedMotion);
+        }
         if (entry.removing && entry.group.scale.x < 0.02) {
           disposeEntry(entry);
           treeEntries.delete(specId);
@@ -5712,6 +5740,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
         container.dataset.gpuTextures = String(renderer.info.memory.textures);
         container.dataset.gpuPrograms = String(renderer.info.programs?.length ?? 0);
         container.dataset.turfInstances = String(scene.getObjectByName('park-close-turf')?.userData.instances ?? 0);
+        container.dataset.visibleBranchLabels = String(visibleBranchLabels);
         container.dataset.averageDrawCalls = (frameDrawTotal / renderedSamples).toFixed(1);
         container.dataset.averageTriangles = String(Math.round(frameTriangleTotal / renderedSamples));
         frameDrawTotal = 0; frameTriangleTotal = 0; renderedSamples = 0;

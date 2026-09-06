@@ -208,6 +208,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
   // interactive demo fixture in an effect below.
   const [snapshot, setSnapshot] = useState(initialSnapshot ?? emptyProjectorSnapshot);
   const [selected, setSelected] = useState<string | null>(initialOverlay?.selected ?? null);
+  const [workspaceFocus, setWorkspaceFocus] = useState<{ upid: string; signal: number } | null>(null);
   // Where the selected tree stood ON SCREEN at pick time (RoomScene projects
   // its dwell rect through onSelectProcess) — the tree menu anchors beside it.
   // Null = no projection (keyboard select / test seam): the menu edge-rests.
@@ -591,6 +592,9 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
   // clears it on close; flat/corner rigs no-op the prop by design — the DOM
   // halo below is the lock mechanism on the flat wall, never the camera).
   const tendingSelfUpid = selectedProcess !== null && stageOf(selectedProcess) === "self" ? selectedProcess.upid : null;
+  useEffect(() => {
+    if (workspaceFocus !== null && workspaceFocus.upid !== selectedProcess?.upid) setWorkspaceFocus(null);
+  }, [selectedProcess?.upid, workspaceFocus]);
   // The lock label rides the halo, which rings the REAL tree — and a flat-
   // locked wall never reframes, so that tree can sit far off-frame (measured
   // live at left=2474 on a 1920 wall). When it does, pin the label to the
@@ -2510,6 +2514,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
       data-view={view}
       data-zen={zenMode ? "true" : "false"}
       data-gesture={gestureMode ? "true" : "false"}
+      data-project-focus={workspaceFocus !== null && workspaceFocus.upid === selectedProcess?.upid ? "true" : undefined}
     >
       <RoomScene
         ideas={researchActive ? [] : visibleIdeaOrbs}
@@ -2526,10 +2531,12 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
         fitSignal={fitSignal}
         parkViewSignal={parkViewSignal}
         focusUpid={
+          workspaceFocus?.upid === selectedProcess?.upid && workspaceFocus !== null ? workspaceFocus.upid :
           guided !== null && (guided.step === "race" || guided.step === "decide")
             ? guided.focusUpid
             : tendingSelfUpid
         }
+        focusSignal={workspaceFocus?.signal ?? 0}
         pointerNav={!gestureMode && !flatLock}
         onAcceptIdea={acceptOrb}
         onSelectProcess={selectSceneProcess}
@@ -3115,6 +3122,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
       {selectedProcess !== null ? (
         <TreeMenu
           process={selectedProcess}
+          projectFocus={workspaceFocus?.upid === selectedProcess.upid}
           snapshot={snapshot}
           anchor={menuAnchor}
           selfBranches={initialSelfBranches ?? null}
@@ -3303,7 +3311,13 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
       {researchDeckQuest !== null ? (
         <ResearchDeckOverlay quest={researchDeckQuest} onClose={() => setResearchDeckId(null)} />
       ) : null}
-      {!mockMode && !researchActive && <ProjectWorkspace snapshot={snapshot} onSelect={setSelected} open={workspaceOpen} onOpen={() => { setWorkspaceOpen(true); setDockCollapseSignal(n => n + 1); }} onClose={() => { setWorkspaceOpen(false); document.querySelector<HTMLButtonElement>('[data-testid="control-dock-button"]')?.focus(); }} planting={planting !== null} onStartMic={() => void toggleMicCapture()} micError={micError} />}
+      {!mockMode && !researchActive && <ProjectWorkspace snapshot={snapshot} onSelect={(callsign) => {
+        const process = snapshot.processes.find(p => p.callsign === callsign);
+        if (process) {
+          setSceneMode("garden"); setSceneLayout("radial"); setSelected(callsign);
+          setWorkspaceFocus(current => ({ upid: process.upid, signal: (current?.signal ?? 0) + 1 }));
+        }
+      }} open={workspaceOpen} onOpen={() => { setWorkspaceOpen(true); setDockCollapseSignal(n => n + 1); }} onClose={() => { setWorkspaceOpen(false); document.querySelector<HTMLButtonElement>('[data-testid="control-dock-button"]')?.focus(); }} planting={planting !== null} onStartMic={() => void toggleMicCapture()} micError={micError} />}
       {addProjectOpen && <AddProject onClose={() => setAddProjectOpen(false)} />}
       {qrOpen ? <QrImport processes={snapshot.processes} onClose={() => setQrOpen(false)} /> : null}
       {guestsOpen ? <GuestHands onClose={() => setGuestsOpen(false)} /> : null}

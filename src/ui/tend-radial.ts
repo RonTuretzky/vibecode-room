@@ -83,6 +83,7 @@ export interface TendChipSize {
 export interface TendChipPlacement {
   left: number;
   top: number;
+  width?: number;
   // A HARD CEILING, present only when the arc could not afford this chip's
   // full nominal and squeezed it (see FLEXIBLE_CHIPS). The renderer applies it
   // as max-height, so the budget the layout reserved is the budget the chip
@@ -279,6 +280,9 @@ const CANONICAL: readonly TendChipId[] = [...VERB_ARC.slice(0, 1), "close", ...V
 export interface TendChipLayoutSpec {
   gesture: boolean;
   present: readonly TendChipId[];
+  /** Occupied header/footer bands in an explicitly focused project view. */
+  insets?: { top: number; bottom: number };
+  compact?: boolean;
 }
 
 interface MutableRect {
@@ -486,6 +490,28 @@ export function tendChipLayout(
   viewport: { width: number; height: number },
   spec: TendChipLayoutSpec,
 ): Record<string, TendChipPlacement> {
+  if (spec.insets && (spec.insets.top > 0 || spec.insets.bottom > 0)) {
+    const top = clamp(spec.insets.top, 0, Math.max(0, viewport.height - 1));
+    const bottom = clamp(spec.insets.bottom, 0, Math.max(0, viewport.height - top - 1));
+    const placements = tendChipLayout(anchor ? { ...anchor, top: anchor.top - top } : null,
+      { ...viewport, height: viewport.height - top - bottom }, { ...spec, insets: undefined });
+    for (const placement of Object.values(placements)) placement.top += top;
+    return placements;
+  }
+  // A small project's four chips can frame a phone's tree without laying a
+  // desktop-sized column across its crown. Larger branch menus keep their
+  // established constellation layout.
+  if (spec.compact) {
+    const margin = TEND_CHIP_MARGIN, gap = 8;
+    const width = Math.max(1, (viewport.width - margin * 2 - gap) / 2);
+    const placements: Record<string, TendChipPlacement> = {
+      identity: { left: margin, top: margin, width: Math.max(1, viewport.width - margin * 2 - 52), height: 120 },
+      close: { left: viewport.width - margin - 44, top: margin, width: 44, height: 44 },
+      remove: { left: margin, top: viewport.height - margin - 76, width, height: 76 },
+      replant: { left: margin + width + gap, top: viewport.height - margin - 76, width, height: 76 },
+    };
+    return Object.fromEntries(spec.present.map(id => [id, placements[id]!]).filter(([, value]) => value !== undefined));
+  }
   const sizes = spec.gesture ? GESTURE_SIZES : DESK_SIZES;
   const present = spec.present;
   if (anchor === null) {

@@ -13,6 +13,39 @@ import {
   type TendChipSize,
 } from "./tend-radial";
 
+test("focused project chips leave measured header and navigation bands clear", () => {
+  const present: TendChipId[] = ["identity", "close", "remove", "replant"];
+  for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }]) {
+    const insets = { top: 120, bottom: 150 };
+    for (const anchor of [null, { left: viewport.width / 3, top: 80, width: viewport.width / 3, height: 700 }]) {
+      const positions = tendChipLayout(anchor, viewport, { gesture: false, present, insets });
+      for (const id of present) {
+        const position = positions[id]!;
+        expect(position.top, id).toBeGreaterThanOrEqual(insets.top + TEND_CHIP_MARGIN);
+        expect(position.top + (position.height ?? tendChipSize(id, false).height), id)
+          .toBeLessThanOrEqual(viewport.height - insets.bottom - TEND_CHIP_MARGIN);
+      }
+    }
+  }
+  expect(tendChipLayout(null, VIEWPORT, { gesture: false, present, insets: { top: 0, bottom: 0 } }))
+    .toEqual(tendChipLayout(null, VIEWPORT, { gesture: false, present }));
+});
+
+test("compact project controls frame the phone scene without covering its center", () => {
+  const viewport = { width: 390, height: 844 }, insets = { top: 64, bottom: 92 };
+  const present: TendChipId[] = ["identity", "close", "remove", "replant"];
+  const placements = tendChipLayout(null, viewport, { gesture: false, present, insets, compact: true });
+  for (const placement of Object.values(placements)) {
+    const right = placement.left + placement.width!, bottom = placement.top + placement.height!;
+    expect(placement.left).toBeGreaterThanOrEqual(TEND_CHIP_MARGIN);
+    expect(right).toBeLessThanOrEqual(viewport.width - TEND_CHIP_MARGIN);
+    expect(placement.top).toBeGreaterThanOrEqual(insets.top);
+    expect(bottom).toBeLessThanOrEqual(viewport.height - insets.bottom);
+    expect(bottom < 250 || placement.top > 600).toBe(true);
+  }
+  expect(placements.remove!.left + placements.remove!.width!).toBeLessThan(placements.replant!.left);
+});
+
 // TEND RADIAL — the pure chip-constellation layout (no panel, no container:
 // every tend verb / branch row / receipt is its own floating glass chip on
 // arcs around the tree's projected anchor rect). These tests pin the three
