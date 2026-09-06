@@ -1,9 +1,8 @@
 # Central Park visual improvement audit
 
-Active objective: improve the scene across detail, graphical quality and all
-other visible aspects until the full result has been inspected and no required
-work remains. This audit records open work; a green regression suite does not
-prove that the visual objective has been achieved.
+The user requested wrapping up this iteration and merging the verified work
+on 2026-09-06. This audit preserves possible future improvements; it does not
+claim that a green regression suite proves maximal visual quality.
 
 ## Evidence from the current pass — 2026-09-06
 
@@ -215,9 +214,12 @@ prove that the visual objective has been achieved.
    the next close forest capture exposes adjacent branch-tip labels as the
    remaining text-clutter problem.
 
-## Completion remains unproven
+## Follow-up after this iteration
 
-Continue actual rendering work and visual inspection. Verification must cover
-the completed scene and its user interactions, including local-AI project
-flows where changes affect them. Do not treat this inventory, partial source
-coverage or unit/browser checks as proof that the full objective is complete.
+The final pass makes fine landscape trees follow nearby visible crowns,
+including regions beyond the lawn. Detail remains bounded to sixteen trees,
+with stable resources across six rebuilds. All seven hardware scenarios pass;
+the Pond, Arsenal and shore captures were inspected. Discrete foliage detail
+transitions, startup gaps, architectural interpretation and denser adopted
+branch menus remain useful candidates for a future iteration. Further graphics
+work is deferred at the user’s request to wrap up and merge this pass.

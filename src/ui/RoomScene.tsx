@@ -1139,11 +1139,9 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
             trees.push({ x: rx, z: rz, px: p.x, pz: p.z, scale: 0.68 + rng() * 0.32, rot: rng() * Math.PI * 2 });
           }
           console.info(`[park-flora] broadleaf trees: ${trees.length} placed`);
-          const nearTrees = trees.filter(p => Math.hypot(p.x, p.z) < 120).sort((a, b) => Math.hypot(a.x, a.z) - Math.hypot(b.x, b.z)).slice(0, 16);
-          const nearSet = new Set(nearTrees);
           parkGrove = createParkGrove(trees.map(p => ({
             x: p.x, z: p.z, y: roomY(p.px, p.pz), scale: p.scale * 1.8, height: p.scale * 19,
-            rot: p.rot, form: p.form, detail: nearSet.has(p),
+            rot: p.rot, form: p.form,
           })), (x, z) => {
             const p = roomToPark(x, z); return roomY(p.x, p.z);
           });
@@ -1561,7 +1559,9 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
           parkShore?.update(camera);
           parkTurf?.update(camera, cameraGroundY(camera.position.x, camera.position.z), t, !reducedMotion);
           parkUnderstorey?.update(camera);
-          parkGrove?.update(t, !reducedMotion);
+          if (parkGrove?.update(t, !reducedMotion, camera)) {
+            container.dataset.groveDetailTrees = JSON.stringify(parkGrove.group.userData.detailTrees ?? []);
+          }
           for (const { mesh, distance } of parkFineDetail) {
             const cutoff = mesh.visible ? distance + 15 : distance - 15;
             mesh.visible = camera.position.distanceToSquared(mesh.boundingSphere!.center) < cutoff * cutoff;

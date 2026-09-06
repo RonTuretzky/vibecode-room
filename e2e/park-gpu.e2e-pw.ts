@@ -37,9 +37,12 @@ test('the full park renders every preset, material and environment return withou
   expect(Number(await scene.getAttribute('data-triangles'))).toBeGreaterThan(100000);
   const stats: Record<string, unknown> = { renderer: await scene.getAttribute('data-renderer'),
     reducedMotion: await page.evaluate(() => matchMedia('(prefers-reduced-motion: reduce)').matches) };
+  const detailRosters: { x: number; z: number }[][] = [];
   for (const [label, file] of [['The Pond', 'pond'], ['Park overlook', 'overlook'], ['Wollman Rink', 'wollman'], ['The Arsenal', 'arsenal'], ['Central Park Zoo', 'zoo'], ['Project lawn', 'lawn']]) {
     await view.click(); await expect(scene).toHaveAttribute('data-park-view', label!);
     await cameraSettled(page);
+    const detail = JSON.parse(await scene.getAttribute('data-grove-detail-trees') ?? '[]') as { x: number; z: number }[];
+    expect(detail.length).toBeLessThanOrEqual(16); detailRosters.push(detail);
     await page.getByTestId('scene-zen-button').click();
     // Capture diagnostics before screenshot readback, which can itself stall
     // the frame loop and inflate a short average at high pixel densities.
@@ -47,11 +50,14 @@ test('the full park renders every preset, material and environment return withou
       const d = (el as HTMLElement).dataset;
       return { triangles: d.averageTriangles, draws: d.averageDrawCalls, frameMs: d.frameMs, p95Ms: d.frameP95Ms, ratio: d.pixelRatio,
         geometries: d.gpuGeometries, textures: d.gpuTextures, programs: d.gpuPrograms, turfInstances: d.turfInstances,
-        reflectionSize: d.reflectionSize, reflectionSamples: d.reflectionSamples };
+        reflectionSize: d.reflectionSize, reflectionSamples: d.reflectionSamples, groveDetailTrees: d.groveDetailTrees };
     });
     await page.screenshot({ path: info.outputPath(`${file}.png`) });
     await page.keyboard.press('Escape');
   }
+  // Fine trees follow exploration beyond the old fixed 120 m lawn region.
+  expect(detailRosters.flat().some(tree => Math.hypot(tree.x, tree.z) > 120)).toBe(true);
+  expect(new Set(detailRosters.map(trees => JSON.stringify(trees))).size).toBeGreaterThan(2);
   // Respect a preference change while the room is already running; a reload
   // must not be required to stop or restore decorative motion.
   const originallyReduced = stats.reducedMotion as boolean;

@@ -1029,3 +1029,33 @@ focused view was visually inspected. Evidence:
 `.context/branch-cards-refined-2026-09-06/`.
 CI for preceding commit c496c32 is green in unit, browser and live-flow jobs
 (run 34058975325).
+
+
+## Camera-following grove detail — 2026-09-06
+
+Landscape trees now choose close detail from the visible crowns near the
+camera, with a maximum of sixteen, instead of permanently selecting trees
+near the lawn. A 75 m entry / 90 m exit band and incumbent preference reduce
+repeated switching during small camera movements; selection runs at 5 Hz.
+Paired coarse/fine forms share each tree's placement, size, seed and tint.
+Fine branches, foliage and terrain-fitted roots return around the viewer
+when exploring other park regions. The change uses discrete detail levels;
+it does not add a crossfade between different leaf geometries.
+
+Distant trees retain spatially batched draws. Promoted instances hide their
+coarse bodies and degenerate only their own triangles inside the merged root
+batch. Demotion restores the original matrices and root indices exactly.
+Fine trunk/canopy instances are reused; fitted near-root meshes are disposed
+when they leave the bounded set. Shadows and water use the same visible trees.
+
+All seven hardware scenarios pass at DPR 2 with motion enabled, including
+all six viewpoints, shoreline navigation, tilt, reflections, branch clicks
+on desktop/portrait and six environment rebuilds. The view journey verifies
+that fine trees change with the camera and reach beyond the former fixed
+lawn region. Warm rebuild counts hold at 188 geometries, 88 textures and
+94 programs. Six view samples span 8.3–8.5 ms average / 9.0–9.9 ms p95 on
+this M4 Max; these are local observations, not cross-device guarantees.
+The Pond, Arsenal and low/upward shore captures were inspected. Fifteen
+targeted geometry/selection/root checks and typechecking also pass. Evidence:
+`.context/grove-lod-gpu-results/`, `.context/grove-lod-units.log` and
+`.context/grove-lod-final-types.log`.
