@@ -1,6 +1,30 @@
 import { expect, test } from 'bun:test';
 import * as THREE from 'three';
 import { createParkFurniture } from './park-furniture';
+import { BENCH_FOOTPRINT, parkFurnitureGeometry } from './park-furniture-geometry';
+
+test('detailed furniture retains human scale, clear normals and bounded shared geometry', () => {
+  const models = parkFurnitureGeometry();
+  for (const [name, geometry] of Object.entries(models)) {
+    geometry.computeBoundingBox();
+    const bounds = geometry.boundingBox!;
+    expect(Array.from(geometry.getAttribute('normal').array).every(Number.isFinite)).toBe(true);
+    const triangles = (geometry.index?.count ?? geometry.getAttribute('position').count) / 3;
+    expect(triangles).toBeLessThan(name === 'lampMetal' ? 3000 : 4000);
+    if (name.startsWith('bench')) {
+      expect(bounds.min.x).toBeGreaterThan(-BENCH_FOOTPRINT.halfWidth);
+      expect(bounds.max.x).toBeLessThan(BENCH_FOOTPRINT.halfWidth);
+      expect(bounds.min.z).toBeGreaterThan(BENCH_FOOTPRINT.back);
+      expect(bounds.max.z).toBeLessThan(BENCH_FOOTPRINT.front);
+      expect(bounds.min.y).toBeGreaterThan(-.012);
+      expect(bounds.max.y).toBeLessThan(.88);
+    }
+  }
+  const width = models.benchWood.boundingBox!.max.x - models.benchWood.boundingBox!.min.x;
+  expect(width).toBeCloseTo(1.8288, 4);
+  expect(models.lampMetal.boundingBox!.max.y).toBeCloseTo(4.558, 3);
+  Object.values(models).forEach(g => g.dispose());
+});
 
 test('level benches and lamp bases meet flat ground without the old placement lift', () => {
   const placement = new THREE.Matrix4().makeTranslation(2, 10.12, -3);
@@ -16,7 +40,8 @@ test('level benches and lamp bases meet flat ground without the old placement li
   const footings = furniture.group.getObjectByName('park-furniture-footings') as THREE.Mesh;
   const p = footings.geometry.getAttribute('position');
   for (let i = 0; i < p.count; i++) {
-    expect([9.965, 10.01].some(y => Math.abs(y - p.getY(i)) < .00001)).toBe(true);
+    expect(p.getY(i)).toBeGreaterThanOrEqual(9.96499);
+    expect(p.getY(i)).toBeLessThanOrEqual(10.01001);
   }
   furniture.dispose();
 });
@@ -32,11 +57,11 @@ test('rotated bench feet extend independently into sloping terrain while the sea
   let buried = 0, minBottom = Infinity, maxBottom = -Infinity;
   for (let i = 0; i < p.count; i++) {
     const gap = p.getY(i) - groundAt(p.getX(i), p.getZ(i));
-    if (Math.abs(gap + .035) < .00001) {
+    if (Math.abs(gap + .025) < .00001) {
       buried++; minBottom = Math.min(minBottom, p.getY(i)); maxBottom = Math.max(maxBottom, p.getY(i));
     } else {
-      expect(p.getY(i)).toBeCloseTo(fitted.elements[13]! + .025, 5);
-      expect(gap).toBeGreaterThan(.009);
+      expect(p.getY(i)).toBeLessThanOrEqual(fitted.elements[13]! + .02501);
+      expect(gap).toBeGreaterThan(-.02501);
     }
   }
   expect(buried).toBe(48);
@@ -51,5 +76,5 @@ test('rotated bench feet extend independently into sloping terrain while the sea
   }
   materials.forEach(material => material.addEventListener('dispose', () => materialDisposals++));
   furniture.dispose();
-  expect(geometryDisposals).toBe(3); expect(instanceDisposals).toBe(2); expect(materialDisposals).toBe(2);
+  expect(geometryDisposals).toBe(4); expect(instanceDisposals).toBe(3); expect(materialDisposals).toBe(3);
 });

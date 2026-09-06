@@ -66,7 +66,7 @@ material textures. It needs no cloud rendering or external asset service.
   accounts for viewport aspect and crown size. It no longer stops at 40 m
   when a larger forest needs more room. Fixed projector rigs retain their
   camera restrictions.
-- `park-furniture.ts`: instanced slatted benches and acorn lamps, with
+- `park-furniture.ts`: instanced World's Fair-style benches and Type B-style lamps, with
   explicit geometry/material cleanup on environment changes.
 
 The room limits terrain and building geometry to a 1,250 m neighbourhood.
@@ -521,3 +521,38 @@ bench views are in `.context/furniture-final-2026-09-06/`. All six presets and
 the close furniture/path images were visually inspected. The local-AI room on
 18994 still reports the same boot and no degraded providers. This pass does
 not modify or newly validate model inference behavior.
+
+### Reference-based street furniture — 2026-09-06
+
+The benches now follow the six-foot proportions, nine slats and curved ironwork
+in [Kenneth Lynch's 6737-6 drawing](https://klynchandsons.com/content/updated%20documents%202024/6737-6-CU-2024.pdf).
+Beveled, green-painted slats have restrained grain and individual carriage
+bolts; circular armrests, arched legs, rosettes and back braces replace the old
+rectangular frame. The lamp's fluted pedestal, molded capital, framed glazing
+and crowned cap follow the [NYC DOT Type B reference](https://www.nycstreetdesign.info/lighting/type-b),
+including its 3.81 m height to the luminaire base. These castings remain
+interpretations, and do not represent every bench/luminaire family in the park.
+
+Shared geometry lives in `park-furniture-geometry.ts`, with paint/glazing in
+`park-furniture-materials.ts`. Five instanced material batches and one fitted
+footing mesh serve all 219 lamps and 26 benches. Per-model triangle counts are
+252/2292/2016 for bench slats/castings/hardware and 2500/240 for lamp
+castings/glazing. A cached 1024×256 painted-grain texture adds about 1.33 MiB
+with mipmaps. Thin transparent glazing uses no transmission target. All
+instance buffers, owned geometry and materials are released on environment
+changes; the shared grain texture persists for the page lifetime.
+
+The first close capture exposed blocky bench risers and paint that lost detail
+in shade. Individual ground plates, slimmer slope supports and slightly lighter
+green paint corrected those issues. Fresh front/side bench and lamp views were
+inspected in `.context/furniture-finish-final-2026-09-06/` and
+`.context/furniture-lamp-final-2026-09-06/`. Footprint checks now share the
+geometry's dimensions. The 94 park unit tests and product typecheck pass.
+
+All four production GPU scenarios pass with motion enabled at DPR 2 on this
+Mac's M4 Max Metal renderer. The six park views sampled 8.3–9.3 ms average
+frames and 9.9–11.1 ms p95. Six rebuilds settle at 152 geometries, 81 textures
+and 92 programs, one geometry/texture and two programs above the prior pass.
+Evidence is in `.context/furniture-finish-gpu-results/`. These brief samples
+are local measurements. The live local-AI room still reports the same boot and
+no degraded providers; this graphics pass does not retest inference.

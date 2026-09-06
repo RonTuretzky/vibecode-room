@@ -64,8 +64,10 @@ prove that the visual objective has been achieved.
    patches and furniture in crossings: one route now owns each crossing's core,
    furniture checks nearby walk footprints, and the bench rotation sign is
    corrected. Terrain-fitted footings replace the old 5/12 cm bench/lamp lifts.
-   Continue checking texture repetition, stair transitions and furniture finish;
-   the simple slats and metalwork still warrant a modeling/material pass.
+   A subsequent reference-based pass adds green beveled slats, curved bench
+   castings, small fasteners and Type B-style framed lanterns. Close inspection
+   corrected blocky slope supports and overly dark paint. Continue checking
+   texture repetition and stair transitions.
 4. **Vegetation and atmosphere.** Grove foliage now has gentle, phased crown
    motion with matching shadow deformation and a live reduced-motion stop. The
    hardware test compiled both shaders and recorded all presets with motion
@@ -97,6 +99,9 @@ prove that the visual objective has been achieved.
    and phone captures were inspected. Six real branch raycasts, mouse picks
    and the dwell activation path still open the expected branch. Larger adopted
    branch menus and the remaining ground-level compositions need further review.
+   Lamp inspection also exposed a camera limitation: manual orbit changes eye
+   height while retaining the preset's look-at height. Independent upward/downward
+   viewing at ground level needs attention; currently changing presets affects it.
 6. **Cost and lifecycle.** Re-measure a large project forest, transitions and
    repeated rebuilds. Audit cached world/atlas lifetimes, reflection/shadow
    cadence, resolution adaptation and long-frame behavior. Six environment
@@ -112,7 +117,9 @@ prove that the visual objective has been achieved.
    samples are not a cross-device performance guarantee. The denser turf and
    fitted furniture pass also passed six rebuilds with motion enabled: after
    warmup, counts stayed at 151 geometries, 80 textures and 90 programs. All 17
-   current park/navigation/focus browser scenarios passed.
+   current park/navigation/focus browser scenarios passed. The newer furniture
+   pass passes all four GPU scenarios, with stable warm counts of 152 geometries,
+   81 textures and 92 programs. Its six views sampled 8.3–9.3 ms average frames.
 
 ## Completion remains unproven
 

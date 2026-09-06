@@ -1,5 +1,6 @@
 import { isNavigationKey, navigationAxes, sceneNavigation } from "./spatial-navigation";
 import { createParkFurniture } from "../park3d/park-furniture";
+import { BENCH_FOOTPRINT } from '../park3d/park-furniture-geometry';
 import { PARK_VIEWS, fitParkProjects } from "../park3d/park-cameras";
 import { parkProjectSlots, type ParkProjectPoint } from "../park3d/park-project-layout";
 import { createParkAtmosphere } from "../park3d/park-atmosphere";
@@ -1251,7 +1252,8 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
                     dummy.rotation.y = Math.atan2(uz, -ux) + (side > 0 ? 0 : Math.PI);
                     dummy.updateMatrix();
                     const corner = new THREE.Vector3();
-                    const footprintClear = [-.95, 0, .95].every(x => [-.35, .25].every(z => {
+                    const footprintClear = [-BENCH_FOOTPRINT.halfWidth, 0, BENCH_FOOTPRINT.halfWidth]
+                      .every(x => [BENCH_FOOTPRINT.back, BENCH_FOOTPRINT.front].every(z => {
                       corner.set(x, 0, z).applyMatrix4(dummy.matrix);
                       const p = roomToPark(corner.x, corner.z);
                       return canPlant(p.x, p.z, .08) && world.waterAt(p.x, p.z) < .4;
