@@ -33,7 +33,8 @@ prove that the visual objective has been achieved.
    grid-direction bias and fade into the surrounding DEM; the new render was
    inspected. The camera now keeps terrain/deck/water-relative eye clearance;
    a hardware route reached the low shore and climbed back over the hillside
-   without dropping below it. The close captures expose sparse turf detail.
+   without dropping below it. Close captures exposed sparse turf detail, now
+   supplemented by short, solid blades and finer ground texture scale.
    The user's existing tab still needs
    a direct visit once the Mac is unlocked.
 2. **Architecture.** Nearby buildings now have recessed roofs, parapets,
@@ -72,10 +73,14 @@ prove that the visual objective has been achieved.
    support; the change was checked in the Zoo render. Species forms remain approximate.
 5. **Composition and UI.** Inspect camera routes and readable project content
    in normal and Zen modes, portrait and landscape. Preserve shared spatial
-   controls and planting/branch interaction.
+   controls and planting/branch interaction. The fresh 32/64-project fixture
+   exposed an automatic single-row layout that forces Fit hundreds of metres
+   away; nearby plantable-ground placement is the next correction.
 6. **Cost and lifecycle.** Re-measure a large project forest, transitions and
    repeated rebuilds. Audit cached world/atlas lifetimes, reflection/shadow
-   cadence, resolution adaptation and long-frame behavior. Brief local frame
+   cadence, resolution adaptation and long-frame behavior. Six environment
+   rebuild cycles now show stable GPU resource counts after warmup, including
+   recreating the close turf. Brief local frame
    samples are not a cross-device performance guarantee.
 
 ## Completion remains unproven

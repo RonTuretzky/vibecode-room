@@ -450,7 +450,7 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
     geometry.setAttribute("parkGroundLayers", new THREE.BufferAttribute(layers, 2));
     (geometry.getAttribute("color") as THREE.BufferAttribute).needsUpdate = true;
     const texLoader = new THREE.TextureLoader();
-    const repeat = { x: (2 * halfEast) / 10, y: (2 * halfNorth) / 10 };
+    const repeat = { x: (2 * halfEast) / 3, y: (2 * halfNorth) / 3 };
     const groundDiff = parkGroundDetailTexture().clone();
     groundDiff.wrapS = THREE.RepeatWrapping;
     groundDiff.wrapT = THREE.RepeatWrapping;
@@ -465,7 +465,7 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
     const groundMaterial = new THREE.MeshStandardMaterial({
       map: groundDiff,
       normalMap: groundNor,
-      normalScale: new THREE.Vector2(.18, .18),
+      normalScale: new THREE.Vector2(.12, .12),
       vertexColors: true,
       roughness: 1,
       metalness: 0,

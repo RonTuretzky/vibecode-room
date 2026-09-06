@@ -353,3 +353,24 @@ camera, crossed into the Pond basin and returned uphill, checking at least
 shoreline and hillside screenshots were inspected. The first route assertion
 used an arbitrary absolute return height; the final test checks actual ground
 elevation gain instead, and passed on a fresh run.
+
+`park-turf.ts` supplies close-view grass with five bent blades per tuft,
+4.5–11 cm tall on open lawn and slightly taller under canopy. Fifteen solid
+triangles avoid transparent billboard overdraw. Coordinate-seeded eight-metre
+tiles recycle at most 49 instance buffers around the eye; terrain/mask sampling
+is spread over frames. Blades fade from 16 to 26 m, and the whole layer fades
+out above 18 m eye clearance. It receives shadows, skips reflection/shadow
+casting, and freezes its wind phase for reduced motion. Paths, structures,
+water and steep rock are excluded. Turf detail/normal textures now repeat at
+three metres with weaker relief, after the close render exposed coarse blobs.
+
+The turf pass passed 85 park tests, product and graphics-fixture TypeScript
+checks, the six-view 2× Metal render, the shoreline route and six repeated
+Orbit/Meadow return cycles. After warmup, the same lawn view retained exactly
+151 GPU geometries, 79 textures and 78 shader programs across four further
+cycles. These are resource counts for that view, not byte-level memory figures.
+Close hillside captures were inspected and the initially sparse blades were
+shortened/densified. A separate 32/64-project hardware fixture ran with motion
+enabled and no page errors or API writes. It exposed overly wide automatic
+project placement: Fit reached radii of 435/872 m. That layout needs correction;
+successful rendering alone does not make the large forest usable.

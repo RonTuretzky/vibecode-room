@@ -96,6 +96,7 @@ import {
 } from "../park3d/park-frame";
 import { insideParkOutline } from "../park3d/park-outline";
 import { createParkShoreline, shorePlantPlacements } from "../park3d/park-shoreline";
+import { createParkTurf } from "../park3d/park-turf";
 import { refinePondMaterial } from "../park3d/park-pond-material";
 import { createParkPlantingMask, PARK_SITES, inSite } from "../park3d/park-sites";
 import { GAPSTOW, OUTCROPS } from "../park3d/park-landmarks";
@@ -951,6 +952,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
       };
       let parkGrove: ReturnType<typeof createParkGrove> | null = null;
       let parkShore: ReturnType<typeof createParkShoreline> | null = null;
+      let parkTurf: ReturnType<typeof createParkTurf> | null = null;
       let parkUnderstorey: ReturnType<typeof createParkUnderstorey> | null = null;
       let parkFurniture: ReturnType<typeof createParkFurniture> | null = null;
       let parkWorld: ParkWorld | null = null;
@@ -1049,6 +1051,12 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
             return { px: p.x, pz: p.z, rx: r.x, rz: r.z, radius: Math.hypot(r.x, r.z) };
           };
           const canPlant = createParkPlantingMask(world.pathLines);
+          parkTurf = createParkTurf({ groundAt: world.groundAt, waterAt: world.waterAt, canopyAt: world.canopyAt, lawnAt: world.lawnAt,
+            canPlant: (x, z, clearance) => insideParkOutline(x, z, -.5) && canPlant(x, z, clearance) }, {
+            toRoom: (x, y, z) => new THREE.Vector3(POND_STAGE.x - x, y - yAnchor - .15, POND_STAGE.z - z),
+            toPark: roomToPark,
+          });
+          group.add(parkTurf.group);
           const understorey = understoreyPlacements({ groundAt: world.groundAt, canopyAt: world.canopyAt, lawnAt: world.lawnAt,
             waterAt: world.waterAt, canPlant }, POND_STAGE);
           parkUnderstorey = createParkUnderstorey(understorey, (x, y, z) => new THREE.Vector3(POND_STAGE.x - x, y - yAnchor - .15, POND_STAGE.z - z));
@@ -1475,6 +1483,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
         update: (t, dt) => {
           atmosphere?.update(t);
           parkShore?.update(camera);
+          parkTurf?.update(camera, cameraGroundY(camera.position.x, camera.position.z), t, !reducedMotion);
           parkUnderstorey?.update(camera);
           parkGrove?.update(t, !reducedMotion);
           for (const { mesh, distance } of parkFineDetail) {
@@ -1631,6 +1640,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
           parkDisposed = true;
           parkGrove?.dispose();
           parkShore?.dispose();
+          parkTurf?.dispose();
           parkUnderstorey?.dispose();
           parkFurniture?.dispose();
           atmosphere?.dispose();
@@ -5677,6 +5687,10 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
         container.dataset.navigationActive = String(keysDown.size > 0 && !cornerLocked);
         container.dataset.drawCalls = String(renderer.info.render.calls);
         container.dataset.triangles = String(renderer.info.render.triangles);
+        container.dataset.gpuGeometries = String(renderer.info.memory.geometries);
+        container.dataset.gpuTextures = String(renderer.info.memory.textures);
+        container.dataset.gpuPrograms = String(renderer.info.programs?.length ?? 0);
+        container.dataset.turfInstances = String(scene.getObjectByName('park-close-turf')?.userData.instances ?? 0);
         container.dataset.averageDrawCalls = (frameDrawTotal / renderedSamples).toFixed(1);
         container.dataset.averageTriangles = String(Math.round(frameTriangleTotal / renderedSamples));
         frameDrawTotal = 0; frameTriangleTotal = 0; renderedSamples = 0;

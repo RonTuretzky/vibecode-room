@@ -41,7 +41,8 @@ test('the full park renders every preset, material and environment return withou
     // the frame loop and inflate a short average at high pixel densities.
     stats[file!] = await scene.evaluate(el => {
       const d = (el as HTMLElement).dataset;
-      return { triangles: d.averageTriangles, draws: d.averageDrawCalls, frameMs: d.frameMs, p95Ms: d.frameP95Ms, ratio: d.pixelRatio };
+      return { triangles: d.averageTriangles, draws: d.averageDrawCalls, frameMs: d.frameMs, p95Ms: d.frameP95Ms, ratio: d.pixelRatio,
+        geometries: d.gpuGeometries, textures: d.gpuTextures, programs: d.gpuPrograms, turfInstances: d.turfInstances };
     });
     await page.screenshot({ path: info.outputPath(`${file}.png`) });
     await page.keyboard.press('Escape');
@@ -104,6 +105,7 @@ test('park exploration reaches the low shore and stays above the terrain on the 
     await expect.poll(async () => (await pose()).z, { intervals: [100], timeout: 10000 }).toBeGreaterThan(start.z - 1);
     await page.keyboard.up('s'); await page.keyboard.up('ArrowDown'); await cameraSettled(page);
     await pose();
+    await expect.poll(async () => Number(await scene.getAttribute('data-turf-instances'))).toBeGreaterThan(100);
     await page.getByTestId('scene-zen-button').click(); await page.screenshot({ path: info.outputPath('pond-hillside-eye.png') });
   } finally {
     for (const key of ['w', 's', 'ArrowDown']) await page.keyboard.up(key);
@@ -114,5 +116,47 @@ test('park exploration reaches the low shore and stays above the terrain on the 
   // here is climbing back out of the basin while retaining eye clearance.
   expect(samples.at(-1)!.ground - Math.min(...samples.map(p => p.ground))).toBeGreaterThan(3);
   writeFileSync(info.outputPath('shore-route.json'), JSON.stringify(samples, null, 2));
+  expect(errors).toEqual([]);
+});
+
+test('rebuilding park environments releases transient GPU resources after warmup', async ({ page }, info) => {
+  test.setTimeout(180000);
+  const errors: string[] = [];
+  page.on('pageerror', e => errors.push(e.message));
+  page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
+  await page.goto('/?live=0&env=park');
+  const scene = page.getByTestId('room-scene');
+  await expect(scene).toHaveAttribute('data-park-ready', 'true', { timeout: 90000 });
+  const canvas = await scene.locator('canvas').elementHandle();
+  const samples: { geometries: number; textures: number; programs: number }[] = [];
+  for (let cycle = 0; cycle < 6; cycle++) {
+    await page.getByTestId('scene-mode-button').click();
+    await expect(scene).toHaveAttribute('data-park-ready', 'false');
+    await page.getByTestId('scene-mode-button').click();
+    await expect(scene).toHaveAttribute('data-park-ready', 'true');
+    await page.getByTestId('control-dock-button').click();
+    await page.getByTestId('central-park-button').click();
+    await expect(scene).toHaveAttribute('data-park-ready', 'false');
+    await page.getByTestId('central-park-button').click();
+    await expect(scene).toHaveAttribute('data-park-ready', 'true');
+    await page.getByTestId('control-dock-button').click();
+    // Return to the same close view, forcing the streamed turf to allocate
+    // again after each disposal, so an aerial-only check cannot hide a leak.
+    for (let i = 0; i < 6 && await scene.getAttribute('data-park-view') !== 'Project lawn'; i++) await page.getByTestId('park-view-button').click();
+    await cameraSettled(page);
+    await expect.poll(async () => Number(await scene.getAttribute('data-turf-instances'))).toBeGreaterThan(100);
+    samples.push(await scene.evaluate(el => { const d = (el as HTMLElement).dataset;
+      return { geometries: Number(d.gpuGeometries), textures: Number(d.gpuTextures), programs: Number(d.gpuPrograms) }; }));
+  }
+  const output = info.outputPath('rebuild-resources.json');
+  writeFileSync(output, JSON.stringify(samples, null, 2));
+  await info.attach('rebuild-resources', { path: output, contentType: 'application/json' });
+  // The first two cycles upload cached models/material variants. Thereafter
+  // resource counts should remain bounded, not grow once per environment.
+  const warm = samples.slice(2);
+  for (const key of ['geometries', 'textures', 'programs'] as const) {
+    expect(Math.max(...warm.map(s => s[key])) - Math.min(...warm.map(s => s[key])), key).toBeLessThanOrEqual(2);
+  }
+  expect(await canvas!.evaluate(el => el.isConnected)).toBe(true);
   expect(errors).toEqual([]);
 });
