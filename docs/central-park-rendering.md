@@ -556,3 +556,26 @@ and 92 programs, one geometry/texture and two programs above the prior pass.
 Evidence is in `.context/furniture-finish-gpu-results/`. These brief samples
 are local measurements. The live local-AI room still reports the same boot and
 no degraded providers; this graphics pass does not retest inference.
+
+### Fair-weather sky detail — 2026-09-06
+
+`park-clouds.ts` replaces the stock sky's barely visible cloud blend with
+irregular cloud bodies, cool undersides and warm edge lighting tied to the sun
+direction. It modifies the existing physical sky draw before the environment
+map is baked, so the visible sky, Pond mirror and environment lighting share
+the pattern. A world-anchored deck, periodic density field, mip filtering and
+horizon fade avoid a panorama seam and grazing-angle noise. The clouds are
+static and do not introduce decorative motion or cloud shadows.
+
+The single cached 512² R8 density texture costs about 0.33 MiB with mipmaps;
+three filtered samples replace the stock procedural noise. It adds no geometry,
+material batch or render target. Ground-level captures in four directions were
+inspected in `.context/cloud-final-2026-09-06/`. The five close samples retain
+8.3 ms average frames at DPR 2 on this Mac and report no browser errors.
+
+Product typechecking and all four production GPU scenarios pass. The six park
+views sampled 8.3–10.2 ms average frames and 9.2–13.0 ms p95 with motion enabled;
+after warmup, six rebuilds hold at 153 geometries, 82 textures and 92 programs.
+Pond reflections, phone layouts and environment return were checked in
+`.context/cloud-final-gpu-results/`. The preceding furniture commit `6045aae`
+has also passed all CI jobs, including live flows.

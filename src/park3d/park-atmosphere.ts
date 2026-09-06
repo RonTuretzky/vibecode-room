@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { Sky } from "three/addons/objects/Sky.js";
+import { addParkClouds } from './park-clouds';
 
 /** A single sun/shadow pass, with a physical sky and warm, distance-based haze. */
 export function createParkAtmosphere(renderer: THREE.WebGLRenderer, scene: THREE.Scene, group: THREE.Group, camera: THREE.Camera) {
@@ -24,6 +25,7 @@ export function createParkAtmosphere(renderer: THREE.WebGLRenderer, scene: THREE
   uniforms.mieDirectionalG.value = .83;
   const direction = new THREE.Vector3(-.62, .48, -.62).normalize();
   uniforms.sunPosition.value.copy(direction);
+  addParkClouds(sky.material);
   group.add(sky);
 
   // Generate environment lighting from the same sky, then release the baker.

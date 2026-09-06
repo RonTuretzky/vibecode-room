@@ -75,8 +75,14 @@ prove that the visual objective has been achieved.
    ground, with tapered branches, human-scale leaf sprays, a 900-plant cap and
    camera-distance culling. It avoids paths, water, steep grades and the stage;
    full-renderer Pond and overview captures were inspected. Crown density,
-   woodland floor materials, grass scale, sky detail and
-   water shading still warrant further work. The close turf now has four times
+   woodland floor materials, grass scale and water shading still warrant further
+   work. A fair-weather cloud layer now adds shaded bodies and sunlit edges to
+   the existing sky, environment lighting and Pond reflection. Four ground-level
+   directions were inspected, and all four GPU scenarios pass. These close
+   views also exposed triangular surfaces in the near photoscan canopy. The
+   asset audit found JPEG base-color textures on seven alpha foliage materials;
+   investigate restoring the source opacity masks before judging crown density.
+   The close turf now has four times
    the cell density in a smaller 25-tile neighbourhood, fading by 16 m; wrapped
    diffuse light gives thin blades a softer response without another pass.
    Small-basin ripples now use an
