@@ -53,7 +53,7 @@ no bake.
 `src/park3d/data/south-park-sites.json` is a bundled OpenStreetMap extract
 (© OpenStreetMap contributors, [ODbL](https://www.openstreetmap.org/copyright)).
 It retains source way IDs, versions, modification times and the extract's
-snapshot timestamp. `scripts/fetch-park-sites.py` refreshes these twelve sites.
+snapshot timestamp. `scripts/fetch-park-sites.py` refreshes these fourteen sites.
 The renderer uses their geometry for landmark placement, Gapstow's outline,
 Wollman's recreation surface, and Hallett's woodland boundary. See
 [`docs/central-park-accuracy.md`](../../../docs/central-park-accuracy.md) for
@@ -65,3 +65,9 @@ model's material and architectural references are the
 [NYC LPC designation report](https://s-media.nyc.gov/agencies/lpc/lp/0312.pdf)
 and [Central Park Conservancy](https://www.centralparknyc.org/locations/arsenal).
 No reference photographs are included in the application.
+
+The Wollman clubhouse/service footprints are OSM ways 265347591 and 265347590,
+retrieved from the OSM API on 2026-09-06. Their tags provide building heights.
+The [operator's rink map](https://assets.wollmanrinknyc.com/wp-content/uploads/2025/01/07210056/WRNYC-Rink-Map-8.5x11-v01.pdf-1.pdf)
+guides the overlook, clubhouse frontage, canopy and patio relationship. The
+map remains a reference document; it is not bundled as a game texture.

@@ -40,6 +40,31 @@ export function siteDistance(x: number, z: number, ring: readonly SitePoint[]): 
   return inSite(x, z, ring) ? -distance : distance;
 }
 
+/** Inferred patio panels between the clubhouse frontage and mapped rink.
+ * Each frontage edge projects to the nearest rink edge; distant/back edges
+ * are excluded. This fills the physical gap without replacing either outline. */
+export const WOLLMAN_PATIO: SitePoint[][] = (() => {
+  const club = PARK_SITES.wollmanClubhouse, rink = PARK_SITES.wollman;
+  const tx = rink.x - club.x, tz = rink.z - club.z;
+  const area = club.ring.reduce((s, a, i) => { const b = club.ring[(i + 1) % club.ring.length]!; return s + a.x * b.z - b.x * a.z; }, 0);
+  const closest = (p: SitePoint) => {
+    let best = { x: p.x, z: p.z }, distance = Infinity;
+    for (let i = 0; i < rink.ring.length; i++) {
+      const a = rink.ring[i]!, b = rink.ring[(i + 1) % rink.ring.length]!, dx = b.x - a.x, dz = b.z - a.z;
+      const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.z - a.z) * dz) / (dx * dx + dz * dz || 1)));
+      const x = a.x + t * dx, z = a.z + t * dz, d = Math.hypot(x - p.x, z - p.z);
+      if (d < distance) { distance = d; best = { x, z }; }
+    }
+    return { point: best, distance };
+  };
+  return club.ring.flatMap((a, i) => {
+    const b = club.ring[(i + 1) % club.ring.length]!, dx = b.x - a.x, dz = b.z - a.z;
+    const facing = (area < 0 ? -dz * tx + dx * tz : dz * tx - dx * tz) / (Math.hypot(dx, dz) * Math.hypot(tx, tz));
+    const ca = closest(a), cb = closest(b);
+    return facing > .15 && Math.max(ca.distance, cb.distance) < 18 ? [[a, b, cb.point, ca.point]] : [];
+  });
+})();
+
 // Use the long edge of the actual bridge outline, not a Manhattan-grid guess.
 export const GAPSTOW_LAYOUT = (() => {
   const site = PARK_SITES.gapstow;
@@ -70,14 +95,16 @@ export function createParkPlantingMask(lines: readonly { width: number; pts: num
       }
     }
   }
-  const sites = ['wollman', 'dairy', 'chess', 'carousel', 'copCot', 'gapstow', 'arsenal'] as const;
+  const sites = ['wollman', 'wollmanClubhouse', 'wollmanService', 'dairy', 'chess', 'carousel', 'copCot', 'gapstow', 'arsenal'] as const;
   const masks = sites.map(key => {
     const site = PARK_SITES[key];
-    return { site, radius: Math.max(...site.ring.map(p => Math.hypot(p.x - site.x, p.z - site.z))) + 6 };
+    const extra = key === 'wollmanClubhouse' ? WOLLMAN_PATIO.flat() : [];
+    return { site, radius: Math.max(...[...site.ring, ...extra].map(p => Math.hypot(p.x - site.x, p.z - site.z))) + 6 };
   });
   return (x, z, clearance = 1) => {
     for (const { site, radius } of masks) {
-      if (Math.hypot(x - site.x, z - site.z) < radius && siteDistance(x, z, site.ring) < clearance + (site === PARK_SITES.wollman ? 3 : 0)) return false;
+      if (site === PARK_SITES.wollmanClubhouse && Math.hypot(x - site.x, z - site.z) < radius && WOLLMAN_PATIO.some(ring => siteDistance(x, z, ring) < clearance)) return false;
+      if (Math.hypot(x - site.x, z - site.z) < radius && siteDistance(x, z, site.ring) < clearance + (site === PARK_SITES.wollman || site === PARK_SITES.wollmanClubhouse ? 3 : 0)) return false;
     }
     return !(buckets.get(`${Math.floor(x / cell)},${Math.floor(z / cell)}`) ?? []).some(s => distanceToSegment(x, z, s.a, s.b) < s.half + Math.min(clearance, 3));
   };

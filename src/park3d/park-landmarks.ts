@@ -25,6 +25,7 @@ import { GAPSTOW_LAYOUT, PARK_SITES } from "./park-sites";
 import { gapstowDeckAt } from "./park-gapstow-ground";
 import { buildWollmanRink } from "./park-wollman";
 import { buildArsenal } from "./park-arsenal";
+import { buildWollmanFacilities } from "./park-wollman-facilities";
 
 export interface LandmarkSpec {
   name: string;
@@ -596,7 +597,10 @@ export function buildLandmarks(groundAt: (x: number, z: number) => number, optio
     model.rotation.y = Math.PI - spec.bearing * DEG;
     group.add(model);
   }
-  if (options.rinkLevel !== undefined) group.add(buildWollmanRink(options.rinkLevel, options.paths));
+  if (options.rinkLevel !== undefined) {
+    group.add(buildWollmanRink(options.rinkLevel, options.paths));
+    group.add(buildWollmanFacilities(options.rinkLevel, groundAt, options.paths));
+  }
   group.add(buildArsenal(options.arsenalLevel ?? groundAt(PARK_SITES.arsenal.x, PARK_SITES.arsenal.z)));
   return group;
 }

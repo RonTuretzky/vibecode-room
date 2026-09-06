@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { PARK_SITES, siteDistance, distanceToSegment } from './park-sites';
+import { parkPathTexture } from './park-materials';
 
 /** A level recreation surface on the mapped rink footprint. The 8 m DEM
  * cannot resolve its retaining edge. Grade a narrow apron, not the hillside. */
@@ -27,7 +28,10 @@ export function buildWollmanRink(level: number, paths: readonly { width: number;
   // changing seasonal court/event fit-out are deliberately not fabricated.
   const surface = new THREE.ShapeGeometry(new THREE.Shape(ring.map(p => new THREE.Vector2(p.x, -p.y))));
   surface.rotateX(-Math.PI / 2); surface.translate(0, .10, 0);
-  const mesh = new THREE.Mesh(surface, new THREE.MeshStandardMaterial({ color: 0x697c80, roughness: .88 }));
+  const surfacePositions = surface.getAttribute('position'), surfaceUv = surface.getAttribute('uv');
+  for (let i = 0; i < surfacePositions.count; i++) surfaceUv.setXY(i, surfacePositions.getX(i) / 3, surfacePositions.getZ(i) / 3);
+  const surfaceMap = typeof document === 'undefined' ? null : parkPathTexture();
+  const mesh = new THREE.Mesh(surface, new THREE.MeshStandardMaterial({ color: 0x99a19a, map: surfaceMap, bumpMap: surfaceMap, bumpScale: .018, roughness: .96 }));
   mesh.name = 'wollman-mapped-surface'; mesh.receiveShadow = true; group.add(mesh);
   const stone = new THREE.MeshStandardMaterial({ color: 0xb5afa0, roughness: .96 });
   const apronRing = ring.map(p => p.clone().multiplyScalar(1 + 2.8 / p.length()));

@@ -265,3 +265,24 @@ are diagnostics, not controlled performance comparisons or device guarantees.
 After tapering the shrub tips, all 72 park tests and the product typecheck
 passed. A fresh 2× hardware test revisited all five camera stops, live motion
 preferences, environment returns and portrait views without GPU/page errors.
+
+`park-wollman-facilities.ts` renders the clubhouse/service footprint in four
+material batches. Its roof sampler carries the mapped overlook footway while
+the terrain grade keeps the frontage clear and joins the rear hill to
+the terrace. Frontage normals, rather than a center-based half-plane, classify
+the curved building's approaches. Patio polygons project the mapped frontage
+to the nearest rink edge and share a planting exclusion mask. The rink's
+rough neutral surface now has fine aggregate detail. Source dimensions and
+modeled details are distinguished in the accuracy document.
+Actual mesh sampling exposed 1.6 m and 4.1 m approach drops that the analytic
+grade checks missed. A buried rear ledge wider than the terrain-cell diagonal
+supports the deck-edge vertices. The regression samples triangles at four grid
+phases on both crossings of the real mapped roof footway.
+
+Overlapping lower walk corridors also pulled down the terrace approaches;
+the final terrain composition now preserves the facility's engineered grade
+without applying its feather twice. The roof edge has a 3.25 m supporting
+apron on either side, wider than the cell diagonal. An actual DEM/network/grid
+check measures 0.08 m at both entries (the modeled deck thickness). All 75 park
+tests, the product typecheck and a fresh 2× Metal browser pass succeeded after
+this correction; the Wollman capture was inspected again.

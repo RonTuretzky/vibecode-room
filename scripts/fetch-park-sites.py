@@ -17,7 +17,9 @@ SITES = {
     'copCot': 385442739, 'inscope': 427087524,
     'sherman': 988716842, 'pulitzer': 988718514,
     'umpire': 385443481, 'arsenal': 265347583,
+    'wollmanClubhouse': 265347591, 'wollmanService': 265347590,
 }
+SITE_NAMES = {'wollmanClubhouse': 'Wollman Clubhouse', 'wollmanService': 'Wollman service building'}
 
 def main():
     query = '[out:json][timeout:45];way(id:' + ','.join(map(str, SITES.values())) + ');out meta geom;'
@@ -36,7 +38,7 @@ def main():
         if len(geometry) < 2:
             raise ValueError(f'Missing geometry for {key}')
         features[key] = {
-            'name': way['tags']['name'], 'osmWay': way_id,
+            'name': way['tags'].get('name', SITE_NAMES.get(key, key)), 'osmWay': way_id,
             'version': way['version'], 'modified': way['timestamp'],
             'coordinates': geometry,
         }

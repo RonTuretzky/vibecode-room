@@ -6,7 +6,7 @@ not a surveyed reconstruction or a live depiction of park operations.
 
 ## Reference data
 
-`src/park3d/data/south-park-sites.json` stores twelve OpenStreetMap ways,
+`src/park3d/data/south-park-sites.json` stores fourteen OpenStreetMap ways,
 including their IDs, revisions, coordinate order and snapshot timestamp.
 Refresh it with `python3 scripts/fetch-park-sites.py`. The small dataset is
 bundled with the app: visiting the park requires no map API or network request.
@@ -91,7 +91,7 @@ does not claim surveyed bathymetry.
   surveyed inventory of native species, trunk positions and crown sizes.
 - The 8 m bare-earth DEM, two-metre water mask and simplified paths cannot
   reproduce every rock ledge, shore wall, step, drain or underpass.
-- The Zoo, rink support buildings and several other park structures
+- The Zoo and several other park structures
   still need individually placed models; generic interior extrusions remain
   suppressed. Facade and rooftop detail on the surrounding city is approximate.
 - The stage flattening and project trees are deliberate workspace additions.
@@ -114,6 +114,33 @@ entrance details are not reproduced. The footprint is graded with a narrow
 feathered edge; a short inferred apron joins the stairs to a nearby mapped
 walk. The model casts shadows and the planting mask excludes its footprint.
 The Arsenal camera stop makes this part of the eastern edge accessible.
+
+## Wollman clubhouse and overlook
+
+The curved clubhouse and nearby service building use OSM ways
+[265347591](https://www.openstreetmap.org/way/265347591) and
+[265347590](https://www.openstreetmap.org/way/265347590), including their tagged
+5 m and 3.3 m building heights. The extract retains their revision metadata and
+the OSM API retrieval source. The role assigned to the smaller unnamed
+building is interpretive.
+
+The official [Wollman Rink map](https://assets.wollmanrinknyc.com/wp-content/uploads/2025/01/07210056/WRNYC-Rink-Map-8.5x11-v01.pdf-1.pdf)
+locates the clubhouse beneath the overlook and shows the frontage canopy and
+patio. The model adds a paved roof terrace, a slatted canopy, glazed frontage,
+railings and patio panels between the two mapped outlines. Material colors,
+bay spacing, railing height, patio subdivisions and vertical grading are
+interpretive. The building height tags control the roof mass; the modeled
+railing extends above it. The rink remains an unprogrammed recreation surface;
+the changing seasonal courts, ice, event furnishings and restaurant fit-out
+are not asserted to depict current operations.
+
+Mapped footway 162154228 crosses the roof and connects to 318474847. Paths use
+a separate roof-height sampler, with a narrow edge tolerance and terrain
+approaches classified by the nearest facade. A buried rear ledge prevents the
+two-metre terrain triangles from pulling incoming walks down toward the
+interior floor. The same grade is protected from overlapping lower walk
+corridors, with an outer supporting apron; the frontage remains clear of earth. Patio and building masks
+keep scattered flora out of the new structures and circulation areas.
 
 ## City edge and perimeter restoration
 

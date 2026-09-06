@@ -22,6 +22,7 @@ import { PARK_SITES, hallettWoodlandAt } from "./park-sites";
 import { createWollmanGrade } from "./park-wollman";
 import { buildLandmarks } from "./park-landmarks";
 import { arsenalApproach, createArsenalGrade } from "./park-arsenal";
+import { createWollmanFacilitiesGrade } from "./park-wollman-facilities";
 import { loadSkylineModels, skylineSites } from "./park-models";
 import { buildParkStreets } from "./park-streets";
 import { refreshSouthWalks, type ParkWalk, type ParkStreetData } from "./park-walks";
@@ -296,6 +297,7 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
   const sampleLawn = (x: number, z: number) => photoLawn(x, z) * (1 - woodland(x, z));
 
   const rinkGrade = opts.landmarks !== false ? createWollmanGrade(sampleDem) : null;
+  const facilitiesGrade = rinkGrade ? createWollmanFacilitiesGrade(rinkGrade.level) : null;
   const arsenalGrade = opts.landmarks !== false ? createArsenalGrade(sampleDem) : null;
   const arsenalWalk = opts.landmarks !== false ? arsenalApproach(pathLines) : null;
   if (arsenalWalk) pathLines.push(arsenalWalk);
@@ -313,7 +315,8 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
     const w = terrainWeight(x, z);
     const base = w === 1 ? sampleDem(x, z) : anchorGround + (sampleDem(x, z) - anchorGround) * w;
     const rinkGround = rinkGrade?.heightAt(x, z, base) ?? base;
-    return arsenalGrade?.heightAt(x, z, rinkGround) ?? rinkGround;
+    const buildingGround = arsenalGrade?.heightAt(x, z, rinkGround) ?? rinkGround;
+    return facilitiesGrade?.heightAt(x, z, buildingGround) ?? buildingGround;
   };
   const view = opts.viewBounds;
   const west = view ? Math.max(-halfEast, view.x - view.radius) : -halfEast;
@@ -325,11 +328,12 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
   const builtWater = waterImage === null ? null : buildWater(sampleWater, dryGroundAt, width / 2, depth / 2, 2, opts.heroWaterAt, { x: cx, z: cz });
   const gapstowLevel = builtWater?.surfaceAt(PARK_SITES.gapstow.x, PARK_SITES.gapstow.z);
   const crossing = opts.landmarks !== false && gapstowLevel != null ? createGapstowCrossing(gapstowLevel) : null;
+  const deckAt = (x: number, z: number) => crossing?.deckAt(x, z) ?? facilitiesGrade?.deckAt(x, z) ?? null;
   const displace = opts.displace !== false;
   const carvedGroundAt = (x: number, z: number) => Math.min(dryGroundAt(x, z), builtWater?.bankHeightAt(x, z) ?? Infinity);
   const walkGrade = opts.detailGround && !displace ? createWalkGrade(pathLines, {
     groundAt: carvedGroundAt,
-    referenceAt: (x, z) => crossing?.grade(x, z, carvedGroundAt(x, z)) ?? carvedGroundAt(x, z),
+    referenceAt: (x, z) => facilitiesGrade?.deckAt(x, z) ?? crossing?.grade(x, z, carvedGroundAt(x, z)) ?? carvedGroundAt(x, z),
     waterAt: sampleWater,
     waterLevelAt: (x, z) => {
       if (!builtWater) return null;
@@ -339,10 +343,11 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
       }
       return null;
     },
-    bridgeAt: crossing?.deckAt,
+    bridgeAt: deckAt,
   }, { west, east, north, south }) : null;
   const bedGroundAt = (x: number, z: number) => {
-    const bed = walkGrade?.heightAt(x, z) ?? carvedGroundAt(x, z);
+    const ground = carvedGroundAt(x, z), walk = walkGrade?.heightAt(x, z) ?? ground;
+    const bed = facilitiesGrade?.constrainWalkAt(x, z, ground, walk) ?? walk;
     return crossing?.grade(x, z, bed) ?? bed;
   };
   const heightAt = (x: number, z: number): number => {
@@ -497,8 +502,8 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
   if (pathLines.length) {
     await nextFrame();
     paths = buildPaths(pathLines,
-      (x, z) => crossing?.deckAt(x, z) ?? groundAt(x, z),
-      (x, z) => crossing?.deckAt(x, z) != null ? 0 : sampleWater(x, z), { west, east, north, south, focus: opts.flatten ?? opts.viewBounds });
+      (x, z) => deckAt(x, z) ?? groundAt(x, z),
+      (x, z) => deckAt(x, z) != null ? 0 : sampleWater(x, z), { west, east, north, south, focus: opts.flatten ?? opts.viewBounds });
     if (paths !== null) {
       group.add(paths);
     }

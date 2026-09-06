@@ -39,8 +39,13 @@ prove that the visual objective has been achieved.
    now has its mapped footprint and height, eight octagonal towers, brick and
    granite materials, framed windows, crenellations and raised entrance. Its
    first GPU capture exposed a missing entrance/walk connection, now joined by
-   a short inferred apron. The Zoo, rink support structures and Fifth Avenue hotel crowns
-   remain incomplete. General architectural details are still illustrative.
+   a short inferred apron. Wollman now has its mapped curved clubhouse, roof
+   terrace, slatted canopy, patio and service building. Full-renderer inspection
+   caught a grassy patio gap and roof-edge approach issue; both were corrected.
+   The Zoo and Fifth Avenue hotel crowns remain incomplete. The official Zoo
+   map and local footprints now identify its separate pavilions, open galleries
+   and central pool for the next modeling pass. General architectural details
+   and the rink's seasonal fit-out remain illustrative or incomplete.
 3. **Ground materials and transitions.** Perimeter hexagonal/granite paving,
    path margins, schist outcrops, contact shading and woodland floor detail
    need close-view inspection. Avoid texture repetition and floating props.
