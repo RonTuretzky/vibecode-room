@@ -1440,17 +1440,18 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
       const butterflyBodyGeo = new THREE.CapsuleGeometry(0.016, 0.17, 3, 6);
       butterflyBodyGeo.rotateX(Math.PI / 2); // fusiform body along the flight axis
       const butterflyBodyMat = new THREE.MeshPhongMaterial({ color: 0x2e2115, shininess: 8 });
-      const butterflyColors = [0xfff6e8, 0xffd166, 0xf5a0c1, 0x9ad7f0, 0xffa94d];
+      const butterflyColors = pondScene ? [0xe98b28, 0xf4a137] : [0xfff6e8, 0xffd166, 0xf5a0c1, 0x9ad7f0, 0xffa94d];
       const butterflyWingMats = butterflyColors.map(
         (color) =>
           new THREE.MeshPhongMaterial({
-            map: makeButterflyWingTexture(color),
+            map: makeButterflyWingTexture(color, pondScene ? "monarch" : "meadow"),
             side: THREE.DoubleSide,
             alphaTest: 0.5,
-            transparent: true,
-            opacity: 0.92, // slight translucency — daylight glows through the membrane
+            transparent: !pondScene,
+            alphaToCoverage: pondScene,
+            opacity: pondScene ? 1 : 0.92,
             emissive: 0xffffff,
-            emissiveIntensity: 0.3,
+            emissiveIntensity: pondScene ? 0.06 : 0.3,
             shininess: 4,
           }),
       );
@@ -1487,6 +1488,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
       for (let i = 0; i < 8; i++) {
         const mat = butterflyWingMats[i % butterflyWingMats.length];
         const fly = new THREE.Group();
+        fly.name = `garden-butterfly-${i}`;
         fly.rotation.order = "YXZ"; // yaw along the path, then pitch, then bank
         const left = new THREE.Mesh(wingLeftGeo, mat);
         const right = new THREE.Mesh(wingRightGeo, mat);
@@ -1496,7 +1498,10 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
         fly.add(left);
         fly.add(right);
         fly.add(new THREE.Mesh(butterflyBodyGeo, butterflyBodyMat));
-        fly.scale.setScalar(0.85 + rng() * 0.45);
+        // The park uses metres. The meadow's enlarged ornament was up to
+        // 90 cm across here; a monarch-sized span is about 8–10 cm.
+        const sizeVariation = rng();
+        fly.scale.setScalar(pondScene ? .115 + sizeVariation * .03 : .85 + sizeVariation * .45);
         const homeX = (rng() - 0.5) * 34;
         const homeZ = (rng() - 0.5) * 26;
         fly.position.set(homeX, 1.2 + rng() * 1.8, homeZ);
@@ -1519,7 +1524,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
         );
         const base = new THREE.Vector3((rng() - 0.5) * 30, 0.7 + rng() * 1.8, (rng() - 0.5) * 24);
         sprite.position.copy(base);
-        sprite.scale.setScalar(0.14 + rng() * 0.1);
+        sprite.scale.setScalar((0.14 + rng() * 0.1) * (pondScene ? .04 : 1));
         group.add(sprite);
         motes.push({ sprite, base, phase: rng() * Math.PI * 2 });
       }

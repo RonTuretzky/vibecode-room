@@ -148,7 +148,8 @@ export function makeGlowTexture(): THREE.CanvasTexture {
 // suffusion, veins radiating from the root, a dark margin band with pale
 // spots, and a hindwing eyespot. Texture space: u=0 body hinge → u=1 tip,
 // v=1 (canvas top) is the head end. The base hue comes from the palette.
-export function makeButterflyWingTexture(base: number): THREE.CanvasTexture {
+export function makeButterflyWingTexture(base: number, pattern: "meadow" | "monarch" = "meadow"): THREE.CanvasTexture {
+  const monarch = pattern === "monarch";
   const size = 256;
   const canvas = document.createElement("canvas");
   canvas.width = size;
@@ -158,6 +159,9 @@ export function makeButterflyWingTexture(base: number): THREE.CanvasTexture {
   new THREE.Color(base).getHSL(hsl);
   const tint = (dl: number, a: number): string => {
     const c = new THREE.Color().setHSL(hsl.h, hsl.s, THREE.MathUtils.clamp(hsl.l + dl, 0, 1));
+    // Canvas stores sRGB bytes. The park map is marked sRGB on upload, so
+    // writing linear channels here would darken the orange a second time.
+    if (monarch) c.convertLinearToSRGB();
     return `rgba(${Math.round(c.r * 255)},${Math.round(c.g * 255)},${Math.round(c.b * 255)},${a})`;
   };
   const dark = (a: number): string => `rgba(38,28,24,${a})`;
@@ -165,6 +169,20 @@ export function makeButterflyWingTexture(base: number): THREE.CanvasTexture {
   // then the rounder hindwing lobe with a scalloped trailing edge.
   const trace = (): void => {
     ctx.beginPath();
+    if (monarch) {
+      // A broad forewing with a tapered apex and a rounder hindwing. Keep
+      // the lobes joined at the root, with a shallow overlapping shoulder.
+      ctx.moveTo(4, 92);
+      ctx.quadraticCurveTo(112, 8, 211, 16);
+      ctx.quadraticCurveTo(241, 28, 216, 59);
+      ctx.quadraticCurveTo(190, 94, 169, 111);
+      ctx.quadraticCurveTo(211, 142, 194, 183);
+      ctx.quadraticCurveTo(165, 234, 111, 240);
+      ctx.quadraticCurveTo(54, 239, 25, 197);
+      ctx.quadraticCurveTo(8, 176, 4, 151);
+      ctx.closePath();
+      return;
+    }
     ctx.moveTo(4, 70);
     ctx.quadraticCurveTo(90, 10, 212, 30); // leading (costal) edge
     ctx.quadraticCurveTo(242, 46, 208, 100); // rounded apex → outer margin
@@ -194,8 +212,8 @@ export function makeButterflyWingTexture(base: number): THREE.CanvasTexture {
   ctx.fillStyle = basal;
   ctx.fillRect(0, 0, size, size);
   // Veins radiating from the root across each lobe.
-  ctx.strokeStyle = dark(0.4);
-  ctx.lineWidth = 2.5;
+  ctx.strokeStyle = dark(monarch ? 0.95 : 0.4);
+  ctx.lineWidth = monarch ? 4 : 2.5;
   ctx.lineCap = "round";
   const vein = (x0: number, y0: number, x1: number, y1: number, bow: number): void => {
     ctx.beginPath();
@@ -211,6 +229,14 @@ export function makeButterflyWingTexture(base: number): THREE.CanvasTexture {
   vein(12, 152, 174, 184, 10);
   vein(12, 156, 132, 220, 12);
   vein(12, 160, 76, 230, 10);
+  if (monarch) {
+    vein(30, 96, 183, 20, -7);
+    vein(45, 99, 170, 105, -11);
+    vein(32, 149, 193, 175, -4);
+    vein(30, 154, 99, 237, 8);
+    vein(78, 69, 116, 87, 8);
+    vein(70, 166, 94, 189, 0);
+  }
   // Dark margin band around the whole outline (half the stroke lands
   // inside the clip), with a soft wide underlay.
   trace();
@@ -219,32 +245,41 @@ export function makeButterflyWingTexture(base: number): THREE.CanvasTexture {
   ctx.stroke();
   trace();
   ctx.strokeStyle = dark(0.92);
-  ctx.lineWidth = 16;
+  ctx.lineWidth = monarch ? 25 : 16;
   ctx.stroke();
   // Pale spots riding the dark margin near the apex + hindwing edge.
   ctx.fillStyle = "rgba(255,252,244,0.85)";
-  for (const [x, y, r] of [[218, 44, 6], [212, 70, 5], [196, 90, 4.5], [172, 182, 3.5], [138, 218, 3.5]] as const) {
+  const spots = monarch
+    ? [[215, 31, 3], [219, 45, 3], [208, 61, 3], [197, 76, 2.8], [184, 91, 2.5],
+      [188, 152, 2.8], [190, 167, 2.8], [182, 185, 2.7], [169, 201, 2.5],
+      [152, 214, 2.7], [133, 224, 2.5], [112, 231, 2.6], [92, 228, 2.7],
+      [72, 221, 2.5], [54, 209, 2.7], [40, 194, 2.5], [193, 32, 4], [181, 45, 3]]
+    : [[218, 44, 6], [212, 70, 5], [196, 90, 4.5], [172, 182, 3.5], [138, 218, 3.5]];
+  for (const [x, y, r] of spots) {
     ctx.beginPath();
-    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.arc(x!, y!, r!, 0, Math.PI * 2);
     ctx.fill();
   }
   // Hindwing eyespot: dark ring, pale iris, dark pupil, white glint.
-  ctx.fillStyle = dark(0.95);
-  ctx.beginPath();
-  ctx.arc(148, 168, 14, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = tint(0.16, 1);
-  ctx.beginPath();
-  ctx.arc(148, 168, 9, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = dark(0.95);
-  ctx.beginPath();
-  ctx.arc(148, 168, 4, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = "rgba(255,255,255,0.9)";
-  ctx.beginPath();
-  ctx.arc(145.5, 165.5, 1.8, 0, Math.PI * 2);
-  ctx.fill();
+  // This belongs to the decorative meadow pattern, not the park's monarch.
+  if (!monarch) {
+    ctx.fillStyle = dark(0.95);
+    ctx.beginPath();
+    ctx.arc(148, 168, 14, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = tint(0.16, 1);
+    ctx.beginPath();
+    ctx.arc(148, 168, 9, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = dark(0.95);
+    ctx.beginPath();
+    ctx.arc(148, 168, 4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "rgba(255,255,255,0.9)";
+    ctx.beginPath();
+    ctx.arc(145.5, 165.5, 1.8, 0, Math.PI * 2);
+    ctx.fill();
+  }
   ctx.restore();
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;

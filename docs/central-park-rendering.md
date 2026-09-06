@@ -859,3 +859,45 @@ sample 8.3–8.4 ms average / 8.4–9.1 ms p95; warm rebuild counts remain fixed
 at 195 geometries / 90 textures / 94 programs in this run. Evidence:
 `.context/vegetation-yield-gpu-results/`. The real two-project room was also
 captured at the lawn and Pond in `.context/vegetation-live-2026-09-06/`.
+
+## Park butterfly scale and markings — 2026-09-06
+
+The lawn review exposed enlarged decorative butterflies: their geometry spans
+roughly 60–90 cm in the park's metre-based scene. Park instances now span about
+8–10 cm, with two orange palettes, a tapered forewing, a rounded hindwing,
+strong dark veins and pale marginal spots. The decorative eyespot is omitted.
+The [Conservancy documents monarchs in the Park](https://www.centralparknyc.org/articles/the-great-monarch-butterfly-migration),
+and [Smithsonian describes their 3–4-inch wingspan](https://www.si.edu/spotlight/buginfo/monarch).
+This is a procedural monarch-inspired drawing, not a specimen scan. The
+meadow retains its existing decorative palette and size.
+
+Park wings use an opaque alpha cutout with alpha-to-coverage and much less
+emissive light. That avoids the prior transparent front/back passes and
+reduces the park's wing palette from five shared textures to two. Airborne
+motes are also reduced to small specks at park scale. The eight insects,
+flap/glide/flower-landing behavior and reduced-motion handling remain in place.
+The wing drawings and a full lawn render were inspected in
+`.context/butterfly-review-2026-09-06/`; typechecking passes.
+
+The close pattern comparison also exposed linear color channels being written
+directly into an sRGB canvas. The park pattern now encodes its orange correctly
+before upload; the corrected wing drawing and lawn were rendered and inspected.
+The first production run passed all six presets, the shoreline route and six
+rebuilds (stable warm counts: 194 geometries / 88 textures / 92 programs).
+Its final orientation test was interrupted by clamshell sleep: the macOS power
+log records sleep at 15:55:05 and wake at 15:59:52 on September 6. Evidence:
+`.context/butterfly-gpu-results/`. The earlier vegetation commit `ba1386b`
+passed all CI jobs.
+
+The interrupted orientation check and full six-view/material/environment
+scenario both pass on the corrected-color build after wake. Final evidence:
+`.context/butterfly-final-gpu-results/`. These complete the four-scenario
+coverage alongside the preceding shoreline/rebuild checks; the final change
+only alters canvas color encoding. Product typechecking passes again.
+
+The final six-view samples are 8.3–8.7 ms average / 9.1–10.7 ms p95 on the
+M4 Max at DPR 2. The real two-project room also loads without browser errors
+at the lawn and Pond; final captures are in
+`.context/butterfly-live-2026-09-06/`. Neither brief sampling nor these
+graphics checks establishes exhaustive interaction coverage or performance
+on other hardware.

@@ -195,8 +195,10 @@ prove that the visual objective has been achieved.
    to 264–284 ms in two fresh runs. Its largest frame gap changes from
    617–670 ms to 488–492 ms, and world-ready from 3.26–3.33 s to 3.02–3.09 s.
    The remaining longest gap is earlier in startup. Continue checking startup
-   and long routes. The busy lawn capture also exposes oversized decorative
-   butterflies and overlapping idea cards; review their scale and composition.
+   and long routes. The busy lawn capture exposed oversized decorative
+   butterflies; the following pass brings them to roughly 8–10 cm with
+   monarch-inspired markings and reduces the oversized airborne motes.
+   Overlapping idea cards still need composition work.
 
 ## Completion remains unproven
 
