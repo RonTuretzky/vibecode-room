@@ -41,9 +41,11 @@ prove that the visual objective has been achieved.
 3. **Ground materials and transitions.** Perimeter hexagonal/granite paving,
    path margins, schist outcrops, contact shading and woodland floor detail
    need close-view inspection. Avoid texture repetition and floating props.
-4. **Vegetation and atmosphere.** Check tree species forms, foliage motion,
-   crown density, grass scale, sky detail and water shading at both ground
-   level and in wide views. The current tree library remains approximate.
+4. **Vegetation and atmosphere.** Grove foliage now has gentle, phased crown
+   motion with matching shadow deformation and a live reduced-motion stop. The
+   hardware test compiled both shaders and recorded all presets with motion
+   enabled. Crown density, woodland understorey, grass scale, sky detail and
+   water shading still warrant further work. Species forms remain approximate.
 5. **Composition and UI.** Inspect camera routes and readable project content
    in normal and Zen modes, portrait and landscape. Preserve shared spatial
    controls and planting/branch interaction.

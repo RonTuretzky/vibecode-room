@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { barkTexture } from "../ui/tree/build";
 import { parkLeafMaterial } from "./park-materials";
 import { buildGroveGeometry, GROVE_FORMS } from "./park-grove-geometry";
+import { createParkWind } from './park-wind';
 
 export interface GroveTree { x: number; y: number; z: number; scale: number; rot: number; form?: number }
 
@@ -13,6 +14,10 @@ export function createParkGrove(trees: GroveTree[]) {
   const bark = new THREE.MeshStandardMaterial({ map: barkTexture(), roughness: .96 });
   const leaves = parkLeafMaterial(0x829957);
   leaves.vertexColors = true;
+  const wind = createParkWind(); wind.attach(leaves);
+  const leafDepth = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking,
+    map: leaves.map, alphaTest: leaves.alphaTest, side: THREE.DoubleSide });
+  wind.attach(leafDepth);
   const batches = new Map<string, { form: number; trees: GroveTree[] }>();
   trees.forEach((tree, i) => {
     const form = tree.form ?? i % forms.length;
@@ -33,16 +38,21 @@ export function createParkGrove(trees: GroveTree[]) {
         if (material === leaves) mesh.setColorAt(i, tint.setHSL(.20 + form * .015, .08, .83 + (i % 3) * .045));
       });
       mesh.computeBoundingSphere();
+      if (material === leaves) {
+        mesh.customDepthMaterial = leafDepth;
+        // Maximum local sway is under .18 m; retain room for scaled crowns.
+        mesh.boundingSphere!.radius += .5;
+      }
       mesh.receiveShadow = true;
       mesh.castShadow = batch.some(tree => Math.hypot(tree.x, tree.z) < 260);
       mesh.userData.parkReflect = true;
       group.add(mesh);
     }
   }
-  return { group, dispose() {
+  return { group, update: wind.update, dispose() {
     group.removeFromParent();
     group.traverse(node => { if (node instanceof THREE.InstancedMesh) node.dispose(); });
     forms.forEach(({ trunk, canopy }) => { trunk.dispose(); canopy.dispose(); });
-    bark.dispose(); leaves.dispose();
+    bark.dispose(); leaves.dispose(); leafDepth.dispose();
   } };
 }

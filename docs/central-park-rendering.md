@@ -42,6 +42,11 @@ material textures. It needs no cloud rendering or external asset service.
   crown normals. Curved forks, tapered root flares and layered foliage
   distinguish vase-shaped, tiered and irregular crowns. The nearest 16
   trees within 120 m retain photoscans.
+- `park-wind.ts`: shared time/strength uniforms gently bend and flutter grove
+  foliage. Instance positions vary the phase, and the same deformation runs
+  in the leaf shadow material. Root geometry stays fixed; reduced motion sets
+  wind strength to zero, including preference changes while the room is open.
+  Instance bounds include the small crown displacement.
 - `park-ground.ts` / `park-terrain-grid.ts`: continuous, linear grass/soil
   albedo and a graded terrain grid. Two-metre sampling around the lawn
   and Pond gradually becomes 18 m near the distant city. Paths and project
@@ -88,7 +93,7 @@ clock, fullscreen button, and project navigation, including keyboard focus.
 ## Verification
 
 - Earlier full unit suite: 2,622 passed, 20 credential-dependent tests skipped.
-- Current park suite: 65 passed; 323 passed including the relevant room,
+- Current park suite: 66 passed; 324 passed including the relevant room,
   projector and spatial-navigation suites. Coverage includes terrain/ray agreement on the
   nonuniform grid, crown geometry budgets, building/bridge winding and
   openings, shoreline clipping, reflection invalidation, and fitting
@@ -122,6 +127,14 @@ VIBERSYN_PORT=18998 VIBERSYN_PARK_GPU=1 bun run test:e2e e2e/park-gpu.e2e-pw.ts 
 ```
 
 Add `VIBERSYN_PARK_DPR=2` to exercise a 2,560 × 1,800 drawing canvas.
+Add `VIBERSYN_PARK_MOTION=1` to enable motion and retain a WebM recording.
+Recording and screenshot capture add overhead; frame samples are diagnostic,
+not a formal frame-rate benchmark. The default test context now places
+`reducedMotion` under Playwright's `contextOptions`, where it is actually
+supported. The hardware test also toggles this preference without reloading
+the scene and verifies that the mounted room responds. After correcting the
+preference option, all nine navigation tests and the full graphics test passed;
+the live preference toggle then passed on a fresh final build as well.
 The opt-in test uses Metal on macOS, requires `data-park-ready=true`, and
 fails if it sees software rendering, too little geometry, shader/load errors
 or WebGL context loss. It captures the four park presets and portrait UI/Zen

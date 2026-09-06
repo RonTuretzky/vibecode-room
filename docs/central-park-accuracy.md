@@ -177,3 +177,9 @@ setbacks, while concave lots stay unshrunk. Existing detailed skyline models
 remain, and building bodies now cast alongside roof details to avoid hollow
 shadow outlines. The rooftop pass passed 323 relevant unit tests, TypeScript,
 production build and full-graphics checks at double pixel density.
+
+Grove foliage now moves gently, with the same deformation in visible and
+shadow passes. Reduced motion disables the breeze. This is an illustrative
+animation, not live weather. The pass adds no per-frame geometry or instance
+matrix rebuilds; it passed 324 relevant unit tests, type/build checks and the
+full graphics regression with motion enabled on Metal at double pixel density.

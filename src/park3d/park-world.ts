@@ -29,6 +29,7 @@ import { buildPaths } from "./park-paths";
 export { buildPaths } from "./park-paths";
 import { buildBuildings } from "./park-buildings";
 export { buildBuildings } from "./park-buildings";
+export type { BuildBuildingsOptions } from "./park-buildings";
 
 export interface ParkManifest {
   center: { lat: number; lon: number; surfaceHeightM: number };

@@ -487,7 +487,13 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
     if (container === null || typeof window === "undefined") {
       return;
     }
-    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const motionPreference = window.matchMedia("(prefers-reduced-motion: reduce)");
+    let reducedMotion = motionPreference.matches;
+    const onMotionPreference = () => {
+      reducedMotion = motionPreference.matches;
+      container.dataset.reducedMotion = String(reducedMotion);
+    };
+    onMotionPreference();
 
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(46, 1, 0.1, 400);
@@ -1453,6 +1459,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
         update: (t, dt) => {
           atmosphere?.update(t);
           parkShore?.update(camera);
+          parkGrove?.update(t, !reducedMotion);
           for (const { mesh, distance } of parkFineDetail) {
             const cutoff = mesh.visible ? distance + 15 : distance - 15;
             mesh.visible = camera.position.distanceToSquared(mesh.boundingSphere!.center) < cutoff * cutoff;
@@ -5684,6 +5691,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
       }
     };
     document.addEventListener("visibilitychange", onSceneVisibility);
+    motionPreference.addEventListener('change', onMotionPreference);
     onSceneVisibility();
 
     return () => {
@@ -5693,6 +5701,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
       unregisterCameraControl();
       unregisterFlatPoseControl?.();
       document.removeEventListener("visibilitychange", onSceneVisibility);
+      motionPreference.removeEventListener('change', onMotionPreference);
       observer.disconnect();
       renderer.domElement.removeEventListener("pointermove", onPointerMove);
       renderer.domElement.removeEventListener("pointerup", onPointerUp);

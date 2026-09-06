@@ -27,7 +27,7 @@ export default defineConfig({
     trace: "on-first-retry",
     // Freeze the bubble float (the UI honors prefers-reduced-motion) so the
     // suite is deterministic and click targets are stable, not moving.
-    reducedMotion: "reduce",
+    contextOptions: { reducedMotion: "reduce" },
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   webServer: {
