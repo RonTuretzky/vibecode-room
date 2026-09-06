@@ -785,3 +785,77 @@ controls and repeated reflection resizing. Warm rebuild counts remain fixed
 at 179 geometries / 91 textures / 92 programs; the six presets sample 8.2–8.4 ms
 average frame intervals and 10.0–10.4 ms p95 on this Mac. Evidence:
 `.context/startup-gpu-results/`. Preceding commit `194b297` passed all CI jobs.
+
+## Individual tree forms and shoreline patches — 2026-09-06
+
+The broadleaf grove now has three seeded variants for each of its three genera.
+They vary leader lean, fork height, scaffold attachment heights/angles, crown
+shoulders and four/five-root flares. Position-seeded selection, proportions,
+tint and fallback genus keep an individual stable across batching or source
+reordering. Mapped genera and heights still take precedence. Models are built
+only when used, then shared by spatial instancing; bark/leaf maps remain shared.
+Near leaf sprays follow connected terminal twigs instead of occupying an
+independent ellipsoid. Leaf randomness no longer changes the next lobe's branch
+layout when switching geometric detail.
+
+All nine variants retain the previous per-tree budgets: fewer than 1,500
+triangles at coarse detail and 18,000 near the lawn. Terrain-fitted base tests
+now cover every variant. The scene still has 640 landscape trees, and detailed
+geometry remains limited to the sixteen nearest the lawn. This adds template
+geometry and draw batches, not a unique high-resolution mesh for every tree.
+
+Understorey now forms multi-clump patches, with smaller companions around
+larger shrubs and a 1,400-plant cap. Lower wooded banks can carry shrubs while
+managed lawn, open water, mapped paths, buildings, the project clearing and
+steep grades retain their exclusions. Each companion passes the same placement
+checks. Emergent shore vegetation uses finer sampling with broad/fine noise
+to soften patch boundaries. The current Pond places 686 sedge/cattail clumps;
+abrupt banks are excluded, and nearby tall clumps cast shadows. The
+[Conservancy's Pond guide](https://assets.centralparknyc.org/pdfs/discovery-programs/The_Pond_Exploration_Guide.pdf)
+identifies cattails in this habitat; positions and patch densities remain
+illustrative, not a planting survey.
+
+Close tree renders before/after were inspected in
+`.context/vegetation-close-before-2026-09-06/`,
+`.context/vegetation-tree-first-2026-09-06/` and
+`.context/vegetation-twig-2026-09-06/`. The Pond and overlook planting review is
+in `.context/vegetation-review-first/`. All 103 targeted park/asset tests and
+product typechecking pass. Individual tree accuracy, the fixed detailed-tree
+neighbourhood and abrupt shore terrain still warrant further work.
+
+The first full GPU run exposed higher draw-call cost in the wide views.
+Increasing tree batch cells from 130 to 180 metres reduced Wollman from about
+1,030 to 924 draws and Arsenal from 1,042 to 877 in the corresponding samples.
+The broader cells can submit slightly more triangles at view edges, but share
+more instances and retain spatial eye/reflection culling. The updated six
+presets sampled 8.3–8.9 ms average frame intervals / 9.2–10.8 ms p95 at DPR 2
+with decorative motion enabled on this M4 Max. These are local samples, not
+cross-device guarantees. The original startup optimization commit `a0880c2`
+has passed all CI jobs.
+
+All four hardware scenarios pass after batching changes: six preset views,
+environment returns and deferred meadow models, the low shoreline walk, six
+rebuilds, portrait views, reduced-motion toggles and reflection resizing.
+Warm resources stay fixed at 195 geometries / 91 textures / 94 programs,
+compared with 179 / 91 / 92 before this vegetation pass. The additional shared
+shapes and reed shadows have a bounded cost; no new texture assets were added.
+Final evidence: `.context/vegetation-final-gpu-results/`.
+
+A subsequent startup trace showed vegetation construction immediately adjacent
+to the world's first heavy render. An existing paint-yield boundary now separates
+those steps, with the disposal guard checked again before flora attachment.
+Two fresh isolated production runs of this denser scene reduced the longest
+main-thread task from 379–395 ms to 264–284 ms and the largest animation-frame
+interval from 617–670 ms to 488–492 ms. World-ready time changed from
+3.26–3.33 s to 3.02–3.09 s. The remaining longest gap occurs earlier in startup;
+world-ready does not mean every model/texture has finished loading. Evidence:
+`.context/vegetation-final-startup-{1,2}/` and
+`.context/vegetation-yield-startup-{1,2}/`. Continue investigating that initial
+gap and longer navigation runs rather than inferring smooth startup from
+settled frame samples.
+
+All four GPU scenarios pass again with the paint-yield change. The six presets
+sample 8.3–8.4 ms average / 8.4–9.1 ms p95; warm rebuild counts remain fixed
+at 195 geometries / 90 textures / 94 programs in this run. Evidence:
+`.context/vegetation-yield-gpu-results/`. The real two-project room was also
+captured at the lawn and Pond in `.context/vegetation-live-2026-09-06/`.

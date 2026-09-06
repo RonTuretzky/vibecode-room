@@ -12,32 +12,48 @@ export interface UnderstoreySource {
   canPlant: (x: number, z: number, clearance: number) => boolean;
 }
 export interface UnderstoreyPlant { x: number; y: number; z: number; scale: number; angle: number; form: number }
+export const UNDERSTOREY_LIMIT = 1400;
 
 /** A patchy shrub layer below wooded canopy. Its own seed keeps the existing
  * trees/furniture stable. Bounded sampling and spatial batches cap the cost. */
 export function understoreyPlacements(source: UnderstoreySource, center: { x: number; z: number }, reach = 440): UnderstoreyPlant[] {
   const rng = mulberry32(0x554e4445), plants: UnderstoreyPlant[] = [];
   const stride = 3.8;
+  const place = (px: number, pz: number, scale: number, angle: number, form: number) => {
+    const distance = Math.hypot(px - center.x, pz - center.z);
+    if (distance < 48 || distance > reach || source.lawnAt(px, pz) > .35) return;
+    const canopy = source.canopyAt(px, pz);
+    const bank = canopy >= 2 && Math.max(source.waterAt(px + 5, pz), source.waterAt(px - 5, pz), source.waterAt(px, pz + 5), source.waterAt(px, pz - 5)) > .65;
+    if (canopy < 6 && !bank) return;
+    if (!source.canPlant(px, pz, 1.5 * scale)) return;
+    if (Math.max(source.waterAt(px, pz), source.waterAt(px + 1.5, pz), source.waterAt(px - 1.5, pz), source.waterAt(px, pz + 1.5), source.waterAt(px, pz - 1.5)) > .3) return;
+    const y = source.groundAt(px, pz);
+    const slope = Math.max(...[[1.5, 0], [-1.5, 0], [0, 1.5], [0, -1.5]].map(([dx, dz]) => Math.abs(source.groundAt(px + dx!, pz + dz!) - y)));
+    if (!Number.isFinite(y) || slope > .75) return;
+    plants.push({ x: px, y, z: pz, scale, angle, form });
+  };
   for (let z = center.z - reach; z <= center.z + reach; z += stride) {
     for (let x = center.x - reach; x <= center.x + reach; x += stride) {
       const px = x + (rng() - .5) * stride * .7, pz = z + (rng() - .5) * stride * .7;
       const distance = Math.hypot(px - center.x, pz - center.z);
-      if (distance < 48 || distance > reach || source.canopyAt(px, pz) < 6 || source.lawnAt(px, pz) > .35) continue;
+      if (distance < 48 || distance > reach || source.canopyAt(px, pz) < 2 || source.lawnAt(px, pz) > .35) continue;
       const patch = groundNoise(px + 158, pz - 631, 18);
-      if (patch < .5 || rng() > .83) continue;
+      if (patch < .43 || rng() > .88) continue;
       const scale = .7 + rng() * .7;
-      if (!source.canPlant(px, pz, 1.5 * scale)) continue;
-      if (Math.max(source.waterAt(px, pz), source.waterAt(px + 1.5, pz), source.waterAt(px - 1.5, pz), source.waterAt(px, pz + 1.5), source.waterAt(px, pz - 1.5)) > .3) continue;
-      const y = source.groundAt(px, pz);
-      const slope = Math.max(...[[1.5, 0], [-1.5, 0], [0, 1.5], [0, -1.5]].map(([dx, dz]) => Math.abs(source.groundAt(px + dx!, pz + dz!) - y)));
-      if (!Number.isFinite(y) || slope > .75) continue;
-      plants.push({ x: px, y, z: pz, scale, angle: rng() * Math.PI * 2, form: patch > .64 ? 1 : 0 });
+      place(px, pz, scale, rng() * Math.PI * 2, patch > .64 ? 1 : 0);
+      // Smaller companion clumps join the shoulders of a shrub into a mass.
+      // Each root independently passes the same ground/water/path checks.
+      if (patch > .52) for (let i = 0; i < 2; i++) {
+        const angle = rng() * Math.PI * 2, radius = .9 + rng() * .9;
+        place(px + Math.cos(angle) * radius, pz + Math.sin(angle) * radius,
+          scale * (.55 + rng() * .25), rng() * Math.PI * 2, 0);
+      }
     }
   }
   // Retain the most visible neighbourhood first when a dense source mask
   // supplies more candidates than the budget; don't truncate by map row.
   plants.sort((a, b) => Math.hypot(a.x - center.x, a.z - center.z) - Math.hypot(b.x - center.x, b.z - center.z));
-  return plants.slice(0, 900);
+  return plants.slice(0, UNDERSTOREY_LIMIT);
 }
 
 export function understoreyGeometry(form: number) {

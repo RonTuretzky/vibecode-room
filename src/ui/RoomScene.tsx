@@ -105,6 +105,7 @@ import { refinePondMaterial } from "../park3d/park-pond-material";
 import { createParkPlantingMask, PARK_SITES, inSite } from "../park3d/park-sites";
 import { GAPSTOW, OUTCROPS } from "../park3d/park-landmarks";
 import { loadParkWorldShared, type ParkWorld } from "../park3d/park-world";
+import { yieldParkBuild } from "../park3d/park-build-scheduler";
 import { Water } from "three/addons/objects/Water.js";
 import { localFromLatLon } from "../park3d/park-frame";
 import type { SelfTreeSpec } from "./self-repo";
@@ -1402,7 +1403,10 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
               const px = POND_STAGE.x - x / PARK_SCALE, pz = POND_STAGE.z - z / PARK_SCALE;
               return (world.cameraGroundAt(px, pz) - y) * PARK_SCALE - .15;
             };
-            return loadGardenFlora(PARK_FLORA_MODELS).then((flora) => {
+            return loadGardenFlora(PARK_FLORA_MODELS).then(async (flora) => {
+              // Give the attached terrain/world its first paint before the
+              // next geometry batch, rather than combining both into one stall.
+              await yieldParkBuild();
               if (!parkDisposed) {
                 scatterParkFlora(flora, world, y);
               }

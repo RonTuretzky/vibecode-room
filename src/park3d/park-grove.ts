@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { parkBarkMaterial } from './park-bark';
 import { parkLeafMaterial } from "./park-materials";
-import { buildGroveGeometry, GROVE_FORMS } from "./park-grove-geometry";
+import { buildGroveGeometry, GROVE_FORMS, GROVE_VARIANTS, groveAppearanceAt } from "./park-grove-geometry";
 import { createParkWind } from './park-wind';
 import { broadleafTexture } from './park-broadleaf-texture';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
@@ -13,10 +13,15 @@ export interface GroveTree { x: number; y: number; z: number; scale: number; rot
 export function createParkGrove(trees: GroveTree[], groundAt: (x: number, z: number) => number) {
   const group = new THREE.Group();
   group.name = "park-broadleaf-groves";
-  const forms = [false, true].flatMap(detail => GROVE_FORMS.map((_, i) => {
-    const { trunk, canopy } = buildGroveGeometry(i, detail), split = splitTreeBase(trunk);
-    trunk.dispose(); return { ...split, canopy };
-  }));
+  const detailOffset = GROVE_FORMS.length * GROVE_VARIANTS;
+  const forms = new Map<number, ReturnType<typeof splitTreeBase> & { canopy: THREE.BufferGeometry }>();
+  const getForm = (index: number) => {
+    const cached = forms.get(index); if (cached) return cached;
+    const { trunk, canopy } = buildGroveGeometry(index % GROVE_FORMS.length, index >= detailOffset,
+      Math.floor(index / GROVE_FORMS.length) % GROVE_VARIANTS);
+    const geometry = { ...splitTreeBase(trunk), canopy };
+    trunk.dispose(); forms.set(index, geometry); return geometry;
+  };
   const fittedBases: THREE.BufferGeometry[] = [];
   const barkMaterials = [parkBarkMaterial(), parkBarkMaterial(true)];
   const wind = createParkWind();
@@ -30,36 +35,44 @@ export function createParkGrove(trees: GroveTree[], groundAt: (x: number, z: num
     wind.attach(depth); return depth;
   });
   const batches = new Map<string, { form: number; trees: GroveTree[] }>();
-  trees.forEach((tree, i) => {
-    const form = (tree.form ?? i % GROVE_FORMS.length) + (tree.detail ? GROVE_FORMS.length : 0);
-    // Slightly larger cells offset the additional batches for crown variants.
-    const key = `${Math.floor(tree.x / 130)},${Math.floor(tree.z / 130)},${form}`;
+  trees.forEach(tree => {
+    const appearance = groveAppearanceAt(tree.x, tree.z);
+    const form = (tree.form ?? appearance.fallbackForm) + appearance.variant * GROVE_FORMS.length + (tree.detail ? detailOffset : 0);
+    // More variants can otherwise turn sparse cells into single-tree draws.
+    // These broader batches retain local eye/reflection culling while sharing
+    // more instances in the wide Wollman/Arsenal views.
+    const key = `${Math.floor(tree.x / 180)},${Math.floor(tree.z / 180)},${form}`;
     const batch = batches.get(key) ?? { form, trees: [] };
     batch.trees.push(tree); batches.set(key, batch);
   });
   const dummy = new THREE.Object3D(), tint = new THREE.Color();
   const baseBatches = new Map<string, { geometry: THREE.BufferGeometry[]; material: THREE.Material; shadow: boolean }>();
   for (const [cell, { form, trees: batch }] of batches) {
+    const model = getForm(form);
     const bark = barkMaterials[form % GROVE_FORMS.length === 2 ? 1 : 0]!;
     const leaves = leafMaterials[form % GROVE_FORMS.length]!;
-    const modelHeight = Math.max(forms[form]!.trunk.boundingBox!.max.y, forms[form]!.canopy.boundingBox!.max.y);
-    const placements = batch.map((tree, i) => {
+    const modelHeight = Math.max(model.trunk.boundingBox!.max.y, model.canopy.boundingBox!.max.y);
+    const placements = batch.map(tree => {
+      const appearance = groveAppearanceAt(tree.x, tree.z);
       dummy.position.set(tree.x, tree.y, tree.z); dummy.rotation.y = tree.rot;
-      dummy.scale.set(tree.scale * (.93 + (i % 3) * .07), tree.height === undefined ? tree.scale * (.92 + (i % 4) * .06) : tree.height / modelHeight, tree.scale);
+      dummy.scale.set(tree.scale * appearance.width, tree.height === undefined ? tree.scale : tree.height / modelHeight, tree.scale * appearance.depth);
       dummy.updateMatrix(); return dummy.matrix.clone();
     });
-    const bases = placements.map(matrix => fitTreeBase(forms[form]!.base, matrix, groundAt));
+    const bases = placements.map(matrix => fitTreeBase(model.base, matrix, groundAt));
     // Bases sharing a spatial cell and bark can share a draw even when their
     // upper trunks use different forms/detail levels.
     const baseKey = `${cell.slice(0, cell.lastIndexOf(','))},${bark === barkMaterials[1] ? 1 : 0}`;
     const baseBatch = baseBatches.get(baseKey) ?? { geometry: [], material: bark, shadow: false };
     baseBatch.geometry.push(...bases); baseBatch.shadow ||= batch.some(tree => Math.hypot(tree.x, tree.z) < 260);
     baseBatches.set(baseKey, baseBatch);
-    for (const [geometry, material] of [[forms[form]!.trunk, bark], [forms[form]!.canopy, leaves]] as const) {
+    for (const [geometry, material] of [[model.trunk, bark], [model.canopy, leaves]] as const) {
       const mesh = new THREE.InstancedMesh(geometry, material, batch.length);
       batch.forEach((tree, i) => {
         mesh.setMatrixAt(i, placements[i]!);
-        if (material === leaves) mesh.setColorAt(i, tint.setHSL(.20 + (form % 3) * .015, .08, .83 + (i % 3) * .045));
+        if (material === leaves) {
+          const appearance = groveAppearanceAt(tree.x, tree.z);
+          mesh.setColorAt(i, tint.setHSL(.20 + (form % 3) * .015 + appearance.hue, .08, appearance.tone));
+        }
       });
       mesh.computeBoundingSphere();
       if (material === leaves) {

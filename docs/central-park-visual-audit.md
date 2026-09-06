@@ -94,6 +94,11 @@ prove that the visual objective has been achieved.
    fan-like forks; the next iterations improved bark scale and branch hierarchy.
    Individual trees and unmapped genera remain approximations; near detail is
    limited to the sixteen trees closest to the lawn, not camera-adaptive LOD.
+   Each genus now has three seeded structural variants, with staggered forks,
+   asymmetric crowns and irregular roots. Position-seeded proportions/tints
+   remain stable across batches; nearby sprays follow terminal twigs. Close
+   renders were inspected. Nine shared templates reduce visible repetition,
+   but individual surveyed trees and adaptive detail remain incomplete.
    Root bases now fit the rendered terrain, with unchanged upper joins and
    instanced crowns. Split geometry preserves the original triangle count;
    tests cover rotated/scaled trees on slopes and curved surfaces. Keep
@@ -105,6 +110,10 @@ prove that the visual objective has been achieved.
    color normalization and offset sampling. Eleven varied blades per tuft
    replace five while retaining the same tile pool; downward and grazing
    views were inspected. Continue judging distant tiling and woodland density.
+   Clustered understorey now fills wooded patches with a 1,400-plant cap.
+   The Pond has 686 emergent clumps with softer patch edges and steep-bank
+   exclusions; overview and Pond renders were inspected. Inspect ground-level
+   plant contact further, especially beside abrupt banks and rock outcrops.
    Small-basin ripples now use an
    irregular seamless spectrum with softer highlights and reduced-motion
    support; the change was checked in the Zoo render. A fresh Pond capture
@@ -177,6 +186,17 @@ prove that the visual objective has been achieved.
    The startup pass passes all four hardware browser scenarios, including
    deferred meadow flora and six rebuilds with stable warm GPU counts
    (179 geometries / 91 textures / 92 programs). All 101 targeted tests pass.
+   The nine-variant vegetation pass adds shared shapes and denser understory.
+   Broader batches reduce its wide-view draw cost. All four GPU scenarios
+   pass again, with stable warm counts of 195 geometries / 91 textures /
+   94 programs and 8.3–8.9 ms average frame samples at DPR 2 on this Mac.
+   All 103 targeted tests pass. Separating flora construction from the world's
+   first render then reduces the denser scene's longest task from 379–395 ms
+   to 264–284 ms in two fresh runs. Its largest frame gap changes from
+   617–670 ms to 488–492 ms, and world-ready from 3.26–3.33 s to 3.02–3.09 s.
+   The remaining longest gap is earlier in startup. Continue checking startup
+   and long routes. The busy lawn capture also exposes oversized decorative
+   butterflies and overlapping idea cards; review their scale and composition.
 
 ## Completion remains unproven
 

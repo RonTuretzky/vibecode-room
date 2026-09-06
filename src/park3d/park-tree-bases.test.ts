@@ -1,11 +1,11 @@
 import { expect, test } from 'bun:test';
 import * as THREE from 'three';
-import { buildGroveGeometry, GROVE_FORMS } from './park-grove-geometry';
+import { buildGroveGeometry, GROVE_FORMS, GROVE_VARIANTS } from './park-grove-geometry';
 import { fitTreeBase, splitTreeBase, TREE_BASE_BLEND_HEIGHT } from './park-tree-bases';
 
 test('splitting root bases preserves all triangles in compact bounded geometry', () => {
-  for (const detail of [false, true]) GROVE_FORMS.forEach((_, form) => {
-    const { trunk, canopy } = buildGroveGeometry(form, detail);
+  for (const detail of [false, true]) GROVE_FORMS.forEach((_, form) => { for (let variant = 0; variant < GROVE_VARIANTS; variant++) {
+    const { trunk, canopy } = buildGroveGeometry(form, detail, variant);
     const original = trunk.getAttribute('position').array.slice();
     const split = splitTreeBase(trunk);
     expect(split.base.index!.count + split.trunk.index!.count).toBe(trunk.index!.count);
@@ -18,7 +18,7 @@ test('splitting root bases preserves all triangles in compact bounded geometry',
     }
     expect(trunk.getAttribute('position').array).toEqual(original);
     [trunk, canopy, split.base, split.trunk].forEach(geometry => geometry.dispose());
-  });
+  } });
 });
 
 test('rotated and scaled roots follow slopes and curved terrain while upper joins stay fixed', () => {

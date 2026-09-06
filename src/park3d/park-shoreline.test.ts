@@ -78,6 +78,9 @@ describe("shoreline vegetation", () => {
       expect(p.y).toBeCloseTo(source.groundAt(p.x, p.z), 8);
       expect(p.y).toBeGreaterThanOrEqual(11.92);
       expect(p.y).toBeLessThanOrEqual(13.7);
+      for (const [dx, dz] of [[.35, 0], [-.35, 0], [0, .35], [0, -.35]]) {
+        expect(Math.abs(source.groundAt(p.x + dx!, p.z + dz!) - source.groundAt(p.x, p.z))).toBeLessThanOrEqual(.3);
+      }
     }
     expect(shorePlantPlacements({ ...source, canPlant: () => false }, center, 27)).toEqual([]);
     expect(shorePlantPlacements({ ...source, groundAt: () => 20 }, center, 27)).toEqual([]);

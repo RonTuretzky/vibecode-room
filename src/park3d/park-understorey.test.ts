@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { understoreyGeometry, understoreyPlacements, type UnderstoreySource } from './park-understorey';
+import { understoreyGeometry, understoreyPlacements, UNDERSTOREY_LIMIT, type UnderstoreySource } from './park-understorey';
 
 const source: UnderstoreySource = { groundAt: (x, z) => 10 + x * .02 + z * .03,
   canopyAt: () => 12, lawnAt: () => 0, waterAt: x => x < -40 ? 1 : 0,
@@ -21,11 +21,22 @@ test('understorey stays grounded in woodland, outside water, paths and the proje
 
 test('dense woodland is capped without favoring one map edge', () => {
   const plants = understoreyPlacements({ ...source, waterAt: () => 0, canPlant: () => true }, { x: 0, z: 0 });
-  expect(plants).toHaveLength(900);
+  expect(plants).toHaveLength(UNDERSTOREY_LIMIT);
   expect(plants.filter(p => p.x > 0).length).toBeGreaterThan(250);
   expect(plants.filter(p => p.x < 0).length).toBeGreaterThan(250);
   expect(plants.filter(p => p.z > 0).length).toBeGreaterThan(250);
   expect(plants.filter(p => p.z < 0).length).toBeGreaterThan(250);
+});
+
+test('low wooded banks gain clustered shrubs while isolated sparse canopy stays open', () => {
+  const sparse = { ...source, canopyAt: () => 3 };
+  const plants = understoreyPlacements(sparse, { x: 0, z: 0 }, 100);
+  expect(plants.length).toBeGreaterThan(5);
+  for (const p of plants) {
+    expect(p.x).toBeGreaterThanOrEqual(-38.5);
+    expect(p.x).toBeLessThan(-35);
+  }
+  expect(understoreyPlacements({ ...sparse, waterAt: () => 0 }, { x: 0, z: 0 }, 100)).toEqual([]);
 });
 
 test('shrub forms use human-scale leaves and bounded geometry with finite normals', () => {

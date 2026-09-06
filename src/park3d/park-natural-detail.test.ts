@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import * as THREE from "three";
-import { buildGroveGeometry, GROVE_FORMS, groveFormForGenus } from "./park-grove-geometry";
+import { buildGroveGeometry, GROVE_FORMS, GROVE_VARIANTS, groveAppearanceAt, groveFormForGenus } from "./park-grove-geometry";
 import { groundNoise, parkGroundColor } from "./park-ground";
 import { parkTerrainAxis, terrainAxisCoordinate } from "./park-terrain-grid";
 import { fitParkProjects } from "./park-cameras";
@@ -16,8 +16,8 @@ describe("natural park geometry", () => {
   });
 
   test("close trees have complete finite detail within an 18,000 triangle budget", () => {
-    GROVE_FORMS.forEach((_, i) => {
-      const { trunk, canopy } = buildGroveGeometry(i, true);
+    GROVE_FORMS.forEach((_, i) => { for (let variant = 0; variant < GROVE_VARIANTS; variant++) {
+      const { trunk, canopy } = buildGroveGeometry(i, true, variant);
       expect(trunk.boundingBox!.min.y).toBeLessThan(0);
       expect(trunk.boundingBox!.min.y).toBeGreaterThan(-.25);
       expect(canopy.boundingBox!.max.y).toBeGreaterThan(10);
@@ -34,7 +34,20 @@ describe("natural park geometry", () => {
         }
         geometry.dispose();
       }
-    });
+    } });
+  });
+
+  test('tree variants differ in branch structure and keep their appearance across source reorderings', () => {
+    for (let form = 0; form < GROVE_FORMS.length; form++) {
+      const trunks = Array.from({ length: GROVE_VARIANTS }, (_, variant) => buildGroveGeometry(form, false, variant));
+      try {
+        expect(new Set(trunks.map(g => JSON.stringify(Array.from(g.trunk.getAttribute('position').array)))).size).toBe(GROVE_VARIANTS);
+        trunks.forEach(g => expect((g.trunk.index!.count + g.canopy.index!.count) / 3).toBeLessThan(1500));
+      } finally { trunks.forEach(g => { g.trunk.dispose(); g.canopy.dispose(); }); }
+    }
+    const points = [[-9, 27], [17, -81], [-301, -220], [88, 241]] as const;
+    const original = new Map(points.map(([x, z]) => [`${x},${z}`, groveAppearanceAt(x, z)]));
+    for (const [x, z] of [...points].reverse()) expect(groveAppearanceAt(x, z)).toEqual(original.get(`${x},${z}`)!);
   });
 
   test("three distinct finite crowns stay within the instancing budget", () => {
