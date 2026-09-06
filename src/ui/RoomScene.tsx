@@ -94,6 +94,8 @@ import {
   insidePark as insideParkRect,
   localFromAlongAcross as parkLocalFromAlongAcross,
 } from "../park3d/park-frame";
+import { createParkShoreline, shorePlantPlacements } from "../park3d/park-shoreline";
+import { refinePondMaterial } from "../park3d/park-pond-material";
 import { createParkPlantingMask, PARK_SITES, inSite } from "../park3d/park-sites";
 import { GAPSTOW, OUTCROPS } from "../park3d/park-landmarks";
 import { loadParkWorldShared, type ParkWorld } from "../park3d/park-world";
@@ -935,6 +937,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
         }
       };
       let parkGrove: ReturnType<typeof createParkGrove> | null = null;
+      let parkShore: ReturnType<typeof createParkShoreline> | null = null;
       let parkFurniture: ReturnType<typeof createParkFurniture> | null = null;
       let parkWorld: ParkWorld | null = null;
       let parkWater: THREE.MeshStandardMaterial | null = null;
@@ -946,7 +949,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
         // re-attaches the same world instead of refetching and rebuilding.
         const parkOptions = {
           viewBounds: { x: POND_STAGE.x, z: POND_STAGE.z, radius: 1250 },
-          stepM: 3,
+          stepM: 2,
           // Level the terrain under the stage, easing back to the real
           // ground beyond (park metres).
           flatten: { x: POND_STAGE.x, z: POND_STAGE.z, radius: meadowRadius + 4, feather: 14 },
@@ -1032,6 +1035,14 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
             return { px: p.x, pz: p.z, rx: r.x, rz: r.z, radius: Math.hypot(r.x, r.z) };
           };
           const canPlant = createParkPlantingMask(world.pathLines);
+          if (world.heroWater) {
+            const center = localFromLatLon(40.766, -73.9741);
+            const plants = shorePlantPlacements({ waterAt: world.waterAt, groundAt: world.groundAt, canPlant: (x, z, c) =>
+              canPlant(x, z, c) && Math.hypot(x - GAPSTOW.x, z - GAPSTOW.z) > 17, waterLevel: world.heroWater.level }, center, 270);
+            parkShore = createParkShoreline(plants, (x, y, z) => new THREE.Vector3(POND_STAGE.x - x, y - yAnchor - .15, POND_STAGE.z - z));
+            group.add(parkShore.group);
+            console.info(`[park-shore] ${plants.length} sedge/cattail clumps`);
+          }
           const trees: { x: number; z: number; scale: number; rot: number; px: number; pz: number }[] = [];
           const TARGET = 640;
           for (let attempt = 0; attempt < 20000 && trees.length < TARGET; attempt++) {
@@ -1258,6 +1269,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
                   distortionScale: .7,
                   fog: true,
                 });
+                refinePondMaterial(hero.material as THREE.ShaderMaterial);
                 hero.rotation.x = -Math.PI / 2;
                 hero.position.y = world.heroWater.level;
                 world.group.add(hero);
@@ -1429,6 +1441,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
         group,
         update: (t, dt) => {
           atmosphere?.update(t);
+          parkShore?.update(camera);
           for (const { mesh, distance } of parkFineDetail) {
             const cutoff = mesh.visible ? distance + 15 : distance - 15;
             mesh.visible = camera.position.distanceToSquared(mesh.boundingSphere!.center) < cutoff * cutoff;
@@ -1582,6 +1595,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
           floraDisposed = true;
           parkDisposed = true;
           parkGrove?.dispose();
+          parkShore?.dispose();
           parkFurniture?.dispose();
           atmosphere?.dispose();
           turf?.dispose();

@@ -67,6 +67,24 @@ The room no longer clears a 325 m circle of city footprints around the project
 lawn. Fifth Avenue's nearby street wall is retained. Detailed skyline models
 still suppress their corresponding extrusions to prevent overlapping buildings.
 
+## Pond and vegetation detail
+
+The next graphics pass replaces straight spoke-like branches with curved
+forks and tapered roots, plus fuller vase-shaped, tiered and irregular crowns.
+The Conservancy's [American elm](https://www.centralparknyc.org/plants/american-elm)
+and [pin oak](https://www.centralparknyc.org/plants/pin-oak) references guide
+the silhouettes. These are procedural visual forms, not species assignments
+to particular tree locations.
+
+The [Pond exploration guide](https://assets.centralparknyc.org/pdfs/discovery-programs/The_Pond_Exploration_Guide.pdf)
+identifies cattails among its aquatic plants. New cattail and sedge-like
+patches follow the rendered shoreline, avoiding mapped walks, structures
+and bridge approaches. Patch positions and densities are interpretive.
+Two-metre terrain sampling and an adjusted bank profile reduce the exposed
+trench along the clipped water edge. Gentler ripples and an olive-to-green
+shore gradient give the water a sheltered-pond appearance; that gradient
+does not claim surveyed bathymetry.
+
 ## Remaining fidelity limits
 
 - Trees are approximate broadleaf forms and a small photoscan library, not a
@@ -80,7 +98,7 @@ still suppress their corresponding extrusions to prevent overlapping buildings.
 - Northern landmarks retain the previous approximate models and placement.
 
 The next useful pass is a measured south-end building/terrain survey, followed
-by distinctive local tree species and schist outcrops. More decoration alone
+by better species-specific models and schist outcrops. More decoration alone
 would not resolve those discrepancies.
 
 ## Verification
@@ -93,9 +111,10 @@ screens, locked projectors, and the shared room/guest spatial controls. Heavy
 park assets require a separate real-GPU inspection because browser automation
 uses the software-renderer fallback.
 
-Verified locally on 2026-09-06: 295 relevant unit tests passed, TypeScript and
+Verified locally on 2026-09-06 after the Pond detail pass: 301 relevant unit tests passed, TypeScript and
 production build passed, and all nine park/navigation browser tests passed.
 Live GPU inspection covered the Pond, connected Gapstow approaches, the
-Wollman surface and access openings, the project lawn, and environment return
-trips. The room retained its two projects and local AI profile. This is targeted
+Wollman surface and access openings, the project lawn, the park overlook,
+and Orbit/Meadow return trips. No browser rendering warnings or errors were
+reported. The room retained its two projects and local AI profile. This is targeted
 regression coverage, not a rerun of every AI workflow.

@@ -27,7 +27,7 @@ describe("natural park geometry", () => {
         }
         geometry.dispose();
       }
-      expect(triangles).toBeLessThan(1000);
+      expect(triangles).toBeLessThan(1500);
     });
     expect(Math.max(...proportions) - Math.min(...proportions)).toBeGreaterThan(.4);
   });

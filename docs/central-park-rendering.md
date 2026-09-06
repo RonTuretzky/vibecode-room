@@ -13,16 +13,26 @@ material textures. It needs no cloud rendering or external asset service.
   weathered stone, and path textures. Leaf materials soften direct diffuse
   lighting using the existing shadowed light; no extra transmission pass.
 - `park-grove-geometry.ts` / `park-grove.ts`: three distinct crown/trunk
-  forms, each below 1,000 triangles, with spatial instancing and rounded
-  crown normals. The nearest 16 trees within 120 m retain photoscans.
+  forms, each below 1,500 triangles, with spatial instancing and rounded
+  crown normals. Curved forks, tapered root flares and layered foliage
+  distinguish vase-shaped, tiered and irregular crowns. The nearest 16
+  trees within 120 m retain photoscans.
 - `park-ground.ts` / `park-terrain-grid.ts`: continuous, linear grass/soil
-  albedo and a graded terrain grid. Three-metre sampling around the lawn
+  albedo and a graded terrain grid. Two-metre sampling around the lawn
   and Pond gradually becomes 18 m near the distant city. Paths and project
   placement interpolate those exact rendered triangles.
+- `park-pond-material.ts`: gentler normals and reflection distortion, with
+  an olive margin fading into deeper green water. The gradient follows the
+  water mask; it represents optical shoreline coverage, not measured depth.
+  Three's Fresnel, sun, shadows and color management remain in use.
+- `park-shoreline.ts`: patchy sedges and cattails rooted on rendered banks,
+  clear of mapped paths and Gapstow's approaches. Two solid geometries stay
+  below 300 triangles per clump, use spatial instancing and distance culling,
+  and add no texture downloads. Only the taller cattails join reflections.
 - `park-reflection.ts`: planar reflections update at full rate during
   camera movement, and at up to 30 Hz at rest. Ripple animation continues
   each frame. Projection changes invalidate the cached reflection.
-- `park-cameras.ts`: lawn, Pond, and overlook views, plus a content fit that
+- `park-cameras.ts`: lawn, Pond, overlook and Wollman views, plus a content fit that
   accounts for viewport aspect and crown size. It no longer stops at 40 m
   when a larger forest needs more room. Fixed projector rigs retain their
   camera restrictions.
@@ -34,7 +44,9 @@ Its controlled ground palette removes baked photograph shadows and avoids
 fetching/decoding the 4.9 MB orthophoto. The separate aerial page retains
 its photograph, regular terrain grid, and optional canopy displacement.
 Each connected water body has a level surface, carved bed, graded bank,
-and clipped shoreline. Water geometry is independent of terrain detail.
+and clipped shoreline. Dry bank vertices now meet the water contour instead
+of following the submerged bed profile, removing the artificial trench at
+the shoreline. Water geometry is independent of terrain detail.
 
 Gapstow has an open arch, earthen approaches, metre-scale masonry UVs,
 irregular stone courses, and hanging ivy clusters. Simple tower footprints
@@ -50,11 +62,15 @@ clock, fullscreen button, and project navigation, including keyboard focus.
 
 ## Verification
 
-- Full unit suite: 2,622 passed, 20 credential-dependent tests skipped.
-- Park suite: 28 passed. Coverage includes terrain/ray agreement on the
+- Earlier full unit suite: 2,622 passed, 20 credential-dependent tests skipped.
+- Current park suite: 43 passed; 301 passed including the relevant room,
+  projector and spatial-navigation suites. Coverage includes terrain/ray agreement on the
   nonuniform grid, crown geometry budgets, building/bridge winding and
   openings, shoreline clipping, reflection invalidation, and fitting
   2/32/64 projects at multiple camera angles and viewport proportions.
+- New shoreline tests cover optical coverage, dry-bank continuity, the
+  installed Water shader integration, planting clearances, rooted geometry,
+  room-coordinate culling and disposal on environment changes.
 - Production build and TypeScript checks passed. The development graphics
   fixture was also checked explicitly (the main tsconfig excludes e2e).
 - Browser checks cover planting controls, branch controls, park cameras,
@@ -101,6 +117,14 @@ wide-view average from about 1,430 draw calls to 718. These local snapshots
 vary with camera position, shadow cadence, model inference, development
 versus production builds, and other GPU work. They are not guaranteed FPS
 or a claim that all devices can sustain the same quality.
+
+The Pond/vegetation detail pass on 2026-09-06 averaged approximately 2.06
+million triangles and 154 draw calls in the live two-project Pond view at
+1,832 × 1,884 drawing pixels, pixel ratio 2. Recent frame intervals averaged
+9.2 ms, with a 24.4 ms p95. The finer terrain and fuller crowns increase
+geometry cost; this pass improves appearance rather than claiming a speedup.
+The shoreline itself uses 264 clumps in spatial batches and no additional
+render target. These are brief local diagnostics, not a controlled benchmark.
 
 ## Spatial controls
 

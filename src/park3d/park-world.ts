@@ -16,6 +16,7 @@ import { skylineProfile } from "./park-skyline-profile";
 import { parkGroundColor } from "./park-ground";
 import { parkPathTexture, parkGroundDetailTexture } from "./park-materials";
 import { AXIS_BEARING, DEG, PARK_CENTER, PARK_HALF_LEN, PARK_HALF_WIDTH, insidePark } from "./park-frame";
+import { waterInteriorAt } from "./park-pond-material";
 import { createGapstowCrossing } from "./park-gapstow-ground";
 import { PARK_SITES, hallettWoodlandAt } from "./park-sites";
 import { createWollmanGrade } from "./park-wollman";
@@ -411,7 +412,8 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
     const tint = new THREE.Color();
     for (let i = 0; i < pos.count; i++) {
       const x = pos.getX(i), z = pos.getZ(i);
-      parkGroundColor(x, z, sampleLawn(x, z), sampleRelief(x, z), sampleWater(x, z), insidePark(x, z, 6), tint);
+      const shore = Math.max(sampleWater(x, z), .6 * Math.max(sampleWater(x + 3, z), sampleWater(x - 3, z), sampleWater(x, z + 3), sampleWater(x, z - 3)));
+      parkGroundColor(x, z, sampleLawn(x, z), sampleRelief(x, z), shore, insidePark(x, z, 6), tint);
       colors[i * 3] *= tint.r;
       colors[i * 3 + 1] *= tint.g;
       colors[i * 3 + 2] *= tint.b;
@@ -701,8 +703,14 @@ export function buildWater(
     const i = Math.floor(gx), j = Math.floor(gz), tx = gx - i, tz = gz - j;
     const corners = [j * cols + i, j * cols + i + 1, (j + 1) * cols + i, (j + 1) * cols + i + 1];
     if (corners.some(at => distance[at] === 255)) return null;
-    const heights = corners.map(at => shoreLevel[at]! - 1 + (distance[at]! * cell / 3.8) ** 2);
-    return heights[0]! * (1 - tx) * (1 - tz) + heights[1]! * tx * (1 - tz) + heights[2]! * (1 - tx) * tz + heights[3]! * tx * tz;
+    const mix = (values: number[]) => values[0]! * (1 - tx) * (1 - tz) + values[1]! * tx * (1 - tz) + values[2]! * (1 - tx) * tz + values[3]! * tx * tz;
+    const shore = mix(corners.map(at => shoreLevel[at]!)) + .09;
+    const wet = waterAt(x, z);
+    // Meet the water at its actual contour. The old quadratic left dry bank
+    // vertices a metre below the surface, exposing dark trenches beside it.
+    if (wet >= .5) return shore - smoothstep(.5, 1, wet) * 1.1;
+    const run = Math.max(0, mix(corners.map(at => distance[at]! * cell)) - cell * .5);
+    return shore + run * .42 + run * run * .025;
   };
   // Which body is the hero (real reflections)? The one under `heroAt`.
   let heroLabel = -1;
@@ -716,6 +724,7 @@ export function buildWater(
   const index: number[] = [];
   const heroPositions: number[] = [];
   const heroUvs: number[] = [];
+  const heroInterior: number[] = [];
   const heroIndex: number[] = [];
   let heroLevel = 0;
   for (let j = 0; j < rows; j++) {
@@ -738,7 +747,10 @@ export function buildWater(
         const polygon = clipWaterTriangle(order.map(k => corners[k!]!));
         const base = targetPositions.length / 3;
         for (const p of polygon) {
-          if (isHero) targetPositions.push(p.x, -p.z, 0);
+          if (isHero) {
+            targetPositions.push(p.x, -p.z, 0);
+            heroInterior.push(waterInteriorAt(waterAt, p.x, p.z));
+          }
           else targetPositions.push(p.x, y, p.z);
           targetUvs.push(p.x / T, p.z / T);
         }
@@ -751,6 +763,7 @@ export function buildWater(
     const heroGeometry = new THREE.BufferGeometry();
     heroGeometry.setAttribute("position", new THREE.Float32BufferAttribute(heroPositions, 3));
     heroGeometry.setAttribute("uv", new THREE.Float32BufferAttribute(heroUvs, 2));
+    heroGeometry.setAttribute("waterInterior", new THREE.Float32BufferAttribute(heroInterior, 1));
     const heroNormals = new Float32Array(heroPositions.length);
     for (let i = 2; i < heroNormals.length; i += 3) {
       heroNormals[i] = 1;
