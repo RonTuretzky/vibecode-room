@@ -26,8 +26,12 @@ export function isNavigationKey(key: string): key is NavigationKey {
 /** Each input source owns its releases; a guest cannot release a local hold. */
 export class NavigationHolds {
   private sources = new Map<string, Set<string>>();
+  private homeRevision = 0;
+  get homeSignal(): number { return this.homeRevision; }
+  requestHome() { this.homeRevision++; }
   set(source: string, keys: readonly string[]) {
     const valid = keys.filter(isNavigationKey);
+    if (valid.includes("home") && !this.sources.get(source)?.has("home")) this.requestHome();
     if (valid.length) this.sources.set(source, new Set(valid));
     else this.sources.delete(source);
   }

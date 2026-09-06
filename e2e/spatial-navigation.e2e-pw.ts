@@ -187,7 +187,15 @@ test("flat projector partners share tilt and replay it to a refreshed window", a
   });
   await page.keyboard.press('Home'); await stopped(page);
   await expect.poll(async () => Math.abs((await pose(partner)).pitch)).toBeLessThan(.01);
-  await partner.close();
+  // A quick guest button tap can also begin and end between render frames.
+  await page.keyboard.down('ArrowUp');
+  await expect.poll(async () => (await pose(page)).pitch).toBeGreaterThan(.3);
+  await page.keyboard.up('ArrowUp'); await stopped(page);
+  const guest = await context.newPage(); await guest.goto('/hands');
+  await expect(guest.getByTestId('guest-status')).toHaveAttribute('data-state', 'live');
+  await guest.getByRole('button', { name: 'Back to projects', exact: true }).click();
+  await expect.poll(async () => Math.max(Math.abs((await pose(page)).pitch), Math.abs((await pose(partner)).pitch))).toBeLessThan(.01);
+  await guest.close(); await partner.close();
 });
 
 

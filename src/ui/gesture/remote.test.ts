@@ -159,3 +159,14 @@ describe("RemoteKeyHolds", () => {
     expect(holds.diff(0.1)).toEqual({ down: [], up: [] });
   });
 });
+
+test('quick remote Home taps report their edge before the frame union, and heartbeats do not repeat it', () => {
+  const holds = new RemoteKeyHolds();
+  expect(holds.update(0, ['home'], 0)).toBe(true);
+  expect(holds.update(0, ['home'], .1)).toBe(false);
+  expect(holds.update(0, [], .2)).toBe(false);
+  expect(holds.diff(.3)).toEqual({ down: [], up: [] });
+  expect(holds.update(0, ['home'], .4)).toBe(true);
+  expect(holds.update(1, ['home'], .5)).toBe(true);
+  expect(holds.update(0, ['home'], 3)).toBe(true);
+});

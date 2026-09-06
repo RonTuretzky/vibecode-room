@@ -253,3 +253,48 @@ test('the antialiased Pond reflection follows repeated screen orientation change
   expect(await canvas!.evaluate(el => el.isConnected)).toBe(true);
   expect(errors).toEqual([]);
 });
+
+
+test('park cards separate on screen and their displayed positions open the correct idea or project', async ({ page }, info) => {
+  test.setTimeout(90000);
+  const errors: string[] = []; page.on('pageerror', e => errors.push(e.message));
+  await page.goto('/?live=0&remote=0&env=park');
+  const scene = page.getByTestId('room-scene');
+  await expect(scene).toHaveAttribute('data-park-ready', 'true', { timeout: 90000 });
+  await cameraSettled(page);
+  const rects = () => scene.evaluate(el => JSON.parse((el as HTMLElement).dataset.sceneCardRects ?? '[]') as
+    { id: string; left: number; top: number; width: number; height: number }[]);
+  await expect.poll(async () => (await rects()).length).toBeGreaterThanOrEqual(2);
+  const check = async () => {
+    const cards = await rects();
+    for (let i = 0; i < cards.length; i++) {
+      const a = cards[i]!;
+      expect(a.left).toBeGreaterThanOrEqual(15); expect(a.left + a.width).toBeLessThanOrEqual(page.viewportSize()!.width - 15);
+      for (const b of cards.slice(i + 1)) expect(a.left < b.left + b.width && a.left + a.width > b.left &&
+        a.top < b.top + b.height && a.top + a.height > b.top).toBe(false);
+    }
+    return cards;
+  };
+  const initial = await check();
+  await page.getByTestId('scene-zen-button').click(); await page.screenshot({ path: info.outputPath('lawn-cards.png') }); await page.keyboard.press('Escape');
+  for (const id of initial.map(card => card.id)) {
+    const card = (await rects()).find(card => card.id === id); if (!card) continue;
+    await page.mouse.move(card.left + card.width / 2, card.top + card.height / 2);
+    await page.waitForTimeout(1100);
+    const hovered = (await rects()).find(card => card.id === id); expect(hovered).toBeDefined();
+    await page.mouse.click(hovered!.left + hovered!.width / 2, hovered!.top + hovered!.height / 2);
+    if (id.startsWith('scene:idea:')) {
+      await expect(page.getByTestId('idea-action-card')).toBeVisible();
+      await page.getByTestId('idea-card-close').click();
+    } else {
+      await expect(page.getByRole('dialog', { name: `Tree controls for ${id.slice('scene:proc:'.length)}`, exact: true })).toBeVisible();
+      await page.getByTestId('tree-menu-close').click();
+    }
+    await page.mouse.move(4, 450);
+  }
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByTestId('scene-fit-button').click(); await cameraSettled(page);
+  await check(); await page.getByTestId('scene-zen-button').click();
+  await page.screenshot({ path: info.outputPath('portrait-cards.png') });
+  expect(errors).toEqual([]);
+});

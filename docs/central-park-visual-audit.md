@@ -142,7 +142,12 @@ prove that the visual objective has been achieved.
    and projector replay. Ground and upward skyline captures were inspected.
    Left/right turn still follows the orbit around its target; consider a
    separate in-place yaw for close exploration. Overlapping idea/project
-   labels on the lawn remain a visible composition problem.
+   title cards on the lawn now occupy separate screen space, with capped
+   close size and quieter unreadable distant labels. GPU captures and actual
+   card clicks pass on desktop and portrait. A 32/64-project check preserves
+   focus and all six branch picks, but neighboring branch-tip labels still
+   overlap in the close forest view. Extend composition work to those labels
+   and the surrounding tree-menu chips.
 6. **Cost and lifecycle.** Re-measure a large project forest, transitions and
    repeated rebuilds. Audit cached world/atlas lifetimes, reflection/shadow
    cadence, resolution adaptation and long-frame behavior. Six environment
@@ -204,7 +209,9 @@ prove that the visual objective has been achieved.
    and long routes. The busy lawn capture exposed oversized decorative
    butterflies; the following pass brings them to roughly 8–10 cm with
    monarch-inspired markings and reduces the oversized airborne motes.
-   Overlapping idea cards still need composition work.
+   Idea/project title overlap is now reduced by bounded screen placement;
+   the next close forest capture exposes adjacent branch-tip labels as the
+   remaining text-clutter problem.
 
 ## Completion remains unproven
 

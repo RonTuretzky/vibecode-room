@@ -93,7 +93,13 @@ export function makeLabelSprite(title: string, statusLine: string, accentCss: st
     if (status.length > 0) {
       ctx.font = statusFont;
       ctx.fillStyle = accentCss;
-      ctx.fillText(status.toUpperCase(), padX, padY + lines.length * lineHeight + 2);
+      const fullStatus = status.toUpperCase();
+      let clippedStatus = fullStatus;
+      if (ctx.measureText(clippedStatus).width > width - padX * 2) {
+        while (clippedStatus.length > 1 && ctx.measureText(`${clippedStatus}…`).width > width - padX * 2) clippedStatus = clippedStatus.slice(0, -1);
+        clippedStatus = `${clippedStatus.trimEnd()}…`;
+      }
+      ctx.fillText(clippedStatus, padX, padY + lines.length * lineHeight + 2);
     }
   };
   paint(statusLine);

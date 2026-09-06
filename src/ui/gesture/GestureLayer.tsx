@@ -242,7 +242,9 @@ export function GestureLayer({ wall, fusionUrl, remoteUrl = "", mouseTest = fals
         url: remoteUrl,
         wall,
         onCursors: mergeCursors,
-        onKeys: (keysFrame) => keyHolds.update(keysFrame.guest, keysFrame.held, nowSec()),
+        onKeys: (keysFrame) => {
+          if (keyHolds.update(keysFrame.guest, keysFrame.held, nowSec())) sceneNavigation.requestHome();
+        },
         // Flat-pair pose sync (the partner window published its shared
         // panorama pose through the hub): hand it to the scene's adopter.
         // Only a flat-locked RoomScene registers one — everywhere else the
@@ -454,7 +456,9 @@ export function GestureLayer({ wall, fusionUrl, remoteUrl = "", mouseTest = fals
         window.dispatchEvent(new KeyboardEvent("keyup", { key }));
       }
 
-      sceneNavigation.set("guests", [...remoteNavigation]);
+      // Home's edge is queued on receipt; sampling it here would either lose
+      // a quick tap or fire a second reset for a longer hold.
+      sceneNavigation.set("guests", [...remoteNavigation].filter(key => key !== "home"));
 
       const feed = [...cursors.entries()].map(([id, c]) => ({ id, x: c.x, y: c.y, engaged: c.engaged }));
       const result = multi.update(zones, feed, t);

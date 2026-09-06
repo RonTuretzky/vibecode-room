@@ -155,18 +155,18 @@ test.describe("desk mode — overlays & keyboard map", () => {
     await expect(page.getByTestId("help-overlay")).toHaveCount(0);
   });
 
-  test("q toggles the QR overlay; click-outside closes it", async ({ page }) => {
+  test("Shift+Q toggles the QR overlay; click-outside closes it", async ({ page }) => {
     await gotoStatic(page);
-    await page.keyboard.press("q");
+    await page.keyboard.press("Shift+Q");
     await expect(page.getByTestId("qr-overlay")).toBeVisible();
     // Click the backdrop (far corner, outside the centered card).
     await page.getByTestId("qr-overlay").click({ position: { x: 8, y: 8 } });
     await expect(page.getByTestId("qr-overlay")).toHaveCount(0);
   });
 
-  test("the q key opens the QR overlay with the server's submit URL + QR image", async ({ page }) => {
+  test("Shift+Q opens the QR overlay with the server's submit URL + QR image", async ({ page }) => {
     await gotoStatic(page);
-    await page.keyboard.press("q");
+    await page.keyboard.press("Shift+Q");
     await expect(page.getByTestId("qr-overlay")).toBeVisible();
     // /api/import/info resolves against the real server; bound to loopback
     // (as in CI) the overlay says so honestly: the submit URL shows and the

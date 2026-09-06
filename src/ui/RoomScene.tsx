@@ -1,4 +1,5 @@
 import { isNavigationKey, navigationAxes, sceneNavigation } from "./spatial-navigation";
+import { createSceneCardLayout, type SceneCard } from "./scene-card-layout";
 import { clampCameraPitch, clampOrbitTilt, orbitCameraPitch } from "./camera-pitch";
 import { createParkFurniture } from "../park3d/park-furniture";
 import { BENCH_FOOTPRINT } from '../park3d/park-furniture-geometry';
@@ -567,6 +568,10 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
     // serve both.
 
     const glowTexture = makeGlowTexture();
+    const sceneCards = createSceneCardLayout();
+    scene.add(sceneCards.group);
+    const cardInputs: SceneCard[] = [];
+    let cardsActive = false;
 
     // ── camera rig (visualizer-style spherical orbit around a pannable target)
     const rig = {
@@ -4311,6 +4316,8 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
       if (rect.width === 0 || rect.height === 0) {
         return null;
       }
+      const cardPick = sceneCards.pick(clientX - rect.left, clientY - rect.top) as ScenePickPayload | null;
+      if (cardPick) return cardPick;
       pointer.set(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
       raycaster.setFromCamera(pointer, camera);
       const targets: THREE.Object3D[] = [];
@@ -4344,6 +4351,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
       // precedence rule decide (resolveScenePick, tree-limbs.ts).
       const payloads: ScenePickPayload[] = [];
       for (const hit of raycaster.intersectObjects(targets, true)) {
+        if (hit.object instanceof THREE.Sprite && !hit.object.visible) continue;
         let node: THREE.Object3D | null = hit.object;
         while (node !== null) {
           if (node.userData.pick !== undefined) {
@@ -4500,7 +4508,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
     // the app-level Auto-Build toggle.
     const keyboardKeys = new Set<string>();
     let keysDown = new Set<string>();
-    let homeHeld = false;
+    let lastHomeSignal = sceneNavigation.homeSignal;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") keyboardKeys.clear();
       if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) {
@@ -4518,6 +4526,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
         // Arrows in a form/list remain native navigation.
         if (target instanceof HTMLElement && target.closest("[role=dialog], .project-workspace, .detail-overlay")) return;
         event.preventDefault();
+        if (key === "home" && !event.repeat && !keyboardKeys.has(key)) sceneNavigation.requestHome();
         keyboardKeys.add(key);
         lastCameraInputMs = performance.now();
       }
@@ -4982,8 +4991,10 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
         }
       }
       keysDown = new Set([...keyboardKeys, ...sceneNavigation.keys()]);
-      const returnHome = keysDown.has("home") && !homeHeld;
-      homeHeld = keysDown.has("home");
+      // A press/release can both arrive between two slow render frames.
+      // Home is a command: retain its edge independently of held motion.
+      const returnHome = sceneNavigation.homeSignal !== lastHomeSignal;
+      lastHomeSignal = sceneNavigation.homeSignal;
       const initialFit = initialFitRef.current !== lastInitialFit;
       lastInitialFit = initialFitRef.current;
       if (fitRef.current !== lastFit || returnHome || (initialFit && !(flatLocked && flatPoseAdopted))) {
@@ -5785,6 +5796,21 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
         rig2.lineGeom.getAttribute("color").needsUpdate = true;
       }
 
+      if (parkEnvActive() && garden) {
+        cardInputs.length = 0;
+        for (const [id, entry] of ideaEntries) if (!entry.removing && entry.label) {
+          entry.label.userData.pick = { kind: "idea", key: id };
+          cardInputs.push({ id: `${SCENE_IDEA_PREFIX}${id}`, label: entry.label,
+            priority: hoveredIdea === id || dwellHighlights.has(`${SCENE_IDEA_PREFIX}${id}`) ? 2 : 0 });
+        }
+        for (const [id, entry] of treeEntries) if (!entry.removing && entry.label) {
+          const callsign = entry.treeSpec?.callsign;
+          cardInputs.push({ id: `${SCENE_PROC_PREFIX}${callsign}`, label: entry.label,
+            priority: hoveredProc === callsign || dwellHighlights.has(`${SCENE_PROC_PREFIX}${callsign}`) ? 2 : focusRef.current === id ? 1 : 0 });
+        }
+        sceneCards.update(camera, container.clientWidth, container.clientHeight, cardInputs);
+        cardsActive = true;
+      } else if (cardsActive) { sceneCards.reset(); cardsActive = false; }
       renderer.info.reset();
       renderer.render(scene, camera);
       frameDrawTotal += renderer.info.render.calls;
@@ -5800,6 +5826,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
           }
         }
         container.dataset.labeledClouds = String(labeled);
+        container.dataset.sceneCardRects = JSON.stringify(sceneCards.rects());
         container.dataset.cameraX = camera.position.x.toFixed(3);
         container.dataset.cameraY = camera.position.y.toFixed(3);
         container.dataset.cameraZ = camera.position.z.toFixed(3);
@@ -5900,6 +5927,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
       invisibleHitMat.dispose();
       invisibleShellMat.dispose();
       glowTexture.dispose();
+      sceneCards.dispose();
       scene.traverse((node) => {
         if (node instanceof THREE.Mesh && node.geometry !== undefined) {
           node.geometry.dispose();

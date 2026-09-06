@@ -107,9 +107,12 @@ for artifact recovery, module ownership, and the test commands.
   arrival toast when a QR/GitHub import lands (**⚘ Plant it…**).
 - **Keyboard:** press `?` (or `h`) for the cheat-sheet overlay. Highlights:
   `b`/`Enter` build the top ready idea · `x` dismiss it · `c` toggle Idea
-  Capture · `a` toggle Auto-Build · `r` toggle Research mode · `q` QR import ·
+  Capture · `Shift+A` toggle Auto-Build · `r` toggle Research mode · `Shift+Q` QR import ·
   `m` mic · `u` unmute · `1–9` select/steer processes · `Esc` close overlays ·
   `Shift+E` emergency stop.
+- **Explore:** use **Controls → Explore** to hold a direction or enable dwell.
+  `W/A/S/D` move, arrows turn and tilt, `Q/E` lower and raise the camera,
+  `=/−` zoom, and `Home` returns to the projects.
 - **Voice:** the wake word is **"Vibersyn"** (fuzzy-matched — "viber sin" or
   "vibersin" work too):
   - the bare name starts **Idea Capture**;
@@ -118,7 +121,7 @@ for artifact recovery, module ownership, and the test commands.
     quest; "research on/off" toggles the mode;
   - **"Vibersyn, stop everything"** is the emergency stop;
   - also understood: "dismiss"/"skip"/"no", "auto build on/off", "stop capturing".
-- **QR Import:** the **QR Import** status-bar button shows a QR code — scan it on
+- **QR Import:** `Shift+Q` opens the import overlay and its QR code — scan it on
   your phone to open a page where you describe what the fleet should build
   (context is the primary field) plus an optional link. A `github.com/<owner>/<repo>`
   link is shallow-cloned into `builds/<upid>/repo/` and a digest of it grounds the

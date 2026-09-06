@@ -948,3 +948,55 @@ Live host and guest navigation then passed, including changing pitch from
 portrait and guest controls were inspected without browser errors. Evidence:
 `.context/camera-tilt-live-2026-09-06/` and
 `.context/camera-tilt-restart/`. The app remains running at port 18994.
+
+## Park card composition — 2026-09-06
+
+The lawn inspection exposed overlapping idea cards, with the text covering
+both another card and a tree crown. Park title cards now reserve clear screen
+space near their original plant anchors. Nearer and highlighted cards take
+priority; displaced cards have a thin connector, and close cards stop growing
+at 220 CSS pixels. Titles too small to read yield until the plant is highlighted.
+The original 3D positions stay fixed. Other environments retain their framing.
+Status text now ends with an ellipsis instead of cutting through the last word.
+
+The layout uses the existing sprite's center offset, so raycasts follow its
+rendered position. Visible card bounds take precedence over objects behind the
+card; hidden sprites cannot intercept a pick. Hover preserves a displaced card's
+slot. Tests compare those screen bounds with actual Three.js sprite raycasts,
+check congestion/phone edges and verify reset behavior. No new image assets or
+per-card geometry are needed; all connector lines share one growing buffer.
+
+
+All six hardware scenarios pass with the card layout. Warm rebuild counts
+remain fixed at 196 geometries / 88 textures / 94 programs; six preset samples
+are 8.3–8.7 ms average / 9.0–10.4 ms p95 on the M4 Max at DPR 2. A repeated
+unit check then caught a distant-hover size oscillation; the minimum readable
+size now persists throughout the highlight. The card-click hardware scenario
+passes again. All 229 targeted card/branch/projector checks and typechecking
+pass. Evidence: `.context/scene-cards-gpu-results/` and
+`.context/scene-cards-final-gpu-results/`.
+
+The 32/64-mature-project captures retain clear overviews and project focus;
+all six branches remain pickable, and dwell opens the expected branch. Six
+samples of the 64-project overview span 8.4–8.9 ms average / 11.5–12.6 ms p95.
+These are local samples, not a cross-device guarantee. Nearby branch-tip cards
+still overlap and remain in the audit. Evidence:
+`.context/scene-cards-forest-2026-09-06/` and
+`.context/scene-cards-picking-2026-09-06/`.
+
+The actual two-project local room also passes focus and lawn/Pond captures
+without browser errors or API writes (`.context/scene-cards-live-2026-09-06/`).
+The first camera commit's CI passed unit and live-flow jobs but found two older
+QR tests still pressing Q, plus a quick Home press missed between render
+frames. QR coverage now uses Shift+Q. Home is queued as a command independently
+of held movement; guest Home edges are captured when received, and heartbeats
+do not repeat them. Pure tests cover press/release before a frame and multiple
+sources; the two-projector browser journey also exercises a quick guest reset.
+
+The complete standard browser suite passes after the Home fix: 75 passed,
+with the six hardware-only scenarios skipped there and covered separately
+above. The flat-pair journey now verifies keyboard Home and a quick guest
+button tap after replay. All 28 focused input/card tests and typechecking also
+pass. Evidence: `.context/scene-cards-full-browser-results/` and
+`.context/home-command-{units,types}.log`. The real room remains muted with
+its original two projects and local model configuration.

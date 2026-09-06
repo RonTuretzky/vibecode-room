@@ -100,13 +100,17 @@ export class RemoteKeyHolds {
     this.#staleSeconds = staleSeconds;
   }
 
-  // Record a guest's current holds. `t` is seconds on the layer's clock.
-  update(guest: number, held: readonly string[], t: number): void {
+  // Record holds and report a new Home press before the next frame samples
+  // their union. `t` is seconds on the layer's clock.
+  update(guest: number, held: readonly string[], t: number): boolean {
+    const previous = this.#guests.get(guest);
+    const homePressed = held.includes("home") && (!previous?.held.has("home") || t - previous.lastSeen > this.#staleSeconds);
     if (held.length === 0) {
       this.#guests.delete(guest);
-      return;
+      return false;
     }
     this.#guests.set(guest, { held: new Set(held), lastSeen: t });
+    return homePressed;
   }
 
   // Advance to time `t`: evict silent guests, recompute the union, and return

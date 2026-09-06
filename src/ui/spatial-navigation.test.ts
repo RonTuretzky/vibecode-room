@@ -30,3 +30,13 @@ describe("spatial navigation", () => {
     expect([...holds.keys()]).toEqual(["w"]);
   });
 });
+
+test('Home commands survive release between frames without repeating a held command', () => {
+  const holds = new NavigationHolds();
+  holds.set('controls', ['home']); holds.set('controls', ['home']);
+  expect(holds.homeSignal).toBe(1);
+  holds.set('controls', []);
+  expect(holds.keys().size).toBe(0); expect(holds.homeSignal).toBe(1);
+  holds.set('controls', ['home']); expect(holds.homeSignal).toBe(2);
+  holds.requestHome(); expect(holds.homeSignal).toBe(3);
+});
