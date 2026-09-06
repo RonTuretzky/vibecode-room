@@ -7,7 +7,7 @@ test("Gapstow has a genuinely open arch, solid abutments and a walkable deck", (
   bridge.updateMatrixWorld(true);
   const ray = new THREE.Raycaster(new THREE.Vector3(0, 1, -10), new THREE.Vector3(0, 0, 1));
   expect(ray.intersectObject(bridge, true)).toHaveLength(0);
-  ray.ray.origin.x = 5.5;
+  ray.ray.origin.x = 9.5;
   expect(ray.intersectObject(bridge, true).length).toBeGreaterThan(0);
   ray.set(new THREE.Vector3(0, 10, 0), new THREE.Vector3(0, -1, 0));
   const deck = ray.intersectObject(bridge, true)[0]!;

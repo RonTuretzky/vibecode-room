@@ -1,6 +1,6 @@
-// Central Park's landmarks as small hand-built models, stood exactly where
-// OpenStreetMap places them, at true 1:1 metres in the park frame (the room
-// scales the whole world down). These are deliberately SHAPED rather than
+// Central Park's landmarks as small hand-built models, placed using mapped
+// sites where available (park-sites.ts), at 1:1 metres in the park frame.
+// These are deliberately SHAPED rather than
 // boxed — a tapered needle, an iron arch, tiered basins, a stone arch, a
 // crenellated keep — because at diorama scale what reads is silhouette:
 //
@@ -21,6 +21,9 @@ import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { parkStoneTexture, parkLeafMaterial } from "./park-materials";
 import { mulberry32 } from "../ui/tree/spec";
 import { DEG, localFromLatLon } from "./park-frame";
+import { GAPSTOW_LAYOUT, PARK_SITES } from "./park-sites";
+import { gapstowDeckAt } from "./park-gapstow-ground";
+import { buildWollmanRink } from "./park-wollman";
 
 export interface LandmarkSpec {
   name: string;
@@ -195,8 +198,8 @@ function buildBethesda(): THREE.Object3D {
 export function buildGapstow(): THREE.Object3D {
   const g = new THREE.Group();
   g.name = "gapstow-stone-bridge";
-  const length = 13.5, width = 3.6;
-  const top = (x: number) => 3.65 + .42 * (1 - (x / (length / 2)) ** 2);
+  const { length, width } = GAPSTOW_LAYOUT;
+  const top = gapstowDeckAt;
   const stoneMap = typeof document === "undefined" ? null : parkStoneTexture().clone();
   stoneMap?.repeat.set(.23, .23);
   const stone = new THREE.MeshStandardMaterial({ color: 0xd8d1b9, map: stoneMap, bumpMap: stoneMap, bumpScale: .045, roughness: .98 });
@@ -208,7 +211,7 @@ export function buildGapstow(): THREE.Object3D {
   }
   profile.closePath();
   const arch = new THREE.Path();
-  arch.absellipse(0, .1, 4.4, 2.9, Math.PI, 0, true); arch.lineTo(-4.4, .1);
+  arch.absellipse(0, .1, 6.7, 3.15, Math.PI, 0, true); arch.lineTo(-6.7, .1);
   profile.holes.push(arch);
   const body = new THREE.Mesh(new THREE.ExtrudeGeometry(profile, { depth: width, bevelEnabled: true, bevelSize: .045, bevelThickness: .035, bevelSegments: 2, curveSegments: 32 }), stone);
   body.position.z = -width / 2; g.add(body);
@@ -218,10 +221,10 @@ export function buildGapstow(): THREE.Object3D {
     for (let i = 0; i < 23; i++) {
       const a = Math.PI * i / 23 + .009, b = Math.PI * (i + 1) / 23 - .009;
       const wedge = new THREE.Shape();
-      wedge.moveTo(Math.cos(a) * 4.4, .1 + Math.sin(a) * 2.9);
-      wedge.lineTo(Math.cos(b) * 4.4, .1 + Math.sin(b) * 2.9);
-      wedge.lineTo(Math.cos(b) * 4.82, .1 + Math.sin(b) * 3.32);
-      wedge.lineTo(Math.cos(a) * 4.82, .1 + Math.sin(a) * 3.32); wedge.closePath();
+      wedge.moveTo(Math.cos(a) * 6.7, .1 + Math.sin(a) * 3.15);
+      wedge.lineTo(Math.cos(b) * 6.7, .1 + Math.sin(b) * 3.15);
+      wedge.lineTo(Math.cos(b) * 7.12, .1 + Math.sin(b) * 3.57);
+      wedge.lineTo(Math.cos(a) * 7.12, .1 + Math.sin(a) * 3.57); wedge.closePath();
       const geo = new THREE.ExtrudeGeometry(wedge, { depth: .14, bevelEnabled: false });
       geo.translate(0, 0, side * (width / 2 + .03) - .07); masonry.push(geo);
     }
@@ -233,29 +236,8 @@ export function buildGapstow(): THREE.Object3D {
       cap.translate(x, top(x) + .79, side * (width / 2 - .12)); masonry.push(cap);
     }
   }
-  // Approach ramps connect the raised deck to the paths on either bank.
-  // The arch alone otherwise reads as a freestanding wall with no way onto it.
-  for (const sign of [-1, 1]) {
-    const approach = new THREE.Shape();
-    approach.moveTo(sign * length / 2, 0);
-    approach.lineTo(sign * (length / 2 + 8.5), 0);
-    approach.lineTo(sign * (length / 2 + 8.5), .1);
-    approach.lineTo(sign * length / 2, top(length / 2));
-    approach.closePath();
-    const ramp = new THREE.ExtrudeGeometry(approach, { depth: width, bevelEnabled: false });
-    ramp.translate(0, 0, -width / 2);
-    g.add(new THREE.Mesh(ramp, stone));
-    for (let i = 0; i < 16; i++) {
-      const t = (i + .5) / 16, x = sign * (length / 2 + t * 8.5);
-      const y = top(length / 2) * (1 - t) + .1 * t;
-      for (const side of [-1, 1]) {
-        const wall = new THREE.BoxGeometry(8.5 / 16, .5, .36);
-        wall.rotateZ(-sign * Math.atan((top(length / 2) - .1) / 8.5));
-        wall.translate(x, y + .25, side * (width / 2 - .12));
-        masonry.push(wall);
-      }
-    }
-  }
+  // The approaches are already part of the mapped 23 m outline. Extending
+  // another 8.5 m at either end made the old 13.5 m body 30.5 m long.
   const detailParts = masonry.map(geo => geo.index ? geo.toNonIndexed() : geo);
   const detail = mergeGeometries(detailParts)!;
   detailParts.forEach(geo => { if (!masonry.includes(geo)) geo.dispose(); });
@@ -357,7 +339,7 @@ function buildBelvedere(): THREE.Object3D {
 }
 
 // Gapstow's site, exported for the room's tree-clearing pass.
-export const GAPSTOW = localFromLatLon(40.76693, -73.97381);
+export const GAPSTOW = PARK_SITES.gapstow;
 
 // ── Inscope Arch ────────────────────────────────────────────────────────────
 // The little granite arch north-east of the Pond — Gapstow's quieter sibling.
@@ -585,32 +567,35 @@ export const LANDMARKS: LandmarkSpec[] = [
   // axis, so +Z faces 148 − 90.
   { name: "Bow Bridge", lat: 40.77576, lon: -73.97177, bearing: 58, build: buildBowBridge },
   { name: "Bethesda Fountain", lat: 40.77432, lon: -73.97083, bearing: 29, build: buildBethesda },
-  { name: "Gapstow Bridge", lat: 40.76693, lon: -73.97381, bearing: 160, build: buildGapstow },
+  { ...PARK_SITES.gapstow, name: "Gapstow Bridge", bearing: GAPSTOW_LAYOUT.bearing, build: buildGapstow },
   { name: "Belvedere Castle", lat: 40.7793, lon: -73.96887, bearing: 29, build: buildBelvedere },
-  { name: "Inscope Arch", lat: 40.767, lon: -73.9709, bearing: 65, build: buildInscope },
-  { name: "Cop Cot", lat: 40.7662, lon: -73.97575, bearing: 29, build: buildCopCot },
-  { name: "Pulitzer Fountain", lat: 40.7641, lon: -73.97345, bearing: 29, build: buildPulitzer },
-  { name: "Sherman Monument", lat: 40.76401, lon: -73.97327, bearing: 209, build: buildSherman },
+  { ...PARK_SITES.inscope, name: "Inscope Arch", bearing: 65, build: buildInscope },
+  { ...PARK_SITES.copCot, name: "Cop Cot", bearing: 29, build: buildCopCot },
+  { ...PARK_SITES.pulitzer, name: "Pulitzer Fountain", bearing: 29, build: buildPulitzer },
+  { ...PARK_SITES.sherman, name: "Sherman Monument", bearing: 209, build: buildSherman },
   { name: "USS Maine Monument", lat: 40.76856, lon: -73.98166, bearing: 119, build: buildMaineMonument },
-  { name: "The Dairy", lat: 40.76674, lon: -73.97453, bearing: 209, build: buildDairy },
-  { name: "Chess & Checkers House", lat: 40.7665, lon: -73.9753, bearing: 29, build: buildChessHouse },
-  { name: "The Carousel", lat: 40.76702, lon: -73.97663, bearing: 29, build: buildCarousel },
+  { ...PARK_SITES.dairy, name: "The Dairy", bearing: 209, build: buildDairy },
+  { ...PARK_SITES.chess, name: "Chess & Checkers House", bearing: 29, build: buildChessHouse },
+  { ...PARK_SITES.carousel, name: "The Carousel", bearing: 29, build: buildCarousel },
 ];
 
 // Build every landmark into one group in the park frame, each standing on
-// the caller's ground (water sits at ground level, so bridges land on it).
-export function buildLandmarks(groundAt: (x: number, z: number) => number): THREE.Group {
+// the rendered ground. Water bridges use the actual level water surface;
+// raw DEM samples over water can be above or below the corrected shoreline.
+export function buildLandmarks(groundAt: (x: number, z: number) => number, options: { waterAt?: (x: number, z: number) => number | null; rinkLevel?: number; paths?: readonly { width: number; pts: number[] }[] } = {}): THREE.Group {
   const group = new THREE.Group();
   group.name = "park-landmarks";
   for (const spec of LANDMARKS) {
     const p = localFromLatLon(spec.lat, spec.lon);
     const model = spec.build();
     model.name = spec.name;
-    model.position.set(p.x, groundAt(p.x, p.z), p.z);
+    const water = spec.name === "Gapstow Bridge" || spec.name === "Bow Bridge" ? options.waterAt?.(p.x, p.z) : null;
+    model.position.set(p.x, water ?? groundAt(p.x, p.z), p.z);
     // Bearing clockwise from north (−Z) → rotation about +Y.
     model.rotation.y = Math.PI - spec.bearing * DEG;
     group.add(model);
   }
+  if (options.rinkLevel !== undefined) group.add(buildWollmanRink(options.rinkLevel, options.paths));
   return group;
 }
 
@@ -638,8 +623,7 @@ export function mallElmPositions(): { x: number; z: number }[] {
 // Schist outcrops worth a few real rock scans: centre + spread radius (m).
 export const OUTCROPS: { name: string; lat: number; lon: number; radius: number }[] = [
   { name: "Pond west shore", lat: 40.7664, lon: -73.97493, radius: 12 },
-  { name: "Umpire Rock", lat: 40.76917, lon: -73.97775, radius: 28 },
+  { ...PARK_SITES.umpire, name: "Umpire Rock (Rat Rock)", radius: 28 },
   { name: "Vista Rock", lat: 40.77941, lon: -73.96907, radius: 22 },
-  { name: "Rat Rock", lat: 40.7695, lon: -73.97585, radius: 14 },
   { name: "Ramble outcrop", lat: 40.77705, lon: -73.97095, radius: 16 },
 ];

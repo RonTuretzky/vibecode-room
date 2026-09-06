@@ -94,6 +94,7 @@ import {
   insidePark as insideParkRect,
   localFromAlongAcross as parkLocalFromAlongAcross,
 } from "../park3d/park-frame";
+import { createParkPlantingMask, PARK_SITES, inSite } from "../park3d/park-sites";
 import { GAPSTOW, OUTCROPS } from "../park3d/park-landmarks";
 import { loadParkWorldShared, type ParkWorld } from "../park3d/park-world";
 import { Water } from "three/addons/objects/Water.js";
@@ -953,10 +954,8 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
           displace: false,
           // Continuous grass/soil albedo with crisp, locally generated detail.
           detailGround: true,
-          // The 5th Ave blocks press right against the stage from the east;
-          // clear the extrusions near the room so only the skyline across
-          // the water remains (the real models all stand farther out).
-          clearFootprints: [{ x: POND_STAGE.x, z: POND_STAGE.z, r: 325 }],
+          // Keep Fifth Avenue's real street wall; the former 325 m clearing
+          // erased nearby city blocks as well as park structures.
           // No window-boxes standing in the greenery (Wollman Rink, the
           // Zoo…): inside the wall the park is landmarks, trees and rock.
           clearParkInterior: true,
@@ -1032,6 +1031,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
             const r = parkToRoom(p.x, p.z);
             return { px: p.x, pz: p.z, rx: r.x, rz: r.z, radius: Math.hypot(r.x, r.z) };
           };
+          const canPlant = createParkPlantingMask(world.pathLines);
           const trees: { x: number; z: number; scale: number; rot: number; px: number; pz: number }[] = [];
           const TARGET = 640;
           for (let attempt = 0; attempt < 20000 && trees.length < TARGET; attempt++) {
@@ -1047,7 +1047,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
               continue;
             }
             const p = { x: px, z: pz };
-            if (world.canopyAt(p.x, p.z) < 2.5 || world.waterAt(p.x, p.z) > 0.5) {
+            if (world.canopyAt(p.x, p.z) < 2.5 || world.waterAt(p.x, p.z) > 0.5 || !canPlant(px, pz, 2.5)) {
               continue;
             }
             if ((p.x - GAPSTOW.x) ** 2 + (p.z - GAPSTOW.z) ** 2 < 22 * 22) {
@@ -1087,7 +1087,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
               if (radius < meadowRadius + 3 || radius > rMax) {
                 continue;
               }
-              if (world.waterAt(px, pz) > 0.4 || !keep(px, pz)) {
+              if (world.waterAt(px, pz) > 0.4 || !canPlant(px, pz) || !keep(px, pz)) {
                 continue;
               }
               if ((px - GAPSTOW.x) ** 2 + (pz - GAPSTOW.z) ** 2 < 16 * 16) {
@@ -1171,10 +1171,11 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
                 const off = (line.width / 2 + 0.5) * side;
                 const px = x1 - uz * off;
                 const pz = z1 + ux * off;
-                if (world.waterAt(px, pz) > 0.4) {
+                if (world.waterAt(px, pz) > 0.4 || inSite(px, pz, PARK_SITES.hallett.ring)) {
                   continue;
                 }
                 const at = parkToRoom(px, pz);
+                if (lamps.some(m => Math.hypot(m.elements[12]! - at.x, m.elements[14]! - at.z) < 18)) continue;
                 dummy.position.set(at.x, roomY(px, pz) + 0.12, at.z);
                 dummy.rotation.y = rng() * Math.PI * 2;
                 dummy.scale.setScalar(1);
@@ -1211,6 +1212,8 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
               const d = Math.sqrt(rng()) * outcrop.radius;
               const px = c.x + Math.cos(a) * d;
               const pz = c.z + Math.sin(a) * d;
+              if (world.waterAt(px, pz) > .35 || !canPlant(px, pz, .5)) continue;
+              if (outcrop.name.startsWith("Umpire") && !inSite(px, pz, PARK_SITES.umpire.ring)) continue;
               rocks.push({ ...parkToRoom(px, pz), px, pz, scale: 2.2 + rng() * 2.2, rot: rng() * Math.PI * 2 });
             }
           }

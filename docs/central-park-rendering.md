@@ -36,7 +36,7 @@ its photograph, regular terrain grid, and optional canopy displacement.
 Each connected water body has a level surface, carved bed, graded bank,
 and clipped shoreline. Water geometry is independent of terrain detail.
 
-Gapstow has an open arch, approach ramps, metre-scale masonry UVs,
+Gapstow has an open arch, earthen approaches, metre-scale masonry UVs,
 irregular stone courses, and hanging ivy clusters. Simple tower footprints
 receive restrained roof setbacks while retaining their geographic footprint
 and height. These are illustrative architectural details, not surveyed
@@ -124,3 +124,11 @@ vocabulary; rigid corner projector views remain fixed and disable their pads.
 
 `e2e/spatial-navigation.e2e-pw.ts` checks real camera changes, sustained mouse and
 remote dwell, keyboard and touch holds, stopping, and guest disconnection.
+
+## Geographic accuracy
+
+The south-end accuracy pass adds locally bundled OSM sites, corrected landmark
+positions, mapped Gapstow dimensions and orientation, connected bridge
+approaches, Wollman Rink and its camera view, and Hallett woodland coverage.
+Vegetation avoids mapped paths and structures. The former 325 m clearing of
+city blocks is removed. See [sources and limitations](central-park-accuracy.md).

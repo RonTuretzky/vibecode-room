@@ -46,3 +46,14 @@ Re-bake the data with `python3 scripts/fetch-park-data.py` (needs numpy +
 Pillow, ~30 s, ~9 MB) and the models with
 `python3 scripts/fetch-park-models.py` (~10 MB). The Google tiles page needs
 no bake.
+
+## South-end control points
+
+`src/park3d/data/south-park-sites.json` is a bundled OpenStreetMap extract
+(© OpenStreetMap contributors, [ODbL](https://www.openstreetmap.org/copyright)).
+It retains source way IDs, versions, modification times and the extract's
+snapshot timestamp. `scripts/fetch-park-sites.py` refreshes these eleven sites.
+The renderer uses their geometry for landmark placement, Gapstow's outline,
+Wollman's recreation surface, and Hallett's woodland boundary. See
+[`docs/central-park-accuracy.md`](../../../docs/central-park-accuracy.md) for
+sources, corrections, and the distinction between mapped and modeled detail.

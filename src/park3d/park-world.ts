@@ -16,6 +16,9 @@ import { skylineProfile } from "./park-skyline-profile";
 import { parkGroundColor } from "./park-ground";
 import { parkPathTexture, parkGroundDetailTexture } from "./park-materials";
 import { AXIS_BEARING, DEG, PARK_CENTER, PARK_HALF_LEN, PARK_HALF_WIDTH, insidePark } from "./park-frame";
+import { createGapstowCrossing } from "./park-gapstow-ground";
+import { PARK_SITES, hallettWoodlandAt } from "./park-sites";
+import { createWollmanGrade } from "./park-wollman";
 import { buildLandmarks } from "./park-landmarks";
 import { loadSkylineModels, skylineSites } from "./park-models";
 
@@ -119,7 +122,7 @@ export interface ParkWorld {
   dispose: () => void;
 }
 
-export const PARK_ATTRIBUTION = "USDA NAIP · USGS 3DEP · NYC Open Data footprints (public domain) · water © OpenStreetMap contributors";
+export const PARK_ATTRIBUTION = "USDA NAIP · USGS 3DEP · NYC Open Data footprints (public domain) · water, paths and landmark sites © OpenStreetMap contributors";
 
 const loadImage = (url: string): Promise<HTMLImageElement> =>
   new Promise((resolve, reject) => {
@@ -292,10 +295,14 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
     }
     return makeSampler(red, canvas.width, canvas.height, halfEast, halfNorth, 0.5, unit);
   };
-  const sampleRelief = maskSampler(reliefImage, manifest.relief.unitM);
+  const photoRelief = maskSampler(reliefImage, manifest.relief.unitM);
+  const woodland = opts.detailGround === true && opts.relief !== false ? hallettWoodlandAt : () => 0;
+  const sampleRelief = (x: number, z: number) => Math.max(photoRelief(x, z), woodland(x, z) * 12);
   const sampleWater = maskSampler(waterImage, 1 / 255);
-  const sampleLawn = maskSampler(lawnImage, 1 / 255);
+  const photoLawn = maskSampler(lawnImage, 1 / 255);
+  const sampleLawn = (x: number, z: number) => photoLawn(x, z) * (1 - woodland(x, z));
 
+  const rinkGrade = opts.landmarks !== false ? createWollmanGrade(sampleDem) : null;
   const flatten = opts.flatten;
   const anchorGround = flatten === undefined ? 0 : sampleDem(flatten.x, flatten.z);
   // 0 inside the flattened disc, 1 on the untouched terrain.
@@ -308,7 +315,8 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
   };
   const dryGroundAt = (x: number, z: number): number => {
     const w = terrainWeight(x, z);
-    return w === 1 ? sampleDem(x, z) : anchorGround + (sampleDem(x, z) - anchorGround) * w;
+    const base = w === 1 ? sampleDem(x, z) : anchorGround + (sampleDem(x, z) - anchorGround) * w;
+    return rinkGrade?.heightAt(x, z, base) ?? base;
   };
   const view = opts.viewBounds;
   const west = view ? Math.max(-halfEast, view.x - view.radius) : -halfEast;
@@ -318,7 +326,12 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
   const cx = (west + east) / 2, cz = (north + south) / 2;
   const width = east - west, depth = south - north;
   const builtWater = waterImage === null ? null : buildWater(sampleWater, dryGroundAt, width / 2, depth / 2, 2, opts.heroWaterAt, { x: cx, z: cz });
-  const bedGroundAt = (x: number, z: number) => Math.min(dryGroundAt(x, z), builtWater?.bankHeightAt(x, z) ?? Infinity);
+  const gapstowLevel = builtWater?.surfaceAt(PARK_SITES.gapstow.x, PARK_SITES.gapstow.z);
+  const crossing = opts.landmarks !== false && gapstowLevel != null ? createGapstowCrossing(gapstowLevel) : null;
+  const bedGroundAt = (x: number, z: number) => {
+    const bed = Math.min(dryGroundAt(x, z), builtWater?.bankHeightAt(x, z) ?? Infinity);
+    return crossing?.grade(x, z, bed) ?? bed;
+  };
   const displace = opts.displace !== false;
   const heightAt = (x: number, z: number): number => {
     if (!displace) {
@@ -478,14 +491,16 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
       }
       pathLines.push({ width: widthUnits * manifest.paths.unitM, pts });
     }
-    paths = buildPaths(pathLines, groundAt, sampleWater);
+    paths = buildPaths(pathLines,
+      (x, z) => crossing?.deckAt(x, z) ?? groundAt(x, z),
+      (x, z) => crossing?.deckAt(x, z) != null ? 0 : sampleWater(x, z));
     if (paths !== null) {
       group.add(paths);
     }
   }
 
   if (opts.landmarks !== false) {
-    group.add(buildLandmarks(dryGroundAt));
+    group.add(buildLandmarks(groundAt, { waterAt: builtWater?.surfaceAt, rinkLevel: rinkGrade?.level, paths: pathLines }));
   }
 
   // ── buildings ───────────────────────────────────────────────────────────
