@@ -132,7 +132,7 @@ export function QrImport({ processes, onClose }: QrImportProps) {
         <header className="qr-head">
           <div>
             <span className="detail-eyebrow">project import</span>
-            <h2 className="qr-title">Scan to add a project</h2>
+            <h2 className="qr-title">Scan to plant an idea</h2>
           </div>
           <button type="button" className="detail-back" onClick={onClose} aria-label="Close QR import">
             <span aria-hidden="true">←</span> back

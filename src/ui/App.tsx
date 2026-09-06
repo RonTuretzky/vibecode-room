@@ -1,3 +1,4 @@
+import { NavigationPad } from "./NavigationPad";
 import { PARK_VIEWS } from "../park3d/park-cameras";
 import { AddProject } from "./AddProject";
 import { projectStatus } from "./project-status";
@@ -235,6 +236,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
   // down its own pipeline instead of committing it (see toggleMic).
   const micStartRef = useRef<Promise<void> | null>(null);
   const [addProjectOpen, setAddProjectOpen] = useState(false);
+  const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [qrOpen, setQrOpen] = useState(initialOverlay?.qrOpen ?? false);
   // HOLO PANEL (the imported tree's LIVE deployment via the /salem proxy): at
   // most ONE at a time — {upid, anchor} or null. Opened from the tree menu's
@@ -2707,14 +2709,20 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
               {isUnmuting ? "Unmuting" : "Unmute"}
             </button>
           ) : null}
-          {/* CONTROL DOCK (calm wall): every routine control folds behind ONE
-              "⚙ Controls" affordance — hover/dwell/focus expands the popover
-              tray, and it collapses ~4s after every cursor leaves (see
-              ControlDock.tsx). The per-wall ?view gating of each button is
-              unchanged; only its resting visibility moved. An opening tree
-              menu folds the tray (collapseSignal) so two glass panels never
-              overlap on the projector. */}
+          {/* Routine actions and sustained navigation share one Controls panel.
+              Opening a project or another dialog folds it out of the way. */}
           <ControlDock collapseSignal={dockCollapseSignal}>
+          <nav className="workspace-nav" aria-label="Room actions">
+            <button type="button" className="ctl-button plant-action" data-testid="plant-idea-button"
+              onClick={() => { setAddProjectOpen(true); setDockCollapseSignal(n => n + 1); }}>🌱 Plant an idea</button>
+            {!mockMode && !researchActive && <button type="button" className="ctl-button" data-testid="projects-button"
+              aria-expanded={workspaceOpen} aria-controls="project-workspace"
+              onClick={() => { setWorkspaceOpen(true); setDockCollapseSignal(n => n + 1); }}>
+              Projects ({snapshot.processes.length})
+            </button>}
+          </nav>
+          <NavigationPad locked={cornerLock} onHome={() => setFitSignal(n => n + 1)} />
+          <div className="control-settings" role="group" aria-label="Room settings">
           <button className="ctl-button" data-testid="research-mode-button" aria-pressed={researchEngineOn} onClick={() => void toggleResearchMode()}>Background research: {researchEngineOn ? "on" : "off"}</button>
           <a className="ctl-button" href={researchActive ? "/" : "/?research=1"}>{researchActive ? "Open garden view" : "Open research view"}</a>
 
@@ -2787,6 +2795,12 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
               {mockMode ? "● Mock Room" : "Mock Room"}
             </button>
           ) : null}
+          </div>
+          <footer className="control-footer">
+            <button type="button" className="ctl-button" data-testid="help-button"
+              onClick={() => { setHelpOpen(true); setDockCollapseSignal(n => n + 1); }}>Help & shortcuts</button>
+            <button type="button" className="ctl-button" onClick={() => { setGuestsOpen(true); setDockCollapseSignal(n => n + 1); }}>Guest controller</button>
+          </footer>
           </ControlDock>
         </div>
       </header>
@@ -3289,7 +3303,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
       {researchDeckQuest !== null ? (
         <ResearchDeckOverlay quest={researchDeckQuest} onClose={() => setResearchDeckId(null)} />
       ) : null}
-      {!mockMode && !researchActive && <ProjectWorkspace snapshot={snapshot} onSelect={setSelected} onAdd={() => setAddProjectOpen(true)} onHelp={() => setHelpOpen(true)} planting={planting !== null} onStartMic={() => void toggleMicCapture()} micError={micError} />}
+      {!mockMode && !researchActive && <ProjectWorkspace snapshot={snapshot} onSelect={setSelected} open={workspaceOpen} onOpen={() => { setWorkspaceOpen(true); setDockCollapseSignal(n => n + 1); }} onClose={() => { setWorkspaceOpen(false); document.querySelector<HTMLButtonElement>('[data-testid="control-dock-button"]')?.focus(); }} planting={planting !== null} onStartMic={() => void toggleMicCapture()} micError={micError} />}
       {addProjectOpen && <AddProject onClose={() => setAddProjectOpen(false)} />}
       {qrOpen ? <QrImport processes={snapshot.processes} onClose={() => setQrOpen(false)} /> : null}
       {guestsOpen ? <GuestHands onClose={() => setGuestsOpen(false)} /> : null}

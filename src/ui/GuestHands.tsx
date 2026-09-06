@@ -130,8 +130,8 @@ export function GuestHands({ onClose }: GuestHandsProps) {
 
         <p className="qr-hint">
           Open the page on any computer or phone on this network: hover/point to aim, hold still
-          on a control to click it, and hold the on-screen W/A/S/D buttons to walk the room
-          camera. Camera hand-tracking (point with your hand, pinch to click) needs the https
+          on a control to click it, and use Controls → Explore to move, turn, raise the view, and zoom.
+          Hold a direction or enable “Dwell to move”; move away to stop. Camera hand-tracking (point with your hand, pinch to click) needs the https
           address{info !== null && info.httpsUrl === null ? " — start the room with run-room.sh to enable it" : " (accept the one-time certificate warning)"}.
         </p>
       </div>
@@ -185,9 +185,9 @@ export function GuestQrBadge() {
   return (
     <div className="guest-qr-badge" data-testid="guest-qr-badge">
       {guestQr !== null ? (
-        <figure title={`Scan on your phone: point at the wall with your hands AND plant a project (the add-a-project fold on the same page) — ${guestQr.url}`}>
+        <figure title={`Scan on your phone: point at the wall with your hands AND plant a project (the plant-an-idea fold on the same page) — ${guestQr.url}`}>
           <img src={guestQr.img} alt="QR code — join as a guest and point at the wall from your phone" />
-          <figcaption>🖐 join · ➕ import</figcaption>
+          <figcaption>🖐 join · 🌱 plant</figcaption>
         </figure>
       ) : null}
     </div>

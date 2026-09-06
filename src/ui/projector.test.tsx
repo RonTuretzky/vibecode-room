@@ -1845,7 +1845,8 @@ describe("gesture dwell-select interaction", () => {
     const html = renderToStaticMarkup(<HelpOverlay onClose={() => {}} gestureMode />);
     expect(html).toContain('data-testid="help-gesture"');
     expect(html).toContain("point, hold, select");
-    expect(html).toContain("LOCKED in gesture mode");
+    expect(html).toContain("dwell on a direction to move");
+    expect(html).toContain("Corner projector views stay fixed");
   });
 });
 

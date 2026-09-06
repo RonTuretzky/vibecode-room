@@ -63,13 +63,14 @@ test("plant, implement a branch, graft, cancel, and recover in a second room ses
   let room = await startRoom({ seedDemoFleet: false, env: rig.env });
   try {
     await page.goto(room.baseUrl);
+    await page.getByTestId("control-dock-button").click();
     await page
-      .getByRole("button", { name: "Add project", exact: true })
+      .getByRole("button", { name: "🌱 Plant an idea", exact: true })
       .click();
     await page
       .getByRole("textbox", { name: "Repository or reference URL" })
       .fill(rig.url);
-    await page.getByRole("button", { name: "Add to garden" }).click();
+    await page.getByRole("button", { name: "Plant in the garden" }).click();
     const project = (
       await room.waitFor(
         (snapshot) =>

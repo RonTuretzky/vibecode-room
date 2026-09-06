@@ -1,3 +1,4 @@
+import { isNavigationKey, navigationAxes, sceneNavigation } from "./spatial-navigation";
 import { createParkFurniture } from "../park3d/park-furniture";
 import { PARK_VIEWS, fitParkProjects } from "../park3d/park-cameras";
 import { createParkAtmosphere } from "../park3d/park-atmosphere";
@@ -4348,8 +4349,11 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
     // d* desired-rig fields, so pinch/fusion writers still interleave
     // latest-writer-wins). Shifted keys pass through untouched — Shift+A is
     // the app-level Auto-Build toggle.
-    const keysDown = new Set<string>();
+    const keyboardKeys = new Set<string>();
+    let keysDown = new Set<string>();
+    let homeHeld = false;
     const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") keyboardKeys.clear();
       if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) {
         return;
       }
@@ -4361,16 +4365,20 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
         }
       }
       const key = event.key.toLowerCase();
-      if (key === "w" || key === "a" || key === "s" || key === "d") {
-        keysDown.add(key);
+      if (isNavigationKey(key) && event.isTrusted) {
+        // Arrows in a form/list remain native navigation.
+        if (target instanceof HTMLElement && target.closest("[role=dialog], .project-workspace, .detail-overlay")) return;
+        event.preventDefault();
+        keyboardKeys.add(key);
+        lastCameraInputMs = performance.now();
       }
     };
     const onKeyUp = (event: KeyboardEvent) => {
-      keysDown.delete(event.key.toLowerCase());
+      if (event.isTrusted) keyboardKeys.delete(event.key.toLowerCase());
     };
     // Focus loss strands keydowns without their keyups — never keep walking.
     const onWindowBlur = () => {
-      keysDown.clear();
+      keyboardKeys.clear();
     };
     const onWheel = (event: WheelEvent) => {
       event.preventDefault();
@@ -4808,7 +4816,10 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
           lastCameraInputMs = now;
         }
       }
-      if (fitRef.current !== lastFit) {
+      keysDown = new Set([...keyboardKeys, ...sceneNavigation.keys()]);
+      const returnHome = keysDown.has("home") && !homeHeld;
+      homeHeld = keysDown.has("home");
+      if (fitRef.current !== lastFit || returnHome) {
         lastFit = fitRef.current;
         if (flatLocked) {
           // FLAT-LOCK FIT = canonical pose, re-CENTERED on the fleet. The
@@ -4861,27 +4872,24 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
           }
         }
       }
+      const navigation = navigationAxes(keysDown);
+      if (keysDown.size > 0) {
+        lastCameraInputMs = now;
+        angVel = 0; heightVel = 0;
+      }
       const smoothing = 1 - Math.exp(-dt * 7);
       if (flatLocked) {
-        // WASD under the flat lock drives the SHARED pair targets: W/S dolly
-        // the whole panorama (flatRig.dist, the same [6,45] envelope as the
-        // pinch zoom), A/D turn it (flatRig.yaw; +yaw turns the view left in
-        // this rig's convention). Deterministic like every other flat-rig
-        // writer: both windows receive identical keydown/keyup timing from
-        // the same source (the relay hub broadcasts guest key holds to EVERY
-        // window), so the dt-integrated totals match to within one frame —
-        // the same transient tolerance the eased rig below already absorbs.
-        // (The corner lock stays keys-dead: its rigid pair never moves.)
+        // Move/Look use the same grammar on desktop and flat projectors.
+        // The flat pair publishes the entire pose to keep its seam aligned;
+        // the corner pair below keeps its fixed eye.
         if (keysDown.size > 0) {
-          if (keysDown.has("w") !== keysDown.has("s")) {
-            const dolly = (keysDown.has("w") ? -6 : 6) * dt; // ~6 units/s
-            flatRig.dist = Math.max(6, Math.min(45, flatRig.dist + dolly));
-            flatPoseDirty = true; // local input — publish to the partner window
-          }
-          if (keysDown.has("a") !== keysDown.has("d")) {
-            flatRig.yaw += (keysDown.has("a") ? 0.9 : -0.9) * dt; // ~0.9 rad/s
-            flatPoseDirty = true;
-          }
+          const step = FLAT_WALK_UNITS_PER_SEC * dt;
+          flatRig.cx = THREE.MathUtils.clamp(flatRig.cx + (-Math.sin(flatRig.yaw) * navigation.forward + Math.cos(flatRig.yaw) * navigation.right) * step, -FLAT_ROAM_LIMIT, FLAT_ROAM_LIMIT);
+          flatRig.cz = THREE.MathUtils.clamp(flatRig.cz + (-Math.cos(flatRig.yaw) * navigation.forward - Math.sin(flatRig.yaw) * navigation.right) * step, -FLAT_ROAM_LIMIT, FLAT_ROAM_LIMIT);
+          flatRig.yaw += navigation.turn * .8 * dt;
+          flatRig.height = THREE.MathUtils.clamp(flatRig.height + navigation.elevation * 7 * dt, 1.4, 30);
+          flatRig.dist = THREE.MathUtils.clamp(flatRig.dist * Math.exp(navigation.zoom * .65 * dt), 6, 45);
+          flatPoseDirty = true;
         }
         // FLAT-POSE PUBLISH: local input dirtied the shared targets — push
         // them to the partner window through the hub, throttled to ~8 Hz.
@@ -4915,33 +4923,14 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
         // constant whether inspecting a leaf or crossing the meadow. Corner-
         // locked wall pairs keep their rigid camera (the keyboard sits at the
         // desk anyway).
-        if (keysDown.size > 0 && !cornerLocked) {
-          const step = (3.2 + rig.radius * 0.45) * dt;
-          const fx = -Math.sin(rig.angle);
-          const fz = -Math.cos(rig.angle);
-          let mx = 0;
-          let mz = 0;
-          if (keysDown.has("w")) {
-            mx += fx;
-            mz += fz;
-          }
-          if (keysDown.has("s")) {
-            mx -= fx;
-            mz -= fz;
-          }
-          if (keysDown.has("d")) {
-            mx += Math.cos(rig.angle);
-            mz += -Math.sin(rig.angle);
-          }
-          if (keysDown.has("a")) {
-            mx -= Math.cos(rig.angle);
-            mz -= -Math.sin(rig.angle);
-          }
-          const mag = Math.hypot(mx, mz);
-          if (mag > 1e-6) {
-            rig.dTargetX += (mx / mag) * step;
-            rig.dTargetZ += (mz / mag) * step;
-          }
+        if (keysDown.size > 0) {
+          const step = Math.min(65, 3.2 + rig.radius * .45) * dt;
+          rig.dTargetX += (-Math.sin(rig.angle) * navigation.forward + Math.cos(rig.angle) * navigation.right) * step;
+          rig.dTargetZ += (-Math.cos(rig.angle) * navigation.forward - Math.sin(rig.angle) * navigation.right) * step;
+          rig.dAngle += navigation.turn * .8 * dt;
+          rig.dHeight = THREE.MathUtils.clamp(rig.dHeight + navigation.elevation * Math.max(5, rig.radius * .4) * dt, 1.4, maxOrbitHeight());
+          rig.dRadius = THREE.MathUtils.clamp(rig.dRadius * Math.exp(navigation.zoom * .65 * dt), 4, maxOrbitRadius());
+          parkHeightFloor();
         }
 
         // Flick inertia: after release the last drag velocity keeps the orbit
@@ -5620,6 +5609,12 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
           }
         }
         container.dataset.labeledClouds = String(labeled);
+        container.dataset.cameraX = camera.position.x.toFixed(3);
+        container.dataset.cameraY = camera.position.y.toFixed(3);
+        container.dataset.cameraZ = camera.position.z.toFixed(3);
+        container.dataset.cameraYaw = (flatLocked ? flatRig.yaw : rig.angle).toFixed(4);
+        container.dataset.cameraRadius = (flatLocked ? flatRig.dist : rig.radius).toFixed(3);
+        container.dataset.navigationActive = String(keysDown.size > 0 && !cornerLocked);
         container.dataset.drawCalls = String(renderer.info.render.calls);
         container.dataset.triangles = String(renderer.info.render.triangles);
         container.dataset.averageDrawCalls = (frameDrawTotal / renderedSamples).toFixed(1);

@@ -101,3 +101,26 @@ wide-view average from about 1,430 draw calls to 718. These local snapshots
 vary with camera position, shadow cadence, model inference, development
 versus production builds, and other GPU work. They are not guaranteed FPS
 or a claim that all devices can sustain the same quality.
+
+## Spatial controls
+
+Controls contains **Plant an idea**, **Projects**, the **Explore** movement and
+view pads, room settings, and **Help & shortcuts**. Planting starts with an idea;
+a GitHub repository or reference URL is optional. The panel remains open until
+closed, clicked outside, or replaced by another panel.
+
+In the room and `/hands` guest controller, hold a direction with a mouse, touch,
+or Space/Enter. Enable **Dwell to move** for mouse hover: a 700 ms progress bar
+precedes continuous movement. Room hand/guest cursors use the existing dwell
+ring and keep moving until their original cursor leaves the direction.
+Releasing, cancelling touch, losing focus, hiding the page, or covering/closing
+the pad releases its input. Guest heartbeats retain the existing 1.5 s stale
+release. Independent sources cannot release one another's held directions.
+
+W/A/S/D move relative to the view; arrows turn or raise/lower the view; =/− zoom;
+Home or **Back to projects** frames the trees again. F fits, while Shift+F changes
+fullscreen. Flat projector pairs share a moving pose with the same movement
+vocabulary; rigid corner projector views remain fixed and disable their pads.
+
+`e2e/spatial-navigation.e2e-pw.ts` checks real camera changes, sustained mouse and
+remote dwell, keyboard and touch holds, stopping, and guest disconnection.

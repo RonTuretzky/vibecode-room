@@ -13,7 +13,7 @@ export function importPageHtml(): string {
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Vibersyn — add a project</title>
+<title>Vibersyn — plant an idea</title>
 <style>
   :root { color-scheme: dark; }
   body {
@@ -45,7 +45,7 @@ export function importPageHtml(): string {
 </head>
 <body>
 <main>
-  <h1>Add a project to the wall</h1>
+  <h1>Plant an idea</h1>
   <p class="hint">Describe what the fleet should build. Optionally add a link — a GitHub repo gets cloned and grounds the build; any other link rides along as reference.</p>
   <form id="import-form">
     <label for="project-context">What should the fleet build?</label>
@@ -54,7 +54,7 @@ export function importPageHtml(): string {
     <label for="repo-url">Link (optional) — GitHub repo or any reference URL</label>
     <input id="repo-url" type="url" inputmode="url" autocomplete="off" autocapitalize="off"
            placeholder="https://github.com/owner/repo" />
-    <button id="submit-button" type="submit">Add to the wall</button>
+    <button id="submit-button" type="submit">Plant in the garden</button>
   </form>
   <div id="status" role="status"></div>
 </main>
@@ -75,7 +75,7 @@ export function importPageHtml(): string {
     }
     button.disabled = true;
     status.className = "";
-    status.textContent = "Adding…";
+    status.textContent = "Planting…";
     try {
       const response = await fetch("/api/projects/import", {
         method: "POST",

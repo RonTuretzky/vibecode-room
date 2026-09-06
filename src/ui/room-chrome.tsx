@@ -37,12 +37,12 @@ export function FullscreenButton() {
   const [visible, setVisible] = useState<boolean>(() => needsFullscreenHint());
   useEffect(() => {
     const update = () => setVisible(needsFullscreenHint());
-    // Keyboard path: plain "f" toggles fullscreen (keydown counts as a real
-    // user gesture, so requestFullscreen is honored). Stays bound while the
-    // button is hidden so "f" also EXITS fullscreen. Ignored with modifiers
-    // held or while typing into a field.
+    // Keyboard path: Shift+F toggles fullscreen (plain F fits the scene). A
+    // real keydown supplies the browser activation. Stays bound while the
+    // button is hidden so Shift+F also exits fullscreen. Other modifiers
+    // and typing into a field leave browser behavior unchanged.
     const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "f" && event.key !== "F") return;
+      if (event.key.toLowerCase() !== "f" || !event.shiftKey || event.repeat) return;
       if (event.metaKey || event.ctrlKey || event.altKey) return;
       const target = event.target as HTMLElement | null;
       if (
@@ -52,9 +52,9 @@ export function FullscreenButton() {
         return;
       }
       if (document.fullscreenElement !== null) {
-        void document.exitFullscreen?.();
+        void document.exitFullscreen?.().catch(() => undefined);
       } else {
-        void document.documentElement.requestFullscreen?.();
+        void document.documentElement.requestFullscreen?.().catch(() => undefined);
       }
     };
     document.addEventListener("fullscreenchange", update);
@@ -76,14 +76,14 @@ export function FullscreenButton() {
       data-testid="fullscreen-button"
       // Dwell-exempt: requestFullscreen only works from a TRUSTED gesture
       // (real mouse/keyboard). A dwell cursor "clicking" this would silently
-      // no-op — use the keyboard F, or a real mouse click.
+      // no-op — use Shift+F, or a real mouse click.
       data-dwell-exempt="true"
-      title="Fullscreen this wall on its projector (or press F)"
+      title="Fullscreen this wall on its projector (or press Shift+F)"
       onClick={() => {
-        void document.documentElement.requestFullscreen?.();
+        void document.documentElement.requestFullscreen?.().catch(() => undefined);
       }}
     >
-      ⛶ Fullscreen <span className="fullscreen-key-hint">(F)</span>
+      ⛶ Fullscreen <span className="fullscreen-key-hint">(Shift+F)</span>
     </button>
   );
 }

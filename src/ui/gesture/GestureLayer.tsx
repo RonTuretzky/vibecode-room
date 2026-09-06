@@ -1,3 +1,4 @@
+import { sceneNavigation } from "../spatial-navigation";
 import { useEffect, useRef, useState } from "react";
 import type { Zone } from "./core";
 import { idToHue } from "./core";
@@ -226,6 +227,8 @@ export function GestureLayer({ wall, fusionUrl, remoteUrl = "", mouseTest = fals
     // events the desk keyboard produces (RoomScene's fly-through binds
     // window-wide) — merged across guests, auto-released on silence.
     const keyHolds = new RemoteKeyHolds();
+    const remoteNavigation = new Set<string>();
+    const navigationDwells = new Map<number, HTMLElement>();
     // GUEST FLY MODE: one PinchCam per guest — the SAME interpreter the laptop
     // bridge runs, so guests get the identical grammar (pinch-drag orbit,
     // palm push/pull free-roam walk, two-pinch spread zoom) through the
@@ -311,7 +314,7 @@ export function GestureLayer({ wall, fusionUrl, remoteUrl = "", mouseTest = fals
         // The dwell hitbox exceeds the visual button by HITBOX_INFLATE_PX per
         // side (viewport-clamped) so pointing jitter around a control still
         // lands; scene raycast rects (appended later) stay exact.
-        out.push({ ...inflateRect(r, HITBOX_INFLATE_PX, vpW, vpH), id, activate: () => (el as HTMLElement).click() });
+        out.push({ ...inflateRect(r, el.hasAttribute("data-nav-key") ? 3 : HITBOX_INFLATE_PX, vpW, vpH), id, activate: () => (el as HTMLElement).click() });
       });
       // Smallest first: a button inside a dwellable panel wins over the panel,
       // and where two neighbors' inflated hitboxes overlap, the smaller control
@@ -439,22 +442,43 @@ export function GestureLayer({ wall, fusionUrl, remoteUrl = "", mouseTest = fals
         onDwellMissRef.current?.();
       }
 
-      // Remote WASD: apply this frame's press/release diff as synthetic window
-      // key events (exactly what the desk keyboard would emit — RoomScene's
-      // handler takes it from there; stale guests release automatically).
+      // Keep legacy key observers informed; the scene reads the source-owned
+      // guest union below so remote release cannot cancel a physical key hold.
       const keyDiff = keyHolds.diff(t);
       for (const key of keyDiff.down) {
+        remoteNavigation.add(key);
         window.dispatchEvent(new KeyboardEvent("keydown", { key }));
       }
       for (const key of keyDiff.up) {
+        remoteNavigation.delete(key);
         window.dispatchEvent(new KeyboardEvent("keyup", { key }));
       }
+
+      sceneNavigation.set("guests", [...remoteNavigation]);
 
       const feed = [...cursors.entries()].map(([id, c]) => ({ id, x: c.x, y: c.y, engaged: c.engaged }));
       const result = multi.update(zones, feed, t);
 
+      // Navigation is a sustained dwell: the original cursor owns the hold
+      // until it leaves, disengages, disappears, or the control is covered.
+      for (const [id, el] of navigationDwells) {
+        const cursor = cursors.get(id);
+        const r = el.getBoundingClientRect();
+        const x = (cursor?.x ?? -1) * vpW, y = (cursor?.y ?? -1) * vpH;
+        const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+        if (!cursor || (!cursor.engaged && !isGuestCursorId(id)) || r.width === 0 || r.height === 0 ||
+            x < r.left - 3 || x > r.right + 3 || y < r.top - 3 || y > r.bottom + 3 ||
+            !top || (top !== el && !el.contains(top))) {
+          navigationDwells.delete(id);
+          if (![...navigationDwells.values()].includes(el)) el.dispatchEvent(new Event("navigation-dwell-end"));
+        }
+      }
       for (const fire of result.fired) {
-        targets.activate(fire.zoneId);
+        const element = elementsById.get(fire.zoneId);
+        if (element?.hasAttribute("data-nav-key")) {
+          navigationDwells.set(fire.cursorId, element);
+          element.dispatchEvent(new Event("navigation-dwell-start"));
+        } else targets.activate(fire.zoneId);
         const rect = rectsById.get(fire.zoneId);
         if (rect !== undefined) {
           fireFlashes.push({
@@ -533,6 +557,9 @@ export function GestureLayer({ wall, fusionUrl, remoteUrl = "", mouseTest = fals
         applyCameraIntents(entry.cam.idleTick(nowSec() + 60), window.innerHeight);
       }
       flyCams.clear();
+      for (const el of navigationDwells.values()) el.dispatchEvent(new Event("navigation-dwell-end"));
+      navigationDwells.clear();
+      sceneNavigation.set("guests", []);
       // Never leave a remote guest's key held down past the layer's lifetime.
       for (const key of keyHolds.releaseAll()) {
         window.dispatchEvent(new KeyboardEvent("keyup", { key }));

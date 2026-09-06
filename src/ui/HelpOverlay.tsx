@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 /**
  * Help overlay — the desk-mode cheat sheet.
  *
@@ -12,7 +13,10 @@ const KEYBOARD_SHORTCUTS: ReadonlyArray<readonly [keys: string, action: string]>
   ["Enter / b", "build the top ready idea"],
   ["x", "dismiss the top ready idea"],
   ["c", "mic + Idea Capture on / off (one control)"],
-  ["W A S D", "walk / strafe through the 3D scene"],
+  ["W A S D", "move forward / back / left / right"],
+  ["arrow keys", "turn left / right · raise / lower the view"],
+  ["= / −", "zoom in / out"],
+  ["Controls → Explore", "hold a direction, or enable Dwell to move"],
   ["Shift+A", "toggle Auto-Build"],
   ["r", "toggle background research; open its view from Controls"],
   ["k", "halt the selected build"],
@@ -22,7 +26,8 @@ const KEYBOARD_SHORTCUTS: ReadonlyArray<readonly [keys: string, action: string]>
   ["g", "garden ↔ orbit scene"],
   ["l", "layout: radial / ball / disk"],
   ["z", "zen mode (hide all chrome)"],
-  ["f", "fit everything in view"],
+  ["f / Home", "return to projects and fit them in view"],
+  ["Shift+F", "enter / exit fullscreen"],
   ["`", "hide/unhide menu (0 clears)"],
   ["drag", "orbit · Shift+drag pan · scroll zoom"],
   ["? / h", "this help"],
@@ -41,16 +46,14 @@ const VOICE_COMMANDS: ReadonlyArray<readonly [phrase: string, effect: string]> =
   ["“Vibersyn, emergency”", "EMERGENCY STOP"],
 ];
 
-// Gesture wall: pointing highlights, holding selects. A colored cursor dot per
-// person is drawn by default (toggleable via the wall's Cursor button). Camera
-// orbit is deliberately LOCKED in gesture mode (pointing must never fight
-// drag-orbit); the view changes only via the keyboard shortcuts.
+// Gesture walls use the same Controls pad through sustained dwell. A rigid
+// corner projector keeps its fixed camera; flat pairs share their moving pose.
 const GESTURE_MOVES: ReadonlyArray<readonly [move: string, effect: string]> = [
   ["point at a project or button", "it grows + glows (your colored dot follows; toggle it with the Cursor button)"],
   ["hold ≈0.8 s", "the ring fills, then selects (idea → build, build → steer/deck)"],
   ["move away", "cancels the dwell; re-point to try again"],
   ["two hands / people", "first on a target owns it — first-to-dwell wins"],
-  ["camera", "orbit/pan/zoom are LOCKED in gesture mode — use G / L / F / Z"],
+  ["camera", "Controls → Explore: dwell on a direction to move; leave it to stop. Corner projector views stay fixed."],
   ["?dwell=mouse", "desk testing: the mouse drives the same dwell-select"],
 ];
 
@@ -62,10 +65,16 @@ export interface HelpOverlayProps {
 }
 
 export function HelpOverlay({ onClose, gestureMode = false }: HelpOverlayProps) {
+  const closeButton = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    closeButton.current?.focus();
+    return () => { document.querySelector<HTMLButtonElement>('[data-testid="control-dock-button"]')?.focus(); };
+  }, []);
   return (
     <div className="detail-overlay help-overlay" data-testid="help-overlay" onClick={onClose}>
       <div
         className="help-card"
+        onKeyDown={event => { if (event.key === "Tab") { event.preventDefault(); closeButton.current?.focus(); } }}
         role="dialog"
         aria-modal="true"
         aria-label="Keyboard and voice controls"
@@ -76,7 +85,7 @@ export function HelpOverlay({ onClose, gestureMode = false }: HelpOverlayProps) 
             <span className="detail-eyebrow">controls</span>
             <h2 className="qr-title">VIBERSYN ROOM — SELF-HOSTED</h2>
           </div>
-          <button type="button" className="detail-back" onClick={onClose} aria-label="Close help">
+          <button type="button" className="detail-back" ref={closeButton} onClick={onClose} aria-label="Close help">
             <span aria-hidden="true">←</span> back
           </button>
         </header>

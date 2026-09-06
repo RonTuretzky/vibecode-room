@@ -1,3 +1,4 @@
+import { NAVIGATION_KEYS } from "../ui/spatial-navigation";
 // Guest-hands relay hub: LAN guests open /hands on their own computer, track
 // their hands in-browser (or use the trackpad fallback), and stream normalized
 // cursors here over WS (/hands/ws). The hub assigns each guest an exclusive
@@ -37,7 +38,7 @@ export interface RemoteGuestCursor {
 
 // The wall-camera keys a guest may hold remotely (the wall's own WASD
 // fly-through — W/S walk, A/D strafe). A closed set: anything else is dropped.
-export const GUEST_KEYS = ["w", "a", "s", "d"] as const;
+export const GUEST_KEYS = NAVIGATION_KEYS;
 export type GuestKey = (typeof GUEST_KEYS)[number];
 
 // Flat-pair pose sync bounds. The scene's own envelopes are yaw unbounded,

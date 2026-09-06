@@ -4,12 +4,13 @@ export function AddProject({ onClose }: { onClose: () => void }) {
   const [context, setContext] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const first = useRef<HTMLInputElement>(null);
+  const first = useRef<HTMLTextAreaElement>(null);
   useEffect(() => {
     const previous = document.activeElement;
     first.current?.focus();
     return () => {
-      if (previous instanceof HTMLElement) previous.focus();
+      if (previous instanceof HTMLElement && previous.offsetParent !== null) previous.focus();
+      else document.querySelector<HTMLButtonElement>('[data-testid="control-dock-button"]')?.focus();
     };
   }, []);
   return (
@@ -43,7 +44,7 @@ export function AddProject({ onClose }: { onClose: () => void }) {
         className="add-project-card"
         role="dialog"
         aria-modal="true"
-        aria-label="Add project"
+        aria-label="Plant an idea"
         onClick={(event) => event.stopPropagation()}
         onSubmit={async (event) => {
           event.preventDefault();
@@ -61,7 +62,7 @@ export function AddProject({ onClose }: { onClose: () => void }) {
             });
             const body = await response.json();
             if (!response.ok)
-              throw new Error(body.error ?? "Project could not be added");
+              throw new Error(body.error ?? "Your idea could not be planted");
             onClose();
           } catch (error) {
             setError(String(error));
@@ -70,39 +71,30 @@ export function AddProject({ onClose }: { onClose: () => void }) {
           }
         }}
       >
-        <h2>Add project</h2>
+        <h2>Plant an idea</h2>
         <p>
-          Import a GitHub repository to study it and grow changes, or describe a
-          new project.
+          Describe what you want to grow. You can also start from an existing
+          GitHub repository.
         </p>
         <label>
-          Repository or reference URL
-          <input
-            ref={first}
-            aria-label="Repository or reference URL"
-            type="url"
-            value={url}
-            onChange={(event) => setUrl(event.target.value)}
-            placeholder="https://github.com/owner/repo"
-          />
+          What would you like to do?
+          <textarea ref={first} aria-label="What would you like to do?"
+            value={context} maxLength={4000} onChange={event => setContext(event.target.value)}
+            placeholder="An idea, a tool you wish existed, or a change you want to make…" />
         </label>
         <label>
-          What would you like to do?
-          <textarea
-            aria-label="What would you like to do?"
-            value={context}
-            maxLength={4000}
-            onChange={(event) => setContext(event.target.value)}
-            placeholder="Leave blank to study the repository first."
-          />
+          Repository or reference URL (optional)
+          <input aria-label="Repository or reference URL" type="url" value={url}
+            onChange={event => setUrl(event.target.value)} placeholder="https://github.com/owner/repo" />
         </label>
+        <p className="plant-hint">Just a repository link? We’ll study it first so you can grow changes from it.</p>
         {error && <p role="alert">{error}</p>}
         <button
           className="ctl-button"
           disabled={busy || (!url.trim() && !context.trim())}
           type="submit"
         >
-          {busy ? "Adding…" : "Add to garden"}
+          {busy ? "Planting…" : "Plant in the garden"}
         </button>
         <button className="ctl-button" type="button" onClick={onClose}>
           Cancel

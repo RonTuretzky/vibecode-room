@@ -1,3 +1,6 @@
+import { NAVIGATION_GROUPS, NAVIGATION_KEYS } from "../ui/spatial-navigation";
+import { bindNavigationPad } from "../ui/navigation-pad-input";
+
 // GET /hands — the guest hand-controls page. People on the room LAN open this
 // on THEIR OWN computer and drive the wall's dwell-to-click layer from it.
 //
@@ -32,7 +35,7 @@ export function handsPageHtml(): string {
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Vibersyn — hand controls</title>
+<title>Vibersyn — guest controller</title>
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
@@ -72,7 +75,7 @@ export function handsPageHtml(): string {
     padding: 0.6rem 0.85rem; font-size: 0.85rem; margin: 0.5rem 0; }
   .banner a { color: #9db9ff; }
   .banner[hidden] { display: none; }
-  .surface { position: relative; width: 100%; aspect-ratio: 16 / 9; border-radius: 0.9rem;
+  .surface { max-height: min(34dvh, 300px); position: relative; width: 100%; aspect-ratio: 16 / 9; border-radius: 0.9rem;
     border: 1px solid #2a3040; background: #0e1320; overflow: hidden; touch-action: none; }
   .surface[hidden] { display: none; }
   #pad-dot { position: absolute; width: 18px; height: 18px; margin: -9px 0 0 -9px; border-radius: 50%;
@@ -91,24 +94,6 @@ export function handsPageHtml(): string {
   #fly-toggle[aria-pressed="true"] { color: #0b0e14; background: #7ee2a8; border-color: #7ee2a8; }
   #fly-toggle[hidden] { display: none; }
   p.hint { color: #8b93a7; font-size: 0.85rem; line-height: 1.5; margin: 0.85rem 0 0; }
-  .wasd-row { display: flex; align-items: center; justify-content: center; gap: 1.25rem; margin-top: 0.9rem; }
-  .wasd { display: grid; grid-template-columns: repeat(3, 3.4rem); grid-template-rows: repeat(2, 3.4rem); gap: 0.4rem; }
-  .wasd button {
-    font-size: 1.15rem; font-weight: 700; border-radius: 0.7rem; cursor: pointer;
-    border: 1px solid #2a3040; background: #131826; color: #8b93a7;
-    touch-action: none; -webkit-user-select: none; user-select: none;
-  }
-  .wasd button[data-held="1"] { color: #0b0e14; background: #5b8cff; border-color: #5b8cff; }
-  .wasd .k-w { grid-column: 2; grid-row: 1; }
-  .wasd .k-a { grid-column: 1; grid-row: 2; }
-  .wasd .k-s { grid-column: 2; grid-row: 2; }
-  .wasd .k-d { grid-column: 3; grid-row: 2; }
-  .wasd-label { color: #46506a; font-size: 0.8rem; max-width: 11rem; line-height: 1.4; }
-  @media (max-width: 30rem) {
-    main { padding-top: 0.75rem; }
-    .wasd { grid-template-columns: repeat(3, 3rem); grid-template-rows: repeat(2, 3rem); }
-  }
-
   .import-fold { margin: 0.6rem 0; padding: 0.55rem 0.7rem; border: 1px solid #2a3346; border-radius: 10px; }
   .import-fold summary { cursor: pointer; font-weight: 700; }
   .import-fold label { display: block; margin: 0.5rem 0 0.2rem; font-size: 0.85rem; color: #9fb0d0; }
@@ -116,12 +101,45 @@ export function handsPageHtml(): string {
   .import-fold textarea { resize: vertical; min-height: 4.5rem; }
   .import-fold button { margin-top: 0.55rem; font-weight: 700; }
   .import-note { display: block; margin-top: 0.4rem; font-size: 0.85rem; color: #9fb0d0; }
+.navigation-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.navigation-heading h3 { font-size: 16px; letter-spacing: .02em; margin: 0; }
+.navigation-dwell { display: flex; gap: 6px; align-items: center; font-size: 12px; cursor: pointer; min-height: 32px; }
+.navigation-dwell input { accent-color: #b7e49c; width: 16px; height: 16px; }
+.navigation-pad p { margin: 2px 0 12px; color: #a9c1b8; font-size: 12px; line-height: 1.5; }
+.navigation-pads { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.navigation-group > span { display: block; text-align: center; font-size: 11px; text-transform: uppercase; letter-spacing: .14em; color: #a9c1b8; margin-bottom: 8px; }
+.navigation-cross { display: grid; grid-template: repeat(2, 46px) / repeat(3, 1fr); gap: 5px; }
+.navigation-cross .north { grid-column: 2; grid-row: 1; }
+.navigation-cross .west { grid-column: 1; grid-row: 2; }
+.navigation-cross .south { grid-column: 2; grid-row: 2; }
+.navigation-cross .east { grid-column: 3; grid-row: 2; }
+.navigation-direction { position: relative; overflow: hidden; min-width: 0; min-height: 44px; border: 1px solid #5a7970; border-radius: 10px; background: #213b36; color: #e4f1eb; font: 24px/1 system-ui; cursor: pointer; touch-action: none; user-select: none; }
+.navigation-direction:hover { background: #315448; }
+.navigation-direction:disabled { opacity: .4; cursor: default; }
+.navigation-direction[data-held="1"] { background: #b7e49c; color: #15291c; border-color: #d9fbc4; }
+.navigation-direction[data-dwelling="1"]::after { content: ""; position: absolute; bottom: 0; left: 0; height: 4px; background: #b7e49c; animation: navigation-dwell 700ms linear forwards; }
+@keyframes navigation-dwell { from { width: 0; } to { width: 100%; } }
+.navigation-zoom { display: grid; grid-template-columns: 48px 48px 1fr; gap: 8px; margin-top: 12px; }
+
+.guest-controls { margin-top: 18px; padding: 16px; border: 1px solid #49645b; border-radius: 16px; background: #11241f; }
+.guest-controls > summary { font-size: 16px; font-weight: 650; cursor: pointer; }
+.guest-controls .navigation-pad { margin: 16px 0; }
+.navigation-heading h2 { font-size: 16px; margin: 0; }
+.navigation-cross { grid-template-rows: repeat(2, 54px); grid-template-columns: repeat(3, minmax(44px, 1fr)); }
+.navigation-pads { max-width: 460px; margin: auto; gap: 12px; }
+.navigation-home { font-size: 13px; line-height: 1.3; }
+.guest-help { margin-top: 14px; color: #b3c8be; }
+.guest-help summary { cursor: pointer; }
+.import-fold input, .import-fold textarea { padding: 10px; border: 1px solid #587264; border-radius: 8px; color: #e5efe9; background: #182c27; font: inherit; }
+.import-fold button { min-height: 44px; padding: 8px 16px; background: #b7e49c; color: #14291b; border: 0; border-radius: 8px; }
+@media (max-width: 380px) { .navigation-pads { gap: 8px; grid-template-columns: 1fr; max-width: 200px; } .guest-controls { padding: 10px; } .navigation-cross { gap: 3px; } .navigation-heading { flex-wrap: wrap; } }
+
 </style>
 </head>
 <body>
 <main>
   <header class="top">
-    <h1>✋ Vibersyn hand controls</h1>
+    <h1>Vibersyn guest controller</h1>
     <span class="status" id="status" data-testid="guest-status" data-state="connecting">connecting…</span>
     <!-- Display name: rendered as a small tag beside your dot on the wall.
          Optional, persisted on this device, editable mid-session. -->
@@ -130,22 +148,6 @@ export function handsPageHtml(): string {
       aria-label="your name, shown beside your dot on the wall" />
     <span class="you" id="you" hidden><span class="dot" id="you-dot"></span>your dot on the wall</span>
   </header>
-
-  <!-- ADD A PROJECT (folded in from the standalone /submit page, live-room
-       directive): guests' one external screen carries BOTH powers — point at
-       the wall, and plant a project on it. Same-origin POST; the wall grows
-       a tree on success. -->
-  <details class="import-fold" data-testid="guest-import-fold">
-    <summary>➕ add a project to the wall</summary>
-    <label for="import-context">what should the room build?</label>
-    <textarea id="import-context" data-testid="guest-import-context" autocomplete="off"
-      autocapitalize="sentences" placeholder="A synthwave dashboard for our ticket queue…"></textarea>
-    <label for="import-url">GitHub link (optional)</label>
-    <input id="import-url" data-testid="guest-import-url" type="url" inputmode="url"
-      autocomplete="off" autocapitalize="off" placeholder="https://github.com/org/repo" />
-    <button type="button" id="import-send" data-testid="guest-import-send">🌱 plant it</button>
-    <span class="import-note" id="import-note" data-testid="guest-import-note" hidden></span>
-  </details>
 
   <div class="banner" id="no-wall-banner" hidden data-testid="guest-no-wall">
     No wall is listening for guests right now — open the room wall (run-room.sh; guest
@@ -170,26 +172,53 @@ export function handsPageHtml(): string {
     <button type="button" id="fly-toggle" data-testid="guest-fly-toggle" aria-pressed="false" hidden>🛩 Fly the room</button>
   </div>
 
-  <!-- Remote WASD: walk the wall's 3D camera (same fly-through the desk
-       keyboard drives). Works in BOTH modes, multi-touch: hold W+D to walk a
-       curve while your other thumb aims on the pad. -->
-  <div class="wasd-row" data-testid="guest-wasd">
-    <div class="wasd">
-      <button type="button" class="k-w" data-key="w" data-testid="guest-key-w">W</button>
-      <button type="button" class="k-a" data-key="a" data-testid="guest-key-a">A</button>
-      <button type="button" class="k-s" data-key="s" data-testid="guest-key-s">S</button>
-      <button type="button" class="k-d" data-key="d" data-testid="guest-key-d">D</button>
-    </div>
-    <div class="wasd-label">walk the room camera — W/S forward &amp; back, A/D strafe (hold them)</div>
-  </div>
+  <details class="guest-controls" open data-testid="guest-controls">
+    <summary>Controls</summary>
+    <section class="navigation-pad" id="guest-navigation" data-testid="guest-wasd" aria-label="Spatial navigation">
+      <div class="navigation-heading"><h2>Explore the room</h2>
+        <label class="navigation-dwell"><input type="checkbox" data-nav-dwell /> Dwell to move</label>
+      </div>
+      <p>Hold a direction, or enable dwell and rest your pointer on it. Move away to stop.</p>
+      <div class="navigation-pads">
+        ${NAVIGATION_GROUPS.map(group => `<div class="navigation-group" role="group" aria-label="${group.label}">
+          <span>${group.label}</span><div class="navigation-cross">${group.buttons.map(button =>
+            `<button type="button" class="navigation-direction ${button.position}" data-nav-key="${button.key}"
+              data-testid="guest-key-${button.key}" aria-label="${button.label}" title="${button.label}">${button.icon}</button>`).join("")}</div>
+        </div>`).join("")}
+      </div>
+      <div class="navigation-zoom" role="group" aria-label="Zoom and reset">
+        <button type="button" class="navigation-direction" data-nav-key="=" aria-label="Zoom in">＋</button>
+        <button type="button" class="navigation-direction" data-nav-key="-" aria-label="Zoom out">−</button>
+        <button type="button" class="navigation-direction navigation-home" data-nav-key="home" aria-label="Back to projects">Back to projects</button>
+      </div>
+    </section>
+  <!-- ADD A PROJECT (folded in from the standalone /submit page, live-room
+       directive): guests' one external screen carries BOTH powers — point at
+       the wall, and plant a project on it. Same-origin POST; the wall grows
+       a tree on success. -->
+  <details class="import-fold" data-testid="guest-import-fold">
+    <summary>🌱 Plant an idea</summary>
+    <label for="import-context">what should the room build?</label>
+    <textarea id="import-context" data-testid="guest-import-context" autocomplete="off"
+      autocapitalize="sentences" placeholder="A synthwave dashboard for our ticket queue…"></textarea>
+    <label for="import-url">GitHub link (optional)</label>
+    <input id="import-url" data-testid="guest-import-url" type="url" inputmode="url"
+      autocomplete="off" autocapitalize="off" placeholder="https://github.com/org/repo" />
+    <button type="button" id="import-send" data-testid="guest-import-send">🌱 plant it</button>
+    <span class="import-note" id="import-note" data-testid="guest-import-note" hidden></span>
+  </details>
 
+
+  <details class="guest-help"><summary>Help & shortcuts</summary>
   <p class="hint">
+    W/A/S/D move · arrow keys change the angle · =/− zoom · Home returns to projects.
     This pad is the wall: your dot appears on the room screen where you point. To click something,
     hold your cursor still on it until the ring around it completes (~1s) — or press/pinch while
     on it to click instantly. Camera mode: point by moving your open hand, click by
     <strong>pinching</strong> thumb+index; your cursor freezes while pinched, so the click always
     lands where you aimed. Hand tracking runs entirely in your browser — only cursor positions are sent.
-  </p>
+  </p></details>
+  </details>
 </main>
 <script type="module">
 (() => {
@@ -285,6 +314,7 @@ export function handsPageHtml(): string {
   const setStatus = (state, label) => {
     statusEl.dataset.state = state;
     statusEl.textContent = label;
+    for (const button of document.querySelectorAll("[data-nav-key]")) button.disabled = state !== "live";
   };
 
   const send = (payload) => {
@@ -340,6 +370,8 @@ export function handsPageHtml(): string {
 
   const renderWalls = () => {
     noWallBanner.hidden = walls.length > 0;
+    for (const button of document.querySelectorAll("[data-nav-key]")) button.disabled = !wsOpen || walls.length === 0;
+    if (walls.length === 0) releaseAllKeys();
     wallsEl.replaceChildren();
     if (walls.length < 2) return;
     for (const wall of walls) {
@@ -348,6 +380,7 @@ export function handsPageHtml(): string {
       b.textContent = "Wall " + wall;
       b.setAttribute("aria-pressed", String(wall === (chosenWall ?? walls[0])));
       b.addEventListener("click", () => {
+        releaseAllKeys();
         chosenWall = wall;
         localStorage.setItem("vibersyn.guest-wall", wall);
         sendHello();
@@ -387,6 +420,7 @@ export function handsPageHtml(): string {
       }
     };
     ws.onclose = () => {
+      releaseAllKeys();
       wsOpen = false;
       setStatus("closed", "reconnecting…");
       setTimeout(connect, 1500);
@@ -440,37 +474,29 @@ export function handsPageHtml(): string {
   pad.addEventListener("pointercancel", padRelease);
   pad.addEventListener("pointerleave", () => { if (padPointerId === null) { padState = null; padFrame(); } });
 
-  // ── WASD: walk the wall's fly-through camera ───────────────────────────────
-  // Held keys stream as {type:"keys",held:[...]} — sent on every change and
-  // heartbeated every 250ms while non-empty (the wall auto-releases a guest
-  // silent for 1.5s, so a crashed page can never leave the camera walking).
-  // Per-button pointer capture gives real multi-touch: W+D with two thumbs.
+  const navigationRoot = el("guest-navigation");
   const heldKeys = new Set();
-  const sendKeys = () => send({ type: "keys", held: [...heldKeys] });
-  setInterval(() => { if (heldKeys.size > 0) sendKeys(); }, 250);
-  for (const button of document.querySelectorAll(".wasd button")) {
-    const key = button.dataset.key;
-    const press = (event) => {
-      event.preventDefault();
-      button.setPointerCapture(event.pointerId);
-      if (!heldKeys.has(key)) { heldKeys.add(key); button.dataset.held = "1"; sendKeys(); }
-    };
-    const release = () => {
-      if (heldKeys.delete(key)) { delete button.dataset.held; sendKeys(); }
-    };
-    button.addEventListener("pointerdown", press);
-    button.addEventListener("pointerup", release);
-    button.addEventListener("pointercancel", release);
-    // A keyboard on the guest machine works too (desk parity, accessibility).
-    button.addEventListener("contextmenu", (event) => event.preventDefault());
-  }
+  let padKeys = [];
+  const sendKeys = () => send({ type: "keys", held: [...new Set([...heldKeys, ...padKeys])] });
+  const bindNavigationPad = ${bindNavigationPad.toString()};
+  bindNavigationPad(navigationRoot, keys => { padKeys = keys; sendKeys(); });
+  setInterval(() => { if (heldKeys.size || padKeys.length) sendKeys(); }, 250);
   const releaseAllKeys = () => {
-    if (heldKeys.size === 0) return;
     heldKeys.clear();
-    for (const button of document.querySelectorAll(".wasd button")) delete button.dataset.held;
+    navigationRoot.dispatchEvent(new Event("navigation-cancel"));
     sendKeys();
   };
+  const navigationKeys = new Set(${JSON.stringify(NAVIGATION_KEYS)});
+  window.addEventListener("keydown", event => {
+    if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey || event.target.closest?.("input, textarea, select, [contenteditable=true]")) return;
+    const key = event.key.toLowerCase();
+    if (navigationKeys.has(key)) { event.preventDefault(); heldKeys.add(key); sendKeys(); }
+  });
+  window.addEventListener("keyup", event => { if (heldKeys.delete(event.key.toLowerCase())) sendKeys(); });
   window.addEventListener("blur", releaseAllKeys);
+  document.addEventListener("visibilitychange", releaseAllKeys);
+  window.addEventListener("pagehide", releaseAllKeys);
+  window.addEventListener("keydown", event => { if (event.key === "Escape") releaseAllKeys(); });
 
   // ── camera-hands mode ──────────────────────────────────────────────────────
   // camEpoch cancels in-flight startups: stopCamera bumps it, and every await

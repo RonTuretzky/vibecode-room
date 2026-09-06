@@ -11,21 +11,22 @@ import { useSelfBranches } from "./self-repo";
 export function ProjectWorkspace({
   snapshot,
   onSelect,
-  onAdd,
-  onHelp,
+  open,
+  onClose,
+  onOpen,
   planting,
   onStartMic,
   micError,
 }: {
   snapshot: ProjectorSnapshot;
   onSelect: (callsign: string) => void;
-  onAdd: () => void;
-  onHelp: () => void;
+  open: boolean;
+  onClose: () => void;
+  onOpen: () => void;
   planting: boolean;
   onStartMic: () => void;
   micError: string | null;
 }) {
-  const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
   const [branch, setBranch] = useState("");
@@ -37,16 +38,14 @@ export function ProjectWorkspace({
     return () => clearInterval(timer);
   }, [open]);
   const inputRef = useRef<HTMLInputElement>(null);
-  const opener = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (open) inputRef.current?.focus();
   }, [open]);
   useEffect(() => {
-    if (planting) setOpen(false);
-  }, [planting]);
+    if (planting && open) onClose();
+  }, [planting, open, onClose]);
   const close = () => {
-    setOpen(false);
-    opener.current?.focus();
+    onClose();
   };
   const post = async (path: string) => {
     setError("");
@@ -68,42 +67,19 @@ export function ProjectWorkspace({
   const status = process ? projectStatus(process, jobs, now) : null;
   const latest = jobs.filter((job) => job.upid === selected).at(-1);
   const interrupted = snapshot.recovery?.interrupted.length ?? 0;
-  const activeJobs = jobs.filter((job) =>
-    ["queued", "implementing", "validating", "committing"].includes(job.status),
-  ).length;
   const adopted = process?.source?.kind === "github-import";
   const isSelf = process !== undefined && stageOf(process) === "self";
   const selfBranches = useSelfBranches(open && isSelf, undefined, snapshot.steerLanding?.atMs);
   const branches = isSelf ? selfBranches.payload?.branches ?? [] : process?.treeRepo?.branches ?? [];
   return (
     <>
-      {!planting && (
-        <nav className="workspace-nav" aria-label="Room actions">
-          <button
-            ref={opener}
-            className="ctl-button"
-            aria-expanded={open}
-            aria-controls="project-workspace"
-            onClick={() => setOpen(!open)}
-          >
-            Projects ({snapshot.processes.length})
-            {activeJobs ? ` · ${activeJobs} running` : ""}
-          </button>
-          <button className="ctl-button" onClick={onAdd}>
-            Add project
-          </button>
-          <button className="ctl-button" onClick={onHelp}>
-            Help
-          </button>
-        </nav>
-      )}
       {snapshot.recovery?.error && (
         <div className="recovery-banner" role="alert">
           {snapshot.recovery.error}
         </div>
       )}
       {interrupted > 0 && !open && !planting && (
-        <button className="recovery-banner" onClick={() => setOpen(true)}>
+        <button type="button" className="recovery-banner" onClick={onOpen}>
           {interrupted} interrupted project{interrupted === 1 ? "" : "s"} —
           review recovery
         </button>
@@ -384,7 +360,7 @@ export function ProjectWorkspace({
             </article>
           )}
           {snapshot.processes.length === 0 && (
-            <p>No projects yet. Add a project or plant an idea to begin.</p>
+            <p>No projects yet. Choose “Plant an idea” in Controls to begin.</p>
           )}
           {snapshot.steerLanding?.error && (
             <p role="alert">{snapshot.steerLanding.error}</p>

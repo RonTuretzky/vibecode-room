@@ -17,6 +17,7 @@ test("self workspace targets branches, refreshes new branches, and exposes cance
   const apply = async (process = mirror as any, landing: any = null) => page.evaluate(({ process, landing }) =>
     (window as any).__VIBERSYN__.applySnapshot({ processes: [process], steerLanding: landing }), { process, landing });
   await apply();
+  await page.getByTestId("control-dock-button").click();
   await page.getByRole("button", { name: "Projects (1)", exact: true }).click();
   await page.locator(".project-row").click();
   await expect(page.getByRole("heading", { name: "mirror: Ready to rebuild the room" })).toBeVisible();

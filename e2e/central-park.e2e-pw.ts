@@ -43,7 +43,7 @@ test("park controls fit a narrow browser and remain usable", async ({ page }) =>
   await page.getByTestId("scene-zen-button").click();
   await expect(page.getByTestId("scene-controls")).toHaveCSS("opacity", "0");
   await expect(page.getByTestId("scene-controls")).toHaveCSS("pointer-events", "none");
-  for (const selector of [".wall-clock", ".workspace-nav"]) {
+  for (const selector of [".wall-clock", ".status-bar"]) {
     await expect(page.locator(selector)).toHaveCSS("opacity", "0");
     await expect(page.locator(selector)).toHaveCSS("pointer-events", "none");
   }
@@ -51,5 +51,5 @@ test("park controls fit a narrow browser and remain usable", async ({ page }) =>
   await expect(page.locator(".fullscreen-button")).toBeHidden();
   await page.keyboard.press("Escape");
   await expect(view).toBeVisible();
-  await expect(page.getByRole("navigation", { name: "Room actions" })).toHaveCSS("opacity", "1");
+  await expect(page.getByTestId("control-dock")).toHaveCSS("opacity", "1");
 });
