@@ -13,6 +13,7 @@
 
 export interface FlatPose {
   yaw: number; // rad, RoomScene orbit convention
+  pitch: number; // rad; old frames default to a level view
   height: number; // world units (scene clamps [1.4,30])
   dist: number; // world units (scene clamps [6,45])
   // The panorama's roaming centre (the palm-depth free-roam walk translates

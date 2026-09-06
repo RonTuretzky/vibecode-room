@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { bindNavigationPad } from "./navigation-pad-input";
-import { NAVIGATION_GROUPS, sceneNavigation } from "./spatial-navigation";
+import { NAVIGATION_GROUPS, NAVIGATION_HEIGHT, sceneNavigation } from "./spatial-navigation";
 
 export function NavigationPad({ locked = false, onHome }: { locked?: boolean; onHome: () => void }) {
   const root = useRef<HTMLElement>(null);
@@ -19,6 +19,10 @@ export function NavigationPad({ locked = false, onHome }: { locked?: boolean; on
             aria-label={button.label} title={button.label}><span aria-hidden="true">{button.icon}</span></button>)}
         </div>
       </div>)}
+    </div>
+    <div className="navigation-height" role="group" aria-label="Camera height">
+      <span>Height</span>{NAVIGATION_HEIGHT.map(button => <button key={button.key} type="button" className="navigation-direction"
+        data-nav-key={button.key} data-testid={`nav-${button.key}`} disabled={locked} aria-label={button.label}>{button.text}</button>)}
     </div>
     <div className="navigation-zoom" role="group" aria-label="Zoom and reset">
       <button type="button" className="navigation-direction" data-nav-key="=" disabled={locked} aria-label="Zoom in">＋</button>

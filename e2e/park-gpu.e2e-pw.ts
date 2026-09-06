@@ -13,7 +13,7 @@ async function cameraSettled(page: Page) {
   let previous = '';
   await expect.poll(async () => {
     const pose = await page.getByTestId('room-scene').evaluate(el => {
-      const d = (el as HTMLElement).dataset; return [d.cameraX, d.cameraY, d.cameraZ, d.cameraRadius].join(',');
+      const d = (el as HTMLElement).dataset; return [d.cameraX, d.cameraY, d.cameraZ, d.cameraRadius, d.cameraPitch].join(',');
     });
     const settled = pose === previous; previous = pose; return settled;
   }, { intervals: [1000], timeout: 15000 }).toBe(true);
@@ -105,21 +105,21 @@ test('park exploration reaches the low shore and stays above the terrain on the 
   };
   const start = await pose();
   try {
-    await page.keyboard.down('ArrowDown');
+    await page.keyboard.down('q');
     await expect.poll(async () => { const p = await pose(); return p.y - p.ground; }, { intervals: [100] }).toBeLessThan(1.43);
     await page.keyboard.down('w');
     await expect.poll(async () => (await pose()).y, { intervals: [100], timeout: 10000 }).toBeLessThan(-1);
-    await page.keyboard.up('w'); await page.keyboard.up('ArrowDown'); await cameraSettled(page);
+    await page.keyboard.up('w'); await page.keyboard.up('q'); await cameraSettled(page);
     await page.getByTestId('scene-zen-button').click();
     await page.screenshot({ path: info.outputPath('pond-low-shore.png') }); await page.keyboard.press('Escape');
-    await page.keyboard.down('ArrowDown'); await page.keyboard.down('s');
+    await page.keyboard.down('q'); await page.keyboard.down('s');
     await expect.poll(async () => (await pose()).z, { intervals: [100], timeout: 10000 }).toBeGreaterThan(start.z - 1);
-    await page.keyboard.up('s'); await page.keyboard.up('ArrowDown'); await cameraSettled(page);
+    await page.keyboard.up('s'); await page.keyboard.up('q'); await cameraSettled(page);
     await pose();
     await expect.poll(async () => Number(await scene.getAttribute('data-turf-instances'))).toBeGreaterThan(100);
     await page.getByTestId('scene-zen-button').click(); await page.screenshot({ path: info.outputPath('pond-hillside-eye.png') });
   } finally {
-    for (const key of ['w', 's', 'ArrowDown']) await page.keyboard.up(key);
+    for (const key of ['w', 's', 'q']) await page.keyboard.up(key);
   }
   expect(samples.length).toBeGreaterThan(10);
   expect(Math.min(...samples.map(p => p.y - p.ground))).toBeGreaterThanOrEqual(1.39);
@@ -169,6 +169,56 @@ test('rebuilding park environments releases transient GPU resources after warmup
     expect(Math.max(...warm.map(s => s[key])) - Math.min(...warm.map(s => s[key])), key).toBeLessThanOrEqual(2);
   }
   expect(await canvas!.evaluate(el => el.isConnected)).toBe(true);
+  expect(errors).toEqual([]);
+});
+
+test('ground-level tilt inspects the shore and skyline without lifting the eye', async ({ page }, info) => {
+  test.setTimeout(90000);
+  const errors: string[] = [];
+  page.on('pageerror', e => errors.push(e.message));
+  page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
+  await page.goto('/?live=0&env=park');
+  const scene = page.getByTestId('room-scene');
+  await expect(scene).toHaveAttribute('data-park-ready', 'true', { timeout: 90000 });
+  await page.getByTestId('park-view-button').click(); await cameraSettled(page);
+  const getPose = () => scene.evaluate(el => { const d = (el as HTMLElement).dataset;
+    return { x: Number(d.cameraX), y: Number(d.cameraY), z: Number(d.cameraZ), pitch: Number(d.cameraPitch), ground: Number(d.cameraGroundY) }; });
+  const shots = [];
+  try {
+    await page.keyboard.down('q');
+    await expect.poll(async () => { const p = await getPose(); return p.y - p.ground; }).toBeLessThan(1.43);
+    await page.keyboard.up('q'); await cameraSettled(page);
+    const eye = await getPose();
+    for (const [key, threshold, name] of [['ArrowDown', -.35, 'shore-ground'], ['ArrowUp', .15, 'shore-upward']] as const) {
+      await page.keyboard.down(key);
+      await expect.poll(async () => { const p = (await getPose()).pitch; return key === 'ArrowDown' ? p < threshold : p > threshold; }).toBe(true);
+      await page.keyboard.up(key); await cameraSettled(page);
+      // The public pose stamp refreshes once a second. A long hold can pass
+      // the composition before the next stamp; trim the inspection view to
+      // 20 degrees while separately exercising the full limit below.
+      if (key === 'ArrowUp') {
+        const excess = (await getPose()).pitch - .35;
+        if (excess > .05) {
+          await page.keyboard.down('ArrowDown'); await page.waitForTimeout(excess / .65 * 1000);
+          await page.keyboard.up('ArrowDown'); await cameraSettled(page);
+        }
+      }
+      const p = await getPose(); shots.push({ name, ...p });
+      expect(Math.hypot(p.x - eye.x, p.y - eye.y, p.z - eye.z)).toBeLessThan(.02);
+      await page.getByTestId('scene-zen-button').click();
+      await page.screenshot({ path: info.outputPath(`${name}.png`) }); await page.keyboard.press('Escape');
+    }
+    await page.keyboard.down('ArrowUp');
+    await expect.poll(async () => (await getPose()).pitch).toBeGreaterThan(1.47);
+    await page.keyboard.up('ArrowUp'); await cameraSettled(page);
+    expect((await getPose()).pitch).toBeLessThan(1.49);
+    await page.keyboard.down('ArrowDown');
+    await expect.poll(async () => (await getPose()).pitch).toBeLessThan(1.35);
+    await page.keyboard.up('ArrowDown');
+    await page.getByTestId('scene-fit-button').click(); await cameraSettled(page);
+    await expect.poll(async () => (await getPose()).pitch).toBeLessThan(0);
+  } finally { for (const key of ['q', 'ArrowUp', 'ArrowDown']) await page.keyboard.up(key); }
+  writeFileSync(info.outputPath('tilt-poses.json'), JSON.stringify(shots, null, 2));
   expect(errors).toEqual([]);
 });
 

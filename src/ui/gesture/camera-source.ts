@@ -7,6 +7,8 @@
 export interface SceneCameraControl {
   // rad; world units (height clamped [1.4,30] inside).
   orbitBy(dYaw: number, dHeight: number): void;
+  // Radians; look up/down in place, independent of eye height.
+  tiltBy(dPitch: number): void;
   // Screen px; scene applies its 0.0045*radius pan feel.
   panBy(dxPx: number, dyPx: number): void;
   // dRadius *= scale, clamped [4,45] (wheel parity).

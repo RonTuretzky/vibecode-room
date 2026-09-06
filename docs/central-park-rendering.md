@@ -901,3 +901,50 @@ at the lawn and Pond; final captures are in
 `.context/butterfly-live-2026-09-06/`. Neither brief sampling nor these
 graphics checks establishes exhaustive interaction coverage or performance
 on other hardware.
+
+## Independent viewing tilt — 2026-09-06
+
+Arrow up/down now tilt the camera in place; Q/E lower/raise its eye separately.
+Both the room and guest navigation pads expose those actions with the existing
+hold, touch and dwell behavior. Shift+Q opens the QR overlay, leaving Q free
+for navigation. The dwell checkbox no longer blocks navigation shortcuts while
+it holds focus; text fields retain their keyboard input. Manual tilt is bounded
+to 85 degrees above/below horizontal and eased with the camera. Fit, presets
+and project focus restore their intended framing. Existing mouse/pinch orbit
+continues around its target, augmented by the manual tilt.
+
+The flat projector pair now carries pitch through pose publication, relay,
+adoption and replay; older frames default to a level view. Corner projectors
+retain their fixed eye and disabled navigation. A two-window reload check
+exposed an existing initial-fit race: the refreshed window adopted its partner,
+then loaded the standing projects and broadcast a canonical view over that
+pose. Initial snapshot framing now yields to an adopted flat pose. Explicit
+Fit and later imports still recenter the pair. The pure camera check compares
+zero-tilt orientations with the original Three.js look-at direction over
+several orbit positions and verifies the vertical limits/reversal behavior.
+
+All 253 targeted unit checks and typechecking pass. Fourteen park, focus and
+spatial-navigation browser scenarios pass, including guest touch/dwell release,
+independent tilt/height, QR, fixed corners and refreshed flat partners. All five
+hardware scenarios pass at DPR 2 with motion enabled. The six preset samples
+are 8.3 ms average / 9.3–9.8 ms p95 on this M4 Max; six rebuilds hold at
+195 geometries / 88 textures / 92 programs after warmup. Evidence:
+`.context/camera-tilt-browser-final-results/` and
+`.context/camera-tilt-gpu-results/`.
+
+The first upward inspection shot reached the 85-degree limit and showed sky;
+it verified the control but was not a useful canopy composition. A second
+hardware run settles pitch as well as eye position and trims the upward shot
+to roughly 20 degrees. That scenario passes again; ground and skyline views
+were inspected in `.context/camera-tilt-ground-final-results/`. Both angles
+retain exactly the same eye, with 1.4 m terrain clearance. Close vegetation,
+label overlap and camera-adaptive tree detail remain in the visual audit.
+
+The real local-AI room was restarted with its existing model overrides and
+mute enabled. Its two projects, branch jobs, planting positions and source
+metadata match the pre-restart snapshot; all providers remain real/local.
+Live host and guest navigation then passed, including changing pitch from
+-0.139 to +0.349 and back from the phone with unchanged x/y/z. Desktop,
+portrait and guest controls were inspected without browser errors. Evidence:
+`.context/camera-tilt-live-2026-09-06/` and
+`.context/camera-tilt-restart/`. The app remains running at port 18994.

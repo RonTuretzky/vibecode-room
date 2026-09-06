@@ -1,4 +1,5 @@
 import { NAVIGATION_KEYS } from "../ui/spatial-navigation";
+import { clampCameraPitch } from "../ui/camera-pitch";
 // Guest-hands relay hub: LAN guests open /hands on their own computer, track
 // their hands in-browser (or use the trackpad fallback), and stream normalized
 // cursors here over WS (/hands/ws). The hub assigns each guest an exclusive
@@ -72,7 +73,7 @@ export type GuestMessage =
   | { kind: "hello"; wall: string | null; name: string | null }
   | { kind: "cursors"; cursors: RemoteGuestCursor[] }
   | { kind: "keys"; held: GuestKey[] }
-  | { kind: "flatpose"; yaw: number; height: number; dist: number; cx: number; cz: number }
+  | { kind: "flatpose"; yaw: number; pitch: number; height: number; dist: number; cx: number; cz: number }
   | { kind: "flyhands"; t: number; aspect: number; hands: GuestFlyHand[] };
 
 // A guest's display name, made wall-safe: control chars stripped (a name is
@@ -129,6 +130,7 @@ export function parseGuestMessage(raw: string): GuestMessage | null {
     }
     return {
       kind: "flatpose",
+      pitch: typeof msg.pitch === "number" ? clampCameraPitch(msg.pitch) : 0,
       yaw: clampRange(msg.yaw, -FLAT_POSE_YAW_LIMIT, FLAT_POSE_YAW_LIMIT),
       height: clampRange(msg.height, FLAT_POSE_HEIGHT_MIN, FLAT_POSE_HEIGHT_MAX),
       dist: clampRange(msg.dist, FLAT_POSE_DIST_MIN, FLAT_POSE_DIST_MAX),
@@ -285,6 +287,7 @@ export interface RemoteHandsHubOptions {
 // The relayed shape of a flat-pair pose (see #relayFlatPose).
 interface FlatPoseWire {
   type: "flatpose";
+  pitch: number;
   yaw: number;
   height: number;
   dist: number;
@@ -363,9 +366,10 @@ export class RemoteHandsHub {
   // window. Never back to the sender (its pose is already right, and echoes
   // would fight the very input that produced them) and never to guests (the
   // pose is projector-rig internals, not a guest-facing stream).
-  #relayFlatPose(sender: RoomPeer, pose: { yaw: number; height: number; dist: number; cx: number; cz: number }): void {
+  #relayFlatPose(sender: RoomPeer, pose: { yaw: number; pitch: number; height: number; dist: number; cx: number; cz: number }): void {
     const frame: FlatPoseWire = {
       type: "flatpose",
+      pitch: pose.pitch,
       yaw: pose.yaw,
       height: pose.height,
       dist: pose.dist,

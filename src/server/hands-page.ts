@@ -1,4 +1,4 @@
-import { NAVIGATION_GROUPS, NAVIGATION_KEYS } from "../ui/spatial-navigation";
+import { NAVIGATION_GROUPS, NAVIGATION_HEIGHT, NAVIGATION_KEYS } from "../ui/spatial-navigation";
 import { bindNavigationPad } from "../ui/navigation-pad-input";
 
 // GET /hands — the guest hand-controls page. People on the room LAN open this
@@ -120,6 +120,9 @@ export function handsPageHtml(): string {
 .navigation-direction[data-dwelling="1"]::after { content: ""; position: absolute; bottom: 0; left: 0; height: 4px; background: #b7e49c; animation: navigation-dwell 700ms linear forwards; }
 @keyframes navigation-dwell { from { width: 0; } to { width: 100%; } }
 .navigation-zoom { display: grid; grid-template-columns: 48px 48px 1fr; gap: 8px; margin-top: 12px; }
+.navigation-height { display: grid; grid-template-columns: auto 1fr 1fr; align-items: center; gap: 8px; margin-top: 12px; }
+.navigation-height > span { color: #a9c1b8; font-size: 12px; }
+.navigation-height .navigation-direction { font-size: 13px; }
 
 .guest-controls { margin-top: 18px; padding: 16px; border: 1px solid #49645b; border-radius: 16px; background: #11241f; }
 .guest-controls > summary { font-size: 16px; font-weight: 650; cursor: pointer; }
@@ -186,6 +189,10 @@ export function handsPageHtml(): string {
               data-testid="guest-key-${button.key}" aria-label="${button.label}" title="${button.label}">${button.icon}</button>`).join("")}</div>
         </div>`).join("")}
       </div>
+      <div class="navigation-height" role="group" aria-label="Camera height">
+        <span>Height</span>${NAVIGATION_HEIGHT.map(button => `<button type="button" class="navigation-direction" data-nav-key="${button.key}"
+          data-testid="guest-key-${button.key}" aria-label="${button.label}">${button.text}</button>`).join("")}
+      </div>
       <div class="navigation-zoom" role="group" aria-label="Zoom and reset">
         <button type="button" class="navigation-direction" data-nav-key="=" aria-label="Zoom in">＋</button>
         <button type="button" class="navigation-direction" data-nav-key="-" aria-label="Zoom out">−</button>
@@ -211,7 +218,7 @@ export function handsPageHtml(): string {
 
   <details class="guest-help"><summary>Help & shortcuts</summary>
   <p class="hint">
-    W/A/S/D move · arrow keys change the angle · =/− zoom · Home returns to projects.
+    W/A/S/D move · arrows turn and tilt · Q/E lower and raise · =/− zoom · Home returns to projects.
     This pad is the wall: your dot appears on the room screen where you point. To click something,
     hold your cursor still on it until the ring around it completes (~1s) — or press/pinch while
     on it to click instantly. Camera mode: point by moving your open hand, click by
@@ -488,7 +495,7 @@ export function handsPageHtml(): string {
   };
   const navigationKeys = new Set(${JSON.stringify(NAVIGATION_KEYS)});
   window.addEventListener("keydown", event => {
-    if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey || event.target.closest?.("input, textarea, select, [contenteditable=true]")) return;
+    if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey || event.target.closest?.("input:not([data-nav-dwell]), textarea, select, [contenteditable=true]")) return;
     const key = event.key.toLowerCase();
     if (navigationKeys.has(key)) { event.preventDefault(); heldKeys.add(key); sendKeys(); }
   });

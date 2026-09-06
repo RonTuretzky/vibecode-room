@@ -7,7 +7,7 @@ test.setTimeout(90_000);
 async function pose(page: Page) {
   return page.getByTestId("room-scene").evaluate(el => {
     const d = (el as HTMLElement).dataset;
-    return { x: Number(d.cameraX), y: Number(d.cameraY), z: Number(d.cameraZ), yaw: Number(d.cameraYaw), radius: Number(d.cameraRadius), active: d.navigationActive };
+    return { x: Number(d.cameraX), y: Number(d.cameraY), z: Number(d.cameraZ), yaw: Number(d.cameraYaw), pitch: Number(d.cameraPitch), radius: Number(d.cameraRadius), active: d.navigationActive };
   });
 }
 async function ready(page: Page) {
@@ -16,13 +16,15 @@ async function ready(page: Page) {
 }
 async function stopped(page: Page) {
   await expect.poll(async () => (await pose(page)).active).toBe("false");
-  // Account for the rig's existing ease-out, then verify no continued movement.
-  await page.waitForTimeout(1000);
-  const a = await pose(page);
-  await page.waitForTimeout(1100);
-  const b = await pose(page);
-  expect(Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z)).toBeLessThan(.15);
-  expect(Math.abs(a.yaw - b.yaw)).toBeLessThan(.01);
+  // Check settled poses rather than assuming the ease-out took one second
+  // on a software renderer or a background projector tab.
+  let previous = await pose(page), stable = 0;
+  await expect.poll(async () => {
+    const current = await pose(page);
+    const still = Math.hypot(previous.x - current.x, previous.y - current.y, previous.z - current.z) < .15 &&
+      Math.abs(previous.yaw - current.yaw) < .01 && Math.abs(previous.pitch - current.pitch) < .01;
+    stable = still ? stable + 1 : 0; previous = current; return stable;
+  }, { intervals: [1100], timeout: 15000 }).toBeGreaterThanOrEqual(2);
 }
 
 test("room controls consolidate actions and sustained dwell moves then stops on leaving", async ({ page }) => {
@@ -82,7 +84,7 @@ test("guest phone controls move, change angle, zoom, and release on disconnect",
   await guest.setViewportSize({ width: 390, height: 844 });
   await guest.goto("/hands");
   await expect(guest.getByTestId("guest-status")).toHaveAttribute("data-state", "live");
-  for (const key of ["w", "arrowleft", "arrowup"]) {
+  for (const key of ["w", "arrowleft", "arrowup", "e"]) {
     const control = guest.getByTestId(`guest-key-${key}`);
     const start = await pose(page);
     await control.scrollIntoViewIfNeeded();
@@ -93,7 +95,7 @@ test("guest phone controls move, change angle, zoom, and release on disconnect",
     await guest.keyboard.down("Space");
     await expect.poll(async () => {
       const current = await pose(page);
-      return key === "arrowleft" ? current.yaw - start.yaw : key === "arrowup" ? current.y - start.y : start.z - current.z;
+      return key === "arrowleft" ? current.yaw - start.yaw : key === "arrowup" ? current.pitch - start.pitch : key === "e" ? current.y - start.y : start.z - current.z;
     }).toBeGreaterThan(.15);
     await guest.keyboard.up("Space");
     await stopped(page);
@@ -134,6 +136,58 @@ test("fixed corner projector controls explicitly disable navigation", async ({ p
   await page.goto("/?live=0&gesture=1&wall=A&env=meadow");
   await page.getByTestId("control-dock-button").click();
   await expect(page.getByTestId("nav-w")).toBeDisabled();
+  await expect(page.getByTestId("nav-arrowup")).toBeDisabled();
+  await expect(page.getByTestId("nav-e")).toBeDisabled();
+});
+
+test("tilt changes the viewing angle in place; height controls and QR have separate shortcuts", async ({ page }) => {
+  await ready(page); await stopped(page);
+  await page.getByTestId('control-dock-button').click();
+  await page.getByLabel('Dwell to move', { exact: true }).check();
+  const start = await pose(page);
+  await page.getByTestId('nav-arrowup').hover();
+  await expect.poll(async () => (await pose(page)).pitch).toBeGreaterThan(start.pitch + .3);
+  await page.getByRole('heading', { name: 'Explore', exact: true }).hover(); await stopped(page);
+  const up = await pose(page);
+  expect(Math.hypot(up.x - start.x, up.y - start.y, up.z - start.z)).toBeLessThan(.05);
+  await page.keyboard.down('q');
+  await expect.poll(async () => (await pose(page)).y).toBeLessThan(up.y - .3);
+  await page.keyboard.up('q'); await stopped(page);
+  await expect(page.getByTestId('qr-overlay')).toHaveCount(0);
+  await page.keyboard.press('Shift+Q');
+  await expect(page.getByTestId('qr-overlay')).toBeVisible();
+  await page.keyboard.press('Escape');
+  await page.keyboard.press('Home'); await stopped(page);
+  expect((await pose(page)).pitch).toBeLessThan(0);
+});
+
+test("flat projector partners share tilt and replay it to a refreshed window", async ({ page, context }) => {
+  const frames: unknown[] = [];
+  const listen = (p: Page, name: string) => p.on('websocket', socket => {
+    for (const event of ['framesent', 'framereceived'] as const) socket.on(event, data => {
+      const raw = String(data.payload); if (raw.includes('flatpose')) frames.push({ name, event, raw });
+    });
+  });
+  listen(page, 'A');
+  const url = '/?live=0&remote=1&flat=1&env=meadow&wall=';
+  await page.goto(url + 'A');
+  const partner = await context.newPage(); listen(partner, 'B'); await partner.goto(url + 'B');
+  await expect(partner.getByTestId('room-scene')).toHaveAttribute('data-camera-pitch', /-?\d/);
+  await stopped(page); await stopped(partner);
+  const before = await pose(page);
+  await page.keyboard.down('ArrowUp');
+  await expect.poll(async () => (await pose(page)).pitch).toBeGreaterThan(.3);
+  await page.keyboard.up('ArrowUp'); await stopped(page);
+  await expect.poll(async () => Math.abs((await pose(partner)).pitch - (await pose(page)).pitch)).toBeLessThan(.015);
+  expect(Math.abs((await pose(page)).y - before.y)).toBeLessThan(.02);
+  const saved = await pose(page);
+  await partner.reload();
+  await expect.poll(async () => Math.abs((await pose(partner)).pitch - saved.pitch)).toBeLessThan(.015).catch(async e => {
+    await test.info().attach('flat-pose-diagnostics', { body: JSON.stringify({ saved, a: await pose(page), b: await pose(partner), frames }), contentType: 'application/json' }); throw e;
+  });
+  await page.keyboard.press('Home'); await stopped(page);
+  await expect.poll(async () => Math.abs((await pose(partner)).pitch)).toBeLessThan(.01);
+  await partner.close();
 });
 
 

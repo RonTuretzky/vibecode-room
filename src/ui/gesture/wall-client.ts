@@ -8,6 +8,7 @@
 // 1-Euro smoothed, so consumers can use them directly.
 
 import type { HandsFrame, PinchHand } from "./hands-client";
+import { clampCameraPitch } from "../camera-pitch";
 
 export interface GestureCursor {
   id: number;
@@ -92,6 +93,7 @@ export function parseKeysFrame(raw: string, wall: string): KeysFrame | null {
 // frames; never throws (LAN input).
 export interface FlatPoseFrame {
   yaw: number;
+  pitch: number;
   height: number;
   dist: number;
   // Roaming centre (free-roam walk). OPTIONAL on the wire — frames from a
@@ -123,6 +125,7 @@ export function parseFlatPoseFrame(raw: string): FlatPoseFrame | null {
   }
   return {
     yaw: msg.yaw,
+    pitch: typeof msg.pitch === "number" ? clampCameraPitch(msg.pitch) : 0,
     height: msg.height,
     dist: msg.dist,
     // Optional-with-default like t (never NaN — junk coerces to 0 too).

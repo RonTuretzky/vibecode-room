@@ -63,11 +63,19 @@ describe("parseKeysFrame", () => {
 });
 
 describe("parseFlatPoseFrame", () => {
+  test("pitch survives the wire, defaults for old peers, and stays finite and below vertical", () => {
+    const frame = (pitch: unknown) => JSON.stringify({ type: "flatpose", yaw: 0, height: 4.6, dist: 20, pitch });
+    expect(parseFlatPoseFrame(frame(.7))?.pitch).toBe(.7);
+    expect(parseFlatPoseFrame(frame(undefined))?.pitch).toBe(0);
+    expect(parseFlatPoseFrame(frame("bad"))?.pitch).toBe(0);
+    expect(parseFlatPoseFrame(frame(1e6))!.pitch).toBeLessThan(Math.PI / 2);
+  });
   test("parses a well-formed flatpose (no wall filter — the pose is pair-global)", () => {
     const raw = JSON.stringify({ type: "flatpose", yaw: -0.4, height: 5.1, dist: 19, cx: -12.5, cz: 30, t: 7.5 });
-    expect(parseFlatPoseFrame(raw)).toEqual({ yaw: -0.4, height: 5.1, dist: 19, cx: -12.5, cz: 30, t: 7.5 });
+    expect(parseFlatPoseFrame(raw)).toEqual({ pitch: 0, yaw: -0.4, height: 5.1, dist: 19, cx: -12.5, cz: 30, t: 7.5 });
     // Missing t defaults to 0 (cursors-frame parity).
     expect(parseFlatPoseFrame(JSON.stringify({ type: "flatpose", yaw: 0, height: 4.6, dist: 20, cx: 1, cz: 2 }))).toEqual({
+      pitch: 0,
       yaw: 0,
       height: 4.6,
       dist: 20,
@@ -79,6 +87,7 @@ describe("parseFlatPoseFrame", () => {
 
   test("cx/cz default to 0 — OLD frames without a roam centre stay valid (mixed-version pair)", () => {
     expect(parseFlatPoseFrame(JSON.stringify({ type: "flatpose", yaw: -0.4, height: 5.1, dist: 19, t: 7.5 }))).toEqual({
+      pitch: 0,
       yaw: -0.4,
       height: 5.1,
       dist: 19,
@@ -89,6 +98,7 @@ describe("parseFlatPoseFrame", () => {
     // Junk cx/cz coerces to 0 like a junk t — optional fields never sink the
     // frame and never let NaN through.
     expect(parseFlatPoseFrame(JSON.stringify({ type: "flatpose", yaw: 0, height: 4.6, dist: 20, cx: "9", cz: null }))).toEqual({
+      pitch: 0,
       yaw: 0,
       height: 4.6,
       dist: 20,
@@ -207,7 +217,7 @@ describe("GestureWallClient", () => {
     ws.message(JSON.stringify({ type: "flatpose", yaw: 0.2, height: 4.6, dist: 20, cx: 3, cz: -4, t: 1 }));
     ws.message(JSON.stringify({ type: "cursors", wall: "A", t: 2, cursors: [{ id: 5, x: 0.1, y: 0.2 }] }));
     ws.message(JSON.stringify({ type: "flatpose", yaw: "bad", height: 4.6, dist: 20 })); // malformed → dropped
-    expect(posesSeen).toEqual([{ yaw: 0.2, height: 4.6, dist: 20, cx: 3, cz: -4, t: 1 }]);
+    expect(posesSeen).toEqual([{ pitch: 0, yaw: 0.2, height: 4.6, dist: 20, cx: 3, cz: -4, t: 1 }]);
     expect(cursorsSeen).toHaveLength(1);
     client.stop();
   });

@@ -7,13 +7,17 @@ export const NAVIGATION_GROUPS = [
     { key: "d", label: "Move right", icon: "→", position: "east" },
   ] },
   { label: "Look", buttons: [
-    { key: "arrowup", label: "Raise view", icon: "↗", position: "north" },
+    { key: "arrowup", label: "Look up", icon: "↟", position: "north" },
     { key: "arrowleft", label: "Turn left", icon: "↶", position: "west" },
-    { key: "arrowdown", label: "Lower view", icon: "↘", position: "south" },
+    { key: "arrowdown", label: "Look down", icon: "↡", position: "south" },
     { key: "arrowright", label: "Turn right", icon: "↷", position: "east" },
   ] },
 ] as const;
-export const NAVIGATION_KEYS = ["w", "a", "s", "d", "arrowup", "arrowdown", "arrowleft", "arrowright", "=", "-", "home"] as const;
+export const NAVIGATION_HEIGHT = [
+  { key: "q", label: "Lower camera", text: "Lower · Q" },
+  { key: "e", label: "Raise camera", text: "Raise · E" },
+] as const;
+export const NAVIGATION_KEYS = ["w", "a", "s", "d", "arrowup", "arrowdown", "arrowleft", "arrowright", "q", "e", "=", "-", "home"] as const;
 export type NavigationKey = typeof NAVIGATION_KEYS[number];
 export function isNavigationKey(key: string): key is NavigationKey {
   return (NAVIGATION_KEYS as readonly string[]).includes(key);
@@ -36,5 +40,5 @@ export function navigationAxes(keys: ReadonlySet<string>) {
   const forward = axis("w", "s"), right = axis("d", "a");
   const length = Math.max(1, Math.hypot(forward, right));
   return { forward: forward / length, right: right / length,
-    turn: axis("arrowleft", "arrowright"), elevation: axis("arrowup", "arrowdown"), zoom: axis("-", "=") };
+    turn: axis("arrowleft", "arrowright"), pitch: axis("arrowup", "arrowdown"), elevation: axis("e", "q"), zoom: axis("-", "=") };
 }

@@ -405,6 +405,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
   const [hiddenIdeas, setHiddenIdeas] = useState<ReadonlySet<string>>(new Set());
   const [hiddenTrees, setHiddenTrees] = useState<ReadonlySet<string>>(new Set());
   const [fitSignal, setFitSignal] = useState(0);
+  const [initialFitSignal, setInitialFitSignal] = useState(0);
   const [parkViewSignal, setParkViewSignal] = useState(0);
   const toggleHiddenIdea = useCallback((id: string) => {
     setHiddenIdeas((current) => {
@@ -1800,7 +1801,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
   // --- Keyboard: the primary desk-mode control surface (SSR-guarded) ---
   // 1–9 select/steer · b/Enter build top idea · x dismiss · c/m mic+capture
   // (one control) · Shift+A auto-build (plain a/w/s/d = scene WASD walk) ·
-  // u unmute · q QR · ?/h help · k halt selected · Shift+E emergency · Esc close.
+  // u unmute · Shift+Q QR · ?/h help · k halt selected · Shift+E emergency · Esc close.
   useEffect(() => {
     if (typeof window === "undefined") {
       return;
@@ -1819,7 +1820,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
       const target = keyEvent.target;
       if (target instanceof HTMLElement) {
         const tag = target.tagName;
-        if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target.isContentEditable) {
+        if ((tag === "INPUT" && !target.hasAttribute("data-nav-dwell")) || tag === "TEXTAREA" || tag === "SELECT" || target.isContentEditable) {
           return;
         }
         // Enter on a focused control is that control's activation, not "build".
@@ -1937,7 +1938,8 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
             void releaseMute();
           }
           return;
-        case "q":
+        case "Q":
+          if (!keyEvent.shiftKey) return;
           setQrOpen((open) => !open);
           return;
         case "?":
@@ -2391,9 +2393,10 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
   // (fitSignal → RoomScene's fitToContent) once so the garden reframes with
   // every tree mid-frame instead of the new one clipping the bottom edge.
   // Baseline = the mount snapshot, so the first live /api/state sync frames
-  // the standing garden too. RoomScene keeps its own guards: rigid corner/
-  // flat pairs ignore the pulse (their cameras may not move).
+  // the standing garden too. RoomScene preserves rigid corner views and an
+  // adopted flat pose when the initial standing fleet arrives.
   const seenUpidsRef = useRef<Set<string> | null>(null);
+  const awaitingInitialSnapshot = useRef(initialSnapshot === undefined);
   useEffect(() => {
     const seen = seenUpidsRef.current;
     if (seen === null) {
@@ -2401,6 +2404,8 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
       return;
     }
     let grewNewTree = false;
+    const initial = awaitingInitialSnapshot.current && snapshot !== emptyProjectorSnapshot;
+    if (snapshot !== emptyProjectorSnapshot) awaitingInitialSnapshot.current = false;
     for (const process of snapshot.processes) {
       if (!seen.has(process.upid)) {
         seen.add(process.upid);
@@ -2408,7 +2413,10 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
       }
     }
     if (grewNewTree) {
-      setFitSignal((n) => n + 1);
+      // A refreshed projector may already have adopted its partner's pose.
+      // Distinguish loading the standing fleet from an explicit later import.
+      if (initial) setInitialFitSignal(n => n + 1);
+      else setFitSignal(n => n + 1);
     }
   }, [snapshot.processes]);
 
@@ -2529,6 +2537,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
         flatLock={flatLock}
         autoFit={autoFit}
         fitSignal={fitSignal}
+        initialFitSignal={initialFitSignal}
         parkViewSignal={parkViewSignal}
         focusUpid={
           workspaceFocus?.upid === selectedProcess?.upid && workspaceFocus !== null ? workspaceFocus.upid :

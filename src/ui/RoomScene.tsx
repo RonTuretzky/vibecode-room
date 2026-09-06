@@ -1,4 +1,5 @@
 import { isNavigationKey, navigationAxes, sceneNavigation } from "./spatial-navigation";
+import { clampCameraPitch, clampOrbitTilt, orbitCameraPitch } from "./camera-pitch";
 import { createParkFurniture } from "../park3d/park-furniture";
 import { BENCH_FOOTPRINT } from '../park3d/park-furniture-geometry';
 import { PARK_VIEWS, fitParkProjects } from "../park3d/park-cameras";
@@ -416,7 +417,7 @@ interface Entry {
   disposeExtra?: () => void;
 }
 
-export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", wall = null, fitSignal, parkViewSignal = 0, focusUpid = null, focusSignal = 0, pointerNav = true, cornerLock = false, flatLock = false, autoFit = false, onAcceptIdea, onSelectProcess, onPickMiss, onPickBranch, onPickIssue, dialogue = [], topics = [], research = [], onResearchNode, onDialogueNode, sky, researchThinking = false, skyView = false, selfTree = null, planting = false, onPlantPick }: RoomSceneProps) {
+export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", wall = null, fitSignal, initialFitSignal = 0, parkViewSignal = 0, focusUpid = null, focusSignal = 0, pointerNav = true, cornerLock = false, flatLock = false, autoFit = false, onAcceptIdea, onSelectProcess, onPickMiss, onPickBranch, onPickIssue, dialogue = [], topics = [], research = [], onResearchNode, onDialogueNode, sky, researchThinking = false, skyView = false, selfTree = null, planting = false, onPlantPick }: RoomSceneProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const ideasRef = useRef(ideas);
   ideasRef.current = ideas;
@@ -473,6 +474,8 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
   parkViewRef.current = parkViewSignal;
   const fitRef = useRef(fitSignal);
   fitRef.current = fitSignal;
+  const initialFitRef = useRef(initialFitSignal);
+  initialFitRef.current = initialFitSignal;
   const focusRef = useRef<string | null>(focusUpid);
   focusRef.current = focusUpid;
   const focusSignalRef = useRef(focusSignal);
@@ -573,6 +576,8 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
       targetX: 0,
       targetZ: 0,
       lookY: 1.7,
+      tilt: 0,
+      dTilt: 0,
       // desired* lerp targets so mode/view/fit changes glide
       dAngle: 0,
       dRadius: 15,
@@ -599,6 +604,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
       rig.dRadius = d.radius;
       rig.dHeight = d.height;
       rig.lookY = d.lookY;
+      rig.dTilt = 0;
       rig.dTargetX = 0;
       rig.dTargetZ = 0;
     };
@@ -608,7 +614,10 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
         rig.height,
         rig.targetZ + Math.cos(rig.angle) * rig.radius,
       );
-      camera.lookAt(rig.targetX, rig.lookY, rig.targetZ);
+      camera.rotation.set(orbitCameraPitch(rig.height, rig.lookY, rig.radius, rig.tilt), rig.angle, 0, "YXZ");
+    };
+    const tiltOrbitRig = (delta: number) => {
+      rig.dTilt = clampOrbitTilt(rig.dHeight, rig.lookY, rig.dRadius, rig.dTilt + delta);
     };
     // ── corner lock (gesture mode with an explicit wall) ────────────────────
     // The rigid two-window pair: ONE shared eye point, a horizontal view
@@ -653,7 +662,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
     // cx/cz: the panorama's ROAMING CENTRE on the ground plane — the palm-
     // depth walk translates it along the view direction, so the pair can
     // free-roam anywhere on the map (orbit/zoom then act about this centre).
-    const flatRig = { yaw: FLAT_YAW, height: FLAT_EYE_HEIGHT, dist: FLAT_EYE_DISTANCE, cx: 0, cz: 0 };
+    const flatRig = { yaw: FLAT_YAW, pitch: 0, height: FLAT_EYE_HEIGHT, dist: FLAT_EYE_DISTANCE, cx: 0, cz: 0 };
     // Roam envelope for the centre: generously past the meadow so nothing is
     // out of reach, finite so nobody glides to infinity (the hub clamps its
     // relay at the slightly-wider FLAT_POSE_CENTER_LIMIT, same rule as dist).
@@ -665,6 +674,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
     const FLAT_WALK_UNITS_PER_SEC = 6;
     // Local input touched flatRig since the last publish (adoption clears it).
     let flatPoseDirty = false;
+    let flatPoseAdopted = false;
     let flatPoseLastPublishMs = 0;
     const FLAT_POSE_PUBLISH_MS = 125; // ~8 Hz — plenty against sub-mm/s drift
     // SMOOTHED APPLICATION: the targets above step at the 30 Hz hands-stream
@@ -672,10 +682,11 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
     // render. The drawn pose eases toward the targets each frame instead.
     // Lockstep survives because both windows ease toward IDENTICAL targets
     // with the same rate — any transient divergence decays within ~100 ms.
-    const flatView = { yaw: FLAT_YAW, height: FLAT_EYE_HEIGHT, dist: FLAT_EYE_DISTANCE, cx: 0, cz: 0 };
+    const flatView = { yaw: FLAT_YAW, pitch: 0, height: FLAT_EYE_HEIGHT, dist: FLAT_EYE_DISTANCE, cx: 0, cz: 0 };
     const applyFlatRig = (dt?: number) => {
       const k = dt === undefined ? 1 : 1 - Math.exp(-dt * 14);
       flatView.yaw += (flatRig.yaw - flatView.yaw) * k;
+      flatView.pitch += (flatRig.pitch - flatView.pitch) * k;
       flatView.height += (flatRig.height - flatView.height) * k;
       flatView.dist += (flatRig.dist - flatView.dist) * k;
       flatView.cx += (flatRig.cx - flatView.cx) * k;
@@ -686,7 +697,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
       const eyeX = flatView.cx + Math.sin(flatView.yaw) * flatView.dist;
       const eyeZ = flatView.cz + Math.cos(flatView.yaw) * flatView.dist;
       camera.position.set(eyeX, flatView.height, eyeZ);
-      camera.lookAt(eyeX - Math.sin(flatView.yaw), flatView.height, eyeZ - Math.cos(flatView.yaw));
+      camera.rotation.set(flatView.pitch, flatView.yaw, 0, "YXZ");
     };
 
     resetRig();
@@ -4175,8 +4186,10 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
       rig.dRadius = fitIdeal.radius;
       rig.dHeight = fitIdeal.height;
       rig.lookY = fitIdeal.lookY;
+      rig.dTilt = 0;
     };
     const fitToContent = () => {
+      rig.dTilt = 0;
       if (skyViewRef.current) {
         // The sky vista IS the composition (an under-deck upward pitch over a
         // bounded disc): any bbox re-frame would put the camera back outside
@@ -4496,7 +4509,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
       const target = event.target;
       if (target instanceof HTMLElement) {
         const tag = target.tagName;
-        if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target.isContentEditable) {
+        if ((tag === "INPUT" && !target.hasAttribute("data-nav-dwell")) || tag === "TEXTAREA" || tag === "SELECT" || target.isContentEditable) {
           return;
         }
       }
@@ -4706,6 +4719,14 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
     // wins). The scene owns the rig and ALL clamps — the layer never touches
     // three.js and cannot push the rig outside the mouse's envelope.
     const unregisterCameraControl = registerSceneCameraControl({
+      tiltBy: (delta) => {
+        if (!Number.isFinite(delta) || cornerLocked) return;
+        lastCameraInputMs = performance.now();
+        if (flatLocked) {
+          flatRig.pitch = clampCameraPitch(flatRig.pitch + delta);
+          flatPoseDirty = true;
+        } else tiltOrbitRig(delta);
+      },
       // Every seam verb is manual camera input (pinch camera, guest joystick
       // keys, …): stamp it so the continuous auto-framing stays suspended
       // while someone is orbiting and for AUTO_FIT_RESUME_MS after.
@@ -4819,7 +4840,9 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
     const unregisterFlatPoseControl = flatLocked
       ? registerSceneFlatPoseControl({
           adopt: (pose) => {
+            flatPoseAdopted = true;
             flatRig.yaw = pose.yaw;
+            flatRig.pitch = clampCameraPitch(pose.pitch ?? 0);
             flatRig.height = Math.max(1.4, Math.min(30, pose.height));
             flatRig.dist = Math.max(6, Math.min(45, pose.dist));
             // Roaming centre: absent on old frames parses to 0 upstream; the
@@ -4899,6 +4922,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
     reconcile();
     let lastTick = tick.current;
     let lastFit = fitRef.current;
+    let lastInitialFit = initialFitRef.current;
     let lastParkView = parkViewRef.current;
     let frameTotalMs = 0, frameSamples = 0;
     const frameIntervals: number[] = [];
@@ -4951,6 +4975,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
         if (parkEnvActive() && !flatLocked && !cornerLocked) {
           const pose = PARK_VIEWS[lastParkView % PARK_VIEWS.length]!;
           rig.dRadius = pose.radius; rig.dHeight = pose.height; rig.lookY = pose.lookY;
+          rig.dTilt = 0;
           rig.dTargetX = pose.targetX; rig.dTargetZ = pose.targetZ; rig.dAngle = pose.angle;
           container.dataset.parkView = pose.label;
           lastCameraInputMs = now;
@@ -4959,7 +4984,9 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
       keysDown = new Set([...keyboardKeys, ...sceneNavigation.keys()]);
       const returnHome = keysDown.has("home") && !homeHeld;
       homeHeld = keysDown.has("home");
-      if (fitRef.current !== lastFit || returnHome) {
+      const initialFit = initialFitRef.current !== lastInitialFit;
+      lastInitialFit = initialFitRef.current;
+      if (fitRef.current !== lastFit || returnHome || (initialFit && !(flatLocked && flatPoseAdopted))) {
         lastFit = fitRef.current;
         if (flatLocked) {
           // FLAT-LOCK FIT = canonical pose, re-CENTERED on the fleet. The
@@ -4983,6 +5010,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
             }
           }
           flatRig.yaw = FLAT_YAW;
+          flatRig.pitch = 0;
           flatRig.height = FLAT_EYE_HEIGHT;
           flatRig.dist = FLAT_EYE_DISTANCE;
           flatRig.cx = fitN > 0 ? Math.max(-80, Math.min(80, fitSx / fitN)) : 0;
@@ -5034,6 +5062,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
           flatRig.cx = THREE.MathUtils.clamp(flatRig.cx + (-Math.sin(flatRig.yaw) * navigation.forward + Math.cos(flatRig.yaw) * navigation.right) * step, -FLAT_ROAM_LIMIT, FLAT_ROAM_LIMIT);
           flatRig.cz = THREE.MathUtils.clamp(flatRig.cz + (-Math.cos(flatRig.yaw) * navigation.forward - Math.sin(flatRig.yaw) * navigation.right) * step, -FLAT_ROAM_LIMIT, FLAT_ROAM_LIMIT);
           flatRig.yaw += navigation.turn * .8 * dt;
+          flatRig.pitch = clampCameraPitch(flatRig.pitch + navigation.pitch * .65 * dt);
           flatRig.height = THREE.MathUtils.clamp(flatRig.height + navigation.elevation * 7 * dt, 1.4, 30);
           flatRig.dist = THREE.MathUtils.clamp(flatRig.dist * Math.exp(navigation.zoom * .65 * dt), 6, 45);
           flatPoseDirty = true;
@@ -5046,7 +5075,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
         if (flatPoseDirty && now - flatPoseLastPublishMs >= FLAT_POSE_PUBLISH_MS) {
           flatPoseLastPublishMs = now;
           flatPoseDirty = false;
-          getFlatPoseSender()?.({ yaw: flatRig.yaw, height: flatRig.height, dist: flatRig.dist, cx: flatRig.cx, cz: flatRig.cz });
+          getFlatPoseSender()?.({ ...flatRig });
         }
         // Rigid flat pair: reassert the locked framing every frame so no
         // stray camera write can ever shear the seam between the halves —
@@ -5075,6 +5104,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
           rig.dTargetX += (-Math.sin(rig.angle) * navigation.forward + Math.cos(rig.angle) * navigation.right) * step;
           rig.dTargetZ += (-Math.cos(rig.angle) * navigation.forward - Math.sin(rig.angle) * navigation.right) * step;
           rig.dAngle += navigation.turn * .8 * dt;
+          if (navigation.pitch !== 0) tiltOrbitRig(navigation.pitch * .65 * dt);
           rig.dHeight = THREE.MathUtils.clamp(rig.dHeight + navigation.elevation * Math.max(5, rig.radius * .4) * dt, minOrbitHeight(), maxOrbitHeight());
           rig.dRadius = THREE.MathUtils.clamp(rig.dRadius * Math.exp(navigation.zoom * .65 * dt), 4, maxOrbitRadius());
           parkHeightFloor();
@@ -5125,9 +5155,11 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
         }
 
         rig.dHeight = Math.max(rig.dHeight, minOrbitHeight());
+        rig.dTilt = clampOrbitTilt(rig.dHeight, rig.lookY, rig.dRadius, rig.dTilt);
         rig.angle = THREE.MathUtils.lerp(rig.angle, rig.dAngle, camSmoothing);
         rig.radius = THREE.MathUtils.lerp(rig.radius, rig.dRadius, camSmoothing);
         rig.height = THREE.MathUtils.lerp(rig.height, rig.dHeight, camSmoothing);
+        rig.tilt = THREE.MathUtils.lerp(rig.tilt, rig.dTilt, camSmoothing);
         rig.targetX = THREE.MathUtils.lerp(rig.targetX, rig.dTargetX, camSmoothing);
         rig.targetZ = THREE.MathUtils.lerp(rig.targetZ, rig.dTargetZ, camSmoothing);
         // Desired and current positions differ during the glide. Both need
@@ -5773,6 +5805,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
         container.dataset.cameraZ = camera.position.z.toFixed(3);
         container.dataset.cameraGroundY = cameraGroundY(camera.position.x, camera.position.z).toFixed(3);
         container.dataset.cameraYaw = (flatLocked ? flatRig.yaw : rig.angle).toFixed(4);
+        container.dataset.cameraPitch = Math.asin(camera.getWorldDirection(detailViewPoint).y).toFixed(4);
         container.dataset.cameraRadius = (flatLocked ? flatRig.dist : rig.radius).toFixed(3);
         container.dataset.navigationActive = String(keysDown.size > 0 && !cornerLocked);
         container.dataset.drawCalls = String(renderer.info.render.calls);

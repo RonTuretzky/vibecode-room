@@ -246,6 +246,8 @@ export interface RoomSceneProps {
   autoFit?: boolean;
   // Increment to request a one-shot fit-to-content camera move.
   fitSignal: number;
+  // First snapshot framing yields to an already synchronized projector pose.
+  initialFitSignal?: number;
   parkViewSignal?: number;
   // GUIDED-DEMO FOCUS: when set, the camera glides to frame this process's
   // node (retrying until the node exists, since a fresh spawn's tree appears a

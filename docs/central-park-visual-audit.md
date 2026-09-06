@@ -135,8 +135,14 @@ prove that the visual objective has been achieved.
    and the dwell activation path still open the expected branch. Larger adopted
    branch menus and the remaining ground-level compositions need further review.
    Lamp inspection also exposed a camera limitation: manual orbit changes eye
-   height while retaining the preset's look-at height. Independent upward/downward
-   viewing at ground level needs attention; currently changing presets affects it.
+   height while retaining the preset's look-at height. Independent tilt now
+   lets the viewer look up/down without moving the eye; Q/E and the shared
+   room/guest Height row control altitude separately. Browser and hardware
+   checks cover both, the 85-degree limits, reset/focus framing, guest release
+   and projector replay. Ground and upward skyline captures were inspected.
+   Left/right turn still follows the orbit around its target; consider a
+   separate in-place yaw for close exploration. Overlapping idea/project
+   labels on the lawn remain a visible composition problem.
 6. **Cost and lifecycle.** Re-measure a large project forest, transitions and
    repeated rebuilds. Audit cached world/atlas lifetimes, reflection/shadow
    cadence, resolution adaptation and long-frame behavior. Six environment

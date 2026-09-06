@@ -4314,6 +4314,9 @@ main.gesture-mode .record-steer-heard-line { font-size: 1.2rem; }
 .navigation-direction[data-dwelling="1"]::after { content: ""; position: absolute; bottom: 0; left: 0; height: 4px; background: #b7e49c; animation: navigation-dwell 700ms linear forwards; }
 @keyframes navigation-dwell { from { width: 0; } to { width: 100%; } }
 .navigation-zoom { display: grid; grid-template-columns: 48px 48px 1fr; gap: 8px; margin-top: 12px; }
+.navigation-height { display: grid; grid-template-columns: auto 1fr 1fr; align-items: center; gap: 8px; margin-top: 12px; }
+.navigation-height > span { color: #a9c1b8; font-size: 12px; }
+.navigation-height .navigation-direction { font-size: 13px; }
 main.gesture-mode .control-dock-tray { gap: 18px; padding: 18px; width: min(600px, calc(100vw - 24px)); }
 main.gesture-mode .navigation-cross { grid-template-rows: repeat(2, 68px); gap: 10px; }
 main.gesture-mode .control-dock-tray .ctl-button { min-height: 48px; font-size: 16px; }

@@ -110,6 +110,7 @@ describe("parseGuestMessage", () => {
   test("parses a flatpose, passing sane values through and clamping wild ones", () => {
     expect(parseGuestMessage(JSON.stringify({ type: "flatpose", yaw: -0.4, height: 4.6, dist: 20, cx: -12.5, cz: 30, t: 3 }))).toEqual({
       kind: "flatpose",
+      pitch: 0,
       yaw: -0.4,
       height: 4.6,
       dist: 20,
@@ -119,6 +120,7 @@ describe("parseGuestMessage", () => {
     // Out-of-envelope values come back to sanity instead of flinging the pair.
     expect(parseGuestMessage(JSON.stringify({ type: "flatpose", yaw: 1e6, height: -3, dist: 9000, cx: 1e6, cz: -1e6 }))).toEqual({
       kind: "flatpose",
+      pitch: 0,
       yaw: FLAT_POSE_YAW_LIMIT,
       height: FLAT_POSE_HEIGHT_MIN,
       dist: FLAT_POSE_DIST_MAX,
@@ -127,6 +129,7 @@ describe("parseGuestMessage", () => {
     });
     expect(parseGuestMessage(JSON.stringify({ type: "flatpose", yaw: -1e6, height: 99, dist: 0 }))).toEqual({
       kind: "flatpose",
+      pitch: 0,
       yaw: -FLAT_POSE_YAW_LIMIT,
       height: FLAT_POSE_HEIGHT_MAX,
       dist: FLAT_POSE_DIST_MIN,
@@ -140,6 +143,7 @@ describe("parseGuestMessage", () => {
     // fixed origin, so a mixed-version pair keeps syncing.
     expect(parseGuestMessage(JSON.stringify({ type: "flatpose", yaw: 0.1, height: 4.6, dist: 20 }))).toEqual({
       kind: "flatpose",
+      pitch: 0,
       yaw: 0.1,
       height: 4.6,
       dist: 20,
@@ -150,6 +154,7 @@ describe("parseGuestMessage", () => {
     // drops the frame) — nothing non-finite may enter the relay.
     expect(parseGuestMessage(JSON.stringify({ type: "flatpose", yaw: 0.1, height: 4.6, dist: 20, cx: "9", cz: null }))).toEqual({
       kind: "flatpose",
+      pitch: 0,
       yaw: 0.1,
       height: 4.6,
       dist: 20,
@@ -158,6 +163,7 @@ describe("parseGuestMessage", () => {
     });
     expect(parseGuestMessage('{"type":"flatpose","yaw":0,"height":4.6,"dist":20,"cx":1e999}')).toEqual({
       kind: "flatpose",
+      pitch: 0,
       yaw: 0,
       height: 4.6,
       dist: 20,
@@ -497,6 +503,20 @@ describe("RemoteHandsHub", () => {
     expect(flatPosesOf(roomA)).toHaveLength(0);
     // The pose is projector-rig internals — guests never see it.
     expect(flatPosesOf(guest)).toHaveLength(0);
+  });
+
+  test("flat pitch survives relay and replay, while old and invalid values stay level", () => {
+    const hub = makeHub(), a = fakePeer(), b = fakePeer();
+    const sender = hub.addRoom(a.send); sender.message(hello("A"));
+    hub.addRoom(b.send).message(hello("B"));
+    sender.message(JSON.stringify({ type: "flatpose", yaw: .2, height: 5, dist: 20, pitch: .6 }));
+    expect(flatPosesOf(b).at(-1)).toMatchObject({ pitch: .6 });
+    const refreshed = fakePeer(); hub.addRoom(refreshed.send).message(hello("B"));
+    expect(flatPosesOf(refreshed).at(-1)).toMatchObject({ pitch: .6 });
+    sender.message(JSON.stringify({ type: "flatpose", yaw: .2, height: 5, dist: 20, pitch: "bad" }));
+    expect(flatPosesOf(b).at(-1)).toMatchObject({ pitch: 0 });
+    sender.message(JSON.stringify({ type: "flatpose", yaw: .2, height: 5, dist: 20, pitch: 100 }));
+    expect((flatPosesOf(b).at(-1) as any).pitch).toBeLessThan(Math.PI / 2);
   });
 
   test("flatpose values are clamped in the relay; malformed flatpose frames are dropped", () => {

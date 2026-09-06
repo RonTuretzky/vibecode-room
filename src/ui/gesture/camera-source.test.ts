@@ -3,6 +3,7 @@ import { applyCameraIntents, getSceneCameraControl, registerSceneCameraControl, 
 
 const makeControl = (): SceneCameraControl => ({
   orbitBy: () => {},
+  tiltBy: () => {},
   panBy: () => {},
   zoomBy: () => {},
   walkBy: () => {},
