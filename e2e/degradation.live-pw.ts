@@ -30,6 +30,7 @@ test("a degraded room admits it on the wall", async ({ room, wall }) => {
   );
   expect(degraded.length, "this boot is degraded, so there is something to render").toBeGreaterThan(0);
 
+  await wall.page.getByTestId("control-dock-button").click();
   await wall.page.getByRole("button", { name: /^Projects \(/ }).click();
   await wall.page.getByText("Providers · fallback services active", { exact: true }).click();
   const text = await wallText(wall.page);
