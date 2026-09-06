@@ -1,5 +1,5 @@
 import { isNavigationKey, navigationAxes, sceneNavigation } from "./spatial-navigation";
-import { createSceneCardLayout, type SceneCard } from "./scene-card-layout";
+import { createSceneCardLayout, type SceneCard, type CardObstacle } from "./scene-card-layout";
 import { clampCameraPitch, clampOrbitTilt, orbitCameraPitch } from "./camera-pitch";
 import { createParkFurniture } from "../park3d/park-furniture";
 import { BENCH_FOOTPRINT } from '../park3d/park-furniture-geometry';
@@ -418,7 +418,7 @@ interface Entry {
   disposeExtra?: () => void;
 }
 
-export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", wall = null, fitSignal, initialFitSignal = 0, parkViewSignal = 0, focusUpid = null, focusSignal = 0, pointerNav = true, cornerLock = false, flatLock = false, autoFit = false, onAcceptIdea, onSelectProcess, onPickMiss, onPickBranch, onPickIssue, dialogue = [], topics = [], research = [], onResearchNode, onDialogueNode, sky, researchThinking = false, skyView = false, selfTree = null, planting = false, onPlantPick }: RoomSceneProps) {
+export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", wall = null, fitSignal, initialFitSignal = 0, parkViewSignal = 0, focusUpid = null, inspectUpid = null, focusSignal = 0, pointerNav = true, cornerLock = false, flatLock = false, autoFit = false, onAcceptIdea, onSelectProcess, onPickMiss, onPickBranch, onPickIssue, dialogue = [], topics = [], research = [], onResearchNode, onDialogueNode, sky, researchThinking = false, skyView = false, selfTree = null, planting = false, onPlantPick }: RoomSceneProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const ideasRef = useRef(ideas);
   ideasRef.current = ideas;
@@ -479,6 +479,8 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
   initialFitRef.current = initialFitSignal;
   const focusRef = useRef<string | null>(focusUpid);
   focusRef.current = focusUpid;
+  const inspectRef = useRef<string | null>(inspectUpid);
+  inspectRef.current = inspectUpid;
   const focusSignalRef = useRef(focusSignal);
   focusSignalRef.current = focusSignal;
   const onAcceptRef = useRef(onAcceptIdea);
@@ -572,6 +574,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
     scene.add(sceneCards.group);
     const cardInputs: SceneCard[] = [];
     let cardsActive = false;
+    let cardObstacles: CardObstacle[] = [], cardObstaclesAt = -Infinity;
 
     // ── camera rig (visualizer-style spherical orbit around a pannable target)
     const rig = {
@@ -2696,7 +2699,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
         tipLabel.userData.ownMap = true;
         tipLabel.position.set(tip.x, tip.y + 0.22, tip.z);
         tipGroup.add(tipLabel);
-        details.push({ label: tipLabel, glow: budGlow, bud });
+        details.push({ label: tipLabel, glow: budGlow, bud, targetId: tipGroup.userData.subTargetId });
         const tipHit = new THREE.Mesh(new THREE.SphereGeometry(0.85, 8, 8), invisibleHitMat);
         tipHit.userData.ownGeometry = true;
         tipHit.position.copy(tip);
@@ -3038,7 +3041,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
         tipLabel.userData.ownMap = true;
         tipLabel.position.set(tip.x, tip.y + 0.25, tip.z);
         tipGroup.add(tipLabel);
-        tipDetails.push({ label: tipLabel, glow: tipGlow });
+        tipDetails.push({ label: tipLabel, glow: tipGlow, targetId: tipGroup.userData.subTargetId });
         const tipHit = new THREE.Mesh(new THREE.SphereGeometry(1.0, 8, 8), invisibleHitMat);
         tipHit.userData.ownGeometry = true;
         tipHit.position.set(tip.x, tip.y + 0.3, tip.z);
@@ -4224,6 +4227,8 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
     // Limb-tip / fruit hover (adopted trees): cursor affordance only — the
     // glow chrome is built into the sub-objects themselves.
     let hoveredSub = false;
+    let hoveredBranchTarget: string | null = null;
+    const tipHighlighted = (id: string) => hoveredBranchTarget === id || dwellHighlights.has(id);
     let dragging = false;
     let panning = false;
     let dragMoved = 0;
@@ -4425,6 +4430,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
       hoveredResearch = null;
       hoveredTurn = null;
       hoveredSub = false;
+      hoveredBranchTarget = null;
       if (picked?.kind === "idea" && picked.key !== undefined && picked.key !== "__idle__") {
         const entry = ideaEntries.get(picked.key);
         if (entry?.ideaSpec?.status === "ready") {
@@ -5244,7 +5250,8 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
         if (entry.tipDetails) {
           detailViewPoint.copy(entry.group.position).applyMatrix4(camera.matrixWorldInverse);
           const pixels = detailViewPoint.z < 0 ? viewportProjection * entry.group.scale.x / -detailViewPoint.z : 0;
-          visibleBranchLabels += updateTreeTipDetail(entry.tipDetails, pixels, dt, reducedMotion);
+          visibleBranchLabels += updateTreeTipDetail(entry.tipDetails, pixels, dt, reducedMotion, tipHighlighted,
+            !parkEnvActive() || inspectRef.current === null ? "ambient" : inspectRef.current === specId ? "focused" : "background");
         }
         if (entry.removing && entry.group.scale.x < 0.02) {
           disposeEntry(entry);
@@ -5801,14 +5808,32 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
         for (const [id, entry] of ideaEntries) if (!entry.removing && entry.label) {
           entry.label.userData.pick = { kind: "idea", key: id };
           cardInputs.push({ id: `${SCENE_IDEA_PREFIX}${id}`, label: entry.label,
-            priority: hoveredIdea === id || dwellHighlights.has(`${SCENE_IDEA_PREFIX}${id}`) ? 2 : 0 });
+            preserveSlot: hoveredIdea === id || dwellHighlights.has(`${SCENE_IDEA_PREFIX}${id}`),
+            priority: hoveredIdea === id || dwellHighlights.has(`${SCENE_IDEA_PREFIX}${id}`) ? 4 : 0 });
         }
         for (const [id, entry] of treeEntries) if (!entry.removing && entry.label) {
           const callsign = entry.treeSpec?.callsign;
           cardInputs.push({ id: `${SCENE_PROC_PREFIX}${callsign}`, label: entry.label,
-            priority: hoveredProc === callsign || dwellHighlights.has(`${SCENE_PROC_PREFIX}${callsign}`) ? 2 : focusRef.current === id ? 1 : 0 });
+            preserveSlot: hoveredProc === callsign || dwellHighlights.has(`${SCENE_PROC_PREFIX}${callsign}`),
+            priority: hoveredProc === callsign || dwellHighlights.has(`${SCENE_PROC_PREFIX}${callsign}`) ? 4 : (inspectRef.current ?? focusRef.current) === id ? 3 : 0 });
+          for (const detail of entry.tipDetails ?? []) if (detail.targetId) {
+            detail.label.userData.pick = detail.label.parent?.userData.pick;
+            cardInputs.push({ id: detail.targetId, label: detail.label, maxWidth: 160, preserveSlot: tipHighlighted(detail.targetId),
+              priority: tipHighlighted(detail.targetId) ? 4 : (inspectRef.current ?? focusRef.current) === id ? 2 : 0 });
+          }
         }
-        sceneCards.update(camera, container.clientWidth, container.clientHeight, cardInputs);
+        // Menus and status chrome own their screen space. Their bounds are
+        // sampled below the frame rate; no per-card DOM reads are needed.
+        if (now - cardObstaclesAt > 100) {
+          cardObstaclesAt = now;
+          const origin = container.getBoundingClientRect();
+          cardObstacles = [...document.querySelectorAll('.status-bar, [data-testid="scene-controls"], [data-testid="tree-menu"] [data-chip], [data-testid="idea-action-card"], [data-testid="branch-popup"]')]
+            .map(el => el.getBoundingClientRect()).filter(r => r.width > 0 && r.height > 0)
+            .map(r => ({ left: r.left - origin.left, top: r.top - origin.top, width: r.width, height: r.height }));
+        }
+        sceneCards.update(camera, container.clientWidth, container.clientHeight, cardInputs, cardObstacles);
+        visibleBranchLabels = 0;
+        for (const entry of treeEntries.values()) for (const detail of entry.tipDetails ?? []) if (detail.label.visible) visibleBranchLabels++;
         cardsActive = true;
       } else if (cardsActive) { sceneCards.reset(); cardsActive = false; }
       renderer.info.reset();

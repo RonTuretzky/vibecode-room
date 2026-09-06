@@ -42,3 +42,28 @@ test('project focus fits the whole body at low and high terrain elevations in bo
     }
   }
 });
+
+test('screen-size caps do not feed back into branch fading, and a pointed-at distant branch can be read', () => {
+ const label=new THREE.Sprite(),glow=new THREE.Sprite();label.scale.y=.7;
+ const detail=[{label,glow,targetId:'branch:a'}];
+ updateTreeTipDetail(detail,100,1/60,true);
+ label.scale.y=.15;
+ for(let frame=0;frame<20;frame++) {
+  updateTreeTipDetail(detail,100,1/60,true);
+  expect(label.material.opacity).toBe(1);expect(label.visible).toBe(true);
+ }
+ updateTreeTipDetail(detail,1,1/60,true);expect(label.visible).toBe(false);
+ updateTreeTipDetail(detail,1,1/60,true,id=>id==='branch:a');expect(label.visible).toBe(true);
+ updateTreeTipDetail(detail,1,1/60,true,()=>false);expect(label.visible).toBe(false);
+ label.material.dispose();glow.material.dispose();
+});
+
+test('inspected branches stay readable on a narrow view while neighboring branch chrome yields', () => {
+ const label=new THREE.Sprite(),glow=new THREE.Sprite(),bud=new THREE.Mesh();
+ const detail=[{label,glow,bud,targetId:'branch:a'}];
+ updateTreeTipDetail(detail,5,1/60,true,()=>false,'focused');expect(label.visible).toBe(true);
+ updateTreeTipDetail(detail,100,1/60,true,()=>false,'background');expect(label.visible||glow.visible||bud.visible).toBe(false);
+ updateTreeTipDetail(detail,100,1/60,true,()=>true,'background');expect(label.visible&&glow.visible&&bud.visible).toBe(true);
+ updateTreeTipDetail(detail,100,1/60,true,()=>false,'ambient');expect(label.visible).toBe(true);
+ label.material.dispose();glow.material.dispose();
+});

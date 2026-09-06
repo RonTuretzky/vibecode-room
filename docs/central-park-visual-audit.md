@@ -145,9 +145,11 @@ prove that the visual objective has been achieved.
    title cards on the lawn now occupy separate screen space, with capped
    close size and quieter unreadable distant labels. GPU captures and actual
    card clicks pass on desktop and portrait. A 32/64-project check preserves
-   focus and all six branch picks, but neighboring branch-tip labels still
-   overlap in the close forest view. Extend composition work to those labels
-   and the surrounding tree-menu chips.
+   focus and all six branch picks, and the following branch-card pass separates neighboring labels from
+   each other and from menu chips. Inspecting one tree quiets its neighbors.
+   All six desktop branch cards open the matching branch; portrait yields
+   some labels to retain readable, non-overlapping cards. Both captures were
+   inspected. Continue reviewing denser adopted branch menus.
 6. **Cost and lifecycle.** Re-measure a large project forest, transitions and
    repeated rebuilds. Audit cached world/atlas lifetimes, reflection/shadow
    cadence, resolution adaptation and long-frame behavior. Six environment

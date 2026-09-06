@@ -1000,3 +1000,32 @@ button tap after replay. All 28 focused input/card tests and typechecking also
 pass. Evidence: `.context/scene-cards-full-browser-results/` and
 `.context/home-command-{units,types}.log`. The real room remains muted with
 its original two projects and local model configuration.
+
+
+## Branch-card composition — 2026-09-06
+
+Branch labels now share the park's screen-space layout, with bounded sideways
+and upward movement and room reserved for menus/status controls. Inspecting
+a tree prioritizes its branches and quiets neighboring branch chrome without
+moving the camera. Hover/dwell preserves a card's slot while ordinary focus
+can reflow during camera movement. Natural sprite height remains independent
+of the screen-size cap, preventing feedback into distance fading.
+
+Hardware testing caught two composition defects: short names enlarged into
+tall cards, and focus incorrectly froze offsets during the camera transition.
+Minimum canvas width now preserves normal type proportions, status measurement
+uses its actual uppercase font, and only active hover/dwell pins the offset.
+All six branches in the desktop fixture fit without overlap and open matching
+popups. Portrait keeps a readable subset clear of the menu and opens the
+matching branch; it does not promise all six labels simultaneously.
+
+The six existing hardware scenarios passed, and the new desktop/portrait
+branch scenario passed after correction. Forty-five targeted unit checks,
+typechecking and all three project-focus browser journeys pass. Earlier
+32/64-project captures and all six branch picks/dwell passed; the 64-project
+focused view was visually inspected. Evidence:
+`.context/branch-cards-corrected-gpu-results/`,
+`.context/branch-cards-browser-results/`,
+`.context/branch-cards-refined-2026-09-06/`.
+CI for preceding commit c496c32 is green in unit, browser and live-flow jobs
+(run 34058975325).

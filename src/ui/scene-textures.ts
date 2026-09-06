@@ -66,8 +66,12 @@ export function makeLabelSprite(title: string, statusLine: string, accentCss: st
   } else if (current.length > 0) {
     lines[2] = fitLine(`${lines[2].slice(0, 26)}…`);
   }
-  const widest = Math.max(...lines.map((line) => measure.measureText(line).width), measure.measureText(statusLine).width * 0.8);
-  const width = Math.min(maxWidth, Math.ceil(widest) + padX * 2);
+  const titleWidth = Math.max(0, ...lines.map((line) => measure.measureText(line).width));
+  measure.font = statusFont;
+  const widest = Math.max(titleWidth, measure.measureText(statusLine.toUpperCase()).width);
+  // Short names should keep ordinary type size when restored at readable
+  // screen scale, rather than becoming tall, magnified cards.
+  const width = Math.max(120, Math.min(maxWidth, Math.ceil(widest) + padX * 2));
   const lineHeight = 17;
   const statusHeight = statusLine.length > 0 ? 15 : 0;
   const height = padY * 2 + lines.length * lineHeight + statusHeight;

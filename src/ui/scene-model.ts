@@ -254,6 +254,8 @@ export interface RoomSceneProps {
   // beat after the snapshot). Null = no focus request; the user's own
   // drag/zoom/fit always takes over afterwards.
   focusUpid?: string | null;
+  // Inspect one tree's branch detail without changing the camera.
+  inspectUpid?: string | null;
   // Repeating an explicit Show in garden command can refocus the same tree.
   focusSignal?: number;
   // When false (pure gesture mode: hands point, nobody drags), the pointer

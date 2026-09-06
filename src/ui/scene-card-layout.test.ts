@@ -59,3 +59,22 @@ test('a highlighted distant plant keeps a readable card over consecutive frames'
  input[0]!.priority=0;layout.update(camera,1280,900,input);expect(label.visible).toBe(false);
  layout.dispose();label.material.dispose();
 });
+
+test('cards reserve space for menus and never settle over status chrome', () => {
+ const obstacles=[{left:0,top:0,width:1280,height:100},{left:80,top:220,width:300,height:240}];
+ const result=placeSceneCards([card('menu',{x:230,y:270}),card('header',{x:230,y:120}),card('clear',{x:650,y:350})],1280,900,obstacles);
+ expect(result.map(c=>c.id)).toContain('menu');expect(result.map(c=>c.id)).not.toContain('header');
+ for(const p of result)for(const r of obstacles)expect(p.x+p.dx-p.width/2<r.left+r.width && p.x+p.dx+p.width/2>r.left && p.y+p.dy>r.top && p.y+p.dy-p.height<r.top+r.height).toBe(false);
+});
+
+test('retiring and reintroducing a capped card restores its natural geometry', () => {
+ const layout=createSceneCardLayout(), camera=new THREE.PerspectiveCamera(50,1280/900,.1,1000);
+ camera.position.z=2;
+ const label=new THREE.Sprite();label.scale.set(3,.75,1);label.center.set(.5,0);
+ const cards=[{id:'tip',label,priority:2,maxWidth:160}];
+ layout.update(camera,1280,900,cards);expect(label.scale.x).toBeLessThan(3);
+ layout.update(camera,1280,900,[]);expect(label.scale.toArray()).toEqual([3,.75,1]);expect(label.center.toArray()).toEqual([.5,0]);
+ layout.update(camera,1280,900,cards);expect(layout.rects()[0]!.width).toBeCloseTo(160);
+ label.material.opacity=0;layout.update(camera,1280,900,cards);expect(label.visible).toBe(false);expect(layout.rects()).toEqual([]);
+ layout.reset();expect(label.visible).toBe(false);layout.dispose();label.material.dispose();
+});

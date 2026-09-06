@@ -2546,6 +2546,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
             : tendingSelfUpid
         }
         focusSignal={workspaceFocus?.signal ?? 0}
+        inspectUpid={branchPopup?.upid ?? selectedProcess?.upid ?? null}
         pointerNav={!gestureMode && !flatLock}
         onAcceptIdea={acceptOrb}
         onSelectProcess={selectSceneProcess}

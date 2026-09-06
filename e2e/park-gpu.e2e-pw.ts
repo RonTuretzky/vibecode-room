@@ -298,3 +298,52 @@ test('park cards separate on screen and their displayed positions open the corre
   await page.screenshot({ path: info.outputPath('portrait-cards.png') });
   expect(errors).toEqual([]);
 });
+
+test('branch cards stay separate from menus and open the matching branch on desktop and portrait', async ({ page }, info) => {
+  test.setTimeout(120000);
+  const errors: string[] = []; page.on('pageerror', e => errors.push(e.message));
+  await page.goto('/?live=0&remote=0&env=park');
+  const scene = page.getByTestId('room-scene');
+  await expect(scene).toHaveAttribute('data-park-ready', 'true', { timeout: 90000 });
+  await page.evaluate(() => {
+    const app = window.__VIBERSYN__!, template = app.getSnapshot().processes[0]!;
+    app.applySnapshot({ ideas: [], plantedPositions: { 'branch-fixture-0': { x: -10, z: -9 }, 'branch-fixture-1': { x: 10, z: -9 } },
+      processes: [0, 1].map(i => ({ ...template, upid: `branch-fixture-${i}`, runId: `branch-run-${i}`,
+        callsign: i ? 'Branch focus' : 'Neighbor', selected: false, previewUrl: undefined, source: undefined, slides: undefined,
+        treeRepo: { adopted: false, remoteUrl: 'https://example.invalid/branch-layout', branches: [{ name: 'main', commits: 24 },
+          ...Array.from({ length: 6 }, (_, j) => ({ name: `room/check-${j + 1}`, commits: 1 + j * 3 }))] } })) });
+  });
+  const focus = async () => {
+    await page.getByTestId('control-dock-button').click(); await page.getByTestId('projects-button').click();
+    await page.locator('.project-row').filter({ has: page.getByText('Branch focus', { exact: true }) }).click();
+    await page.getByRole('button', { name: 'Show in garden', exact: true }).click(); await cameraSettled(page);
+  };
+  const rects = () => scene.evaluate(el => JSON.parse((el as HTMLElement).dataset.sceneCardRects ?? '[]') as
+    { id: string; left: number; top: number; width: number; height: number }[]);
+  const check = async () => {
+    const cards = await rects(), obstacles = await page.locator('.status-bar, [data-testid="scene-controls"], [data-testid="tree-menu"] [data-chip]')
+      .evaluateAll(els => els.map(el => { const r = el.getBoundingClientRect(); return { left: r.left, top: r.top, width: r.width, height: r.height }; }).filter(r => r.width && r.height));
+    for (const a of cards) for (const b of [...cards.filter(b => b.id !== a.id), ...obstacles]) {
+      expect(a.left < b.left + b.width && a.left + a.width > b.left && a.top < b.top + b.height && a.top + a.height > b.top).toBe(false);
+    }
+    expect(cards.some(card => card.id.startsWith('scene:branch:Neighbor:'))).toBe(false);
+    return cards.filter(card => card.id.startsWith('scene:branch:Branch focus:'));
+  };
+  await focus();
+  await expect.poll(async () => (await check()).length).toBe(6);
+  await page.screenshot({ path: info.outputPath('desktop-branches.png') });
+  for (let j = 1; j <= 6; j++) {
+    await page.mouse.move(4, 450); await page.waitForTimeout(1100);
+    const card = (await rects()).find(card => card.id === `scene:branch:Branch focus:room/check-${j}`)!;
+    expect(card).toBeDefined();
+    await page.mouse.click(card.left + card.width / 2, card.top + card.height / 2);
+    await expect(page.getByTestId('branch-popup')).toContainText(`check-${j}`);
+    await page.getByTestId('branch-popup-close').click();
+  }
+  await page.getByTestId('tree-menu-close').click(); await page.setViewportSize({ width: 390, height: 844 });
+  await focus(); await expect.poll(async () => (await check()).length).toBeGreaterThan(0);
+  await page.screenshot({ path: info.outputPath('portrait-branches.png') });
+  const card = (await check())[0]!; await page.mouse.click(card.left + card.width / 2, card.top + card.height / 2);
+  await expect(page.getByTestId('branch-popup')).toContainText(card.id.split('room/')[1]!);
+  expect(errors).toEqual([]);
+});

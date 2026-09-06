@@ -4,23 +4,28 @@ export interface TreeTipDetail {
   label: THREE.Sprite;
   glow: THREE.Sprite;
   bud?: THREE.Mesh;
+  targetId?: string;
+  // Layout may cap a close sprite's drawn scale. Distance fading must keep
+  // using its natural height, or those two adjustments feed back and flicker.
+  baseHeight?: number;
 }
 
 /** Readable branch detail appears at close range; the underlying branch and
  * pick volumes remain intact in an overview. Use CSS pixels, independent of
  * device pixel ratio, with a gradual fade rather than a distance pop. */
-export function updateTreeTipDetail(details: readonly TreeTipDetail[], pixelsPerUnit: number, dt: number, reducedMotion: boolean): number {
+export function updateTreeTipDetail(details: readonly TreeTipDetail[], pixelsPerUnit: number, dt: number, reducedMotion: boolean, highlighted?: (id: string) => boolean, context: "ambient" | "focused" | "background" = "ambient"): number {
   let visible = 0;
   const ease = reducedMotion ? 1 : 1 - Math.exp(-Math.max(0, dt) * 16);
   for (const detail of details) {
-    const height = detail.label.scale.y * pixelsPerUnit;
-    const label = THREE.MathUtils.smoothstep(height, 18, 30);
-    const glow = THREE.MathUtils.smoothstep(height, 6, 15) * .35;
+    const height = (detail.baseHeight ??= detail.label.scale.y) * pixelsPerUnit;
+    const pointedAt = Boolean(detail.targetId && highlighted?.(detail.targetId));
+    const label = pointedAt || context === "focused" ? 1 : context === "ambient" ? THREE.MathUtils.smoothstep(height, 18, 30) : 0;
+    const glow = context !== "background" || pointedAt ? THREE.MathUtils.smoothstep(height, 6, 15) * .35 : 0;
     detail.label.material.opacity = THREE.MathUtils.lerp(detail.label.material.opacity, label, ease);
     detail.glow.material.opacity = THREE.MathUtils.lerp(detail.glow.material.opacity, glow, ease);
     detail.label.visible = detail.label.material.opacity > .01;
     detail.glow.visible = detail.glow.material.opacity > .01;
-    if (detail.bud) detail.bud.visible = height > 5;
+    if (detail.bud) detail.bud.visible = height > 5 && (context !== "background" || pointedAt);
     if (detail.label.visible) visible++;
   }
   return visible;
