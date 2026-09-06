@@ -14,7 +14,7 @@ import * as THREE from "three";
 import { parkTerrainAxis, terrainAxisCoordinate } from "./park-terrain-grid";
 import { skylineProfile } from "./park-skyline-profile";
 import { parkGroundColor } from "./park-ground";
-import { parkPathTexture, parkGroundDetailTexture } from "./park-materials";
+import { parkGroundDetailTexture } from "./park-materials";
 import { AXIS_BEARING, DEG, PARK_CENTER, PARK_HALF_LEN, PARK_HALF_WIDTH } from "./park-frame";
 import { insideParkOutline as insidePark } from "./park-outline";
 import { waterInteriorAt } from "./park-pond-material";
@@ -24,7 +24,10 @@ import { createWollmanGrade } from "./park-wollman";
 import { buildLandmarks } from "./park-landmarks";
 import { loadSkylineModels, skylineSites } from "./park-models";
 import { buildParkStreets } from "./park-streets";
-import { refreshSouthWalks, type ParkStreetData } from "./park-walks";
+import { refreshSouthWalks, type ParkWalk, type ParkStreetData } from "./park-walks";
+import { createWalkGrade } from "./park-walk-grade";
+import { buildPaths } from "./park-paths";
+export { buildPaths } from "./park-paths";
 import { buildingFacadeMaterial, FACADE_TILE_M, glassBuilding } from "./park-facades";
 
 export interface ParkManifest {
@@ -111,7 +114,7 @@ export interface ParkWorld {
   paths: THREE.Mesh | null;
   // Path centrelines in local metres (width, flat [x,z,...] runs) for the
   // caller's street furniture — lamps and benches stand along these.
-  pathLines: { width: number; pts: number[] }[];
+  pathLines: ParkWalk[];
   perimeterTrees: ParkStreetData['trees'];
   // 1 where the map has water (the Lake, the Reservoir…), 0 elsewhere.
   waterAt: (x: number, z: number) => number;
@@ -183,7 +186,7 @@ const fetchOk = async (url: string): Promise<Response> => {
 // Bilinear sampler over a row-major grid whose pixel/node centres span the
 // extent; `inset` is 0 for node grids (DEM: node 0 sits ON the west edge) and
 // 0.5 for pixel grids (relief: pixel 0 is centred half a cell in).
-function makeSampler(
+export function makeSampler(
   data: ArrayLike<number>,
   cols: number,
   rows: number,
@@ -278,6 +281,18 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
     opts.detailGround && opts.paths !== false ? fetchOk(`${base}/streets.json`).then(r => r.json() as Promise<ParkStreetData>) : null,
   ]);
 
+  let pathLines: ParkWalk[] = [];
+  if (pathsJson !== null) {
+    for (const [widthUnits, line] of pathsJson.paths) {
+      const pts: number[] = [];
+      for (let i = 0; i < line.length; i += 2) {
+        pts.push(line[i] * manifest.paths.unitM, line[i + 1] * manifest.paths.unitM);
+      }
+      pathLines.push({ width: widthUnits * manifest.paths.unitM, pts });
+    }
+    if (streetData?.walks?.length) pathLines = refreshSouthWalks(pathLines, streetData);
+  }
+
   // ── samplers ────────────────────────────────────────────────────────────
   const dem = new Int16Array(demBuffer);
   if (dem.length !== manifest.dem.cols * manifest.dem.rows) {
@@ -335,11 +350,26 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
   const builtWater = waterImage === null ? null : buildWater(sampleWater, dryGroundAt, width / 2, depth / 2, 2, opts.heroWaterAt, { x: cx, z: cz });
   const gapstowLevel = builtWater?.surfaceAt(PARK_SITES.gapstow.x, PARK_SITES.gapstow.z);
   const crossing = opts.landmarks !== false && gapstowLevel != null ? createGapstowCrossing(gapstowLevel) : null;
+  const displace = opts.displace !== false;
+  const carvedGroundAt = (x: number, z: number) => Math.min(dryGroundAt(x, z), builtWater?.bankHeightAt(x, z) ?? Infinity);
+  const walkGrade = opts.detailGround && !displace ? createWalkGrade(pathLines, {
+    groundAt: carvedGroundAt,
+    referenceAt: (x, z) => crossing?.grade(x, z, carvedGroundAt(x, z)) ?? carvedGroundAt(x, z),
+    waterAt: sampleWater,
+    waterLevelAt: (x, z) => {
+      if (!builtWater) return null;
+      for (const [dx, dz] of [[0, 0], [3, 0], [-3, 0], [0, 3], [0, -3]]) {
+        const level = builtWater.surfaceAt(x + dx!, z + dz!);
+        if (level != null) return level;
+      }
+      return null;
+    },
+    bridgeAt: crossing?.deckAt,
+  }, { west, east, north, south }) : null;
   const bedGroundAt = (x: number, z: number) => {
-    const bed = Math.min(dryGroundAt(x, z), builtWater?.bankHeightAt(x, z) ?? Infinity);
+    const bed = walkGrade?.heightAt(x, z) ?? carvedGroundAt(x, z);
     return crossing?.grade(x, z, bed) ?? bed;
   };
-  const displace = opts.displace !== false;
   const heightAt = (x: number, z: number): number => {
     if (!displace) {
       return bedGroundAt(x, z);
@@ -488,21 +518,12 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
   if (water) group.add(water);
 
   // ── paths ───────────────────────────────────────────────────────────────
-  let pathLines: { width: number; pts: number[] }[] = [];
   let paths: THREE.Mesh | null = null;
-  if (pathsJson !== null) {
+  if (pathLines.length) {
     await nextFrame();
-    for (const [widthUnits, line] of pathsJson.paths) {
-      const pts: number[] = [];
-      for (let i = 0; i < line.length; i += 2) {
-        pts.push(line[i] * manifest.paths.unitM, line[i + 1] * manifest.paths.unitM);
-      }
-      pathLines.push({ width: widthUnits * manifest.paths.unitM, pts });
-    }
-    if (streetData?.walks?.length) pathLines = refreshSouthWalks(pathLines, streetData);
     paths = buildPaths(pathLines,
       (x, z) => crossing?.deckAt(x, z) ?? groundAt(x, z),
-      (x, z) => crossing?.deckAt(x, z) != null ? 0 : sampleWater(x, z));
+      (x, z) => crossing?.deckAt(x, z) != null ? 0 : sampleWater(x, z), { west, east, north, south, focus: opts.flatten ?? opts.viewBounds });
     if (paths !== null) {
       group.add(paths);
     }
@@ -601,7 +622,7 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
       }
       if (paths !== null) {
         paths.geometry.dispose();
-        (paths.material as THREE.Material).dispose();
+        for (const material of Array.isArray(paths.material) ? paths.material : [paths.material]) material.dispose();
       }
       heroWater?.geometry.dispose();
       group.getObjectByName("park-landmarks")?.traverse((node) => {
@@ -859,124 +880,6 @@ export function waterRippleNormals(): THREE.CanvasTexture {
   rippleTexture.wrapS = THREE.RepeatWrapping;
   rippleTexture.wrapT = THREE.RepeatWrapping;
   return rippleTexture;
-}
-
-// Path ribbons the way the photographs show them: a narrow asphalt core
-// (grey-warm on the walks, darker on the drives) flanked by brick edging
-// strips — the red-brown gutter courses that line Central Park's walks.
-// Each polyline becomes flat triangle strips lying a hand above the
-// terrain, broken where it crosses water (the bridges carry those spans),
-// with light per-vertex jitter so long runs don't read as vector art.
-export function buildPaths(
-  lines: { width: number; pts: number[] }[],
-  groundAt: (x: number, z: number) => number,
-  waterAt: (x: number, z: number) => number,
-): THREE.Mesh | null {
-  const positions: number[] = [];
-  const colors: number[] = [];
-  const uvs: number[] = [];
-  const index: number[] = [];
-  const walk = new THREE.Color(0x958e85);
-  const drive = new THREE.Color(0x716f6b);
-  const brick = new THREE.Color(0x99917d);
-  const curb = new THREE.Color(0x8f8c85);
-  let seed = 0x50415448;
-  const rand = () => {
-    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
-    return seed / 4294967296;
-  };
-  for (const line of lines) {
-    const isDrive = line.width > 5.5;
-    const core = line.width > 5.5 ? drive : walk;
-    const edge = isDrive ? curb : brick;
-    const half = line.width / 2;
-    const edgeHalf = Math.min(0.16, half * 0.2);
-    // Drape both sides of a densified ribbon over the actual rendered mesh.
-    // Sparse map points otherwise bridge hills and miss narrow water crossings.
-    const points: number[] = [];
-    for (let i = 0; i < line.pts.length - 2; i += 2) {
-      const x = line.pts[i]!, z = line.pts[i + 1]!;
-      const dx = line.pts[i + 2]! - x, dz = line.pts[i + 3]! - z;
-      const count = Math.max(1, Math.ceil(Math.hypot(dx, dz) / 1.5));
-      for (let j = 0; j < count; j++) points.push(x + dx * j / count, z + dz * j / count);
-    }
-    points.push(...line.pts.slice(-2));
-    const n = points.length / 2;
-    let run: number[] = [];
-    const flush = () => {
-      if (run.length >= 4) {
-        emitRibbon(run, 0, half - edgeHalf * 2, core, 0.07, 0.08);
-        emitRibbon(run, half - edgeHalf, edgeHalf, edge, 0.085, 0.05);
-        emitRibbon(run, -(half - edgeHalf), edgeHalf, edge, 0.085, 0.05);
-      }
-      run = [];
-    };
-    for (let i = 0; i < n; i++) {
-      const x = points[i * 2];
-      const z = points[i * 2 + 1];
-      const prev = Math.max(0, i - 1), next = Math.min(n - 1, i + 1);
-      const dx = points[next * 2]! - points[prev * 2]!, dz = points[next * 2 + 1]! - points[prev * 2 + 1]!;
-      const len = Math.hypot(dx, dz) || 1, ox = -dz / len * (half + 1), oz = dx / len * (half + 1);
-      const crossSlope = Math.abs(groundAt(x + ox, z + oz) - groundAt(x - ox, z - oz)) / (line.width + 2);
-      const alongSlope = Math.abs(groundAt(points[next * 2]!, points[next * 2 + 1]!) - groundAt(points[prev * 2]!, points[prev * 2 + 1]!)) / len;
-      if (crossSlope > .4 || alongSlope > .4 || waterAt(x, z) > .35 || waterAt(x + ox, z + oz) > .35 || waterAt(x - ox, z - oz) > .35) {
-        flush();
-      } else {
-        run.push(x, z);
-      }
-    }
-    flush();
-  }
-  function emitRibbon(run: number[], offset: number, half: number, base: THREE.Color, lift: number, jitter: number): void {
-    const n = run.length / 2;
-    const start = positions.length / 3;
-    for (let i = 0; i < n; i++) {
-      const x = run[i * 2];
-      const z = run[i * 2 + 1];
-      const xPrev = run[Math.max(0, i - 1) * 2];
-      const zPrev = run[Math.max(0, i - 1) * 2 + 1];
-      const xNext = run[Math.min(n - 1, i + 1) * 2];
-      const zNext = run[Math.min(n - 1, i + 1) * 2 + 1];
-      const dx = xNext - xPrev;
-      const dz = zNext - zPrev;
-      const len = Math.hypot(dx, dz) || 1;
-      const px = -dz / len;
-      const pz = dx / len;
-      const cx = x + px * offset;
-      const cz = z + pz * offset;
-      for (const side of [1, -1]) {
-        const vx = cx + px * half * side, vz = cz + pz * half * side;
-        positions.push(vx, groundAt(vx, vz) + lift, vz);
-        uvs.push(vx / 2, vz / 2);
-      }
-      const tone = 1 - jitter / 2 + rand() * jitter;
-      colors.push(base.r * tone, base.g * tone, base.b * tone, base.r * tone, base.g * tone, base.b * tone);
-      if (i > 0) {
-        const a = start + (i - 1) * 2;
-        // Two triangles per quad, counter-clockwise from above.
-        index.push(a, a + 2, a + 3, a, a + 3, a + 1);
-      }
-    }
-  }
-  if (positions.length === 0) {
-    return null;
-  }
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
-  geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
-  geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
-  const normals = new Float32Array(positions.length);
-  for (let i = 1; i < normals.length; i += 3) {
-    normals[i] = 1;
-  }
-  geometry.setAttribute("normal", new THREE.BufferAttribute(normals, 3));
-  geometry.setIndex(index);
-  geometry.computeBoundingSphere();
-  const map = typeof document === "undefined" ? null : parkPathTexture();
-  const mesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ vertexColors: true, map, bumpMap: map, bumpScale: .025, roughness: .95 }));
-  mesh.receiveShadow = true;
-  mesh.name = "park-paths";
-  return mesh;
 }
 
 // Page-lifetime shared world (the garden-flora pattern): the room rebuilds

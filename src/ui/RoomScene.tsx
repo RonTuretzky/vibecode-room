@@ -525,6 +525,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
     // node glyphs, and skip the instanced vegetation + real-model nodes.
     const debugInfo = renderer.getContext().getExtension("WEBGL_debug_renderer_info");
     const gpuName = debugInfo === null ? "" : String(renderer.getContext().getParameter(debugInfo.UNMASKED_RENDERER_WEBGL));
+    container.dataset.renderer = gpuName;
     const softwareGL = /swiftshader|llvmpipe|softpipe|software/i.test(gpuName);
     const maxPixelRatio = Math.min(window.devicePixelRatio, softwareGL ? 1 : 2);
     // Start conservatively on CPU rasterizers; DOM controls remain full-size.

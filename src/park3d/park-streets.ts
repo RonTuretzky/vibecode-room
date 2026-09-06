@@ -5,7 +5,7 @@ import { parkPathTexture, parkStoneTexture } from "./park-materials";
 
 export interface StreetWay {
   id: number;
-  tags: { highway?: string; barrier?: string; name?: string; width?: string; lanes?: string; oneway?: string; height?: string; bridge?: string; layer?: string };
+  tags: { highway?: string; barrier?: string; name?: string; width?: string; lanes?: string; oneway?: string; height?: string; bridge?: string; layer?: string; surface?: string };
   coordinates: number[][];
 }
 export interface StreetSegment { id: number; ax: number; az: number; bx: number; bz: number; width: number; name: string; oneway: boolean; lanes: number; start: number }

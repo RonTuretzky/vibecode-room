@@ -128,10 +128,16 @@ duplicate trunks and retaining the existing 640-tree budget. In the live
 two-project room, 146 mapped trees passed the range, water, path and spacing
 filters. Their silhouettes remain procedural; untagged heights are estimates.
 
-The refreshed path network retains the northern walks and park drives. The
-terrain still causes some steep-shore path segments to be rejected by the
-renderer. Restoring connected, graded walk surfaces is an outstanding visual
-issue, not evidence that path rendering is complete.
+The refreshed path network retains the northern walks and park drives. Walks
+now grade the terrain across their width, with feathered shoulders. Steep
+banks no longer cause valid footways to disappear; their triangles subdivide
+where needed to follow the rendered terrain, and clip at the actual water
+contour. Tagged stairs are modeled as treads and risers. Surface tags survive
+clipping and choose asphalt, pavers, gravel/earth, mulch or wooden boards.
+Natural paths have no artificial stone margin. Grade, step dimensions, paver
+pattern and surface colors remain interpretations of the DEM and tags, not
+surveyed construction details. Full-renderer captures of the southern scene were inspected; detailed low-angle
+comparison against surveyed construction remains outside this model.
 
 The next useful pass is a measured south-end building/terrain survey, followed
 by better species-specific models and schist outcrops. More decoration alone
@@ -154,3 +160,11 @@ Wollman surface and access openings, the project lawn, the park overlook,
 and Orbit/Meadow return trips. No browser rendering warnings or errors were
 reported. The room retained its two projects and local AI profile. This is targeted
 regression coverage, not a rerun of every AI workflow.
+
+The subsequent walk pass passed 319 relevant unit tests, TypeScript and build
+checks, nine navigation tests, and an opt-in full-graphics browser test. The
+hardware test visits every park preset, captures normal/Zen portrait views,
+and returns from Orbit and Meadow without rendering errors. Inspecting its
+screenshots led to two further fixes: connected junction margins and grading
+shore walks from the carved bank surface. This is an isolated demo-room test;
+the locked desktop prevented directly revisiting the user's active browser tab.

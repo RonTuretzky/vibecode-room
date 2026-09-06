@@ -15,13 +15,22 @@ prove that the visual objective has been achieved.
 - Distinct roughness and relief maps improve window/masonry separation;
   lighter haze makes nearby buildings easier to distinguish.
 - The Pond, crowns and bank improvements from the preceding pass remain.
+- Walks now grade their terrain corridors and clip at the shoreline instead
+  of being dropped on steep banks. Source stair tags produce treads/risers;
+  surface tags distinguish paved and natural routes. These changes pass
+  geometry/source-data checks and full-renderer screenshot inspection.
+- Adaptive path triangles and shared vertices reduce the initial dense pass
+  from 518k triangles/1.55M vertices to 198k/201k. A real-data centroid check
+  finds no buried walk/stair triangles in the 400 m southern neighbourhood.
 
 ## Observed work still to resolve
 
-1. **Walk continuity and terrain grading.** Steep bank checks currently reject
-   portions of valid mapped footways, leaving isolated ribbons near the Pond.
-   Grade walk corridors against the terrain and handle actual stairs/bridges
-   explicitly; hiding fragments alone would leave the underlying problem.
+1. **Walk continuity and terrain grading.** Full-renderer captures now show
+   connected shore walks and clean junctions. The first captures caught edging
+   through intersections and abrupt DEM-based banks; both were corrected and
+   rechecked. Continue low-angle inspection of stair transitions and modeled
+   grades as camera exploration improves. The user's existing tab still needs
+   a direct visit once the Mac is unlocked.
 2. **Architecture.** Many city blocks still have generic silhouettes. Add
    appropriate cornices, parapets, roof detail and better mapped landmark
    coverage while retaining source footprints/heights and existing models.

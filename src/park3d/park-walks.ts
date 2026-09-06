@@ -8,7 +8,7 @@ export interface ParkStreetData {
   walks: StreetWay[];
   trees: { id: number; coordinates: number[]; height: string | null; genus: string | null }[];
 }
-export interface ParkWalk { width: number; pts: number[] }
+export interface ParkWalk { width: number; pts: number[]; kind?: 'walk' | 'steps' | 'bridge'; surface?: string; osmWay?: number }
 
 /** Replace the old rectangle-clipped south-end walks. Split at the extract
  * bounds so the original northern network still joins the refreshed walks. */
@@ -19,7 +19,7 @@ export function refreshSouthWalks(original: ParkWalk[], data: ParkStreetData): P
   const result: ParkWalk[] = [];
   const clip = (line: ParkWalk, keep: (x: number, z: number) => boolean, densify: boolean) => {
     let run: number[] = [];
-    const flush = () => { if (run.length >= 4) result.push({ width: line.width, pts: run }); run = []; };
+    const flush = () => { if (run.length >= 4) result.push({ ...line, pts: run }); run = []; };
     for (let i = 2; i < line.pts.length; i += 2) {
       const ax = line.pts[i - 2]!, az = line.pts[i - 1]!, dx = line.pts[i]! - ax, dz = line.pts[i + 1]! - az;
       const cuts = [0, 1];
@@ -48,7 +48,8 @@ export function refreshSouthWalks(original: ParkWalk[], data: ParkStreetData): P
     const fallback = way.tags.highway === 'pedestrian' ? 3.6 : way.tags.highway === 'cycleway' || way.tags.highway === 'bridleway' ? 3.4 : 2.6;
     const width = Math.min(9, Math.max(1.2, Number(way.tags.width) || fallback));
     const pts = way.coordinates.flatMap(([lon, lat]) => { const p = localFromLatLon(lat!, lon!); return [p.x, p.z]; });
-    clip({ width, pts }, (x, z) => inBounds(x, z) && insideParkOutline(x, z, 8), true);
+    const kind = way.tags.highway === 'steps' ? 'steps' : way.tags.bridge === 'yes' ? 'bridge' : 'walk';
+    clip({ width, pts, kind, surface: way.tags.surface, osmWay: way.id }, (x, z) => inBounds(x, z) && insideParkOutline(x, z, 8), true);
   }
   return result;
 }

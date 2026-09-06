@@ -17,6 +17,13 @@ material textures. It needs no cloud rendering or external asset service.
   puts broad road surfaces on the existing terrain; only nearby curbs and
   walls need separate geometry. This avoids road/terrain intersections and
   more than a million extra triangles from fully meshed carriageways.
+- `park-walk-grade.ts` / `park-paths.ts`: walks shape narrow terrain corridors
+  before triangulation. Actual shore contours clip the walking surface, and
+  adaptive triangles follow banks without disappearing into terrain. Mapped
+  stairs get horizontal treads and vertical risers; Gapstow's arch stays open.
+  Distant walks use fewer segments and share vertices. `park-walk-materials.ts`
+  uses retained OSM surface tags for asphalt, pavers, gravel/earth, mulch and
+  wooden boards, batching each texture instead of making a mesh per way.
 - `park-facades.ts`: generated color, relief and roughness maps distinguish
   recessed window panes, mullions, sills and matte masonry. Known prewar
   buildings retain masonry at tall heights. Reduced atmospheric density
@@ -75,7 +82,7 @@ clock, fullscreen button, and project navigation, including keyboard focus.
 ## Verification
 
 - Earlier full unit suite: 2,622 passed, 20 credential-dependent tests skipped.
-- Current park suite: 51 passed; 309 passed including the relevant room,
+- Current park suite: 61 passed; 319 passed including the relevant room,
   projector and spatial-navigation suites. Coverage includes terrain/ray agreement on the
   nonuniform grid, crown geometry budgets, building/bridge winding and
   openings, shoreline clipping, reflection invalidation, and fitting
@@ -83,6 +90,9 @@ clock, fullscreen button, and project navigation, including keyboard focus.
 - New shoreline tests cover optical coverage, dry-bank continuity, the
   installed Water shader integration, planting clearances, rooted geometry,
   room-coordinate culling and disposal on environment changes.
+- Walk tests cover steep crossfalls, shore clipping, bank-ridge subdivision,
+  corridor continuity at junctions and bucket boundaries, waterbed/bridge
+  preservation, stair winding and natural path margins/material batches.
 - City tests cover the true outline and its padding, street dimensions,
   junction clearances, geometry budgets, actual wall openings, façade
   classification and joining refreshed walks to the older northern network.
@@ -96,6 +106,27 @@ clock, fullscreen button, and project navigation, including keyboard focus.
   Orbit/Meadow return trips, and a 32-project fixture. LM Studio's local
   `room-local-code` endpoint generated synthetic code during load checks.
   No real project data was changed by the graphics fixture.
+
+## Full graphics regression
+
+On a machine with hardware WebGL, run:
+
+```sh
+VIBERSYN_PORT=18998 VIBERSYN_PARK_GPU=1 bun run test:e2e e2e/park-gpu.e2e-pw.ts --workers=1
+```
+
+The opt-in test uses Metal on macOS, requires `data-park-ready=true`, and
+fails if it sees software rendering, too little geometry, shader/load errors
+or WebGL context loss. It captures the four park presets and portrait UI/Zen
+views, then checks Orbit and Meadow return trips. PNGs and renderer/frame
+samples are written under `test-results/`. Images require human/agent review;
+the test does not decide whether a scene looks good. It uses an isolated,
+in-memory demo room and does not change live projects.
+
+The walk pass was inspected through these full-renderer captures. Junction
+edging and abrupt bank grading were corrected after the first screenshots.
+The Mac's locked screen prevented direct interaction with the user's existing
+tab during this pass; the separate hardware-rendered browser test succeeded.
 
 ## Reproducing the larger forest
 
@@ -145,6 +176,13 @@ After the city/perimeter pass, the same live Pond preset at 1,832 × 1,884
 pixels averaged about 2.17 million triangles, 167 draw calls and 10.1 ms frame
 intervals, with a 31.4 ms p95. This adds street and perimeter detail with a
 modest geometry increase, but the longer frames still require profiling.
+The walk pass now has about 198,000 path triangles and 201,000 vertices in
+this neighbourhood. Its initial uniformly dense version had about 518,000
+triangles and 1.55 million vertices. These are mesh counts, not full-frame
+render costs or measured speedups. A check of triangle centroids within 400 m
+of the project lawn found no buried walk or stair triangles. Exact path geometry
+still depends on the modeled DEM grading.
+
 The visual improvement goal remains open; see the [current audit](central-park-visual-audit.md).
 
 ## Spatial controls

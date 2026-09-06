@@ -123,6 +123,11 @@ test('refreshed walks restore the perimeter, retain Gapstow, and meet the old ne
   expect(kept[1]).toBe(original[1]);
   const walks = refreshSouthWalks([], data as ParkStreetData);
   expect(walks.length).toBeGreaterThan(300);
+  expect(walks.some(walk => walk.kind === 'steps')).toBe(true);
+  const bridge = data.walks.find(way => way.tags.bridge === 'yes')!;
+  expect(walks.find(walk => walk.osmWay === bridge.id)?.kind).toBe('bridge');
+  expect(walks.filter(walk => walk.surface === 'paving_stones').length).toBeGreaterThan(30);
+  expect(walks.some(walk => walk.surface === 'woodchips')).toBe(true);
   let gapstowDistance = Infinity, restored = 0;
   for (const walk of walks) {
     expect(walk.pts.every(Number.isFinite)).toBe(true);
