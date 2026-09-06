@@ -509,6 +509,11 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
     // rebinds both once its world loads (inside the park wall, never water).
     let plantableAt: (x: number, z: number) => boolean = (x, z) => Math.hypot(x, z) < 104;
     let plantGroundY: (x: number, z: number) => number = () => 0;
+    let parkCameraGroundY: ((x: number, z: number) => number) | null = null;
+    const cameraGroundY = (x: number, z: number) => parkEnvActive() && modeRef.current === "garden" && !skyViewRef.current
+      ? parkCameraGroundY?.(x, z) ?? 0 : 0;
+    const minOrbitHeight = () => cameraGroundY(rig.dTargetX + Math.sin(rig.dAngle) * rig.dRadius,
+      rig.dTargetZ + Math.cos(rig.dAngle) * rig.dRadius) + 1.4;
     const maxOrbitRadius = () => (parkEnvActive() ? 1200 : 45);
     const maxOrbitHeight = () => (parkEnvActive() ? 900 : 30);
     // Pulling far back in the park also lifts the eye above the city, so the
@@ -1337,6 +1342,10 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
               const pz = POND_STAGE.z - z / PARK_SCALE;
               return (world.groundAt(px, pz) - y) * PARK_SCALE - 0.15;
             };
+            parkCameraGroundY = (x, z) => {
+              const px = POND_STAGE.x - x / PARK_SCALE, pz = POND_STAGE.z - z / PARK_SCALE;
+              return (world.cameraGroundAt(px, pz) - y) * PARK_SCALE - .15;
+            };
             return loadGardenFlora().then((flora) => {
               if (!parkDisposed) {
                 scatterParkFlora(flora, world, y);
@@ -1631,6 +1640,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
           parkWorld = null;
           plantableAt = (x, z) => Math.hypot(x, z) < 104;
           plantGroundY = () => 0;
+          parkCameraGroundY = null;
           if (pondScene) {
             camera.far = defaultFar;
             if (!cornerLocked && !flatLocked) camera.fov = defaultFov;
@@ -4291,7 +4301,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
           const dAngle = -dx * 0.005;
           const dHeight = dy * 0.045;
           rig.dAngle += dAngle;
-          rig.dHeight = Math.max(1.4, Math.min(maxOrbitHeight(), rig.dHeight + dHeight));
+          rig.dHeight = Math.max(minOrbitHeight(), Math.min(maxOrbitHeight(), rig.dHeight + dHeight));
           // Exponential moving average keeps the flick velocity stable.
           angVel = angVel * 0.75 + (dAngle / dtMove) * 0.25;
           heightVel = heightVel * 0.75 + (dHeight / dtMove) * 0.25;
@@ -4630,7 +4640,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
         }
         // Exact mirror of the onPointerMove orbit path (incl. height clamp).
         rig.dAngle += dYaw;
-        rig.dHeight = Math.max(1.4, Math.min(maxOrbitHeight(), rig.dHeight + dHeight));
+        rig.dHeight = Math.max(minOrbitHeight(), Math.min(maxOrbitHeight(), rig.dHeight + dHeight));
       },
       panBy: (dxPx, dyPx) => {
         lastCameraInputMs = performance.now();
@@ -4972,7 +4982,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
           rig.dTargetX += (-Math.sin(rig.angle) * navigation.forward + Math.cos(rig.angle) * navigation.right) * step;
           rig.dTargetZ += (-Math.cos(rig.angle) * navigation.forward - Math.sin(rig.angle) * navigation.right) * step;
           rig.dAngle += navigation.turn * .8 * dt;
-          rig.dHeight = THREE.MathUtils.clamp(rig.dHeight + navigation.elevation * Math.max(5, rig.radius * .4) * dt, 1.4, maxOrbitHeight());
+          rig.dHeight = THREE.MathUtils.clamp(rig.dHeight + navigation.elevation * Math.max(5, rig.radius * .4) * dt, minOrbitHeight(), maxOrbitHeight());
           rig.dRadius = THREE.MathUtils.clamp(rig.dRadius * Math.exp(navigation.zoom * .65 * dt), 4, maxOrbitRadius());
           parkHeightFloor();
         }
@@ -4986,7 +4996,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
             angVel *= Math.exp(-dt * 2.2);
           }
           if (Math.abs(heightVel) > 1e-3) {
-            rig.dHeight = Math.max(1.4, Math.min(maxOrbitHeight(), rig.dHeight + heightVel * dt));
+            rig.dHeight = Math.max(minOrbitHeight(), Math.min(maxOrbitHeight(), rig.dHeight + heightVel * dt));
             heightVel *= Math.exp(-dt * 2.6);
           }
         }
@@ -5021,11 +5031,16 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
           }
         }
 
+        rig.dHeight = Math.max(rig.dHeight, minOrbitHeight());
         rig.angle = THREE.MathUtils.lerp(rig.angle, rig.dAngle, camSmoothing);
         rig.radius = THREE.MathUtils.lerp(rig.radius, rig.dRadius, camSmoothing);
         rig.height = THREE.MathUtils.lerp(rig.height, rig.dHeight, camSmoothing);
         rig.targetX = THREE.MathUtils.lerp(rig.targetX, rig.dTargetX, camSmoothing);
         rig.targetZ = THREE.MathUtils.lerp(rig.targetZ, rig.dTargetZ, camSmoothing);
+        // Desired and current positions differ during the glide. Both need
+        // clearance, including while moving sideways across a rising slope.
+        rig.height = Math.max(rig.height, cameraGroundY(rig.targetX + Math.sin(rig.angle) * rig.radius,
+          rig.targetZ + Math.cos(rig.angle) * rig.radius) + 1.4);
         applyRig();
       }
 
@@ -5656,6 +5671,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
         container.dataset.cameraX = camera.position.x.toFixed(3);
         container.dataset.cameraY = camera.position.y.toFixed(3);
         container.dataset.cameraZ = camera.position.z.toFixed(3);
+        container.dataset.cameraGroundY = cameraGroundY(camera.position.x, camera.position.z).toFixed(3);
         container.dataset.cameraYaw = (flatLocked ? flatRig.yaw : rig.angle).toFixed(4);
         container.dataset.cameraRadius = (flatLocked ? flatRig.dist : rig.radius).toFixed(3);
         container.dataset.navigationActive = String(keysDown.size > 0 && !cornerLocked);

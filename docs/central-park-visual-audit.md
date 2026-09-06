@@ -31,8 +31,10 @@ prove that the visual objective has been achieved.
    rechecked. Continue low-angle inspection of stair transitions and modeled
    grades as camera exploration improves. Contour-based bank grades now remove
    grid-direction bias and fade into the surrounding DEM; the new render was
-   inspected. The camera still needs a terrain-relative lower bound to explore
-   slopes without dropping below them. The user's existing tab still needs
+   inspected. The camera now keeps terrain/deck/water-relative eye clearance;
+   a hardware route reached the low shore and climbed back over the hillside
+   without dropping below it. The close captures expose sparse turf detail.
+   The user's existing tab still needs
    a direct visit once the Mac is unlocked.
 2. **Architecture.** Nearby buildings now have recessed roofs, parapets,
    coping, roof grain and low rooftop housings within source height/footprint

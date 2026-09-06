@@ -342,3 +342,14 @@ The Pond capture was inspected. A full DEM/network/terrain diagnostic checked
 stair riser extended 2.2 cm into the ground. It also confirmed that the camera's
 old 1.4 m global lower bound can fall below the local hillside, requiring a
 separate camera-floor correction.
+
+Park exploration now clamps both the desired and interpolated camera poses
+to 1.4 m above the local terrain, walkable decks or water. This permits the
+lower Pond shore while keeping hillside movement above ground; it is not
+general building/tree collision. Nine room/guest navigation scenarios and
+the six-view hardware test passed. A separate hardware route lowered the
+camera, crossed into the Pond basin and returned uphill, checking at least
+1.39 m sampled clearance throughout (allowing diagnostic rounding). Its
+shoreline and hillside screenshots were inspected. The first route assertion
+used an arbitrary absolute return height; the final test checks actual ground
+elevation gain instead, and passed on a fresh run.

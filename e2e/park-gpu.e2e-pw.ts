@@ -76,3 +76,43 @@ test('the full park renders every preset, material and environment return withou
   await info.attach('render-samples', { path: samples, contentType: 'application/json' });
   expect(errors).toEqual([]);
 });
+
+test('park exploration reaches the low shore and stays above the terrain on the return climb', async ({ page }, info) => {
+  test.setTimeout(120000);
+  const errors: string[] = []; page.on('pageerror', e => errors.push(e.message));
+  await page.goto('/?live=0&env=park');
+  const scene = page.getByTestId('room-scene');
+  await expect(scene).toHaveAttribute('data-park-ready', 'true', { timeout: 90000 });
+  await page.getByTestId('park-view-button').click();
+  await expect(scene).toHaveAttribute('data-park-view', 'The Pond'); await cameraSettled(page);
+  const samples: { y: number; ground: number; z: number }[] = [];
+  const pose = async () => {
+    const p = await scene.evaluate(el => { const d = (el as HTMLElement).dataset;
+      return { y: Number(d.cameraY), ground: Number(d.cameraGroundY), z: Number(d.cameraZ) }; });
+    samples.push(p); return p;
+  };
+  const start = await pose();
+  try {
+    await page.keyboard.down('ArrowDown');
+    await expect.poll(async () => { const p = await pose(); return p.y - p.ground; }, { intervals: [100] }).toBeLessThan(1.43);
+    await page.keyboard.down('w');
+    await expect.poll(async () => (await pose()).y, { intervals: [100], timeout: 10000 }).toBeLessThan(-1);
+    await page.keyboard.up('w'); await page.keyboard.up('ArrowDown'); await cameraSettled(page);
+    await page.getByTestId('scene-zen-button').click();
+    await page.screenshot({ path: info.outputPath('pond-low-shore.png') }); await page.keyboard.press('Escape');
+    await page.keyboard.down('ArrowDown'); await page.keyboard.down('s');
+    await expect.poll(async () => (await pose()).z, { intervals: [100], timeout: 10000 }).toBeGreaterThan(start.z - 1);
+    await page.keyboard.up('s'); await page.keyboard.up('ArrowDown'); await cameraSettled(page);
+    await pose();
+    await page.getByTestId('scene-zen-button').click(); await page.screenshot({ path: info.outputPath('pond-hillside-eye.png') });
+  } finally {
+    for (const key of ['w', 's', 'ArrowDown']) await page.keyboard.up(key);
+  }
+  expect(samples.length).toBeGreaterThan(10);
+  expect(Math.min(...samples.map(p => p.y - p.ground))).toBeGreaterThanOrEqual(1.39);
+  // Elevation is relative to the project lawn, not sea level. What matters
+  // here is climbing back out of the basin while retaining eye clearance.
+  expect(samples.at(-1)!.ground - Math.min(...samples.map(p => p.ground))).toBeGreaterThan(3);
+  writeFileSync(info.outputPath('shore-route.json'), JSON.stringify(samples, null, 2));
+  expect(errors).toEqual([]);
+});

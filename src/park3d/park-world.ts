@@ -127,6 +127,9 @@ export interface ParkWorld {
   waterAt: (x: number, z: number) => number;
   // Bare-earth height (flatten applied) at a local point.
   groundAt: (x: number, z: number) => number;
+  // Camera floor over terrain, walkable decks and water; avoids descending
+  // beneath a hillside or the water surface while exploring the park.
+  cameraGroundAt: (x: number, z: number) => number;
   // Surface height including the canopy relief when displaced (flatten
   // applied); equals groundAt when `displace` is off.
   heightAt: (x: number, z: number) => number;
@@ -582,6 +585,7 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
     pathLines,
     perimeterTrees: streetData?.trees ?? [],
     groundAt,
+    cameraGroundAt: (x, z) => Math.max(groundAt(x, z), deckAt(x, z) ?? -Infinity, builtWater?.surfaceAt(x, z) ?? -Infinity),
     heightAt: displace ? heightAt : groundAt,
     canopyAt: sampleRelief,
     lawnAt: sampleLawn,
