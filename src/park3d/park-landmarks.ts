@@ -26,6 +26,8 @@ import { gapstowDeckAt } from "./park-gapstow-ground";
 import { buildWollmanRink } from "./park-wollman";
 import { buildArsenal } from "./park-arsenal";
 import { buildWollmanFacilities } from "./park-wollman-facilities";
+import { buildZoo } from "./park-zoo";
+import { createZooGrade } from "./park-zoo-layout";
 
 export interface LandmarkSpec {
   name: string;
@@ -584,7 +586,7 @@ export const LANDMARKS: LandmarkSpec[] = [
 // Build every landmark into one group in the park frame, each standing on
 // the rendered ground. Water bridges use the actual level water surface;
 // raw DEM samples over water can be above or below the corrected shoreline.
-export function buildLandmarks(groundAt: (x: number, z: number) => number, options: { waterAt?: (x: number, z: number) => number | null; rinkLevel?: number; arsenalLevel?: number; paths?: readonly { width: number; pts: number[] }[] } = {}): THREE.Group {
+export function buildLandmarks(groundAt: (x: number, z: number) => number, options: { waterAt?: (x: number, z: number) => number | null; rinkLevel?: number; arsenalLevel?: number; zooGrade?: ReturnType<typeof createZooGrade>; paths?: readonly { width: number; pts: number[] }[] } = {}): THREE.Group {
   const group = new THREE.Group();
   group.name = "park-landmarks";
   for (const spec of LANDMARKS) {
@@ -602,6 +604,8 @@ export function buildLandmarks(groundAt: (x: number, z: number) => number, optio
     group.add(buildWollmanFacilities(options.rinkLevel, groundAt, options.paths));
   }
   group.add(buildArsenal(options.arsenalLevel ?? groundAt(PARK_SITES.arsenal.x, PARK_SITES.arsenal.z)));
+  const zoo = options.zooGrade ?? createZooGrade(groundAt);
+  group.add(buildZoo(groundAt, zoo.courtLevel, zoo.pavilionLevels));
   return group;
 }
 

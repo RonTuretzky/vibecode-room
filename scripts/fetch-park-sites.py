@@ -18,8 +18,12 @@ SITES = {
     'sherman': 988716842, 'pulitzer': 988718514,
     'umpire': 385443481, 'arsenal': 265347583,
     'wollmanClubhouse': 265347591, 'wollmanService': 265347590,
+    'zooComplex': 265347580, 'zooTropic': 108111424, 'zooGift': 265347582,
+    'zooTickets': 265347584, 'zooPool': 108111423,
 }
-SITE_NAMES = {'wollmanClubhouse': 'Wollman Clubhouse', 'wollmanService': 'Wollman service building'}
+SITE_NAMES = {'wollmanClubhouse': 'Wollman Clubhouse', 'wollmanService': 'Wollman service building',
+              'zooComplex': 'Zoo pavilions and galleries', 'zooTropic': 'Tropic Zone',
+              'zooGift': 'Zoo gift shop pavilion', 'zooTickets': 'Zoo tickets', 'zooPool': 'Sea lion pool'}
 
 def main():
     query = '[out:json][timeout:45];way(id:' + ','.join(map(str, SITES.values())) + ');out meta geom;'

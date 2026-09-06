@@ -23,6 +23,7 @@ import { createWollmanGrade } from "./park-wollman";
 import { buildLandmarks } from "./park-landmarks";
 import { arsenalApproach, createArsenalGrade } from "./park-arsenal";
 import { createWollmanFacilitiesGrade } from "./park-wollman-facilities";
+import { createZooGrade } from "./park-zoo-layout";
 import { loadSkylineModels, skylineSites } from "./park-models";
 import { buildParkStreets } from "./park-streets";
 import { refreshSouthWalks, type ParkWalk, type ParkStreetData } from "./park-walks";
@@ -299,6 +300,7 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
   const rinkGrade = opts.landmarks !== false ? createWollmanGrade(sampleDem) : null;
   const facilitiesGrade = rinkGrade ? createWollmanFacilitiesGrade(rinkGrade.level) : null;
   const arsenalGrade = opts.landmarks !== false ? createArsenalGrade(sampleDem) : null;
+  const zooGrade = opts.landmarks !== false ? createZooGrade(sampleDem) : null;
   const arsenalWalk = opts.landmarks !== false ? arsenalApproach(pathLines) : null;
   if (arsenalWalk) pathLines.push(arsenalWalk);
   const flatten = opts.flatten;
@@ -316,7 +318,8 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
     const base = w === 1 ? sampleDem(x, z) : anchorGround + (sampleDem(x, z) - anchorGround) * w;
     const rinkGround = rinkGrade?.heightAt(x, z, base) ?? base;
     const buildingGround = arsenalGrade?.heightAt(x, z, rinkGround) ?? rinkGround;
-    return facilitiesGrade?.heightAt(x, z, buildingGround) ?? buildingGround;
+    const facilitiesGround = facilitiesGrade?.heightAt(x, z, buildingGround) ?? buildingGround;
+    return zooGrade?.heightAt(x, z, facilitiesGround) ?? facilitiesGround;
   };
   const view = opts.viewBounds;
   const west = view ? Math.max(-halfEast, view.x - view.radius) : -halfEast;
@@ -347,7 +350,8 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
   }, { west, east, north, south }) : null;
   const bedGroundAt = (x: number, z: number) => {
     const ground = carvedGroundAt(x, z), walk = walkGrade?.heightAt(x, z) ?? ground;
-    const bed = facilitiesGrade?.constrainWalkAt(x, z, ground, walk) ?? walk;
+    const facilities = facilitiesGrade?.constrainWalkAt(x, z, ground, walk) ?? walk;
+    const bed = zooGrade?.constrainWalkAt(x, z, ground, facilities) ?? facilities;
     return crossing?.grade(x, z, bed) ?? bed;
   };
   const heightAt = (x: number, z: number): number => {
@@ -510,7 +514,7 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
   }
 
   if (opts.landmarks !== false) {
-    group.add(buildLandmarks(groundAt, { waterAt: builtWater?.surfaceAt, rinkLevel: rinkGrade?.level, arsenalLevel: arsenalGrade?.level, paths: pathLines }));
+    group.add(buildLandmarks(groundAt, { waterAt: builtWater?.surfaceAt, rinkLevel: rinkGrade?.level, arsenalLevel: arsenalGrade?.level, zooGrade: zooGrade ?? undefined, paths: pathLines }));
   }
 
   let streets: ReturnType<typeof buildParkStreets> | null = null;
@@ -818,7 +822,7 @@ export function buildWater(
   // into, mirror-bright toward grazing angles (Fresnel does that once the
   // base is dark and the surface is smooth), with fine ripples breaking the
   // reflection. The host hands it a sky envMap and scrolls the ripples.
-  const material = new THREE.MeshStandardMaterial({ color: 0x0f1d1a, roughness: 0.12, metalness: 0 });
+  const material = new THREE.MeshStandardMaterial({ color: 0x365b52, roughness: 0.24, metalness: 0.12 });
   if (typeof document !== "undefined") {
     material.normalMap = waterRippleNormals();
     material.normalScale.set(0.22, 0.22);

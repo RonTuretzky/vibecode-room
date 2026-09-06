@@ -42,10 +42,13 @@ prove that the visual objective has been achieved.
    a short inferred apron. Wollman now has its mapped curved clubhouse, roof
    terrace, slatted canopy, patio and service building. Full-renderer inspection
    caught a grassy patio gap and roof-edge approach issue; both were corrected.
-   The Zoo and Fifth Avenue hotel crowns remain incomplete. The official Zoo
-   map and local footprints now identify its separate pavilions, open galleries
-   and central pool for the next modeling pass. General architectural details
-   and the rink's seasonal fit-out remain illustrative or incomplete.
+   The Zoo now has its mapped exterior pavilions, open galleries, tropical-house
+   glazing, central pool and an illustrative clock with three open arches.
+   The first render exposed a crowded camera composition, dark small water
+   bodies and courtyard grading; all were refined and checked in a fresh
+   hardware capture. Fifth Avenue hotel
+   crowns, Zoo enclosures/interiors, sculptural details and the rink's seasonal
+   fit-out remain incomplete. Architectural details remain interpretive.
 3. **Ground materials and transitions.** Perimeter hexagonal/granite paving,
    path margins, schist outcrops, contact shading and woodland floor detail
    need close-view inspection. Avoid texture repetition and floating props.

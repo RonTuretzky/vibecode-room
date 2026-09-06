@@ -1,7 +1,7 @@
 // Geographic control points, retained locally with OSM IDs/revisions. Model
 // detail is still interpretive; locations and footprints come from this data.
 import siteData from './data/south-park-sites.json';
-import { DEG, localFromLatLon } from './park-frame';
+import { DEG, localFromLatLon, localFromAlongAcross } from './park-frame';
 
 export type ParkSiteKey = keyof typeof siteData.features;
 export interface SitePoint { x: number; z: number }
@@ -39,6 +39,11 @@ export function siteDistance(x: number, z: number, ring: readonly SitePoint[]): 
   for (let i = 0; i < ring.length; i++) distance = Math.min(distance, distanceToSegment(x, z, ring[i]!, ring[(i + 1) % ring.length]!));
   return inSite(x, z, ring) ? -distance : distance;
 }
+
+// Inferred formal court inside the Zoo's mapped galleries. The pool itself
+// retains its surveyed polygon; this paving boundary is a modeled layout.
+export const ZOO_COURT = [[-1753, 334], [-1681, 334], [-1681, 383], [-1753, 383]]
+  .map(([along, across]) => localFromAlongAcross(along!, across!));
 
 /** Inferred patio panels between the clubhouse frontage and mapped rink.
  * Each frontage edge projects to the nearest rink edge; distant/back edges
@@ -95,13 +100,15 @@ export function createParkPlantingMask(lines: readonly { width: number; pts: num
       }
     }
   }
-  const sites = ['wollman', 'wollmanClubhouse', 'wollmanService', 'dairy', 'chess', 'carousel', 'copCot', 'gapstow', 'arsenal'] as const;
+  const sites = ['wollman', 'wollmanClubhouse', 'wollmanService', 'dairy', 'chess', 'carousel', 'copCot', 'gapstow', 'arsenal',
+    'zooComplex', 'zooTropic', 'zooGift', 'zooTickets', 'zooPool'] as const;
   const masks = sites.map(key => {
     const site = PARK_SITES[key];
     const extra = key === 'wollmanClubhouse' ? WOLLMAN_PATIO.flat() : [];
     return { site, radius: Math.max(...[...site.ring, ...extra].map(p => Math.hypot(p.x - site.x, p.z - site.z))) + 6 };
   });
   return (x, z, clearance = 1) => {
+    if (Math.hypot(x - PARK_SITES.zooPool.x, z - PARK_SITES.zooPool.z) < 55 && siteDistance(x, z, ZOO_COURT) < clearance) return false;
     for (const { site, radius } of masks) {
       if (site === PARK_SITES.wollmanClubhouse && Math.hypot(x - site.x, z - site.z) < radius && WOLLMAN_PATIO.some(ring => siteDistance(x, z, ring) < clearance)) return false;
       if (Math.hypot(x - site.x, z - site.z) < radius && siteDistance(x, z, site.ring) < clearance + (site === PARK_SITES.wollman || site === PARK_SITES.wollmanClubhouse ? 3 : 0)) return false;

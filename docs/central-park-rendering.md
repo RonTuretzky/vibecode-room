@@ -62,7 +62,7 @@ material textures. It needs no cloud rendering or external asset service.
 - `park-reflection.ts`: planar reflections update at full rate during
   camera movement, and at up to 30 Hz at rest. Ripple animation continues
   each frame. Projection changes invalidate the cached reflection.
-- `park-cameras.ts`: lawn, Pond, overlook and Wollman views, plus a content fit that
+- `park-cameras.ts`: lawn, Pond, overlook, Wollman, Arsenal and Zoo views, plus a content fit that
   accounts for viewport aspect and crown size. It no longer stops at 40 m
   when a larger forest needs more room. Fixed projector rigs retain their
   camera restrictions.
@@ -286,3 +286,23 @@ apron on either side, wider than the cell diagonal. An actual DEM/network/grid
 check measures 0.08 m at both entries (the modeled deck thickness). All 75 park
 tests, the product typecheck and a fresh 2× Metal browser pass succeeded after
 this correction; the Wollman capture was inspected again.
+
+`park-zoo-layout.ts` separates the retained connected roof into pavilions and
+open galleries and defines their ground treatment. `park-zoo.ts` batches the
+exterior model into eight meshes: brick, stone, slate, frames, glazing, water,
+turf and planting. Simplified arch surrounds reduce its initial 79k triangles
+to about 54k while preserving the silhouette, projecting sills and frame depth.
+Roofs include ridge vertices and closed gables; all three clock passages are
+open geometry, tested by ray casting. Generic woodland planting excludes the
+new buildings and formal court. The smaller water bodies now use a lighter
+green material; the Pond's separate reflective material is unchanged.
+
+Zoo verification passed 78 park tests, the product typecheck and all ten
+park/navigation browser scenarios. A further 2× Metal pass after the final
+grade/glazing refinements visited all six camera stops, live reduced-motion
+changes, environment returns and portrait views with no GPU/page errors.
+The final Zoo and Pond captures were inspected. The final Zoo mesh count is
+eight with 54,174 triangles; the test caps it at 60k. Real DEM checks cover the
+northern court entries, including overlapping terrain feathers that previously
+left an unwanted ridge. The source visitor map informed the improved camera
+composition, with the Arsenal behind the court instead of obscuring it.

@@ -11,6 +11,8 @@ export const PARK_VIEWS = [
     targetX: POND_STAGE.x - PARK_SITES.wollman.x, targetZ: POND_STAGE.z - PARK_SITES.wollman.z, angle: Math.PI },
   { label: "The Arsenal", radius: 82, height: 35, lookY: 8,
     targetX: POND_STAGE.x - PARK_SITES.arsenal.x, targetZ: POND_STAGE.z - PARK_SITES.arsenal.z, angle: -2.1 },
+  { label: "Central Park Zoo", radius: 132, height: 83, lookY: 4,
+    targetX: POND_STAGE.x - PARK_SITES.zooPool.x, targetZ: POND_STAGE.z - PARK_SITES.zooPool.z, angle: 1.05 },
 ] as const;
 
 /** Fit the complete project bounds, including crown room, in portrait or

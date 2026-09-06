@@ -6,7 +6,7 @@ not a surveyed reconstruction or a live depiction of park operations.
 
 ## Reference data
 
-`src/park3d/data/south-park-sites.json` stores fourteen OpenStreetMap ways,
+`src/park3d/data/south-park-sites.json` stores nineteen OpenStreetMap ways,
 including their IDs, revisions, coordinate order and snapshot timestamp.
 Refresh it with `python3 scripts/fetch-park-sites.py`. The small dataset is
 bundled with the app: visiting the park requires no map API or network request.
@@ -141,6 +141,32 @@ two-metre terrain triangles from pulling incoming walks down toward the
 interior floor. The same grade is protected from overlapping lower walk
 corridors, with an outer supporting apron; the frontage remains clear of earth. Patio and building masks
 keep scattered flora out of the new structures and circulation areas.
+
+## Central Park Zoo
+
+Five retained OSM ways add the connected pavilion/gallery roof (265347580),
+Tropic Zone roof (108111424), southern gift pavilion (265347582), ticket
+pavilion (265347584) and central sea lion pool (108111423). Source coordinates,
+revisions and tagged heights remain in the local snapshot. The gift pavilion
+retains OSM's ambiguous “The Arsenal” name in its metadata; its modeled role
+comes from the WCS visitor map rather than that tag.
+
+The [WCS visitor guide](https://cdn.wcs.org/2021/12/21/1bht5smgwj_Copy_of_CPZ_Social_Story__For_Web_11.19.21.pdf)
+shows the central court, separate pavilions, cafe, arched windows and Delacorte
+Clock. The model divides the long connected roof into enclosed pavilions and
+open colonnades, with a glazed tropical-house roof, slate ridges, projecting
+sills, brick piers and an octagonal pool. Its three clock passages are actual
+openings. A dedicated Zoo camera stop makes these details accessible.
+
+Interior division lines, gallery height, window rhythm, facade colors, roof
+profiles, clock proportions and court planting are interpretive. The central
+court boundary is inferred from the surrounding galleries; the pool retains
+its mapped outline. Buildings facing the court share a modeled entrance
+level, while peripheral buildings use local DEM medians. The remaining terrain
+feathers into these built levels; overlapping aprons blend continuously and
+cover the narrow gaps without restoring the original hill between them. Animal sculptures, interiors, live animals,
+exhibit enclosures and current operating arrangements are not reproduced.
+This is an exterior architectural pass, not a complete reconstruction of the Zoo.
 
 ## City edge and perimeter restoration
 

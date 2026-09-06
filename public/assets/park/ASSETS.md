@@ -53,7 +53,7 @@ no bake.
 `src/park3d/data/south-park-sites.json` is a bundled OpenStreetMap extract
 (© OpenStreetMap contributors, [ODbL](https://www.openstreetmap.org/copyright)).
 It retains source way IDs, versions, modification times and the extract's
-snapshot timestamp. `scripts/fetch-park-sites.py` refreshes these fourteen sites.
+snapshot timestamp. `scripts/fetch-park-sites.py` refreshes these nineteen sites.
 The renderer uses their geometry for landmark placement, Gapstow's outline,
 Wollman's recreation surface, and Hallett's woodland boundary. See
 [`docs/central-park-accuracy.md`](../../../docs/central-park-accuracy.md) for
@@ -71,3 +71,9 @@ retrieved from the OSM API on 2026-09-06. Their tags provide building heights.
 The [operator's rink map](https://assets.wollmanrinknyc.com/wp-content/uploads/2025/01/07210056/WRNYC-Rink-Map-8.5x11-v01.pdf-1.pdf)
 guides the overlook, clubhouse frontage, canopy and patio relationship. The
 map remains a reference document; it is not bundled as a game texture.
+
+The Zoo uses OSM ways 265347580, 108111424, 265347582, 265347584 and 108111423,
+retrieved through the OSM map API on 2026-09-06. The WCS visitor guide informs
+modeled pavilion roles, open galleries and the clock. No WCS photographs or
+map images are distributed as textures. See the accuracy document for the
+source link and the distinction between source outlines and modeled detail.
