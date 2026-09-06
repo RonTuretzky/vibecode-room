@@ -6,12 +6,12 @@
 // same module serves the park3d page (?src=open) and the room (?env=park).
 //
 // Local frame: metres, +X east, +Y up, −Z north, origin at the park centre
-// (see park-frame.ts). The terrain is unlit — the photograph carries its own
-// sun — with the canopy's slope shading baked into vertex colours so the
-// relief reads as 3D under any scene lighting; the buildings are plain
-// Lambert so the host scene's light rig owns their look.
+// (see park-frame.ts). The aerial page keeps the unlit orthophoto; the room
+// uses lit turf and path materials, a carved waterbed, and physical facades
+// so the host scene's sky and sun determine their appearance.
 
 import * as THREE from "three";
+import { parkPathTexture, parkTurfTexture } from "./park-materials";
 import { AXIS_BEARING, DEG, PARK_CENTER, PARK_HALF_LEN, PARK_HALF_WIDTH, insidePark } from "./park-frame";
 import { buildLandmarks } from "./park-landmarks";
 import { loadSkylineModels, skylineSites } from "./park-models";
@@ -32,6 +32,8 @@ export interface ParkManifest {
 }
 
 export interface ParkWorldOptions {
+  // A room view needs its neighbourhood, not every triangle across Manhattan.
+  viewBounds?: { x: number; z: number; radius: number };
   // Asset base URL (default /assets/park).
   base?: string;
   // Terrain grid step in metres (default 8 — the DEM's own resolution; the
@@ -69,8 +71,7 @@ export interface ParkWorldOptions {
   // the greenery read as a massive building in the middle of the park; at
   // eye level the hand-built landmarks and trees carry the park instead.
   clearParkInterior?: boolean;
-  // Ground parity with the garden: drape the terrain in the garden's tiled
-  // photoscan grass (crisp underfoot), tinted per-vertex by the orthophoto
+  // Drape the terrain in fine tiled turf, tinted per-vertex by the orthophoto
   // so paths, woodland floor and lawns keep their large-scale colour. The
   // default (false) keeps the raw orthophoto — right for the aerial page.
   detailGround?: boolean;
@@ -303,38 +304,50 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
     const d = Math.hypot(x - flatten.x, z - flatten.z);
     return smoothstep(flatten.radius, flatten.radius + flatten.feather, d);
   };
-  const groundAt = (x: number, z: number): number => {
+  const dryGroundAt = (x: number, z: number): number => {
     const w = terrainWeight(x, z);
     return w === 1 ? sampleDem(x, z) : anchorGround + (sampleDem(x, z) - anchorGround) * w;
   };
+  const view = opts.viewBounds;
+  const west = view ? Math.max(-halfEast, view.x - view.radius) : -halfEast;
+  const east = view ? Math.min(halfEast, view.x + view.radius) : halfEast;
+  const north = view ? Math.max(-halfNorth, view.z - view.radius) : -halfNorth;
+  const south = view ? Math.min(halfNorth, view.z + view.radius) : halfNorth;
+  const cx = (west + east) / 2, cz = (north + south) / 2;
+  const width = east - west, depth = south - north;
+  const builtWater = waterImage === null ? null : buildWater(sampleWater, dryGroundAt, width / 2, depth / 2, 2, opts.heroWaterAt, { x: cx, z: cz });
+  const bedGroundAt = (x: number, z: number) => Math.min(dryGroundAt(x, z), builtWater?.bankHeightAt(x, z) ?? Infinity);
   const displace = opts.displace !== false;
   const heightAt = (x: number, z: number): number => {
     if (!displace) {
-      return groundAt(x, z);
+      return bedGroundAt(x, z);
     }
     const w = terrainWeight(x, z);
-    const h = sampleDem(x, z) + sampleRelief(x, z);
-    return w === 1 ? h : anchorGround + (h - anchorGround) * w;
+    return bedGroundAt(x, z) + (sampleWater(x, z) < .4 ? sampleRelief(x, z) * w : 0);
   };
 
   // ── terrain ─────────────────────────────────────────────────────────────
   await nextFrame();
   const step = opts.stepM ?? manifest.dem.stepM;
-  const segsX = Math.ceil((2 * halfEast) / step);
-  const segsZ = Math.ceil((2 * halfNorth) / step);
-  const geometry = new THREE.PlaneGeometry(2 * halfEast, 2 * halfNorth, segsX, segsZ);
+  const segsX = Math.ceil(width / step);
+  const segsZ = Math.ceil(depth / step);
+  const geometry = new THREE.PlaneGeometry(width, depth, segsX, segsZ);
   // Plane XY → world XZ with −Z north: plane +Y (north, texture row 0 after
   // three's default flipY) lands on −Z.
   geometry.rotateX(-Math.PI / 2);
+  geometry.translate(cx, 0, cz);
   const pos = geometry.getAttribute("position") as THREE.BufferAttribute;
+  const groundUv = geometry.getAttribute("uv") as THREE.BufferAttribute;
   const reliefAt = new Float32Array(pos.count);
   for (let i = 0; i < pos.count; i++) {
     const x = pos.getX(i);
     const z = pos.getZ(i);
+    groundUv.setXY(i, (x + halfEast) / (2 * halfEast), 1 - (z + halfNorth) / (2 * halfNorth));
     const w = terrainWeight(x, z);
     reliefAt[i] = displace ? sampleRelief(x, z) * w : 0;
     pos.setY(i, heightAt(x, z));
   }
+  const groundAt = displace ? bedGroundAt : terrainSurfaceSampler(pos, segsX, segsZ, west, north, width, depth, bedGroundAt);
   await nextFrame();
   geometry.computeVertexNormals();
   // Bake the canopy's slope shading: a fixed afternoon sun from the
@@ -394,7 +407,7 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
     const rgba = sctx.getImageData(0, 0, sw, sh).data;
     // The garden disc's tint — lawns pull toward it so the stage never sits
     // on a differently-green island.
-    const meadowTint = new THREE.Color(0xaef29a);
+    const meadowTint = new THREE.Color(0xd9e5ae);
     for (let i = 0; i < pos.count; i++) {
       const x = pos.getX(i);
       const z = pos.getZ(i);
@@ -409,7 +422,7 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
     (geometry.getAttribute("color") as THREE.BufferAttribute).needsUpdate = true;
     const texLoader = new THREE.TextureLoader();
     const repeat = { x: (2 * halfEast) / 10, y: (2 * halfNorth) / 10 };
-    const groundDiff = texLoader.load("/assets/garden/ground/aerial_grass_rock_diff_1k.jpg");
+    const groundDiff = parkTurfTexture().clone();
     groundDiff.wrapS = THREE.RepeatWrapping;
     groundDiff.wrapT = THREE.RepeatWrapping;
     groundDiff.repeat.set(repeat.x, repeat.y);
@@ -423,6 +436,7 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
     terrainMaterial = new THREE.MeshStandardMaterial({
       map: groundDiff,
       normalMap: groundNor,
+      normalScale: new THREE.Vector2(.18, .18),
       vertexColors: true,
       roughness: 1,
       metalness: 0,
@@ -464,20 +478,11 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
   group.add(terrain);
 
   // ── water ───────────────────────────────────────────────────────────────
-  // Flat reflective sheets over the mapped water, a hand above the photo
-  // (the DEM already sits at the water surface over lakes). Built on its own
-  // 4 m grid so shorelines stay crisp whatever the terrain step.
-  let water: THREE.Mesh | null = null;
-  let heroWater: { geometry: THREE.BufferGeometry; level: number } | null = null;
-  if (waterImage !== null) {
-    await nextFrame();
-    const built = buildWater(sampleWater, groundAt, halfEast, halfNorth, 2, opts.heroWaterAt);
-    water = built.mesh;
-    heroWater = built.hero;
-    if (water !== null) {
-      group.add(water);
-    }
-  }
+  // Each mapped body has a level surface and a carved bed below it. The
+  // water uses a separate 2 m grid so its outline is independent of terrain LOD.
+  const water = builtWater?.mesh ?? null;
+  const heroWater = builtWater?.hero ?? null;
+  if (water) group.add(water);
 
   // ── paths ───────────────────────────────────────────────────────────────
   const pathLines: { width: number; pts: number[] }[] = [];
@@ -498,7 +503,7 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
   }
 
   if (opts.landmarks !== false) {
-    group.add(buildLandmarks(groundAt));
+    group.add(buildLandmarks(dryGroundAt));
   }
 
   // ── buildings ───────────────────────────────────────────────────────────
@@ -506,7 +511,14 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
   let buildings: THREE.Mesh | null = null;
   if (buildingsJson !== null) {
     await nextFrame();
-    buildings = buildBuildings(buildingsJson.buildings, manifest.buildings.unitM, groundAt, {
+    const nearbyBuildings = view ? buildingsJson.buildings.filter((row: [number, number, number, number[]]) => {
+      const ring = row[3], unit = manifest.buildings.unitM;
+      let x = 0, z = 0;
+      for (let i = 0; i < ring.length; i += 2) { x += ring[i]! * unit; z += ring[i + 1]! * unit; }
+      x /= ring.length / 2; z /= ring.length / 2;
+      return x >= west && x <= east && z >= north && z <= south;
+    }) : buildingsJson.buildings;
+    buildings = buildBuildings(nearbyBuildings, manifest.buildings.unitM, groundAt, {
       facades: opts.facades !== false,
       exclude: [...(models ? skylineSites() : []), ...(opts.clearFootprints ?? [])],
       excludeInsidePark: opts.clearParkInterior === true,
@@ -531,7 +543,7 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
     paths,
     pathLines,
     groundAt,
-    heightAt,
+    heightAt: displace ? heightAt : groundAt,
     canopyAt: sampleRelief,
     lawnAt: sampleLawn,
     waterAt: sampleWater,
@@ -570,7 +582,10 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
       group.getObjectByName("park-landmarks")?.traverse((node) => {
         if (node instanceof THREE.Mesh) {
           node.geometry.dispose();
-          (node.material as THREE.Material).dispose();
+          if (node instanceof THREE.InstancedMesh) node.dispose();
+          const material = node.material as THREE.MeshStandardMaterial;
+          if (material.userData.ownsParkMap) material.map?.dispose();
+          material.dispose();
         }
       });
       group.removeFromParent();
@@ -588,7 +603,8 @@ export function buildWater(
   halfNorth: number,
   cell: number,
   heroAt?: { x: number; z: number },
-): { mesh: THREE.Mesh | null; hero: { geometry: THREE.BufferGeometry; level: number } | null } {
+  offset = { x: 0, z: 0 },
+): { mesh: THREE.Mesh | null; hero: { geometry: THREE.BufferGeometry; level: number } | null; surfaceAt: (x: number, z: number) => number | null; bankHeightAt: (x: number, z: number) => number | null } {
   const cols = Math.ceil((2 * halfEast) / cell);
   const rows = Math.ceil((2 * halfNorth) / cell);
   // Which cells are water, then one LEVEL per connected body: lidar DEMs
@@ -598,7 +614,8 @@ export function buildWater(
   const isWater = new Uint8Array(cols * rows);
   for (let j = 0; j < rows; j++) {
     for (let i = 0; i < cols; i++) {
-      if (waterAt(-halfEast + (i + 0.5) * cell, -halfNorth + (j + 0.5) * cell) >= 0.5) {
+      const x = offset.x - halfEast + i * cell, z = offset.z - halfNorth + j * cell;
+      if (Math.max(waterAt(x, z), waterAt(x + cell, z), waterAt(x, z + cell), waterAt(x + cell, z + cell), waterAt(x + cell / 2, z + cell / 2)) >= .5) {
         isWater[j * cols + i] = 1;
       }
     }
@@ -637,7 +654,7 @@ export function buildWater(
         }
       }
     }
-    const heights = cells.map((c) => groundAt(-halfEast + ((c % cols) + 0.5) * cell, -halfNorth + (Math.floor(c / cols) + 0.5) * cell));
+    const heights = cells.map((c) => groundAt(offset.x - halfEast + ((c % cols) + 0.5) * cell, offset.z - halfNorth + (Math.floor(c / cols) + 0.5) * cell));
     heights.sort((a, b) => a - b);
     const surface = heights[Math.floor(heights.length * 0.2)];
     for (const c of cells) {
@@ -645,11 +662,55 @@ export function buildWater(
     }
     bodies++;
   }
+  const surfaceAt = (x: number, z: number): number | null => {
+    const i = Math.floor((x - offset.x + halfEast) / cell), j = Math.floor((z - offset.z + halfNorth) / cell);
+    if (i < 0 || j < 0 || i >= cols || j >= rows || !isWater[j * cols + i]) return null;
+    return level[j * cols + i]! + .1;
+  };
+  // Grow a narrow distance field out from each bank. DEM returns over water
+  // can be metres above its level; a gradual bank avoids cutting vertical,
+  // grid-shaped trenches into the surrounding paths and lawns.
+  const distance = new Uint8Array(isWater.length).fill(255);
+  const shoreLevel = new Float32Array(level);
+  let front: number[] = [];
+  for (let c = 0; c < isWater.length; c++) {
+    if (!isWater[c]) continue;
+    distance[c] = 0;
+    const i = c % cols, j = Math.floor(c / cols);
+    if ((i > 0 && !isWater[c - 1]) || (i < cols - 1 && !isWater[c + 1]) ||
+        (j > 0 && !isWater[c - cols]) || (j < rows - 1 && !isWater[c + cols])) front.push(c);
+  }
+  const bankCells = Math.ceil(14 / cell);
+  for (let step = 1; step <= bankCells; step++) {
+    const next: number[] = [];
+    for (const c of front) {
+      const i = c % cols, j = Math.floor(c / cols);
+      for (const [di, dj] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
+        const ni = i + di!, nj = j + dj!;
+        if (ni < 0 || ni >= cols || nj < 0 || nj >= rows) continue;
+        const at = nj * cols + ni;
+        if (distance[at] !== 255) continue;
+        distance[at] = step;
+        shoreLevel[at] = shoreLevel[c]!;
+        next.push(at);
+      }
+    }
+    front = next;
+  }
+  const bankHeightAt = (x: number, z: number): number | null => {
+    const gx = (x - offset.x + halfEast) / cell - .5, gz = (z - offset.z + halfNorth) / cell - .5;
+    if (gx < 0 || gz < 0 || gx >= cols - 1 || gz >= rows - 1) return null;
+    const i = Math.floor(gx), j = Math.floor(gz), tx = gx - i, tz = gz - j;
+    const corners = [j * cols + i, j * cols + i + 1, (j + 1) * cols + i, (j + 1) * cols + i + 1];
+    if (corners.some(at => distance[at] === 255)) return null;
+    const heights = corners.map(at => shoreLevel[at]! - 1 + (distance[at]! * cell / 3.8) ** 2);
+    return heights[0]! * (1 - tx) * (1 - tz) + heights[1]! * tx * (1 - tz) + heights[2]! * (1 - tx) * tz + heights[3]! * tx * tz;
+  };
   // Which body is the hero (real reflections)? The one under `heroAt`.
   let heroLabel = -1;
-  if (heroAt !== undefined) {
-    const hi = Math.min(cols - 1, Math.max(0, Math.floor((heroAt.x + halfEast) / cell)));
-    const hj = Math.min(rows - 1, Math.max(0, Math.floor((heroAt.z + halfNorth) / cell)));
+  if (heroAt !== undefined && Math.abs(heroAt.x - offset.x) < halfEast && Math.abs(heroAt.z - offset.z) < halfNorth) {
+    const hi = Math.floor((heroAt.x - offset.x + halfEast) / cell);
+    const hj = Math.floor((heroAt.z - offset.z + halfNorth) / cell);
     heroLabel = label[hj * cols + hi];
   }
   const positions: number[] = [];
@@ -664,27 +725,27 @@ export function buildWater(
       if (isWater[j * cols + i] === 0) {
         continue;
       }
-      const x0 = -halfEast + i * cell;
-      const z0 = -halfNorth + j * cell;
+      const x0 = offset.x - halfEast + i * cell;
+      const z0 = offset.z - halfNorth + j * cell;
       const y = level[j * cols + i] + 0.1;
       const T = 3.5;
-      if (label[j * cols + i] === heroLabel) {
-        // Local XY plane (x, −z) so the caller can mount it the way
-        // three's Water expects (rotation.x = −π/2 → back to y-up).
-        heroLevel = y;
-        const v = heroPositions.length / 3;
-        heroPositions.push(x0, -z0, 0, x0 + cell, -z0, 0, x0 + cell, -(z0 + cell), 0, x0, -(z0 + cell), 0);
-        heroUvs.push(x0 / T, z0 / T, (x0 + cell) / T, z0 / T, (x0 + cell) / T, (z0 + cell) / T, x0 / T, (z0 + cell) / T);
-        // CCW in local XY (normal +Z, so the −π/2 X-rotation lands it +Y).
-        heroIndex.push(v, v + 3, v + 2, v, v + 2, v + 1);
-        continue;
+      const corners = [[x0, z0], [x0 + cell, z0], [x0 + cell, z0 + cell], [x0, z0 + cell]]
+        .map(([x, z]) => ({ x: x!, z: z!, wet: waterAt(x!, z!) }));
+      const isHero = label[j * cols + i] === heroLabel;
+      const targetPositions = isHero ? heroPositions : positions;
+      const targetUvs = isHero ? heroUvs : uvs;
+      const targetIndex = isHero ? heroIndex : index;
+      if (isHero) heroLevel = y;
+      for (const order of [[0, 3, 2], [0, 2, 1]]) {
+        const polygon = clipWaterTriangle(order.map(k => corners[k!]!));
+        const base = targetPositions.length / 3;
+        for (const p of polygon) {
+          if (isHero) targetPositions.push(p.x, -p.z, 0);
+          else targetPositions.push(p.x, y, p.z);
+          targetUvs.push(p.x / T, p.z / T);
+        }
+        for (let k = 1; k + 1 < polygon.length; k++) targetIndex.push(base, base + k, base + k + 1);
       }
-      const v = positions.length / 3;
-      positions.push(x0, y, z0, x0 + cell, y, z0, x0 + cell, y, z0 + cell, x0, y, z0 + cell);
-      // World-space UVs for the ripple normal map.
-      uvs.push(x0 / T, z0 / T, (x0 + cell) / T, z0 / T, (x0 + cell) / T, (z0 + cell) / T, x0 / T, (z0 + cell) / T);
-      // Counter-clockwise from above (+Y): (x0,z0) → (x0,z1) → (x1,z1) …
-      index.push(v, v + 3, v + 2, v, v + 2, v + 1);
     }
   }
   let hero: { geometry: THREE.BufferGeometry; level: number } | null = null;
@@ -702,7 +763,7 @@ export function buildWater(
     hero = { geometry: heroGeometry, level: heroLevel };
   }
   if (positions.length === 0) {
-    return { mesh: null, hero };
+    return { mesh: null, hero, surfaceAt, bankHeightAt };
   }
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
@@ -725,7 +786,7 @@ export function buildWater(
   }
   const mesh = new THREE.Mesh(geometry, material);
   mesh.name = "park-water";
-  return { mesh, hero };
+  return { mesh, hero, surfaceAt, bankHeightAt };
 }
 
 // Tileable ripple normal map (sum of sines), generated once per page.
@@ -777,10 +838,11 @@ export function buildPaths(
 ): THREE.Mesh | null {
   const positions: number[] = [];
   const colors: number[] = [];
+  const uvs: number[] = [];
   const index: number[] = [];
   const walk = new THREE.Color(0x958e85);
   const drive = new THREE.Color(0x716f6b);
-  const brick = new THREE.Color(0x8a5747);
+  const brick = new THREE.Color(0x99917d);
   const curb = new THREE.Color(0x8f8c85);
   let seed = 0x50415448;
   const rand = () => {
@@ -793,7 +855,17 @@ export function buildPaths(
     const edge = isDrive ? curb : brick;
     const half = line.width / 2;
     const edgeHalf = Math.min(0.16, half * 0.2);
-    const n = line.pts.length / 2;
+    // Drape both sides of a densified ribbon over the actual rendered mesh.
+    // Sparse map points otherwise bridge hills and miss narrow water crossings.
+    const points: number[] = [];
+    for (let i = 0; i < line.pts.length - 2; i += 2) {
+      const x = line.pts[i]!, z = line.pts[i + 1]!;
+      const dx = line.pts[i + 2]! - x, dz = line.pts[i + 3]! - z;
+      const count = Math.max(1, Math.ceil(Math.hypot(dx, dz) / 1.5));
+      for (let j = 0; j < count; j++) points.push(x + dx * j / count, z + dz * j / count);
+    }
+    points.push(...line.pts.slice(-2));
+    const n = points.length / 2;
     let run: number[] = [];
     const flush = () => {
       if (run.length >= 4) {
@@ -804,9 +876,14 @@ export function buildPaths(
       run = [];
     };
     for (let i = 0; i < n; i++) {
-      const x = line.pts[i * 2];
-      const z = line.pts[i * 2 + 1];
-      if (waterAt(x, z) > 0.45) {
+      const x = points[i * 2];
+      const z = points[i * 2 + 1];
+      const prev = Math.max(0, i - 1), next = Math.min(n - 1, i + 1);
+      const dx = points[next * 2]! - points[prev * 2]!, dz = points[next * 2 + 1]! - points[prev * 2 + 1]!;
+      const len = Math.hypot(dx, dz) || 1, ox = -dz / len * (half + 1), oz = dx / len * (half + 1);
+      const crossSlope = Math.abs(groundAt(x + ox, z + oz) - groundAt(x - ox, z - oz)) / (line.width + 2);
+      const alongSlope = Math.abs(groundAt(points[next * 2]!, points[next * 2 + 1]!) - groundAt(points[prev * 2]!, points[prev * 2 + 1]!)) / len;
+      if (crossSlope > .4 || alongSlope > .4 || waterAt(x, z) > .35 || waterAt(x + ox, z + oz) > .35 || waterAt(x - ox, z - oz) > .35) {
         flush();
       } else {
         run.push(x, z);
@@ -831,8 +908,11 @@ export function buildPaths(
       const pz = dx / len;
       const cx = x + px * offset;
       const cz = z + pz * offset;
-      const y = groundAt(cx, cz) + lift;
-      positions.push(cx + px * half, y, cz + pz * half, cx - px * half, y, cz - pz * half);
+      for (const side of [1, -1]) {
+        const vx = cx + px * half * side, vz = cz + pz * half * side;
+        positions.push(vx, groundAt(vx, vz) + lift, vz);
+        uvs.push(vx / 2, vz / 2);
+      }
       const tone = 1 - jitter / 2 + rand() * jitter;
       colors.push(base.r * tone, base.g * tone, base.b * tone, base.r * tone, base.g * tone, base.b * tone);
       if (i > 0) {
@@ -848,6 +928,7 @@ export function buildPaths(
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
   geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+  geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
   const normals = new Float32Array(positions.length);
   for (let i = 1; i < normals.length; i += 3) {
     normals[i] = 1;
@@ -855,7 +936,9 @@ export function buildPaths(
   geometry.setAttribute("normal", new THREE.BufferAttribute(normals, 3));
   geometry.setIndex(index);
   geometry.computeBoundingSphere();
-  const mesh = new THREE.Mesh(geometry, new THREE.MeshLambertMaterial({ vertexColors: true }));
+  const map = typeof document === "undefined" ? null : parkPathTexture();
+  const mesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ vertexColors: true, map, bumpMap: map, bumpScale: .025, roughness: .95 }));
+  mesh.receiveShadow = true;
   mesh.name = "park-paths";
   return mesh;
 }
@@ -912,6 +995,7 @@ export function buildBuildings(
   const colors = new Float32Array(vertexCount * 3);
   const uvs = new Float32Array(vertexCount * 2);
   const wallIndex: number[] = [];
+  const glassIndex: number[] = [];
   const roofIndex: number[] = [];
   let v = 0;
   const roofGrey = new THREE.Color(0x8c8c8c);
@@ -975,6 +1059,7 @@ export function buildBuildings(
       return;
     }
     const height = Math.max(3, hUnits * unit);
+    const facadeIndices = year >= 1960 || height > 140 ? glassIndex : wallIndex;
     // With a facade texture the near-white tile multiplies the tone; undim
     // it and sun-facing walls blow out to paper.
     const toneScale = opts.facades !== false ? 0.78 : 1;
@@ -1007,7 +1092,7 @@ export function buildBuildings(
       const c = put(xs[j], base, zs[j], nx, 0, nz, tone, 0.78, u1, 0);
       const d = put(xs[j], top, zs[j], nx, 0, nz, tone, 1, u1, v1);
       const e = put(xs[i], top, zs[i], nx, 0, nz, tone, 1, u0, v1);
-      wallIndex.push(a, c, d, a, d, e);
+      facadeIndices.push(a, c, d, a, d, e);
     }
 
     contour.length = 0;
@@ -1040,18 +1125,24 @@ export function buildBuildings(
   geometry.setAttribute("normal", new THREE.BufferAttribute(normals, 3));
   geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
   geometry.setAttribute("uv", new THREE.BufferAttribute(uvs, 2));
-  const index = new Uint32Array(wallIndex.length + roofIndex.length);
+  const index = new Uint32Array(wallIndex.length + glassIndex.length + roofIndex.length);
   index.set(wallIndex, 0);
-  index.set(roofIndex, wallIndex.length);
+  index.set(glassIndex, wallIndex.length);
+  index.set(roofIndex, wallIndex.length + glassIndex.length);
   geometry.setIndex(new THREE.BufferAttribute(index, 1));
   geometry.addGroup(0, wallIndex.length, 0);
-  geometry.addGroup(wallIndex.length, roofIndex.length, 1);
+  geometry.addGroup(wallIndex.length, glassIndex.length, 1);
+  geometry.addGroup(wallIndex.length + glassIndex.length, roofIndex.length, 2);
   geometry.computeBoundingSphere();
-  const wallMaterial = new THREE.MeshLambertMaterial({ vertexColors: true });
+  const wallMaterial = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: .88 });
+  const glassMaterial = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: .34, metalness: .25, envMapIntensity: .5 });
   if (opts.facades !== false && typeof document !== "undefined") {
     wallMaterial.map = facadeTexture();
+    wallMaterial.bumpMap = wallMaterial.map;
+    wallMaterial.bumpScale = .055;
+    glassMaterial.map = glassFacadeTexture();
   }
-  const mesh = new THREE.Mesh(geometry, [wallMaterial, new THREE.MeshLambertMaterial({ vertexColors: true })]);
+  const mesh = new THREE.Mesh(geometry, [wallMaterial, glassMaterial, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: .95 })]);
   mesh.name = "park-buildings";
   return mesh;
 }
@@ -1071,7 +1162,7 @@ function facadeTexture(): THREE.CanvasTexture {
   canvas.width = size;
   canvas.height = size;
   const ctx = canvas.getContext("2d")!;
-  ctx.fillStyle = "#f3f1ec";
+  ctx.fillStyle = "#e1dfd5";
   ctx.fillRect(0, 0, size, size);
   let seed = 0x46414341;
   const rand = () => {
@@ -1091,10 +1182,18 @@ function facadeTexture(): THREE.CanvasTexture {
       if (r > 0.93) {
         ctx.fillStyle = "#ffe9b8"; // lit
       } else {
-        const glass = 46 + Math.floor(rand() * 34);
-        ctx.fillStyle = `rgb(${glass},${glass + 8},${glass + 18})`;
+        const glass = 95 + Math.floor(rand() * 36);
+        const reflection = ctx.createLinearGradient(x, y, x + w, y + h);
+        reflection.addColorStop(0, `rgb(${glass + 18},${glass + 29},${glass + 35})`);
+        reflection.addColorStop(.55, `rgb(${glass},${glass + 12},${glass + 19})`);
+        reflection.addColorStop(1, `rgb(${glass - 9},${glass + 2},${glass + 5})`);
+        ctx.fillStyle = reflection;
       }
       ctx.fillRect(x, y, w, h);
+      ctx.fillStyle = "rgba(70,72,66,.25)";
+      ctx.fillRect(x - 2, y - 2, w + 4, 2);
+      ctx.fillStyle = "rgba(255,249,222,.65)";
+      ctx.fillRect(x - 2, y + h, w + 4, 2);
       // Mullion.
       ctx.fillStyle = "rgba(240,238,232,0.85)";
       ctx.fillRect(x + w / 2 - 1, y, 2, h);
@@ -1109,4 +1208,64 @@ function facadeTexture(): THREE.CanvasTexture {
   facadeCanvasTexture.colorSpace = THREE.SRGBColorSpace;
   facadeCanvasTexture.anisotropy = 4;
   return facadeCanvasTexture;
+}
+
+
+/** Interpolate the same two triangles as PlaneGeometry, so paths and props sit
+ * on the rendered terrain rather than a different continuous DEM surface. */
+export function terrainSurfaceSampler(
+  positions: Pick<THREE.BufferAttribute, "getY">, cols: number, rows: number,
+  west: number, north: number, width: number, depth: number,
+  fallback: (x: number, z: number) => number,
+): (x: number, z: number) => number {
+  return (x, z) => {
+    const gx = (x - west) / width * cols, gz = (z - north) / depth * rows;
+    if (gx < 0 || gz < 0 || gx > cols || gz > rows) return fallback(x, z);
+    const i = Math.min(cols - 1, Math.floor(gx)), j = Math.min(rows - 1, Math.floor(gz));
+    const tx = gx - i, tz = gz - j, a = j * (cols + 1) + i;
+    const ha = positions.getY(a), hb = positions.getY(a + cols + 1);
+    const hc = positions.getY(a + cols + 2), hd = positions.getY(a + 1);
+    return tx + tz <= 1 ? ha + (hd - ha) * tx + (hb - ha) * tz
+      : hc + (hb - hc) * (1 - tx) + (hd - hc) * (1 - tz);
+  };
+}
+
+let glassCanvasTexture: THREE.CanvasTexture | null = null;
+function glassFacadeTexture(): THREE.CanvasTexture {
+  if (glassCanvasTexture) return glassCanvasTexture;
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = 256;
+  const ctx = canvas.getContext("2d")!;
+  ctx.fillStyle = "#b9c6ca"; ctx.fillRect(0, 0, 256, 256);
+  for (let row = 0; row < 4; row++) {
+    for (let col = 0; col < 8; col++) {
+      const x = col * 32, y = row * 64, v = Math.round(hash01(row * 8 + col + 174) * 24);
+      const gradient = ctx.createLinearGradient(x, y, x + 32, y + 64);
+      gradient.addColorStop(0, `rgb(${157 + v},${176 + v},${180 + v})`);
+      gradient.addColorStop(.65, `rgb(${119 + v},${140 + v},${145 + v})`);
+      gradient.addColorStop(1, `rgb(${143 + v},${158 + v},${162 + v})`);
+      ctx.fillStyle = gradient; ctx.fillRect(x + 1, y + 2, 30, 57);
+      ctx.fillStyle = "#75888e"; ctx.fillRect(x, y + 60, 32, 4);
+    }
+  }
+  glassCanvasTexture = new THREE.CanvasTexture(canvas);
+  glassCanvasTexture.wrapS = glassCanvasTexture.wrapT = THREE.RepeatWrapping;
+  glassCanvasTexture.colorSpace = THREE.SRGBColorSpace;
+  glassCanvasTexture.anisotropy = 8;
+  return glassCanvasTexture;
+}
+
+/** Clip a terrain cell triangle to the bilinear mask contour instead of drawing
+ * a full square per water pixel. Keeps shorelines smooth at close range. */
+export function clipWaterTriangle(points: { x: number; z: number; wet: number }[]): { x: number; z: number; wet: number }[] {
+  const output: typeof points = [];
+  for (let i = 0; i < points.length; i++) {
+    const a = points[i]!, b = points[(i + 1) % points.length]!;
+    if (a.wet >= .5) output.push(a);
+    if ((a.wet >= .5) !== (b.wet >= .5)) {
+      const t = (.5 - a.wet) / (b.wet - a.wet);
+      output.push({ x: a.x + (b.x - a.x) * t, z: a.z + (b.z - a.z) * t, wet: .5 });
+    }
+  }
+  return output;
 }

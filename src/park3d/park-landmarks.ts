@@ -17,6 +17,9 @@
 // outcrops (positions for the caller's rock scans).
 
 import * as THREE from "three";
+import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
+import { parkStoneTexture, parkFoliageTexture } from "./park-materials";
+import { mulberry32 } from "../ui/tree/spec";
 import { DEG, localFromLatLon } from "./park-frame";
 
 export interface LandmarkSpec {
@@ -189,25 +192,89 @@ function buildBethesda(): THREE.Object3D {
 }
 
 // ── Gapstow Bridge ──────────────────────────────────────────────────────────
-function buildGapstow(): THREE.Object3D {
+export function buildGapstow(): THREE.Object3D {
   const g = new THREE.Group();
-  const length = 13.5;
-  const height = 3.4;
-  const width = 3.6;
-  const shape = new THREE.Shape();
-  shape.moveTo(-length / 2, 0);
-  shape.lineTo(length / 2, 0);
-  shape.lineTo(length / 2, height - 0.6);
-  // Gentle hump of the parapet.
-  shape.quadraticCurveTo(0, height + 0.9, -length / 2, height - 0.6);
-  shape.closePath();
+  g.name = "gapstow-stone-bridge";
+  const length = 13.5, width = 3.6;
+  const top = (x: number) => 3.65 + .42 * (1 - (x / (length / 2)) ** 2);
+  const stoneMap = typeof document === "undefined" ? null : parkStoneTexture().clone();
+  stoneMap?.repeat.set(.23, .23);
+  const stone = new THREE.MeshStandardMaterial({ color: 0xc1bb9f, map: stoneMap, bumpMap: stoneMap, bumpScale: .085, roughness: .98 });
+  stone.userData.ownsParkMap = true;
+  const profile = new THREE.Shape();
+  profile.moveTo(-length / 2, 0); profile.lineTo(length / 2, 0);
+  for (let i = 24; i >= 0; i--) {
+    const x = -length / 2 + length * i / 24; profile.lineTo(x, top(x));
+  }
+  profile.closePath();
   const arch = new THREE.Path();
-  arch.absarc(0, 0.2, 3.4, Math.PI, 0, true);
-  arch.lineTo(-3.4, 0.2);
-  shape.holes.push(arch);
-  const body = new THREE.Mesh(new THREE.ExtrudeGeometry(shape, { depth: width, bevelEnabled: false }), mat(DARK_STONE, 0.9));
-  body.position.z = -width / 2;
-  g.add(body);
+  arch.absellipse(0, .1, 4.4, 2.9, Math.PI, 0, true); arch.lineTo(-4.4, .1);
+  profile.holes.push(arch);
+  const body = new THREE.Mesh(new THREE.ExtrudeGeometry(profile, { depth: width, bevelEnabled: true, bevelSize: .045, bevelThickness: .035, bevelSegments: 2, curveSegments: 32 }), stone);
+  body.position.z = -width / 2; g.add(body);
+  const masonry: THREE.BufferGeometry[] = [];
+  // Individual radial arch stones give the opening real relief and a keystone.
+  for (const side of [-1, 1]) {
+    for (let i = 0; i < 23; i++) {
+      const a = Math.PI * i / 23 + .009, b = Math.PI * (i + 1) / 23 - .009;
+      const wedge = new THREE.Shape();
+      wedge.moveTo(Math.cos(a) * 4.4, .1 + Math.sin(a) * 2.9);
+      wedge.lineTo(Math.cos(b) * 4.4, .1 + Math.sin(b) * 2.9);
+      wedge.lineTo(Math.cos(b) * 4.82, .1 + Math.sin(b) * 3.32);
+      wedge.lineTo(Math.cos(a) * 4.82, .1 + Math.sin(a) * 3.32); wedge.closePath();
+      const geo = new THREE.ExtrudeGeometry(wedge, { depth: .14, bevelEnabled: false });
+      geo.translate(0, 0, side * (width / 2 + .03) - .07); masonry.push(geo);
+    }
+    for (let i = 0; i < 30; i++) {
+      const x = -length / 2 + (i + .5) * length / 30;
+      const wall = new THREE.BoxGeometry(length / 30 - .012, .72, .42);
+      wall.translate(x, top(x) + .36, side * (width / 2 - .12)); masonry.push(wall);
+      const cap = new THREE.BoxGeometry(length / 30 - .018, .14, .56);
+      cap.translate(x, top(x) + .79, side * (width / 2 - .12)); masonry.push(cap);
+    }
+  }
+  // Approach ramps connect the raised deck to the paths on either bank.
+  // The arch alone otherwise reads as a freestanding wall with no way onto it.
+  for (const sign of [-1, 1]) {
+    const approach = new THREE.Shape();
+    approach.moveTo(sign * length / 2, 0);
+    approach.lineTo(sign * (length / 2 + 8.5), 0);
+    approach.lineTo(sign * (length / 2 + 8.5), .1);
+    approach.lineTo(sign * length / 2, top(length / 2));
+    approach.closePath();
+    const ramp = new THREE.ExtrudeGeometry(approach, { depth: width, bevelEnabled: false });
+    ramp.translate(0, 0, -width / 2);
+    g.add(new THREE.Mesh(ramp, stone));
+    for (let i = 0; i < 16; i++) {
+      const t = (i + .5) / 16, x = sign * (length / 2 + t * 8.5);
+      const y = top(length / 2) * (1 - t) + .1 * t;
+      for (const side of [-1, 1]) {
+        const wall = new THREE.BoxGeometry(8.5 / 16, .5, .36);
+        wall.rotateZ(-sign * Math.atan((top(length / 2) - .1) / 8.5));
+        wall.translate(x, y + .25, side * (width / 2 - .12));
+        masonry.push(wall);
+      }
+    }
+  }
+  const detailParts = masonry.map(geo => geo.index ? geo.toNonIndexed() : geo);
+  const detail = mergeGeometries(detailParts)!;
+  detailParts.forEach(geo => { if (!masonry.includes(geo)) geo.dispose(); });
+  masonry.forEach(geo => geo.dispose());
+  g.add(new THREE.Mesh(detail, mat(0xb5ae94, .96)));
+  // Ivy follows the parapet rather than obscuring the arch silhouette.
+  if (typeof document !== "undefined") {
+    const ivyMat = new THREE.MeshStandardMaterial({ map: parkFoliageTexture(), color: 0x6f8548, alphaTest: .4, side: THREE.DoubleSide, roughness: .9 });
+    const ivy = new THREE.InstancedMesh(new THREE.PlaneGeometry(.65, .8), ivyMat, 90);
+    const dummy = new THREE.Object3D(), rng = mulberry32(937);
+    for (let i = 0; i < 90; i++) {
+      const x = (rng() - .5) * length;
+      dummy.position.set(x, top(x) + .4 - rng() * .6, (i % 2 ? -1 : 1) * (width / 2 + .17));
+      dummy.rotation.set(0, i % 2 ? Math.PI : 0, (rng() - .5) * .8);
+      dummy.updateMatrix(); ivy.setMatrixAt(i, dummy.matrix);
+    }
+    ivy.computeBoundingSphere(); g.add(ivy);
+  }
+  g.traverse(node => { if (node instanceof THREE.Mesh) { node.castShadow = true; node.receiveShadow = true; } });
   return g;
 }
 

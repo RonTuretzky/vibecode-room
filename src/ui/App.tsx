@@ -1,3 +1,4 @@
+import { PARK_VIEWS } from "../park3d/park-cameras";
 import { AddProject } from "./AddProject";
 import { projectStatus } from "./project-status";
 import { ProjectWorkspace } from "./ProjectWorkspace";
@@ -401,6 +402,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
   const [hiddenIdeas, setHiddenIdeas] = useState<ReadonlySet<string>>(new Set());
   const [hiddenTrees, setHiddenTrees] = useState<ReadonlySet<string>>(new Set());
   const [fitSignal, setFitSignal] = useState(0);
+  const [parkViewSignal, setParkViewSignal] = useState(0);
   const toggleHiddenIdea = useCallback((id: string) => {
     setHiddenIdeas((current) => {
       const next = new Set(current);
@@ -2520,6 +2522,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
         flatLock={flatLock}
         autoFit={autoFit}
         fitSignal={fitSignal}
+        parkViewSignal={parkViewSignal}
         focusUpid={
           guided !== null && (guided.step === "race" || guided.step === "decide")
             ? guided.focusUpid
@@ -2862,6 +2865,13 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
         >
           {sceneLayout === "radial" ? "⊹ Radial" : sceneLayout === "ball" ? "◉ Ball" : "⊙ Disk"}
         </button>
+        {sceneEnvironment === "park" && sceneMode === "garden" && !cornerLock && !flatLock && (
+          <button type="button" className="ctl-button" data-testid="park-view-button"
+            onClick={() => setParkViewSignal(n => n + 1)}
+            title="Explore the Pond, take in the skyline, then return to your project lawn.">
+            ◇ {PARK_VIEWS[(parkViewSignal + 1) % PARK_VIEWS.length]!.label}
+          </button>
+        )}
         <button
           type="button"
           className="ctl-button scene-fit"
