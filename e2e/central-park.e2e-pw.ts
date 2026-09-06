@@ -43,6 +43,13 @@ test("park controls fit a narrow browser and remain usable", async ({ page }) =>
   await page.getByTestId("scene-zen-button").click();
   await expect(page.getByTestId("scene-controls")).toHaveCSS("opacity", "0");
   await expect(page.getByTestId("scene-controls")).toHaveCSS("pointer-events", "none");
+  for (const selector of [".wall-clock", ".workspace-nav"]) {
+    await expect(page.locator(selector)).toHaveCSS("opacity", "0");
+    await expect(page.locator(selector)).toHaveCSS("pointer-events", "none");
+  }
+  // Some browser/OS combinations do not expose fullscreen at all.
+  await expect(page.locator(".fullscreen-button")).toBeHidden();
   await page.keyboard.press("Escape");
   await expect(view).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Room actions" })).toHaveCSS("opacity", "1");
 });

@@ -1,6 +1,7 @@
 import { createParkFurniture } from "../park3d/park-furniture";
-import { PARK_VIEWS } from "../park3d/park-cameras";
+import { PARK_VIEWS, fitParkProjects } from "../park3d/park-cameras";
 import { createParkAtmosphere } from "../park3d/park-atmosphere";
+import { ParkReflectionSchedule } from "../park3d/park-reflection";
 import { createParkGrove } from "../park3d/park-grove";
 import { parkTurfTexture } from "../park3d/park-materials";
 import { AdaptiveResolution } from "./render-quality";
@@ -497,8 +498,8 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
     // rebinds both once its world loads (inside the park wall, never water).
     let plantableAt: (x: number, z: number) => boolean = (x, z) => Math.hypot(x, z) < 104;
     let plantGroundY: (x: number, z: number) => number = () => 0;
-    const maxOrbitRadius = () => (parkEnvActive() ? 700 : 45);
-    const maxOrbitHeight = () => (parkEnvActive() ? 520 : 30);
+    const maxOrbitRadius = () => (parkEnvActive() ? 1200 : 45);
+    const maxOrbitHeight = () => (parkEnvActive() ? 900 : 30);
     // Pulling far back in the park also lifts the eye above the city, so the
     // long zoom-out becomes the aerial postcard instead of a flight through
     // a tower's floors.
@@ -512,6 +513,9 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
     // cap the pixel ratio, and (below) pause the frame loop while hidden.
     const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    // Water renders the scene recursively. Count the eye, reflection and
+    // shadow work together, resetting only at the start of our own render.
+    renderer.info.autoReset = false;
     // Software rasterizers (headless test Chromium, GPU-less kiosks) crawl
     // under the photoscan flora — they keep the sky/ground and the primitive
     // node glyphs, and skip the instanced vegetation + real-model nodes.
@@ -934,6 +938,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
       let parkWater: THREE.MeshStandardMaterial | null = null;
       let parkHeroWater: Water | null = null;
       let parkDisposed = false;
+      const parkFineDetail: { mesh: THREE.InstancedMesh; distance: number }[] = [];
       if (pondScene) {
         // Shared for the page (see park-world.ts): a garden↔orbit toggle
         // re-attaches the same world instead of refetching and rebuilding.
@@ -943,10 +948,9 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
           // Level the terrain under the stage, easing back to the real
           // ground beyond (park metres).
           flatten: { x: POND_STAGE.x, z: POND_STAGE.z, radius: meadowRadius + 4, feather: 14 },
-          orthoMaxWidth: 3072,
           // No raised canopy — real trees stand in for the mask instead.
           displace: false,
-          // Ground parity with the garden: crisp tiled grass, photo-tinted.
+          // Continuous grass/soil albedo with crisp, locally generated detail.
           detailGround: true,
           // The 5th Ave blocks press right against the stage from the east;
           // clear the extrusions near the room so only the skyline across
@@ -1005,6 +1009,10 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
                   instanced.castShadow = batch.some(p => Math.hypot(p.x, p.z) < 260);
                   instanced.receiveShadow = true;
                   group.add(instanced);
+                  // Individual petals/blades cost full scan geometry even
+                  // when smaller than a pixel in a project overview.
+                  const detailReach = /^(grass|flower|dandelion)/.test(name) ? 180 : name.startsWith("shrub") ? 320 : 0;
+                  if (detailReach) parkFineDetail.push({ mesh: instanced, distance: detailReach + instanced.boundingSphere!.radius });
                 }
               });
             }
@@ -1052,7 +1060,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
             trees.push({ x: rx, z: rz, px: p.x, pz: p.z, scale: 0.68 + rng() * 0.32, rot: rng() * Math.PI * 2 });
           }
           console.info(`[park-flora] jacaranda_tree: ${trees.length} placed`);
-          const nearTrees = trees.filter(p => Math.hypot(p.x, p.z) < 155).sort((a, b) => Math.hypot(a.x, a.z) - Math.hypot(b.x, b.z)).slice(0, 24);
+          const nearTrees = trees.filter(p => Math.hypot(p.x, p.z) < 120).sort((a, b) => Math.hypot(a.x, a.z) - Math.hypot(b.x, b.z)).slice(0, 16);
           instance("jacaranda_tree", nearTrees);
           const nearSet = new Set(nearTrees);
           parkGrove = createParkGrove(trees.filter(p => !nearSet.has(p)).map(p => ({
@@ -1243,7 +1251,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
                   sunDirection: atmosphere!.direction,
                   sunColor: 0xffe8c0,
                   waterColor: 0x426354,
-                  distortionScale: 1.1,
+                  distortionScale: .7,
                   fog: true,
                 });
                 hero.rotation.x = -Math.PI / 2;
@@ -1256,7 +1264,9 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
               // Reflect the trees, skyline and shore. Skip the fine undergrowth
               // whose extra geometry adds little to a rippled reflection.
               const original = world.group.userData.heroWaterRender as typeof hero.onBeforeRender;
+              const reflectionSchedule = new ParkReflectionSchedule();
               hero.onBeforeRender = (renderer2, scene2, camera2, geometry2, material2, group2) => {
+                if (!reflectionSchedule.shouldRender(performance.now(), camera2)) return;
                 const hidden: THREE.Object3D[] = [];
                 scene.traverse((node) => {
                   if (node instanceof THREE.InstancedMesh && node.visible && !node.userData.parkReflect) {
@@ -1415,6 +1425,10 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
         group,
         update: (t, dt) => {
           atmosphere?.update(t);
+          for (const { mesh, distance } of parkFineDetail) {
+            const cutoff = mesh.visible ? distance + 15 : distance - 15;
+            mesh.visible = camera.position.distanceToSquared(mesh.boundingSphere!.center) < cutoff * cutoff;
+          }
           // The Pond's ripples drift even when motion is reduced elsewhere —
           // still water reads as a rendering bug, not calm.
           if (parkWater?.normalMap != null) {
@@ -3994,7 +4008,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
     };
     // Ideal fit framing → out; FALSE when the scene is empty (caller decides:
     // one-shot fit resets the rig, the auto-fit poll just waits).
-    const computeFitTargets = (out: { targetX: number; targetZ: number; radius: number; height: number }): boolean => {
+    const computeFitTargets = (out: { targetX: number; targetZ: number; radius: number; height: number; lookY: number }): boolean => {
       fitBox.makeEmpty();
       let hasContent = fitExpand(ideaEntries);
       hasContent = fitExpand(treeEntries) || hasContent;
@@ -4003,23 +4017,27 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
       if (!hasContent) {
         return false;
       }
+      if (parkEnvActive()) {
+        Object.assign(out, fitParkProjects(fitBox, camera.fov, camera.aspect));
+        return true;
+      }
+      out.lookY = rig.lookY;
       fitBox.getCenter(fitCenter);
       fitBox.getSize(fitSize);
       const spread = Math.max(fitSize.x, fitSize.z, 6);
       out.targetX = fitCenter.x;
       out.targetZ = fitCenter.z;
       out.radius = Math.min(40, spread * 0.85 + 7);
-      out.height = parkEnvActive() && layoutRef.current === "radial"
-        ? Math.min(16, out.radius * .15 + 2.7)
-        : Math.min(26, out.radius * 0.34 + 2);
+      out.height = Math.min(26, out.radius * 0.34 + 2);
       return true;
     };
-    const fitIdeal = { targetX: 0, targetZ: 0, radius: 0, height: 0 };
+    const fitIdeal = { targetX: 0, targetZ: 0, radius: 0, height: 0, lookY: 0 };
     const applyFitTargets = () => {
       rig.dTargetX = fitIdeal.targetX;
       rig.dTargetZ = fitIdeal.targetZ;
       rig.dRadius = fitIdeal.radius;
       rig.dHeight = fitIdeal.height;
+      rig.lookY = fitIdeal.lookY;
     };
     const fitToContent = () => {
       if (skyViewRef.current) {
@@ -4739,12 +4757,14 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
     let lastFit = fitRef.current;
     let lastParkView = parkViewRef.current;
     let frameTotalMs = 0, frameSamples = 0;
+    const frameIntervals: number[] = [];
+    let frameDrawTotal = 0, frameTriangleTotal = 0, renderedSamples = 0;
     // The focus upid whose camera move has already been applied. A pending
     // focus retries each frame until the node exists (fresh spawns land a beat
     // after the snapshot), then applies exactly once.
     let appliedFocus: string | null = null;
 
-    const clock = new THREE.Clock();
+    const clock = new THREE.Timer();
     let rafId = 0;
     let running = false;
     const frame = () => {
@@ -4752,10 +4772,14 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
         return;
       }
       rafId = requestAnimationFrame(frame);
+      clock.update();
       const frameSeconds = clock.getDelta();
       const dt = Math.min(frameSeconds, 0.1);
-      if (frameSeconds > 0 && frameSeconds < .25) { frameTotalMs += frameSeconds * 1000; frameSamples++; }
-      const t = clock.elapsedTime;
+      if (frameSeconds > 0) {
+        frameTotalMs += frameSeconds * 1000; frameSamples++;
+        frameIntervals.push(frameSeconds * 1000);
+      }
+      const t = clock.getElapsed();
       const now = performance.now();
       const ratio = resolution.sample(frameSeconds * 1000, now);
       if (ratio !== null) { renderer.setPixelRatio(ratio); resize(); }
@@ -5581,7 +5605,11 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
         rig2.lineGeom.getAttribute("color").needsUpdate = true;
       }
 
+      renderer.info.reset();
       renderer.render(scene, camera);
+      frameDrawTotal += renderer.info.render.calls;
+      frameTriangleTotal += renderer.info.render.triangles;
+      renderedSamples++;
       if (relayoutDue) {
         // Prober stamps that need live values: how many cards are showing and
         // what the sky actually costs (read AFTER render so the count is real).
@@ -5594,9 +5622,14 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
         container.dataset.labeledClouds = String(labeled);
         container.dataset.drawCalls = String(renderer.info.render.calls);
         container.dataset.triangles = String(renderer.info.render.triangles);
+        container.dataset.averageDrawCalls = (frameDrawTotal / renderedSamples).toFixed(1);
+        container.dataset.averageTriangles = String(Math.round(frameTriangleTotal / renderedSamples));
+        frameDrawTotal = 0; frameTriangleTotal = 0; renderedSamples = 0;
         container.dataset.pixelRatio = renderer.getPixelRatio().toFixed(2);
         container.dataset.frameMs = (frameTotalMs / Math.max(1, frameSamples)).toFixed(1);
-        frameTotalMs = 0; frameSamples = 0;
+        frameIntervals.sort((a, b) => a - b);
+        container.dataset.frameP95Ms = (frameIntervals[Math.max(0, Math.ceil(frameIntervals.length * .95) - 1)] ?? 0).toFixed(1);
+        frameTotalMs = 0; frameSamples = 0; frameIntervals.length = 0;
         container.dataset.parkReady = String(parkEnvActive() && scene.getObjectByName("park-world") !== undefined);
       }
     };
@@ -5611,7 +5644,9 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
         return;
       }
       running = true;
-      clock.getDelta();
+      clock.reset();
+      frameTotalMs = 0; frameSamples = 0; frameIntervals.length = 0;
+      frameDrawTotal = 0; frameTriangleTotal = 0; renderedSamples = 0;
       frame();
     };
     const stopLoop = () => {
@@ -5630,6 +5665,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
 
     return () => {
       stopLoop();
+      clock.dispose();
       unregisterDwellSource();
       unregisterCameraControl();
       unregisterFlatPoseControl?.();

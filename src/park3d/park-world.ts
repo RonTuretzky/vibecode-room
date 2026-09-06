@@ -11,7 +11,10 @@
 // so the host scene's sky and sun determine their appearance.
 
 import * as THREE from "three";
-import { parkPathTexture, parkTurfTexture } from "./park-materials";
+import { parkTerrainAxis, terrainAxisCoordinate } from "./park-terrain-grid";
+import { skylineProfile } from "./park-skyline-profile";
+import { parkGroundColor } from "./park-ground";
+import { parkPathTexture, parkGroundDetailTexture } from "./park-materials";
 import { AXIS_BEARING, DEG, PARK_CENTER, PARK_HALF_LEN, PARK_HALF_WIDTH, insidePark } from "./park-frame";
 import { buildLandmarks } from "./park-landmarks";
 import { loadSkylineModels, skylineSites } from "./park-models";
@@ -71,8 +74,7 @@ export interface ParkWorldOptions {
   // the greenery read as a massive building in the middle of the park; at
   // eye level the hand-built landmarks and trees carry the park instead.
   clearParkInterior?: boolean;
-  // Drape the terrain in fine tiled turf, tinted per-vertex by the orthophoto
-  // so paths, woodland floor and lawns keep their large-scale colour. The
+  // Use fine tiled ground detail and a continuous lawn/woodland palette. The
   // default (false) keeps the raw orthophoto — right for the aerial page.
   detailGround?: boolean;
   // Blend the surface to the anchor's ground height inside `radius`, easing
@@ -257,7 +259,7 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
     opts.relief === false ? null : loadImage(`${base}/${manifest.relief.file}`),
     opts.water === false ? null : loadImage(`${base}/${manifest.water.file}`),
     opts.relief === false ? null : loadImage(`${base}/${manifest.lawn.file}`),
-    loadOrtho(`${base}/${manifest.ortho.file}`, manifest.ortho.width, manifest.ortho.height, opts.orthoMaxWidth),
+    opts.detailGround === true ? null : loadOrtho(`${base}/${manifest.ortho.file}`, manifest.ortho.width, manifest.ortho.height, opts.orthoMaxWidth),
     opts.buildings === false
       ? null
       : fetchOk(`${base}/${manifest.buildings.file}`).then((r) => r.json() as Promise<{ buildings: [number, number, number, number[]][] }>),
@@ -329,8 +331,14 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
   // ── terrain ─────────────────────────────────────────────────────────────
   await nextFrame();
   const step = opts.stepM ?? manifest.dem.stepM;
-  const segsX = Math.ceil(width / step);
-  const segsZ = Math.ceil(depth / step);
+  // Avoid spending most of the frame on metre-scale triangles beneath
+  // distant city blocks. Preserve the regular grid for the aerial renderer.
+  const axes = opts.detailGround && !displace && view ? {
+    x: parkTerrainAxis(west, east, view.x, step),
+    z: parkTerrainAxis(north, south, view.z, step),
+  } : undefined;
+  const segsX = axes ? axes.x.length - 1 : Math.ceil(width / step);
+  const segsZ = axes ? axes.z.length - 1 : Math.ceil(depth / step);
   const geometry = new THREE.PlaneGeometry(width, depth, segsX, segsZ);
   // Plane XY → world XZ with −Z north: plane +Y (north, texture row 0 after
   // three's default flipY) lands on −Z.
@@ -340,14 +348,15 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
   const groundUv = geometry.getAttribute("uv") as THREE.BufferAttribute;
   const reliefAt = new Float32Array(pos.count);
   for (let i = 0; i < pos.count; i++) {
-    const x = pos.getX(i);
-    const z = pos.getZ(i);
+    const x = axes ? axes.x[i % (segsX + 1)]! : pos.getX(i);
+    const z = axes ? axes.z[Math.floor(i / (segsX + 1))]! : pos.getZ(i);
+    pos.setX(i, x); pos.setZ(i, z);
     groundUv.setXY(i, (x + halfEast) / (2 * halfEast), 1 - (z + halfNorth) / (2 * halfNorth));
     const w = terrainWeight(x, z);
     reliefAt[i] = displace ? sampleRelief(x, z) * w : 0;
     pos.setY(i, heightAt(x, z));
   }
-  const groundAt = displace ? bedGroundAt : terrainSurfaceSampler(pos, segsX, segsZ, west, north, width, depth, bedGroundAt);
+  const groundAt = displace ? bedGroundAt : terrainSurfaceSampler(pos, segsX, segsZ, west, north, width, depth, bedGroundAt, axes);
   await nextFrame();
   geometry.computeVertexNormals();
   // Bake the canopy's slope shading: a fixed afternoon sun from the
@@ -380,49 +389,24 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
   }
   geometry.computeBoundingSphere();
 
-  orthoTexture.colorSpace = THREE.SRGBColorSpace;
-  orthoTexture.anisotropy = 8;
+  if (orthoTexture) {
+    orthoTexture.colorSpace = THREE.SRGBColorSpace;
+    orthoTexture.anisotropy = 8;
+  }
   let terrainMaterial: THREE.Material | THREE.Material[];
   if (opts.detailGround === true) {
-    // Tint each vertex from a small readback of the photo, then let the
-    // garden's tiled grass carry the surface detail. Lifted toward the
-    // meadow's brightness so the room's stage and the park ground match.
-    const sampleCanvas = document.createElement("canvas");
-    const sw = 512;
-    const sh = Math.round((sw * manifest.ortho.height) / manifest.ortho.width);
-    sampleCanvas.width = sw;
-    sampleCanvas.height = sh;
-    const sctx = sampleCanvas.getContext("2d", { willReadFrequently: true })!;
-    // loadOrtho may hand back a pre-flipped ImageBitmap (flipY=false) — keep
-    // orientation consistent: row 0 of the DRAWN canvas must be north.
-    const image = orthoTexture.image as CanvasImageSource;
-    if (orthoTexture.flipY) {
-      sctx.drawImage(image, 0, 0, sw, sh);
-    } else {
-      sctx.translate(0, sh);
-      sctx.scale(1, -1);
-      sctx.drawImage(image, 0, 0, sw, sh);
-      sctx.setTransform(1, 0, 0, 1, 0, 0);
-    }
-    const rgba = sctx.getImageData(0, 0, sw, sh).data;
-    // The garden disc's tint — lawns pull toward it so the stage never sits
-    // on a differently-green island.
-    const meadowTint = new THREE.Color(0xd9e5ae);
+    const tint = new THREE.Color();
     for (let i = 0; i < pos.count; i++) {
-      const x = pos.getX(i);
-      const z = pos.getZ(i);
-      const px = Math.min(sw - 1, Math.max(0, Math.round(((x + halfEast) / (2 * halfEast)) * sw)));
-      const py = Math.min(sh - 1, Math.max(0, Math.round(((z + halfNorth) / (2 * halfNorth)) * sh)));
-      const o = (py * sw + px) * 4;
-      const t = sampleLawn(x, z) * 0.6;
-      colors[i * 3] *= Math.min(1, (rgba[o] / 255) * 2.1) * (1 - t) + meadowTint.r * t;
-      colors[i * 3 + 1] *= Math.min(1, (rgba[o + 1] / 255) * 2.1) * (1 - t) + meadowTint.g * t;
-      colors[i * 3 + 2] *= Math.min(1, (rgba[o + 2] / 255) * 2.1) * (1 - t) + meadowTint.b * t;
+      const x = pos.getX(i), z = pos.getZ(i);
+      parkGroundColor(x, z, sampleLawn(x, z), sampleRelief(x, z), sampleWater(x, z), insidePark(x, z, 6), tint);
+      colors[i * 3] *= tint.r;
+      colors[i * 3 + 1] *= tint.g;
+      colors[i * 3 + 2] *= tint.b;
     }
     (geometry.getAttribute("color") as THREE.BufferAttribute).needsUpdate = true;
     const texLoader = new THREE.TextureLoader();
     const repeat = { x: (2 * halfEast) / 10, y: (2 * halfNorth) / 10 };
-    const groundDiff = parkTurfTexture().clone();
+    const groundDiff = parkGroundDetailTexture().clone();
     groundDiff.wrapS = THREE.RepeatWrapping;
     groundDiff.wrapT = THREE.RepeatWrapping;
     groundDiff.repeat.set(repeat.x, repeat.y);
@@ -441,10 +425,8 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
       roughness: 1,
       metalness: 0,
     });
-    // The photo no longer drapes the ground; release it.
-    orthoTexture.dispose();
     // The grass belongs INSIDE the wall only: split the index into a park
-    // group (tiled grass) and a city group (plain ortho-tinted paving) by
+    // group (tiled grass) and a city group (neutral paving) by
     // triangle centroid, so the blocks between buildings read as street,
     // not meadow.
     const src = geometry.getIndex()!;
@@ -465,7 +447,7 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
     geometry.clearGroups();
     geometry.addGroup(0, parkTris.length, 0);
     geometry.addGroup(parkTris.length, cityTris.length, 1);
-    const paving = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, metalness: 0, color: 0xb8b5af });
+    const paving = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, metalness: 0 });
     terrainMaterial = [terrainMaterial, paving];
   } else {
     terrainMaterial = new THREE.MeshBasicMaterial({ map: orthoTexture, vertexColors: true });
@@ -519,6 +501,7 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
       return x >= west && x <= east && z >= north && z <= south;
     }) : buildingsJson.buildings;
     buildings = buildBuildings(nearbyBuildings, manifest.buildings.unitM, groundAt, {
+      detail: opts.detailGround,
       facades: opts.facades !== false,
       exclude: [...(models ? skylineSites() : []), ...(opts.clearFootprints ?? [])],
       excludeInsidePark: opts.clearParkInterior === true,
@@ -555,7 +538,7 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
         tm.normalMap?.dispose();
         tm.dispose();
       }
-      orthoTexture.dispose();
+      orthoTexture?.dispose();
       if (buildings !== null) {
         buildings.geometry.dispose();
         for (const m of Array.isArray(buildings.material) ? buildings.material : [buildings.material]) {
@@ -973,6 +956,7 @@ export function loadParkWorldShared(opts: ParkWorldOptions = {}): Promise<ParkWo
 // ambient occlusion from the street canyon).
 export interface BuildBuildingsOptions {
   facades?: boolean;
+  detail?: boolean;
   exclude?: { x: number; z: number; r: number }[];
   excludeInsidePark?: boolean;
 }
@@ -984,12 +968,11 @@ export function buildBuildings(
   opts: BuildBuildingsOptions = {},
 ): THREE.Mesh {
   let vertexCount = 0;
-  let indexCount = 0;
-  for (const [, , , ring] of rows) {
-    const n = ring.length / 2;
-    vertexCount += 4 * n + n;
-    indexCount += 6 * n + 3 * (n - 2);
-  }
+  const profiles = rows.map(([height, , year, ring]) => skylineProfile(height * unit, year, ring, opts.detail === true));
+  rows.forEach(([, , , ring], i) => {
+    const n = ring.length / 2, tiers = profiles[i]!.length;
+    vertexCount += (tiers * 4 + (tiers - 1) * 4 + 1) * n;
+  });
   const positions = new Float32Array(vertexCount * 3);
   const normals = new Float32Array(vertexCount * 3);
   const colors = new Float32Array(vertexCount * 3);
@@ -1073,26 +1056,44 @@ export function buildBuildings(
     const tone = facadeTone(year, height, b + 1).multiplyScalar(toneScale);
     const roof = tone.clone().lerp(roofGrey, 0.5).multiplyScalar(0.9 / Math.max(toneScale, 0.01));
 
-    let run = 0;
+    const tiers = profiles[b]!;
+    let bottom = 0;
+    for (let tierIndex = 0; tierIndex < tiers.length; tierIndex++) {
+      const tier = tiers[tierIndex]!;
+      const tierX = (i: number) => cx0 + (xs[i]! - cx0) * tier.scale;
+      const tierZ = (i: number) => cz0 + (zs[i]! - cz0) * tier.scale;
+      let run = 0;
+      for (let i = 0; i < n; i++) {
+        const j = (i + 1) % n;
+        const xi = tierX(i), zi = tierZ(i), xj = tierX(j), zj = tierZ(j);
+        const dx = xj - xi, dz = zj - zi, len = Math.hypot(dx, dz) || 1;
+        const nx = -dz / len, nz = dx / len;
+        const u0 = run / FACADE_TILE_M, u1 = (run + len) / FACADE_TILE_M;
+        run += len;
+        const low = base + bottom * height, high = base + tier.top * height;
+        const v0 = bottom * height / FACADE_TILE_M, v1 = tier.top * height / FACADE_TILE_M;
+        const a = put(xi, low, zi, nx, 0, nz, tone, .78 + bottom * .22, u0, v0);
+        const c = put(xj, low, zj, nx, 0, nz, tone, .78 + bottom * .22, u1, v0);
+        const d = put(xj, high, zj, nx, 0, nz, tone, .78 + tier.top * .22, u1, v1);
+        const e = put(xi, high, zi, nx, 0, nz, tone, .78 + tier.top * .22, u0, v1);
+        facadeIndices.push(a, c, d, a, d, e);
+        const next = tiers[tierIndex + 1];
+        if (next) {
+          const innerXi = cx0 + (xs[i]! - cx0) * next.scale, innerZi = cz0 + (zs[i]! - cz0) * next.scale;
+          const innerXj = cx0 + (xs[j]! - cx0) * next.scale, innerZj = cz0 + (zs[j]! - cz0) * next.scale;
+          const a = put(xi, high, zi, 0, 1, 0, roof, 1, 0, 0);
+          const c = put(xj, high, zj, 0, 1, 0, roof, 1, 0, 0);
+          const d = put(innerXj, high, innerZj, 0, 1, 0, roof, 1, 0, 0);
+          const e = put(innerXi, high, innerZi, 0, 1, 0, roof, 1, 0, 0);
+          roofIndex.push(a, c, d, a, d, e);
+        }
+      }
+      bottom = tier.top;
+    }
+    const roofScale = tiers[tiers.length - 1]!.scale;
     for (let i = 0; i < n; i++) {
-      const j = (i + 1) % n;
-      const dx = xs[j] - xs[i];
-      const dz = zs[j] - zs[i];
-      const len = Math.hypot(dx, dz) || 1;
-      // Counter-clockwise from above: outward is the right-hand side.
-      const nx = -dz / len;
-      const nz = dx / len;
-      // Facade UVs run in wall-metres (u along the ring so window columns
-      // never stretch, v vertically from the base).
-      const u0 = run / FACADE_TILE_M;
-      const u1 = (run + len) / FACADE_TILE_M;
-      const v1 = height / FACADE_TILE_M;
-      run += len;
-      const a = put(xs[i], base, zs[i], nx, 0, nz, tone, 0.78, u0, 0);
-      const c = put(xs[j], base, zs[j], nx, 0, nz, tone, 0.78, u1, 0);
-      const d = put(xs[j], top, zs[j], nx, 0, nz, tone, 1, u1, v1);
-      const e = put(xs[i], top, zs[i], nx, 0, nz, tone, 1, u0, v1);
-      facadeIndices.push(a, c, d, a, d, e);
+      xs[i] = cx0 + (xs[i]! - cx0) * roofScale;
+      zs[i] = cz0 + (zs[i]! - cz0) * roofScale;
     }
 
     contour.length = 0;
@@ -1121,10 +1122,10 @@ export function buildBuildings(
   });
 
   const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-  geometry.setAttribute("normal", new THREE.BufferAttribute(normals, 3));
-  geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
-  geometry.setAttribute("uv", new THREE.BufferAttribute(uvs, 2));
+  geometry.setAttribute("position", new THREE.BufferAttribute(opts.detail ? positions.subarray(0, v * 3) : positions, 3));
+  geometry.setAttribute("normal", new THREE.BufferAttribute(opts.detail ? normals.subarray(0, v * 3) : normals, 3));
+  geometry.setAttribute("color", new THREE.BufferAttribute(opts.detail ? colors.subarray(0, v * 3) : colors, 3));
+  geometry.setAttribute("uv", new THREE.BufferAttribute(opts.detail ? uvs.subarray(0, v * 2) : uvs, 2));
   const index = new Uint32Array(wallIndex.length + glassIndex.length + roofIndex.length);
   index.set(wallIndex, 0);
   index.set(glassIndex, wallIndex.length);
@@ -1217,9 +1218,11 @@ export function terrainSurfaceSampler(
   positions: Pick<THREE.BufferAttribute, "getY">, cols: number, rows: number,
   west: number, north: number, width: number, depth: number,
   fallback: (x: number, z: number) => number,
+  axes?: { x: readonly number[]; z: readonly number[] },
 ): (x: number, z: number) => number {
   return (x, z) => {
-    const gx = (x - west) / width * cols, gz = (z - north) / depth * rows;
+    const gx = axes ? terrainAxisCoordinate(axes.x, x) : (x - west) / width * cols;
+    const gz = axes ? terrainAxisCoordinate(axes.z, z) : (z - north) / depth * rows;
     if (gx < 0 || gz < 0 || gx > cols || gz > rows) return fallback(x, z);
     const i = Math.min(cols - 1, Math.floor(gx)), j = Math.min(rows - 1, Math.floor(gz));
     const tx = gx - i, tz = gz - j, a = j * (cols + 1) + i;

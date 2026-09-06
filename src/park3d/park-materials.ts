@@ -16,31 +16,70 @@ function texture(name: string, size: number, paint: (ctx: CanvasRenderingContext
   return map;
 }
 
-/** A whole twig on a card, with small separated leaves instead of giant blades. */
+/** A rounded spray of broad leaves, with gaps that survive mipmapping. */
 export function parkFoliageTexture(): THREE.CanvasTexture {
-  return texture("foliage", 256, (ctx, size) => {
+  return texture("foliage", 256, (ctx) => {
     const rng = mulberry32(7291);
-    ctx.strokeStyle = "#899778";
-    ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.moveTo(128, 249); ctx.quadraticCurveTo(108, 135, 133, 22); ctx.stroke();
-    for (let i = 0; i < 17; i++) {
-      const y = 33 + i * 11;
-      const side = i % 2 ? 1 : -1;
-      const x = 123 + side * (20 + rng() * 22);
-      ctx.strokeStyle = "#9ca68c";
-      ctx.lineWidth = 1.2;
-      ctx.beginPath(); ctx.moveTo(124, y + 25); ctx.lineTo(x, y); ctx.stroke();
-      ctx.save(); ctx.translate(x, y); ctx.rotate(side * (.6 + rng() * .4));
-      const w = 14 + rng() * 6, h = 23 + rng() * 12;
-      const shade = ctx.createLinearGradient(-w, 0, w, 0);
-      shade.addColorStop(0, "#95ac7e"); shade.addColorStop(.47, "#f0f4c7"); shade.addColorStop(1, "#becd9e");
-      ctx.fillStyle = shade;
-      ctx.beginPath(); ctx.moveTo(0, h); ctx.bezierCurveTo(-w * 1.5, h * .1, -w, -h * .7, 0, -h); ctx.bezierCurveTo(w, -h * .6, w * 1.5, h * .2, 0, h); ctx.fill();
-      ctx.strokeStyle = "rgba(105,126,79,.35)"; ctx.lineWidth = .8;
-      ctx.beginPath(); ctx.moveTo(0, h); ctx.lineTo(0, -h); ctx.stroke();
-      ctx.restore();
+    for (let branch = 0; branch < 7; branch++) {
+      const angle = -Math.PI + .32 + branch * (Math.PI - .64) / 6;
+      const bx = 128, by = 220 - Math.abs(branch - 3) * 12;
+      const reach = Math.min(134 + rng() * 45, 100 / Math.max(.05, Math.abs(Math.cos(angle))));
+      const dx = Math.cos(angle) * reach, dy = Math.sin(angle) * reach;
+      ctx.strokeStyle = "#8b9170"; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(bx, by); ctx.quadraticCurveTo(bx + dx * .55, by + dy * .3, bx + dx, by + dy); ctx.stroke();
+      for (let i = 0; i < 8; i++) {
+        const t = .25 + i * .095, side = i % 2 ? 1 : -1;
+        const x = bx + dx * t - Math.sin(angle) * side * 13;
+        const y = by + dy * t + Math.cos(angle) * side * 13;
+        ctx.save(); ctx.translate(x, y); ctx.rotate(angle + Math.PI / 2 + side * .7);
+        const w = 8 + rng() * 4, h = 13 + rng() * 6;
+        const shade = ctx.createLinearGradient(-w, 0, w, 0);
+        shade.addColorStop(0, "#aabb87"); shade.addColorStop(.5, "#e0e9af"); shade.addColorStop(1, "#bdcf94");
+        ctx.fillStyle = shade;
+        ctx.beginPath(); ctx.moveTo(0, h);
+        ctx.bezierCurveTo(-w * 1.3, h * .35, -w, -h * .65, 0, -h);
+        ctx.bezierCurveTo(w, -h * .65, w * 1.3, h * .35, 0, h); ctx.fill();
+        ctx.strokeStyle = "rgba(100,123,68,.25)"; ctx.lineWidth = .65;
+        ctx.beginPath(); ctx.moveTo(0, h); ctx.lineTo(0, -h * .8); ctx.stroke();
+        ctx.restore();
+      }
     }
   });
+}
+
+/** Thin-leaf diffuse response, reusing the already shadowed direct light.
+ * No extra render target, transmission pass, or unshadowed emissive glow. */
+export function parkLeafMaterial(color = 0xffffff): THREE.MeshStandardMaterial {
+  const material = new THREE.MeshStandardMaterial({ map: parkFoliageTexture(), color,
+    alphaTest: .25, alphaToCoverage: true, side: THREE.DoubleSide, roughness: .92 });
+  material.onBeforeCompile = shader => {
+    const physical = THREE.ShaderChunk.lights_physical_pars_fragment.replace(
+      "reflectedLight.directDiffuse += irradiance * BRDF_Lambert( material.diffuseContribution );",
+      `float leafCosine = dot( geometryNormal, directLight.direction );
+       float leafDiffuse = max( 0.0, ( leafCosine + 0.3 ) / 1.3 ) * 0.86
+         + max( 0.0, -leafCosine ) * 0.18;
+       reflectedLight.directDiffuse += leafDiffuse * directLight.color * BRDF_Lambert( material.diffuseContribution );`,
+    );
+    shader.fragmentShader = shader.fragmentShader.replace("#include <lights_physical_pars_fragment>", physical);
+  };
+  material.customProgramCacheKey = () => "park-leaf-wrap-v1";
+  return material;
+}
+
+/** Neutral fine detail: grass/soil hue comes from linear terrain colors. */
+export function parkGroundDetailTexture(): THREE.CanvasTexture {
+  const map = texture("ground-detail", 512, (ctx, size) => {
+    const rng = mulberry32(39121);
+    ctx.fillStyle = "#deded6"; ctx.fillRect(0, 0, size, size);
+    for (let i = 0; i < 38000; i++) {
+      const x = rng() * size, y = rng() * size, light = 160 + rng() * 85;
+      ctx.strokeStyle = `rgba(${light},${light},${light * .96},.32)`;
+      ctx.lineWidth = .5 + rng() * .8;
+      ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + rng() * 2 - 1, y - 1 - rng() * 4); ctx.stroke();
+    }
+  });
+  map.wrapS = map.wrapT = THREE.RepeatWrapping;
+  return map;
 }
 
 export function parkTurfTexture(): THREE.CanvasTexture {
@@ -62,17 +101,33 @@ export function parkTurfTexture(): THREE.CanvasTexture {
 export function parkStoneTexture(): THREE.CanvasTexture {
   const map = texture("stone", 512, (ctx, size) => {
     const rng = mulberry32(18476);
-    ctx.fillStyle = "#716f5d"; ctx.fillRect(0, 0, size, size);
-    for (let row = 0; row < 9; row++) {
-      let x = row % 2 ? -42 : 0;
+    ctx.fillStyle = "#817e70"; ctx.fillRect(0, 0, size, size);
+    const courses = [50, 62, 58, 71, 61, 54, 81, 75];
+    let y = 0;
+    for (const height of courses) {
+      let x = -rng() * 65;
       while (x < size) {
-        const w = 43 + rng() * 52, y = row * size / 9;
-        const l = 95 + rng() * 58;
-        ctx.fillStyle = `rgb(${l * 1.06},${l * 1.02},${l * .89})`;
-        ctx.beginPath(); ctx.roundRect(x + 2, y + 2, w - 4, size / 9 - 4, 4 + rng() * 5); ctx.fill();
-        ctx.strokeStyle = "rgba(226,220,190,.2)"; ctx.lineWidth = 2; ctx.stroke();
+        const w = 43 + rng() * 58, l = 137 + rng() * 22;
+        const bevel = 3 + rng() * 4;
+        ctx.fillStyle = `rgb(${l * 1.04},${l * 1.01},${l * .91})`;
+        ctx.beginPath();
+        ctx.moveTo(x + bevel, y + 2); ctx.lineTo(x + w - bevel, y + 2 + rng() * 3);
+        ctx.lineTo(x + w - 2, y + bevel); ctx.lineTo(x + w - 3, y + height - bevel);
+        ctx.lineTo(x + w - bevel, y + height - 2); ctx.lineTo(x + bevel, y + height - 2 - rng() * 3);
+        ctx.lineTo(x + 2, y + height - bevel); ctx.lineTo(x + 2, y + bevel); ctx.closePath(); ctx.fill();
+        ctx.strokeStyle = "rgba(214,210,191,.18)"; ctx.lineWidth = 1.2; ctx.stroke();
         x += w;
       }
+      y += height;
+    }
+    // Overlapping translucent mineral/moss stains span the joints, so stone
+    // variation reads as weathering instead of a high-contrast checkerboard.
+    for (let i = 0; i < 65; i++) {
+      const x = rng() * size, y = rng() * size, r = 12 + rng() * 42;
+      const wash = ctx.createRadialGradient(x, y, 0, x, y, r);
+      wash.addColorStop(0, i % 3 ? "rgba(73,81,51,.13)" : "rgba(228,222,196,.12)");
+      wash.addColorStop(1, "rgba(90,93,62,0)"); ctx.fillStyle = wash;
+      ctx.fillRect(x - r, y - r, r * 2, r * 2);
     }
     for (let i = 0; i < 32000; i++) {
       ctx.fillStyle = rng() > .5 ? "rgba(26,32,22,.1)" : "rgba(244,237,210,.12)";

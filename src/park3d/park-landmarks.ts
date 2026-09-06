@@ -18,7 +18,7 @@
 
 import * as THREE from "three";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
-import { parkStoneTexture, parkFoliageTexture } from "./park-materials";
+import { parkStoneTexture, parkLeafMaterial } from "./park-materials";
 import { mulberry32 } from "../ui/tree/spec";
 import { DEG, localFromLatLon } from "./park-frame";
 
@@ -199,7 +199,7 @@ export function buildGapstow(): THREE.Object3D {
   const top = (x: number) => 3.65 + .42 * (1 - (x / (length / 2)) ** 2);
   const stoneMap = typeof document === "undefined" ? null : parkStoneTexture().clone();
   stoneMap?.repeat.set(.23, .23);
-  const stone = new THREE.MeshStandardMaterial({ color: 0xc1bb9f, map: stoneMap, bumpMap: stoneMap, bumpScale: .085, roughness: .98 });
+  const stone = new THREE.MeshStandardMaterial({ color: 0xd8d1b9, map: stoneMap, bumpMap: stoneMap, bumpScale: .045, roughness: .98 });
   stone.userData.ownsParkMap = true;
   const profile = new THREE.Shape();
   profile.moveTo(-length / 2, 0); profile.lineTo(length / 2, 0);
@@ -260,16 +260,34 @@ export function buildGapstow(): THREE.Object3D {
   const detail = mergeGeometries(detailParts)!;
   detailParts.forEach(geo => { if (!masonry.includes(geo)) geo.dispose(); });
   masonry.forEach(geo => geo.dispose());
-  g.add(new THREE.Mesh(detail, mat(0xb5ae94, .96)));
+  g.add(new THREE.Mesh(detail, stone));
+  // Every masonry piece uses metre-scale UVs, including boxes whose default
+  // 0..1 UVs would stretch an entire wall texture across one coping stone.
+  g.traverse(node => {
+    if (!(node instanceof THREE.Mesh)) return;
+    const position = node.geometry.getAttribute("position"), normal = node.geometry.getAttribute("normal");
+    const uv = node.geometry.getAttribute("uv");
+    for (let i = 0; i < position.count; i++) {
+      const x = position.getX(i), y = position.getY(i), z = position.getZ(i);
+      if (Math.abs(normal.getY(i)) > .65) uv.setXY(i, x, z);
+      else uv.setXY(i, Math.abs(normal.getX(i)) > .65 ? z : x, y);
+    }
+  });
   // Ivy follows the parapet rather than obscuring the arch silhouette.
   if (typeof document !== "undefined") {
-    const ivyMat = new THREE.MeshStandardMaterial({ map: parkFoliageTexture(), color: 0x6f8548, alphaTest: .4, side: THREE.DoubleSide, roughness: .9 });
-    const ivy = new THREE.InstancedMesh(new THREE.PlaneGeometry(.65, .8), ivyMat, 90);
+    const ivyMat = parkLeafMaterial(0x718849);
+    const count = 168;
+    const ivy = new THREE.InstancedMesh(new THREE.PlaneGeometry(.72, .68), ivyMat, count);
     const dummy = new THREE.Object3D(), rng = mulberry32(937);
-    for (let i = 0; i < 90; i++) {
-      const x = (rng() - .5) * length;
-      dummy.position.set(x, top(x) + .4 - rng() * .6, (i % 2 ? -1 : 1) * (width / 2 + .17));
-      dummy.rotation.set(0, i % 2 ? Math.PI : 0, (rng() - .5) * .8);
+    for (let i = 0; i < count; i++) {
+      const cluster = Math.floor(i / 12), strand = i % 12;
+      const side = cluster % 2 ? -1 : 1;
+      const rootX = -length / 2 + (cluster % 7 + .5) * length / 7;
+      const drop = strand / 12 * (Math.abs(rootX) > 4.5 ? 1.75 : .9);
+      const x = rootX + Math.sin(strand * .85 + cluster) * .3;
+      dummy.position.set(x, top(x) + .65 - drop, side * (width / 2 + .19 + rng() * .07));
+      dummy.rotation.set((rng() - .5) * .3, side < 0 ? Math.PI : 0, Math.PI + (rng() - .5) * .7);
+      dummy.scale.setScalar(.8 + rng() * .5);
       dummy.updateMatrix(); ivy.setMatrixAt(i, dummy.matrix);
     }
     ivy.computeBoundingSphere(); g.add(ivy);

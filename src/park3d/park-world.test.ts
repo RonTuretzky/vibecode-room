@@ -99,6 +99,25 @@ describe("park buildings extrusion", () => {
     expect(outside.geometry.boundingBox!.max.y).toBeCloseTo(10 - 0.4 + 30);
   });
 
+  test("illustrative roof setbacks preserve height, footprint, and outward winding", () => {
+    for (const ring of [cw, ccw]) {
+      const mesh = buildBuildings([[900, 0, 1930, ring]], 0.1, groundAt, { detail: true });
+      const { roofs, walls } = checkWinding(mesh);
+      expect(walls).toBe(24);
+      expect(roofs).toBe(18);
+      mesh.geometry.computeBoundingBox();
+      expect(mesh.geometry.boundingBox!.min.x).toBeCloseTo(0);
+      expect(mesh.geometry.boundingBox!.max.x).toBeCloseTo(20);
+      expect(mesh.geometry.boundingBox!.max.y).toBeCloseTo(99.6);
+      const ray = new THREE.Raycaster(new THREE.Vector3(.5, 120, 5), new THREE.Vector3(0, -1, 0));
+      expect(ray.intersectObject(mesh)[0]!.point.y).toBeCloseTo(9.6 + 90 * .73, 4);
+      ray.ray.origin.x = 10;
+      expect(ray.intersectObject(mesh)[0]!.point.y).toBeCloseTo(99.6, 4);
+      mesh.geometry.dispose();
+      for (const material of mesh.material as THREE.Material[]) material.dispose();
+    }
+  });
+
   test("the base is darker than the top (street-canyon shading)", () => {
     const mesh = buildBuildings([[300, 0, 1920, cw]], 0.1, groundAt);
     const pos = mesh.geometry.getAttribute("position");

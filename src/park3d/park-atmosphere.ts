@@ -9,7 +9,8 @@ export function createParkAtmosphere(renderer: THREE.WebGLRenderer, scene: THREE
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFShadowMap;
   renderer.shadowMap.autoUpdate = false;
-  scene.fog = new THREE.FogExp2(0xd1dace, .0019);
+  const haze = new THREE.FogExp2(0xd1dace, .0019);
+  scene.fog = haze;
 
   const sky = new Sky();
   sky.name = "park-atmospheric-sky";
@@ -48,16 +49,19 @@ export function createParkAtmosphere(renderer: THREE.WebGLRenderer, scene: THREE
   return {
     direction,
     update(t: number) {
+      // Keep distant projects readable when Fit rises above a large forest;
+      // normal lawn/Pond/overlook views retain their original atmosphere.
+      haze.density = .0019 * THREE.MathUtils.clamp(140 / Math.max(140, camera.position.y), .35, 1);
       // Shadows move with foliage, at a lower cadence than camera rendering.
       if (t - lastShadow > .18) {
         camera.getWorldDirection(forward);
         const reach = camera.position.y > 20 && forward.y < -.08
-          ? THREE.MathUtils.clamp(-camera.position.y / forward.y, 28, 300) : 28;
+          ? THREE.MathUtils.clamp(-camera.position.y / forward.y, 28, 1600) : 28;
         focus.set(Math.round((camera.position.x + forward.x * reach) / 2) * 2, 0,
           Math.round((camera.position.z + forward.z * reach) / 2) * 2);
         sun.target.position.copy(focus);
         sun.position.copy(focus).addScaledVector(direction, 260);
-        const span = THREE.MathUtils.clamp(camera.position.y * 1.35, 48, 160);
+        const span = THREE.MathUtils.clamp(camera.position.y * 1.35, 48, 320);
         Object.assign(sun.shadow.camera, { left: -span, right: span, top: span, bottom: -span, far: 600 });
         sun.shadow.camera.updateProjectionMatrix();
         renderer.shadowMap.needsUpdate = true;

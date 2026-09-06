@@ -270,7 +270,11 @@ button {
 .deep.zen .scene-controls,
 .deep.zen .hide-menu,
 .deep.zen .wall-badge,
+.deep.zen .wall-clock,
+.deep.zen .fullscreen-button,
+.deep.zen .workspace-nav,
 .deep.zen .voice-flash {
+  visibility: hidden;
   opacity: 0;
   pointer-events: none !important;
 }
@@ -280,7 +284,8 @@ button {
    faded (invisible) header buttons would still take clicks and dwell hits. */
 .deep.zen .status-bar *,
 .deep.zen .stage *,
-.deep.zen .scene-controls * {
+.deep.zen .scene-controls *,
+.deep.zen .workspace-nav * {
   pointer-events: none !important;
 }
 

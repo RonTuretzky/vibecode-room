@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { parkFoliageTexture } from "../../park3d/park-materials";
+import { parkLeafMaterial } from "../../park3d/park-materials";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { hashSeed, mulberry32, type TreeAdornmentKind, type TreeSpec3D, type TreeVec3 } from "./spec";
 
@@ -206,6 +206,17 @@ function leafGeometry(): THREE.BufferGeometry {
   geometry.computeVertexNormals();
   leafGeoCache = geometry;
   return leafGeoCache;
+}
+
+let naturalLeafGeoCache: THREE.BufferGeometry | null = null;
+function naturalLeafGeometry(): THREE.BufferGeometry {
+  if (!naturalLeafGeoCache) {
+    naturalLeafGeoCache = leafGeometry().clone();
+    // A branching spray is wider than a single blade; fewer instances cover
+    // the same crown while each leaf remains small within its alpha card.
+    naturalLeafGeoCache.scale(1.7, 1.12, 1);
+  }
+  return naturalLeafGeoCache;
 }
 
 let crystalGeoCache: THREE.BufferGeometry | null = null;
@@ -433,7 +444,7 @@ export function buildTree(spec: TreeSpec3D, quality: TreeQuality, natural = fals
   const swayColors: THREE.Color[] = [];
   const foliage = spec.foliage;
   if (foliage !== undefined && foliage.density > 0 && q.foliageMul > 0 && foliage.palette.length > 0) {
-    const palette = (natural ? [0x3a5728, 0x547232, 0x68813b, 0x455e2c, 0x839849] : foliage.palette).map((c) => new THREE.Color(c));
+    const palette = (natural ? [0x64813e, 0x728d49, 0x829953, 0x56723b, 0x95a962] : foliage.palette).map((c) => new THREE.Color(c));
     const scatter = (rng: () => number, at: THREE.Vector3, spreadXZ: number, spreadY: number, count: number) => {
       for (let i = 0; i < count; i += 1) {
         const theta = rng() * Math.PI * 2;
@@ -445,7 +456,9 @@ export function buildTree(spec: TreeSpec3D, quality: TreeQuality, natural = fals
         );
         sway.push({
           position,
-          quaternion: randomLeafQuaternion(rng),
+          quaternion: natural
+            ? new THREE.Quaternion().setFromEuler(new THREE.Euler((rng() - .5) * Math.PI, rng() * Math.PI * 2, rng() * Math.PI * 2))
+            : randomLeafQuaternion(rng),
           scale: 0.8 + rng() * 0.8,
           phase: rng() * Math.PI * 2,
           amp: 0.05 + rng() * 0.06,
@@ -461,7 +474,7 @@ export function buildTree(spec: TreeSpec3D, quality: TreeQuality, natural = fals
       }
       const length = curve.getLength();
       const rng = mulberry32(hashSeed(`${spec.id}:foliage:${branch.id}`));
-      const count = Math.round(Math.min(90, Math.max(28, length * 14)) * foliage.density * q.foliageMul * (natural ? 2.8 : 1));
+      const count = Math.round(Math.min(90, Math.max(28, length * 14)) * foliage.density * q.foliageMul * (natural ? 1.9 : 1));
       for (let i = 0; i < count; i += 1) {
         // Bias clusters toward the outer branch (sqrt skews t → 1).
         const t = 0.34 + 0.66 * Math.sqrt(rng());
@@ -471,7 +484,7 @@ export function buildTree(spec: TreeSpec3D, quality: TreeQuality, natural = fals
       // A tuft at every sub-twig tip.
       for (const twig of twigsByBranch.get(branch.id) ?? []) {
         twig.curve.getPoint(1, P);
-        scatter(rng, P, 0.5, 0.55, Math.round((natural ? 24 : 9) * foliage.density * q.foliageMul));
+        scatter(rng, P, 0.5, 0.55, Math.round((natural ? 18 : 9) * foliage.density * q.foliageMul));
       }
     }
     // Crown tuft at the trunk top so the tree reads as a full canopy.
@@ -481,7 +494,7 @@ export function buildTree(spec: TreeSpec3D, quality: TreeQuality, natural = fals
       new THREE.Vector3(0, height * 0.97, 0),
       1.15,
       1.5,
-      Math.round((natural ? 220 : 80) * foliage.density * q.foliageMul),
+      Math.round((natural ? 165 : 80) * foliage.density * q.foliageMul),
     );
   }
   // Leaf-adornment tufts (every quality: they carry data, not just looks).
@@ -507,15 +520,14 @@ export function buildTree(spec: TreeSpec3D, quality: TreeQuality, natural = fals
   }
   let leaves: THREE.InstancedMesh | null = null;
   if (sway.length > 0) {
-    const leafMat = new THREE.MeshStandardMaterial({
-      map: natural ? parkFoliageTexture() : leafTexture(),
-      alphaToCoverage: natural,
+    const leafMat = natural ? parkLeafMaterial() : new THREE.MeshStandardMaterial({
+      map: leafTexture(),
       alphaTest: 0.45,
       side: THREE.DoubleSide,
       roughness: 0.85,
       metalness: 0,
     });
-    leaves = new THREE.InstancedMesh(leafGeometry(), leafMat, sway.length);
+    leaves = new THREE.InstancedMesh(natural ? naturalLeafGeometry() : leafGeometry(), leafMat, sway.length);
     leaves.castShadow = natural;
     leaves.receiveShadow = natural;
     leaves.raycast = noRaycast;
