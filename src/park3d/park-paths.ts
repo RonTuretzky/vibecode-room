@@ -3,32 +3,40 @@ import { walkMaterial, walkSurface, type WalkSurface } from './park-walk-materia
 import type { ParkWalk } from './park-walks';
 import { walkJunctions } from './park-walk-junctions';
 
-interface Station { x: number; z: number; px: number; pz: number }
-interface Vertex { x: number; y: number; z: number; wet: number }
+interface Station { x: number; z: number; px: number; pz: number; along: number }
+interface Vertex { x: number; y: number; z: number; wet: number; along: number; edge: number }
 
 /** Fine ribbons follow the rendered terrain. Clip at the actual path edge:
  * a steep bank or water beside a walk must not erase the entire walk. */
 export function buildPaths(lines: ParkWalk[], groundAt: (x: number, z: number) => number,
   waterAt: (x: number, z: number) => number,
   bounds?: { west: number; east: number; north: number; south: number; focus?: { x: number; z: number } }): THREE.Mesh | null {
-  const positions: number[] = [], colors: number[] = [], uvs: number[] = [];
+  const positions: number[] = [], colors: number[] = [], uvs: number[] = [], walkCoords: number[] = [];
   const batches = new Map<WalkSurface['texture'], number[]>();
   let activeTexture: WalkSurface['texture'] = 'aggregate';
   const stone = new THREE.Color(0xa09a8b), edge = new THREE.Color(0x99917d);
   const sharedVertices = new Map<string, number>();
   const insideOtherWalk = walkJunctions(lines);
-  let clipMarginAt: ((x: number, z: number) => boolean) | undefined;
+  let clipWalkAt: ((x: number, z: number) => boolean) | undefined;
   const detailStep = (x: number, z: number) => {
     const d = bounds?.focus ? Math.hypot(x - bounds.focus.x, z - bounds.focus.z) : 0;
     return d > 500 ? 5 : d > 300 ? 3 : 1.5;
   };
   let stairTreads = 0;
+  let halfWidth = 0;
   function vertex(x: number, z: number, lift: number, y?: number): Vertex {
-    return { x, z, y: y ?? groundAt(x, z) + lift, wet: waterAt(x, z) };
+    return { x, z, y: y ?? groundAt(x, z) + lift, wet: waterAt(x, z), along: 0, edge: 0 };
+  }
+  function between(p: Vertex, q: Vertex, t: number, lift?: number): Vertex {
+    const v = vertex(p.x + (q.x - p.x) * t, p.z + (q.z - p.z) * t, lift ?? 0,
+      lift == null ? p.y + (q.y - p.y) * t : undefined);
+    v.along = p.along + (q.along - p.along) * t;
+    v.edge = p.edge + (q.edge - p.edge) * t;
+    return v;
   }
   function emit(a: Vertex, b: Vertex, c: Vertex, color: THREE.Color, lift?: number, depth = 0) {
     if (lift != null && depth < 4) {
-      const mid = (p: Vertex, q: Vertex) => vertex((p.x + q.x) / 2, (p.z + q.z) / 2, lift);
+      const mid = (p: Vertex, q: Vertex) => between(p, q, .5, lift);
       const ab = mid(a, b), bc = mid(b, c), ca = mid(c, a);
       const centerY = groundAt((a.x + b.x + c.x) / 3, (a.z + b.z + c.z) / 3) + lift;
       // Subdivide only where interpolation would bury or visibly suspend the
@@ -41,7 +49,7 @@ export function buildPaths(lines: ParkWalk[], groundAt: (x: number, z: number) =
     }
     for (const p of [a, b, c]) {
       // Share smooth walk vertices. Stairs retain sharp tread/riser normals.
-      const key = lift == null ? null : `${p.x.toFixed(4)},${p.y.toFixed(4)},${p.z.toFixed(4)},${color.r},${activeTexture}`;
+      const key = lift == null ? null : `${p.x.toFixed(4)},${p.y.toFixed(4)},${p.z.toFixed(4)},${color.r},${activeTexture},${p.along.toFixed(4)},${p.edge.toFixed(4)}`;
       let id = key == null ? undefined : sharedVertices.get(key);
       if (id == null) {
         id = positions.length / 3;
@@ -49,6 +57,7 @@ export function buildPaths(lines: ParkWalk[], groundAt: (x: number, z: number) =
         const tone = 1 + Math.sin(p.x * .17 + p.z * .29) * .025;
         colors.push(color.r * tone, color.g * tone, color.b * tone);
         uvs.push(p.x / 2, (p.z + p.y * .4) / 2);
+        walkCoords.push(p.along, p.edge);
         if (key != null) sharedVertices.set(key, id);
       }
       let batch = batches.get(activeTexture);
@@ -58,11 +67,11 @@ export function buildPaths(lines: ParkWalk[], groundAt: (x: number, z: number) =
   }
   function triangle(a: Vertex, b: Vertex, c: Vertex, color: THREE.Color, lift?: number, depth = 0) {
     const source = [a, b, c], clipped: Vertex[] = [];
-    const isDry = (p: Vertex) => p.wet < .5 && !clipMarginAt?.(p.x, p.z);
-    if (clipMarginAt && depth < 4) {
+    const isDry = (p: Vertex) => p.wet < .5 && !clipWalkAt?.(p.x, p.z);
+    if (clipWalkAt && depth < 4) {
       const midpoints = source.map((p, i) => {
         const q = source[(i + 1) % 3]!;
-        return vertex((p.x + q.x) / 2, (p.z + q.z) / 2, lift ?? 0, lift == null ? (p.y + q.y) / 2 : undefined);
+        return between(p, q, .5, lift);
       });
       const center = vertex((a.x + b.x + c.x) / 3, (a.z + b.z + c.z) / 3, lift ?? 0);
       const states = source.map(isDry);
@@ -83,12 +92,12 @@ export function buildPaths(lines: ParkWalk[], groundAt: (x: number, z: number) =
       for (let k = 0; k < 14; k++) {
         const t = (lo + hi) / 2;
         const x = p.x + (q.x - p.x) * t, z = p.z + (q.z - p.z) * t;
-        if ((waterAt(x, z) < .5 && !clipMarginAt?.(x, z)) === dry) lo = t;
+        if ((waterAt(x, z) < .5 && !clipWalkAt?.(x, z)) === dry) lo = t;
         else hi = t;
       }
       const t = dry ? lo : hi;
-      const x = p.x + (q.x - p.x) * t, z = p.z + (q.z - p.z) * t;
-      clipped.push({ x, y: lift == null ? p.y + (q.y - p.y) * t : groundAt(x, z) + lift, z, wet: 0 });
+      const clippedVertex = between(p, q, t, lift); clippedVertex.wet = 0;
+      clipped.push(clippedVertex);
     }
     if (clipped.length < 3) return;
     for (let k = 1; k + 1 < clipped.length; k++) emit(clipped[0]!, clipped[k]!, clipped[k + 1]!, color, lift);
@@ -97,7 +106,8 @@ export function buildPaths(lines: ParkWalk[], groundAt: (x: number, z: number) =
     triangle(a, b, c, color, lift); triangle(a, c, d, color, lift);
   }
   function side(s: Station, offset: number, lift: number, y?: number) {
-    return vertex(s.x + s.px * offset, s.z + s.pz * offset, lift, y);
+    const v = vertex(s.x + s.px * offset, s.z + s.pz * offset, lift, y);
+    v.along = s.along; v.edge = Math.max(0, halfWidth - Math.abs(offset)); return v;
   }
   for (const line of lines) {
     if (line.width <= 0 || line.pts.length < 4) continue;
@@ -114,12 +124,15 @@ export function buildPaths(lines: ParkWalk[], groundAt: (x: number, z: number) =
     }
     if (!points.length) continue;
     points.push({ x: line.pts.at(-2)!, z: line.pts.at(-1)! });
+    let along = 0;
     const stations: Station[] = points.map((p, i) => {
       const a = points[Math.max(0, i - 1)]!, b = points[Math.min(points.length - 1, i + 1)]!;
       const dx = b.x - a.x, dz = b.z - a.z, length = Math.hypot(dx, dz) || 1;
-      return { ...p, px: -dz / length, pz: dx / length };
+      if (i > 0) along += Math.hypot(p.x - points[i - 1]!.x, p.z - points[i - 1]!.z);
+      return { ...p, px: -dz / length, pz: dx / length, along };
     });
     const half = line.width / 2, margin = Math.min(.32, half * .4);
+    halfWidth = half;
     // Narrow transverse cells conform to terrain triangles at banks and bends.
     const cross: number[] = [-half, -half + margin];
     const coreWidth = line.width - margin * 2, cuts = Math.max(1, Math.ceil(coreWidth / 2));
@@ -139,10 +152,10 @@ export function buildPaths(lines: ParkWalk[], groundAt: (x: number, z: number) =
         const left = cross[k]!, right = cross[k - 1]!, border = k === 1 || k === cross.length - 1;
         const lift = border && !isSteps && surface.hardEdge ? .085 : .07;
         const color = border && !isSteps && surface.hardEdge ? edge : coreColor;
-        activeTexture = border && !isSteps && surface.hardEdge ? 'aggregate' : surface.texture;
-        clipMarginAt = border && !isSteps && surface.hardEdge ? (x, z) => insideOtherWalk(line, x, z) : undefined;
+        activeTexture = border && !isSteps && surface.hardEdge ? 'edging' : surface.texture;
+        clipWalkAt = isSteps ? undefined : (x, z) => insideOtherWalk(line, x, z, !(border && surface.hardEdge));
         quad(side(a, left, lift, top), side(b, left, lift, top), side(b, right, lift, top), side(a, right, lift, top), color, isSteps ? undefined : lift);
-        clipMarginAt = undefined;
+        clipWalkAt = undefined;
         activeTexture = 'aggregate';
         if (top != null && previousTop != null && Math.abs(top - previousTop) > .002) {
           const low = Math.min(top, previousTop), high = Math.max(top, previousTop);
@@ -173,6 +186,7 @@ export function buildPaths(lines: ParkWalk[], groundAt: (x: number, z: number) =
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
   geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
   geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geometry.setAttribute('parkWalkCoord', new THREE.Float32BufferAttribute(walkCoords, 2));
   const index: number[] = [], materials: THREE.MeshStandardMaterial[] = [];
   for (const [texture, batch] of batches) {
     geometry.addGroup(index.length, batch.length, materials.length);

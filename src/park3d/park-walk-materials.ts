@@ -3,7 +3,7 @@ import { mulberry32 } from '../ui/tree/spec';
 import { parkPathTexture } from './park-materials';
 import type { ParkWalk } from './park-walks';
 
-type WalkTexture = 'aggregate' | 'pavers' | 'earth' | 'mulch' | 'boards';
+type WalkTexture = 'aggregate' | 'pavers' | 'earth' | 'mulch' | 'boards' | 'edging';
 export interface WalkSurface { texture: WalkTexture; color: number; hardEdge: boolean }
 
 /** Surface tags determine the material family. Untagged routes keep the
@@ -23,7 +23,7 @@ export function walkSurface(line: ParkWalk): WalkSurface {
 
 const textures = new Map<WalkTexture, THREE.CanvasTexture>();
 function surfaceTexture(kind: WalkTexture): THREE.CanvasTexture {
-  if (kind === 'aggregate') return parkPathTexture();
+  if (kind === 'aggregate' || kind === 'edging') return parkPathTexture();
   const cached = textures.get(kind); if (cached) return cached;
   const size = 512, canvas = document.createElement('canvas'); canvas.width = canvas.height = size;
   const ctx = canvas.getContext('2d')!, rng = mulberry32(kind === 'pavers' ? 91877 : kind === 'mulch' ? 71193 : 34491);
@@ -66,6 +66,46 @@ function surfaceTexture(kind: WalkTexture): THREE.CanvasTexture {
 
 export function walkMaterial(kind: WalkTexture): THREE.MeshStandardMaterial {
   const map = typeof document === 'undefined' ? null : surfaceTexture(kind);
-  return new THREE.MeshStandardMaterial({ vertexColors: true, map, bumpMap: map,
-    bumpScale: kind === 'mulch' ? .035 : kind === 'pavers' ? .018 : .025, roughness: .95 });
+  const material = new THREE.MeshStandardMaterial({ vertexColors: true, map, bumpMap: map,
+    bumpScale: kind === 'mulch' ? .02 : kind === 'pavers' ? .008 : .0025, roughness: .95 });
+  material.onBeforeCompile = shader => {
+    const vertex = '#include <begin_vertex>', color = '#include <color_fragment>', normals = '#include <normal_fragment_maps>';
+    if (!shader.vertexShader.includes(vertex) || !shader.fragmentShader.includes(color) || !shader.fragmentShader.includes(normals)) {
+      throw new Error('Three walk material shader changed');
+    }
+    shader.vertexShader = 'attribute vec2 parkWalkCoord; varying vec2 vParkWalkCoord; varying vec3 vParkWalkPosition;\n' + shader.vertexShader
+      .replace(vertex, `${vertex}\nvParkWalkCoord = parkWalkCoord; vParkWalkPosition = position;`);
+    shader.fragmentShader = `
+      varying vec2 vParkWalkCoord; varying vec3 vParkWalkPosition;
+      float walkHash(vec2 p) { return fract(sin(dot(p, vec2(127.1,311.7))) * 43758.5453); }
+      float walkNoise(vec2 p) {
+        vec2 c = floor(p), f = fract(p); f = f*f*(3.0-2.0*f);
+        return mix(mix(walkHash(c),walkHash(c+vec2(1,0)),f.x),mix(walkHash(c+vec2(0,1)),walkHash(c+vec2(1,1)),f.x),f.y);
+      }
+    ` + shader.fragmentShader.replace(color, `${color}
+      float walkVariation = walkNoise(vParkWalkPosition.xz * .42);
+      diffuseColor.rgb *= .93 + .14 * walkVariation;
+      float walkRelief = 0.0;
+      ${kind === 'edging' ? `
+        // Half-metre stone courses follow the walk through bends. Joints
+        // fade at distance instead of aliasing into a bright dotted stripe.
+        float phase = fract(vParkWalkCoord.x / .48);
+        float jointDistance = min(phase, 1.0-phase) * .48;
+        float footprint = max(fwidth(vParkWalkCoord.x), .0005);
+        float detail = 1.0-smoothstep(.025,.12,footprint);
+        float joint = (1.0-smoothstep(.004-footprint,.004+footprint,jointDistance)) * detail;
+        float stoneTone = walkHash(vec2(floor(vParkWalkCoord.x / .48), 7.0));
+        diffuseColor.rgb *= mix(.90 + stoneTone*.17, .43, joint);
+        float soilEdge = (1.0-smoothstep(.012,.045,vParkWalkCoord.y + walkVariation*.014)) * detail;
+        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(.13,.12,.087), soilEdge*.3);
+        walkRelief = -joint * .003;
+      ` : ''}
+    `).replace(normals, `${normals}
+      #ifdef USE_BUMPMAP
+        normal = perturbNormalArb(-vViewPosition, normal, vec2(dFdx(walkRelief), dFdy(walkRelief)), faceDirection);
+      #endif
+    `);
+  };
+  material.customProgramCacheKey = () => `park-walk-detail-v1-${kind}`;
+  return material;
 }

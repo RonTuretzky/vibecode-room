@@ -204,7 +204,8 @@ describe("paths on rendered terrain", () => {
       const xs = [0, 1, 2].map(k => pos.getX(indices.getX(i + k)));
       expect(xs.every(x => x <= -2) || xs.every(x => x >= 2)).toBe(true);
     }
-    mesh.geometry.dispose(); (mesh.material as THREE.Material).dispose();
+    mesh.geometry.dispose();
+    for (const material of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) material.dispose();
   });
 });
 

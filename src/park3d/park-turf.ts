@@ -9,7 +9,9 @@ export interface TurfSource {
   canopyAt: (x: number, z: number) => number;
   canPlant: (x: number, z: number, clearance: number) => boolean;
 }
-const TILE = 8, GRID = 32, CAPACITY = GRID * GRID, RADIUS = 3;
+// Spend detail on the ground beside the viewer: four times the density in
+// a smaller neighbourhood, with a fixed 25-tile / 102,400-tuft ceiling.
+const TILE = 8, GRID = 64, CAPACITY = GRID * GRID, RADIUS = 2;
 export interface TurfBladePatch { x: number; y: number; z: number; height: number; angle: number; lawn: number; canopy: number }
 
 /** Coordinate-seeded cells retain the same blades when revisited. The
@@ -71,13 +73,20 @@ export function createParkTurf(source: TurfSource, coordinates: {
     shader.uniforms.parkTurfTime = windTime; shader.uniforms.parkTurfVisibility = visibility;
     shader.vertexShader = 'uniform float parkTurfTime; uniform float parkTurfVisibility;\n' + shader.vertexShader.replace(anchor, `${anchor}
       vec3 turfRoot = (modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
-      float turfFade = (1.0 - smoothstep(16.0, 26.0, distance(turfRoot.xz, cameraPosition.xz))) * parkTurfVisibility;
+      float turfFade = (1.0 - smoothstep(10.0, 16.0, distance(turfRoot.xz, cameraPosition.xz))) * parkTurfVisibility;
       transformed.y *= turfFade;
       transformed.xz += vec2(.10, .055) * position.y * position.y * turfFade
         * sin(parkTurfTime * 1.3 + turfRoot.x * .67 + turfRoot.z * .43);
     `);
+    const physical = THREE.ShaderChunk.lights_physical_pars_fragment.replace(
+      'reflectedLight.directDiffuse += irradiance * BRDF_Lambert( material.diffuseContribution );',
+      `float bladeCosine = dot(geometryNormal, directLight.direction);
+       float bladeDiffuse = max(0.0, (bladeCosine + .2) / 1.2) * .86 + max(0.0, -bladeCosine) * .12;
+       reflectedLight.directDiffuse += bladeDiffuse * directLight.color * BRDF_Lambert(material.diffuseContribution);`,
+    );
+    shader.fragmentShader = shader.fragmentShader.replace('#include <lights_physical_pars_fragment>', physical);
   };
-  material.customProgramCacheKey = () => 'park-close-turf-v1';
+  material.customProgramCacheKey = () => 'park-close-turf-v2';
   const active = new Map<string, THREE.InstancedMesh>(), pool: THREE.InstancedMesh[] = [], all: THREE.InstancedMesh[] = [];
   let pending: { key: string; x: number; z: number }[] = [], previousCell = '', disposed = false, lastTime: number | null = null;
   const dummy = new THREE.Object3D(), color = new THREE.Color();
@@ -117,8 +126,9 @@ export function createParkTurf(source: TurfSource, coordinates: {
         pending = [...wanted.values()].filter(t => !active.has(t.key))
           .sort((a, b) => (a.x - cx) ** 2 + (a.z - cz) ** 2 - (b.x - cx) ** 2 - (b.z - cz) ** 2);
       }
-      // Spread terrain/mask sampling over frames, nearest cells first.
-      for (let i = 0; i < 4 && pending.length; i++) {
+      // One dense tile uses the previous four-tile sampling budget. Populate
+      // the viewer's immediate ground first, then fill the fading outskirts.
+      if (pending.length) {
         const tile = pending.shift()!;
         let mesh = pool.pop();
         if (!mesh) {
@@ -129,7 +139,9 @@ export function createParkTurf(source: TurfSource, coordinates: {
         }
         fill(mesh, tile.x, tile.z); active.set(tile.key, mesh);
       }
-      group.userData.instances = [...active.values()].reduce((n, mesh) => n + mesh.count, 0);
+      let instances = 0;
+      for (const mesh of active.values()) instances += mesh.count;
+      group.userData.instances = instances;
     },
     get allocatedTiles() { return all.length; },
     dispose() {

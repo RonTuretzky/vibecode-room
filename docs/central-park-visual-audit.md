@@ -57,9 +57,15 @@ prove that the visual objective has been achieved.
    fit-out remain incomplete. Architectural details remain interpretive.
 3. **Ground materials and transitions.** Perimeter hexagonal/granite paving,
    path margins, schist outcrops, contact shading and woodland floor detail
-   need close-view inspection. The first slope/woodland layer adds mineral grain
+   need continued close-view inspection. The first slope/woodland layer adds mineral grain
    and small leaf fragments in the existing terrain draw, verified in a hardware
-   render. Continue checking texture repetition and prop contact.
+   render. Close walk captures now show finer aggregate, metre-scaled stone
+   courses and denser near-eye turf. New junction views exposed coplanar paving
+   patches and furniture in crossings: one route now owns each crossing's core,
+   furniture checks nearby walk footprints, and the bench rotation sign is
+   corrected. Terrain-fitted footings replace the old 5/12 cm bench/lamp lifts.
+   Continue checking texture repetition, stair transitions and furniture finish;
+   the simple slats and metalwork still warrant a modeling/material pass.
 4. **Vegetation and atmosphere.** Grove foliage now has gentle, phased crown
    motion with matching shadow deformation and a live reduced-motion stop. The
    hardware test compiled both shaders and recorded all presets with motion
@@ -68,7 +74,10 @@ prove that the visual objective has been achieved.
    camera-distance culling. It avoids paths, water, steep grades and the stage;
    full-renderer Pond and overview captures were inspected. Crown density,
    woodland floor materials, grass scale, sky detail and
-   water shading still warrant further work. Small-basin ripples now use an
+   water shading still warrant further work. The close turf now has four times
+   the cell density in a smaller 25-tile neighbourhood, fading by 16 m; wrapped
+   diffuse light gives thin blades a softer response without another pass.
+   Small-basin ripples now use an
    irregular seamless spectrum with softer highlights and reduced-motion
    support; the change was checked in the Zoo render. A fresh Pond capture
    exposed blocky reflected silhouettes at DPR 2. Its mirror now uses bounded,
@@ -100,7 +109,10 @@ prove that the visual objective has been achieved.
    auditing long-frame behavior. The sharper Pond reflection retains the same
    30 Hz idle/full-rate navigation schedule, with bounded buffer resolution and
    delayed resizing. Full hardware rebuild checks still pass. Brief local frame
-   samples are not a cross-device performance guarantee.
+   samples are not a cross-device performance guarantee. The denser turf and
+   fitted furniture pass also passed six rebuilds with motion enabled: after
+   warmup, counts stayed at 151 geometries, 80 textures and 90 programs. All 17
+   current park/navigation/focus browser scenarios passed.
 
 ## Completion remains unproven
 

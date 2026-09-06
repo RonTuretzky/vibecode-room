@@ -2,13 +2,48 @@ import * as THREE from "three";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 
 /** Slatted park benches and acorn lamps, with shared geometry and owned cleanup. */
-export function createParkFurniture(lamps: THREE.Matrix4[], benches: THREE.Matrix4[]) {
+export function createParkFurniture(
+  lampPlacements: THREE.Matrix4[], benchPlacements: THREE.Matrix4[],
+  groundAt: (x: number, z: number) => number,
+) {
   const group = new THREE.Group();
   group.name = "park-street-furniture";
   const iron = new THREE.MeshStandardMaterial({ color: 0x263b30, roughness: .67, metalness: .45 });
   const wood = new THREE.MeshStandardMaterial({ color: 0x786044, roughness: .88 });
   const glass = new THREE.MeshStandardMaterial({ color: 0xf0e4bf, roughness: .28, emissive: 0xffdf9c, emissiveIntensity: .2 });
   const geometries: THREE.BufferGeometry[] = [];
+  const supports: THREE.BufferGeometry[] = [];
+  const point = new THREE.Vector3();
+  // Keep seats and posts level; fit their footings to the actual rendered
+  // terrain. Sampling each footprint also handles benches rotated on slopes.
+  function fit(placement: THREE.Matrix4, feet: THREE.BufferGeometry[]) {
+    const matrix = placement.clone();
+    let highest = -Infinity;
+    for (const foot of feet) {
+      const p = foot.getAttribute('position');
+      for (let i = 0; i < p.count; i++) {
+        point.fromBufferAttribute(p, i).applyMatrix4(matrix);
+        highest = Math.max(highest, groundAt(point.x, point.z));
+      }
+    }
+    matrix.elements[13] = highest - .015;
+    for (const foot of feet) {
+      const p = foot.getAttribute('position');
+      for (let i = 0; i < p.count; i++) {
+        const bottom = p.getY(i) < 0;
+        point.fromBufferAttribute(p, i).applyMatrix4(matrix);
+        // Bury the bottom slightly to avoid a light leak along the grade.
+        if (bottom) point.y = groundAt(point.x, point.z) - .035;
+        p.setXYZ(i, point.x, point.y, point.z);
+      }
+      foot.computeVertexNormals();
+      supports.push(foot);
+    }
+    return matrix;
+  }
+  const lamps = lampPlacements.map(matrix => fit(matrix, [new THREE.CylinderGeometry(.215, .215, .05, 12)]));
+  const benches = benchPlacements.map(matrix => fit(matrix,
+    [-.72, .72].flatMap(x => [-.2, .2].map(z => new THREE.BoxGeometry(.055, .05, .055).translate(x, 0, z)))));
   function cylinder(top: number, bottom: number, height: number, y: number) {
     const geo = new THREE.CylinderGeometry(top, bottom, height, 12);
     return geo.translate(0, y, 0);
@@ -51,6 +86,15 @@ export function createParkFurniture(lamps: THREE.Matrix4[], benches: THREE.Matri
   frame.push(box(1.5, .045, .045, 0, .22, -.2));
   batch(slats, wood, benches);
   batch(frame, iron, benches);
+  if (supports.length) {
+    const geometry = mergeGeometries(supports)!;
+    supports.forEach(part => part.dispose());
+    geometries.push(geometry);
+    const mesh = new THREE.Mesh(geometry, iron);
+    mesh.name = 'park-furniture-footings';
+    mesh.castShadow = mesh.receiveShadow = true;
+    group.add(mesh);
+  }
   return { group, dispose() {
     group.removeFromParent();
     group.traverse(node => { if (node instanceof THREE.InstancedMesh) node.dispose(); });

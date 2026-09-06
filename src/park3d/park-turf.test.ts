@@ -40,14 +40,14 @@ test('long camera routes reuse a bounded turf pool and release every GPU resourc
   expect(turf.group.visible).toBe(false);
   camera.position.y = 1.4;
   turf.update(camera, 0, 1, true);
-  expect(turf.allocatedTiles).toBe(4);
+  expect(turf.allocatedTiles).toBe(1);
   let time = 1;
   for (const [x, z] of [[0, 0], [500, -300], [-800, 700], [0, 0]]) {
     camera.position.set(x!, 1.4, z!);
-    for (let i = 0; i < 15; i++) turf.update(camera, 0, ++time, true);
-    expect(turf.allocatedTiles).toBe(49);
+    for (let i = 0; i < 30; i++) turf.update(camera, 0, ++time, true);
+    expect(turf.allocatedTiles).toBe(25);
     expect(turf.group.userData.instances).toBeGreaterThan(20000);
-    expect(turf.group.userData.instances).toBeLessThanOrEqual(49 * 1024);
+    expect(turf.group.userData.instances).toBeLessThanOrEqual(25 * 4096);
   }
   let geometryDisposals = 0, materialDisposals = 0, instanceDisposals = 0;
   const mesh = turf.group.children[0] as THREE.InstancedMesh;
@@ -55,7 +55,7 @@ test('long camera routes reuse a bounded turf pool and release every GPU resourc
   (mesh.material as THREE.Material).addEventListener('dispose', () => materialDisposals++);
   turf.group.children.forEach(m => m.addEventListener('dispose' as never, () => instanceDisposals++));
   turf.dispose(); turf.dispose();
-  expect(geometryDisposals).toBe(1); expect(materialDisposals).toBe(1); expect(instanceDisposals).toBe(49);
+  expect(geometryDisposals).toBe(1); expect(materialDisposals).toBe(1); expect(instanceDisposals).toBe(25);
   turf.update(camera, 0, ++time, true);
-  expect(turf.allocatedTiles).toBe(49);
+  expect(turf.allocatedTiles).toBe(25);
 });

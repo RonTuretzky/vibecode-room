@@ -1227,12 +1227,12 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
                 const off = (line.width / 2 + 0.5) * side;
                 const px = x1 - uz * off;
                 const pz = z1 + ux * off;
-                if (world.waterAt(px, pz) > 0.4 || inSite(px, pz, PARK_SITES.hallett.ring)) {
+                if (world.waterAt(px, pz) > 0.4 || inSite(px, pz, PARK_SITES.hallett.ring) || !canPlant(px, pz, .25)) {
                   continue;
                 }
                 const at = parkToRoom(px, pz);
                 if (lamps.some(m => Math.hypot(m.elements[12]! - at.x, m.elements[14]! - at.z) < 18)) continue;
-                dummy.position.set(at.x, roomY(px, pz) + 0.12, at.z);
+                dummy.position.set(at.x, roomY(px, pz), at.z);
                 dummy.rotation.y = rng() * Math.PI * 2;
                 dummy.scale.setScalar(1);
                 dummy.updateMatrix();
@@ -1245,17 +1245,27 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
                   const bz = z1 + ux * boff;
                   if (world.waterAt(bx, bz) < 0.4) {
                     const bat = parkToRoom(bx, bz);
-                    dummy.position.set(bat.x, roomY(bx, bz) + 0.05, bat.z);
-                    // Face the path (rotated π from the world-frame edge
-                    // normal, which the half-turn world transform absorbs).
-                    dummy.rotation.y = Math.atan2(-uz, -ux) + (side > 0 ? 0 : Math.PI);
+                    dummy.position.set(bat.x, roomY(bx, bz), bat.z);
+                    // The seat runs parallel to the walk, with its front
+                    // facing the planted side after the park-to-room half turn.
+                    dummy.rotation.y = Math.atan2(uz, -ux) + (side > 0 ? 0 : Math.PI);
                     dummy.updateMatrix();
+                    const corner = new THREE.Vector3();
+                    const footprintClear = [-.95, 0, .95].every(x => [-.35, .25].every(z => {
+                      corner.set(x, 0, z).applyMatrix4(dummy.matrix);
+                      const p = roomToPark(corner.x, corner.z);
+                      return canPlant(p.x, p.z, .08) && world.waterAt(p.x, p.z) < .4;
+                    }));
+                    if (!footprintClear) continue;
                     benches.push(dummy.matrix.clone());
                   }
                 }
               }
             }
-            parkFurniture = createParkFurniture(lamps, benches);
+            parkFurniture = createParkFurniture(lamps, benches, (x, z) => {
+              const p = roomToPark(x, z);
+              return roomY(p.x, p.z);
+            });
             group.add(parkFurniture.group);
           };
           furniture();

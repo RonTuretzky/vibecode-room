@@ -467,3 +467,57 @@ no browser/GPU errors. DPR 2 uses a 1536×1080 mirror at 1280×900 CSS pixels an
 592×1280 at 390×844; both have four samples. After the six environment rebuilds,
 the last four readings hold at 151 geometries, 79 textures and 77 programs.
 Eight reflection/natural-detail unit tests and both TypeScript checks pass.
+
+### Close walks, turf and furniture — 2026-09-06
+
+Close eye-level captures exposed blurry path aggregate and uninterrupted edging
+strips. The shared aggregate texture now uses 1024² pixels instead of 256² at
+the same two-metre world scale, with smaller bump relief. This adds roughly
+5 MiB including mipmaps to the cached texture. A separate edging material uses
+distance along each route for 48 cm stone courses, narrow joints and subtle
+stone-to-stone variation; derivative filtering fades the joints at distance.
+Route coordinates survive terrain subdivision and shoreline clipping.
+
+The denser close turf puts 64×64 candidates in each eight-metre tile, with a
+25-tile pool and a 102,400-tuft ceiling. It fades from 10 to 16 m and populates
+one tile per frame, preserving the old 4096-candidate sampling budget per frame.
+Wrapped direct diffuse light softens thin blades without emissive light or a
+new render pass. Four paired 1280×900, DPR 2 Metal captures retained 8.3 ms
+average frames in brief samples; denser visible turf added about 55–114k
+triangles while the smaller pool slightly reduced draw calls. These samples
+precede the furniture/junction fixes and are not cross-device guarantees.
+Evidence: `.context/ground-close-before-2026-09-06/` and
+`.context/ground-close-dense-2026-09-06/`.
+
+Furniture close-ups exposed three placement defects: posts/feet were lifted
+above terrain, some lamps occupied another path at a junction, and a reversed
+rotation sign turned benches across the path. Benches now run along the walk,
+their full seat footprint checks nearby paths/water, and lamp bases check walk
+clearance. Level seats and posts rest on footings sampled from the rendered
+terrain; the footings share one additional metal draw and are disposed with the
+furniture. The local placement diagnostic retains 219 lamps and 26 benches.
+Slats and metalwork still have simple geometry and need a separate finish pass.
+
+The same close-up caught coplanar core paving patches at intersections. Wider
+routes, then explicitly tagged surfaces, own the crossing core. Neighbouring
+ribbons clip to it while retaining a small overlap at the boundary; flat route
+ends cannot cut holes past their actual coverage. The corrected junction was
+inspected in `.context/furniture-clear-2026-09-06/`. Flat/sloped furniture
+contact, resource disposal, single crossing coverage and end-cap coverage have
+regression checks. The real-data diagnostic finds no buried upward-facing walk
+triangles within 400 m of the stage; one existing vertical stair riser extends
+2.2 cm into terrain. Both preceding commits (`af4a324`, `b675141`) have passed
+all CI jobs, including live flows.
+
+The complete pass passes 93 park unit tests, product and graphics-fixture
+TypeScript checks, and 17 production browser scenarios. These cover room/guest
+dwell controls, desktop/phone project focus, all six park presets, low-shore
+navigation, six environment rebuilds, reduced-motion changes and five reflection
+orientation changes. The GPU suite used real Metal at DPR 2 with motion enabled.
+The six views sampled 8.3–9.1 ms average frames and 9.1–11.4 ms p95; after
+warmup, rebuilds held at 151 geometries, 80 textures and 90 programs. Captures
+and diagnostics are in `.context/ground-furniture-gpu-results/`; clear close
+bench views are in `.context/furniture-final-2026-09-06/`. All six presets and
+the close furniture/path images were visually inspected. The local-AI room on
+18994 still reports the same boot and no degraded providers. This pass does
+not modify or newly validate model inference behavior.

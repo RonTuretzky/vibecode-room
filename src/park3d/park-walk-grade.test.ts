@@ -46,6 +46,23 @@ function dispose(mesh: THREE.Mesh) {
 }
 
 describe('walk surfaces', () => {
+  test('crossings have one paving surface without cutting holes beyond flat route ends', () => {
+    const mesh = buildPaths([
+      { width: 3, pts: [-8, 0, 8, 0], surface: 'asphalt' },
+      { width: 2, pts: [0, -8, 0, 8], surface: 'concrete' },
+      { width: 4, pts: [4, 3, 4, 6], surface: 'concrete' },
+    ], () => 0, () => 0)!;
+    const ray = new THREE.Raycaster(new THREE.Vector3(.13, 10, .07), new THREE.Vector3(0, -1, 0));
+    expect(ray.intersectObject(mesh)).toHaveLength(1);
+    for (let x = -1.4; x < 1.5; x += .2) for (let z = -1.4; z < 1.5; z += .2) {
+      ray.set(new THREE.Vector3(x, 10, z), new THREE.Vector3(0, -1, 0));
+      expect(ray.intersectObject(mesh).length).toBeGreaterThan(0);
+    }
+    ray.set(new THREE.Vector3(4.13, 10, 1.4), new THREE.Vector3(0, -1, 0));
+    expect(ray.intersectObject(mesh).length).toBeGreaterThan(0);
+    dispose(mesh);
+  });
+
   test('crossing walks remove edging through the junction without opening corner holes', () => {
     const mesh = buildPaths([{ width: 2, pts: [-8, 16, 8, 16] }, { width: 2, pts: [0, 8, 0, 24] }], () => 0, () => 0)!;
     const ray = new THREE.Raycaster(new THREE.Vector3(0, 10, 16.85), new THREE.Vector3(0, -1, 0));
@@ -66,9 +83,22 @@ describe('walk surfaces', () => {
     expect(lines.map(line => walkSurface(line).texture)).toEqual(['mulch', 'earth', 'pavers', 'aggregate', 'boards']);
     expect(walkSurface(lines[0]!).hardEdge).toBe(false);
     const mesh = buildPaths([...lines, ...lines], () => 0, () => 0)!;
-    expect(mesh.geometry.groups).toHaveLength(5);
+    expect(mesh.geometry.groups).toHaveLength(6); // Five surfaces plus their shared stone edging.
     const p = mesh.geometry.getAttribute('position');
     for (let i = 0; i < p.count; i++) if (p.getZ(i) < 2) expect(p.getY(i)).toBeCloseTo(.07);
+    dispose(mesh);
+  });
+
+  test('stone courses keep continuous metre coordinates through terrain refinement and shore clipping', () => {
+    const mesh = buildPaths([{ width: 2, pts: [-10, 0, 10, 0], surface: 'asphalt' }],
+      (x, z) => Math.sin(x * .7) + z * .2, x => Math.abs(x) < 2 ? 1 : 0)!;
+    const p = mesh.geometry.getAttribute('position'), coord = mesh.geometry.getAttribute('parkWalkCoord');
+    expect(coord.count).toBe(p.count);
+    for (let i = 0; i < p.count; i++) {
+      expect(coord.getX(i)).toBeCloseTo(p.getX(i) + 10, 4);
+      expect(coord.getY(i)).toBeGreaterThanOrEqual(0);
+      expect(coord.getY(i)).toBeLessThanOrEqual(1);
+    }
     dispose(mesh);
   });
 
