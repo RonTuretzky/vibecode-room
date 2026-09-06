@@ -5,7 +5,7 @@ test("park views cycle, Fit returns to projects, and environment switches stay u
   const view = page.getByTestId("park-view-button");
   const scene = page.getByTestId("room-scene");
   await expect(view).toContainText("The Pond");
-  for (const label of ["The Pond", "Park overlook", "Wollman Rink", "Project lawn"]) {
+  for (const label of ["The Pond", "Park overlook", "Wollman Rink", "The Arsenal", "Project lawn"]) {
     await view.click();
     await expect(scene).toHaveAttribute("data-park-view", label);
   }

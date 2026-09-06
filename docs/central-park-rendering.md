@@ -238,3 +238,16 @@ positions, mapped Gapstow dimensions and orientation, connected bridge
 approaches, Wollman Rink and its camera view, and Hallett woodland coverage.
 Vegetation avoids mapped paths and structures. The former 325 m clearing of
 city blocks is removed. See [sources and limitations](central-park-accuracy.md).
+
+The Arsenal is a locally generated landmark on its OSM footprint, with an
+independent foundation grade and a short entrance/walk connector. Brick,
+granite, pale trim, windows and roof geometry merge into five meshes; a cached
+512 px brick texture supplies running-bond courses. It adds no remote asset
+request. Its camera stop is included in the full hardware-renderer regression.
+The first 2× render was inspected for silhouette, grounding and street context;
+that inspection caught the entrance gap subsequently corrected by the apron.
+The corrected pass has 12,518 landmark triangles. All 69 park geometry tests,
+the product/test typechecks and the 10 navigation/full-GPU scenarios passed.
+The final Metal/Apple M4 Max capture rendered at 2,560 × 1,800 pixels with no
+shader or page errors. Its entrance connection was visually rechecked. These
+checks cover graphics and navigation; they do not re-run AI generation flows.

@@ -2882,7 +2882,7 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
         {sceneEnvironment === "park" && sceneMode === "garden" && !cornerLock && !flatLock && (
           <button type="button" className="ctl-button" data-testid="park-view-button"
             onClick={() => setParkViewSignal(n => n + 1)}
-            title="Explore the Pond, skyline and Wollman Rink, then return to your project lawn.">
+            title="Explore the Pond, skyline, Wollman Rink and Arsenal, then return to your project lawn.">
             ◇ {PARK_VIEWS[(parkViewSignal + 1) % PARK_VIEWS.length]!.label}
           </button>
         )}

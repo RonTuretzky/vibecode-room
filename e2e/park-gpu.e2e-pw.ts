@@ -33,7 +33,7 @@ test('the full park renders every preset, material and environment return withou
   expect(Number(await scene.getAttribute('data-triangles'))).toBeGreaterThan(100000);
   const stats: Record<string, unknown> = { renderer: await scene.getAttribute('data-renderer'),
     reducedMotion: await page.evaluate(() => matchMedia('(prefers-reduced-motion: reduce)').matches) };
-  for (const [label, file] of [['The Pond', 'pond'], ['Park overlook', 'overlook'], ['Wollman Rink', 'wollman'], ['Project lawn', 'lawn']]) {
+  for (const [label, file] of [['The Pond', 'pond'], ['Park overlook', 'overlook'], ['Wollman Rink', 'wollman'], ['The Arsenal', 'arsenal'], ['Project lawn', 'lawn']]) {
     await view.click(); await expect(scene).toHaveAttribute('data-park-view', label!);
     await cameraSettled(page);
     await page.getByTestId('scene-zen-button').click();

@@ -21,6 +21,7 @@ import { createGapstowCrossing } from "./park-gapstow-ground";
 import { PARK_SITES, hallettWoodlandAt } from "./park-sites";
 import { createWollmanGrade } from "./park-wollman";
 import { buildLandmarks } from "./park-landmarks";
+import { arsenalApproach, createArsenalGrade } from "./park-arsenal";
 import { loadSkylineModels, skylineSites } from "./park-models";
 import { buildParkStreets } from "./park-streets";
 import { refreshSouthWalks, type ParkWalk, type ParkStreetData } from "./park-walks";
@@ -295,6 +296,9 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
   const sampleLawn = (x: number, z: number) => photoLawn(x, z) * (1 - woodland(x, z));
 
   const rinkGrade = opts.landmarks !== false ? createWollmanGrade(sampleDem) : null;
+  const arsenalGrade = opts.landmarks !== false ? createArsenalGrade(sampleDem) : null;
+  const arsenalWalk = opts.landmarks !== false ? arsenalApproach(pathLines) : null;
+  if (arsenalWalk) pathLines.push(arsenalWalk);
   const flatten = opts.flatten;
   const anchorGround = flatten === undefined ? 0 : sampleDem(flatten.x, flatten.z);
   // 0 inside the flattened disc, 1 on the untouched terrain.
@@ -308,7 +312,8 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
   const dryGroundAt = (x: number, z: number): number => {
     const w = terrainWeight(x, z);
     const base = w === 1 ? sampleDem(x, z) : anchorGround + (sampleDem(x, z) - anchorGround) * w;
-    return rinkGrade?.heightAt(x, z, base) ?? base;
+    const rinkGround = rinkGrade?.heightAt(x, z, base) ?? base;
+    return arsenalGrade?.heightAt(x, z, rinkGround) ?? rinkGround;
   };
   const view = opts.viewBounds;
   const west = view ? Math.max(-halfEast, view.x - view.radius) : -halfEast;
@@ -500,7 +505,7 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
   }
 
   if (opts.landmarks !== false) {
-    group.add(buildLandmarks(groundAt, { waterAt: builtWater?.surfaceAt, rinkLevel: rinkGrade?.level, paths: pathLines }));
+    group.add(buildLandmarks(groundAt, { waterAt: builtWater?.surfaceAt, rinkLevel: rinkGrade?.level, arsenalLevel: arsenalGrade?.level, paths: pathLines }));
   }
 
   let streets: ReturnType<typeof buildParkStreets> | null = null;

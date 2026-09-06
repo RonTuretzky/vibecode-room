@@ -82,6 +82,27 @@ export function parkGroundDetailTexture(): THREE.CanvasTexture {
   return map;
 }
 
+/** Ten courses of running-bond masonry in a 2.4 × .8 m UV tile. Neutral
+ * mineral grain lets the landmark material supply its orange brick hue. */
+export function parkBrickTexture(): THREE.CanvasTexture {
+  const map = texture('arsenal-brick', 512, (ctx, size) => {
+    const rng = mulberry32(1851), course = size / 10;
+    ctx.fillStyle = '#a6a395'; ctx.fillRect(0, 0, size, size);
+    for (let row = 0; row < 10; row++) for (let col = -1; col < 11; col++) {
+      const x = (col + (row % 2) * .5) * course, y = row * course;
+      const tone = 190 + rng() * 40;
+      ctx.fillStyle = `rgb(${tone},${tone * .97},${tone * .9})`;
+      ctx.fillRect(x + 2, y + 3, course - 4, course - 6);
+    }
+    for (let i = 0; i < 21000; i++) {
+      ctx.fillStyle = rng() < .5 ? 'rgba(255,246,225,.1)' : 'rgba(72,63,49,.1)';
+      ctx.fillRect(rng() * size, rng() * size, 1 + rng() * 2, 1 + rng() * 2);
+    }
+  });
+  map.wrapS = map.wrapT = THREE.RepeatWrapping;
+  return map;
+}
+
 export function parkTurfTexture(): THREE.CanvasTexture {
   const map = texture("turf", 512, (ctx, size) => {
     const rng = mulberry32(93271);

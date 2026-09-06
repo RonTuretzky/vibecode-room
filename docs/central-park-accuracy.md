@@ -6,7 +6,7 @@ not a surveyed reconstruction or a live depiction of park operations.
 
 ## Reference data
 
-`src/park3d/data/south-park-sites.json` stores eleven OpenStreetMap ways,
+`src/park3d/data/south-park-sites.json` stores twelve OpenStreetMap ways,
 including their IDs, revisions, coordinate order and snapshot timestamp.
 Refresh it with `python3 scripts/fetch-park-sites.py`. The small dataset is
 bundled with the app: visiting the park requires no map API or network request.
@@ -91,11 +91,29 @@ does not claim surveyed bathymetry.
   surveyed inventory of native species, trunk positions and crown sizes.
 - The 8 m bare-earth DEM, two-metre water mask and simplified paths cannot
   reproduce every rock ledge, shore wall, step, drain or underpass.
-- The Zoo, Arsenal, rink support buildings and several other park structures
+- The Zoo, rink support buildings and several other park structures
   still need individually placed models; generic interior extrusions remain
   suppressed. Facade and rooftop detail on the surrounding city is approximate.
 - The stage flattening and project trees are deliberate workspace additions.
 - Northern landmarks retain the previous approximate models and placement.
+
+## Arsenal architecture
+
+The Arsenal now uses [OSM way 265347583](https://www.openstreetmap.org/way/265347583)
+for its footprint and tagged 23.5 m maximum height. This supplemental extract
+was retrieved from the OSM API on 2026-09-06; its separate source and feature
+revision are retained in the site dataset. The refresh script includes it.
+
+The city's [LPC designation report LP-0312](https://s-media.nyc.gov/agencies/lpc/lp/0312.pdf)
+guides the orange brick, granite basement, limestone trim, white window
+frames, eight engaged octagonal towers, crenellations and raised east entrance.
+The [Conservancy's location page](https://www.centralparknyc.org/locations/arsenal)
+provides additional context. Floor heights, tower profiles, window spacing,
+brick courses and stair details remain modeled approximations. Sculptural
+entrance details are not reproduced. The footprint is graded with a narrow
+feathered edge; a short inferred apron joins the stairs to a nearby mapped
+walk. The model casts shadows and the planting mask excludes its footprint.
+The Arsenal camera stop makes this part of the eastern edge accessible.
 
 ## City edge and perimeter restoration
 

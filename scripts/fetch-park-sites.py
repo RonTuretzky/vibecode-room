@@ -16,7 +16,7 @@ SITES = {
     'chess': 265347597, 'carousel': 585788256,
     'copCot': 385442739, 'inscope': 427087524,
     'sherman': 988716842, 'pulitzer': 988718514,
-    'umpire': 385443481,
+    'umpire': 385443481, 'arsenal': 265347583,
 }
 
 def main():
@@ -40,6 +40,8 @@ def main():
             'version': way['version'], 'modified': way['timestamp'],
             'coordinates': geometry,
         }
+        if 'height' in way['tags']:
+            features[key]['heightM'] = float(way['tags']['height'])
     output = {
         'attribution': '© OpenStreetMap contributors',
         'license': 'https://www.openstreetmap.org/copyright',

@@ -53,8 +53,15 @@ no bake.
 `src/park3d/data/south-park-sites.json` is a bundled OpenStreetMap extract
 (© OpenStreetMap contributors, [ODbL](https://www.openstreetmap.org/copyright)).
 It retains source way IDs, versions, modification times and the extract's
-snapshot timestamp. `scripts/fetch-park-sites.py` refreshes these eleven sites.
+snapshot timestamp. `scripts/fetch-park-sites.py` refreshes these twelve sites.
 The renderer uses their geometry for landmark placement, Gapstow's outline,
 Wollman's recreation surface, and Hallett's woodland boundary. See
 [`docs/central-park-accuracy.md`](../../../docs/central-park-accuracy.md) for
 sources, corrections, and the distinction between mapped and modeled detail.
+
+The Arsenal footprint and tagged height come from OSM way 265347583, retrieved
+through the OSM API on 2026-09-06 with its revision metadata. The procedural
+model's material and architectural references are the
+[NYC LPC designation report](https://s-media.nyc.gov/agencies/lpc/lp/0312.pdf)
+and [Central Park Conservancy](https://www.centralparknyc.org/locations/arsenal).
+No reference photographs are included in the application.

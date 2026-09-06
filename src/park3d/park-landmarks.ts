@@ -24,6 +24,7 @@ import { DEG, localFromLatLon } from "./park-frame";
 import { GAPSTOW_LAYOUT, PARK_SITES } from "./park-sites";
 import { gapstowDeckAt } from "./park-gapstow-ground";
 import { buildWollmanRink } from "./park-wollman";
+import { buildArsenal } from "./park-arsenal";
 
 export interface LandmarkSpec {
   name: string;
@@ -582,7 +583,7 @@ export const LANDMARKS: LandmarkSpec[] = [
 // Build every landmark into one group in the park frame, each standing on
 // the rendered ground. Water bridges use the actual level water surface;
 // raw DEM samples over water can be above or below the corrected shoreline.
-export function buildLandmarks(groundAt: (x: number, z: number) => number, options: { waterAt?: (x: number, z: number) => number | null; rinkLevel?: number; paths?: readonly { width: number; pts: number[] }[] } = {}): THREE.Group {
+export function buildLandmarks(groundAt: (x: number, z: number) => number, options: { waterAt?: (x: number, z: number) => number | null; rinkLevel?: number; arsenalLevel?: number; paths?: readonly { width: number; pts: number[] }[] } = {}): THREE.Group {
   const group = new THREE.Group();
   group.name = "park-landmarks";
   for (const spec of LANDMARKS) {
@@ -596,6 +597,7 @@ export function buildLandmarks(groundAt: (x: number, z: number) => number, optio
     group.add(model);
   }
   if (options.rinkLevel !== undefined) group.add(buildWollmanRink(options.rinkLevel, options.paths));
+  group.add(buildArsenal(options.arsenalLevel ?? groundAt(PARK_SITES.arsenal.x, PARK_SITES.arsenal.z)));
   return group;
 }
 

@@ -35,8 +35,11 @@ prove that the visual objective has been achieved.
    coping, roof grain and low rooftop housings within source height/footprint
    bounds. Extra collinear survey vertices no longer disable tower setbacks.
    Full-renderer review caught and resolved hollow parapet shadows; complete
-   building bodies and landmark models now cast consistent shadows. The Zoo,
-   Arsenal, rink support structures and distinctive Fifth Avenue hotel crowns
+   building bodies and landmark models now cast consistent shadows. The Arsenal
+   now has its mapped footprint and height, eight octagonal towers, brick and
+   granite materials, framed windows, crenellations and raised entrance. Its
+   first GPU capture exposed a missing entrance/walk connection, now joined by
+   a short inferred apron. The Zoo, rink support structures and Fifth Avenue hotel crowns
    remain incomplete. General architectural details are still illustrative.
 3. **Ground materials and transitions.** Perimeter hexagonal/granite paving,
    path margins, schist outcrops, contact shading and woodland floor detail

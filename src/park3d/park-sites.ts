@@ -5,6 +5,11 @@ import { DEG, localFromLatLon } from './park-frame';
 
 export type ParkSiteKey = keyof typeof siteData.features;
 export interface SitePoint { x: number; z: number }
+export interface ParkSite {
+  name: string; osmWay: number; version: number; modified: string;
+  coordinates: number[][]; heightM?: number;
+  lat: number; lon: number; x: number; z: number; ring: SitePoint[];
+}
 export const PARK_SITES = Object.fromEntries(Object.entries(siteData.features).map(([key, feature]) => {
   const coordinates = feature.coordinates;
   const lat = (Math.min(...coordinates.map(p => p[1]!)) + Math.max(...coordinates.map(p => p[1]!))) / 2;
@@ -12,7 +17,7 @@ export const PARK_SITES = Object.fromEntries(Object.entries(siteData.features).m
   const ring = coordinates.map(([lon, lat]) => localFromLatLon(lat!, lon!));
   if (ring.length > 2 && ring[0]!.x === ring.at(-1)!.x && ring[0]!.z === ring.at(-1)!.z) ring.pop();
   return [key, { ...feature, lat, lon, ...localFromLatLon(lat, lon), ring }];
-})) as Record<ParkSiteKey, typeof siteData.features.gapstow & { lat: number; lon: number; x: number; z: number; ring: SitePoint[] }>;
+})) as Record<ParkSiteKey, ParkSite>;
 
 export function inSite(x: number, z: number, ring: readonly SitePoint[]): boolean {
   let inside = false;
@@ -65,7 +70,7 @@ export function createParkPlantingMask(lines: readonly { width: number; pts: num
       }
     }
   }
-  const sites = ['wollman', 'dairy', 'chess', 'carousel', 'copCot', 'gapstow'] as const;
+  const sites = ['wollman', 'dairy', 'chess', 'carousel', 'copCot', 'gapstow', 'arsenal'] as const;
   const masks = sites.map(key => {
     const site = PARK_SITES[key];
     return { site, radius: Math.max(...site.ring.map(p => Math.hypot(p.x - site.x, p.z - site.z))) + 6 };
