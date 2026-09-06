@@ -4,6 +4,7 @@ import { PARK_VIEWS, fitParkProjects } from "../park3d/park-cameras";
 import { createParkAtmosphere } from "../park3d/park-atmosphere";
 import { ParkReflectionSchedule } from "../park3d/park-reflection";
 import { createParkGrove } from "../park3d/park-grove";
+import { createParkUnderstorey, understoreyPlacements } from "../park3d/park-understorey";
 import { parkTurfTexture } from "../park3d/park-materials";
 import { AdaptiveResolution } from "./render-quality";
 import {
@@ -945,6 +946,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
       };
       let parkGrove: ReturnType<typeof createParkGrove> | null = null;
       let parkShore: ReturnType<typeof createParkShoreline> | null = null;
+      let parkUnderstorey: ReturnType<typeof createParkUnderstorey> | null = null;
       let parkFurniture: ReturnType<typeof createParkFurniture> | null = null;
       let parkWorld: ParkWorld | null = null;
       let parkWater: THREE.MeshStandardMaterial | null = null;
@@ -1042,6 +1044,11 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
             return { px: p.x, pz: p.z, rx: r.x, rz: r.z, radius: Math.hypot(r.x, r.z) };
           };
           const canPlant = createParkPlantingMask(world.pathLines);
+          const understorey = understoreyPlacements({ groundAt: world.groundAt, canopyAt: world.canopyAt, lawnAt: world.lawnAt,
+            waterAt: world.waterAt, canPlant }, POND_STAGE);
+          parkUnderstorey = createParkUnderstorey(understorey, (x, y, z) => new THREE.Vector3(POND_STAGE.x - x, y - yAnchor - .15, POND_STAGE.z - z));
+          group.add(parkUnderstorey.group);
+          console.info(`[park-understorey] ${understorey.length} shrubs`);
           if (world.heroWater) {
             const center = localFromLatLon(40.766, -73.9741);
             const plants = shorePlantPlacements({ waterAt: world.waterAt, groundAt: world.groundAt, canPlant: (x, z, c) =>
@@ -1459,6 +1466,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
         update: (t, dt) => {
           atmosphere?.update(t);
           parkShore?.update(camera);
+          parkUnderstorey?.update(camera);
           parkGrove?.update(t, !reducedMotion);
           for (const { mesh, distance } of parkFineDetail) {
             const cutoff = mesh.visible ? distance + 15 : distance - 15;
@@ -1614,6 +1622,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
           parkDisposed = true;
           parkGrove?.dispose();
           parkShore?.dispose();
+          parkUnderstorey?.dispose();
           parkFurniture?.dispose();
           atmosphere?.dispose();
           turf?.dispose();

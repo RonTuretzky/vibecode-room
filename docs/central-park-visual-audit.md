@@ -47,7 +47,11 @@ prove that the visual objective has been achieved.
 4. **Vegetation and atmosphere.** Grove foliage now has gentle, phased crown
    motion with matching shadow deformation and a live reduced-motion stop. The
    hardware test compiled both shaders and recorded all presets with motion
-   enabled. Crown density, woodland understorey, grass scale, sky detail and
+   enabled. A new low shrub layer supplies clustered undergrowth on wooded
+   ground, with tapered branches, human-scale leaf sprays, a 900-plant cap and
+   camera-distance culling. It avoids paths, water, steep grades and the stage;
+   full-renderer Pond and overview captures were inspected. Crown density,
+   woodland floor materials, grass scale, sky detail and
    water shading still warrant further work. Species forms remain approximate.
 5. **Composition and UI.** Inspect camera routes and readable project content
    in normal and Zen modes, portrait and landscape. Preserve shared spatial

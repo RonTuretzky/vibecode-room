@@ -251,3 +251,17 @@ the product/test typechecks and the 10 navigation/full-GPU scenarios passed.
 The final Metal/Apple M4 Max capture rendered at 2,560 × 1,800 pixels with no
 shader or page errors. Its entrance connection was visually rechecked. These
 checks cover graphics and navigation; they do not re-run AI generation flows.
+
+`park-understorey.ts` adds clustered low shrubs below wooded canopy. Its seed is
+independent of existing flora, so the tree and furniture layout stays stable.
+Two 280-triangle forms share foliage/bark materials and are instanced in 70 m
+cells. Candidates avoid water, walks, open lawns, steep grades and the project
+clearing. The nearest 900 plants cap dense-source cost; camera-distance culling
+and nearby-only shadow casting bound the visible cost. This is illustrative
+undergrowth, not a surveyed shrub inventory. Its first full GPU pass kept the
+Pond frame interval at approximately 8.3 ms on the test M4 Max while adding
+about 44k visible/pass triangles and 22 draws in that brief sample. Such samples
+are diagnostics, not controlled performance comparisons or device guarantees.
+After tapering the shrub tips, all 72 park tests and the product typecheck
+passed. A fresh 2× hardware test revisited all five camera stops, live motion
+preferences, environment returns and portrait views without GPU/page errors.
