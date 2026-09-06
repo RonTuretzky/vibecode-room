@@ -323,3 +323,22 @@ also freezes its current phase when reduced motion is requested. The final
 2× hardware pass and product typecheck succeeded; 79 park tests passed, with
 normalization and tile-edge coverage for the new map. The final Zoo capture
 was inspected after the strength/roughness refinement.
+
+Bank grading now uses the clipped water contour, with spatial buckets for
+nearby segments. This removes the four-neighbour distance field's diagonal
+bias. Near the shore, mask gradients preserve continuity with the bilinear
+water mask; the outer four metres blend back to the existing terrain instead
+of dropping the grade abruptly. The profile remains an illustrative correction
+to the DEM, not surveyed bathymetry. Tests cover directional invariance, outer
+continuity and independently elevated water bodies.
+
+The terrain material now adds restrained mineral grain on steep faces and
+small, rotated leaf fragments under woodland. Two weights per vertex control
+cover; the existing terrain draw supplies the detail with no new textures or
+render passes. Subpixel leaf fragments fade to prevent distant shimmer. The
+82 park tests, product typecheck and fresh 2× Metal browser pass succeeded.
+The Pond capture was inspected. A full DEM/network/terrain diagnostic checked
+84,344 nearby path faces: no upward walking face was buried; one vertical
+stair riser extended 2.2 cm into the ground. It also confirmed that the camera's
+old 1.4 m global lower bound can fall below the local hillside, requiring a
+separate camera-floor correction.

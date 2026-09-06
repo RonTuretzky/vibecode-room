@@ -25,6 +25,8 @@ import { arsenalApproach, createArsenalGrade } from "./park-arsenal";
 import { createWollmanFacilitiesGrade } from "./park-wollman-facilities";
 import { createZooGrade } from "./park-zoo-layout";
 import { sampleWaterRipple } from "./park-water-ripples";
+import { createWaterBankSampler, type WaterBankSegment } from "./park-water-banks";
+import { refineParkGround } from "./park-ground-material";
 import { loadSkylineModels, skylineSites } from "./park-models";
 import { buildParkStreets } from "./park-streets";
 import { refreshSouthWalks, type ParkWalk, type ParkStreetData } from "./park-walks";
@@ -430,15 +432,19 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
   }
   let terrainMaterial: THREE.Material | THREE.Material[];
   if (opts.detailGround === true) {
-    const tint = new THREE.Color();
+    const tint = new THREE.Color(), layers = new Float32Array(pos.count * 2);
     for (let i = 0; i < pos.count; i++) {
       const x = pos.getX(i), z = pos.getZ(i);
       const shore = Math.max(sampleWater(x, z), .6 * Math.max(sampleWater(x + 3, z), sampleWater(x - 3, z), sampleWater(x, z + 3), sampleWater(x, z - 3)));
-      parkGroundColor(x, z, sampleLawn(x, z), sampleRelief(x, z), shore, insidePark(x, z, 6), tint);
+      const lawn = sampleLawn(x, z), canopy = sampleRelief(x, z);
+      parkGroundColor(x, z, lawn, canopy, shore, insidePark(x, z, 6), tint);
+      layers[i * 2] = smoothstep(.12, .48, 1 - nrm.getY(i));
+      layers[i * 2 + 1] = smoothstep(1, 10, canopy) * (1 - lawn * .85);
       colors[i * 3] *= tint.r;
       colors[i * 3 + 1] *= tint.g;
       colors[i * 3 + 2] *= tint.b;
     }
+    geometry.setAttribute("parkGroundLayers", new THREE.BufferAttribute(layers, 2));
     (geometry.getAttribute("color") as THREE.BufferAttribute).needsUpdate = true;
     const texLoader = new THREE.TextureLoader();
     const repeat = { x: (2 * halfEast) / 10, y: (2 * halfNorth) / 10 };
@@ -453,7 +459,7 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
     groundNor.wrapT = THREE.RepeatWrapping;
     groundNor.repeat.set(repeat.x, repeat.y);
     groundNor.anisotropy = 8;
-    terrainMaterial = new THREE.MeshStandardMaterial({
+    const groundMaterial = new THREE.MeshStandardMaterial({
       map: groundDiff,
       normalMap: groundNor,
       normalScale: new THREE.Vector2(.18, .18),
@@ -461,6 +467,8 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
       roughness: 1,
       metalness: 0,
     });
+    refineParkGround(groundMaterial);
+    terrainMaterial = groundMaterial;
     // The grass belongs INSIDE the wall only: split the index into a park
     // group (tiled grass) and a city group (neutral paving) by
     // triangle centroid, so the blocks between buildings read as street,
@@ -700,51 +708,7 @@ export function buildWater(
     if (i < 0 || j < 0 || i >= cols || j >= rows || !isWater[j * cols + i]) return null;
     return level[j * cols + i]! + .1;
   };
-  // Grow a narrow distance field out from each bank. DEM returns over water
-  // can be metres above its level; a gradual bank avoids cutting vertical,
-  // grid-shaped trenches into the surrounding paths and lawns.
-  const distance = new Uint8Array(isWater.length).fill(255);
-  const shoreLevel = new Float32Array(level);
-  let front: number[] = [];
-  for (let c = 0; c < isWater.length; c++) {
-    if (!isWater[c]) continue;
-    distance[c] = 0;
-    const i = c % cols, j = Math.floor(c / cols);
-    if ((i > 0 && !isWater[c - 1]) || (i < cols - 1 && !isWater[c + 1]) ||
-        (j > 0 && !isWater[c - cols]) || (j < rows - 1 && !isWater[c + cols])) front.push(c);
-  }
-  const bankCells = Math.ceil(14 / cell);
-  for (let step = 1; step <= bankCells; step++) {
-    const next: number[] = [];
-    for (const c of front) {
-      const i = c % cols, j = Math.floor(c / cols);
-      for (const [di, dj] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
-        const ni = i + di!, nj = j + dj!;
-        if (ni < 0 || ni >= cols || nj < 0 || nj >= rows) continue;
-        const at = nj * cols + ni;
-        if (distance[at] !== 255) continue;
-        distance[at] = step;
-        shoreLevel[at] = shoreLevel[c]!;
-        next.push(at);
-      }
-    }
-    front = next;
-  }
-  const bankHeightAt = (x: number, z: number): number | null => {
-    const gx = (x - offset.x + halfEast) / cell - .5, gz = (z - offset.z + halfNorth) / cell - .5;
-    if (gx < 0 || gz < 0 || gx >= cols - 1 || gz >= rows - 1) return null;
-    const i = Math.floor(gx), j = Math.floor(gz), tx = gx - i, tz = gz - j;
-    const corners = [j * cols + i, j * cols + i + 1, (j + 1) * cols + i, (j + 1) * cols + i + 1];
-    if (corners.some(at => distance[at] === 255)) return null;
-    const mix = (values: number[]) => values[0]! * (1 - tx) * (1 - tz) + values[1]! * tx * (1 - tz) + values[2]! * (1 - tx) * tz + values[3]! * tx * tz;
-    const shore = mix(corners.map(at => shoreLevel[at]!)) + .09;
-    const wet = waterAt(x, z);
-    // Meet the water at its actual contour. The old quadratic left dry bank
-    // vertices a metre below the surface, exposing dark trenches beside it.
-    if (wet >= .5) return shore - smoothstep(.5, 1, wet) * 1.1;
-    const run = Math.max(0, mix(corners.map(at => distance[at]! * cell)) - cell * .5);
-    return shore + run * .42 + run * run * .025;
-  };
+  const bankSegments: WaterBankSegment[] = [];
   // Which body is the hero (real reflections)? The one under `heroAt`.
   let heroLabel = -1;
   if (heroAt !== undefined && Math.abs(heroAt.x - offset.x) < halfEast && Math.abs(heroAt.z - offset.z) < halfNorth) {
@@ -777,6 +741,12 @@ export function buildWater(
       if (isHero) heroLevel = y;
       for (const order of [[0, 3, 2], [0, 2, 1]]) {
         const polygon = clipWaterTriangle(order.map(k => corners[k!]!));
+        for (let edge = 0; edge < polygon.length; edge++) {
+          const a = polygon[edge]!, b = polygon[(edge + 1) % polygon.length]!;
+          if (a.wet === .5 && b.wet === .5 && Math.hypot(b.x - a.x, b.z - a.z) > .001) {
+            bankSegments.push({ ax: a.x, az: a.z, bx: b.x, bz: b.z, level: y });
+          }
+        }
         const base = targetPositions.length / 3;
         for (const p of polygon) {
           if (isHero) {
@@ -791,6 +761,7 @@ export function buildWater(
       }
     }
   }
+  const bankHeightAt = createWaterBankSampler(bankSegments, { waterAt, surfaceAt, groundAt });
   let hero: { geometry: THREE.BufferGeometry; level: number } | null = null;
   if (heroPositions.length > 0) {
     const heroGeometry = new THREE.BufferGeometry();

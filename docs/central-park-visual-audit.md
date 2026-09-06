@@ -29,7 +29,10 @@ prove that the visual objective has been achieved.
    connected shore walks and clean junctions. The first captures caught edging
    through intersections and abrupt DEM-based banks; both were corrected and
    rechecked. Continue low-angle inspection of stair transitions and modeled
-   grades as camera exploration improves. The user's existing tab still needs
+   grades as camera exploration improves. Contour-based bank grades now remove
+   grid-direction bias and fade into the surrounding DEM; the new render was
+   inspected. The camera still needs a terrain-relative lower bound to explore
+   slopes without dropping below them. The user's existing tab still needs
    a direct visit once the Mac is unlocked.
 2. **Architecture.** Nearby buildings now have recessed roofs, parapets,
    coping, roof grain and low rooftop housings within source height/footprint
@@ -51,7 +54,9 @@ prove that the visual objective has been achieved.
    fit-out remain incomplete. Architectural details remain interpretive.
 3. **Ground materials and transitions.** Perimeter hexagonal/granite paving,
    path margins, schist outcrops, contact shading and woodland floor detail
-   need close-view inspection. Avoid texture repetition and floating props.
+   need close-view inspection. The first slope/woodland layer adds mineral grain
+   and small leaf fragments in the existing terrain draw, verified in a hardware
+   render. Continue checking texture repetition and prop contact.
 4. **Vegetation and atmosphere.** Grove foliage now has gentle, phased crown
    motion with matching shadow deformation and a live reduced-motion stop. The
    hardware test compiled both shaders and recorded all presets with motion
