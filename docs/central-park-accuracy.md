@@ -97,6 +97,42 @@ does not claim surveyed bathymetry.
 - The stage flattening and project trees are deliberate workspace additions.
 - Northern landmarks retain the previous approximate models and placement.
 
+## City edge and perimeter restoration
+
+The room now uses [the mapped park outline](https://www.openstreetmap.org/way/427818536)
+for land membership, while keeping the original coordinate frame for the
+baked DEM and camera positions. The former rectangle cut off parkland on the
+east and south edges. Correcting the surface alone exposed gaps in the old
+rectangle-clipped paths and photo-derived vegetation, so the same pass also
+refreshes the south-end walking network and restores mapped perimeter trees.
+
+`scripts/fetch-park-streets.py` writes the attributed local
+`public/assets/park/streets.json` and `src/park3d/data/park-outline.json`.
+The 2026-09-06 extract contains 1,547 streets/walls, 518 walks and 167 perimeter
+tree locations. Street and path ways retain IDs and revision metadata; tree
+nodes retain IDs, positions and available height/genus tags. All share the
+extract timestamp. No map service is contacted while using the room.
+
+Surrounding streets follow mapped centerlines. Tagged widths take precedence;
+missing dimensions use lane-based defaults. Sidewalk widths, pavement colors,
+curb profiles, lane dividers and untagged wall heights remain illustrative.
+Walls keep tagged heights and stop at mapped walking routes. Road surfaces
+share the terrain mesh, preventing lighter ground from clipping through them.
+The [Conservancy's perimeter description](https://www.centralparknyc.org/restoration/park-perimeter)
+and [NYC sidewalk material guidance](https://www.nycstreetdesign.info/material/sidewalks)
+provide visual references; the exact hexagonal/granite paving pattern still
+needs a separate material pass.
+
+Mapped perimeter trees are placed before photo-derived candidates, avoiding
+duplicate trunks and retaining the existing 640-tree budget. In the live
+two-project room, 146 mapped trees passed the range, water, path and spacing
+filters. Their silhouettes remain procedural; untagged heights are estimates.
+
+The refreshed path network retains the northern walks and park drives. The
+terrain still causes some steep-shore path segments to be rejected by the
+renderer. Restoring connected, graded walk surfaces is an outstanding visual
+issue, not evidence that path rendering is complete.
+
 The next useful pass is a measured south-end building/terrain survey, followed
 by better species-specific models and schist outcrops. More decoration alone
 would not resolve those discrepancies.
@@ -111,7 +147,7 @@ screens, locked projectors, and the shared room/guest spatial controls. Heavy
 park assets require a separate real-GPU inspection because browser automation
 uses the software-renderer fallback.
 
-Verified locally on 2026-09-06 after the Pond detail pass: 301 relevant unit tests passed, TypeScript and
+Verified locally on 2026-09-06 after the city/perimeter pass: 309 relevant unit tests passed, TypeScript and
 production build passed, and all nine park/navigation browser tests passed.
 Live GPU inspection covered the Pond, connected Gapstow approaches, the
 Wollman surface and access openings, the project lawn, the park overlook,

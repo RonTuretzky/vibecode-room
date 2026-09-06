@@ -9,6 +9,18 @@ material textures. It needs no cloud rendering or external asset service.
   and one sun shadow map. Shadow coverage follows the camera. Elevated
   project overviews ease the haze and widen shadow coverage. Renderer
   settings are restored when leaving the park.
+- `park-outline.ts`: the mapped park boundary controls surface materials,
+  building exclusion and planting. The rectangle in `park-frame.ts` remains
+  the coordinate/crop frame. Spatial buckets accelerate boundary queries.
+- `park-streets.ts` / `park-walks.ts`: mapped surrounding streets, sidewalks,
+  perimeter walls and refreshed south-end walks. A 3,072-pixel local atlas
+  puts broad road surfaces on the existing terrain; only nearby curbs and
+  walls need separate geometry. This avoids road/terrain intersections and
+  more than a million extra triangles from fully meshed carriageways.
+- `park-facades.ts`: generated color, relief and roughness maps distinguish
+  recessed window panes, mullions, sills and matte masonry. Known prewar
+  buildings retain masonry at tall heights. Reduced atmospheric density
+  preserves more contrast in nearby façades.
 - `park-materials.ts`: deterministic, page-cached turf, broadleaf sprays,
   weathered stone, and path textures. Leaf materials soften direct diffuse
   lighting using the existing shadowed light; no extra transmission pass.
@@ -63,7 +75,7 @@ clock, fullscreen button, and project navigation, including keyboard focus.
 ## Verification
 
 - Earlier full unit suite: 2,622 passed, 20 credential-dependent tests skipped.
-- Current park suite: 43 passed; 301 passed including the relevant room,
+- Current park suite: 51 passed; 309 passed including the relevant room,
   projector and spatial-navigation suites. Coverage includes terrain/ray agreement on the
   nonuniform grid, crown geometry budgets, building/bridge winding and
   openings, shoreline clipping, reflection invalidation, and fitting
@@ -71,6 +83,9 @@ clock, fullscreen button, and project navigation, including keyboard focus.
 - New shoreline tests cover optical coverage, dry-bank continuity, the
   installed Water shader integration, planting clearances, rooted geometry,
   room-coordinate culling and disposal on environment changes.
+- City tests cover the true outline and its padding, street dimensions,
+  junction clearances, geometry budgets, actual wall openings, façade
+  classification and joining refreshed walks to the older northern network.
 - Production build and TypeScript checks passed. The development graphics
   fixture was also checked explicitly (the main tsconfig excludes e2e).
 - Browser checks cover planting controls, branch controls, park cameras,
@@ -125,6 +140,12 @@ million triangles and 154 draw calls in the live two-project Pond view at
 geometry cost; this pass improves appearance rather than claiming a speedup.
 The shoreline itself uses 264 clumps in spatial batches and no additional
 render target. These are brief local diagnostics, not a controlled benchmark.
+
+After the city/perimeter pass, the same live Pond preset at 1,832 × 1,884
+pixels averaged about 2.17 million triangles, 167 draw calls and 10.1 ms frame
+intervals, with a 31.4 ms p95. This adds street and perimeter detail with a
+modest geometry increase, but the longer frames still require profiling.
+The visual improvement goal remains open; see the [current audit](central-park-visual-audit.md).
 
 ## Spatial controls
 

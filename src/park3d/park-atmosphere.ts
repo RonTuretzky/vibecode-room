@@ -9,7 +9,9 @@ export function createParkAtmosphere(renderer: THREE.WebGLRenderer, scene: THREE
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFShadowMap;
   renderer.shadowMap.autoUpdate = false;
-  const haze = new THREE.FogExp2(0xd1dace, .0019);
+  // Keep the near city legible: the previous density erased most contrast
+  // within a kilometre, making the detailed façades read like grey blocks.
+  const haze = new THREE.FogExp2(0xc8d5d9, .0013);
   scene.fog = haze;
 
   const sky = new Sky();
@@ -51,7 +53,7 @@ export function createParkAtmosphere(renderer: THREE.WebGLRenderer, scene: THREE
     update(t: number) {
       // Keep distant projects readable when Fit rises above a large forest;
       // normal lawn/Pond/overlook views retain their original atmosphere.
-      haze.density = .0019 * THREE.MathUtils.clamp(140 / Math.max(140, camera.position.y), .35, 1);
+      haze.density = .0013 * THREE.MathUtils.clamp(140 / Math.max(140, camera.position.y), .35, 1);
       // Shadows move with foliage, at a lower cadence than camera rendering.
       if (t - lastShadow > .18) {
         camera.getWorldDirection(forward);

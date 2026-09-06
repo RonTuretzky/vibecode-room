@@ -91,9 +91,9 @@ import { loadGardenFlora, type FloraLibrary } from "./garden-flora";
 import {
   POND_STAGE,
   alongAcross as alongAcrossOf,
-  insidePark as insideParkRect,
   localFromAlongAcross as parkLocalFromAlongAcross,
 } from "../park3d/park-frame";
+import { insideParkOutline } from "../park3d/park-outline";
 import { createParkShoreline, shorePlantPlacements } from "../park3d/park-shoreline";
 import { refinePondMaterial } from "../park3d/park-pond-material";
 import { createParkPlantingMask, PARK_SITES, inSite } from "../park3d/park-sites";
@@ -1043,8 +1043,18 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
             group.add(parkShore.group);
             console.info(`[park-shore] ${plants.length} sedge/cattail clumps`);
           }
-          const trees: { x: number; z: number; scale: number; rot: number; px: number; pz: number }[] = [];
+          const trees: { x: number; z: number; scale: number; rot: number; px: number; pz: number; form?: number }[] = [];
           const TARGET = 640;
+          for (const mapped of world.perimeterTrees) {
+            const p = localFromLatLon(mapped.coordinates[1]!, mapped.coordinates[0]!);
+            const room = parkToRoom(p.x, p.z);
+            if (Math.hypot(room.x, room.z) > 700 || world.waterAt(p.x, p.z) > .35 || !canPlant(p.x, p.z, .4)) continue;
+            if (trees.some(t => Math.hypot(t.x - room.x, t.z - room.z) < 6)) continue;
+            const height = THREE.MathUtils.clamp(Number(mapped.height) || 15 + rng() * 5, 10, 24);
+            trees.push({ x: room.x, z: room.z, px: p.x, pz: p.z, scale: height / 19, rot: rng() * Math.PI * 2,
+              form: mapped.genus?.toLowerCase().includes('quercus') ? 1 : 0 });
+          }
+          console.info(`[park-perimeter] ${trees.length} mapped trees`);
           for (let attempt = 0; attempt < 20000 && trees.length < TARGET; attempt++) {
             const { px, pz, rx, rz, radius } = samplePark(700);
             if (radius < meadowRadius + 14 || radius > 700) {
@@ -1076,7 +1086,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
           instance("jacaranda_tree", nearTrees);
           const nearSet = new Set(nearTrees);
           parkGrove = createParkGrove(trees.filter(p => !nearSet.has(p)).map(p => ({
-            x: p.x, z: p.z, y: roomY(p.px, p.pz), scale: p.scale * 1.8, rot: p.rot,
+            x: p.x, z: p.z, y: roomY(p.px, p.pz), scale: p.scale * 1.8, rot: p.rot, form: p.form,
           })));
           group.add(parkGrove.group);
           // Understorey from the imagery masks: shrubs where the canopy is
@@ -1306,7 +1316,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
             plantableAt = (x, z) => {
               const px = POND_STAGE.x - x / PARK_SCALE;
               const pz = POND_STAGE.z - z / PARK_SCALE;
-              return insideParkRect(px, pz, -4) && world.waterAt(px, pz) < 0.4;
+              return insideParkOutline(px, pz, -4) && world.waterAt(px, pz) < 0.4;
             };
             plantGroundY = (x, z) => {
               const px = POND_STAGE.x - x / PARK_SCALE;

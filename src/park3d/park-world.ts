@@ -15,13 +15,17 @@ import { parkTerrainAxis, terrainAxisCoordinate } from "./park-terrain-grid";
 import { skylineProfile } from "./park-skyline-profile";
 import { parkGroundColor } from "./park-ground";
 import { parkPathTexture, parkGroundDetailTexture } from "./park-materials";
-import { AXIS_BEARING, DEG, PARK_CENTER, PARK_HALF_LEN, PARK_HALF_WIDTH, insidePark } from "./park-frame";
+import { AXIS_BEARING, DEG, PARK_CENTER, PARK_HALF_LEN, PARK_HALF_WIDTH } from "./park-frame";
+import { insideParkOutline as insidePark } from "./park-outline";
 import { waterInteriorAt } from "./park-pond-material";
 import { createGapstowCrossing } from "./park-gapstow-ground";
 import { PARK_SITES, hallettWoodlandAt } from "./park-sites";
 import { createWollmanGrade } from "./park-wollman";
 import { buildLandmarks } from "./park-landmarks";
 import { loadSkylineModels, skylineSites } from "./park-models";
+import { buildParkStreets } from "./park-streets";
+import { refreshSouthWalks, type ParkStreetData } from "./park-walks";
+import { buildingFacadeMaterial, FACADE_TILE_M, glassBuilding } from "./park-facades";
 
 export interface ParkManifest {
   center: { lat: number; lon: number; surfaceHeightM: number };
@@ -108,6 +112,7 @@ export interface ParkWorld {
   // Path centrelines in local metres (width, flat [x,z,...] runs) for the
   // caller's street furniture — lamps and benches stand along these.
   pathLines: { width: number; pts: number[] }[];
+  perimeterTrees: ParkStreetData['trees'];
   // 1 where the map has water (the Lake, the Reservoir…), 0 elsewhere.
   waterAt: (x: number, z: number) => number;
   // Bare-earth height (flatten applied) at a local point.
@@ -123,7 +128,7 @@ export interface ParkWorld {
   dispose: () => void;
 }
 
-export const PARK_ATTRIBUTION = "USDA NAIP · USGS 3DEP · NYC Open Data footprints (public domain) · water, paths and landmark sites © OpenStreetMap contributors";
+export const PARK_ATTRIBUTION = "USDA NAIP · USGS 3DEP · NYC Open Data footprints (public domain) · park outline, water, streets, paths, trees and sites © OpenStreetMap contributors";
 
 const loadImage = (url: string): Promise<HTMLImageElement> =>
   new Promise((resolve, reject) => {
@@ -230,7 +235,7 @@ const GLASS = [0x8fa6b8, 0x7f95a8, 0xa3b4c2, 0x6f8799, 0x9fb3c4];
 
 function facadeTone(year: number, height: number, seed: number): THREE.Color {
   let palette: number[];
-  if (height > 150 || year >= 1990) {
+  if (glassBuilding(height, year)) {
     palette = GLASS;
   } else if (year !== 0 && year < 1945) {
     palette = PREWAR;
@@ -258,7 +263,7 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
   }
   const { halfEast, halfNorth } = manifest.extent;
 
-  const [demBuffer, reliefImage, waterImage, lawnImage, orthoTexture, buildingsJson, pathsJson] = await Promise.all([
+  const [demBuffer, reliefImage, waterImage, lawnImage, orthoTexture, buildingsJson, pathsJson, streetData] = await Promise.all([
     fetchOk(`${base}/${manifest.dem.file}`).then((r) => r.arrayBuffer()),
     opts.relief === false ? null : loadImage(`${base}/${manifest.relief.file}`),
     opts.water === false ? null : loadImage(`${base}/${manifest.water.file}`),
@@ -270,6 +275,7 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
     opts.paths === false
       ? null
       : fetchOk(`${base}/${manifest.paths.file}`).then((r) => r.json() as Promise<{ paths: [number, number[]][] }>),
+    opts.detailGround && opts.paths !== false ? fetchOk(`${base}/streets.json`).then(r => r.json() as Promise<ParkStreetData>) : null,
   ]);
 
   // ── samplers ────────────────────────────────────────────────────────────
@@ -482,7 +488,7 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
   if (water) group.add(water);
 
   // ── paths ───────────────────────────────────────────────────────────────
-  const pathLines: { width: number; pts: number[] }[] = [];
+  let pathLines: { width: number; pts: number[] }[] = [];
   let paths: THREE.Mesh | null = null;
   if (pathsJson !== null) {
     await nextFrame();
@@ -493,6 +499,7 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
       }
       pathLines.push({ width: widthUnits * manifest.paths.unitM, pts });
     }
+    if (streetData?.walks?.length) pathLines = refreshSouthWalks(pathLines, streetData);
     paths = buildPaths(pathLines,
       (x, z) => crossing?.deckAt(x, z) ?? groundAt(x, z),
       (x, z) => crossing?.deckAt(x, z) != null ? 0 : sampleWater(x, z));
@@ -503,6 +510,22 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
 
   if (opts.landmarks !== false) {
     group.add(buildLandmarks(groundAt, { waterAt: builtWater?.surfaceAt, rinkLevel: rinkGrade?.level, paths: pathLines }));
+  }
+
+  let streets: ReturnType<typeof buildParkStreets> | null = null;
+  if (streetData) {
+    streets = buildParkStreets(streetData.ways, groundAt, { west, east, north, south }, pathLines);
+    group.add(streets.group);
+    if (streets.map && Array.isArray(terrain.material)) {
+      const uv = new Float32Array(pos.count * 2);
+      for (let i = 0; i < pos.count; i++) {
+        uv[i * 2] = (pos.getX(i) - west) / width;
+        uv[i * 2 + 1] = 1 - (pos.getZ(i) - north) / depth;
+      }
+      geometry.setAttribute('uv1', new THREE.BufferAttribute(uv, 2));
+      const city = terrain.material[1] as THREE.MeshStandardMaterial;
+      city.map = streets.map; city.vertexColors = false; city.needsUpdate = true;
+    }
   }
 
   // ── buildings ───────────────────────────────────────────────────────────
@@ -542,12 +565,14 @@ export async function loadParkWorld(opts: ParkWorldOptions = {}): Promise<ParkWo
     heroWater,
     paths,
     pathLines,
+    perimeterTrees: streetData?.trees ?? [],
     groundAt,
     heightAt: displace ? heightAt : groundAt,
     canopyAt: sampleRelief,
     lawnAt: sampleLawn,
     waterAt: sampleWater,
     dispose: () => {
+      streets?.dispose();
       geometry.dispose();
       for (const m of Array.isArray(terrain.material) ? terrain.material : [terrain.material]) {
         const tm = m as THREE.MeshStandardMaterial;
@@ -1070,7 +1095,7 @@ export function buildBuildings(
       return;
     }
     const height = Math.max(3, hUnits * unit);
-    const facadeIndices = year >= 1960 || height > 140 ? glassIndex : wallIndex;
+    const facadeIndices = glassBuilding(height, year) ? glassIndex : wallIndex;
     // With a facade texture the near-white tile multiplies the tone; undim
     // it and sun-facing walls blow out to paper.
     const toneScale = opts.facades !== false ? 0.78 : 1;
@@ -1163,82 +1188,12 @@ export function buildBuildings(
   geometry.addGroup(wallIndex.length, glassIndex.length, 1);
   geometry.addGroup(wallIndex.length + glassIndex.length, roofIndex.length, 2);
   geometry.computeBoundingSphere();
-  const wallMaterial = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: .88 });
-  const glassMaterial = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: .34, metalness: .25, envMapIntensity: .5 });
-  if (opts.facades !== false && typeof document !== "undefined") {
-    wallMaterial.map = facadeTexture();
-    wallMaterial.bumpMap = wallMaterial.map;
-    wallMaterial.bumpScale = .055;
-    glassMaterial.map = glassFacadeTexture();
-  }
+  const wallMaterial = buildingFacadeMaterial(false, opts.facades !== false);
+  const glassMaterial = buildingFacadeMaterial(true, opts.facades !== false);
   const mesh = new THREE.Mesh(geometry, [wallMaterial, glassMaterial, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: .95 })]);
   mesh.name = "park-buildings";
   return mesh;
 }
-
-// One repeating facade tile: FACADE_TILE_M metres of wall — a 4×4 grid of
-// punched windows over a near-white ground the vertex tone colours. A few
-// windows glow warm, most sit dark blue-grey; drawn once per page.
-const FACADE_TILE_M = 13;
-let facadeCanvasTexture: THREE.CanvasTexture | null = null;
-
-function facadeTexture(): THREE.CanvasTexture {
-  if (facadeCanvasTexture !== null) {
-    return facadeCanvasTexture;
-  }
-  const size = 256;
-  const canvas = document.createElement("canvas");
-  canvas.width = size;
-  canvas.height = size;
-  const ctx = canvas.getContext("2d")!;
-  ctx.fillStyle = "#e1dfd5";
-  ctx.fillRect(0, 0, size, size);
-  let seed = 0x46414341;
-  const rand = () => {
-    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
-    return seed / 4294967296;
-  };
-  const cells = 4;
-  const cell = size / cells;
-  for (let row = 0; row < cells; row++) {
-    for (let col = 0; col < cells; col++) {
-      // Window ~55% of the bay, sitting low (sill) and centred.
-      const w = cell * 0.52;
-      const h = cell * 0.58;
-      const x = col * cell + (cell - w) / 2;
-      const y = row * cell + cell * 0.24;
-      const r = rand();
-      if (r > 0.93) {
-        ctx.fillStyle = "#ffe9b8"; // lit
-      } else {
-        const glass = 95 + Math.floor(rand() * 36);
-        const reflection = ctx.createLinearGradient(x, y, x + w, y + h);
-        reflection.addColorStop(0, `rgb(${glass + 18},${glass + 29},${glass + 35})`);
-        reflection.addColorStop(.55, `rgb(${glass},${glass + 12},${glass + 19})`);
-        reflection.addColorStop(1, `rgb(${glass - 9},${glass + 2},${glass + 5})`);
-        ctx.fillStyle = reflection;
-      }
-      ctx.fillRect(x, y, w, h);
-      ctx.fillStyle = "rgba(70,72,66,.25)";
-      ctx.fillRect(x - 2, y - 2, w + 4, 2);
-      ctx.fillStyle = "rgba(255,249,222,.65)";
-      ctx.fillRect(x - 2, y + h, w + 4, 2);
-      // Mullion.
-      ctx.fillStyle = "rgba(240,238,232,0.85)";
-      ctx.fillRect(x + w / 2 - 1, y, 2, h);
-    }
-    // Floor line.
-    ctx.fillStyle = "rgba(120,116,108,0.35)";
-    ctx.fillRect(0, row * cell, size, 2);
-  }
-  facadeCanvasTexture = new THREE.CanvasTexture(canvas);
-  facadeCanvasTexture.wrapS = THREE.RepeatWrapping;
-  facadeCanvasTexture.wrapT = THREE.RepeatWrapping;
-  facadeCanvasTexture.colorSpace = THREE.SRGBColorSpace;
-  facadeCanvasTexture.anisotropy = 4;
-  return facadeCanvasTexture;
-}
-
 
 /** Interpolate the same two triangles as PlaneGeometry, so paths and props sit
  * on the rendered terrain rather than a different continuous DEM surface. */
@@ -1259,31 +1214,6 @@ export function terrainSurfaceSampler(
     return tx + tz <= 1 ? ha + (hd - ha) * tx + (hb - ha) * tz
       : hc + (hb - hc) * (1 - tx) + (hd - hc) * (1 - tz);
   };
-}
-
-let glassCanvasTexture: THREE.CanvasTexture | null = null;
-function glassFacadeTexture(): THREE.CanvasTexture {
-  if (glassCanvasTexture) return glassCanvasTexture;
-  const canvas = document.createElement("canvas");
-  canvas.width = canvas.height = 256;
-  const ctx = canvas.getContext("2d")!;
-  ctx.fillStyle = "#b9c6ca"; ctx.fillRect(0, 0, 256, 256);
-  for (let row = 0; row < 4; row++) {
-    for (let col = 0; col < 8; col++) {
-      const x = col * 32, y = row * 64, v = Math.round(hash01(row * 8 + col + 174) * 24);
-      const gradient = ctx.createLinearGradient(x, y, x + 32, y + 64);
-      gradient.addColorStop(0, `rgb(${157 + v},${176 + v},${180 + v})`);
-      gradient.addColorStop(.65, `rgb(${119 + v},${140 + v},${145 + v})`);
-      gradient.addColorStop(1, `rgb(${143 + v},${158 + v},${162 + v})`);
-      ctx.fillStyle = gradient; ctx.fillRect(x + 1, y + 2, 30, 57);
-      ctx.fillStyle = "#75888e"; ctx.fillRect(x, y + 60, 32, 4);
-    }
-  }
-  glassCanvasTexture = new THREE.CanvasTexture(canvas);
-  glassCanvasTexture.wrapS = glassCanvasTexture.wrapT = THREE.RepeatWrapping;
-  glassCanvasTexture.colorSpace = THREE.SRGBColorSpace;
-  glassCanvasTexture.anisotropy = 8;
-  return glassCanvasTexture;
 }
 
 /** Clip a terrain cell triangle to the bilinear mask contour instead of drawing

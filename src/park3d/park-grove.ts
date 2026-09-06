@@ -3,7 +3,7 @@ import { barkTexture } from "../ui/tree/build";
 import { parkLeafMaterial } from "./park-materials";
 import { buildGroveGeometry, GROVE_FORMS } from "./park-grove-geometry";
 
-export interface GroveTree { x: number; y: number; z: number; scale: number; rot: number }
+export interface GroveTree { x: number; y: number; z: number; scale: number; rot: number; form?: number }
 
 /** Several broadleaf silhouettes, spatially batched for eye/water culling. */
 export function createParkGrove(trees: GroveTree[]) {
@@ -15,7 +15,7 @@ export function createParkGrove(trees: GroveTree[]) {
   leaves.vertexColors = true;
   const batches = new Map<string, { form: number; trees: GroveTree[] }>();
   trees.forEach((tree, i) => {
-    const form = i % forms.length;
+    const form = tree.form ?? i % forms.length;
     // Slightly larger cells offset the additional batches for crown variants.
     const key = `${Math.floor(tree.x / 130)},${Math.floor(tree.z / 130)},${form}`;
     const batch = batches.get(key) ?? { form, trees: [] };
