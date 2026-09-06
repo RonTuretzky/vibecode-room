@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { parkFoliageTexture } from "../../park3d/park-materials";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { hashSeed, mulberry32, type TreeAdornmentKind, type TreeSpec3D, type TreeVec3 } from "./spec";
 
@@ -297,7 +298,7 @@ function randomLeafQuaternion(rng: () => number): THREE.Quaternion {
   return new THREE.Quaternion().setFromEuler(swayEuler);
 }
 
-export function buildTree(spec: TreeSpec3D, quality: TreeQuality): BuiltTree {
+export function buildTree(spec: TreeSpec3D, quality: TreeQuality, natural = false): BuiltTree {
   const q = QUALITY[quality];
   const group = new THREE.Group();
   const ownedGeometries: THREE.BufferGeometry[] = [];
@@ -419,6 +420,8 @@ export function buildTree(spec: TreeSpec3D, quality: TreeQuality): BuiltTree {
       emissiveIntensity: 0.08,
     });
     const wood = new THREE.Mesh(woodGeometry, barkMat);
+    wood.castShadow = natural;
+    wood.receiveShadow = natural;
     wood.raycast = noRaycast;
     group.add(wood);
     ownedGeometries.push(woodGeometry);
@@ -430,7 +433,7 @@ export function buildTree(spec: TreeSpec3D, quality: TreeQuality): BuiltTree {
   const swayColors: THREE.Color[] = [];
   const foliage = spec.foliage;
   if (foliage !== undefined && foliage.density > 0 && q.foliageMul > 0 && foliage.palette.length > 0) {
-    const palette = foliage.palette.map((c) => new THREE.Color(c));
+    const palette = (natural ? [0x3a5728, 0x547232, 0x68813b, 0x455e2c, 0x839849] : foliage.palette).map((c) => new THREE.Color(c));
     const scatter = (rng: () => number, at: THREE.Vector3, spreadXZ: number, spreadY: number, count: number) => {
       for (let i = 0; i < count; i += 1) {
         const theta = rng() * Math.PI * 2;
@@ -458,7 +461,7 @@ export function buildTree(spec: TreeSpec3D, quality: TreeQuality): BuiltTree {
       }
       const length = curve.getLength();
       const rng = mulberry32(hashSeed(`${spec.id}:foliage:${branch.id}`));
-      const count = Math.round(Math.min(90, Math.max(28, length * 14)) * foliage.density * q.foliageMul);
+      const count = Math.round(Math.min(90, Math.max(28, length * 14)) * foliage.density * q.foliageMul * (natural ? 2.8 : 1));
       for (let i = 0; i < count; i += 1) {
         // Bias clusters toward the outer branch (sqrt skews t → 1).
         const t = 0.34 + 0.66 * Math.sqrt(rng());
@@ -468,7 +471,7 @@ export function buildTree(spec: TreeSpec3D, quality: TreeQuality): BuiltTree {
       // A tuft at every sub-twig tip.
       for (const twig of twigsByBranch.get(branch.id) ?? []) {
         twig.curve.getPoint(1, P);
-        scatter(rng, P, 0.5, 0.55, Math.round(9 * foliage.density * q.foliageMul));
+        scatter(rng, P, 0.5, 0.55, Math.round((natural ? 24 : 9) * foliage.density * q.foliageMul));
       }
     }
     // Crown tuft at the trunk top so the tree reads as a full canopy.
@@ -478,7 +481,7 @@ export function buildTree(spec: TreeSpec3D, quality: TreeQuality): BuiltTree {
       new THREE.Vector3(0, height * 0.97, 0),
       1.15,
       1.5,
-      Math.round(80 * foliage.density * q.foliageMul),
+      Math.round((natural ? 220 : 80) * foliage.density * q.foliageMul),
     );
   }
   // Leaf-adornment tufts (every quality: they carry data, not just looks).
@@ -505,13 +508,16 @@ export function buildTree(spec: TreeSpec3D, quality: TreeQuality): BuiltTree {
   let leaves: THREE.InstancedMesh | null = null;
   if (sway.length > 0) {
     const leafMat = new THREE.MeshStandardMaterial({
-      map: leafTexture(),
+      map: natural ? parkFoliageTexture() : leafTexture(),
+      alphaToCoverage: natural,
       alphaTest: 0.45,
       side: THREE.DoubleSide,
       roughness: 0.85,
       metalness: 0,
     });
     leaves = new THREE.InstancedMesh(leafGeometry(), leafMat, sway.length);
+    leaves.castShadow = natural;
+    leaves.receiveShadow = natural;
     leaves.raycast = noRaycast;
     // Instance positions live in the matrices; geometry bounds would cull the
     // whole canopy wrongly.
@@ -613,11 +619,11 @@ export function buildTree(spec: TreeSpec3D, quality: TreeQuality): BuiltTree {
 // A THREE.LOD wrapper: the same spec built at all three qualities, swapped by
 // camera distance so a whole forest stays smooth. Only the visible level pays
 // its sway update.
-export function buildTreeLOD(spec: TreeSpec3D): BuiltTree {
+export function buildTreeLOD(spec: TreeSpec3D, natural = false): BuiltTree {
   const levels: [BuiltTree, number][] = [
-    [buildTree(spec, "high"), 0],
-    [buildTree(spec, "medium"), TREE_LOD_MEDIUM],
-    [buildTree(spec, "low"), TREE_LOD_LOW],
+    [buildTree(spec, "high", natural), 0],
+    [buildTree(spec, "medium", natural), TREE_LOD_MEDIUM],
+    [buildTree(spec, "low", natural), TREE_LOD_LOW],
   ];
   const lod = new THREE.LOD();
   for (const [level, distance] of levels) {

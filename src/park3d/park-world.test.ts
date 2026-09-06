@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import * as THREE from "three";
-import { buildBuildings } from "./park-world";
+import { buildBuildings, buildWater, buildPaths, terrainSurfaceSampler, clipWaterTriangle } from "./park-world";
 
 // Geometric normal of an indexed triangle vs. the stored vertex normal: the
 // extrusion must be front-facing from outside (walls) and above (roofs) for
@@ -115,4 +115,82 @@ describe("park buildings extrusion", () => {
     }
     expect(baseSum).toBeLessThan(topSum);
   });
+});
+
+
+describe("park water and banks", () => {
+  test("a noisy DEM produces a level pond with its entire bed below water", () => {
+    const water = buildWater((x, z) => Math.abs(x) < 8 && Math.abs(z) < 8 ? 1 : 0, (x, z) => 12 + x * .3 + z * .2, 30, 30, 2, { x: 0, z: 0 });
+    expect(water.hero).not.toBeNull();
+    expect(water.mesh).toBeNull();
+    for (let x = -7; x < 8; x += 2) {
+      expect(water.surfaceAt(x, 1)).toBeCloseTo(water.hero!.level);
+      expect(water.bankHeightAt(x, 1)).toBeLessThan(water.hero!.level);
+    }
+    expect(water.surfaceAt(15, 0)).toBeNull();
+    expect(water.bankHeightAt(29, 0)).toBeNull();
+    let previous = water.bankHeightAt(7, 1)!;
+    for (let x = 9; x < 20; x += 2) {
+      const next = water.bankHeightAt(x, 1)!;
+      expect(next).toBeGreaterThan(previous);
+      previous = next;
+    }
+    water.hero!.geometry.dispose();
+  });
+
+  test("translated crops retain world coordinates and independent water levels", () => {
+    const water = buildWater((x) => (x > 90 && x < 98) || (x > 102 && x < 110) ? 1 : 0,
+      x => x < 100 ? 5 : 15, 20, 10, 2, { x: 95, z: 200 }, { x: 100, z: 200 });
+    expect(water.hero!.level).toBeCloseTo(5.1);
+    expect(water.surfaceAt(105, 200)).toBeCloseTo(15.1);
+    expect(water.surfaceAt(95, 0)).toBeNull();
+    water.hero!.geometry.computeBoundingBox();
+    expect(water.hero!.geometry.boundingBox!.min.x).toBe(91);
+    expect(water.hero!.geometry.boundingBox!.max.y).toBe(-190);
+    const pos = water.mesh!.geometry.getAttribute("position");
+    for (let i = 0; i < pos.count; i++) expect(pos.getY(i)).toBeCloseTo(15.1);
+    water.hero!.geometry.dispose(); water.mesh!.geometry.dispose();
+    (water.mesh!.material as THREE.Material).dispose();
+  });
+
+  test("a hero point outside a crop cannot select its edge water", () => {
+    const water = buildWater(() => 1, () => 5, 10, 10, 2, { x: 50, z: 0 });
+    expect(water.hero).toBeNull();
+    expect(water.mesh).not.toBeNull();
+    water.mesh!.geometry.dispose(); (water.mesh!.material as THREE.Material).dispose();
+  });
+});
+
+describe("paths on rendered terrain", () => {
+  test("surface sampling uses the actual triangle diagonal, including crop edges", () => {
+    const heights = [0, 2, 4, 12];
+    const sample = terrainSurfaceSampler({ getY: (i: number) => heights[i]! }, 1, 1, 10, 20, 2, 2, () => -100);
+    expect(sample(10.5, 20.5)).toBeCloseTo(1.5);
+    expect(sample(11.5, 21.5)).toBeCloseTo(7.5);
+    expect(sample(12, 22)).toBe(12);
+    expect(sample(9, 20)).toBe(-100);
+  });
+
+  test("both path edges follow sloped ground and sparse paths stop at water", () => {
+    const ground = (x: number, z: number) => x * .2 + z * .4;
+    const mesh = buildPaths([{ width: 2, pts: [-10, 0, 10, 0] }], ground, x => Math.abs(x) < 2 ? 1 : 0)!;
+    const pos = mesh.geometry.getAttribute("position"), indices = mesh.geometry.getIndex()!;
+    expect(pos.count).toBeGreaterThan(20);
+    for (let i = 0; i < pos.count; i++) {
+      const clearance = pos.getY(i) - ground(pos.getX(i), pos.getZ(i));
+      expect(clearance).toBeGreaterThan(.06);
+      expect(clearance).toBeLessThan(.09);
+    }
+    for (let i = 0; i < indices.count; i += 3) {
+      const xs = [0, 1, 2].map(k => pos.getX(indices.getX(i + k)));
+      expect(xs.every(x => x <= -2) || xs.every(x => x >= 2)).toBe(true);
+    }
+    mesh.geometry.dispose(); (mesh.material as THREE.Material).dispose();
+  });
+});
+
+
+test("water contour clips a diagonal shoreline without filling the dry corner", () => {
+  const polygon = clipWaterTriangle([{ x: 0, z: 0, wet: 1 }, { x: 0, z: 2, wet: 0 }, { x: 2, z: 0, wet: 0 }]);
+  expect(polygon.map(p => [p.x, p.z])).toEqual([[0, 0], [0, 1], [1, 0]]);
 });
