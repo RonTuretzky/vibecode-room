@@ -37,11 +37,18 @@ material textures. It needs no cloud rendering or external asset service.
 - `park-materials.ts`: deterministic, page-cached turf, broadleaf sprays,
   weathered stone, and path textures. Leaf materials soften direct diffuse
   lighting using the existing shadowed light; no extra transmission pass.
-- `park-grove-geometry.ts` / `park-grove.ts`: three distinct crown/trunk
-  forms, each below 1,500 triangles, with spatial instancing and rounded
-  crown normals. Curved forks, tapered root flares and layered foliage
-  distinguish vase-shaped, tiered and irregular crowns. The nearest 16
-  trees within 120 m retain photoscans.
+- `park-grove-geometry.ts` / `park-grove.ts`: elm-like vase, rounded oak and
+  spreading plane crowns follow mapped genera where available. Spatially
+  instanced distant forms stay below 1,500 triangles. The nearest 16 trees
+  within 120 m of the project lawn use 15,288–16,800 triangle detail forms,
+  with smoother trunks, connected secondary forks and small leaf sprays.
+  Model bounds preserve the selected 10–24 m mapped or 13–19 m inferred height.
+- `park-broadleaf-texture.ts` / `park-bark.ts`: three cached 512-pixel leaf
+  atlases distinguish serrated elm, pointed oak and palmate plane shapes.
+  Locally bundled CC0 bark scans add color, normal and roughness detail.
+  Six 1k bark maps add roughly 5 MiB of downloads; all nine textures together
+  require about 36 MiB as RGBA8 with mipmaps. Textures persist for the page;
+  instanced buffers, six geometry templates and materials are disposed on exit.
 - `park-wind.ts`: shared time/strength uniforms gently bend and flutter grove
   foliage. Instance positions vary the phase, and the same deformation runs
   in the leaf shadow material. Root geometry stays fixed; reduced motion sets
@@ -621,3 +628,41 @@ Fresh lawn/Pond captures from the actual two-project local room were inspected
 in `.context/foliage-live-2026-09-06/`, with no browser errors. Its boot ID and
 healthy local-provider status remain unchanged. Both preceding commits
 (`6045aae`, `d684a05`) have passed all CI jobs, including live flows.
+
+## Broadleaf landscape pass — 2026-09-06
+
+The landscape grove now selects elm-like, oak-like or plane-like crowns from
+mapped `Ulmus`, `Quercus` and `Platanus` genera. Other/inferred trees rotate
+through the three illustrative forms. Both near and distant models preserve
+the selected height through their actual geometry bounds. Project trees are
+unchanged. The former close jacaranda scans remain available in the meadow.
+
+Near trees add smoother tapered trunks, five main limbs, connected secondary
+forks, small twigs and finer foliage cards. Root tips enter the ground. Bark
+UVs run along limbs at local metre scale instead of stretching one tile over
+the whole trunk. Plane trees use a Platanus scan; elm/oak use a furrowed willow
+bark approximation. The leaf atlases distinguish toothed simple, pointed-lobed
+and palmate shapes. References and pinned asset URLs are in the park asset
+manifest; this is a genus-level interpretation, not a botanical survey.
+
+The 97 targeted unit tests and product typecheck pass. New geometry checks
+cover near-tree triangle/index budgets, finite positions/UVs and normalized
+normals. The six source bark files pass pinned-hash validation. All four full
+GPU browser scenarios pass, covering six presets, low-shore traversal, motion
+preferences, six rebuilds and repeated reflection resizing. In the preset
+run, average frames sampled 8.3–8.4 ms with p95 of 9.2–9.4 ms at 2× resolution
+on the M4 Max. Warm resource counts remain 160 geometries, 91 textures and
+89 programs. This short local run does not characterize other devices.
+
+Evidence: `.context/broadleaf-gpu-results/`,
+`.context/broadleaf-final-close-2026-09-06/` (final branch joins and roots),
+`.context/broadleaf-units-final.log` and `.context/broadleaf-types-final.log`.
+The running local room was also captured at the lawn and Pond with its two
+real projects; both renders were inspected without browser errors, and the
+local-provider health and server boot ID remain unchanged. Evidence is in
+`.context/broadleaf-live-2026-09-06/`.
+The previous opacity-repair commit `f6ee7a3` has passed all CI jobs.
+
+Remaining vegetation work includes less repeated individual architecture,
+root transitions on steep slopes and camera-adaptive near detail beyond the
+fixed sixteen-tree lawn neighbourhood. The full visual audit remains open.

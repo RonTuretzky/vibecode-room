@@ -1,7 +1,8 @@
 # Central Park world assets
 
-Everything in this directory is **public domain / open government data** (plus OpenStreetMap water outlines under ODbL),
-baked by `scripts/fetch-park-data.py` and consumed by `src/park3d/park-world.ts`
+This directory contains **public domain / open government data**, OpenStreetMap
+data under ODbL, CC0 bark scans and the CC BY landmark models listed below.
+The geographic layers are baked by `scripts/fetch-park-data.py` and consumed by `src/park3d/park-world.ts`
 (the `park3d.html?src=open` evaluation page and the room's `?env=park`
 environment). Unlike Google's Photorealistic 3D Tiles (the page's default
 `?src=tiles` stream, which may never be persisted), these files may be stored,
@@ -77,3 +78,23 @@ retrieved through the OSM map API on 2026-09-06. The WCS visitor guide informs
 modeled pavilion roles, open galleries and the clock. No WCS photographs or
 map images are distributed as textures. See the accuracy document for the
 source link and the distinction between source outlines and modeled detail.
+
+## Broadleaf bark (`bark/*.jpg`)
+
+Six unchanged 1024×1024 maps from Poly Haven: diffuse color, OpenGL normal and
+roughness for [Bark Willow](https://polyhaven.com/a/bark_willow) and
+[Bark Platanus](https://polyhaven.com/a/bark_platanus). They are covered by
+[Poly Haven's CC0 asset license](https://polyhaven.com/license). The willow
+scan supplies a furrowed-bark approximation for elm/oak forms; it is not an
+elm or oak scan. Plane-like trees use the Platanus scan.
+
+`bark/sources.json` pins the original download URLs and MD5 hashes. Restore
+missing/changed maps with `python3 scripts/fetch-park-bark.py`; validate the
+committed copies without network access with `--check`. All runtime requests
+use these local files. The combined payload is approximately 5 MiB.
+
+Crown and leaf shapes are authored geometry and canvas textures, informed by
+the Conservancy's [American elm](https://www.centralparknyc.org/plants/american-elm),
+[red oak](https://www.centralparknyc.org/plants/red-oak) and
+[London plane](https://www.centralparknyc.org/plants/london-plane) descriptions.
+They illustrate genus-level traits, rather than reproduce individual trees.

@@ -1,0 +1,36 @@
+{
+  "bark_willow": {
+    "diff": {
+      "file": "bark_willow_diff_1k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/bark_willow/bark_willow_diff_1k.jpg",
+      "md5": "792d4f8467fe360092eee335ee60b698"
+    },
+    "nor": {
+      "file": "bark_willow_nor_1k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/bark_willow/bark_willow_nor_gl_1k.jpg",
+      "md5": "91ffa6e3a1ba8cccb714908ef50122d5"
+    },
+    "rough": {
+      "file": "bark_willow_rough_1k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/bark_willow/bark_willow_rough_1k.jpg",
+      "md5": "794115a3942e6e435274aabfa0967818"
+    }
+  },
+  "bark_platanus": {
+    "diff": {
+      "file": "bark_platanus_diff_1k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/bark_platanus/bark_platanus_diff_1k.jpg",
+      "md5": "2824272c2b693b7784bc2515d0728a8a"
+    },
+    "nor": {
+      "file": "bark_platanus_nor_1k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/bark_platanus/bark_platanus_nor_gl_1k.jpg",
+      "md5": "850c131308d165e0ed3daa617a9a057f"
+    },
+    "rough": {
+      "file": "bark_platanus_rough_1k.jpg",
+      "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/bark_platanus/bark_platanus_rough_1k.jpg",
+      "md5": "9354f1dd3df3b8b8bf4439307496841c"
+    }
+  }
+}

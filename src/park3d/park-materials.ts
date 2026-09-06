@@ -49,8 +49,8 @@ export function parkFoliageTexture(): THREE.CanvasTexture {
 
 /** Thin-leaf diffuse response, reusing the already shadowed direct light.
  * No extra render target, transmission pass, or unshadowed emissive glow. */
-export function parkLeafMaterial(color = 0xffffff): THREE.MeshStandardMaterial {
-  const material = new THREE.MeshStandardMaterial({ map: parkFoliageTexture(), color,
+export function parkLeafMaterial(color = 0xffffff, map: THREE.Texture = parkFoliageTexture()): THREE.MeshStandardMaterial {
+  const material = new THREE.MeshStandardMaterial({ map, color,
     alphaTest: .25, alphaToCoverage: true, side: THREE.DoubleSide, roughness: .92 });
   material.onBeforeCompile = shader => {
     const physical = THREE.ShaderChunk.lights_physical_pars_fragment.replace(

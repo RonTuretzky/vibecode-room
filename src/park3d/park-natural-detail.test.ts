@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import * as THREE from "three";
-import { buildGroveGeometry, GROVE_FORMS } from "./park-grove-geometry";
+import { buildGroveGeometry, GROVE_FORMS, groveFormForGenus } from "./park-grove-geometry";
 import { groundNoise, parkGroundColor } from "./park-ground";
 import { parkTerrainAxis, terrainAxisCoordinate } from "./park-terrain-grid";
 import { fitParkProjects } from "./park-cameras";
@@ -8,6 +8,35 @@ import { ParkReflectionSchedule } from "./park-reflection";
 import { terrainSurfaceSampler } from "./park-world";
 
 describe("natural park geometry", () => {
+  test("mapped broadleaf genera select their crown and unknown genera keep the fallback", () => {
+    expect(groveFormForGenus('Ulmus')).toBe(0);
+    expect(groveFormForGenus(' Quercus rubra ')).toBe(1);
+    expect(groveFormForGenus('PLATANUS')).toBe(2);
+    for (const value of [null, undefined, '', 'Acer']) expect(groveFormForGenus(value)).toBeUndefined();
+  });
+
+  test("close trees have complete finite detail within an 18,000 triangle budget", () => {
+    GROVE_FORMS.forEach((_, i) => {
+      const { trunk, canopy } = buildGroveGeometry(i, true);
+      expect(trunk.boundingBox!.min.y).toBeLessThan(0);
+      expect(trunk.boundingBox!.min.y).toBeGreaterThan(-.25);
+      expect(canopy.boundingBox!.max.y).toBeGreaterThan(10);
+      expect((trunk.index!.count + canopy.index!.count) / 3).toBeLessThan(18000);
+      for (const geometry of [trunk, canopy]) {
+        const positions = geometry.attributes.position!, normals = geometry.attributes.normal!;
+        for (const value of geometry.index!.array) expect(value).toBeLessThan(positions.count);
+        for (const attribute of ['position', 'normal', 'uv']) {
+          expect(geometry.attributes[attribute]!.count).toBe(positions.count);
+          for (const value of geometry.attributes[attribute]!.array) expect(Number.isFinite(value)).toBe(true);
+        }
+        for (let v = 0; v < normals.count; v++) {
+          expect(Math.hypot(normals.getX(v), normals.getY(v), normals.getZ(v))).toBeCloseTo(1, 4);
+        }
+        geometry.dispose();
+      }
+    });
+  });
+
   test("three distinct finite crowns stay within the instancing budget", () => {
     const proportions: number[] = [];
     GROVE_FORMS.forEach((_, i) => {

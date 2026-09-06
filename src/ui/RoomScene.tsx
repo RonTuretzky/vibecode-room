@@ -6,6 +6,7 @@ import { parkProjectSlots, type ParkProjectPoint } from "../park3d/park-project-
 import { createParkAtmosphere } from "../park3d/park-atmosphere";
 import { ParkReflectionQuality, ParkReflectionSchedule } from "../park3d/park-reflection";
 import { createParkGrove } from "../park3d/park-grove";
+import { groveFormForGenus } from '../park3d/park-grove-geometry';
 import { createParkUnderstorey, understoreyPlacements } from "../park3d/park-understorey";
 import { parkTurfTexture } from "../park3d/park-materials";
 import { AdaptiveResolution } from "./render-quality";
@@ -1045,9 +1046,9 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
               });
             }
           };
-          // Trees at full size (the scan is ~19 m tall; shore trees run
-          // 10–15 m), kept sparse and off the bridge so the postcard's
-          // sightline over the water stays open.
+          // Broadleaf trees follow mapped genera/heights where supplied;
+          // inferred woodland fills the canopy mask while keeping the bridge
+          // and the stage's view across the Pond open.
           // Candidates are drawn in PARK coordinates over the park's own
           // corner — a blind disc around the stage lands mostly in the city
           // (zeroed masks) and starves every species long before its target.
@@ -1088,7 +1089,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
             if (trees.some(t => Math.hypot(t.x - room.x, t.z - room.z) < 6)) continue;
             const height = THREE.MathUtils.clamp(Number(mapped.height) || 15 + rng() * 5, 10, 24);
             trees.push({ x: room.x, z: room.z, px: p.x, pz: p.z, scale: height / 19, rot: rng() * Math.PI * 2,
-              form: mapped.genus?.toLowerCase().includes('quercus') ? 1 : 0 });
+              form: groveFormForGenus(mapped.genus) });
           }
           console.info(`[park-perimeter] ${trees.length} mapped trees`);
           for (let attempt = 0; attempt < 20000 && trees.length < TARGET; attempt++) {
@@ -1113,16 +1114,16 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
             if (trees.some((q) => (q.x - rx) ** 2 + (q.z - rz) ** 2 < 9 * 9)) {
               continue;
             }
-            // Mature park canopy: the scan is ~19 m, so 0.68–1.0 spans the
-            // 13–19 m elms and oaks in the photographs.
+            // Inferred trees span 13–19 m; these are illustrative placements,
+            // distinct from mapped individuals with source heights and genera.
             trees.push({ x: rx, z: rz, px: p.x, pz: p.z, scale: 0.68 + rng() * 0.32, rot: rng() * Math.PI * 2 });
           }
-          console.info(`[park-flora] jacaranda_tree: ${trees.length} placed`);
+          console.info(`[park-flora] broadleaf trees: ${trees.length} placed`);
           const nearTrees = trees.filter(p => Math.hypot(p.x, p.z) < 120).sort((a, b) => Math.hypot(a.x, a.z) - Math.hypot(b.x, b.z)).slice(0, 16);
-          instance("jacaranda_tree", nearTrees);
           const nearSet = new Set(nearTrees);
-          parkGrove = createParkGrove(trees.filter(p => !nearSet.has(p)).map(p => ({
-            x: p.x, z: p.z, y: roomY(p.px, p.pz), scale: p.scale * 1.8, rot: p.rot, form: p.form,
+          parkGrove = createParkGrove(trees.map(p => ({
+            x: p.x, z: p.z, y: roomY(p.px, p.pz), scale: p.scale * 1.8, height: p.scale * 19,
+            rot: p.rot, form: p.form, detail: nearSet.has(p),
           })));
           group.add(parkGrove.group);
           // Understorey from the imagery masks: shrubs where the canopy is
@@ -1160,9 +1161,8 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
           };
           // Photographs of the Pond show a WOODED bowl: continuous shrub
           // masses under and between the trees, brush overhanging the
-          // shoreline, rocks at the water's edge. The shrub scans are ~1-3k
-          // tris a clump, so mass them freely; the jacarandas stay the only
-          // expensive species.
+          // shoreline, rocks at the water's edge. Spatial batches keep the
+          // scanned undergrowth separate from the authored broadleaf grove.
           const underwood = (px: number, pz: number) => world.canopyAt(px, pz) > 1.2;
           const lowVeg = (px: number, pz: number) => {
             const c = world.canopyAt(px, pz);

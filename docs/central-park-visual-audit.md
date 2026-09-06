@@ -84,8 +84,14 @@ prove that the visual objective has been achieved.
    Original Poly Haven opacity masks now restore their cutouts, and fresh
    close renders show leaf-shaped fronds and more open shadows. The repair
    preserves every mesh/UV buffer and adds an asset regression check. Continue
-   judging crown density with the corrected textures. Near photoscan trees
-   still reuse a jacaranda model; matching them to mapped park genera remains.
+   judging crown density with the corrected textures. Landscape trees now use
+   elm-like, oak-like and plane-like forms selected by mapped genus when
+   available, replacing the near jacaranda stand-in. Finer nearby geometry,
+   connected secondary branches, distinct leaf edges and local bark scans were
+   inspected at ground level. The first prototype exposed smooth trunks and
+   fan-like forks; the next iterations improved bark scale and branch hierarchy.
+   Individual trees and unmapped genera remain approximations; near detail is
+   limited to the sixteen trees closest to the lawn, not camera-adaptive LOD.
    The close turf now has four times
    the cell density in a smaller 25-tile neighbourhood, fading by 16 m; wrapped
    diffuse light gives thin blades a softer response without another pass.
@@ -135,6 +141,11 @@ prove that the visual objective has been achieved.
    A paired original/repaired-foliage comparison measured 8.3–9.1 ms average
    frames for both, with matching geometry/texture counts per view. The longer
    suite had slower samples, so retain long-frame behavior in this audit.
+   The broadleaf replacement passes all four full GPU scenarios, with stable
+   warm counts of 160 geometries, 91 textures and 89 programs across six
+   rebuilds. Six park views sample 8.3–8.4 ms average / 9.2–9.4 ms p95 at DPR 2
+   on the M4 Max. The cached bark/leaf maps increase texture memory; nearby
+   tree meshes are substantially smaller than the replaced scans.
 
 ## Completion remains unproven
 

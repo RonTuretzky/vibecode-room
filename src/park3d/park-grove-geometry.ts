@@ -2,23 +2,33 @@ import * as THREE from "three";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { mulberry32 } from "../ui/tree/spec";
 
-// Elm-like vase, tiered oak-like crown, and an irregular broadleaf. These
-// are visual forms, not a surveyed species assignment. Curved forks and root
-// flares replace the old straight spoke trunks; each stays below 1,500 tris.
+// Elm vase, rounded oak and an irregular spreading plane-like crown. These
+// describe genus-level silhouettes; each individual remains an interpretation.
 export const GROVE_FORMS = [
-  { width: 4.7, height: 8.8, depth: 2.0, lobes: 12, cards: 32, lean: .55 },
-  { width: 3.9, height: 10.8, depth: 1.7, lobes: 12, cards: 30, lean: -.3 },
-  { width: 4.2, height: 8.3, depth: 2.3, lobes: 12, cards: 29, lean: 1.1 },
+  { width: 4.8, height: 9.4, depth: 2.0, lobes: 14, cards: 24, lean: .55 },
+  { width: 4.9, height: 8.5, depth: 2.7, lobes: 16, cards: 20, lean: -.3 },
+  { width: 4.2, height: 9.0, depth: 2.8, lobes: 14, cards: 22, lean: 1.1 },
 ] as const;
 
-export function buildGroveGeometry(formIndex: number) {
+export function groveFormForGenus(genus?: string | null): number | undefined {
+  const value = genus?.trim().toLowerCase();
+  if (value?.startsWith('ulmus')) return 0;
+  if (value?.startsWith('quercus')) return 1;
+  if (value?.startsWith('platanus')) return 2;
+  return undefined;
+}
+
+export function buildGroveGeometry(formIndex: number, detail = false) {
   const form = GROVE_FORMS[formIndex]!;
   const rng = mulberry32(0x47524f56 + formIndex * 1439);
   const leaves: THREE.BufferGeometry[] = [], wood: THREE.BufferGeometry[] = [];
   const limb = (start: THREE.Vector3, control: THREE.Vector3, end: THREE.Vector3, base: number, tip: number, sides = 5, segments = 3) => {
+    if (detail) { sides = base > .25 ? 16 : 8; segments = Math.max(segments, 7); }
     const curve = new THREE.QuadraticBezierCurve3(start, control, end);
     const geometry = new THREE.TubeGeometry(curve, segments, 1, sides, false);
-    const position = geometry.attributes.position!, point = new THREE.Vector3(), center = new THREE.Vector3();
+    const position = geometry.attributes.position!, uv = geometry.attributes.uv!;
+    const point = new THREE.Vector3(), center = new THREE.Vector3();
+    const length = curve.getLength();
     for (let j = 0; j <= segments; j++) {
       const t = j / segments, radius = THREE.MathUtils.lerp(base, tip, t);
       curve.getPointAt(t, center);
@@ -26,40 +36,65 @@ export function buildGroveGeometry(formIndex: number) {
         const i = j * (sides + 1) + k;
         point.fromBufferAttribute(position, i).sub(center).multiplyScalar(radius).add(center);
         position.setXYZ(i, point.x, point.y, point.z);
+        // Tube U runs along the limb by default; bark grain must run along V.
+        // Keep the grain at local metre scale instead of stretching one tile over
+        // the complete trunk or squeezing it into a short twig.
+        uv.setXY(i, k / sides * Math.PI * 2 * Math.max(.035, (base + tip) * .5), t * length);
       }
     }
-    geometry.computeVertexNormals(); wood.push(geometry);
+    geometry.computeVertexNormals(); wood.push(geometry); return curve;
   };
-  const fork = new THREE.Vector3(form.lean * .3, 3.7, .2);
+  const fork = new THREE.Vector3(form.lean * .3, formIndex === 1 ? 2.8 : 3.7, .2);
   const crown = new THREE.Vector3(form.lean, form.height, -.2);
-  limb(new THREE.Vector3(0, .12, 0), new THREE.Vector3(-form.lean * .15, 1.8, 0), fork, .51, .29, 8, 4);
-  limb(fork, crown.clone().lerp(fork, .5).add(new THREE.Vector3(.15, 0, .2)), crown, .29, .05, 6, 3);
+  limb(new THREE.Vector3(0, -.12, 0), new THREE.Vector3(-form.lean * .15, 1.8, 0), fork, .51, .29, 8, 4);
+  const leader = limb(fork, crown.clone().lerp(fork, .5).add(new THREE.Vector3(.15, 0, .2)), crown, .29, .05, 6, 3);
+  const scaffolds = Array.from({ length: 5 }, (_, i) => {
+    const angle = i * Math.PI * 2 / 5 + .17;
+    const end = new THREE.Vector3(form.lean + Math.cos(angle) * form.width * .44,
+      form.height * (.72 + (i % 3) * .035), Math.sin(angle) * form.width * .44);
+    const start = leader.getPoint((i % 3) * .035);
+    const control = start.clone().lerp(end, .55); control.y += formIndex === 0 ? .9 : .2;
+    return limb(start, control, end, .18, .06, 5, 3);
+  });
   // Flared roots taper into the ground, anchoring the tree without separate
   // contact-shadow decals or additional transparent overdraw.
   for (let i = 0; i < 5; i++) {
     const angle = i * Math.PI * 2 / 5 + rng() * .3, r = .85 + rng() * .45;
     limb(new THREE.Vector3(Math.cos(angle) * .26, .8, Math.sin(angle) * .26),
       new THREE.Vector3(Math.cos(angle) * .65, .18, Math.sin(angle) * .65),
-      new THREE.Vector3(Math.cos(angle) * r, .04, Math.sin(angle) * r), .19, .015, 4, 2);
+      new THREE.Vector3(Math.cos(angle) * r, -.08, Math.sin(angle) * r), .19, .015, 4, 2);
   }
   const normal = new THREE.Vector3();
   for (let lobe = 0; lobe < form.lobes; lobe++) {
     const angle = lobe * 2.39996 + rng() * .35;
-    const tier = lobe / (form.lobes - 1);
-    const radius = formIndex === 1 ? form.width * (1 - tier * .85) :
-      form.width * (lobe > 8 ? .25 + rng() * .3 : .68 + rng() * .3);
-    const y = formIndex === 1 ? 4.7 + tier * (form.height - 4.7) :
-      form.height + (rng() - .4) * form.depth - (radius / form.width) * .8;
+    // The inner lobes fill the top; outer lobes fall around a broad shoulder.
+    // A linear bottom-wide taper made the old oak read like a conifer.
+    const ring = lobe % 4;
+    const radius = form.width * (ring === 0 ? .22 + rng() * .23 : .65 + rng() * .35);
+    const y = form.height + (rng() - .5) * form.depth * .7 -
+      (radius / form.width) * (formIndex === 0 ? .75 : formIndex === 1 ? 2.1 : 1.5);
     const center = new THREE.Vector3(form.lean + Math.cos(angle) * radius, y, Math.sin(angle) * radius);
-    const start = formIndex === 1 ? new THREE.Vector3(form.lean * tier, 3.5 + tier * 5.5, .1) : fork.clone().lerp(crown, rng() * .22);
+    const branch = scaffolds[Math.round(((angle - .17) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) / (Math.PI * 2 / 5)) % 5]!;
+    const start = ring === 0 ? leader.getPoint(.65 + rng() * .2) :
+      branch.getPoint(.68 + rng() * .3);
     const control = start.clone().lerp(center, .53);
-    control.y += formIndex === 0 ? 1.7 : .6;
-    limb(start, control, center, .15 + rng() * .035, .02);
-    const spread = formIndex === 1 ? 1.3 + (1 - tier) * .8 : 2.3;
-    for (let i = 0; i < form.cards; i++) {
+    control.y += formIndex === 0 ? .7 : .2;
+    limb(start, control, center, .06 + rng() * .015, detail ? .035 : .012);
+    const spread = formIndex === 1 ? 2.1 : 2.0;
+    if (detail) {
+      for (let twig = 0; twig < 5; twig++) {
+        const a = angle + twig * 2.39996;
+        const end = center.clone().add(new THREE.Vector3(Math.cos(a) * spread, (twig % 3 - .5) * .65, Math.sin(a) * spread));
+        const bend = center.clone().lerp(end, .5); bend.y += .35;
+        limb(center, bend, end, .025, .006, 4, 3);
+      }
+    }
+    const cards = detail ? form.cards * 7 : form.cards;
+    for (let i = 0; i < cards; i++) {
       const azimuth = rng() * Math.PI * 2, vertical = rng() * 2 - 1;
       const r = Math.cbrt(rng()), horizontal = Math.sqrt(1 - vertical * vertical);
-      const card = new THREE.PlaneGeometry(2.05 + rng() * .7, 1.95 + rng() * .6);
+      const card = new THREE.PlaneGeometry((detail ? .70 : 1.8) + rng() * (detail ? .30 : .55),
+        (detail ? .65 : 1.65) + rng() * (detail ? .25 : .5));
       card.rotateZ(rng() * Math.PI * 2); card.rotateY(rng() * Math.PI);
       card.rotateX((rng() - .5) * Math.PI);
       card.translate(center.x + Math.cos(azimuth) * horizontal * r * spread,
