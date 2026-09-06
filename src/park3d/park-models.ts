@@ -60,6 +60,9 @@ export async function loadSkylineModels(groundAt: (x: number, z: number) => numb
     SKYLINE_MODELS.map(async (spec) => {
       const gltf = await loader.loadAsync(`${base}/${spec.file}.glb`);
       const model = gltf.scene;
+      model.traverse(node => {
+        if (node instanceof THREE.Mesh) { node.castShadow = true; node.receiveShadow = true; }
+      });
       if (spec.up === "z") {
         model.rotation.x = -Math.PI / 2;
       }

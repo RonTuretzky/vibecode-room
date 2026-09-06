@@ -168,3 +168,12 @@ and returns from Orbit and Meadow without rendering errors. Inspecting its
 screenshots led to two further fixes: connected junction margins and grading
 shore walks from the carved bank surface. This is an isolated demo-room test;
 the locked desktop prevented directly revisiting the user's active browser tab.
+
+Nearby generic city roofs now include inset parapets, coping, recessed roof
+surfaces and restrained low housings. These are illustrative, bounded by the
+source footprint and roof height; no equipment placement is claimed to be
+surveyed. Source footprints with extra collinear vertices keep simple tower
+setbacks, while concave lots stay unshrunk. Existing detailed skyline models
+remain, and building bodies now cast alongside roof details to avoid hollow
+shadow outlines. The rooftop pass passed 323 relevant unit tests, TypeScript,
+production build and full-graphics checks at double pixel density.

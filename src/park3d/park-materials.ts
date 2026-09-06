@@ -153,3 +153,21 @@ export function parkPathTexture(): THREE.CanvasTexture {
   map.wrapS = map.wrapT = THREE.RepeatWrapping;
   return map;
 }
+
+/** Quiet rolled-roof grain; the architectural details supply real shadows. */
+export function parkRoofTexture(): THREE.CanvasTexture {
+  const map = texture('roof', 512, (ctx, size) => {
+    const rng = mulberry32(76815);
+    ctx.fillStyle = '#d5d4cd'; ctx.fillRect(0, 0, size, size);
+    for (let strip = 0; strip < 4; strip++) {
+      const tone = 203 + rng() * 16;
+      ctx.fillStyle = `rgb(${tone},${tone},${tone * .98})`; ctx.fillRect(strip * 128, 0, 128, size);
+      ctx.fillStyle = 'rgba(91,96,92,.13)'; ctx.fillRect(strip * 128, 0, 2, size);
+    }
+    for (let i = 0; i < 22000; i++) {
+      ctx.fillStyle = rng() > .5 ? 'rgba(250,248,240,.16)' : 'rgba(58,62,57,.12)';
+      ctx.fillRect(rng() * size, rng() * size, .6 + rng(), .6 + rng());
+    }
+  });
+  map.wrapS = map.wrapT = THREE.RepeatWrapping; return map;
+}

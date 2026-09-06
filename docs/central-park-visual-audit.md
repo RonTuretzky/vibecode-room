@@ -31,10 +31,13 @@ prove that the visual objective has been achieved.
    rechecked. Continue low-angle inspection of stair transitions and modeled
    grades as camera exploration improves. The user's existing tab still needs
    a direct visit once the Mac is unlocked.
-2. **Architecture.** Many city blocks still have generic silhouettes. Add
-   appropriate cornices, parapets, roof detail and better mapped landmark
-   coverage while retaining source footprints/heights and existing models.
-   The Zoo, Arsenal and rink support structures remain incomplete.
+2. **Architecture.** Nearby buildings now have recessed roofs, parapets,
+   coping, roof grain and low rooftop housings within source height/footprint
+   bounds. Extra collinear survey vertices no longer disable tower setbacks.
+   Full-renderer review caught and resolved hollow parapet shadows; complete
+   building bodies and landmark models now cast consistent shadows. The Zoo,
+   Arsenal, rink support structures and distinctive Fifth Avenue hotel crowns
+   remain incomplete. General architectural details are still illustrative.
 3. **Ground materials and transitions.** Perimeter hexagonal/granite paving,
    path margins, schist outcrops, contact shading and woodland floor detail
    need close-view inspection. Avoid texture repetition and floating props.

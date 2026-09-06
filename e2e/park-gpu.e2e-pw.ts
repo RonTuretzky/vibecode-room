@@ -3,7 +3,7 @@ import { writeFileSync } from 'node:fs';
 
 // Opt-in hardware test: the regular suite intentionally uses lightweight
 // software-renderer fallbacks. This test must load the actual park assets.
-test.use({ viewport: { width: 1280, height: 900 }, deviceScaleFactor: 1,
+test.use({ viewport: { width: 1280, height: 900 }, deviceScaleFactor: process.env.VIBERSYN_PARK_DPR === '2' ? 2 : 1,
   launchOptions: { args: process.platform === 'darwin' ? ['--use-angle=metal'] : [] } });
 test.skip(process.env.VIBERSYN_PARK_GPU !== '1', 'Set VIBERSYN_PARK_GPU=1 on a machine with hardware WebGL.');
 
@@ -34,11 +34,13 @@ test('the full park renders every preset, material and environment return withou
     await view.click(); await expect(scene).toHaveAttribute('data-park-view', label!);
     await cameraSettled(page);
     await page.getByTestId('scene-zen-button').click();
-    await page.screenshot({ path: info.outputPath(`${file}.png`) });
+    // Capture diagnostics before screenshot readback, which can itself stall
+    // the frame loop and inflate a short average at high pixel densities.
     stats[file!] = await scene.evaluate(el => {
       const d = (el as HTMLElement).dataset;
       return { triangles: d.averageTriangles, draws: d.averageDrawCalls, frameMs: d.frameMs, p95Ms: d.frameP95Ms, ratio: d.pixelRatio };
     });
+    await page.screenshot({ path: info.outputPath(`${file}.png`) });
     await page.keyboard.press('Escape');
   }
   await page.getByTestId('scene-mode-button').click();

@@ -105,14 +105,14 @@ describe("park buildings extrusion", () => {
       const { roofs, walls } = checkWinding(mesh);
       expect(walls).toBe(24);
       expect(roofs).toBe(18);
-      mesh.geometry.computeBoundingBox();
-      expect(mesh.geometry.boundingBox!.min.x).toBeCloseTo(0);
-      expect(mesh.geometry.boundingBox!.max.x).toBeCloseTo(20);
-      expect(mesh.geometry.boundingBox!.max.y).toBeCloseTo(99.6);
+      const bounds = new THREE.Box3().setFromObject(mesh);
+      expect(bounds.min.x).toBeCloseTo(0);
+      expect(bounds.max.x).toBeCloseTo(20);
+      expect(bounds.max.y).toBeCloseTo(99.6);
       const ray = new THREE.Raycaster(new THREE.Vector3(.5, 120, 5), new THREE.Vector3(0, -1, 0));
       expect(ray.intersectObject(mesh)[0]!.point.y).toBeCloseTo(9.6 + 90 * .73, 4);
       ray.ray.origin.x = 10;
-      expect(ray.intersectObject(mesh)[0]!.point.y).toBeCloseTo(99.6, 4);
+      expect(ray.intersectObject(mesh)[0]!.point.y).toBeCloseTo(99.6 - 1.05, 4);
       mesh.geometry.dispose();
       for (const material of mesh.material as THREE.Material[]) material.dispose();
     }

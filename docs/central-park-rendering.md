@@ -24,6 +24,12 @@ material textures. It needs no cloud rendering or external asset service.
   Distant walks use fewer segments and share vertices. `park-walk-materials.ts`
   uses retained OSM surface tags for asphalt, pavers, gravel/earth, mulch and
   wooden boards, batching each texture instead of making a mesh per way.
+- `park-buildings.ts` / `park-roof-details.ts`: geographic extrusion is isolated
+  from world loading. Nearby roofs have inset parapets, coping, recessed roof
+  membranes and low access/mechanical housings. Details remain inside mapped
+  footprints and roof-height limits. Convex footprints with extra survey
+  vertices retain restrained setbacks; concave lots keep their silhouettes.
+  Whole buildings and existing skyline models cast consistent sun shadows.
 - `park-facades.ts`: generated color, relief and roughness maps distinguish
   recessed window panes, mullions, sills and matte masonry. Known prewar
   buildings retain masonry at tall heights. Reduced atmospheric density
@@ -82,7 +88,7 @@ clock, fullscreen button, and project navigation, including keyboard focus.
 ## Verification
 
 - Earlier full unit suite: 2,622 passed, 20 credential-dependent tests skipped.
-- Current park suite: 61 passed; 319 passed including the relevant room,
+- Current park suite: 65 passed; 323 passed including the relevant room,
   projector and spatial-navigation suites. Coverage includes terrain/ray agreement on the
   nonuniform grid, crown geometry budgets, building/bridge winding and
   openings, shoreline clipping, reflection invalidation, and fitting
@@ -115,6 +121,7 @@ On a machine with hardware WebGL, run:
 VIBERSYN_PORT=18998 VIBERSYN_PARK_GPU=1 bun run test:e2e e2e/park-gpu.e2e-pw.ts --workers=1
 ```
 
+Add `VIBERSYN_PARK_DPR=2` to exercise a 2,560 × 1,800 drawing canvas.
 The opt-in test uses Metal on macOS, requires `data-park-ready=true`, and
 fails if it sees software rendering, too little geometry, shader/load errors
 or WebGL context loss. It captures the four park presets and portrait UI/Zen
@@ -123,8 +130,11 @@ samples are written under `test-results/`. Images require human/agent review;
 the test does not decide whether a scene looks good. It uses an isolated,
 in-memory demo room and does not change live projects.
 
-The walk pass was inspected through these full-renderer captures. Junction
+The walk and rooftop passes were inspected through these full-renderer captures. Junction
 edging and abrupt bank grading were corrected after the first screenshots.
+Rooftop review also caught isolated parapet shadows; building bodies and
+landmark models now cast alongside their details. Frame diagnostics are read
+before screenshots to avoid including the capture readback in those samples.
 The Mac's locked screen prevented direct interaction with the user's existing
 tab during this pass; the separate hardware-rendered browser test succeeded.
 
