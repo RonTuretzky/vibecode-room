@@ -42,7 +42,8 @@ test('the full park renders every preset, material and environment return withou
     stats[file!] = await scene.evaluate(el => {
       const d = (el as HTMLElement).dataset;
       return { triangles: d.averageTriangles, draws: d.averageDrawCalls, frameMs: d.frameMs, p95Ms: d.frameP95Ms, ratio: d.pixelRatio,
-        geometries: d.gpuGeometries, textures: d.gpuTextures, programs: d.gpuPrograms, turfInstances: d.turfInstances };
+        geometries: d.gpuGeometries, textures: d.gpuTextures, programs: d.gpuPrograms, turfInstances: d.turfInstances,
+        reflectionSize: d.reflectionSize, reflectionSamples: d.reflectionSamples };
     });
     await page.screenshot({ path: info.outputPath(`${file}.png`) });
     await page.keyboard.press('Escape');
@@ -157,6 +158,38 @@ test('rebuilding park environments releases transient GPU resources after warmup
   for (const key of ['geometries', 'textures', 'programs'] as const) {
     expect(Math.max(...warm.map(s => s[key])) - Math.min(...warm.map(s => s[key])), key).toBeLessThanOrEqual(2);
   }
+  expect(await canvas!.evaluate(el => el.isConnected)).toBe(true);
+  expect(errors).toEqual([]);
+});
+
+test('the antialiased Pond reflection follows repeated screen orientation changes', async ({ page }, info) => {
+  test.setTimeout(90000);
+  const errors: string[] = [];
+  page.on('pageerror', e => errors.push(e.message));
+  page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
+  await page.goto('/?live=0&env=park');
+  const scene = page.getByTestId('room-scene');
+  await expect(scene).toHaveAttribute('data-park-ready', 'true', { timeout: 90000 });
+  await page.getByTestId('park-view-button').click();
+  await cameraSettled(page);
+  const samples: Record<string, string>[] = [];
+  const canvas = await scene.locator('canvas').elementHandle();
+  for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }, { width: 1280, height: 900 },
+    { width: 390, height: 844 }, { width: 1280, height: 900 }]) {
+    await page.setViewportSize(viewport);
+    await expect.poll(async () => {
+      const [w, h] = (await scene.getAttribute('data-reflection-size') ?? '').split('x').map(Number);
+      return Math.abs(w! / h! - viewport.width / viewport.height);
+    }, { timeout: 10000 }).toBeLessThan(.02);
+    const sample = await scene.evaluate(el => ({ ...(el as HTMLElement).dataset }));
+    const [w, h] = sample.reflectionSize!.split('x').map(Number);
+    expect(Math.max(w!, h!)).toBeLessThanOrEqual(1536);
+    expect(Number(sample.reflectionSamples)).toBeGreaterThan(0);
+    samples.push(sample as Record<string, string>);
+  }
+  await page.getByTestId('scene-zen-button').click();
+  await page.screenshot({ path: info.outputPath('reflection-after-resizes.png') });
+  writeFileSync(info.outputPath('reflection-resize-samples.json'), JSON.stringify(samples, null, 2));
   expect(await canvas!.evaluate(el => el.isConnected)).toBe(true);
   expect(errors).toEqual([]);
 });

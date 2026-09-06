@@ -3,7 +3,7 @@ import { createParkFurniture } from "../park3d/park-furniture";
 import { PARK_VIEWS, fitParkProjects } from "../park3d/park-cameras";
 import { parkProjectSlots, type ParkProjectPoint } from "../park3d/park-project-layout";
 import { createParkAtmosphere } from "../park3d/park-atmosphere";
-import { ParkReflectionSchedule } from "../park3d/park-reflection";
+import { ParkReflectionQuality, ParkReflectionSchedule } from "../park3d/park-reflection";
 import { createParkGrove } from "../park3d/park-grove";
 import { createParkUnderstorey, understoreyPlacements } from "../park3d/park-understorey";
 import { parkTurfTexture } from "../park3d/park-materials";
@@ -1326,8 +1326,18 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
               // whose extra geometry adds little to a rippled reflection.
               const original = world.group.userData.heroWaterRender as typeof hero.onBeforeRender;
               const reflectionSchedule = new ParkReflectionSchedule();
+              const mirrorTexture = (hero.material as THREE.ShaderMaterial).uniforms.mirrorSampler!.value as THREE.Texture;
+              const reflectionQuality = mirrorTexture.renderTarget
+                ? new ParkReflectionQuality(mirrorTexture.renderTarget, renderer.capabilities.maxSamples) : null;
+              const reflectionBuffer = new THREE.Vector2();
+              container.dataset.reflectionSize = mirrorTexture.renderTarget ? `${mirrorTexture.renderTarget.width}x${mirrorTexture.renderTarget.height}` : 'none';
+              container.dataset.reflectionSamples = String(mirrorTexture.renderTarget?.samples ?? 0);
               hero.onBeforeRender = (renderer2, scene2, camera2, geometry2, material2, group2) => {
-                if (!reflectionSchedule.shouldRender(performance.now(), camera2)) return;
+                const now = performance.now();
+                renderer2.getDrawingBufferSize(reflectionBuffer);
+                const resized = reflectionQuality?.update(reflectionBuffer.x, reflectionBuffer.y, now) ?? false;
+                if (resized) container.dataset.reflectionSize = `${mirrorTexture.renderTarget!.width}x${mirrorTexture.renderTarget!.height}`;
+                if (!reflectionSchedule.shouldRender(now, camera2) && !resized) return;
                 const hidden: THREE.Object3D[] = [];
                 scene.traverse((node) => {
                   if (node instanceof THREE.InstancedMesh && node.visible && !node.userData.parkReflect) {
@@ -1655,6 +1665,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
         dispose: () => {
           floraDisposed = true;
           parkDisposed = true;
+          container.dataset.reflectionSize = 'none';
           parkGrove?.dispose();
           parkShore?.dispose();
           parkTurf?.dispose();

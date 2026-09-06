@@ -442,3 +442,28 @@ positions on the process instead of the snapshot's `plantedPositions` field and
 sampled the projector before its import-fit settled; those test setup errors
 were corrected, then all three new scenarios passed. The live local-AI room at
 port 18994 remains healthy with the same server boot and no degraded providers.
+
+### Sharper Pond reflections — 2026-09-06
+
+The fixed 768×768 planar reflection visibly undersampled building windows and
+tree silhouettes at DPR 2. `ParkReflectionQuality` now reuses that cached render
+target with up to four MSAA samples and a resolution derived from the drawing
+buffer. Its longest side is capped at 1536 pixels; the other side follows the
+screen aspect. Resize requests must settle for 250 ms, and unchanged frames
+allocate nothing. Adaptive drawing-buffer resolution changes use the same path.
+This increases the bounded reflection-buffer memory cost; resource counts alone
+do not measure those bytes.
+
+The fresh Pond screenshot has cleaner reflected façades and silhouette edges.
+Its brief local frame sample remains 8.3 ms at DPR 2 on this M4 Max, with the
+same approximate draw count. All six presets, low-shore navigation and six
+environment rebuilds pass the full hardware checks. This is local evidence,
+not a performance promise for other GPUs. Captures and measurements are under
+`.context/reflection-quality-gpu-results/`.
+
+The dedicated orientation check also passes: five alternating landscape/phone
+sizes preserve the canvas, keep the mirror within its resolution bound and emit
+no browser/GPU errors. DPR 2 uses a 1536×1080 mirror at 1280×900 CSS pixels and
+592×1280 at 390×844; both have four samples. After the six environment rebuilds,
+the last four readings hold at 151 geometries, 79 textures and 77 programs.
+Eight reflection/natural-detail unit tests and both TypeScript checks pass.

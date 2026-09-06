@@ -70,7 +70,10 @@ prove that the visual objective has been achieved.
    woodland floor materials, grass scale, sky detail and
    water shading still warrant further work. Small-basin ripples now use an
    irregular seamless spectrum with softer highlights and reduced-motion
-   support; the change was checked in the Zoo render. Species forms remain approximate.
+   support; the change was checked in the Zoo render. A fresh Pond capture
+   exposed blocky reflected silhouettes at DPR 2. Its mirror now uses bounded,
+   screen-shaped resolution and antialiasing; the sharper façades and tree
+   edges were inspected in a new hardware capture. Species forms remain approximate.
 5. **Composition and UI.** Inspect camera routes and readable project content
    in normal and Zen modes, portrait and landscape. Preserve shared spatial
    controls and planting/branch interaction. The fresh 32/64-project fixture
@@ -94,7 +97,9 @@ prove that the visual objective has been achieved.
    2,900 draw calls / 18–19 ms average frames to 1,004–1,014 draws / 8.7–8.8 ms
    at 2× resolution on this M4 Max; p95 is 11.9–12.5 ms in the fresh six-sample
    check. Close detail returns and branch picking remains available. Continue
-   auditing reflection cadence and long-frame behavior. Brief local frame
+   auditing long-frame behavior. The sharper Pond reflection retains the same
+   30 Hz idle/full-rate navigation schedule, with bounded buffer resolution and
+   delayed resizing. Full hardware rebuild checks still pass. Brief local frame
    samples are not a cross-device performance guarantee.
 
 ## Completion remains unproven
