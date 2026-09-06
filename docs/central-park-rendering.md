@@ -579,3 +579,45 @@ after warmup, six rebuilds hold at 153 geometries, 82 textures and 92 programs.
 Pond reflections, phone layouts and environment return were checked in
 `.context/cloud-final-gpu-results/`. The preceding furniture commit `6045aae`
 has also passed all CI jobs, including live flows.
+
+### Restore missing foliage opacity — 2026-09-06
+
+Close sky inspection exposed solid triangular surfaces in the jacaranda
+canopy. The packed GLB's leaf material requested blending but its base-color
+image was JPEG, so alpha testing could not reveal the gaps between leaves.
+The same defect affected grass, dandelion, ursinia, periwinkle and both shrub
+models. The current upstream glTF metadata also links JPEG color images.
+
+`scripts/repair-garden-alpha.py` restores each model's original 1k Poly Haven
+opacity mask into the packed color image as RGBA PNG. It verifies the source
+mask hash, preserves image dimensions and records source URLs/hashes in glTF
+extras. The asset fetch script now runs this repair, while `--check` validates
+alpha without network access. A Bun regression check rejects opaque/JPEG
+base-color images on the seven cutout materials and checks buffer bounds.
+
+The repairs add 3.53 MiB to the committed download payload without adding mesh
+detail or runtime texture maps. All 69 non-image buffer views across the ten
+models are byte-identical to the previous commit; meshes, nodes and accessors
+are unchanged. All seven repaired alpha channels pass validation, and the
+95 targeted unit tests and product typecheck pass. Fresh close captures in
+`.context/foliage-alpha-final-2026-09-06/` show leaf-shaped fronds and more open
+shadows in place of solid cards. The live room's served jacaranda GLB matches
+the repaired source SHA-256.
+
+All 17 park, room/guest navigation, project focus and workspace browser
+scenarios pass, including the four full GPU scenarios. The longer suite
+sampled 8.3–13.9 ms average frames / 9.2–16.9 ms p95; its warm rebuild counts
+remain fixed at 217 geometries, 82 textures and 92 programs. Because several
+views were slower than the preceding run, a paired comparison used one browser,
+the same build and camera route, and served the original GLBs only to the
+baseline context. Both versions sampled 8.3–9.1 ms average frames, with
+identical per-view geometry/texture counts. The repaired version sampled
+9.1–10.8 ms p95. This brief comparison did not reproduce the longer run's
+slowdown; it is not a cross-device guarantee. Evidence:
+`.context/foliage-alpha-gpu-results/` and
+`.context/foliage-alpha-performance-comparison.json`.
+
+Fresh lawn/Pond captures from the actual two-project local room were inspected
+in `.context/foliage-live-2026-09-06/`, with no browser errors. Its boot ID and
+healthy local-provider status remain unchanged. Both preceding commits
+(`6045aae`, `d684a05`) have passed all CI jobs, including live flows.

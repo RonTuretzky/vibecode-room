@@ -80,8 +80,12 @@ prove that the visual objective has been achieved.
    the existing sky, environment lighting and Pond reflection. Four ground-level
    directions were inspected, and all four GPU scenarios pass. These close
    views also exposed triangular surfaces in the near photoscan canopy. The
-   asset audit found JPEG base-color textures on seven alpha foliage materials;
-   investigate restoring the source opacity masks before judging crown density.
+   asset audit found JPEG base-color textures on seven alpha foliage materials.
+   Original Poly Haven opacity masks now restore their cutouts, and fresh
+   close renders show leaf-shaped fronds and more open shadows. The repair
+   preserves every mesh/UV buffer and adds an asset regression check. Continue
+   judging crown density with the corrected textures. Near photoscan trees
+   still reuse a jacaranda model; matching them to mapped park genera remains.
    The close turf now has four times
    the cell density in a smaller 25-tile neighbourhood, fading by 16 m; wrapped
    diffuse light gives thin blades a softer response without another pass.
@@ -126,6 +130,11 @@ prove that the visual objective has been achieved.
    current park/navigation/focus browser scenarios passed. The newer furniture
    pass passes all four GPU scenarios, with stable warm counts of 152 geometries,
    81 textures and 92 programs. Its six views sampled 8.3–9.3 ms average frames.
+   After cloud/opacity repair, all 17 browser scenarios pass again and warm
+   rebuild counts stay fixed at 217 geometries, 82 textures and 92 programs.
+   A paired original/repaired-foliage comparison measured 8.3–9.1 ms average
+   frames for both, with matching geometry/texture counts per view. The longer
+   suite had slower samples, so retain long-frame behavior in this audit.
 
 ## Completion remains unproven
 

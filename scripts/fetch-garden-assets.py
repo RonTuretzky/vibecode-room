@@ -9,6 +9,8 @@ the asset set):
      199MB bin, far too heavy for the two-projector room.
   3. Download the tiled ground texture (1k diff + normal) and the tonemapped
      sky panorama (8k, downscaled to 4k with sips).
+  4. Restore source opacity masks in foliage base-color textures. Some upstream
+     glTF exports use JPEG even on alpha materials; packing cannot recover it.
 
 Everything lands in public/assets/garden/. Licensing: all Poly Haven content
 is CC0 — see public/assets/garden/ASSETS.md.
@@ -130,6 +132,7 @@ if __name__ == "__main__":
             fetch_model(asset, ratio, cache)
         fetch_ground()
         fetch_sky(cache)
+    subprocess.run([sys.executable, os.path.join(os.path.dirname(__file__), "repair-garden-alpha.py")], check=True)
     total = 0
     for dirpath, _, names in os.walk(ROOT):
         total += sum(os.path.getsize(os.path.join(dirpath, n)) for n in names)

@@ -14,6 +14,15 @@ MODELS table in the fetch script). Sets keep their clumps as separate meshes
 (`--join false`) — `garden-flora.ts` scatters each clump as a variant. The
 jacaranda's raw LOD0 scan is a 199MB bin, simplified to ~85k tris.
 
+Seven cutout materials originally arrived with JPEG base-color images, losing
+their transparency. `scripts/repair-garden-alpha.py` combines the original
+Poly Haven 1k opacity mask with each packed color image as RGBA PNG, retaining
+all mesh/UV/normal buffers. The fetch script runs this step automatically;
+`python3 scripts/repair-garden-alpha.py --check` validates alpha without network
+access (requires Pillow). Each repaired image records its source mask URL and
+MD5 in glTF extras. The seven repairs add about 3.53 MiB to the total payload,
+with no extra texture maps or geometry at runtime.
+
 | File | Poly Haven asset | Role in scene |
 | --- | --- | --- |
 | `grass_medium_01.glb` | grass_medium_01 | instanced grass tufts |
