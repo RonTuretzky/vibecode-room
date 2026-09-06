@@ -12,12 +12,16 @@ test('Zoo roof surfaces cover the mapped complex while all three clock passages 
   const grade = createZooGrade(() => 10), model = buildZoo(() => 10, grade.courtLevel, grade.pavilionLevels);
   model.updateMatrixWorld(true);
   const ray = new THREE.Raycaster(), ring = PARK_SITES.zooComplex.ring;
+  // Coverage concerns roof faces; scanning every sill, hedge and pier for
+  // each 2 m sample costs millions of irrelevant triangle intersections.
+  // Passage checks below still raycast the complete model.
+  const roofs = [model.getObjectByName('zoo-slate')!, model.getObjectByName('zoo-glazing')!];
   let samples = 0;
   for (let x = Math.min(...ring.map(p => p.x)); x <= Math.max(...ring.map(p => p.x)); x += 2) {
     for (let z = Math.min(...ring.map(p => p.z)); z <= Math.max(...ring.map(p => p.z)); z += 2) {
       if (!inSite(x, z, ring)) continue;
       ray.set(new THREE.Vector3(x, 50, z), new THREE.Vector3(0, -1, 0)); ray.far = 100;
-      const hits = ray.intersectObject(model);
+      const hits = ray.intersectObjects(roofs, false);
       expect(hits.length).toBeGreaterThan(0); expect(hits[0]!.point.y).toBeGreaterThan(14); samples++;
     }
   }
