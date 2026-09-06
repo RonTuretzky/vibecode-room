@@ -1,6 +1,7 @@
 import { isNavigationKey, navigationAxes, sceneNavigation } from "./spatial-navigation";
 import { createParkFurniture } from "../park3d/park-furniture";
 import { PARK_VIEWS, fitParkProjects } from "../park3d/park-cameras";
+import { parkProjectSlots, type ParkProjectPoint } from "../park3d/park-project-layout";
 import { createParkAtmosphere } from "../park3d/park-atmosphere";
 import { ParkReflectionSchedule } from "../park3d/park-reflection";
 import { createParkGrove } from "../park3d/park-grove";
@@ -510,6 +511,8 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
     // rebinds both once its world loads (inside the park wall, never water).
     let plantableAt: (x: number, z: number) => boolean = (x, z) => Math.hypot(x, z) < 104;
     let plantGroundY: (x: number, z: number) => number = () => 0;
+    let autoPlantableAt: (x: number, z: number) => boolean = (x, z) => Math.hypot(x, z) < 104;
+    let parkLayoutDirty = false;
     let parkCameraGroundY: ((x: number, z: number) => number) | null = null;
     const cameraGroundY = (x: number, z: number) => parkEnvActive() && modeRef.current === "garden" && !skyViewRef.current
       ? parkCameraGroundY?.(x, z) ?? 0 : 0;
@@ -1350,6 +1353,15 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
               const pz = POND_STAGE.z - z / PARK_SCALE;
               return (world.groundAt(px, pz) - y) * PARK_SCALE - 0.15;
             };
+            const clearRoot = createParkPlantingMask(world.pathLines);
+            autoPlantableAt = (x, z) => {
+              const px = POND_STAGE.x - x / PARK_SCALE, pz = POND_STAGE.z - z / PARK_SCALE;
+              if (!insideParkOutline(px, pz, -4) || !clearRoot(px, pz, 3)) return false;
+              const height = world.groundAt(px, pz);
+              return [[0, 0], [3, 0], [-3, 0], [0, 3], [0, -3]].every(([dx, dz]) =>
+                world.waterAt(px + dx!, pz + dz!) < .25 && Math.abs(world.groundAt(px + dx!, pz + dz!) - height) < 2);
+            };
+            parkLayoutDirty = true;
             parkCameraGroundY = (x, z) => {
               const px = POND_STAGE.x - x / PARK_SCALE, pz = POND_STAGE.z - z / PARK_SCALE;
               return (world.cameraGroundAt(px, pz) - y) * PARK_SCALE - .15;
@@ -1650,6 +1662,8 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
           parkWorld = null;
           plantableAt = (x, z) => Math.hypot(x, z) < 104;
           plantGroundY = () => 0;
+          autoPlantableAt = (x, z) => Math.hypot(x, z) < 104;
+          parkLayoutDirty = true;
           parkCameraGroundY = null;
           if (pondScene) {
             camera.far = defaultFar;
@@ -3429,6 +3443,7 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
       const ring = (index + 1) >> 1;
       return index % 2 === 1 ? -ring : ring;
     };
+    let parkSlots: ParkProjectPoint[] = [];
     const treePosition = (index: number, count: number, garden: boolean): { pos: THREE.Vector3; k: number } => {
       if (layoutRef.current === "ball") {
         const dir = fibSphereDir(index, count);
@@ -3442,6 +3457,8 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
         const r = DISK_R_PROC * DISK_RADIUS;
         return { pos: new THREE.Vector3(Math.cos(angle) * r, diskY(), Math.sin(angle) * r), k: poincareScale(DISK_R_PROC) };
       }
+      const parkSlot = garden && parkEnvActive() ? parkSlots[index] : null;
+      if (parkSlot) return { pos: new THREE.Vector3(parkSlot.x, parkSlot.y, parkSlot.z), k: 1 };
       const slot = centeredSlot(index);
       const y = garden ? 0 : 3.1 + (Math.abs(slot) % 2) * 0.9;
       // 13-unit slots (live-room request, twice: space the trees out MORE) with a deeper
@@ -3553,6 +3570,9 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
       // of the live SELF process).
       const selfInput = garden && !hyper ? selfTreeRef.current : null;
       const treeSpecs = visibleTreeSpecs(treesRef.current, selfInput !== null);
+      parkSlots = garden && !hyper && parkEnvActive() ? parkProjectSlots(treeSpecs.length + (selfInput ? 1 : 0), {
+        canPlant: autoPlantableAt, groundAt: plantGroundY,
+      }, treeSpecs.flatMap(spec => spec.plantedAt && plantableAt(spec.plantedAt.x, spec.plantedAt.z) ? [spec.plantedAt] : [])) : [];
 
       const seenIdeas = new Set<string>();
       ideaSpecs.forEach((spec, index) => {
@@ -4855,7 +4875,8 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
       const now = performance.now();
       const ratio = resolution.sample(frameSeconds * 1000, now);
       if (ratio !== null) { renderer.setPixelRatio(ratio); resize(); }
-      if (tick.current !== lastTick) {
+      if (tick.current !== lastTick || parkLayoutDirty) {
+        parkLayoutDirty = false;
         lastTick = tick.current;
         reconcile();
       }

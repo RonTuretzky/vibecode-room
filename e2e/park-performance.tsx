@@ -15,7 +15,12 @@ if (query.get("live") !== "0") {
 } else {
   const requested = Number(query.get("trees") ?? 32);
   const count = Number.isFinite(requested) ? Math.max(1, Math.min(64, Math.floor(requested))) : 32;
+  const mature = query.get('mature') === '1';
   const snapshot = busyRoomSnapshot();
+  snapshot.sessionId = 'graphics-fixture';
+  snapshot.globalState = `${count} fixture projects`;
+  snapshot.activeCue = 'Graphics preview';
+  snapshot.listening = false; snapshot.muted = true;
   const templates = snapshot.processes;
   snapshot.processes = Array.from({ length: count }, (_, i) => ({
     ...templates[i % templates.length]!,
@@ -25,6 +30,13 @@ if (query.get("live") !== "0") {
     selected: false,
     previewUrl: undefined,
     source: undefined,
+    slides: undefined,
+    // A second load case exercises full crowns and branch-tip chrome;
+    // the ordinary busy fixture contains only young concept saplings.
+    treeRepo: mature ? { adopted: false, remoteUrl: `https://example.invalid/graphics/${i}`,
+      branches: [{ name: 'main', commits: 24 }, ...Array.from({ length: 6 }, (_, j) => ({
+        name: `room/fixture-branch-${j + 1}`, commits: 1 + (i + j * 3) % 18,
+      }))] } : undefined,
   }));
   createRoot(document.getElementById("root")!).render(
     <ProjectorApp initialSnapshot={snapshot} urlSearch="?live=0&env=park" />,

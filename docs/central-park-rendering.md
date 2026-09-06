@@ -374,3 +374,27 @@ shortened/densified. A separate 32/64-project hardware fixture ran with motion
 enabled and no page errors or API writes. It exposed overly wide automatic
 project placement: Fit reached radii of 435/872 m. That layout needs correction;
 successful rendering alone does not make the large forest usable.
+
+`park-project-layout.ts` now retains the familiar first five candidate slots
+and expands into compact hexagonal rows at 13 m spacing. Park roots use the
+rendered ground height and reject mapped walks/structures, wet margins and
+steep crossfalls. Explicitly planted locations keep their existing override
+and reserve space from automatic roots. A world-load invalidation recomputes
+slots once the real masks arrive. Meadow and abstract layouts retain their
+existing arrangement. Candidate order is independent of project count.
+
+The layout passed 154 park/scene unit tests and product/fixture typechecks.
+Real Metal captures of 32/64 projects reduced Fit's radii from 435/872 m to
+169/256 m. The separate development fixture now labels itself accurately and
+accepts `mature=1` for full-grown trees with six branch tips each; the original
+fixture only stressed saplings. Both mature sizes rendered with motion at
+2× resolution, opened the project list and selected the last project's tree
+controls without page errors or API writes. At 64 mature trees, brief frame
+samples were 18.4–19.1 ms (p95 26.2–27.6 ms); branch-tip chrome remains visually
+crowded and expensive at this overview distance. This is an open optimization,
+not a claim of universal smooth performance.
+
+The final production build passed all 13 combined browser scenarios: park
+camera presets, room/guest/dwell navigation, phone workspace focus, the full
+hardware rendering pass, low-shore exploration and repeated GPU rebuilds.
+Earlier turf commit `31d4ed2` also passed all CI jobs, including live flows.

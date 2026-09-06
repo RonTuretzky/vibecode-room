@@ -74,13 +74,20 @@ prove that the visual objective has been achieved.
 5. **Composition and UI.** Inspect camera routes and readable project content
    in normal and Zen modes, portrait and landscape. Preserve shared spatial
    controls and planting/branch interaction. The fresh 32/64-project fixture
-   exposed an automatic single-row layout that forces Fit hundreds of metres
-   away; nearby plantable-ground placement is the next correction.
+   exposed an automatic single-row layout that forced Fit too far away. Compact
+   terrain-aware slots now reduce its radius from 435/872 m to 169/256 m;
+   chosen planting positions retain their override. In the mature-tree fixture,
+   distant branch-tip cards still obscure crowns. Selecting through Projects
+   opens controls but does not bring a distant tree closer; the menu can overlap
+   the top controls. Inspect that focus/label behavior next.
 6. **Cost and lifecycle.** Re-measure a large project forest, transitions and
    repeated rebuilds. Audit cached world/atlas lifetimes, reflection/shadow
    cadence, resolution adaptation and long-frame behavior. Six environment
    rebuild cycles now show stable GPU resource counts after warmup, including
-   recreating the close turf. Brief local frame
+   recreating the close turf. The fresh 64-mature-tree fixture has six branch
+   tips per tree and measures roughly 2,900 draw calls / 18–19 ms average frames
+   at 2× resolution on this M4 Max, with p95 around 27 ms. Reduce distant chrome
+   work while retaining branch picking at useful distances. Brief local frame
    samples are not a cross-device performance guarantee.
 
 ## Completion remains unproven
