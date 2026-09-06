@@ -306,3 +306,20 @@ eight with 54,174 triangles; the test caps it at 60k. Real DEM checks cover the
 northern court entries, including overlapping terrain feathers that previously
 left an unwanted ridge. The source visitor map informed the improved camera
 composition, with the Arsenal behind the court instead of obscuring it.
+
+The Zoo roof coverage test initially exceeded Bun's five-second limit on CI:
+it scanned all 54k model triangles for every sample. Restricting coverage rays
+to slate/glazing surfaces preserves the roof check, while the three passage
+rays still test the complete model. Local runtime fell from about 1.3 seconds
+to 0.3 seconds. Commit `af46898` passed all CI jobs, including the full browser
+suite and the branch/recovery/deck flow checks.
+
+The small basins' three-wave normal map produced a visible repeated grating.
+`park-water-ripples.ts` now supplies a phase-distorted, sixteen-wave spectrum
+with normalized, seamless tangent-space normals. Generation remains cached
+once per page. A seven-metre repeat, weaker perturbation, zero metalness and
+moderate roughness soften the excessively regular highlights. Secondary water
+also freezes its current phase when reduced motion is requested. The final
+2× hardware pass and product typecheck succeeded; 79 park tests passed, with
+normalization and tile-edge coverage for the new map. The final Zoo capture
+was inspected after the strength/roughness refinement.

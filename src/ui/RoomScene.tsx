@@ -1472,9 +1472,9 @@ export function RoomScene({ ideas, trees, mode, layout, environment = "meadow", 
             const cutoff = mesh.visible ? distance + 15 : distance - 15;
             mesh.visible = camera.position.distanceToSquared(mesh.boundingSphere!.center) < cutoff * cutoff;
           }
-          // The Pond's ripples drift even when motion is reduced elsewhere —
-          // still water reads as a rendering bug, not calm.
-          if (parkWater?.normalMap != null) {
+          // Freeze the smaller basins at their current phase when the user
+          // requests reduced motion, just as the Pond stops below.
+          if (!reducedMotion && parkWater?.normalMap != null) {
             parkWater.normalMap.offset.set((t * 0.014) % 1, (t * 0.011) % 1);
           }
           if (parkHeroWater !== null) {

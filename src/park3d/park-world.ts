@@ -24,6 +24,7 @@ import { buildLandmarks } from "./park-landmarks";
 import { arsenalApproach, createArsenalGrade } from "./park-arsenal";
 import { createWollmanFacilitiesGrade } from "./park-wollman-facilities";
 import { createZooGrade } from "./park-zoo-layout";
+import { sampleWaterRipple } from "./park-water-ripples";
 import { loadSkylineModels, skylineSites } from "./park-models";
 import { buildParkStreets } from "./park-streets";
 import { refreshSouthWalks, type ParkWalk, type ParkStreetData } from "./park-walks";
@@ -767,7 +768,6 @@ export function buildWater(
       const x0 = offset.x - halfEast + i * cell;
       const z0 = offset.z - halfNorth + j * cell;
       const y = level[j * cols + i] + 0.1;
-      const T = 3.5;
       const corners = [[x0, z0], [x0 + cell, z0], [x0 + cell, z0 + cell], [x0, z0 + cell]]
         .map(([x, z]) => ({ x: x!, z: z!, wet: waterAt(x!, z!) }));
       const isHero = label[j * cols + i] === heroLabel;
@@ -784,7 +784,8 @@ export function buildWater(
             heroInterior.push(waterInteriorAt(waterAt, p.x, p.z));
           }
           else targetPositions.push(p.x, y, p.z);
-          targetUvs.push(p.x / T, p.z / T);
+          const tile = isHero ? 3.5 : 7;
+          targetUvs.push(p.x / tile, p.z / tile);
         }
         for (let k = 1; k + 1 < polygon.length; k++) targetIndex.push(base, base + k, base + k + 1);
       }
@@ -818,21 +819,19 @@ export function buildWater(
   geometry.setAttribute("normal", new THREE.BufferAttribute(normals, 3));
   geometry.setIndex(index);
   geometry.computeBoundingSphere();
-  // The Pond in the photographs is dark glass: nearly black-green looked
-  // into, mirror-bright toward grazing angles (Fresnel does that once the
-  // base is dark and the surface is smooth), with fine ripples breaking the
-  // reflection. The host hands it a sky envMap and scrolls the ripples.
-  const material = new THREE.MeshStandardMaterial({ color: 0x365b52, roughness: 0.24, metalness: 0.12 });
+  // Secondary basins reflect the same physical sky as the park. The Pond
+  // has a separate reflection pass; these use a modest normal-map ripple.
+  const material = new THREE.MeshStandardMaterial({ color: 0x365b52, roughness: 0.32, metalness: 0 });
   if (typeof document !== "undefined") {
     material.normalMap = waterRippleNormals();
-    material.normalScale.set(0.22, 0.22);
+    material.normalScale.set(0.12, 0.12);
   }
   const mesh = new THREE.Mesh(geometry, material);
   mesh.name = "park-water";
   return { mesh, hero, surfaceAt, bankHeightAt };
 }
 
-// Tileable ripple normal map (sum of sines), generated once per page.
+// Seamless irregular ripple normal map, generated once per page.
 let rippleTexture: THREE.CanvasTexture | null = null;
 
 export function waterRippleNormals(): THREE.CanvasTexture {
@@ -845,19 +844,12 @@ export function waterRippleNormals(): THREE.CanvasTexture {
   canvas.height = size;
   const ctx = canvas.getContext("2d")!;
   const img = ctx.createImageData(size, size);
-  const TAU = Math.PI * 2;
-  const h = (x: number, y: number): number =>
-    Math.sin((x * 3 + y) * TAU / size) * 0.5 +
-    Math.sin((x * 7 - y * 4) * TAU / size + 1.7) * 0.3 +
-    Math.sin((x * 2 + y * 9) * TAU / size + 4.1) * 0.2;
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
-      const dx = h(x + 1, y) - h(x - 1, y);
-      const dy = h(x, y + 1) - h(x, y - 1);
-      const o = (y * size + x) * 4;
-      img.data[o] = 128 + dx * 90;
-      img.data[o + 1] = 128 + dy * 90;
-      img.data[o + 2] = 255;
+      const normal = sampleWaterRipple(x / size, y / size), o = (y * size + x) * 4;
+      img.data[o] = Math.round((normal.x * .5 + .5) * 255);
+      img.data[o + 1] = Math.round((normal.y * .5 + .5) * 255);
+      img.data[o + 2] = Math.round((normal.z * .5 + .5) * 255);
       img.data[o + 3] = 255;
     }
   }

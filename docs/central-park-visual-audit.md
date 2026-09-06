@@ -60,7 +60,9 @@ prove that the visual objective has been achieved.
    camera-distance culling. It avoids paths, water, steep grades and the stage;
    full-renderer Pond and overview captures were inspected. Crown density,
    woodland floor materials, grass scale, sky detail and
-   water shading still warrant further work. Species forms remain approximate.
+   water shading still warrant further work. Small-basin ripples now use an
+   irregular seamless spectrum with softer highlights and reduced-motion
+   support; the change was checked in the Zoo render. Species forms remain approximate.
 5. **Composition and UI.** Inspect camera routes and readable project content
    in normal and Zen modes, portrait and landscape. Preserve shared spatial
    controls and planting/branch interaction.
