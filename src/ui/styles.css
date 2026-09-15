@@ -4333,3 +4333,22 @@ main.gesture-mode .navigation-direction { min-width: 0; }
 @media (max-width: 600px) {
   .status-bar:has(.control-dock[data-expanded="true"]) .status-right { backdrop-filter: none; -webkit-backdrop-filter: none; }
 }
+
+/* CREDIBLE SENSORS badge (src/ui/AttestedSources.tsx). Status colours follow
+   DESIGN.md: active/nominal green, pending amber, halted/error red. */
+.attested-sources { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.attested-source {
+  display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px;
+  font-size: 15px; letter-spacing: 0.01em; border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(10, 18, 26, 0.7); color: #e6e9f0; white-space: nowrap;
+}
+.attested-source.hardware { border-color: rgba(0, 255, 136, 0.55); box-shadow: 0 0 10px rgba(0, 255, 136, 0.18); }
+.attested-source.hardware .attested-lock { color: #00ff88; }
+.attested-source.leaf-only { border-color: rgba(245, 166, 35, 0.6); }
+.attested-source.leaf-only .attested-lock { color: #f5a623; }
+.attested-source.broken { border-color: rgba(255, 59, 48, 0.7); }
+.attested-source.broken .attested-lock { color: #ff3b30; }
+.attested-source .attested-label { font-weight: 600; }
+.attested-source .attested-facts { color: #9aa4b8; }
+.attested-source .attested-streams { color: #cfd6e4; font-variant-numeric: tabular-nums; }
+.attested-source .attested-sealed { color: #9affc9; font-size: 12px; text-transform: uppercase; letter-spacing: 0.08em; }

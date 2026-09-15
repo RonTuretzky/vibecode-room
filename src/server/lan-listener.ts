@@ -6,11 +6,17 @@
 
 import type { Hono } from "hono";
 import type { HubConnection, RemoteHandsHub } from "./remote-hands";
+import type { AttestationRegistry } from "../attest/registry";
+import type { StreamType } from "../attest/format";
 
 // Per-connection state for a LAN listener's guest-hands WebSocket.
 export interface LanSocketData {
   kind?: "hands-guest";
   hands?: HubConnection;
+  // CREDIBLE SENSORS: `?source=<id>[&stream=gesture]` binds the socket to an
+  // attested phone; its frames are ledgered for the signed chunk records.
+  source?: string;
+  stream?: StreamType;
 }
 
 interface UpgradableServer {
@@ -24,8 +30,11 @@ interface UpgradableServer {
 // microseconds-wide window before assignment answers 503.
 export function createLanFetch(app: () => Hono | null) {
   return (request: Request, server: UpgradableServer): Response | Promise<Response> | undefined => {
-    if (new URL(request.url).pathname === "/hands/ws") {
-      if (server.upgrade(request, { data: { kind: "hands-guest" } })) {
+    const url = new URL(request.url);
+    if (url.pathname === "/hands/ws") {
+      const source = url.searchParams.get("source") ?? undefined;
+      const stream: StreamType = url.searchParams.get("stream") === "gesture" ? "gesture" : "hands";
+      if (server.upgrade(request, { data: { kind: "hands-guest", source, stream } })) {
         return undefined;
       }
       return new Response("Expected a WebSocket upgrade for /hands/ws", { status: 426 });
@@ -41,7 +50,7 @@ export function createLanFetch(app: () => Hono | null) {
 // Guest-ingest WebSocket handlers over the shared relay hub. LAN sockets carry
 // ONLY guest connections (the wall's /api/hands/room subscription lives on the
 // main listener) — anything else is ignored.
-export function createLanWebsocket(hub: RemoteHandsHub) {
+export function createLanWebsocket(hub: RemoteHandsHub, attestation?: AttestationRegistry) {
   return {
     open(ws: { data?: LanSocketData; send: (raw: string) => void }) {
       if (ws.data?.kind === "hands-guest") {
@@ -50,6 +59,9 @@ export function createLanWebsocket(hub: RemoteHandsHub) {
     },
     message(ws: { data?: LanSocketData }, message: string | Uint8Array) {
       if (ws.data?.kind === "hands-guest" && typeof message === "string") {
+        if (ws.data.source !== undefined) {
+          attestation?.recordBytes(ws.data.source, ws.data.stream ?? "hands", new TextEncoder().encode(`${message}\n`));
+        }
         ws.data.hands?.message(message);
       }
     },

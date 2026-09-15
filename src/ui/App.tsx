@@ -10,6 +10,7 @@ import type { CSSProperties } from "react";
 import { demoProjectorSnapshot, busyRoomSnapshot, emptyProjectorSnapshot, withUnmuted } from "./demo-data";
 import type { ProjectorProcess, ProjectorSnapshot, ResearchTrayItem } from "./types";
 import { GestureLayer } from "./gesture/GestureLayer";
+import { AttestedSources } from "./AttestedSources";
 import { CalibrationOverlay, type AutocalState } from "./CalibrationOverlay";
 import { PinchCameraLayer } from "./gesture/PinchCameraLayer";
 import { HandSkeletonHud } from "./gesture/HandSkeletonHud";
@@ -2699,6 +2700,10 @@ export function ProjectorApp({ initialSnapshot, urlSearch, initialOverlay, initi
               Local AI{gestureMode ? "" : ` · ${snapshot.ai.model}`}
             </span>
           )}
+          {/* CREDIBLE SENSORS: attested phones feeding this room. Shown in
+              every mode — it is the room's answer to "is that mic what it says
+              it is", which is exactly what a projector audience wants to see. */}
+          <AttestedSources sources={snapshot.attestedSources ?? []} />
           {/* Emergency status: desk mode always shows it (ALL CLEAR is a
               debugging readout); gesture mode shows it ONLY while an emergency
               is actually active — that's the actionable case. */}

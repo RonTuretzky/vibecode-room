@@ -82,6 +82,10 @@ export interface ProjectorRuntimeEnv {
 
 export interface ProjectorRuntime {
   readonly sessionId: string;
+  // CREDIBLE SENSORS: attested phone sources (attestable-recorder in room mode)
+  // and the per-stream byte ledgers their signed chunks are checked against.
+  // Optional so test fakes that never touch attestation need not provide it.
+  readonly attestation?: import("../attest/registry").AttestationRegistry;
   // The directory this room's permanent transcript archive is written to, or
   // null when it keeps no record. The read-back endpoints report it so "where
   // are my words" has an answer even when the archive is off.

@@ -282,6 +282,10 @@ export interface ProjectorSnapshot {
     // the projector prove audio is flowing even in "replay" mode (no ASR key).
     bytesReceived: number;
   };
+  // CREDIBLE SENSORS: phones running attestable-recorder in room mode. Each
+  // entry says what was verified (hardware attestation vs leaf-only claims) and
+  // how many signed chunks matched the bytes the room actually consumed.
+  attestedSources?: import("../attest/registry").AttestedSourceSummary[];
   // The idea tray: every live ledger candidate (ready first), so the room sees
   // forming ideas and can explicitly build/dismiss instead of trusting a single
   // auto-surfaced bubble. Absent in legacy/static fixtures.

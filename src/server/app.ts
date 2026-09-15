@@ -1,4 +1,6 @@
 import { Hono } from "hono";
+import { registerAttestationRoutes } from "../attest/routes";
+import { selectAttestationBackend, type AttestationBackend } from "../attest/backend";
 import type { Context } from "hono";
 import { stat } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -20,6 +22,9 @@ const TRANSCRIPT_ARCHIVE_OFF =
 
 export interface ProjectorAppOptions {
   env?: Record<string, string | undefined>;
+  // CREDIBLE SENSORS: where attestation chains are judged. Absent = selected
+  // from env (VIBERSYN_ATTEST_VERIFIER_URL → Warden verifier, else leaf-only).
+  attestationBackend?: AttestationBackend;
   // The host/port the HTTP server is bound to. /api/import/info derives the
   // phone-reachable submit URL (and the lanReachable flag) from them.
   host?: string;
@@ -96,6 +101,12 @@ export function createProjectorApp(runtime: ProjectorRuntime, options: Projector
   // gateway is a separate process on a port, so the room has to ASK. Bounded
   // and cached in gateway-probe.ts — a status page must not become a load
   // generator, and must never hang on a dead port.
+  if (runtime.attestation !== undefined) {
+    registerAttestationRoutes(app, {
+      registry: runtime.attestation,
+      backend: options.attestationBackend ?? selectAttestationBackend(options.env ?? process.env),
+    });
+  }
   app.get("/api/health", async (context) =>
     context.json(
       healthPayload({

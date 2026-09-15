@@ -1,4 +1,5 @@
 import { localCloudRelate } from "../research/sky";
+import { AttestationRegistry } from "../attest/registry";
 import { enforceLocalAi, localAiEnabled, localModel } from "../config/local";
 import { probeLocalAi } from "../providers/local";
 import { probeLocalWhisper } from "../providers/asr/local";
@@ -305,6 +306,19 @@ class LiveProjectorRuntime implements ProjectorRuntime {
   #liveFinals: TranscriptLine[] = [];
   #interim: TranscriptLine | null = null;
   #micActive = false;
+  // CREDIBLE SENSORS (docs/credible-sensors.md): every attested phone source and
+  // what the room received from it. Changes republish the snapshot, debounced —
+  // a phone posts a chunk record every second or so per stream.
+  readonly attestation = new AttestationRegistry({ onChange: () => this.#scheduleAttestationPublish() });
+  #attestationPublishTimer: ReturnType<typeof setTimeout> | null = null;
+  #scheduleAttestationPublish(): void {
+    if (this.#attestationPublishTimer !== null) return;
+    this.#attestationPublishTimer = setTimeout(() => {
+      this.#attestationPublishTimer = null;
+      try { this.publish(); } catch { /* a failed publish must not take the registry down */ }
+    }, 250);
+    (this.#attestationPublishTimer as { unref?: () => void }).unref?.();
+  }
   #micBytes = 0;
   // Mic PCM frames dropped because the ASR backlog was full — the symptom of a
   // saturated uplink (wifi congestion or a twitch playback stream hogging the
@@ -3550,6 +3564,7 @@ class LiveProjectorRuntime implements ProjectorRuntime {
       updatedAt: new Date().toISOString(),
       providers: this.degradation,
       mic: { mode: this.micMode, active: this.#micActive, bytesReceived: this.#micBytes },
+      attestedSources: this.attestation.summary(),
       branchJobs: this.#branchJobs?.snapshot() ?? [],
       plantedPositions: { ...this.#positions },
       recovery: { restoredAtMs: this.#recoveredAt, interrupted: [...this.#interrupted.keys()], error: this.#stateFile.error },

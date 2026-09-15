@@ -78,7 +78,7 @@ const handsHub = new RemoteHandsHub();
 // socket handlers live in lan-listener.ts (unit-tested).
 let lanApp: Hono | null = null;
 const lanFetch = createLanFetch(() => lanApp);
-const lanWebsocket = createLanWebsocket(handsHub);
+const lanWebsocket = createLanWebsocket(handsHub, runtime.attestation);
 
 // Dedicated PHONE IMPORT listener: a second socket on 0.0.0.0 serving ONLY the
 // import + guest-hands surfaces, so the QR flow works from phones on the room
@@ -150,20 +150,26 @@ interface MicSocketData {
   kind?: "mic" | "hands-room" | "hands-guest";
   session?: import("./composition").MicSession;
   hands?: HubConnection;
+  // CREDIBLE SENSORS: `?source=<id>` binds this socket to an attested phone so
+  // every byte it sends is ledgered for the phone's signed chunk records.
+  source?: string;
+  stream?: import("../attest/format").StreamType;
 }
 
 Bun.serve<MicSocketData>({
   hostname: host,
   port,
   fetch(request, server) {
-    const pathname = new URL(request.url).pathname;
+    const url = new URL(request.url);
+    const pathname = url.pathname;
+    const attestedSource = url.searchParams.get("source") ?? undefined;
     // A quiet room is still connected. Bun's default ten-second idle timeout
     // otherwise repeatedly cuts the event stream and flashes a disconnect warning.
     if (pathname === "/api/events") server.timeout(request, 0);
     // The live microphone path is a WebSocket so the browser can stream raw PCM
     // continuously. Everything else stays on the Hono app.
     if (pathname === "/api/mic") {
-      const upgraded = server.upgrade(request, { data: { kind: "mic" } });
+      const upgraded = server.upgrade(request, { data: { kind: "mic", source: attestedSource, stream: "audio" } });
       if (upgraded) {
         return undefined;
       }
@@ -174,7 +180,8 @@ Bun.serve<MicSocketData>({
     // bind on 0.0.0.0, or the host machine's own browser) stream cursors in.
     if (pathname === "/api/hands/room" || pathname === "/hands/ws") {
       const kind = pathname === "/api/hands/room" ? "hands-room" : "hands-guest";
-      if (server.upgrade(request, { data: { kind } })) {
+      const stream = url.searchParams.get("stream") === "gesture" ? "gesture" : "hands";
+      if (server.upgrade(request, { data: kind === "hands-guest" ? { kind, source: attestedSource, stream } : { kind } })) {
         return undefined;
       }
       return new Response(`Expected a WebSocket upgrade for ${pathname}`, { status: 426 });
@@ -211,6 +218,9 @@ Bun.serve<MicSocketData>({
     message(ws, message) {
       if (ws.data?.kind === "hands-room" || ws.data?.kind === "hands-guest") {
         if (typeof message === "string") {
+          if (ws.data.kind === "hands-guest" && ws.data.source !== undefined) {
+            runtime.attestation?.recordBytes(ws.data.source, ws.data.stream ?? "hands", new TextEncoder().encode(`${message}\n`));
+          }
           ws.data.hands?.message(message);
         }
         return;
@@ -224,6 +234,9 @@ Bun.serve<MicSocketData>({
         return; // Control text frames are ignored; only binary PCM is consumed.
       }
       const bytes = message instanceof Uint8Array ? message : new Uint8Array(message);
+      if (ws.data.source !== undefined) {
+        runtime.attestation?.recordBytes(ws.data.source, "audio", bytes);
+      }
       session.pushAudio(bytes);
     },
     close(ws, code, reason) {
